@@ -16,7 +16,7 @@ import {
   Type,
 } from "@google/genai";
 
-const MODEL = "gemini-3.1-pro-preview";
+const MODEL = "gemini-3.0-flash-preview";
 const MAX_TOOL_ROUNDS = 10; // Prevent infinite tool-calling loops
 
 let ai: GoogleGenAI | null = null;
