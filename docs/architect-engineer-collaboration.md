@@ -2,9 +2,11 @@
 
 ## 1. Overview
 
-This document defines the current state of the collaboration model between the **Director** (human), **Architect** (cloud AI agent), and **Engineer** (local AI coding agent) in the Distributed Multi-Agent Software Engineering Platform.
+This document defines the collaboration model between the **Director** (human), **Architect** (cloud AI agent), and **Engineer** (local AI coding agent) in the OIS Agentic Network.
 
 The system enables collaborative software engineering at scale through asynchronous, structured communication over the Model Context Protocol (MCP), with a central Hub brokering all interactions.
+
+For formal workflow specifications (state machines, FSM transitions, cross-domain interactions, SSE events, invariants), see **[Workflow Registry v2.0](specs/workflow-registry.md)** — the authoritative source of truth.
 
 ---
 
@@ -20,29 +22,17 @@ The system enables collaborative software engineering at scale through asynchron
 | **Oversight** | Reviews Architect assessments, monitors engineer status |
 | **Does NOT** | Write code, call Hub tools directly, or interact with the Engineer directly |
 
-### 2.2 Architect (Cloud Agent — gemini-3.1-pro-preview)
+### 2.2 Architect (Cloud Agent — Gemini on Vertex AI)
 
 | Responsibility | Description |
 |---|---|
 | **Planning** | Translates Director intent into concrete engineering directives |
 | **Governance** | Reviews engineering reports and proposals against project standards |
-| **Tool discovery** | Dynamically discovers Hub tools via MCP (McpToolset) — no hardcoded wrappers |
+| **Tool discovery** | Dynamically discovers Hub tools via MCP — no hardcoded wrappers |
 | **Communication modes** | **Discuss** (analyze without acting) vs **Execute** (issue directives) |
-| **Auto-review** | Automatically reviews reports and proposals via webhook-triggered LLM invocation |
-| **Clarification** | Automatically answers Engineer clarification requests via webhook |
+| **Auto-review** | Automatically reviews reports and proposals via SSE-triggered sandwich handlers |
+| **Clarification** | Automatically answers Engineer clarification requests via sandwich handler |
 | **Does NOT** | Execute code, access the filesystem, or call Engineer-tagged tools |
-
-**Architect's Hub Tools (tagged `[Architect]`):**
-- `submit_directive` — issue work to the Engineer
-- `get_report` — retrieve completed report summaries
-- `engineer_status` — check connected engineers
-- `review_proposal` — approve/reject/request changes on proposals
-- `cancel_task` — cancel pending directives
-- `respond_to_clarification` — answer Engineer questions
-- `submit_review` — store review assessment for a completed task (GCS-persisted)
-- `close_thread` — close an ideation thread after Director review
-- `get_pending_actions` — get summary of all items requiring Architect attention (for autonomous polling)
-- `submit_audit_entry` — log an autonomous action for Director audit trail
 
 ### 2.3 Engineer (Local Agent — OpenCode/Claude Code)
 
@@ -52,334 +42,108 @@ The system enables collaborative software engineering at scale through asynchron
 | **Reporting** | Submits structured reports with summaries and verification data |
 | **Proposals** | Submits proposals for design decisions needing Architect review |
 | **Clarification** | Requests clarification on ambiguous directives before executing |
-| **Quality** | Includes verification (build/test output) in reports |
+| **Threads** | Opens ideation threads for bidirectional discussion with Architect |
 | **Does NOT** | Set project direction, approve proposals, or issue directives |
-
-**Engineer's Hub Tools (tagged `[Engineer]`):**
-- `get_directive` — poll for pending directives
-- `submit_report` — submit completed work with summary + verification
-- `submit_proposal` — propose design decisions for Architect review
-- `request_clarification` — ask questions about ambiguous directives
-- `get_clarification_response` — retrieve Architect's answer
-- `get_proposal_decision` — check proposal approval status
-- `close_proposal` — mark a proposal as implemented after acting on approval
 
 ---
 
 ## 3. Key Workflows
 
-### 3.1 Task Execution (Directive → Report)
+| Workflow | Description |
+|---|---|
+| **WF-001** Task Execution | Director instructs Architect, directive issued, Engineer executes, report submitted, Architect auto-reviews |
+| **WF-002** Proposal & Review | Engineer submits proposal, Architect auto-reviews, approves/rejects with feedback |
+| **WF-003** Clarification | Engineer requests clarification, task pauses (`input_required`), Architect auto-responds, task resumes |
+| **WF-004** Task Cancellation | Director instructs, Architect cancels, dependent tasks cascade-cancelled |
+| **WF-005** Ideation Threads | Either party opens thread, strict turn-taking, convergence detection |
+| **WF-005a/b** Convergence | On convergence: Hub cascade (deterministic, via `convergenceAction`) or Architect LLM (autonomous) — mutually exclusive |
+| **WF-006** Mission Lifecycle | Architect creates missions, links tasks and ideas, tracks to completion |
+| **WF-008** Event Loop | Architect polls `get_pending_actions` every 300s as SSE backup |
 
-```
-Director                    Architect                   Hub                         Engineer
-   │                           │                         │                            │
-   │  "Build feature X"        │                         │                            │
-   │──────────────────────────►│                         │                            │
-   │                           │  submit_directive()     │                            │
-   │                           │────────────────────────►│                            │
-   │                           │                         │  [task queued: pending]     │
-   │                           │                         │                            │
-   │                           │                         │◄───────────────────────────│
-   │                           │                         │  get_directive()            │
-   │                           │                         │───────────────────────────►│
-   │                           │                         │                            │
-   │                           │                         │  [webhook: directive_       │
-   │                           │◄────────────────────────│   acknowledged]             │
-   │                           │                         │                            │
-   │                           │                         │                            │ [executes]
-   │                           │                         │                            │
-   │                           │                         │◄───────────────────────────│
-   │                           │                         │  submit_report(summary,     │
-   │                           │                         │   report, verification)     │
-   │                           │                         │                            │
-   │                           │  [webhook: report_      │                            │
-   │                           │◄──────submitted]────────│                            │
-   │                           │                         │                            │
-   │                           │  [AUTO-REVIEW via LLM]  │                            │
-   │                           │  read_document(ref)     │                            │
-   │                           │────────────────────────►│                            │
-   │                           │◄────────────────────────│                            │
-   │                           │  [assessment stored]    │                            │
-   │                           │                         │                            │
-   │  "What's the status?"     │                         │                            │
-   │──────────────────────────►│                         │                            │
-   │◄──────────────────────────│                         │                            │
-   │  "Engineer completed X,   │                         │                            │
-   │   all tests pass"         │                         │                            │
-```
-
-### 3.2 Proposal and Review
-
-```
-Engineer                    Hub                         Architect
-   │                         │                            │
-   │  submit_proposal(       │                            │
-   │    title, summary,      │                            │
-   │    body)                │                            │
-   │────────────────────────►│                            │
-   │                         │  [webhook: proposal_       │
-   │                         │   submitted]               │
-   │                         │───────────────────────────►│
-   │                         │                            │
-   │                         │                            │ [AUTO-REVIEW via LLM]
-   │                         │                            │ get_proposals()
-   │                         │◄───────────────────────────│
-   │                         │───────────────────────────►│
-   │                         │                            │ read_document(ref)
-   │                         │◄───────────────────────────│
-   │                         │───────────────────────────►│
-   │                         │                            │ review_proposal(
-   │                         │◄───────────────────────────│   decision, feedback)
-   │                         │                            │
-   │  get_proposal_decision()│                            │
-   │────────────────────────►│                            │
-   │◄────────────────────────│                            │
-   │  {decision: "approved", │                            │
-   │   feedback: "..."}      │                            │
-```
-
-### 3.3 Clarification Request
-
-```
-Engineer                    Hub                         Architect
-   │                         │                            │
-   │  request_clarification( │                            │
-   │    taskId, question)    │                            │
-   │────────────────────────►│                            │
-   │                         │  [task → input_required]   │
-   │                         │  [webhook: clarification_  │
-   │                         │   requested]               │
-   │                         │───────────────────────────►│
-   │                         │                            │
-   │                         │                            │ [AUTO-RESPOND via LLM]
-   │                         │                            │ respond_to_clarification(
-   │                         │◄───────────────────────────│   taskId, answer)
-   │                         │  [task → working]          │
-   │                         │                            │
-   │  get_clarification_     │                            │
-   │    response(taskId)     │                            │
-   │────────────────────────►│                            │
-   │◄────────────────────────│                            │
-   │  {answer: "..."}        │                            │
-   │                         │                            │
-   │  [resumes execution]    │                            │
-```
-
-### 3.4 Task Cancellation
-
-```
-Director                    Architect                   Hub
-   │                           │                         │
-   │  "Cancel that task"       │                         │
-   │──────────────────────────►│                         │
-   │                           │  cancel_task(taskId)    │
-   │                           │────────────────────────►│
-   │                           │                         │  [task → cancelled]
-   │                           │◄────────────────────────│
-   │◄──────────────────────────│                         │
-   │  "Task cancelled"         │                         │
-```
-
-### 3.5 Ideation Thread (Bidirectional Discussion)
-
-```
-Engineer                    Hub                         Architect
-   │                         │                            │
-   │  open_thread(           │                            │
-   │    title, message)      │                            │
-   │────────────────────────►│                            │
-   │                         │  [thread → active]         │
-   │                         │  [webhook: thread_opened]  │
-   │                         │───────────────────────────►│
-   │                         │                            │
-   │                         │                            │ [AUTO-REPLY via LLM]
-   │                         │                            │ get_thread(threadId)
-   │                         │◄───────────────────────────│
-   │                         │───────────────────────────►│
-   │                         │                            │ reply_to_thread(
-   │                         │◄───────────────────────────│   threadId, message)
-   │                         │  [currentTurn → engineer]  │
-   │                         │                            │
-   │  get_thread(threadId)   │                            │
-   │────────────────────────►│                            │
-   │◄────────────────────────│                            │
-   │                         │                            │
-   │  reply_to_thread(       │                            │
-   │    converged=true)      │                            │
-   │────────────────────────►│                            │
-   │                         │  [webhook: thread_reply]   │
-   │                         │───────────────────────────►│
-   │                         │                            │ reply_to_thread(
-   │                         │◄───────────────────────────│   converged=true)
-   │                         │  [thread → converged]      │
-   │                         │                            │
-   │                         │           ... Director reviews ...
-   │                         │                            │
-   │                         │                            │ close_thread(threadId)
-   │                         │◄───────────────────────────│
-   │                         │  [thread → closed]         │
-```
-
-**Thread states:** `active` → `converged` | `round_limit` | `escalated` → `closed`
-
-**Outstanding intent values:**
-- `decision_needed` — A decision must be made
-- `agreement_pending` — One party proposed, waiting for agreement
-- `director_input` — Director must weigh in
-- `implementation_ready` — Design agreed, ready for directive
+See [Workflow Registry](specs/workflow-registry.md) for full step-by-step specifications, state machine diagrams, and cross-domain interaction maps.
 
 ---
 
-## 4. Task State Machine
-
-```
-                    ┌──────────┐
-                    │ pending  │
-                    └────┬─────┘
-                         │
-              ┌──────────┼──────────┐
-              │          │          │
-              ▼          │          ▼
-        ┌──────────┐     │    ┌───────────┐
-        │ working  │     │    │ cancelled │
-        └────┬─────┘     │    └───────────┘
-             │           │
-     ┌───────┼───────┐   │
-     │       │       │   │
-     ▼       │       ▼   │
-┌─────────┐  │  ┌──────────────┐
-│completed│  │  │input_required│
-└─────────┘  │  └──────┬───────┘
-             │         │
-     ┌───────┘         │ (answer received)
-     ▼                 │
-┌─────────┐            │
-│ failed  │    ┌───────┘
-└─────────┘    │
-               ▼
-          ┌──────────┐
-          │ working  │ (resumed)
-          └──────────┘
-```
-
-**Terminal states:** `completed`, `failed`, `cancelled`
-**Reported states:** `reported_completed`, `reported_failed` (after Architect reads the report)
-
----
-
-## 5. Communication Infrastructure
+## 4. Communication Infrastructure
 
 | Component | Technology | Location |
 |---|---|---|
 | **Hub** | TypeScript/Express + MCP SDK | Cloud Run, `australia-southeast1` |
-| **Architect** | Python/ADK + McpToolset | Cloud Run, `australia-southeast1` |
-| **Engineer** | OpenCode + remote MCP config | Local developer machine |
+| **Architect** | Node.js/TypeScript + Vertex AI (Gemini) | Cloud Run, `australia-southeast1` |
+| **Engineer** | Claude Code / OpenCode + MCP plugin | Local developer machine |
 | **State** | GCS Bucket (`gs://ois-relay-hub-state`) | `australia-southeast1` |
 | **Auth** | Bearer token (`HUB_API_TOKEN`) | All MCP endpoints |
-| **Director CLI** | `architect-chat.sh` + `architect-parse.py` | Local terminal |
+| **Director CLI** | `architect-chat.sh` | Local terminal |
 
-**MCP Tools:** 28 total (10 Architect, 7 Engineer, 11 Any)
-**Notification Events:** 5 (`report_submitted`, `proposal_submitted`, `clarification_requested`, `directive_acknowledged`, `thread_message`)
-**Delivery:** MCP SSE to connected sessions (primary), HTTP webhook fallback (Phase 13b)
+**Notification delivery:** MCP SSE push to connected agents (primary). Architect event loop polls every 300s (backup). Engineer receives via `claude/channel` experimental MCP notification.
 
----
-
-## 6. Friction Points and Edge Cases
-
-### 6.1 Session Fragility
-**Issue:** Every Hub redeployment or OpenCode restart invalidates MCP sessions. The Director must restart OpenCode, and the engineer-chat.sh must create a new Architect session.
-**Impact:** Disrupts workflow flow. IP-based dedup (Phase 10) mitigates the engineer identity problem but doesn't prevent the session drop itself.
-**Root cause:** Cloud Run is stateless. MCP sessions are in-memory on the Hub. Hub restarts wipe all sessions.
-
-### 6.2 Architect Session Isolation
-**Issue:** The Architect's SQLite session DB is ephemeral (inside the Cloud Run container). Each redeployment wipes Director conversation history. The Architect has no memory of previous conversations.
-**Impact:** Director must re-explain context on each session. The Architect can't reference past discussions.
-**Root cause:** SQLite is local to the container. No external session persistence.
-
-### 6.3 Stale Task Accumulation
-**Issue:** Tasks 13 and 14 from earlier Architect sessions remained in `working` status indefinitely. No timeout or cleanup mechanism exists.
-**Impact:** Clutters the task queue. Engineer must manually identify and clear stale tasks.
-**Mitigation (proposed):** Heartbeat-based stuck task recovery (deferred from Phase 10 to future phase).
-
-### 6.4 Auto-Review Quality
-**Issue:** The Architect's auto-review runs in a fresh session with no prior context. It reads the report but doesn't know the project's history, axioms, or previous decisions.
-**Impact:** Reviews are surface-level ("looks good") rather than deep architectural assessments.
-**Root cause:** No axiom registry or persistent Architect memory. Each auto-review is a stateless LLM call.
-
-### 6.5 Report-Report Gap
-**Issue:** The Architect can only get the *next unread* report via `get_report`. If multiple reports are submitted, it processes them one at a time. There's no way to get a specific report by task ID.
-**Impact:** The Architect can't re-read a specific report without knowing its exact GCS path and using `read_document`.
-
-### 6.6 Engineer Polling
-**Issue:** The Engineer (OpenCode) must be explicitly told to "check for directives." The Hub now supports SSE push notifications (Phase 13b), but the Engineer does not yet listen for them.
-**Impact:** Latency between directive issuance and pickup. Relies on Director prompting the Engineer.
-**Mitigation (Phase 13c):** OpenCode Plugin (Node.js) to listen on the SSE stream and surface Hub notifications in the terminal.
-
-### 6.7 Single-Threaded Task Execution
-**Issue:** The Engineer processes one directive at a time sequentially. There's no parallel execution or task batching.
-**Impact:** Throughput is limited by serial execution. Multiple directives queue up.
+**Entire stack is Node.js/TypeScript.** Single connection per agent. Full-duplex autonomous. Shared `@ois/network-adapter` package.
 
 ---
 
-## 7. Recommendations for Improvement
+## 5. Open Friction Points
+
+### 5.1 Stale Task Accumulation
+**Status:** Open
+**Issue:** Tasks from earlier sessions can remain in `working` status indefinitely. No timeout or cleanup mechanism exists.
+**Proposed fix:** Heartbeat-based stuck task recovery — Engineer heartbeats, Hub detects stale tasks, reverts to pending after timeout.
+
+### 5.2 Auto-Review Quality
+**Status:** Open
+**Issue:** The Architect's auto-review has limited context. It reads the report but doesn't evaluate against project axioms or previous decisions.
+**Proposed fix:** Axiom registry in GCS. Architect loads axioms at boot and evaluates reports against them.
+
+### 5.3 Single-Threaded Task Execution
+**Status:** Open
+**Issue:** The Engineer processes one directive at a time sequentially. No parallel execution or task batching.
+**Impact:** Throughput limited by serial execution. Multiple directives queue up.
+
+### Resolved (historical)
+
+| Issue | Resolution |
+|---|---|
+| Engineer polling (6.6) | **Resolved** — SSE push notifications via `claude/channel` deliver directives in real-time (Phase 13e + plugin) |
+| Session fragility (6.1) | **Mitigated** — `@ois/network-adapter` with state-based reconnect, session reaper, zero orphan sessions |
+| Architect session isolation (6.2) | **Mitigated** — GCS-backed context store persists Architect context across restarts (Phase 14 Node.js rewrite) |
+| Report-report gap (6.5) | **Resolved** — `get_pending_actions` surfaces all unreviewed tasks; `get_document` reads any report by ref |
+
+---
+
+## 6. Recommendations
 
 ### High Priority
 
-| # | Recommendation | Impact | Effort |
-|---|---|---|---|
-| R1 | **Axiom Registry** — Store project axioms in GCS. Architect loads at boot. Auto-review evaluates reports against axioms. | Transforms reviews from surface-level to governance-aware. | Medium |
-| R2 | **Persistent Architect sessions** — Use external session storage (Firestore or GCS) for Architect conversation history. | Director context preserved across restarts. | Medium |
-| R3 | **Get report by task ID** — Add `get_task_report(taskId)` tool so the Architect can re-read any report without knowing the GCS path. | Eliminates report-report gap. | Low |
+| # | Recommendation | Impact |
+|---|---|---|
+| R1 | **Axiom Registry** — Store project axioms in GCS. Auto-review evaluates against axioms. | Governance-aware reviews |
+| R2 | **Heartbeat-based stuck task recovery** — Hub detects stale tasks, reverts to pending. | Prevents task accumulation |
 
 ### Medium Priority
 
-| # | Recommendation | Impact | Effort |
-|---|---|---|---|
-| R4 | **Heartbeat-based stuck task recovery** — Engineer heartbeats, Hub detects stale tasks, reverts to pending after timeout. | Prevents task accumulation. | Medium |
-| R5 | **Task priority ordering** — `submit_directive` accepts priority. `get_directive` returns highest-priority pending task. | Better batching when multiple directives are queued. | Low |
-| R6 | **Claude Code Channels** — Hub declares `claude/channel` capability. Push directives directly to Claude Code's LLM. | Zero-latency directive delivery. | Medium |
-
-### Lower Priority
-
-| # | Recommendation | Impact | Effort |
-|---|---|---|---|
-| R7 | **Chat Web UI** — Replace `architect-chat.sh` with a React/Next.js web app. | Better UX, mobile support. | High |
-| R8 | **Multi-Engineer routing** — Route directives to specific Engineers by capability or project. | Enables parallel teams. | High |
-| R9 | **Structured verification schema** — Replace free-form verification string with structured JSON (command, exit code, output, coverage). | Machine-parseable quality metrics. | Low |
+| # | Recommendation | Impact |
+|---|---|---|
+| R3 | **Task priority ordering** — `create_task` accepts priority. `get_task` returns highest-priority. | Better batching |
+| R4 | **Multi-Engineer routing** — Route directives by capability or project. | Parallel teams |
+| R5 | **Chat Web UI** — Replace `architect-chat.sh` with a web interface. | Better UX |
 
 ---
 
-## 8. Platform Evolution Timeline
+## 7. Platform Evolution Timeline
 
 | Phase | Focus | Key Deliverable |
 |---|---|---|
 | 1-4 | MVP | Basic bidirectional comms (Hub + CLI + Agent Engine) |
-| 5 | Cloud Run migration | Architect on Cloud Run with gemini-3.1-pro-preview |
-| 6a | Real coding agent | OpenCode as Engineer via remote MCP Server |
-| 7 | Operational resilience | GCS persistence, Bearer auth, task state machine |
-| 8 | Communication workflows | Summary+reference reports, read_document, webhooks, auto-review |
-| 9 | Dynamic tools | McpToolset, role tags, list_documents, persistent reports |
-| 10 | Workflow efficiency | Clarification workflow, safe cancel, IP dedup, verification |
-| 11 | Closed loops & ideation | submit_review, get_review, close_proposal, ideation threads (5 tools) |
-| 12 | Supervised autonomy | Counter reconciliation, get_pending_actions, audit trail, NaN cleanup (3 tools) |
-| 13a | Hub client + sandwich | hub_client.py (singleton MCP session), sandwich pattern, deterministic event loop |
-| 13b | Hub SSE notifications | notifyConnectedAgents(), hybrid notifyEvent(), SSE keepalive, session status tracking |
-| 13c | Agent SSE listeners | Architect logging_callback SSE listener, OpenCode Plugin (Node.js), hub_check tool |
-| 13d+e | Universal Adapter | MCP-to-MCP proxy, Push-to-LLM, autonomous bidirectional comms, hub-config.json |
-| 14 | Node.js Architect | Full rewrite from Python/ADK to Node.js/TypeScript. Unified context store. Full-duplex SSE. |
-| 15 | Persistent notifications | GCS-backed notification queue, Last-Event-ID replay, 24h TTL, indestructible delivery |
-| 16 | Wisdom retention | ARCHITECTURE.md, 8 ADRs, correlation IDs, communication semantics, context enrichment |
-| Stability | Connection manager | @ois/network-adapter shared package, IConnectionManager, state machine, session reaper, zero orphans |
-| Next | Backlog | Operational stress testing, token identity, pagination, dashboard |
-
-### Current Architecture (Stability Phase)
-
-```
-Director ←→ Architect (Cloud Run) ←→ Hub (Cloud Run) ←→ Plugin (local proxy) ←→ OpenCode ←→ Engineer (LLM)
-              │                         │                    │
-              └── @ois/network-adapter ──┘                    └── @ois/network-adapter
-                  McpConnectionManager                           McpConnectionManager
-                  (shared package)                               (shared package)
-```
-
-**Entire stack is Node.js/TypeScript. Single connection per agent. Full-duplex autonomous. Zero orphan sessions. Shared connection manager.**
+| 5 | Cloud Run | Architect on Cloud Run with Gemini |
+| 6a | Real coding agent | OpenCode as Engineer via remote MCP |
+| 7 | Resilience | GCS persistence, Bearer auth, task state machine |
+| 8 | Workflows | Summary+reference reports, webhooks, auto-review |
+| 9 | Dynamic tools | McpToolset, role tags, persistent reports |
+| 10 | Efficiency | Clarification, safe cancel, IP dedup, verification |
+| 11 | Closed loops | Review workflow, close_proposal, ideation threads |
+| 12 | Autonomy | get_pending_actions, audit trail, counter reconciliation |
+| 13 | Transport | Hub client, sandwich pattern, SSE notifications, universal adapter |
+| 14 | Node.js rewrite | Architect rewritten from Python/ADK to Node.js/TypeScript |
+| 15 | Notifications | GCS-backed queue, Last-Event-ID replay, 24h TTL |
+| 16 | Wisdom | ARCHITECTURE.md, ADRs, correlation IDs, context enrichment |
+| Stability | Connection mgr | @ois/network-adapter, IConnectionManager, session reaper |
+| IaC | Terraform | Idempotent GCP deployment, GitHub hosting, plugin marketplace |
