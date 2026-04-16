@@ -62,6 +62,167 @@ For formal workflow specifications (state machines, FSM transitions, cross-domai
 
 See [Workflow Registry](specs/workflow-registry.md) for full step-by-step specifications, state machine diagrams, and cross-domain interaction maps.
 
+### 3.1 Task Execution (WF-001)
+
+```
+Director                    Architect                   Hub                         Engineer
+   |                           |                         |                            |
+   |  "Build feature X"        |                         |                            |
+   |-------------------------->|                         |                            |
+   |                           |  create_task()          |                            |
+   |                           |------------------------>|                            |
+   |                           |                         |  [task queued: pending]     |
+   |                           |                         |                            |
+   |                           |                         |  directive_issued (SSE) --->|
+   |                           |                         |                            |
+   |                           |                         |<---------------------------|
+   |                           |                         |  get_task()                 |
+   |                           |                         |--------------------------->|
+   |                           |                         |                            |
+   |                           |  directive_acknowledged  |                            |
+   |                           |<------------------------|                            |
+   |                           |                         |                            | [executes]
+   |                           |                         |                            |
+   |                           |                         |<---------------------------|
+   |                           |                         |  create_report(summary,     |
+   |                           |                         |   report, verification)     |
+   |                           |                         |                            |
+   |                           |  report_submitted (SSE) |                            |
+   |                           |<------------------------|                            |
+   |                           |                         |                            |
+   |                           |  [AUTO-REVIEW via LLM]  |                            |
+   |                           |  get_document(ref)      |                            |
+   |                           |------------------------>|                            |
+   |                           |<------------------------|                            |
+   |                           |  create_review()        |                            |
+   |                           |------------------------>|                            |
+   |                           |                         |                            |
+   |  "What's the status?"     |                         |                            |
+   |-------------------------->|                         |                            |
+   |<--------------------------|                         |                            |
+   |  "Engineer completed X,   |                         |                            |
+   |   all tests pass"         |                         |                            |
+```
+
+### 3.2 Proposal and Review (WF-002)
+
+```
+Engineer                    Hub                         Architect
+   |                         |                            |
+   |  create_proposal(       |                            |
+   |    title, summary,      |                            |
+   |    body)                |                            |
+   |------------------------>|                            |
+   |                         |  proposal_submitted (SSE)  |
+   |                         |--------------------------->|
+   |                         |                            |
+   |                         |                            | [AUTO-REVIEW via LLM]
+   |                         |                            | get_document(ref)
+   |                         |<---------------------------|
+   |                         |--------------------------->|
+   |                         |                            | create_proposal_review(
+   |                         |<---------------------------|   decision, feedback)
+   |                         |                            |
+   |  proposal_decided (SSE) |                            |
+   |<------------------------|                            |
+   |  get_proposal()         |                            |
+   |------------------------>|                            |
+   |<------------------------|                            |
+   |  {decision: "approved", |                            |
+   |   feedback: "..."}      |                            |
+```
+
+### 3.3 Clarification (WF-003)
+
+```
+Engineer                    Hub                         Architect
+   |                         |                            |
+   |  create_clarification(  |                            |
+   |    taskId, question)    |                            |
+   |------------------------>|                            |
+   |                         |  [task -> input_required]  |
+   |                         |  clarification_requested   |
+   |                         |  (SSE)                     |
+   |                         |--------------------------->|
+   |                         |                            |
+   |                         |                            | [AUTO-RESPOND via LLM]
+   |                         |                            | resolve_clarification(
+   |                         |<---------------------------|   taskId, answer)
+   |                         |  [task -> working]         |
+   |                         |                            |
+   |  clarification_answered |                            |
+   |  (SSE)                  |                            |
+   |<------------------------|                            |
+   |  get_clarification()    |                            |
+   |------------------------>|                            |
+   |<------------------------|                            |
+   |  {answer: "..."}        |                            |
+   |                         |                            |
+   |  [resumes execution]    |                            |
+```
+
+### 3.4 Task Cancellation (WF-004)
+
+```
+Director                    Architect                   Hub
+   |                           |                         |
+   |  "Cancel that task"       |                         |
+   |-------------------------->|                         |
+   |                           |  cancel_task(taskId)    |
+   |                           |------------------------>|
+   |                           |                         |  [task -> cancelled]
+   |                           |                         |  [dependents cascade]
+   |                           |<------------------------|
+   |<--------------------------|                         |
+   |  "Task cancelled"         |                         |
+```
+
+### 3.5 Ideation Thread (WF-005)
+
+```
+Engineer                    Hub                         Architect
+   |                         |                            |
+   |  create_thread(         |                            |
+   |    title, message)      |                            |
+   |------------------------>|                            |
+   |                         |  [thread -> active]        |
+   |                         |  thread_message (SSE)      |
+   |                         |--------------------------->|
+   |                         |                            |
+   |                         |                            | [AUTO-REPLY via LLM]
+   |                         |                            | get_thread(threadId)
+   |                         |<---------------------------|
+   |                         |--------------------------->|
+   |                         |                            | create_thread_reply(
+   |                         |<---------------------------|   threadId, message)
+   |                         |  [currentTurn -> engineer] |
+   |                         |                            |
+   |  thread_message (SSE)   |                            |
+   |<------------------------|                            |
+   |  get_thread(threadId)   |                            |
+   |------------------------>|                            |
+   |<------------------------|                            |
+   |                         |                            |
+   |  create_thread_reply(   |                            |
+   |    converged=true)      |                            |
+   |------------------------>|                            |
+   |                         |  thread_message (SSE) ---->|
+   |                         |                            | create_thread_reply(
+   |                         |<---------------------------|   converged=true)
+   |                         |  [thread -> converged]     |
+   |                         |                            |
+   |                         |  Path A: Hub cascade       |
+   |                         |  (if convergenceAction)    |
+   |                         |  -> auto-spawns task/      |
+   |                         |     proposal, closes thread|
+   |                         |                            |
+   |                         |  Path B: Architect LLM     |
+   |                         |  (if no convergenceAction) |
+   |                         |  thread_converged (SSE) -->|
+   |                         |                            | [LLM decides action]
+   |                         |                            | create_task() if ready
+```
+
 ---
 
 ## 4. Communication Infrastructure
