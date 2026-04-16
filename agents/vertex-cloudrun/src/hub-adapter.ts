@@ -153,6 +153,15 @@ export class HubAdapter {
     }
   }
 
+  async closeThread(threadId: string): Promise<boolean> {
+    try {
+      await this.callTool("close_thread", { threadId });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async resolveClarification(
     taskId: string,
     answer: string

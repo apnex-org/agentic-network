@@ -64,6 +64,9 @@ Guidelines:
 
 // ── Single-Shot Text Generation (Sandwich Pattern) ────────────────
 
+const GENERATE_MAX_RETRIES = 3;
+const GENERATE_RETRY_BASE_MS = 2000;
+
 export async function generateText(
   userPrompt: string,
   contextSupplement: string = ""
@@ -74,16 +77,83 @@ export async function generateText(
     ARCHITECT_SYSTEM_PROMPT +
     (contextSupplement ? "\n\n" + contextSupplement : "");
 
-  const response = await client.models.generateContent({
-    model: MODEL,
-    contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-    config: {
-      systemInstruction,
-      temperature: 0.2,
-    },
-  });
+  const promptChars = userPrompt.length + systemInstruction.length;
+  console.log(`[LLM] generateText: prompt=${promptChars} chars (system=${systemInstruction.length}, user=${userPrompt.length})`);
 
-  return response.text || "";
+  for (let attempt = 1; attempt <= GENERATE_MAX_RETRIES; attempt++) {
+    try {
+      const response = await client.models.generateContent({
+        model: MODEL,
+        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+        config: {
+          systemInstruction,
+          temperature: 0.2,
+        },
+      });
+
+      // Diagnose empty/blocked responses
+      const candidate = response.candidates?.[0];
+      const finishReason = candidate?.finishReason;
+      const safetyRatings = candidate?.safetyRatings;
+      const promptFeedback = (response as any).promptFeedback;
+      const usage = (response as any).usageMetadata;
+      const text = response.text || "";
+
+      // Always log token usage when available
+      if (usage) {
+        console.log(`[LLM] Token usage: input=${usage.promptTokenCount || "?"}, output=${usage.candidatesTokenCount || usage.totalTokenCount ? (usage.totalTokenCount - (usage.promptTokenCount || 0)) : "?"}, total=${usage.totalTokenCount || "?"}`);
+      }
+
+      if (!text) {
+        console.error(`[LLM] Empty response from Gemini (attempt ${attempt}/${GENERATE_MAX_RETRIES})`);
+        console.error(`[LLM]   finishReason: ${finishReason || "none"}`);
+        console.error(`[LLM]   promptFeedback: ${JSON.stringify(promptFeedback || null)}`);
+        console.error(`[LLM]   safetyRatings: ${JSON.stringify(safetyRatings || null)}`);
+        console.error(`[LLM]   candidateCount: ${response.candidates?.length || 0}`);
+        console.error(`[LLM]   usageMetadata: ${JSON.stringify(usage || null)}`);
+
+        // Safety block — no point retrying
+        if (finishReason === "SAFETY" || promptFeedback?.blockReason) {
+          console.error(`[LLM] Response blocked by safety filter — not retrying`);
+          throw new Error(`Gemini response blocked: ${finishReason || promptFeedback?.blockReason}`);
+        }
+
+        // Context too large or unknown failure — no point retrying with same input
+        if (finishReason === "OTHER") {
+          console.error(`[LLM] Possible context overflow or unknown failure (finishReason: OTHER) — not retrying`);
+          throw new Error(`Gemini unknown failure: finishReason=OTHER, inputTokens=${usage?.promptTokenCount || "unknown"}`);
+        }
+
+        // Retry on empty response (possible transient issue)
+        if (attempt < GENERATE_MAX_RETRIES) {
+          const delay = GENERATE_RETRY_BASE_MS * attempt;
+          console.log(`[LLM] Retrying in ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+
+        throw new Error(`Gemini returned empty response after ${GENERATE_MAX_RETRIES} attempts (finishReason: ${finishReason}, inputTokens: ${usage?.promptTokenCount || "unknown"})`);
+      }
+
+      console.log(`[LLM] generateText: got ${text.length} chars (finishReason: ${finishReason})`);
+      return text;
+    } catch (err: any) {
+      // Handle 429 rate limiting with retry
+      const status = err?.status || err?.code || err?.response?.status;
+      if ((status === 429 || err?.message?.includes("429") || err?.message?.includes("RESOURCE_EXHAUSTED")) && attempt < GENERATE_MAX_RETRIES) {
+        const delay = GENERATE_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+        console.warn(`[LLM] Rate limited (429) on attempt ${attempt}/${GENERATE_MAX_RETRIES} — retrying in ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+
+      // Re-throw non-retryable errors
+      throw err;
+    }
+  }
+
+  // Should not reach here, but just in case
+  throw new Error("generateText: exhausted all retries");
 }
 
 // ── Multi-Turn with Function Calling (Director Chat) ──────────────

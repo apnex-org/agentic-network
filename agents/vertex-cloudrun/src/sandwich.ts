@@ -36,7 +36,28 @@ export async function sandwichReviewReport(
       `- Any follow-up actions needed?\n\n` +
       `Respond with ONLY your assessment text.`;
 
-    const assessment = await generateText(prompt, contextSupplement);
+    let assessment: string;
+    try {
+      assessment = await generateText(prompt, contextSupplement);
+    } catch (err) {
+      console.error(`[Sandwich] LLM generation failed for report review ${taskId}:`, err);
+      await hub.createAuditEntry(
+        "auto_review_failed",
+        `Report review LLM failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+        taskId
+      );
+      return;
+    }
+
+    if (!assessment || !assessment.trim()) {
+      console.error(`[Sandwich] LLM returned empty assessment for ${taskId} — skipping review`);
+      await hub.createAuditEntry(
+        "auto_review_empty",
+        `Report review skipped for ${taskId}: LLM returned empty response`,
+        taskId
+      );
+      return;
+    }
 
     // 3. EXECUTE
     await hub.createReview(taskId, assessment);
@@ -77,7 +98,28 @@ export async function sandwichReviewProposal(
       `After your full review, add this metadata line at the very end:\n` +
       `DECISION: approved or rejected or changes_requested`;
 
-    const result = await generateText(prompt, contextSupplement);
+    let result: string;
+    try {
+      result = await generateText(prompt, contextSupplement);
+    } catch (err) {
+      console.error(`[Sandwich] LLM generation failed for proposal review ${proposalId}:`, err);
+      await hub.createAuditEntry(
+        "auto_proposal_review_failed",
+        `Proposal review LLM failed for ${proposalId}: ${err instanceof Error ? err.message : String(err)}`,
+        proposalId
+      );
+      return;
+    }
+
+    if (!result || !result.trim()) {
+      console.error(`[Sandwich] LLM returned empty review for proposal ${proposalId} — skipping`);
+      await hub.createAuditEntry(
+        "auto_proposal_review_empty",
+        `Proposal review skipped for ${proposalId}: LLM returned empty response`,
+        proposalId
+      );
+      return;
+    }
 
     // Parse decision from the end, use full text as feedback
     let decision = "approved";
@@ -135,6 +177,40 @@ export async function sandwichThreadReply(
       .map((m) => `\n[${m.author}]: ${m.text}\n`)
       .join("");
 
+    // Pre-fetch documents referenced in thread messages.
+    // Scan for document paths (docs/*.md patterns) and load them via Hub.
+    // This enriches the context so the LLM doesn't need tool access.
+    const allText = messages.map(m => m.text).join(" ");
+    const docPaths = extractDocumentPaths(allText);
+    let documentContext = "";
+    if (docPaths.length > 0) {
+      console.log(`[Sandwich] Pre-fetching ${docPaths.length} documents for thread ${threadId}`);
+      const docs: string[] = [];
+      const MAX_DOC_CHARS = 8000; // Per-doc limit to prevent context overflow
+      const MAX_TOTAL_CHARS = 50000; // Total document context limit
+      let totalChars = 0;
+      for (const path of docPaths) {
+        if (totalChars >= MAX_TOTAL_CHARS) {
+          console.log(`[Sandwich] Document context limit reached (${totalChars} chars), skipping remaining`);
+          break;
+        }
+        const content = await hub.getDocument(path);
+        if (content) {
+          const truncated = content.length > MAX_DOC_CHARS
+            ? content.substring(0, MAX_DOC_CHARS) + "\n... [truncated]"
+            : content;
+          docs.push(`--- ${path} ---\n${truncated}\n--- END ${path} ---`);
+          totalChars += truncated.length;
+          console.log(`[Sandwich]   Loaded ${path} (${content.length} chars${content.length > MAX_DOC_CHARS ? ", truncated" : ""})`);
+        } else {
+          console.log(`[Sandwich]   Could not load ${path}`);
+        }
+      }
+      if (docs.length > 0) {
+        documentContext = "\n\n--- REFERENCED DOCUMENTS ---\n" + docs.join("\n\n") + "\n--- END DOCUMENTS ---\n";
+      }
+    }
+
     const contextSupplement = await context.buildAutonomousContext();
 
     // Determine cognitive framing from semantic intent
@@ -162,13 +238,38 @@ export async function sandwichThreadReply(
     const prompt =
       `You are the Architect participating in ideation thread '${thread.title || ""}' (${threadId}).\n` +
       `Round ${thread.roundCount || "?"}/${thread.maxRounds || "?"}.\n\n` +
-      `--- THREAD HISTORY ---${messagesText}--- END HISTORY ---\n\n` +
-      `${framingInstruction}\n\n` +
+      `--- THREAD HISTORY ---${messagesText}--- END HISTORY ---\n` +
+      (documentContext ? `\nThe following documents were referenced in the thread and have been pre-loaded for your review:${documentContext}\n` : "") +
+      `\n${framingInstruction}\n\n` +
+      `IMPORTANT: You do NOT have access to tools in this context. All referenced documents have been pre-loaded above. ` +
+      `Base your response on the thread history, any pre-loaded documents, and your project context.\n\n` +
       `After your full response, add these two metadata lines at the very end:\n` +
       `CONVERGED: true (if you fully agree) or false\n` +
       `INTENT: one of decision_needed, agreement_pending, director_input, implementation_ready, or none`;
 
-    const result = await generateText(prompt, contextSupplement);
+    let result: string;
+    try {
+      result = await generateText(prompt, contextSupplement);
+    } catch (err) {
+      console.error(`[Sandwich] LLM generation failed for thread ${threadId}:`, err);
+      await hub.createAuditEntry(
+        "auto_thread_reply_failed",
+        `Thread reply LLM failed for ${threadId}: ${err instanceof Error ? err.message : String(err)}`,
+        threadId
+      );
+      return;
+    }
+
+    // Guard: never post empty replies
+    if (!result || !result.trim()) {
+      console.error(`[Sandwich] LLM returned empty text for thread ${threadId} — skipping reply`);
+      await hub.createAuditEntry(
+        "auto_thread_reply_empty",
+        `Thread reply skipped for ${threadId}: LLM returned empty response`,
+        threadId
+      );
+      return;
+    }
 
     // Parse metadata from the end of the response, keep everything else as the reply
     let responseText = result;
@@ -209,6 +310,17 @@ export async function sandwichThreadReply(
       responseText = lines.slice(0, firstMeta).join("\n").trim();
     }
 
+    // Final guard after metadata stripping
+    if (!responseText) {
+      console.error(`[Sandwich] LLM response for thread ${threadId} was only metadata — skipping reply`);
+      await hub.createAuditEntry(
+        "auto_thread_reply_empty",
+        `Thread reply skipped for ${threadId}: response was metadata-only`,
+        threadId
+      );
+      return;
+    }
+
     // 3. EXECUTE
     await hub.createThreadReply(threadId, responseText, converged, intent);
     await hub.createAuditEntry(
@@ -225,7 +337,7 @@ export async function sandwichThreadReply(
       );
     }
 
-    console.log(`[Sandwich] Thread reply complete for ${threadId}`);
+    console.log(`[Sandwich] Thread reply complete for ${threadId} (${responseText.length} chars)`);
   } catch (err) {
     console.error(`[Sandwich] Thread reply failed for ${threadId}:`, err);
   }
@@ -273,7 +385,28 @@ export async function sandwichThreadConverged(
       `- Otherwise: State what follow-up action, if any, is needed.\n\n` +
       `Respond with ONLY the directive text (if implementation_ready) or the summary text. No preamble.`;
 
-    const result = await generateText(prompt, contextSupplement);
+    let result: string;
+    try {
+      result = await generateText(prompt, contextSupplement);
+    } catch (err) {
+      console.error(`[Sandwich] LLM generation failed for converged thread ${threadId}:`, err);
+      await hub.createAuditEntry(
+        "convergence_llm_failed",
+        `Convergence LLM failed for ${threadId}: ${err instanceof Error ? err.message : String(err)}`,
+        threadId
+      );
+      return;
+    }
+
+    if (!result || !result.trim()) {
+      console.error(`[Sandwich] LLM returned empty response for converged thread ${threadId} — skipping`);
+      await hub.createAuditEntry(
+        "convergence_llm_empty",
+        `Convergence handling skipped for ${threadId}: LLM returned empty response`,
+        threadId
+      );
+      return;
+    }
 
     // 3. EXECUTE — issue directive if implementation_ready, otherwise log
     if (intent === "implementation_ready") {
@@ -292,6 +425,14 @@ export async function sandwichThreadConverged(
         threadId
       );
       console.log(`[Sandwich] Convergence noted for ${threadId} (intent: ${intent})`);
+    }
+
+    // Close the thread to prevent reprocessing on next event loop poll
+    const closed = await hub.closeThread(threadId);
+    if (closed) {
+      console.log(`[Sandwich] Thread ${threadId} closed after convergence processing`);
+    } else {
+      console.warn(`[Sandwich] Failed to close thread ${threadId} — may be reprocessed`);
     }
   } catch (err) {
     console.error(`[Sandwich] Thread convergence handling failed for ${threadId}:`, err);
@@ -313,7 +454,28 @@ export async function sandwichClarification(
       `Their question: '${question}'\n\n` +
       `Provide a clear, concise answer. Respond with ONLY your answer text.`;
 
-    const answer = await generateText(prompt, contextSupplement);
+    let answer: string;
+    try {
+      answer = await generateText(prompt, contextSupplement);
+    } catch (err) {
+      console.error(`[Sandwich] LLM generation failed for clarification ${taskId}:`, err);
+      await hub.createAuditEntry(
+        "auto_clarification_failed",
+        `Clarification LLM failed for ${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+        taskId
+      );
+      return;
+    }
+
+    if (!answer || !answer.trim()) {
+      console.error(`[Sandwich] LLM returned empty answer for clarification ${taskId} — skipping`);
+      await hub.createAuditEntry(
+        "auto_clarification_empty",
+        `Clarification skipped for ${taskId}: LLM returned empty response`,
+        taskId
+      );
+      return;
+    }
 
     // 2. EXECUTE
     await hub.resolveClarification(taskId, answer);
@@ -327,4 +489,29 @@ export async function sandwichClarification(
   } catch (err) {
     console.error(`[Sandwich] Clarification failed for ${taskId}:`, err);
   }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Extract document paths from thread message text.
+ * Matches patterns like docs/something.md, get_document("path"), etc.
+ */
+function extractDocumentPaths(text: string): string[] {
+  const paths = new Set<string>();
+
+  // Match docs/*.md paths (with optional subdirectories)
+  const docPathRegex = /docs\/[\w\-\/]+\.md/g;
+  let match;
+  while ((match = docPathRegex.exec(text)) !== null) {
+    paths.add(match[0]);
+  }
+
+  // Match get_document("path") or get_document('path') calls
+  const getDocRegex = /get_document\s*\(\s*["']([^"']+)["']\s*\)/g;
+  while ((match = getDocRegex.exec(text)) !== null) {
+    paths.add(match[1]);
+  }
+
+  return Array.from(paths);
 }
