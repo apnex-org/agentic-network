@@ -245,6 +245,12 @@ export async function sandwichThreadConverged(
       return;
     }
 
+    // Guard: skip if Hub cascade already handled this thread (closed it)
+    if (thread.status === "closed") {
+      console.log(`[Sandwich] Thread ${threadId} already closed (Hub cascade handled) — skipping`);
+      return;
+    }
+
     const messages = (thread.messages || []) as Array<{
       author: string;
       text: string;

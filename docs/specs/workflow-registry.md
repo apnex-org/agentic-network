@@ -491,29 +491,60 @@ Precondition: None
 | 2    | Other     | `create_thread_reply(id, msg, converged: true)`               | active      | `thread_message` → [initiator]     |
 | 3    | Initiator | `create_thread_reply(id, msg, converged: true)`               | converged   | `thread_converged` → [architect]   |
 
-**Agent behavior:** Step 3's `thread_converged` event triggers `sandwichThreadConverged`. If intent is `implementation_ready`, the Architect auto-creates a task (with `sourceThreadId`, which auto-closes the thread).
+**Agent behavior:** Step 3's `thread_converged` event triggers one of two mutually exclusive paths:
+
+- **Path A (WF-005b):** If a `convergenceAction` was attached to the thread, the Hub cascade handles it deterministically — no Architect LLM involvement.
+- **Path B (WF-005a):** If no `convergenceAction` exists, the Architect LLM receives the `thread_converged` event (with `hasAction: false`) and autonomously decides what action to take.
+
+The `hasAction` flag in the `thread_converged` event payload prevents both paths from firing simultaneously (see INV-SYS-018).
 
 **Tested By:** `e2e-foundation.test.ts` "both parties converge → thread status = converged"
 
 ---
 
-### WF-005a Thread — Convergence to Auto-Directive
+### WF-005a Thread — Convergence to Auto-Directive (Architect LLM Path)
 
 ```
 Actors: Architect (automated), Engineer
-Precondition: Thread converged with intent = "implementation_ready"
+Precondition: Thread converged WITHOUT a convergenceAction (hasAction = false)
 ```
 
 | Step | Actor           | Action                                               | State After          | Event Emitted                     |
 | ---- | --------------- | ---------------------------------------------------- | -------------------- | --------------------------------- |
-| 1    | System          | `thread_converged` event fires                       | thread: converged    | `thread_converged` → [architect]  |
-| 2    | Architect (LLM) | `sandwichThreadConverged` → LLM writes directive     | —                    | —                                 |
-| 3    | Architect (LLM) | `create_task(title, desc, sourceThreadId: threadId)` | task: pending        | `directive_issued` → [engineer]   |
-| 4    | System          | Thread auto-closed by sourceThreadId                 | thread: closed       | —                                 |
+| 1    | System          | `thread_converged` event fires (hasAction: false)    | thread: converged    | `thread_converged` → [architect]  |
+| 2    | Architect (LLM) | `sandwichThreadConverged` reads thread, LLM reasons  | —                    | —                                 |
+| 3    | Architect (LLM) | If `implementation_ready`: `create_task(title, desc, sourceThreadId)` | task: pending | `directive_issued` → [engineer] |
+| 4    | System          | Thread auto-closed by sourceThreadId (XD-005)        | thread: closed       | —                                 |
+
+**Guard:** `sandwichThreadConverged` checks thread status before acting — if the thread is already `closed` (e.g. Hub cascade beat the event loop), it skips processing.
 
 **Tested By:** NONE (requires LLM integration — not testable in-memory)
 
 **Note:** This is the only workflow where the Architect autonomously creates tasks without Director instruction.
+
+---
+
+### WF-005b Thread — Convergence via Hub Cascade (convergenceAction Path)
+
+```
+Actors: System (Hub policy engine)
+Precondition: Thread converged WITH a convergenceAction attached
+```
+
+| Step | Actor  | Action                                                                      | State After       | Event Emitted                     |
+| ---- | ------ | --------------------------------------------------------------------------- | ----------------- | --------------------------------- |
+| 1    | Any    | `create_thread_reply(converged: true, convergenceAction: {type, template})` | converged         | internal: `thread_converged_with_action` |
+| 2    | Hub    | `handleThreadConvergedWithAction` reads action type                         | —                 | —                                 |
+| 3a   | Hub    | If `create_task`: `submitDirective(description)`                            | task: pending     | `directive_issued` → [engineer]   |
+| 3b   | Hub    | If `create_proposal`: `submitProposal(title, description)`                  | proposal: submitted | `proposal_submitted` → [architect] |
+| 4    | Hub    | `closeThread(threadId)`                                                     | thread: closed    | —                                 |
+| 5    | System | `thread_converged` SSE emitted (hasAction: true)                            | —                 | `thread_converged` → [architect]  |
+
+**Dedup:** Step 5 emits the SSE event with `hasAction: true`. The Architect's notification handler skips `sandwichThreadConverged` when this flag is set, preventing duplicate task/proposal creation. The event-loop polling backup is also guarded — `sandwichThreadConverged` re-reads the thread and skips if status is already `closed`.
+
+**Key difference from WF-005a:** This path is deterministic and Hub-driven. The action is pre-declared via `convergenceAction` (late-binding) — no LLM reasoning required. The converging party specifies exactly what should happen on convergence.
+
+**Tested By:** NONE (requires integration test with convergenceAction)
 
 ---
 
@@ -567,8 +598,9 @@ Precondition: Architect connected to Hub
 | 3    | Architect (LLM) | Process `pendingProposals`                | Calls `sandwichReviewProposal` per proposal |
 | 4    | Architect (LLM) | Process `threadsAwaitingReply`            | Calls `sandwichThreadReply` per thread    |
 | 5    | Architect (LLM) | Process `clarificationsPending`           | Calls `sandwichClarification` per task    |
+| 6    | Architect (LLM) | Process `convergedThreads`                | Calls `sandwichThreadConverged` per thread (guarded — skips if thread already closed by Hub cascade) |
 
-**Note:** `thread_converged` has NO polling backup. If the SSE event is missed and the event loop polls, converged threads are not processed. This is a gap.
+**Dedup note:** Step 6 is a polling backup for `thread_converged` SSE events. The `sandwichThreadConverged` handler re-reads the thread and skips if status is `closed`, preventing duplicates when the Hub cascade (WF-005b) already handled the convergence.
 
 **Tested By:** NONE (agent-side, requires LLM)
 
@@ -627,13 +659,25 @@ Precondition: Architect connected to Hub
 | Failure     | Non-fatal — task is created, close failure logged                     |
 | Tested By   | `policy-router.test.ts` "createTask auto-closes source thread"       |
 
-### XD-006 Thread Convergence → Auto-Directive (Agent-Side)
+### XD-006a Thread Convergence → Auto-Action (Hub Cascade)
 
 | Field       | Value                                                                 |
 | ----------- | --------------------------------------------------------------------- |
-| Trigger     | `thread_converged` SSE event with `intent: "implementation_ready"`    |
+| Trigger     | `create_thread_reply` detects convergence AND `convergenceAction` is present |
+| Effect      | Hub spawns task or proposal from `convergenceAction.templateData`, closes thread |
+| Cascade     | `directive_issued` → [engineer] or `proposal_submitted` → [architect] |
+| Dedup       | `thread_converged` SSE emitted with `hasAction: true` — Architect skips (INV-SYS-018) |
+| Failure     | Non-fatal — convergence detected but action malformed, logged         |
+| Tested By   | NONE (requires integration test with convergenceAction)              |
+
+### XD-006b Thread Convergence → Auto-Directive (Architect LLM)
+
+| Field       | Value                                                                 |
+| ----------- | --------------------------------------------------------------------- |
+| Trigger     | `thread_converged` SSE event with `hasAction: false` and `intent: "implementation_ready"` |
 | Effect      | Architect LLM generates directive, calls `create_task` with `sourceThreadId` |
 | Cascade     | Task creation triggers XD-005 (thread auto-close)                    |
+| Guard       | `sandwichThreadConverged` skips if thread status is already `closed`  |
 | Failure     | LLM failure — no task created, logged via `create_audit_entry`       |
 | Tested By   | NONE (requires LLM)                                                  |
 
@@ -680,7 +724,7 @@ Precondition: Architect connected to Hub
 | ------------------ | ------------------------------------ | ----------------- | --------------------------------------------- | --------------------------- |
 | `thread_message`   | ThreadPolicy.createThread            | [opposite role]   | threadId, title, author, message, currentTurn  | New thread opened           |
 | `thread_message`   | ThreadPolicy.createThreadReply       | [opposite role]   | threadId, title, author, message, currentTurn  | Reply posted (if still active) |
-| `thread_converged` | ThreadPolicy.createThreadReply       | [architect]       | threadId, title, intent                        | Both parties converged      |
+| `thread_converged` | ThreadPolicy.createThreadReply       | [architect]       | threadId, title, intent, hasAction              | Both parties converged. `hasAction: true` signals Hub cascade handled it — Architect must skip LLM processing |
 
 ### 4.6 Planning Domain Events
 
@@ -747,6 +791,7 @@ Precondition: Architect connected to Hub
 | INV-SYS-015 | `thread_converged` with `implementation_ready` triggers auto-directive creation    | NONE (requires LLM)                            |
 | INV-SYS-016 | Event loop polls `get_pending_actions` every 300s as SSE backup                   | NONE (requires transport)                      |
 | INV-SYS-017 | `thread_converged` has polling backup via `get_pending_actions.convergedThreads`   | `e2e-remediation.test.ts` "surfaces converged threads" |
+| INV-SYS-018 | Thread convergence dedup: Hub cascade (WF-005b) and Architect LLM (WF-005a) never both fire for the same thread. `hasAction` flag gates the SSE path; thread status `closed` gates the polling path | NONE (requires integration test) |
 
 ---
 
@@ -770,6 +815,7 @@ Precondition: Architect connected to Hub
 | GAP-12 | `create_review` has no `decision` field                                                 | High     | Open — **Mission-6 T3** will add `approved\|rejected\|revision_needed` |
 | GAP-13 | No revision loop (`in_review → working`) or `revisionCount` tracking                   | Medium   | Open — **Mission-6 T3** will implement |
 | GAP-14 | No circuit breaker for infinite revision loops                                          | Medium   | Open — **Mission-6 T4** will implement `escalated` state |
+| GAP-15 | Thread convergence dual-execution: Hub cascade and Architect LLM both fire for same thread | High     | **RESOLVED** (idea-57) — `hasAction` flag gates SSE path, status guard gates polling path |
 
 ### 6.2 Test Coverage Gaps
 
@@ -779,13 +825,13 @@ Items marked `Tested By: NONE` in this registry:
 | ---------------- | ----- | ---------------------------------------------------------------- |
 | Entity Invariants | 14    | INV-T4, INV-P1, INV-P2, INV-P4, INV-TH6, INV-TH7, INV-TH8, INV-I2, INV-M4, INV-TN1, INV-TE1, INV-TE2, INV-A1, INV-A2, INV-D1, INV-D2 |
 | System Invariants | 8     | INV-SYS-003, INV-SYS-010 through INV-SYS-017                   |
-| Workflows         | 3     | WF-005a, WF-006, WF-008                                         |
-| Cross-Domain      | 1     | XD-006                                                           |
-| **Total gaps**    | **26** | —                                                               |
+| Workflows         | 4     | WF-005a, WF-005b, WF-006, WF-008                                |
+| Cross-Domain      | 2     | XD-006a, XD-006b                                                 |
+| **Total gaps**    | **28** | —                                                               |
 
 ### 6.3 Recommendations
 
 1. **Immediate (next task):** Write E2E tests for all 14 entity invariant gaps. These are pure policy tests — no LLM or transport needed.
 2. **Short-term:** Implement FSM guards (GAP-1, GAP-4, GAP-5, GAP-9) to enforce the Registry's declared transitions.
-3. **Medium-term:** Address GAP-7 (`thread_converged` polling backup) and GAP-8 (RBAC enforcement).
+3. **Medium-term:** Write integration tests for convergence dedup (INV-SYS-018) covering both WF-005a and WF-005b paths.
 4. **Deferred:** Agent behavior invariants (INV-SYS-011 through INV-SYS-017) require LLM integration testing — scope for a separate mission.

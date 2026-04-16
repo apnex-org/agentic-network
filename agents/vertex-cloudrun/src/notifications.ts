@@ -89,8 +89,12 @@ export function handleHubEvent(
     case "thread_converged": {
       const threadId = data.threadId as string;
       const intent = (data.intent as string) || null;
-      if (threadId) {
+      const hasAction = !!data.hasAction;
+      if (threadId && !hasAction) {
+        // Only handle if Hub cascade didn't already act (hasAction = convergenceAction present)
         sandwichThreadConverged(hub, context, threadId, intent);
+      } else if (hasAction) {
+        console.log(`[Notifications] Skipping thread_converged for ${threadId} — Hub cascade handles convergenceAction`);
       }
       break;
     }
