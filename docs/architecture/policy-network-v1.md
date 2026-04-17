@@ -80,10 +80,11 @@ interface Mission {
 | `get_mission`    | Any       | `missionId`                                       | Read mission with linked entities |
 | `list_missions`  | Any       | `status?`                                         | List missions, optionally filtered |
 
-**Auto-Linkage (Controller Layer):**
-- When `submit_directive` is called with `correlationId` matching `mission-\d+`, the Hub automatically calls `missionStore.linkTask(correlationId, taskId)`.
-- When `update_idea` sets `missionId` and status to `incorporated`, the Hub automatically calls `missionStore.linkIdea(missionId, ideaId)`.
-- Both operations are idempotent (`.includes()` check) and non-fatal (try/catch — primary operation succeeds even if linkage fails).
+**Linkage (Virtual View):**
+- `mission.tasks` is computed on every read as the set of Task IDs where `task.correlationId === mission.id`.
+- `mission.ideas` is computed on every read as the set of Idea IDs where `idea.missionId === mission.id`.
+- No explicit link step — setting `correlationId` on a Task (via `submit_directive` / scaffold) or `missionId` on an Idea (via `update_idea`) is sufficient.
+- Prior iterations stored these as arrays on the Mission and appended via `linkTask` / `linkIdea`; that pattern lost writes under concurrent auto-linkage (task-223) and has been retired.
 
 ### 2.3 Turn
 
@@ -248,14 +249,14 @@ Thread (discussion) — orthogonal, referenced via correlationId or sourceThread
 Idea.sourceThreadId → Thread (provenance tracking)
 ```
 
-### Auto-Linkage Rules
+### Linkage Rules (Virtual View)
 
-| Trigger                                         | Action                                    | Location        |
-| ----------------------------------------------- | ----------------------------------------- | --------------- |
-| `submit_directive(correlationId: "mission-N")`  | `missionStore.linkTask(mission-N, taskId)` | Controller layer |
-| `update_idea(missionId: "mission-N", status: "incorporated")` | `missionStore.linkIdea(mission-N, ideaId)` | Controller layer |
+| Relationship                  | Source of truth                              | Read path                                             |
+| ----------------------------- | -------------------------------------------- | ----------------------------------------------------- |
+| `mission.tasks` ← Task        | `task.correlationId` (set at `submit_directive`) | `MissionStore.getMission` filters tasks by `correlationId` |
+| `mission.ideas` ← Idea        | `idea.missionId` (set at `update_idea`)      | `MissionStore.getMission` filters ideas by `missionId`     |
 
-All auto-linkage is:
-- **Idempotent:** `.includes()` check before array push
-- **Non-fatal:** Primary operation succeeds even if linkage fails (try/catch)
-- **Controller-layer:** Stores remain decoupled — no cross-store dependencies
+Properties:
+- **No stored array:** the Mission entity's `tasks` / `ideas` fields are recomputed on every read; there is no append step to race against.
+- **Idempotent by construction:** the source-of-truth field is a scalar on the linked entity, not a collection on the Mission.
+- **Cross-store read coupling:** `MissionStore` takes `ITaskStore` and `IIdeaStore` as constructor deps and scans them on read. Scales with total tasks/ideas per mission read; fine at current scale, revisit if get_mission latency becomes a hot-path concern.

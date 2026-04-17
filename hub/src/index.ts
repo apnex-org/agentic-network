@@ -58,7 +58,7 @@ if (STORAGE_BACKEND === "gcs") {
   notificationStore = new GcsNotificationStore(GCS_BUCKET);
   // New entities — GCS-backed for persistence across restarts
   ideaStore = new GcsIdeaStore(GCS_BUCKET);
-  missionStore = new GcsMissionStore(GCS_BUCKET);
+  missionStore = new GcsMissionStore(GCS_BUCKET, taskStore, ideaStore);
   turnStore = new GcsTurnStore(GCS_BUCKET);
   teleStore = new GcsTeleStore(GCS_BUCKET);
 } else {
@@ -74,7 +74,7 @@ if (STORAGE_BACKEND === "gcs") {
   auditStore = new MemoryAuditStore();
   notificationStore = new MemoryNotificationStore();
   ideaStore = new MemoryIdeaStore();
-  missionStore = new MemoryMissionStore();
+  missionStore = new MemoryMissionStore(taskStore, ideaStore);
   turnStore = new MemoryTurnStore();
   teleStore = new MemoryTeleStore();
 }

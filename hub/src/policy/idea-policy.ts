@@ -85,14 +85,8 @@ async function updateIdea(args: Record<string, unknown>, ctx: IPolicyContext): P
     return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Idea not found: ${ideaId}` }) }], isError: true };
   }
 
-  // Auto-linkage: if incorporated into a mission, add to mission's ideas array
-  if (idea.missionId && idea.status === "incorporated") {
-    try {
-      await ctx.stores.mission.linkIdea(idea.missionId, ideaId);
-    } catch (err) {
-      console.log(`[IdeaPolicy] Auto-linkage failed (idea ${ideaId} → mission ${idea.missionId}): ${err}`);
-    }
-  }
+  // Mission linkage is a virtual view over the idea store (see mission.ts).
+  // `idea.missionId` is the single source of truth — no explicit link step.
 
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ ideaId: idea.id, status: idea.status, missionId: idea.missionId }) }],

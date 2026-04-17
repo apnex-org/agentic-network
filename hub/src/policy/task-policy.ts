@@ -98,16 +98,9 @@ async function createTask(args: Record<string, unknown>, ctx: IPolicyContext): P
     }
   }
 
-  // Auto-linkage: if correlationId matches mission-\d+, link task to mission
-  if (correlationId && /^mission-\d+$/.test(correlationId)) {
-    try {
-      await ctx.stores.mission.linkTask(correlationId, taskId);
-      console.log(`[TaskPolicy] Auto-linked task ${taskId} to ${correlationId}`);
-    } catch (err) {
-      console.log(`[TaskPolicy] Auto-linkage failed (task ${taskId} → ${correlationId}): ${err}`);
-      // Non-fatal — the directive was still created
-    }
-  }
+  // Mission linkage is a virtual view over the task store (see mission.ts).
+  // `correlationId` on the task is the single source of truth — no explicit
+  // link step is needed.
 
   // Determine the resulting status
   const hasDeps = dependsOn && dependsOn.length > 0;

@@ -5,9 +5,17 @@
  *   proposed → active → completed
  *                     → abandoned
  *
- * Links to Tasks and Ideas via arrays. Auto-linkage is handled
- * at the controller layer (Hub tool handlers), not in the store.
+ * `tasks` and `ideas` are returned on every read as a virtual view
+ * computed from the task store (filtered by `correlationId === mission.id`)
+ * and the idea store (filtered by `missionId === mission.id`). They are
+ * never stored or mutated in-place — previous implementations kept stored
+ * arrays and used naked read-modify-write to append, which lost writes
+ * under concurrent auto-linkage. See `hub/test/mission-integrity.test.ts`
+ * for the regression pin.
  */
+
+import type { ITaskStore } from "../state.js";
+import type { IIdeaStore } from "./idea.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -19,7 +27,9 @@ export interface Mission {
   description: string;
   documentRef: string | null;
   status: MissionStatus;
+  /** Virtual view — computed on read from `ITaskStore` by `correlationId`. */
   tasks: string[];
+  /** Virtual view — computed on read from `IIdeaStore` by `missionId`. */
   ideas: string[];
   correlationId: string | null;
   createdAt: string;
@@ -43,12 +53,6 @@ export interface IMissionStore {
     missionId: string,
     updates: { status?: MissionStatus; description?: string; documentRef?: string }
   ): Promise<Mission | null>;
-
-  /** Append a task ID (idempotent — deduplicates) */
-  linkTask(missionId: string, taskId: string): Promise<void>;
-
-  /** Append an idea ID (idempotent — deduplicates) */
-  linkIdea(missionId: string, ideaId: string): Promise<void>;
 }
 
 // ── Memory Implementation ────────────────────────────────────────────
@@ -56,6 +60,11 @@ export interface IMissionStore {
 export class MemoryMissionStore implements IMissionStore {
   private missions = new Map<string, Mission>();
   private counter = 0;
+
+  constructor(
+    private readonly taskStore: ITaskStore,
+    private readonly ideaStore: IIdeaStore,
+  ) {}
 
   async createMission(
     title: string,
@@ -74,19 +83,19 @@ export class MemoryMissionStore implements IMissionStore {
       status: "proposed",
       tasks: [],
       ideas: [],
-      correlationId: id, // Self-referencing for auto-linkage
+      correlationId: id,
       createdAt: now,
       updatedAt: now,
     };
 
     this.missions.set(id, mission);
     console.log(`[MemoryMissionStore] Mission created: ${id} — ${title}`);
-    return { ...mission };
+    return this.hydrate(mission);
   }
 
   async getMission(missionId: string): Promise<Mission | null> {
     const mission = this.missions.get(missionId);
-    return mission ? { ...mission, tasks: [...mission.tasks], ideas: [...mission.ideas] } : null;
+    return mission ? this.hydrate(mission) : null;
   }
 
   async listMissions(statusFilter?: MissionStatus): Promise<Mission[]> {
@@ -94,11 +103,7 @@ export class MemoryMissionStore implements IMissionStore {
     const filtered = statusFilter
       ? all.filter((m) => m.status === statusFilter)
       : all;
-    return filtered.map((m) => ({
-      ...m,
-      tasks: [...m.tasks],
-      ideas: [...m.ideas],
-    }));
+    return Promise.all(filtered.map((m) => this.hydrate(m)));
   }
 
   async updateMission(
@@ -114,26 +119,18 @@ export class MemoryMissionStore implements IMissionStore {
     mission.updatedAt = new Date().toISOString();
 
     console.log(`[MemoryMissionStore] Mission updated: ${missionId} → status=${mission.status}`);
-    return { ...mission, tasks: [...mission.tasks], ideas: [...mission.ideas] };
+    return this.hydrate(mission);
   }
 
-  async linkTask(missionId: string, taskId: string): Promise<void> {
-    const mission = this.missions.get(missionId);
-    if (!mission) throw new Error(`Mission not found: ${missionId}`);
-    if (!mission.tasks.includes(taskId)) {
-      mission.tasks.push(taskId);
-      mission.updatedAt = new Date().toISOString();
-      console.log(`[MemoryMissionStore] Linked task ${taskId} to ${missionId}`);
-    }
-  }
-
-  async linkIdea(missionId: string, ideaId: string): Promise<void> {
-    const mission = this.missions.get(missionId);
-    if (!mission) throw new Error(`Mission not found: ${missionId}`);
-    if (!mission.ideas.includes(ideaId)) {
-      mission.ideas.push(ideaId);
-      mission.updatedAt = new Date().toISOString();
-      console.log(`[MemoryMissionStore] Linked idea ${ideaId} to ${missionId}`);
-    }
+  private async hydrate(stored: Mission): Promise<Mission> {
+    const [tasks, ideas] = await Promise.all([
+      this.taskStore.listTasks(),
+      this.ideaStore.listIdeas(),
+    ]);
+    return {
+      ...stored,
+      tasks: tasks.filter((t) => t.correlationId === stored.id).map((t) => t.id),
+      ideas: ideas.filter((i) => i.missionId === stored.id).map((i) => i.id),
+    };
   }
 }

@@ -171,14 +171,16 @@ export class PolicyLoopbackHub implements ILoopbackHub {
   }
 
   private createStores(): AllStores {
+    const task = new MemoryTaskStore();
+    const idea = new MemoryIdeaStore();
     return {
-      task: new MemoryTaskStore(),
+      task,
       engineerRegistry: new MemoryEngineerRegistry(),
       proposal: new MemoryProposalStore(),
       thread: new MemoryThreadStore(),
       audit: new MemoryAuditStore(),
-      idea: new MemoryIdeaStore(),
-      mission: new MemoryMissionStore(),
+      idea,
+      mission: new MemoryMissionStore(task, idea),
       turn: new MemoryTurnStore(),
       tele: new MemoryTeleStore(),
     };

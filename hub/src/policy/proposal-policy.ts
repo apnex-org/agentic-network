@@ -152,14 +152,9 @@ async function scaffoldPlan(
       sc.resolutionMap.set(t.idRef, taskId);
       sc.createdTaskIds.push(taskId);
 
-      // Auto-link task to mission if missionRef is set
-      if (t.missionRef && correlationId.startsWith("mission-")) {
-        try {
-          await ctx.stores.mission.linkTask(correlationId, taskId);
-        } catch (err) {
-          console.log(`[Scaffold] Auto-linkage warning: ${err}`);
-        }
-      }
+      // Mission linkage is a virtual view over the task store keyed by
+      // `correlationId` (see entities/mission.ts). Passing `correlationId`
+      // above is sufficient — no explicit link step.
 
       console.log(`[Scaffold] Created task ${taskId} (idRef: ${t.idRef}, correlationId: ${correlationId})`);
     }

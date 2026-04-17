@@ -1,14 +1,24 @@
 /**
  * GCS-backed Mission Store.
+ *
+ * `tasks` and `ideas` are computed as a virtual view on every read —
+ * see `hub/src/entities/mission.ts` for the rationale (prior stored-array
+ * implementation lost writes under concurrent auto-linkage).
  */
 
 import { readJson, writeJson, listFiles, getAndIncrementCounter } from "../../gcs-state.js";
 import type { Mission, MissionStatus, IMissionStore } from "../mission.js";
+import type { ITaskStore } from "../../state.js";
+import type { IIdeaStore } from "../idea.js";
 
 export class GcsMissionStore implements IMissionStore {
   private bucket: string;
 
-  constructor(bucket: string) {
+  constructor(
+    bucket: string,
+    private readonly taskStore: ITaskStore,
+    private readonly ideaStore: IIdeaStore,
+  ) {
     this.bucket = bucket;
     console.log(`[GcsMissionStore] Using bucket: gs://${bucket}`);
   }
@@ -37,11 +47,12 @@ export class GcsMissionStore implements IMissionStore {
 
     await writeJson(this.bucket, `missions/${id}.json`, mission);
     console.log(`[GcsMissionStore] Mission created: ${id} — ${title}`);
-    return { ...mission };
+    return this.hydrate(mission);
   }
 
   async getMission(missionId: string): Promise<Mission | null> {
-    return await readJson<Mission>(this.bucket, `missions/${missionId}.json`);
+    const mission = await readJson<Mission>(this.bucket, `missions/${missionId}.json`);
+    return mission ? this.hydrate(mission) : null;
   }
 
   async listMissions(statusFilter?: MissionStatus): Promise<Mission[]> {
@@ -55,7 +66,7 @@ export class GcsMissionStore implements IMissionStore {
         missions.push(m);
       }
     }
-    return missions;
+    return Promise.all(missions.map((m) => this.hydrate(m)));
   }
 
   async updateMission(
@@ -73,30 +84,18 @@ export class GcsMissionStore implements IMissionStore {
 
     await writeJson(this.bucket, path, mission);
     console.log(`[GcsMissionStore] Mission updated: ${missionId} → status=${mission.status}`);
-    return { ...mission, tasks: [...mission.tasks], ideas: [...mission.ideas] };
+    return this.hydrate(mission);
   }
 
-  async linkTask(missionId: string, taskId: string): Promise<void> {
-    const path = `missions/${missionId}.json`;
-    const mission = await readJson<Mission>(this.bucket, path);
-    if (!mission) throw new Error(`Mission not found: ${missionId}`);
-    if (!mission.tasks.includes(taskId)) {
-      mission.tasks.push(taskId);
-      mission.updatedAt = new Date().toISOString();
-      await writeJson(this.bucket, path, mission);
-      console.log(`[GcsMissionStore] Linked task ${taskId} to ${missionId}`);
-    }
-  }
-
-  async linkIdea(missionId: string, ideaId: string): Promise<void> {
-    const path = `missions/${missionId}.json`;
-    const mission = await readJson<Mission>(this.bucket, path);
-    if (!mission) throw new Error(`Mission not found: ${missionId}`);
-    if (!mission.ideas.includes(ideaId)) {
-      mission.ideas.push(ideaId);
-      mission.updatedAt = new Date().toISOString();
-      await writeJson(this.bucket, path, mission);
-      console.log(`[GcsMissionStore] Linked idea ${ideaId} to ${missionId}`);
-    }
+  private async hydrate(stored: Mission): Promise<Mission> {
+    const [tasks, ideas] = await Promise.all([
+      this.taskStore.listTasks(),
+      this.ideaStore.listIdeas(),
+    ]);
+    return {
+      ...stored,
+      tasks: tasks.filter((t) => t.correlationId === stored.id).map((t) => t.id),
+      ideas: ideas.filter((i) => i.missionId === stored.id).map((i) => i.id),
+    };
   }
 }

@@ -637,7 +637,7 @@ Precondition: Mission exists
 | 1    | Any       | `create_idea(text)`                              | open          | `idea_submitted` → [architect, engineer]   |
 | 2    | Architect | `update_idea(id, missionId: "mission-1")`        | incorporated  | (none)                                     |
 
-**Cross-domain effect:** Mission's `ideas[]` array updated via `linkIdea`.
+**Cross-domain effect:** `mission.ideas` view includes this ideaId on next read (computed from `idea.missionId`).
 
 **Tested By:** `e2e-workflows.test.ts` "tasks and ideas auto-link to mission"
 
@@ -668,23 +668,23 @@ Precondition: Architect connected to Hub
 
 ## 3. Cross-Domain Interaction Map
 
-### XD-001 Task → Mission Auto-Linkage
+### XD-001 Task → Mission Linkage (Virtual View)
 
 | Field       | Value                                                                 |
 | ----------- | --------------------------------------------------------------------- |
 | Trigger     | `create_task` with `correlationId` matching `/^mission-\d+$/`         |
-| Effect      | `mission.linkTask(correlationId, taskId)` — adds taskId to mission's tasks[] |
-| Failure     | Non-fatal — task is created, linkage failure logged as warning        |
-| Tested By   | `e2e-workflows.test.ts` "tasks and ideas auto-link"                  |
+| Mechanism   | `task.correlationId` stored on the Task; `mission.tasks` computed on read from the task store filtered by that field. |
+| Failure     | None — no link step to fail. Setting `correlationId` is atomic with task creation. |
+| Tested By   | `mission-integrity.test.ts` (concurrent create_task) + `e2e-workflows.test.ts` |
 
-### XD-002 Idea → Mission Auto-Linkage
+### XD-002 Idea → Mission Linkage (Virtual View)
 
 | Field       | Value                                                                 |
 | ----------- | --------------------------------------------------------------------- |
 | Trigger     | `update_idea` with `missionId` set, resulting status = `incorporated` |
-| Effect      | `mission.linkIdea(missionId, ideaId)` — adds ideaId to mission's ideas[] |
-| Failure     | Non-fatal — idea status updated, linkage failure logged as warning    |
-| Tested By   | `e2e-workflows.test.ts` "tasks and ideas auto-link"                  |
+| Mechanism   | `idea.missionId` stored on the Idea; `mission.ideas` computed on read from the idea store filtered by that field. |
+| Failure     | None — no link step to fail. Setting `missionId` is atomic with the idea update. |
+| Tested By   | `mission-integrity.test.ts` (concurrent update_idea) + `e2e-workflows.test.ts` |
 
 ### XD-003 Task Review Approval → DAG Cascade
 

@@ -281,14 +281,16 @@ export class TestHub {
     this.notificationStore = new MemoryNotificationStore();
     this.documentStore = new MemoryDocumentStore();
 
+    const task = new MemoryTaskStore();
+    const idea = new MemoryIdeaStore();
     this.stores = {
-      task: new MemoryTaskStore(),
+      task,
       engineerRegistry: this.engineerRegistry,
       proposal: new MemoryProposalStore(),
       thread: new MemoryThreadStore(),
       audit: new MemoryAuditStore(),
-      idea: new MemoryIdeaStore(),
-      mission: new MemoryMissionStore(),
+      idea,
+      mission: new MemoryMissionStore(task, idea),
       turn: new MemoryTurnStore(),
       tele: new MemoryTeleStore(),
     };
