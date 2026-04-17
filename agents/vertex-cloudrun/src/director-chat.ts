@@ -141,7 +141,31 @@ export function createDirectorChatRouter(
       });
     } catch (err: any) {
       console.error("[DirectorChat] Error:", err);
-      res.status(500).json({ error: err.message || "Internal error" });
+
+      // Classify the error and surface a human-readable message as a
+      // 200 chat response so the UI shows the reason instead of a
+      // transport error that it interprets as "session expired".
+      const status = err?.status || err?.code || err?.response?.status;
+      const msg = err?.message || String(err);
+      let friendly: string;
+      if (status === 429 || msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) {
+        friendly = `Gemini quota exhausted (429). Retry shortly or check Vertex AI quota for \`${process.env.GOOGLE_CLOUD_PROJECT || "labops-389703"}\`.`;
+      } else if (status === 400 || msg.includes("400") || msg.includes("INVALID_ARGUMENT")) {
+        friendly = `Gemini rejected the request (400 INVALID_ARGUMENT). See the \`[LLM] generateWithTools round … 400 INVALID_ARGUMENT\` diagnostics in Cloud Run logs. If it persists, start a new session.`;
+      } else if (status === 404 || msg.includes("NOT_FOUND")) {
+        friendly = `Gemini model or resource not found (404): ${msg}`;
+      } else if (msg.toLowerCase().includes("safety") || msg.toLowerCase().includes("blocked")) {
+        friendly = `Gemini blocked the response (safety filter).`;
+      } else {
+        friendly = `Architect error: ${msg}`;
+      }
+
+      // Keep the session alive — the UI treats HTTP 5xx as session loss.
+      res.status(200).json({
+        session_id: session.id,
+        response: friendly,
+        error: true,
+      });
     }
   });
 

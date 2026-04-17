@@ -247,20 +247,78 @@ export async function generateWithTools(
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
 
-    const response = await client.models.generateContent({
-      model: MODEL,
-      contents,
-      config: {
-        systemInstruction,
-        tools: [{ functionDeclarations }],
-        toolConfig: {
-          functionCallingConfig: {
-            mode: FunctionCallingConfigMode.AUTO,
+    // 429 retry mirrors generateText; does NOT count against MAX_TOOL_ROUNDS
+    let response: Awaited<ReturnType<typeof client.models.generateContent>> | null = null;
+    for (let attempt = 1; attempt <= GENERATE_MAX_RETRIES; attempt++) {
+      try {
+        response = await client.models.generateContent({
+          model: MODEL,
+          contents,
+          config: {
+            systemInstruction,
+            tools: [{ functionDeclarations }],
+            toolConfig: {
+              functionCallingConfig: {
+                mode: FunctionCallingConfigMode.AUTO,
+              },
+            },
+            temperature: 0.2,
           },
-        },
-        temperature: 0.2,
-      },
-    });
+        });
+        break;
+      } catch (err: any) {
+        const status = err?.status || err?.code || err?.response?.status;
+        const msg = err?.message || "";
+
+        if ((status === 429 || msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) && attempt < GENERATE_MAX_RETRIES) {
+          const delay = GENERATE_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+          console.warn(`[LLM] generateWithTools round ${rounds}: Rate limited (429) attempt ${attempt}/${GENERATE_MAX_RETRIES} — retrying in ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+
+        // 400 — dump payload shape. INVALID_ARGUMENT is almost always
+        // a malformed contents/tools payload; we want to see what shape
+        // we sent so we can narrow root cause without reproducing.
+        if (status === 400 || msg.includes("400") || msg.includes("INVALID_ARGUMENT")) {
+          console.error(`[LLM] generateWithTools round ${rounds}: 400 INVALID_ARGUMENT — request diagnostics`);
+          console.error(`[LLM]   contents.length=${contents.length}`);
+          console.error(`[LLM]   systemInstruction.length=${systemInstruction.length}`);
+          const totalChars = contents.reduce(
+            (sum, c) => sum + (c.parts?.reduce((s, p) => s + JSON.stringify(p).length, 0) ?? 0),
+            0,
+          );
+          console.error(`[LLM]   contents total chars=${totalChars}`);
+          console.error(`[LLM]   functionDeclarations.length=${functionDeclarations.length}`);
+          // Role sequence — Gemini rejects certain patterns (e.g. two
+          // consecutive same-role turns, or a tool turn that follows a
+          // non-tool turn).
+          console.error(`[LLM]   role sequence: ${contents.map((c) => c.role).join("→")}`);
+          const last = contents[contents.length - 1];
+          if (last?.parts) {
+            for (const [i, part] of last.parts.entries()) {
+              const keys = Object.keys(part);
+              const preview = JSON.stringify(part).substring(0, 200);
+              console.error(`[LLM]   last.parts[${i}] keys=[${keys.join(",")}] preview=${preview}`);
+            }
+          }
+        }
+
+        throw err;
+      }
+    }
+
+    if (!response) throw new Error("generateWithTools: unreachable — empty response after retry loop");
+
+    // Per-round usage + finish reason — previously only generateText logged this
+    const candidate = response.candidates?.[0];
+    const finishReason = candidate?.finishReason;
+    const usage = (response as any).usageMetadata;
+    if (usage) {
+      console.log(`[LLM] generateWithTools round ${rounds}: input=${usage.promptTokenCount ?? "?"} output=${usage.candidatesTokenCount ?? "?"} total=${usage.totalTokenCount ?? "?"} finishReason=${finishReason ?? "none"}`);
+    } else {
+      console.log(`[LLM] generateWithTools round ${rounds}: finishReason=${finishReason ?? "none"}`);
+    }
 
     // Add model response to history
     const modelContent = response.candidates?.[0]?.content;
