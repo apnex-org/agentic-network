@@ -6,7 +6,14 @@
  * implementation lost writes under concurrent auto-linkage).
  */
 
-import { readJson, writeJson, listFiles, getAndIncrementCounter } from "../../gcs-state.js";
+import {
+  readJson,
+  listFiles,
+  getAndIncrementCounter,
+  createOnly,
+  updateExisting,
+  GcsPathNotFound,
+} from "../../gcs-state.js";
 import type { Mission, MissionStatus, IMissionStore } from "../mission.js";
 import type { ITaskStore } from "../../state.js";
 import type { IIdeaStore } from "../idea.js";
@@ -45,7 +52,7 @@ export class GcsMissionStore implements IMissionStore {
       updatedAt: now,
     };
 
-    await writeJson(this.bucket, `missions/${id}.json`, mission);
+    await createOnly<Mission>(this.bucket, `missions/${id}.json`, mission);
     console.log(`[GcsMissionStore] Mission created: ${id} — ${title}`);
     return this.hydrate(mission);
   }
@@ -74,17 +81,20 @@ export class GcsMissionStore implements IMissionStore {
     updates: { status?: MissionStatus; description?: string; documentRef?: string }
   ): Promise<Mission | null> {
     const path = `missions/${missionId}.json`;
-    const mission = await readJson<Mission>(this.bucket, path);
-    if (!mission) return null;
-
-    if (updates.status) mission.status = updates.status;
-    if (updates.description !== undefined) mission.description = updates.description;
-    if (updates.documentRef !== undefined) mission.documentRef = updates.documentRef;
-    mission.updatedAt = new Date().toISOString();
-
-    await writeJson(this.bucket, path, mission);
-    console.log(`[GcsMissionStore] Mission updated: ${missionId} → status=${mission.status}`);
-    return this.hydrate(mission);
+    try {
+      const mission = await updateExisting<Mission>(this.bucket, path, (m) => {
+        if (updates.status) m.status = updates.status;
+        if (updates.description !== undefined) m.description = updates.description;
+        if (updates.documentRef !== undefined) m.documentRef = updates.documentRef;
+        m.updatedAt = new Date().toISOString();
+        return m;
+      });
+      console.log(`[GcsMissionStore] Mission updated: ${missionId} → status=${mission.status}`);
+      return this.hydrate(mission);
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return null;
+      throw err;
+    }
   }
 
   private async hydrate(stored: Mission): Promise<Mission> {

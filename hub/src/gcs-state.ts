@@ -91,16 +91,19 @@ export async function readJson<T>(bucket: string, path: string): Promise<T | nul
   }
 }
 
-export async function writeJson(bucket: string, path: string, data: unknown): Promise<void> {
+// Module-internal — NOT exported. External callers must use one of the
+// three concurrency-aware primitives (createOnly / updateExisting /
+// upsert) declared below. See ADR-011 for the invariant.
+async function writeJson(bucket: string, path: string, data: unknown): Promise<void> {
   const content = JSON.stringify(data, null, 2);
   await storage.bucket(bucket).file(path).save(content, {
     contentType: "application/json",
   });
 }
 
-// ── M18: GCS Optimistic Concurrency Control helpers ─────────────────
-// Uses `ifGenerationMatch` to implement compare-and-swap semantics for
-// Agent entity updates. A `generation` of 0 means "must not exist yet"
+// ── GCS Optimistic Concurrency Control helpers ──────────────────────
+// Uses `ifGenerationMatch` to implement compare-and-swap semantics on
+// GCS-backed JSON objects. A `generation` of 0 means "must not exist yet"
 // (create-only); any other value matches the expected object version.
 
 export async function readJsonWithGeneration<T>(
@@ -129,6 +132,22 @@ export class GcsOccPreconditionFailed extends Error {
   }
 }
 
+/** Thrown by `updateExisting` when the target path does not exist. */
+export class GcsPathNotFound extends Error {
+  constructor(path: string) {
+    super(`GCS path not found: ${path}`);
+    this.name = "GcsPathNotFound";
+  }
+}
+
+/** Thrown by `updateExisting` / `upsert` when the CAS retry budget is exhausted. */
+export class GcsOccRetryExhausted extends Error {
+  constructor(path: string, public readonly attempts: number) {
+    super(`GCS OCC retry budget exhausted for ${path} after ${attempts} attempts`);
+    this.name = "GcsOccRetryExhausted";
+  }
+}
+
 export async function writeJsonWithPrecondition(
   bucket: string,
   path: string,
@@ -146,6 +165,127 @@ export async function writeJsonWithPrecondition(
     if (error.code === 412) throw new GcsOccPreconditionFailed(path);
     throw error;
   }
+}
+
+// ── Phase 2 concurrency-aware primitives (ADR-011) ──────────────────
+// These are the ONLY public write surface for GCS-backed entity stores.
+// The plain `writeJson` is module-internal — new call sites must pick
+// one of the three intent-bearing primitives below.
+
+const OCC_RETRY_MAX_ATTEMPTS = 5;
+const OCC_RETRY_INITIAL_BACKOFF_MS = 20;
+
+// Module-internal sentinel. Gated state transitions (e.g., "cancel only
+// when pending") throw this from inside an `updateExisting` transform to
+// signal the gate failed on a fresh read. Not retried — the transform's
+// business check is authoritative. Caller catches and maps to its
+// existing false/null contract.
+class TransitionRejected extends Error {
+  constructor(reason: string) {
+    super(`transition rejected: ${reason}`);
+    this.name = "TransitionRejected";
+  }
+}
+
+/**
+ * Exposed for unit testing only. Drives the CAS retry loop with injected
+ * reader/writer so we can exercise the retry + backoff logic without a
+ * live GCS bucket. Not for application use — application code should
+ * call `createOnly` / `updateExisting` / `upsert`.
+ */
+export async function __casRetryForTest<T>(
+  reader: () => Promise<{ data: T | null; generation: number }>,
+  writer: (next: T, gen: number) => Promise<void>,
+  transform: (current: T | null) => T | Promise<T>,
+  opts: { allowMissing: boolean; path: string; sleep?: (ms: number) => Promise<void> },
+): Promise<T> {
+  const sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let attempt = 0; attempt < OCC_RETRY_MAX_ATTEMPTS; attempt++) {
+    const { data, generation } = await reader();
+    if (data === null && !opts.allowMissing) throw new GcsPathNotFound(opts.path);
+    const next = await transform(data);
+    try {
+      await writer(next, generation);
+      return next;
+    } catch (err) {
+      if (err instanceof GcsOccPreconditionFailed) {
+        if (attempt + 1 >= OCC_RETRY_MAX_ATTEMPTS) {
+          throw new GcsOccRetryExhausted(opts.path, attempt + 1);
+        }
+        const base = OCC_RETRY_INITIAL_BACKOFF_MS * Math.pow(2, attempt);
+        const jitter = Math.floor(Math.random() * base);
+        await sleep(base + jitter);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new GcsOccRetryExhausted(opts.path, OCC_RETRY_MAX_ATTEMPTS);
+}
+
+/**
+ * Create a new JSON object at `path`. Fails with `GcsOccPreconditionFailed`
+ * if the object already exists. Use for initial-creation paths where the
+ * ID is freshly allocated and nothing else should be writing there.
+ */
+export async function createOnly<T>(
+  bucket: string,
+  path: string,
+  data: T,
+): Promise<void> {
+  await writeJsonWithPrecondition(bucket, path, data, 0);
+}
+
+/**
+ * OCC-safe update of an existing JSON object. Reads the current state
+ * with its GCS generation, applies `transform`, and writes with
+ * `ifGenerationMatch`. On precondition failure, re-reads and retries
+ * with jittered exponential backoff up to `OCC_RETRY_MAX_ATTEMPTS`.
+ *
+ * Throws:
+ *   - `GcsPathNotFound` if the object does not exist.
+ *   - `GcsOccRetryExhausted` if concurrent writers beat us repeatedly.
+ *   - Any other error from `transform` (not retried — business-level
+ *     gating belongs inside the transform and bubbles up).
+ *
+ * Returns the final written state.
+ */
+export async function updateExisting<T>(
+  bucket: string,
+  path: string,
+  transform: (current: T) => T | Promise<T>,
+): Promise<T> {
+  return __casRetryForTest<T>(
+    async () => {
+      const r = await readJsonWithGeneration<T>(bucket, path);
+      return { data: r?.data ?? null, generation: r?.generation ?? 0 };
+    },
+    (next, gen) => writeJsonWithPrecondition(bucket, path, next, gen),
+    (cur) => transform(cur as T),
+    { allowMissing: false, path },
+  );
+}
+
+/**
+ * OCC-safe either-create-or-update. Reads the current state (may be
+ * null), applies `transform(current | null)`, writes with
+ * `ifGenerationMatch = generation` (0 if absent). Retries on precondition
+ * failure with the same backoff as `updateExisting`.
+ */
+export async function upsert<T>(
+  bucket: string,
+  path: string,
+  transform: (current: T | null) => T | Promise<T>,
+): Promise<T> {
+  return __casRetryForTest<T>(
+    async () => {
+      const r = await readJsonWithGeneration<T>(bucket, path);
+      return { data: r?.data ?? null, generation: r?.generation ?? 0 };
+    },
+    (next, gen) => writeJsonWithPrecondition(bucket, path, next, gen),
+    transform,
+    { allowMissing: true, path },
+  );
 }
 
 async function writeMarkdown(bucket: string, path: string, content: string): Promise<void> {
@@ -359,7 +499,7 @@ export class GcsTaskStore implements ITaskStore {
       updatedAt: now,
     };
 
-    await writeJson(this.bucket, `tasks/${id}.json`, task);
+    await createOnly<Task>(this.bucket, `tasks/${id}.json`, task);
     console.log(`[GcsTaskStore] Directive submitted: ${id} (status: ${hasDeps ? "blocked" : "pending"})`);
     return id;
   }
@@ -389,17 +529,32 @@ export class GcsTaskStore implements ITaskStore {
     for (const [, task] of allTasks) {
       if (task.status !== "blocked") continue;
       if (!task.dependsOn || !task.dependsOn.includes(completedTaskId)) continue;
-      // Check if ALL dependencies are now completed
-      const allDepsCompleted = task.dependsOn.every((depId) => {
+      // Stale-snapshot prefilter; transform re-checks against fresh state.
+      const allDepsCompletedSnapshot = task.dependsOn.every((depId) => {
         const dep = allTasks.get(depId);
         return dep && dep.status === "completed";
       });
-      if (allDepsCompleted) {
-        task.status = "pending";
-        task.updatedAt = new Date().toISOString();
-        await writeJson(this.bucket, `tasks/${task.id}.json`, task);
+      if (!allDepsCompletedSnapshot) continue;
+      try {
+        await updateExisting<Task>(this.bucket, `tasks/${task.id}.json`, (current) => {
+          if (current.status !== "blocked") throw new TransitionRejected("already transitioned");
+          if (!current.dependsOn || !current.dependsOn.includes(completedTaskId)) {
+            throw new TransitionRejected("dependency no longer relevant");
+          }
+          const stillAllDone = current.dependsOn.every((depId) => {
+            const dep = allTasks.get(depId);
+            return dep && dep.status === "completed";
+          });
+          if (!stillAllDone) throw new TransitionRejected("deps not all completed");
+          current.status = "pending";
+          current.updatedAt = new Date().toISOString();
+          return current;
+        });
         unblocked.push(task.id);
         console.log(`[GcsTaskStore] Task unblocked: ${task.id}`);
+      } catch (err) {
+        if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) continue;
+        throw err;
       }
     }
     return unblocked;
@@ -413,11 +568,22 @@ export class GcsTaskStore implements ITaskStore {
       const task = await readJson<Task>(this.bucket, file);
       if (!task || task.status !== "blocked") continue;
       if (!task.dependsOn || !task.dependsOn.includes(failedTaskId)) continue;
-      task.status = "cancelled";
-      task.updatedAt = new Date().toISOString();
-      await writeJson(this.bucket, `tasks/${task.id}.json`, task);
-      cancelled.push(task.id);
-      console.log(`[GcsTaskStore] Task cancelled (dependency failed): ${task.id}`);
+      try {
+        await updateExisting<Task>(this.bucket, `tasks/${task.id}.json`, (current) => {
+          if (current.status !== "blocked") throw new TransitionRejected("already transitioned");
+          if (!current.dependsOn || !current.dependsOn.includes(failedTaskId)) {
+            throw new TransitionRejected("dependency no longer relevant");
+          }
+          current.status = "cancelled";
+          current.updatedAt = new Date().toISOString();
+          return current;
+        });
+        cancelled.push(task.id);
+        console.log(`[GcsTaskStore] Task cancelled (dependency failed): ${task.id}`);
+      } catch (err) {
+        if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) continue;
+        throw err;
+      }
     }
     return cancelled;
   }
@@ -427,15 +593,26 @@ export class GcsTaskStore implements ITaskStore {
     try {
       const files = await listFiles(this.bucket, "tasks/");
       for (const file of files) {
-        const task = await readJson<Task>(this.bucket, file);
-        if (!task || task.status !== "pending") continue;
-        if (!taskClaimableBy(task.labels ?? {}, claimant?.labels)) continue;
-        task.status = "working";
-        task.assignedEngineerId = claimant?.engineerId ?? null;
-        task.updatedAt = new Date().toISOString();
-        await writeJson(this.bucket, file, task);
-        console.log(`[GcsTaskStore] Directive assigned: ${task.id}${task.assignedEngineerId ? ` → ${task.assignedEngineerId}` : ""}`);
-        return task;
+        const preview = await readJson<Task>(this.bucket, file);
+        if (!preview || preview.status !== "pending") continue;
+        if (!taskClaimableBy(preview.labels ?? {}, claimant?.labels)) continue;
+        try {
+          const task = await updateExisting<Task>(this.bucket, file, (current) => {
+            if (current.status !== "pending") throw new TransitionRejected("already claimed");
+            if (!taskClaimableBy(current.labels ?? {}, claimant?.labels)) {
+              throw new TransitionRejected("labels diverged");
+            }
+            current.status = "working";
+            current.assignedEngineerId = claimant?.engineerId ?? null;
+            current.updatedAt = new Date().toISOString();
+            return current;
+          });
+          console.log(`[GcsTaskStore] Directive assigned: ${task.id}${task.assignedEngineerId ? ` → ${task.assignedEngineerId}` : ""}`);
+          return task;
+        } catch (err) {
+          if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) continue;
+          throw err;
+        }
       }
       return null;
     } finally {
@@ -445,41 +622,44 @@ export class GcsTaskStore implements ITaskStore {
 
   async submitReport(taskId: string, report: string, summary: string, success: boolean, verification?: string): Promise<boolean> {
     const taskPath = `tasks/${taskId}.json`;
-    const task = await readJson<Task>(this.bucket, taskPath);
-    if (!task) {
-      console.log(`[GcsTaskStore] Report failed: task ${taskId} not found`);
-      return false;
+    let finalTask: Task;
+    try {
+      finalTask = await updateExisting<Task>(this.bucket, taskPath, (current) => {
+        const version = (current.revisionCount || 0) + 1;
+        const reportRef = `reports/${taskId}-v${version}-report.md`;
+        current.report = report;
+        current.reportSummary = summary;
+        current.reportRef = reportRef;
+        current.verification = verification || null;
+        current.status = "in_review";
+        current.updatedAt = new Date().toISOString();
+        return current;
+      });
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) {
+        console.log(`[GcsTaskStore] Report failed: task ${taskId} not found`);
+        return false;
+      }
+      throw err;
     }
-
-    const version = (task.revisionCount || 0) + 1;
-    const reportRef = `reports/${taskId}-v${version}-report.md`;
-    task.report = report;
-    task.reportSummary = summary;
-    task.reportRef = reportRef;
-    task.verification = verification || null;
-    task.status = "in_review";
-    task.updatedAt = new Date().toISOString();
-
-    // Write task metadata update
-    await writeJson(this.bucket, taskPath, task);
 
     // Write report as a separate Markdown file
     const reportContent = [
       `# Engineering Report: ${taskId}`,
       "",
-      `**Status:** ${task.status}`,
-      `**Directive:** ${task.directive}`,
+      `**Status:** ${finalTask.status}`,
+      `**Directive:** ${finalTask.directive}`,
       `**Summary:** ${summary}`,
       verification ? `**Verification:** ${verification}` : null,
-      `**Completed:** ${task.updatedAt}`,
+      `**Completed:** ${finalTask.updatedAt}`,
       "",
       "---",
       "",
       report,
     ].filter(Boolean).join("\n");
-    await writeMarkdown(this.bucket, reportRef, reportContent);
+    await writeMarkdown(this.bucket, finalTask.reportRef!, reportContent);
 
-    console.log(`[GcsTaskStore] Report submitted for: ${taskId} (${task.status})`);
+    console.log(`[GcsTaskStore] Report submitted for: ${taskId} (${finalTask.status})`);
     return true;
   }
 
@@ -488,20 +668,31 @@ export class GcsTaskStore implements ITaskStore {
     try {
       const files = await listFiles(this.bucket, "tasks/");
       for (const file of files) {
-        const task = await readJson<Task>(this.bucket, file);
+        const preview = await readJson<Task>(this.bucket, file);
         if (
-          task &&
-          (task.status === "completed" || task.status === "failed") &&
-          task.report !== null
-        ) {
-          // Mark as reported but keep report data intact
-          // Full report is also preserved in reports/{taskId}-report.md
-          const result = { ...task };
-          task.status = ("reported_" + task.status) as TaskStatus;
-          task.updatedAt = new Date().toISOString();
-          await writeJson(this.bucket, file, task);
-          console.log(`[GcsTaskStore] Report retrieved: ${task.id}`);
-          return result;
+          !preview ||
+          !(preview.status === "completed" || preview.status === "failed") ||
+          preview.report === null
+        ) continue;
+        let preTransition: Task | null = null;
+        try {
+          await updateExisting<Task>(this.bucket, file, (current) => {
+            if (!(current.status === "completed" || current.status === "failed")) {
+              throw new TransitionRejected("already reported or status flipped");
+            }
+            if (current.report === null) throw new TransitionRejected("report cleared");
+            preTransition = { ...current };
+            current.status = ("reported_" + current.status) as TaskStatus;
+            current.updatedAt = new Date().toISOString();
+            return current;
+          });
+        } catch (err) {
+          if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) continue;
+          throw err;
+        }
+        if (preTransition) {
+          console.log(`[GcsTaskStore] Report retrieved: ${(preTransition as Task).id}`);
+          return preTransition;
         }
       }
       return null;
@@ -526,80 +717,100 @@ export class GcsTaskStore implements ITaskStore {
 
   async cancelTask(taskId: string): Promise<boolean> {
     const taskPath = `tasks/${taskId}.json`;
-    const task = await readJson<Task>(this.bucket, taskPath);
-    if (!task) return false;
-    if (task.status !== "pending") return false;
-    task.status = "cancelled";
-    task.updatedAt = new Date().toISOString();
-    await writeJson(this.bucket, taskPath, task);
-    console.log(`[GcsTaskStore] Task cancelled: ${taskId}`);
-    return true;
+    try {
+      await updateExisting<Task>(this.bucket, taskPath, (current) => {
+        if (current.status !== "pending") throw new TransitionRejected("not pending");
+        current.status = "cancelled";
+        current.updatedAt = new Date().toISOString();
+        return current;
+      });
+      console.log(`[GcsTaskStore] Task cancelled: ${taskId}`);
+      return true;
+    } catch (err) {
+      if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) return false;
+      throw err;
+    }
   }
 
   async requestClarification(taskId: string, question: string): Promise<boolean> {
     const taskPath = `tasks/${taskId}.json`;
-    const task = await readJson<Task>(this.bucket, taskPath);
-    if (!task || task.status !== "working") return false;
-    task.status = "input_required";
-    task.clarificationQuestion = question;
-    task.updatedAt = new Date().toISOString();
-    await writeJson(this.bucket, taskPath, task);
-    console.log(`[GcsTaskStore] Clarification requested for: ${taskId}`);
-    return true;
+    try {
+      await updateExisting<Task>(this.bucket, taskPath, (current) => {
+        if (current.status !== "working") throw new TransitionRejected("not working");
+        current.status = "input_required";
+        current.clarificationQuestion = question;
+        current.updatedAt = new Date().toISOString();
+        return current;
+      });
+      console.log(`[GcsTaskStore] Clarification requested for: ${taskId}`);
+      return true;
+    } catch (err) {
+      if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) return false;
+      throw err;
+    }
   }
 
   async respondToClarification(taskId: string, answer: string): Promise<boolean> {
     const taskPath = `tasks/${taskId}.json`;
-    const task = await readJson<Task>(this.bucket, taskPath);
-    if (!task || task.status !== "input_required") return false;
-    task.status = "working";
-    task.clarificationAnswer = answer;
-    task.updatedAt = new Date().toISOString();
-    await writeJson(this.bucket, taskPath, task);
-    console.log(`[GcsTaskStore] Clarification answered for: ${taskId}`);
-    return true;
+    try {
+      await updateExisting<Task>(this.bucket, taskPath, (current) => {
+        if (current.status !== "input_required") throw new TransitionRejected("not input_required");
+        current.status = "working";
+        current.clarificationAnswer = answer;
+        current.updatedAt = new Date().toISOString();
+        return current;
+      });
+      console.log(`[GcsTaskStore] Clarification answered for: ${taskId}`);
+      return true;
+    } catch (err) {
+      if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) return false;
+      throw err;
+    }
   }
 
   async submitReview(taskId: string, assessment: string, decision?: "approved" | "rejected"): Promise<boolean> {
     const taskPath = `tasks/${taskId}.json`;
-    const task = await readJson<Task>(this.bucket, taskPath);
-    if (!task) return false;
+    let finalTask: Task;
+    let reviewVersion = 0;
+    try {
+      finalTask = await updateExisting<Task>(this.bucket, taskPath, (current) => {
+        reviewVersion = (current.revisionCount || 0) + 1;
+        current.reviewAssessment = assessment;
+        current.reviewRef = `reviews/${taskId}-v${reviewVersion}-review.md`;
+        current.updatedAt = new Date().toISOString();
 
-    const version = (task.revisionCount || 0) + 1;
-    const reviewRef = `reviews/${taskId}-v${version}-review.md`;
-    task.reviewAssessment = assessment;
-    task.reviewRef = reviewRef;
-    task.updatedAt = new Date().toISOString();
-
-    if (decision === "approved") {
-      task.status = "completed";
-    } else if (decision === "rejected") {
-      if ((task.revisionCount || 0) >= 3) {
-        task.status = "escalated";
-      } else {
-        task.revisionCount = (task.revisionCount || 0) + 1;
-        task.status = "working";
-      }
+        if (decision === "approved") {
+          current.status = "completed";
+        } else if (decision === "rejected") {
+          if ((current.revisionCount || 0) >= 3) {
+            current.status = "escalated";
+          } else {
+            current.revisionCount = (current.revisionCount || 0) + 1;
+            current.status = "working";
+          }
+        }
+        return current;
+      });
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return false;
+      throw err;
     }
-
-    // Write task metadata update
-    await writeJson(this.bucket, taskPath, task);
 
     // Write review as a separate Markdown file
     const reviewContent = [
-      `# Architect Review: ${taskId} (v${version})`,
+      `# Architect Review: ${taskId} (v${reviewVersion})`,
       "",
-      `**Task:** ${task.directive}`,
+      `**Task:** ${finalTask.directive}`,
       `**Decision:** ${decision || "none"}`,
-      `**Reviewed:** ${task.updatedAt}`,
+      `**Reviewed:** ${finalTask.updatedAt}`,
       "",
       "---",
       "",
       assessment,
     ].join("\n");
-    await writeMarkdown(this.bucket, reviewRef, reviewContent);
+    await writeMarkdown(this.bucket, finalTask.reviewRef!, reviewContent);
 
-    console.log(`[GcsTaskStore] Review submitted for: ${taskId} (v${version}, decision: ${decision || "none"})`);
+    console.log(`[GcsTaskStore] Review submitted for: ${taskId} (v${reviewVersion}, decision: ${decision || "none"})`);
     return true;
   }
 
@@ -952,7 +1163,7 @@ export class GcsProposalStore implements IProposalStore {
     };
 
     // Write metadata
-    await writeJson(this.bucket, `proposals/${id}.json`, proposal);
+    await createOnly<Proposal>(this.bucket, `proposals/${id}.json`, proposal);
 
     // Write full proposal as Markdown
     const mdContent = [
@@ -993,39 +1204,54 @@ export class GcsProposalStore implements IProposalStore {
 
   async reviewProposal(proposalId: string, decision: ProposalStatus, feedback: string): Promise<boolean> {
     const path = `proposals/${proposalId}.json`;
-    const p = await readJson<Proposal>(this.bucket, path);
-    if (!p) return false;
-
-    p.status = decision;
-    p.decision = decision;
-    p.feedback = feedback;
-    p.updatedAt = new Date().toISOString();
-    await writeJson(this.bucket, path, p);
-
-    console.log(`[GcsProposalStore] Proposal ${proposalId} reviewed: ${decision}`);
-    return true;
+    try {
+      await updateExisting<Proposal>(this.bucket, path, (p) => {
+        p.status = decision;
+        p.decision = decision;
+        p.feedback = feedback;
+        p.updatedAt = new Date().toISOString();
+        return p;
+      });
+      console.log(`[GcsProposalStore] Proposal ${proposalId} reviewed: ${decision}`);
+      return true;
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return false;
+      throw err;
+    }
   }
 
   async closeProposal(proposalId: string): Promise<boolean> {
     const path = `proposals/${proposalId}.json`;
-    const p = await readJson<Proposal>(this.bucket, path);
-    if (!p) return false;
-    if (p.status !== "approved" && p.status !== "rejected" && p.status !== "changes_requested") return false;
-    p.status = "implemented";
-    p.updatedAt = new Date().toISOString();
-    await writeJson(this.bucket, path, p);
-    console.log(`[GcsProposalStore] Proposal ${proposalId} closed as implemented`);
-    return true;
+    try {
+      await updateExisting<Proposal>(this.bucket, path, (p) => {
+        if (p.status !== "approved" && p.status !== "rejected" && p.status !== "changes_requested") {
+          throw new TransitionRejected("not in a closeable state");
+        }
+        p.status = "implemented";
+        p.updatedAt = new Date().toISOString();
+        return p;
+      });
+      console.log(`[GcsProposalStore] Proposal ${proposalId} closed as implemented`);
+      return true;
+    } catch (err) {
+      if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) return false;
+      throw err;
+    }
   }
 
   async setScaffoldResult(proposalId: string, result: import("./state.js").ScaffoldResult): Promise<boolean> {
     const path = `proposals/${proposalId}.json`;
-    const p = await readJson<Proposal>(this.bucket, path);
-    if (!p) return false;
-    p.scaffoldResult = result;
-    p.updatedAt = new Date().toISOString();
-    await writeJson(this.bucket, path, p);
-    return true;
+    try {
+      await updateExisting<Proposal>(this.bucket, path, (p) => {
+        p.scaffoldResult = result;
+        p.updatedAt = new Date().toISOString();
+        return p;
+      });
+      return true;
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return false;
+      throw err;
+    }
   }
 }
 
@@ -1063,41 +1289,49 @@ export class GcsThreadStore implements IThreadStore {
       updatedAt: now,
     };
 
-    await writeJson(this.bucket, `threads/${id}.json`, thread);
+    await createOnly<Thread>(this.bucket, `threads/${id}.json`, thread);
     console.log(`[GcsThreadStore] Thread opened: ${id} — ${title}`);
     return { ...thread };
   }
 
   async replyToThread(threadId: string, message: string, author: ThreadAuthor, converged = false, intent: ThreadIntent = null, semanticIntent: SemanticIntent = null): Promise<Thread | null> {
     const path = `threads/${threadId}.json`;
-    const thread = await readJson<Thread>(this.bucket, path);
-    if (!thread || thread.status !== "active") return null;
-    if (thread.currentTurn !== author) return null;
+    try {
+      const thread = await updateExisting<Thread>(this.bucket, path, (current) => {
+        if (current.status !== "active") throw new TransitionRejected("thread not active");
+        if (current.currentTurn !== author) throw new TransitionRejected("not this author's turn");
 
-    const now = new Date().toISOString();
-    thread.messages.push({ author, text: message, timestamp: now, converged, intent, semanticIntent });
-    thread.roundCount++;
-    thread.outstandingIntent = intent;
-    if (semanticIntent) thread.currentSemanticIntent = semanticIntent;
-    thread.currentTurn = author === "engineer" ? "architect" : "engineer";
-    thread.updatedAt = now;
+        const now = new Date().toISOString();
+        current.messages.push({ author, text: message, timestamp: now, converged, intent, semanticIntent });
+        current.roundCount++;
+        current.outstandingIntent = intent;
+        if (semanticIntent) current.currentSemanticIntent = semanticIntent;
+        current.currentTurn = author === "engineer" ? "architect" : "engineer";
+        current.updatedAt = now;
 
-    // Check convergence
-    const msgs = thread.messages;
-    if (msgs.length >= 2 && msgs[msgs.length - 1].converged && msgs[msgs.length - 2].converged) {
-      thread.status = "converged";
-      console.log(`[GcsThreadStore] Thread converged: ${threadId}`);
+        // Check convergence
+        const msgs = current.messages;
+        if (msgs.length >= 2 && msgs[msgs.length - 1].converged && msgs[msgs.length - 2].converged) {
+          current.status = "converged";
+        }
+
+        // Check round limit
+        if (current.roundCount >= current.maxRounds && current.status === "active") {
+          current.status = "round_limit";
+        }
+        return current;
+      });
+      if (thread.status === "converged") {
+        console.log(`[GcsThreadStore] Thread converged: ${threadId}`);
+      } else if (thread.status === "round_limit") {
+        console.log(`[GcsThreadStore] Thread hit round limit: ${threadId}`);
+      }
+      console.log(`[GcsThreadStore] Reply on ${threadId} by ${author} (round ${thread.roundCount}/${thread.maxRounds})`);
+      return { ...thread };
+    } catch (err) {
+      if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) return null;
+      throw err;
     }
-
-    // Check round limit
-    if (thread.roundCount >= thread.maxRounds && thread.status === "active") {
-      thread.status = "round_limit";
-      console.log(`[GcsThreadStore] Thread hit round limit: ${threadId}`);
-    }
-
-    await writeJson(this.bucket, path, thread);
-    console.log(`[GcsThreadStore] Reply on ${threadId} by ${author} (round ${thread.roundCount}/${thread.maxRounds})`);
-    return { ...thread };
   }
 
   async getThread(threadId: string): Promise<Thread | null> {
@@ -1120,23 +1354,33 @@ export class GcsThreadStore implements IThreadStore {
 
   async closeThread(threadId: string): Promise<boolean> {
     const path = `threads/${threadId}.json`;
-    const thread = await readJson<Thread>(this.bucket, path);
-    if (!thread) return false;
-    thread.status = "closed";
-    thread.updatedAt = new Date().toISOString();
-    await writeJson(this.bucket, path, thread);
-    console.log(`[GcsThreadStore] Thread closed: ${threadId}`);
-    return true;
+    try {
+      await updateExisting<Thread>(this.bucket, path, (thread) => {
+        thread.status = "closed";
+        thread.updatedAt = new Date().toISOString();
+        return thread;
+      });
+      console.log(`[GcsThreadStore] Thread closed: ${threadId}`);
+      return true;
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return false;
+      throw err;
+    }
   }
 
   async setConvergenceAction(threadId: string, action: import("./state.js").ConvergenceAction): Promise<boolean> {
     const path = `threads/${threadId}.json`;
-    const thread = await readJson<Thread>(this.bucket, path);
-    if (!thread) return false;
-    thread.convergenceAction = action;
-    thread.updatedAt = new Date().toISOString();
-    await writeJson(this.bucket, path, thread);
-    return true;
+    try {
+      await updateExisting<Thread>(this.bucket, path, (thread) => {
+        thread.convergenceAction = action;
+        thread.updatedAt = new Date().toISOString();
+        return thread;
+      });
+      return true;
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return false;
+      throw err;
+    }
   }
 }
 
@@ -1167,7 +1411,7 @@ export class GcsAuditStore implements IAuditStore {
     };
 
     // Write as JSON for structured querying
-    await writeJson(this.bucket, `audit/${id}.json`, entry);
+    await createOnly<AuditEntry>(this.bucket, `audit/${id}.json`, entry);
 
     // Also write a human-readable log line to a daily Markdown file
     const dateStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
@@ -1249,7 +1493,7 @@ export class GcsNotificationStore implements INotificationStore {
     };
 
     // Write to v2/ namespace — ULIDs are lexicographically sortable
-    await writeJson(this.bucket, `${GcsNotificationStore.V2_PREFIX}${id}.json`, notification);
+    await createOnly<Notification>(this.bucket, `${GcsNotificationStore.V2_PREFIX}${id}.json`, notification);
 
     console.log(`[GcsNotificationStore] Persisted ${id}: ${event} → [${targetRoles.join(",")}]`);
     return notification;

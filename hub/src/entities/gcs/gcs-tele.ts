@@ -2,7 +2,12 @@
  * GCS-backed Tele Store.
  */
 
-import { readJson, writeJson, listFiles, getAndIncrementCounter } from "../../gcs-state.js";
+import {
+  readJson,
+  listFiles,
+  getAndIncrementCounter,
+  createOnly,
+} from "../../gcs-state.js";
 import type { Tele, ITeleStore } from "../tele.js";
 
 export class GcsTeleStore implements ITeleStore {
@@ -30,7 +35,7 @@ export class GcsTeleStore implements ITeleStore {
       createdAt: now,
     };
 
-    await writeJson(this.bucket, `tele/${id}.json`, tele);
+    await createOnly<Tele>(this.bucket, `tele/${id}.json`, tele);
     console.log(`[GcsTeleStore] Tele defined: ${id} — ${name}`);
     return { ...tele };
   }

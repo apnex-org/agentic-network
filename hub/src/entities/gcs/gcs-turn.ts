@@ -2,7 +2,14 @@
  * GCS-backed Turn Store.
  */
 
-import { readJson, writeJson, listFiles, getAndIncrementCounter } from "../../gcs-state.js";
+import {
+  readJson,
+  listFiles,
+  getAndIncrementCounter,
+  createOnly,
+  updateExisting,
+  GcsPathNotFound,
+} from "../../gcs-state.js";
 import type { Turn, TurnStatus, ITurnStore } from "../turn.js";
 
 export class GcsTurnStore implements ITurnStore {
@@ -35,7 +42,7 @@ export class GcsTurnStore implements ITurnStore {
       updatedAt: now,
     };
 
-    await writeJson(this.bucket, `turns/${id}.json`, turn);
+    await createOnly<Turn>(this.bucket, `turns/${id}.json`, turn);
     console.log(`[GcsTurnStore] Turn created: ${id} — ${title}`);
     return { ...turn, missionIds: [...turn.missionIds], taskIds: [...turn.taskIds], tele: [...turn.tele] };
   }
@@ -63,40 +70,53 @@ export class GcsTurnStore implements ITurnStore {
     updates: { status?: TurnStatus; scope?: string; tele?: string[] }
   ): Promise<Turn | null> {
     const path = `turns/${turnId}.json`;
-    const turn = await readJson<Turn>(this.bucket, path);
-    if (!turn) return null;
-
-    if (updates.status) turn.status = updates.status;
-    if (updates.scope !== undefined) turn.scope = updates.scope;
-    if (updates.tele) turn.tele = updates.tele;
-    turn.updatedAt = new Date().toISOString();
-
-    await writeJson(this.bucket, path, turn);
-    console.log(`[GcsTurnStore] Turn updated: ${turnId} → status=${turn.status}`);
-    return { ...turn, missionIds: [...turn.missionIds], taskIds: [...turn.taskIds], tele: [...turn.tele] };
+    try {
+      const turn = await updateExisting<Turn>(this.bucket, path, (t) => {
+        if (updates.status) t.status = updates.status;
+        if (updates.scope !== undefined) t.scope = updates.scope;
+        if (updates.tele) t.tele = updates.tele;
+        t.updatedAt = new Date().toISOString();
+        return t;
+      });
+      console.log(`[GcsTurnStore] Turn updated: ${turnId} → status=${turn.status}`);
+      return { ...turn, missionIds: [...turn.missionIds], taskIds: [...turn.taskIds], tele: [...turn.tele] };
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return null;
+      throw err;
+    }
   }
 
   async linkMission(turnId: string, missionId: string): Promise<void> {
     const path = `turns/${turnId}.json`;
-    const turn = await readJson<Turn>(this.bucket, path);
-    if (!turn) throw new Error(`Turn not found: ${turnId}`);
-    if (!turn.missionIds.includes(missionId)) {
-      turn.missionIds.push(missionId);
-      turn.updatedAt = new Date().toISOString();
-      await writeJson(this.bucket, path, turn);
-      console.log(`[GcsTurnStore] Linked mission ${missionId} to ${turnId}`);
+    try {
+      await updateExisting<Turn>(this.bucket, path, (turn) => {
+        if (!turn.missionIds.includes(missionId)) {
+          turn.missionIds.push(missionId);
+          turn.updatedAt = new Date().toISOString();
+          console.log(`[GcsTurnStore] Linked mission ${missionId} to ${turnId}`);
+        }
+        return turn;
+      });
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) throw new Error(`Turn not found: ${turnId}`);
+      throw err;
     }
   }
 
   async linkTask(turnId: string, taskId: string): Promise<void> {
     const path = `turns/${turnId}.json`;
-    const turn = await readJson<Turn>(this.bucket, path);
-    if (!turn) throw new Error(`Turn not found: ${turnId}`);
-    if (!turn.taskIds.includes(taskId)) {
-      turn.taskIds.push(taskId);
-      turn.updatedAt = new Date().toISOString();
-      await writeJson(this.bucket, path, turn);
-      console.log(`[GcsTurnStore] Linked task ${taskId} to ${turnId}`);
+    try {
+      await updateExisting<Turn>(this.bucket, path, (turn) => {
+        if (!turn.taskIds.includes(taskId)) {
+          turn.taskIds.push(taskId);
+          turn.updatedAt = new Date().toISOString();
+          console.log(`[GcsTurnStore] Linked task ${taskId} to ${turnId}`);
+        }
+        return turn;
+      });
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) throw new Error(`Turn not found: ${turnId}`);
+      throw err;
     }
   }
 }

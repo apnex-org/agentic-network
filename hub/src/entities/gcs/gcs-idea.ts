@@ -2,7 +2,14 @@
  * GCS-backed Idea Store.
  */
 
-import { readJson, writeJson, listFiles, getAndIncrementCounter } from "../../gcs-state.js";
+import {
+  readJson,
+  listFiles,
+  getAndIncrementCounter,
+  createOnly,
+  updateExisting,
+  GcsPathNotFound,
+} from "../../gcs-state.js";
 import type { Idea, IdeaStatus, IIdeaStore } from "../idea.js";
 
 export class GcsIdeaStore implements IIdeaStore {
@@ -35,7 +42,7 @@ export class GcsIdeaStore implements IIdeaStore {
       updatedAt: now,
     };
 
-    await writeJson(this.bucket, `ideas/${id}.json`, idea);
+    await createOnly<Idea>(this.bucket, `ideas/${id}.json`, idea);
     console.log(`[GcsIdeaStore] Idea submitted: ${id}`);
     return { ...idea };
   }
@@ -63,16 +70,19 @@ export class GcsIdeaStore implements IIdeaStore {
     updates: { status?: IdeaStatus; missionId?: string; tags?: string[] }
   ): Promise<Idea | null> {
     const path = `ideas/${ideaId}.json`;
-    const idea = await readJson<Idea>(this.bucket, path);
-    if (!idea) return null;
-
-    if (updates.status) idea.status = updates.status;
-    if (updates.missionId !== undefined) idea.missionId = updates.missionId;
-    if (updates.tags) idea.tags = updates.tags;
-    idea.updatedAt = new Date().toISOString();
-
-    await writeJson(this.bucket, path, idea);
-    console.log(`[GcsIdeaStore] Idea updated: ${ideaId} → status=${idea.status}`);
-    return { ...idea };
+    try {
+      const updated = await updateExisting<Idea>(this.bucket, path, (idea) => {
+        if (updates.status) idea.status = updates.status;
+        if (updates.missionId !== undefined) idea.missionId = updates.missionId;
+        if (updates.tags) idea.tags = updates.tags;
+        idea.updatedAt = new Date().toISOString();
+        return idea;
+      });
+      console.log(`[GcsIdeaStore] Idea updated: ${ideaId} → status=${updated.status}`);
+      return { ...updated };
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return null;
+      throw err;
+    }
   }
 }
