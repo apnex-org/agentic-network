@@ -14,6 +14,7 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { ProposedExecutionPlan, ScaffoldResult } from "../state.js";
+import { callerLabels } from "./labels.js";
 
 // ── Scaffolding ─────────────────────────────────────────────────────
 
@@ -94,6 +95,11 @@ async function scaffoldPlan(
     createdTaskIds: [],
   };
 
+  // Mission-19: scaffolded tasks inherit labels from the parent proposal
+  // (authoritative source) rather than the approver's caller-labels.
+  const parent = await ctx.stores.proposal.getProposal(proposalId);
+  const inheritedLabels = parent?.labels ?? {};
+
   try {
     // Phase 1: Create missions
     for (const m of plan.missions || []) {
@@ -139,7 +145,8 @@ async function scaffoldPlan(
         undefined, // no idempotency key
         t.title,
         t.description,
-        resolvedDeps.length > 0 ? resolvedDeps : undefined
+        resolvedDeps.length > 0 ? resolvedDeps : undefined,
+        inheritedLabels,
       );
 
       sc.resolutionMap.set(t.idRef, taskId);
@@ -224,15 +231,17 @@ async function createProposal(args: Record<string, unknown>, ctx: IPolicyContext
     }
   }
 
-  const proposal = await ctx.stores.proposal.submitProposal(title, summary, body, correlationId, executionPlan);
+  // Mission-19: propagate caller's Agent labels onto the new Proposal.
+  const labels = await callerLabels(ctx);
+  const proposal = await ctx.stores.proposal.submitProposal(title, summary, body, correlationId, executionPlan, labels);
 
-  await ctx.emit("proposal_submitted", {
+  await ctx.dispatch("proposal_submitted", {
     proposalId: proposal.id,
     title: proposal.title,
     summary: proposal.summary,
     proposalRef: proposal.proposalRef,
     hasExecutionPlan: !!executionPlan,
-  }, ["architect"]);
+  }, { roles: ["architect"], matchLabels: labels });
 
   return {
     content: [{
@@ -318,23 +327,23 @@ async function createProposalReview(args: Record<string, unknown>, ctx: IPolicyC
     for (const t of scaffoldData.tasks) {
       const task = await ctx.stores.task.getTask(t.generatedId);
       if (task && task.status === "pending") {
-        await ctx.emit("directive_issued", {
+        await ctx.dispatch("directive_issued", {
           taskId: t.generatedId,
           directive: (task.description || task.title || "").substring(0, 200),
           correlationId: task.correlationId,
-        }, ["engineer"]);
+        }, { roles: ["engineer"], matchLabels: task.labels });
       }
     }
   }
 
-  await ctx.emit("proposal_decided", {
+  await ctx.dispatch("proposal_decided", {
     proposalId,
     decision,
     feedback: feedback.substring(0, 200),
     scaffolded: !!scaffoldData,
     scaffoldedMissions: scaffoldData?.missions.length || 0,
     scaffoldedTasks: scaffoldData?.tasks.length || 0,
-  }, ["engineer"]);
+  }, { roles: ["engineer"], matchLabels: proposal.labels });
 
   const response: Record<string, unknown> = {
     success: true,

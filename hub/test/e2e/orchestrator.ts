@@ -175,6 +175,10 @@ export class ActorFacade {
       emit: async (event, data, targetRoles) => {
         this.eventCapture.capture(event, data, targetRoles);
       },
+      dispatch: async (event, data, selector) => {
+        // For e2e capture, record selector.roles as targetRoles for backward-compat assertions.
+        this.eventCapture.capture(event, data, selector.roles);
+      },
       sessionId: this.sessionId,
       clientIp: "127.0.0.1",
       role: this.role,

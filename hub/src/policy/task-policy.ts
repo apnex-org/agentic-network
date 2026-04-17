@@ -12,6 +12,7 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult, FsmTransitionTable, DomainEvent } from "./types.js";
 import { isValidTransition } from "./types.js";
+import { callerLabels } from "./labels.js";
 
 // ── Task FSM ────────────────────────────────────────────────────────
 
@@ -82,7 +83,9 @@ async function createTask(args: Record<string, unknown>, ctx: IPolicyContext): P
     }
   }
 
-  const taskId = await ctx.stores.task.submitDirective(resolvedDirective, correlationId, idempotencyKey, title, description, dependsOn);
+  // Mission-19: propagate caller's Agent labels onto the new Task.
+  const labels = await callerLabels(ctx);
+  const taskId = await ctx.stores.task.submitDirective(resolvedDirective, correlationId, idempotencyKey, title, description, dependsOn, labels);
 
   // Atomically close the source thread if provided
   if (sourceThreadId) {
@@ -111,21 +114,21 @@ async function createTask(args: Record<string, unknown>, ctx: IPolicyContext): P
   const resultStatus = hasDeps ? "blocked" : "pending";
 
   if (hasDeps) {
-    // Notify that the task is blocked on dependencies
-    await ctx.emit("task_blocked", {
+    // Notify that the task is blocked on dependencies (architects in same label scope).
+    await ctx.dispatch("task_blocked", {
       taskId,
       directive: resolvedDirective.substring(0, 200),
       correlationId,
       dependsOn,
-    }, ["architect"]);
+    }, { roles: ["architect"], matchLabels: labels });
   } else {
-    // Notify Engineer that a new directive is available
-    await ctx.emit("directive_issued", {
+    // Notify Engineers in the matching label scope that a new directive is available.
+    await ctx.dispatch("directive_issued", {
       taskId,
       directive: resolvedDirective.substring(0, 200),
       correlationId,
       sourceThreadId,
-    }, ["engineer"]);
+    }, { roles: ["engineer"], matchLabels: labels });
   }
 
   return {
@@ -146,7 +149,13 @@ async function getTask(args: Record<string, unknown>, ctx: IPolicyContext): Prom
     ctx.stores.engineerRegistry.setSessionRole(sid, "engineer");
   }
 
-  const task = await ctx.stores.task.getNextDirective();
+  // Mission-19 t4/t5: label-aware claim. Only pull tasks whose labels are
+  // a subset of the caller's Agent.labels; persist assignedEngineerId for
+  // P2P routing of subsequent events (review, clarification, revision).
+  const claimant = await ctx.stores.engineerRegistry.getAgentForSession(sid);
+  const task = await ctx.stores.task.getNextDirective(
+    claimant ? { engineerId: claimant.engineerId, labels: claimant.labels ?? {} } : undefined,
+  );
   if (!task) {
     return {
       content: [
@@ -158,14 +167,12 @@ async function getTask(args: Record<string, unknown>, ctx: IPolicyContext): Prom
     };
   }
 
-  // Fire notification to notify Architect that work has started
-  const engStatus = await ctx.stores.engineerRegistry.getStatusSummary();
-  const currentEng = engStatus.engineers.find((e) => e.sessionId === sid);
-  await ctx.emit("directive_acknowledged", {
+  // Fire notification to notify Architect that work has started (routed by task labels)
+  await ctx.dispatch("directive_acknowledged", {
     taskId: task.id,
-    engineerId: currentEng?.engineerId || "unknown",
+    engineerId: task.assignedEngineerId || claimant?.engineerId || "unknown",
     directive: task.description?.substring(0, 100) || task.title || "",
-  }, ["architect"]);
+  }, { roles: ["architect"], matchLabels: task.labels });
 
   return {
     content: [
@@ -225,12 +232,12 @@ async function createReport(args: Record<string, unknown>, ctx: IPolicyContext):
   const version = (task.revisionCount || 0) + 1;
   const reportRef = `reports/${taskId}-v${version}-report.md`;
 
-  // Notify Architect — report is now awaiting review
-  await ctx.emit("report_submitted", {
+  // Notify Architect(s) in task's label scope — report is now awaiting review.
+  await ctx.dispatch("report_submitted", {
     taskId,
     summary,
     reportRef,
-  }, ["architect"]);
+  }, { roles: ["architect"], matchLabels: task.labels });
 
   // NO cascade here — DAG unblocking moves to create_review(approved) in ReviewPolicy
 
@@ -325,11 +332,12 @@ async function handleTaskCompleted(event: DomainEvent, ctx: IPolicyContext): Pro
   const taskId = event.payload.taskId as string;
   const unblockedIds = await ctx.stores.task.unblockDependents(taskId);
   for (const unblockedId of unblockedIds) {
-    await ctx.emit("directive_issued", {
+    const unblocked = await ctx.stores.task.getTask(unblockedId);
+    await ctx.dispatch("directive_issued", {
       taskId: unblockedId,
       directive: `Unblocked by completion of ${taskId}`,
       correlationId: null,
-    }, ["engineer"]);
+    }, { roles: ["engineer"], matchLabels: unblocked?.labels });
   }
 }
 
@@ -337,10 +345,11 @@ async function handleTaskCancelled(event: DomainEvent, ctx: IPolicyContext): Pro
   const taskId = event.payload.taskId as string;
   const cancelledIds = await ctx.stores.task.cancelDependents(taskId);
   for (const cancelledId of cancelledIds) {
-    await ctx.emit("task_cancelled", {
+    const cancelled = await ctx.stores.task.getTask(cancelledId);
+    await ctx.dispatch("task_cancelled", {
       taskId: cancelledId,
       reason: `Dependency ${taskId} was cancelled`,
-    }, ["architect"]);
+    }, { roles: ["architect"], matchLabels: cancelled?.labels });
   }
 }
 

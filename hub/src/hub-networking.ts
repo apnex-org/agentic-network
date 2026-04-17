@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import type { IEngineerRegistry, INotificationStore } from "./state.js";
+import type { IEngineerRegistry, INotificationStore, Selector } from "./state.js";
 import { fireWebhook } from "./webhook.js";
 import type { Server } from "http";
 
@@ -50,14 +50,22 @@ export interface HubNetworkingConfig {
 export type CreateMcpServerFn = (
   getSessionId: () => string,
   getClientIp: () => string,
-  notifyEvent: NotifyEventFn
+  notifyEvent: NotifyEventFn,
+  dispatchEvent: DispatchEventFn,
 ) => McpServer;
 
-/** Function type for the persist-first notification pipeline */
+/** Function type for the persist-first notification pipeline (role-based, legacy) */
 export type NotifyEventFn = (
   event: string,
   data: Record<string, unknown>,
   targetRoles?: string[]
+) => Promise<void>;
+
+/** Mission-19: selector-based dispatch. Role ∧ matchLabels equality. */
+export type DispatchEventFn = (
+  event: string,
+  data: Record<string, unknown>,
+  selector: Selector,
 ) => Promise<void>;
 
 // ── Hub Networking Runtime ───────────────────────────────────────────
@@ -318,6 +326,59 @@ export class HubNetworking {
     }
   }
 
+  /**
+   * Mission-19: dispatch by selector (role ∧ matchLabels equality).
+   * Persists the notification with `targetRoles` derived from selector.roles
+   * (or all roles, for legacy listSince() compatibility when roles is unset),
+   * then delivers only to Agents matching the full selector.
+   */
+  async dispatchEvent(
+    event: string,
+    data: Record<string, unknown>,
+    selector: Selector,
+  ): Promise<void> {
+    const targetRoles = selector.roles && selector.roles.length > 0
+      ? [...selector.roles]
+      : ["architect", "engineer", "director"];
+    const notification = await this.notificationStore.persist(event, data, targetRoles);
+    const matched = await this.engineerRegistry.selectAgents(selector);
+    const selStr = JSON.stringify(selector);
+    this.log(`[Dispatch] Persisted notif-${notification.id}: ${event} selector=${selStr} matched=${matched.length} agent(s)`);
+
+    let notified = 0;
+    for (const agent of matched) {
+      const sessionId = agent.currentSessionId;
+      if (!sessionId) continue;
+      const mcpServer = this.servers.get(sessionId);
+      if (!mcpServer) continue;
+      if (!this.sseActive.get(sessionId)) continue;
+      try {
+        await mcpServer.server.sendLoggingMessage({
+          level: "info",
+          logger: "hub-event",
+          data: {
+            id: notification.id,
+            event,
+            data,
+            timestamp: new Date().toISOString(),
+            targetRoles,
+            selector,
+          },
+        });
+        notified++;
+        this.log(`[Dispatch] Sent notif-${notification.id} (${event}) to ${agent.engineerId}/${agent.role} session ${sessionId.substring(0, 8)}...`);
+      } catch (err) {
+        this.log(`[Dispatch] Failed to notify ${sessionId.substring(0, 8)}...: ${err}`);
+        this.sseActive.set(sessionId, false);
+      }
+    }
+
+    if (notified === 0 && this.config.webhookUrl) {
+      this.log(`[Dispatch] No SSE recipients for ${event}, falling back to webhook`);
+      await fireWebhook(event, data);
+    }
+  }
+
   /** Get session info for testing/monitoring */
   async getSessionInfo(): Promise<Array<{
     sessionId: string;
@@ -565,7 +626,8 @@ export class HubNetworking {
           server = this.createMcpServerFn(
             getSessionId,
             getClientIp,
-            this.notifyEvent.bind(this)
+            this.notifyEvent.bind(this),
+            this.dispatchEvent.bind(this),
           );
 
           await server.connect(transport);

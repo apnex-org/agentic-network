@@ -74,13 +74,15 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
       taskId
     );
 
-    // Emit review_completed to engineer
-    await ctx.emit("review_completed", {
+    // Emit review_completed to the assigned engineer (P2P) or label-scoped pool fallback.
+    await ctx.dispatch("review_completed", {
       taskId,
       reviewRef,
       assessment: assessment.substring(0, 200),
       decision: "approved",
-    }, ["engineer"]);
+    }, task.assignedEngineerId
+      ? { engineerId: task.assignedEngineerId }
+      : { roles: ["engineer"], matchLabels: task.labels });
 
     // Push task_completed internal event for DAG cascade
     ctx.internalEvents.push({
@@ -130,12 +132,12 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
     );
 
     if (isEscalated) {
-      // Circuit breaker: too many revisions
-      await ctx.emit("director_attention_required", {
+      // Circuit breaker: too many revisions — escalate to architect(s) in the label scope.
+      await ctx.dispatch("director_attention_required", {
         taskId,
         revisionCount: task.revisionCount,
         assessment,
-      }, ["architect"]);
+      }, { roles: ["architect"], matchLabels: task.labels });
 
       return {
         content: [{
@@ -152,16 +154,18 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
         }],
       };
     } else {
-      // Normal rejection — send back for revision
+      // Normal rejection — send back for revision (P2P to original engineer, fallback to pool).
       // Payload enrichment: include full assessment so agent loop can ingest immediately
-      await ctx.emit("revision_required", {
+      await ctx.dispatch("revision_required", {
         taskId,
         assessment,
         feedback: assessment,
         previousReportRef: task.reportRef,
         reviewRef,
         revisionCount: newRevisionCount,
-      }, ["engineer"]);
+      }, task.assignedEngineerId
+        ? { engineerId: task.assignedEngineerId }
+        : { roles: ["engineer"], matchLabels: task.labels });
 
       return {
         content: [{

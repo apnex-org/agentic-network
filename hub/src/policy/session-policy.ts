@@ -23,6 +23,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
   const globalInstanceId = args.globalInstanceId as string | undefined;
   const clientMetadataArg = args.clientMetadata as AgentClientMetadata | undefined;
   const advisoryTags = args.advisoryTags as Record<string, unknown> | undefined;
+  const labels = args.labels as Record<string, string> | undefined;
 
   // M18 path: the proxy sent the full Agent handshake payload.
   if (globalInstanceId && clientMetadataArg) {
@@ -41,6 +42,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
       role: tokenRole,
       clientMetadata: clientMetadataArg,
       advisoryTags: advisoryTags ?? {},
+      labels: labels ?? {},
     };
     const result = await ctx.stores.engineerRegistry.registerAgent(sid, tokenRole, payload, ctx.clientIp);
     if (!result.ok) {
@@ -63,6 +65,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
           wasCreated: result.wasCreated,
           clientMetadata: result.clientMetadata,
           advisoryTags: result.advisoryTags,
+          labels: result.labels,
           message: `Registered agent ${result.engineerId} (epoch=${result.sessionEpoch}${result.wasCreated ? ", newly created" : ""})`,
         }),
       }],
@@ -137,6 +140,7 @@ export function registerSessionPolicy(router: PolicyRouter): void {
         .optional()
         .describe("M18: Mutable metadata about the client driving this session."),
       advisoryTags: z.record(z.string(), z.unknown()).optional().describe("M18: Launch-time-only tags (e.g., llmModel). Explicitly drift-prone; do NOT route on these values."),
+      labels: z.record(z.string(), z.string()).optional().describe("Mission-19: routing labels (e.g., {env: 'smoke-test', team: 'billing'}). Immutable after first registration. Reserved key 'ois.io/namespace' has no v1 semantics."),
     },
     registerRole,
   );

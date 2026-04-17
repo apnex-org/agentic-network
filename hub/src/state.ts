@@ -28,6 +28,8 @@ export interface Task {
   dependsOn: string[];
   revisionCount: number;
   status: TaskStatus;
+  /** Mission-19: routing labels inherited from creator at submit-time. */
+  labels: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,6 +47,7 @@ export interface EngineerStatusEntry {
   sessionEpoch: number;
   clientMetadata: AgentClientMetadata;
   advisoryTags: AgentAdvisoryTags;
+  labels: AgentLabels;
   firstSeenAt: string;
   lastSeenAt: string;
 }
@@ -75,6 +78,56 @@ export interface AgentAdvisoryTags {
 export type AgentRole = "engineer" | "architect" | "director";
 export type AgentStatus = "online" | "offline";
 
+// Mission-19: routing metadata. Keys/values are caller-supplied strings.
+// Labels are IMMUTABLE after first registration in v1 — a displacing call
+// whose payload.labels differs from the persisted set is silently ignored.
+// Reserved key `ois.io/namespace` is reserved for future strict-isolation
+// semantics; no special behavior in v1.
+export type AgentLabels = Record<string, string>;
+
+/**
+ * Mission-19: routing selector. Equality-only matchLabels in v1.
+ * An Agent matches iff every (key, value) pair in matchLabels is
+ * present and equal in agent.labels. `roles`, when set, further
+ * filters to agents whose role ∈ roles. `engineerId`, when set,
+ * pins dispatch to that specific Agent (P2P routing — t5). An
+ * empty selector matches all non-archived, online agents.
+ */
+export interface Selector {
+  engineerId?: string;
+  roles?: AgentRole[];
+  matchLabels?: Record<string, string>;
+}
+
+/** True iff `labels` contains every key/value pair in `matchLabels`. */
+export function labelsMatch(labels: AgentLabels, matchLabels?: Record<string, string>): boolean {
+  if (!matchLabels) return true;
+  for (const [k, v] of Object.entries(matchLabels)) {
+    if (labels[k] !== v) return false;
+  }
+  return true;
+}
+
+/**
+ * Mission-19: can an Agent with `claimantLabels` claim a Task with `taskLabels`?
+ * True iff the task's labels are a subset of the claimant's labels (the
+ * claimant carries every routing key the task demands). When the claimant
+ * has no labels (undefined), only unlabeled tasks are claimable — legacy
+ * behavior for sessions that have not completed the M18 handshake.
+ */
+export function taskClaimableBy(
+  taskLabels: Record<string, string>,
+  claimantLabels?: Record<string, string>,
+): boolean {
+  const taskKeys = Object.keys(taskLabels);
+  if (taskKeys.length === 0) return true;
+  if (!claimantLabels) return false;
+  for (const [k, v] of Object.entries(taskLabels)) {
+    if (claimantLabels[k] !== v) return false;
+  }
+  return true;
+}
+
 export interface Agent {
   engineerId: string;          // e.g., "eng-abc123xyz" (Hub-issued)
   fingerprint: string;         // sha256(globalInstanceId) — token NOT included
@@ -85,6 +138,7 @@ export interface Agent {
   currentSessionId: string | null; // ephemeral, per SSE connection
   clientMetadata: AgentClientMetadata;
   advisoryTags: AgentAdvisoryTags;
+  labels: AgentLabels;         // Mission-19: routing metadata, immutable post-create in v1
   firstSeenAt: string;
   lastSeenAt: string;
   // Displacement rate-limit accounting (in-memory, not persisted):
@@ -96,6 +150,7 @@ export interface RegisterAgentPayload {
   role: AgentRole;
   clientMetadata: AgentClientMetadata;
   advisoryTags?: AgentAdvisoryTags;
+  labels?: AgentLabels;
 }
 
 export interface RegisterAgentSuccess {
@@ -105,6 +160,7 @@ export interface RegisterAgentSuccess {
   wasCreated: boolean;
   clientMetadata: AgentClientMetadata;
   advisoryTags: AgentAdvisoryTags;
+  labels: AgentLabels;
 }
 
 export interface RegisterAgentFailure {
@@ -152,6 +208,8 @@ export interface Proposal {
   correlationId: string | null;
   executionPlan: ProposedExecutionPlan | null;
   scaffoldResult: ScaffoldResult | null;
+  /** Mission-19: routing labels inherited from creator at submit-time. */
+  labels: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -203,6 +261,8 @@ export interface Thread {
   correlationId: string | null;
   convergenceAction: ConvergenceAction | null;
   messages: ThreadMessage[];
+  /** Mission-19: routing labels inherited from creator at open-time. */
+  labels: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -242,7 +302,7 @@ export interface IAuditStore {
 }
 
 export interface IThreadStore {
-  openThread(title: string, message: string, author: ThreadAuthor, maxRounds?: number, correlationId?: string): Promise<Thread>;
+  openThread(title: string, message: string, author: ThreadAuthor, maxRounds?: number, correlationId?: string, labels?: Record<string, string>): Promise<Thread>;
   replyToThread(threadId: string, message: string, author: ThreadAuthor, converged?: boolean, intent?: ThreadIntent, semanticIntent?: SemanticIntent): Promise<Thread | null>;
   getThread(threadId: string): Promise<Thread | null>;
   listThreads(status?: ThreadStatus): Promise<Thread[]>;
@@ -251,7 +311,7 @@ export interface IThreadStore {
 }
 
 export interface IProposalStore {
-  submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan): Promise<Proposal>;
+  submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>): Promise<Proposal>;
   setScaffoldResult(proposalId: string, result: ScaffoldResult): Promise<boolean>;
   getProposals(status?: ProposalStatus): Promise<Proposal[]>;
   getProposal(proposalId: string): Promise<Proposal | null>;
@@ -260,11 +320,20 @@ export interface IProposalStore {
 }
 
 export interface ITaskStore {
-  submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[]): Promise<string>;
+  submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>): Promise<string>;
   findByIdempotencyKey(key: string): Promise<Task | null>;
   unblockDependents(completedTaskId: string): Promise<string[]>;
   cancelDependents(failedTaskId: string): Promise<string[]>;
-  getNextDirective(): Promise<Task | null>;
+  /**
+   * Mission-19: claim the next directive the caller is authorized to run.
+   * A Task with non-empty `labels` is only matched when every (k,v) pair
+   * in task.labels is present and equal in `claimant.labels` (subset).
+   * When `claimant` is omitted, behaves like the pre-Mission-19 FIFO pull
+   * (used by legacy paths that have not yet completed M18 handshake).
+   * `claimant.engineerId`, when set, is persisted on the task as
+   * `assignedEngineerId` for P2P routing of subsequent events.
+   */
+  getNextDirective(claimant?: { engineerId?: string; labels?: Record<string, string> }): Promise<Task | null>;
   submitReport(taskId: string, report: string, summary: string, success: boolean, verification?: string): Promise<boolean>;
   getNextReport(): Promise<Task | null>;
   getTask(taskId: string): Promise<Task | null>;
@@ -287,7 +356,11 @@ export interface IEngineerRegistry {
   // M18: Agent entity operations.
   registerAgent(sessionId: string, tokenRole: AgentRole, payload: RegisterAgentPayload, address?: string): Promise<RegisterAgentResult>;
   getAgent(engineerId: string): Promise<Agent | null>;
+  /** Mission-19: resolve the Agent bound to an SSE session (null if none). */
+  getAgentForSession(sessionId: string): Promise<Agent | null>;
   listAgents(): Promise<Agent[]>;
+  /** Mission-19: return non-archived, online agents matching the selector (role ∧ matchLabels equality). */
+  selectAgents(selector: Selector): Promise<Agent[]>;
   migrateAgentQueue(sourceEngineerId: string, targetEngineerId: string): Promise<{ moved: number }>;
   /** Heartbeat: bump lastSeenAt (and flip status back to online if it drifted) for the Agent bound to this session. Rate-limited per agent. */
   touchAgent(sessionId: string): Promise<void>;
@@ -345,7 +418,7 @@ export class MemoryTaskStore implements ITaskStore {
   private tasks: Map<string, Task> = new Map();
   private counter = 0;
 
-  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[]): Promise<string> {
+  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>): Promise<string> {
     this.counter++;
     const id = `task-${this.counter}`;
     const now = new Date().toISOString();
@@ -369,6 +442,7 @@ export class MemoryTaskStore implements ITaskStore {
       dependsOn: dependsOn || [],
       revisionCount: 0,
       status: hasDeps ? "blocked" : "pending",
+      labels: labels || {},
       createdAt: now,
       updatedAt: now,
     });
@@ -418,14 +492,15 @@ export class MemoryTaskStore implements ITaskStore {
     return cancelled;
   }
 
-  async getNextDirective(): Promise<Task | null> {
+  async getNextDirective(claimant?: { engineerId?: string; labels?: Record<string, string> }): Promise<Task | null> {
     for (const task of this.tasks.values()) {
-      if (task.status === "pending") {
-        task.status = "working";
-        task.updatedAt = new Date().toISOString();
-        console.log(`[MemoryTaskStore] Directive assigned: ${task.id}`);
-        return { ...task };
-      }
+      if (task.status !== "pending") continue;
+      if (!taskClaimableBy(task.labels ?? {}, claimant?.labels)) continue;
+      task.status = "working";
+      task.assignedEngineerId = claimant?.engineerId ?? null;
+      task.updatedAt = new Date().toISOString();
+      console.log(`[MemoryTaskStore] Directive assigned: ${task.id}${task.assignedEngineerId ? ` → ${task.assignedEngineerId}` : ""}`);
+      return { ...task };
     }
     return null;
   }
@@ -541,7 +616,7 @@ export class MemoryProposalStore implements IProposalStore {
   private proposals: Map<string, Proposal> = new Map();
   private counter = 0;
 
-  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan): Promise<Proposal> {
+  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>): Promise<Proposal> {
     this.counter++;
     const id = `prop-${this.counter}`;
     const now = new Date().toISOString();
@@ -557,6 +632,7 @@ export class MemoryProposalStore implements IProposalStore {
       correlationId: correlationId || null,
       executionPlan: executionPlan || null,
       scaffoldResult: null,
+      labels: labels || {},
       createdAt: now,
       updatedAt: now,
     };
@@ -610,7 +686,7 @@ export class MemoryThreadStore implements IThreadStore {
   private threads: Map<string, Thread> = new Map();
   private counter = 0;
 
-  async openThread(title: string, message: string, author: ThreadAuthor, maxRounds = 10, correlationId?: string): Promise<Thread> {
+  async openThread(title: string, message: string, author: ThreadAuthor, maxRounds = 10, correlationId?: string, labels?: Record<string, string>): Promise<Thread> {
     this.counter++;
     const id = `thread-${this.counter}`;
     const now = new Date().toISOString();
@@ -628,6 +704,7 @@ export class MemoryThreadStore implements IThreadStore {
       correlationId: correlationId || null,
       convergenceAction: null,
       messages: [{ author, text: message, timestamp: now, converged: false, intent: null, semanticIntent: null }],
+      labels: labels || {},
       createdAt: now,
       updatedAt: now,
     };
@@ -776,6 +853,7 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
         sessionEpoch: a.sessionEpoch,
         clientMetadata: a.clientMetadata,
         advisoryTags: a.advisoryTags,
+        labels: a.labels ?? {},
         firstSeenAt: a.firstSeenAt,
         lastSeenAt: a.lastSeenAt,
       }));
@@ -822,11 +900,13 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
         }
       }
       // Displacement: increment epoch, rebind session.
+      // Labels are immutable post-create in v1 — payload.labels is silently ignored.
       agent.sessionEpoch += 1;
       agent.currentSessionId = sessionId;
       agent.status = "online";
       agent.clientMetadata = payload.clientMetadata;
       agent.advisoryTags = payload.advisoryTags ?? {};
+      agent.labels = agent.labels ?? {};
       agent.lastSeenAt = now;
       this.agents.set(agent.engineerId, agent);
       this.sessionToEngineerId.set(sessionId, agent.engineerId);
@@ -839,6 +919,7 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
         wasCreated: false,
         clientMetadata: agent.clientMetadata,
         advisoryTags: agent.advisoryTags,
+        labels: agent.labels,
       };
     }
 
@@ -854,6 +935,7 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
       currentSessionId: sessionId,
       clientMetadata: payload.clientMetadata,
       advisoryTags: payload.advisoryTags ?? {},
+      labels: payload.labels ?? {},
       firstSeenAt: now,
       lastSeenAt: now,
     };
@@ -869,6 +951,7 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
       wasCreated: true,
       clientMetadata: agent.clientMetadata,
       advisoryTags: agent.advisoryTags,
+      labels: agent.labels,
     };
   }
 
@@ -877,8 +960,28 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
     return a ? { ...a } : null;
   }
 
+  async getAgentForSession(sessionId: string): Promise<Agent | null> {
+    const engineerId = this.sessionToEngineerId.get(sessionId);
+    if (!engineerId) return null;
+    const a = this.agents.get(engineerId);
+    return a ? { ...a } : null;
+  }
+
   async listAgents(): Promise<Agent[]> {
     return Array.from(this.agents.values()).map((a) => ({ ...a }));
+  }
+
+  async selectAgents(selector: Selector): Promise<Agent[]> {
+    const out: Agent[] = [];
+    for (const a of this.agents.values()) {
+      if (a.archived) continue;
+      if (a.status !== "online") continue;
+      if (selector.engineerId && a.engineerId !== selector.engineerId) continue;
+      if (selector.roles && !selector.roles.includes(a.role)) continue;
+      if (!labelsMatch(a.labels ?? {}, selector.matchLabels)) continue;
+      out.push({ ...a });
+    }
+    return out;
   }
 
   async touchAgent(sessionId: string): Promise<void> {

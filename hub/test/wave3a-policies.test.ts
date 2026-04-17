@@ -72,9 +72,9 @@ describe("ClarificationPolicy", () => {
     expect(parsed.success).toBe(true);
     expect(parsed.status).toBe("input_required");
 
-    const emitted = (clarCtx as any).emittedEvents.find((e: any) => e.event === "clarification_requested");
+    const emitted = (clarCtx as any).dispatchedEvents.find((e: any) => e.event === "clarification_requested");
     expect(emitted).toBeDefined();
-    expect(emitted.targetRoles).toEqual(["architect"]);
+    expect(emitted.selector.roles).toEqual(["architect"]);
   });
 
   it("create_clarification fails for non-working task", async () => {
@@ -108,9 +108,9 @@ describe("ClarificationPolicy", () => {
     expect(parsed.success).toBe(true);
     expect(parsed.status).toBe("working");
 
-    const emitted = (resolveCtx as any).emittedEvents.find((e: any) => e.event === "clarification_answered");
+    const emitted = (resolveCtx as any).dispatchedEvents.find((e: any) => e.event === "clarification_answered");
     expect(emitted).toBeDefined();
-    expect(emitted.targetRoles).toEqual(["engineer"]);
+    expect(emitted.selector.roles).toEqual(["engineer"]);
   });
 
   it("resolve_clarification fails for non-input_required task", async () => {
@@ -191,9 +191,9 @@ describe("ReviewPolicy", () => {
     expect(parsed.success).toBe(true);
     expect(parsed.reviewRef).toContain(taskId);
 
-    const emitted = (reviewCtx as any).emittedEvents.find((e: any) => e.event === "review_completed");
+    const emitted = (reviewCtx as any).dispatchedEvents.find((e: any) => e.event === "review_completed");
     expect(emitted).toBeDefined();
-    expect(emitted.targetRoles).toEqual(["engineer"]);
+    expect(emitted.selector.roles).toEqual(["engineer"]);
   });
 
   it("create_review fails for non-existent task", async () => {

@@ -48,9 +48,9 @@ describe("ProposalPolicy", () => {
     expect(parsed.proposalId).toBeDefined();
     expect(parsed.status).toBe("submitted");
 
-    const emitted = (ctx as any).emittedEvents.find((e: any) => e.event === "proposal_submitted");
+    const emitted = (ctx as any).dispatchedEvents.find((e: any) => e.event === "proposal_submitted");
     expect(emitted).toBeDefined();
-    expect(emitted.targetRoles).toEqual(["architect"]);
+    expect(emitted.selector.roles).toEqual(["architect"]);
   });
 
   it("list_proposals returns proposals", async () => {
@@ -96,9 +96,9 @@ describe("ProposalPolicy", () => {
     const reviewParsed = JSON.parse(reviewResult.content[0].text);
     expect(reviewParsed.decision).toBe("approved");
 
-    const emitted = (reviewCtx as any).emittedEvents.find((e: any) => e.event === "proposal_decided");
+    const emitted = (reviewCtx as any).dispatchedEvents.find((e: any) => e.event === "proposal_decided");
     expect(emitted).toBeDefined();
-    expect(emitted.targetRoles).toEqual(["engineer"]);
+    expect(emitted.selector.roles).toEqual(["engineer"]);
 
     // Get
     const getResult = await router.handle("get_proposal", { proposalId }, ctx);
@@ -170,9 +170,9 @@ describe("ThreadPolicy", () => {
     expect(parsed.status).toBe("active");
     expect(parsed.currentTurn).toBe("engineer"); // architect opened, engineer's turn
 
-    const emitted = (ctx as any).emittedEvents.find((e: any) => e.event === "thread_message");
+    const emitted = (ctx as any).dispatchedEvents.find((e: any) => e.event === "thread_message");
     expect(emitted).toBeDefined();
-    expect(emitted.targetRoles).toEqual(["engineer"]); // notifies the other party
+    expect(emitted.selector.roles).toEqual(["engineer"]); // notifies the other party
   });
 
   it("create_thread_reply and turn alternation", async () => {
@@ -230,7 +230,7 @@ describe("ThreadPolicy", () => {
     expect(r2.status).toBe("converged");
 
     // Should emit thread_converged
-    const emitted = (archCtx2 as any).emittedEvents.find((e: any) => e.event === "thread_converged");
+    const emitted = (archCtx2 as any).dispatchedEvents.find((e: any) => e.event === "thread_converged");
     expect(emitted).toBeDefined();
   });
 

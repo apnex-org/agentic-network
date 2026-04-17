@@ -12,6 +12,7 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { ThreadAuthor, ThreadIntent, ConvergenceAction } from "../state.js";
 import type { DomainEvent } from "./types.js";
+import { callerLabels } from "./labels.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -24,16 +25,18 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
 
   const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
   const author: ThreadAuthor = callerRole === "engineer" ? "engineer" : "architect";
-  const thread = await ctx.stores.thread.openThread(title, message, author, maxRounds, correlationId);
+  // Mission-19: propagate caller's Agent labels onto the new Thread.
+  const labels = await callerLabels(ctx);
+  const thread = await ctx.stores.thread.openThread(title, message, author, maxRounds, correlationId, labels);
 
   const targetRole = author === "architect" ? "engineer" : "architect";
-  await ctx.emit("thread_message", {
+  await ctx.dispatch("thread_message", {
     threadId: thread.id,
     title: thread.title,
     author,
     message: message.substring(0, 200),
     currentTurn: thread.currentTurn,
-  }, [targetRole]);
+  }, { roles: [targetRole], matchLabels: thread.labels });
 
   return {
     content: [{
@@ -96,13 +99,13 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   // Notify the other party (unless thread just converged or hit limit)
   if (thread.status === "active") {
     const targetRole = author === "architect" ? "engineer" : "architect";
-    await ctx.emit("thread_message", {
+    await ctx.dispatch("thread_message", {
       threadId: thread.id,
       title: thread.title,
       author,
       message: message.substring(0, 200),
       currentTurn: thread.currentTurn,
-    }, [targetRole]);
+    }, { roles: [targetRole], matchLabels: thread.labels });
   }
 
   // Notify Architect when thread converges
@@ -122,12 +125,12 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
       });
     }
 
-    await ctx.emit("thread_converged", {
+    await ctx.dispatch("thread_converged", {
       threadId: thread.id,
       title: thread.title,
       intent: thread.outstandingIntent,
       hasAction: !!action,
-    }, ["architect"]);
+    }, { roles: ["architect"], matchLabels: thread.labels });
   }
 
   return {
@@ -212,6 +215,10 @@ async function handleThreadConvergedWithAction(
   const { type, templateData } = action;
   const { title, description } = templateData;
 
+  // Mission-19: spawn from a converged thread inherits the thread's labels.
+  const sourceThread = await ctx.stores.thread.getThread(threadId);
+  const inheritedLabels = sourceThread?.labels ?? {};
+
   if (type === "create_task") {
     // Spawn a task with sourceThreadId (auto-closes thread via XD-005)
     const taskId = await ctx.stores.task.submitDirective(
@@ -220,17 +227,19 @@ async function handleThreadConvergedWithAction(
       undefined, // idempotencyKey
       title,
       description,
+      undefined, // dependsOn
+      inheritedLabels,
     );
 
     // Auto-close the thread
     await ctx.stores.thread.closeThread(threadId);
 
-    // Emit directive_issued for the new task
-    await ctx.emit("directive_issued", {
+    // Emit directive_issued for the new task (routed by inherited labels)
+    await ctx.dispatch("directive_issued", {
       taskId,
       directive: description.substring(0, 200),
       sourceThreadId: threadId,
-    }, ["engineer"]);
+    }, { roles: ["engineer"], matchLabels: inheritedLabels });
 
     console.log(`[ThreadPolicy] Auto-spawned task ${taskId} from converged thread ${threadId}`);
 
@@ -239,19 +248,22 @@ async function handleThreadConvergedWithAction(
       title,
       description.substring(0, 200),
       description,
+      undefined, // correlationId
+      undefined, // executionPlan
+      inheritedLabels,
     );
 
     // Auto-close the thread
     await ctx.stores.thread.closeThread(threadId);
 
-    // Emit proposal_submitted
-    await ctx.emit("proposal_submitted", {
+    // Emit proposal_submitted (routed by inherited labels)
+    await ctx.dispatch("proposal_submitted", {
       proposalId: proposal.id,
       title: proposal.title,
       summary: proposal.summary,
       proposalRef: proposal.proposalRef,
       sourceThreadId: threadId,
-    }, ["architect"]);
+    }, { roles: ["architect"], matchLabels: inheritedLabels });
 
     console.log(`[ThreadPolicy] Auto-spawned proposal ${proposal.id} from converged thread ${threadId}`);
 

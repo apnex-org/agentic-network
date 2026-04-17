@@ -118,7 +118,8 @@ console.log(`[Hub] PolicyRouter initialized with ${policyRouter.size} tool(s): $
 function createMcpServer(
   getSessionId: () => string,
   getClientIp: () => string,
-  notifyEvent: (event: string, data: Record<string, unknown>, targetRoles?: string[]) => Promise<void>
+  notifyEvent: (event: string, data: Record<string, unknown>, targetRoles?: string[]) => Promise<void>,
+  dispatchEvent: (event: string, data: Record<string, unknown>, selector: import("./state.js").Selector) => Promise<void>,
 ): McpServer {
   const server = new McpServer(
     {
@@ -136,6 +137,7 @@ function createMcpServer(
   const ctxFactory = () => ({
     stores: allStores,
     emit: notifyEvent,
+    dispatch: dispatchEvent,
     sessionId: getSessionId(),
     clientIp: getClientIp(),
     role: "unknown", // resolved at handler level via engineerRegistry
@@ -165,8 +167,8 @@ const PORT = parseInt(process.env.PORT || "8080", 10);
 
 // The createMcpServer factory adapts the production tool registration
 // to the HubNetworking's CreateMcpServerFn interface.
-const createMcpServerFactory: CreateMcpServerFn = (getSessionId, getClientIp, notifyEvent) => {
-  return createMcpServer(getSessionId, getClientIp, notifyEvent);
+const createMcpServerFactory: CreateMcpServerFn = (getSessionId, getClientIp, notifyEvent, dispatchEvent) => {
+  return createMcpServer(getSessionId, getClientIp, notifyEvent, dispatchEvent);
 };
 
 const hub = new HubNetworking(

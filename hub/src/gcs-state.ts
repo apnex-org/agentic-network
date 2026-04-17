@@ -36,11 +36,14 @@ import type {
   AgentRole,
   RegisterAgentPayload,
   RegisterAgentResult,
+  Selector,
 } from "./state.js";
 import {
   computeFingerprint,
   shortHash,
   recordDisplacementAndCheck,
+  labelsMatch,
+  taskClaimableBy,
   THRASHING_THRESHOLD,
   THRASHING_WINDOW_MS,
   AGENT_TOUCH_MIN_INTERVAL_MS,
@@ -326,7 +329,7 @@ export class GcsTaskStore implements ITaskStore {
     console.log(`[GcsTaskStore] Using bucket: gs://${bucket}`);
   }
 
-  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[]): Promise<string> {
+  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>): Promise<string> {
     const num = await getAndIncrementCounter(this.bucket, "taskCounter");
     const id = `task-${num}`;
     const now = new Date().toISOString();
@@ -351,6 +354,7 @@ export class GcsTaskStore implements ITaskStore {
       dependsOn: dependsOn || [],
       revisionCount: 0,
       status: hasDeps ? "blocked" : "pending",
+      labels: labels || {},
       createdAt: now,
       updatedAt: now,
     };
@@ -418,19 +422,20 @@ export class GcsTaskStore implements ITaskStore {
     return cancelled;
   }
 
-  async getNextDirective(): Promise<Task | null> {
+  async getNextDirective(claimant?: { engineerId?: string; labels?: Record<string, string> }): Promise<Task | null> {
     await this.taskLock.acquire();
     try {
       const files = await listFiles(this.bucket, "tasks/");
       for (const file of files) {
         const task = await readJson<Task>(this.bucket, file);
-        if (task && task.status === "pending") {
-          task.status = "working";
-          task.updatedAt = new Date().toISOString();
-          await writeJson(this.bucket, file, task);
-          console.log(`[GcsTaskStore] Directive assigned: ${task.id}`);
-          return task;
-        }
+        if (!task || task.status !== "pending") continue;
+        if (!taskClaimableBy(task.labels ?? {}, claimant?.labels)) continue;
+        task.status = "working";
+        task.assignedEngineerId = claimant?.engineerId ?? null;
+        task.updatedAt = new Date().toISOString();
+        await writeJson(this.bucket, file, task);
+        console.log(`[GcsTaskStore] Directive assigned: ${task.id}${task.assignedEngineerId ? ` → ${task.assignedEngineerId}` : ""}`);
+        return task;
       }
       return null;
     } finally {
@@ -644,6 +649,7 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
         sessionEpoch: a.sessionEpoch,
         clientMetadata: a.clientMetadata,
         advisoryTags: a.advisoryTags,
+        labels: a.labels ?? {},
         firstSeenAt: a.firstSeenAt,
         lastSeenAt: a.lastSeenAt,
       }));
@@ -695,6 +701,7 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
           currentSessionId: sessionId,
           clientMetadata: payload.clientMetadata,
           advisoryTags: payload.advisoryTags ?? {},
+          labels: payload.labels ?? {},
           firstSeenAt: now,
           lastSeenAt: now,
         };
@@ -711,6 +718,7 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
             wasCreated: true,
             clientMetadata: agent.clientMetadata,
             advisoryTags: agent.advisoryTags,
+            labels: agent.labels,
           };
         } catch (err) {
           if (err instanceof GcsOccPreconditionFailed) continue; // race: another create won
@@ -744,6 +752,8 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
       }
 
       // Displace: increment epoch, rebind session, update mutable metadata.
+      // Labels are immutable post-create in v1 — payload.labels is silently ignored.
+      // Defensive migration: older Agents may lack the labels field entirely.
       const updated: Agent = {
         ...agent,
         sessionEpoch: agent.sessionEpoch + 1,
@@ -751,6 +761,7 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
         status: "online",
         clientMetadata: payload.clientMetadata,
         advisoryTags: payload.advisoryTags ?? agent.advisoryTags ?? {},
+        labels: agent.labels ?? {},
         lastSeenAt: now,
       };
 
@@ -767,6 +778,7 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
           wasCreated: false,
           clientMetadata: updated.clientMetadata,
           advisoryTags: updated.advisoryTags,
+          labels: updated.labels,
         };
       } catch (err) {
         if (err instanceof GcsOccPreconditionFailed) continue; // race: retry once
@@ -786,6 +798,12 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
     return await readJson<Agent>(this.bucket, `agents/${engineerId}.json`);
   }
 
+  async getAgentForSession(sessionId: string): Promise<Agent | null> {
+    const engineerId = this.sessionToEngineerId.get(sessionId);
+    if (!engineerId) return null;
+    return await readJson<Agent>(this.bucket, `agents/${engineerId}.json`);
+  }
+
   async listAgents(): Promise<Agent[]> {
     const files = await listFiles(this.bucket, "agents/");
     const agents: Agent[] = [];
@@ -796,6 +814,27 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
       if (a) agents.push(a);
     }
     return agents;
+  }
+
+  async selectAgents(selector: Selector): Promise<Agent[]> {
+    // Fast path for engineerId pinpoint — skip full bucket scan.
+    if (selector.engineerId) {
+      const a = await this.getAgent(selector.engineerId);
+      if (!a) return [];
+      if (a.archived) return [];
+      if (a.status !== "online") return [];
+      if (selector.roles && !selector.roles.includes(a.role)) return [];
+      if (!labelsMatch(a.labels ?? {}, selector.matchLabels)) return [];
+      return [a];
+    }
+    const all = await this.listAgents();
+    return all.filter((a) => {
+      if (a.archived) return false;
+      if (a.status !== "online") return false;
+      if (selector.roles && !selector.roles.includes(a.role)) return false;
+      if (!labelsMatch(a.labels ?? {}, selector.matchLabels)) return false;
+      return true;
+    });
   }
 
   /**
@@ -890,7 +929,7 @@ export class GcsProposalStore implements IProposalStore {
     console.log(`[GcsProposalStore] Using bucket: gs://${bucket}`);
   }
 
-  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: import("./state.js").ProposedExecutionPlan): Promise<Proposal> {
+  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: import("./state.js").ProposedExecutionPlan, labels?: Record<string, string>): Promise<Proposal> {
     const num = await getAndIncrementCounter(this.bucket, "proposalCounter");
     const id = `prop-${num}`;
     const now = new Date().toISOString();
@@ -907,6 +946,7 @@ export class GcsProposalStore implements IProposalStore {
       correlationId: correlationId || null,
       executionPlan: executionPlan || null,
       scaffoldResult: null,
+      labels: labels || {},
       createdAt: now,
       updatedAt: now,
     };
@@ -999,7 +1039,7 @@ export class GcsThreadStore implements IThreadStore {
     console.log(`[GcsThreadStore] Using bucket: gs://${bucket}`);
   }
 
-  async openThread(title: string, message: string, author: ThreadAuthor, maxRounds = 10, correlationId?: string): Promise<Thread> {
+  async openThread(title: string, message: string, author: ThreadAuthor, maxRounds = 10, correlationId?: string, labels?: Record<string, string>): Promise<Thread> {
     const num = await getAndIncrementCounter(this.bucket, "threadCounter");
     const id = `thread-${num}`;
     const now = new Date().toISOString();
@@ -1018,6 +1058,7 @@ export class GcsThreadStore implements IThreadStore {
       correlationId: correlationId || null,
       convergenceAction: null,
       messages: [{ author, text: message, timestamp: now, converged: false, intent: null, semanticIntent: null }],
+      labels: labels || {},
       createdAt: now,
       updatedAt: now,
     };

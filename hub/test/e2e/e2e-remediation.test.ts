@@ -87,6 +87,7 @@ describe("Registry Remediation", () => {
       const engCtx = {
         stores: orch.stores,
         emit: async () => {},
+        dispatch: async () => {},
         sessionId: "session-eng-audit-test",
         clientIp: "127.0.0.1",
         role: "engineer",
@@ -189,6 +190,7 @@ describe("Registry Remediation", () => {
       const unknownResult = await orch.router.handle("list_tasks", {}, {
         stores: orch.stores,
         emit: async () => {},
+        dispatch: async () => {},
         sessionId: "unregistered-session",
         clientIp: "127.0.0.1",
         role: "unknown",

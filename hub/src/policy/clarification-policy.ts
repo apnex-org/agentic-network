@@ -23,7 +23,12 @@ async function createClarification(args: Record<string, unknown>, ctx: IPolicyCo
     };
   }
 
-  await ctx.emit("clarification_requested", { taskId, question }, ["architect"]);
+  // Dispatch to architect(s) in the task's label scope.
+  const task = await ctx.stores.task.getTask(taskId);
+  await ctx.dispatch("clarification_requested", { taskId, question }, {
+    roles: ["architect"],
+    matchLabels: task?.labels,
+  });
 
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ success: true, taskId, status: "input_required", question }) }],
@@ -42,7 +47,12 @@ async function resolveClarification(args: Record<string, unknown>, ctx: IPolicyC
     };
   }
 
-  await ctx.emit("clarification_answered", { taskId, answer: answer.substring(0, 200) }, ["engineer"]);
+  // P2P back to the assigned engineer when known, else label-scoped pool fallback.
+  const task = await ctx.stores.task.getTask(taskId);
+  await ctx.dispatch("clarification_answered", { taskId, answer: answer.substring(0, 200) },
+    task?.assignedEngineerId
+      ? { engineerId: task.assignedEngineerId }
+      : { roles: ["engineer"], matchLabels: task?.labels });
 
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ success: true, taskId, status: "working", answer }) }],

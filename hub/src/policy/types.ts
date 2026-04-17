@@ -3,7 +3,7 @@
  */
 
 import type { ZodType } from "zod";
-import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore } from "../state.js";
+import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, Selector } from "../state.js";
 import type { IIdeaStore, IMissionStore, ITurnStore, ITeleStore } from "../entities/index.js";
 
 // ── Domain Event (internal, synchronous) ────────────────────────────
@@ -31,8 +31,10 @@ export interface AllStores {
 
 export interface IPolicyContext {
   stores: AllStores;
-  /** Emit an SSE notification to connected clients */
+  /** Emit an SSE notification to connected clients (role-based, legacy) */
   emit: (event: string, data: Record<string, unknown>, targetRoles?: string[]) => Promise<void>;
+  /** Mission-19: dispatch by selector (role ∧ matchLabels equality). */
+  dispatch: (event: string, data: Record<string, unknown>, selector: Selector) => Promise<void>;
   /** Current session identity */
   sessionId: string;
   clientIp: string;

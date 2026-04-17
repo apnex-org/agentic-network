@@ -158,10 +158,10 @@ describe("TaskPolicy", () => {
     expect(parsed.status).toBe("pending");
 
     // Should emit directive_issued
-    const issued = ctx.emittedEvents.find(e => e.event === "directive_issued");
+    const issued = ctx.dispatchedEvents.find(e => e.event === "directive_issued");
     expect(issued).toBeDefined();
     expect(issued!.data.taskId).toBe("task-1");
-    expect(issued!.targetRoles).toEqual(["engineer"]);
+    expect(issued!.selector.roles).toEqual(["engineer"]);
   });
 
   it("createTask with title and description", async () => {
@@ -238,7 +238,7 @@ describe("TaskPolicy", () => {
     expect(parsed.status).toBe("in_review");
 
     // report_submitted should be emitted
-    const submitted = reportCtx.emittedEvents.find(e => e.event === "report_submitted");
+    const submitted = reportCtx.dispatchedEvents.find(e => e.event === "report_submitted");
     expect(submitted).toBeDefined();
     expect(submitted!.data.taskId).toBe("task-1");
   });
@@ -329,7 +329,7 @@ describe("TaskPolicy", () => {
     expect(childTask!.status).toBe("blocked");
 
     // No directive_issued for the child
-    const directiveIssued = reportCtx.emittedEvents.find(
+    const directiveIssued = reportCtx.dispatchedEvents.find(
       e => e.event === "directive_issued" && e.data.taskId === "task-2"
     );
     expect(directiveIssued).toBeUndefined();
@@ -352,11 +352,11 @@ describe("TaskPolicy", () => {
     await router.handle("cancel_task", { taskId: "task-1" }, cancelCtx);
 
     // The cascade should have emitted task_cancelled for the child
-    const childCancelled = cancelCtx.emittedEvents.find(
+    const childCancelled = cancelCtx.dispatchedEvents.find(
       e => e.event === "task_cancelled" && e.data.taskId === "task-2"
     );
     expect(childCancelled).toBeDefined();
-    expect(childCancelled!.targetRoles).toEqual(["architect"]);
+    expect(childCancelled!.selector.roles).toEqual(["architect"]);
   });
 
   it("getPendingActions returns empty summary", async () => {
