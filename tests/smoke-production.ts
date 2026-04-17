@@ -169,6 +169,78 @@ async function pickUpTask(
   return task;
 }
 
+// ── Cleanup sweep ────────────────────────────────────────────────────
+
+const TERMINAL_TASK = new Set(["completed", "cancelled", "failed"]);
+const TERMINAL_THREAD = new Set(["closed"]);
+const TERMINAL_PROPOSAL = new Set(["implemented", "rejected"]);
+
+/**
+ * Sweep every artifact tagged with this run and drive it to a terminal
+ * state. Matches by title containing RUN_TAG, which works uniformly
+ * across list_tasks/list_threads/list_proposals regardless of which
+ * fields the Hub exposes in list summaries. Idempotent and best-effort
+ * — logs failures but never throws, so it is safe in a finally block.
+ */
+async function cleanupRunArtifacts(
+  architect: McpAgentClient,
+  engineer: McpAgentClient,
+  runTag: string
+): Promise<void> {
+  console.log("\nCleaning up run artifacts...");
+
+  const mineByTitle = <T extends { title?: unknown }>(items: T[]): T[] =>
+    items.filter((x) => typeof x.title === "string" && x.title.includes(runTag));
+
+  // Tasks: cancel any non-terminal task from this run.
+  try {
+    const res = await call(architect, "list_tasks", {});
+    const tasks = (res.tasks as Array<Record<string, unknown>>) ?? [];
+    for (const t of mineByTitle(tasks)) {
+      if (TERMINAL_TASK.has(t.status as string)) continue;
+      const r = await call(architect, "cancel_task", { taskId: t.id });
+      const ok = r.success === true;
+      console.log(`  ${ok ? "\u2713" : "!"} cancel ${t.id} (${t.status})${ok ? "" : ` \u2192 ${r.error}`}`);
+    }
+  } catch (err) {
+    console.log(`  ! task sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Threads: close any non-closed thread from this run.
+  try {
+    const res = await call(architect, "list_threads", {});
+    const threads = (res.threads as Array<Record<string, unknown>>) ?? [];
+    for (const t of mineByTitle(threads)) {
+      if (TERMINAL_THREAD.has(t.status as string)) continue;
+      const r = await call(architect, "close_thread", { threadId: t.id });
+      const ok = r.success === true;
+      console.log(`  ${ok ? "\u2713" : "!"} close ${t.id} (${t.status})${ok ? "" : ` \u2192 ${r.error}`}`);
+    }
+  } catch (err) {
+    console.log(`  ! thread sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Proposals: engineer can close approved → implemented. Submitted /
+  // changes_requested cannot be cancelled (no tool); report them.
+  try {
+    const res = await call(architect, "list_proposals", {});
+    const proposals = (res.proposals as Array<Record<string, unknown>>) ?? [];
+    for (const p of mineByTitle(proposals)) {
+      const status = p.status as string;
+      if (TERMINAL_PROPOSAL.has(status)) continue;
+      if (status === "approved") {
+        const r = await call(engineer, "close_proposal", { proposalId: p.id });
+        const ok = r.success === true || r.status === "implemented";
+        console.log(`  ${ok ? "\u2713" : "!"} close ${p.id} (${status})${ok ? "" : ` \u2192 ${r.error}`}`);
+      } else {
+        console.log(`  ! proposal ${p.id} left in non-terminal state (${status}) — no cancel tool`);
+      }
+    }
+  } catch (err) {
+    console.log(`  ! proposal sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -201,6 +273,8 @@ async function main(): Promise<void> {
   }
 
   console.log("\nRunning tests...\n");
+
+  try {
 
   // ════════════════════════════════════════════════════════════════════
   // WF-001: Task Happy Path
@@ -363,6 +437,7 @@ async function main(): Promise<void> {
       title: `[smoke] WF-004 proposal (${RUN_TAG})`,
       summary: "Smoke test proposal",
       body: "This is an automated smoke test proposal body.",
+      correlationId: RUN_TAG,
     });
     proposalId = res.proposalId as string;
     assert(!!proposalId, "proposalId returned");
@@ -398,6 +473,7 @@ async function main(): Promise<void> {
     const res = await call(engineer, "create_thread", {
       title: `[smoke] WF-005 thread (${RUN_TAG})`,
       message: "Smoke test thread — engineer opening message",
+      correlationId: RUN_TAG,
     });
     threadId = res.threadId as string;
     assert(!!threadId, "threadId returned");
@@ -473,10 +549,16 @@ async function main(): Promise<void> {
     assertEq(res.status, "completed", "task completed after approved revision");
   });
 
-  // ── Cleanup ────────────────────────────────────────────────────────
-  console.log("\nDisconnecting...");
-  await engineer.stop();
-  await architect.stop();
+  } finally {
+    // Sweep artifacts before disconnecting so both clients are still
+    // live (architect cancels/closes, engineer closes approved proposals).
+    // Runs even if a test above threw.
+    await cleanupRunArtifacts(architect, engineer, RUN_TAG);
+
+    console.log("\nDisconnecting...");
+    await engineer.stop();
+    await architect.stop();
+  }
 
   // ── Summary ────────────────────────────────────────────────────────
   const passed = results.filter((r) => r.passed).length;
