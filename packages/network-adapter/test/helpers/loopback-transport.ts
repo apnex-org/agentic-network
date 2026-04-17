@@ -40,6 +40,19 @@ export interface ToolCall {
   at: number;
 }
 
+/**
+ * Structural contract LoopbackTransport needs from its hub. Lets the
+ * default `LoopbackHub` coexist with `PolicyLoopbackHub` (which plugs
+ * the real Hub PolicyRouter into the same seam) without the transport
+ * needing to know which flavor it's talking to.
+ */
+export interface ILoopbackHub {
+  attach(transport: LoopbackTransport): string;
+  detach(sessionId: string): void;
+  dispatch(sessionId: string, method: string, args: Record<string, unknown>): Promise<unknown>;
+  listMethods(): string[];
+}
+
 interface ToolErrorInjection {
   tool: string;
   errorMessage: string;
@@ -191,7 +204,7 @@ export class LoopbackTransport implements ITransport {
    */
   public role?: string;
 
-  constructor(private readonly hub: LoopbackHub) {}
+  constructor(private readonly hub: ILoopbackHub) {}
 
   get wireState(): WireState {
     return this._wireState;

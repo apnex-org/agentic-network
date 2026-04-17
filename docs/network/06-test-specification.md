@@ -2,7 +2,7 @@
 
 ## Scope
 
-All tests target the shared network-adapter package (`@ois/network-adapter`) in isolation — no Cloud Run agents, no Gemini, no OpenCode. Tests use **real production code** for both the Hub networking layer (`hub-networking.ts`) and the client (`McpTransport` + `McpAgentClient`), connected via real MCP SDK transports. The only shim is a minimal `register_role` tool — everything else is production code.
+All tests target the shared network-adapter package (`@ois/network-adapter`) in isolation — no Cloud Run agents, no Gemini, no OpenCode. Tests use **real production code** for both the Hub networking layer (`hub-networking.ts`) and the client (`McpTransport` + `McpAgentClient`), connected via real MCP SDK transports. The only shim is a minimal `register_role` tool — everything else is production code. Mission-19 L7 tests additionally run against `PolicyLoopbackHub`, which plugs the real Hub `PolicyRouter` (all 13 policies) + in-memory stores behind the `ILoopbackHub` contract, so the full policy stack executes without spinning up HTTP/SSE.
 
 **Run tests:** `cd packages/network-adapter && npm test`
 
@@ -35,8 +35,9 @@ and the two invariant tests that ride on top of it.
 | `test/integration/register-role-payload.test.ts` | L7  | 1     | **Invariant #9** — two `register_role` calls on the same session, plain first then enriched. Runs on `LoopbackTransport`. |
 | `test/integration/sync-phase-rpcs.test.ts`    | L7    | 1     | **Invariant #10** — `get_task` + `get_pending_actions` fire during `synchronizing`, strictly after enriched `register_role`, strictly before `streaming`. Runs on `LoopbackTransport`. |
 | `test/integration/invariant-gaps.test.ts`    | L7    | 3     | **G2/G3/G4** — duplicate hub-event dedup, `getTransport()` + `listMethods()` live pass-through, 401 handshake propagates out of `start()`. |
+| `test/integration/label-routing.test.ts`     | L7    | 5     | **Mission-19** — handshake label plumbing + dispatch selector isolation + INV-AG1 (immutable labels) + INV-SYS-L09 (empty matchLabels = broadcast). Runs on `PolicyLoopbackHub` (real Hub `PolicyRouter` + all 13 policies behind `LoopbackTransport`). |
 
-**Totals:** 9 files, 68 tests.
+**Totals:** 10 files, 73 tests.
 
 ## Invariant coverage
 
@@ -64,11 +65,14 @@ This table maps the behavioural invariants the package is required to enforce ba
 | G2 | Duplicate hub-event (same id + entity + timestamp) is delivered to callbacks exactly once.   | L7    | `invariant-gaps.test.ts`                                     | covered    |
 | G3 | `getTransport()` returns the injected instance live; `listMethods()` reflects hub state.    | L7    | `invariant-gaps.test.ts`                                     | covered    |
 | G4 | A non-retriable handshake error (e.g. 401) propagates out of `start()` and leaves `disconnected`. | L7    | `invariant-gaps.test.ts`                                     | covered    |
+| M19-AG1 | Agent.labels stamped on first register_role; later handshakes with different labels cannot overwrite (immutability). | L7 | `label-routing.test.ts`                                      | covered    |
+| M19-L7a | `HandshakeConfig.labels` flows through enriched `register_role` onto the Agent entity; omitting it persists `labels = {}`. | L7 | `label-routing.test.ts`                                      | covered    |
+| M19-L7b | `ctx.dispatch` with `matchLabels: {env:"prod"}` delivers only to Agents whose `labels` match; `matchLabels: {}` broadcasts to all role-matching Agents (INV-SYS-L09). | L7 | `label-routing.test.ts`                                      | covered    |
 
 ### Known gaps
 
-None. All 16 primary invariants plus G1–G4 are pinned. New gaps should be
-added here as the package grows.
+None. All 16 primary invariants plus G1–G4 and the Mission-19 L7 round-trip
+rows are pinned. New gaps should be added here as the package grows.
 
 ## Test conventions
 
@@ -99,6 +103,9 @@ npx vitest run test/integration/mcp-agent-client.test.ts
 
 # Just the two invariant regressions
 npx vitest run test/integration/register-role-payload.test.ts test/integration/sync-phase-rpcs.test.ts
+
+# Mission-19 label routing (L7 full-stack E2E through real PolicyRouter)
+npx vitest run test/integration/label-routing.test.ts
 
 # Unit (handshake primitives + instance bootstrap + deferred backlog)
 npx vitest run test/unit

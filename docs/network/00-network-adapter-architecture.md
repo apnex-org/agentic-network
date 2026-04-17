@@ -297,13 +297,15 @@ Two `register_role` calls happen on every fresh session, in order, on
 the same session id:
 
 1. **Plain** — during `connecting`, at the wire-init seam. No enriched payload. Establishes the session id.
-2. **Enriched** — immediately after, carrying `globalInstanceId`, `proxyName`, `proxyVersion`, `transport`, `sdkVersion`, `clientInfo`, optional `llmModel`. This is the M18 identity — how the Hub tells two sessions belonging to the same physical agent apart from two agents racing the same token.
+2. **Enriched** — immediately after, carrying `globalInstanceId`, `proxyName`, `proxyVersion`, `transport`, `sdkVersion`, `clientInfo`, optional `llmModel`, and optional Mission-19 `labels`. This is the M18 identity — how the Hub tells two sessions belonging to the same physical agent apart from two agents racing the same token.
 
 Fatal handshake codes (`agent_thrashing_detected`, `role_mismatch`) do
 NOT retry. They invoke `onFatalHalt` and the shim is expected to exit
 the host process (`makeStdioFatalHalt` is provided for stdio shims).
 
-Pinned by: `handshake.test.ts` (unit) + `register-role-payload.test.ts` (integration, Invariant #9).
+**Mission-19 routing labels.** The enriched call also forwards `labels?: Record<string, string>` from `HandshakeConfig.labels`. The Hub stamps these onto the Agent entity **once, immutably** (INV-AG1) — a later handshake with a different label map cannot overwrite them. Downstream, `task.labels` inherits from the creator Agent and `ctx.dispatch` uses them as `matchLabels`, so agents with `{env:"prod"}` form an isolated virtual network from agents with `{env:"smoke"}`. Omit `labels` for the legacy broadcast behavior (INV-SYS-L09: empty `matchLabels` matches all role-qualified Agents). See `docs/network/workflow-registry.md` §6 for selector semantics and `packages/network-adapter/test/integration/label-routing.test.ts` for the full L7 round-trip E2E.
+
+Pinned by: `handshake.test.ts` (unit) + `register-role-payload.test.ts` (integration, Invariant #9) + `label-routing.test.ts` (Mission-19 L7 E2E).
 
 ### 6.4 State sync
 

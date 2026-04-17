@@ -1,6 +1,6 @@
 # OIS SDK Guide — Module & Interface Reference
 
-**Last updated:** 2026-04-16
+**Last updated:** 2026-04-17
 
 This document catalogues every module in the OIS agentic network, its public surface, and its purpose. Use it to reason orthogonally about function: each module owns one concern, and this guide maps what that concern is.
 
@@ -69,6 +69,8 @@ Enriched `register_role` handshake with M18 Agent metadata, fatal-code detection
 | `makeStdioFatalHalt` | function | Builds fatal-halt function with stdio drain delay |
 
 **Naming verdict:** The `Handshake*` prefix is consistent and clear. No changes needed.
+
+**Mission-19 routing labels:** `HandshakeConfig.labels?: Record<string, string>` carries K8s-style equality labels through the enriched `register_role` call. The Hub stamps them onto the Agent entity **once, immutably** (INV-AG1) — subsequent handshakes with a different `labels` map are ignored. Tasks created by the Agent inherit these labels and dispatch selectors use them as `matchLabels`, so two agents with `{env:"prod"}` form an isolated virtual network from agents with `{env:"smoke"}`. Omit `labels` (or pass `{}`) to keep legacy broadcast semantics (INV-SYS-L09: empty matchLabels = broadcast to all role-matching agents). See `docs/network/workflow-registry.md` §6 for routing semantics and `packages/network-adapter/test/integration/label-routing.test.ts` for the full-stack L7 E2E.
 
 ### 1.4 Event Router — `event-router.ts`
 

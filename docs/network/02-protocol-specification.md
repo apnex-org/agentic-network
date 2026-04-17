@@ -228,13 +228,23 @@ File naming uses zero-padded IDs (6 digits) for lexicographic ordering, enabling
 After MCP initialization, agents must register their role:
 
 ```
-POST /mcp → register_role({ role: "engineer" | "architect" })
+POST /mcp → register_role({
+  role: "engineer" | "architect" | "director",
+  globalInstanceId?: string,            // M18 Agent fingerprint
+  clientMetadata?: { ... },             // M18 enriched payload
+  advisoryTags?: { ... },
+  labels?: Record<string, string>       // Mission-19 routing labels (K8s equality)
+})
 ```
 
 This binds the session to a role, enabling:
 - Role-targeted notification delivery
 - Engineer registry tracking (connect/disconnect, task counts)
 - Session reaper orphan detection (unregistered sessions pruned after 60s)
+
+### Mission-19 routing labels
+
+`labels` is an optional K8s-style equality map stamped onto the Agent entity **once, immutably** (INV-AG1). Subsequent `register_role` calls for the same `globalInstanceId` cannot rewrite the labels. Tasks created by the Agent inherit the labels and `ctx.dispatch` selectors use them as `matchLabels`, scoping delivery to label-matching agents only. Omit `labels` (or pass `{}`) for legacy broadcast semantics — empty `matchLabels` matches every role-qualified Agent (INV-SYS-L09). See `docs/network/workflow-registry.md` §6 for selector semantics.
 
 ## Document Storage
 
