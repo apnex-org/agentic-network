@@ -27,8 +27,10 @@
  */
 
 import { McpAgentClient } from "../packages/network-adapter/src/index.js";
+import type { AgentEvent } from "../packages/network-adapter/src/index.js";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 
 // ── Configuration ────────────────────────────────────────────────────
 
@@ -105,11 +107,26 @@ function assertEq<T>(actual: T, expected: T, label: string): void {
 
 async function createClient(
   config: HubConfig,
-  role: string
+  role: string,
+  labels?: Record<string, string>
 ): Promise<McpAgentClient> {
+  // Labels only stick when the M18 enriched handshake runs — the bare
+  // register_role path silently drops them (no Agent entity is created,
+  // so callerLabels() returns {} and dispatch degrades to broadcast).
+  // Fabricate a per-session globalInstanceId so each smoke run gets a
+  // fresh Agent (no collision with prior runs or real operators).
   const client = new McpAgentClient(
     {
       role,
+      labels,
+      handshake: {
+        globalInstanceId: `smoke-${role}-${randomUUID()}`,
+        proxyName: "smoke-production",
+        proxyVersion: "0.0.0",
+        transport: "http",
+        sdkVersion: "0.0.0",
+        getClientInfo: () => ({ name: "smoke-production", version: "0.0.0" }),
+      },
       logger: () => {}, // suppress transport chatter
     },
     {
@@ -255,17 +272,23 @@ async function main(): Promise<void> {
   let architect: McpAgentClient;
   let engineer: McpAgentClient;
 
+  // Mission-19: smoke clients register with env:smoke so their traffic
+  // does not broadcast into prod engineer/architect pools. Labels are
+  // immutable post-create (INV-AG1); the bare register_role call stamps
+  // them before any scoped dispatch fires.
+  const SMOKE_LABELS = { env: "smoke" };
+
   try {
-    architect = await createClient(config, "architect");
-    console.log("  architect: connected");
+    architect = await createClient(config, "architect", SMOKE_LABELS);
+    console.log("  architect: connected (labels: env=smoke)");
   } catch (err) {
     console.error(`FATAL: architect connection failed: ${err}`);
     process.exit(1);
   }
 
   try {
-    engineer = await createClient(config, "engineer");
-    console.log("  engineer:  connected");
+    engineer = await createClient(config, "engineer", SMOKE_LABELS);
+    console.log("  engineer:  connected (labels: env=smoke)");
   } catch (err) {
     console.error(`FATAL: engineer connection failed: ${err}`);
     await architect.stop();
@@ -273,6 +296,9 @@ async function main(): Promise<void> {
   }
 
   console.log("\nRunning tests...\n");
+
+  // Hoisted so the finally block can stop it on test failure too.
+  let prodEngineer: McpAgentClient | undefined;
 
   try {
 
@@ -549,6 +575,59 @@ async function main(): Promise<void> {
     assertEq(res.status, "completed", "task completed after approved revision");
   });
 
+  // ════════════════════════════════════════════════════════════════════
+  // M19-ISO: Label isolation
+  //   A parallel engineer labeled env:prod must NOT receive directive_issued
+  //   for a task created by an env:smoke architect. Exercises the full
+  //   live dispatch path (selector resolution → transport → notification).
+  // ════════════════════════════════════════════════════════════════════
+  let isoTaskId: string | undefined;
+
+  await runTest("M19-ISO.1 Prod-scoped engineer connects in parallel", async () => {
+    prodEngineer = await createClient(config, "engineer", { env: "prod" });
+    assert(!!prodEngineer, "prod engineer connected");
+  });
+
+  await runTest("M19-ISO.2 Smoke directive does NOT reach env:prod engineer", async () => {
+    assert(!!prodEngineer, "prerequisite");
+    const received: AgentEvent[] = [];
+    prodEngineer!.setCallbacks({
+      onActionableEvent: (e) => received.push(e),
+      onInformationalEvent: (e) => received.push(e),
+    });
+
+    const res = await call(architect, "create_task", {
+      title: `[smoke] M19-ISO task (${RUN_TAG})`,
+      description: "Label isolation assertion — should not reach env:prod engineer",
+      correlationId: RUN_TAG,
+    });
+    isoTaskId = res.taskId as string;
+    assert(!!isoTaskId, "taskId returned");
+
+    // Give the Hub a moment to dispatch. directive_issued on the smoke
+    // engineer should arrive within a few hundred ms; if prod receives
+    // it, it lands in the same window.
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const leaked = received.filter(
+      (e) =>
+        e.event === "directive_issued" &&
+        (e as unknown as { taskId?: string }).taskId === isoTaskId
+    );
+    assert(
+      leaked.length === 0,
+      `env:prod engineer received ${leaked.length} directive_issued events for the smoke task — label isolation broken`,
+    );
+  });
+
+  await runTest("M19-ISO.3 env:smoke engineer CAN claim the smoke task (sanity)", async () => {
+    assert(!!isoTaskId, "prerequisite");
+    // The smoke engineer is labeled env:smoke and must be able to claim.
+    // This guards against over-restrictive selector logic (false negative).
+    const task = await pickUpTask(engineer, isoTaskId!);
+    assertEq(task.status, "working", "smoke engineer claims smoke task");
+  });
+
   } finally {
     // Sweep artifacts before disconnecting so both clients are still
     // live (architect cancels/closes, engineer closes approved proposals).
@@ -558,6 +637,7 @@ async function main(): Promise<void> {
     console.log("\nDisconnecting...");
     await engineer.stop();
     await architect.stop();
+    if (prodEngineer) await prodEngineer.stop();
   }
 
   // ── Summary ────────────────────────────────────────────────────────

@@ -74,6 +74,17 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
 
   // Legacy path: bare {role} call, backwards-compatible with @ois/hub-connection <= 1.3.0.
   // Records the role in the sessionRoles map for RBAC; no Agent entity is created.
+  //
+  // Mission-19 label routing requires an Agent entity (labels are persisted on
+  // the Agent, not on the session). Warn loudly so callers that set `labels`
+  // here notice the silent degradation and switch to the enriched M18 handshake.
+  if (labels && Object.keys(labels).length > 0) {
+    console.warn(
+      `[session-policy] register_role(bare) received labels=${JSON.stringify(labels)} ` +
+      `on sessionId=${sid} role=${role} but labels are only persisted via the enriched M18 handshake ` +
+      `(globalInstanceId + clientMetadata). Dropping labels — caller will default to broadcast dispatch.`
+    );
+  }
   ctx.stores.engineerRegistry.setSessionRole(sid, role as "engineer" | "architect");
   return {
     content: [{

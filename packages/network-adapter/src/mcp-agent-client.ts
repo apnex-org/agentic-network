@@ -401,6 +401,12 @@ export class McpAgentClient implements IAgentClient {
     // session is bound before spending round-trips on the enriched
     // payload. This ordering is invariant: the enriched handshake below
     // re-registers on the same session to stamp its semantics onto it.
+    //
+    // Labels are intentionally NOT forwarded here: the Hub's legacy
+    // bare-path handler drops them silently (it doesn't create an Agent
+    // entity). Labels must ride the enriched payload below so they
+    // persist on the Agent and subsequent task.labels / dispatch
+    // selectors pick them up.
     await this.transport.request("register_role", { role: this.cfg.role });
     this.totalHandshakes++;
     this.log.log(
@@ -422,6 +428,7 @@ export class McpAgentClient implements IAgentClient {
         transport: handshake.transport,
         sdkVersion: handshake.sdkVersion,
         llmModel: handshake.llmModel,
+        labels: this.cfg.labels,
       },
       previousEpoch: this._lastEpoch,
       log: this.log,

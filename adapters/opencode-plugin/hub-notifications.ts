@@ -84,6 +84,29 @@ interface HubConfig {
   hubToken: string
   autoPrompt: boolean
   role: string
+  /**
+   * Mission-19 routing labels. Stamped onto the Agent entity via the
+   * enriched register_role handshake; scoped dispatches filter by these.
+   * From hub-config.json `labels` field or OIS_HUB_LABELS env var (JSON).
+   */
+  labels?: Record<string, string>
+}
+
+function parseLabels(raw: string | undefined, source: string): Record<string, string> | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const out: Record<string, string> = {}
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === "string") out[k] = v
+      }
+      return Object.keys(out).length > 0 ? out : undefined
+    }
+  } catch (err) {
+    log(`WARNING: Failed to parse labels from ${source}: ${err}`)
+  }
+  return undefined
 }
 
 function loadConfig(directory: string): HubConfig {
@@ -105,6 +128,8 @@ function loadConfig(directory: string): HubConfig {
   if (process.env.OIS_HUB_ROLE) cfg.role = process.env.OIS_HUB_ROLE
   if (process.env.HUB_PLUGIN_AUTO_PROMPT)
     cfg.autoPrompt = process.env.HUB_PLUGIN_AUTO_PROMPT.toLowerCase() !== "false"
+  const envLabels = parseLabels(process.env.OIS_HUB_LABELS, "OIS_HUB_LABELS env var")
+  if (envLabels) cfg.labels = envLabels
   return cfg
 }
 
@@ -446,9 +471,14 @@ async function connectToHub(globalInstanceId: string): Promise<void> {
     // restarts. Do NOT call process.exit — that would kill the whole TUI.
   }
 
+  if (config.labels) {
+    log(`Labels: ${JSON.stringify(config.labels)}`)
+  }
+
   hubAdapter = new McpAgentClient(
     {
       role: config.role,
+      labels: config.labels,
       logger: log,
       handshake: {
         globalInstanceId,

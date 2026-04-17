@@ -38,6 +38,30 @@ interface HubConfig {
   hubUrl: string;
   hubToken: string;
   role: string;
+  /**
+   * Mission-19 routing labels. Stamped onto the Agent entity via the
+   * enriched register_role handshake; scoped dispatches (tasks, threads,
+   * etc.) filter by these. Read from hub-config.json `labels` field or
+   * the `OIS_HUB_LABELS` env var (JSON-encoded). Omit for broadcast.
+   */
+  labels?: Record<string, string>;
+}
+
+function parseLabels(raw: string | undefined, source: string): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === "string") out[k] = v;
+      }
+      return Object.keys(out).length > 0 ? out : undefined;
+    }
+  } catch (err) {
+    console.error(`WARNING: Failed to parse labels from ${source}: ${err}`);
+  }
+  return undefined;
 }
 
 function loadConfig(): HubConfig {
@@ -48,7 +72,12 @@ function loadConfig(): HubConfig {
   if (existsSync(configPath)) {
     try {
       const raw = JSON.parse(readFileSync(configPath, "utf-8"));
-      fileConfig = { hubUrl: raw.hubUrl, hubToken: raw.hubToken, role: raw.role };
+      fileConfig = {
+        hubUrl: raw.hubUrl,
+        hubToken: raw.hubToken,
+        role: raw.role,
+        labels: raw.labels,
+      };
     } catch (err) {
       console.error(`WARNING: Failed to parse ${configPath}: ${err}`);
     }
@@ -57,13 +86,16 @@ function loadConfig(): HubConfig {
   const hubUrl = process.env.OIS_HUB_URL || fileConfig.hubUrl || "";
   const hubToken = process.env.OIS_HUB_TOKEN || fileConfig.hubToken || "";
   const role = process.env.OIS_HUB_ROLE || fileConfig.role || "engineer";
+  const labels =
+    parseLabels(process.env.OIS_HUB_LABELS, "OIS_HUB_LABELS env var") ??
+    fileConfig.labels;
 
   if (!hubUrl || !hubToken) {
     console.error("ERROR: Hub credentials not found. Checked .ois/hub-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars");
     process.exit(1);
   }
 
-  return { hubUrl, hubToken, role };
+  return { hubUrl, hubToken, role, labels };
 }
 
 const config = loadConfig();
@@ -174,9 +206,14 @@ async function main(): Promise<void> {
 
   const fatalHalt = makeStdioFatalHalt(log);
 
+  if (config.labels) {
+    log(`Labels: ${JSON.stringify(config.labels)}`);
+  }
+
   agent = new McpAgentClient(
     {
       role: config.role,
+      labels: config.labels,
       logger: log,
       handshake: {
         globalInstanceId,

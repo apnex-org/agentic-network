@@ -126,6 +126,13 @@ export interface AgentHandshakeConfig {
 export interface AgentClientConfig {
   /** Role the session registers as (e.g. "engineer", "architect"). */
   role: string;
+  /**
+   * Mission-19 routing labels. Persisted on first-create and immutable
+   * thereafter (INV-AG1). Only take effect when an enriched `handshake`
+   * config is also supplied — the Hub's bare register_role handler
+   * drops labels silently because it doesn't create an Agent entity.
+   */
+  labels?: Record<string, string>;
   /** Optional full enriched handshake. When omitted, plain register_role. */
   handshake?: AgentHandshakeConfig;
   /** Structured logger. Legacy string logger accepted during migration. */

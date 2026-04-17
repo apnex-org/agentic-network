@@ -23,10 +23,35 @@ const GCS_BUCKET = process.env.GCS_BUCKET || "ois-relay-hub-state";
 const CONTEXT_PREFIX = process.env.CONTEXT_PREFIX || "architect-context/";
 const EVENT_LOOP_ENABLED =
   (process.env.EVENT_LOOP_ENABLED || "true").toLowerCase() !== "false";
+const GLOBAL_INSTANCE_ID = process.env.OIS_GLOBAL_INSTANCE_ID;
+const SERVICE_NAME = process.env.K_SERVICE || "architect-cloudrun";
+const PROXY_VERSION = process.env.K_REVISION || "0.0.0";
+
+function parseLabels(raw: string | undefined): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === "string") out[k] = v;
+      }
+      return Object.keys(out).length > 0 ? out : undefined;
+    }
+  } catch (err) {
+    console.error(`WARNING: Failed to parse OIS_HUB_LABELS: ${err}`);
+  }
+  return undefined;
+}
 
 // ── Initialize Components ────────────────────────────────────────────
 
-const hub = new HubAdapter(HUB_URL, HUB_TOKEN, "architect");
+const hub = new HubAdapter(HUB_URL, HUB_TOKEN, "architect", {
+  labels: parseLabels(process.env.OIS_HUB_LABELS),
+  globalInstanceId: GLOBAL_INSTANCE_ID,
+  serviceName: SERVICE_NAME,
+  proxyVersion: PROXY_VERSION,
+});
 const context = new ContextStore({ bucket: GCS_BUCKET, prefix: CONTEXT_PREFIX });
 
 // Wire SSE notifications to handlers

@@ -21,6 +21,27 @@ import {
 
 export type HubEventHandler = (eventData: Record<string, unknown>) => void;
 
+export interface HubAdapterOptions {
+  /**
+   * Mission-19 routing labels (e.g. {env:"prod"}). Only take effect
+   * when an enriched handshake runs (i.e. `globalInstanceId` is also
+   * provided); otherwise the Hub's bare-path register_role drops them.
+   */
+  labels?: Record<string, string>;
+  /**
+   * Stable client identifier. When set, the architect runs the M18
+   * enriched handshake so an Agent entity is created/updated with
+   * `labels` and routing selectors can exclude it. In Cloud Run, set
+   * this via a terraform-managed env var so Agent identity survives
+   * revision churn.
+   */
+  globalInstanceId?: string;
+  /** Human-readable client name surfaced in clientMetadata. Defaults to "architect-cloudrun". */
+  serviceName?: string;
+  /** Proxy version surfaced in clientMetadata. Defaults to "0.0.0". */
+  proxyVersion?: string;
+}
+
 export class HubAdapter {
   private agent: McpAgentClient;
 
@@ -29,11 +50,31 @@ export class HubAdapter {
 
   private onSyncRequired: (() => void) | null = null;
 
-  constructor(hubUrl: string, hubToken: string, role: string = "architect") {
+  constructor(
+    hubUrl: string,
+    hubToken: string,
+    role: string = "architect",
+    opts: HubAdapterOptions = {}
+  ) {
+    const serviceName = opts.serviceName ?? "architect-cloudrun";
+    const proxyVersion = opts.proxyVersion ?? "0.0.0";
+    const handshake = opts.globalInstanceId
+      ? {
+          globalInstanceId: opts.globalInstanceId,
+          proxyName: "@ois/vertex-cloudrun",
+          proxyVersion,
+          transport: "http",
+          sdkVersion: "@ois/network-adapter@2.0.0",
+          getClientInfo: () => ({ name: serviceName, version: proxyVersion }),
+        }
+      : undefined;
+
     this.agent = new McpAgentClient(
       {
         role,
+        labels: opts.labels,
         logger: (msg) => console.log(`[HubAdapter] ${msg}`),
+        handshake,
       },
       {
         transportConfig: { url: hubUrl, token: hubToken },

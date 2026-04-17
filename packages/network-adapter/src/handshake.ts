@@ -48,6 +48,7 @@ export interface HandshakePayload {
   globalInstanceId: string;
   clientMetadata: HandshakeClientMetadata;
   advisoryTags: HandshakeAdvisoryTags;
+  labels?: Record<string, string>;
 }
 
 export interface HandshakeResponse {
@@ -119,6 +120,14 @@ export interface HandshakeConfig {
   transport: string;
   sdkVersion: string;
   llmModel?: string;
+  /**
+   * Mission-19 routing labels. Forwarded as the `labels` arg on the
+   * enriched register_role call. Hub persists them on the Agent entity
+   * (immutable after first create — INV-AG1), and subsequent
+   * `task.labels` / dispatch selectors inherit from the Agent. Omit to
+   * keep legacy broadcast semantics (labels = {}).
+   */
+  labels?: Record<string, string>;
 }
 
 export interface HandshakeContext {
@@ -148,7 +157,7 @@ export interface HandshakeResult {
  * Build the enriched register_role payload.
  */
 export function buildHandshakePayload(config: HandshakeConfig): HandshakePayload {
-  return {
+  const payload: HandshakePayload = {
     role: config.role,
     globalInstanceId: config.globalInstanceId,
     clientMetadata: {
@@ -166,6 +175,8 @@ export function buildHandshakePayload(config: HandshakeConfig): HandshakePayload
       llmModel: config.llmModel ?? "unknown",
     },
   };
+  if (config.labels) payload.labels = config.labels;
+  return payload;
 }
 
 /**
