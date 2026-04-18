@@ -243,9 +243,20 @@ export async function sandwichThreadReply(
 
     // 2. REASON — tool-driven: the LLM drives convergence by invoking
     // create_thread_reply with the real Hub schema (Threads 2.0, ADR-013).
-    // Tool surface is narrowed to avoid spawning tasks/proposals during
-    // ideation — cascade work belongs to sandwichThreadConverged.
-    const THREAD_REPLY_TOOLS = ["create_thread_reply", "get_document"];
+    // Tool surface includes a small workflow-action set so the Architect
+    // can execute mission/task management from within a thread reply
+    // (Phase 2 anticipated via stagedActions; this allow-list is the
+    // interim bridge until Phase 2 cascade vocabulary ships). The cascade
+    // guard in sandwichThreadConverged still suppresses auto-directive
+    // spawn on close_no_action threads, so this doesn't reintroduce the
+    // double-action class we fixed in commit f2f3799.
+    const THREAD_REPLY_TOOLS = [
+      "create_thread_reply",
+      "get_document",
+      "create_mission",
+      "create_task",
+      "create_audit_entry",
+    ];
     const allTools = (await hub.listTools()) as Array<{
       name: string;
       description?: string;
