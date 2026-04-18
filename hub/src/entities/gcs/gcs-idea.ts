@@ -10,7 +10,7 @@ import {
   updateExisting,
   GcsPathNotFound,
 } from "../../gcs-state.js";
-import type { Idea, IdeaStatus, IIdeaStore } from "../idea.js";
+import type { Idea, IdeaStatus, IIdeaStore, CascadeBacklink } from "../idea.js";
 
 export class GcsIdeaStore implements IIdeaStore {
   private bucket: string;
@@ -24,7 +24,8 @@ export class GcsIdeaStore implements IIdeaStore {
     text: string,
     author: string,
     sourceThreadId?: string,
-    tags?: string[]
+    tags?: string[],
+    backlink?: CascadeBacklink
   ): Promise<Idea> {
     const num = await getAndIncrementCounter(this.bucket, "ideaCounter");
     const id = `idea-${num}`;
@@ -36,15 +37,29 @@ export class GcsIdeaStore implements IIdeaStore {
       author,
       status: "open",
       missionId: null,
-      sourceThreadId: sourceThreadId || null,
+      sourceThreadId: backlink?.sourceThreadId ?? sourceThreadId ?? null,
+      sourceActionId: backlink?.sourceActionId ?? null,
+      sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
       tags: tags || [],
       createdAt: now,
       updatedAt: now,
     };
 
     await createOnly<Idea>(this.bucket, `ideas/${id}.json`, idea);
-    console.log(`[GcsIdeaStore] Idea submitted: ${id}`);
+    console.log(`[GcsIdeaStore] Idea submitted: ${id}${backlink ? ` (cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId})` : ""}`);
     return { ...idea };
+  }
+
+  async findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Idea | null> {
+    const files = await listFiles(this.bucket, "ideas/");
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const idea = await readJson<Idea>(this.bucket, file);
+      if (idea && idea.sourceThreadId === key.sourceThreadId && idea.sourceActionId === key.sourceActionId) {
+        return idea;
+      }
+    }
+    return null;
   }
 
   async getIdea(ideaId: string): Promise<Idea | null> {

@@ -16,6 +16,11 @@ import type { DomainEvent } from "./types.js";
 import { callerLabels } from "./labels.js";
 import { LIST_PAGINATION_SCHEMA, LIST_LABELS_SCHEMA, applyLabelFilter, paginate } from "./list-filters.js";
 import { runCascade } from "./cascade.js";
+// Side-effect import: registers per-action-type cascade handlers
+// (create_task, create_proposal, create_idea) with the cascade
+// registry at module-load time. Adding a new handler type: append
+// to cascade-actions/index.ts.
+import "./cascade-actions/index.js";
 
 // ── Routing Mode Validation (M24-T2, INV-TH18) ──────────────────────
 /**

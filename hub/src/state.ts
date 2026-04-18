@@ -32,8 +32,33 @@ export interface Task {
   labels: Record<string, string>;
   /** Mission-20 Phase 3: owning Turn for virtual-view composition. */
   turnId: string | null;
+  /**
+   * Mission-24 Phase 2 (ADR-014, INV-TH20/23): cascade-spawn back-links.
+   * When this Task was spawned by a thread cascade handler, these fields
+   * carry the provenance pair (sourceThreadId+sourceActionId is the
+   * natural idempotency key) plus the thread's negotiated summary frozen
+   * at commit (Summary-as-Living-Record). Null for non-cascade-spawned
+   * tasks — Director-directed, legacy, or Architect-decomposed tasks.
+   */
+  sourceThreadId: string | null;
+  sourceActionId: string | null;
+  sourceThreadSummary: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Mission-24 Phase 2 (ADR-014): cascade-spawn provenance metadata
+ * attached to any entity created by a cascade handler. `sourceThreadId`
+ * + `sourceActionId` form the natural idempotency key (INV-TH20);
+ * `sourceThreadSummary` preserves the decision narrative per INV-TH23
+ * (Summary-as-Living-Record) even if the source thread is later
+ * archived or expired.
+ */
+export interface CascadeBacklink {
+  sourceThreadId: string;
+  sourceActionId: string;
+  sourceThreadSummary: string;
 }
 
 /**
@@ -219,6 +244,11 @@ export interface Proposal {
   scaffoldResult: ScaffoldResult | null;
   /** Mission-19: routing labels inherited from creator at submit-time. */
   labels: Record<string, string>;
+  /** Mission-24 Phase 2 (ADR-014, INV-TH20/23): cascade-spawn back-links.
+   * See Task.sourceThreadId for semantics. */
+  sourceThreadId: string | null;
+  sourceActionId: string | null;
+  sourceThreadSummary: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -690,17 +720,32 @@ export interface IThreadStore {
 }
 
 export interface IProposalStore {
-  submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>): Promise<Proposal>;
+  submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<Proposal>;
   setScaffoldResult(proposalId: string, result: ScaffoldResult): Promise<boolean>;
   getProposals(status?: ProposalStatus): Promise<Proposal[]>;
   getProposal(proposalId: string): Promise<Proposal | null>;
   reviewProposal(proposalId: string, decision: ProposalStatus, feedback: string): Promise<boolean>;
   closeProposal(proposalId: string): Promise<boolean>;
+  /**
+   * Mission-24 Phase 2 (ADR-014, INV-TH20): look up a Proposal by the
+   * natural idempotency key {sourceThreadId, sourceActionId}. Returns
+   * null when no Proposal has been spawned from that thread+action pair.
+   */
+  findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Proposal | null>;
 }
 
 export interface ITaskStore {
-  submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>): Promise<string>;
+  submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<string>;
   findByIdempotencyKey(key: string): Promise<Task | null>;
+  /**
+   * Mission-24 Phase 2 (ADR-014, INV-TH20): look up a Task by the natural
+   * idempotency key {sourceThreadId, sourceActionId}. Returns null when
+   * no Task has been spawned from that thread+action pair. Cascade
+   * handlers query this before create to dedupe retries. The key
+   * structurally matches CascadeBacklink minus the summary — summary
+   * isn't part of the lookup.
+   */
+  findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Task | null>;
   unblockDependents(completedTaskId: string): Promise<string[]>;
   cancelDependents(failedTaskId: string): Promise<string[]>;
   /**
@@ -797,7 +842,7 @@ export class MemoryTaskStore implements ITaskStore {
   private tasks: Map<string, Task> = new Map();
   private counter = 0;
 
-  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>): Promise<string> {
+  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<string> {
     this.counter++;
     const id = `task-${this.counter}`;
     const now = new Date().toISOString();
@@ -823,16 +868,28 @@ export class MemoryTaskStore implements ITaskStore {
       status: hasDeps ? "blocked" : "pending",
       labels: labels || {},
       turnId: null,
+      sourceThreadId: backlink?.sourceThreadId ?? null,
+      sourceActionId: backlink?.sourceActionId ?? null,
+      sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
       createdAt: now,
       updatedAt: now,
     });
-    console.log(`[MemoryTaskStore] Directive submitted: ${id} (status: ${hasDeps ? "blocked" : "pending"})`);
+    console.log(`[MemoryTaskStore] Directive submitted: ${id} (status: ${hasDeps ? "blocked" : "pending"}${backlink ? `, cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId}` : ""})`);
     return id;
   }
 
   async findByIdempotencyKey(key: string): Promise<Task | null> {
     for (const task of this.tasks.values()) {
       if (task.idempotencyKey === key) {
+        return { ...task };
+      }
+    }
+    return null;
+  }
+
+  async findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Task | null> {
+    for (const task of this.tasks.values()) {
+      if (task.sourceThreadId === key.sourceThreadId && task.sourceActionId === key.sourceActionId) {
         return { ...task };
       }
     }
@@ -1004,7 +1061,7 @@ export class MemoryProposalStore implements IProposalStore {
   private proposals: Map<string, Proposal> = new Map();
   private counter = 0;
 
-  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>): Promise<Proposal> {
+  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<Proposal> {
     this.counter++;
     const id = `prop-${this.counter}`;
     const now = new Date().toISOString();
@@ -1021,12 +1078,24 @@ export class MemoryProposalStore implements IProposalStore {
       executionPlan: executionPlan || null,
       scaffoldResult: null,
       labels: labels || {},
+      sourceThreadId: backlink?.sourceThreadId ?? null,
+      sourceActionId: backlink?.sourceActionId ?? null,
+      sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
       createdAt: now,
       updatedAt: now,
     };
     this.proposals.set(id, proposal);
-    console.log(`[MemoryProposalStore] Proposal submitted: ${id} — ${title}`);
+    console.log(`[MemoryProposalStore] Proposal submitted: ${id} — ${title}${backlink ? ` (cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId})` : ""}`);
     return { ...proposal };
+  }
+
+  async findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Proposal | null> {
+    for (const proposal of this.proposals.values()) {
+      if (proposal.sourceThreadId === key.sourceThreadId && proposal.sourceActionId === key.sourceActionId) {
+        return { ...proposal };
+      }
+    }
+    return null;
   }
 
   async getProposals(status?: ProposalStatus): Promise<Proposal[]> {

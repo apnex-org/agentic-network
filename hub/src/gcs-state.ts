@@ -42,6 +42,7 @@ import type {
   OpenThreadOptions,
   ReapedThread,
   ParticipantRole,
+  CascadeBacklink,
 } from "./state.js";
 import {
   computeFingerprint,
@@ -478,7 +479,7 @@ export class GcsTaskStore implements ITaskStore {
     console.log(`[GcsTaskStore] Using bucket: gs://${bucket}`);
   }
 
-  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>): Promise<string> {
+  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<string> {
     const num = await getAndIncrementCounter(this.bucket, "taskCounter");
     const id = `task-${num}`;
     const now = new Date().toISOString();
@@ -505,13 +506,29 @@ export class GcsTaskStore implements ITaskStore {
       status: hasDeps ? "blocked" : "pending",
       labels: labels || {},
       turnId: null,
+      sourceThreadId: backlink?.sourceThreadId ?? null,
+      sourceActionId: backlink?.sourceActionId ?? null,
+      sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
       createdAt: now,
       updatedAt: now,
     };
 
     await createOnly<Task>(this.bucket, `tasks/${id}.json`, task);
-    console.log(`[GcsTaskStore] Directive submitted: ${id} (status: ${hasDeps ? "blocked" : "pending"})`);
+    console.log(`[GcsTaskStore] Directive submitted: ${id} (status: ${hasDeps ? "blocked" : "pending"}${backlink ? `, cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId}` : ""})`);
     return id;
+  }
+
+  async findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Task | null> {
+    // Linear scan — acceptable at Phase 2 scale. A secondary index is
+    // follow-on work when task counts make this hot.
+    const files = await listFiles(this.bucket, "tasks/");
+    for (const file of files) {
+      const task = await readJson<Task>(this.bucket, file);
+      if (task && task.sourceThreadId === key.sourceThreadId && task.sourceActionId === key.sourceActionId) {
+        return task;
+      }
+    }
+    return null;
   }
 
   async findByIdempotencyKey(key: string): Promise<Task | null> {
@@ -1180,7 +1197,7 @@ export class GcsProposalStore implements IProposalStore {
     console.log(`[GcsProposalStore] Using bucket: gs://${bucket}`);
   }
 
-  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: import("./state.js").ProposedExecutionPlan, labels?: Record<string, string>): Promise<Proposal> {
+  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: import("./state.js").ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<Proposal> {
     const num = await getAndIncrementCounter(this.bucket, "proposalCounter");
     const id = `prop-${num}`;
     const now = new Date().toISOString();
@@ -1198,6 +1215,9 @@ export class GcsProposalStore implements IProposalStore {
       executionPlan: executionPlan || null,
       scaffoldResult: null,
       labels: labels || {},
+      sourceThreadId: backlink?.sourceThreadId ?? null,
+      sourceActionId: backlink?.sourceActionId ?? null,
+      sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -1277,6 +1297,18 @@ export class GcsProposalStore implements IProposalStore {
       if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) return false;
       throw err;
     }
+  }
+
+  async findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Proposal | null> {
+    const files = await listFiles(this.bucket, "proposals/");
+    for (const file of files) {
+      if (!file.endsWith(".json")) continue;
+      const p = await readJson<Proposal>(this.bucket, file);
+      if (p && p.sourceThreadId === key.sourceThreadId && p.sourceActionId === key.sourceActionId) {
+        return p;
+      }
+    }
+    return null;
   }
 
   async setScaffoldResult(proposalId: string, result: import("./state.js").ScaffoldResult): Promise<boolean> {

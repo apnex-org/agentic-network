@@ -1412,3 +1412,268 @@ describe("ThreadPolicy — cascade infrastructure (M24-T4)", () => {
     expect(key.sourceActionId).toBe(action.id);
   });
 });
+
+// ── Mission-24 Phase 2 (M24-T5): per-action cascade handlers ─────────
+
+describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
+  let router: PolicyRouter;
+  let archCtx: IPolicyContext;
+  let engCtx: IPolicyContext;
+
+  beforeEach(async () => {
+    // Import registers all 3 handlers as a side effect.
+    await import("../src/policy/cascade-actions/index.js");
+    router = new PolicyRouter(noop);
+    registerThreadPolicy(router);
+
+    archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
+    engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng-1" });
+    archCtx.stores.engineerRegistry.setSessionRole("s-arch", "architect");
+    archCtx.stores.engineerRegistry.setSessionRole("s-eng-1", "engineer");
+  });
+
+  /** Open thread → engineer converge staging the given action → caller
+   * finishes via architect converge. Returns threadId. */
+  async function spawnViaConvergence(stagedAction: Record<string, unknown>, summary = "Agreed; proceed."): Promise<string> {
+    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    await router.handle("create_thread_reply", {
+      threadId, message: "agree", converged: true, summary, stagedActions: [stagedAction],
+    }, engCtx);
+    // Poison the action.type in the gate's Zod schema? No — we run by
+    // injecting the committed action post-gate via the test hook below.
+    return threadId;
+  }
+
+  /** Bypass the tool-surface Zod narrow schema (Phase 1: only
+   * close_no_action) by staging via direct store mutation. The gate's
+   * validateStagedActions() still runs against the Phase 2 payload
+   * schema registry, so payloads must be valid Phase 2 shapes. */
+  function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): void {
+    const store = ctx.stores.thread as any;
+    const t = store.threads.get(threadId);
+    const id = `action-${t.convergenceActions.length + 1}`;
+    t.convergenceActions.push({
+      id, type, status: "staged",
+      proposer: { role: "engineer", agentId: null },
+      timestamp: new Date().toISOString(),
+      payload,
+    });
+  }
+
+  /** Minimal convergence flow using direct-injection for staging: arch
+   * opens, eng replies (no stage, converged=true; gate needs a staged
+   * action, so inject first), then arch converges. */
+  async function convergeWithInjectedAction(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
+    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    // Stage via direct injection BEFORE the eng converge reply.
+    await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
+    injectStagedAction(threadId, type, payload, archCtx);
+    // eng converges (round 3). Summary set via message param path.
+    await router.handle("create_thread_reply", {
+      threadId, message: "arch-round", summary,
+    }, archCtx);
+    await router.handle("create_thread_reply", {
+      threadId, message: "eng-converge", converged: true,
+    }, engCtx);
+    // arch converges to seal.
+    await router.handle("create_thread_reply", {
+      threadId, message: "arch-converge", converged: true,
+    }, archCtx);
+    return threadId;
+  }
+
+  // ── create_task ──────────────────────────────────────────────
+
+  it("create_task handler spawns a Task with back-link metadata", async () => {
+    const threadId = await convergeWithInjectedAction(
+      "create_task",
+      { title: "Spawned", description: "Do the thing" },
+      "Engineer and architect agreed a task is needed.",
+    );
+
+    // Find the spawned task
+    const tasks = await archCtx.stores.task.listTasks();
+    const spawned = tasks.find((t) => t.sourceThreadId === threadId);
+    expect(spawned).toBeDefined();
+    expect(spawned!.title).toBe("Spawned");
+    expect(spawned!.directive).toBe("Do the thing");
+    expect(spawned!.sourceActionId).toBeTruthy();
+    expect(spawned!.sourceThreadSummary).toMatch(/agreed a task/i);
+
+    // Finalized event has report entry naming the task's entityId
+    const finalized = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_finalized");
+    expect(finalized.data.report.some((r: any) => r.type === "create_task" && r.entityId === spawned!.id && r.status === "executed")).toBe(true);
+  });
+
+  it("create_task handler is idempotent on re-run (skipped_idempotent)", async () => {
+    const { runCascade } = await import("../src/policy/cascade.js");
+    const threadId = await convergeWithInjectedAction(
+      "create_task",
+      { title: "Once", description: "only once" },
+      "Spawn once.",
+    );
+
+    const thread = await archCtx.stores.thread.getThread(threadId);
+    const action = thread!.convergenceActions.find((a: any) => a.type === "create_task")!;
+    // Re-run cascade against the same thread+action pair.
+    const result = await runCascade(archCtx, thread!, [action as any], "Spawn once.");
+    expect(result.report[0].status).toBe("skipped_idempotent");
+    expect(result.skippedCount).toBe(1);
+    expect(result.anyFailure).toBe(false);
+
+    // Only one task spawned total
+    const tasks = await archCtx.stores.task.listTasks();
+    expect(tasks.filter((t) => t.sourceThreadId === threadId)).toHaveLength(1);
+
+    // Audit trail records the idempotency skip
+    const audits = await archCtx.stores.audit.listEntries(50);
+    expect(audits.some((a) => a.action === "action_already_executed" && a.details.includes(thread!.id))).toBe(true);
+  });
+
+  // ── create_proposal ──────────────────────────────────────────
+
+  it("create_proposal handler spawns a Proposal with back-link metadata", async () => {
+    const threadId = await convergeWithInjectedAction(
+      "create_proposal",
+      { title: "Proposal title", description: "Full proposal body text" },
+      "Converged on drafting a proposal.",
+    );
+
+    const proposals = await archCtx.stores.proposal.getProposals();
+    const spawned = proposals.find((p) => p.sourceThreadId === threadId);
+    expect(spawned).toBeDefined();
+    expect(spawned!.title).toBe("Proposal title");
+    expect(spawned!.summary).toBe("Full proposal body text");
+    expect(spawned!.sourceThreadSummary).toMatch(/drafting a proposal/i);
+
+    const finalized = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_finalized");
+    expect(finalized.data.report.some((r: any) => r.type === "create_proposal" && r.entityId === spawned!.id && r.status === "executed")).toBe(true);
+  });
+
+  it("create_proposal handler is idempotent on re-run", async () => {
+    const { runCascade } = await import("../src/policy/cascade.js");
+    const threadId = await convergeWithInjectedAction(
+      "create_proposal",
+      { title: "P1", description: "body" },
+      "Draft once.",
+    );
+    const thread = await archCtx.stores.thread.getThread(threadId);
+    const action = thread!.convergenceActions.find((a: any) => a.type === "create_proposal")!;
+
+    const result = await runCascade(archCtx, thread!, [action as any], "Draft once.");
+    expect(result.report[0].status).toBe("skipped_idempotent");
+    expect(result.skippedCount).toBe(1);
+
+    const proposals = await archCtx.stores.proposal.getProposals();
+    expect(proposals.filter((p) => p.sourceThreadId === threadId)).toHaveLength(1);
+  });
+
+  // ── create_idea ──────────────────────────────────────────────
+
+  it("create_idea handler spawns an Idea with back-link metadata", async () => {
+    const threadId = await convergeWithInjectedAction(
+      "create_idea",
+      { title: "Idea title", description: "Body of the idea", tags: ["exploration", "followup"] },
+      "Captured idea for future exploration.",
+    );
+
+    const ideas = await archCtx.stores.idea.listIdeas();
+    const spawned = ideas.find((i) => i.sourceThreadId === threadId);
+    expect(spawned).toBeDefined();
+    expect(spawned!.text).toContain("Idea title");
+    expect(spawned!.text).toContain("Body of the idea");
+    expect(spawned!.tags).toEqual(["exploration", "followup"]);
+    expect(spawned!.sourceActionId).toBeTruthy();
+    expect(spawned!.sourceThreadSummary).toMatch(/future exploration/i);
+
+    const finalized = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_finalized");
+    expect(finalized.data.report.some((r: any) => r.type === "create_idea" && r.entityId === spawned!.id && r.status === "executed")).toBe(true);
+  });
+
+  it("create_idea handler is idempotent on re-run", async () => {
+    const { runCascade } = await import("../src/policy/cascade.js");
+    const threadId = await convergeWithInjectedAction(
+      "create_idea",
+      { title: "IdeaX", description: "desc" },
+      "Record once.",
+    );
+    const thread = await archCtx.stores.thread.getThread(threadId);
+    const action = thread!.convergenceActions.find((a: any) => a.type === "create_idea")!;
+
+    const result = await runCascade(archCtx, thread!, [action as any], "Record once.");
+    expect(result.report[0].status).toBe("skipped_idempotent");
+
+    const ideas = await archCtx.stores.idea.listIdeas();
+    expect(ideas.filter((i) => i.sourceThreadId === threadId)).toHaveLength(1);
+  });
+
+  // ── Multi-action cascade ─────────────────────────────────────
+
+  it("multiple committed actions of different types all spawn correctly", async () => {
+    const r = await router.handle("create_thread", { title: "multi", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
+    // Inject 2 actions of different types.
+    injectStagedAction(threadId, "create_task", { title: "T1", description: "dt" }, archCtx);
+    injectStagedAction(threadId, "create_idea", { title: "I1", description: "di" }, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "arch", summary: "Multi-action test." }, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "eng-converge", converged: true }, engCtx);
+    await router.handle("create_thread_reply", { threadId, message: "arch-converge", converged: true }, archCtx);
+
+    const finalized = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_finalized");
+    expect(finalized.data.committedActionCount).toBe(2);
+    expect(finalized.data.executedCount).toBe(2);
+    expect(finalized.data.warning).toBe(false);
+
+    const tasks = await archCtx.stores.task.listTasks();
+    const ideas = await archCtx.stores.idea.listIdeas();
+    expect(tasks.filter((t) => t.sourceThreadId === threadId)).toHaveLength(1);
+    expect(ideas.filter((i) => i.sourceThreadId === threadId)).toHaveLength(1);
+  });
+
+  // ── Spawned-entity shape guards ──────────────────────────────
+
+  it("spawned entities carry labels inherited from the thread", async () => {
+    // Open with architect-authored labels via direct setting
+    const r = await router.handle("create_thread", { title: "lab", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    const store = archCtx.stores.thread as any;
+    store.threads.get(threadId).labels = { team: "platform", env: "prod" };
+
+    await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
+    injectStagedAction(threadId, "create_task", { title: "T", description: "d" }, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "arch", summary: "Label inheritance test." }, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "e", converged: true }, engCtx);
+    await router.handle("create_thread_reply", { threadId, message: "a", converged: true }, archCtx);
+
+    const tasks = await archCtx.stores.task.listTasks();
+    const spawned = tasks.find((t) => t.sourceThreadId === threadId);
+    expect(spawned!.labels).toEqual({ team: "platform", env: "prod" });
+  });
+
+  // ── findByCascadeKey helpers ─────────────────────────────────
+
+  it("findByCascadeKey returns the spawned entity for task/proposal/idea stores", async () => {
+    const threadId = await convergeWithInjectedAction(
+      "create_task",
+      { title: "T", description: "d" },
+      "s",
+    );
+    const thread = await archCtx.stores.thread.getThread(threadId);
+    const action = thread!.convergenceActions.find((a: any) => a.type === "create_task")!;
+    const key = { sourceThreadId: threadId, sourceActionId: action.id };
+
+    const task = await archCtx.stores.task.findByCascadeKey(key);
+    expect(task).toBeDefined();
+    expect(task!.sourceThreadId).toBe(threadId);
+    expect(task!.sourceActionId).toBe(action.id);
+
+    // Unrelated key → null
+    const missing = await archCtx.stores.task.findByCascadeKey({
+      sourceThreadId: "thread-999", sourceActionId: "action-99",
+    });
+    expect(missing).toBeNull();
+  });
+});

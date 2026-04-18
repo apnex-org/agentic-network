@@ -17,9 +17,24 @@ export interface Idea {
   status: IdeaStatus;
   missionId: string | null;
   sourceThreadId: string | null;
+  /** Mission-24 Phase 2 (ADR-014, INV-TH20/23): cascade-spawn back-links.
+   * `sourceThreadId` predates Phase 2 but completes the natural
+   * idempotency key with `sourceActionId`; `sourceThreadSummary`
+   * preserves the decision narrative per INV-TH23. Null for
+   * hand-submitted ideas and pre-Phase-2 cascade-spawned ideas. */
+  sourceActionId: string | null;
+  sourceThreadSummary: string | null;
   tags: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+// Re-export CascadeBacklink to avoid a state.ts import at the idea module
+// level (keeps the dependency direction: state.ts → idea.ts).
+export interface CascadeBacklink {
+  sourceThreadId: string;
+  sourceActionId: string;
+  sourceThreadSummary: string;
 }
 
 // ── Interface ────────────────────────────────────────────────────────
@@ -29,7 +44,8 @@ export interface IIdeaStore {
     text: string,
     author: string,
     sourceThreadId?: string,
-    tags?: string[]
+    tags?: string[],
+    backlink?: CascadeBacklink
   ): Promise<Idea>;
 
   getIdea(ideaId: string): Promise<Idea | null>;
@@ -40,6 +56,13 @@ export interface IIdeaStore {
     ideaId: string,
     updates: { status?: IdeaStatus; missionId?: string; tags?: string[]; text?: string }
   ): Promise<Idea | null>;
+
+  /**
+   * Mission-24 Phase 2 (ADR-014, INV-TH20): look up an Idea by the natural
+   * idempotency key {sourceThreadId, sourceActionId}. Returns null when
+   * no Idea has been spawned from that thread+action pair.
+   */
+  findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Idea | null>;
 }
 
 // ── Memory Implementation ────────────────────────────────────────────
@@ -52,7 +75,8 @@ export class MemoryIdeaStore implements IIdeaStore {
     text: string,
     author: string,
     sourceThreadId?: string,
-    tags?: string[]
+    tags?: string[],
+    backlink?: CascadeBacklink
   ): Promise<Idea> {
     this.counter++;
     const id = `idea-${this.counter}`;
@@ -64,15 +88,30 @@ export class MemoryIdeaStore implements IIdeaStore {
       author,
       status: "open",
       missionId: null,
-      sourceThreadId: sourceThreadId || null,
+      // Prefer backlink.sourceThreadId when both are present (cascade
+      // handler is the authoritative source); fall back to the legacy
+      // positional sourceThreadId for hand-submitted ideas linked to a
+      // thread outside the cascade path.
+      sourceThreadId: backlink?.sourceThreadId ?? sourceThreadId ?? null,
+      sourceActionId: backlink?.sourceActionId ?? null,
+      sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
       tags: tags || [],
       createdAt: now,
       updatedAt: now,
     };
 
     this.ideas.set(id, idea);
-    console.log(`[MemoryIdeaStore] Idea submitted: ${id}`);
+    console.log(`[MemoryIdeaStore] Idea submitted: ${id}${backlink ? ` (cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId})` : ""}`);
     return { ...idea };
+  }
+
+  async findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Idea | null> {
+    for (const idea of this.ideas.values()) {
+      if (idea.sourceThreadId === key.sourceThreadId && idea.sourceActionId === key.sourceActionId) {
+        return { ...idea };
+      }
+    }
+    return null;
   }
 
   async getIdea(ideaId: string): Promise<Idea | null> {
