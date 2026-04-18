@@ -22,7 +22,11 @@ export type HubEventType =
   | "clarification_answered"
   | "thread_opened"
   | "thread_message"
-  | "thread_converged"
+  // Mission-24 Phase 2 (M24-T3, ADR-014): merged from the legacy
+  // thread_converged + thread_convergence_completed pair. Fires once,
+  // after cascade, carrying the full ConvergenceReport.
+  | "thread_convergence_finalized"
+  | "thread_abandoned"
   | "idea_submitted"
   | "mission_created"
   | "mission_activated"
@@ -50,7 +54,9 @@ const ENGINEER_ACTIONABLE: ReadonlySet<string> = new Set([
   "thread_message",
   "clarification_answered",
   "task_issued",
-  "thread_converged",
+  // Mission-24 Phase 2 (M24-T3): thread_converged merged into
+  // thread_convergence_finalized.
+  "thread_convergence_finalized",
   "revision_required",
 ]);
 
@@ -72,7 +78,9 @@ const ARCHITECT_ACTIONABLE: ReadonlySet<string> = new Set([
   "proposal_submitted",
   "clarification_requested",
   "thread_message",
-  "thread_converged",
+  // Mission-24 Phase 2 (M24-T3): thread_converged merged into
+  // thread_convergence_finalized.
+  "thread_convergence_finalized",
 ]);
 
 /** Architect events that are FYI */

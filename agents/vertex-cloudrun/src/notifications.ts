@@ -11,7 +11,6 @@ import {
   sandwichReviewReport,
   sandwichReviewProposal,
   sandwichThreadReply,
-  sandwichThreadConverged,
   sandwichClarification,
 } from "./sandwich.js";
 import {
@@ -86,16 +85,22 @@ export function handleHubEvent(
       break;
     }
 
-    case "thread_converged": {
+    case "thread_convergence_finalized": {
+      // Mission-24 Phase 2 (M24-T3, ADR-014): single merged event
+      // replacing the legacy thread_converged + thread_convergence_completed
+      // pair. Fires AFTER the Hub cascade runs, carrying the full
+      // ConvergenceReport. All Phase 2 convergences have at least one
+      // committed action (Phase 1 gate enforces it), so the Hub has
+      // always done the work by the time this notification lands —
+      // nothing for the sandwich to do besides log.
       const threadId = data.threadId as string;
-      const intent = (data.intent as string) || null;
-      const hasAction = !!data.hasAction;
-      if (threadId && !hasAction) {
-        // Only handle if Hub cascade didn't already act (hasAction = convergenceAction present)
-        sandwichThreadConverged(hub, context, threadId, intent);
-      } else if (hasAction) {
-        console.log(`[Notifications] Skipping thread_converged for ${threadId} — Hub cascade handles convergenceAction`);
-      }
+      const executedCount = (data.executedCount as number | undefined) ?? 0;
+      const failedCount = (data.failedCount as number | undefined) ?? 0;
+      const warning = !!data.warning;
+      console.log(
+        `[Notifications] thread_convergence_finalized for ${threadId}: ` +
+          `executed=${executedCount}, failed=${failedCount}${warning ? " [WARNING]" : ""} — Hub cascade has completed.`,
+      );
       break;
     }
 

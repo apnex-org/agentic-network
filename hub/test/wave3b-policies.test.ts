@@ -234,9 +234,21 @@ describe("ThreadPolicy", () => {
     const r2 = JSON.parse(reply2.content[0].text);
     expect(r2.status).toBe("converged");
 
-    // Should emit thread_converged
-    const emitted = (archCtx2 as any).dispatchedEvents.find((e: any) => e.event === "thread_converged");
+    // Mission-24 Phase 2 (M24-T3): merged thread_convergence_finalized
+    // replaces the legacy thread_converged + thread_convergence_completed
+    // split. The finalized event fires AFTER the internal cascade runs,
+    // so assert on archCtx2's dispatch ledger via the orchestrator's
+    // internal event drain (the handler runs inside the dispatch cycle).
+    const emitted = (archCtx2 as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_finalized");
     expect(emitted).toBeDefined();
+    // outstandingIntent mirrors the converging reply's intent — the
+    // architect's convergence call here didn't set one, so it's null.
+    // What matters is the ConvergenceReport shape is populated.
+    expect(emitted.data.summary).toMatch(/Engineer agreed/i);
+    expect(emitted.data.committedActionCount).toBe(1);
+    expect(emitted.data.executedCount).toBe(1);
+    expect(emitted.data.warning).toBe(false);
+    expect(Array.isArray(emitted.data.report)).toBe(true);
   });
 
   it("get_thread returns full thread", async () => {
@@ -389,7 +401,7 @@ describe("ThreadPolicy — Threads 2.0 (Mission-21 Phase 1)", () => {
     expect(parsed.error).toMatch(/summary is empty/);
   });
 
-  it("close_no_action happy path: converges, closes thread, emits thread_convergence_completed", async () => {
+  it("close_no_action happy path: converges, closes thread, emits thread_convergence_finalized", async () => {
     const threadId = await openThread();
     await convergeEngReply(threadId);
     const r2 = await router.handle("create_thread_reply", {
@@ -403,12 +415,20 @@ describe("ThreadPolicy — Threads 2.0 (Mission-21 Phase 1)", () => {
     expect(["converged", "closed"]).toContain(parsed.status);
     expect(parsed.convergenceActions).toHaveLength(1);
     expect(parsed.convergenceActions[0].status).toBe("committed");
-    // Event fired with report
-    const completedEvent = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_completed");
-    expect(completedEvent).toBeDefined();
-    expect(completedEvent.data.committedActionCount).toBe(1);
-    expect(completedEvent.data.report).toHaveLength(1);
-    expect(completedEvent.data.report[0].status).toBe("executed");
+    // Mission-24 Phase 2 (M24-T3): the finalized event carries the full
+    // ConvergenceReport; the legacy two-event split is gone.
+    const finalized = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_finalized");
+    expect(finalized).toBeDefined();
+    expect(finalized.data.committedActionCount).toBe(1);
+    expect(finalized.data.executedCount).toBe(1);
+    expect(finalized.data.failedCount).toBe(0);
+    expect(finalized.data.warning).toBe(false);
+    expect(finalized.data.report).toHaveLength(1);
+    expect(finalized.data.report[0].status).toBe("executed");
+    expect(finalized.data.report[0].type).toBe("close_no_action");
+    // Legacy event names are no longer emitted.
+    expect((archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_converged")).toBeUndefined();
+    expect((archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_completed")).toBeUndefined();
   });
 
   it("stage → revise chain preserves revisionOf lineage", async () => {

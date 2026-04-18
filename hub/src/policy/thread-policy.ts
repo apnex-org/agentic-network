@@ -210,6 +210,13 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
 
   // Mission-21: push an internal cascade event on convergence so the
   // committed actions can be executed in array order.
+  // Mission-24 Phase 2 (M24-T3, ADR-014): the two-event split
+  // (thread_converged synchronous + thread_convergence_completed
+  // post-cascade) is merged into one thread_convergence_finalized
+  // event dispatched AFTER the cascade runs, carrying the full
+  // ConvergenceReport. Consumers no longer have to reconstruct the
+  // outcome from two events. The public dispatch now lives in the
+  // handleThreadConvergedWithAction handler below.
   if (thread.status === "converged") {
     const committed = thread.convergenceActions.filter((a) => a.status === "committed");
     if (committed.length > 0) {
@@ -218,28 +225,14 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
         payload: {
           threadId: thread.id,
           title: thread.title,
+          intent: thread.outstandingIntent,
+          summary: thread.summary,
           actions: committed,
+          participants: thread.participants,
+          labels: thread.labels,
         },
       });
     }
-
-    // INV-TH16: convergence is a participant-internal event. Scope the
-    // notification to the thread's participants so engineer↔engineer
-    // threads don't leak their outcome to the architect (or anyone else
-    // who happens to share the counterparty role).
-    const participantIds = thread.participants
-      .map((p) => p.agentId)
-      .filter((id): id is string => typeof id === "string" && id.length > 0);
-    const convergedSelector = participantIds.length > 0
-      ? { engineerIds: participantIds, matchLabels: thread.labels }
-      : { roles: ["architect" as const], matchLabels: thread.labels };
-    await ctx.dispatch("thread_converged", {
-      threadId: thread.id,
-      title: thread.title,
-      intent: thread.outstandingIntent,
-      summary: thread.summary,
-      committedActionCount: committed.length,
-    }, convergedSelector);
   }
 
   // Mission-21 Phase 1 Architect review addition #2: echo the current
@@ -405,6 +398,9 @@ async function handleThreadConvergedWithAction(
 ): Promise<void> {
   const payload = event.payload;
   const threadId = payload.threadId as string;
+  const title = (payload.title as string) ?? "";
+  const intent = (payload.intent as string | null) ?? null;
+  const summary = (payload.summary as string) ?? "";
   const actions = payload.actions as StagedAction[] | undefined;
 
   if (!Array.isArray(actions) || actions.length === 0) {
@@ -413,17 +409,19 @@ async function handleThreadConvergedWithAction(
   }
 
   const sourceThread = await ctx.stores.thread.getThread(threadId);
-  const inheritedLabels = sourceThread?.labels ?? {};
+  const inheritedLabels = sourceThread?.labels ?? (payload.labels as Record<string, string> | undefined) ?? {};
   // Include the thread's negotiated summary in audit details — Director
   // notification-A digest surfaces hub/architect audit entries and this
   // gives the human reader the actors' narrative without needing to
   // look the thread up separately.
-  const summaryForAudit = sourceThread?.summary?.trim() || "(no summary provided)";
+  const summaryForAudit = summary.trim() || "(no summary provided)";
 
-  // Internal ConvergenceReport — per-action telemetry. Distinct from
-  // Thread.summary (the negotiated narrative). Phase 2 will widen this
-  // with a `warning` flag on any partial failure.
-  const report: Array<{ actionId: string; status: "executed" | "failed"; error?: string; entityId?: string | null }> = [];
+  // Mission-24 Phase 2 ConvergenceReport shape (ADR-014 §110):
+  // carried on thread_convergence_finalized. Distinct from
+  // Thread.summary (the negotiated narrative). `warning` fires on any
+  // partial failure; `executedCount` + `failedCount` are convenience
+  // counts so consumers don't recount the per-action entries.
+  const report: Array<{ actionId: string; type: string; status: "executed" | "failed"; error?: string; entityId?: string | null }> = [];
 
   for (const action of actions) {
     if (action.type === "close_no_action") {
@@ -435,35 +433,52 @@ async function handleThreadConvergedWithAction(
           `Thread ${threadId} closed (close_no_action). Summary: ${summaryForAudit}. Reason: ${reason}`,
           threadId,
         );
-        report.push({ actionId: action.id, status: "executed", entityId: null });
+        report.push({ actionId: action.id, type: action.type, status: "executed", entityId: null });
       } catch (err: any) {
-        report.push({ actionId: action.id, status: "failed", error: err?.message ?? String(err) });
+        report.push({ actionId: action.id, type: action.type, status: "failed", error: err?.message ?? String(err) });
       }
     } else {
       // Phase 1: vocabulary limited to close_no_action at the stage tool,
       // so this branch is unreachable under normal operation. Guard
       // defensively for Phase 2 widening.
-      report.push({ actionId: action.id, status: "failed", error: `Phase 1 does not support action type "${action.type}"` });
+      report.push({ actionId: action.id, type: action.type, status: "failed", error: `Phase 1 does not support action type "${action.type}"` });
     }
   }
 
   await ctx.stores.thread.closeThread(threadId);
 
+  const executedCount = report.filter((r) => r.status === "executed").length;
+  const failedCount = report.length - executedCount;
+
   // INV-TH16: cascade completion is participant-internal. Scope to thread
   // participants so engineer↔engineer threads don't notify unrelated roles.
-  const cascadeParticipantIds = (sourceThread?.participants ?? [])
+  const participantSource = sourceThread?.participants
+    ?? (payload.participants as Array<{ agentId?: string | null }> | undefined)
+    ?? [];
+  const cascadeParticipantIds = participantSource
     .map((p) => p.agentId)
     .filter((id): id is string => typeof id === "string" && id.length > 0);
-  const completedSelector = cascadeParticipantIds.length > 0
+  const finalizedSelector = cascadeParticipantIds.length > 0
     ? { engineerIds: cascadeParticipantIds, matchLabels: inheritedLabels }
     : { roles: ["architect" as const, "engineer" as const], matchLabels: inheritedLabels };
-  await ctx.dispatch("thread_convergence_completed", {
-    threadId,
-    committedActionCount: actions.length,
-    report,
-  }, completedSelector);
 
-  console.log(`[ThreadPolicy] Cascade completed for ${threadId}: ${report.filter(r => r.status === "executed").length}/${actions.length} executed`);
+  // Mission-24 Phase 2 (M24-T3, ADR-014): single merged event replacing
+  // the legacy pre-cascade thread_converged and post-cascade
+  // thread_convergence_completed emissions. Consumers get the full
+  // ConvergenceReport in one delivery.
+  await ctx.dispatch("thread_convergence_finalized", {
+    threadId,
+    title,
+    intent,
+    summary,
+    committedActionCount: actions.length,
+    executedCount,
+    failedCount,
+    warning: failedCount > 0,
+    report,
+  }, finalizedSelector);
+
+  console.log(`[ThreadPolicy] Cascade finalized for ${threadId}: ${executedCount}/${actions.length} executed`);
 }
 
 // ── Registration ────────────────────────────────────────────────────

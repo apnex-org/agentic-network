@@ -101,7 +101,7 @@ describe.skip("E2E Convergence Auto-Spawn (PHASE 2 REWRITE PENDING)", () => {
     expect(closedThread.status).toBe("closed");
   });
 
-  it("convergence without action fires thread_converged (backward compat)", async () => {
+  it("convergence fires thread_convergence_finalized with full report", async () => {
     const thread = await arch.createThread("Simple discussion", "Just talking");
     const threadId = thread.threadId as string;
 
@@ -110,8 +110,10 @@ describe.skip("E2E Convergence Auto-Spawn (PHASE 2 REWRITE PENDING)", () => {
     orch.events.clear();
     await arch.replyToThread(threadId, "Confirmed", { converged: true });
 
-    // thread_converged event should fire (for sandwich handler)
-    orch.events.expectEvent("thread_converged");
+    // Mission-24 Phase 2 (M24-T3): merged thread_convergence_finalized
+    // replaces the legacy thread_converged + thread_convergence_completed
+    // pair.
+    orch.events.expectEvent("thread_convergence_finalized");
 
     // No task_issued or proposal_submitted — no action
     orch.events.expectNoEvent("task_issued");

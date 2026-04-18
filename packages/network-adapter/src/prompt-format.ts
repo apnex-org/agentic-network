@@ -21,8 +21,8 @@ export function getActionText(
       return "Revise and resubmit with create_report";
     case "thread_message":
       return `Read with get_thread(threadId="${data.threadId}"), then reply with create_thread_reply`;
-    case "thread_converged":
-      return "Check thread for follow-up action";
+    case "thread_convergence_finalized":
+      return "Review convergence report and act on follow-up if needed";
     case "clarification_answered":
       return `Read with get_clarification(taskId="${data.taskId}"), then resume work`;
     case "review_completed":
@@ -92,11 +92,12 @@ export function buildPromptText(
       );
     case "proposal_decided":
       return `[Architect] Proposal ${data.proposalId || ""}: ${data.decision || "decided"}.`;
-    case "thread_converged":
+    case "thread_convergence_finalized":
       return (
         `[Hub] Thread "${data.title || data.threadId}" converged with intent: ${data.intent || "none"}. ` +
         `Summary: ${(data.summary as string)?.slice(0, 200) || "(none)"}. ` +
-        `Committed actions: ${data.committedActionCount ?? 0}. Check the thread for any follow-up action.`
+        `Committed actions: ${data.committedActionCount ?? 0} (executed=${data.executedCount ?? 0}, failed=${data.failedCount ?? 0}${data.warning ? ", WARNING" : ""}). ` +
+        `Review the full ConvergenceReport in the event payload for any follow-up action.`
       );
     default:
       return `[Hub] Notification: ${event}.`;
@@ -120,8 +121,8 @@ export function buildToastMessage(
       return `Clarification answered: ${data.taskId || "task"}`;
     case "thread_message":
       return `Thread reply: "${data.title || data.threadId || "thread"}"`;
-    case "thread_converged":
-      return `Thread converged: "${data.title || data.threadId}" (${data.intent || "no intent"})`;
+    case "thread_convergence_finalized":
+      return `Thread converged: "${data.title || data.threadId}" (${data.intent || "no intent"}, ${data.executedCount ?? 0}/${data.committedActionCount ?? 0} executed)`;
     default:
       return `Hub: ${event}`;
   }

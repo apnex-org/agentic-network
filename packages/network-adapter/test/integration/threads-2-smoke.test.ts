@@ -206,13 +206,17 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
     expect(r2.convergenceActions).toHaveLength(1);
     expect(r2.convergenceActions[0].status).toBe("committed");
 
-    // Cascade wrote audit entry + dispatched thread_convergence_completed.
-    const cascadeEvents = hub.dispatched.filter((d) => d.event === "thread_convergence_completed");
+    // Mission-24 Phase 2 (M24-T3): merged thread_convergence_finalized
+    // replaces the legacy thread_converged + thread_convergence_completed
+    // pair, carrying the full ConvergenceReport in one delivery.
+    const cascadeEvents = hub.dispatched.filter((d) => d.event === "thread_convergence_finalized");
     expect(cascadeEvents.length).toBeGreaterThanOrEqual(1);
     expect(cascadeEvents[0].data.report).toBeDefined();
+    expect((cascadeEvents[0].data as any).committedActionCount).toBe(1);
+    expect((cascadeEvents[0].data as any).executedCount).toBe(1);
 
     // Participant isolation on cascade: eng-2 did not receive.
-    expect(eventsFor(eng2, "thread_convergence_completed", threadId)).toHaveLength(0);
+    expect(eventsFor(eng2, "thread_convergence_finalized", threadId)).toHaveLength(0);
   });
 
   // ── WF-TH-06: stage → revise → retract lineage ────────────────────

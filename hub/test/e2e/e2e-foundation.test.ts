@@ -174,10 +174,13 @@ describe("E2E Foundation", () => {
       });
       expect(reply2.status).toBe("converged");
 
-      // Event: thread_converged → architect
-      orch.events.expectEvent("thread_converged");
-      const convergedEvent = orch.events.expectEventFor("thread_converged", "architect");
+      // Mission-24 Phase 2 (M24-T3): thread_convergence_finalized → architect
+      // (merged event replaces the legacy thread_converged + thread_convergence_completed pair).
+      orch.events.expectEvent("thread_convergence_finalized");
+      const convergedEvent = orch.events.expectEventFor("thread_convergence_finalized", "architect");
       expect(convergedEvent.data.threadId).toBe(thread.threadId);
+      expect(convergedEvent.data.committedActionCount).toBe(1);
+      expect(convergedEvent.data.executedCount).toBe(1);
     });
 
     it("reply when not your turn throws E2EError", async () => {
