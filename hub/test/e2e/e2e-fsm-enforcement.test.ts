@@ -77,14 +77,16 @@ describe("FSM Enforcement", () => {
       ).rejects.toThrow(/Invalid state transition.*input_required/);
     });
 
-    it("rejects cancel on working task (only pending can be cancelled)", async () => {
+    it("permits cancel on working task (stewardship for stranded work — thread-131 widening)", async () => {
       await arch.createTask("Working task", "Being worked on");
       await eng.getTask();
 
-      // Task is working — try to cancel
-      await expect(
-        arch.cancelTask("task-1")
-      ).rejects.toThrow();
+      // Working is cancellable for stewardship (engineer went offline,
+      // task needs to be reclaimed). Previously pending-only; widened
+      // in the thread-131 fix-up after 3 kate-stranded tasks could not
+      // be cancelled by Architect.
+      const result = await arch.cancelTask("task-1");
+      expect(result).toBeTruthy();
     });
 
     it("in_review rejects cancel and clarification", async () => {

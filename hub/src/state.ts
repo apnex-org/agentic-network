@@ -863,10 +863,18 @@ export class MemoryTaskStore implements ITaskStore {
   async cancelTask(taskId: string): Promise<boolean> {
     const task = this.tasks.get(taskId);
     if (!task) return false;
-    if (task.status !== "pending") return false;
+    // Cancellable from any non-terminal in-flight state. Stewardship
+    // need: stranded `working` tasks (assigned engineer offline) and
+    // `blocked` tasks with stale deps both require cancellation to
+    // clear the board — tightening to `pending` alone left zombies
+    // unreclaimable (thread-131 finding). `in_review` is deliberately
+    // excluded: a submitted report deserves a decision, not a cancel.
+    const CANCELLABLE: Task["status"][] = ["pending", "working", "blocked", "input_required"];
+    if (!CANCELLABLE.includes(task.status)) return false;
+    const priorStatus = task.status;
     task.status = "cancelled";
     task.updatedAt = new Date().toISOString();
-    console.log(`[MemoryTaskStore] Task cancelled: ${taskId}`);
+    console.log(`[MemoryTaskStore] Task cancelled: ${taskId} (was: ${priorStatus})`);
     return true;
   }
 

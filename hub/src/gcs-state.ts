@@ -725,14 +725,25 @@ export class GcsTaskStore implements ITaskStore {
 
   async cancelTask(taskId: string): Promise<boolean> {
     const taskPath = `tasks/${taskId}.json`;
+    let priorStatus: Task["status"] | null = null;
     try {
       await updateExisting<Task>(this.bucket, taskPath, (current) => {
-        if (current.status !== "pending") throw new TransitionRejected("not pending");
+        // Cancellable from any non-terminal in-flight state. Stewardship
+        // need: stranded `working` tasks (assigned engineer offline) and
+        // `blocked` tasks with stale deps both require cancellation to
+        // clear the board — tightening to `pending` alone left zombies
+        // unreclaimable (thread-131 finding). `in_review` is deliberately
+        // excluded: a submitted report deserves a decision, not a cancel.
+        const CANCELLABLE: Task["status"][] = ["pending", "working", "blocked", "input_required"];
+        if (!CANCELLABLE.includes(current.status)) {
+          throw new TransitionRejected(`not cancellable from status ${current.status}`);
+        }
+        priorStatus = current.status;
         current.status = "cancelled";
         current.updatedAt = new Date().toISOString();
         return current;
       });
-      console.log(`[GcsTaskStore] Task cancelled: ${taskId}`);
+      console.log(`[GcsTaskStore] Task cancelled: ${taskId} (was: ${priorStatus})`);
       return true;
     } catch (err) {
       if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) return false;

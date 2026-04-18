@@ -410,7 +410,7 @@ export function registerTaskPolicy(router: PolicyRouter): void {
   // ── cancel_task ───────────────────────────────────────────────────
   router.register(
     "cancel_task",
-    "[Architect] Cancel a pending directive that hasn't been picked up by an Engineer yet. Only works on tasks with 'pending' status.",
+    "[Architect] Cancel a directive. Permitted from pending, working, blocked, or input_required status (stewardship for stranded or stale tasks). Not permitted on tasks already reported for review — those require a review decision.",
     {
       taskId: z.string().describe("The task ID to cancel"),
     },
