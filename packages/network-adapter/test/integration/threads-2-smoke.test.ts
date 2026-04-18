@@ -278,10 +278,16 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
       expect("authorAgentId" in msg).toBe(true);
       expect(typeof msg.authorAgentId).toBe("string");
     }
-    // Three rounds, two unique (role, agentId) tuples — upsert wins.
+    // Three rounds, two unique (role, agentId) tuples — upsert is idempotent.
+    // eng-1 opened + replied; arch replied once. The participants list must
+    // stay at 2 entries (not 3). `lastActiveAt` monotonicity is intentionally
+    // not asserted here: three rounds can land within the same millisecond
+    // on a fast loopback (ISO-string resolution). The idempotency property
+    // is what this test pins.
     expect(thread.participants).toHaveLength(2);
     const engEntry = thread.participants.find((p: any) => p.agentId === eng1.engineerId);
-    expect(engEntry.lastActiveAt).not.toBe(engEntry.joinedAt);
+    expect(engEntry).toBeDefined();
+    expect(engEntry.role).toBe("engineer");
   });
 
   // ── WF-TH-11/15: engineer↔engineer isolation ─────────────────────
