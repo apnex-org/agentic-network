@@ -108,16 +108,43 @@ After submitting a report, the Architect will automatically review it. To check 
 After a proposal is approved and you've implemented the changes:
 1. Call `architect-hub_close_proposal` with the `proposalId` to mark it as implemented
 
-### Ideation Threads
+### Ideation Threads (Threads 2.0, ADR-013, Mission-21 Phase 1)
 
-To start a bidirectional discussion with the Architect:
-1. Call `architect-hub_create_thread` with a `title` and your opening `message`
-2. The Architect will be notified and respond automatically
-3. Call `architect-hub_get_thread` to read the full thread with all messages
-4. Reply using `architect-hub_create_thread_reply` with the `threadId` and your response
-5. Set `converged=true` when you agree with the Architect's position
-6. Set `intent` to classify what the thread needs: `decision_needed`, `agreement_pending`, `director_input`, or `implementation_ready`
-7. The thread auto-closes when both parties converge, or escalates at the round limit
+Threads are the bidirectional discussion primitive. A thread has exactly two active roles at any time, both of which are in `thread.participants[]`. The Hub routes every thread event (`thread_message`, `thread_converged`, `thread_convergence_completed`) **only to the participants** — other agents sharing the same role are not notified (INV-TH16). Turn alternation is also pinned by `agentId` (INV-TH17), so a non-participant cannot usurp the reply turn.
+
+**Opening a thread**
+
+1. Call `architect-hub_create_thread` with `title`, `message`, and optionally `recipientAgentId` to pin a specific counterparty.
+   - Architect ↔ Engineer: `recipientAgentId` is optional when there's a single counterparty of the other role; leave it unset to role-broadcast.
+   - Engineer ↔ Engineer (peer-to-peer): `recipientAgentId` is effectively required so the notification reaches the right peer. Discover peer agentIds via `architect-hub_get_engineer_status`.
+2. The recipient is notified; you wait for their reply via `thread_message` notification.
+3. Read the thread with `architect-hub_get_thread`.
+4. Reply with `architect-hub_create_thread_reply`.
+
+**Converging a thread**
+
+Set `converged=true` on your reply when you fully agree. The Hub enforces a hard gate — your reply is rejected unless BOTH of these are populated at convergence:
+
+- **`stagedActions`** — at least one committed convergence action. Phase 1 vocabulary is limited to `close_no_action` (the thread produces no downstream artefact). Stage one with:
+  ```json
+  [{"kind":"stage","type":"close_no_action","payload":{"reason":"<short rationale>"}}]
+  ```
+  You can also `revise` a prior staged action by id, or `retract` one.
+- **`summary`** — a non-empty negotiated narrative of the agreed outcome. Either party can set or refine across rounds; the last value wins at convergence.
+
+Both sides of the thread must then signal `converged=true` for the thread to actually converge (bilateral agreement). The converging party's reply commits the staged actions, triggers the cascade (audit + thread close), and dispatches `thread_convergence_completed` to participants only.
+
+**Gate self-correction**
+
+If the Hub rejects your reply with `"Thread convergence rejected: …"`, read the error — it names exactly what's missing (no convergenceActions, empty summary, or both). Retry with the missing piece populated.
+
+**NEVER rely on prose promises in the message field to create tasks/proposals/ideas etc. after convergence.** Only machine-readable `stagedActions` cascade. In Phase 1 the cascade only executes `close_no_action`; if the thread needs to spawn a task or proposal, converge with `close_no_action` and then call the relevant tool (`architect-hub_create_task`, `architect-hub_create_proposal`, etc.) explicitly in the same or next turn. Phase 2 will widen the vocabulary to let those entities spawn atomically from convergence.
+
+**Intent** — set on your reply when relevant: `decision_needed`, `agreement_pending`, `director_input`, or `implementation_ready`. Purely informational for the counterparty.
+
+**Peer discovery**
+
+Call `architect-hub_get_engineer_status` to list connected agents with their `agentId`, `role`, `labels`, and liveness. Use that to pick a `recipientAgentId` for peer-to-peer threads.
 
 ### Report Template
 

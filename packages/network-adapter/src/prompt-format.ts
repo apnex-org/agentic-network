@@ -49,12 +49,23 @@ export function buildPromptText(
   cfg: PromptFormatConfig
 ): string {
   const p = cfg.toolPrefix;
+  // Author varies in Threads 2.0: arch↔eng threads carry "architect" or
+  // "engineer"; peer-to-peer eng↔eng threads carry "engineer" on both
+  // sides. Fall back to "peer" when the payload is unusual.
+  const authorLabel = data.author === "architect" ? "Architect"
+    : data.author === "engineer" ? "Engineer peer"
+    : "Peer";
   switch (event) {
     case "thread_message":
       return (
-        `[Architect] Replied to thread "${data.title || data.threadId}". ` +
-        `It is your turn. Please call ${p}get_thread with threadId="${data.threadId}" ` +
-        `to read the full thread, then reply using ${p}create_thread_reply.`
+        `[${authorLabel}] Replied to thread "${data.title || data.threadId}". ` +
+        `It is your turn. Call ${p}get_thread with threadId="${data.threadId}" ` +
+        `to read the full thread, then reply using ${p}create_thread_reply. ` +
+        `Threads 2.0 discipline: when you signal converged=true you MUST also populate ` +
+        `\`stagedActions\` (for a purely-ideation thread: ` +
+        `[{kind:"stage",type:"close_no_action",payload:{reason:"<short rationale>"}}]) ` +
+        `AND a non-empty \`summary\` narrating the agreed outcome. ` +
+        `The Hub gate rejects converged=true without both — read the error message and retry with the missing piece populated.`
       );
     case "clarification_answered":
       return (
@@ -83,11 +94,12 @@ export function buildPromptText(
       return `[Architect] Proposal ${data.proposalId || ""}: ${data.decision || "decided"}.`;
     case "thread_converged":
       return (
-        `[Architect] Thread "${data.title || data.threadId}" converged with intent: ${data.intent || "none"}. ` +
-        `Check if follow-up action is needed.`
+        `[Hub] Thread "${data.title || data.threadId}" converged with intent: ${data.intent || "none"}. ` +
+        `Summary: ${(data.summary as string)?.slice(0, 200) || "(none)"}. ` +
+        `Committed actions: ${data.committedActionCount ?? 0}. Check the thread for any follow-up action.`
       );
     default:
-      return `[Architect] Hub notification: ${event}.`;
+      return `[Hub] Notification: ${event}.`;
   }
 }
 
