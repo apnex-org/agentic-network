@@ -12,6 +12,7 @@ import { isValidTransition } from "./types.js";
 import type { FsmTransitionTable } from "./types.js";
 import type { MissionStatus } from "../entities/index.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
+import { dispatchMissionCreated, dispatchMissionActivated } from "./dispatch-helpers.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -31,10 +32,9 @@ async function createMission(args: Record<string, unknown>, ctx: IPolicyContext)
 
   const mission = await ctx.stores.mission.createMission(title, description, documentRef);
 
-  await ctx.emit("mission_created", {
-    missionId: mission.id,
-    title,
-  }, ["architect", "engineer"]);
+  // Uses the shared helper so the cascade path (cascade-actions/
+  // propose-mission.ts) fires an identically-shaped event.
+  await dispatchMissionCreated(ctx, mission);
 
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ missionId: mission.id, status: mission.status, correlationId: mission.correlationId }) }],
@@ -72,7 +72,9 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
   }
 
   if (status === "active") {
-    await ctx.emit("mission_activated", { missionId, title: mission.title }, ["architect", "engineer"]);
+    // Uses the shared helper so the cascade path (cascade-actions/
+    // update-mission-status.ts) fires an identically-shaped event.
+    await dispatchMissionActivated(ctx, mission);
   }
 
   return {

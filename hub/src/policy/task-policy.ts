@@ -14,6 +14,7 @@ import type { IPolicyContext, PolicyResult, FsmTransitionTable, DomainEvent } fr
 import { isValidTransition } from "./types.js";
 import { callerLabels } from "./labels.js";
 import { LIST_PAGINATION_SCHEMA, LIST_LABELS_SCHEMA, applyLabelFilter, paginate } from "./list-filters.js";
+import { dispatchTaskSpawned } from "./dispatch-helpers.js";
 
 // ── Task FSM ────────────────────────────────────────────────────────
 
@@ -107,22 +108,12 @@ async function createTask(args: Record<string, unknown>, ctx: IPolicyContext): P
   const hasDeps = dependsOn && dependsOn.length > 0;
   const resultStatus = hasDeps ? "blocked" : "pending";
 
-  if (hasDeps) {
-    // Notify that the task is blocked on dependencies (architects in same label scope).
-    await ctx.dispatch("task_blocked", {
-      taskId,
-      directive: resolvedDirective.substring(0, 200),
-      correlationId,
-      dependsOn,
-    }, { roles: ["architect"], matchLabels: labels });
-  } else {
-    // Notify Engineers in the matching label scope that a new directive is available.
-    await ctx.dispatch("task_issued", {
-      taskId,
-      directive: resolvedDirective.substring(0, 200),
-      correlationId,
-      sourceThreadId,
-    }, { roles: ["engineer"], matchLabels: labels });
+  // Fan-out routing event. Uses the shared helper so the cascade-
+  // path (cascade-actions/create-task.ts) fires identically-shaped
+  // events without drift — see policy/dispatch-helpers.ts.
+  const spawnedTask = await ctx.stores.task.getTask(taskId);
+  if (spawnedTask) {
+    await dispatchTaskSpawned(ctx, spawnedTask, labels, sourceThreadId);
   }
 
   return {

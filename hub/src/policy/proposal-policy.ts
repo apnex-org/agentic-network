@@ -16,6 +16,7 @@ import type { IPolicyContext, PolicyResult } from "./types.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import type { ProposedExecutionPlan, ScaffoldResult } from "../state.js";
 import { callerLabels } from "./labels.js";
+import { dispatchProposalSubmitted } from "./dispatch-helpers.js";
 
 // ── Scaffolding ─────────────────────────────────────────────────────
 
@@ -231,13 +232,9 @@ async function createProposal(args: Record<string, unknown>, ctx: IPolicyContext
   const labels = await callerLabels(ctx);
   const proposal = await ctx.stores.proposal.submitProposal(title, summary, body, correlationId, executionPlan, labels);
 
-  await ctx.dispatch("proposal_submitted", {
-    proposalId: proposal.id,
-    title: proposal.title,
-    summary: proposal.summary,
-    proposalRef: proposal.proposalRef,
-    hasExecutionPlan: !!executionPlan,
-  }, { roles: ["architect"], matchLabels: labels });
+  // Uses the shared helper so the cascade path (cascade-actions/
+  // create-proposal.ts) fires an identically-shaped event.
+  await dispatchProposalSubmitted(ctx, proposal, labels, !!executionPlan);
 
   return {
     content: [{

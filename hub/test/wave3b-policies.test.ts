@@ -2168,3 +2168,179 @@ describe("Phase 2 invariants (M24-T11)", () => {
     expect(skipAudits.length).toBeGreaterThanOrEqual(3);
   });
 });
+
+// ── Cascade-path SSE dispatch parity (bug surfaced post-M24-T15 ITW) ─
+// The Phase 2 cascade handlers persist entities correctly but, prior
+// to the shared-helper refactor (dispatch-helpers.ts), silently
+// skipped the ctx.dispatch() call that the direct-tool equivalents
+// fire. Engineers had to poll get_task to discover cascade-spawned
+// tasks. These tests pin the parity: each cascade action fires the
+// same SSE event the direct tool would.
+
+describe("Cascade-path SSE parity (dispatch-helpers)", () => {
+  let router: PolicyRouter;
+  let archCtx: IPolicyContext;
+  let engCtx: IPolicyContext;
+
+  beforeEach(async () => {
+    await import("../src/policy/cascade-actions/index.js");
+    router = new PolicyRouter(noop);
+    registerThreadPolicy(router);
+
+    archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
+    engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng" });
+    archCtx.stores.engineerRegistry.setSessionRole("s-arch", "architect");
+    archCtx.stores.engineerRegistry.setSessionRole("s-eng", "engineer");
+  });
+
+  function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): void {
+    const store = ctx.stores.thread as any;
+    const t = store.threads.get(threadId);
+    const id = `action-${t.convergenceActions.length + 1}`;
+    t.convergenceActions.push({
+      id, type, status: "staged",
+      proposer: { role: "engineer", agentId: null },
+      timestamp: new Date().toISOString(),
+      payload,
+    });
+  }
+
+  async function runConverge(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
+    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
+    injectStagedAction(threadId, type, payload, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "arch", summary }, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "eng-c", converged: true }, engCtx);
+    await router.handle("create_thread_reply", { threadId, message: "arch-c", converged: true }, archCtx);
+    return threadId;
+  }
+
+  it("create_task cascade fires task_issued to engineers (matches direct tool)", async () => {
+    const threadId = await runConverge(
+      "create_task",
+      { title: "T", description: "d" },
+      "Spawn via cascade.",
+    );
+    const issued = (archCtx as any).dispatchedEvents.find(
+      (e: any) => e.event === "task_issued" && e.data.sourceThreadId === threadId,
+    );
+    expect(issued).toBeDefined();
+    expect(issued.selector.roles).toEqual(["engineer"]);
+    expect(issued.data.taskId).toMatch(/^task-/);
+    expect(issued.data.directive).toBe("d");
+  });
+
+  it("create_proposal cascade fires proposal_submitted to architects", async () => {
+    await runConverge(
+      "create_proposal",
+      { title: "P", description: "body" },
+      "Spawn via cascade.",
+    );
+    const submitted = (archCtx as any).dispatchedEvents.find(
+      (e: any) => e.event === "proposal_submitted",
+    );
+    expect(submitted).toBeDefined();
+    expect(submitted.selector.roles).toEqual(["architect"]);
+    expect(submitted.data.proposalId).toMatch(/^prop-/);
+    expect(submitted.data.title).toBe("P");
+  });
+
+  it("create_idea cascade fires idea_submitted (emit to both roles)", async () => {
+    await runConverge(
+      "create_idea",
+      { title: "I", description: "desc", tags: ["x"] },
+      "Spawn via cascade.",
+    );
+    const emitted = (archCtx as any).emittedEvents.find(
+      (e: any) => e.event === "idea_submitted",
+    );
+    expect(emitted).toBeDefined();
+    expect(emitted.targetRoles).toEqual(["architect", "engineer"]);
+    expect(emitted.data.ideaId).toMatch(/^idea-/);
+  });
+
+  it("propose_mission cascade fires mission_created", async () => {
+    await runConverge(
+      "propose_mission",
+      { title: "M", description: "d", goals: [] },
+      "Spawn via cascade.",
+    );
+    const emitted = (archCtx as any).emittedEvents.find(
+      (e: any) => e.event === "mission_created",
+    );
+    expect(emitted).toBeDefined();
+    expect(emitted.targetRoles).toEqual(["architect", "engineer"]);
+    expect(emitted.data.missionId).toMatch(/^mission-/);
+    expect(emitted.data.title).toBe("M");
+  });
+
+  it("update_mission_status cascade fires mission_activated on proposed → active", async () => {
+    const mission = await archCtx.stores.mission.createMission("M-Act", "d");
+    // Clear events captured during the direct createMission.
+    (archCtx as any).emittedEvents.length = 0;
+    await runConverge(
+      "update_mission_status",
+      { missionId: mission.id, status: "active" },
+      "Activate via cascade.",
+    );
+    const activated = (archCtx as any).emittedEvents.find(
+      (e: any) => e.event === "mission_activated",
+    );
+    expect(activated).toBeDefined();
+    expect(activated.data.missionId).toBe(mission.id);
+  });
+
+  it("update_mission_status cascade does NOT fire mission_activated for non-active targets", async () => {
+    const mission = await archCtx.stores.mission.createMission("M-Abandon", "d");
+    // mission is "proposed"; transition straight to "abandoned" is FSM-legal
+    (archCtx as any).emittedEvents.length = 0;
+    await runConverge(
+      "update_mission_status",
+      { missionId: mission.id, status: "abandoned" },
+      "Abandon via cascade.",
+    );
+    const activated = (archCtx as any).emittedEvents.find(
+      (e: any) => e.event === "mission_activated",
+    );
+    expect(activated).toBeUndefined();
+  });
+
+  it("close_no_action cascade does NOT fire any entity-spawn event", async () => {
+    await runConverge(
+      "close_no_action",
+      { reason: "nothing to do" },
+      "Close via cascade.",
+    );
+    // No task/proposal/idea/mission spawn; audit-only.
+    for (const event of ["task_issued", "proposal_submitted", "idea_submitted", "mission_created", "mission_activated"]) {
+      expect((archCtx as any).dispatchedEvents.find((e: any) => e.event === event)).toBeUndefined();
+      expect((archCtx as any).emittedEvents.find((e: any) => e.event === event)).toBeUndefined();
+    }
+  });
+
+  it("idempotent re-run does NOT re-dispatch (status: skipped_idempotent → no event)", async () => {
+    const { runCascade } = await import("../src/policy/cascade.js");
+    const threadId = await runConverge(
+      "create_task",
+      { title: "Once", description: "only once" },
+      "Single dispatch.",
+    );
+    // First dispatch count on task_issued
+    const firstCount = (archCtx as any).dispatchedEvents.filter(
+      (e: any) => e.event === "task_issued",
+    ).length;
+    expect(firstCount).toBe(1);
+
+    // Replay cascade against the same thread+action
+    const thread = await archCtx.stores.thread.getThread(threadId);
+    const action = thread!.convergenceActions.find((a: any) => a.type === "create_task")!;
+    const result = await runCascade(archCtx, thread!, [action as any], "Single dispatch.");
+    expect(result.report[0].status).toBe("skipped_idempotent");
+    // No additional task_issued dispatch
+    const finalCount = (archCtx as any).dispatchedEvents.filter(
+      (e: any) => e.event === "task_issued",
+    ).length;
+    expect(finalCount).toBe(1);
+  });
+});

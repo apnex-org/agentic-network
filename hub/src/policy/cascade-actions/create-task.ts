@@ -13,6 +13,7 @@
  */
 
 import { registerCascadeHandler, cascadeIdempotencyKey } from "../cascade.js";
+import { dispatchTaskSpawned } from "../dispatch-helpers.js";
 
 registerCascadeHandler("create_task", async ({ ctx, thread, action, sourceThreadSummary }) => {
   if (action.type !== "create_task") {
@@ -53,6 +54,15 @@ registerCascadeHandler("create_task", async ({ ctx, thread, action, sourceThread
     `Task ${taskId} spawned from thread ${thread.id}/${action.id}. Title: ${payload.title}. Summary: ${sourceThreadSummary}.`,
     taskId,
   );
+
+  // Fire the same SSE event the direct create_task tool does so
+  // engineers in the matching label scope get a task_issued push —
+  // not just the audit entry. Shared helper keeps the payload shape
+  // in lock-step with task-policy.ts:submitTask.
+  const spawnedTask = await ctx.stores.task.getTask(taskId);
+  if (spawnedTask) {
+    await dispatchTaskSpawned(ctx, spawnedTask, thread.labels);
+  }
 
   return { status: "executed", entityId: taskId };
 });

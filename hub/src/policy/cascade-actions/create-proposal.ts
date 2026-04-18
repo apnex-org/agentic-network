@@ -12,6 +12,7 @@
  */
 
 import { registerCascadeHandler, cascadeIdempotencyKey } from "../cascade.js";
+import { dispatchProposalSubmitted } from "../dispatch-helpers.js";
 
 registerCascadeHandler("create_proposal", async ({ ctx, thread, action, sourceThreadSummary }) => {
   if (action.type !== "create_proposal") {
@@ -47,6 +48,10 @@ registerCascadeHandler("create_proposal", async ({ ctx, thread, action, sourceTh
     `Proposal ${proposal.id} spawned from thread ${thread.id}/${action.id}. Title: ${payload.title}. Summary: ${sourceThreadSummary}.`,
     proposal.id,
   );
+
+  // Same proposal_submitted event the direct tool fires — architects
+  // in matching label scope get the push, not just the audit trail.
+  await dispatchProposalSubmitted(ctx, proposal, thread.labels, false);
 
   return { status: "executed", entityId: proposal.id };
 });

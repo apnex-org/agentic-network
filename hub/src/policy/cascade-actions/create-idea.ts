@@ -11,6 +11,7 @@
  */
 
 import { registerCascadeHandler, cascadeIdempotencyKey } from "../cascade.js";
+import { dispatchIdeaSubmitted } from "../dispatch-helpers.js";
 
 registerCascadeHandler("create_idea", async ({ ctx, thread, action, sourceThreadSummary }) => {
   if (action.type !== "create_idea") {
@@ -49,6 +50,9 @@ registerCascadeHandler("create_idea", async ({ ctx, thread, action, sourceThread
     `Idea ${idea.id} spawned from thread ${thread.id}/${action.id}. Title: ${payload.title}. Summary: ${sourceThreadSummary}.`,
     idea.id,
   );
+
+  // Same idea_submitted event the direct tool fires.
+  await dispatchIdeaSubmitted(ctx, idea, author);
 
   return { status: "executed", entityId: idea.id };
 });

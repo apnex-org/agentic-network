@@ -16,6 +16,7 @@
  */
 
 import { registerCascadeHandler, cascadeIdempotencyKey } from "../cascade.js";
+import { dispatchMissionCreated } from "../dispatch-helpers.js";
 
 registerCascadeHandler("propose_mission", async ({ ctx, thread, action, sourceThreadSummary }) => {
   if (action.type !== "propose_mission") {
@@ -53,6 +54,11 @@ registerCascadeHandler("propose_mission", async ({ ctx, thread, action, sourceTh
     `Mission ${mission.id} proposed from thread ${thread.id}/${action.id}. Title: ${payload.title}. Goals: ${payload.goals.length}. Summary: ${sourceThreadSummary}.`,
     mission.id,
   );
+
+  // Same mission_created event the direct tool fires. The mission
+  // lands in `proposed` status — Director still activates separately
+  // (scope-of-commitment boundary per ADR-014 §21).
+  await dispatchMissionCreated(ctx, mission);
 
   return { status: "executed", entityId: mission.id };
 });

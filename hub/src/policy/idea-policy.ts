@@ -12,6 +12,7 @@ import { isValidTransition } from "./types.js";
 import type { FsmTransitionTable } from "./types.js";
 import type { IdeaStatus } from "../entities/index.js";
 import { LIST_PAGINATION_SCHEMA, LIST_TAGS_SCHEMA, applyTagFilter, paginate } from "./list-filters.js";
+import { dispatchIdeaSubmitted } from "./dispatch-helpers.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -34,11 +35,9 @@ async function createIdea(args: Record<string, unknown>, ctx: IPolicyContext): P
   const role = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
   const idea = await ctx.stores.idea.submitIdea(text, role, sourceThreadId, tags);
 
-  await ctx.emit("idea_submitted", {
-    ideaId: idea.id,
-    text: text.substring(0, 200),
-    author: role,
-  }, ["architect", "engineer"]);
+  // Uses the shared helper so the cascade path (cascade-actions/
+  // create-idea.ts) fires an identically-shaped event.
+  await dispatchIdeaSubmitted(ctx, idea, role);
 
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ ideaId: idea.id, status: idea.status }) }],

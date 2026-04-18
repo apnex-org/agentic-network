@@ -12,6 +12,7 @@
  */
 
 import { registerCascadeHandler } from "../cascade.js";
+import { dispatchMissionActivated } from "../dispatch-helpers.js";
 import type { MissionStatus } from "../../entities/mission.js";
 
 const VALID_MISSION_STATUSES: ReadonlySet<string> = new Set<MissionStatus>(["proposed", "active", "completed", "abandoned"]);
@@ -71,6 +72,13 @@ registerCascadeHandler("update_mission_status", async ({ ctx, thread, action, so
     `Mission ${missionId} status ${mission.status} → ${targetStatus} from thread ${thread.id}/${action.id}. Summary: ${sourceThreadSummary}.`,
     missionId,
   );
+
+  // Same mission_activated event the direct updateMission fires on
+  // the proposed → active edge. Other transitions stay silent —
+  // matches direct-path behaviour; revisit if listeners emerge.
+  if (targetStatus === "active") {
+    await dispatchMissionActivated(ctx, updated);
+  }
 
   return { status: "executed", entityId: missionId };
 });
