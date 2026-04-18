@@ -1,7 +1,7 @@
 # Threads 2.0 — direct P2P plan
 
-**Status:** working document · mutable until missions fully execute, at which point promote the Ratified Architecture section to ADR-014 and retire this file.
-**Owner:** Director · **Started:** 2026-04-18 · **Architecture ratified:** 2026-04-18 via thread-125
+**Status:** archived planning artefact · Ratified Phase 2 Architecture section promoted to [ADR-014](../decisions/014-threads-2-phase-2-architecture.md) on 2026-04-18. Retained for mission-phasing, working log, and held/out-of-scope context; decisions are authoritative in ADR-014.
+**Owner:** Director · **Started:** 2026-04-18 · **Architecture ratified:** 2026-04-18 via thread-125 · **Promoted to ADR-014:** 2026-04-18
 
 ## Goal
 
@@ -240,3 +240,4 @@ Size: 1 day.
 - 2026-04-18 — Finding: `close_thread` is role-guarded at the plugin/proxy layer, not advisory. Raised to Architect review thread.
 - 2026-04-18 — **thread-125 Architect review** — 8 rounds, greg↔architect. Full Phase 2 architecture ratified: three routing modes, termination FSM, validate-then-execute atomicity, action vocabulary with scope-of-commitment principle, idempotency via natural key, entity back-linking with summary-as-living-record, proposer provenance widening, event merge, peer discovery tool, Director integration with `director-*` prefix, thread expiry reaper. All decisions frozen in thread-125's summary per the Summary-as-Living-Record invariant. Sandwich retry latency surfaced as separate hardening mission and authorized.
 - 2026-04-18 — This file updated with the ratified architecture and mission phasing. Next: draft ADR-014 and amend `workflow-registry.md` (M-Ratify).
+- 2026-04-18 — **M-Ratify task A complete.** Ratified Phase 2 Architecture section promoted to [`docs/decisions/014-threads-2-phase-2-architecture.md`](../decisions/014-threads-2-phase-2-architecture.md). ADR-014 supersedes the "Phase 2 (deferred)" and "Phase 3 (deferred)" placeholder sections of ADR-013; ADR-013 retained as the immutable Phase 1 record. This planning doc is now an archived artefact — ADR-014 is authoritative for the architecture; mission phasing, held items, and working log remain here for provenance.

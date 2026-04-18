@@ -223,7 +223,38 @@ export interface Proposal {
   updatedAt: string;
 }
 
-export type ThreadStatus = "active" | "converged" | "round_limit" | "closed";
+/**
+ * Thread lifecycle terminal states.
+ * Mission-21 Phase 1: active | converged | round_limit | closed.
+ * Mission-24 Phase 2 (ADR-014): widens with `abandoned` and `cascade_failed`.
+ * - `abandoned`: participant-initiated exit via `leave_thread`, or the Hub
+ *   idle reaper (`thread_reaper_abandoned` audit action).
+ * - `cascade_failed`: post-gate infrastructure failure during the async
+ *   execute phase of validate-then-execute cascade (INV-TH19). Thread is
+ *   terminal; manual resolution required.
+ */
+export type ThreadStatus = "active" | "converged" | "round_limit" | "closed" | "abandoned" | "cascade_failed";
+
+/**
+ * Mission-24 Phase 2 (ADR-014, INV-TH18): routing mode declared at thread
+ * open, immutable for the thread's lifetime. Broadcast coerces to Targeted
+ * on first reply (the single permitted mode transition). Context-bound
+ * resolves participants dynamically from the bound entity's current
+ * assignee(s) at each turn.
+ */
+export type ThreadRoutingMode = "targeted" | "broadcast" | "context_bound";
+
+/**
+ * Mission-24 Phase 2 (ADR-014): binding for `context_bound` threads.
+ * Required when `routingMode === "context_bound"`, null otherwise.
+ * `entityType` typically one of `task | mission | proposal | idea`;
+ * `entityId` is the owning entity's id.
+ */
+export interface ThreadContext {
+  entityType: string;
+  entityId: string;
+}
+
 export type ThreadIntent = "decision_needed" | "agreement_pending" | "director_input" | "implementation_ready" | null;
 export type ThreadAuthor = "engineer" | "architect";
 export type SemanticIntent =
@@ -264,9 +295,21 @@ export interface ThreadParticipant {
   lastActiveAt: string;
 }
 
-/** Phase 1 vocabulary. Phase 2 widens to create_task / create_proposal /
- * create_idea / create_mission / update_mission / update_idea. */
-export type StagedActionType = "close_no_action";
+/**
+ * Phase 1 (ADR-013) shipped with `close_no_action` only.
+ * Phase 2 (ADR-014) widens the autonomous vocabulary to 8 types total.
+ * Director-gated types (create_mission, update_mission_scope, cancel_task)
+ * are NOT stageable via `create_thread_reply` — they have direct endpoints.
+ */
+export type StagedActionType =
+  | "close_no_action"
+  | "create_task"
+  | "create_proposal"
+  | "create_idea"
+  | "update_idea"
+  | "update_mission_status"
+  | "propose_mission"
+  | "create_clarification";
 
 export type StagedActionStatus =
   | "staged"      // proposed by a reply, not yet committed
@@ -276,27 +319,122 @@ export type StagedActionStatus =
   | "executed"    // cascade ran successfully
   | "failed";     // cascade attempted but threw
 
-export interface StagedActionPayload {
-  // Phase 1 shape: only close_no_action. Future types add their own fields.
+// ── Mission-24 Phase 2 payload shapes (ADR-014) ─────────────────────
+
+/** Phase 1 retained. Used when a thread concludes with no entity-creation. */
+export interface CloseNoActionPayload {
   reason: string;
 }
 
-export interface StagedAction {
+/** Phase 2 autonomous: spawn a Task from thread convergence. */
+export interface CreateTaskActionPayload {
+  title: string;
+  description: string;
+  correlationId?: string;
+}
+
+/** Phase 2 autonomous: spawn a Proposal from thread convergence. */
+export interface CreateProposalActionPayload {
+  title: string;
+  description: string;
+  correlationId?: string;
+}
+
+/** Phase 2 autonomous: spawn an Idea from thread convergence. */
+export interface CreateIdeaActionPayload {
+  title: string;
+  description: string;
+  tags?: string[];
+}
+
+/** Phase 2 autonomous: update an existing Idea's mutable fields. */
+export interface UpdateIdeaActionPayload {
+  ideaId: string;
+  changes: Record<string, unknown>;
+}
+
+/** Phase 2 autonomous: transition a Mission between its existing statuses
+ * (e.g. active→paused). Scope-widening edits (goal/description) are
+ * Director-gated and not in this vocabulary. */
+export interface UpdateMissionStatusActionPayload {
+  missionId: string;
+  status: string;
+}
+
+/** Phase 2 autonomous: propose a new Mission in `draft`. Director approval
+ * activates. Distinct from Director-gated `create_mission` which bypasses
+ * the draft step. */
+export interface ProposeMissionActionPayload {
+  title: string;
+  description: string;
+  goals: string[];
+}
+
+/** Phase 2 autonomous: spawn a Clarification request. */
+export interface CreateClarificationActionPayload {
+  question: string;
+  context: string;
+}
+
+/** Broad union of all autonomous payload shapes. Validators narrow by
+ * the paired `type` discriminator on StagedAction. */
+export type StagedActionPayload =
+  | CloseNoActionPayload
+  | CreateTaskActionPayload
+  | CreateProposalActionPayload
+  | CreateIdeaActionPayload
+  | UpdateIdeaActionPayload
+  | UpdateMissionStatusActionPayload
+  | ProposeMissionActionPayload
+  | CreateClarificationActionPayload;
+
+/**
+ * Mission-24 Phase 2 (ADR-014, INV-TH22): proposer widens from bare
+ * ParticipantRole to {role, agentId}. Essential for P2P audit trails
+ * where multiple agents share a role (engineer↔engineer threads).
+ * agentId is nullable for legacy/future-Director entries whose agentId
+ * hasn't been resolved.
+ */
+export interface StagedActionProposer {
+  role: ParticipantRole;
+  agentId: string | null;
+}
+
+interface StagedActionCommon {
   /** Thread-scoped id: "action-1", "action-2", ... allocated in stage order. */
   id: string;
-  type: StagedActionType;
   status: StagedActionStatus;
-  /** Which participant role staged / last revised this action. */
-  proposer: ParticipantRole;
+  /** Mission-24 (INV-TH22): role+agentId of the agent that last staged /
+   * revised this action. Widened from ParticipantRole in Phase 2. */
+  proposer: StagedActionProposer;
   /** ISO-8601 of most recent stage / revise operation on this entry. */
   timestamp: string;
-  payload: StagedActionPayload;
   /** If this entry revises a prior action, the prior action's id. */
   revisionOf?: string;
 }
 
+/** Discriminated union on `type` — TypeScript narrows `payload` to the
+ * matching shape when `type` is inspected, so handlers and tests can
+ * access payload fields without explicit casts. */
+export type StagedAction =
+  | (StagedActionCommon & { type: "close_no_action"; payload: CloseNoActionPayload })
+  | (StagedActionCommon & { type: "create_task"; payload: CreateTaskActionPayload })
+  | (StagedActionCommon & { type: "create_proposal"; payload: CreateProposalActionPayload })
+  | (StagedActionCommon & { type: "create_idea"; payload: CreateIdeaActionPayload })
+  | (StagedActionCommon & { type: "update_idea"; payload: UpdateIdeaActionPayload })
+  | (StagedActionCommon & { type: "update_mission_status"; payload: UpdateMissionStatusActionPayload })
+  | (StagedActionCommon & { type: "propose_mission"; payload: ProposeMissionActionPayload })
+  | (StagedActionCommon & { type: "create_clarification"; payload: CreateClarificationActionPayload });
+
 export type StagedActionOp =
-  | { kind: "stage"; type: StagedActionType; payload: StagedActionPayload }
+  | { kind: "stage"; type: "close_no_action"; payload: CloseNoActionPayload }
+  | { kind: "stage"; type: "create_task"; payload: CreateTaskActionPayload }
+  | { kind: "stage"; type: "create_proposal"; payload: CreateProposalActionPayload }
+  | { kind: "stage"; type: "create_idea"; payload: CreateIdeaActionPayload }
+  | { kind: "stage"; type: "update_idea"; payload: UpdateIdeaActionPayload }
+  | { kind: "stage"; type: "update_mission_status"; payload: UpdateMissionStatusActionPayload }
+  | { kind: "stage"; type: "propose_mission"; payload: ProposeMissionActionPayload }
+  | { kind: "stage"; type: "create_clarification"; payload: CreateClarificationActionPayload }
   | { kind: "revise"; id: string; payload: StagedActionPayload }
   | { kind: "retract"; id: string };
 
@@ -314,6 +452,29 @@ export interface Thread {
   id: string;
   title: string;
   status: ThreadStatus;
+  /**
+   * Mission-24 Phase 2 (ADR-014, INV-TH18): routing mode declared at
+   * open, immutable. Legacy threads (pre-Phase-2) normalize to
+   * `"targeted"` — their behaviour mapped cleanly to agent-pinned
+   * dispatch via currentTurnAgentId + recipientAgentId. Broadcast and
+   * Context-bound are Phase 2 additions; see ADR-014 for semantics.
+   */
+  routingMode: ThreadRoutingMode;
+  /**
+   * Mission-24 Phase 2 (ADR-014): entity binding for `context_bound`
+   * threads. Required when routingMode === "context_bound"; null in the
+   * Targeted and Broadcast modes. PolicyRouter resolves participants
+   * dynamically from the bound entity's assignee(s) at each turn.
+   */
+  context: ThreadContext | null;
+  /**
+   * Mission-24 Phase 2 (ADR-014, INV-TH21): optional per-thread override
+   * on the deployment-wide idle-expiry default (typically 7 days). When
+   * null, the deployment default applies. A Hub reaper periodically
+   * transitions idle threads to `abandoned` with audit action
+   * `thread_reaper_abandoned`.
+   */
+  idleExpiryMs: number | null;
   initiatedBy: ThreadAuthor;
   currentTurn: ThreadAuthor;
   /**
@@ -863,6 +1024,14 @@ export class MemoryThreadStore implements IThreadStore {
       id,
       title,
       status: "active",
+      // Mission-24 Phase 2 (INV-TH18): every thread opens with a routing
+      // mode. Phase 1 call sites defaulted to targeted semantics (via
+      // recipientAgentId pinning); that default is preserved here until
+      // the openThread options bag is widened to accept routingMode /
+      // context in the M24-T-next policy-layer work.
+      routingMode: "targeted",
+      context: null,
+      idleExpiryMs: null,
       initiatedBy: author,
       currentTurn: nextTurn,
       currentTurnAgentId: recipientAgentId ?? null,
@@ -921,7 +1090,12 @@ export class MemoryThreadStore implements IThreadStore {
     // applyStagedActionOps can throw on bad op (e.g. revising a
     // non-existent / wrong-status action). Let it propagate — caller
     // gets ThreadConvergenceGateError with a domain-specific message.
-    applyStagedActionOps(working, stagedActions, author as ParticipantRole, now);
+    applyStagedActionOps(
+      working,
+      stagedActions,
+      { role: author as ParticipantRole, agentId: authorAgentId ?? null },
+      now,
+    );
 
     if (summaryUpdate !== undefined) working.summary = summaryUpdate;
     upsertParticipant(working.participants, author, authorAgentId, now);
@@ -1011,7 +1185,10 @@ export class MemoryThreadStore implements IThreadStore {
 function cloneThread(t: Thread): Thread {
   return {
     ...t,
-    convergenceActions: t.convergenceActions.map((a) => ({ ...a, payload: { ...a.payload } })),
+    // Cast preserves the (type, payload) pairing on the cloned action —
+    // spreading the source `a` would lose the StagedAction discriminator
+    // narrowing that TypeScript applies per source element.
+    convergenceActions: t.convergenceActions.map((a) => ({ ...a, payload: { ...a.payload } } as StagedAction)),
     participants: t.participants.map((p) => ({ ...p })),
     messages: t.messages.map((m) => ({ ...m })),
     labels: { ...t.labels },
@@ -1020,24 +1197,33 @@ function cloneThread(t: Thread): Thread {
 
 /** Apply a list of StagedActionOp in order to the thread's
  * convergenceActions[]. Called from both MemoryThreadStore and the
- * GcsThreadStore CAS transform. Side-effect only — mutates in place. */
+ * GcsThreadStore CAS transform. Side-effect only — mutates in place.
+ *
+ * Mission-24 (INV-TH22): `proposer` is now `{role, agentId}` rather
+ * than bare ParticipantRole. Callers must pass both; agentId may be
+ * null for future-Director entries that haven't resolved a stable
+ * agentId yet.
+ */
 export function applyStagedActionOps(
   thread: Thread,
   ops: StagedActionOp[],
-  proposer: ParticipantRole,
+  proposer: StagedActionProposer,
   now: string,
 ): void {
   for (const op of ops) {
     if (op.kind === "stage") {
       const id = `action-${thread.convergenceActions.length + 1}`;
+      // Cast is sound: `op` is discriminated on (kind="stage", type, payload)
+      // so type and payload are tied at the op level; the assembled object
+      // satisfies exactly one arm of the StagedAction discriminated union.
       thread.convergenceActions.push({
         id,
         type: op.type,
         status: "staged",
-        proposer,
+        proposer: { ...proposer },
         timestamp: now,
         payload: { ...op.payload },
-      });
+      } as StagedAction);
     } else if (op.kind === "revise") {
       const prior = thread.convergenceActions.find((a) => a.id === op.id);
       if (!prior) {
@@ -1056,11 +1242,11 @@ export function applyStagedActionOps(
         id: newId,
         type: prior.type,
         status: "staged",
-        proposer,
+        proposer: { ...proposer },
         timestamp: now,
         payload: { ...op.payload },
         revisionOf: prior.id,
-      });
+      } as StagedAction);
     } else if (op.kind === "retract") {
       const prior = thread.convergenceActions.find((a) => a.id === op.id);
       if (!prior) {

@@ -1318,6 +1318,12 @@ export class GcsThreadStore implements IThreadStore {
       id,
       title,
       status: "active",
+      // Mission-24 Phase 2 (INV-TH18): Phase 1 openThread call sites
+      // default to targeted routing; the Phase 2 options-bag widening
+      // (routingMode / context) lands with the policy-layer work.
+      routingMode: "targeted",
+      context: null,
+      idleExpiryMs: null,
       initiatedBy: author,
       currentTurn: nextTurn,
       currentTurnAgentId: recipientAgentId ?? null,
@@ -1371,7 +1377,12 @@ export class GcsThreadStore implements IThreadStore {
 
         // Mission-21: apply staging ops BEFORE the turn flip so the gate
         // evaluates the post-op convergenceActions state.
-        applyStagedActionOps(current, stagedActions, author as ParticipantRole, now);
+        applyStagedActionOps(
+          current,
+          stagedActions,
+          { role: author as ParticipantRole, agentId: authorAgentId ?? null },
+          now,
+        );
         if (summaryUpdate !== undefined) current.summary = summaryUpdate;
         upsertParticipant(current.participants, author, authorAgentId, now);
 
@@ -1522,24 +1533,62 @@ export class GcsThreadStore implements IThreadStore {
 }
 
 /**
- * Mission-21 Phase 1 defensive read normaliser. Pre-cutover thread
- * JSON files don't have `convergenceActions`, `summary`, or
- * `participants` — fill them in with empty defaults so every caller
- * sees a consistent Thread shape. New threads written after the
- * cutover already have these fields. Legacy `convergenceAction`
+ * Defensive read normaliser for Thread JSON read from GCS.
+ *
+ * Mission-21 Phase 1: backfills `convergenceActions`, `summary`,
+ * `participants`, `recipientAgentId`, `currentTurnAgentId` for
+ * pre-cutover threads that don't have them. Legacy `convergenceAction`
  * (singular) is read and silently dropped; the new `convergenceActions`
  * array is the only path forward (ADR-013).
+ *
+ * Mission-24 Phase 2 (ADR-014): additionally backfills
+ * - `routingMode` — legacy threads default to `"targeted"` (their
+ *   Phase 1 behaviour maps cleanly to agent-pinned dispatch).
+ * - `context` — null for non-context_bound legacy threads.
+ * - `idleExpiryMs` — null (deployment-wide default applies).
+ * - Coerces legacy `proposer: ParticipantRole` entries on each staged
+ *   action into the widened `{role, agentId: null}` shape (INV-TH22).
+ *   agentId is null because pre-Phase-2 shapes never carried it.
  */
 function normalizeThreadShape(t: any): Thread {
+  const convergenceActions = Array.isArray(t.convergenceActions)
+    ? t.convergenceActions.map((a: any) => normalizeStagedActionShape(a))
+    : [];
   return {
     ...t,
-    convergenceActions: Array.isArray(t.convergenceActions) ? t.convergenceActions : [],
+    routingMode: isThreadRoutingMode(t.routingMode) ? t.routingMode : "targeted",
+    context: isThreadContext(t.context) ? t.context : null,
+    idleExpiryMs: typeof t.idleExpiryMs === "number" ? t.idleExpiryMs : null,
+    convergenceActions,
     summary: typeof t.summary === "string" ? t.summary : "",
     participants: Array.isArray(t.participants) ? t.participants : [],
     recipientAgentId: typeof t.recipientAgentId === "string" ? t.recipientAgentId : null,
     currentTurnAgentId: typeof t.currentTurnAgentId === "string" ? t.currentTurnAgentId : null,
     messages: Array.isArray(t.messages) ? t.messages : [],
   } as Thread;
+}
+
+function isThreadRoutingMode(v: unknown): v is "targeted" | "broadcast" | "context_bound" {
+  return v === "targeted" || v === "broadcast" || v === "context_bound";
+}
+
+function isThreadContext(v: unknown): v is { entityType: string; entityId: string } {
+  return typeof v === "object" && v !== null
+    && typeof (v as any).entityType === "string"
+    && typeof (v as any).entityId === "string";
+}
+
+/**
+ * Mission-24 (INV-TH22) backfill: widen legacy `proposer: string` shape
+ * into `{role, agentId: null}` on read. Already-widened entries pass
+ * through untouched.
+ */
+function normalizeStagedActionShape(a: any): any {
+  if (!a || typeof a !== "object") return a;
+  if (typeof a.proposer === "string") {
+    return { ...a, proposer: { role: a.proposer, agentId: null } };
+  }
+  return a;
 }
 
 // ── GCS Audit Store ──────────────────────────────────────────────────
