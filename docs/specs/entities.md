@@ -356,7 +356,7 @@ This layering lets a client rotate its token (authentication) or bounce its sess
 | **Agent** | see §3.2 | append-only (epoch++) | `hub/src/hub-networking.ts` + `GcsEngineerRegistry` | `agents/{engineerId}.json` + `agents/by-fingerprint/{fp}.json` | — (no FSM) | Task (via assignedEngineerId) |
 | **Mission** | _TBD_ | _TBD_ | `hub/src/policy/mission-policy.ts` | `missions/{missionId}.json` | workflow-registry §1.X | Task (virtual view), Idea, Turn |
 | **Idea** | _TBD_ | free-form (text + tags + status) | `hub/src/policy/idea-policy.ts` | `ideas/{ideaId}.json` | workflow-registry §1.X | Mission (via missionId link) |
-| **Thread** | _TBD_ | split scalar + per-message | `hub/src/policy/thread-policy.ts` | `threads/{threadId}.json` + `threads/{threadId}/messages/{seq}.json` | workflow-registry §1.X | Task (sourceThreadId), Proposal (correlationId) |
+| **Thread** | Threads 2.0 — see ADR-013. Scalar: `{id, title, status, initiatedBy, currentTurn, roundCount, maxRounds, outstandingIntent, currentSemanticIntent, correlationId, convergenceActions[], summary, participants[], labels, lastMessageConverged, createdAt, updatedAt}`. Per-message: `{author, authorAgentId, text, timestamp, converged, intent, semanticIntent}`. | scalar create-only for identity, transition-only for status / currentTurn / roundCount / convergenceActions lifecycle / summary, free-form for updatedAt / lastMessageConverged; messages append-only | `hub/src/policy/thread-policy.ts` | `threads/{threadId}.json` + `threads/{threadId}/messages/{seq}.json` | `workflow-registry.md §1.3` (now with INV-TH11..TH15 from ADR-013) | Task / Proposal (auto-spawn via Phase 2 cascade actions); Audit (relatedEntity); Agent (via authorAgentId on messages and participants[] entries) |
 | **Proposal** | _TBD_ | transition-only | `hub/src/policy/proposal-policy.ts` | `proposals/{proposalId}.json` | workflow-registry §1.X | Mission (scaffolding), Task (scaffolding) |
 | **Turn** | _TBD_ | virtual-view scalar | `hub/src/policy/turn-policy.ts` | `turns/{turnId}.json` | workflow-registry §1.X | Mission, Task (virtual view via turnId) |
 | **Tele** | _TBD_ | immutable | `hub/src/policy/tele-policy.ts` | `tele/{teleId}.json` | — (no FSM, immutable) | Turn (tele[]) |
@@ -364,6 +364,8 @@ This layering lets a client rotate its token (authentication) or bounce its sess
 | **Document** | _TBD_ | free-form, create-or-overwrite | `hub/src/policy/document-policy.ts` | `documents/**` | — (no FSM) | referenced by reportRef, proposalRef, documentRef |
 
 **_TBD_ rows** are placeholders. A follow-up task (to be created after thread-116 review of this draft) will fill them in parallel — each entity's fill-in is mechanical: read `hub/src/entities/<name>.ts` (or `state.ts`), the owning policy file, and the corresponding workflow-registry FSM section.
+
+**Thread** was filled in partially as a side-effect of Mission-21 Phase 1 (ADR-013 — Threads 2.0). The full YAML frontmatter block for Thread matching the Task / Agent style in §3 is still pending; the audit matrix row above is the short-form summary for now.
 
 ---
 

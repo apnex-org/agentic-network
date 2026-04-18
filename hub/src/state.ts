@@ -233,6 +233,9 @@ export type SemanticIntent =
 
 export interface ThreadMessage {
   author: ThreadAuthor;
+  /** Mission-21 Phase 1: the Agent.engineerId of the specific agent that
+   * sent this message. Null for legacy messages from before Threads 2.0. */
+  authorAgentId: string | null;
   text: string;
   timestamp: string;
   converged: boolean;
@@ -240,14 +243,64 @@ export interface ThreadMessage {
   semanticIntent: SemanticIntent;
 }
 
-export type ConvergenceActionType = "create_task" | "create_proposal";
+// ── Mission-21 Threads 2.0 ──────────────────────────────────────────
 
-export interface ConvergenceAction {
-  type: ConvergenceActionType;
-  templateData: {
-    title: string;
-    description: string;
-  };
+/** Participant roles. Director reserved for future (idea-84) — Phase 1
+ * populates only engineer and architect from Agent role resolution. */
+export type ParticipantRole = "engineer" | "architect" | "director";
+
+export interface ThreadParticipant {
+  role: ParticipantRole;
+  /** Agent.engineerId. Null for future Director pre-idea-84 activation. */
+  agentId: string | null;
+  joinedAt: string;
+  lastActiveAt: string;
+}
+
+/** Phase 1 vocabulary. Phase 2 widens to create_task / create_proposal /
+ * create_idea / create_mission / update_mission / update_idea. */
+export type StagedActionType = "close_no_action";
+
+export type StagedActionStatus =
+  | "staged"      // proposed by a reply, not yet committed
+  | "revised"     // superseded by a later revision (still in array for lineage)
+  | "retracted"   // explicitly withdrawn by the proposer or partner
+  | "committed"   // locked in at convergence; about to execute
+  | "executed"    // cascade ran successfully
+  | "failed";     // cascade attempted but threw
+
+export interface StagedActionPayload {
+  // Phase 1 shape: only close_no_action. Future types add their own fields.
+  reason: string;
+}
+
+export interface StagedAction {
+  /** Thread-scoped id: "action-1", "action-2", ... allocated in stage order. */
+  id: string;
+  type: StagedActionType;
+  status: StagedActionStatus;
+  /** Which participant role staged / last revised this action. */
+  proposer: ParticipantRole;
+  /** ISO-8601 of most recent stage / revise operation on this entry. */
+  timestamp: string;
+  payload: StagedActionPayload;
+  /** If this entry revises a prior action, the prior action's id. */
+  revisionOf?: string;
+}
+
+export type StagedActionOp =
+  | { kind: "stage"; type: StagedActionType; payload: StagedActionPayload }
+  | { kind: "revise"; id: string; payload: StagedActionPayload }
+  | { kind: "retract"; id: string };
+
+/** Error thrown by the thread store when `converged=true` fails the Phase 1
+ * forcing-function gate (empty committed actions OR empty summary). Carries
+ * a domain-specific message so the caller can self-correct. */
+export class ThreadConvergenceGateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ThreadConvergenceGateError";
+  }
 }
 
 export interface Thread {
@@ -261,7 +314,29 @@ export interface Thread {
   outstandingIntent: ThreadIntent;
   currentSemanticIntent: SemanticIntent;
   correlationId: string | null;
-  convergenceAction: ConvergenceAction | null;
+  /**
+   * Mission-21 Phase 1: staged and committed convergence actions.
+   * Replaces the singular `convergenceAction` field from Mission-11.
+   * Entries with `status="staged"` are candidates for commit at the next
+   * convergence; entries with `status="committed"` are the definitive
+   * outcome set that the cascade will execute. See ADR-013.
+   */
+  convergenceActions: StagedAction[];
+  /**
+   * Mission-21 Phase 1: negotiated narrative summary of the thread's
+   * outcome. Required non-empty at convergence. Either party can stage
+   * or revise this across rounds; the converging party commits the
+   * latest version. Distinct from `ConvergenceReport` (Hub-internal
+   * per-action execution telemetry). See ADR-013.
+   */
+  summary: string;
+  /**
+   * Mission-21 Phase 1: participants tracked openly (no pinning in v1).
+   * Upserted on every reply — new {role, agentId} gets appended;
+   * existing entries update lastActiveAt. Enables engineer-to-engineer
+   * collaboration within a single thread. See ADR-013.
+   */
+  participants: ThreadParticipant[];
   messages: ThreadMessage[];
   /** Mission-19: routing labels inherited from creator at open-time. */
   labels: Record<string, string>;
@@ -312,13 +387,31 @@ export interface IAuditStore {
   listEntries(limit?: number, actor?: AuditEntry["actor"]): Promise<AuditEntry[]>;
 }
 
+/**
+ * Mission-21 Phase 1: Threads 2.0 — options bag for reply operations
+ * to keep the interface readable as we add stagedActions, summary, and
+ * authorAgentId alongside existing converged/intent/semanticIntent.
+ */
+export interface ReplyToThreadOptions {
+  converged?: boolean;
+  intent?: ThreadIntent;
+  semanticIntent?: SemanticIntent;
+  /** Optional staging operations applied to convergenceActions[]. */
+  stagedActions?: StagedActionOp[];
+  /** Optional summary update. Accumulates across rounds; non-empty
+   * required at convergence. */
+  summary?: string;
+  /** Agent.engineerId of the author (from engineerRegistry.getAgentForSession).
+   * Attached to the new ThreadMessage and upserted into participants. */
+  authorAgentId?: string | null;
+}
+
 export interface IThreadStore {
-  openThread(title: string, message: string, author: ThreadAuthor, maxRounds?: number, correlationId?: string, labels?: Record<string, string>): Promise<Thread>;
-  replyToThread(threadId: string, message: string, author: ThreadAuthor, converged?: boolean, intent?: ThreadIntent, semanticIntent?: SemanticIntent): Promise<Thread | null>;
+  openThread(title: string, message: string, author: ThreadAuthor, maxRounds?: number, correlationId?: string, labels?: Record<string, string>, authorAgentId?: string | null): Promise<Thread>;
+  replyToThread(threadId: string, message: string, author: ThreadAuthor, options?: ReplyToThreadOptions): Promise<Thread | null>;
   getThread(threadId: string): Promise<Thread | null>;
   listThreads(status?: ThreadStatus): Promise<Thread[]>;
   closeThread(threadId: string): Promise<boolean>;
-  setConvergenceAction(threadId: string, action: ConvergenceAction): Promise<boolean>;
 }
 
 export interface IProposalStore {
@@ -698,7 +791,7 @@ export class MemoryThreadStore implements IThreadStore {
   private threads: Map<string, Thread> = new Map();
   private counter = 0;
 
-  async openThread(title: string, message: string, author: ThreadAuthor, maxRounds = 10, correlationId?: string, labels?: Record<string, string>): Promise<Thread> {
+  async openThread(title: string, message: string, author: ThreadAuthor, maxRounds = 10, correlationId?: string, labels?: Record<string, string>, authorAgentId: string | null = null): Promise<Thread> {
     this.counter++;
     const id = `thread-${this.counter}`;
     const now = new Date().toISOString();
@@ -714,56 +807,106 @@ export class MemoryThreadStore implements IThreadStore {
       outstandingIntent: null,
       currentSemanticIntent: null,
       correlationId: correlationId || null,
-      convergenceAction: null,
-      messages: [{ author, text: message, timestamp: now, converged: false, intent: null, semanticIntent: null }],
+      convergenceActions: [],
+      summary: "",
+      participants: [{
+        role: author,
+        agentId: authorAgentId,
+        joinedAt: now,
+        lastActiveAt: now,
+      }],
+      messages: [{ author, authorAgentId, text: message, timestamp: now, converged: false, intent: null, semanticIntent: null }],
       labels: labels || {},
       createdAt: now,
       updatedAt: now,
     };
     this.threads.set(id, thread);
     console.log(`[MemoryThreadStore] Thread opened: ${id} — ${title}`);
-    return { ...thread };
+    return cloneThread(thread);
   }
 
-  async replyToThread(threadId: string, message: string, author: ThreadAuthor, converged = false, intent: ThreadIntent = null, semanticIntent: SemanticIntent = null): Promise<Thread | null> {
-    const thread = this.threads.get(threadId);
-    if (!thread || thread.status !== "active") return null;
-    if (thread.currentTurn !== author) return null;
+  async replyToThread(threadId: string, message: string, author: ThreadAuthor, options: ReplyToThreadOptions = {}): Promise<Thread | null> {
+    const stored = this.threads.get(threadId);
+    if (!stored || stored.status !== "active") return null;
+    if (stored.currentTurn !== author) return null;
 
+    const {
+      converged = false,
+      intent = null,
+      semanticIntent = null,
+      stagedActions = [],
+      summary: summaryUpdate,
+      authorAgentId = null,
+    } = options;
+
+    // Transactional: mutate a clone. Only swap in on success so that
+    // throwing `ThreadConvergenceGateError` (or `applyStagedActionOps`
+    // throws on bad revise/retract) rolls back cleanly.
+    const working = cloneThread(stored);
     const now = new Date().toISOString();
-    thread.messages.push({ author, text: message, timestamp: now, converged, intent, semanticIntent });
-    if (semanticIntent) thread.currentSemanticIntent = semanticIntent;
-    thread.roundCount++;
-    thread.outstandingIntent = intent;
-    thread.currentTurn = author === "engineer" ? "architect" : "engineer";
-    thread.updatedAt = now;
 
-    // Check convergence
-    const msgs = thread.messages;
-    if (msgs.length >= 2 && msgs[msgs.length - 1].converged && msgs[msgs.length - 2].converged) {
-      thread.status = "converged";
-      console.log(`[MemoryThreadStore] Thread converged: ${threadId}`);
+    // applyStagedActionOps can throw on bad op (e.g. revising a
+    // non-existent / wrong-status action). Let it propagate — caller
+    // gets ThreadConvergenceGateError with a domain-specific message.
+    applyStagedActionOps(working, stagedActions, author as ParticipantRole, now);
+
+    if (summaryUpdate !== undefined) working.summary = summaryUpdate;
+    upsertParticipant(working.participants, author, authorAgentId, now);
+
+    working.messages.push({ author, authorAgentId, text: message, timestamp: now, converged, intent, semanticIntent });
+    if (semanticIntent) working.currentSemanticIntent = semanticIntent;
+    working.roundCount++;
+    working.outstandingIntent = intent;
+    working.currentTurn = author === "engineer" ? "architect" : "engineer";
+    working.updatedAt = now;
+
+    const prevConverged = stored.lastMessageConverged ?? false;
+    const willConverge = converged && prevConverged;
+    working.lastMessageConverged = converged;
+
+    if (willConverge) {
+      // Mission-21 Phase 1 forcing-function gate. On rejection, throw
+      // so the clone is discarded and the stored thread stays intact.
+      const staged = working.convergenceActions.filter((a) => a.status === "staged");
+      const summaryEmpty = working.summary.trim().length === 0;
+
+      if (staged.length === 0 || summaryEmpty) {
+        const reasons: string[] = [];
+        if (staged.length === 0) reasons.push("no convergenceActions committed (stage at least one — Phase 1 vocab: close_no_action{reason})");
+        if (summaryEmpty) reasons.push("summary is empty (narrate the agreed outcome)");
+        throw new ThreadConvergenceGateError(
+          `Thread convergence rejected: ${reasons.join("; ")}.`,
+        );
+      }
+
+      for (const action of working.convergenceActions) {
+        if (action.status === "staged") action.status = "committed";
+      }
+      working.status = "converged";
+      console.log(`[MemoryThreadStore] Thread converged: ${threadId} (${staged.length} committed action(s))`);
     }
 
-    // Check round limit
-    if (thread.roundCount >= thread.maxRounds && thread.status === "active") {
-      thread.status = "round_limit";
+    if (working.roundCount >= working.maxRounds && working.status === "active") {
+      working.status = "round_limit";
       console.log(`[MemoryThreadStore] Thread hit round limit: ${threadId}`);
     }
 
-    console.log(`[MemoryThreadStore] Reply on ${threadId} by ${author} (round ${thread.roundCount}/${thread.maxRounds})`);
-    return { ...thread };
+    // Commit: replace the stored thread with the fully-mutated clone.
+    this.threads.set(threadId, working);
+
+    console.log(`[MemoryThreadStore] Reply on ${threadId} by ${author}${authorAgentId ? ` (${authorAgentId})` : ""} (round ${working.roundCount}/${working.maxRounds})`);
+    return cloneThread(working);
   }
 
   async getThread(threadId: string): Promise<Thread | null> {
     const t = this.threads.get(threadId);
-    return t ? { ...t } : null;
+    return t ? cloneThread(t) : null;
   }
 
   async listThreads(status?: ThreadStatus): Promise<Thread[]> {
     const all = Array.from(this.threads.values());
-    if (status) return all.filter((t) => t.status === status).map((t) => ({ ...t }));
-    return all.map((t) => ({ ...t }));
+    if (status) return all.filter((t) => t.status === status).map(cloneThread);
+    return all.map(cloneThread);
   }
 
   async closeThread(threadId: string): Promise<boolean> {
@@ -774,13 +917,93 @@ export class MemoryThreadStore implements IThreadStore {
     console.log(`[MemoryThreadStore] Thread closed: ${threadId}`);
     return true;
   }
+}
 
-  async setConvergenceAction(threadId: string, action: ConvergenceAction): Promise<boolean> {
-    const thread = this.threads.get(threadId);
-    if (!thread) return false;
-    thread.convergenceAction = action;
-    thread.updatedAt = new Date().toISOString();
-    return true;
+// ── Thread 2.0 helpers ──────────────────────────────────────────────
+
+/** Deep-clone a Thread so callers can't mutate the store's live state. */
+function cloneThread(t: Thread): Thread {
+  return {
+    ...t,
+    convergenceActions: t.convergenceActions.map((a) => ({ ...a, payload: { ...a.payload } })),
+    participants: t.participants.map((p) => ({ ...p })),
+    messages: t.messages.map((m) => ({ ...m })),
+    labels: { ...t.labels },
+  };
+}
+
+/** Apply a list of StagedActionOp in order to the thread's
+ * convergenceActions[]. Called from both MemoryThreadStore and the
+ * GcsThreadStore CAS transform. Side-effect only — mutates in place. */
+export function applyStagedActionOps(
+  thread: Thread,
+  ops: StagedActionOp[],
+  proposer: ParticipantRole,
+  now: string,
+): void {
+  for (const op of ops) {
+    if (op.kind === "stage") {
+      const id = `action-${thread.convergenceActions.length + 1}`;
+      thread.convergenceActions.push({
+        id,
+        type: op.type,
+        status: "staged",
+        proposer,
+        timestamp: now,
+        payload: { ...op.payload },
+      });
+    } else if (op.kind === "revise") {
+      const prior = thread.convergenceActions.find((a) => a.id === op.id);
+      if (!prior) {
+        throw new ThreadConvergenceGateError(
+          `Cannot revise action ${op.id}: no such action in thread ${thread.id}.`,
+        );
+      }
+      if (prior.status !== "staged") {
+        throw new ThreadConvergenceGateError(
+          `Cannot revise action ${op.id}: status is ${prior.status} (only "staged" is revisable).`,
+        );
+      }
+      prior.status = "revised";
+      const newId = `action-${thread.convergenceActions.length + 1}`;
+      thread.convergenceActions.push({
+        id: newId,
+        type: prior.type,
+        status: "staged",
+        proposer,
+        timestamp: now,
+        payload: { ...op.payload },
+        revisionOf: prior.id,
+      });
+    } else if (op.kind === "retract") {
+      const prior = thread.convergenceActions.find((a) => a.id === op.id);
+      if (!prior) {
+        throw new ThreadConvergenceGateError(
+          `Cannot retract action ${op.id}: no such action in thread ${thread.id}.`,
+        );
+      }
+      if (prior.status !== "staged") {
+        throw new ThreadConvergenceGateError(
+          `Cannot retract action ${op.id}: status is ${prior.status} (only "staged" is retractable).`,
+        );
+      }
+      prior.status = "retracted";
+    }
+  }
+}
+
+/** Upsert a participant entry by (role, agentId). Mutates in place. */
+export function upsertParticipant(
+  participants: ThreadParticipant[],
+  role: ParticipantRole,
+  agentId: string | null,
+  now: string,
+): void {
+  const existing = participants.find((p) => p.role === role && p.agentId === agentId);
+  if (existing) {
+    existing.lastActiveAt = now;
+  } else {
+    participants.push({ role, agentId, joinedAt: now, lastActiveAt: now });
   }
 }
 

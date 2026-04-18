@@ -38,6 +38,8 @@ import type {
   RegisterAgentPayload,
   RegisterAgentResult,
   Selector,
+  ReplyToThreadOptions,
+  ParticipantRole,
 } from "./state.js";
 import {
   computeFingerprint,
@@ -45,6 +47,9 @@ import {
   recordDisplacementAndCheck,
   labelsMatch,
   taskClaimableBy,
+  applyStagedActionOps,
+  upsertParticipant,
+  ThreadConvergenceGateError,
   THRASHING_THRESHOLD,
   THRASHING_WINDOW_MS,
   AGENT_TOUCH_MIN_INTERVAL_MS,
@@ -1267,12 +1272,12 @@ export class GcsThreadStore implements IThreadStore {
     console.log(`[GcsThreadStore] Using bucket: gs://${bucket}`);
   }
 
-  async openThread(title: string, message: string, author: ThreadAuthor, maxRounds = 10, correlationId?: string, labels?: Record<string, string>): Promise<Thread> {
+  async openThread(title: string, message: string, author: ThreadAuthor, maxRounds = 10, correlationId?: string, labels?: Record<string, string>, authorAgentId: string | null = null): Promise<Thread> {
     const num = await getAndIncrementCounter(this.bucket, "threadCounter");
     const id = `thread-${num}`;
     const now = new Date().toISOString();
     const otherParty: ThreadAuthor = author === "engineer" ? "architect" : "engineer";
-    const firstMessage: ThreadMessage = { author, text: message, timestamp: now, converged: false, intent: null, semanticIntent: null };
+    const firstMessage: ThreadMessage = { author, authorAgentId, text: message, timestamp: now, converged: false, intent: null, semanticIntent: null };
 
     // Stored thread scalar holds no messages[] — messages live one-per-file
     // under threads/{id}/messages/{seq}.json so the reply-path transform
@@ -1288,7 +1293,14 @@ export class GcsThreadStore implements IThreadStore {
       outstandingIntent: null,
       currentSemanticIntent: null,
       correlationId: correlationId || null,
-      convergenceAction: null,
+      convergenceActions: [],
+      summary: "",
+      participants: [{
+        role: author,
+        agentId: authorAgentId,
+        joinedAt: now,
+        lastActiveAt: now,
+      }],
       messages: [],
       labels: labels || {},
       lastMessageConverged: false,
@@ -1302,7 +1314,15 @@ export class GcsThreadStore implements IThreadStore {
     return { ...scalar, messages: [firstMessage] };
   }
 
-  async replyToThread(threadId: string, message: string, author: ThreadAuthor, converged = false, intent: ThreadIntent = null, semanticIntent: SemanticIntent = null): Promise<Thread | null> {
+  async replyToThread(threadId: string, message: string, author: ThreadAuthor, options: ReplyToThreadOptions = {}): Promise<Thread | null> {
+    const {
+      converged = false,
+      intent = null,
+      semanticIntent = null,
+      stagedActions = [],
+      summary: summaryUpdate,
+      authorAgentId = null,
+    } = options;
     const path = `threads/${threadId}.json`;
     try {
       const thread = await updateExisting<Thread>(this.bucket, path, (current) => {
@@ -1310,20 +1330,42 @@ export class GcsThreadStore implements IThreadStore {
         if (current.currentTurn !== author) throw new TransitionRejected("not this author's turn");
 
         const now = new Date().toISOString();
+
+        // Mission-21: apply staging ops BEFORE the turn flip so the gate
+        // evaluates the post-op convergenceActions state.
+        applyStagedActionOps(current, stagedActions, author as ParticipantRole, now);
+        if (summaryUpdate !== undefined) current.summary = summaryUpdate;
+        upsertParticipant(current.participants, author, authorAgentId, now);
+
         current.roundCount++;
         current.outstandingIntent = intent;
         if (semanticIntent) current.currentSemanticIntent = semanticIntent;
         current.currentTurn = author === "engineer" ? "architect" : "engineer";
         current.updatedAt = now;
 
-        // Scalar convergence: two consecutive messages both flagged
-        // converged=true. The previous message's flag is carried on the
-        // scalar itself, so the transform doesn't need to touch the
-        // per-file messages.
-        if (converged && (current.lastMessageConverged ?? false)) {
+        const prevConverged = current.lastMessageConverged ?? false;
+        const willConverge = converged && prevConverged;
+        current.lastMessageConverged = converged;
+
+        if (willConverge) {
+          // Mission-21 Phase 1 forcing-function gate.
+          const staged = current.convergenceActions.filter((a) => a.status === "staged");
+          const summaryEmpty = current.summary.trim().length === 0;
+
+          if (staged.length === 0 || summaryEmpty) {
+            const reasons: string[] = [];
+            if (staged.length === 0) reasons.push("no convergenceActions committed (stage at least one — Phase 1 vocab: close_no_action{reason})");
+            if (summaryEmpty) reasons.push("summary is empty (narrate the agreed outcome)");
+            throw new ThreadConvergenceGateError(
+              `Thread convergence rejected: ${reasons.join("; ")}.`,
+            );
+          }
+
+          for (const action of current.convergenceActions) {
+            if (action.status === "staged") action.status = "committed";
+          }
           current.status = "converged";
         }
-        current.lastMessageConverged = converged;
 
         if (current.roundCount >= current.maxRounds && current.status === "active") {
           current.status = "round_limit";
@@ -1333,6 +1375,7 @@ export class GcsThreadStore implements IThreadStore {
 
       const newMessage: ThreadMessage = {
         author,
+        authorAgentId,
         text: message,
         timestamp: thread.updatedAt,
         converged,
@@ -1346,13 +1389,18 @@ export class GcsThreadStore implements IThreadStore {
       );
 
       if (thread.status === "converged") {
-        console.log(`[GcsThreadStore] Thread converged: ${threadId}`);
+        const committedCount = thread.convergenceActions.filter((a) => a.status === "committed").length;
+        console.log(`[GcsThreadStore] Thread converged: ${threadId} (${committedCount} committed action(s))`);
       } else if (thread.status === "round_limit") {
         console.log(`[GcsThreadStore] Thread hit round limit: ${threadId}`);
       }
-      console.log(`[GcsThreadStore] Reply on ${threadId} by ${author} (round ${thread.roundCount}/${thread.maxRounds})`);
+      console.log(`[GcsThreadStore] Reply on ${threadId} by ${author}${authorAgentId ? ` (${authorAgentId})` : ""} (round ${thread.roundCount}/${thread.maxRounds})`);
       return { ...thread, messages: await this.loadMessages(threadId, thread) };
     } catch (err) {
+      // Gate rejection is a policy-visible failure — propagate so the
+      // caller gets the specific message to self-correct. Other errors
+      // (not-active, not-your-turn, missing path) still map to null.
+      if (err instanceof ThreadConvergenceGateError) throw err;
       if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) return null;
       throw err;
     }
@@ -1361,7 +1409,8 @@ export class GcsThreadStore implements IThreadStore {
   async getThread(threadId: string): Promise<Thread | null> {
     const scalar = await readJson<Thread>(this.bucket, `threads/${threadId}.json`);
     if (!scalar) return null;
-    return { ...scalar, messages: await this.loadMessages(threadId, scalar) };
+    const normalized = normalizeThreadShape(scalar);
+    return { ...normalized, messages: await this.loadMessages(threadId, normalized) };
   }
 
   async listThreads(status?: ThreadStatus): Promise<Thread[]> {
@@ -1375,7 +1424,7 @@ export class GcsThreadStore implements IThreadStore {
       const t = await readJson<Thread>(this.bucket, file);
       if (t) {
         if (status && t.status !== status) continue;
-        threads.push(t);
+        threads.push(normalizeThreadShape(t));
       }
     }
     return threads;
@@ -1386,6 +1435,7 @@ export class GcsThreadStore implements IThreadStore {
    * `threads/{id}/messages/{seq}.json` ordered by numeric seq. Falls
    * back to the scalar's inline `messages` when no per-file entries
    * exist — supports legacy threads written before the Phase 3 split.
+   * Also normalises legacy message shape to fill in authorAgentId.
    */
   private async loadMessages(threadId: string, scalar: Thread): Promise<ThreadMessage[]> {
     const files = await listFiles(this.bucket, `threads/${threadId}/messages/`);
@@ -1400,7 +1450,9 @@ export class GcsThreadStore implements IThreadStore {
       if (msg) entries.push({ seq, msg });
     }
     entries.sort((a, b) => a.seq - b.seq);
-    return entries.map((e) => e.msg);
+    // Mission-21 Phase 1: backfill authorAgentId=null on legacy messages
+    // written before Threads 2.0 so consumers always see a defined field.
+    return entries.map((e) => ({ ...e.msg, authorAgentId: e.msg.authorAgentId ?? null }));
   }
 
   async closeThread(threadId: string): Promise<boolean> {
@@ -1419,20 +1471,25 @@ export class GcsThreadStore implements IThreadStore {
     }
   }
 
-  async setConvergenceAction(threadId: string, action: import("./state.js").ConvergenceAction): Promise<boolean> {
-    const path = `threads/${threadId}.json`;
-    try {
-      await updateExisting<Thread>(this.bucket, path, (thread) => {
-        thread.convergenceAction = action;
-        thread.updatedAt = new Date().toISOString();
-        return thread;
-      });
-      return true;
-    } catch (err) {
-      if (err instanceof GcsPathNotFound) return false;
-      throw err;
-    }
-  }
+}
+
+/**
+ * Mission-21 Phase 1 defensive read normaliser. Pre-cutover thread
+ * JSON files don't have `convergenceActions`, `summary`, or
+ * `participants` — fill them in with empty defaults so every caller
+ * sees a consistent Thread shape. New threads written after the
+ * cutover already have these fields. Legacy `convergenceAction`
+ * (singular) is read and silently dropped; the new `convergenceActions`
+ * array is the only path forward (ADR-013).
+ */
+function normalizeThreadShape(t: any): Thread {
+  return {
+    ...t,
+    convergenceActions: Array.isArray(t.convergenceActions) ? t.convergenceActions : [],
+    summary: typeof t.summary === "string" ? t.summary : "",
+    participants: Array.isArray(t.participants) ? t.participants : [],
+    messages: Array.isArray(t.messages) ? t.messages : [],
+  } as Thread;
 }
 
 // ── GCS Audit Store ──────────────────────────────────────────────────

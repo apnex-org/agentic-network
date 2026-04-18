@@ -132,7 +132,7 @@ Additional fields:
 
 ---
 
-### 1.3 Thread
+### 1.3 Thread (Threads 2.0 — Mission-21 Phase 1)
 
 ```
 Entity: Thread
@@ -140,7 +140,11 @@ States: active, converged, round_limit, closed
 Initial: active
 Terminal: closed
 Additional fields:
-  labels — Record<string, string>; Mission-19 routing metadata inherited from the opener Agent at create-time
+  labels                 — Record<string, string>; Mission-19 routing metadata inherited from the opener Agent at create-time
+  convergenceActions     — StagedAction[]; staged / revised / retracted / committed / executed / failed lifecycle (ADR-013)
+  summary                — string; negotiated narrative of the thread's outcome, required non-empty at convergence (ADR-013)
+  participants           — ThreadParticipant[]; {role, agentId, joinedAt, lastActiveAt} upserted on every reply, open tracking
+  ThreadMessage.authorAgentId — Agent.engineerId attached per message (multi-Engineer threads observable)
 ```
 
 #### Transitions
@@ -149,13 +153,12 @@ Additional fields:
 | ------------ | ------------ | ---------------------------------------------------- | --------- |
 | (initial)    | active       | `create_thread`                                      | Any       |
 | active       | active       | `create_thread_reply` (normal reply, turn flips)     | Any       |
-| active       | converged    | `create_thread_reply` (both parties signalled converged) | Any    |
+| active       | converged    | `create_thread_reply` (both parties signalled `converged=true`, gate passes — see INV-TH11/TH12) | Any    |
 | active       | round_limit  | `create_thread_reply` (roundCount >= maxRounds)      | System    |
 | active       | closed       | `close_thread`                                       | Architect |
+| converged    | closed       | cascade handler (auto-close after executing committed actions — Phase 1 `close_no_action`) | System |
 | converged    | closed       | `close_thread`                                       | Architect |
-| escalated    | closed       | `close_thread`                                       | Architect |
 | round_limit  | closed       | `close_thread`                                       | Architect |
-| any          | closed       | `create_task` with sourceThreadId (auto-close)       | Architect |
 
 #### Invariants
 
@@ -168,11 +171,20 @@ Additional fields:
 | INV-TH5  | `thread_converged` targets architect (for follow-through)                       | `e2e-foundation.test.ts` "thread convergence" |
 | INV-TH6  | Replies to non-active threads are rejected                                      | NONE                                     |
 | INV-TH7  | `close_thread` can close a thread in any state                                  | NONE (no status guard in store)          |
-| INV-TH8  | `escalated` state is set when round_limit is reached                            | NONE (code uses `round_limit`, `escalated` may be unused) |
 | INV-TH9  | A Thread's `labels` are set at `create_thread` from the opener Agent's labels and are immutable | `test/mission-19/labels.test.ts` "thread inherits opener labels" |
-| INV-TH10 | Entities auto-spawned by a Thread's `convergenceAction` (Task or Proposal) inherit the Thread's `labels` — a Director mediating the conversation cannot rewrite the downstream routing domain | `test/mission-19/labels.test.ts` "thread-spawn inherits thread labels" |
+| **INV-TH11** | **`converged=true` is rejected via `ThreadConvergenceGateError` unless `convergenceActions` has ≥1 entry with `status="staged"` at the moment of the transition (the forcing function that ends the prose-promise bug class — ADR-013)** | `wave3b-policies.test.ts` "rejects converged=true when convergenceActions empty" |
+| **INV-TH12** | **`converged=true` is rejected via `ThreadConvergenceGateError` unless `summary` is non-empty at the moment of the transition** | `wave3b-policies.test.ts` "rejects converged=true when summary empty" |
+| **INV-TH13** | **On convergence, all `status="staged"` actions atomically flip to `status="committed"` inside the same CAS transaction that sets `thread.status="converged"`. Cascade handler then iterates committed actions in array order.** | `wave3b-policies.test.ts` "convergence commits staged actions atomically" |
+| **INV-TH14** | **Participant upsert is symmetric: any reply by `{role, agentId}` not already in `participants[]` appends; existing entries update `lastActiveAt`. No pinning — multiple Engineers under matching labels can reply in the same thread (engineer-to-engineer collaboration).** | `wave3b-policies.test.ts` "participants array upserts" |
+| **INV-TH15** | **`ThreadMessage.authorAgentId` is set from the replying Agent's `engineerId` on every reply. Null only when the caller hasn't completed the M18 handshake (legacy / test context).** | `wave3b-policies.test.ts` "authorAgentId attached to every ThreadMessage" |
 
-**Gap: The `escalated` state exists in the enum but it's unclear when it's set vs `round_limit`. The store appears to use `round_limit` when maxRounds is reached. `escalated` may be a phantom state or intended for future Director intervention.**
+**Phase 1 vocabulary:** `StagedActionType = "close_no_action"` only. Phase 2 widens to `create_task`, `create_proposal`, `create_idea`, `create_mission`, `update_mission`, `update_idea`.
+
+**Removed in 2.0 cutover:** singular `convergenceAction` field, `setConvergenceAction` store method, old `handleThreadConvergedWithAction` single-type branch. Pre-cutover threads in non-terminal states were admin-closed. See ADR-013.
+
+**Former INV-TH10** (Entities auto-spawned by `convergenceAction` inherit labels) is subsumed by Phase 2 per-action cascade semantics and will be restated then.
+
+**Former gap** (`escalated` phantom state): retained in the `ThreadStatus` enum for backwards compatibility but not emitted by any store code. Candidate for removal in a future cleanup.
 
 ---
 

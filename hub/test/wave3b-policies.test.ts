@@ -215,6 +215,11 @@ describe("ThreadPolicy", () => {
       message: "Agreed on X",
       converged: true,
       intent: "implementation_ready",
+      // Mission-21 Phase 1: gate requires at least one committed
+      // action AND non-empty summary. Engineer stages close_no_action
+      // and authors the summary on the first convergence reply.
+      summary: "Architect proposed X; Engineer agreed. No further action required.",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "Agreement reached" } }],
     }, engCtx);
     const r1 = JSON.parse(reply1.content[0].text);
 
@@ -308,5 +313,252 @@ describe("ThreadPolicy", () => {
       message: "Out of turn!",
     }, ctx);
     expect(result.isError).toBe(true);
+  });
+});
+
+// ── Mission-21 Phase 1: Threads 2.0 ──────────────────────────────────
+
+describe("ThreadPolicy — Threads 2.0 (Mission-21 Phase 1)", () => {
+  let router: PolicyRouter;
+  let archCtx: IPolicyContext;
+  let engCtx: IPolicyContext;
+
+  beforeEach(async () => {
+    router = new PolicyRouter(noop);
+    registerThreadPolicy(router);
+    registerSessionPolicy(router);
+    archCtx = createTestContext();
+    engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "eng-session-001" });
+    await router.handle("register_role", { role: "architect" }, archCtx);
+    await router.handle("register_role", { role: "engineer" }, engCtx);
+  });
+
+  async function openThread(title = "T", message = "M"): Promise<string> {
+    const result = await router.handle("create_thread", { title, message }, archCtx);
+    return JSON.parse(result.content[0].text).threadId;
+  }
+
+  // Helper — reply with a stage/summary payload commonly needed below.
+  async function convergeEngReply(threadId: string) {
+    return router.handle("create_thread_reply", {
+      threadId,
+      message: "engineer converges",
+      converged: true,
+      summary: "Agreed outcome.",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "no further action needed" } }],
+    }, engCtx);
+  }
+
+  it("rejects converged=true when convergenceActions empty (gate)", async () => {
+    const threadId = await openThread();
+    // Engineer converges with summary but no actions → gate rejection
+    const r = await router.handle("create_thread_reply", {
+      threadId,
+      message: "done",
+      converged: true,
+      summary: "all good",
+    }, engCtx);
+    // Architect converges too → gate fires because no staged actions
+    const r2 = await router.handle("create_thread_reply", {
+      threadId,
+      message: "agreed",
+      converged: true,
+    }, archCtx);
+    expect(r2.isError).toBe(true);
+    const parsed = JSON.parse(r2.content[0].text);
+    expect(parsed.error).toMatch(/no convergenceActions committed/);
+  });
+
+  it("rejects converged=true when summary empty (gate)", async () => {
+    const threadId = await openThread();
+    // Engineer stages action but no summary
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "done",
+      converged: true,
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "nothing" } }],
+    }, engCtx);
+    // Architect converges → gate fires because summary still empty
+    const r2 = await router.handle("create_thread_reply", {
+      threadId,
+      message: "agreed",
+      converged: true,
+    }, archCtx);
+    expect(r2.isError).toBe(true);
+    const parsed = JSON.parse(r2.content[0].text);
+    expect(parsed.error).toMatch(/summary is empty/);
+  });
+
+  it("close_no_action happy path: converges, closes thread, emits thread_convergence_completed", async () => {
+    const threadId = await openThread();
+    await convergeEngReply(threadId);
+    const r2 = await router.handle("create_thread_reply", {
+      threadId,
+      message: "Confirmed.",
+      converged: true,
+    }, archCtx);
+    const parsed = JSON.parse(r2.content[0].text);
+    // The cascade auto-closes the thread after successful convergence;
+    // the reply response captures the moment just before close.
+    expect(["converged", "closed"]).toContain(parsed.status);
+    expect(parsed.convergenceActions).toHaveLength(1);
+    expect(parsed.convergenceActions[0].status).toBe("committed");
+    // Event fired with report
+    const completedEvent = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_completed");
+    expect(completedEvent).toBeDefined();
+    expect(completedEvent.data.committedActionCount).toBe(1);
+    expect(completedEvent.data.report).toHaveLength(1);
+    expect(completedEvent.data.report[0].status).toBe("executed");
+  });
+
+  it("stage → revise chain preserves revisionOf lineage", async () => {
+    const threadId = await openThread();
+    const r1 = await router.handle("create_thread_reply", {
+      threadId,
+      message: "initial proposal",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "first-draft reason" } }],
+    }, engCtx);
+    expect(r1.isError).toBeUndefined();
+    const parsed1 = JSON.parse(r1.content[0].text);
+    expect(parsed1.convergenceActions).toHaveLength(1);
+    expect(parsed1.convergenceActions[0].id).toBe("action-1");
+
+    // Architect revises action-1
+    const r2 = await router.handle("create_thread_reply", {
+      threadId,
+      message: "revising the reason",
+      stagedActions: [{ kind: "revise", id: "action-1", payload: { reason: "refined reason" } }],
+    }, archCtx);
+    const parsed2 = JSON.parse(r2.content[0].text);
+    expect(parsed2.convergenceActions).toHaveLength(2);
+    const revised = parsed2.convergenceActions.find((a: any) => a.id === "action-1");
+    const next = parsed2.convergenceActions.find((a: any) => a.id === "action-2");
+    expect(revised.status).toBe("revised");
+    expect(next.status).toBe("staged");
+    expect(next.revisionOf).toBe("action-1");
+    expect(next.payload.reason).toBe("refined reason");
+  });
+
+  it("retract removes staged action from gate-eligible set", async () => {
+    const threadId = await openThread();
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "stage one",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "maybe" } }],
+    }, engCtx);
+    const r2 = await router.handle("create_thread_reply", {
+      threadId,
+      message: "retract that",
+      stagedActions: [{ kind: "retract", id: "action-1" }],
+    }, archCtx);
+    const parsed2 = JSON.parse(r2.content[0].text);
+    expect(parsed2.convergenceActions[0].status).toBe("retracted");
+    // Engineer now tries to converge with retracted-only state → gate rejects
+    const r3 = await router.handle("create_thread_reply", {
+      threadId,
+      message: "converge",
+      converged: true,
+      summary: "summary",
+    }, engCtx);
+    // r3 is the first converged=true on this thread (scalar), so no gate yet
+    expect(r3.isError).toBeUndefined();
+    const r4 = await router.handle("create_thread_reply", {
+      threadId,
+      message: "confirm",
+      converged: true,
+    }, archCtx);
+    expect(r4.isError).toBe(true);
+    const parsed4 = JSON.parse(r4.content[0].text);
+    expect(parsed4.error).toMatch(/no convergenceActions committed/);
+  });
+
+  it("participants array upserts {role, agentId} on first reply by each Agent", async () => {
+    const threadId = await openThread(); // opener = architect (no agentId in test context)
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "eng joins",
+    }, engCtx);
+    const getResult = await router.handle("get_thread", { threadId }, archCtx);
+    const thread = JSON.parse(getResult.content[0].text);
+    expect(thread.participants).toHaveLength(2);
+    const roles = thread.participants.map((p: any) => p.role);
+    expect(roles).toEqual(expect.arrayContaining(["architect", "engineer"]));
+  });
+
+  it("authorAgentId attached to every ThreadMessage", async () => {
+    const threadId = await openThread();
+    await router.handle("create_thread_reply", { threadId, message: "eng" }, engCtx);
+    const getResult = await router.handle("get_thread", { threadId }, archCtx);
+    const thread = JSON.parse(getResult.content[0].text);
+    expect(thread.messages).toHaveLength(2);
+    // In test context getAgentForSession resolves to null — expected for non-registered Agents
+    for (const msg of thread.messages) {
+      expect("authorAgentId" in msg).toBe(true);
+    }
+  });
+
+  it("retract of non-staged (already-revised) action fails with gate error", async () => {
+    const threadId = await openThread();
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "stage",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "a" } }],
+    }, engCtx);
+    // Architect revises action-1, then engineer tries to retract action-1
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "revise",
+      stagedActions: [{ kind: "revise", id: "action-1", payload: { reason: "b" } }],
+    }, archCtx);
+    const r3 = await router.handle("create_thread_reply", {
+      threadId,
+      message: "retract the revised one",
+      stagedActions: [{ kind: "retract", id: "action-1" }],
+    }, engCtx);
+    expect(r3.isError).toBe(true);
+    const parsed = JSON.parse(r3.content[0].text);
+    expect(parsed.error).toMatch(/Cannot retract action action-1/);
+  });
+
+  it("summary persists across rounds (set by engineer, inherited by architect)", async () => {
+    const threadId = await openThread();
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "eng",
+      summary: "Engineer-authored summary",
+    }, engCtx);
+    const getResult = await router.handle("get_thread", { threadId }, archCtx);
+    const thread = JSON.parse(getResult.content[0].text);
+    expect(thread.summary).toBe("Engineer-authored summary");
+  });
+
+  it("reply response echoes current convergenceActions + participants (Architect review #2)", async () => {
+    const threadId = await openThread();
+    const r = await router.handle("create_thread_reply", {
+      threadId,
+      message: "hi",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "x" } }],
+    }, engCtx);
+    const parsed = JSON.parse(r.content[0].text);
+    expect(parsed.convergenceActions).toBeDefined();
+    expect(parsed.participants).toBeDefined();
+    expect(parsed.summary).toBeDefined();
+    expect(parsed.convergenceActions).toHaveLength(1);
+    expect(parsed.participants.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("convergence commits staged actions atomically (staged → committed)", async () => {
+    const threadId = await openThread();
+    await convergeEngReply(threadId);
+    const r2 = await router.handle("create_thread_reply", {
+      threadId,
+      message: "confirm",
+      converged: true,
+    }, archCtx);
+    const parsed = JSON.parse(r2.content[0].text);
+    const committed = parsed.convergenceActions.filter((a: any) => a.status === "committed");
+    const stagedStill = parsed.convergenceActions.filter((a: any) => a.status === "staged");
+    expect(committed.length).toBeGreaterThanOrEqual(1);
+    expect(stagedStill.length).toBe(0);
   });
 });

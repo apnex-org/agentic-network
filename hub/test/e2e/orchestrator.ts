@@ -337,7 +337,15 @@ export class ActorFacade {
 
   async replyToThread(threadId: string, message: string, opts?: {
     converged?: boolean; intent?: string; semanticIntent?: string;
-    convergenceAction?: { type: string; templateData: { title: string; description: string } };
+    // Mission-21 Phase 1: Threads 2.0 — stagedActions + summary replace
+    // the singular convergenceAction field. Phase 1 vocabulary is
+    // limited to close_no_action; Phase 2 widens to create_task etc.
+    summary?: string;
+    stagedActions?: Array<
+      | { kind: "stage"; type: "close_no_action"; payload: { reason: string } }
+      | { kind: "revise"; id: string; payload: { reason: string } }
+      | { kind: "retract"; id: string }
+    >;
   }): Promise<Record<string, unknown>> {
     await this.ensureRegistered();
     const result = await this.router.handle("create_thread_reply", {

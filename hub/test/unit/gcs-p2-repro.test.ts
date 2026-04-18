@@ -337,46 +337,14 @@ describe("GcsProposalStore.reviewProposal + setScaffoldResult", () => {
   });
 });
 
-// ── GcsThreadStore scalar sites (closeThread, setConvergenceAction) ──
-
-describe("GcsThreadStore scalar CAS — lost-update reproduction", () => {
-  it("setConvergenceAction + closeThread survive concurrent writes", async () => {
-    gcsFake().put("threads/thread-1.json", {
-      id: "thread-1",
-      title: "seed",
-      status: "active",
-      initiatedBy: "architect",
-      currentTurn: "engineer",
-      roundCount: 2,
-      maxRounds: 10,
-      outstandingIntent: null,
-      currentSemanticIntent: null,
-      correlationId: null,
-      convergenceAction: null,
-      messages: [],
-      labels: {},
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    });
-    const store = new GcsThreadStore(BUCKET);
-
-    const [closed, action] = await Promise.all([
-      store.closeThread("thread-1"),
-      store.setConvergenceAction("thread-1", {
-        type: "create_task",
-        directive: "do the next thing",
-      } as any),
-    ]);
-
-    expect(closed).toBeTruthy();
-    expect(action).toBeTruthy();
-
-    const final = await store.getThread("thread-1");
-    expect(final).not.toBeNull();
-    expect(final!.status).toBe("closed");
-    expect(final!.convergenceAction).not.toBeNull();
-  });
-});
+// Mission-21 Phase 1 clean cutover removed `setConvergenceAction` —
+// the singular convergenceAction field is replaced by
+// `convergenceActions: StagedAction[]` and staging happens exclusively
+// via `create_thread_reply`'s `stagedActions` parameter. The former
+// lost-update reproduction for this scalar site is obsolete; the new
+// equivalent test (applyStagedActionOps under concurrent CAS) belongs
+// in the Threads 2.0 test suite added alongside Phase 1 — see
+// `wave3b-policies.test.ts` / similar.
 
 // ── GcsThreadStore per-file messages split (Phase 3 P1) ─────────────
 
@@ -441,16 +409,26 @@ describe("GcsThreadStore per-file messages — concurrent reply reproduction", (
     expect(final!.messages.length).toBe(2);
   });
 
-  it("convergence trips when two consecutive replies are both converged=true", async () => {
+  it("convergence trips when two consecutive replies are both converged=true (with gate satisfied)", async () => {
     const store = new GcsThreadStore(BUCKET);
     const thread = await store.openThread("t", "hello", "architect", 10);
 
-    const r1 = await store.replyToThread(thread.id, "eng agrees", "engineer", true);
+    // Mission-21 Phase 1: converged=true alone is not enough — the
+    // gate requires at least one committed action and a non-empty
+    // summary. Attach them on the first converging reply; the second
+    // reply inherits the staged actions + summary and commits at the
+    // turn transition.
+    const r1 = await store.replyToThread(thread.id, "eng agrees", "engineer", {
+      converged: true,
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "nothing to do" } }],
+      summary: "Both agreed: no action required.",
+    });
     expect(r1!.status).toBe("active"); // one converged flag not enough
     expect(r1!.lastMessageConverged).toBe(true);
 
-    const r2 = await store.replyToThread(thread.id, "arch agrees", "architect", true);
+    const r2 = await store.replyToThread(thread.id, "arch agrees", "architect", { converged: true });
     expect(r2!.status).toBe("converged");
+    expect(r2!.convergenceActions.filter((a) => a.status === "committed").length).toBe(1);
   });
 });
 

@@ -4,13 +4,23 @@
  * Validates the convergenceAction feature: when a thread converges
  * with a convergenceAction, the Hub automatically spawns the
  * requested entity (task or proposal) and closes the thread.
+ *
+ * MISSION-21 PHASE 1 STATUS: these tests exercise the singular
+ * convergenceAction shape with `create_task` / `create_proposal`
+ * vocabulary, which was deleted in the Threads 2.0 clean cutover.
+ * Phase 2 re-introduces multi-action cascade with the full vocabulary
+ * and best-effort execution semantics. When Phase 2 lands, this suite
+ * must be rewritten against the StagedActionOp API (stage create_task /
+ * stage create_proposal / etc.) — each existing scenario becomes a
+ * {kind:"stage", type:"create_task", payload:{title,description}}.
+ * Temporarily skipped to keep the tree green while Phase 1 ships.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { TestOrchestrator } from "./orchestrator.js";
 import type { ActorFacade } from "./orchestrator.js";
 
-describe("E2E Convergence Auto-Spawn", () => {
+describe.skip("E2E Convergence Auto-Spawn (PHASE 2 REWRITE PENDING)", () => {
   let orch: TestOrchestrator;
   let arch: ActorFacade;
   let eng: ActorFacade;

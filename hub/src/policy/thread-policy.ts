@@ -10,7 +10,8 @@
 import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
-import type { ThreadAuthor, ThreadIntent, ConvergenceAction } from "../state.js";
+import type { ThreadAuthor, ThreadIntent, StagedAction, StagedActionOp, Thread } from "../state.js";
+import { ThreadConvergenceGateError } from "../state.js";
 import type { DomainEvent } from "./types.js";
 import { callerLabels } from "./labels.js";
 import { LIST_PAGINATION_SCHEMA, LIST_LABELS_SCHEMA, applyLabelFilter, paginate } from "./list-filters.js";
@@ -28,7 +29,11 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
   const author: ThreadAuthor = callerRole === "engineer" ? "engineer" : "architect";
   // Mission-19: propagate caller's Agent labels onto the new Thread.
   const labels = await callerLabels(ctx);
-  const thread = await ctx.stores.thread.openThread(title, message, author, maxRounds, correlationId, labels);
+  // Mission-21 Phase 1: resolve the caller's agentId so openThread can
+  // seed the participants[] array with a full {role, agentId} entry.
+  const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(ctx.sessionId).catch(() => null);
+  const authorAgentId: string | null = agent?.engineerId ?? null;
+  const thread = await ctx.stores.thread.openThread(title, message, author, maxRounds, correlationId, labels, authorAgentId);
 
   const targetRole = author === "architect" ? "engineer" : "architect";
   await ctx.dispatch("thread_message", {
@@ -60,41 +65,41 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   const converged = (args.converged as boolean) || false;
   const intent = (args.intent as string) || null;
   const semanticIntent = (args.semanticIntent as string) || null;
-  const convergenceAction = args.convergenceAction as ConvergenceAction | undefined;
+  const stagedActions = (args.stagedActions as StagedActionOp[] | undefined) ?? [];
+  const summary = args.summary as string | undefined;
 
   const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
   const author: ThreadAuthor = callerRole === "engineer" ? "engineer" : "architect";
-  const thread = await ctx.stores.thread.replyToThread(
-    threadId,
-    message,
-    author,
-    converged,
-    (intent as ThreadIntent) || null,
-    semanticIntent as any,
-  );
+  // Mission-21 Phase 1: resolve the caller's agentId so the store can
+  // attach it to the ThreadMessage and upsert into participants[].
+  const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(ctx.sessionId).catch(() => null);
+  const authorAgentId: string | null = agent?.engineerId ?? null;
+
+  let thread: Thread | null;
+  try {
+    thread = await ctx.stores.thread.replyToThread(threadId, message, author, {
+      converged,
+      intent: (intent as ThreadIntent) || null,
+      semanticIntent: semanticIntent as any,
+      stagedActions,
+      summary,
+      authorAgentId,
+    });
+  } catch (err: any) {
+    if (err instanceof ThreadConvergenceGateError) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: err.message }) }],
+        isError: true,
+      };
+    }
+    throw err;
+  }
 
   if (!thread) {
     return {
       content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Thread ${threadId} not found, not active, or not your turn` }) }],
       isError: true,
     };
-  }
-
-  // Store convergenceAction on the thread entity (late-binding)
-  if (convergenceAction) {
-    // Directly mutate the thread in the store
-    const stored = await ctx.stores.thread.getThread(threadId);
-    if (stored) {
-      (stored as any).convergenceAction = convergenceAction;
-      // For MemoryThreadStore, we need to set it on the live object
-      // The store returns copies, so we use a targeted update
-      try {
-        await (ctx.stores.thread as any).setConvergenceAction(threadId, convergenceAction);
-      } catch {
-        // Fallback: store doesn't have setConvergenceAction yet — log and continue
-        console.log(`[ThreadPolicy] convergenceAction stored for thread ${threadId}: ${convergenceAction.type}`);
-      }
-    }
   }
 
   // Notify the other party (unless thread just converged or hit limit)
@@ -109,19 +114,17 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
     }, { roles: [targetRole], matchLabels: thread.labels });
   }
 
-  // Notify Architect when thread converges
+  // Mission-21: push an internal cascade event on convergence so the
+  // committed actions can be executed in array order.
   if (thread.status === "converged") {
-    // Check for convergenceAction — if present, push internal event for cascade
-    const finalThread = await ctx.stores.thread.getThread(threadId);
-    const action = finalThread?.convergenceAction || convergenceAction;
-
-    if (action) {
+    const committed = thread.convergenceActions.filter((a) => a.status === "committed");
+    if (committed.length > 0) {
       ctx.internalEvents.push({
         type: "thread_converged_with_action",
         payload: {
           threadId: thread.id,
           title: thread.title,
-          action,
+          actions: committed,
         },
       });
     }
@@ -130,10 +133,14 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
       threadId: thread.id,
       title: thread.title,
       intent: thread.outstandingIntent,
-      hasAction: !!action,
+      summary: thread.summary,
+      committedActionCount: committed.length,
     }, { roles: ["architect"], matchLabels: thread.labels });
   }
 
+  // Mission-21 Phase 1 Architect review addition #2: echo the current
+  // convergenceActions[] and participants[] so the caller's LLM can
+  // reason about the thread state without re-reading.
   return {
     content: [{
       type: "text" as const,
@@ -144,7 +151,9 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
         roundCount: thread.roundCount,
         maxRounds: thread.maxRounds,
         outstandingIntent: thread.outstandingIntent,
-        convergenceAction: convergenceAction || null,
+        summary: thread.summary,
+        convergenceActions: thread.convergenceActions,
+        participants: thread.participants,
       }),
     }],
   };
@@ -202,77 +211,66 @@ async function closeThread(args: Record<string, unknown>, ctx: IPolicyContext): 
 
 // ── Cascade Handlers ────────────────────────────────────────────────
 
+/**
+ * Mission-21 Phase 1: iterate committed StagedAction[] in array order
+ * and execute each. Phase 1 only supports close_no_action, which just
+ * writes an audit entry and closes the thread. Phase 2 widens this to
+ * the full vocabulary (create_task, create_proposal, create_mission,
+ * update_idea, update_mission, create_idea) with best-effort cascade
+ * and a ConvergenceReport per action.
+ */
 async function handleThreadConvergedWithAction(
   event: DomainEvent,
   ctx: IPolicyContext
 ): Promise<void> {
   const payload = event.payload;
   const threadId = payload.threadId as string;
-  const action = payload.action as ConvergenceAction;
+  const actions = payload.actions as StagedAction[] | undefined;
 
-  if (!action || !action.type || !action.templateData) {
-    console.log(`[ThreadPolicy] thread_converged_with_action: invalid action for thread ${threadId}`);
+  if (!Array.isArray(actions) || actions.length === 0) {
+    console.log(`[ThreadPolicy] thread_converged_with_action: no actions to cascade for thread ${threadId}`);
     return;
   }
 
-  const { type, templateData } = action;
-  const { title, description } = templateData;
-
-  // Mission-19: spawn from a converged thread inherits the thread's labels.
   const sourceThread = await ctx.stores.thread.getThread(threadId);
   const inheritedLabels = sourceThread?.labels ?? {};
 
-  if (type === "create_task") {
-    // Spawn a task with sourceThreadId (auto-closes thread via XD-005)
-    const taskId = await ctx.stores.task.submitDirective(
-      description,
-      undefined, // correlationId
-      undefined, // idempotencyKey
-      title,
-      description,
-      undefined, // dependsOn
-      inheritedLabels,
-    );
+  // Internal ConvergenceReport — per-action telemetry. Distinct from
+  // Thread.summary (the negotiated narrative). Phase 2 will widen this
+  // with a `warning` flag on any partial failure.
+  const report: Array<{ actionId: string; status: "executed" | "failed"; error?: string; entityId?: string | null }> = [];
 
-    // Auto-close the thread
-    await ctx.stores.thread.closeThread(threadId);
-
-    // Emit task_issued for the new task (routed by inherited labels)
-    await ctx.dispatch("task_issued", {
-      taskId,
-      directive: description.substring(0, 200),
-      sourceThreadId: threadId,
-    }, { roles: ["engineer"], matchLabels: inheritedLabels });
-
-    console.log(`[ThreadPolicy] Auto-spawned task ${taskId} from converged thread ${threadId}`);
-
-  } else if (type === "create_proposal") {
-    const proposal = await ctx.stores.proposal.submitProposal(
-      title,
-      description.substring(0, 200),
-      description,
-      undefined, // correlationId
-      undefined, // executionPlan
-      inheritedLabels,
-    );
-
-    // Auto-close the thread
-    await ctx.stores.thread.closeThread(threadId);
-
-    // Emit proposal_submitted (routed by inherited labels)
-    await ctx.dispatch("proposal_submitted", {
-      proposalId: proposal.id,
-      title: proposal.title,
-      summary: proposal.summary,
-      proposalRef: proposal.proposalRef,
-      sourceThreadId: threadId,
-    }, { roles: ["architect"], matchLabels: inheritedLabels });
-
-    console.log(`[ThreadPolicy] Auto-spawned proposal ${proposal.id} from converged thread ${threadId}`);
-
-  } else {
-    console.log(`[ThreadPolicy] Unknown convergenceAction type: ${type}`);
+  for (const action of actions) {
+    if (action.type === "close_no_action") {
+      const reason = action.payload.reason?.trim() || "(no reason provided)";
+      try {
+        await ctx.stores.audit.logEntry(
+          "hub",
+          "thread_close_no_action",
+          `Thread ${threadId} closed with no action. Reason: ${reason}`,
+          threadId,
+        );
+        report.push({ actionId: action.id, status: "executed", entityId: null });
+      } catch (err: any) {
+        report.push({ actionId: action.id, status: "failed", error: err?.message ?? String(err) });
+      }
+    } else {
+      // Phase 1: vocabulary limited to close_no_action at the stage tool,
+      // so this branch is unreachable under normal operation. Guard
+      // defensively for Phase 2 widening.
+      report.push({ actionId: action.id, status: "failed", error: `Phase 1 does not support action type "${action.type}"` });
+    }
   }
+
+  await ctx.stores.thread.closeThread(threadId);
+
+  await ctx.dispatch("thread_convergence_completed", {
+    threadId,
+    committedActionCount: actions.length,
+    report,
+  }, { roles: ["architect", "engineer"], matchLabels: inheritedLabels });
+
+  console.log(`[ThreadPolicy] Cascade completed for ${threadId}: ${report.filter(r => r.status === "executed").length}/${actions.length} executed`);
 }
 
 // ── Registration ────────────────────────────────────────────────────
@@ -293,20 +291,32 @@ export function registerThreadPolicy(router: PolicyRouter): void {
 
   router.register(
     "create_thread_reply",
-    "[Any] Reply to an active ideation thread. Only works when it is your turn. Optionally signal convergence or classify the outstanding intent.",
+    "[Any] Reply to an active ideation thread. Only works when it is your turn. Threads 2.0 (Mission-21 Phase 1): stage / revise / retract convergenceActions, author a summary narrating the thread's agreed outcome. At converged=true, the policy rejects the reply unless at least one action is committed and the summary is non-empty (close_no_action{reason} satisfies both — use it when the thread concludes with no entity-creation needed).",
     {
       threadId: z.string().describe("The thread ID to reply to"),
       message: z.string().describe("Your response message"),
-      converged: z.boolean().optional().describe("Set to true if you agree with the other party's position"),
+      converged: z.boolean().optional().describe("Set to true if you agree with the other party's position (requires committed convergenceActions + non-empty summary)"),
       intent: z.enum(["decision_needed", "agreement_pending", "director_input", "implementation_ready"]).optional().describe("Classify what the thread is waiting for (optional)"),
       semanticIntent: z.enum(["seek_rigorous_critique", "seek_approval", "collaborative_brainstorm", "inform", "seek_consensus", "rubber_duck", "educate", "mediate", "post_mortem"]).optional().describe("Communication semantics: how should the recipient frame their response (optional)"),
-      convergenceAction: z.object({
-        type: z.enum(["create_task", "create_proposal"]).describe("What to auto-spawn on convergence"),
-        templateData: z.object({
-          title: z.string().describe("Title for the auto-spawned entity"),
-          description: z.string().describe("Description for the auto-spawned entity"),
-        }).describe("Pre-populated data for the auto-spawned entity"),
-      }).optional().describe("Optional late-binding action to execute when the thread converges. Attached by the converging party."),
+      summary: z.string().optional().describe("Negotiated narrative summary of the thread's agreed outcome. Either party can set or revise across rounds; latest value wins. Required non-empty at convergence."),
+      stagedActions: z.array(
+        z.discriminatedUnion("kind", [
+          z.object({
+            kind: z.literal("stage"),
+            type: z.enum(["close_no_action"]).describe("Phase 1 vocab: only close_no_action"),
+            payload: z.object({ reason: z.string().describe("Why the thread is concluding with no entity-creation action") }),
+          }),
+          z.object({
+            kind: z.literal("revise"),
+            id: z.string().describe("Prior action ID to supersede"),
+            payload: z.object({ reason: z.string() }),
+          }),
+          z.object({
+            kind: z.literal("retract"),
+            id: z.string().describe("Prior action ID to withdraw"),
+          }),
+        ]),
+      ).optional().describe("Ordered staging operations applied to the thread's convergenceActions[]. stage allocates a new action-N id; revise supersedes a prior id; retract withdraws a prior id."),
     },
     createThreadReply,
   );

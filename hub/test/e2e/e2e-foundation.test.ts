@@ -156,10 +156,14 @@ describe("E2E Foundation", () => {
       // Event: thread_message → engineer
       orch.events.expectEventFor("thread_message", "engineer");
 
-      // 2. Engineer replies with convergence signal
+      // 2. Engineer replies with convergence signal. Mission-21 Phase 1:
+      // gate requires committed action + non-empty summary on the
+      // eventual convergence — stage them on the first converging reply.
       const reply1 = await eng.replyToThread(thread.threadId as string, "REST is better for our use case. Agreed.", {
         converged: true,
         intent: "implementation_ready",
+        summary: "Agreed: REST over GraphQL for current use case.",
+        stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "Decision logged; no further artifacts needed for this thread" } }],
       });
       expect(reply1.status).toBe("active"); // only one party converged so far
       expect(reply1.currentTurn).toBe("architect");

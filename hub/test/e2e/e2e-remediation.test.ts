@@ -24,13 +24,28 @@ describe("Registry Remediation", () => {
 
   // ── T3: Converged Threads in Polling Backup ───────────────────────
 
-  describe("Converged Threads Polling Backup", () => {
+  // Mission-21 Phase 1 note: under Threads 2.0 the cascade handler
+  // for close_no_action immediately closes the thread as part of the
+  // convergence transaction — threads no longer linger in "converged"
+  // status waiting for Architect follow-up. Pre-Phase-1 this polling
+  // backup surfaced such threads to the Architect event loop; post-
+  // Phase-1 there's nothing to surface because every converged thread
+  // is also closed by the time the cascade drains. When Phase 2 lands
+  // with cascade-failure semantics (ConvergenceReport.warning), a
+  // different flavour of surfacing will be needed — rewrite then.
+  describe.skip("Converged Threads Polling Backup (obsolete in Threads 2.0)", () => {
     it("get_pending_actions surfaces converged threads", async () => {
       // Create and converge a thread
       const thread = await arch.createThread("Design review", "Should we use X?");
       const threadId = thread.threadId as string;
 
-      await eng.replyToThread(threadId, "Yes, X is correct", { converged: true });
+      // Mission-21 Phase 1 gate: stage close_no_action + summary on
+      // the first converging reply; second reply inherits state.
+      await eng.replyToThread(threadId, "Yes, X is correct", {
+        converged: true,
+        summary: "Agreed on using X.",
+        stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "decision logged" } }],
+      });
       await arch.replyToThread(threadId, "Agreed", { converged: true });
 
       // Poll for pending actions
@@ -44,7 +59,11 @@ describe("Registry Remediation", () => {
 
     it("converged threads included in totalPending count", async () => {
       const thread = await arch.createThread("Count test", "Counting");
-      await eng.replyToThread(thread.threadId as string, "OK", { converged: true });
+      await eng.replyToThread(thread.threadId as string, "OK", {
+        converged: true,
+        summary: "Nothing to count.",
+        stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "trivial" } }],
+      });
       await arch.replyToThread(thread.threadId as string, "Confirmed", { converged: true });
 
       const pending = await arch.getPendingActions();

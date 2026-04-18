@@ -217,7 +217,13 @@ describe("Mission-19 Labels — Thread inherits opener labels (INV-TH9)", () => 
   });
 });
 
-describe("Mission-19 Labels — Thread-spawn inherits thread labels (INV-T17, INV-TH10)", () => {
+// MISSION-21 PHASE 1 STATUS: this block exercises the singular
+// convergenceAction shape with create_task vocabulary, deleted in the
+// Threads 2.0 clean cutover. Phase 2 re-introduces create_task as a
+// stagedAction.type; rewrite each scenario to
+// stagedActions:[{kind:"stage", type:"create_task", payload:{...}}]
+// when Phase 2 lands. Skipped for Phase 1 tree-green.
+describe.skip("Mission-19 Labels — Thread-spawn inherits thread labels (INV-T17, INV-TH10) [PHASE 2 REWRITE PENDING]", () => {
   let router: PolicyRouter;
   let archCtx: TestPolicyContext;
   let engCtx: TestPolicyContext;
