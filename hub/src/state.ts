@@ -7,7 +7,7 @@
 
 export type TaskStatus = "pending" | "working" | "blocked" | "input_required" | "in_review" | "completed" | "failed" | "escalated" | "cancelled";
 
-export type SessionRole = "engineer" | "architect" | "unknown";
+export type SessionRole = "engineer" | "architect" | "director" | "unknown";
 
 export interface Task {
   id: string;
@@ -1623,8 +1623,11 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
   ): Promise<RegisterAgentResult> {
     const fingerprint = computeFingerprint(payload.globalInstanceId);
     const now = new Date().toISOString();
-    // SessionRole is engineer|architect|unknown — map director to unknown for legacy use.
-    this.sessionRoles.set(sessionId, (tokenRole === "director" ? "unknown" : tokenRole) as SessionRole);
+    // Mission-24 Phase 2 (ADR-014 §77): SessionRole widened with
+    // "director" so the director-* agentId prefix flow can authorize
+    // MCP tools via the existing getRole()-driven RBAC without the
+    // legacy "unknown" → "engineer" fallback in task-policy auto-register.
+    this.sessionRoles.set(sessionId, tokenRole as SessionRole);
 
     const existingId = this.byFingerprint.get(fingerprint);
     let agent = existingId ? this.agents.get(existingId) ?? null : null;
@@ -1675,8 +1678,15 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
       };
     }
 
-    // First-contact: create a new Agent entity.
-    const engineerId = `eng-${shortHash(fingerprint)}`;
+    // First-contact: create a new Agent entity. Mission-24 Phase 2
+    // (ADR-014 §77): director sessions get the reserved director-*
+    // agentId prefix so dispatch selectors + audit trails can identify
+    // Director actors at a glance (distinct from architect/engineer
+    // which share the eng-* prefix). The prefix is cosmetic for routing
+    // (the `role` field on the Agent is the authoritative check) but
+    // makes cross-session traces immediately legible.
+    const agentIdPrefix = tokenRole === "director" ? "director" : "eng";
+    const engineerId = `${agentIdPrefix}-${shortHash(fingerprint)}`;
     agent = {
       engineerId,
       fingerprint,

@@ -188,6 +188,60 @@ describe("SessionPolicy", () => {
     expect(parsed.role).toBe("architect");
   });
 
+  // ── M24-T10 Director integration (ADR-014 §77) ────────────────
+
+  it("register_role as director (M18) mints an agentId with the director-* prefix", async () => {
+    const directorHandshake = {
+      role: "director",
+      globalInstanceId: "test-gid-director-1",
+      clientMetadata: {
+        clientName: "director-chat",
+        clientVersion: "0.0.0",
+        proxyName: "@ois/director-plugin",
+        proxyVersion: "0.0.0",
+      },
+    };
+    const result = await router.handle("register_role", directorHandshake, ctx);
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.engineerId).toMatch(/^director-/);
+    // Engineer + architect stay on the eng-* prefix for backward compatibility
+    // with existing audit trails + label selectors.
+    expect(parsed.engineerId).not.toMatch(/^eng-/);
+  });
+
+  it("registered director SessionRole is 'director' (not mapped to 'unknown')", async () => {
+    const directorHandshake = {
+      role: "director",
+      globalInstanceId: "test-gid-director-2",
+      clientMetadata: {
+        clientName: "d", clientVersion: "0", proxyName: "@ois/d", proxyVersion: "0",
+      },
+    };
+    await router.handle("register_role", directorHandshake, ctx);
+    expect(ctx.stores.engineerRegistry.getRole(ctx.sessionId)).toBe("director");
+  });
+
+  it("director and engineer with same agent-name coexist without collision", async () => {
+    // Different globalInstanceIds → different fingerprints → different agent IDs,
+    // but both derive their prefix from their role declaration. Verifies that
+    // the prefix selection is role-driven, not fingerprint-prefix-driven.
+    const engResult = await router.handle("register_role", {
+      role: "engineer", globalInstanceId: "gid-same-1",
+      clientMetadata: { clientName: "c", clientVersion: "0", proxyName: "p", proxyVersion: "0" },
+    }, createTestContext({ stores: ctx.stores, sessionId: "eng-session" }));
+
+    const dirCtx = createTestContext({ stores: ctx.stores, sessionId: "dir-session" });
+    const dirResult = await router.handle("register_role", {
+      role: "director", globalInstanceId: "gid-same-2",
+      clientMetadata: { clientName: "c", clientVersion: "0", proxyName: "p", proxyVersion: "0" },
+    }, dirCtx);
+
+    expect(JSON.parse(engResult.content[0].text).engineerId).toMatch(/^eng-/);
+    expect(JSON.parse(dirResult.content[0].text).engineerId).toMatch(/^director-/);
+  });
+
   it("touchAgent bumps lastSeenAt and flips drifted status back to online", async () => {
     await router.handle("register_role", engineerHandshake, ctx);
     const reg = ctx.stores.engineerRegistry as any;

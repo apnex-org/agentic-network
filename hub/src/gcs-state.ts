@@ -928,7 +928,9 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
     payload: RegisterAgentPayload,
     address?: string,
   ): Promise<RegisterAgentResult> {
-    this.sessionRoles.set(sessionId, (tokenRole === "director" ? "unknown" : tokenRole) as SessionRole);
+    // Mission-24 Phase 2 (ADR-014 §77): SessionRole now carries the
+    // "director" literal directly rather than mapping to "unknown".
+    this.sessionRoles.set(sessionId, tokenRole as SessionRole);
     const fingerprint = computeFingerprint(payload.globalInstanceId);
     const fpPath = `agents/by-fingerprint/${fingerprint}.json`;
 
@@ -939,7 +941,10 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
 
       if (!existing) {
         // First-contact create: ifGenerationMatch=0 ensures "must not exist".
-        const engineerId = `eng-${shortHash(fingerprint)}`;
+        // Mission-24 Phase 2 (ADR-014 §77): director sessions get the
+        // reserved director-* agentId prefix for at-a-glance identification.
+        const agentIdPrefix = tokenRole === "director" ? "director" : "eng";
+        const engineerId = `${agentIdPrefix}-${shortHash(fingerprint)}`;
         const agent: Agent = {
           engineerId,
           fingerprint,
