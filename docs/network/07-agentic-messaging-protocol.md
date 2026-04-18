@@ -66,7 +66,7 @@ interface AmpEnvelope {
   /** Globally unique, lexicographically sortable identifier (ULID) */
   id: string;
 
-  /** Event type (e.g., "directive_issued", "report_submitted") */
+  /** Event type (e.g., "task_issued", "report_submitted") */
   type: string;
 
   /** Links related events across the system (e.g., "mission-2") */
@@ -115,7 +115,7 @@ function createEnvelope(type: string, payload: Record<string, unknown>, opts: {
 
 | Event                    | Source    | Target     | Trigger                                  |
 | ------------------------ | -------- | ---------- | ---------------------------------------- |
-| `directive_issued`       | hub      | engineer   | Architect creates a task                 |
+| `task_issued`       | hub      | engineer   | Architect creates a task                 |
 | `directive_acknowledged` | hub      | architect  | Engineer picks up a task                 |
 | `report_submitted`       | hub      | architect  | Engineer submits work report             |
 | `review_completed`       | hub      | engineer   | Architect reviews a report               |

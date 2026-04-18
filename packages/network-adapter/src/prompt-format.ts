@@ -15,7 +15,7 @@ export function getActionText(
   data: Record<string, unknown>
 ): string {
   switch (event) {
-    case "directive_issued":
+    case "task_issued":
       return "Pick up with get_task";
     case "revision_required":
       return "Revise and resubmit with create_report";
@@ -62,7 +62,7 @@ export function buildPromptText(
         `Call ${p}get_clarification with taskId="${data.taskId}" ` +
         `to read the answer and resume your work.`
       );
-    case "directive_issued":
+    case "task_issued":
       return (
         `[Architect] Issued a new directive (${data.taskId || "pending"}). ` +
         `Call ${p}get_task to pick it up and execute it.`
@@ -96,7 +96,7 @@ export function buildToastMessage(
   data: Record<string, unknown>
 ): string {
   switch (event) {
-    case "directive_issued":
+    case "task_issued":
       return `New directive: ${data.taskId || "unknown"}`;
     case "review_completed":
       return `Review complete: ${data.taskId || "task"}`;

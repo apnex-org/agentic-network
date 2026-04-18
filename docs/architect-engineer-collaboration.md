@@ -73,7 +73,7 @@ Director                    Architect                   Hub                     
    |                           |------------------------>|                            |
    |                           |                         |  [task queued: pending]     |
    |                           |                         |                            |
-   |                           |                         |  directive_issued (SSE) --->|
+   |                           |                         |  task_issued (SSE) --->|
    |                           |                         |                            |
    |                           |                         |<---------------------------|
    |                           |                         |  get_task()                 |

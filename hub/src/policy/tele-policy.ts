@@ -8,6 +8,7 @@
 import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
+import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -39,10 +40,11 @@ async function getTele(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   };
 }
 
-async function listTele(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+async function listTele(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const teles = await ctx.stores.tele.listTele();
+  const page = paginate(teles, args);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ tele: teles, count: teles.length }, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ tele: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2) }],
   };
 }
 
@@ -69,8 +71,10 @@ export function registerTelePolicy(router: PolicyRouter): void {
 
   router.register(
     "list_tele",
-    "[Any] List all defined Tele (teleological goals).",
-    {},
+    "[Any] List all defined Tele (teleological goals) with pagination.",
+    {
+      ...LIST_PAGINATION_SCHEMA,
+    },
     listTele,
   );
 }

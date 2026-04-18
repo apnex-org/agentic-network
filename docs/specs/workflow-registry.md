@@ -363,7 +363,7 @@ Precondition: None
 
 | Step | Actor     | Action                                          | State After  | Dispatch Selector                                                  |
 | ---- | --------- | ----------------------------------------------- | ------------ | ------------------------------------------------------------------ |
-| 1    | Architect | `create_task(title, description)`               | pending      | `directive_issued` → { roles: [engineer], matchLabels: task.labels } |
+| 1    | Architect | `create_task(title, description)`               | pending      | `task_issued` → { roles: [engineer], matchLabels: task.labels } |
 | 2    | Engineer  | `get_task()`                                    | working      | `directive_acknowledged` → { roles: [architect], matchLabels: task.labels } |
 | 3    | Engineer  | `create_report(taskId, ...)`                    | in_review    | `report_submitted` → { roles: [architect], matchLabels: task.labels } |
 | 4    | Architect | `create_review(taskId, ..., decision: "approved")` | completed  | `review_completed` → { engineerId: task.assignedEngineerId } (P2P; label-scoped pool fallback if null) |
@@ -449,12 +449,12 @@ Precondition: Two or more tasks with dependency relationships
 
 | Step | Actor     | Action                                              | State After  | Dispatch Selector                                      |
 | ---- | --------- | --------------------------------------------------- | ------------ | ------------------------------------------------------ |
-| 1    | Architect | `create_task("A", ...)`                             | A: pending   | `directive_issued` → { roles: [engineer], matchLabels: A.labels } |
+| 1    | Architect | `create_task("A", ...)`                             | A: pending   | `task_issued` → { roles: [engineer], matchLabels: A.labels } |
 | 2    | Architect | `create_task("B", ..., dependsOn: ["A"])`           | B: blocked   | `task_blocked` → { roles: [architect], matchLabels: B.labels } |
 | 3    | Engineer  | `get_task()` → picks up A                           | A: working   | `directive_acknowledged` → { roles: [architect], matchLabels: A.labels } |
 | 4    | Engineer  | `create_report("A", ...)`                           | A: in_review | `report_submitted` → { roles: [architect], matchLabels: A.labels } |
 | 5    | Architect | `create_review("A", ..., decision: "approved")`     | A: completed | `review_completed` → { engineerId: A.assignedEngineerId } (P2P) |
-| 6    | System    | Cascade: unblockDependents(A)                       | B: pending   | `directive_issued` → { roles: [engineer], matchLabels: B.labels } |
+| 6    | System    | Cascade: unblockDependents(A)                       | B: pending   | `task_issued` → { roles: [engineer], matchLabels: B.labels } |
 | 7    | Engineer  | `get_task()` → picks up B                           | B: working   | `directive_acknowledged` → { roles: [architect], matchLabels: B.labels } |
 
 **Key change (v2.0.0):** Cascade unblocking now happens at Step 6 (after review approval), not at Step 4 (after report). This prevents unblocking dependents before the Architect has verified the work.
@@ -571,7 +571,7 @@ Precondition: Thread converged WITHOUT a convergenceAction (hasAction = false)
 | ---- | --------------- | ---------------------------------------------------- | -------------------- | --------------------------------- |
 | 1    | System          | `thread_converged` event fires (hasAction: false)    | thread: converged    | `thread_converged` → [architect]  |
 | 2    | Architect (LLM) | `sandwichThreadConverged` reads thread, LLM reasons  | —                    | —                                 |
-| 3    | Architect (LLM) | If `implementation_ready`: `create_task(title, desc, sourceThreadId)` | task: pending | `directive_issued` → [engineer] |
+| 3    | Architect (LLM) | If `implementation_ready`: `create_task(title, desc, sourceThreadId)` | task: pending | `task_issued` → [engineer] |
 | 4    | System          | Thread auto-closed by sourceThreadId (XD-005)        | thread: closed       | —                                 |
 
 **Guard:** `sandwichThreadConverged` checks thread status before acting — if the thread is already `closed` (e.g. Hub cascade beat the event loop), it skips processing.
@@ -593,7 +593,7 @@ Precondition: Thread converged WITH a convergenceAction attached
 | ---- | ------ | --------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------- |
 | 1    | Any    | `create_thread_reply(converged: true, convergenceAction: {type, template})` | converged         | internal: `thread_converged_with_action`                      |
 | 2    | Hub    | `handleThreadConvergedWithAction` reads action type                         | —                 | —                                                             |
-| 3a   | Hub    | If `create_task`: `submitDirective(description, labels: thread.labels)`     | task: pending     | `directive_issued` → { roles: [engineer], matchLabels: thread.labels } |
+| 3a   | Hub    | If `create_task`: `submitDirective(description, labels: thread.labels)`     | task: pending     | `task_issued` → { roles: [engineer], matchLabels: thread.labels } |
 | 3b   | Hub    | If `create_proposal`: `submitProposal(title, description, labels: thread.labels)` | proposal: submitted | `proposal_submitted` → { roles: [architect], matchLabels: thread.labels } |
 | 4    | Hub    | `closeThread(threadId)`                                                     | thread: closed    | —                                                             |
 | 5    | System | `thread_converged` SSE emitted (hasAction: true)                            | —                 | `thread_converged` → { roles: [architect], matchLabels: thread.labels } |
@@ -693,7 +693,7 @@ Precondition: Architect connected to Hub
 | Trigger     | `create_review(decision: "approved")` approves a task with blocked dependents |
 | Mechanism   | Internal event `task_completed` → `handleTaskCompleted` cascade       |
 | Effect      | `task.unblockDependents(taskId)` — transitions each dependent blocked→pending |
-| Events      | `directive_issued` → [engineer] per unblocked task                    |
+| Events      | `task_issued` → [engineer] per unblocked task                    |
 | Failure     | Non-fatal to primary op — `cascade_failure` → [architect]            |
 | Tested By   | NONE (existing tests use old trigger — will be updated in Mission-6 T5) |
 
@@ -725,7 +725,7 @@ Precondition: Architect connected to Hub
 | ----------- | --------------------------------------------------------------------- |
 | Trigger     | `create_thread_reply` detects convergence AND `convergenceAction` is present |
 | Effect      | Hub spawns task or proposal from `convergenceAction.templateData`, closes thread |
-| Cascade     | `directive_issued` → [engineer] or `proposal_submitted` → [architect] |
+| Cascade     | `task_issued` → [engineer] or `proposal_submitted` → [architect] |
 | Dedup       | `thread_converged` SSE emitted with `hasAction: true` — Architect skips (INV-SYS-018) |
 | Failure     | Non-fatal — convergence detected but action malformed, logged         |
 | Tested By   | NONE (requires integration test with convergenceAction)              |
@@ -751,8 +751,8 @@ Since Mission-19 (v2.1.0), all events in this catalogue are delivered via `ctx.d
 
 | Event                    | Emitter                         | Target          | Payload                                         | Purpose                               |
 | ------------------------ | ------------------------------- | --------------- | ------------------------------------------------ | ------------------------------------- |
-| `directive_issued`       | TaskPolicy.createTask           | [engineer] ∧ task.labels | taskId, directive, correlationId, sourceThreadId  | New task available for pickup within the Task's label scope |
-| `directive_issued`       | TaskPolicy.handleTaskCompleted  | [engineer] ∧ task.labels | taskId, directive, correlationId                  | Blocked task unblocked by cascade     |
+| `task_issued`       | TaskPolicy.createTask           | [engineer] ∧ task.labels | taskId, directive, correlationId, sourceThreadId  | New task available for pickup within the Task's label scope |
+| `task_issued`       | TaskPolicy.handleTaskCompleted  | [engineer] ∧ task.labels | taskId, directive, correlationId                  | Blocked task unblocked by cascade     |
 | `task_blocked`           | TaskPolicy.createTask           | [architect] ∧ task.labels | taskId, directive, correlationId, dependsOn       | Task created but waiting on deps      |
 | `directive_acknowledged` | TaskPolicy.getTask              | [architect] ∧ task.labels | taskId, engineerId, directive                     | Engineer picked up task               |
 | `report_submitted`       | TaskPolicy.createReport         | [architect] ∧ task.labels | taskId, summary, reportRef                        | Engineer completed work               |
@@ -809,7 +809,7 @@ Since Mission-19 (v2.1.0), all events in this catalogue are delivered via `ctx.d
 
 | Category      | Events | Unique Names |
 | ------------- | ------ | ------------ |
-| Task          | 6      | 5 (directive_issued emitted by 2 sources) |
+| Task          | 6      | 5 (task_issued emitted by 2 sources) |
 | Clarification | 2      | 2            |
 | Review        | 3      | 3 (review_completed, revision_required, director_attention_required) |
 | Proposal      | 2      | 2            |

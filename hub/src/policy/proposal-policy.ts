@@ -13,6 +13,7 @@
 import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
+import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import type { ProposedExecutionPlan, ScaffoldResult } from "../state.js";
 import { callerLabels } from "./labels.js";
 
@@ -256,10 +257,11 @@ async function createProposal(args: Record<string, unknown>, ctx: IPolicyContext
 async function listProposals(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const status = args.status as string | undefined;
   const proposals = await ctx.stores.proposal.getProposals(status as any);
+  const page = paginate(proposals, args);
   return {
     content: [{
       type: "text" as const,
-      text: JSON.stringify({ proposals, count: proposals.length }, null, 2),
+      text: JSON.stringify({ proposals: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2),
     }],
   };
 }
@@ -318,11 +320,11 @@ async function createProposalReview(args: Record<string, unknown>, ctx: IPolicyC
     // Store the scaffold result on the proposal
     await ctx.stores.proposal.setScaffoldResult(proposalId, scaffoldData);
 
-    // Emit directive_issued for each created task that is pending (not blocked)
+    // Emit task_issued for each created task that is pending (not blocked)
     for (const t of scaffoldData.tasks) {
       const task = await ctx.stores.task.getTask(t.generatedId);
       if (task && task.status === "pending") {
-        await ctx.dispatch("directive_issued", {
+        await ctx.dispatch("task_issued", {
           taskId: t.generatedId,
           directive: (task.description || task.title || "").substring(0, 200),
           correlationId: task.correlationId,
@@ -440,9 +442,10 @@ export function registerProposalPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_proposals",
-    "[Any] List all proposals, optionally filtered by status (submitted, approved, rejected, changes_requested, implemented).",
+    "[Any] List proposals with optional status filter and pagination.",
     {
       status: z.enum(["submitted", "approved", "rejected", "changes_requested", "implemented"]).optional().describe("Filter proposals by status (optional)"),
+      ...LIST_PAGINATION_SCHEMA,
     },
     listProposals,
   );

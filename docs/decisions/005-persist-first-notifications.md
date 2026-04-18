@@ -32,4 +32,4 @@ Fire-and-forget `sendLoggingMessage` with webhook fallback. No persistence, no r
 - 24-hour TTL with hourly cleanup sweep prevents unbounded growth
 - Zero client-side changes — MCP SDK handles `Last-Event-ID` automatically
 - Pointer-style payloads ensure clients always read latest state via tool calls (strong consistency)
-- All 8 notification event types now fire: `directive_issued`, `report_submitted`, `proposal_submitted`, `clarification_requested`, `clarification_answered`, `proposal_decided`, `review_completed`, `thread_message`
+- All 8 notification event types now fire: `task_issued`, `report_submitted`, `proposal_submitted`, `clarification_requested`, `clarification_answered`, `proposal_decided`, `review_completed`, `thread_message`

@@ -197,7 +197,7 @@ describe("E2E Workflows", () => {
       expect(report.status).toBe("in_review");
 
       // 5. Cascade does NOT fire on report — child remains blocked
-      const unblockEvent = orch.events.forEvent("directive_issued").find(
+      const unblockEvent = orch.events.forEvent("task_issued").find(
         (e) => e.data.taskId === childId
       );
       expect(unblockEvent).toBeUndefined();
@@ -244,13 +244,13 @@ describe("E2E Workflows", () => {
       await eng.createReport(a.taskId as string, "A done", "OK");
 
       // B should still be blocked (no cascade on report)
-      const bUnblock = orch.events.forEvent("directive_issued").find(
+      const bUnblock = orch.events.forEvent("task_issued").find(
         (e) => e.data.taskId === b.taskId
       );
       expect(bUnblock).toBeUndefined();
 
       // C should still be blocked
-      const cUnblock = orch.events.forEvent("directive_issued").find(
+      const cUnblock = orch.events.forEvent("task_issued").find(
         (e) => e.data.taskId === c.taskId
       );
       expect(cUnblock).toBeUndefined();
@@ -277,7 +277,7 @@ describe("E2E Workflows", () => {
       await eng.createReport(b.taskId as string, "B done", "OK");
 
       // C should still be blocked — no cascade on report
-      const cUnblock = orch.events.forEvent("directive_issued").find(
+      const cUnblock = orch.events.forEvent("task_issued").find(
         (e) => e.data.taskId === c.taskId
       );
       expect(cUnblock).toBeUndefined();

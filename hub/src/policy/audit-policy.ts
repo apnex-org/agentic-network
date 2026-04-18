@@ -8,6 +8,7 @@
 import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
+import { LIST_PAGINATION_SCHEMA, MAX_LIST_LIMIT, DEFAULT_LIST_LIMIT, paginate } from "./list-filters.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -33,14 +34,18 @@ async function createAuditEntry(args: Record<string, unknown>, ctx: IPolicyConte
 }
 
 async function listAuditEntries(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  const limit = (args.limit as number) || 50;
+  // Audit listing takes a store-level `limit` that caps the number of
+  // entries loaded from GCS (default 50). The shared paginator then
+  // applies offset/limit to the loaded slice. Request a larger store-
+  // level cap when a caller wants to page deeper.
+  const storeCap = Math.min(MAX_LIST_LIMIT, (args.limit as number) ?? DEFAULT_LIST_LIMIT);
   const actor = args.actor as string | undefined;
-
-  const entries = await ctx.stores.audit.listEntries(limit, actor as "architect" | "engineer" | "hub" | undefined);
+  const entries = await ctx.stores.audit.listEntries(storeCap, actor as "architect" | "engineer" | "hub" | undefined);
+  const page = paginate(entries, args);
   return {
     content: [{
       type: "text" as const,
-      text: JSON.stringify({ entries, count: entries.length }, null, 2),
+      text: JSON.stringify({ entries: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2),
     }],
   };
 }
@@ -52,7 +57,7 @@ export function registerAuditPolicy(router: PolicyRouter): void {
     "create_audit_entry",
     "[Architect] Log an audit entry recording an autonomous action taken by the Architect. Persisted in GCS for Director oversight. Every autonomous decision should be audited.",
     {
-      action: z.string().describe("Short action name (e.g., 'auto_review', 'auto_clarification', 'directive_issued')"),
+      action: z.string().describe("Short action name (e.g., 'auto_review', 'auto_clarification', 'task_issued')"),
       details: z.string().describe("Description of what was done and why"),
       relatedEntity: z.string().optional().describe("Related entity ID (e.g., 'task-24', 'prop-7', 'thread-3')"),
     },
@@ -61,10 +66,10 @@ export function registerAuditPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_audit_entries",
-    "[Any] List recent audit entries for Director review. Returns the most recent entries first. Supports filtering by actor.",
+    "[Any] List audit entries with optional actor filter and pagination. Returns most recent first.",
     {
-      limit: z.number().optional().describe("Maximum number of entries to return (default: 50)"),
       actor: z.enum(["architect", "engineer", "hub"]).optional().describe("Filter by actor (optional)"),
+      ...LIST_PAGINATION_SCHEMA,
     },
     listAuditEntries,
   );

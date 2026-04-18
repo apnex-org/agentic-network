@@ -78,7 +78,7 @@ Event classification and deduplication for role-based routing.
 
 | Export | Kind | Purpose |
 |---|---|---|
-| `HubEventType` | type | Union of all known Hub event types (directive_issued, report_submitted, etc.) |
+| `HubEventType` | type | Union of all known Hub event types (task_issued, report_submitted, etc.) |
 | `HubEvent` | interface | Parsed event envelope: event, data, timestamp, id |
 | `EventDisposition` | type | `"actionable" \| "informational" \| "unhandled"` |
 | `classifyEvent` | function | Classifies event for a given role |

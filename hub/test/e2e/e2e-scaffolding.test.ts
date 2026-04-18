@@ -252,7 +252,7 @@ describe("E2E Auto-Scaffolding", () => {
   });
 
   describe("Events", () => {
-    it("directive_issued emitted for pending (non-blocked) tasks", async () => {
+    it("task_issued emitted for pending (non-blocked) tasks", async () => {
       orch.events.clear();
 
       const proposal = await eng.createProposal(
@@ -272,8 +272,8 @@ describe("E2E Auto-Scaffolding", () => {
       orch.events.clear(); // clear proposal_submitted
       await arch.reviewProposal(proposal.proposalId as string, "approved", "OK");
 
-      // directive_issued for t1 (pending), but NOT for t2 (blocked)
-      const directives = orch.events.forEvent("directive_issued");
+      // task_issued for t1 (pending), but NOT for t2 (blocked)
+      const directives = orch.events.forEvent("task_issued");
       expect(directives.length).toBe(1);
       expect(directives[0].targetRoles).toContain("engineer");
     });

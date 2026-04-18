@@ -29,8 +29,8 @@ describe("E2E Foundation", () => {
       expect(task.taskId).toBe("task-1");
       expect(task.status).toBe("pending");
 
-      // Event: directive_issued → engineer
-      orch.events.expectEventFor("directive_issued", "engineer");
+      // Event: task_issued → engineer
+      orch.events.expectEventFor("task_issued", "engineer");
 
       // 2. Engineer picks up the task
       const picked = await eng.getTask();
@@ -54,7 +54,7 @@ describe("E2E Foundation", () => {
 
       // Verify the full event sequence (no task_completed cascade on report)
       orch.events.expectEventSequence([
-        "directive_issued",
+        "task_issued",
         "directive_acknowledged",
         "report_submitted",
         "review_completed",
@@ -71,16 +71,16 @@ describe("E2E Foundation", () => {
       const engineerEvents = orch.events.forRole("engineer");
       const architectEvents = orch.events.forRole("architect");
 
-      // Engineer should receive: directive_issued, review_completed
-      expect(engineerEvents.some((e) => e.event === "directive_issued")).toBe(true);
+      // Engineer should receive: task_issued, review_completed
+      expect(engineerEvents.some((e) => e.event === "task_issued")).toBe(true);
       expect(engineerEvents.some((e) => e.event === "review_completed")).toBe(true);
 
       // Architect should receive: directive_acknowledged, report_submitted
       expect(architectEvents.some((e) => e.event === "directive_acknowledged")).toBe(true);
       expect(architectEvents.some((e) => e.event === "report_submitted")).toBe(true);
 
-      // Architect should NOT receive directive_issued (that's for engineers)
-      expect(architectEvents.some((e) => e.event === "directive_issued")).toBe(false);
+      // Architect should NOT receive task_issued (that's for engineers)
+      expect(architectEvents.some((e) => e.event === "task_issued")).toBe(false);
     });
   });
 
@@ -228,7 +228,7 @@ describe("E2E Foundation", () => {
 
       await arch.createTask("Counted task", "Description");
       expect(orch.events.count()).toBeGreaterThan(0);
-      expect(orch.events.count("directive_issued")).toBe(1);
+      expect(orch.events.count("task_issued")).toBe(1);
     });
 
     it("E2EError is thrown on policy errors", async () => {

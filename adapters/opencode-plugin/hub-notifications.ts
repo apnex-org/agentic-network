@@ -494,7 +494,7 @@ async function connectToHub(globalInstanceId: string): Promise<void> {
         onFatalHalt,
         onPendingTask: (task) => {
           appendNotification(
-            { event: "directive_issued", data: task, action: "Pick up with get_task" },
+            { event: "task_issued", data: task, action: "Pick up with get_task" },
             { logPath: notificationLogPath }
           )
         },

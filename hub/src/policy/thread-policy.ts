@@ -13,6 +13,7 @@ import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { ThreadAuthor, ThreadIntent, ConvergenceAction } from "../state.js";
 import type { DomainEvent } from "./types.js";
 import { callerLabels } from "./labels.js";
+import { LIST_PAGINATION_SCHEMA, LIST_LABELS_SCHEMA, applyLabelFilter, paginate } from "./list-filters.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -165,7 +166,8 @@ async function getThread(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 
 async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const status = args.status as string | undefined;
-  const threads = await ctx.stores.thread.listThreads(status as any);
+  let threads = await ctx.stores.thread.listThreads(status as any);
+  threads = applyLabelFilter(threads, args.labels as Record<string, string> | undefined);
   const summaries = threads.map((t) => ({
     id: t.id,
     title: t.title,
@@ -178,8 +180,9 @@ async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): 
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
   }));
+  const page = paginate(summaries, args);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ threads: summaries, count: summaries.length }, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ threads: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2) }],
   };
 }
 
@@ -234,8 +237,8 @@ async function handleThreadConvergedWithAction(
     // Auto-close the thread
     await ctx.stores.thread.closeThread(threadId);
 
-    // Emit directive_issued for the new task (routed by inherited labels)
-    await ctx.dispatch("directive_issued", {
+    // Emit task_issued for the new task (routed by inherited labels)
+    await ctx.dispatch("task_issued", {
       taskId,
       directive: description.substring(0, 200),
       sourceThreadId: threadId,
@@ -317,9 +320,11 @@ export function registerThreadPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_threads",
-    "[Any] List all ideation threads, optionally filtered by status (active, converged, round_limit, closed).",
+    "[Any] List ideation threads with optional status filter, label match-all filter, and pagination.",
     {
       status: z.enum(["active", "converged", "round_limit", "closed"]).optional().describe("Filter threads by status (optional)"),
+      ...LIST_LABELS_SCHEMA,
+      ...LIST_PAGINATION_SCHEMA,
     },
     listThreads,
   );

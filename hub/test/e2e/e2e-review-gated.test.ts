@@ -129,7 +129,7 @@ describe("Review-Gated DAG Cascade", () => {
     expect(reviewParsed.decision).toBe("approved");
 
     // DAG cascade should have fired — child unblocked
-    const directiveEvents = orch.events.forEvent("directive_issued");
+    const directiveEvents = orch.events.forEvent("task_issued");
     const childUnblock = directiveEvents.find((e) => e.data.taskId === child.taskId);
     expect(childUnblock).toBeDefined();
 

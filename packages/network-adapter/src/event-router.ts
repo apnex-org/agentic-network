@@ -11,7 +11,7 @@
 
 /** All known Hub event types */
 export type HubEventType =
-  | "directive_issued"
+  | "task_issued"
   | "directive_acknowledged"
   | "report_submitted"
   | "review_completed"
@@ -49,7 +49,7 @@ export type EventDisposition = "actionable" | "informational" | "unhandled";
 const ENGINEER_ACTIONABLE: ReadonlySet<string> = new Set([
   "thread_message",
   "clarification_answered",
-  "directive_issued",
+  "task_issued",
   "thread_converged",
   "revision_required",
 ]);

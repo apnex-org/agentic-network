@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { readDocument, writeDocument, listDocuments } from "../gcs-document.js";
+import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -85,8 +86,9 @@ async function listDocs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
 
   try {
     const docs = await listDocuments(ctx.config.gcsBucket, prefix);
+    const page = paginate(docs, args);
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ documents: docs, count: docs.length }, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ documents: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2) }],
     };
   } catch (error) {
     return {
@@ -118,8 +120,11 @@ export function registerDocumentPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_documents",
-    "[Any] List documents in a directory of the Hub's state storage. Use to browse reports, proposals, tasks, or other stored files. Returns file paths, sizes, and timestamps.",
-    { prefix: z.string().describe("The directory prefix to list (e.g., 'reports/', 'proposals/', 'tasks/')") },
+    "[Any] List documents in a directory of the Hub's state storage with pagination. Returns file paths, sizes, and timestamps.",
+    {
+      prefix: z.string().describe("The directory prefix to list (e.g., 'reports/', 'proposals/', 'tasks/')"),
+      ...LIST_PAGINATION_SCHEMA,
+    },
     listDocs,
   );
 }

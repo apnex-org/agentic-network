@@ -11,6 +11,7 @@ import type { IPolicyContext, PolicyResult } from "./types.js";
 import { isValidTransition } from "./types.js";
 import type { FsmTransitionTable } from "./types.js";
 import type { IdeaStatus } from "../entities/index.js";
+import { LIST_PAGINATION_SCHEMA, LIST_TAGS_SCHEMA, applyTagFilter, paginate } from "./list-filters.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -46,9 +47,11 @@ async function createIdea(args: Record<string, unknown>, ctx: IPolicyContext): P
 
 async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const status = args.status as IdeaStatus | undefined;
-  const ideas = await ctx.stores.idea.listIdeas(status);
+  let ideas = await ctx.stores.idea.listIdeas(status);
+  ideas = applyTagFilter(ideas, args.tags as string[] | undefined);
+  const page = paginate(ideas, args);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ ideas, count: ideas.length }, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ ideas: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2) }],
   };
 }
 
@@ -131,9 +134,11 @@ export function registerIdeaPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_ideas",
-    "[Any] List all ideas, optionally filtered by status.",
+    "[Any] List ideas with optional status filter, tag match-any filter, and pagination.",
     {
       status: z.enum(["open", "triaged", "dismissed", "incorporated"]).optional().describe("Filter by status"),
+      ...LIST_TAGS_SCHEMA,
+      ...LIST_PAGINATION_SCHEMA,
     },
     listIdeas,
   );

@@ -229,7 +229,7 @@ async function main(): Promise<void> {
         },
         onPendingTask: (task) => {
           appendNotification(
-            { event: "directive_issued", data: task, action: "Pick up with get_task" },
+            { event: "task_issued", data: task, action: "Pick up with get_task" },
             { logPath: LOG_FILE, mirror: (block) => process.stderr.write(block) }
           );
         },

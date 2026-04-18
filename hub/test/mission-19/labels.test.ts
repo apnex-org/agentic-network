@@ -91,7 +91,7 @@ describe("Mission-19 Labels — Task inherits caller labels (INV-T13)", () => {
       description: "Implement X",
     }, ctx);
 
-    const dispatched = ctx.dispatchedEvents.find((e) => e.event === "directive_issued");
+    const dispatched = ctx.dispatchedEvents.find((e) => e.event === "task_issued");
     expect(dispatched).toBeDefined();
     expect(dispatched!.selector.roles).toEqual(["engineer"]);
     expect(dispatched!.selector.matchLabels).toEqual({ team: "platform" });

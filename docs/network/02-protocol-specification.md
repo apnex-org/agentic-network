@@ -149,7 +149,7 @@ Notifications are sent as MCP `LoggingMessageNotification` with these fields:
   logger: "hub-event",
   data: {
     id: number,              // Monotonic notification ID
-    event: string,           // Event type (e.g., "directive_issued")
+    event: string,           // Event type (e.g., "task_issued")
     data: Record<string, unknown>,  // Event-specific payload (pointer-style)
     timestamp: string,       // ISO 8601
     targetRoles: string[]    // ["engineer"], ["architect"], or ["engineer", "architect"]
@@ -161,7 +161,7 @@ Notifications are sent as MCP `LoggingMessageNotification` with these fields:
 
 | Event                    | Target Roles          | Payload Data                                    |
 | ------------------------ | --------------------- | ----------------------------------------------- |
-| `directive_issued`         | `["engineer"]`          | `{ taskId }`                                      |
+| `task_issued`         | `["engineer"]`          | `{ taskId }`                                      |
 | `directive_acknowledged`   | `["architect"]`         | `{ taskId }`                                      |
 | `report_submitted`         | `["architect"]`         | `{ taskId, summary }`                             |
 | `review_completed`         | `["engineer"]`          | `{ taskId }`                                      |
@@ -198,7 +198,7 @@ notifications/notif-000042.json
 ```json
 {
   "id": 42,
-  "event": "directive_issued",
+  "event": "task_issued",
   "data": { "taskId": "task-29" },
   "targetRoles": ["engineer"],
   "timestamp": "2026-04-12T03:26:17.328Z"

@@ -19,7 +19,7 @@ The Plugin receives real-time SSE notifications from the Hub. When the Architect
 - `clarification_answered` — Architect answered your clarification. Resume work.
 
 **INFORMATIONAL notifications** (injected as context, no response required):
-- `directive_issued` — New directive available. Pick up when ready.
+- `task_issued` — New directive available. Pick up when ready.
 - `review_completed` — Architect reviewed your report. Check when ready.
 - `proposal_decided` — Architect decided on your proposal.
 

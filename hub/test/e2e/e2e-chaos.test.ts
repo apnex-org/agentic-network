@@ -52,8 +52,8 @@ describe("E2E Chaos", () => {
       const cascadeFailure = orch.events.forEvent("cascade_failure");
       expect(cascadeFailure).toHaveLength(0);
 
-      // No directive_issued for the child
-      const childDirective = orch.events.forEvent("directive_issued").find(
+      // No task_issued for the child
+      const childDirective = orch.events.forEvent("task_issued").find(
         (e) => e.data.taskId === child.taskId
       );
       expect(childDirective).toBeUndefined();

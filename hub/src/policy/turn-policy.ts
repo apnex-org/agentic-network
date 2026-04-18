@@ -11,6 +11,7 @@ import type { IPolicyContext, PolicyResult } from "./types.js";
 import { isValidTransition } from "./types.js";
 import type { FsmTransitionTable } from "./types.js";
 import type { TurnStatus } from "../entities/index.js";
+import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -91,8 +92,9 @@ async function getTurn(args: Record<string, unknown>, ctx: IPolicyContext): Prom
 async function listTurns(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const status = args.status as TurnStatus | undefined;
   const turns = await ctx.stores.turn.listTurns(status);
+  const page = paginate(turns, args);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ turns, count: turns.length }, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ turns: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2) }],
   };
 }
 
@@ -131,9 +133,10 @@ export function registerTurnPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_turns",
-    "[Any] List all turns, optionally filtered by status.",
+    "[Any] List turns with optional status filter and pagination.",
     {
       status: z.enum(["planning", "active", "completed"]).optional().describe("Filter by status"),
+      ...LIST_PAGINATION_SCHEMA,
     },
     listTurns,
   );

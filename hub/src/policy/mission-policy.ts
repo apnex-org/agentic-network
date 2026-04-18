@@ -11,6 +11,7 @@ import type { IPolicyContext, PolicyResult } from "./types.js";
 import { isValidTransition } from "./types.js";
 import type { FsmTransitionTable } from "./types.js";
 import type { MissionStatus } from "../entities/index.js";
+import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -93,8 +94,9 @@ async function getMission(args: Record<string, unknown>, ctx: IPolicyContext): P
 async function listMissions(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const status = args.status as MissionStatus | undefined;
   const missions = await ctx.stores.mission.listMissions(status);
+  const page = paginate(missions, args);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ missions, count: missions.length }, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ missions: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2) }],
   };
 }
 
@@ -133,9 +135,10 @@ export function registerMissionPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_missions",
-    "[Any] List all missions, optionally filtered by status.",
+    "[Any] List missions with optional status filter and pagination.",
     {
       status: z.enum(["proposed", "active", "completed", "abandoned"]).optional().describe("Filter by status"),
+      ...LIST_PAGINATION_SCHEMA,
     },
     listMissions,
   );

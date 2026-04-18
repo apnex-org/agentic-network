@@ -13,6 +13,7 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult, FsmTransitionTable, DomainEvent } from "./types.js";
 import { isValidTransition } from "./types.js";
 import { callerLabels } from "./labels.js";
+import { LIST_PAGINATION_SCHEMA, LIST_LABELS_SCHEMA, applyLabelFilter, paginate } from "./list-filters.js";
 
 // ── Task FSM ────────────────────────────────────────────────────────
 
@@ -116,7 +117,7 @@ async function createTask(args: Record<string, unknown>, ctx: IPolicyContext): P
     }, { roles: ["architect"], matchLabels: labels });
   } else {
     // Notify Engineers in the matching label scope that a new directive is available.
-    await ctx.dispatch("directive_issued", {
+    await ctx.dispatch("task_issued", {
       taskId,
       directive: resolvedDirective.substring(0, 200),
       correlationId,
@@ -273,12 +274,14 @@ async function getReport(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 }
 
 async function listTasks(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  const tasks = await ctx.stores.task.listTasks();
+  let tasks = await ctx.stores.task.listTasks();
+  tasks = applyLabelFilter(tasks, args.labels as Record<string, string> | undefined);
+  const page = paginate(tasks, args);
   return {
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify({ tasks, count: tasks.length }, null, 2),
+        text: JSON.stringify({ tasks: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2),
       },
     ],
   };
@@ -326,7 +329,7 @@ async function handleTaskCompleted(event: DomainEvent, ctx: IPolicyContext): Pro
   const unblockedIds = await ctx.stores.task.unblockDependents(taskId);
   for (const unblockedId of unblockedIds) {
     const unblocked = await ctx.stores.task.getTask(unblockedId);
-    await ctx.dispatch("directive_issued", {
+    await ctx.dispatch("task_issued", {
       taskId: unblockedId,
       directive: `Unblocked by completion of ${taskId}`,
       correlationId: null,
@@ -396,8 +399,11 @@ export function registerTaskPolicy(router: PolicyRouter): void {
   // ── list_tasks ────────────────────────────────────────────────────
   router.register(
     "list_tasks",
-    "[Any] List all current tasks in the hub (for debugging).",
-    {},
+    "[Any] List tasks in the hub with optional label match-all filter and pagination.",
+    {
+      ...LIST_LABELS_SCHEMA,
+      ...LIST_PAGINATION_SCHEMA,
+    },
     listTasks,
   );
 

@@ -577,7 +577,7 @@ async function main(): Promise<void> {
 
   // ════════════════════════════════════════════════════════════════════
   // M19-ISO: Label isolation
-  //   A parallel engineer labeled env:prod must NOT receive directive_issued
+  //   A parallel engineer labeled env:prod must NOT receive task_issued
   //   for a task created by an env:smoke architect. Exercises the full
   //   live dispatch path (selector resolution → transport → notification).
   // ════════════════════════════════════════════════════════════════════
@@ -604,19 +604,19 @@ async function main(): Promise<void> {
     isoTaskId = res.taskId as string;
     assert(!!isoTaskId, "taskId returned");
 
-    // Give the Hub a moment to dispatch. directive_issued on the smoke
+    // Give the Hub a moment to dispatch. task_issued on the smoke
     // engineer should arrive within a few hundred ms; if prod receives
     // it, it lands in the same window.
     await new Promise((r) => setTimeout(r, 1500));
 
     const leaked = received.filter(
       (e) =>
-        e.event === "directive_issued" &&
+        e.event === "task_issued" &&
         (e as unknown as { taskId?: string }).taskId === isoTaskId
     );
     assert(
       leaked.length === 0,
-      `env:prod engineer received ${leaked.length} directive_issued events for the smoke task — label isolation broken`,
+      `env:prod engineer received ${leaked.length} task_issued events for the smoke task — label isolation broken`,
     );
   });
 

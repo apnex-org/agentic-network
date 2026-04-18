@@ -146,7 +146,7 @@ describe("TaskPolicy", () => {
     expect(canonical).toContain("get_pending_actions");
   });
 
-  it("createTask creates a task and emits directive_issued", async () => {
+  it("createTask creates a task and emits task_issued", async () => {
     const result = await router.handle("create_task", {
       title: "Test task",
       description: "Implement something",
@@ -157,8 +157,8 @@ describe("TaskPolicy", () => {
     expect(parsed.taskId).toBe("task-1");
     expect(parsed.status).toBe("pending");
 
-    // Should emit directive_issued
-    const issued = ctx.dispatchedEvents.find(e => e.event === "directive_issued");
+    // Should emit task_issued
+    const issued = ctx.dispatchedEvents.find(e => e.event === "task_issued");
     expect(issued).toBeDefined();
     expect(issued!.data.taskId).toBe("task-1");
     expect(issued!.selector.roles).toEqual(["engineer"]);
@@ -328,9 +328,9 @@ describe("TaskPolicy", () => {
     const childTask = await ctx.stores.task.getTask("task-2");
     expect(childTask!.status).toBe("blocked");
 
-    // No directive_issued for the child
+    // No task_issued for the child
     const directiveIssued = reportCtx.dispatchedEvents.find(
-      e => e.event === "directive_issued" && e.data.taskId === "task-2"
+      e => e.event === "task_issued" && e.data.taskId === "task-2"
     );
     expect(directiveIssued).toBeUndefined();
   });

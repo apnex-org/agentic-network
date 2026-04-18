@@ -44,8 +44,8 @@ describe("E2E Convergence Auto-Spawn", () => {
     await arch.replyToThread(threadId, "Agreed. Proceed.", { converged: true });
 
     // Task should have been auto-spawned
-    orch.events.expectEventFor("directive_issued", "engineer");
-    const directive = orch.events.expectEvent("directive_issued");
+    orch.events.expectEventFor("task_issued", "engineer");
+    const directive = orch.events.expectEvent("task_issued");
     expect(directive.data.sourceThreadId).toBe(threadId);
 
     // Thread should be auto-closed
@@ -103,8 +103,8 @@ describe("E2E Convergence Auto-Spawn", () => {
     // thread_converged event should fire (for sandwich handler)
     orch.events.expectEvent("thread_converged");
 
-    // No directive_issued or proposal_submitted — no action
-    orch.events.expectNoEvent("directive_issued");
+    // No task_issued or proposal_submitted — no action
+    orch.events.expectNoEvent("task_issued");
     orch.events.expectNoEvent("proposal_submitted");
 
     // Thread should be converged but NOT auto-closed (no action to trigger close)
@@ -152,7 +152,7 @@ describe("E2E Convergence Auto-Spawn", () => {
     await eng.replyToThread(threadId, "Agreed", { converged: true });
 
     // Task should have been spawned
-    orch.events.expectEventFor("directive_issued", "engineer");
+    orch.events.expectEventFor("task_issued", "engineer");
 
     const tasks = await arch.listTasks();
     const taskList = (tasks as any).tasks;

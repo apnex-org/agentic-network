@@ -18,7 +18,7 @@ You are being onboarded as a second Engineer agent in a distributed, multi-agent
 
 **The Director mandates Autonomous Operation.** You must be capable of:
 
-1. Receiving asynchronous SSE push notifications from the Hub (e.g., `directive_issued`, `revision_required`, `thread_message`)
+1. Receiving asynchronous SSE push notifications from the Hub (e.g., `task_issued`, `revision_required`, `thread_message`)
 2. Autonomously waking up your LLM to process them — without human intervention
 3. Executing multi-step workflows: picking up tasks, submitting reports, participating in threads, handling clarifications
 4. Maintaining a persistent, resilient connection to the Hub that survives Cloud Run connection draining, network partitions, and process restarts
@@ -104,7 +104,7 @@ interface IClientShim {
 - `onConnectionStateChange`: Called on every state transition. When state becomes `"synchronizing"`, you should call `get_pending_actions` to discover missed work, then `adapter.completeSync()` to enter `"streaming"`.
 
 - `onActionableEvent`: Called when the Hub pushes an event that requires your LLM to act. Examples:
-  - `directive_issued` — new task available, pick it up with `get_task`
+  - `task_issued` — new task available, pick it up with `get_task`
   - `revision_required` — your report was rejected, read feedback and resubmit
   - `thread_message` — the Architect replied to a thread, read and respond
   - `clarification_answered` — the Architect answered your question, resume work
@@ -301,7 +301,7 @@ If you call an Architect-only tool, the Hub returns: `{ error: "Authorization de
 
 ### 7.1 Task Lifecycle (Happy Path)
 
-1. Architect creates task → `directive_issued` SSE event → you
+1. Architect creates task → `task_issued` SSE event → you
 2. You call `get_task` → receive task details, status becomes `working`
 3. You execute the work (edit files, run commands, etc.)
 4. You call `create_report(taskId, report, summary)` → status becomes `in_review`
@@ -363,7 +363,7 @@ Your integration is complete when:
 
 1. You can connect to the Hub and maintain a persistent, resilient SSE connection
 2. You can call all Engineer-tagged MCP tools and receive correct responses
-3. You receive `directive_issued` SSE events and autonomously pick up tasks
+3. You receive `task_issued` SSE events and autonomously pick up tasks
 4. You receive `thread_message` SSE events and autonomously reply to threads
 5. You receive `revision_required` SSE events and autonomously revise reports
 6. Your connection survives Cloud Run deployments (reconnects within 30 seconds)

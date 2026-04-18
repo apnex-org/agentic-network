@@ -123,17 +123,17 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
         expect(result.taskId).toBeTruthy();
 
         await waitFor(() =>
-          engProd.actionable.some((e) => e.event === "directive_issued"),
+          engProd.actionable.some((e) => e.event === "task_issued"),
           2_000,
         );
 
-        const prodHits = engProd.actionable.filter((e) => e.event === "directive_issued");
-        const smokeHits = engSmoke.actionable.filter((e) => e.event === "directive_issued");
+        const prodHits = engProd.actionable.filter((e) => e.event === "task_issued");
+        const smokeHits = engSmoke.actionable.filter((e) => e.event === "task_issued");
         expect(prodHits.length).toBe(1);
         expect(smokeHits.length).toBe(0);
 
         // Verify the dispatch record agrees with delivery.
-        const dispatches = hub.dispatched.filter((d) => d.event === "directive_issued");
+        const dispatches = hub.dispatched.filter((d) => d.event === "task_issued");
         expect(dispatches.length).toBe(1);
         expect(dispatches[0].selector.matchLabels).toEqual({ env: "prod" });
         expect(dispatches[0].deliveredTo).toEqual([engProd.engineerId]);
@@ -158,13 +158,13 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
 
         await waitFor(
           () =>
-            engProd.actionable.some((e) => e.event === "directive_issued") &&
-            engSmoke.actionable.some((e) => e.event === "directive_issued") &&
-            engBare.actionable.some((e) => e.event === "directive_issued"),
+            engProd.actionable.some((e) => e.event === "task_issued") &&
+            engSmoke.actionable.some((e) => e.event === "task_issued") &&
+            engBare.actionable.some((e) => e.event === "task_issued"),
           2_000,
         );
 
-        const dispatches = hub.dispatched.filter((d) => d.event === "directive_issued");
+        const dispatches = hub.dispatched.filter((d) => d.event === "task_issued");
         expect(dispatches.length).toBe(1);
         expect(dispatches[0].selector.matchLabels).toEqual({});
         expect(dispatches[0].deliveredTo.sort()).toEqual(
