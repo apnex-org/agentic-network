@@ -19,6 +19,16 @@ import {
 const MODEL = "gemini-3-flash-preview";
 const MAX_TOOL_ROUNDS = 10; // Prevent infinite tool-calling loops
 
+/**
+ * Sentinel returned by `generateWithTools` when the tool-loop hits
+ * `MAX_TOOL_ROUNDS`. Exported so downstream code can recognise it and
+ * refuse to persist it into replayed context — otherwise the model
+ * reads its own past error responses back and hallucinates them as
+ * fresh answers (observed 2026-04-18; see ADR-012 pollution note).
+ */
+export const MAX_TOOL_ROUNDS_SENTINEL =
+  "I reached the maximum number of tool-calling rounds. Please try a more specific request.";
+
 let ai: GoogleGenAI | null = null;
 
 function getAI(): GoogleGenAI {
@@ -360,7 +370,7 @@ export async function generateWithTools(
 
   // Hit max rounds
   return {
-    text: "I reached the maximum number of tool-calling rounds. Please try a more specific request.",
+    text: MAX_TOOL_ROUNDS_SENTINEL,
     history: contents,
   };
 }

@@ -212,15 +212,26 @@ export class ContextStore {
   /**
    * Build context for Director chat — full conversation history.
    * Returns contents array for Gemini multi-turn format.
+   *
+   * Defensive filter: strip any `model` turn that matches the
+   * MAX_TOOL_ROUNDS sentinel string. Legacy pollution (pre-filter
+   * writes) lingers in GCS; reading these back in as context causes
+   * the model to hallucinate the sentinel on new queries. Write-path
+   * filter in `director-chat.ts` prevents new pollution; this
+   * read-path filter catches what's already persisted.
    */
   async buildDirectorContext(): Promise<
     Array<{ role: string; parts: Array<{ text: string }> }>
   > {
     const history = await this.getDirectorHistory();
-    return history.map((msg) => ({
-      role: msg.role,
-      parts: [{ text: msg.text }],
-    }));
+    const MAX_ROUNDS_SENTINEL =
+      "I reached the maximum number of tool-calling rounds. Please try a more specific request.";
+    return history
+      .filter((msg) => !(msg.role === "model" && msg.text === MAX_ROUNDS_SENTINEL))
+      .map((msg) => ({
+        role: msg.role,
+        parts: [{ text: msg.text }],
+      }));
   }
 
   /**

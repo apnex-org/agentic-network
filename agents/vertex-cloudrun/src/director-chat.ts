@@ -14,6 +14,7 @@ import { ContextStore } from "./context.js";
 import {
   generateWithTools,
   mcpToolsToFunctionDeclarations,
+  MAX_TOOL_ROUNDS_SENTINEL,
   type ToolExecutor,
 } from "./llm.js";
 import type { Content, FunctionDeclaration } from "@google/genai";
@@ -169,8 +170,15 @@ export function createDirectorChatRouter(
       }
       session.history = trimmed;
 
-      // Store model response in context
-      await context.appendDirectorMessage("model", text);
+      // Store model response in context — EXCEPT the MAX_TOOL_ROUNDS
+      // sentinel. Persisting it pollutes future replayed history and
+      // causes the model to hallucinate the same string on subsequent
+      // sessions (observed 2026-04-18; see ADR-012).
+      if (text !== MAX_TOOL_ROUNDS_SENTINEL) {
+        await context.appendDirectorMessage("model", text);
+      } else {
+        console.warn("[DirectorChat] Skipped persisting MAX_TOOL_ROUNDS sentinel to director-history.json");
+      }
 
       console.log(`[DirectorChat] Response: ${text.substring(0, 100)}...`);
 
