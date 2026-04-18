@@ -17,6 +17,54 @@ import {
   type ToolExecutor,
 } from "./llm.js";
 
+// ── Sandwich retry topology (M25-SH-T1, ADR-014) ──────────────────────
+//
+// Observed failure mode (thread-125 round 5): sandwich LLM emits prose
+// output with finishReason=STOP but never calls create_thread_reply. The
+// guard catches it, writes an audit entry, and returns. The only path
+// back to healthy behaviour was the 300s EventLoop poll — 5+ minutes of
+// latency on a live design thread.
+//
+// Retry policy: after a transient failure (LLM tool-call miss, upstream
+// throw, MAX_TOOL_ROUNDS) enqueue ONE immediate retry with jittered
+// 5-15s backoff before falling through to the 300s EventLoop poll
+// fallback. One attempt per notification; no exponential compounding.
+//
+// Permanent failures (missing tool surface, deterministic Hub rejection,
+// missing entity) skip retry — a second attempt would produce the same
+// outcome.
+//
+// Failure audit entries are still written per-attempt by the inner
+// handler. A first-attempt + retry that both fail will produce two
+// audit entries; that's intentional — it surfaces the retry pattern in
+// the audit log rather than masking it.
+
+export type SandwichOutcome =
+  | { kind: "success" }
+  | { kind: "transient_failure"; reason: string }
+  | { kind: "permanent_failure"; reason: string };
+
+export async function withSandwichRetry(
+  label: string,
+  attempt: () => Promise<SandwichOutcome>,
+): Promise<void> {
+  const first = await attempt();
+  if (first.kind !== "transient_failure") return;
+
+  const delay = 5000 + Math.floor(Math.random() * 10000);
+  console.log(
+    `[Sandwich] ${label} transient failure — retrying in ${delay}ms (${first.reason})`,
+  );
+  await new Promise((r) => setTimeout(r, delay));
+
+  const second = await attempt();
+  if (second.kind === "transient_failure") {
+    console.warn(
+      `[Sandwich] ${label} retry exhausted — 300s EventLoop poll will retry (${second.reason})`,
+    );
+  }
+}
+
 export async function sandwichReviewReport(
   hub: HubAdapter,
   context: ContextStore,
@@ -168,12 +216,26 @@ export async function sandwichThreadReply(
   context: ContextStore,
   threadId: string
 ): Promise<void> {
+  // M25-SH-T1: wrap the attempt in the retry orchestrator so a transient
+  // LLM failure (tool-call miss, upstream throw, MAX_TOOL_ROUNDS) fires
+  // an immediate one-shot retry instead of waiting for the 300s poll.
+  await withSandwichRetry(
+    `thread reply ${threadId}`,
+    () => attemptThreadReply(hub, context, threadId),
+  );
+}
+
+async function attemptThreadReply(
+  hub: HubAdapter,
+  context: ContextStore,
+  threadId: string
+): Promise<SandwichOutcome> {
   try {
     // 1. FETCH
     const thread = await hub.getThread(threadId);
     if (!thread) {
       console.warn(`[Sandwich] Could not read thread ${threadId}`);
-      return;
+      return { kind: "permanent_failure", reason: "thread not found" };
     }
 
     const messages = (thread.messages || []) as Array<{
@@ -254,6 +316,7 @@ export async function sandwichThreadReply(
       "create_thread_reply",
       "get_document",
       "create_mission",
+      "update_mission",
       "create_task",
       "create_audit_entry",
     ];
@@ -274,7 +337,7 @@ export async function sandwichThreadReply(
         `Thread reply aborted for ${threadId}: Hub advertised no create_thread_reply tool`,
         threadId,
       );
-      return;
+      return { kind: "permanent_failure", reason: "no create_thread_reply tool advertised" };
     }
 
     // Capture the actual create_thread_reply invocation so we can log the
@@ -349,7 +412,9 @@ export async function sandwichThreadReply(
         `Thread reply LLM failed for ${threadId}: ${err instanceof Error ? err.message : String(err)}`,
         threadId,
       );
-      return;
+      // Transient: upstream throw from Vertex / network / quota — retry
+      // may succeed against a transient fault.
+      return { kind: "transient_failure", reason: `LLM generation threw: ${err instanceof Error ? err.message : String(err)}` };
     }
 
     if (result === MAX_TOOL_ROUNDS_SENTINEL) {
@@ -361,7 +426,9 @@ export async function sandwichThreadReply(
         `Thread reply for ${threadId} exceeded tool-call rounds without converging`,
         threadId,
       );
-      return;
+      // Transient: LLM stuck in a tool-call loop on this attempt; a fresh
+      // invocation may sample differently. One-shot retry.
+      return { kind: "transient_failure", reason: "MAX_TOOL_ROUNDS exhausted" };
     }
 
     if (!replyArgs) {
@@ -373,7 +440,10 @@ export async function sandwichThreadReply(
         `Thread reply skipped for ${threadId}: LLM finished without invoking create_thread_reply`,
         threadId,
       );
-      return;
+      // Transient: the thread-125 round-5 failure shape. LLM emitted
+      // prose with finishReason=STOP but never invoked the tool. Fresh
+      // sampling on retry has good odds of correcting this.
+      return { kind: "transient_failure", reason: "LLM finished without calling create_thread_reply" };
     }
 
     const committedArgs: Record<string, unknown> = replyArgs;
@@ -386,7 +456,10 @@ export async function sandwichThreadReply(
         `Thread reply for ${threadId} rejected by Hub — args: ${JSON.stringify(committedArgs).substring(0, 500)}`,
         threadId,
       );
-      return;
+      // Permanent: Hub rejected with these specific args (e.g. gate
+      // refusal). A second attempt with the same LLM-chosen args will
+      // fail the same way. Retry skipped.
+      return { kind: "permanent_failure", reason: "Hub rejected create_thread_reply args" };
     }
 
     const converged = committedArgs.converged === true;
@@ -409,8 +482,13 @@ export async function sandwichThreadReply(
     console.log(
       `[Sandwich] Thread reply complete for ${threadId} (${replyMessage.length} chars, converged=${converged})`,
     );
+    return { kind: "success" };
   } catch (err) {
     console.error(`[Sandwich] Thread reply failed for ${threadId}:`, err);
+    // Unhandled exception — classify transient so the retry gets one
+    // shot at cleanup. Common causes: transient GCS errors, fleeting
+    // network blips reading the thread.
+    return { kind: "transient_failure", reason: `unhandled exception: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
