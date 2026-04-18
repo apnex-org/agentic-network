@@ -234,6 +234,11 @@ async function handleThreadConvergedWithAction(
 
   const sourceThread = await ctx.stores.thread.getThread(threadId);
   const inheritedLabels = sourceThread?.labels ?? {};
+  // Include the thread's negotiated summary in audit details — Director
+  // notification-A digest surfaces hub/architect audit entries and this
+  // gives the human reader the actors' narrative without needing to
+  // look the thread up separately.
+  const summaryForAudit = sourceThread?.summary?.trim() || "(no summary provided)";
 
   // Internal ConvergenceReport — per-action telemetry. Distinct from
   // Thread.summary (the negotiated narrative). Phase 2 will widen this
@@ -247,7 +252,7 @@ async function handleThreadConvergedWithAction(
         await ctx.stores.audit.logEntry(
           "hub",
           "thread_close_no_action",
-          `Thread ${threadId} closed with no action. Reason: ${reason}`,
+          `Thread ${threadId} closed (close_no_action). Summary: ${summaryForAudit}. Reason: ${reason}`,
           threadId,
         );
         report.push({ actionId: action.id, status: "executed", entityId: null });

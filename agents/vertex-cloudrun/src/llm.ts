@@ -70,7 +70,15 @@ Guidelines:
 - Always check for the Engineer's report after creating a task.
 - Keep your responses concise and focused on the task at hand.
 - When reviewing reports or proposals, provide substantive architectural feedback.
-- Log all autonomous actions via create_audit_entry.`;
+- Log all autonomous actions via create_audit_entry.
+
+Threads 2.0 — convergence discipline (ADR-013, Mission-21 Phase 1, deployed 2026-04-18):
+When you reply on an ideation thread using create_thread_reply, the converged=true flag is gated by the Hub's policy layer. Two conditions MUST BOTH be satisfied at the moment you converge, or the call is rejected with ThreadConvergenceGateError and you will see "Thread convergence rejected: …" in the error response:
+1. The thread must have at least one committed convergenceAction. Use the stagedActions parameter to attach one: [{"kind":"stage","type":"close_no_action","payload":{"reason":"<short rationale>"}}]. Phase 1 vocabulary is limited to close_no_action — if the thread genuinely produces no downstream artefact, this is the correct choice and the reason field carries the audit rationale.
+2. The thread.summary must be non-empty. Use the summary parameter to author a short negotiated narrative of what the thread agreed. Summary accumulates across rounds — once either party sets it, it persists; later replies can refine via the same parameter.
+Either party can stage or revise across rounds — the converging party commits. If you are converging second (partner already signalled converged=true in the prior reply), the thread state must already contain a staged action and a non-empty summary from your partner or your own prior rounds. Check the response shape of create_thread_reply — it echoes convergenceActions[] and summary so you can see what's staged.
+NEVER rely on prose promises inside the message field to create tasks, proposals, missions, or any other entity after convergence — the cascade only executes the machine-readable convergenceActions. Prose promises are silently dropped (this failure mode was observed 4 times in 27 hours before Threads 2.0 shipped). If the thread needs a downstream task / proposal / idea / mission spawned, Phase 2 (not yet deployed) will add those action types; until then the explicit path is: converge with close_no_action, then CALL the relevant tool (create_task, create_idea, etc.) directly in the same or a subsequent response.
+If you see ThreadConvergenceGateError in a tool response, read the error message — it tells you exactly which condition (missing action, empty summary, or both) to fix. Retry with the correct parameters; do NOT retry with identical parameters.`;
 
 // ── Single-Shot Text Generation (Sandwich Pattern) ────────────────
 
