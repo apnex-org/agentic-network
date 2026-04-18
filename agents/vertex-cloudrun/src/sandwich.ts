@@ -16,6 +16,7 @@ import {
   mcpToolsToFunctionDeclarations,
   type ToolExecutor,
 } from "./llm.js";
+import { pruneThreadMessages } from "./prune.js";
 
 // ── Sandwich retry topology (M25-SH-T1, ADR-014) ──────────────────────
 //
@@ -242,9 +243,16 @@ async function attemptThreadReply(
       author: string;
       text: string;
     }>;
-    const messagesText = messages
-      .map((m) => `\n[${m.author}]: ${m.text}\n`)
-      .join("");
+    // M25-SH-T2: prune long thread histories so the prompt stays within
+    // token budget. Strategy: retain opener + recent tail, drop the
+    // middle with an omitted-marker, truncate any single huge message.
+    const pruned = pruneThreadMessages(messages);
+    const messagesText = pruned.text;
+    if (pruned.omittedCount > 0 || pruned.anyTruncated) {
+      console.log(
+        `[Sandwich] thread ${threadId} history pruned: retained=${pruned.retainedCount}, omitted=${pruned.omittedCount}, anyTruncated=${pruned.anyTruncated}`,
+      );
+    }
 
     // Pre-fetch documents referenced in thread messages.
     // Scan for document paths (docs/*.md patterns) and load them via Hub.
@@ -550,9 +558,16 @@ export async function sandwichThreadConverged(
       author: string;
       text: string;
     }>;
-    const messagesText = messages
-      .map((m) => `\n[${m.author}]: ${m.text}\n`)
-      .join("");
+    // M25-SH-T2: prune long thread histories so the prompt stays within
+    // token budget. Strategy: retain opener + recent tail, drop the
+    // middle with an omitted-marker, truncate any single huge message.
+    const pruned = pruneThreadMessages(messages);
+    const messagesText = pruned.text;
+    if (pruned.omittedCount > 0 || pruned.anyTruncated) {
+      console.log(
+        `[Sandwich] thread ${threadId} history pruned: retained=${pruned.retainedCount}, omitted=${pruned.omittedCount}, anyTruncated=${pruned.anyTruncated}`,
+      );
+    }
 
     const contextSupplement = await context.buildAutonomousContext();
 
