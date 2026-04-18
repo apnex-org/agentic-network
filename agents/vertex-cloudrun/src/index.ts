@@ -11,6 +11,7 @@ import { ContextStore } from "./context.js";
 import { handleHubEvent, handleWebhookEvent } from "./notifications.js";
 import { startEventLoop, stopEventLoop, resetEventLoopTimer, triggerImmediatePoll } from "./event-loop.js";
 import { createDirectorChatRouter } from "./director-chat.js";
+import { mcpToolsToFunctionDeclarations, validateToolDeclarations } from "./llm.js";
 
 // ── Configuration ────────────────────────────────────────────────────
 
@@ -125,6 +126,27 @@ async function startup(): Promise<void> {
   } catch (err) {
     console.error("[Architect] Initial Hub connection failed:", err);
     // Will reconnect via adapter's reconnect loop
+  }
+
+  // Validate Hub tool declarations against Vertex's schema validator.
+  // Catches malformed MCP→Gemini schema conversion at startup so the
+  // bad revision fails the Cloud Run health probe and rolls back,
+  // instead of emitting 400 INVALID_ARGUMENT two rounds into a live
+  // Director chat. See ADR-012 and commit dd9aa3d for the specific
+  // array+items regression that motivated this check.
+  if (hub.isConnected) {
+    try {
+      const tools = await hub.listTools();
+      const declarations = mcpToolsToFunctionDeclarations(
+        tools as Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>,
+      );
+      await validateToolDeclarations(declarations);
+    } catch (err) {
+      console.error("[Architect] Tool declaration validation failed — aborting startup:", err);
+      process.exit(1);
+    }
+  } else {
+    console.warn("[Architect] Hub not connected — skipping tool validation (will re-validate on first chat call)");
   }
 
   // Start event loop

@@ -238,6 +238,62 @@ export function mcpToolsToFunctionDeclarations(
     });
 }
 
+/**
+ * Dry-run validation of Gemini FunctionDeclarations against Vertex's
+ * schema validator. Sends a minimal generateContent request with just
+ * the declarations attached; if Vertex rejects, the 400 error body
+ * names the offending `function_declarations[N].*` path. Maps those
+ * indices back to tool names for a readable failure.
+ *
+ * Intended for startup — if the declarations are malformed the
+ * Architect crashes before accepting chat traffic, so the bad
+ * revision fails Cloud Run's health check and rolls back instead of
+ * leaking 400s into the Director's session two rounds deep
+ * (observed 2026-04-18 — missing `items` field regression).
+ */
+export async function validateToolDeclarations(
+  functionDeclarations: FunctionDeclaration[]
+): Promise<void> {
+  if (functionDeclarations.length === 0) return;
+  const client = getAI();
+  try {
+    await client.models.generateContent({
+      model: MODEL,
+      contents: [{ role: "user", parts: [{ text: "ping" }] }],
+      config: {
+        tools: [{ functionDeclarations }],
+        toolConfig: {
+          functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO },
+        },
+        temperature: 0.0,
+      },
+    });
+    console.log(
+      `[LLM] validateToolDeclarations: OK — ${functionDeclarations.length} declarations accepted by Vertex`,
+    );
+  } catch (err: any) {
+    const status = err?.status || err?.code || err?.response?.status;
+    const msg = err?.message || String(err);
+    if (status === 400 || msg.includes("INVALID_ARGUMENT")) {
+      const failedIndices = Array.from(msg.matchAll(/function_declarations\[(\d+)\]/g))
+        .map((m: any) => Number(m[1]));
+      const uniqueIndices = [...new Set(failedIndices)];
+      const failedNames = uniqueIndices
+        .map((i) => functionDeclarations[i as number]?.name ?? `[idx ${i}]`)
+        .join(", ");
+      console.error(`[LLM] validateToolDeclarations: REJECTED by Vertex`);
+      console.error(`[LLM]   Failed tools: ${failedNames || "(none parseable)"}`);
+      console.error(`[LLM]   Raw error: ${msg}`);
+      throw new Error(
+        `Vertex rejected tool declarations (tools: ${failedNames || "unknown"}): ${msg}`,
+      );
+    }
+    // Non-400 error (auth, network, quota) — propagate without claiming schema is broken
+    console.error(`[LLM] validateToolDeclarations: non-schema error (${status}) — not failing startup:`, msg);
+    throw err;
+  }
+}
+
 function mapJsonSchemaType(type: string | undefined): Type {
   switch (type) {
     case "number":
