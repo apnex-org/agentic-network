@@ -127,6 +127,40 @@ async function getEngineerStatus(_args: Record<string, unknown>, ctx: IPolicyCon
   };
 }
 
+// ── list_available_peers (M24-T8, ADR-014) ─────────────────────────
+// Pruned projection for LLM consumption during thread opening. Unlike
+// get_engineer_status (connection counts, timestamps, sessionEpoch),
+// this returns only what the caller needs to decide "open a thread to
+// whom": agentId + role + labels. Honours the existing selectAgents
+// selector (role + matchLabels equality). Excludes the caller's own
+// agentId — self-threads are a bug, not a feature.
+async function listAvailablePeers(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const role = args.role as AgentRole | undefined;
+  const matchLabels = args.matchLabels as Record<string, string> | undefined;
+
+  const agents = await ctx.stores.engineerRegistry.selectAgents({
+    roles: role ? [role] : undefined,
+    matchLabels,
+  });
+
+  const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  const selfId = self?.engineerId;
+  const peers = agents
+    .filter((a) => a.engineerId !== selfId)
+    .map((a) => ({
+      agentId: a.engineerId,
+      role: a.role,
+      labels: a.labels ?? {},
+    }));
+
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ count: peers.length, peers }),
+    }],
+  };
+}
+
 // ── Registration ────────────────────────────────────────────────────
 
 export function registerSessionPolicy(router: PolicyRouter): void {
@@ -161,6 +195,16 @@ export function registerSessionPolicy(router: PolicyRouter): void {
     "[Any] Get the connection status of all registered Engineers, including their IDs, connection times, and task completion counts.",
     {},
     getEngineerStatus,
+  );
+
+  router.register(
+    "list_available_peers",
+    "[Any] Lean projection of online agents for thread opening. Returns {agentId, role, labels} per match. Use this — not get_engineer_status — when deciding who to open a thread to. Caller's own agentId is excluded.",
+    {
+      role: z.enum(["engineer", "architect", "director"]).optional().describe("Filter by role. Omit to return peers across all roles."),
+      matchLabels: z.record(z.string(), z.string()).optional().describe("Match-all label filter: only agents whose labels include every provided key=value pair."),
+    },
+    listAvailablePeers,
   );
 
   router.register(
