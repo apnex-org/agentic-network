@@ -785,3 +785,216 @@ describe("ThreadPolicy — leave_thread (M24-T6)", () => {
     expect(entry!.details).toContain("need to leave");
   });
 });
+
+// ── Mission-24 Phase 2 (M24-T7, INV-TH21): thread reaper ─────────────
+
+describe("ThreadStore — reapIdleThreads (M24-T7)", () => {
+  let router: PolicyRouter;
+  let archCtx: IPolicyContext;
+  let eng1Ctx: IPolicyContext;
+  let eng2Ctx: IPolicyContext;
+  let eng1Id: string;
+  let eng2Id: string;
+
+  beforeEach(async () => {
+    router = new PolicyRouter(noop);
+    registerThreadPolicy(router);
+
+    archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
+    eng1Ctx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng-1" });
+    eng2Ctx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng-2" });
+
+    const reg = archCtx.stores.engineerRegistry;
+    const client = { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" };
+    await reg.registerAgent("s-arch", "architect", {
+      globalInstanceId: "inst-arch", role: "architect", clientMetadata: client,
+    });
+    const eng1Reg = await reg.registerAgent("s-eng-1", "engineer", {
+      globalInstanceId: "inst-eng-1", role: "engineer", clientMetadata: client,
+    });
+    const eng2Reg = await reg.registerAgent("s-eng-2", "engineer", {
+      globalInstanceId: "inst-eng-2", role: "engineer", clientMetadata: client,
+    });
+    if (eng1Reg.ok) eng1Id = eng1Reg.engineerId;
+    if (eng2Reg.ok) eng2Id = eng2Reg.engineerId;
+  });
+
+  async function openThread(): Promise<string> {
+    const r = await router.handle("create_thread", {
+      title: "reap me", message: "hi",
+      recipientAgentId: eng2Id,
+    }, eng1Ctx);
+    return JSON.parse(r.content[0].text).threadId;
+  }
+
+  /** Force a thread's updatedAt to simulate elapsed idle time. */
+  function ageThread(ctx: IPolicyContext, threadId: string, idleMs: number): void {
+    const store = ctx.stores.thread as unknown as { threads: Map<string, { updatedAt: string }> };
+    const t = store.threads.get(threadId);
+    if (!t) throw new Error(`thread ${threadId} not found`);
+    t.updatedAt = new Date(Date.now() - idleMs).toISOString();
+  }
+
+  it("reaps an active thread whose idle time exceeds the deployment default", async () => {
+    const threadId = await openThread();
+    ageThread(eng1Ctx, threadId, 60_000); // 1 min idle
+
+    const reaped = await eng1Ctx.stores.thread.reapIdleThreads(30_000); // threshold 30s
+    expect(reaped).toHaveLength(1);
+    expect(reaped[0].threadId).toBe(threadId);
+
+    const getResult = await router.handle("get_thread", { threadId }, eng1Ctx);
+    const thread = JSON.parse(getResult.content[0].text);
+    expect(thread.status).toBe("abandoned");
+  });
+
+  it("leaves not-yet-idle active threads alone", async () => {
+    const threadId = await openThread();
+    // Thread was just created — updatedAt is now; it's nowhere near idle.
+    const reaped = await eng1Ctx.stores.thread.reapIdleThreads(7 * 24 * 60 * 60 * 1000);
+    expect(reaped).toHaveLength(0);
+
+    const getResult = await router.handle("get_thread", { threadId }, eng1Ctx);
+    const thread = JSON.parse(getResult.content[0].text);
+    expect(thread.status).toBe("active");
+  });
+
+  it("honours per-thread idleExpiryMs override (stricter than default)", async () => {
+    const threadId = await openThread();
+    // Override the thread's idleExpiryMs to 5s, age it to 10s idle,
+    // keep deployment default high (7d). Override should fire.
+    const store = eng1Ctx.stores.thread as unknown as {
+      threads: Map<string, { updatedAt: string; idleExpiryMs: number | null }>;
+    };
+    const t = store.threads.get(threadId)!;
+    t.idleExpiryMs = 5_000;
+    t.updatedAt = new Date(Date.now() - 10_000).toISOString();
+
+    const reaped = await eng1Ctx.stores.thread.reapIdleThreads(7 * 24 * 60 * 60 * 1000);
+    expect(reaped).toHaveLength(1);
+    expect(reaped[0].threadId).toBe(threadId);
+  });
+
+  it("honours per-thread idleExpiryMs override (looser than default)", async () => {
+    const threadId = await openThread();
+    // Override to 1h, age to only 10s idle, default 5s. Override wins → skip.
+    const store = eng1Ctx.stores.thread as unknown as {
+      threads: Map<string, { updatedAt: string; idleExpiryMs: number | null }>;
+    };
+    const t = store.threads.get(threadId)!;
+    t.idleExpiryMs = 60 * 60 * 1000;
+    t.updatedAt = new Date(Date.now() - 10_000).toISOString();
+
+    const reaped = await eng1Ctx.stores.thread.reapIdleThreads(5_000);
+    expect(reaped).toHaveLength(0);
+  });
+
+  it("retracts ALL staged actions on reap (no leaver; nothing commits)", async () => {
+    const threadId = await openThread();
+    // Both engineers stage actions before the thread goes idle.
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "eng-2 stages",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "from eng-2" } }],
+    }, eng2Ctx);
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "eng-1 stages",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "from eng-1" } }],
+    }, eng1Ctx);
+
+    ageThread(eng1Ctx, threadId, 10 * 60 * 1000);
+    await eng1Ctx.stores.thread.reapIdleThreads(60_000);
+
+    const getResult = await router.handle("get_thread", { threadId }, eng1Ctx);
+    const thread = JSON.parse(getResult.content[0].text);
+    expect(thread.convergenceActions).toHaveLength(2);
+    for (const action of thread.convergenceActions) {
+      expect(action.status).toBe("retracted");
+    }
+  });
+
+  it("returns ReapedThread shape with title, labels, participantAgentIds, idleMs", async () => {
+    const r = await router.handle("create_thread", {
+      title: "shape-test",
+      message: "m",
+      recipientAgentId: eng2Id,
+    }, eng1Ctx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    // Promote eng-2 to participant so they appear in participantAgentIds.
+    await router.handle("create_thread_reply", { threadId, message: "reply" }, eng2Ctx);
+
+    // Thread labels come from caller-agent labels, which are empty in
+    // this test harness. Stamp them directly so we can assert the
+    // reaper preserves the map intact in the ReapedThread envelope.
+    const store = eng1Ctx.stores.thread as unknown as {
+      threads: Map<string, { updatedAt: string; labels: Record<string, string> }>;
+    };
+    const t = store.threads.get(threadId)!;
+    t.labels = { kind: "test", mission: "m24" };
+    t.updatedAt = new Date(Date.now() - 90_000).toISOString();
+
+    const reaped = await eng1Ctx.stores.thread.reapIdleThreads(30_000);
+    expect(reaped).toHaveLength(1);
+    const entry = reaped[0];
+    expect(entry.threadId).toBe(threadId);
+    expect(entry.title).toBe("shape-test");
+    expect(entry.labels).toEqual({ kind: "test", mission: "m24" });
+    expect(entry.participantAgentIds.sort()).toEqual([eng1Id, eng2Id].sort());
+    expect(entry.idleMs).toBeGreaterThanOrEqual(90_000);
+  });
+
+  it("skips non-active threads (closed, converged, already abandoned)", async () => {
+    // Active, idle → will reap
+    const activeId = await openThread();
+    ageThread(eng1Ctx, activeId, 90_000);
+
+    // Closed thread, also artificially aged
+    const closedId = await openThread();
+    await router.handle("close_thread", { threadId: closedId }, archCtx);
+    ageThread(eng1Ctx, closedId, 90_000);
+
+    // Abandoned thread (via leave_thread), also aged
+    const abandonedId = await openThread();
+    await router.handle("leave_thread", { threadId: abandonedId }, eng1Ctx);
+    ageThread(eng1Ctx, abandonedId, 90_000);
+
+    const reaped = await eng1Ctx.stores.thread.reapIdleThreads(30_000);
+    expect(reaped).toHaveLength(1);
+    expect(reaped[0].threadId).toBe(activeId);
+  });
+
+  it("excludes null agentIds from participantAgentIds (pre-M18 legacy)", async () => {
+    const legacyArch = createTestContext({ role: "architect", sessionId: "legacy-arch" });
+    legacyArch.stores.engineerRegistry.setSessionRole("legacy-arch", "architect");
+    legacyArch.stores.engineerRegistry.setSessionRole("legacy-eng", "engineer");
+    const openResult = await router.handle("create_thread", {
+      title: "legacy", message: "m",
+    }, legacyArch);
+    const threadId = JSON.parse(openResult.content[0].text).threadId;
+
+    const store = legacyArch.stores.thread as unknown as {
+      threads: Map<string, { updatedAt: string }>;
+    };
+    store.threads.get(threadId)!.updatedAt = new Date(Date.now() - 90_000).toISOString();
+
+    const reaped = await legacyArch.stores.thread.reapIdleThreads(30_000);
+    expect(reaped).toHaveLength(1);
+    // Author's agentId was null (legacy path), so the set is empty.
+    expect(reaped[0].participantAgentIds).toEqual([]);
+  });
+
+  it("multiple idle threads reaped in a single call", async () => {
+    const a = await openThread();
+    const b = await openThread();
+    const c = await openThread();
+    ageThread(eng1Ctx, a, 90_000);
+    ageThread(eng1Ctx, b, 90_000);
+    ageThread(eng1Ctx, c, 90_000);
+
+    const reaped = await eng1Ctx.stores.thread.reapIdleThreads(30_000);
+    expect(reaped).toHaveLength(3);
+    const ids = reaped.map((r) => r.threadId).sort();
+    expect(ids).toEqual([a, b, c].sort());
+  });
+});

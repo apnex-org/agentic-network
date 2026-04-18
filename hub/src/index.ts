@@ -201,8 +201,77 @@ async function startupSequence(): Promise<void> {
   }
 }
 
+// ── Thread Reaper (M24-T7, INV-TH21) ─────────────────────────────────
+// Periodic task: scans active threads whose idle time exceeds
+// `thread.idleExpiryMs` (or the deployment default), transitions them
+// to `abandoned`, retracts any staged actions, audits with action
+// `thread_reaper_abandoned`, and dispatches `thread_abandoned`
+// participant-scoped to any remaining participants with resolved
+// agentIds. Hourly cadence by default; configurable via env for tests
+// and for deployments that want tighter/looser sweeping.
+
+const THREAD_IDLE_EXPIRY_MS = parseInt(
+  process.env.HUB_THREAD_IDLE_EXPIRY_MS || String(7 * 24 * 60 * 60 * 1000),
+  10,
+);
+const THREAD_REAPER_INTERVAL_MS = parseInt(
+  process.env.HUB_THREAD_REAPER_INTERVAL_MS || String(60 * 60 * 1000),
+  10,
+);
+
+let threadReaperHandle: NodeJS.Timeout | null = null;
+
+async function runThreadReaperTick(): Promise<void> {
+  try {
+    const reaped = await threadStore.reapIdleThreads(THREAD_IDLE_EXPIRY_MS);
+    if (reaped.length === 0) return;
+    console.log(`[Reaper] thread reaper: ${reaped.length} idle thread(s) transitioned to abandoned`);
+    for (const t of reaped) {
+      await auditStore.logEntry(
+        "hub",
+        "thread_reaper_abandoned",
+        `Thread ${t.threadId} reaped after ${Math.round(t.idleMs / 1000)}s idle (threshold ${Math.round(THREAD_IDLE_EXPIRY_MS / 1000)}s). Title: ${t.title}.`,
+        t.threadId,
+      );
+      if (t.participantAgentIds.length > 0) {
+        await hub.dispatchEvent("thread_abandoned", {
+          threadId: t.threadId,
+          title: t.title,
+          leaverAgentId: null,
+          reason: "idle_expiry",
+          idleMs: t.idleMs,
+          retractedActionCount: 0, // counted in-store; keep payload tight
+        }, {
+          engineerIds: t.participantAgentIds,
+          matchLabels: t.labels,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[Reaper] thread reaper tick failed:", err);
+  }
+}
+
+function startThreadReaper(): void {
+  if (threadReaperHandle) return;
+  console.log(`[Hub] Starting thread reaper: interval=${THREAD_REAPER_INTERVAL_MS}ms, default-idle-expiry=${THREAD_IDLE_EXPIRY_MS}ms`);
+  threadReaperHandle = setInterval(() => {
+    void runThreadReaperTick();
+  }, THREAD_REAPER_INTERVAL_MS);
+  // Allow process exit even if interval is pending.
+  threadReaperHandle.unref?.();
+}
+
+function stopThreadReaper(): void {
+  if (threadReaperHandle) {
+    clearInterval(threadReaperHandle);
+    threadReaperHandle = null;
+  }
+}
+
 startupSequence().then(async () => {
   await hub.start();
+  startThreadReaper();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT}`);
   console.log(`[Hub] MCP endpoint: POST/GET/DELETE /mcp`);
   console.log(`[Hub] Health check: GET /health`);
@@ -210,12 +279,14 @@ startupSequence().then(async () => {
   console.error("[Hub] Startup sequence error:", err);
   // Start anyway
   await hub.start();
+  startThreadReaper();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT} (with startup warning)`);
 });
 
 // ── Graceful Shutdown ────────────────────────────────────────────────
 process.on("SIGINT", async () => {
   console.log("[Hub] Shutting down...");
+  stopThreadReaper();
   await hub.stop();
   process.exit(0);
 });

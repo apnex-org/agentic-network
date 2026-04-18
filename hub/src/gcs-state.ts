@@ -40,6 +40,7 @@ import type {
   Selector,
   ReplyToThreadOptions,
   OpenThreadOptions,
+  ReapedThread,
   ParticipantRole,
 } from "./state.js";
 import {
@@ -1567,6 +1568,60 @@ export class GcsThreadStore implements IThreadStore {
       if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) return null;
       throw err;
     }
+  }
+
+  async reapIdleThreads(defaultIdleExpiryMs: number): Promise<ReapedThread[]> {
+    // List-then-update is non-atomic but acceptable for the reaper —
+    // the CAS on each per-thread update ensures a concurrent reply
+    // won't silently clobber the transition (the updateExisting
+    // transform re-checks status=active; if a reply landed between the
+    // list and the update, the transform throws TransitionRejected
+    // and we skip that thread this tick. It'll be caught next cycle
+    // if it idles again.)
+    const scalars = await this.listThreads("active");
+    const now = Date.now();
+    const nowIso = new Date().toISOString();
+    const reaped: ReapedThread[] = [];
+    for (const thread of scalars) {
+      const threshold = typeof thread.idleExpiryMs === "number" ? thread.idleExpiryMs : defaultIdleExpiryMs;
+      const idleMs = now - new Date(thread.updatedAt).getTime();
+      if (idleMs <= threshold) continue;
+      const path = `threads/${thread.id}.json`;
+      try {
+        await updateExisting<Thread>(this.bucket, path, (current) => {
+          if (current.status !== "active") throw new TransitionRejected("not active");
+          const reIdleMs = now - new Date(current.updatedAt).getTime();
+          const reThreshold = typeof current.idleExpiryMs === "number" ? current.idleExpiryMs : defaultIdleExpiryMs;
+          if (reIdleMs <= reThreshold) throw new TransitionRejected("no longer idle");
+          for (const action of current.convergenceActions) {
+            if (action.status === "staged") {
+              action.status = "retracted";
+              action.timestamp = nowIso;
+            }
+          }
+          current.status = "abandoned";
+          current.updatedAt = nowIso;
+          return current;
+        });
+        reaped.push({
+          threadId: thread.id,
+          title: thread.title,
+          labels: { ...thread.labels },
+          participantAgentIds: thread.participants
+            .map((p) => p.agentId)
+            .filter((id): id is string => typeof id === "string" && id.length > 0),
+          idleMs,
+        });
+        console.log(`[GcsThreadStore] Thread reaped (idle ${Math.round(idleMs / 1000)}s): ${thread.id}`);
+      } catch (err) {
+        if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) {
+          // Thread moved under us; skip this tick.
+          continue;
+        }
+        throw err;
+      }
+    }
+    return reaped;
   }
 
 }

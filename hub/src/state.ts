@@ -617,6 +617,24 @@ export interface OpenThreadOptions {
   recipientRole?: ThreadAuthor | null;
 }
 
+/**
+ * Mission-24 Phase 2 (ADR-014, M24-T7): reaper return shape. One entry
+ * per active thread that the reaper transitioned to `abandoned`. The
+ * caller (index.ts reaper loop) uses this to audit + dispatch
+ * thread_abandoned participant-scoped per INV-TH16.
+ */
+export interface ReapedThread {
+  threadId: string;
+  title: string;
+  labels: Record<string, string>;
+  /** Resolved agentIds of current participants. Excludes null agentIds
+   * (pre-M18 legacy entries) so the dispatch selector is well-formed. */
+  participantAgentIds: string[];
+  /** ms of idle time at the moment of reaping. Surfaced in the
+   * thread_abandoned event payload for remaining participants. */
+  idleMs: number;
+}
+
 export interface IThreadStore {
   openThread(title: string, message: string, author: ThreadAuthor, options?: OpenThreadOptions): Promise<Thread>;
   replyToThread(threadId: string, message: string, author: ThreadAuthor, options?: ReplyToThreadOptions): Promise<Thread | null>;
@@ -633,6 +651,17 @@ export interface IThreadStore {
    * dispatch + audit entry — see INV-TH16 participant-scoped routing.
    */
   leaveThread(threadId: string, leaverAgentId: string): Promise<Thread | null>;
+  /**
+   * Mission-24 Phase 2 (ADR-014, M24-T7, INV-TH21): scan all active
+   * threads and transition to `abandoned` any whose idle time
+   * `(now - updatedAt)` exceeds the per-thread `idleExpiryMs` override
+   * or the deployment-default when that's null. Auto-retracts ALL
+   * staged actions (no leaver — the thread is dying, nothing commits).
+   * Returns the reaped set so the caller can audit with action
+   * `thread_reaper_abandoned` and dispatch `thread_abandoned`
+   * participant-scoped. Called by the periodic reaper in index.ts.
+   */
+  reapIdleThreads(defaultIdleExpiryMs: number): Promise<ReapedThread[]>;
 }
 
 export interface IProposalStore {
@@ -1225,6 +1254,42 @@ export class MemoryThreadStore implements IThreadStore {
     this.threads.set(threadId, working);
     console.log(`[MemoryThreadStore] Thread abandoned: ${threadId} (leaver=${leaverAgentId})`);
     return cloneThread(working);
+  }
+
+  async reapIdleThreads(defaultIdleExpiryMs: number): Promise<ReapedThread[]> {
+    const now = Date.now();
+    const nowIso = new Date().toISOString();
+    const reaped: ReapedThread[] = [];
+    for (const [threadId, thread] of this.threads.entries()) {
+      if (thread.status !== "active") continue;
+      const threshold = typeof thread.idleExpiryMs === "number" ? thread.idleExpiryMs : defaultIdleExpiryMs;
+      const idleMs = now - new Date(thread.updatedAt).getTime();
+      if (idleMs <= threshold) continue;
+      // Transition via clone-and-swap to match leaveThread discipline.
+      const working = cloneThread(thread);
+      // Reaper retracts ALL staged actions (no leaver — the thread is
+      // dying; nothing commits). Preserves the staging history for audit.
+      for (const action of working.convergenceActions) {
+        if (action.status === "staged") {
+          action.status = "retracted";
+          action.timestamp = nowIso;
+        }
+      }
+      working.status = "abandoned";
+      working.updatedAt = nowIso;
+      this.threads.set(threadId, working);
+      reaped.push({
+        threadId,
+        title: thread.title,
+        labels: { ...thread.labels },
+        participantAgentIds: thread.participants
+          .map((p) => p.agentId)
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+        idleMs,
+      });
+      console.log(`[MemoryThreadStore] Thread reaped (idle ${Math.round(idleMs / 1000)}s): ${threadId}`);
+    }
+    return reaped;
   }
 }
 
