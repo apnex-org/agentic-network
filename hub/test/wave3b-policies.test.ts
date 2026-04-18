@@ -1889,3 +1889,282 @@ describe("ThreadPolicy — cascade handlers part 2 (M24-T9)", () => {
     expect(finalized.data.threadTerminal).toBe("closed");
   });
 });
+
+// ── Mission-24 Phase 2 invariant coverage (M24-T11, ADR-014) ─────────
+
+describe("Phase 2 invariants (M24-T11)", () => {
+  let router: PolicyRouter;
+  let archCtx: IPolicyContext;
+  let engCtx: IPolicyContext;
+  let archId: string;
+  let engId: string;
+
+  beforeEach(async () => {
+    await import("../src/policy/cascade-actions/index.js");
+    router = new PolicyRouter(noop);
+    registerThreadPolicy(router);
+
+    archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
+    engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng" });
+
+    const reg = archCtx.stores.engineerRegistry;
+    const client = { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" };
+    const archReg = await reg.registerAgent("s-arch", "architect", { globalInstanceId: "arch-i", role: "architect", clientMetadata: client });
+    const engReg = await reg.registerAgent("s-eng", "engineer", { globalInstanceId: "eng-i", role: "engineer", clientMetadata: client });
+    if (archReg.ok) archId = archReg.engineerId;
+    if (engReg.ok) engId = engReg.engineerId;
+  });
+
+  // ── INV-TH22: StagedAction.proposer carries {role, agentId} ──
+
+  it("INV-TH22: staged actions record proposer as {role, agentId}, not bare role", async () => {
+    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    await router.handle("create_thread_reply", {
+      threadId, message: "stage",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "done" } }],
+    }, engCtx);
+
+    const t = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
+    const action = t.convergenceActions[0];
+    expect(action.proposer).toBeDefined();
+    expect(typeof action.proposer).toBe("object");
+    expect(action.proposer.role).toBe("engineer");
+    expect(action.proposer.agentId).toBe(engId);
+    // Bare-role proposer is rejected by the schema — shape must be object.
+    expect(typeof action.proposer).not.toBe("string");
+  });
+
+  it("INV-TH22: revise op carries the revising party's proposer, not the original", async () => {
+    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    // Engineer stages
+    await router.handle("create_thread_reply", {
+      threadId, message: "stage",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "v1" } }],
+    }, engCtx);
+    // Architect revises
+    await router.handle("create_thread_reply", {
+      threadId, message: "revise",
+      stagedActions: [{ kind: "revise", id: "action-1", payload: { reason: "v2" } }],
+    }, archCtx);
+
+    const t = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
+    const action2 = t.convergenceActions.find((a: any) => a.id === "action-2");
+    expect(action2).toBeDefined();
+    expect(action2.proposer.role).toBe("architect");
+    expect(action2.proposer.agentId).toBe(archId);
+    // Original (now revised) still pinned to engineer.
+    const action1 = t.convergenceActions.find((a: any) => a.id === "action-1");
+    expect(action1.proposer.role).toBe("engineer");
+  });
+
+  // ── INV-TH23: Summary-as-Living-Record ──────────────────────
+
+  it("INV-TH23: sourceThreadSummary on spawned entities is frozen at commit (not later summary mutations)", async () => {
+    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    // Engineer stages + converges with the "commit" summary.
+    await router.handle("create_thread_reply", {
+      threadId, message: "s",
+      converged: true,
+      summary: "COMMIT-TIME SUMMARY",
+      stagedActions: [{
+        kind: "stage", type: "create_task",
+        payload: { title: "T", description: "d" },
+      }],
+    }, engCtx);
+    // Architect converges → gate promotes + cascade executes immediately.
+    await router.handle("create_thread_reply", { threadId, message: "go", converged: true }, archCtx);
+
+    // Find the spawned task — sourceThreadSummary should reflect what
+    // the commit saw. (Thread is now closed; subsequent direct summary
+    // mutation on the thread record does NOT propagate to the entity.)
+    const tasks = await archCtx.stores.task.listTasks();
+    const spawned = tasks.find((t) => t.sourceThreadId === threadId);
+    expect(spawned).toBeDefined();
+    expect(spawned!.sourceThreadSummary).toBe("COMMIT-TIME SUMMARY");
+
+    // Mutate the thread's summary post-commit
+    const store = archCtx.stores.thread as any;
+    store.threads.get(threadId).summary = "POST-COMMIT MUTATION";
+    // Re-read the entity — still the frozen commit-time summary.
+    const after = await archCtx.stores.task.getTask(spawned!.id);
+    expect(after!.sourceThreadSummary).toBe("COMMIT-TIME SUMMARY");
+    expect(after!.sourceThreadSummary).not.toBe("POST-COMMIT MUTATION");
+  });
+
+  it("INV-TH23: every autonomous spawn type carries sourceThreadSummary", async () => {
+    async function runConverge(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
+      const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+      const threadId = JSON.parse(r.content[0].text).threadId;
+      await router.handle("create_thread_reply", {
+        threadId, message: "s", converged: true, summary,
+        stagedActions: [{ kind: "stage", type, payload } as any],
+      }, engCtx);
+      await router.handle("create_thread_reply", { threadId, message: "go", converged: true }, archCtx);
+      return threadId;
+    }
+
+    // create_task
+    const tid1 = await runConverge("create_task", { title: "T1", description: "d" }, "SUM-TASK");
+    const t = (await archCtx.stores.task.listTasks()).find((t) => t.sourceThreadId === tid1);
+    expect(t!.sourceThreadSummary).toBe("SUM-TASK");
+
+    // create_proposal
+    const tid2 = await runConverge("create_proposal", { title: "P1", description: "d" }, "SUM-PROP");
+    const p = (await archCtx.stores.proposal.getProposals()).find((p) => p.sourceThreadId === tid2);
+    expect(p!.sourceThreadSummary).toBe("SUM-PROP");
+
+    // create_idea
+    const tid3 = await runConverge("create_idea", { title: "I1", description: "d" }, "SUM-IDEA");
+    const i = (await archCtx.stores.idea.listIdeas()).find((i) => i.sourceThreadId === tid3);
+    expect(i!.sourceThreadSummary).toBe("SUM-IDEA");
+
+    // propose_mission
+    const tid4 = await runConverge("propose_mission", { title: "M1", description: "d", goals: [] }, "SUM-MISSION");
+    const m = (await archCtx.stores.mission.listMissions()).find((m) => m.sourceThreadId === tid4);
+    expect(m!.sourceThreadSummary).toBe("SUM-MISSION");
+  });
+
+  // ── Cascade validate-failure keeps thread active (INV-TH19) ──
+
+  it("INV-TH19: validate-phase failure keeps thread active; staged → NOT committed", async () => {
+    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+
+    // Engineer stages a valid close_no_action then converges (round 2).
+    await router.handle("create_thread_reply", {
+      threadId, message: "s", converged: true, summary: "x",
+      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "ok" } }],
+    }, engCtx);
+
+    // Poison the staged action's payload to force validate failure.
+    const store = archCtx.stores.thread as any;
+    store.threads.get(threadId).convergenceActions[0].payload = {}; // drop `reason`
+
+    // Architect tries to converge → gate runs validate → rejects.
+    const badConverge = await router.handle("create_thread_reply", {
+      threadId, message: "c", converged: true,
+    }, archCtx);
+    expect(badConverge.isError).toBe(true);
+    expect(JSON.parse(badConverge.content[0].text).error).toMatch(/staged action validation failed/);
+
+    // Thread state: still active, action still staged, no finalized event
+    const t = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
+    expect(t.status).toBe("active");
+    expect(t.convergenceActions[0].status).toBe("staged");
+    const finalized = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_finalized");
+    expect(finalized).toBeUndefined();
+  });
+
+  // ── Cascade execute-failure → cascade_failed terminal (INV-TH19) ──
+
+  it("INV-TH19: execute-phase failure transitions thread to cascade_failed (via failing handler)", async () => {
+    // Register a handler that always fails for an unused action type —
+    // doesn't poison the shared registry because the cleanup below
+    // removes it. Simulates a handler throwing post-commit due to
+    // infrastructure failure (GCS write error, etc.).
+    const { registerCascadeHandler, getCascadeHandler } = await import("../src/policy/cascade.js");
+    const before = getCascadeHandler("create_clarification");
+    registerCascadeHandler("create_clarification", async () => {
+      throw new Error("simulated handler failure");
+    });
+
+    try {
+      const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+      const threadId = JSON.parse(r.content[0].text).threadId;
+
+      // Engineer stages a create_clarification action that the
+      // registered-failing handler will throw on during execute.
+      await router.handle("create_thread_reply", {
+        threadId, message: "stage", converged: true, summary: "x",
+        stagedActions: [{
+          kind: "stage", type: "create_clarification",
+          payload: { question: "q", context: "c" },
+        }],
+      }, engCtx);
+      // Architect converges → gate promotes → cascade runs → handler throws
+      await router.handle("create_thread_reply", {
+        threadId, message: "c", converged: true,
+      }, archCtx);
+
+      // Thread transitions to cascade_failed (not closed)
+      const final = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
+      expect(final.status).toBe("cascade_failed");
+
+      // Finalized event fires with warning + cascade_failed terminal
+      const finalized = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_finalized");
+      expect(finalized).toBeDefined();
+      expect(finalized.data.warning).toBe(true);
+      expect(finalized.data.threadTerminal).toBe("cascade_failed");
+      expect(finalized.data.failedCount).toBe(1);
+      const entry = (finalized.data.report as any[])[0];
+      expect(entry.status).toBe("failed");
+      expect(entry.error).toMatch(/simulated handler failure/);
+
+      // Audit entry records cascade_failed distinct from executed-success flows
+      const audits = await archCtx.stores.audit.listEntries(50);
+      expect(audits.some((a) => a.action === "thread_cascade_failed" && a.relatedEntity === threadId)).toBe(true);
+    } finally {
+      // Restore the original handler so adjacent tests see a clean registry.
+      if (before) registerCascadeHandler("create_clarification", before);
+    }
+  });
+
+  // ── INV-TH18: routingMode immutability already covered elsewhere;
+  // this round adds a focused "cannot mutate post-open via direct store mutation gate test"
+  // to confirm no code path flips the mode after open (other than the
+  // broadcast-coerce on first reply which is the single permitted transition).
+
+  it("INV-TH18: targeted routingMode is NOT mutated by replyToThread turn-flip", async () => {
+    const r = await router.handle("create_thread", {
+      title: "t", message: "m", routingMode: "targeted", recipientAgentId: engId,
+    }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+
+    const before = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
+    expect(before.routingMode).toBe("targeted");
+
+    // Two round-trips of replies
+    await router.handle("create_thread_reply", { threadId, message: "r1" }, engCtx);
+    await router.handle("create_thread_reply", { threadId, message: "r2" }, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "r3" }, engCtx);
+
+    const after = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
+    expect(after.routingMode).toBe("targeted");
+  });
+
+  // ── INV-TH20: idempotency replay-safety across multiple retries ──
+
+  it("INV-TH20: runCascade is idempotent on repeated replays for the same committed action", async () => {
+    const { runCascade } = await import("../src/policy/cascade.js");
+
+    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    await router.handle("create_thread_reply", {
+      threadId, message: "s", converged: true, summary: "Spawn once.",
+      stagedActions: [{ kind: "stage", type: "create_task", payload: { title: "T", description: "d" } }],
+    }, engCtx);
+    await router.handle("create_thread_reply", { threadId, message: "go", converged: true }, archCtx);
+
+    const thread = await archCtx.stores.thread.getThread(threadId);
+    const action = thread!.convergenceActions.find((a) => a.type === "create_task")!;
+
+    // Three replay attempts — all should be skipped_idempotent
+    for (let i = 0; i < 3; i++) {
+      const result = await runCascade(archCtx, thread!, [action as any], "Spawn once.");
+      expect(result.report[0].status).toBe("skipped_idempotent");
+      expect(result.anyFailure).toBe(false);
+    }
+
+    // Still exactly one spawned task.
+    const tasks = await archCtx.stores.task.listTasks();
+    expect(tasks.filter((t) => t.sourceThreadId === threadId)).toHaveLength(1);
+
+    // At least 3 action_already_executed audit entries (one per replay)
+    const audits = await archCtx.stores.audit.listEntries(100);
+    const skipAudits = audits.filter((a) => a.action === "action_already_executed" && a.details.includes(thread!.id));
+    expect(skipAudits.length).toBeGreaterThanOrEqual(3);
+  });
+});

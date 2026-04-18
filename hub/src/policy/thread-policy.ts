@@ -21,6 +21,16 @@ import { runCascade } from "./cascade.js";
 // registry at module-load time. Adding a new handler type: append
 // to cascade-actions/index.ts.
 import "./cascade-actions/index.js";
+import {
+  CloseNoActionPayloadSchema,
+  CreateTaskActionPayloadSchema,
+  CreateProposalActionPayloadSchema,
+  CreateIdeaActionPayloadSchema,
+  UpdateIdeaActionPayloadSchema,
+  UpdateMissionStatusActionPayloadSchema,
+  ProposeMissionActionPayloadSchema,
+  CreateClarificationActionPayloadSchema,
+} from "./staged-action-payloads.js";
 
 // ── Routing Mode Validation (M24-T2, INV-TH18) ──────────────────────
 /**
@@ -509,7 +519,7 @@ export function registerThreadPolicy(router: PolicyRouter): void {
 
   router.register(
     "create_thread_reply",
-    "[Any] Reply to an active ideation thread. Only works when it is your turn. Threads 2.0 (Mission-21 Phase 1): stage / revise / retract convergenceActions, author a summary narrating the thread's agreed outcome. At converged=true, the policy rejects the reply unless at least one action is committed and the summary is non-empty (close_no_action{reason} satisfies both — use it when the thread concludes with no entity-creation needed).",
+    "[Any] Reply to an active ideation thread. Only works when it is your turn. Threads 2.0 (ADR-013/014): stage / revise / retract convergenceActions, author a summary narrating the thread's agreed outcome. At converged=true, the policy rejects the reply unless at least one action is committed and the summary is non-empty. Mission-24 Phase 2 widens the stage vocabulary to the 8 autonomous action types — close_no_action, create_task, create_proposal, create_idea, update_idea, update_mission_status, propose_mission, create_clarification — each committed action is executed by a registered cascade handler that spawns its entity with back-link metadata (sourceThreadId, sourceActionId, sourceThreadSummary).",
     {
       threadId: z.string().describe("The thread ID to reply to"),
       message: z.string().describe("Your response message"),
@@ -519,15 +529,55 @@ export function registerThreadPolicy(router: PolicyRouter): void {
       summary: z.string().optional().describe("Negotiated narrative summary of the thread's agreed outcome. Either party can set or revise across rounds; latest value wins. Required non-empty at convergence."),
       stagedActions: z.array(
         z.discriminatedUnion("kind", [
+          // Mission-24 Phase 2 (M24-T11, ADR-014): stage-op vocabulary
+          // widens to all 8 autonomous action types. Per-type payload
+          // schemas are the canonical validators; the gate re-runs
+          // them pre-commit so drift between tool-layer and gate is
+          // caught even if the tool schema lags.
           z.object({
             kind: z.literal("stage"),
-            type: z.enum(["close_no_action"]).describe("Phase 1 vocab: only close_no_action"),
-            payload: z.object({ reason: z.string().describe("Why the thread is concluding with no entity-creation action") }),
+            type: z.literal("close_no_action"),
+            payload: CloseNoActionPayloadSchema,
+          }),
+          z.object({
+            kind: z.literal("stage"),
+            type: z.literal("create_task"),
+            payload: CreateTaskActionPayloadSchema,
+          }),
+          z.object({
+            kind: z.literal("stage"),
+            type: z.literal("create_proposal"),
+            payload: CreateProposalActionPayloadSchema,
+          }),
+          z.object({
+            kind: z.literal("stage"),
+            type: z.literal("create_idea"),
+            payload: CreateIdeaActionPayloadSchema,
+          }),
+          z.object({
+            kind: z.literal("stage"),
+            type: z.literal("update_idea"),
+            payload: UpdateIdeaActionPayloadSchema,
+          }),
+          z.object({
+            kind: z.literal("stage"),
+            type: z.literal("update_mission_status"),
+            payload: UpdateMissionStatusActionPayloadSchema,
+          }),
+          z.object({
+            kind: z.literal("stage"),
+            type: z.literal("propose_mission"),
+            payload: ProposeMissionActionPayloadSchema,
+          }),
+          z.object({
+            kind: z.literal("stage"),
+            type: z.literal("create_clarification"),
+            payload: CreateClarificationActionPayloadSchema,
           }),
           z.object({
             kind: z.literal("revise"),
             id: z.string().describe("Prior action ID to supersede"),
-            payload: z.object({ reason: z.string() }),
+            payload: z.record(z.string(), z.unknown()).describe("Revised payload — shape must match the prior action's type (validated at gate)"),
           }),
           z.object({
             kind: z.literal("retract"),
