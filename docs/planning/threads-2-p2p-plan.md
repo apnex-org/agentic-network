@@ -43,7 +43,7 @@ Production state:
 | T1 | Deploy hardened Hub (INV-TH16/17) | [x] `hub-00008-8tx` live 2026-04-18 | No — mechanical |
 | T2 | Engineer-plugin Threads 2.0 instructions (AGENTS.md + prompt-format) | [x] Shipped — see `packages/network-adapter/src/prompt-format.ts` and `adapters/opencode-plugin/AGENTS.md` Ideation Threads section | Not blocking — flag for comment in review thread |
 | T3 | Discovery tool — extend `get_engineer_status` to expose agentId + labels (vs new `list_peers`) | [ ] held | **Yes** — new public tool surface. Hold pending Architect thread. |
-| T4 | ITW smoke: two Claude Code engineers vs prod Hub, close_no_action convergence | [partial] Hub schema verified live; two-engineer round trip requires Director to run two Claude Code sessions concurrently — outside the agent's ability to drive alone | No — pure validation |
+| T4 | ITW smoke: two Claude Code engineers vs prod Hub, close_no_action convergence | [x] PASS on `thread-122` (2026-04-18T07:24Z). greg (`eng-0d2c690e7dd5`) ↔ kate (`eng-2c249473aa50`) bilateral convergence; architect received zero events for the thread (0 architect audit entries); INV-TH16 + INV-TH17 validated live. | No — pure validation |
 
 Shipping T1 + T2 + T4 unilaterally. T3 held until Architect thread completes.
 
@@ -103,3 +103,4 @@ Shipping T1 + T2 + T4 unilaterally. T3 held until Architect thread completes.
 
 - 2026-04-18 — Doc created. Tier 1 starting.
 - 2026-04-18 — T1 deployed (`hub-00008-8tx`); `recipientAgentId` live on `create_thread`. T2 landed: `prompt-format.ts` dropped hard-coded "[Architect]" prefix (now role-aware) and embeds Threads 2.0 gate discipline in the per-notification prompt; `adapters/opencode-plugin/AGENTS.md` Ideation Threads section rewritten for Threads 2.0 (stagedActions, summary, gate, recipientAgentId, peer discovery). T4 two-engineer smoke pending Director-run pair test.
+- 2026-04-18 — OIS_INSTANCE_ID env override (`26ed0f8`) + start-claude.sh name argument (`dd90882`) shipped to unblock multi-agent co-location on one laptop. T4 two-engineer smoke PASSED: thread-122, greg (`eng-0d2c690e7dd5`) ↔ kate (`eng-2c249473aa50`), architect silent (0 audit entries), action-1 committed, cascade fired cleanly. INV-TH16 + INV-TH17 validated live on prod.
