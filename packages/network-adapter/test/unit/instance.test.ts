@@ -21,14 +21,24 @@ import { tmpdir } from "node:os";
 describe("loadOrCreateGlobalInstanceId", () => {
   let tmpDir: string;
   let instanceFile: string;
+  let savedEnv: string | undefined;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "ois-instance-test-"));
     instanceFile = join(tmpDir, "instance.json");
+    // The env override shortcut takes precedence over the file path
+    // (commit 26ed0f8). Clear it for the file-based tests so running
+    // the suite from a process that set OIS_INSTANCE_ID (e.g. via
+    // start-claude.sh) doesn't short-circuit the file-path branch.
+    // The env-override sub-describe restores/overrides as needed.
+    savedEnv = process.env.OIS_INSTANCE_ID;
+    delete process.env.OIS_INSTANCE_ID;
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+    if (savedEnv === undefined) delete process.env.OIS_INSTANCE_ID;
+    else process.env.OIS_INSTANCE_ID = savedEnv;
   });
 
   it("creates a new UUID on first call and persists it", () => {
