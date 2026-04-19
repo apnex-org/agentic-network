@@ -339,7 +339,8 @@ export type StagedActionType =
   | "update_idea"
   | "update_mission_status"
   | "propose_mission"
-  | "create_clarification";
+  | "create_clarification"
+  | "create_bug";
 
 export type StagedActionStatus =
   | "staged"      // proposed by a reply, not yet committed
@@ -406,6 +407,19 @@ export interface CreateClarificationActionPayload {
   context: string;
 }
 
+/** M-Cascade-Perfection Phase 2 (ADR-015): spawn a Bug from thread
+ *  convergence — e.g., an in-thread code-review discovering a defect.
+ *  Class + tags optional (free-text); severity defaults to minor at the
+ *  handler if omitted. */
+export interface CreateBugActionPayload {
+  title: string;
+  description: string;
+  severity?: "critical" | "major" | "minor";
+  class?: string;
+  tags?: string[];
+  surfacedBy?: string;
+}
+
 /** Broad union of all autonomous payload shapes. Validators narrow by
  * the paired `type` discriminator on StagedAction. */
 export type StagedActionPayload =
@@ -416,7 +430,8 @@ export type StagedActionPayload =
   | UpdateIdeaActionPayload
   | UpdateMissionStatusActionPayload
   | ProposeMissionActionPayload
-  | CreateClarificationActionPayload;
+  | CreateClarificationActionPayload
+  | CreateBugActionPayload;
 
 /**
  * Mission-24 Phase 2 (ADR-014, INV-TH22): proposer widens from bare
@@ -454,7 +469,8 @@ export type StagedAction =
   | (StagedActionCommon & { type: "update_idea"; payload: UpdateIdeaActionPayload })
   | (StagedActionCommon & { type: "update_mission_status"; payload: UpdateMissionStatusActionPayload })
   | (StagedActionCommon & { type: "propose_mission"; payload: ProposeMissionActionPayload })
-  | (StagedActionCommon & { type: "create_clarification"; payload: CreateClarificationActionPayload });
+  | (StagedActionCommon & { type: "create_clarification"; payload: CreateClarificationActionPayload })
+  | (StagedActionCommon & { type: "create_bug"; payload: CreateBugActionPayload });
 
 export type StagedActionOp =
   | { kind: "stage"; type: "close_no_action"; payload: CloseNoActionPayload }
@@ -465,6 +481,7 @@ export type StagedActionOp =
   | { kind: "stage"; type: "update_mission_status"; payload: UpdateMissionStatusActionPayload }
   | { kind: "stage"; type: "propose_mission"; payload: ProposeMissionActionPayload }
   | { kind: "stage"; type: "create_clarification"; payload: CreateClarificationActionPayload }
+  | { kind: "stage"; type: "create_bug"; payload: CreateBugActionPayload }
   | { kind: "revise"; id: string; payload: StagedActionPayload }
   | { kind: "retract"; id: string };
 

@@ -329,6 +329,7 @@ interface Counters {
   missionCounter: number;
   turnCounter: number;
   teleCounter: number;
+  bugCounter: number;
 }
 
 const counterLock = new AsyncLock();
@@ -357,6 +358,7 @@ export async function getAndIncrementCounter(
       missionCounter: 0,
       turnCounter: 0,
       teleCounter: 0,
+      bugCounter: 0,
     };
     // Ensure all counters are valid finite numbers (handles NaN, null, undefined)
     const counters: Counters = {
@@ -369,6 +371,7 @@ export async function getAndIncrementCounter(
       missionCounter: safeInt(raw.missionCounter),
       turnCounter: safeInt(raw.turnCounter),
       teleCounter: safeInt(raw.teleCounter),
+      bugCounter: safeInt(raw.bugCounter),
     };
     counters[field]++;
     await writeJson(bucket, "meta/counter.json", counters);
@@ -396,6 +399,7 @@ async function reconcileCounters(bucket: string): Promise<void> {
       missionCounter: 0,
       turnCounter: 0,
       teleCounter: 0,
+      bugCounter: 0,
     };
     const counters: Counters = {
       taskCounter: safeInt(raw.taskCounter),
@@ -407,6 +411,7 @@ async function reconcileCounters(bucket: string): Promise<void> {
       missionCounter: safeInt(raw.missionCounter),
       turnCounter: safeInt(raw.turnCounter),
       teleCounter: safeInt(raw.teleCounter),
+      bugCounter: safeInt(raw.bugCounter),
     };
 
     // Scan each entity type and find the highest existing numeric ID
@@ -420,6 +425,7 @@ async function reconcileCounters(bucket: string): Promise<void> {
       { prefix: "missions/", pattern: /mission-(\d+)\.json$/, field: "missionCounter" },
       { prefix: "turns/", pattern: /turn-(\d+)\.json$/, field: "turnCounter" },
       { prefix: "tele/", pattern: /tele-(\d+)\.json$/, field: "teleCounter" },
+      { prefix: "bugs/", pattern: /bug-(\d+)\.json$/, field: "bugCounter" },
     ];
 
     let reconciled = false;

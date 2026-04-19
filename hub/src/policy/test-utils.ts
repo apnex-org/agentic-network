@@ -5,6 +5,7 @@ import { MemoryIdeaStore } from "../entities/idea.js";
 import { MemoryMissionStore } from "../entities/mission.js";
 import { MemoryTurnStore } from "../entities/turn.js";
 import { MemoryTeleStore } from "../entities/tele.js";
+import { MemoryBugStore } from "../entities/bug.js";
 
 interface EmittedEvent {
   event: string;
@@ -40,6 +41,7 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     mission,
     turn: new MemoryTurnStore(mission, task),
     tele: new MemoryTeleStore(),
+    bug: new MemoryBugStore(),
   };
 
   return {

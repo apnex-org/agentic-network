@@ -21,6 +21,7 @@ import type { IPolicyContext } from "./types.js";
 import type { Task, Proposal } from "../state.js";
 import type { Idea } from "../entities/idea.js";
 import type { Mission } from "../entities/mission.js";
+import type { Bug } from "../entities/bug.js";
 
 /**
  * Fire the matching SSE event for a newly-spawned Task.
@@ -121,5 +122,37 @@ export async function dispatchMissionActivated(
   await ctx.emit("mission_activated", {
     missionId: mission.id,
     title: mission.title,
+  }, ["architect", "engineer"]);
+}
+
+/**
+ * Fire `bug_reported` to both roles on new Bug creation.
+ * M-Cascade-Perfection Phase 2 / ADR-015.
+ */
+export async function dispatchBugReported(
+  ctx: IPolicyContext,
+  bug: Bug,
+): Promise<void> {
+  await ctx.emit("bug_reported", {
+    bugId: bug.id,
+    title: bug.title,
+    severity: bug.severity,
+    class: bug.class,
+  }, ["architect", "engineer"]);
+}
+
+/**
+ * Fire `bug_status_changed` on Bug FSM transitions. Consumers that
+ * need finer grain (e.g., only on "resolved") can filter by `status`.
+ */
+export async function dispatchBugStatusChanged(
+  ctx: IPolicyContext,
+  bug: Bug,
+): Promise<void> {
+  await ctx.emit("bug_status_changed", {
+    bugId: bug.id,
+    title: bug.title,
+    status: bug.status,
+    severity: bug.severity,
   }, ["architect", "engineer"]);
 }

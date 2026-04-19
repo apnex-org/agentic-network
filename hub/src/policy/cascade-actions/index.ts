@@ -19,3 +19,4 @@ import "./update-idea.js";
 import "./update-mission-status.js";
 import "./propose-mission.js";
 import "./create-clarification.js";
+import "./create-bug.js";

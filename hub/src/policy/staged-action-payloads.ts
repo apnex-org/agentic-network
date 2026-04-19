@@ -79,6 +79,17 @@ export const CreateClarificationActionPayloadSchema = z.object({
   context: z.string().describe("Surrounding context the responder needs to answer"),
 });
 
+/** create_bug { title, description, severity?, class?, tags?, surfacedBy? }
+ *  — M-Cascade-Perfection Phase 2 / ADR-015. */
+export const CreateBugActionPayloadSchema = z.object({
+  title: z.string().describe("Short title for the bug"),
+  description: z.string().describe("Full description including reproduction steps"),
+  severity: z.enum(["critical", "major", "minor"]).optional().describe("Severity (default: minor)"),
+  class: z.string().optional().describe("Free-text root-cause class"),
+  tags: z.array(z.string()).optional().describe("Categorization tags"),
+  surfacedBy: z.string().optional().describe("Discovery channel"),
+});
+
 // ── Registry: type → payload schema ─────────────────────────────────
 
 /**
@@ -95,6 +106,7 @@ export const STAGED_ACTION_PAYLOAD_SCHEMAS = {
   update_mission_status: UpdateMissionStatusActionPayloadSchema,
   propose_mission: ProposeMissionActionPayloadSchema,
   create_clarification: CreateClarificationActionPayloadSchema,
+  create_bug: CreateBugActionPayloadSchema,
 } as const;
 
 // ── Discriminated-union schemas for stage ops ───────────────────────
@@ -131,6 +143,7 @@ export const AUTONOMOUS_STAGED_ACTION_TYPES = [
   "update_mission_status",
   "propose_mission",
   "create_clarification",
+  "create_bug",
 ] as const;
 
 // ── Validate phase (M24-T4, INV-TH19) ───────────────────────────────

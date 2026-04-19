@@ -12,9 +12,9 @@ import { MemoryTaskStore, MemoryEngineerRegistry, MemoryProposalStore, MemoryThr
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, INotificationStore } from "./state.js";
 import { GcsTaskStore, GcsEngineerRegistry, GcsProposalStore, GcsThreadStore, GcsAuditStore, GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
 import {
-  MemoryIdeaStore, MemoryMissionStore, MemoryTurnStore, MemoryTeleStore,
-  GcsIdeaStore, GcsMissionStore, GcsTurnStore, GcsTeleStore,
-  type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore,
+  MemoryIdeaStore, MemoryMissionStore, MemoryTurnStore, MemoryTeleStore, MemoryBugStore,
+  GcsIdeaStore, GcsMissionStore, GcsTurnStore, GcsTeleStore, GcsBugStore,
+  type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
 } from "./entities/index.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy } from "./policy/index.js";
@@ -30,6 +30,7 @@ import { registerClarificationPolicy } from "./policy/clarification-policy.js";
 import { registerReviewPolicy } from "./policy/review-policy.js";
 import { registerProposalPolicy } from "./policy/proposal-policy.js";
 import { registerThreadPolicy } from "./policy/thread-policy.js";
+import { registerBugPolicy } from "./policy/bug-policy.js";
 import { bindRouterToMcp } from "./policy/mcp-binding.js";
 import type { AllStores } from "./policy/index.js";
 
@@ -47,6 +48,7 @@ let ideaStore: IIdeaStore;
 let missionStore: IMissionStore;
 let turnStore: ITurnStore;
 let teleStore: ITeleStore;
+let bugStore: IBugStore;
 
 if (STORAGE_BACKEND === "gcs") {
   console.log(`[Hub] Using GCS storage backend: gs://${GCS_BUCKET}`);
@@ -61,6 +63,7 @@ if (STORAGE_BACKEND === "gcs") {
   missionStore = new GcsMissionStore(GCS_BUCKET, taskStore, ideaStore);
   turnStore = new GcsTurnStore(GCS_BUCKET, missionStore, taskStore);
   teleStore = new GcsTeleStore(GCS_BUCKET);
+  bugStore = new GcsBugStore(GCS_BUCKET);
 } else {
   if (process.env.NODE_ENV === "production") {
     console.error("[Hub] FATAL: STORAGE_BACKEND is 'memory' in production. Set STORAGE_BACKEND=gcs to prevent silent state loss.");
@@ -77,6 +80,7 @@ if (STORAGE_BACKEND === "gcs") {
   missionStore = new MemoryMissionStore(taskStore, ideaStore);
   turnStore = new MemoryTurnStore(missionStore, taskStore);
   teleStore = new MemoryTeleStore();
+  bugStore = new MemoryBugStore();
 }
 
 // ── Aggregate Store Object ────────────────────────────────────────────
@@ -90,6 +94,7 @@ const allStores: AllStores = {
   mission: missionStore,
   turn: turnStore,
   tele: teleStore,
+  bug: bugStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────
@@ -109,6 +114,7 @@ registerClarificationPolicy(policyRouter);
 registerReviewPolicy(policyRouter);
 registerProposalPolicy(policyRouter);
 registerThreadPolicy(policyRouter);
+registerBugPolicy(policyRouter);
 console.log(`[Hub] PolicyRouter initialized with ${policyRouter.size} tool(s): ${policyRouter.getRegisteredTools().join(", ")}`);
 
 // ── MCP Server Factory ───────────────────────────────────────────────

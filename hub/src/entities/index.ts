@@ -17,3 +17,7 @@ export { GcsTurnStore } from "./gcs/gcs-turn.js";
 export type { Tele, ITeleStore } from "./tele.js";
 export { MemoryTeleStore } from "./tele.js";
 export { GcsTeleStore } from "./gcs/gcs-tele.js";
+
+export type { Bug, BugStatus, BugSeverity, IBugStore } from "./bug.js";
+export { MemoryBugStore } from "./bug.js";
+export { GcsBugStore } from "./gcs/gcs-bug.js";

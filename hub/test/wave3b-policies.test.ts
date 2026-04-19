@@ -2437,12 +2437,13 @@ describe("ActionSpec kinds (ADR-015)", () => {
     archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
   });
 
-  it("all 8 autonomous action types have registered ActionSpecs", async () => {
+  it("all 9 autonomous action types have registered ActionSpecs (Phase 2 add: create_bug)", async () => {
     const { listActionSpecs } = await import("../src/policy/cascade-spec.js");
     const types = new Set(listActionSpecs());
     for (const type of [
       "close_no_action", "create_task", "create_proposal", "create_idea",
       "update_idea", "update_mission_status", "propose_mission", "create_clarification",
+      "create_bug",
     ]) {
       expect(types.has(type as any)).toBe(true);
     }
@@ -2491,5 +2492,232 @@ describe("ActionSpec kinds (ADR-015)", () => {
     expect(getActionSpec("create_clarification")).toBeUndefined();
     // Restore canonical
     if (before) registerActionSpec(before);
+  });
+});
+
+// ── M-Cascade-Perfection Phase 2 (ADR-015): Bug entity + create_bug ─
+
+describe("BugPolicy (ADR-015 Phase 2)", () => {
+  let router: PolicyRouter;
+  let ctx: IPolicyContext;
+
+  beforeEach(async () => {
+    await import("../src/policy/cascade-actions/index.js");
+    const { registerBugPolicy } = await import("../src/policy/bug-policy.js");
+    router = new PolicyRouter(noop);
+    registerBugPolicy(router);
+    ctx = createTestContext({ role: "engineer" });
+    ctx.stores.engineerRegistry.setSessionRole(ctx.sessionId, "engineer");
+  });
+
+  it("registers all 4 bug tools", () => {
+    expect(router.has("create_bug")).toBe(true);
+    expect(router.has("list_bugs")).toBe(true);
+    expect(router.has("get_bug")).toBe(true);
+    expect(router.has("update_bug")).toBe(true);
+  });
+
+  it("create_bug spawns a Bug in status=open with default severity=minor + fires bug_reported", async () => {
+    const r = await router.handle("create_bug", {
+      title: "Test bug",
+      description: "steps to repro...",
+    }, ctx);
+    expect(r.isError).toBeUndefined();
+    const parsed = JSON.parse(r.content[0].text);
+    expect(parsed.bugId).toMatch(/^bug-/);
+    expect(parsed.status).toBe("open");
+    expect(parsed.severity).toBe("minor");
+
+    const emitted = (ctx as any).emittedEvents.find((e: any) => e.event === "bug_reported");
+    expect(emitted).toBeDefined();
+    expect(emitted.data.bugId).toBe(parsed.bugId);
+  });
+
+  it("create_bug stores class + tags + severity + surfacedBy", async () => {
+    const r = await router.handle("create_bug", {
+      title: "Classified bug",
+      description: "body",
+      severity: "major",
+      class: "drift",
+      tags: ["hub", "cascade"],
+      surfacedBy: "unit-test",
+    }, ctx);
+    const { bugId } = JSON.parse(r.content[0].text);
+    const get = await router.handle("get_bug", { bugId }, ctx);
+    const bug = JSON.parse(get.content[0].text);
+    expect(bug.severity).toBe("major");
+    expect(bug.class).toBe("drift");
+    expect(bug.tags).toEqual(["hub", "cascade"]);
+    expect(bug.surfacedBy).toBe("unit-test");
+  });
+
+  it("list_bugs filters by status + severity + class + tags match-any", async () => {
+    await router.handle("create_bug", { title: "A", description: "a", severity: "critical", class: "drift", tags: ["hub"] }, ctx);
+    await router.handle("create_bug", { title: "B", description: "b", severity: "minor", class: "race", tags: ["engineer"] }, ctx);
+    await router.handle("create_bug", { title: "C", description: "c", severity: "critical", class: "drift", tags: ["architect"] }, ctx);
+
+    const byStatus = JSON.parse((await router.handle("list_bugs", { status: "open" }, ctx)).content[0].text);
+    expect(byStatus.total).toBe(3);
+
+    const bySeverity = JSON.parse((await router.handle("list_bugs", { severity: "critical" }, ctx)).content[0].text);
+    expect(bySeverity.total).toBe(2);
+
+    const byClass = JSON.parse((await router.handle("list_bugs", { class: "drift" }, ctx)).content[0].text);
+    expect(byClass.total).toBe(2);
+
+    const byTags = JSON.parse((await router.handle("list_bugs", { tags: ["hub", "architect"] }, ctx)).content[0].text);
+    expect(byTags.total).toBe(2);
+  });
+
+  it("update_bug transitions open → investigating → resolved; fires bug_status_changed", async () => {
+    const r = await router.handle("create_bug", { title: "T", description: "d" }, ctx);
+    const { bugId } = JSON.parse(r.content[0].text);
+
+    // Clear events captured during create_bug
+    (ctx as any).emittedEvents.length = 0;
+
+    await router.handle("update_bug", { bugId, status: "investigating" }, ctx);
+    const ev1 = (ctx as any).emittedEvents.find((e: any) => e.event === "bug_status_changed");
+    expect(ev1).toBeDefined();
+    expect(ev1.data.status).toBe("investigating");
+
+    await router.handle("update_bug", { bugId, status: "resolved", fixCommits: ["abc123"] }, ctx);
+    const ev2 = (ctx as any).emittedEvents.filter((e: any) => e.event === "bug_status_changed").pop();
+    expect(ev2.data.status).toBe("resolved");
+
+    const bug = JSON.parse((await router.handle("get_bug", { bugId }, ctx)).content[0].text);
+    expect(bug.status).toBe("resolved");
+    expect(bug.fixCommits).toEqual(["abc123"]);
+  });
+
+  it("update_bug rejects invalid FSM transitions (open → resolved is legal; resolved → open is not)", async () => {
+    const r = await router.handle("create_bug", { title: "T", description: "d" }, ctx);
+    const { bugId } = JSON.parse(r.content[0].text);
+
+    // open → resolved is a legal edge
+    const ok = await router.handle("update_bug", { bugId, status: "resolved" }, ctx);
+    expect(ok.isError).toBeUndefined();
+
+    // resolved → open is not
+    const bad = await router.handle("update_bug", { bugId, status: "open" }, ctx);
+    expect(bad.isError).toBe(true);
+    expect(JSON.parse(bad.content[0].text).error).toMatch(/Invalid state transition/);
+  });
+
+  it("update_bug metadata-only changes don't fire bug_status_changed", async () => {
+    const r = await router.handle("create_bug", { title: "T", description: "d" }, ctx);
+    const { bugId } = JSON.parse(r.content[0].text);
+    (ctx as any).emittedEvents.length = 0;
+
+    // Update tags + linkedTaskIds only — no status change
+    await router.handle("update_bug", { bugId, tags: ["new-tag"], linkedTaskIds: ["task-100"] }, ctx);
+    const ev = (ctx as any).emittedEvents.find((e: any) => e.event === "bug_status_changed");
+    expect(ev).toBeUndefined();
+  });
+});
+
+// ── Phase 2: create_bug cascade parity ──────────────────────────────
+
+describe("Cascade: create_bug (Phase 2 validation)", () => {
+  let router: PolicyRouter;
+  let archCtx: IPolicyContext;
+  let engCtx: IPolicyContext;
+
+  beforeEach(async () => {
+    await import("../src/policy/cascade-actions/index.js");
+    router = new PolicyRouter(noop);
+    registerThreadPolicy(router);
+    archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
+    engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng" });
+    archCtx.stores.engineerRegistry.setSessionRole("s-arch", "architect");
+    archCtx.stores.engineerRegistry.setSessionRole("s-eng", "engineer");
+  });
+
+  function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): void {
+    const store = ctx.stores.thread as any;
+    const t = store.threads.get(threadId);
+    const id = `action-${t.convergenceActions.length + 1}`;
+    t.convergenceActions.push({
+      id, type, status: "staged",
+      proposer: { role: "engineer", agentId: null },
+      timestamp: new Date().toISOString(),
+      payload,
+    });
+  }
+
+  async function runConverge(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
+    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+    await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
+    injectStagedAction(threadId, type, payload, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "arch", summary }, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "eng-c", converged: true }, engCtx);
+    await router.handle("create_thread_reply", { threadId, message: "arch-c", converged: true }, archCtx);
+    return threadId;
+  }
+
+  it("create_bug cascade spawns Bug with full back-link (sourceThreadId/ActionId/Summary)", async () => {
+    const threadId = await runConverge(
+      "create_bug",
+      {
+        title: "Cascade-spawned bug",
+        description: "Found during thread review",
+        severity: "major",
+        class: "drift",
+        tags: ["hub", "cascade"],
+        surfacedBy: "code-review",
+      },
+      "Engineer + architect agreed this is a bug.",
+    );
+
+    const bugs = await archCtx.stores.bug.listBugs();
+    const spawned = bugs.find((b) => b.sourceThreadId === threadId);
+    expect(spawned).toBeDefined();
+    expect(spawned!.title).toBe("Cascade-spawned bug");
+    expect(spawned!.severity).toBe("major");
+    expect(spawned!.class).toBe("drift");
+    expect(spawned!.tags).toEqual(["hub", "cascade"]);
+    expect(spawned!.surfacedBy).toBe("code-review");
+    expect(spawned!.sourceActionId).toBeTruthy();
+    expect(spawned!.sourceThreadSummary).toMatch(/agreed this is a bug/i);
+    expect(spawned!.status).toBe("open");
+  });
+
+  it("create_bug cascade fires bug_reported via the shared dispatch-helper", async () => {
+    await runConverge(
+      "create_bug",
+      { title: "T", description: "d" },
+      "Spawn via cascade.",
+    );
+    const emitted = (archCtx as any).emittedEvents.find((e: any) => e.event === "bug_reported");
+    expect(emitted).toBeDefined();
+    expect(emitted.targetRoles).toEqual(["architect", "engineer"]);
+  });
+
+  it("create_bug cascade is idempotent on re-run (validates new ActionSpec pattern)", async () => {
+    const { runCascade } = await import("../src/policy/cascade.js");
+    const threadId = await runConverge(
+      "create_bug",
+      { title: "Once", description: "only once" },
+      "Spawn once.",
+    );
+    const thread = await archCtx.stores.thread.getThread(threadId);
+    const action = thread!.convergenceActions.find((a: any) => a.type === "create_bug")!;
+
+    const result = await runCascade(archCtx, thread!, [action as any], "Spawn once.");
+    expect(result.report[0].status).toBe("skipped_idempotent");
+    const bugs = await archCtx.stores.bug.listBugs();
+    expect(bugs.filter((b) => b.sourceThreadId === threadId)).toHaveLength(1);
+  });
+
+  it("create_bug cascade defaults severity=minor when omitted from payload", async () => {
+    const threadId = await runConverge(
+      "create_bug",
+      { title: "No sev", description: "d" }, // severity omitted
+      "Default severity test.",
+    );
+    const bugs = await archCtx.stores.bug.listBugs();
+    const spawned = bugs.find((b) => b.sourceThreadId === threadId);
+    expect(spawned!.severity).toBe("minor");
   });
 });
