@@ -367,6 +367,62 @@ describe("TaskPolicy", () => {
     expect(parsed.unreadReports).toEqual([]);
   });
 
+  it("getPendingActions includes in_review tasks (regression pin for bug-9 / idea-89)", async () => {
+    // bug-9 (commit 88e3fe8): submitReport transitions task → in_review,
+    // but the `unreviewedTasks` + `unreadReports` filters previously
+    // matched only completed/failed/reported_* — skipping in_review
+    // entirely. Architect's EventLoop poll returned empty lists and
+    // never reviewed engineer reports. Fix adds "in_review" to both
+    // filters. This test drives the full submitReport → in_review
+    // flow and asserts the task surfaces in BOTH lists, so any future
+    // drift between submitReport's status transition and the filter
+    // set will fail here.
+    // 1. Architect creates a task
+    const archCtx = createTestContext({ stores: ctx.stores, role: "architect" });
+    await router.handle("create_task", { title: "T", description: "do the thing" }, archCtx);
+    // 2. Engineer claims it → working
+    const engCtx = createTestContext({ stores: ctx.stores, role: "engineer", sessionId: "eng-session" });
+    await router.handle("register_role", { role: "engineer" }, engCtx);
+    const claimed = await router.handle("get_task", {}, engCtx);
+    const claimedTask = JSON.parse(claimed.content[0].text);
+    expect(claimedTask.taskId).toBe("task-1");
+    // 3. Engineer submits report → in_review
+    const reportResult = await router.handle("create_report", {
+      taskId: "task-1", report: "done", summary: "all good",
+    }, engCtx);
+    const reportParsed = JSON.parse(reportResult.content[0].text);
+    expect(reportParsed.status).toBe("in_review");
+    // 4. Architect polls pending actions — should see the in_review task
+    const pending = await router.handle("get_pending_actions", {}, archCtx);
+    const parsed = JSON.parse(pending.content[0].text);
+    // Task must appear in unreviewedTasks (EventLoop calls sandwichReviewReport on these)
+    expect(parsed.unreviewedTasks.some((t: any) => t.taskId === "task-1")).toBe(true);
+    // And in unreadReports (reportRef present + no review assessment yet)
+    expect(parsed.unreadReports.some((t: any) => t.taskId === "task-1")).toBe(true);
+    // totalPending should count it
+    expect(parsed.totalPending).toBeGreaterThanOrEqual(1);
+  });
+
+  it("getPendingActions excludes reviewed in_review tasks (!reviewAssessment gate still holds)", async () => {
+    // Variant of the above: after create_review writes an assessment,
+    // the task should drop out of unreviewedTasks even if still in
+    // in_review status (so the architect doesn't re-review the same
+    // report on subsequent polls).
+    const archCtx = createTestContext({ stores: ctx.stores, role: "architect" });
+    await router.handle("create_task", { title: "T", description: "do" }, archCtx);
+    const engCtx = createTestContext({ stores: ctx.stores, role: "engineer", sessionId: "eng-reviewed" });
+    await router.handle("register_role", { role: "engineer" }, engCtx);
+    await router.handle("get_task", {}, engCtx);
+    await router.handle("create_report", { taskId: "task-1", report: "done", summary: "ok" }, engCtx);
+    // Architect writes a review — task.reviewAssessment becomes non-null
+    await ctx.stores.task.submitReview("task-1", "looks good", "approved");
+    // Poll again — task should NOT be in unreviewedTasks anymore
+    const pending = await router.handle("get_pending_actions", {}, archCtx);
+    const parsed = JSON.parse(pending.content[0].text);
+    expect(parsed.unreviewedTasks.some((t: any) => t.taskId === "task-1")).toBe(false);
+    expect(parsed.unreadReports.some((t: any) => t.taskId === "task-1")).toBe(false);
+  });
+
   it("listTasks returns created tasks", async () => {
     await router.handle("create_task", { title: "One", description: "First task" }, ctx);
     const ctx2 = createTestContext({ stores: ctx.stores });
