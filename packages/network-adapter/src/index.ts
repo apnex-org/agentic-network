@@ -85,3 +85,29 @@ export type {
   NotificationLogEntry,
   NotificationLogOptions,
 } from "./notification-log.js";
+
+// ── Cognitive layer re-exports (ADR-018) ────────────────────────────
+// The `cognitive` option on `McpAgentClient` accepts any
+// `@ois/cognitive-layer` `CognitivePipeline`. Re-exporting the
+// essentials keeps downstream consumers from needing a separate
+// dependency declaration for the standard-pipeline pattern.
+
+export {
+  CognitivePipeline,
+  CognitiveTelemetry,
+  CircuitBreaker,
+  HubUnavailableError,
+} from "@ois/cognitive-layer";
+export type {
+  CognitiveMiddleware,
+  ToolCallContext,
+  ListToolsContext,
+  ToolErrorContext,
+  StandardPipelineConfig,
+  CognitiveTelemetryConfig,
+  TelemetryEvent,
+  TelemetryEventKind,
+  CircuitBreakerConfig,
+  CircuitState,
+  CircuitStateChange,
+} from "@ois/cognitive-layer";

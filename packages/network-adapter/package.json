@@ -16,7 +16,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0"
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@ois/cognitive-layer": "file:../cognitive-layer"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

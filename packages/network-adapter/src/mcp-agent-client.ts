@@ -58,6 +58,11 @@ import {
   createDedupFilter,
 } from "./event-router.js";
 import { performHandshake } from "./handshake.js";
+import type {
+  CognitivePipeline,
+  ToolCallContext,
+  ToolErrorContext,
+} from "@ois/cognitive-layer";
 import { performStateSync } from "./state-sync.js";
 
 // Same list as McpConnectionManager. Matched case-insensitively.
@@ -91,6 +96,15 @@ export interface McpAgentClientOptions {
   /** Dedup cache size. Default 100, matching `UniversalClientAdapter`. */
   dedupCacheSize?: number;
   /**
+   * Opt-in cognitive-layer pipeline (ADR-018 / `@ois/cognitive-layer`).
+   * When provided, every `call()` is wrapped through the pipeline's
+   * `runToolCall` phase with the raw transport request as the terminal;
+   * thrown errors are routed through `runToolError`. Omit for legacy
+   * behavior (zero cost — no pipeline overhead). Use
+   * `CognitivePipeline.standard({...})` for the ADR-018 canonical stack.
+   */
+  cognitive?: CognitivePipeline;
+  /**
    * Legacy-compatible mode: when true, `runSynchronizingPhase` performs
    * the handshake(s) but does NOT run `performStateSync` or advance the
    * FSM out of `synchronizing`. The caller must drive `completeSync()`
@@ -108,6 +122,7 @@ export class McpAgentClient implements IAgentClient {
   private readonly ownsTransport: boolean;
   private readonly manualSync: boolean;
   private readonly dedup: ReturnType<typeof createDedupFilter>;
+  private readonly cognitive?: CognitivePipeline;
 
   private _state: SessionState = "disconnected";
   private callbacks: AgentClientCallbacks = {};
@@ -144,6 +159,7 @@ export class McpAgentClient implements IAgentClient {
     this.log = normalizeToILogger(config.logger, "McpAgentClient");
     this.manualSync = options.manualSync ?? false;
     this.dedup = createDedupFilter(options.dedupCacheSize ?? 100);
+    this.cognitive = options.cognitive;
 
     if (options.transport && options.transportConfig) {
       throw new Error(
@@ -226,6 +242,58 @@ export class McpAgentClient implements IAgentClient {
     if (this._state !== "streaming" && this._state !== "synchronizing") {
       throw new Error(`McpAgentClient.call: session state=${this._state}`);
     }
+
+    // Legacy path: no cognitive pipeline configured. Zero-cost passthrough.
+    if (!this.cognitive) {
+      return this.rawCall(method, params);
+    }
+
+    // Cognitive path (ADR-018): wrap raw call through the pipeline.
+    // runToolCall threads every registered middleware's onToolCall around
+    // the terminal; runToolError routes any thrown error through the
+    // error phase (ErrorNormalizer, etc.) with a re-throw fallback.
+    const startedAt = Date.now();
+    const ctx: ToolCallContext = {
+      tool: method,
+      args: params,
+      sessionId: this.transport.getSessionId() ?? "",
+      agentId: this._engineerId,
+      startedAt,
+      tags: {},
+    };
+    try {
+      return await this.cognitive.runToolCall(ctx, async (c) =>
+        this.rawCall(c.tool, c.args),
+      );
+    } catch (err) {
+      const errCtx: ToolErrorContext = {
+        tool: method,
+        args: params,
+        sessionId: ctx.sessionId,
+        agentId: this._engineerId,
+        error: err,
+        durationMs: Date.now() - startedAt,
+        startedAt,
+        tags: ctx.tags,
+      };
+      // Error phase: any middleware may transform the error into a
+      // recovered value; fallback terminal re-throws.
+      return await this.cognitive.runToolError(errCtx, async () => {
+        throw err;
+      });
+    }
+  }
+
+  /**
+   * Raw transport call with the session_invalid retry-once semantics.
+   * Separated from `call()` so the cognitive pipeline wraps this whole
+   * retry-capable primitive (cache/dedup/circuit all observe one logical
+   * invocation regardless of internal session-cycling).
+   */
+  private async rawCall(
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
     try {
       return await this.transport.request(method, params);
     } catch (err) {
@@ -234,7 +302,7 @@ export class McpAgentClient implements IAgentClient {
       this.log.log(
         "agent.session.invalid_retry",
         { method },
-        `call(${method}): session_invalid — cycling session`
+        `call(${method}): session_invalid — cycling session`,
       );
       await this.reconnectSession("session_invalid");
       // Retry exactly once on the fresh session.

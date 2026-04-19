@@ -33,7 +33,14 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpAgentClient } from "@ois/network-adapter";
+import {
+  McpAgentClient,
+  CognitivePipeline,
+  CognitiveTelemetry,
+  CircuitBreaker,
+  HubUnavailableError,
+  type TelemetryEvent,
+} from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../packages/network-adapter/test/helpers/policy-loopback.js";
 import { createDispatcher, pendingKey } from "../src/dispatcher.js";
@@ -90,8 +97,11 @@ async function createArchitect(hub: PolicyLoopbackHub): Promise<{
   return { agent, transport, engineerId };
 }
 
-async function createEngineerWithShim(hub: PolicyLoopbackHub): Promise<EngineerHarness> {
-  const transport = new LoopbackTransport(hub);
+async function createEngineerWithShim(
+  hub: PolicyLoopbackHub,
+  opts: { cognitive?: CognitivePipeline; transportOverride?: LoopbackTransport } = {},
+): Promise<EngineerHarness> {
+  const transport = opts.transportOverride ?? new LoopbackTransport(hub);
 
   // Late-binding ref for the dispatcher's getAgent() callback.
   let agentRef: McpAgentClient | null = null;
@@ -115,7 +125,7 @@ async function createEngineerWithShim(hub: PolicyLoopbackHub): Promise<EngineerH
         onPendingActionItem: (item) => pendingActionItemHandler(item),
       },
     },
-    { transport },
+    { transport, cognitive: opts.cognitive },
   );
   agentRef = agent;
 
@@ -296,5 +306,143 @@ describe("opencode-plugin shim — full-loopback E2E", () => {
     const content = (result as { content: Array<{ text: string }> }).content;
     const combined = content.map((c) => c.text ?? "").join(" ");
     expect(combined).toMatch(/Hub not connected/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Cognitive-layer shim-level coverage (M-Cognitive-Hypervisor Phase 1)
+// ─────────────────────────────────────────────────────────────────────
+
+describe("opencode-plugin shim — cognitive layer integration", () => {
+  let hub: PolicyLoopbackHub;
+  let arch: Awaited<ReturnType<typeof createArchitect>>;
+
+  beforeEach(async () => {
+    hub = new PolicyLoopbackHub();
+    arch = await createArchitect(hub);
+  });
+
+  afterEach(async () => {
+    try { await arch.agent.stop(); } catch { /* ignore */ }
+  });
+
+  it("CognitiveTelemetry captures tool_call events across dispatcher → agent.call", async () => {
+    const events: TelemetryEvent[] = [];
+    const pipeline = new CognitivePipeline().use(
+      new CognitiveTelemetry({ sink: (e) => events.push(e) }),
+    );
+    const eng = await createEngineerWithShim(hub, { cognitive: pipeline });
+
+    const openRaw = await arch.agent.call("create_thread", {
+      title: "cog-telemetry",
+      message: "test",
+      routingMode: "unicast",
+      recipientAgentId: eng.engineerId,
+    });
+    const threadId = parseResult<{ threadId: string }>(openRaw).threadId;
+
+    await waitFor(() => eng.dispatcher.pendingActionMap.size > 0, 2_000);
+
+    await eng.mcpClient.callTool({
+      name: "create_thread_reply",
+      arguments: { threadId, message: "cog roundtrip" },
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    const replyCall = events.find(
+      (e) => e.kind === "tool_call" && e.tool === "create_thread_reply",
+    );
+    expect(replyCall).toBeDefined();
+    expect(replyCall!.sessionId).toBe(eng.transport.getSessionId());
+    expect(typeof replyCall!.durationMs).toBe("number");
+
+    try { await eng.mcpClient.close(); } catch { /* ignore */ }
+    try { await eng.agent.stop(); } catch { /* ignore */ }
+  });
+
+  it("CircuitBreaker fails fast on induced transport faults", async () => {
+    const realTransport = new LoopbackTransport(hub);
+    const origRequest = realTransport.request.bind(realTransport);
+    let faultNext = 0;
+    realTransport.request = async (method, params) => {
+      if (faultNext > 0 && method !== "register_role") {
+        faultNext--;
+        throw new Error("503 Service Unavailable");
+      }
+      return origRequest(method, params);
+    };
+
+    const stateChanges: string[] = [];
+    const pipeline = new CognitivePipeline().use(
+      new CircuitBreaker({
+        failureThreshold: 2,
+        cooldownMs: 60_000,
+        onStateChange: (c) => stateChanges.push(`${c.from}->${c.to}`),
+      }),
+    );
+
+    const eng = await createEngineerWithShim(hub, {
+      cognitive: pipeline,
+      transportOverride: realTransport,
+    });
+
+    faultNext = 2;
+    await expect(eng.agent.call("list_tele", {})).rejects.toThrow("503");
+    await expect(eng.agent.call("list_tele", {})).rejects.toThrow("503");
+
+    faultNext = 0;
+    const result = await eng.mcpClient.callTool({
+      name: "list_tele",
+      arguments: {},
+    });
+    const content = (result as { content: Array<{ text: string }> }).content;
+    const combined = content.map((c) => c.text ?? "").join(" ");
+    expect(combined).toContain("circuit breaker tripped");
+    expect(stateChanges).toContain("CLOSED->OPEN");
+
+    try { await eng.mcpClient.close(); } catch { /* ignore */ }
+    try { await eng.agent.stop(); } catch { /* ignore */ }
+  });
+
+  it("standard pipeline composes both middlewares; telemetry observes CircuitBreaker fast-fail", async () => {
+    const events: TelemetryEvent[] = [];
+    const realTransport = new LoopbackTransport(hub);
+    const origRequest = realTransport.request.bind(realTransport);
+    let faultNext = 0;
+    realTransport.request = async (method, params) => {
+      if (faultNext > 0 && method !== "register_role") {
+        faultNext--;
+        throw new Error("ECONNRESET");
+      }
+      return origRequest(method, params);
+    };
+
+    const pipeline = CognitivePipeline.standard({
+      telemetry: { sink: (e) => events.push(e) },
+      circuitBreaker: { failureThreshold: 2, cooldownMs: 60_000 },
+    });
+
+    const eng = await createEngineerWithShim(hub, {
+      cognitive: pipeline,
+      transportOverride: realTransport,
+    });
+
+    faultNext = 2;
+    await expect(eng.agent.call("list_tele", {})).rejects.toThrow();
+    await expect(eng.agent.call("list_tele", {})).rejects.toThrow();
+    await expect(eng.agent.call("list_tele", {})).rejects.toBeInstanceOf(
+      HubUnavailableError,
+    );
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    const fastFail = events.find(
+      (e) => e.kind === "tool_error" && e.tags?.circuitBreaker === "fast_fail_open",
+    );
+    expect(fastFail).toBeDefined();
+
+    try { await eng.mcpClient.close(); } catch { /* ignore */ }
+    try { await eng.agent.stop(); } catch { /* ignore */ }
   });
 });

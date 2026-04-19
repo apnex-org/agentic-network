@@ -28,7 +28,14 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpAgentClient } from "@ois/network-adapter";
+import {
+  McpAgentClient,
+  CognitivePipeline,
+  CognitiveTelemetry,
+  CircuitBreaker,
+  HubUnavailableError,
+  type TelemetryEvent,
+} from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../packages/network-adapter/test/helpers/policy-loopback.js";
 import { createDispatcher, pendingKey } from "../src/dispatcher.js";
@@ -85,8 +92,11 @@ async function createArchitect(hub: PolicyLoopbackHub): Promise<{
   return { agent, transport, engineerId };
 }
 
-async function createEngineerWithShim(hub: PolicyLoopbackHub): Promise<EngineerHarness> {
-  const transport = new LoopbackTransport(hub);
+async function createEngineerWithShim(
+  hub: PolicyLoopbackHub,
+  opts: { cognitive?: CognitivePipeline; transportOverride?: LoopbackTransport } = {},
+): Promise<EngineerHarness> {
+  const transport = opts.transportOverride ?? new LoopbackTransport(hub);
 
   // Build dispatcher lazily — agent needs it for handshake.getClientInfo
   // and onPendingActionItem, but dispatcher needs agent. Mirrors the
@@ -114,7 +124,7 @@ async function createEngineerWithShim(hub: PolicyLoopbackHub): Promise<EngineerH
         },
       },
     },
-    { transport },
+    { transport, cognitive: opts.cognitive },
   );
 
   const dispatcher = createDispatcher({
@@ -303,5 +313,158 @@ describe("claude-plugin shim — full-loopback E2E", () => {
       name: "mock-claude-code",
       version: "1.0.0",
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Cognitive-layer shim-level coverage (M-Cognitive-Hypervisor Phase 1)
+// ─────────────────────────────────────────────────────────────────────
+// Same loopback topology as the tests above, but the engineer's
+// McpAgentClient is constructed with a CognitivePipeline. Validates
+// that the adapter-layer middlewares (telemetry, circuit breaker)
+// operate correctly when driven through the real claude-plugin
+// dispatcher and real Hub.
+
+describe("claude-plugin shim — cognitive layer integration", () => {
+  let hub: PolicyLoopbackHub;
+  let arch: Awaited<ReturnType<typeof createArchitect>>;
+
+  beforeEach(async () => {
+    hub = new PolicyLoopbackHub();
+    arch = await createArchitect(hub);
+  });
+
+  afterEach(async () => {
+    try { await arch.agent.stop(); } catch { /* ignore */ }
+  });
+
+  it("CognitiveTelemetry captures tool_call events across dispatcher → agent.call", async () => {
+    const events: TelemetryEvent[] = [];
+    const pipeline = new CognitivePipeline().use(
+      new CognitiveTelemetry({ sink: (e) => events.push(e) }),
+    );
+    const eng = await createEngineerWithShim(hub, { cognitive: pipeline });
+
+    // Open a thread from architect → engineer so engineer can reply
+    const openRaw = await arch.agent.call("create_thread", {
+      title: "cog-telemetry",
+      message: "test",
+      routingMode: "unicast",
+      recipientAgentId: eng.engineerId,
+    });
+    const threadId = parseResult<{ threadId: string }>(openRaw).threadId;
+
+    await waitFor(() => eng.dispatcher.pendingActionMap.size > 0, 2_000);
+
+    // Engineer's MCP client (stands in for Claude Code) calls a tool;
+    // dispatcher forwards to agent.call; cognitive pipeline sees it.
+    await eng.mcpClient.callTool({
+      name: "create_thread_reply",
+      arguments: { threadId, message: "cog roundtrip" },
+    });
+
+    await new Promise((r) => setTimeout(r, 20)); // let microtasks settle
+
+    const replyCall = events.find(
+      (e) => e.kind === "tool_call" && e.tool === "create_thread_reply",
+    );
+    expect(replyCall).toBeDefined();
+    expect(replyCall!.sessionId).toBe(eng.transport.getSessionId());
+    expect(typeof replyCall!.durationMs).toBe("number");
+
+    await eng.mcpClient.close();
+    await eng.agent.stop();
+  });
+
+  it("CircuitBreaker fails fast on induced transport faults", async () => {
+    const realTransport = new LoopbackTransport(hub);
+    const origRequest = realTransport.request.bind(realTransport);
+    let faultNext = 0;
+    realTransport.request = async (method, params) => {
+      if (faultNext > 0 && method !== "register_role") {
+        faultNext--;
+        throw new Error("503 Service Unavailable");
+      }
+      return origRequest(method, params);
+    };
+
+    const stateChanges: string[] = [];
+    const pipeline = new CognitivePipeline().use(
+      new CircuitBreaker({
+        failureThreshold: 2,
+        cooldownMs: 60_000,
+        onStateChange: (c) => stateChanges.push(`${c.from}->${c.to}`),
+      }),
+    );
+
+    const eng = await createEngineerWithShim(hub, {
+      cognitive: pipeline,
+      transportOverride: realTransport,
+    });
+
+    // Induce two 5xx faults via agent.call directly
+    faultNext = 2;
+    await expect(eng.agent.call("list_tele", {})).rejects.toThrow("503");
+    await expect(eng.agent.call("list_tele", {})).rejects.toThrow("503");
+
+    // Circuit now OPEN. Next call from the MCP client (simulating
+    // Claude Code) reaches the dispatcher → agent.call → cognitive
+    // pipeline → fast-fail. dispatcher's catch turns the error into an
+    // isError content block; the Hub is NOT reached.
+    faultNext = 0;
+    const result = await eng.mcpClient.callTool({
+      name: "list_tele",
+      arguments: {},
+    });
+    const content = (result as { content: Array<{ text: string }> }).content;
+    const combined = content.map((c) => c.text ?? "").join(" ");
+    expect(combined).toContain("circuit breaker tripped");
+
+    expect(stateChanges).toContain("CLOSED->OPEN");
+
+    await eng.mcpClient.close();
+    await eng.agent.stop();
+  });
+
+  it("standard pipeline composes both middlewares; telemetry observes CircuitBreaker fast-fail", async () => {
+    const events: TelemetryEvent[] = [];
+    const realTransport = new LoopbackTransport(hub);
+    const origRequest = realTransport.request.bind(realTransport);
+    let faultNext = 0;
+    realTransport.request = async (method, params) => {
+      if (faultNext > 0 && method !== "register_role") {
+        faultNext--;
+        throw new Error("ECONNRESET");
+      }
+      return origRequest(method, params);
+    };
+
+    const pipeline = CognitivePipeline.standard({
+      telemetry: { sink: (e) => events.push(e) },
+      circuitBreaker: { failureThreshold: 2, cooldownMs: 60_000 },
+    });
+
+    const eng = await createEngineerWithShim(hub, {
+      cognitive: pipeline,
+      transportOverride: realTransport,
+    });
+
+    faultNext = 2;
+    await expect(eng.agent.call("list_tele", {})).rejects.toThrow();
+    await expect(eng.agent.call("list_tele", {})).rejects.toThrow();
+    await expect(eng.agent.call("list_tele", {})).rejects.toBeInstanceOf(
+      HubUnavailableError,
+    );
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    const fastFail = events.find(
+      (e) => e.kind === "tool_error" && e.tags?.circuitBreaker === "fast_fail_open",
+    );
+    expect(fastFail).toBeDefined();
+    expect(fastFail!.errorMessage).toContain("circuit breaker tripped");
+
+    await eng.mcpClient.close();
+    await eng.agent.stop();
   });
 });

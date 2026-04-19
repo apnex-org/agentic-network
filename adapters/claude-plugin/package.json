@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@ois/cognitive-layer": "file:ois-cognitive-layer-0.1.0.tgz",
     "@ois/network-adapter": "file:ois-network-adapter-2.0.0.tgz"
   },
   "devDependencies": {
