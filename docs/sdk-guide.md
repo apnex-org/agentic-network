@@ -364,11 +364,14 @@ Each file registers tools for one domain. Consistent `register*Policy()` naming.
 
 MCP proxy adapter that bridges Claude Code to the Hub.
 
-### 3.1 Proxy — `proxy.ts`
+### 3.1 Shim + Dispatcher — `shim.ts` / `dispatcher.ts`
 
-No public exports — self-contained entry point. Internally uses `McpAgentClient` from `@ois/network-adapter` to maintain Hub session, creates local MCP server, proxies tool calls, and handles SSE event delivery with push-to-LLM.
+Split in two:
 
-**Naming verdict:** `proxy.ts` is accurate — it proxies MCP between Claude Code and the Hub. No changes needed.
+- `shim.ts` — platform-specific entry. Loads config, initialises logging, constructs `McpAgentClient`, wires a `StdioServerTransport`, handles shutdown signals. No testable logic — all of that lives in the dispatcher.
+- `dispatcher.ts` — host-independent core. Exports `createDispatcher({ agent, proxyVersion, ... })` returning `{ server, callbacks, getClientInfo, pendingActionMap }`. The MCP `Server` instance has the `Initialize`/`ListTools`/`CallTool` handlers pre-registered; callbacks hook Hub SSE events into the `pendingActionMap` for sourceQueueItemId injection. Also exports `injectQueueItemId` as a pure helper — the ADR-017 Phase 1.1 fix lives here, covered by unit tests.
+
+**Naming (2026-04-19):** renamed from `proxy.ts` → `shim.ts` + `dispatcher.ts` per the idea-104 refactor. Parallels the opencode-plugin structure.
 
 ---
 

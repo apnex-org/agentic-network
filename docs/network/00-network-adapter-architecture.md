@@ -415,7 +415,7 @@ Three shims consume `@ois/network-adapter@2.0.0`.
 
 | Shim                                              | Transport host   | Manual sync | Notes                                                                                                 |
 | ------------------------------------------------- | ---------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
-| `adapters/claude-plugin/src/proxy.ts`             | stdio MCP server | no          | ~150 lines. Uses `listToolsRaw()` to re-advertise the Hub's tool surface to Claude Code. Shipped as `plugin:agent-adapter:proxy`. |
+| `adapters/claude-plugin/src/shim.ts` + `dispatcher.ts` | stdio MCP server | no  | Split into `shim.ts` (stdio + config) and `dispatcher.ts` (MCP server + CallTool handler + pendingActionMap). Shipped as `plugin:agent-adapter:proxy`. |
 | `adapters/opencode-plugin/hub-notifications.ts`   | Bun.serve proxy  | no          | ~300 lines. Local MCP proxy on random port, registered with OpenCode via `client.mcp.add(...)`.       |
 | `agents/vertex-cloudrun/src/hub-adapter.ts`       | Express (Cloud Run) | **yes**  | Preserves public `HubAdapter` class surface (`onSync`/`completeSync`). Passes `manualSync: true`.     |
 

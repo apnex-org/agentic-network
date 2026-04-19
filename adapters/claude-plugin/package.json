@@ -4,12 +4,13 @@
   "description": "Claude Code host bundle — Universal Agent Adapter for the OIS agentic network",
   "license": "MIT",
   "type": "module",
-  "main": "dist/proxy.js",
+  "main": "dist/shim.js",
   "scripts": {
     "build": "tsc",
     "postinstall": "tsc",
-    "start": "node dist/proxy.js",
-    "dev": "tsx src/proxy.ts"
+    "start": "node dist/shim.js",
+    "dev": "tsx src/shim.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
@@ -18,6 +19,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4"
   }
 }
