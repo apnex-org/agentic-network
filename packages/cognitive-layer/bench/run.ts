@@ -85,8 +85,10 @@ async function runScenarios(mode: "baseline" | "cognitive"): Promise<RunResult> 
     const arch = await createAgent(hub, "architect");
     const eng = await createAgent(hub, "engineer", pipeline);
 
-    // Seed a few ideas for read-heavy scenarios
-    await seedIdeas(eng.agent, 10);
+    // Seed enough ideas to exceed ResponseSummarizer's default maxItems=10
+    // so the scenario exercises the summarizer path. Phase-1 bench used
+    // 10; Phase 2a bench uses 50 to surface ResponseSummarizer savings.
+    await seedIdeas(eng.agent, 50);
 
     const ctx: ScenarioContext = {
       eng: eng.agent,
@@ -202,6 +204,29 @@ async function main(): Promise<void> {
   console.log(`| Mean call duration (ms) | ${cognitive.sink.meanDurationMs().toFixed(2)} |`);
   console.log(`| Error rate | ${formatRate(cognitive.sink.errorRate())} |`);
 
+  console.log("\n### Virtual Tokens Saved (Phase 2a primary KPI)\n");
+  console.log("| Metric | Value |");
+  console.log("|---|---:|");
+  console.log(`| Summarized calls (ResponseSummarizer fired) | ${formatCount(c.summarizedCallCount)} / ${formatCount(c.toolCalls)} |`);
+  const summarizeRate = c.toolCalls > 0 ? c.summarizedCallCount / c.toolCalls : 0;
+  console.log(`| Summarize rate | ${formatRate(summarizeRate)} |`);
+  console.log(`| **Total Virtual Tokens Saved** | **${formatCount(c.totalVirtualTokensSaved)}** |`);
+  const vtsPerSummary = c.summarizedCallCount > 0 ? c.totalVirtualTokensSaved / c.summarizedCallCount : 0;
+  console.log(`| Mean Virtual Tokens Saved / summarized call | ${formatCount(Math.round(vtsPerSummary))} |`);
+  const vtsVsBaseline =
+    b.totalOutputTokensApprox > 0
+      ? c.totalVirtualTokensSaved / b.totalOutputTokensApprox
+      : 0;
+  console.log(`| Virtual Tokens Saved vs baseline output tokens | ${formatRate(vtsVsBaseline)} |`);
+
+  console.log("\n### LLM-usage accounting (Phase 2a ckpt-C bridge)\n");
+  console.log("| Metric | Value |");
+  console.log("|---|---:|");
+  console.log(`| llm_usage events captured | ${formatCount(c.llmUsageEvents)} |`);
+  console.log(`| Total LLM prompt tokens | ${formatCount(c.totalLlmPromptTokens)} |`);
+  console.log(`| Total LLM completion tokens | ${formatCount(c.totalLlmCompletionTokens)} |`);
+  console.log(`| Total LLM total tokens | ${formatCount(c.totalLlmTotalTokens)} |`);
+
   console.log("\n### Per-tool call counts (cognitive run)\n");
   const sorted = Object.entries(c.toolCallsByTool).sort(([, a], [, bv]) => bv - a);
   for (const [tool, count] of sorted.slice(0, 10)) {
@@ -246,7 +271,8 @@ async function main(): Promise<void> {
   console.log(`- **Hub-side call reduction:** ${hubCallsPrevented} fewer Hub calls (${hubReductionPct.toFixed(1)}% reduction)`);
   console.log(`- **Cache hit rate:** ${formatRate(cognitive.sink.cacheHitRate())} (${c.cacheHits} reads served from cache)`);
   console.log(`- **Dedup prevention:** ${c.dedupInFlight + c.dedupReplay} duplicate writes collapsed`);
-  console.log(`- **Client tokens unchanged:** ${formatCount(c.totalOutputTokensApprox)} output tokens seen by LLM either way — cognitive layer is cache-transparent (LLM still sees same data; Hub sees fewer calls)`);
+  console.log(`- **Virtual Tokens Saved (Phase 2a KPI):** ${formatCount(c.totalVirtualTokensSaved)} tokens across ${c.summarizedCallCount} summarized calls`);
+  console.log(`- **Client tokens observed:** ${formatCount(c.totalOutputTokensApprox)} output tokens passed to LLM (post-summarization); baseline was ${formatCount(b.totalOutputTokensApprox)} (${formatPct(computeDelta(b.totalOutputTokensApprox, c.totalOutputTokensApprox))})`);
   console.log();
 }
 

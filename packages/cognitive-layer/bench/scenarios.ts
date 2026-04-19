@@ -183,12 +183,38 @@ export const schemaDriftScenario: Scenario = {
   },
 };
 
+/**
+ * Scenario 6 — Oversized read surface (Phase 2a ResponseSummarizer target).
+ *
+ * Pattern: LLM asks list_ideas without a limit (common — the M-Ideas-Audit
+ * prompts did exactly this). Hub returns 50+ items; pre-Phase-2a this
+ * flooded the context with redundant payload. With ResponseSummarizer:
+ * the LLM sees first 10 + a pagination hint + the next-offset cursor.
+ *
+ * Designed so each list_ideas result exceeds BOTH heuristics:
+ *   - top-level array length > maxItems (50 > 10), AND
+ *   - serialized bytes > maxBytes (50 items × ~150 bytes > 2000)
+ *
+ * Cognitive benefit expected: large virtualTokensSaved surface per call,
+ * driving the Phase 2a primary KPI.
+ */
+export const oversizedReadSurfaceScenario: Scenario = {
+  name: "oversized-read-surface",
+  description: "3 list_ideas calls without limit (returns 50+ items each) — summarizer target",
+  async run({ eng }) {
+    for (let i = 0; i < 3; i++) {
+      await eng.call("list_ideas", {}).catch(() => null);
+    }
+  },
+};
+
 export const ALL_SCENARIOS: Scenario[] = [
   auditWorkflowScenario,
   duplicateWriteStormScenario,
   readCacheScenario,
   threadConvergenceScenario,
   schemaDriftScenario,
+  oversizedReadSurfaceScenario,
 ];
 
 function extractId(raw: unknown, key: string): string | null {
