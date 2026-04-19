@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { IPolicyContext, AllStores, DomainEvent } from "./types.js";
 import { MemoryTaskStore, MemoryEngineerRegistry, MemoryProposalStore, MemoryThreadStore, MemoryAuditStore } from "../state.js";
 import type { Selector } from "../state.js";
@@ -52,7 +53,11 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     dispatch: async (event, data, selector) => {
       dispatchedEvents.push({ event, data, selector });
     },
-    sessionId: "test-session-001",
+    // ADR-016: distinct per-call sessionId so M18 handshakes derive
+    // unique globalInstanceIds and each actor ends up with its own
+    // Agent record. Previously every context shared "test-session-001"
+    // which caused fingerprint collisions on multi-actor test setups.
+    sessionId: `test-session-${randomUUID().slice(0, 8)}`,
     clientIp: "127.0.0.1",
     role: "architect",
     internalEvents: [],

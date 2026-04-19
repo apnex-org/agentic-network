@@ -1356,7 +1356,7 @@ export class GcsThreadStore implements IThreadStore {
       authorAgentId = null,
       recipientAgentId = null,
       recipientRole = null,
-      routingMode = "targeted",
+      routingMode = "unicast",
       context = null,
     } = options;
     const num = await getAndIncrementCounter(this.bucket, "threadCounter");
@@ -1464,7 +1464,7 @@ export class GcsThreadStore implements IThreadStore {
         // other participant; the pool-discovery surface closes. Single
         // permitted routingMode transition.
         if (current.routingMode === "broadcast") {
-          current.routingMode = "targeted";
+          current.routingMode = "unicast";
         }
         current.updatedAt = now;
 
@@ -1722,9 +1722,11 @@ export class GcsThreadStore implements IThreadStore {
  * array is the only path forward (ADR-013).
  *
  * Mission-24 Phase 2 (ADR-014): additionally backfills
- * - `routingMode` — legacy threads default to `"targeted"` (their
+ * - `routingMode` — legacy threads default to `"unicast"` (their
  *   Phase 1 behaviour maps cleanly to agent-pinned dispatch).
- * - `context` — null for non-context_bound legacy threads.
+ *   ADR-016 rename: legacy "targeted" → "unicast", "context_bound" →
+ *   "multicast"; normalize-on-read so no GCS rewrite needed.
+ * - `context` — null for non-multicast legacy threads.
  * - `idleExpiryMs` — null (deployment-wide default applies).
  * - Coerces legacy `proposer: ParticipantRole` entries on each staged
  *   action into the widened `{role, agentId: null}` shape (INV-TH22).
@@ -1736,7 +1738,7 @@ function normalizeThreadShape(t: any): Thread {
     : [];
   return {
     ...t,
-    routingMode: isThreadRoutingMode(t.routingMode) ? t.routingMode : "targeted",
+    routingMode: normalizeRoutingMode(t.routingMode),
     context: isThreadContext(t.context) ? t.context : null,
     idleExpiryMs: typeof t.idleExpiryMs === "number" ? t.idleExpiryMs : null,
     convergenceActions,
@@ -1748,8 +1750,14 @@ function normalizeThreadShape(t: any): Thread {
   } as Thread;
 }
 
-function isThreadRoutingMode(v: unknown): v is "targeted" | "broadcast" | "context_bound" {
-  return v === "targeted" || v === "broadcast" || v === "context_bound";
+/** ADR-016 normalize-on-read: legacy ADR-014 routingMode names map
+ *  to the IP-routing-terminology equivalents. Soft migration — no
+ *  GCS rewrite, just translation at the boundary. */
+function normalizeRoutingMode(v: unknown): "unicast" | "broadcast" | "multicast" {
+  if (v === "unicast" || v === "broadcast" || v === "multicast") return v;
+  if (v === "targeted") return "unicast";
+  if (v === "context_bound") return "multicast";
+  return "unicast"; // legacy threads without the field default to unicast
 }
 
 function isThreadContext(v: unknown): v is { entityType: string; entityId: string } {

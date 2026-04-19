@@ -272,11 +272,30 @@ export type ThreadStatus = "active" | "converged" | "round_limit" | "closed" | "
  * resolves participants dynamically from the bound entity's current
  * assignee(s) at each turn.
  */
-export type ThreadRoutingMode = "targeted" | "broadcast" | "context_bound";
+/**
+ * IP-routing-terminology routing modes (ADR-016, replaces the
+ * `targeted` / `context_bound` names from ADR-014):
+ *
+ *   - unicast    one-to-one pinned dialogue (was "targeted")
+ *   - broadcast  one-to-pool discovery by role+labels (present impl
+ *                coerces to unicast on first reply — semantically
+ *                closer to IP anycast than true broadcast). A future
+ *                mode may split these: `anycast` = current behaviour
+ *                (closest/first-match pinning), `broadcast` = strict
+ *                1-to-all-every-message. Not urgent until a use case
+ *                actually needs distinct semantics.
+ *   - multicast  one-to-group; membership resolved dynamically from
+ *                the bound entity's assignee(s) (was "context_bound")
+ *
+ * Legacy threads stored with "targeted"/"context_bound" normalize to
+ * "unicast"/"multicast" on read via normalizeThreadShape() — no GCS
+ * rewrite required.
+ */
+export type ThreadRoutingMode = "unicast" | "broadcast" | "multicast";
 
 /**
  * Mission-24 Phase 2 (ADR-014): binding for `context_bound` threads.
- * Required when `routingMode === "context_bound"`, null otherwise.
+ * Required when `routingMode === "multicast"`, null otherwise.
  * `entityType` typically one of `task | mission | proposal | idea`;
  * `entityId` is the owning entity's id.
  */
@@ -502,14 +521,14 @@ export interface Thread {
   /**
    * Mission-24 Phase 2 (ADR-014, INV-TH18): routing mode declared at
    * open, immutable. Legacy threads (pre-Phase-2) normalize to
-   * `"targeted"` — their behaviour mapped cleanly to agent-pinned
+   * `"unicast"` — their behaviour mapped cleanly to agent-pinned
    * dispatch via currentTurnAgentId + recipientAgentId. Broadcast and
    * Context-bound are Phase 2 additions; see ADR-014 for semantics.
    */
   routingMode: ThreadRoutingMode;
   /**
    * Mission-24 Phase 2 (ADR-014): entity binding for `context_bound`
-   * threads. Required when routingMode === "context_bound"; null in the
+   * threads. Required when routingMode === "multicast"; null in the
    * Targeted and Broadcast modes. PolicyRouter resolves participants
    * dynamically from the bound entity's assignee(s) at each turn.
    */
@@ -664,7 +683,7 @@ export interface OpenThreadOptions {
   recipientRole?: ThreadAuthor | null;
   /**
    * Mission-24 Phase 2 (ADR-014, INV-TH18): routing mode declared at
-   * open. Omitted defaults to "targeted" so legacy callers keep working
+   * open. Omitted defaults to "unicast" so legacy callers keep working
    * unchanged. Consistency with mode-specific fields is enforced by the
    * policy layer at create_thread, not here — the store trusts that
    * what the policy hands it is well-formed.
@@ -1168,7 +1187,7 @@ export class MemoryThreadStore implements IThreadStore {
       authorAgentId = null,
       recipientAgentId = null,
       recipientRole = null,
-      routingMode = "targeted",
+      routingMode = "unicast",
       context = null,
     } = options;
     this.counter++;
@@ -1281,10 +1300,10 @@ export class MemoryThreadStore implements IThreadStore {
     // Mission-24 Phase 2 (INV-TH18): broadcast → targeted coercion on
     // first reply. The responder becomes the second (and only) other
     // participant; the pool-discovery surface closes. This is the single
-    // permitted routingMode transition; targeted + context_bound remain
+    // permitted routingMode transition; unicast + multicast remain
     // immutable for the thread's lifetime.
     if (stored.routingMode === "broadcast") {
-      working.routingMode = "targeted";
+      working.routingMode = "unicast";
     }
     working.updatedAt = now;
 

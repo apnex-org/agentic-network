@@ -23,24 +23,37 @@ import { runCascade } from "./cascade.js";
 import "./cascade-actions/index.js";
 import { AUTONOMOUS_STAGED_ACTION_TYPES } from "./staged-action-payloads.js";
 
-// ── Routing Mode Validation (M24-T2, INV-TH18) ──────────────────────
+// ── Routing Mode Validation (ADR-016, INV-TH18 + INV-TH28) ──────────
 /**
  * Enforce routingMode ↔ mode-specific field consistency at thread open.
  * Returns null on valid input, otherwise a caller-facing error string.
  *
- *   - targeted       → recipientAgentId optional (pin), context must be null
- *   - broadcast      → recipientAgentId must be null, context must be null
- *   - context_bound  → context required with {entityType, entityId},
- *                      recipientAgentId must be null
+ *   - unicast   → recipientAgentId REQUIRED (one-to-one pin), context null
+ *   - broadcast → recipientAgentId must be null, context must be null
+ *                 (pool-discovery by role+labels; currently coerces to
+ *                 unicast on first reply — see ThreadRoutingMode docstring
+ *                 for anycast-semantic note)
+ *   - multicast → context required with {entityType, entityId},
+ *                 recipientAgentId must be null (membership resolved
+ *                 dynamically from the bound entity's assignee)
+ *
+ * ADR-016 change: unicast now REQUIRES recipientAgentId. Callers who
+ * want "any engineer matching labels" must explicitly opt in to
+ * broadcast — eliminates the multi-agent leakage class that took out
+ * the kate↔greg session when an architect opened a thread without
+ * pinning a recipient. INV-TH28 pins this invariant.
  */
 function validateRoutingModeArgs(
   routingMode: ThreadRoutingMode,
   recipientAgentId: string | null,
   context: ThreadContext | null,
 ): string | null {
-  if (routingMode === "targeted") {
+  if (routingMode === "unicast") {
+    if (!recipientAgentId) {
+      return `routingMode="unicast" requires recipientAgentId — one-to-one dialogue must pin the counterparty. For pool-discovery by role+labels, set routingMode="broadcast" explicitly.`;
+    }
     if (context !== null) {
-      return `routingMode="targeted" must not set context — context is only for context_bound threads.`;
+      return `routingMode="unicast" must not set context — context is only for multicast threads.`;
     }
     return null;
   }
@@ -49,20 +62,20 @@ function validateRoutingModeArgs(
       return `routingMode="broadcast" must not set recipientAgentId — broadcast is pool-discovery by role/labels, not a pinned target.`;
     }
     if (context !== null) {
-      return `routingMode="broadcast" must not set context — context is only for context_bound threads.`;
+      return `routingMode="broadcast" must not set context — context is only for multicast threads.`;
     }
     return null;
   }
-  if (routingMode === "context_bound") {
+  if (routingMode === "multicast") {
     if (!context || typeof context.entityType !== "string" || !context.entityType || typeof context.entityId !== "string" || !context.entityId) {
-      return `routingMode="context_bound" requires context={entityType, entityId} with non-empty strings.`;
+      return `routingMode="multicast" requires context={entityType, entityId} with non-empty strings.`;
     }
     if (recipientAgentId) {
-      return `routingMode="context_bound" must not set recipientAgentId — participants resolve from the bound entity's assignee.`;
+      return `routingMode="multicast" must not set recipientAgentId — participants resolve from the bound entity's assignee.`;
     }
     return null;
   }
-  return `Unknown routingMode "${routingMode}" — expected one of: targeted, broadcast, context_bound.`;
+  return `Unknown routingMode "${routingMode}" — expected one of: unicast, broadcast, multicast.`;
 }
 
 // ── Handlers ────────────────────────────────────────────────────────
@@ -74,7 +87,7 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
   const correlationId = args.correlationId as string | undefined;
   const _semanticIntent = args.semanticIntent as string | undefined;
   const recipientAgentId = (args.recipientAgentId as string | undefined) ?? null;
-  const routingMode = ((args.routingMode as ThreadRoutingMode | undefined) ?? "targeted");
+  const routingMode = ((args.routingMode as ThreadRoutingMode | undefined) ?? "unicast");
   const context = (args.context as ThreadContext | undefined) ?? null;
 
   // Mission-24 Phase 2 (INV-TH18): validate routing mode ↔ mode-specific
@@ -118,22 +131,42 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
     context,
   });
 
-  // Mission-21 Phase 1 (INV-TH16): when the opener named a specific
-  // recipientAgentId, pin the open-time dispatch to that agent so
-  // other agents sharing the role/labels don't get spammed. This is
-  // the only way engineer↔engineer threads achieve isolation on the
-  // first notification (before participants[] carries both parties).
-  // Without recipientAgentId we preserve legacy role+label broadcast.
-  const openSelector = recipientAgentId
-    ? { engineerIds: [recipientAgentId], matchLabels: thread.labels }
-    : { roles: [author === "architect" ? "engineer" : "architect"] as any, matchLabels: thread.labels };
-  await ctx.dispatch("thread_message", {
-    threadId: thread.id,
-    title: thread.title,
-    author,
-    message: message.substring(0, 200),
-    currentTurn: thread.currentTurn,
-  }, openSelector);
+  // INV-TH16 + ADR-016 INV-TH27: thread open dispatch is always
+  // agent-targeted in unicast/multicast modes. Broadcast mode
+  // EXPLICITLY opts in to role-pool discovery via the routingMode
+  // declaration — no implicit role fallback. The kate↔greg incident
+  // (architect opened a thread without pinning recipientAgentId, both
+  // engineer sessions received the opener) cannot recur because
+  // unicast now rejects at validate time without a recipientAgentId.
+  let openSelector;
+  if (routingMode === "broadcast") {
+    // Explicit pool discovery: architect → any engineer; engineer
+    // opens only happen in peer-to-peer contexts which require
+    // unicast, so broadcast openers are always from the architect.
+    openSelector = {
+      roles: [author === "architect" ? "engineer" : "architect"] as ("engineer" | "architect")[],
+      matchLabels: thread.labels,
+    };
+  } else if (recipientAgentId) {
+    // unicast with required recipientAgentId (validator enforced)
+    openSelector = { engineerIds: [recipientAgentId], matchLabels: thread.labels };
+  } else {
+    // multicast: participants resolve from bound entity assignee.
+    // Today this doesn't yet trigger dynamic resolution (ADR-014 §189
+    // deferred), so openers behave as no-op dispatch — thread still
+    // persists, no SSE fires. Participant resolution at reply time
+    // drives the flow for now.
+    openSelector = null;
+  }
+  if (openSelector) {
+    await ctx.dispatch("thread_message", {
+      threadId: thread.id,
+      title: thread.title,
+      author,
+      message: message.substring(0, 200),
+      currentTurn: thread.currentTurn,
+    }, openSelector);
+  }
 
   return {
     content: [{
@@ -193,28 +226,21 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
     };
   }
 
-  // Notify the other participants (unless thread just converged or hit limit).
-  // Mission-21 Phase 1 (INV-TH16): dispatch is participant-scoped —
-  // every non-author participant with a known agentId gets the event.
-  // ADR-014 §115 targets removal of the role+label fallback below —
-  // post-Phase-1 every thread should have resolved agentIds; the
-  // fallback is dead code in prod. Softened rather than removed: log
-  // a loud warning when it fires so any drift is visible in logs.
-  // Full removal is a clean-cutover follow-up after the test surface
-  // is migrated off the legacy bare register_role path (14+ wave3b
-  // tests + several e2e tests still use it).
+  // INV-TH16 + ADR-016 INV-TH27: reply dispatch is strictly
+  // participant-scoped. The role+label fallback is REMOVED — every
+  // post-Phase-1 thread has resolved agentIds by round 2; a reply
+  // reaching this point with unresolved participants is an invariant
+  // violation, not a condition to tolerate. Throw loudly so the
+  // upstream participant-upsert bug is visible instead of papered
+  // over by silent role-broadcast leakage.
   if (thread.status === "active") {
     const otherParticipantIds = thread.participants
       .filter((p) => p.agentId && p.agentId !== authorAgentId)
       .map((p) => p.agentId as string);
-    let replySelector;
-    if (otherParticipantIds.length > 0) {
-      replySelector = { engineerIds: otherParticipantIds, matchLabels: thread.labels };
-    } else {
-      console.warn(
-        `[ThreadPolicy] thread_message for ${thread.id}: no participant has a resolved agentId — falling back to role broadcast. This is a legacy pre-M18 path slated for removal (ADR-014 §115).`,
+    if (otherParticipantIds.length === 0) {
+      throw new Error(
+        `[ThreadPolicy] INV-TH27 violation: thread ${thread.id} reply has no resolved counterparty agentId. All post-Phase-1 threads must have resolved agentIds — participant-upsert chain is broken upstream.`,
       );
-      replySelector = { roles: [author === "architect" ? "engineer" : "architect"] as any, matchLabels: thread.labels };
     }
     await ctx.dispatch("thread_message", {
       threadId: thread.id,
@@ -222,7 +248,7 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
       author,
       message: message.substring(0, 200),
       currentTurn: thread.currentTurn,
-    }, replySelector);
+    }, { engineerIds: otherParticipantIds, matchLabels: thread.labels });
   }
 
   // Mission-21: push an internal cascade event on convergence so the
@@ -461,12 +487,11 @@ async function handleThreadConvergedWithAction(
     await ctx.stores.thread.closeThread(threadId);
   }
 
-  // INV-TH16: cascade completion is participant-internal. Scope to thread
-  // participants so engineer↔engineer threads don't notify unrelated roles.
-  // ADR-014 §115 fallback-removal is soft-landed: log a loud warning if
-  // participants lack agentIds, but still dispatch via role broadcast
-  // so subscribers aren't stranded. Full removal pending test-surface
-  // migration (clean-cutover mission).
+  // INV-TH16 + ADR-016 INV-TH27: finalized dispatch is strictly
+  // participant-scoped. Role+label fallback REMOVED — a converged
+  // thread without resolved participant agentIds is an invariant
+  // violation (every reply carries agentId; convergence is gated on
+  // at least 2 replies). Throw so the bug is visible.
   const participantSource = sourceThread.participants
     ?? (payload.participants as Array<{ agentId?: string | null }> | undefined)
     ?? [];
@@ -474,20 +499,15 @@ async function handleThreadConvergedWithAction(
     .map((p) => p.agentId)
     .filter((id): id is string => typeof id === "string" && id.length > 0);
 
-  let finalizedSelector;
-  if (cascadeParticipantIds.length > 0) {
-    finalizedSelector = { engineerIds: cascadeParticipantIds, matchLabels: inheritedLabels };
-  } else {
-    console.warn(
-      `[ThreadPolicy] thread_convergence_finalized for ${threadId}: no participant has a resolved agentId — falling back to role broadcast. Legacy pre-M18 path slated for removal (ADR-014 §115).`,
+  if (cascadeParticipantIds.length === 0) {
+    throw new Error(
+      `[ThreadPolicy] INV-TH27 violation: thread ${threadId} finalized with no resolved participant agentIds. Cascade already executed successfully; the bug is in participant upsert, not in this dispatch.`,
     );
-    finalizedSelector = { roles: ["architect" as const, "engineer" as const], matchLabels: inheritedLabels };
   }
 
   // Mission-24 Phase 2 (M24-T3, ADR-014): single merged event replacing
   // the legacy pre-cascade thread_converged and post-cascade
-  // thread_convergence_completed emissions. Consumers get the full
-  // ConvergenceReport in one delivery.
+  // thread_convergence_completed emissions.
   await ctx.dispatch("thread_convergence_finalized", {
     threadId,
     title,
@@ -500,7 +520,7 @@ async function handleThreadConvergedWithAction(
     warning: cascadeResult.anyFailure,
     threadTerminal: cascadeResult.anyFailure ? "cascade_failed" : "closed",
     report: cascadeResult.report,
-  }, finalizedSelector);
+  }, { engineerIds: cascadeParticipantIds, matchLabels: inheritedLabels });
 
   console.log(
     `[ThreadPolicy] Cascade finalized for ${threadId}: ${cascadeResult.executedCount}/${actions.length} executed, ${cascadeResult.failedCount} failed, ${cascadeResult.skippedCount} skipped`,
@@ -512,7 +532,7 @@ async function handleThreadConvergedWithAction(
 export function registerThreadPolicy(router: PolicyRouter): void {
   router.register(
     "create_thread",
-    "[Any] Open a new ideation thread for bidirectional discussion. routingMode (Targeted / Broadcast / Context-bound) is declared at open and immutable for life — except Broadcast, which coerces to Targeted on first reply. Targeted pins via recipientAgentId; Broadcast discovers a responder by role/labels; Context-bound binds the thread to an entity so participants follow the entity's assignee. Omit routingMode for the default (targeted) + legacy call-path behaviour. Replies always route only to thread.participants[].",
+    "[Any] Open a new ideation thread for bidirectional discussion. routingMode (IP-routing terminology per ADR-016) declared at open, immutable for life except broadcast which coerces to unicast on first reply. unicast = one-to-one pinned dialogue (requires recipientAgentId); broadcast = explicit pool-discovery by role+labels (no recipientAgentId); multicast = one-to-group, membership resolved from the bound entity's assignee (requires context). Default is unicast — if you want pool discovery, set routingMode: \"broadcast\" explicitly. Replies always route only to thread.participants[].",
     {
       title: z.string().describe("Short title for the discussion topic"),
       message: z.string().describe("Opening message with your initial thoughts"),
@@ -520,11 +540,11 @@ export function registerThreadPolicy(router: PolicyRouter): void {
       correlationId: z.string().optional().describe("Optional correlation ID to link this thread to related tasks/proposals"),
       semanticIntent: z.enum(["seek_rigorous_critique", "seek_approval", "collaborative_brainstorm", "inform", "seek_consensus", "rubber_duck", "educate", "mediate", "post_mortem"]).optional().describe("Communication semantics: how should the recipient frame their response"),
       recipientAgentId: z.string().optional().describe("Targeted routingMode only: pin the open-time thread_message dispatch to this specific agentId. Required for engineer↔engineer threads when ambiguity exists; optional for architect↔engineer threads where role + labels disambiguate."),
-      routingMode: z.enum(["targeted", "broadcast", "context_bound"]).optional().describe("Mission-24 Phase 2 (INV-TH18): declared at open, immutable for thread life. targeted=pinned dialogue (default); broadcast=pool-discovery by role/labels, coerces to targeted on first reply; context_bound=thread bound to an entity (requires context)."),
+      routingMode: z.enum(["unicast", "broadcast", "multicast"]).optional().describe("ADR-016 IP-routing terminology (INV-TH18 + INV-TH28): declared at open, immutable for thread life. unicast = one-to-one pinned dialogue (default; REQUIRES recipientAgentId); broadcast = explicit pool-discovery by role+labels, coerces to unicast on first reply; multicast = one-to-group, membership resolved from bound entity's assignee (requires context)."),
       context: z.object({
         entityType: z.string().describe("Entity type: task | mission | proposal | idea"),
         entityId: z.string().describe("ID of the bound entity"),
-      }).optional().describe("Required when routingMode=context_bound. PolicyRouter resolves participants dynamically from the bound entity's assignee(s) at each turn."),
+      }).optional().describe("Required when routingMode=multicast. PolicyRouter resolves participants dynamically from the bound entity's assignee(s) at each turn."),
     },
     createThread,
   );

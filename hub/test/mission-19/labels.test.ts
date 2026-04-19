@@ -195,9 +195,13 @@ describe("Mission-19 Labels — Thread inherits opener labels (INV-TH9)", () => 
     await registerCallerAgent(ctx, "architect", { team: "platform" });
     await router.handle("register_role", { role: "architect" }, ctx);
 
+    // ADR-016 INV-TH28: unicast (default) requires recipientAgentId;
+    // this test just needs the thread to persist with labels, so
+    // broadcast mode is the cleanest fit (no counterparty yet known).
     const result = await router.handle("create_thread", {
       title: "T",
       message: "M",
+      routingMode: "broadcast",
     }, ctx);
     const { threadId } = JSON.parse(result.content[0].text);
 
@@ -209,7 +213,11 @@ describe("Mission-19 Labels — Thread inherits opener labels (INV-TH9)", () => 
     await registerCallerAgent(ctx, "architect", { team: "platform" });
     await router.handle("register_role", { role: "architect" }, ctx);
 
-    await router.handle("create_thread", { title: "T", message: "M" }, ctx);
+    await router.handle("create_thread", {
+      title: "T",
+      message: "M",
+      routingMode: "broadcast",
+    }, ctx);
 
     const dispatched = ctx.dispatchedEvents.find((e) => e.event === "thread_message");
     expect(dispatched).toBeDefined();

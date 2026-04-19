@@ -21,7 +21,7 @@ describe("ProposalPolicy", () => {
   let router: PolicyRouter;
   let ctx: IPolicyContext;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     router = new PolicyRouter(noop);
     registerProposalPolicy(router);
     ctx = createTestContext();
@@ -140,7 +140,7 @@ describe("ThreadPolicy", () => {
   let router: PolicyRouter;
   let ctx: IPolicyContext;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     router = new PolicyRouter(noop);
     registerThreadPolicy(router);
     registerSessionPolicy(router);
@@ -157,10 +157,14 @@ describe("ThreadPolicy", () => {
 
   it("create_thread opens and emits thread_message", async () => {
     // Register as architect so we know the role
-    await router.handle("register_role", { role: "architect" }, ctx);
+    await router.handle("register_role", {
+      role: "architect",
+      globalInstanceId: `test-gid-${ctx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, ctx);
 
     const result = await router.handle("create_thread", {
-      title: "Design Discussion",
+      routingMode: "broadcast",title: "Design Discussion",
       message: "How should we handle errors?",
     }, ctx);
 
@@ -177,16 +181,24 @@ describe("ThreadPolicy", () => {
 
   it("create_thread_reply and turn alternation", async () => {
     // Architect opens thread
-    await router.handle("register_role", { role: "architect" }, ctx);
+    await router.handle("register_role", {
+      role: "architect",
+      globalInstanceId: `test-gid-${ctx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, ctx);
     const createResult = await router.handle("create_thread", {
-      title: "Turn test",
+      routingMode: "broadcast",title: "Turn test",
       message: "Opening message",
     }, ctx);
     const { threadId } = JSON.parse(createResult.content[0].text);
 
     // Engineer replies
     const engCtx = createTestContext({ stores: ctx.stores, role: "engineer" });
-    await router.handle("register_role", { role: "engineer" }, engCtx);
+    await router.handle("register_role", {
+      role: "engineer",
+      globalInstanceId: `test-gid-${engCtx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, engCtx);
     const replyResult = await router.handle("create_thread_reply", {
       threadId,
       message: "Engineer response",
@@ -200,16 +212,24 @@ describe("ThreadPolicy", () => {
 
   it("convergence: both parties converge → thread converges", async () => {
     // Architect opens with convergence
-    await router.handle("register_role", { role: "architect" }, ctx);
+    await router.handle("register_role", {
+      role: "architect",
+      globalInstanceId: `test-gid-${ctx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, ctx);
     const createResult = await router.handle("create_thread", {
-      title: "Convergence test",
+      routingMode: "broadcast",title: "Convergence test",
       message: "I think we should do X",
     }, ctx);
     const { threadId } = JSON.parse(createResult.content[0].text);
 
     // Architect already sent opening — now engineer replies with convergence
     const engCtx = createTestContext({ stores: ctx.stores, role: "engineer" });
-    await router.handle("register_role", { role: "engineer" }, engCtx);
+    await router.handle("register_role", {
+      role: "engineer",
+      globalInstanceId: `test-gid-${engCtx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, engCtx);
     const reply1 = await router.handle("create_thread_reply", {
       threadId,
       message: "Agreed on X",
@@ -223,9 +243,12 @@ describe("ThreadPolicy", () => {
     }, engCtx);
     const r1 = JSON.parse(reply1.content[0].text);
 
-    // Architect converges too
-    const archCtx2 = createTestContext({ stores: ctx.stores });
-    await router.handle("register_role", { role: "architect" }, archCtx2);
+    // Architect converges too. ADR-016 INV-TH27: must reuse the
+    // original ctx — a new architect context would have a distinct
+    // M18 agentId and the thread's currentTurnAgentId pin would reject
+    // it (correctly; post-Phase-2 a different agent cannot usurp a
+    // pinned turn).
+    const archCtx2 = ctx;
     const reply2 = await router.handle("create_thread_reply", {
       threadId,
       message: "Confirmed",
@@ -252,9 +275,13 @@ describe("ThreadPolicy", () => {
   });
 
   it("get_thread returns full thread", async () => {
-    await router.handle("register_role", { role: "architect" }, ctx);
+    await router.handle("register_role", {
+      role: "architect",
+      globalInstanceId: `test-gid-${ctx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, ctx);
     const createResult = await router.handle("create_thread", {
-      title: "Get test",
+      routingMode: "broadcast",title: "Get test",
       message: "Hello",
     }, ctx);
     const { threadId } = JSON.parse(createResult.content[0].text);
@@ -271,9 +298,13 @@ describe("ThreadPolicy", () => {
   });
 
   it("list_threads returns summaries without messages", async () => {
-    await router.handle("register_role", { role: "architect" }, ctx);
-    await router.handle("create_thread", { title: "T1", message: "M1" }, ctx);
-    await router.handle("create_thread", { title: "T2", message: "M2" }, ctx);
+    await router.handle("register_role", {
+      role: "architect",
+      globalInstanceId: `test-gid-${ctx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, ctx);
+    await router.handle("create_thread", { routingMode: "broadcast",title: "T1", message: "M1" }, ctx);
+    await router.handle("create_thread", { routingMode: "broadcast",title: "T2", message: "M2" }, ctx);
 
     const result = await router.handle("list_threads", {}, ctx);
     const parsed = JSON.parse(result.content[0].text);
@@ -283,8 +314,12 @@ describe("ThreadPolicy", () => {
   });
 
   it("list_threads filters by status", async () => {
-    await router.handle("register_role", { role: "architect" }, ctx);
-    await router.handle("create_thread", { title: "Active", message: "M1" }, ctx);
+    await router.handle("register_role", {
+      role: "architect",
+      globalInstanceId: `test-gid-${ctx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, ctx);
+    await router.handle("create_thread", { routingMode: "broadcast",title: "Active", message: "M1" }, ctx);
 
     const result = await router.handle("list_threads", { status: "closed" }, ctx);
     const parsed = JSON.parse(result.content[0].text);
@@ -292,9 +327,13 @@ describe("ThreadPolicy", () => {
   });
 
   it("close_thread closes a thread", async () => {
-    await router.handle("register_role", { role: "architect" }, ctx);
+    await router.handle("register_role", {
+      role: "architect",
+      globalInstanceId: `test-gid-${ctx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, ctx);
     const createResult = await router.handle("create_thread", {
-      title: "Close me",
+      routingMode: "broadcast",title: "Close me",
       message: "Opening",
     }, ctx);
     const { threadId } = JSON.parse(createResult.content[0].text);
@@ -312,9 +351,13 @@ describe("ThreadPolicy", () => {
 
   it("create_thread_reply fails when not your turn", async () => {
     // Architect opens (engineer's turn)
-    await router.handle("register_role", { role: "architect" }, ctx);
+    await router.handle("register_role", {
+      role: "architect",
+      globalInstanceId: `test-gid-${ctx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, ctx);
     const createResult = await router.handle("create_thread", {
-      title: "Turn enforcement",
+      routingMode: "broadcast",title: "Turn enforcement",
       message: "Opening",
     }, ctx);
     const { threadId } = JSON.parse(createResult.content[0].text);
@@ -341,12 +384,20 @@ describe("ThreadPolicy — Threads 2.0 (Mission-21 Phase 1)", () => {
     registerSessionPolicy(router);
     archCtx = createTestContext();
     engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "eng-session-001" });
-    await router.handle("register_role", { role: "architect" }, archCtx);
-    await router.handle("register_role", { role: "engineer" }, engCtx);
+    await router.handle("register_role", {
+      role: "architect",
+      globalInstanceId: `test-gid-${archCtx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, archCtx);
+    await router.handle("register_role", {
+      role: "engineer",
+      globalInstanceId: `test-gid-${engCtx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, engCtx);
   });
 
   async function openThread(title = "T", message = "M"): Promise<string> {
-    const result = await router.handle("create_thread", { title, message }, archCtx);
+    const result = await router.handle("create_thread", { routingMode: "broadcast",title, message }, archCtx);
     return JSON.parse(result.content[0].text).threadId;
   }
 
@@ -620,7 +671,7 @@ describe("ThreadPolicy — participant-scoped dispatch (INV-TH16)", () => {
   });
 
   it("open without recipientAgentId falls back to role broadcast", async () => {
-    await router.handle("create_thread", { title: "T", message: "M" }, eng1Ctx);
+    await router.handle("create_thread", { routingMode: "broadcast",title: "T", message: "M" }, eng1Ctx);
     const openEvent = (eng1Ctx as any).dispatchedEvents.find((e: any) => e.event === "thread_message");
     expect(openEvent).toBeDefined();
     expect(openEvent.selector.roles).toEqual(["architect"]);
@@ -657,24 +708,11 @@ describe("ThreadPolicy — participant-scoped dispatch (INV-TH16)", () => {
     expect(replyEvent.selector.roles).toBeUndefined();
   });
 
-  it("reply dispatch falls back to role when no participant has a resolved agentId", async () => {
-    // Simulate legacy thread where nobody has an M18 Agent (agentId=null).
-    // Use setSessionRole directly to populate the role map — this is what
-    // the legacy register_role path does without creating an Agent entity.
-    const legacyArch = createTestContext({ role: "architect", sessionId: "legacy-arch" });
-    const legacyEng = createTestContext({ stores: legacyArch.stores, role: "engineer", sessionId: "legacy-eng" });
-    legacyArch.stores.engineerRegistry.setSessionRole("legacy-arch", "architect");
-    legacyArch.stores.engineerRegistry.setSessionRole("legacy-eng", "engineer");
-    const openResult = await router.handle("create_thread", { title: "L", message: "M" }, legacyArch);
-    const threadId = JSON.parse(openResult.content[0].text).threadId;
-    (legacyEng as any).dispatchedEvents.length = 0;
-    await router.handle("create_thread_reply", { threadId, message: "eng reply" }, legacyEng);
-    const replyEvent = (legacyEng as any).dispatchedEvents.find((e: any) => e.event === "thread_message");
-    expect(replyEvent).toBeDefined();
-    // All participants have agentId=null, so fallback to role.
-    expect(replyEvent.selector.roles).toEqual(["architect"]);
-    expect(replyEvent.selector.engineerIds).toBeUndefined();
-  });
+  // ADR-016 INV-TH27: deleted the "reply dispatch falls back to role
+  // when no participant has a resolved agentId" test — the behavior
+  // it asserted (silent role-broadcast on unresolved participants) is
+  // now an invariant violation that throws loudly. See the reply-path
+  // throw in thread-policy.ts createThreadReply.
 });
 
 // ── Mission-24 Phase 2 (M24-T6, INV-TH18): leave_thread tool ─────────
@@ -984,25 +1022,9 @@ describe("ThreadStore — reapIdleThreads (M24-T7)", () => {
     expect(reaped[0].threadId).toBe(activeId);
   });
 
-  it("excludes null agentIds from participantAgentIds (pre-M18 legacy)", async () => {
-    const legacyArch = createTestContext({ role: "architect", sessionId: "legacy-arch" });
-    legacyArch.stores.engineerRegistry.setSessionRole("legacy-arch", "architect");
-    legacyArch.stores.engineerRegistry.setSessionRole("legacy-eng", "engineer");
-    const openResult = await router.handle("create_thread", {
-      title: "legacy", message: "m",
-    }, legacyArch);
-    const threadId = JSON.parse(openResult.content[0].text).threadId;
-
-    const store = legacyArch.stores.thread as unknown as {
-      threads: Map<string, { updatedAt: string }>;
-    };
-    store.threads.get(threadId)!.updatedAt = new Date(Date.now() - 90_000).toISOString();
-
-    const reaped = await legacyArch.stores.thread.reapIdleThreads(30_000);
-    expect(reaped).toHaveLength(1);
-    // Author's agentId was null (legacy path), so the set is empty.
-    expect(reaped[0].participantAgentIds).toEqual([]);
-  });
+  // ADR-016 INV-TH27 removed the pre-M18 legacy-participant test.
+  // Every M-Cascade-Perfection thread has resolved agentIds; there is
+  // no "null agentId participant" scenario to exclude from the reaper.
 
   it("multiple idle threads reaped in a single call", async () => {
     const a = await openThread();
@@ -1047,32 +1069,41 @@ describe("ThreadPolicy — routingMode enforcement (M24-T2)", () => {
 
   // ── Open-time validation ──────────────────────────────────────
 
-  it("omitted routingMode defaults to targeted (legacy callers unchanged)", async () => {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, eng1Ctx);
-    expect(r.isError).toBeUndefined();
-    const threadId = JSON.parse(r.content[0].text).threadId;
+  it("omitted routingMode defaults to unicast; requires recipientAgentId (ADR-016 INV-TH28)", async () => {
+    // Without recipientAgentId → rejected by validator
+    const rBad = await router.handle("create_thread", { title: "t", message: "m" }, eng1Ctx);
+    expect(rBad.isError).toBe(true);
+    expect(JSON.parse(rBad.content[0].text).error).toMatch(/unicast.*requires recipientAgentId/);
+
+    // With recipientAgentId → accepted; stored routingMode is unicast
+    const rOk = await router.handle("create_thread", {
+      title: "t", message: "m", recipientAgentId: eng2Id,
+    }, eng1Ctx);
+    expect(rOk.isError).toBeUndefined();
+    const threadId = JSON.parse(rOk.content[0].text).threadId;
     const t = (await router.handle("get_thread", { threadId }, eng1Ctx)).content[0].text;
-    expect(JSON.parse(t).routingMode).toBe("targeted");
+    expect(JSON.parse(t).routingMode).toBe("unicast");
   });
 
   it("targeted with recipientAgentId stores routingMode=targeted", async () => {
     const r = await router.handle("create_thread", {
-      title: "t", message: "m", routingMode: "targeted", recipientAgentId: eng2Id,
+      title: "t", message: "m", routingMode: "unicast", recipientAgentId: eng2Id,
     }, eng1Ctx);
     expect(r.isError).toBeUndefined();
     const parsed = JSON.parse(r.content[0].text);
     const thread = JSON.parse((await router.handle("get_thread", { threadId: parsed.threadId }, eng1Ctx)).content[0].text);
-    expect(thread.routingMode).toBe("targeted");
+    expect(thread.routingMode).toBe("unicast");
     expect(thread.context).toBeNull();
   });
 
-  it("rejects targeted with context set", async () => {
+  it("rejects unicast with context set (unicast doesn't carry multicast-only context)", async () => {
     const r = await router.handle("create_thread", {
-      title: "t", message: "m", routingMode: "targeted",
+      title: "t", message: "m", routingMode: "unicast",
+      recipientAgentId: eng2Id, // needed to reach the context-check
       context: { entityType: "task", entityId: "task-1" },
     }, eng1Ctx);
     expect(r.isError).toBe(true);
-    expect(JSON.parse(r.content[0].text).error).toMatch(/targeted.*must not set context/);
+    expect(JSON.parse(r.content[0].text).error).toMatch(/unicast.*must not set context/);
   });
 
   it("broadcast stores routingMode=broadcast without recipient pin", async () => {
@@ -1105,36 +1136,36 @@ describe("ThreadPolicy — routingMode enforcement (M24-T2)", () => {
 
   it("context_bound with valid context stores mode + context", async () => {
     const r = await router.handle("create_thread", {
-      title: "t", message: "m", routingMode: "context_bound",
+      title: "t", message: "m", routingMode: "multicast",
       context: { entityType: "task", entityId: "task-42" },
     }, eng1Ctx);
     expect(r.isError).toBeUndefined();
     const thread = JSON.parse((await router.handle("get_thread", { threadId: JSON.parse(r.content[0].text).threadId }, eng1Ctx)).content[0].text);
-    expect(thread.routingMode).toBe("context_bound");
+    expect(thread.routingMode).toBe("multicast");
     expect(thread.context).toEqual({ entityType: "task", entityId: "task-42" });
   });
 
   it("rejects context_bound without context", async () => {
     const r = await router.handle("create_thread", {
-      title: "t", message: "m", routingMode: "context_bound",
+      title: "t", message: "m", routingMode: "multicast",
     }, eng1Ctx);
     expect(r.isError).toBe(true);
-    expect(JSON.parse(r.content[0].text).error).toMatch(/context_bound.*requires context/);
+    expect(JSON.parse(r.content[0].text).error).toMatch(/multicast.*requires context/);
   });
 
   it("rejects context_bound with recipientAgentId", async () => {
     const r = await router.handle("create_thread", {
-      title: "t", message: "m", routingMode: "context_bound",
+      title: "t", message: "m", routingMode: "multicast",
       context: { entityType: "task", entityId: "task-1" },
       recipientAgentId: eng2Id,
     }, eng1Ctx);
     expect(r.isError).toBe(true);
-    expect(JSON.parse(r.content[0].text).error).toMatch(/context_bound.*must not set recipientAgentId/);
+    expect(JSON.parse(r.content[0].text).error).toMatch(/multicast.*must not set recipientAgentId/);
   });
 
   it("rejects context_bound with empty-string entityType", async () => {
     const r = await router.handle("create_thread", {
-      title: "t", message: "m", routingMode: "context_bound",
+      title: "t", message: "m", routingMode: "multicast",
       context: { entityType: "", entityId: "x" },
     }, eng1Ctx);
     expect(r.isError).toBe(true);
@@ -1156,14 +1187,14 @@ describe("ThreadPolicy — routingMode enforcement (M24-T2)", () => {
     await router.handle("create_thread_reply", { threadId, message: "I'll take it" }, eng1Ctx);
 
     const after = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
-    expect(after.routingMode).toBe("targeted");
+    expect(after.routingMode).toBe("unicast");
     // Participants now include both parties; currentTurnAgentId pins the turn.
     expect(after.participants.length).toBe(2);
   });
 
   it("targeted routingMode is immutable across replies", async () => {
     const openResult = await router.handle("create_thread", {
-      title: "pinned", message: "m", routingMode: "targeted", recipientAgentId: eng2Id,
+      title: "pinned", message: "m", routingMode: "unicast", recipientAgentId: eng2Id,
     }, eng1Ctx);
     const threadId = JSON.parse(openResult.content[0].text).threadId;
 
@@ -1172,12 +1203,12 @@ describe("ThreadPolicy — routingMode enforcement (M24-T2)", () => {
     await router.handle("create_thread_reply", { threadId, message: "r3" }, eng2Ctx);
 
     const t = JSON.parse((await router.handle("get_thread", { threadId }, eng1Ctx)).content[0].text);
-    expect(t.routingMode).toBe("targeted");
+    expect(t.routingMode).toBe("unicast");
   });
 
   it("context_bound routingMode is immutable across replies", async () => {
     const openResult = await router.handle("create_thread", {
-      title: "ctx", message: "m", routingMode: "context_bound",
+      title: "ctx", message: "m", routingMode: "multicast",
       context: { entityType: "task", entityId: "task-1" },
     }, eng1Ctx);
     const threadId = JSON.parse(openResult.content[0].text).threadId;
@@ -1185,7 +1216,7 @@ describe("ThreadPolicy — routingMode enforcement (M24-T2)", () => {
     await router.handle("create_thread_reply", { threadId, message: "r1" }, archCtx);
 
     const t = JSON.parse((await router.handle("get_thread", { threadId }, eng1Ctx)).content[0].text);
-    expect(t.routingMode).toBe("context_bound");
+    expect(t.routingMode).toBe("multicast");
     expect(t.context).toEqual({ entityType: "task", entityId: "task-1" });
   });
 });
@@ -1198,7 +1229,7 @@ describe("ThreadPolicy — cascade infrastructure (M24-T4)", () => {
   let engCtx: IPolicyContext;
   let eng2Ctx: IPolicyContext;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     router = new PolicyRouter(noop);
     registerThreadPolicy(router);
 
@@ -1206,8 +1237,23 @@ describe("ThreadPolicy — cascade infrastructure (M24-T4)", () => {
     engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng-1" });
     eng2Ctx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng-2" });
     archCtx.stores.engineerRegistry.setSessionRole("s-arch", "architect");
+    await archCtx.stores.engineerRegistry.registerAgent("s-arch", "architect" as any, {
+      globalInstanceId: `test-gid-${"s-arch"}`,
+      role: "architect" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
     archCtx.stores.engineerRegistry.setSessionRole("s-eng-1", "engineer");
+    await archCtx.stores.engineerRegistry.registerAgent("s-eng-1", "engineer" as any, {
+      globalInstanceId: `test-gid-${"s-eng-1"}`,
+      role: "engineer" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
     archCtx.stores.engineerRegistry.setSessionRole("s-eng-2", "engineer");
+    await archCtx.stores.engineerRegistry.registerAgent("s-eng-2", "engineer" as any, {
+      globalInstanceId: `test-gid-${"s-eng-2"}`,
+      role: "engineer" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
   });
 
   /** Open a thread, then reach the bilateral-convergence precondition
@@ -1218,7 +1264,7 @@ describe("ThreadPolicy — cascade infrastructure (M24-T4)", () => {
     stagedActions?: Array<Record<string, unknown>>;
     summary?: string;
   } = {}): Promise<string> {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", {
       threadId,
@@ -1249,7 +1295,7 @@ describe("ThreadPolicy — cascade infrastructure (M24-T4)", () => {
     // accepted by an older tool schema but is no longer well-formed
     // against the current Zod validator. The gate's
     // validateStagedActions() catches it before promoting to committed.
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     // Engineer stages valid close_no_action + converges (round 2)
     await router.handle("create_thread_reply", {
@@ -1331,7 +1377,7 @@ describe("ThreadPolicy — cascade infrastructure (M24-T4)", () => {
     // Open an active thread; it's not eligible for cascade_failed
     // transition from the closed-state perspective. Method accepts
     // {active, converged} to allow late failure detection.
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     // Active thread — allowed
     const okActive = await archCtx.stores.thread.markCascadeFailed(threadId);
@@ -1438,13 +1484,23 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
     archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
     engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng-1" });
     archCtx.stores.engineerRegistry.setSessionRole("s-arch", "architect");
+    await archCtx.stores.engineerRegistry.registerAgent("s-arch", "architect" as any, {
+      globalInstanceId: `test-gid-${"s-arch"}`,
+      role: "architect" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
     archCtx.stores.engineerRegistry.setSessionRole("s-eng-1", "engineer");
+    await archCtx.stores.engineerRegistry.registerAgent("s-eng-1", "engineer" as any, {
+      globalInstanceId: `test-gid-${"s-eng-1"}`,
+      role: "engineer" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
   });
 
   /** Open thread → engineer converge staging the given action → caller
    * finishes via architect converge. Returns threadId. */
   async function spawnViaConvergence(stagedAction: Record<string, unknown>, summary = "Agreed; proceed."): Promise<string> {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", {
       threadId, message: "agree", converged: true, summary, stagedActions: [stagedAction],
@@ -1474,7 +1530,7 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
    * opens, eng replies (no stage, converged=true; gate needs a staged
    * action, so inject first), then arch converges. */
   async function convergeWithInjectedAction(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     // Stage via direct injection BEFORE the eng converge reply.
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
@@ -1621,7 +1677,7 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
   // ── Multi-action cascade ─────────────────────────────────────
 
   it("multiple committed actions of different types all spawn correctly", async () => {
-    const r = await router.handle("create_thread", { title: "multi", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "multi", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
     // Inject 2 actions of different types.
@@ -1646,7 +1702,7 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
 
   it("spawned entities carry labels inherited from the thread", async () => {
     // Open with architect-authored labels via direct setting
-    const r = await router.handle("create_thread", { title: "lab", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "lab", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     const store = archCtx.stores.thread as any;
     store.threads.get(threadId).labels = { team: "platform", env: "prod" };
@@ -1702,7 +1758,17 @@ describe("ThreadPolicy — cascade handlers part 2 (M24-T9)", () => {
     archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
     engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng-1" });
     archCtx.stores.engineerRegistry.setSessionRole("s-arch", "architect");
+    await archCtx.stores.engineerRegistry.registerAgent("s-arch", "architect" as any, {
+      globalInstanceId: `test-gid-${"s-arch"}`,
+      role: "architect" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
     archCtx.stores.engineerRegistry.setSessionRole("s-eng-1", "engineer");
+    await archCtx.stores.engineerRegistry.registerAgent("s-eng-1", "engineer" as any, {
+      globalInstanceId: `test-gid-${"s-eng-1"}`,
+      role: "engineer" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
   });
 
   function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): void {
@@ -1718,7 +1784,7 @@ describe("ThreadPolicy — cascade handlers part 2 (M24-T9)", () => {
   }
 
   async function convergeWithInjectedAction(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
     injectStagedAction(threadId, type, payload, archCtx);
@@ -1927,7 +1993,7 @@ describe("Phase 2 invariants (M24-T11)", () => {
   // ── INV-TH22: StagedAction.proposer carries {role, agentId} ──
 
   it("INV-TH22: staged actions record proposer as {role, agentId}, not bare role", async () => {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", {
       threadId, message: "stage",
@@ -1945,7 +2011,7 @@ describe("Phase 2 invariants (M24-T11)", () => {
   });
 
   it("INV-TH22: revise op carries the revising party's proposer, not the original", async () => {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     // Engineer stages
     await router.handle("create_thread_reply", {
@@ -1971,7 +2037,7 @@ describe("Phase 2 invariants (M24-T11)", () => {
   // ── INV-TH23: Summary-as-Living-Record ──────────────────────
 
   it("INV-TH23: sourceThreadSummary on spawned entities is frozen at commit (not later summary mutations)", async () => {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     // Engineer stages + converges with the "commit" summary.
     await router.handle("create_thread_reply", {
@@ -2005,7 +2071,7 @@ describe("Phase 2 invariants (M24-T11)", () => {
 
   it("INV-TH23: every autonomous spawn type carries sourceThreadSummary", async () => {
     async function runConverge(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
-      const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+      const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
       const threadId = JSON.parse(r.content[0].text).threadId;
       await router.handle("create_thread_reply", {
         threadId, message: "s", converged: true, summary,
@@ -2039,7 +2105,7 @@ describe("Phase 2 invariants (M24-T11)", () => {
   // ── Cascade validate-failure keeps thread active (INV-TH19) ──
 
   it("INV-TH19: validate-phase failure keeps thread active; staged → NOT committed", async () => {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
 
     // Engineer stages a valid close_no_action then converges (round 2).
@@ -2087,7 +2153,7 @@ describe("Phase 2 invariants (M24-T11)", () => {
     });
 
     try {
-      const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+      const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
       const threadId = JSON.parse(r.content[0].text).threadId;
 
       // Engineer stages a create_clarification action that the
@@ -2135,12 +2201,12 @@ describe("Phase 2 invariants (M24-T11)", () => {
 
   it("INV-TH18: targeted routingMode is NOT mutated by replyToThread turn-flip", async () => {
     const r = await router.handle("create_thread", {
-      title: "t", message: "m", routingMode: "targeted", recipientAgentId: engId,
+      title: "t", message: "m", routingMode: "unicast", recipientAgentId: engId,
     }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
 
     const before = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
-    expect(before.routingMode).toBe("targeted");
+    expect(before.routingMode).toBe("unicast");
 
     // Two round-trips of replies
     await router.handle("create_thread_reply", { threadId, message: "r1" }, engCtx);
@@ -2148,7 +2214,7 @@ describe("Phase 2 invariants (M24-T11)", () => {
     await router.handle("create_thread_reply", { threadId, message: "r3" }, engCtx);
 
     const after = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
-    expect(after.routingMode).toBe("targeted");
+    expect(after.routingMode).toBe("unicast");
   });
 
   // ── INV-TH20: idempotency replay-safety across multiple retries ──
@@ -2156,7 +2222,7 @@ describe("Phase 2 invariants (M24-T11)", () => {
   it("INV-TH20: runCascade is idempotent on repeated replays for the same committed action", async () => {
     const { runCascade } = await import("../src/policy/cascade.js");
 
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", {
       threadId, message: "s", converged: true, summary: "Spawn once.",
@@ -2206,7 +2272,17 @@ describe("Cascade-path SSE parity (dispatch-helpers)", () => {
     archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
     engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng" });
     archCtx.stores.engineerRegistry.setSessionRole("s-arch", "architect");
+    await archCtx.stores.engineerRegistry.registerAgent("s-arch", "architect" as any, {
+      globalInstanceId: `test-gid-${"s-arch"}`,
+      role: "architect" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
     archCtx.stores.engineerRegistry.setSessionRole("s-eng", "engineer");
+    await archCtx.stores.engineerRegistry.registerAgent("s-eng", "engineer" as any, {
+      globalInstanceId: `test-gid-${"s-eng"}`,
+      role: "engineer" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
   });
 
   function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): void {
@@ -2222,7 +2298,7 @@ describe("Cascade-path SSE parity (dispatch-helpers)", () => {
   }
 
   async function runConverge(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
     injectStagedAction(threadId, type, payload, archCtx);
@@ -2373,12 +2449,17 @@ describe("runCascade — depth guard (INV-TH25)", () => {
     registerThreadPolicy(router);
     archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
     archCtx.stores.engineerRegistry.setSessionRole("s-arch", "architect");
+    await archCtx.stores.engineerRegistry.registerAgent("s-arch", "architect" as any, {
+      globalInstanceId: `test-gid-${"s-arch"}`,
+      role: "architect" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
   });
 
   it("depth < MAX_CASCADE_DEPTH executes normally", async () => {
     const { runCascade, MAX_CASCADE_DEPTH } = await import("../src/policy/cascade.js");
     expect(MAX_CASCADE_DEPTH).toBe(3);
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     const thread = await archCtx.stores.thread.getThread(threadId);
     const actions = [
@@ -2395,7 +2476,7 @@ describe("runCascade — depth guard (INV-TH25)", () => {
 
   it("depth == MAX_CASCADE_DEPTH returns deferred-failed entries without executing", async () => {
     const { runCascade, MAX_CASCADE_DEPTH } = await import("../src/policy/cascade.js");
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     const thread = await archCtx.stores.thread.getThread(threadId);
     const actions = [
@@ -2508,6 +2589,11 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     registerBugPolicy(router);
     ctx = createTestContext({ role: "engineer" });
     ctx.stores.engineerRegistry.setSessionRole(ctx.sessionId, "engineer");
+    await ctx.stores.engineerRegistry.registerAgent(ctx.sessionId, "engineer" as any, {
+      globalInstanceId: `test-gid-${ctx.sessionId}`,
+      role: "engineer" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
   });
 
   it("registers all 4 bug tools", () => {
@@ -2630,7 +2716,17 @@ describe("Cascade: create_bug (Phase 2 validation)", () => {
     archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
     engCtx = createTestContext({ stores: archCtx.stores, role: "engineer", sessionId: "s-eng" });
     archCtx.stores.engineerRegistry.setSessionRole("s-arch", "architect");
+    await archCtx.stores.engineerRegistry.registerAgent("s-arch", "architect" as any, {
+      globalInstanceId: `test-gid-${"s-arch"}`,
+      role: "architect" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
     archCtx.stores.engineerRegistry.setSessionRole("s-eng", "engineer");
+    await archCtx.stores.engineerRegistry.registerAgent("s-eng", "engineer" as any, {
+      globalInstanceId: `test-gid-${"s-eng"}`,
+      role: "engineer" as any,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    });
   });
 
   function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): void {
@@ -2646,7 +2742,7 @@ describe("Cascade: create_bug (Phase 2 validation)", () => {
   }
 
   async function runConverge(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
-    const r = await router.handle("create_thread", { title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
     injectStagedAction(threadId, type, payload, archCtx);

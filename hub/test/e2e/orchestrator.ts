@@ -359,10 +359,20 @@ export class ActorFacade {
 
   async createThread(title: string, message: string, opts?: {
     maxRounds?: number; correlationId?: string; semanticIntent?: string;
+    routingMode?: "unicast" | "broadcast" | "multicast";
+    recipientAgentId?: string;
+    context?: { entityType: string; entityId: string };
   }): Promise<Record<string, unknown>> {
     await this.ensureRegistered();
+    // ADR-016 INV-TH28: unicast requires recipientAgentId. e2e tests
+    // that open "to any counterparty" implicitly used the old
+    // targeted-without-pin semantics — now explicit broadcast.
+    const mergedOpts: Record<string, unknown> = { ...opts };
+    if (mergedOpts.routingMode === undefined && mergedOpts.recipientAgentId === undefined) {
+      mergedOpts.routingMode = "broadcast";
+    }
     const result = await this.router.handle("create_thread", {
-      title, message, ...opts,
+      title, message, ...mergedOpts,
     }, this.ctx());
     return this.parse("create_thread", result);
   }
