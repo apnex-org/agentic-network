@@ -12,7 +12,7 @@ No clone required. Point your OpenCode plugin config at the repo directly:
   "plugins": {
     "hub-notifications": {
       "github": "apnex/agentic-network",
-      "path": "adapters/opencode-plugin/hub-notifications.ts"
+      "path": "adapters/opencode-plugin/src/shim.ts"
     }
   }
 }
@@ -61,14 +61,14 @@ The `OIS_` variables are shared across all OIS plugins.
 
 ### 2. Register the plugin
 
-Add the plugin to your OpenCode configuration, pointing to the `hub-notifications.ts` file:
+Add the plugin to your OpenCode configuration, pointing to the `src/shim.ts` file:
 
 ```jsonc
 // .opencode/config.json (or your OpenCode plugin config)
 {
   "plugins": {
     "hub-notifications": {
-      "path": "/path/to/agentic-network/adapters/opencode-plugin/hub-notifications.ts"
+      "path": "/path/to/agentic-network/adapters/opencode-plugin/src/shim.ts"
     }
   }
 }

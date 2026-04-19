@@ -104,12 +104,12 @@ Environment variables override config file values:
 
 | Constant                  | Value        | Location                    | Purpose                                    |
 | ------------------------- | ------------ | --------------------------- | ------------------------------------------ |
-| `RATE_LIMIT_MS`             | `30,000ms`     | `hub-notifications.ts:136`    | Cooldown between `promptLLM()` calls         |
-| `MAX_PROCESSED_CACHE`       | `100`          | `hub-notifications.ts:139`    | LRU dedup cache size                       |
-| Init defer delay          | `3,000ms`      | `hub-notifications.ts:541`    | Delay before network I/O on plugin load    |
-| Bun idle timeout          | `0` (disabled) | `hub-notifications.ts:454`    | Prevents Bun from closing SSE streams      |
-| Proxy bind address        | `127.0.0.1`    | `hub-notifications.ts:453`    | Localhost only — no external access        |
-| Proxy port                | `0` (random)   | `hub-notifications.ts:453`    | OS-assigned port                           |
+| `RATE_LIMIT_MS`             | `30,000ms`     | `src/shim.ts`                 | Cooldown between `promptLLM()` calls         |
+| `MAX_PROCESSED_CACHE`       | `100`          | `src/shim.ts`                 | LRU dedup cache size                       |
+| Init defer delay          | `3,000ms`      | `src/shim.ts`                 | Delay before network I/O on plugin load    |
+| Bun idle timeout          | `0` (disabled) | `src/shim.ts`                 | Prevents Bun from closing SSE streams      |
+| Proxy bind address        | `127.0.0.1`    | `src/shim.ts`                 | Localhost only — no external access        |
+| Proxy port                | `0` (random)   | `src/shim.ts`                 | OS-assigned port                           |
 
 ### Persistence Files
 

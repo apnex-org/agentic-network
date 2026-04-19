@@ -126,7 +126,7 @@ The governance and planning agent. Reviews work, issues directives, manages thre
 - **Event loop:** 300s catch-up polling via `get_pending_actions`
 - **Context store:** unified GCS-backed memory (`context.ts`) with `buildDirectorContext()` (full history) and `buildAutonomousContext()` (compressed summary)
 
-### Engineer Plugin (`adapters/opencode-plugin/hub-notifications.ts`)
+### Engineer Plugin (`adapters/opencode-plugin/src/shim.ts` + `dispatcher.ts`)
 
 The Universal MCP Network Adapter shim for OpenCode. Manages the single MCP connection from OpenCode to the Hub.
 

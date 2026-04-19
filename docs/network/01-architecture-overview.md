@@ -72,7 +72,7 @@ This document describes the agentic network infrastructure — the transport, ro
 
 **What it is:** An OpenCode plugin that bridges the remote Hub to the local LLM. It runs a local MCP proxy server, forwards tool calls to the Hub, and delivers notifications to the LLM via Push-to-LLM.
 
-**Source:** `adapters/opencode-plugin/hub-notifications.ts`
+**Source:** `adapters/opencode-plugin/src/shim.ts` + `dispatcher.ts`
 **Runtime:** Bun (via OpenCode plugin system)
 **Network role:** Proxy — bridges remote Hub to local MCP client (OpenCode)
 

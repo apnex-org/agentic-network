@@ -1,0 +1,23 @@
+{
+  "name": "@ois/opencode-plugin",
+  "version": "1.0.0",
+  "description": "OpenCode host bundle — Universal Agent Adapter for the OIS agentic network",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/shim.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@ois/network-adapter": "file:ois-network-adapter-2.0.0.tgz"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^0.4.30",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4"
+  }
+}

@@ -384,9 +384,9 @@ agentic-network/
     src/policy/                      # All 13 domain policies
   docs/specs/workflow-registry.md    # Authoritative workflow specification
   agents/vertex-cloudrun/            # The Architect shell — do not modify
-  adapters/opencode-plugin/hub-notifications.ts  # OpenCode adapter — reference implementation
+  adapters/opencode-plugin/src/shim.ts  # OpenCode adapter — reference implementation
   adapters/claude-plugin/            # Claude Code adapter — reference implementation
   AGENTS.md                          # Workflow instructions (OpenCode-specific)
 ```
 
-The OpenCode adapter (`adapters/opencode-plugin/hub-notifications.ts`) is your primary reference implementation. Study how it wires `McpAgentClient` callbacks, handles state sync, and routes notifications.
+The OpenCode adapter (`adapters/opencode-plugin/src/shim.ts`) is your primary reference implementation. Study how it wires `McpAgentClient` callbacks, handles state sync, and routes notifications.

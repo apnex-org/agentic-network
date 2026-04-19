@@ -112,7 +112,7 @@ Option C — both. Recommended: support both; let mission-authoring pattern dict
 **Adapter-side:**
 - `agents/vertex-cloudrun/src/sandwich.ts` — add `sandwichMissionDirective` handler.
 - `adapters/claude-plugin/src/shim.ts` — dispatch mission_directive from drain queue (via dispatcher.ts wiring).
-- `adapters/opencode-plugin/hub-notifications.ts` — same.
+- `adapters/opencode-plugin/src/shim.ts` — same (via dispatcher.ts wiring).
 
 **Effort:**
 - Hub changes: ~2 days.

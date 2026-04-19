@@ -377,13 +377,19 @@ Split in two:
 
 ## 4. `adapters/opencode-plugin/` — OpenCode Plugin
 
-### 4.1 Hub Notifications — `hub-notifications.ts`
+### 4.1 Shim + Dispatcher — `src/shim.ts` / `src/dispatcher.ts`
+
+Split in two to mirror the claude-plugin structure (2026-04-19 idea-104b refactor; renamed from `hub-notifications.ts`):
+
+- `src/shim.ts` — OpenCode-specific entry. Bun.serve, OpenCode SDK integration (showToast, promptLLM, injectContext), rate-limited notification queue + deferred backlog, session tracking, tool discovery sync, `HubPlugin` export.
+- `src/dispatcher.ts` — host-independent MCP dispatcher. Exports `createDispatcher({ getAgent, proxyVersion, ... })` returning `{ pendingActionMap, createMcpServer, makeFetchHandler, queueMapCallbacks, makePendingActionItemHandler }`. The fetchHandler is the Bun.serve fetch callback; the MCP Server factory creates a fresh Server per Initialize request. Also exports `injectQueueItemId` as a pure helper — the ADR-017 Phase 1.1 fix lives here, unit-tested.
 
 | Export | Kind | Purpose |
 |---|---|---|
-| `HubPlugin` | const | OpenCode plugin entry point: initializes adapter, starts proxy, manages event lifecycle |
-
-**Naming verdict:** `hub-notifications.ts` is misleading — it's the full plugin, not just notifications. **Recommend: rename to `plugin.ts`** or `index.ts` to match its actual scope. The export name `HubPlugin` is appropriate.
+| `HubPlugin` | const (shim.ts) | OpenCode plugin entry point: initializes adapter, starts proxy, manages event lifecycle |
+| `buildPluginCallbacks` | function (shim.ts) | Composes dispatcher's queueMap-population with OpenCode notification handlers; exported for tests |
+| `createDispatcher` | function (dispatcher.ts) | Factory for the host-independent MCP dispatcher |
+| `injectQueueItemId` | function (dispatcher.ts) | Pure helper — sourceQueueItemId injection on create_thread_reply |
 
 ---
 
