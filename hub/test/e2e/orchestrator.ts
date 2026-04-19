@@ -42,6 +42,9 @@ import { MemoryIdeaStore } from "../../src/entities/idea.js";
 import { MemoryMissionStore } from "../../src/entities/mission.js";
 import { MemoryTurnStore } from "../../src/entities/turn.js";
 import { MemoryTeleStore } from "../../src/entities/tele.js";
+import { MemoryBugStore } from "../../src/entities/bug.js";
+import { MemoryPendingActionStore } from "../../src/entities/pending-action.js";
+import { MemoryDirectorNotificationStore } from "../../src/entities/director-notification.js";
 
 // ── Captured Event ──────────────────────────────────────────────────
 
@@ -490,6 +493,9 @@ export class TestOrchestrator {
       mission,
       turn: new MemoryTurnStore(mission, task),
       tele: new MemoryTeleStore(),
+      bug: new MemoryBugStore(),
+      pendingAction: new MemoryPendingActionStore(),
+      directorNotification: new MemoryDirectorNotificationStore(),
     };
   }
 

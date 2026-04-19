@@ -34,6 +34,7 @@ import type {
   INotificationStore,
   IEngineerRegistry,
   Agent,
+  AgentLivenessState,
   AgentRole,
   RegisterAgentPayload,
   RegisterAgentResult,
@@ -56,6 +57,7 @@ import {
   THRASHING_THRESHOLD,
   THRASHING_WINDOW_MS,
   AGENT_TOUCH_MIN_INTERVAL_MS,
+  DEFAULT_AGENT_RECEIPT_SLA_MS,
 } from "./state.js";
 import { validateStagedActions } from "./policy/staged-action-payloads.js";
 
@@ -964,6 +966,10 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
           labels: payload.labels ?? {},
           firstSeenAt: now,
           lastSeenAt: now,
+          livenessState: "online",
+          lastHeartbeatAt: now,
+          receiptSla: payload.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS,
+          wakeEndpoint: payload.wakeEndpoint ?? null,
         };
         try {
           await writeJsonWithPrecondition(this.bucket, fpPath, agent, 0);
@@ -1023,6 +1029,11 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
         advisoryTags: payload.advisoryTags ?? agent.advisoryTags ?? {},
         labels: agent.labels ?? {},
         lastSeenAt: now,
+        // ADR-017: liveness reset + mutable config re-apply.
+        livenessState: "online",
+        lastHeartbeatAt: now,
+        receiptSla: payload.receiptSla ?? agent.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS,
+        wakeEndpoint: payload.wakeEndpoint ?? agent.wakeEndpoint ?? null,
       };
 
       try {
@@ -1055,13 +1066,15 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
   }
 
   async getAgent(engineerId: string): Promise<Agent | null> {
-    return await readJson<Agent>(this.bucket, `agents/${engineerId}.json`);
+    const a = await readJson<Agent>(this.bucket, `agents/${engineerId}.json`);
+    return a ? normalizeAgentShape(a) : null;
   }
 
   async getAgentForSession(sessionId: string): Promise<Agent | null> {
     const engineerId = this.sessionToEngineerId.get(sessionId);
     if (!engineerId) return null;
-    return await readJson<Agent>(this.bucket, `agents/${engineerId}.json`);
+    const a = await readJson<Agent>(this.bucket, `agents/${engineerId}.json`);
+    return a ? normalizeAgentShape(a) : null;
   }
 
   async listAgents(): Promise<Agent[]> {
@@ -1071,7 +1084,7 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
       // Only read the top-level per-engineerId file, not the by-fingerprint mirror.
       if (file.startsWith("agents/by-fingerprint/")) continue;
       const a = await readJson<Agent>(this.bucket, file);
-      if (a) agents.push(a);
+      if (a) agents.push(normalizeAgentShape(a));
     }
     return agents;
   }
@@ -1150,6 +1163,41 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
     }
   }
 
+  /** ADR-017: refresh heartbeat on drain. Not rate-limited — drains
+   *  are infrequent, so a write every time is acceptable. Resets
+   *  livenessState to online on the authoritative proof-of-life. */
+  async refreshHeartbeat(engineerId: string): Promise<void> {
+    const existing = await readJsonWithGeneration<Agent>(this.bucket, `agents/${engineerId}.json`);
+    if (!existing) return;
+    const { data: agent, generation } = existing;
+    const updated: Agent = {
+      ...normalizeAgentShape(agent),
+      lastHeartbeatAt: new Date().toISOString(),
+      livenessState: "online",
+    };
+    try {
+      await writeJsonWithPrecondition(this.bucket, `agents/${engineerId}.json`, updated, generation);
+      await writeJson(this.bucket, `agents/by-fingerprint/${agent.fingerprint}.json`, updated);
+    } catch (err) {
+      if (err instanceof GcsOccPreconditionFailed) return;
+      throw err;
+    }
+  }
+
+  async setLivenessState(engineerId: string, state: AgentLivenessState): Promise<void> {
+    const existing = await readJsonWithGeneration<Agent>(this.bucket, `agents/${engineerId}.json`);
+    if (!existing) return;
+    const { data: agent, generation } = existing;
+    const updated: Agent = { ...normalizeAgentShape(agent), livenessState: state };
+    try {
+      await writeJsonWithPrecondition(this.bucket, `agents/${engineerId}.json`, updated, generation);
+      await writeJson(this.bucket, `agents/by-fingerprint/${agent.fingerprint}.json`, updated);
+    } catch (err) {
+      if (err instanceof GcsOccPreconditionFailed) return;
+      throw err;
+    }
+  }
+
   /**
    * Mark the Agent bound to this session offline. Called on session teardown.
    * Only writes if the Agent's currentSessionId still matches — otherwise a
@@ -1165,8 +1213,9 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
     const { data: agent, generation } = existing;
     if (agent.currentSessionId !== sessionId) return; // a newer session owns the agent
     const updated: Agent = {
-      ...agent,
+      ...normalizeAgentShape(agent),
       status: "offline",
+      livenessState: "offline",
       lastSeenAt: new Date().toISOString(),
     };
     try {
@@ -1732,6 +1781,23 @@ export class GcsThreadStore implements IThreadStore {
  *   action into the widened `{role, agentId: null}` shape (INV-TH22).
  *   agentId is null because pre-Phase-2 shapes never carried it.
  */
+/** ADR-017 defensive normalization — legacy Agent blobs lacking the
+ *  liveness-layer fields get sane defaults on read. Writes always
+ *  populate these fields; the helper protects against persisted data
+ *  predating the ADR-017 schema addition. */
+function normalizeAgentShape(a: any): Agent {
+  if (!a) return a;
+  const now = a.lastSeenAt ?? a.firstSeenAt ?? new Date(0).toISOString();
+  return {
+    ...a,
+    labels: a.labels ?? {},
+    livenessState: (a.livenessState as Agent["livenessState"]) ?? (a.status === "online" ? "online" : "offline"),
+    lastHeartbeatAt: a.lastHeartbeatAt ?? now,
+    receiptSla: typeof a.receiptSla === "number" ? a.receiptSla : DEFAULT_AGENT_RECEIPT_SLA_MS,
+    wakeEndpoint: typeof a.wakeEndpoint === "string" ? a.wakeEndpoint : null,
+  } as Agent;
+}
+
 function normalizeThreadShape(t: any): Thread {
   const convergenceActions = Array.isArray(t.convergenceActions)
     ? t.convergenceActions.map((a: any) => normalizeStagedActionShape(a))

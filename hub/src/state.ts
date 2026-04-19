@@ -162,6 +162,14 @@ export function taskClaimableBy(
   return true;
 }
 
+/**
+ * ADR-017 liveness FSM — replaces the boolean online/offline `status`.
+ * The legacy `status` field is derived from `livenessState` for backward
+ * compatibility (online → "online"; everything else → "offline") during
+ * migration; v1 surfaces both.
+ */
+export type AgentLivenessState = "online" | "degraded" | "unresponsive" | "offline";
+
 export interface Agent {
   engineerId: string;          // e.g., "eng-abc123xyz" (Hub-issued)
   fingerprint: string;         // sha256(globalInstanceId) — token NOT included
@@ -175,6 +183,11 @@ export interface Agent {
   labels: AgentLabels;         // Mission-19: routing metadata, immutable post-create in v1
   firstSeenAt: string;
   lastSeenAt: string;
+  // ADR-017 liveness FSM — computed from lastHeartbeatAt + receiptSla.
+  livenessState: AgentLivenessState;
+  lastHeartbeatAt: string;     // updated on drain_pending_actions; drives FSM
+  receiptSla: number;          // ms; per-agent override, default DEFAULT_RECEIPT_SLA_MS
+  wakeEndpoint: string | null; // optional durable-wake URL (Cloud Run, etc.)
   // Displacement rate-limit accounting (in-memory, not persisted):
   // see GcsEngineerRegistry.displacementHistory for the in-memory map.
 }
@@ -185,6 +198,9 @@ export interface RegisterAgentPayload {
   clientMetadata: AgentClientMetadata;
   advisoryTags?: AgentAdvisoryTags;
   labels?: AgentLabels;
+  // ADR-017 additions: optional liveness-layer configuration.
+  wakeEndpoint?: string;
+  receiptSla?: number;
 }
 
 export interface RegisterAgentSuccess {
@@ -826,10 +842,40 @@ export interface IEngineerRegistry {
   touchAgent(sessionId: string): Promise<void>;
   /** Mark the Agent bound to this session offline. Called on session teardown. */
   markAgentOffline(sessionId: string): Promise<void>;
+  /** ADR-017: bump `lastHeartbeatAt` and force `livenessState` to "online" for
+   *  an agent that demonstrably drained its queue. Unlike touchAgent (which is
+   *  rate-limited), this is called only on authentic drain events and is not
+   *  rate-limited — drains are infrequent enough to flush every time. */
+  refreshHeartbeat(engineerId: string): Promise<void>;
+  /** ADR-017: flip `livenessState` on an agent (used by the watchdog's
+   *  demotion ladder). No-op for unknown agents. */
+  setLivenessState(engineerId: string, state: AgentLivenessState): Promise<void>;
 }
 
 /** Minimum interval between persisted Agent heartbeat writes (per agent). */
 export const AGENT_TOUCH_MIN_INTERVAL_MS = 30_000;
+
+/** Default ADR-017 receipt SLA — Hub's tolerance for "drain has not arrived yet". */
+export const DEFAULT_AGENT_RECEIPT_SLA_MS = 30_000;
+
+/**
+ * Compute the canonical `livenessState` for an Agent given current time.
+ * INV-AG6 / INV-COMMS-L03: online requires heartbeat within 2× receiptSla;
+ * beyond that it degrades; deeper staleness promotes to unresponsive; the
+ * explicit `offline` state requires a teardown signal and is set elsewhere.
+ */
+export function computeLivenessState(
+  agent: Pick<Agent, "livenessState" | "lastHeartbeatAt" | "receiptSla">,
+  nowMs: number,
+): AgentLivenessState {
+  if (agent.livenessState === "offline") return "offline";
+  const heartbeatAtMs = new Date(agent.lastHeartbeatAt).getTime();
+  const staleMs = nowMs - heartbeatAtMs;
+  const sla = agent.receiptSla;
+  if (staleMs <= 2 * sla) return "online";
+  if (staleMs <= 4 * sla) return "degraded";
+  return "unresponsive";
+}
 
 // ── In-Memory Implementation ─────────────────────────────────────────
 
@@ -1699,6 +1745,12 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
       agent.advisoryTags = payload.advisoryTags ?? {};
       agent.labels = agent.labels ?? {};
       agent.lastSeenAt = now;
+      // ADR-017: liveness reset on displacement; wakeEndpoint + receiptSla
+      // are mutable config (unlike labels) and accept updates per payload.
+      agent.livenessState = "online";
+      agent.lastHeartbeatAt = now;
+      agent.receiptSla = payload.receiptSla ?? agent.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS;
+      agent.wakeEndpoint = payload.wakeEndpoint ?? agent.wakeEndpoint ?? null;
       this.agents.set(agent.engineerId, agent);
       this.sessionToEngineerId.set(sessionId, agent.engineerId);
       this.lastTouchAt.set(agent.engineerId, Date.now());
@@ -1736,6 +1788,10 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
       labels: payload.labels ?? {},
       firstSeenAt: now,
       lastSeenAt: now,
+      livenessState: "online",
+      lastHeartbeatAt: now,
+      receiptSla: payload.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS,
+      wakeEndpoint: payload.wakeEndpoint ?? null,
     };
     this.agents.set(engineerId, agent);
     this.byFingerprint.set(fingerprint, engineerId);
@@ -1755,18 +1811,39 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
 
   async getAgent(engineerId: string): Promise<Agent | null> {
     const a = this.agents.get(engineerId);
-    return a ? { ...a } : null;
+    if (!a) return null;
+    const liveness = computeLivenessState(a, Date.now());
+    return { ...a, livenessState: liveness, status: liveness === "online" ? "online" : "offline" };
   }
 
   async getAgentForSession(sessionId: string): Promise<Agent | null> {
     const engineerId = this.sessionToEngineerId.get(sessionId);
     if (!engineerId) return null;
     const a = this.agents.get(engineerId);
-    return a ? { ...a } : null;
+    if (!a) return null;
+    const liveness = computeLivenessState(a, Date.now());
+    return { ...a, livenessState: liveness, status: liveness === "online" ? "online" : "offline" };
   }
 
   async listAgents(): Promise<Agent[]> {
-    return Array.from(this.agents.values()).map((a) => ({ ...a }));
+    const now = Date.now();
+    return Array.from(this.agents.values()).map((a) => {
+      const liveness = computeLivenessState(a, now);
+      return { ...a, livenessState: liveness, status: liveness === "online" ? "online" : "offline" };
+    });
+  }
+
+  async refreshHeartbeat(engineerId: string): Promise<void> {
+    const a = this.agents.get(engineerId);
+    if (!a) return;
+    a.lastHeartbeatAt = new Date().toISOString();
+    a.livenessState = "online";
+  }
+
+  async setLivenessState(engineerId: string, state: AgentLivenessState): Promise<void> {
+    const a = this.agents.get(engineerId);
+    if (!a) return;
+    a.livenessState = state;
   }
 
   async selectAgents(selector: Selector): Promise<Agent[]> {
@@ -1805,6 +1882,7 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
     const agent = this.agents.get(engineerId);
     if (agent && agent.currentSessionId === sessionId) {
       agent.status = "offline";
+      agent.livenessState = "offline";
       agent.lastSeenAt = new Date().toISOString();
     }
     this.sessionToEngineerId.delete(sessionId);

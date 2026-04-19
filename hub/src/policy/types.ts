@@ -4,7 +4,15 @@
 
 import type { ZodType } from "zod";
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, Selector } from "../state.js";
-import type { IIdeaStore, IMissionStore, ITurnStore, ITeleStore, IBugStore } from "../entities/index.js";
+import type {
+  IIdeaStore,
+  IMissionStore,
+  ITurnStore,
+  ITeleStore,
+  IBugStore,
+  IPendingActionStore,
+  IDirectorNotificationStore,
+} from "../entities/index.js";
 
 // ── Domain Event (internal, synchronous) ────────────────────────────
 
@@ -26,6 +34,8 @@ export interface AllStores {
   turn: ITurnStore;
   tele: ITeleStore;
   bug: IBugStore;
+  pendingAction: IPendingActionStore;
+  directorNotification: IDirectorNotificationStore;
 }
 
 // ── Policy Context (the Layer 4 ↔ Layer 7 seam) ─────────────────────

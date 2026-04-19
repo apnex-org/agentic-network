@@ -159,13 +159,26 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
     openSelector = null;
   }
   if (openSelector) {
-    await ctx.dispatch("thread_message", {
+    const dispatchPayload = {
       threadId: thread.id,
       title: thread.title,
       author,
       message: message.substring(0, 200),
       currentTurn: thread.currentTurn,
-    }, openSelector);
+    };
+    // ADR-017 INV-COMMS-L01: enqueue BEFORE SSE. For unicast opens we
+    // know the exact target; for broadcast the dispatch targets a role
+    // pool and no specific agent is "owed" a response (any one may
+    // claim it) — broadcast enqueueing is Phase-2 scope.
+    if (routingMode === "unicast" && recipientAgentId) {
+      await ctx.stores.pendingAction.enqueue({
+        targetAgentId: recipientAgentId,
+        dispatchType: "thread_message",
+        entityRef: thread.id,
+        payload: dispatchPayload,
+      });
+    }
+    await ctx.dispatch("thread_message", dispatchPayload, openSelector);
   }
 
   return {
@@ -191,6 +204,11 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   const semanticIntent = (args.semanticIntent as string) || null;
   const stagedActions = (args.stagedActions as StagedActionOp[] | undefined) ?? [];
   const summary = args.summary as string | undefined;
+  // ADR-017: when present, the caller is settling a queue item. The ACK
+  // lands atomically with the reply — if the reply succeeds, the queue
+  // item transitions to completion_acked. Missing ID is fine (callers
+  // pre-ADR-017 or callers not holding a specific queue item).
+  const sourceQueueItemId = (args.sourceQueueItemId as string | undefined) ?? null;
 
   const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
   const author: ThreadAuthor = callerRole === "engineer" ? "engineer" : "architect";
@@ -242,13 +260,31 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
         `[ThreadPolicy] INV-TH27 violation: thread ${thread.id} reply has no resolved counterparty agentId. All post-Phase-1 threads must have resolved agentIds — participant-upsert chain is broken upstream.`,
       );
     }
-    await ctx.dispatch("thread_message", {
+    const replyPayload = {
       threadId: thread.id,
       title: thread.title,
       author,
       message: message.substring(0, 200),
       currentTurn: thread.currentTurn,
-    }, { engineerIds: otherParticipantIds, matchLabels: thread.labels });
+    };
+    // ADR-017 INV-COMMS-L01: enqueue per-recipient BEFORE SSE.
+    for (const targetId of otherParticipantIds) {
+      await ctx.stores.pendingAction.enqueue({
+        targetAgentId: targetId,
+        dispatchType: "thread_message",
+        entityRef: thread.id,
+        payload: replyPayload,
+      });
+    }
+    await ctx.dispatch("thread_message", replyPayload, { engineerIds: otherParticipantIds, matchLabels: thread.labels });
+  }
+
+  // ADR-017 completion ACK: if the caller supplied a sourceQueueItemId,
+  // the owed work has been delivered — flip the queue item to
+  // completion_acked. Happens AFTER the successful reply persistence so
+  // we only ack on observed work-lands.
+  if (sourceQueueItemId) {
+    await ctx.stores.pendingAction.completionAck(sourceQueueItemId);
   }
 
   // Mission-21: push an internal cascade event on convergence so the
@@ -587,6 +623,7 @@ export function registerThreadPolicy(router: PolicyRouter): void {
           }),
         ]),
       ).optional().describe("Ordered staging operations applied to the thread's convergenceActions[]. stage allocates a new action-N id; revise supersedes a prior id; retract withdraws a prior id."),
+      sourceQueueItemId: z.string().optional().describe("ADR-017: when this reply settles a pending-action queue item, pass its id (from drain_pending_actions). The Hub flips the item to completion_acked on successful reply. Omit when replying autonomously (not in response to a queued dispatch)."),
     },
     createThreadReply,
   );

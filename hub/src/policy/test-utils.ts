@@ -7,6 +7,8 @@ import { MemoryMissionStore } from "../entities/mission.js";
 import { MemoryTurnStore } from "../entities/turn.js";
 import { MemoryTeleStore } from "../entities/tele.js";
 import { MemoryBugStore } from "../entities/bug.js";
+import { MemoryPendingActionStore } from "../entities/pending-action.js";
+import { MemoryDirectorNotificationStore } from "../entities/director-notification.js";
 
 interface EmittedEvent {
   event: string;
@@ -43,6 +45,8 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     turn: new MemoryTurnStore(mission, task),
     tele: new MemoryTeleStore(),
     bug: new MemoryBugStore(),
+    pendingAction: new MemoryPendingActionStore(),
+    directorNotification: new MemoryDirectorNotificationStore(),
   };
 
   return {

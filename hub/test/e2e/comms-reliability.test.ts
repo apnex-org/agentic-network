@@ -13,11 +13,13 @@
  * Run with: `npm test -- comms-reliability`
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { PolicyRouter } from "../../src/policy/router.js";
 import { registerThreadPolicy } from "../../src/policy/thread-policy.js";
 import { registerSessionPolicy } from "../../src/policy/session-policy.js";
+import { registerPendingActionPolicy } from "../../src/policy/pending-action-policy.js";
 import { createTestContext, type TestPolicyContext } from "../../src/policy/test-utils.js";
+import { Watchdog } from "../../src/policy/watchdog.js";
 import type { AgentClientMetadata } from "../../src/state.js";
 
 const noop = () => {};
@@ -31,8 +33,8 @@ const CLIENT: AgentClientMetadata = {
 
 // Test-side helper — registers an agent whose wake-endpoint is a fake that
 // NEVER returns (simulates Cloud Run deploy absent / scale-to-zero failure).
-async function registerUnresponsiveArchitect(ctx: TestPolicyContext) {
-  await ctx.stores.engineerRegistry.registerAgent(
+async function registerUnresponsiveArchitect(ctx: TestPolicyContext): Promise<string> {
+  const result = await ctx.stores.engineerRegistry.registerAgent(
     ctx.sessionId,
     "architect",
     {
@@ -44,9 +46,10 @@ async function registerUnresponsiveArchitect(ctx: TestPolicyContext) {
       // simulates an architect that is fully unresponsive (no receipt ACK, no
       // completion ACK, no cold-start success).
       wakeEndpoint: "http://localhost:0/wake-blackhole",
-    } as any,
+    },
   );
-  return `eng-arch-mock`;
+  if (!result.ok) throw new Error(`registerAgent failed: ${(result as any).code}`);
+  return result.engineerId;
 }
 
 async function registerEngineer(ctx: TestPolicyContext) {
@@ -67,6 +70,7 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
   let archRouter: PolicyRouter;
   let engCtx: TestPolicyContext;
   let archCtx: TestPolicyContext;
+  let watchdog: Watchdog;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -76,6 +80,8 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
     registerThreadPolicy(archRouter);
     registerSessionPolicy(engRouter);
     registerSessionPolicy(archRouter);
+    registerPendingActionPolicy(engRouter);
+    registerPendingActionPolicy(archRouter);
 
     engCtx = createTestContext({ sessionId: "sess-eng", role: "engineer" });
     archCtx = createTestContext({
@@ -83,6 +89,14 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
       role: "architect",
       stores: engCtx.stores, // share the store layer
     });
+
+    watchdog = new Watchdog({ stores: engCtx.stores, tickIntervalMs: 1_000 });
+    watchdog.start();
+  });
+
+  afterEach(() => {
+    watchdog.stop();
+    vi.useRealTimers();
   });
 
   // ═════════════════════════════════════════════════════════════════
@@ -167,9 +181,10 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
 
       // INV-COMMS-L05 — escalation ladder auditable.
       const audit = await engCtx.stores.audit.listEntries();
-      const ladder = audit.filter((a) =>
-        ["comms_redispatch", "agent_demoted", "queue_item_escalated"].includes(a.action),
-      );
+      // listEntries returns most-recent-first; reverse for chronological ladder.
+      const ladder = audit
+        .filter((a) => ["comms_redispatch", "agent_demoted", "queue_item_escalated"].includes(a.action))
+        .reverse();
       expect(ladder.map((a) => a.action)).toEqual([
         "comms_redispatch",
         "agent_demoted",
@@ -182,7 +197,7 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
       expect(notifications.filter((n: any) => n.source === "queue_item_escalated")).toHaveLength(1);
 
       // INV-AG6 — agent livenessState demoted.
-      const arch = await engCtx.stores.engineerRegistry.getAgentById(archAgentId);
+      const arch = await engCtx.stores.engineerRegistry.getAgent(archAgentId);
       expect((arch as any).livenessState).toBe("unresponsive");
 
       // INV-COMMS-L04 — queue item is terminal (escalated), NOT eternally enqueued.
@@ -206,7 +221,7 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
       // Register establishes heartbeat; advance past 2x receiptSla.
       await vi.advanceTimersByTimeAsync(70_000); // 70s > 2 * 30s
 
-      const arch = await engCtx.stores.engineerRegistry.getAgentById(archAgentId);
+      const arch = await engCtx.stores.engineerRegistry.getAgent(archAgentId);
       expect((arch as any).livenessState).toBe("degraded");
       // Legacy boolean status stays consistent with FSM during Phase 1–2.
       expect(arch?.status).not.toBe("online");
@@ -220,7 +235,7 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
       // Architect recovers: calls drain.
       await archRouter.handle("drain_pending_actions", {}, archCtx);
 
-      const arch = await engCtx.stores.engineerRegistry.getAgentById(archAgentId);
+      const arch = await engCtx.stores.engineerRegistry.getAgent(archAgentId);
       expect((arch as any).livenessState).toBe("online");
     });
   });

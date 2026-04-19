@@ -14,7 +14,9 @@ import { GcsTaskStore, GcsEngineerRegistry, GcsProposalStore, GcsThreadStore, Gc
 import {
   MemoryIdeaStore, MemoryMissionStore, MemoryTurnStore, MemoryTeleStore, MemoryBugStore,
   GcsIdeaStore, GcsMissionStore, GcsTurnStore, GcsTeleStore, GcsBugStore,
+  MemoryPendingActionStore, MemoryDirectorNotificationStore,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
+  type IPendingActionStore, type IDirectorNotificationStore,
 } from "./entities/index.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy } from "./policy/index.js";
@@ -31,6 +33,8 @@ import { registerReviewPolicy } from "./policy/review-policy.js";
 import { registerProposalPolicy } from "./policy/proposal-policy.js";
 import { registerThreadPolicy } from "./policy/thread-policy.js";
 import { registerBugPolicy } from "./policy/bug-policy.js";
+import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
+import { Watchdog } from "./policy/watchdog.js";
 import { bindRouterToMcp } from "./policy/mcp-binding.js";
 import type { AllStores } from "./policy/index.js";
 
@@ -49,6 +53,11 @@ let missionStore: IMissionStore;
 let turnStore: ITurnStore;
 let teleStore: ITeleStore;
 let bugStore: IBugStore;
+// ADR-017: comms reliability layer. Memory-only in v1 (Hub restart drops the
+// queue); GCS persistence is a Phase-1-extension follow-up. Queue rebuild
+// after restart is a manual reconcile pass against audit for now.
+let pendingActionStore: IPendingActionStore;
+let directorNotificationStore: IDirectorNotificationStore;
 
 if (STORAGE_BACKEND === "gcs") {
   console.log(`[Hub] Using GCS storage backend: gs://${GCS_BUCKET}`);
@@ -64,6 +73,8 @@ if (STORAGE_BACKEND === "gcs") {
   turnStore = new GcsTurnStore(GCS_BUCKET, missionStore, taskStore);
   teleStore = new GcsTeleStore(GCS_BUCKET);
   bugStore = new GcsBugStore(GCS_BUCKET);
+  pendingActionStore = new MemoryPendingActionStore();
+  directorNotificationStore = new MemoryDirectorNotificationStore();
 } else {
   if (process.env.NODE_ENV === "production") {
     console.error("[Hub] FATAL: STORAGE_BACKEND is 'memory' in production. Set STORAGE_BACKEND=gcs to prevent silent state loss.");
@@ -81,6 +92,8 @@ if (STORAGE_BACKEND === "gcs") {
   turnStore = new MemoryTurnStore(missionStore, taskStore);
   teleStore = new MemoryTeleStore();
   bugStore = new MemoryBugStore();
+  pendingActionStore = new MemoryPendingActionStore();
+  directorNotificationStore = new MemoryDirectorNotificationStore();
 }
 
 // ── Aggregate Store Object ────────────────────────────────────────────
@@ -95,6 +108,8 @@ const allStores: AllStores = {
   turn: turnStore,
   tele: teleStore,
   bug: bugStore,
+  pendingAction: pendingActionStore,
+  directorNotification: directorNotificationStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────
@@ -115,7 +130,30 @@ registerReviewPolicy(policyRouter);
 registerProposalPolicy(policyRouter);
 registerThreadPolicy(policyRouter);
 registerBugPolicy(policyRouter);
+registerPendingActionPolicy(policyRouter);
 console.log(`[Hub] PolicyRouter initialized with ${policyRouter.size} tool(s): ${policyRouter.getRegisteredTools().join(", ")}`);
+
+// ADR-017: start the comms-reliability watchdog. Stateless scanner over
+// the pending-actions queue; enforces deadlines + escalation ladder. The
+// injectable wake-client uses fetch (best-effort); failures are logged but
+// never block watchdog progress — the queue is the truth.
+const watchdog = new Watchdog({
+  stores: allStores,
+  log: (msg) => console.log(msg),
+  wakeClient: async (wakeEndpoint, item) => {
+    try {
+      await fetch(wakeEndpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ queueItemId: item.id, dispatchType: item.dispatchType, entityRef: item.entityRef }),
+      });
+    } catch (err: any) {
+      console.log(`[Hub] Watchdog wake-POST failed for ${wakeEndpoint}: ${err?.message ?? err}`);
+    }
+  },
+});
+watchdog.start();
+console.log("[Hub] ADR-017 comms-reliability watchdog started");
 
 // ── MCP Server Factory ───────────────────────────────────────────────
 // Each session gets its own McpServer instance connected to its transport.

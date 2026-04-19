@@ -21,3 +21,21 @@ export { GcsTeleStore } from "./gcs/gcs-tele.js";
 export type { Bug, BugStatus, BugSeverity, IBugStore } from "./bug.js";
 export { MemoryBugStore } from "./bug.js";
 export { GcsBugStore } from "./gcs/gcs-bug.js";
+
+export type {
+  PendingActionItem,
+  PendingActionState,
+  PendingActionDispatchType,
+  IPendingActionStore,
+  EnqueueOptions,
+} from "./pending-action.js";
+export { MemoryPendingActionStore, DEFAULT_RECEIPT_SLA_MS, DEFAULT_COMPLETION_SLA_MS } from "./pending-action.js";
+
+export type {
+  DirectorNotification,
+  NotificationSeverity,
+  NotificationSource,
+  IDirectorNotificationStore,
+  CreateNotificationOptions,
+} from "./director-notification.js";
+export { MemoryDirectorNotificationStore } from "./director-notification.js";

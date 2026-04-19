@@ -1,0 +1,204 @@
+/**
+ * PendingActionItem Entity (ADR-017).
+ *
+ * Authoritative record of work owed to a specific agent. Every
+ * dispatched event that expects an agent response enqueues a
+ * PendingActionItem BEFORE SSE fires (INV-COMMS-L01). SSE is a
+ * delivery hint; the queue is truth.
+ *
+ * FSM:  enqueued → receipt_acked → completion_acked    (happy path)
+ *                → escalated                            (Director handoff)
+ *                → errored                              (non-recoverable)
+ *
+ * Natural-key idempotency: {targetAgentId, entityRef, dispatchType}.
+ */
+
+export type PendingActionDispatchType =
+  | "thread_message"
+  | "thread_convergence_finalized"
+  | "task_issued"
+  | "proposal_submitted"
+  | "report_created"
+  | "review_requested";
+
+export type PendingActionState =
+  | "enqueued"
+  | "receipt_acked"
+  | "completion_acked"
+  | "escalated"
+  | "errored";
+
+export interface PendingActionItem {
+  id: string;
+  targetAgentId: string;
+  dispatchType: PendingActionDispatchType;
+  entityRef: string;
+  naturalKey: string;
+  payload: Record<string, unknown>;
+  enqueuedAt: string;
+  receiptDeadline: string;
+  completionDeadline: string;
+  receiptAckedAt: string | null;
+  completionAckedAt: string | null;
+  attemptCount: number;
+  lastAttemptAt: string | null;
+  state: PendingActionState;
+  escalationReason: string | null;
+}
+
+export interface EnqueueOptions {
+  targetAgentId: string;
+  dispatchType: PendingActionDispatchType;
+  entityRef: string;
+  payload: Record<string, unknown>;
+  receiptSlaMs?: number;
+  completionSlaMs?: number;
+}
+
+// Default SLAs (per-dispatch-type overrides at the policy layer).
+export const DEFAULT_RECEIPT_SLA_MS = 30_000;
+export const DEFAULT_COMPLETION_SLA_MS = 5 * 60_000;
+
+export interface IPendingActionStore {
+  enqueue(opts: EnqueueOptions): Promise<PendingActionItem>;
+  getById(id: string): Promise<PendingActionItem | null>;
+  listForAgent(
+    targetAgentId: string,
+    filter?: { state?: PendingActionState },
+  ): Promise<PendingActionItem[]>;
+  receiptAck(id: string): Promise<PendingActionItem | null>;
+  completionAck(id: string): Promise<PendingActionItem | null>;
+  escalate(id: string, reason: string): Promise<PendingActionItem | null>;
+  incrementAttempt(id: string): Promise<PendingActionItem | null>;
+  /** Watchdog rescheduling: on stage-1/2 re-dispatch, push the receipt
+   *  deadline forward so the agent gets another SLA window before the
+   *  next escalation step. */
+  rescheduleReceiptDeadline(id: string, newDeadline: string): Promise<PendingActionItem | null>;
+  /** Watchdog scan: items whose deadline has passed and state is non-terminal. */
+  listExpired(nowMs: number): Promise<PendingActionItem[]>;
+}
+
+function naturalKey(opts: { targetAgentId: string; dispatchType: string; entityRef: string }): string {
+  return `${opts.targetAgentId}:${opts.entityRef}:${opts.dispatchType}`;
+}
+
+function cloneItem(item: PendingActionItem): PendingActionItem {
+  return { ...item, payload: { ...item.payload } };
+}
+
+export class MemoryPendingActionStore implements IPendingActionStore {
+  private items = new Map<string, PendingActionItem>();
+  private byNaturalKey = new Map<string, string>(); // naturalKey → id
+  private counter = 0;
+
+  async enqueue(opts: EnqueueOptions): Promise<PendingActionItem> {
+    const key = naturalKey(opts);
+    const existingId = this.byNaturalKey.get(key);
+    if (existingId) {
+      const existing = this.items.get(existingId);
+      if (existing && existing.state !== "completion_acked" && existing.state !== "errored") {
+        // INV-PA2 — idempotent re-enqueue on non-terminal items returns existing.
+        return cloneItem(existing);
+      }
+      // Terminal item with same natural key — allow a new one (re-opens).
+    }
+
+    this.counter++;
+    const now = new Date();
+    const receiptSla = opts.receiptSlaMs ?? DEFAULT_RECEIPT_SLA_MS;
+    const completionSla = opts.completionSlaMs ?? DEFAULT_COMPLETION_SLA_MS;
+    const id = `pa-${now.toISOString().replace(/[:.]/g, "-")}-${this.counter.toString(36)}`;
+    const item: PendingActionItem = {
+      id,
+      targetAgentId: opts.targetAgentId,
+      dispatchType: opts.dispatchType,
+      entityRef: opts.entityRef,
+      naturalKey: key,
+      payload: { ...opts.payload },
+      enqueuedAt: now.toISOString(),
+      receiptDeadline: new Date(now.getTime() + receiptSla).toISOString(),
+      completionDeadline: new Date(now.getTime() + completionSla).toISOString(),
+      receiptAckedAt: null,
+      completionAckedAt: null,
+      attemptCount: 0,
+      lastAttemptAt: null,
+      state: "enqueued",
+      escalationReason: null,
+    };
+    this.items.set(id, item);
+    this.byNaturalKey.set(key, id);
+    return cloneItem(item);
+  }
+
+  async getById(id: string): Promise<PendingActionItem | null> {
+    const item = this.items.get(id);
+    return item ? cloneItem(item) : null;
+  }
+
+  async listForAgent(
+    targetAgentId: string,
+    filter?: { state?: PendingActionState },
+  ): Promise<PendingActionItem[]> {
+    const out: PendingActionItem[] = [];
+    for (const item of this.items.values()) {
+      if (item.targetAgentId !== targetAgentId) continue;
+      if (filter?.state && item.state !== filter.state) continue;
+      out.push(cloneItem(item));
+    }
+    return out;
+  }
+
+  async receiptAck(id: string): Promise<PendingActionItem | null> {
+    const item = this.items.get(id);
+    if (!item) return null;
+    if (item.state !== "enqueued") return cloneItem(item); // idempotent
+    item.state = "receipt_acked";
+    item.receiptAckedAt = new Date().toISOString();
+    return cloneItem(item);
+  }
+
+  async completionAck(id: string): Promise<PendingActionItem | null> {
+    const item = this.items.get(id);
+    if (!item) return null;
+    if (item.state === "completion_acked") return cloneItem(item); // idempotent
+    item.state = "completion_acked";
+    item.completionAckedAt = new Date().toISOString();
+    if (!item.receiptAckedAt) item.receiptAckedAt = item.completionAckedAt;
+    return cloneItem(item);
+  }
+
+  async escalate(id: string, reason: string): Promise<PendingActionItem | null> {
+    const item = this.items.get(id);
+    if (!item) return null;
+    item.state = "escalated";
+    item.escalationReason = reason;
+    return cloneItem(item);
+  }
+
+  async incrementAttempt(id: string): Promise<PendingActionItem | null> {
+    const item = this.items.get(id);
+    if (!item) return null;
+    item.attemptCount += 1;
+    item.lastAttemptAt = new Date().toISOString();
+    return cloneItem(item);
+  }
+
+  async rescheduleReceiptDeadline(id: string, newDeadline: string): Promise<PendingActionItem | null> {
+    const item = this.items.get(id);
+    if (!item) return null;
+    item.receiptDeadline = newDeadline;
+    return cloneItem(item);
+  }
+
+  async listExpired(nowMs: number): Promise<PendingActionItem[]> {
+    const out: PendingActionItem[] = [];
+    for (const item of this.items.values()) {
+      if (item.state === "completion_acked" || item.state === "escalated" || item.state === "errored") continue;
+      const deadline = item.state === "enqueued"
+        ? new Date(item.receiptDeadline).getTime()
+        : new Date(item.completionDeadline).getTime();
+      if (nowMs >= deadline) out.push(cloneItem(item));
+    }
+    return out;
+  }
+}
