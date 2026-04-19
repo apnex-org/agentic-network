@@ -425,6 +425,14 @@ async function attemptThreadReply(
       `Set \`intent\` to one of decision_needed, agreement_pending, director_input, implementation_ready when appropriate. ` +
       `If you need additional document context beyond what's pre-loaded, call get_document first, then call create_thread_reply.`;
 
+    // Cumulative per-sandwich LLM usage accounting (M-Cognitive-Hypervisor
+    // Phase 1 shim-layer add). Per-round Gemini usageMetadata is surfaced
+    // via onUsage and aggregated so the sandwich logs a single summary
+    // line at completion — makes per-reply cost legible without grepping.
+    let cumPromptTokens = 0;
+    let cumCompletionTokens = 0;
+    let finalRound = 0;
+
     let result: string;
     try {
       const out = await generateWithTools(
@@ -433,8 +441,22 @@ async function attemptThreadReply(
         functionDeclarations,
         executeToolCall,
         contextSupplement,
+        {
+          injectRoundBudget: true,
+          parallelToolCalls: true, // thread-reply allow-list tools are independent; safe to batch
+          onUsage: (u) => {
+            cumPromptTokens += u.promptTokens;
+            cumCompletionTokens += u.completionTokens;
+            finalRound = u.round;
+          },
+        },
       );
       result = out.text;
+      console.log(
+        `[Sandwich] thread-reply ${threadId}: ${finalRound} rounds, ` +
+          `${cumPromptTokens} prompt + ${cumCompletionTokens} completion = ` +
+          `${cumPromptTokens + cumCompletionTokens} total Gemini tokens`,
+      );
     } catch (err) {
       console.error(`[Sandwich] LLM generation failed for thread ${threadId}:`, err);
       await hub.createAuditEntry(

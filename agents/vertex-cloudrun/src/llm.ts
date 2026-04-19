@@ -20,6 +20,53 @@ const MODEL = "gemini-3-flash-preview";
 const MAX_TOOL_ROUNDS = 10; // Prevent infinite tool-calling loops
 
 /**
+ * Per-round Gemini usage metadata, surfaced to callers via the
+ * `onUsage` callback in `CognitiveOptions`. Used by callers to
+ * accumulate token budgets across multi-round invocations.
+ */
+export interface LlmRoundUsage {
+  round: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  finishReason?: string;
+  parallelToolCalls?: number; // count of tool calls executed in this round
+}
+
+/**
+ * Cognitive-hypervisor shim options for `generateWithTools`.
+ *
+ * These are the architect-side Phase 1 additions specified in
+ * M-Cognitive-Hypervisor (ADR-018 Non-goals §shim-layer). The shared
+ * `@ois/cognitive-layer` package sits at the tool-call boundary; these
+ * options sit inside the LLM loop where only the agent that OWNS the
+ * prompt can reach.
+ */
+export interface CognitiveOptions {
+  /**
+   * Inject `[Cognitive Budget: round N/M — consider converging if
+   * approaching the limit]` as a synthetic trailing line on the system
+   * instruction for each LLM turn. Teaches the LLM to self-pace.
+   * Default: `true`.
+   */
+  injectRoundBudget?: boolean;
+  /**
+   * When a round emits multiple tool calls, execute them in parallel
+   * (via `Promise.all`) rather than serially. Safe when tools are
+   * independent; can be disabled if the executor has ordering
+   * constraints on shared state. Default: `false` (conservative —
+   * opt in per call site).
+   */
+  parallelToolCalls?: boolean;
+  /**
+   * Per-round callback receiving Gemini `usageMetadata` + round number.
+   * Enables callers to accumulate cumulative token usage for
+   * observability without parsing Cloud Run logs.
+   */
+  onUsage?: (usage: LlmRoundUsage) => void;
+}
+
+/**
  * Sentinel returned by `generateWithTools` when the tool-loop hits
  * `MAX_TOOL_ROUNDS`. Exported so downstream code can recognise it and
  * refuse to persist it into replayed context — otherwise the model
@@ -343,11 +390,15 @@ export async function generateWithTools(
   userMessage: string,
   functionDeclarations: FunctionDeclaration[],
   executeToolCall: ToolExecutor,
-  contextSupplement: string = ""
+  contextSupplement: string = "",
+  cognitive: CognitiveOptions = {},
 ): Promise<{ text: string; history: Content[] }> {
   const client = getAI();
 
-  const systemInstruction =
+  const injectBudget = cognitive.injectRoundBudget !== false;
+  const parallelToolCalls = cognitive.parallelToolCalls === true;
+
+  const baseSystemInstruction =
     ARCHITECT_SYSTEM_PROMPT +
     (contextSupplement ? "\n\n" + contextSupplement : "");
 
@@ -361,6 +412,15 @@ export async function generateWithTools(
 
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
+
+    // Round-budget injection: append a budget-status line to the system
+    // instruction before each LLM turn so the model self-paces. Budget
+    // text is stable within a round; a fresh system instruction is
+    // computed per-iteration so the round number advances.
+    const budgetNote = injectBudget
+      ? `\n\n[Cognitive Budget: round ${rounds}/${MAX_TOOL_ROUNDS} — consider converging if approaching the limit]`
+      : "";
+    const systemInstruction = baseSystemInstruction + budgetNote;
 
     // 429 retry mirrors generateText; does NOT count against MAX_TOOL_ROUNDS
     let response: Awaited<ReturnType<typeof client.models.generateContent>> | null = null;
@@ -434,6 +494,21 @@ export async function generateWithTools(
     } else {
       console.log(`[LLM] generateWithTools round ${rounds}: finishReason=${finishReason ?? "none"}`);
     }
+    // Surface per-round usage to caller for cumulative accounting
+    if (cognitive.onUsage) {
+      try {
+        cognitive.onUsage({
+          round: rounds,
+          promptTokens: Number(usage?.promptTokenCount ?? 0),
+          completionTokens: Number(usage?.candidatesTokenCount ?? 0),
+          totalTokens: Number(usage?.totalTokenCount ?? 0),
+          finishReason: finishReason ? String(finishReason) : undefined,
+          parallelToolCalls: response.functionCalls?.length,
+        });
+      } catch {
+        /* usage sink must never disturb the LLM loop */
+      }
+    }
 
     // Add model response to history
     const modelContent = response.candidates?.[0]?.content;
@@ -448,24 +523,57 @@ export async function generateWithTools(
       return { text: response.text || "", history: contents };
     }
 
-    // Execute each function call
+    // Execute function calls — in parallel when safe (default: serial
+    // to preserve ordering invariants in legacy executors; enable
+    // `cognitive.parallelToolCalls` for single-turn batched reads).
     const responseParts: Part[] = [];
-    for (const fc of functionCalls) {
-      if (!fc.name) continue;
+    const namedCalls = functionCalls.filter((fc) => fc.name);
 
-      console.log(`[LLM] Tool call: ${fc.name}(${JSON.stringify(fc.args || {}).substring(0, 100)})`);
-
-      try {
-        const result = await executeToolCall(fc.name, fc.args ?? {});
-        responseParts.push(
-          createPartFromFunctionResponse(fc.id ?? "", fc.name, result)
-        );
-      } catch (err: any) {
-        responseParts.push(
-          createPartFromFunctionResponse(fc.id ?? "", fc.name, {
-            error: err.message || String(err),
-          })
-        );
+    if (parallelToolCalls && namedCalls.length > 1) {
+      console.log(`[LLM] Tool calls (parallel): ${namedCalls.length}`);
+      type ParallelResult =
+        | { ok: true; fc: (typeof namedCalls)[number]; result: Record<string, unknown> }
+        | { ok: false; fc: (typeof namedCalls)[number]; error: unknown };
+      const results: ParallelResult[] = await Promise.all(
+        namedCalls.map(async (fc): Promise<ParallelResult> => {
+          console.log(`[LLM] Tool call: ${fc.name}(${JSON.stringify(fc.args || {}).substring(0, 100)})`);
+          try {
+            const result = await executeToolCall(fc.name!, fc.args ?? {});
+            return { ok: true, fc, result };
+          } catch (err) {
+            return { ok: false, fc, error: err };
+          }
+        }),
+      );
+      // Preserve original call order in response parts
+      for (const r of results) {
+        if (r.ok) {
+          responseParts.push(
+            createPartFromFunctionResponse(r.fc.id ?? "", r.fc.name!, r.result),
+          );
+        } else {
+          const msg = r.error instanceof Error ? r.error.message : String(r.error);
+          responseParts.push(
+            createPartFromFunctionResponse(r.fc.id ?? "", r.fc.name!, { error: msg }),
+          );
+        }
+      }
+    } else {
+      // Serial execution (legacy default)
+      for (const fc of namedCalls) {
+        console.log(`[LLM] Tool call: ${fc.name}(${JSON.stringify(fc.args || {}).substring(0, 100)})`);
+        try {
+          const result = await executeToolCall(fc.name!, fc.args ?? {});
+          responseParts.push(
+            createPartFromFunctionResponse(fc.id ?? "", fc.name!, result),
+          );
+        } catch (err: any) {
+          responseParts.push(
+            createPartFromFunctionResponse(fc.id ?? "", fc.name!, {
+              error: err.message || String(err),
+            }),
+          );
+        }
       }
     }
 

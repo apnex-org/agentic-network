@@ -335,12 +335,31 @@ export function createDirectorChatRouter(
         session.history = trimSessionHistory(persistedHistory, MAX_SESSION_HISTORY_ENTRIES);
       }
 
+      // M-Cognitive-Hypervisor Phase 1 shim: budget injection + usage
+      // emission. Parallel tool calls intentionally disabled for director-
+      // chat — session history order assumptions are not yet audited.
+      let cumPromptTokens = 0;
+      let cumCompletionTokens = 0;
+      let finalRound = 0;
       const { text, history } = await generateWithTools(
         session.history,
         message,
         cachedFunctionDeclarations,
         executeToolCall,
-        contextSupplement
+        contextSupplement,
+        {
+          injectRoundBudget: true,
+          parallelToolCalls: false,
+          onUsage: (u) => {
+            cumPromptTokens += u.promptTokens;
+            cumCompletionTokens += u.completionTokens;
+            finalRound = u.round;
+          },
+        },
+      );
+      console.log(
+        `[DirectorChat] session ${session.id}: ${finalRound} rounds, ` +
+          `${cumPromptTokens}+${cumCompletionTokens}=${cumPromptTokens + cumCompletionTokens} Gemini tokens`,
       );
 
       // Update session history — trim to cap so tool-loop rounds
