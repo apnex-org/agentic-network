@@ -16,15 +16,22 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
   const proposals = await ctx.stores.proposal.getProposals();
   const threads = await ctx.stores.thread.listThreads();
 
-  // Reports awaiting Architect read (exclude already-reviewed)
+  // Reports awaiting Architect read (exclude already-reviewed).
+  // idea-89 fix: submitReport transitions task → "in_review", but this
+  // filter was only matching "completed"/"failed"/"reported_*". Result:
+  // 14+ engineer reports sat in in_review indefinitely because the
+  // architect's EventLoop poll saw unreviewedTasks:[] every tick.
+  // Include "in_review" so the architect sandwich picks them up.
   const unreadReports = tasks.filter(
-    (t) => (t.status === "completed" || t.status === "failed") && t.report !== null && !t.reviewAssessment
+    (t) => (t.status === "in_review" || t.status === "completed" || t.status === "failed") && t.report !== null && !t.reviewAssessment
   );
 
-  // Completed tasks without review
+  // Completed tasks without review. Same fix as above — add "in_review"
+  // so the EventLoop.unreviewedTasks poll drains reports awaiting review.
   const unreviewedTasks = tasks.filter(
     (t) =>
-      (t.status === "completed" ||
+      (t.status === "in_review" ||
+       t.status === "completed" ||
        t.status === "failed" ||
        t.status?.startsWith("reported_")) &&
       !t.reviewAssessment
