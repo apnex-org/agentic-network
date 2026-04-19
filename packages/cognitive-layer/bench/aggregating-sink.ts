@@ -18,12 +18,25 @@ export interface AggregatedCounters {
   toolErrors: number;
   listTools: number;
   overflow: number;
+  /** Phase 2a ckpt-C — Gemini / shim-LLM usage events */
+  llmUsageEvents: number;
 
   // Volume & payload
   totalInputBytes: number;
   totalOutputBytes: number;
   totalInputTokensApprox: number;
   totalOutputTokensApprox: number;
+
+  // Phase 2a — LLM-side token accounting (sum across llm_usage events)
+  totalLlmPromptTokens: number;
+  totalLlmCompletionTokens: number;
+  totalLlmTotalTokens: number;
+
+  // Phase 2a — Virtual Tokens Saved (ResponseSummarizer KPI)
+  /** Sum of ctx.tags.virtualTokensSaved across all tool_call events */
+  totalVirtualTokensSaved: number;
+  /** Count of events that triggered ResponseSummarizer truncation */
+  summarizedCallCount: number;
 
   // Duration (sum + count for mean derivation)
   totalDurationMs: number;
@@ -71,6 +84,12 @@ export class AggregatingTelemetrySink {
       case "telemetry_overflow":
         c.overflow++;
         return;
+      case "llm_usage":
+        c.llmUsageEvents++;
+        if (typeof event.llmPromptTokens === "number") c.totalLlmPromptTokens += event.llmPromptTokens;
+        if (typeof event.llmCompletionTokens === "number") c.totalLlmCompletionTokens += event.llmCompletionTokens;
+        if (typeof event.llmTotalTokens === "number") c.totalLlmTotalTokens += event.llmTotalTokens;
+        return;
     }
 
     if (typeof event.durationMs === "number") {
@@ -101,6 +120,13 @@ export class AggregatingTelemetrySink {
       c.circuitBreakerFastFails++;
     }
     if (tags.circuitBreaker === "probe") c.circuitBreakerProbes++;
+
+    // Phase 2a — Virtual Tokens Saved (architect-ratified primary KPI)
+    if (tags.summarized === "true") {
+      c.summarizedCallCount++;
+      const vts = Number(tags.virtualTokensSaved);
+      if (Number.isFinite(vts)) c.totalVirtualTokensSaved += vts;
+    }
 
     if (event.errorMessage) {
       const prefix = event.errorMessage.slice(0, 40);
@@ -156,10 +182,16 @@ function emptyCounters(): AggregatedCounters {
     toolErrors: 0,
     listTools: 0,
     overflow: 0,
+    llmUsageEvents: 0,
     totalInputBytes: 0,
     totalOutputBytes: 0,
     totalInputTokensApprox: 0,
     totalOutputTokensApprox: 0,
+    totalLlmPromptTokens: 0,
+    totalLlmCompletionTokens: 0,
+    totalLlmTotalTokens: 0,
+    totalVirtualTokensSaved: 0,
+    summarizedCallCount: 0,
     totalDurationMs: 0,
     durationCount: 0,
     cacheHits: 0,

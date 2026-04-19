@@ -27,7 +27,15 @@ export type TelemetryEventKind =
   | "tool_call"
   | "list_tools"
   | "tool_error"
-  | "telemetry_overflow";
+  | "telemetry_overflow"
+  /**
+   * Per-LLM-round usage emitted by shims that own their LLM loop
+   * (vertex-cloudrun). Carries Gemini-like `{promptTokenCount,
+   * candidatesTokenCount}` in the new `llm*` fields. Flows through
+   * the same sink as tool-call events so consumers can cross-
+   * correlate LLM token spend with tool-surface token pressure.
+   */
+  | "llm_usage";
 
 export interface TelemetryEvent {
   kind: TelemetryEventKind;
@@ -63,6 +71,19 @@ export interface TelemetryEvent {
   inputTokensApprox?: number;
   /** Approximate token count for `outputBytes`. Same heuristic. */
   outputTokensApprox?: number;
+  /**
+   * LLM-usage fields (populated on `llm_usage` events). Carry the
+   * shim-owned LLM's per-round token accounting into the same
+   * telemetry sink as tool-call events. `llmRound` mirrors the
+   * generateWithTools loop counter. See vertex-cloudrun's
+   * `LlmRoundUsage` for the upstream type.
+   */
+  llmRound?: number;
+  llmPromptTokens?: number;
+  llmCompletionTokens?: number;
+  llmTotalTokens?: number;
+  llmFinishReason?: string;
+  llmParallelToolCalls?: number;
   timestamp: number;
 }
 
@@ -206,6 +227,40 @@ export class CognitiveTelemetry implements CognitiveMiddleware {
   /** Count of events dropped since last overflow log. */
   getDroppedCount(): number {
     return this.dropped;
+  }
+
+  /**
+   * Emit an `llm_usage` telemetry event — called by shims that own
+   * their LLM loop to surface per-round Gemini / Anthropic usage
+   * through the same sink as tool-call events.
+   *
+   * @param usage  Per-round usage metadata (promptTokens, etc)
+   * @param ctx    Optional call context carrying sessionId + agentId
+   */
+  emitLlmUsage(
+    usage: {
+      round: number;
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+      finishReason?: string;
+      parallelToolCalls?: number;
+    },
+    ctx?: { sessionId?: string; agentId?: string; tags?: Record<string, string> },
+  ): void {
+    this.emit({
+      kind: "llm_usage",
+      sessionId: ctx?.sessionId,
+      agentId: ctx?.agentId,
+      tags: ctx?.tags ? { ...ctx.tags } : undefined,
+      llmRound: usage.round,
+      llmPromptTokens: usage.promptTokens,
+      llmCompletionTokens: usage.completionTokens,
+      llmTotalTokens: usage.totalTokens,
+      llmFinishReason: usage.finishReason,
+      llmParallelToolCalls: usage.parallelToolCalls,
+      timestamp: this.now(),
+    });
   }
 
   private emit(event: TelemetryEvent): void {
