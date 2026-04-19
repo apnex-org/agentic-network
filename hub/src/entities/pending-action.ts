@@ -56,7 +56,11 @@ export interface EnqueueOptions {
 }
 
 // Default SLAs (per-dispatch-type overrides at the policy layer).
-export const DEFAULT_RECEIPT_SLA_MS = 30_000;
+// idea-105 (2026-04-19): bumped receipt SLA from 30s to 60s after dn-003
+// false-positive — LLM-paced compose routinely exceeds 60s. Total watchdog
+// ladder is 3× receiptSla; 60s gives a 180s total window matching observed
+// reply compose-times without losing true-silence detection.
+export const DEFAULT_RECEIPT_SLA_MS = 60_000;
 export const DEFAULT_COMPLETION_SLA_MS = 5 * 60_000;
 
 export interface IPendingActionStore {

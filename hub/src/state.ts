@@ -855,8 +855,11 @@ export interface IEngineerRegistry {
 /** Minimum interval between persisted Agent heartbeat writes (per agent). */
 export const AGENT_TOUCH_MIN_INTERVAL_MS = 30_000;
 
-/** Default ADR-017 receipt SLA — Hub's tolerance for "drain has not arrived yet". */
-export const DEFAULT_AGENT_RECEIPT_SLA_MS = 30_000;
+/** Default ADR-017 receipt SLA — Hub's tolerance for "drain has not arrived yet".
+ *  idea-105 (2026-04-19): raised from 30s to 60s to accommodate real-world
+ *  LLM compose-times without false-positive watchdog escalation. Total ladder
+ *  is 3× this value. */
+export const DEFAULT_AGENT_RECEIPT_SLA_MS = 60_000;
 
 /**
  * Compute the canonical `livenessState` for an Agent given current time.

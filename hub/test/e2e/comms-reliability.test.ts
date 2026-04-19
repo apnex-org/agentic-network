@@ -176,8 +176,9 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
 
       // Architect never calls drain_pending_actions. Watchdog should fire
       // through its three stages: re-dispatch → demote → escalate.
-      // receiptSla default 30s; watchdog tolerance 3x + slack.
-      await vi.advanceTimersByTimeAsync(180_000); // 3 minutes
+      // receiptSla default 60s (idea-105); watchdog ladder is 3× = 180s.
+      // Need >4× to also land on unresponsive via heartbeat recompute.
+      await vi.advanceTimersByTimeAsync(260_000); // 260s covers ladder + unresponsive threshold
 
       // INV-COMMS-L05 — escalation ladder auditable.
       const audit = await engCtx.stores.audit.listEntries();
@@ -219,7 +220,7 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
       const archAgentId = await registerUnresponsiveArchitect(archCtx);
 
       // Register establishes heartbeat; advance past 2x receiptSla.
-      await vi.advanceTimersByTimeAsync(70_000); // 70s > 2 * 30s
+      await vi.advanceTimersByTimeAsync(130_000); // 130s > 2 * 60s (idea-105 default)
 
       const arch = await engCtx.stores.engineerRegistry.getAgent(archAgentId);
       expect((arch as any).livenessState).toBe("degraded");
@@ -230,7 +231,7 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
     it("drain_pending_actions call refreshes heartbeat → online", async () => {
       await registerEngineer(engCtx);
       const archAgentId = await registerUnresponsiveArchitect(archCtx);
-      await vi.advanceTimersByTimeAsync(70_000);
+      await vi.advanceTimersByTimeAsync(130_000); // past 2× receiptSla (60s)
 
       // Architect recovers: calls drain.
       await archRouter.handle("drain_pending_actions", {}, archCtx);

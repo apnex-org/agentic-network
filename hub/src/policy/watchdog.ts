@@ -149,7 +149,7 @@ export class Watchdog {
   }
 
   private async extendDeadline(itemId: string, nowMs: number, agent: Agent | null): Promise<void> {
-    const sla = agent?.receiptSla ?? 30_000;
+    const sla = agent?.receiptSla ?? 60_000;
     const newDeadline = new Date(nowMs + sla).toISOString();
     await this.stores.pendingAction.rescheduleReceiptDeadline(itemId, newDeadline);
   }
