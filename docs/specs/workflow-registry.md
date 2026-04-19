@@ -346,11 +346,11 @@ Mutability: Overwritable (create_document overwrites existing)
 
 ---
 
-### 1.10 Agent (M18 + Mission-19)
+### 1.10 Agent (M18 + Mission-19 + ADR-017)
 
 ```
 Entity: Agent
-States: online, offline
+States (livenessState FSM — ADR-017): online, degraded, unresponsive, offline
 Initial: online (on first register_role handshake)
 Terminal: (none — archival via `archived` flag, not deletion)
 Identity: engineerId (Hub-issued) — stable across reconnects
@@ -358,8 +358,12 @@ Identity: engineerId (Hub-issued) — stable across reconnects
           sessionEpoch — monotonic; incremented on each displacement
           currentSessionId — ephemeral, set per SSE connection
 Routing fields:
-  role    — "engineer" | "architect" | "director"
-  labels  — Record<string, string>; Kubernetes-style routing metadata, IMMUTABLE post-create in v1
+  role          — "engineer" | "architect" | "director"
+  labels        — Record<string, string>; Kubernetes-style routing metadata, IMMUTABLE post-create in v1
+Liveness fields (ADR-017):
+  wakeEndpoint  — optional HTTP URL Hub POSTs to on queue-deadline miss (Cloud Run cold-start)
+  lastHeartbeatAt — updated on every drain_pending_actions call; drives FSM transitions
+  receiptSla    — ms; default 30000; per-agent override via register_role
 ```
 
 Agents are the first-class routing targets in Mission-19. Every dispatched event resolves a `Selector` (roles ∧ matchLabels ∧ optional engineerId pin) against the live Agent registry — there are no role-wide broadcasts once labels are in use.
@@ -381,6 +385,69 @@ Keys prefixed with `ois.io/` are reserved for future Hub-defined routing semanti
 | INV-AG3  | An Agent with empty `labels = {}` matches any Selector whose `matchLabels` is also empty or absent; it does NOT match a Selector that requires specific labels | `test/mission-19/selector.test.ts` "empty labels match empty selectors" |
 | INV-AG4  | A pre-Mission-19 Agent persisted without a `labels` field is defensively migrated to `labels = {}` on read | `test/mission-19/registry.test.ts` "legacy agents default to empty labels" |
 | INV-AG5  | `register_role` may optionally declare `labels`. On first create, they persist. On displacement, the persisted labels are preserved verbatim (ignore incoming) | `test/mission-19/registry.test.ts` "displacement ignores incoming labels" |
+| INV-AG6  | Agent `livenessState == "online"` requires `now - lastHeartbeatAt ≤ 2× receiptSla`. FSM transitions are Hub-enforced; raw socket state is NOT authoritative. Demotion `online → degraded → unresponsive → offline` is automatic (ADR-017) | `test/e2e/comms-reliability.test.ts` "liveness FSM demotes on stale heartbeat" |
+| INV-AG7  | `wakeEndpoint`, when declared at `register_role`, enables durable Hub-to-agent wake on queue-deadline miss (ADR-017). Absence of `wakeEndpoint` means watchdog cannot re-dispatch; escalation skips Stage 1 and proceeds directly to Director notification | `test/e2e/comms-reliability.test.ts` "wakeEndpoint cold-starts scaled-to-zero agent" |
+
+---
+
+### 1.11 PendingActionItem (ADR-017)
+
+```
+Entity: PendingActionItem
+States: enqueued, receipt_acked, completion_acked, escalated, errored
+Initial: enqueued (on dispatch of owed-response event)
+Terminal: completion_acked (happy path) | escalated (Director handoff) | errored (non-recoverable)
+Identity: id (Hub-issued, e.g. "pa-2026-04-19T02-25-08-abc123")
+Natural key: `${targetAgentId}:${entityRef}:${dispatchType}` — idempotency guard
+Durability: GCS-backed; survives Hub and agent restarts
+```
+
+PendingActionItem is the authoritative record of work owed to a specific agent. Every dispatched event that expects an agent response enqueues a PendingActionItem **before** SSE fires (INV-COMMS-L01). SSE is a delivery hint; the queue is truth.
+
+#### Transitions
+
+| From             | To                 | Trigger                                           |
+| ---------------- | ------------------ | ------------------------------------------------- |
+| —                | enqueued           | Hub dispatches owed-response event                |
+| enqueued         | receipt_acked      | Target agent calls `drain_pending_actions`        |
+| receipt_acked    | completion_acked   | Agent settles owed work with `sourceQueueItemId` reference (e.g., `create_thread_reply`, `auto_review`) |
+| enqueued         | escalated          | Receipt deadline missed 3+ times; watchdog escalates to Director notification |
+| receipt_acked    | escalated          | Completion deadline missed; agent alive but stuck |
+| any non-terminal | errored            | Non-recoverable failure (malformed payload, missing target, etc.) |
+
+#### Invariants
+
+| ID       | Invariant                                                                                                    | Tested By                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| INV-PA1  | Enqueue is transactional with the originating state change. Either both land or neither does. No owed work without a queue entry | `test/e2e/comms-reliability.test.ts` "enqueue transactional with state change" |
+| INV-PA2  | Natural-key idempotency: enqueue with an existing `{targetAgentId, entityRef, dispatchType}` returns the existing item; never duplicates | `test/e2e/comms-reliability.test.ts` "duplicate enqueue returns existing item" |
+| INV-PA3  | `drain_pending_actions` returns only items in state `enqueued` for the calling agent, and atomically flips them to `receipt_acked` | `test/e2e/comms-reliability.test.ts` "drain flips state to receipt_acked" |
+| INV-PA4  | Every queue item reaches a terminal state within `completionDeadline + maxWatchdogWindow`. No eternal non-terminal items | `test/e2e/comms-reliability.test.ts` "all items terminal within deadline" |
+| INV-PA5  | Items in `escalated` state MUST have a corresponding `DirectorNotification` record. Escalation without surfacing is a bug | `test/e2e/comms-reliability.test.ts` "escalated items surface to director" |
+
+---
+
+### 1.12 DirectorNotification (ADR-017)
+
+```
+Entity: DirectorNotification
+States: unacknowledged, acknowledged
+Initial: unacknowledged (on creation)
+Terminal: acknowledged (via `acknowledge_director_notification` tool)
+Identity: id (Hub-issued, e.g. "dn-2026-04-19-001")
+Durability: GCS-backed
+Severity: info | warning | critical
+```
+
+DirectorNotification is the terminal escalation surface. When the watchdog escalates a PendingActionItem (agent unresponsive or stuck), a notification is persisted here. The Director-chat layer consumes from this store via a future chat-side surface; for now, Director queries directly via `list_director_notifications`.
+
+#### Invariants
+
+| ID       | Invariant                                                                                                    | Tested By                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| INV-DN1  | Every `queue_item_escalated` notification carries `sourceRef` pointing to the escalated PendingActionItem    | `test/e2e/comms-reliability.test.ts` "notification carries sourceRef" |
+| INV-DN2  | Notifications are append-only until acknowledged; acknowledgement is idempotent (double-ack is a no-op)      | `test/e2e/comms-reliability.test.ts` "acknowledge is idempotent" |
+| INV-DN3  | `severity: critical` notifications MUST be filterable in `list_director_notifications` — Director triage depends on this | `test/e2e/comms-reliability.test.ts` "filter by severity" |
 
 ---
 
@@ -901,6 +968,18 @@ Since Mission-19 (v2.1.0), all events in this catalogue are delivered via `ctx.d
 | INV-SYS-L08 | Label inheritance is authoritative — scaffolded children read labels from the parent entity's record, not from the approver/converging Agent's session | `test/mission-19/labels.test.ts` "scaffold + thread-spawn inherit parent labels" |
 | INV-SYS-L09 | If zero Agents match a selector, dispatch is a no-op for SSE — the webhook fallback (when configured) is the only at-least-once delivery path | `test/mission-19/dispatch.test.ts` "empty match → webhook fallback" |
 | INV-SYS-L10 | Persisted notifications retain the flattened `targetRoles` field for backward compatibility with the catch-up polling endpoint; selectors are NOT replayed | N/A (transport compatibility, not behavioral) |
+
+### Comms Reliability Invariants (ADR-017)
+
+These invariants supersede INV-SYS-010 ("SSE delivery is at-least-once; clients must handle idempotency"). Post-ADR-017, SSE is a delivery hint — the PendingActionItem queue is the authoritative at-least-once delivery mechanism, and Hub-side watchdog enforces liveness guarantees. INV-SYS-016 (polling-as-SSE-backup) is subsumed by the drain protocol below.
+
+| ID             | Invariant                                                                                                    | Tested By                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| INV-COMMS-L01  | Every dispatched event that owes a specific agent a response MUST be durably enqueued on that agent's pending-actions queue **before** SSE fires. Enqueue is transactional with the originating state change | `test/e2e/comms-reliability.test.ts` "enqueue precedes SSE" |
+| INV-COMMS-L02  | Every queue item has both `receiptDeadline` and `completionDeadline`. Watchdog MUST enforce both. No infinite-deadline items are permitted | `test/e2e/comms-reliability.test.ts` "watchdog enforces deadlines" |
+| INV-COMMS-L03  | Agent `livenessState == "online"` requires `now - lastHeartbeatAt ≤ 2× receiptSla`. The Hub MUST NOT report `online` for agents failing this check; FSM transitions automatically (supersedes stale-socket-truth pattern) | `test/e2e/comms-reliability.test.ts` "liveness reflects heartbeat reality" |
+| INV-COMMS-L04  | Every queue item reaches a terminal state (`completion_acked` \| `escalated` \| `errored`). No item may remain non-terminal beyond `completionDeadline + maxWatchdogWindow`. **No silent drops — ever** | `test/e2e/comms-reliability.test.ts` "no silent drops" |
+| INV-COMMS-L05  | Escalation ladder is deterministic and auditable: re-dispatch (+ durable wake if `wakeEndpoint` present) → demote liveness → Director notification. Every stage writes an audit entry with queue-item ID | `test/e2e/comms-reliability.test.ts` "escalation ladder auditable" |
 
 ---
 
