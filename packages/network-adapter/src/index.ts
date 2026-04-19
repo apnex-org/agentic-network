@@ -97,6 +97,8 @@ export {
   CognitiveTelemetry,
   CircuitBreaker,
   HubUnavailableError,
+  WriteCallDedup,
+  DedupTimeoutError,
 } from "@ois/cognitive-layer";
 export type {
   CognitiveMiddleware,
@@ -110,4 +112,5 @@ export type {
   CircuitBreakerConfig,
   CircuitState,
   CircuitStateChange,
+  WriteCallDedupConfig,
 } from "@ois/cognitive-layer";

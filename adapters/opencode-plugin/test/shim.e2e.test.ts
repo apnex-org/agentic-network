@@ -39,6 +39,7 @@ import {
   CognitiveTelemetry,
   CircuitBreaker,
   HubUnavailableError,
+  WriteCallDedup,
   type TelemetryEvent,
 } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
@@ -441,6 +442,35 @@ describe("opencode-plugin shim — cognitive layer integration", () => {
       (e) => e.kind === "tool_error" && e.tags?.circuitBreaker === "fast_fail_open",
     );
     expect(fastFail).toBeDefined();
+
+    try { await eng.mcpClient.close(); } catch { /* ignore */ }
+    try { await eng.agent.stop(); } catch { /* ignore */ }
+  });
+
+  it("WriteCallDedup collapses duplicate write calls to a single Hub invocation", async () => {
+    const pipeline = new CognitivePipeline().use(new WriteCallDedup({ windowMs: 10_000 }));
+    const eng = await createEngineerWithShim(hub, { cognitive: pipeline });
+
+    const createArgs = {
+      title: "dedup-opencode",
+      message: "dedup",
+      routingMode: "unicast" as const,
+      recipientAgentId: arch.engineerId,
+    };
+
+    const [r1, r2] = await Promise.all([
+      eng.mcpClient.callTool({ name: "create_thread", arguments: createArgs }),
+      eng.mcpClient.callTool({ name: "create_thread", arguments: createArgs }),
+    ]);
+
+    const text1 = (r1 as { content: Array<{ text: string }> }).content[0].text;
+    const text2 = (r2 as { content: Array<{ text: string }> }).content[0].text;
+    const parsed1 = JSON.parse(text1);
+    const parsed2 = JSON.parse(text2);
+    expect(parsed1.threadId).toBe(parsed2.threadId);
+
+    const hubCalls = hub.getToolCalls("create_thread");
+    expect(hubCalls).toHaveLength(1);
 
     try { await eng.mcpClient.close(); } catch { /* ignore */ }
     try { await eng.agent.stop(); } catch { /* ignore */ }

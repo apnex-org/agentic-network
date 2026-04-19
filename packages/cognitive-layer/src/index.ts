@@ -39,3 +39,6 @@ export type {
   CircuitState,
   CircuitStateChange,
 } from "./middlewares/circuit-breaker.js";
+
+export { WriteCallDedup, DedupTimeoutError } from "./middlewares/write-call-dedup.js";
+export type { WriteCallDedupConfig } from "./middlewares/write-call-dedup.js";

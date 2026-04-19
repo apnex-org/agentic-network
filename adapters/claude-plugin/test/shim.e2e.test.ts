@@ -34,6 +34,7 @@ import {
   CognitiveTelemetry,
   CircuitBreaker,
   HubUnavailableError,
+  WriteCallDedup,
   type TelemetryEvent,
 } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
@@ -463,6 +464,42 @@ describe("claude-plugin shim — cognitive layer integration", () => {
     );
     expect(fastFail).toBeDefined();
     expect(fastFail!.errorMessage).toContain("circuit breaker tripped");
+
+    await eng.mcpClient.close();
+    await eng.agent.stop();
+  });
+
+  it("WriteCallDedup collapses duplicate write calls to a single Hub invocation", async () => {
+    // Count create_thread calls seen by the Hub.
+    const pipeline = new CognitivePipeline().use(new WriteCallDedup({ windowMs: 10_000 }));
+    const eng = await createEngineerWithShim(hub, { cognitive: pipeline });
+
+    // Establish a thread opened BY eng (write call) — engineer must be
+    // the author. Issue the same create_thread via the MCP client twice
+    // rapidly; dedup should collapse them.
+    const createArgs = {
+      title: "dedup-test",
+      message: "dedup",
+      routingMode: "unicast" as const,
+      recipientAgentId: arch.engineerId,
+    };
+
+    const [r1, r2] = await Promise.all([
+      eng.mcpClient.callTool({ name: "create_thread", arguments: createArgs }),
+      eng.mcpClient.callTool({ name: "create_thread", arguments: createArgs }),
+    ]);
+
+    // Both MCP responses land; parse threadId from each
+    const text1 = (r1 as { content: Array<{ text: string }> }).content[0].text;
+    const text2 = (r2 as { content: Array<{ text: string }> }).content[0].text;
+    const parsed1 = JSON.parse(text1);
+    const parsed2 = JSON.parse(text2);
+    expect(parsed1.threadId).toBeDefined();
+    expect(parsed1.threadId).toBe(parsed2.threadId);
+
+    // Hub saw exactly ONE create_thread call (dedup worked)
+    const hubCalls = hub.getToolCalls("create_thread");
+    expect(hubCalls).toHaveLength(1);
 
     await eng.mcpClient.close();
     await eng.agent.stop();

@@ -20,15 +20,18 @@ import type {
 } from "./contract.js";
 import { CognitiveTelemetry, type CognitiveTelemetryConfig } from "./middlewares/telemetry.js";
 import { CircuitBreaker, type CircuitBreakerConfig } from "./middlewares/circuit-breaker.js";
+import { WriteCallDedup, type WriteCallDedupConfig } from "./middlewares/write-call-dedup.js";
 
 export interface StandardPipelineConfig {
   /** CognitiveTelemetry options. */
   telemetry?: CognitiveTelemetryConfig;
   /** CircuitBreaker options. */
   circuitBreaker?: CircuitBreakerConfig;
+  /** WriteCallDedup options. */
+  writeCallDedup?: WriteCallDedupConfig;
   /**
    * Future middlewares will register config fields here as they land:
-   * dedup, cache, enricher, normalizer.
+   * cache, enricher, normalizer.
    */
 }
 
@@ -108,6 +111,7 @@ export class CognitivePipeline {
     const pipeline = new CognitivePipeline();
     pipeline.use(new CognitiveTelemetry(config.telemetry ?? {}));
     pipeline.use(new CircuitBreaker(config.circuitBreaker ?? {}));
+    pipeline.use(new WriteCallDedup(config.writeCallDedup ?? {}));
     return pipeline;
   }
 }

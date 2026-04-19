@@ -381,6 +381,9 @@ describe("CircuitBreaker — .standard() integration", () => {
     const { CognitivePipeline } = await import("../src/pipeline.js");
     const p = CognitivePipeline.standard();
     const names = p.getMiddlewares().map((m) => m.name);
-    expect(names).toEqual(["CognitiveTelemetry", "CircuitBreaker"]);
+    // Assert relative ordering + presence rather than exact list, so
+    // the test stays stable as subsequent checkpoints extend .standard().
+    expect(names[0]).toBe("CognitiveTelemetry");
+    expect(names.indexOf("CircuitBreaker")).toBe(1);
   });
 });
