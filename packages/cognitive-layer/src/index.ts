@@ -50,3 +50,9 @@ export type {
   InvalidationDirective,
   CacheKey,
 } from "./middlewares/tool-result-cache.js";
+
+export { ToolDescriptionEnricher } from "./middlewares/tool-description-enricher.js";
+export type {
+  ToolDescriptionEnricherConfig,
+  ToolHints,
+} from "./middlewares/tool-description-enricher.js";

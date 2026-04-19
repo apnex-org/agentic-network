@@ -102,8 +102,10 @@ export function createDispatcher(opts: DispatcherOptions): OpenCodeDispatcher {
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       const agent = opts.getAgent();
       if (!agent || !agent.isConnected) return { tools: [] };
-      const transport = agent.getTransport() as McpTransport;
-      const tools = await transport.listToolsRaw();
+      // Route through agent.listTools() so any configured cognitive
+      // pipeline's onListTools hooks observe the tool surface before
+      // it's advertised to OpenCode.
+      const tools = await agent.listTools();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return { tools: tools as any };
     });

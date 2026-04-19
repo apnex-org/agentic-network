@@ -36,6 +36,7 @@ import {
   HubUnavailableError,
   WriteCallDedup,
   ToolResultCache,
+  ToolDescriptionEnricher,
   type TelemetryEvent,
 } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
@@ -465,6 +466,29 @@ describe("claude-plugin shim — cognitive layer integration", () => {
     );
     expect(fastFail).toBeDefined();
     expect(fastFail!.errorMessage).toContain("circuit breaker tripped");
+
+    await eng.mcpClient.close();
+    await eng.agent.stop();
+  });
+
+  it("ToolDescriptionEnricher — hints flow through mcpClient.listTools end-to-end", async () => {
+    const pipeline = new CognitivePipeline().use(new ToolDescriptionEnricher());
+    const eng = await createEngineerWithShim(hub, { cognitive: pipeline });
+
+    // Dispatcher.ListTools now routes through agent.listTools() which
+    // fires the cognitive pipeline's onListTools hooks. So what the
+    // MCP client sees through tools/list IS enriched.
+    const result = await eng.mcpClient.listTools();
+    const names = result.tools.map((t) => t.name);
+    expect(names).toContain("get_thread");
+    expect(names).toContain("create_thread");
+
+    const getThread = result.tools.find((t) => t.name === "get_thread");
+    const createThread = result.tools.find((t) => t.name === "create_thread");
+    expect(getThread?.description ?? "").toContain("[C30s]");
+    expect(getThread?.description ?? "").toContain("[ID]");
+    expect(getThread?.description ?? "").toContain("[PAR]");
+    expect(createThread?.description ?? "").toContain("[W]");
 
     await eng.mcpClient.close();
     await eng.agent.stop();

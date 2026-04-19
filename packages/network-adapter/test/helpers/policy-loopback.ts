@@ -27,6 +27,7 @@ import { MemoryTurnStore } from "../../../../hub/src/entities/turn.js";
 import { MemoryTeleStore } from "../../../../hub/src/entities/tele.js";
 import { MemoryPendingActionStore } from "../../../../hub/src/entities/pending-action.js";
 import { MemoryDirectorNotificationStore } from "../../../../hub/src/entities/director-notification.js";
+import { MemoryBugStore } from "../../../../hub/src/entities/bug.js";
 import type { ILoopbackHub, LoopbackTransport, ToolCall } from "./loopback-transport.js";
 
 export interface DispatchedEvent {
@@ -175,6 +176,7 @@ export class PolicyLoopbackHub implements ILoopbackHub {
   private createStores(): AllStores {
     const task = new MemoryTaskStore();
     const idea = new MemoryIdeaStore();
+    const mission = new MemoryMissionStore(task, idea);
     return {
       task,
       engineerRegistry: new MemoryEngineerRegistry(),
@@ -182,11 +184,12 @@ export class PolicyLoopbackHub implements ILoopbackHub {
       thread: new MemoryThreadStore(),
       audit: new MemoryAuditStore(),
       idea,
-      mission: new MemoryMissionStore(task, idea),
-      turn: new MemoryTurnStore(),
+      mission,
+      turn: new MemoryTurnStore(mission, task),
       tele: new MemoryTeleStore(),
       pendingAction: new MemoryPendingActionStore(),
       directorNotification: new MemoryDirectorNotificationStore(),
+      bug: new MemoryBugStore(),
     };
   }
 

@@ -62,6 +62,8 @@ import type {
   CognitivePipeline,
   ToolCallContext,
   ToolErrorContext,
+  ListToolsContext,
+  Tool as CognitiveTool,
 } from "@ois/cognitive-layer";
 import { performStateSync } from "./state-sync.js";
 
@@ -282,6 +284,30 @@ export class McpAgentClient implements IAgentClient {
         throw err;
       });
     }
+  }
+
+  /**
+   * Route `tools/list` through the cognitive pipeline when one is
+   * configured; otherwise fall through to `transport.listToolsRaw()`
+   * directly (shim-compatible signature). Enables
+   * `ToolDescriptionEnricher` and any future list-tools middleware
+   * to observe the tool-surface request before it reaches the Hub
+   * client. Shims that previously reached into `getTransport()
+   * .listToolsRaw()` should migrate to this method.
+   */
+  async listTools(): Promise<CognitiveTool[]> {
+    const raw = await (this.transport as McpTransport).listToolsRaw();
+    const tools = raw as CognitiveTool[];
+
+    if (!this.cognitive) return tools;
+
+    const ctx: ListToolsContext = {
+      sessionId: this.transport.getSessionId() ?? "",
+      agentId: this._engineerId,
+      startedAt: Date.now(),
+      tags: {},
+    };
+    return this.cognitive.runListTools(ctx, async () => tools);
   }
 
   /**

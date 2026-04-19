@@ -41,6 +41,7 @@ import {
   HubUnavailableError,
   WriteCallDedup,
   ToolResultCache,
+  ToolDescriptionEnricher,
   type TelemetryEvent,
 } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
@@ -443,6 +444,20 @@ describe("opencode-plugin shim — cognitive layer integration", () => {
       (e) => e.kind === "tool_error" && e.tags?.circuitBreaker === "fast_fail_open",
     );
     expect(fastFail).toBeDefined();
+
+    try { await eng.mcpClient.close(); } catch { /* ignore */ }
+    try { await eng.agent.stop(); } catch { /* ignore */ }
+  });
+
+  it("ToolDescriptionEnricher — hints flow through mcpClient.listTools end-to-end", async () => {
+    const pipeline = new CognitivePipeline().use(new ToolDescriptionEnricher());
+    const eng = await createEngineerWithShim(hub, { cognitive: pipeline });
+
+    const result = await eng.mcpClient.listTools();
+    const getThread = result.tools.find((t) => t.name === "get_thread");
+    const createThread = result.tools.find((t) => t.name === "create_thread");
+    expect(getThread?.description ?? "").toContain("[C30s]");
+    expect(createThread?.description ?? "").toContain("[W]");
 
     try { await eng.mcpClient.close(); } catch { /* ignore */ }
     try { await eng.agent.stop(); } catch { /* ignore */ }

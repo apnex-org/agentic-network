@@ -101,12 +101,14 @@ export {
   DedupTimeoutError,
   ToolResultCache,
   FlushAllOnWriteStrategy,
+  ToolDescriptionEnricher,
 } from "@ois/cognitive-layer";
 export type {
   CognitiveMiddleware,
   ToolCallContext,
   ListToolsContext,
   ToolErrorContext,
+  Tool as CognitiveTool,
   StandardPipelineConfig,
   CognitiveTelemetryConfig,
   TelemetryEvent,
@@ -119,4 +121,6 @@ export type {
   InvalidationStrategy,
   InvalidationDirective,
   CacheKey,
+  ToolDescriptionEnricherConfig,
+  ToolHints,
 } from "@ois/cognitive-layer";

@@ -186,8 +186,10 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
   });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const transport = agent.getTransport() as McpTransport;
-    const tools = await transport.listToolsRaw();
+    // Route through agent.listTools() so any configured cognitive
+    // pipeline's onListTools hooks (e.g. ToolDescriptionEnricher)
+    // observe + modify the surface presented to Claude Code.
+    const tools = await agent.listTools();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return { tools: tools as any[] };
   });
