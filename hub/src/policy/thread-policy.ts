@@ -195,17 +195,27 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
 
   // Notify the other participants (unless thread just converged or hit limit).
   // Mission-21 Phase 1 (INV-TH16): dispatch is participant-scoped —
-  // every non-author participant with a known agentId gets the event,
-  // nobody else. Agents that joined via legacy (pre-M18) handshake
-  // carry agentId=null; if every participant is pre-M18 we fall back
-  // to role broadcast so the thread still progresses.
+  // every non-author participant with a known agentId gets the event.
+  // ADR-014 §115 targets removal of the role+label fallback below —
+  // post-Phase-1 every thread should have resolved agentIds; the
+  // fallback is dead code in prod. Softened rather than removed: log
+  // a loud warning when it fires so any drift is visible in logs.
+  // Full removal is a clean-cutover follow-up after the test surface
+  // is migrated off the legacy bare register_role path (14+ wave3b
+  // tests + several e2e tests still use it).
   if (thread.status === "active") {
     const otherParticipantIds = thread.participants
       .filter((p) => p.agentId && p.agentId !== authorAgentId)
       .map((p) => p.agentId as string);
-    const replySelector = otherParticipantIds.length > 0
-      ? { engineerIds: otherParticipantIds, matchLabels: thread.labels }
-      : { roles: [author === "architect" ? "engineer" : "architect"] as any, matchLabels: thread.labels };
+    let replySelector;
+    if (otherParticipantIds.length > 0) {
+      replySelector = { engineerIds: otherParticipantIds, matchLabels: thread.labels };
+    } else {
+      console.warn(
+        `[ThreadPolicy] thread_message for ${thread.id}: no participant has a resolved agentId — falling back to role broadcast. This is a legacy pre-M18 path slated for removal (ADR-014 §115).`,
+      );
+      replySelector = { roles: [author === "architect" ? "engineer" : "architect"] as any, matchLabels: thread.labels };
+    }
     await ctx.dispatch("thread_message", {
       threadId: thread.id,
       title: thread.title,
@@ -453,15 +463,26 @@ async function handleThreadConvergedWithAction(
 
   // INV-TH16: cascade completion is participant-internal. Scope to thread
   // participants so engineer↔engineer threads don't notify unrelated roles.
+  // ADR-014 §115 fallback-removal is soft-landed: log a loud warning if
+  // participants lack agentIds, but still dispatch via role broadcast
+  // so subscribers aren't stranded. Full removal pending test-surface
+  // migration (clean-cutover mission).
   const participantSource = sourceThread.participants
     ?? (payload.participants as Array<{ agentId?: string | null }> | undefined)
     ?? [];
   const cascadeParticipantIds = participantSource
     .map((p) => p.agentId)
     .filter((id): id is string => typeof id === "string" && id.length > 0);
-  const finalizedSelector = cascadeParticipantIds.length > 0
-    ? { engineerIds: cascadeParticipantIds, matchLabels: inheritedLabels }
-    : { roles: ["architect" as const, "engineer" as const], matchLabels: inheritedLabels };
+
+  let finalizedSelector;
+  if (cascadeParticipantIds.length > 0) {
+    finalizedSelector = { engineerIds: cascadeParticipantIds, matchLabels: inheritedLabels };
+  } else {
+    console.warn(
+      `[ThreadPolicy] thread_convergence_finalized for ${threadId}: no participant has a resolved agentId — falling back to role broadcast. Legacy pre-M18 path slated for removal (ADR-014 §115).`,
+    );
+    finalizedSelector = { roles: ["architect" as const, "engineer" as const], matchLabels: inheritedLabels };
+  }
 
   // Mission-24 Phase 2 (M24-T3, ADR-014): single merged event replacing
   // the legacy pre-cascade thread_converged and post-cascade

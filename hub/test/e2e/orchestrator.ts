@@ -176,8 +176,25 @@ export class ActorFacade {
         this.eventCapture.capture(event, data, targetRoles);
       },
       dispatch: async (event, data, selector) => {
-        // For e2e capture, record selector.roles as targetRoles for backward-compat assertions.
-        this.eventCapture.capture(event, data, selector.roles);
+        // ADR-014 §115 soft-cutover: dispatches now prefer engineerIds
+        // or engineerId (singular — used by review-policy etc.). For
+        // role-targeted assertions (expectEventFor(event, role)), resolve
+        // any engineer-id form → role via the registry so role-fallback
+        // and engineerId-targeted paths both populate targetRoles.
+        let targetRoles: string[] | undefined = selector.roles ? [...selector.roles] : undefined;
+        const idsToResolve: string[] = [];
+        if (selector.engineerIds && selector.engineerIds.length > 0) idsToResolve.push(...selector.engineerIds);
+        if (selector.engineerId) idsToResolve.push(selector.engineerId);
+        if (idsToResolve.length > 0) {
+          const resolved = new Set<string>(targetRoles ?? []);
+          const registry = this.stores.engineerRegistry as any;
+          for (const eid of idsToResolve) {
+            const agent = await registry.getAgent?.(eid).catch(() => null);
+            if (agent?.role) resolved.add(agent.role);
+          }
+          targetRoles = Array.from(resolved);
+        }
+        this.eventCapture.capture(event, data, targetRoles);
       },
       sessionId: this.sessionId,
       clientIp: "127.0.0.1",
@@ -187,10 +204,25 @@ export class ActorFacade {
     };
   }
 
-  /** Ensure this actor's role is registered (auto-called on first use). */
+  /** Ensure this actor's role is registered (auto-called on first use).
+   *  ADR-014 §115 removed the role+label dispatch fallback, so every
+   *  test actor must use the enriched M18 handshake to get a resolved
+   *  agentId on its Agent record. globalInstanceId is derived from the
+   *  stable sessionId — running the same test twice in the same process
+   *  re-binds the same Agent (epoch bumps), which mirrors the prod
+   *  reconnect semantics. */
   private async ensureRegistered(): Promise<void> {
     if (this.registered) return;
-    await this.router.handle("register_role", { role: this.role }, this.ctx());
+    await this.router.handle("register_role", {
+      role: this.role,
+      globalInstanceId: `test-gid-${this.sessionId}`,
+      clientMetadata: {
+        clientName: "e2e-orchestrator",
+        clientVersion: "0.0.0",
+        proxyName: "@ois/hub-e2e",
+        proxyVersion: "0.0.0",
+      },
+    }, this.ctx());
     this.registered = true;
   }
 
