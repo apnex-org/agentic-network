@@ -17,6 +17,7 @@ import {
   type ToolExecutor,
 } from "./llm.js";
 import { pruneThreadMessages } from "./prune.js";
+import { architectTelemetry } from "./telemetry.js";
 
 // ── Sandwich retry topology (M25-SH-T1, ADR-014) ──────────────────────
 //
@@ -429,6 +430,10 @@ async function attemptThreadReply(
     // Phase 1 shim-layer add). Per-round Gemini usageMetadata is surfaced
     // via onUsage and aggregated so the sandwich logs a single summary
     // line at completion — makes per-reply cost legible without grepping.
+    //
+    // Phase 2a ckpt-C: also emit each round through the shared
+    // architectTelemetry sink as an `llm_usage` event so Gemini token
+    // accounting lands in the same pipe as tool-call telemetry.
     let cumPromptTokens = 0;
     let cumCompletionTokens = 0;
     let finalRound = 0;
@@ -448,6 +453,10 @@ async function attemptThreadReply(
             cumPromptTokens += u.promptTokens;
             cumCompletionTokens += u.completionTokens;
             finalRound = u.round;
+            architectTelemetry.emitLlmUsage(u, {
+              sessionId: threadId,
+              tags: { sandwich: "thread-reply" },
+            });
           },
         },
       );

@@ -209,6 +209,72 @@ describe("CognitiveTelemetry — getPendingCount / getDroppedCount", () => {
 
 // ── Phase 1.1 — bytes + approximate tokens ─────────────────────────
 
+// ── Phase 2a ckpt-C — LLM-usage bridge ─────────────────────────────
+
+describe("CognitiveTelemetry.emitLlmUsage — Phase 2a ckpt-C", () => {
+  it("emits an llm_usage event with all usage fields populated", async () => {
+    const events: TelemetryEvent[] = [];
+    const t = new CognitiveTelemetry({ sink: (e) => events.push(e) });
+
+    t.emitLlmUsage(
+      {
+        round: 3,
+        promptTokens: 1500,
+        completionTokens: 320,
+        totalTokens: 1820,
+        finishReason: "STOP",
+        parallelToolCalls: 2,
+      },
+      { sessionId: "thread-7", agentId: "eng-abc", tags: { sandwich: "thread-reply" } },
+    );
+    await flushMicrotasks();
+
+    expect(events).toHaveLength(1);
+    const ev = events[0];
+    expect(ev.kind).toBe("llm_usage");
+    expect(ev.sessionId).toBe("thread-7");
+    expect(ev.agentId).toBe("eng-abc");
+    expect(ev.llmRound).toBe(3);
+    expect(ev.llmPromptTokens).toBe(1500);
+    expect(ev.llmCompletionTokens).toBe(320);
+    expect(ev.llmTotalTokens).toBe(1820);
+    expect(ev.llmFinishReason).toBe("STOP");
+    expect(ev.llmParallelToolCalls).toBe(2);
+    expect(ev.tags).toEqual({ sandwich: "thread-reply" });
+  });
+
+  it("ctx is optional — emits without sessionId/agentId", async () => {
+    const events: TelemetryEvent[] = [];
+    const t = new CognitiveTelemetry({ sink: (e) => events.push(e) });
+
+    t.emitLlmUsage({
+      round: 1,
+      promptTokens: 500,
+      completionTokens: 50,
+      totalTokens: 550,
+    });
+    await flushMicrotasks();
+
+    expect(events[0].kind).toBe("llm_usage");
+    expect(events[0].sessionId).toBeUndefined();
+    expect(events[0].agentId).toBeUndefined();
+    expect(events[0].llmRound).toBe(1);
+  });
+
+  it("emission is non-blocking (fire-and-forget)", async () => {
+    let sinkResolved = false;
+    const t = new CognitiveTelemetry({
+      sink: () => {
+        sinkResolved = true;
+      },
+    });
+    t.emitLlmUsage({ round: 1, promptTokens: 100, completionTokens: 10, totalTokens: 110 });
+    // Sink may not have fired yet — microtask is queued
+    await flushMicrotasks();
+    expect(sinkResolved).toBe(true);
+  });
+});
+
 describe("CognitiveTelemetry — bytes + approximate tokens", () => {
   it("emits inputBytes + inputTokensApprox on tool_call success", async () => {
     const events: TelemetryEvent[] = [];

@@ -11,6 +11,7 @@ import { Router, type Request, type Response } from "express";
 import { randomUUID } from "crypto";
 import { HubAdapter } from "./hub-adapter.js";
 import { ContextStore } from "./context.js";
+import { architectTelemetry } from "./telemetry.js";
 import {
   generateWithTools,
   mcpToolsToFunctionDeclarations,
@@ -338,6 +339,9 @@ export function createDirectorChatRouter(
       // M-Cognitive-Hypervisor Phase 1 shim: budget injection + usage
       // emission. Parallel tool calls intentionally disabled for director-
       // chat — session history order assumptions are not yet audited.
+      //
+      // Phase 2a ckpt-C: emit per-round usage through the shared
+      // architectTelemetry sink alongside the cumulative console.log.
       let cumPromptTokens = 0;
       let cumCompletionTokens = 0;
       let finalRound = 0;
@@ -354,6 +358,10 @@ export function createDirectorChatRouter(
             cumPromptTokens += u.promptTokens;
             cumCompletionTokens += u.completionTokens;
             finalRound = u.round;
+            architectTelemetry.emitLlmUsage(u, {
+              sessionId: session.id,
+              tags: { sandwich: "director-chat" },
+            });
           },
         },
       );
