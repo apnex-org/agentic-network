@@ -344,6 +344,17 @@ async function syncTools(): Promise<void> {
 function buildPluginCallbacks(): AgentClientCallbacks {
   return {
     onActionableEvent: (event: AgentEvent) => {
+      // ADR-017 Phase 1.1: SSE events carry queueItemId inline. Capture
+      // into pendingActionMap so the CallToolRequestSchema handler can
+      // inject sourceQueueItemId on the settling call even without a
+      // prior drain (eliminates SSE-vs-drain race).
+      if (event.event === "thread_message") {
+        const qid = (event.data as Record<string, unknown>).queueItemId
+        const threadId = (event.data as Record<string, unknown>).threadId
+        if (typeof qid === "string" && typeof threadId === "string") {
+          pendingActionMap.set(pendingKey("thread_message", threadId), qid)
+        }
+      }
       const action = getActionText(event.event, event.data)
       appendNotification(
         { event: event.event, data: event.data, action },

@@ -159,24 +159,28 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
     openSelector = null;
   }
   if (openSelector) {
-    const dispatchPayload = {
+    const dispatchPayload: Record<string, unknown> = {
       threadId: thread.id,
       title: thread.title,
       author,
       message: message.substring(0, 200),
       currentTurn: thread.currentTurn,
     };
-    // ADR-017 INV-COMMS-L01: enqueue BEFORE SSE. For unicast opens we
-    // know the exact target; for broadcast the dispatch targets a role
-    // pool and no specific agent is "owed" a response (any one may
-    // claim it) — broadcast enqueueing is Phase-2 scope.
+    // ADR-017 Phase 1.1: enqueue BEFORE SSE AND carry queueItemId INLINE
+    // in the SSE payload. Adapters settle directly from the event without
+    // needing a separate drain round-trip (eliminates the SSE-vs-drain
+    // race observed on thread-138). drain_pending_actions remains the
+    // recovery path for items that arrived while the adapter was
+    // disconnected. For broadcast/multicast, no single target owes a
+    // response (phase-2 scope — no enqueue yet).
     if (routingMode === "unicast" && recipientAgentId) {
-      await ctx.stores.pendingAction.enqueue({
+      const item = await ctx.stores.pendingAction.enqueue({
         targetAgentId: recipientAgentId,
         dispatchType: "thread_message",
         entityRef: thread.id,
         payload: dispatchPayload,
       });
+      dispatchPayload.queueItemId = item.id;
     }
     await ctx.dispatch("thread_message", dispatchPayload, openSelector);
   }
@@ -260,23 +264,32 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
         `[ThreadPolicy] INV-TH27 violation: thread ${thread.id} reply has no resolved counterparty agentId. All post-Phase-1 threads must have resolved agentIds — participant-upsert chain is broken upstream.`,
       );
     }
-    const replyPayload = {
+    // ADR-017 Phase 1.1: enqueue per-recipient BEFORE SSE AND per-recipient
+    // dispatch so each target's queueItemId rides inline on its event
+    // payload. Adapters settle directly from the event — no separate drain
+    // round-trip needed (eliminates the SSE-vs-drain race). For multi-
+    // recipient threads (broadcast-coerced-to-unicast, multicast) each
+    // recipient gets its own dispatch with its own queueItemId.
+    const basePayload: Record<string, unknown> = {
       threadId: thread.id,
       title: thread.title,
       author,
       message: message.substring(0, 200),
       currentTurn: thread.currentTurn,
     };
-    // ADR-017 INV-COMMS-L01: enqueue per-recipient BEFORE SSE.
     for (const targetId of otherParticipantIds) {
-      await ctx.stores.pendingAction.enqueue({
+      const item = await ctx.stores.pendingAction.enqueue({
         targetAgentId: targetId,
         dispatchType: "thread_message",
         entityRef: thread.id,
-        payload: replyPayload,
+        payload: basePayload,
       });
+      await ctx.dispatch(
+        "thread_message",
+        { ...basePayload, queueItemId: item.id },
+        { engineerIds: [targetId], matchLabels: thread.labels },
+      );
     }
-    await ctx.dispatch("thread_message", replyPayload, { engineerIds: otherParticipantIds, matchLabels: thread.labels });
   }
 
   // ADR-017 completion ACK: if the caller supplied a sourceQueueItemId,

@@ -145,6 +145,20 @@ function pushChannelNotification(event: AgentEvent, level: "actionable" | "infor
 function buildCallbacks(): AgentClientCallbacks {
   return {
     onActionableEvent: (event) => {
+      // ADR-017 Phase 1.1: SSE events carry queueItemId inline. Capture
+      // into the pendingActionMap so the CallToolRequestSchema handler
+      // can inject sourceQueueItemId on the subsequent settling call —
+      // even if the map was never populated by a drain. This eliminates
+      // the SSE-vs-drain race that caused false-positive escalations on
+      // thread-138 (the drain ran on wake only; events arriving after
+      // connection missed the map entirely).
+      if (event.event === "thread_message") {
+        const qid = (event.data as Record<string, unknown>).queueItemId;
+        const threadId = (event.data as Record<string, unknown>).threadId;
+        if (typeof qid === "string" && typeof threadId === "string") {
+          pendingActionMap.set(pendingKey("thread_message", threadId), qid);
+        }
+      }
       const action = getActionText(event.event, event.data);
       appendNotification({ event: event.event, data: event.data, action }, {
         logPath: LOG_FILE,

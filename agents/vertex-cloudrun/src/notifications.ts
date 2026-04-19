@@ -79,8 +79,15 @@ export function handleHubEvent(
     case "thread_message": {
       const threadId = data.threadId as string;
       const currentTurn = data.currentTurn as string;
+      // ADR-017 Phase 1.1: the Hub carries queueItemId INLINE on the SSE
+      // event. Thread it through to sandwichThreadReply so the settling
+      // create_thread_reply call injects sourceQueueItemId and the Hub
+      // completion-ACKs without a watchdog escalation. Missing on legacy
+      // events — sandwich falls back to no-ID (which Hub tolerates as
+      // optional today; will escalate on Phase 1.1's watchdog-active path).
+      const queueItemId = typeof data.queueItemId === "string" ? data.queueItemId : undefined;
       if (threadId && currentTurn === "architect") {
-        sandwichThreadReply(hub, context, threadId);
+        sandwichThreadReply(hub, context, threadId, queueItemId);
       }
       break;
     }

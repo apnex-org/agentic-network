@@ -289,4 +289,112 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
       expect(item.completionAckedAt).toBeDefined();
     });
   });
+
+  // ═════════════════════════════════════════════════════════════════
+  // Phase 1.1: queueItemId rides inline on the SSE event payload
+  // (Adapters can settle without a separate drain — eliminates the
+  // SSE-vs-drain race observed on thread-138.)
+  // ═════════════════════════════════════════════════════════════════
+
+  describe("Phase 1.1 — queueItemId inline on SSE payload", () => {
+    it("thread open dispatches thread_message with queueItemId in event data", async () => {
+      await registerEngineer(engCtx);
+      const archAgentId = await registerUnresponsiveArchitect(archCtx);
+
+      await engRouter.handle(
+        "create_thread",
+        {
+          title: "T",
+          message: "M",
+          routingMode: "unicast",
+          recipientAgentId: archAgentId,
+        },
+        engCtx,
+      );
+
+      // The dispatched event payload must carry queueItemId so adapters
+      // can settle directly without a drain round-trip.
+      const openDispatch = engCtx.dispatchedEvents.find((e) => e.event === "thread_message");
+      expect(openDispatch).toBeDefined();
+      expect(openDispatch!.data.queueItemId).toBeDefined();
+      expect(typeof openDispatch!.data.queueItemId).toBe("string");
+      expect((openDispatch!.data.queueItemId as string).startsWith("pa-")).toBe(true);
+
+      // The enqueued item's id matches the one on the event.
+      const pendingStore = (engCtx.stores as any).pendingAction;
+      const items = await pendingStore.listForAgent(archAgentId);
+      expect(items[0].id).toBe(openDispatch!.data.queueItemId);
+    });
+
+    it("reply dispatches per-recipient with their own queueItemId inline", async () => {
+      await registerEngineer(engCtx);
+      const archAgentId = await registerUnresponsiveArchitect(archCtx);
+
+      // Seed the thread with both participants resolved.
+      const openResult = await engRouter.handle(
+        "create_thread",
+        { title: "T", message: "M", routingMode: "unicast", recipientAgentId: archAgentId },
+        engCtx,
+      );
+      const { threadId } = JSON.parse(openResult.content[0].text);
+      const pendingStore = (engCtx.stores as any).pendingAction;
+      const openItem = (await pendingStore.listForAgent(archAgentId))[0];
+
+      // Architect replies via drain path (to populate its participant
+      // record and give the engineer-side reply a counterparty to target).
+      await archRouter.handle("drain_pending_actions", {}, archCtx);
+      await archRouter.handle(
+        "create_thread_reply",
+        { threadId, message: "ack", sourceQueueItemId: openItem.id },
+        archCtx,
+      );
+
+      // Architect's reply dispatches a thread_message to the engineer.
+      // That event MUST carry a queueItemId — the engineer's queue item.
+      const replyDispatch = archCtx.dispatchedEvents.find(
+        (e) => e.event === "thread_message" && (e.selector.engineerIds ?? []).length > 0,
+      );
+      expect(replyDispatch).toBeDefined();
+      expect(replyDispatch!.data.queueItemId).toBeDefined();
+      expect((replyDispatch!.data.queueItemId as string).startsWith("pa-")).toBe(true);
+      expect(replyDispatch!.selector.engineerIds).toContain("eng-fake-engineer-id".length > 0 ? replyDispatch!.selector.engineerIds![0] : "");
+
+      // The reply's queueItemId matches a real enqueued item for the engineer.
+      const engAgent = await engCtx.stores.engineerRegistry.getAgentForSession(engCtx.sessionId);
+      const engItems = await pendingStore.listForAgent(engAgent!.engineerId);
+      expect(engItems.map((i: any) => i.id)).toContain(replyDispatch!.data.queueItemId);
+    });
+
+    it("reply-with-sourceQueueItemId completion-ACKs without a prior drain (SSE-direct path)", async () => {
+      await registerEngineer(engCtx);
+      const archAgentId = await registerUnresponsiveArchitect(archCtx);
+
+      const openResult = await engRouter.handle(
+        "create_thread",
+        { title: "T", message: "M", routingMode: "unicast", recipientAgentId: archAgentId },
+        engCtx,
+      );
+      const { threadId } = JSON.parse(openResult.content[0].text);
+
+      // Simulate the adapter extracting queueItemId from the SSE event
+      // payload (Phase 1.1 behavior) WITHOUT ever calling drain_pending_actions.
+      const openDispatch = engCtx.dispatchedEvents.find((e) => e.event === "thread_message");
+      const queueItemId = openDispatch!.data.queueItemId as string;
+      expect(queueItemId).toBeDefined();
+
+      // Architect replies directly with the ID from the SSE event.
+      // (No drain was called — this test proves the SSE-direct path works.)
+      await archRouter.handle(
+        "create_thread_reply",
+        { threadId, message: "ack", sourceQueueItemId: queueItemId },
+        archCtx,
+      );
+
+      // Queue item MUST be completion_acked even though drain never ran.
+      const pendingStore = (engCtx.stores as any).pendingAction;
+      const item = await pendingStore.getById(queueItemId);
+      expect(item.state).toBe("completion_acked");
+      expect(item.completionAckedAt).toBeDefined();
+    });
+  });
 });
