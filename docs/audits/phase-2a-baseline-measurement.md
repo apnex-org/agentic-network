@@ -12,10 +12,13 @@
 
 Phase 2a's measurable win in the synthetic bench is a **33.2% reduction in LLM-observed output tokens** with **3,644 Virtual Tokens Saved** (the architect-ratified primary KPI, thread-160). The Phase 1 Hub-call-reduction number (67.7%) is preserved. Phase 2a layers a new LLM-context delta on top of Phase 1's Hub-call savings — this is the first Phase in which the LLM actually sees a smaller tool surface.
 
-The production (Pass 2) measurement surfaced **two unexpected findings** that dominate the Phase 2b backlog:
+The production (Pass 2) measurement surfaced **three unexpected findings** that reshape the Phase 2b backlog:
 
-1. **The architect's `McpAgentClient` is instantiated WITHOUT the `cognitive` pipeline** (`agents/vertex-cloudrun/src/hub-adapter.ts:80`). ResponseSummarizer, ToolResultCache, WriteCallDedup are all inactive on architect-side. Only the `llm_usage` telemetry bridge is wired. Switching the architect to the full pipeline is estimated the single highest-ROI Phase 2b intervention.
-2. **The dominant production failure class is not response overflow — it's sandwich-scope-mismatch** (FR-SCOPE-REJECT). The architect repeatedly calls tools the sandwich rejects (`get_idea`, `list_audit_entries`, `get_engineer_status`); each rejection burns one round; 10 rejections hit MAX_TOOL_ROUNDS. Thread-166 (design analysis) burned **1.36M Gemini tokens** across two failed attempts because of this. ResponseSummarizer cannot reduce this — a Phase 2b FastFail-OnRepeatScopeReject middleware could.
+1. **Sandwich-scope system-prompt mismatch drives FR-SCOPE-REJECT.** The `ARCHITECT_SYSTEM_PROMPT` at `agents/vertex-cloudrun/src/llm.ts:111-113` advertises 20+ tools by name (including `list_audit_entries`, `get_engineer_status`, `create_audit_entry`, etc.). Sandwich `thread-reply` then filters the tool declarations to 10 tools (`sandwich.ts:329-346`). The LLM sees both lists, calls tools from the broader system prompt, and each rejection burns one round. 10 rejections hit MAX_TOOL_ROUNDS. Thread-166 burned **1.36M Gemini tokens** across two failed attempts from this class alone. Tool-scope filtering *is* happening at the declarations layer; the system prompt is the leak.
+
+2. **Accumulated history dominates prompt-token growth from round ~5 onward.** `generateWithTools` pushes every model turn + every tool result into `contents[]` (`llm.ts:516` + tool-result parts); nothing is trimmed. Thread-166 round 7 prompt = 99,269 tokens, round 10 prompt = 252,251 tokens — the delta is not larger *responses*, it's more *accumulated* responses. ResponseSummarizer trims one response; it does not reclaim context from prior rounds.
+
+3. **The architect's `McpAgentClient` is instantiated WITHOUT the `cognitive` pipeline** (`agents/vertex-cloudrun/src/hub-adapter.ts:80`). ResponseSummarizer, ToolResultCache, WriteCallDedup are all inactive on architect-side. Only the `llm_usage` telemetry bridge is wired. Wiring the full pipeline caps per-response size but is complementary to (1) and (2), not a substitute — it doesn't help the scope leak or the accumulated-history problem.
 
 ---
 
@@ -129,21 +132,46 @@ MAX_TOOL_ROUNDS isn't emitted as a `llmFinishReason` — it's a sandwich-level e
 
 **82% of production Gemini spend went to attempts that hit MAX_TOOL_ROUNDS.** This is the architect-side analogue of the M-Ideas-Audit failure class — not fixed by Phase 2a, dominates Phase 2b priority.
 
-### Root cause analysis: FR-SCOPE-REJECT
+### Root cause #1 — Sandwich-scope system-prompt leak (FR-SCOPE-REJECT)
 
-Sandwich `thread-reply` scope intentionally forbids tools the architect keeps calling anyway:
+The sandwich-thread-reply path already filters tool *declarations* to a 10-tool allowlist (`sandwich.ts:329-346`). But `ARCHITECT_SYSTEM_PROMPT` at `llm.ts:111-113` names many more tools by role:
 
-| Rejected tool | Rejection events observed |
-|---|---:|
-| `list_audit_entries` | 7 |
-| `get_idea` | 1 |
-| `get_engineer_status` | 1 |
+```
+Tools tagged [Architect] are for your use (create_task, get_report,
+  get_engineer_status, create_proposal_review, create_review,
+  close_thread, get_pending_actions, create_audit_entry,
+  resolve_clarification, cancel_task).
+Tools tagged [Any] can be used by either role (list_tasks,
+  list_documents, get_document, list_proposals, get_review,
+  create_thread, create_thread_reply, get_thread, list_threads,
+  list_audit_entries).
+```
 
-Each rejection consumes one round; ten consecutive rejections exhaust MAX_TOOL_ROUNDS; sandwich retries; rejection cycle repeats. Thread-166 hit 979,858 prompt tokens on a single attempt because of this — the architect paged through `list_tasks` with escalating offsets (`offset: 250` was observed) trying to work around the rejection.
+Gemini reads both — the system-prompt listing *and* the filtered declaration list — and reliably reaches for the former. Observed rejections in Pass 2:
 
-Phase 2a's ResponseSummarizer does not help here — the blocker is scope, not oversized response.
+| Rejected tool | Rejection events | Source of the hallucination |
+|---|---:|---|
+| `list_audit_entries` | 7 | `[Any]` line in system prompt |
+| `get_idea` | 1 | Not even in system prompt — thread history or training |
+| `get_engineer_status` | 1 | `[Architect]` line in system prompt |
 
-### Architect-side cognitive coverage: MISSING
+Each rejection consumes one round and returns an error string; the LLM retries, often with the same tool, and burns 10 rounds hitting MAX_TOOL_ROUNDS. The fix is a **sandwich-scope prompt override** — when entering thread-reply, inject an explicit override that supersedes the general tool directory and names only the allowlisted tools.
+
+### Root cause #2 — Accumulated tool-call history
+
+`generateWithTools` (`llm.ts:411-520`) appends every model turn + every tool result to `contents[]` and never trims. Prompt-token growth across Pass 2:
+
+| Thread | Round 1 prompt | Round 7 prompt | Round 10 prompt | Growth R1→R10 |
+|---|---:|---:|---:|---:|
+| 166 attempt 2 | ~5,000 | 99,269 | 252,251 | ~50× |
+| 167 attempt 2 | ~5,000 | ~90,000 | 172,355 / final 611,121 | ~120× |
+| 165 | ~5,000 | — | 190,539 | ~38× |
+
+These increases are not from larger *individual* responses — they are accumulated stale `list_ideas` / `list_tasks` results from earlier rounds that the LLM has already moved past. ResponseSummarizer at the tool-call boundary trims each response once; it does not reclaim context from prior-round history.
+
+Fix: a round-to-round history trimmer that replaces stale tool-result bodies with summary stubs (e.g., `"{ kind: 'tool_result_elided', tool: 'list_tasks', elidedTokens: 12500 }"`) once they are more than N rounds old. Keep the original structure so the LLM retains turn ordering; drop the payload that's already been acted on.
+
+### Root cause #3 — Architect-side cognitive coverage missing
 
 The architect's `McpAgentClient` at `agents/vertex-cloudrun/src/hub-adapter.ts:80-91` is instantiated without the `cognitive` option. Consequence:
 
@@ -154,7 +182,7 @@ The architect's `McpAgentClient` at `agents/vertex-cloudrun/src/hub-adapter.ts:8
 
 Only `architectTelemetry` (the Phase 2a ckpt-C singleton) is wired, and that's pure observability — it does not modify tool-call behavior.
 
-Wiring the architect's `McpAgentClient` with `cognitive: CognitivePipeline.standard({ telemetry: { sink: architectTelemetrySink } })` is the single largest Phase 2b lever. Estimated impact by extrapolation from Pass 1: **~33% reduction in Gemini output tokens** on thread-166-class workloads, plus the Phase 1 Hub-call reduction applied to the architect's request surface.
+Wiring the architect's `McpAgentClient` with `cognitive: CognitivePipeline.standard({ telemetry: { sink: architectTelemetry.sink } })` complements root causes #1 + #2 — it caps per-response size, but the scope leak and accumulated history are what dominate thread-166-class blowups.
 
 ---
 
@@ -188,22 +216,30 @@ Original Phase 2b middleware list from thread-160:
 - GranularMatrix (per-tool middleware config)
 - ParallelBatchSuggester
 
-**Revised ranking after Pass 2 data:**
+**Revised ranking after Pass 2 data** — sequenced to conclusively solve MAX_TOOL_ROUNDS and architect token/context waste:
 
-1. **Wire architect-side cognitive pipeline** (not on original list — newly surfaced)
-   Single smallest diff with largest production impact. `hub-adapter.ts:80-91` needs `cognitive: CognitivePipeline.standard(...)` injected. Extrapolated ~33% Gemini output-token reduction on oversized-read workloads.
+1. **Sandwich-scope system-prompt override** (NEW — root cause of FR-SCOPE-REJECT)
+   When `sandwich.ts` enters thread-reply mode, prepend a scope override to the system prompt that names only the 10 allowlisted tools and explicitly suppresses the broader directory. Eliminates the class directly. Would have saved the full ~3M prompt-token burn observed in Pass 2 MAX_TOOL_ROUNDS attempts. Scope: ~20 lines of code in `sandwich.ts` + `llm.ts`.
 
-2. **FastFail-OnRepeatScopeReject middleware** (not on original list — Pass 2 discovered failure class)
-   When the sandwich rejects the same tool twice within a round-budget, terminate the sandwich early instead of letting it exhaust MAX_TOOL_ROUNDS. Would have saved ~3M prompt tokens in Pass 2.
+2. **Round-to-round history trimming** (NEW — dominates prompt growth from round 5+)
+   Add a history-compactor in `generateWithTools` that replaces stale tool-result blobs older than N rounds with elision stubs. Keeps turn structure; drops payload. Would cap round-10 prompt growth at roughly round-5 levels. Extrapolated token savings on thread-166-class workloads: 50-80% per attempt. Scope: ~40 lines in `llm.ts`.
 
-3. **ParallelBatchSuggester** (original list, still valid)
+3. **Wire architect-side cognitive pipeline** (NEW — complementary response-surface cap)
+   Add `cognitive: CognitivePipeline.standard(...)` at `hub-adapter.ts:80-91`. Phase 1 Hub-call reduction (67.7%) + Phase 2a output-token reduction (33.2%) apply to architect's Hub request surface. Complements #1 and #2 rather than substitutes. Scope: ~5 lines.
+
+4. **FastFail-OnRepeatScopeReject middleware** (belt-and-braces)
+   After #1 ships, scope rejections should be rare. If any remain, fail fast on repeat-same-rejection within N rounds rather than letting the loop hit MAX_TOOL_ROUNDS. Small additional safety net.
+
+5. **ParallelBatchSuggester** (original list, still valid)
    Thread-167 showed the architect manually ordering sequential `get_thread` calls that could have been parallel. Directly addresses the parallel-candidate prompt shape.
 
-4. **StaleWhileRevalidate** (original list, deprioritized)
+6. **StaleWhileRevalidate** (original list, deprioritized)
    Pass 1 cache hit rate is already 77.6%; revalidation only matters for long-lived cached entries, which didn't surface as a bottleneck in either pass.
 
-5. **GranularMatrix** (original list, deprioritized)
+7. **GranularMatrix** (original list, deprioritized)
    Per-tool config is a quality-of-life optimization; Pass 2 did not surface a case where the global defaults hurt.
+
+Execution plan: `docs/planning/phase-2b-architect-token-optimization-plan.md`.
 
 ---
 
