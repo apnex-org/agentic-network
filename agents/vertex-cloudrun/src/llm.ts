@@ -64,6 +64,17 @@ export interface CognitiveOptions {
    * observability without parsing Cloud Run logs.
    */
   onUsage?: (usage: LlmRoundUsage) => void;
+  /**
+   * Phase 2b ckpt-A — scope-override preamble prepended before
+   * `ARCHITECT_SYSTEM_PROMPT` so it is the first thing the LLM reads.
+   * Used by the sandwich thread-reply path to suppress tool calls to
+   * tools named in the general system prompt but filtered out at the
+   * function-declaration layer. Without this, Gemini hallucinates calls
+   * to tools like `list_audit_entries` / `get_engineer_status` (seen in
+   * Pass-2 baseline measurement), each burning a round until
+   * MAX_TOOL_ROUNDS.
+   */
+  scopeOverride?: string;
 }
 
 /**
@@ -398,7 +409,15 @@ export async function generateWithTools(
   const injectBudget = cognitive.injectRoundBudget !== false;
   const parallelToolCalls = cognitive.parallelToolCalls === true;
 
+  // Phase 2b ckpt-A — scopeOverride prepended before the general prompt
+  // so the LLM's first cue is the restricted-scope constraint. The
+  // general directory in ARCHITECT_SYSTEM_PROMPT remains available for
+  // callers without an override (e.g. director-chat), but the sandwich
+  // path names only its allowlisted tools + explicit out-of-scope
+  // rejections, which eliminates the FR-SCOPE-REJECT class observed in
+  // the Phase 2a baseline.
   const baseSystemInstruction =
+    (cognitive.scopeOverride ? cognitive.scopeOverride + "\n\n" : "") +
     ARCHITECT_SYSTEM_PROMPT +
     (contextSupplement ? "\n\n" + contextSupplement : "");
 

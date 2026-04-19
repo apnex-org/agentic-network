@@ -19,6 +19,62 @@ import {
 import { pruneThreadMessages } from "./prune.js";
 import { architectTelemetry } from "./telemetry.js";
 
+/**
+ * Phase 2b ckpt-A — Sandwich scope override builder.
+ *
+ * The sandwich thread-reply path filters tool *declarations* to an
+ * allowlist, but `ARCHITECT_SYSTEM_PROMPT` in llm.ts names 20+ tools by
+ * role tag ([Architect] / [Any]). Gemini reads the system prompt and
+ * calls tools from it that aren't in the filtered declarations — each
+ * call returns an error and burns a round. Pass-2 baseline measurement
+ * observed 12 MAX_TOOL_ROUNDS attempts across 6 driven threads; 82% of
+ * architect Gemini spend (~3.05M tokens) went to these failed attempts.
+ *
+ * Fix: prepend an explicit override to the system instruction naming
+ * the allowlisted tools and the commonly-leaked out-of-scope tools the
+ * LLM tries to call. The override is built from the same allowlist the
+ * declarations use, so the two stay in sync.
+ */
+export function buildSandwichScopeOverride(
+  allowlist: readonly string[],
+): string {
+  // Tools the general system prompt advertises (by role tag) that the
+  // sandwich rejects. Keeping this list explicit — not computed from
+  // the system prompt — because the rejection surface is stable and
+  // explicit is easier for the LLM to follow.
+  const candidateLeaks = [
+    "list_audit_entries",
+    "get_idea",
+    "list_ideas",
+    "update_idea",
+    "get_engineer_status",
+    "create_proposal_review",
+    "create_review",
+    "resolve_clarification",
+    "get_report",
+    "list_documents",
+    "list_proposals",
+    "get_review",
+    "create_thread",
+  ];
+  const leaks = candidateLeaks.filter((t) => !allowlist.includes(t));
+  const allowLines = allowlist.map((t) => `  - ${t}`).join("\n");
+  const leakLines = leaks.map((t) => `  - ${t}`).join("\n");
+  return (
+    `SANDWICH SCOPE OVERRIDE — THREAD-REPLY CONTEXT\n` +
+    `\n` +
+    `This reply operates under a restricted tool scope. You may ONLY call these tools:\n` +
+    `${allowLines}\n` +
+    `\n` +
+    `All other tools mentioned in the general system prompt below are NOT AVAILABLE in this sandwich context. ` +
+    `Calling them returns an error and burns a round. Specifically, these tools from the general directory are OUT-OF-SCOPE here:\n` +
+    `${leakLines}\n` +
+    `\n` +
+    `Post your reply via create_thread_reply in as few rounds as possible. ` +
+    `Do not browse, audit, query, or inspect beyond the allowlisted tools above.`
+  );
+}
+
 // ── Sandwich retry topology (M25-SH-T1, ADR-014) ──────────────────────
 //
 // Observed failure mode (thread-125 round 5): sandwich LLM emits prose
@@ -449,6 +505,7 @@ async function attemptThreadReply(
         {
           injectRoundBudget: true,
           parallelToolCalls: true, // thread-reply allow-list tools are independent; safe to batch
+          scopeOverride: buildSandwichScopeOverride(THREAD_REPLY_TOOLS),
           onUsage: (u) => {
             cumPromptTokens += u.promptTokens;
             cumCompletionTokens += u.completionTokens;
