@@ -99,6 +99,8 @@ export {
   HubUnavailableError,
   WriteCallDedup,
   DedupTimeoutError,
+  ToolResultCache,
+  FlushAllOnWriteStrategy,
 } from "@ois/cognitive-layer";
 export type {
   CognitiveMiddleware,
@@ -113,4 +115,8 @@ export type {
   CircuitState,
   CircuitStateChange,
   WriteCallDedupConfig,
+  ToolResultCacheConfig,
+  InvalidationStrategy,
+  InvalidationDirective,
+  CacheKey,
 } from "@ois/cognitive-layer";

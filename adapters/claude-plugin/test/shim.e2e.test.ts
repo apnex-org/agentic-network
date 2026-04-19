@@ -35,6 +35,7 @@ import {
   CircuitBreaker,
   HubUnavailableError,
   WriteCallDedup,
+  ToolResultCache,
   type TelemetryEvent,
 } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
@@ -464,6 +465,36 @@ describe("claude-plugin shim — cognitive layer integration", () => {
     );
     expect(fastFail).toBeDefined();
     expect(fastFail!.errorMessage).toContain("circuit breaker tripped");
+
+    await eng.mcpClient.close();
+    await eng.agent.stop();
+  });
+
+  it("ToolResultCache returns cached reads without hitting Hub; write tool flushes cache", async () => {
+    const pipeline = new CognitivePipeline().use(
+      new ToolResultCache({ ttlMs: 30_000 }),
+    );
+    const eng = await createEngineerWithShim(hub, { cognitive: pipeline });
+
+    hub.clearToolCallLog();
+
+    // First list_tele — cache miss, hits Hub
+    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
+    expect(hub.getToolCalls("list_tele")).toHaveLength(1);
+
+    // Second list_tele — cache hit, Hub NOT called again
+    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
+    expect(hub.getToolCalls("list_tele")).toHaveLength(1); // still 1
+
+    // Issue a write (create_idea) — FlushAllOnWriteStrategy wipes cache
+    await eng.mcpClient.callTool({
+      name: "create_idea",
+      arguments: { text: "cache-flush-test" },
+    });
+
+    // Next list_tele — cache was flushed, hits Hub again
+    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
+    expect(hub.getToolCalls("list_tele")).toHaveLength(2);
 
     await eng.mcpClient.close();
     await eng.agent.stop();

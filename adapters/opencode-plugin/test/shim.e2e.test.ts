@@ -40,6 +40,7 @@ import {
   CircuitBreaker,
   HubUnavailableError,
   WriteCallDedup,
+  ToolResultCache,
   type TelemetryEvent,
 } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
@@ -442,6 +443,32 @@ describe("opencode-plugin shim — cognitive layer integration", () => {
       (e) => e.kind === "tool_error" && e.tags?.circuitBreaker === "fast_fail_open",
     );
     expect(fastFail).toBeDefined();
+
+    try { await eng.mcpClient.close(); } catch { /* ignore */ }
+    try { await eng.agent.stop(); } catch { /* ignore */ }
+  });
+
+  it("ToolResultCache returns cached reads without hitting Hub; write tool flushes cache", async () => {
+    const pipeline = new CognitivePipeline().use(
+      new ToolResultCache({ ttlMs: 30_000 }),
+    );
+    const eng = await createEngineerWithShim(hub, { cognitive: pipeline });
+
+    hub.clearToolCallLog();
+
+    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
+    expect(hub.getToolCalls("list_tele")).toHaveLength(1);
+
+    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
+    expect(hub.getToolCalls("list_tele")).toHaveLength(1);
+
+    await eng.mcpClient.callTool({
+      name: "create_idea",
+      arguments: { text: "cache-flush-test-opencode" },
+    });
+
+    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
+    expect(hub.getToolCalls("list_tele")).toHaveLength(2);
 
     try { await eng.mcpClient.close(); } catch { /* ignore */ }
     try { await eng.agent.stop(); } catch { /* ignore */ }

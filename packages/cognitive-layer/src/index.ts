@@ -42,3 +42,11 @@ export type {
 
 export { WriteCallDedup, DedupTimeoutError } from "./middlewares/write-call-dedup.js";
 export type { WriteCallDedupConfig } from "./middlewares/write-call-dedup.js";
+
+export { ToolResultCache, FlushAllOnWriteStrategy } from "./middlewares/tool-result-cache.js";
+export type {
+  ToolResultCacheConfig,
+  InvalidationStrategy,
+  InvalidationDirective,
+  CacheKey,
+} from "./middlewares/tool-result-cache.js";

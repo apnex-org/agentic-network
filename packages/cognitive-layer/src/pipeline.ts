@@ -21,6 +21,7 @@ import type {
 import { CognitiveTelemetry, type CognitiveTelemetryConfig } from "./middlewares/telemetry.js";
 import { CircuitBreaker, type CircuitBreakerConfig } from "./middlewares/circuit-breaker.js";
 import { WriteCallDedup, type WriteCallDedupConfig } from "./middlewares/write-call-dedup.js";
+import { ToolResultCache, type ToolResultCacheConfig } from "./middlewares/tool-result-cache.js";
 
 export interface StandardPipelineConfig {
   /** CognitiveTelemetry options. */
@@ -29,9 +30,11 @@ export interface StandardPipelineConfig {
   circuitBreaker?: CircuitBreakerConfig;
   /** WriteCallDedup options. */
   writeCallDedup?: WriteCallDedupConfig;
+  /** ToolResultCache options. */
+  toolResultCache?: ToolResultCacheConfig;
   /**
    * Future middlewares will register config fields here as they land:
-   * cache, enricher, normalizer.
+   * enricher, normalizer.
    */
 }
 
@@ -112,6 +115,7 @@ export class CognitivePipeline {
     pipeline.use(new CognitiveTelemetry(config.telemetry ?? {}));
     pipeline.use(new CircuitBreaker(config.circuitBreaker ?? {}));
     pipeline.use(new WriteCallDedup(config.writeCallDedup ?? {}));
+    pipeline.use(new ToolResultCache(config.toolResultCache ?? {}));
     return pipeline;
   }
 }
