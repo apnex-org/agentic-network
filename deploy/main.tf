@@ -250,10 +250,14 @@ resource "google_cloud_run_v2_service" "architect" {
         name  = "OIS_GLOBAL_INSTANCE_ID"
         value = var.architect_global_instance_id
       }
-      env {
-        name  = "ARCHITECT_WAKE_ENDPOINT"
-        value = google_cloud_run_v2_service.architect.uri
-      }
+      # ADR-017 wakeEndpoint: cannot self-reference the Cloud Run
+      # service URL (terraform forbids). Left unset in terraform for v1;
+      # Hub watchdog's re-dispatch path still works without wake POST
+      # (architect's 300s event-loop polls drain the queue on its own
+      # schedule; scale-to-zero longer than 300s correctly escalates to
+      # Director). Optimization: set ARCHITECT_WAKE_ENDPOINT manually
+      # via gcloud run services update, or move Cloud Run URL to a
+      # terraform locals + data source in a follow-up.
       env {
         name  = "OIS_HUB_LABELS"
         value = var.architect_labels

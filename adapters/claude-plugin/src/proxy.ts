@@ -28,6 +28,7 @@ import {
   type SessionState,
   type SessionReconnectReason,
   type HandshakeResponse,
+  type DrainedPendingAction,
 } from "@ois/network-adapter";
 import { readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -173,6 +174,20 @@ function buildCallbacks(): AgentClientCallbacks {
 // ── Graceful Shutdown ───────────────────────────────────────────────
 
 let agent: McpAgentClient | null = null;
+
+/**
+ * ADR-017: local map from `${dispatchType}:${entityRef}` → queueItemId.
+ * Populated by onPendingActionItem on every drain; consumed by the
+ * CallToolRequestSchema handler to inject sourceQueueItemId into
+ * settling tool calls (currently create_thread_reply) before forwarding
+ * to the Hub. Entry removed on successful forward; Hub's completion-ack
+ * is idempotent so retries are safe.
+ */
+const pendingActionMap = new Map<string, string>();
+
+function pendingKey(dispatchType: string, entityRef: string): string {
+  return `${dispatchType}:${entityRef}`;
+}
 let shuttingDown = false;
 
 async function shutdown(): Promise<void> {
@@ -233,6 +248,21 @@ async function main(): Promise<void> {
             { logPath: LOG_FILE, mirror: (block) => process.stderr.write(block) }
           );
         },
+        onPendingActionItem: (item: DrainedPendingAction) => {
+          // ADR-017: stash the queue-item id keyed by {dispatchType,
+          // entityRef} so the CallToolRequestSchema handler can inject
+          // sourceQueueItemId when the user issues the settling call
+          // (e.g., create_thread_reply).
+          pendingActionMap.set(pendingKey(item.dispatchType, item.entityRef), item.id);
+          // Surface to the user so they know work is owed.
+          const actionHint = item.dispatchType === "thread_message"
+            ? `Reply with create_thread_reply to thread ${item.entityRef}`
+            : `Owed: ${item.dispatchType} on ${item.entityRef}`;
+          appendNotification(
+            { event: item.dispatchType, data: item.payload, action: actionHint },
+            { logPath: LOG_FILE, mirror: (block) => process.stderr.write(block) }
+          );
+        },
       },
     },
     {
@@ -283,8 +313,23 @@ async function main(): Promise<void> {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    // ADR-017: inject sourceQueueItemId on settling tool calls. For
+    // thread replies, the key is the threadId. If the user already
+    // supplied the id explicitly, that wins. Entry is removed on
+    // successful forward; Hub's completion-ack is idempotent anyway.
+    let outgoingArgs = args ?? {};
+    if (name === "create_thread_reply" && outgoingArgs && typeof outgoingArgs === "object") {
+      const threadId = (outgoingArgs as Record<string, unknown>).threadId;
+      if (typeof threadId === "string" && !("sourceQueueItemId" in outgoingArgs)) {
+        const queueItemId = pendingActionMap.get(pendingKey("thread_message", threadId));
+        if (queueItemId) {
+          outgoingArgs = { ...outgoingArgs, sourceQueueItemId: queueItemId };
+          pendingActionMap.delete(pendingKey("thread_message", threadId));
+        }
+      }
+    }
     try {
-      const result = await agent!.call(name, args ?? {});
+      const result = await agent!.call(name, outgoingArgs);
       return {
         content: [
           { type: "text" as const, text: typeof result === "string" ? result : JSON.stringify(result, null, 2) },

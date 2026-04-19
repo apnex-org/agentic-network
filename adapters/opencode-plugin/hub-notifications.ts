@@ -26,6 +26,7 @@ import {
   type SessionState,
   type SessionReconnectReason,
   type HandshakeFatalError,
+  type DrainedPendingAction,
 } from "@ois/network-adapter"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import {
@@ -46,6 +47,18 @@ const RATE_LIMIT_MS = 30_000
 let diagLogPath = ""
 let notificationLogPath = ""
 let hubAdapter: McpAgentClient | null = null
+
+/**
+ * ADR-017: local map from `${dispatchType}:${entityRef}` → queueItemId.
+ * Populated by onPendingActionItem on every drain; consumed by the
+ * CallToolRequestSchema handler to inject sourceQueueItemId into
+ * settling tool calls (currently create_thread_reply).
+ */
+const pendingActionMap = new Map<string, string>()
+
+function pendingKey(dispatchType: string, entityRef: string): string {
+  return `${dispatchType}:${entityRef}`
+}
 let proxyPort = 0
 let sdkClient: any = null
 let currentSessionId: string | null = null
@@ -395,11 +408,24 @@ function createProxyServer(): Server {
         }],
       }
     }
+    // ADR-017: inject sourceQueueItemId on settling tool calls. Thread
+    // replies look up the pending-action queue-item id by threadId. If
+    // the caller already supplied the id explicitly, that wins. Entry
+    // is removed on successful forward (Hub completion-ack is idempotent).
+    const { name } = request.params
+    let outgoingArgs: Record<string, unknown> = (request.params.arguments ?? {}) as Record<string, unknown>
+    if (name === "create_thread_reply") {
+      const threadId = outgoingArgs.threadId
+      if (typeof threadId === "string" && !("sourceQueueItemId" in outgoingArgs)) {
+        const queueItemId = pendingActionMap.get(pendingKey("thread_message", threadId))
+        if (queueItemId) {
+          outgoingArgs = { ...outgoingArgs, sourceQueueItemId: queueItemId }
+          pendingActionMap.delete(pendingKey("thread_message", threadId))
+        }
+      }
+    }
     try {
-      const result = await hubAdapter.call(
-        request.params.name,
-        (request.params.arguments ?? {}) as Record<string, unknown>,
-      )
+      const result = await hubAdapter.call(name, outgoingArgs)
       return {
         content: [{
           type: "text" as const,
@@ -495,6 +521,19 @@ async function connectToHub(globalInstanceId: string): Promise<void> {
         onPendingTask: (task) => {
           appendNotification(
             { event: "task_issued", data: task, action: "Pick up with get_task" },
+            { logPath: notificationLogPath }
+          )
+        },
+        onPendingActionItem: (item: DrainedPendingAction) => {
+          // ADR-017: stash queue-item id keyed by {dispatchType, entityRef}.
+          // The CallToolRequestSchema handler injects sourceQueueItemId on
+          // the settling tool call (e.g., create_thread_reply).
+          pendingActionMap.set(pendingKey(item.dispatchType, item.entityRef), item.id)
+          const actionHint = item.dispatchType === "thread_message"
+            ? `Reply with create_thread_reply to thread ${item.entityRef}`
+            : `Owed: ${item.dispatchType} on ${item.entityRef}`
+          appendNotification(
+            { event: item.dispatchType, data: item.payload, action: actionHint },
             { logPath: notificationLogPath }
           )
         },
