@@ -545,18 +545,16 @@ export async function generateWithTools(
           }
         }),
       );
-      // Preserve original call order in response parts
+      // Preserve original call order AND apply architect-ratified
+      // positional-preservation contract (thread-160 Phase 2a):
+      //   Each response element is {status, data|error}. The 1:1
+      //   mapping between the model's tool_calls and the tool_outputs
+      //   array stays intact on partial failure — Gemini's internal
+      //   attribution depends on it.
       for (const r of results) {
-        if (r.ok) {
-          responseParts.push(
-            createPartFromFunctionResponse(r.fc.id ?? "", r.fc.name!, r.result),
-          );
-        } else {
-          const msg = r.error instanceof Error ? r.error.message : String(r.error);
-          responseParts.push(
-            createPartFromFunctionResponse(r.fc.id ?? "", r.fc.name!, { error: msg }),
-          );
-        }
+        responseParts.push(
+          createPartFromFunctionResponse(r.fc.id ?? "", r.fc.name!, buildPartialFailureElement(r)),
+        );
       }
     } else {
       // Serial execution (legacy default)
@@ -586,4 +584,33 @@ export async function generateWithTools(
     text: MAX_TOOL_ROUNDS_SENTINEL,
     history: contents,
   };
+}
+
+/**
+ * Build the architect-ratified positional-preservation envelope for a
+ * single parallel-batch element (M-Cognitive-Hypervisor Phase 2a /
+ * thread-160 round 2).
+ *
+ *   Success: `{ status: "success", data: <raw tool result> }`
+ *   Error:   `{ status: "error", error: { message: "..." } }`
+ *
+ * Exported for unit testing. Applied ONLY to the parallel execution
+ * branch — the serial path retains its legacy raw/`{error}` shape
+ * since 1:1 attribution is preserved implicitly by sequential
+ * execution.
+ */
+export function buildPartialFailureElement(
+  r:
+    | { ok: true; result: Record<string, unknown> }
+    | { ok: false; error: unknown }
+    // Callers pass richer objects; we only look at discriminator + payload.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    | any,
+): Record<string, unknown> {
+  if (r && r.ok === true) {
+    return { status: "success", data: r.result };
+  }
+  const raw = r?.error;
+  const message = raw instanceof Error ? raw.message : String(raw ?? "unknown error");
+  return { status: "error", error: { message } };
 }
