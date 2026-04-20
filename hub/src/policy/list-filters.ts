@@ -88,9 +88,12 @@ export function paginate<T>(items: T[], args: Record<string, unknown>): Paginate
 //   - $regex / $where / $expr  (ReDoS / arbitrary code exec risk)
 //   - $or / $and / $not        (logical composition; defer to Phase 3+)
 //
-// Shared helpers so list_ideas / list_threads (Phase 2) can adopt the
-// same shape without redeclaring schemas. See docs/audits/phase-2x-
-// closing.md for the measurement that produced this design.
+// Phase C (task-306, Mission-24) extended the adoption to list_ideas,
+// list_threads, list_missions + added nested path support through
+// dotted-key field names + FieldAccessor-computed virtual fields
+// (e.g., `createdBy.id` = `${role}:${agentId}`). Per-entity field specs
+// live in each *-policy.ts; the shared helpers here stayed unchanged —
+// dotted keys pass through Zod's object schema as opaque property names.
 
 /**
  * Field type descriptors — control which operators a filterable field
