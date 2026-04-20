@@ -335,6 +335,34 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   }
 
   if (!thread) {
+    // CP2 C3 (bug-15): INV-TH17 shadow instrumentation at the policy
+    // catch site. `replyToThread` returns null for several reasons
+    // (thread not found, not active, role-mismatch, or agent-pinning
+    // mismatch). A diagnostic re-read distinguishes the agent-pinning
+    // case so the shadow-breach metric fires only for that specific
+    // invariant. Cost is one extra store read on the failure side.
+    const current = await ctx.stores.thread.getThread(threadId);
+    if (
+      current &&
+      current.status === "active" &&
+      current.currentTurn === author &&
+      current.currentTurnAgentId &&
+      current.currentTurnAgentId !== authorAgentId
+    ) {
+      logShadowInvariantBreach(
+        "INV-TH17",
+        `create_thread_reply rejected: agent-pinning violation — caller agentId=${authorAgentId ?? "null"} but thread pins ${current.currentTurnAgentId}`,
+        ctx,
+        {
+          relatedEntity: threadId,
+          extra: {
+            callerAgentId: authorAgentId,
+            pinnedAgentId: current.currentTurnAgentId,
+            author,
+          },
+        },
+      );
+    }
     return {
       content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Thread ${threadId} not found, not active, or not your turn` }) }],
       isError: true,

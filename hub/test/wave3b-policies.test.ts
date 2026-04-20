@@ -605,6 +605,55 @@ describe("ThreadPolicy — Threads 2.0 (Mission-21 Phase 1)", () => {
     expect(parsed.remediation).toMatch(/populate `summary`/);
   });
 
+  // ── Phase 2d CP2 C3: INV-TH17 shadow breach (bug-15) ──────────
+  describe("INV-TH17 shadow breach on agent-pinning violation (CP2 C3 / bug-15)", () => {
+    it("emits shadow breach when a different agent of the pinned role replies", async () => {
+      const threadId = await openThread();
+      // Engineer replies — flips turn back to architect, pinning
+      // currentTurnAgentId to the original architect's agentId.
+      await router.handle("create_thread_reply", {
+        threadId,
+        message: "eng reply",
+      }, engCtx);
+
+      // Imposter architect session: same role, distinct agentId.
+      const imposterCtx = createTestContext({
+        stores: archCtx.stores,
+        role: "architect",
+        sessionId: "arch-imposter-session",
+      });
+      await router.handle("register_role", {
+        role: "architect",
+        globalInstanceId: `test-gid-${imposterCtx.sessionId}`,
+        clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+      }, imposterCtx);
+
+      const r = await router.handle("create_thread_reply", {
+        threadId,
+        message: "imposter reply",
+      }, imposterCtx);
+
+      expect(r.isError).toBe(true);
+      const snapshot = (imposterCtx as any).metrics.snapshot();
+      expect(snapshot["inv_th17.shadow_breach"]).toBeGreaterThanOrEqual(1);
+    });
+
+    it("does NOT emit shadow breach when the pinned agent replies correctly", async () => {
+      const threadId = await openThread();
+      await router.handle("create_thread_reply", {
+        threadId,
+        message: "eng reply",
+      }, engCtx);
+      // Original architect replies — pinned agent matches, no shadow breach.
+      await router.handle("create_thread_reply", {
+        threadId,
+        message: "arch reply",
+      }, archCtx);
+      const snapshot = (archCtx as any).metrics.snapshot();
+      expect(snapshot["inv_th17.shadow_breach"] ?? 0).toBe(0);
+    });
+  });
+
   // ── Phase 2d CP2 C2: convergence-gate instructional format ─────
   describe("convergence-gate errors carry subtype + remediation (CP2 C2)", () => {
     it("revise of a non-existent action yields subtype=revise_invalid", async () => {
