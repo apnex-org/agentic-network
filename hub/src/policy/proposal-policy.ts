@@ -255,12 +255,25 @@ async function createProposal(args: Record<string, unknown>, ctx: IPolicyContext
 
 async function listProposals(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const status = args.status as string | undefined;
-  const proposals = await ctx.stores.proposal.getProposals(status as any);
-  const page = paginate(proposals, args);
+  const hasFilter = status != null;
+  // Fetch full collection so `_ois_query_unmatched` can compare pre- vs
+  // post-filter counts. CP2 C5 (task-307).
+  const all = await ctx.stores.proposal.getProposals();
+  const totalPreFilter = all.length;
+  const filtered = hasFilter ? all.filter((p) => p.status === status) : all;
+  const page = paginate(filtered, args);
+  const queryUnmatched = hasFilter && page.count === 0 && totalPreFilter > 0;
   return {
     content: [{
       type: "text" as const,
-      text: JSON.stringify({ proposals: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2),
+      text: JSON.stringify({
+        proposals: page.items,
+        count: page.count,
+        total: page.total,
+        offset: page.offset,
+        limit: page.limit,
+        ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
+      }, null, 2),
     }],
   };
 }

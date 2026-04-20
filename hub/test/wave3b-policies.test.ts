@@ -76,6 +76,30 @@ describe("ProposalPolicy", () => {
     expect(parsed.count).toBe(0);
   });
 
+  // ── CP2 C5 (task-307): _ois_query_unmatched sentinel ────────────
+  it("list_proposals fires _ois_query_unmatched when filter yields zero on non-empty collection", async () => {
+    await router.handle("create_proposal", { title: "P1", summary: "S1", body: "B1" }, ctx);
+    const result = await router.handle("list_proposals", { status: "approved" }, ctx);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.count).toBe(0);
+    expect(parsed._ois_query_unmatched).toBe(true);
+  });
+
+  it("list_proposals omits _ois_query_unmatched when no filter is provided", async () => {
+    // empty collection + no filter → no sentinel (it's for filter-yields-zero case only)
+    const result = await router.handle("list_proposals", {}, ctx);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed._ois_query_unmatched).toBeUndefined();
+  });
+
+  it("list_proposals omits _ois_query_unmatched when filter yields zero on truly-empty collection", async () => {
+    const result = await router.handle("list_proposals", { status: "approved" }, ctx);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.count).toBe(0);
+    // no sentinel — distinguish "filter valid, nothing matches" from "collection empty"
+    expect(parsed._ois_query_unmatched).toBeUndefined();
+  });
+
   it("full lifecycle: create → review → get → close", async () => {
     // Create
     const createResult = await router.handle("create_proposal", {
@@ -3063,6 +3087,23 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
 
     const byTags = JSON.parse((await router.handle("list_bugs", { tags: ["hub", "architect"] }, ctx)).content[0].text);
     expect(byTags.total).toBe(2);
+  });
+
+  // ── CP2 C5 (task-307): _ois_query_unmatched sentinel ────────────
+  it("list_bugs fires _ois_query_unmatched when filter yields zero on non-empty collection", async () => {
+    await router.handle("create_bug", { title: "A", description: "a", severity: "critical" }, ctx);
+    const result = await router.handle("list_bugs", { severity: "minor" }, ctx);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.count).toBe(0);
+    expect(parsed._ois_query_unmatched).toBe(true);
+  });
+
+  it("list_bugs omits _ois_query_unmatched when filter matches at least one", async () => {
+    await router.handle("create_bug", { title: "A", description: "a", severity: "critical" }, ctx);
+    const result = await router.handle("list_bugs", { severity: "critical" }, ctx);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.count).toBe(1);
+    expect(parsed._ois_query_unmatched).toBeUndefined();
   });
 
   it("update_bug transitions open → investigating → resolved; fires bug_status_changed", async () => {

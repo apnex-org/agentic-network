@@ -136,6 +136,17 @@ describe("AuditPolicy", () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.count).toBeLessThanOrEqual(3);
   });
+
+  // ── CP2 C5 (task-307): _ois_query_unmatched sentinel ────────────
+  it("list_audit_entries fires _ois_query_unmatched when actor filter yields zero on non-empty log", async () => {
+    // Default ctx role is "architect"; seed an architect entry.
+    await router.handle("create_audit_entry", { action: "test", details: "seed" }, ctx);
+    // Filter for a different actor — log is non-empty but filter yields zero.
+    const result = await router.handle("list_audit_entries", { actor: "engineer" }, ctx);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.count).toBe(0);
+    expect(parsed._ois_query_unmatched).toBe(true);
+  });
 });
 
 // ── Session Policy ──────────────────────────────────────────────────

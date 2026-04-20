@@ -69,12 +69,29 @@ async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
   const severity = args.severity as BugSeverity | undefined;
   const classFilter = args.class as string | undefined;
   const tags = args.tags as string[] | undefined;
-  const bugs = await ctx.stores.bug.listBugs({ status, severity, class: classFilter, tags });
-  const page = paginate(bugs, args);
+  const hasFilter = status != null || severity != null || classFilter != null || (tags != null && tags.length > 0);
+  const filtered = await ctx.stores.bug.listBugs({ status, severity, class: classFilter, tags });
+  // CP2 C5 (task-307): detect "valid filter with zero matches" to fire
+  // the _ois_query_unmatched sentinel. Pre-filter count comes from an
+  // unfiltered list call ONLY when the filtered result is empty — cheap
+  // on the empty path, no cost on the happy path.
+  let totalPreFilter = filtered.length;
+  if (hasFilter && filtered.length === 0) {
+    totalPreFilter = (await ctx.stores.bug.listBugs()).length;
+  }
+  const page = paginate(filtered, args);
+  const queryUnmatched = hasFilter && page.count === 0 && totalPreFilter > 0;
   return {
     content: [{
       type: "text" as const,
-      text: JSON.stringify({ bugs: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2),
+      text: JSON.stringify({
+        bugs: page.items,
+        count: page.count,
+        total: page.total,
+        offset: page.offset,
+        limit: page.limit,
+        ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
+      }, null, 2),
     }],
   };
 }

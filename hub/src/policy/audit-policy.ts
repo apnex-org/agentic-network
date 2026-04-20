@@ -40,12 +40,28 @@ async function listAuditEntries(args: Record<string, unknown>, ctx: IPolicyConte
   // level cap when a caller wants to page deeper.
   const storeCap = Math.min(MAX_LIST_LIMIT, (args.limit as number) ?? DEFAULT_LIST_LIMIT);
   const actor = args.actor as string | undefined;
+  const hasFilter = actor != null;
   const entries = await ctx.stores.audit.listEntries(storeCap, actor as "architect" | "engineer" | "hub" | undefined);
+  // CP2 C5 (task-307): sentinel for "valid filter with zero matches".
+  // When the filtered window is empty, probe the unfiltered window at
+  // the same cap to distinguish from truly-empty.
+  let totalPreFilter = entries.length;
+  if (hasFilter && entries.length === 0) {
+    totalPreFilter = (await ctx.stores.audit.listEntries(storeCap)).length;
+  }
   const page = paginate(entries, args);
+  const queryUnmatched = hasFilter && page.count === 0 && totalPreFilter > 0;
   return {
     content: [{
       type: "text" as const,
-      text: JSON.stringify({ entries: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2),
+      text: JSON.stringify({
+        entries: page.items,
+        count: page.count,
+        total: page.total,
+        offset: page.offset,
+        limit: page.limit,
+        ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
+      }, null, 2),
     }],
   };
 }
