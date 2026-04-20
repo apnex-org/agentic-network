@@ -146,6 +146,89 @@ export const AUTONOMOUS_STAGED_ACTION_TYPES = [
   "create_bug",
 ] as const;
 
+/**
+ * Phase 2a (task-303, thread-223) — per-action commit authority.
+ *
+ * The converger's role must be ≥ the max-privilege of any staged
+ * action in the thread. Architect holds directive authority for
+ * task + mission + mission-status updates. Proposals are engineer-
+ * authored per ADR-010. Everything else is symmetric — either
+ * party can converge.
+ *
+ * Convergence gate in thread-policy.ts reads this map and rejects
+ * converged=true with a reject-with-hint error when the caller's
+ * role doesn't satisfy.
+ */
+export type ConvergerRoleRequirement = "architect" | "engineer" | "either";
+
+export const REQUIRED_CONVERGER_ROLE: Record<
+  typeof AUTONOMOUS_STAGED_ACTION_TYPES[number],
+  ConvergerRoleRequirement
+> = {
+  close_no_action: "either",
+  create_task: "architect",
+  create_proposal: "engineer",
+  create_idea: "either",
+  update_idea: "either",
+  update_mission_status: "architect",
+  propose_mission: "architect",
+  create_clarification: "either",
+  create_bug: "either",
+};
+
+/**
+ * Compute the effective commit-authority requirement for a set of
+ * staged actions. Rule: architect > engineer > either. If any action
+ * requires architect, the whole set requires architect. If any action
+ * requires engineer (and none requires architect), the set requires
+ * engineer. Otherwise either can converge.
+ */
+export function effectiveConvergerRequirement(
+  actionTypes: readonly string[],
+): ConvergerRoleRequirement {
+  let requirement: ConvergerRoleRequirement = "either";
+  for (const t of actionTypes) {
+    const r = (REQUIRED_CONVERGER_ROLE as Record<string, ConvergerRoleRequirement | undefined>)[t];
+    if (r === "architect") return "architect"; // max — no further escalation possible
+    if (r === "engineer" && requirement === "either") requirement = "engineer";
+  }
+  return requirement;
+}
+
+/**
+ * Check whether a caller's role satisfies the effective requirement.
+ * Role hierarchy: architect has super-user privilege over engineer-
+ * required actions (architect ≥ engineer ≥ director for Hub purposes).
+ * But engineer/director CANNOT converge architect-required actions —
+ * architect is the sole authority for directives (tasks, missions).
+ *
+ * Returns null on success; otherwise a human-readable error message
+ * naming the violating action types + required role for the
+ * reject-with-hint surface at the convergence gate.
+ */
+export function checkConvergerAuthority(
+  callerRole: "architect" | "engineer" | "director" | "unknown",
+  stagedActionTypes: readonly string[],
+): string | null {
+  const required = effectiveConvergerRequirement(stagedActionTypes);
+  if (required === "either") return null;
+  // Architect is super-user — can converge anything.
+  if (callerRole === "architect") return null;
+  // engineer / director roles satisfy only engineer-required.
+  if (required === "engineer" && (callerRole === "engineer" || callerRole === "director")) return null;
+  // All other combinations: architect-required + non-architect caller.
+  const violating = stagedActionTypes.filter((t) => {
+    const r = (REQUIRED_CONVERGER_ROLE as Record<string, ConvergerRoleRequirement | undefined>)[t];
+    return r === required;
+  });
+  return (
+    `Convergence denied: this thread stages ${violating.join(", ")} ` +
+    `which requires converger role '${required}', but caller role is '${callerRole}'. ` +
+    `Per-action commit authority (Phase 2a task-303): architect-only actions ` +
+    `(create_task, update_mission_status, propose_mission) must be converged by the Architect.`
+  );
+}
+
 // ── Validate phase (M24-T4, INV-TH19) ───────────────────────────────
 
 /**

@@ -2303,6 +2303,114 @@ describe("Phase 2 invariants (M24-T11)", () => {
     const skipAudits = audits.filter((a) => a.action === "action_already_executed" && a.details.includes(thread!.id));
     expect(skipAudits.length).toBeGreaterThanOrEqual(3);
   });
+
+  // ── Phase 2a (task-303, thread-223) — per-action commit authority ──
+
+  it("Phase 2a: engineer cannot finalize convergence on a thread staging create_task (architect-only action)", async () => {
+    // Architect opens the thread, stages create_task, and converges.
+    // Engineer then mirrors-converges — authority check must block,
+    // because the max-privilege of staged actions is architect-only
+    // and engineer is attempting to be the committer (final converger).
+    const r = await router.handle("create_thread", { routingMode: "broadcast", title: "phase2a-authority", message: "Please add a task" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+
+    // Engineer's turn — stage + converge from the engineer side first
+    // (allowed because architect hasn't yet converged; no other party's
+    // converged=true exists → authority check is NOT a bilateral-final-
+    // convergence trigger).
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "Proposing the task",
+      converged: true,
+      intent: "implementation_ready",
+      summary: "Engineer proposes a task; architect must commit.",
+      stagedActions: [{
+        kind: "stage", type: "create_task",
+        payload: { title: "T", description: "D" },
+      }],
+    }, engCtx);
+
+    // Now architect converges — this is the COMMITTER role. Authority
+    // check passes because callerRole=architect satisfies the
+    // max-privilege=architect requirement.
+    const archResp = await router.handle("create_thread_reply", {
+      threadId,
+      message: "Approved. Proceed.",
+      converged: true,
+    }, archCtx);
+    expect(archResp.isError).toBeUndefined();
+
+    // Thread should reach `closed` (cascade succeeded)
+    const t = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
+    expect(t.status).toBe("closed");
+  });
+
+  it("Phase 2a: architect stamp via EITHER slot satisfies create_task authority — late-binding from architect, engineer confirms", async () => {
+    // Architect opens, engineer no-content, architect stages + converges,
+    // engineer confirms. Architect is first-converger; engineer is
+    // second. The "any converger with authority" rule means architect's
+    // converge stamp counts, so engineer's confirm passes.
+    const r = await router.handle("create_thread", { routingMode: "broadcast", title: "phase2a-late-bind", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "No content",
+      stagedActions: [],
+    }, engCtx);
+
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "Here is the task",
+      converged: true,
+      intent: "implementation_ready",
+      summary: "Architect issues the task.",
+      stagedActions: [{
+        kind: "stage", type: "create_task",
+        payload: { title: "T", description: "D" },
+      }],
+    }, archCtx);
+
+    const engResp = await router.handle("create_thread_reply", {
+      threadId,
+      message: "Acknowledged",
+      converged: true,
+    }, engCtx);
+    // Passes: architect's converge stamp satisfies authority
+    expect(engResp.isError).toBeUndefined();
+    const t = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
+    expect(t.status).toBe("closed");
+  });
+
+  it("Phase 2a: close_no_action threads unaffected by authority check (either role can converge)", async () => {
+    const r = await router.handle("create_thread", { routingMode: "broadcast", title: "phase2a-symmetric", message: "m" }, archCtx);
+    const threadId = JSON.parse(r.content[0].text).threadId;
+
+    // Engineer stages + converges with close_no_action
+    await router.handle("create_thread_reply", {
+      threadId,
+      message: "Ack",
+      converged: true,
+      intent: "implementation_ready",
+      summary: "Symmetric close.",
+      stagedActions: [{
+        kind: "stage", type: "close_no_action",
+        payload: { reason: "no downstream" },
+      }],
+    }, engCtx);
+
+    // Architect mirrors-converges — close_no_action is "either", so no
+    // authority gate. Thread reaches `closed`.
+    const archResp = await router.handle("create_thread_reply", {
+      threadId,
+      message: "Agreed",
+      converged: true,
+    }, archCtx);
+    expect(archResp.isError).toBeUndefined();
+
+    const t = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
+    expect(t.status).toBe("closed");
+  });
 });
 
 // ── Cascade-path SSE dispatch parity (bug surfaced post-M24-T15 ITW) ─

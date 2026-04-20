@@ -21,7 +21,7 @@ import { runCascade } from "./cascade.js";
 // registry at module-load time. Adding a new handler type: append
 // to cascade-actions/index.ts.
 import "./cascade-actions/index.js";
-import { AUTONOMOUS_STAGED_ACTION_TYPES } from "./staged-action-payloads.js";
+import { AUTONOMOUS_STAGED_ACTION_TYPES, checkConvergerAuthority } from "./staged-action-payloads.js";
 
 // ── Routing Mode Validation (ADR-016, INV-TH18 + INV-TH28) ──────────
 /**
@@ -220,6 +220,52 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   // attach it to the ThreadMessage and upsert into participants[].
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(ctx.sessionId).catch(() => null);
   const authorAgentId: string | null = agent?.engineerId ?? null;
+
+  // Phase 2a (task-303, thread-223) — per-action commit authority.
+  // When bilateral convergence fires, at least ONE converger must have
+  // authority over the staged actions. Architect stamp can be first
+  // (architect stages + converges, engineer confirms) or second
+  // (engineer stages or converges first, architect confirms). Either
+  // shape is valid — what matters is that the architect is part of
+  // the consensus for architect-required actions, not which slot they
+  // occupy.
+  //
+  // Check fires ONLY at the bilateral trigger (lastMessageConverged
+  // already true + this reply is converged=true). Failing earlier
+  // converges would block healthy one-party-commits-first flows.
+  if (converged) {
+    const existing = await ctx.stores.thread.getThread(threadId);
+    const prevConverged = existing?.lastMessageConverged === true;
+    if (prevConverged) {
+      const stagedEffective = [
+        ...(existing?.convergenceActions ?? [])
+          .filter((a: any) => a.status === "staged" || a.status === "committed")
+          .map((a: any) => a.type as string),
+        ...(stagedActions ?? [])
+          .filter((op: any) => op?.kind === "stage")
+          .map((op: any) => op.type as string),
+      ];
+      // Collect every role that has signalled converged=true on this
+      // thread (including the current caller). At least one of those
+      // roles must satisfy the staged-action authority requirement.
+      const convergerRoles: Array<"architect" | "engineer" | "director" | "unknown"> = [callerRole as any];
+      for (const m of existing?.messages ?? []) {
+        if ((m as any).converged === true) {
+          convergerRoles.push((m as any).author === "architect" ? "architect" : "engineer");
+        }
+      }
+      const anyAuthorized = convergerRoles.some(
+        (role) => checkConvergerAuthority(role, stagedEffective) === null,
+      );
+      if (!anyAuthorized) {
+        const authorityError = checkConvergerAuthority(callerRole as any, stagedEffective);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: authorityError }) }],
+          isError: true,
+        };
+      }
+    }
+  }
 
   let thread: Thread | null;
   try {
@@ -620,6 +666,24 @@ async function handleThreadConvergedWithAction(
       `Thread ${threadId} cascade_failed: ${cascadeResult.failedCount}/${actions.length} handler failure(s). Summary: ${summaryForCascade}.`,
       threadId,
     );
+    // Phase 2a (task-303, thread-223): Director notification on cascade
+    // failure. Without this, cascade_failed threads were invisible until
+    // someone listed threads by status. Severity: critical — human
+    // intervention is expected (either retry-cascade once Phase 2c
+    // ships, or force_close_thread to discard staged actions). Details
+    // include the per-action report so operators can triage which
+    // handler(s) broke the cascade.
+    const failedReport = cascadeResult.report
+      .filter((r) => r.status === "failed")
+      .map((r) => `${r.type}/${r.actionId}: ${r.error ?? "unknown error"}`)
+      .join("; ");
+    await ctx.stores.directorNotification.create({
+      severity: "critical",
+      source: "cascade_failed",
+      sourceRef: threadId,
+      title: `Thread ${threadId} cascade_failed — ${cascadeResult.failedCount}/${actions.length} action(s) failed`,
+      details: `Thread ${threadId} reached converged=true but the post-convergence cascade failed. Failed actions: ${failedReport}. Thread summary: ${summaryForCascade}. Retry path: Phase 2c retry_cascade tool (not yet shipped); interim path: force_close_thread to discard staged actions.`,
+    });
   } else {
     await ctx.stores.thread.closeThread(threadId);
   }
