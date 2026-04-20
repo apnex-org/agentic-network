@@ -1,6 +1,6 @@
 # M-Cognitive-Hypervisor — Work Trace (live state)
 
-**Mission scope.** Tracks all in-flight, queued, and recently-completed work under the M-Cognitive-Hypervisor mission (`docs/planning/m-cognitive-hypervisor.md`). When a new overall mission is adopted, fork a new work-trace doc alongside its spec.
+**Mission scope.** Tracks all in-flight, queued, and recently-completed work under the M-Cognitive-Hypervisor mission (spec: `docs/planning/m-cognitive-hypervisor.md`). Work-traces live in `docs/traces/` (separate from `docs/planning/` design artifacts). Naming: `<mission-slug>-work-trace.md`, one per overall mission. When a new overall mission is adopted, drop a new trace file into `docs/traces/`; archive a closed trace by renaming to `<mission-slug>-work-trace.closed.md`.
 
 **What this is.** Living document. Tracks every in-flight item, its dependencies, and recent session history. Updated whenever an item changes state. Single source of truth for "what's happening right now" across sessions.
 
