@@ -399,6 +399,98 @@ async function closeThread(args: Record<string, unknown>, ctx: IPolicyContext): 
 }
 
 /**
+ * Phase 2c ckpt-C (idea-117) — administrative thread close.
+ *
+ * Covers the gap where a thread is structurally stuck (currentTurn =
+ * architect, but architect can never reply — e.g., MAX_TOOL_ROUNDS on
+ * every attempt) and the normal close_thread path is inaccessible
+ * (architect itself in a death spiral; director lacks architect role).
+ *
+ * Calls the same thread.closeThread primitive, but ALSO abandons any
+ * non-terminal queue item for that thread so both the thread state and
+ * the queue state transition to terminal atomically. Emits a distinct
+ * audit action (`thread_force_closed`) and a Director notification so
+ * the intervention is visible downstream.
+ *
+ * Role-gated at runtime to Architect or Director (inline check, same
+ * pattern as prune_stuck_queue_items — the router RoleTag surface
+ * doesn't include Director).
+ */
+async function forceCloseThread(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
+  if (callerRole !== "architect" && callerRole !== "director") {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ error: `Authorization denied: force_close_thread requires role 'architect' or 'director', but caller is '${callerRole}'` }) }],
+      isError: true,
+    };
+  }
+
+  const threadId = args.threadId as string;
+  const reason = typeof args.reason === "string" && args.reason.trim().length > 0
+    ? args.reason
+    : "administrative force-close via force_close_thread";
+
+  const thread = await ctx.stores.thread.getThread(threadId);
+  if (!thread) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Thread ${threadId} not found` }) }],
+      isError: true,
+    };
+  }
+
+  const success = await ctx.stores.thread.closeThread(threadId);
+  if (!success) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `closeThread failed for ${threadId}` }) }],
+      isError: true,
+    };
+  }
+
+  // Abandon any non-terminal queue items attached to this thread so
+  // the queue state matches the thread state. Scans across all
+  // architect participants — covers the common case where a single
+  // thread has one stuck queue item per recipient.
+  const abandonedItems: string[] = [];
+  for (const participant of thread.participants ?? []) {
+    if (participant.role !== "architect") continue;
+    if (!participant.agentId) continue;
+    const items = await ctx.stores.pendingAction.listForAgent(participant.agentId);
+    for (const item of items) {
+      if (item.dispatchType !== "thread_message") continue;
+      if (item.entityRef !== threadId) continue;
+      if (item.state === "completion_acked" || item.state === "errored" || item.state === "escalated") continue;
+      const abandoned = await ctx.stores.pendingAction.abandon(item.id, reason);
+      if (abandoned?.state === "errored") abandonedItems.push(item.id);
+    }
+  }
+
+  await ctx.stores.audit.logEntry(
+    "hub",
+    "thread_force_closed",
+    `Thread ${threadId} administratively force-closed (reason: ${reason}, caller-role: ${callerRole}, abandoned-queue-items: ${abandonedItems.length})`,
+    threadId,
+  );
+
+  await ctx.stores.directorNotification.create({
+    severity: "warning",
+    source: "queue_item_escalated",
+    sourceRef: threadId,
+    title: `Thread ${threadId} force-closed`,
+    details: `Administrative force-close via force_close_thread. Reason: ${reason}. ${abandonedItems.length > 0 ? `Abandoned queue items: ${abandonedItems.join(", ")}.` : "No active queue items."}`,
+  });
+
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({
+      success: true,
+      threadId,
+      status: "closed",
+      reason,
+      abandonedQueueItems: abandonedItems,
+    }) }],
+  };
+}
+
+/**
  * Mission-24 Phase 2 (M24-T6, ADR-014): participant-initiated exit
  * from an active thread. Unlike close_thread (Architect stewardship),
  * leave_thread is callable by any Thread participant and is the
@@ -664,6 +756,16 @@ export function registerThreadPolicy(router: PolicyRouter): void {
     "[Architect] Close an ideation thread as administrative stewardship. Distinct from `leave_thread` (participant-initiated abandonment) and from the cascade-driven close after bilateral convergence — use `close_thread` for stranded threads with no living participant, or for threads that need to be terminated outside the normal convergence flow.",
     { threadId: z.string().describe("The thread ID to close") },
     closeThread,
+  );
+
+  router.register(
+    "force_close_thread",
+    "[Any] idea-117 Phase 2c admin: force-close a structurally stuck thread. Distinct from close_thread — runtime-gated to Architect or Director roles, atomically abandons any non-terminal queue items for the thread, and emits a distinct audit action (thread_force_closed) + Director notification. Use when the architect cannot itself close the thread (e.g., MAX_TOOL_ROUNDS death spiral) or when director-level intervention is needed for queue-stuck threads.",
+    {
+      threadId: z.string().describe("The thread ID to force-close"),
+      reason: z.string().optional().describe("Human-readable reason for the force-close; persisted on the audit entry and Director notification"),
+    },
+    forceCloseThread,
   );
 
   router.register(

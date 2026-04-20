@@ -349,6 +349,60 @@ describe("ThreadPolicy", () => {
     expect(result.isError).toBe(true);
   });
 
+  it("force_close_thread administratively closes and abandons queue items (Phase 2c ckpt-C, idea-117)", async () => {
+    await router.handle("register_role", {
+      role: "architect",
+      globalInstanceId: `test-gid-${ctx.sessionId}`,
+      clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+    }, ctx);
+    const architectAgent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+    expect(architectAgent).not.toBeNull();
+
+    const createResult = await router.handle("create_thread", {
+      routingMode: "broadcast", title: "Stuck thread", message: "Opening",
+    }, ctx);
+    const { threadId } = JSON.parse(createResult.content[0].text);
+
+    // Simulate a stuck queue item for the architect on this thread
+    const queued = await ctx.stores.pendingAction.enqueue({
+      targetAgentId: architectAgent!.engineerId,
+      dispatchType: "thread_message",
+      entityRef: threadId,
+      payload: {},
+    });
+    await ctx.stores.pendingAction.receiptAck(queued.id);
+
+    const result = await router.handle("force_close_thread", { threadId, reason: "test admin close" }, ctx);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.status).toBe("closed");
+    expect(parsed.abandonedQueueItems.length).toBeGreaterThanOrEqual(1);
+
+    // Thread should be closed
+    const thread = await ctx.stores.thread.getThread(threadId);
+    expect(thread?.status).toBe("closed");
+
+    // Queue item should be errored (abandoned)
+    const item = await ctx.stores.pendingAction.getById(queued.id);
+    expect(item?.state).toBe("errored");
+    expect(item?.escalationReason).toBe("test admin close");
+
+    // Audit entry + Director notification emitted
+    const audits = await ctx.stores.audit.listEntries();
+    expect(audits.some((a: any) => a.action === "thread_force_closed" && a.relatedEntity === threadId)).toBe(true);
+    const notifs = await ctx.stores.directorNotification.list({});
+    expect(notifs.some((n: any) => n.sourceRef === threadId)).toBe(true);
+  });
+
+  it("force_close_thread denies engineer role", async () => {
+    const engCtx = createTestContext({ stores: ctx.stores, role: "engineer" });
+    await router.handle("register_role", { role: "engineer" }, engCtx);
+    const result = await router.handle("force_close_thread", { threadId: "thread-anything" }, engCtx);
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error).toMatch(/Authorization denied/);
+  });
+
   it("create_thread_reply fails when not your turn", async () => {
     // Architect opens (engineer's turn)
     await router.handle("register_role", {

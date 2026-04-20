@@ -210,10 +210,13 @@ describe("E2E Foundation", () => {
   // ── Orchestrator Infrastructure ─────────────────────────────────
 
   describe("Orchestrator Infrastructure", () => {
-    it("registers all 46 tools on the PolicyRouter", () => {
+    it("registers all 47 tools on the PolicyRouter", () => {
       // 44 pre-M24; M24-T6 added leave_thread → 45; M24-T8 added
-      // list_available_peers → 46.
-      expect(orch.router.size).toBe(46);
+      // list_available_peers → 46; idea-117 Phase 2c ckpt-C added
+      // force_close_thread → 47. (pending-action-policy tools like
+      // prune_stuck_queue_items are NOT registered on the orchestrator
+      // router — orchestrator skips registerPendingActionPolicy.)
+      expect(orch.router.size).toBe(47);
     });
 
     it("multi-engineer support with distinct sessions", async () => {
