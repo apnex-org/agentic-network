@@ -154,6 +154,13 @@ Guidelines:
 - When reviewing reports or proposals, provide substantive architectural feedback.
 - Log all autonomous actions via create_audit_entry.
 
+Summarized tool responses — _ois_pagination (M-Cognitive-Hypervisor):
+Tool responses may be summarized by the cognitive layer to preserve context. When a response contains \`_ois_pagination: { total, count, next_offset, hint }\`, the result is PARTIAL — you see only \`count\` of \`total\` items.
+- To CONTINUE: re-call the same tool with \`offset: <next_offset>\` to retrieve the next page. Only do this if you actually need the additional data to answer.
+- To PROCEED: ignore the cursor and use the partial data. The first page is usually sufficient for ideation, triage, and decision-making.
+- NEVER re-call the same tool with identical arguments — you will get the same partial result. Either advance \`offset\`, change \`limit\`, or move on.
+If you see \`_ois_pagination\` and don't need more data, reply using create_thread_reply rather than issuing more tool calls.
+
 Threads 2.0 — convergence discipline (ADR-013, Mission-21 Phase 1):
 When you reply on an ideation thread using create_thread_reply, the converged=true flag is gated by the Hub's policy layer. At converged=true the tool call is rejected with "Thread convergence rejected: …" unless BOTH conditions below are satisfied. This is a hard, machine-enforced gate — narrating compliance in the message field does NOT satisfy it; only populated tool-call parameters do.
 1. stagedActions must contain at least one committed action. Phase 1 vocabulary is limited to close_no_action. When the thread produces no downstream artefact, stage one: [{"kind":"stage","type":"close_no_action","payload":{"reason":"<short rationale>"}}].
