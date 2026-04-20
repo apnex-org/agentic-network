@@ -360,9 +360,91 @@ function stopThreadReaper(): void {
   }
 }
 
+// ── Agent Reaper (CP3 C4, bug-16 part 1) ─────────────────────────────
+// Periodic background task symmetric to the thread reaper: scans
+// offline Agent records and permanently deletes those whose lastSeenAt
+// is older than HUB_AGENT_STALE_THRESHOLD_MS. Before each delete, any
+// thread whose currentTurnAgentId pins to the victim is unpinned
+// (cascade unpin per thread-234 architect direction) so the thread
+// remains replyable by its other participants. Default threshold: 7
+// days; default interval: 1 hour.
+const HUB_AGENT_STALE_THRESHOLD_MS = parseInt(
+  process.env.HUB_AGENT_STALE_THRESHOLD_MS || String(7 * 24 * 60 * 60 * 1000),
+  10,
+);
+const HUB_AGENT_REAPER_INTERVAL_MS = parseInt(
+  process.env.HUB_AGENT_REAPER_INTERVAL_MS || String(60 * 60 * 1000),
+  10,
+);
+
+let agentReaperHandle: NodeJS.Timeout | null = null;
+
+async function runAgentReaperTick(): Promise<void> {
+  try {
+    const stale = await engineerRegistry.listOfflineAgentsOlderThan(HUB_AGENT_STALE_THRESHOLD_MS);
+    if (stale.length === 0) return;
+    console.log(`[Reaper] agent reaper: ${stale.length} stale agent(s) to delete (threshold ${Math.round(HUB_AGENT_STALE_THRESHOLD_MS / 1000)}s)`);
+    for (const agent of stale) {
+      const staleMs = Date.now() - Date.parse(agent.lastSeenAt);
+      // CP3 C4 cascade unpin — strip the stale agentId from any thread
+      // that still pins them to its currentTurnAgentId. Audited per
+      // thread so forensic readers can trace the transition.
+      try {
+        const unpinned = await threadStore.unpinCurrentTurnAgent(agent.engineerId);
+        for (const threadId of unpinned) {
+          await auditStore.logEntry(
+            "hub",
+            "thread_currentturn_unpinned_via_agent_reaper",
+            `Thread ${threadId} currentTurnAgentId cleared because pinned agent ${agent.engineerId} (role=${agent.role}) was reaped after ${Math.round(staleMs / 1000)}s offline.`,
+            threadId,
+          );
+        }
+        if (unpinned.length > 0) {
+          console.log(`[Reaper] agent ${agent.engineerId}: ${unpinned.length} thread(s) unpinned via cascade`);
+        }
+      } catch (unpinErr) {
+        console.error(`[Reaper] cascade unpin failed for agent ${agent.engineerId}:`, unpinErr);
+      }
+
+      try {
+        const deleted = await engineerRegistry.deleteAgent(agent.engineerId);
+        if (deleted) {
+          await auditStore.logEntry(
+            "hub",
+            "agent_reaper_deleted",
+            `Agent ${agent.engineerId} (role=${agent.role}, fingerprint=${agent.fingerprint.slice(0, 12)}…) deleted after ${Math.round(staleMs / 1000)}s offline (threshold ${Math.round(HUB_AGENT_STALE_THRESHOLD_MS / 1000)}s). lastSeenAt=${agent.lastSeenAt}.`,
+            agent.engineerId,
+          );
+        }
+      } catch (deleteErr) {
+        console.error(`[Reaper] deleteAgent failed for ${agent.engineerId}:`, deleteErr);
+      }
+    }
+  } catch (err) {
+    console.error("[Reaper] agent reaper tick failed:", err);
+  }
+}
+
+function startAgentReaper(): void {
+  if (agentReaperHandle) return;
+  console.log(`[Hub] Starting agent reaper: interval=${HUB_AGENT_REAPER_INTERVAL_MS}ms, stale-threshold=${HUB_AGENT_STALE_THRESHOLD_MS}ms`);
+  agentReaperHandle = setInterval(() => {
+    void runAgentReaperTick();
+  }, HUB_AGENT_REAPER_INTERVAL_MS);
+  agentReaperHandle.unref?.();
+}
+
+function stopAgentReaper(): void {
+  if (agentReaperHandle) {
+    clearInterval(agentReaperHandle);
+    agentReaperHandle = null;
+  }
+}
+
 startupSequence().then(async () => {
   await hub.start();
   startThreadReaper();
+  startAgentReaper();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT}`);
   console.log(`[Hub] MCP endpoint: POST/GET/DELETE /mcp`);
   console.log(`[Hub] Health check: GET /health`);
@@ -371,6 +453,7 @@ startupSequence().then(async () => {
   // Start anyway
   await hub.start();
   startThreadReaper();
+  startAgentReaper();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT} (with startup warning)`);
 });
 
@@ -378,6 +461,7 @@ startupSequence().then(async () => {
 process.on("SIGINT", async () => {
   console.log("[Hub] Shutting down...");
   stopThreadReaper();
+  stopAgentReaper();
   await hub.stop();
   process.exit(0);
 });

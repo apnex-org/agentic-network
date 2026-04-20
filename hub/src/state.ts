@@ -873,6 +873,16 @@ export interface IThreadStore {
    * participant-scoped. Called by the periodic reaper in index.ts.
    */
   reapIdleThreads(defaultIdleExpiryMs: number): Promise<ReapedThread[]>;
+  /**
+   * CP3 C4 (bug-16 part 1): find all threads whose `currentTurnAgentId`
+   * pins to the given victim agentId and null-out the pin so other
+   * participants (or a freshly-minted successor fingerprint) can resume
+   * the conversation. Called by the Agent reaper in index.ts immediately
+   * before the Agent record is deleted, so no thread ends up pinned to
+   * a non-existent agent. Returns the threadIds that were unpinned
+   * (non-empty only when the agent held at least one pin).
+   */
+  unpinCurrentTurnAgent(agentId: string): Promise<string[]>;
 }
 
 export interface IProposalStore {
@@ -954,6 +964,22 @@ export interface IEngineerRegistry {
   /** ADR-017: flip `livenessState` on an agent (used by the watchdog's
    *  demotion ladder). No-op for unknown agents. */
   setLivenessState(engineerId: string, state: AgentLivenessState): Promise<void>;
+  /**
+   * CP3 C4 (bug-16 part 1): return Agent records whose last-seen timestamp
+   * is older than `staleThresholdMs` AND whose current state is offline
+   * (either `status === "offline"` or `livenessState === "offline"`).
+   * Caller is the background Agent reaper in index.ts; it cascades the
+   * unpin on the thread side before calling `deleteAgent` for each.
+   */
+  listOfflineAgentsOlderThan(staleThresholdMs: number): Promise<Agent[]>;
+  /**
+   * CP3 C4 (bug-16 part 1): permanently delete the Agent record + the
+   * by-fingerprint alias for this engineerId. Returns `true` if a record
+   * was removed, `false` if no such agent existed. The caller (reaper)
+   * is responsible for the audit + any pre-delete cascades (thread
+   * unpinning in particular).
+   */
+  deleteAgent(engineerId: string): Promise<boolean>;
 }
 
 /** Minimum interval between persisted Agent heartbeat writes (per agent). */
@@ -1625,6 +1651,19 @@ export class MemoryThreadStore implements IThreadStore {
     }
     return reaped;
   }
+
+  async unpinCurrentTurnAgent(agentId: string): Promise<string[]> {
+    const unpinned: string[] = [];
+    for (const t of this.threads.values()) {
+      if (t.currentTurnAgentId === agentId) {
+        t.currentTurnAgentId = null;
+        t.updatedAt = new Date().toISOString();
+        unpinned.push(t.id);
+        console.log(`[MemoryThreadStore] Thread ${t.id} currentTurnAgentId unpinned via agent reaper (victim=${agentId})`);
+      }
+    }
+    return unpinned;
+  }
 }
 
 // ── Thread 2.0 helpers ──────────────────────────────────────────────
@@ -2063,6 +2102,36 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
     this.pendingQueues.set(sourceEngineerId, []);
     console.log(`[MemoryEngineerRegistry] migrate_agent_queue: moved ${moved} from ${sourceEngineerId} to ${targetEngineerId}`);
     return { moved };
+  }
+
+  async listOfflineAgentsOlderThan(staleThresholdMs: number): Promise<Agent[]> {
+    const nowMs = Date.now();
+    const stale: Agent[] = [];
+    for (const a of this.agents.values()) {
+      const liveness = computeLivenessState(a, nowMs);
+      const isOffline = a.status === "offline" || liveness === "offline";
+      if (!isOffline) continue;
+      const lastSeenMs = Date.parse(a.lastSeenAt);
+      if (!Number.isFinite(lastSeenMs)) continue;
+      if (nowMs - lastSeenMs <= staleThresholdMs) continue;
+      stale.push({ ...a, livenessState: "offline", status: "offline" });
+    }
+    return stale;
+  }
+
+  async deleteAgent(engineerId: string): Promise<boolean> {
+    const agent = this.agents.get(engineerId);
+    if (!agent) return false;
+    this.agents.delete(engineerId);
+    this.byFingerprint.delete(agent.fingerprint);
+    this.displacementHistory.delete(agent.fingerprint);
+    this.lastTouchAt.delete(engineerId);
+    // Clean up any session->engineerId bindings still pointing here.
+    for (const [sid, eid] of this.sessionToEngineerId.entries()) {
+      if (eid === engineerId) this.sessionToEngineerId.delete(sid);
+    }
+    console.log(`[MemoryEngineerRegistry] Agent deleted: ${engineerId} (via reaper)`);
+    return true;
   }
 
 }

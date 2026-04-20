@@ -1271,6 +1271,39 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
     return { moved: 0 };
   }
 
+  async listOfflineAgentsOlderThan(staleThresholdMs: number): Promise<Agent[]> {
+    const agents = await this.listAgents();
+    const nowMs = Date.now();
+    const stale: Agent[] = [];
+    for (const a of agents) {
+      const isOffline = a.status === "offline" || a.livenessState === "offline";
+      if (!isOffline) continue;
+      const lastSeenMs = Date.parse(a.lastSeenAt);
+      if (!Number.isFinite(lastSeenMs)) continue;
+      if (nowMs - lastSeenMs <= staleThresholdMs) continue;
+      stale.push(a);
+    }
+    return stale;
+  }
+
+  async deleteAgent(engineerId: string): Promise<boolean> {
+    const agent = await readJson<Agent>(this.bucket, `agents/${engineerId}.json`);
+    if (!agent) return false;
+    // Delete the per-engineerId file first, then the by-fingerprint alias.
+    // Order matters for crash-safety: the alias is the path readers race to
+    // resolve an engineerId from a fingerprint; losing the main file first
+    // means a concurrent registerAgent retry will create fresh state cleanly.
+    await deleteFile(this.bucket, `agents/${engineerId}.json`);
+    await deleteFile(this.bucket, `agents/by-fingerprint/${agent.fingerprint}.json`);
+    this.displacementHistory.delete(agent.fingerprint);
+    this.lastTouchAt.delete(engineerId);
+    for (const [sid, eid] of this.sessionToEngineerId.entries()) {
+      if (eid === engineerId) this.sessionToEngineerId.delete(sid);
+    }
+    console.log(`[GcsEngineerRegistry] Agent deleted: ${engineerId} (via reaper)`);
+    return true;
+  }
+
 }
 
 // ── GCS Proposal Store ───────────────────────────────────────────────
@@ -1802,6 +1835,39 @@ export class GcsThreadStore implements IThreadStore {
       }
     }
     return reaped;
+  }
+
+  async unpinCurrentTurnAgent(agentId: string): Promise<string[]> {
+    // List all threads and filter client-side — GCS has no secondary
+    // index on currentTurnAgentId. Throughput matters only on the
+    // reaper cadence, and the reaper runs hourly in the default
+    // deployment; per-tick cost is at worst O(threads) reads.
+    const scalars = await this.listThreads();
+    const candidates = scalars.filter((t) => t.currentTurnAgentId === agentId);
+    const nowIso = new Date().toISOString();
+    const unpinned: string[] = [];
+    for (const thread of candidates) {
+      const path = `threads/${thread.id}.json`;
+      try {
+        await updateExisting<Thread>(this.bucket, path, (current) => {
+          if (current.currentTurnAgentId !== agentId) {
+            throw new TransitionRejected("no longer pinned to victim");
+          }
+          current.currentTurnAgentId = null;
+          current.updatedAt = nowIso;
+          return current;
+        });
+        unpinned.push(thread.id);
+        console.log(`[GcsThreadStore] Thread ${thread.id} currentTurnAgentId unpinned via agent reaper (victim=${agentId})`);
+      } catch (err) {
+        if (err instanceof TransitionRejected || err instanceof GcsPathNotFound) {
+          // Thread changed under us (reply landed, thread deleted); skip.
+          continue;
+        }
+        throw err;
+      }
+    }
+    return unpinned;
   }
 
 }

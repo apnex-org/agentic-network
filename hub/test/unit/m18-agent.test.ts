@@ -197,3 +197,69 @@ describe("MemoryEngineerRegistry.registerAgent", () => {
     expect(result.moved).toBeGreaterThanOrEqual(0);
   });
 });
+
+// CP3 C4 (bug-16 part 1): agent reaper — listOfflineAgentsOlderThan + deleteAgent.
+describe("MemoryEngineerRegistry agent reaper (CP3 C4)", () => {
+  let reg: MemoryEngineerRegistry;
+  beforeEach(() => {
+    reg = new MemoryEngineerRegistry();
+  });
+
+  async function offlineAgentSeenAt(instanceId: string, lastSeenIsoOverride?: string): Promise<string> {
+    const first = await reg.registerAgent(`sess-${instanceId}`, "engineer", payload(instanceId));
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("seed failed");
+    // Flip to offline and (optionally) rewind lastSeenAt to force a stale window.
+    await reg.markAgentOffline(`sess-${instanceId}`);
+    if (lastSeenIsoOverride) {
+      // Direct write into the registry for test fixtures — the public API
+      // has no "set lastSeenAt to an arbitrary past time" tool, which is
+      // fine: only the reaper cares about this, and the test is what
+      // proves the reaper's threshold math.
+      const agent = await reg.getAgent(first.engineerId);
+      expect(agent).not.toBeNull();
+      (reg as any).agents.get(first.engineerId).lastSeenAt = lastSeenIsoOverride;
+    }
+    return first.engineerId;
+  }
+
+  it("listOfflineAgentsOlderThan returns only stale-and-offline records", async () => {
+    const now = Date.now();
+    const oldIso = new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString(); // 10 days ago
+    const recentIso = new Date(now - 60 * 60 * 1000).toISOString();        // 1 hour ago
+    const staleId = await offlineAgentSeenAt("stale-inst", oldIso);
+    await offlineAgentSeenAt("fresh-inst", recentIso);
+    // A third agent that's online (handshake left status=online).
+    const onlineResult = await reg.registerAgent("sess-online", "engineer", payload("online-inst"));
+    expect(onlineResult.ok).toBe(true);
+
+    const stale = await reg.listOfflineAgentsOlderThan(7 * 24 * 60 * 60 * 1000);
+    expect(stale.map((a) => a.engineerId)).toEqual([staleId]);
+  });
+
+  it("deleteAgent removes the record so subsequent getAgent returns null", async () => {
+    const id = await offlineAgentSeenAt("to-delete-inst", new Date(Date.now() - 1000).toISOString());
+    expect(await reg.getAgent(id)).not.toBeNull();
+    const deleted = await reg.deleteAgent(id);
+    expect(deleted).toBe(true);
+    expect(await reg.getAgent(id)).toBeNull();
+  });
+
+  it("deleteAgent on a missing engineerId returns false without error", async () => {
+    const deleted = await reg.deleteAgent("eng-never-existed");
+    expect(deleted).toBe(false);
+  });
+
+  it("after deleteAgent, the fingerprint is reusable (reconnect mints a fresh Agent)", async () => {
+    const id = await offlineAgentSeenAt("reusable-inst", new Date(Date.now() - 1000).toISOString());
+    await reg.deleteAgent(id);
+    const next = await reg.registerAgent("sess-2", "engineer", payload("reusable-inst"));
+    expect(next.ok).toBe(true);
+    if (!next.ok) return;
+    // Same fingerprint → same derived engineerId; wasCreated=true proves
+    // the old record did not survive.
+    expect(next.engineerId).toBe(id);
+    expect(next.wasCreated).toBe(true);
+    expect(next.sessionEpoch).toBe(1);
+  });
+});
