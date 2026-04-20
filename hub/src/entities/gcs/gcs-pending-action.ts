@@ -111,6 +111,18 @@ export class GcsPendingActionStore implements IPendingActionStore {
     });
   }
 
+  async findOpenByNaturalKey(opts: { targetAgentId: string; entityRef: string; dispatchType: PendingActionDispatchType }): Promise<PendingActionItem | null> {
+    const key = naturalKey(opts);
+    const all = await this.listAll();
+    for (const item of all) {
+      if (item.naturalKey !== key) continue;
+      // Only return open (non-terminal) items.
+      if (item.state === "completion_acked" || item.state === "escalated" || item.state === "errored") continue;
+      return item;
+    }
+    return null;
+  }
+
   async receiptAck(id: string): Promise<PendingActionItem | null> {
     try {
       return await updateExisting<PendingActionItem>(

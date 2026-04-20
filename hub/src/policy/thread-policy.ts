@@ -365,8 +365,25 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   // the owed work has been delivered — flip the queue item to
   // completion_acked. Happens AFTER the successful reply persistence so
   // we only ack on observed work-lands.
-  if (sourceQueueItemId) {
-    await ctx.stores.pendingAction.completionAck(sourceQueueItemId);
+  //
+  // bug-19 / idea-123 (2026-04-20): when sourceQueueItemId is NOT
+  // supplied, auto-match by natural key {callerAgentId, threadId,
+  // thread_message}. This strips mechanical plumbing from the LLM's
+  // reply surface — the LLM expresses cognition (message + optional
+  // convergence signals); the Hub handles correlation. Explicit
+  // sourceQueueItemId still wins when present (edge cases where a
+  // single thread has multiple overlapping queue items for the caller).
+  let queueItemToAck: string | null = sourceQueueItemId;
+  if (!queueItemToAck && authorAgentId) {
+    const autoMatch = await ctx.stores.pendingAction.findOpenByNaturalKey({
+      targetAgentId: authorAgentId,
+      entityRef: threadId,
+      dispatchType: "thread_message",
+    });
+    if (autoMatch) queueItemToAck = autoMatch.id;
+  }
+  if (queueItemToAck) {
+    await ctx.stores.pendingAction.completionAck(queueItemToAck);
   }
 
   // Mission-21: push an internal cascade event on convergence so the

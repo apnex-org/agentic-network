@@ -73,6 +73,17 @@ export const DEFAULT_COMPLETION_SLA_MS = 5 * 60_000;
 export interface IPendingActionStore {
   enqueue(opts: EnqueueOptions): Promise<PendingActionItem>;
   getById(id: string): Promise<PendingActionItem | null>;
+  /**
+   * bug-19 / idea-123: look up the open pending-action item that matches
+   * the natural key `{targetAgentId, entityRef, dispatchType}`. Returns
+   * null if no open (non-terminal) item exists. Terminal items
+   * (completion_acked / escalated / errored) are excluded so repeat
+   * replies don't accidentally resurrect a closed dispatch.
+   *
+   * Used by `create_thread_reply` to auto-settle an outstanding
+   * dispatch without requiring the LLM to plumb `sourceQueueItemId`.
+   */
+  findOpenByNaturalKey(opts: { targetAgentId: string; entityRef: string; dispatchType: PendingActionDispatchType }): Promise<PendingActionItem | null>;
   listForAgent(
     targetAgentId: string,
     filter?: { state?: PendingActionState },
@@ -185,6 +196,18 @@ export class MemoryPendingActionStore implements IPendingActionStore {
       out.push(cloneItem(item));
     }
     return out;
+  }
+
+  async findOpenByNaturalKey(opts: { targetAgentId: string; entityRef: string; dispatchType: PendingActionDispatchType }): Promise<PendingActionItem | null> {
+    const key = naturalKey(opts);
+    const id = this.byNaturalKey.get(key);
+    if (!id) return null;
+    const item = this.items.get(id);
+    if (!item) return null;
+    // Only return open (non-terminal) items. A terminal item with the
+    // same natural key is history — repeat replies don't resurrect it.
+    if (item.state === "completion_acked" || item.state === "escalated" || item.state === "errored") return null;
+    return cloneItem(item);
   }
 
   async receiptAck(id: string): Promise<PendingActionItem | null> {

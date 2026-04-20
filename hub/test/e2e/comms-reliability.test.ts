@@ -295,6 +295,114 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
   });
 
   // ═════════════════════════════════════════════════════════════════
+  // bug-19 / idea-123 — auto-match queue item by natural key.
+  // Caller's reply settles their outstanding dispatch for the thread
+  // without requiring sourceQueueItemId to be plumbed through — Hub
+  // derives it from {targetAgentId, entityRef=threadId, dispatchType=
+  // thread_message}. Supports the "LLM expresses cognition, Hub handles
+  // plumbing" principle (idea-123).
+  // ═════════════════════════════════════════════════════════════════
+
+  describe("bug-19 — auto-match queue item by natural key", () => {
+    it("reply without sourceQueueItemId auto-settles after drain (receipt_acked → completion_acked)", async () => {
+      await registerEngineer(engCtx);
+      const archAgentId = await registerUnresponsiveArchitect(archCtx);
+
+      const openResult = await engRouter.handle(
+        "create_thread",
+        { title: "T", message: "M", routingMode: "unicast", recipientAgentId: archAgentId },
+        engCtx,
+      );
+      const { threadId } = JSON.parse(openResult.content[0].text);
+
+      // Architect drains → receipt_acked
+      const drainResult = await archRouter.handle("drain_pending_actions", {}, archCtx);
+      const drained = JSON.parse(drainResult.content[0].text);
+      const queueItemId = drained.items[0].id;
+
+      const pendingStore = (engCtx.stores as any).pendingAction;
+      let item = await pendingStore.getById(queueItemId);
+      expect(item.state).toBe("receipt_acked");
+
+      // Architect replies WITHOUT sourceQueueItemId. Auto-match by
+      // natural key {archAgentId, threadId, thread_message} should
+      // still drive completion_ack.
+      await archRouter.handle(
+        "create_thread_reply",
+        { threadId, message: "auto-settle test" /* no sourceQueueItemId */ },
+        archCtx,
+      );
+
+      item = await pendingStore.getById(queueItemId);
+      expect(item.state).toBe("completion_acked");
+      expect(item.completionAckedAt).toBeDefined();
+    });
+
+    it("reply without drain + without sourceQueueItemId auto-settles (enqueued → completion_acked, kate repro)", async () => {
+      // This is kate's exact repro: SSE never delivered, so no drain happened
+      // before the reply. Hub should still auto-match on the reply path and
+      // terminate the queue item cleanly.
+      await registerEngineer(engCtx);
+      const archAgentId = await registerUnresponsiveArchitect(archCtx);
+
+      const openResult = await engRouter.handle(
+        "create_thread",
+        { title: "T", message: "M", routingMode: "unicast", recipientAgentId: archAgentId },
+        engCtx,
+      );
+      const { threadId } = JSON.parse(openResult.content[0].text);
+
+      const pendingStore = (engCtx.stores as any).pendingAction;
+      let items = await pendingStore.listForAgent(archAgentId);
+      expect(items).toHaveLength(1);
+      const queueItemId = items[0].id;
+      expect(items[0].state).toBe("enqueued"); // no drain yet
+
+      // Architect replies directly — no drain, no sourceQueueItemId. This
+      // is the path kate hit: her SSE never delivered so she never drained,
+      // and she replied manually once the Director pointed at the thread.
+      await archRouter.handle(
+        "create_thread_reply",
+        { threadId, message: "replying without drain" /* no sourceQueueItemId */ },
+        archCtx,
+      );
+
+      const item = await pendingStore.getById(queueItemId);
+      expect(item.state).toBe("completion_acked");
+      expect(item.completionAckedAt).toBeDefined();
+    });
+
+    it("explicit sourceQueueItemId still wins over auto-match (edge case: multiple overlapping items)", async () => {
+      // The auto-match should only kick in when sourceQueueItemId is absent.
+      // If the caller explicitly passes it, their intent is authoritative.
+      await registerEngineer(engCtx);
+      const archAgentId = await registerUnresponsiveArchitect(archCtx);
+
+      const openResult = await engRouter.handle(
+        "create_thread",
+        { title: "T", message: "M", routingMode: "unicast", recipientAgentId: archAgentId },
+        engCtx,
+      );
+      const { threadId } = JSON.parse(openResult.content[0].text);
+
+      const drainResult = await archRouter.handle("drain_pending_actions", {}, archCtx);
+      const drained = JSON.parse(drainResult.content[0].text);
+      const queueItemId = drained.items[0].id;
+
+      // Reply with explicit sourceQueueItemId (current path still works).
+      await archRouter.handle(
+        "create_thread_reply",
+        { threadId, message: "explicit", sourceQueueItemId: queueItemId },
+        archCtx,
+      );
+
+      const pendingStore = (engCtx.stores as any).pendingAction;
+      const item = await pendingStore.getById(queueItemId);
+      expect(item.state).toBe("completion_acked");
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════
   // Phase 1.1: queueItemId rides inline on the SSE event payload
   // (Adapters can settle without a separate drain — eliminates the
   // SSE-vs-drain race observed on thread-138.)
