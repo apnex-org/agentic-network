@@ -11,7 +11,7 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { ThreadAuthor, ThreadIntent, StagedAction, StagedActionOp, Thread, ThreadRoutingMode, ThreadContext } from "../state.js";
-import { ThreadConvergenceGateError } from "../state.js";
+import { ThreadConvergenceGateError, CONVERGENCE_GATE_REMEDIATION } from "../state.js";
 import type { DomainEvent } from "./types.js";
 import { callerLabels } from "./labels.js";
 import {
@@ -288,7 +288,12 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
           threadId, callerRole, stagedEffective,
         });
         return {
-          content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: authorityError }) }],
+          content: [{ type: "text" as const, text: JSON.stringify({
+            success: false,
+            error: authorityError,
+            subtype: "authority",
+            remediation: CONVERGENCE_GATE_REMEDIATION.authority,
+          }) }],
           isError: true,
         };
       }
@@ -307,20 +312,22 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
     });
   } catch (err: any) {
     if (err instanceof ThreadConvergenceGateError) {
-      const msg: string = err.message ?? "";
-      let subtype = "unknown";
-      if (msg.includes("no convergenceActions committed")) subtype = "stage_missing";
-      else if (msg.includes("summary is empty")) subtype = "summary_missing";
-      else if (msg.includes("staged action validation failed")) subtype = "payload_validation";
-      else if (msg.includes("Cannot revise action")) subtype = "revise_invalid";
-      else if (msg.includes("Cannot retract action")) subtype = "retract_invalid";
-      logShadowInvariantBreach("INV-TH19", `convergence gate rejected on create_thread_reply: ${msg}`, ctx, {
+      // CP2 C2: subtype + remediation are now carried on the error
+      // itself — no more message-string parsing at the catch site.
+      // Throw sites populate them; policy just echoes them back.
+      const { subtype, remediation, message } = err;
+      logShadowInvariantBreach("INV-TH19", `convergence gate rejected on create_thread_reply: ${message}`, ctx, {
         relatedEntity: threadId,
         extra: { subtype, converged, authorAgentId },
       });
       ctx.metrics.increment("convergence_gate.rejected", { threadId, subtype });
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: err.message }) }],
+        content: [{ type: "text" as const, text: JSON.stringify({
+          success: false,
+          error: message,
+          subtype,
+          remediation,
+        }) }],
         isError: true,
       };
     }

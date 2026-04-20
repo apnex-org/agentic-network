@@ -576,6 +576,10 @@ describe("ThreadPolicy — Threads 2.0 (Mission-21 Phase 1)", () => {
     expect(r2.isError).toBe(true);
     const parsed = JSON.parse(r2.content[0].text);
     expect(parsed.error).toMatch(/no convergenceActions committed/);
+    // CP2 C2: structured subtype + remediation
+    expect(parsed.subtype).toBe("stage_missing");
+    expect(parsed.remediation).toMatch(/populate `stagedActions`/);
+    expect(parsed.remediation).toMatch(/close_no_action/);
   });
 
   it("rejects converged=true when summary empty (gate)", async () => {
@@ -596,6 +600,71 @@ describe("ThreadPolicy — Threads 2.0 (Mission-21 Phase 1)", () => {
     expect(r2.isError).toBe(true);
     const parsed = JSON.parse(r2.content[0].text);
     expect(parsed.error).toMatch(/summary is empty/);
+    // CP2 C2: structured subtype + remediation
+    expect(parsed.subtype).toBe("summary_missing");
+    expect(parsed.remediation).toMatch(/populate `summary`/);
+  });
+
+  // ── Phase 2d CP2 C2: convergence-gate instructional format ─────
+  describe("convergence-gate errors carry subtype + remediation (CP2 C2)", () => {
+    it("revise of a non-existent action yields subtype=revise_invalid", async () => {
+      const threadId = await openThread();
+      const r = await router.handle("create_thread_reply", {
+        threadId,
+        message: "try revise",
+        stagedActions: [{ kind: "revise", id: "action-999", payload: { reason: "nope" } }],
+      }, engCtx);
+      expect(r.isError).toBe(true);
+      const parsed = JSON.parse(r.content[0].text);
+      expect(parsed.subtype).toBe("revise_invalid");
+      expect(parsed.remediation).toMatch(/Stage a new action instead/);
+    });
+
+    it("retract of a non-existent action yields subtype=retract_invalid", async () => {
+      const threadId = await openThread();
+      const r = await router.handle("create_thread_reply", {
+        threadId,
+        message: "try retract",
+        stagedActions: [{ kind: "retract", id: "action-999" }],
+      }, engCtx);
+      expect(r.isError).toBe(true);
+      const parsed = JSON.parse(r.content[0].text);
+      expect(parsed.subtype).toBe("retract_invalid");
+      expect(parsed.remediation).toMatch(/follow-up thread/);
+    });
+
+    it("payload validation failure yields subtype=payload_validation", async () => {
+      // `validateStagedActions` re-validates at converge time AFTER the
+      // action has already been staged. To trigger that specific path
+      // we stage a valid payload first, then mutate the thread's stored
+      // action directly — otherwise the staging-time schema catches
+      // malformed payloads before they reach the gate.
+      const threadId = await openThread();
+      // Engineer stages + first converged=true (preliminary)
+      await router.handle("create_thread_reply", {
+        threadId,
+        message: "stage ok",
+        converged: true,
+        summary: "proposed summary",
+        stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "test" } }],
+      }, engCtx);
+      // Corrupt the stored payload so validateStagedActions at the
+      // bilateral-commit moment will reject it.
+      const threadInternal = (archCtx.stores.thread as any).threads as Map<string, any>;
+      const t = threadInternal.get(threadId);
+      t.convergenceActions[0].payload = {};
+      // Architect's converged=true triggers the bilateral commit →
+      // validateStagedActions fires → payload_validation.
+      const r2 = await router.handle("create_thread_reply", {
+        threadId,
+        message: "converge",
+        converged: true,
+      }, archCtx);
+      expect(r2.isError).toBe(true);
+      const parsed = JSON.parse(r2.content[0].text);
+      expect(parsed.subtype).toBe("payload_validation");
+      expect(parsed.remediation).toMatch(/staged-action-payloads\.ts/);
+    });
   });
 
   it("close_no_action happy path: converges, closes thread, emits thread_convergence_finalized", async () => {

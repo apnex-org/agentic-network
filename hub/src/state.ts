@@ -546,13 +546,51 @@ export type StagedActionOp =
   | { kind: "revise"; id: string; payload: StagedActionPayload }
   | { kind: "retract"; id: string };
 
+/** Subtype enumeration for `ThreadConvergenceGateError`. Aligns with the
+ * Phase 2d CP1 observability taxonomy — each subtype maps 1:1 to a
+ * metrics bucket detail + a structured remediation hint that the LLM
+ * caller can use to self-correct without needing to parse the message
+ * string. Phase 2d CP2 (task-304 audit report §5.1). */
+export type ConvergenceGateSubtype =
+  | "stage_missing"
+  | "summary_missing"
+  | "payload_validation"
+  | "revise_invalid"
+  | "retract_invalid"
+  | "authority";
+
+/** Canonical remediation text per subtype. Throw sites may override with
+ * a more specific hint (e.g., when both stage + summary are missing).
+ * Text is written for the LLM caller's benefit: short, actionable,
+ * references the exact field or shape to populate. */
+export const CONVERGENCE_GATE_REMEDIATION: Record<ConvergenceGateSubtype, string> = {
+  stage_missing:
+    "To signal converged=true, populate `stagedActions` with at least one stage action before replying. For purely-ideation threads (no downstream work): [{kind:\"stage\",type:\"close_no_action\",payload:{reason:\"<short rationale>\"}}].",
+  summary_missing:
+    "To signal converged=true, also populate `summary` with a non-empty narrative of the thread's agreed outcome. Either party can set or revise across rounds; the latest non-empty value wins.",
+  payload_validation:
+    "Fix the per-action payload shape errors named in the message, then re-stage (or `revise`) the offending action. Payload schemas live in `hub/src/policy/staged-action-payloads.ts` per action type.",
+  revise_invalid:
+    "`revise` only applies to actions currently in status=\"staged\". Stage a new action instead when the target was already revised, retracted, or committed.",
+  retract_invalid:
+    "`retract` only applies to actions currently in status=\"staged\". A committed action cannot be retracted — open a follow-up thread to revise the outcome.",
+  authority:
+    "Caller's role lacks the authority to commit one or more staged action types. Either have a caller with the required role converge the thread, or `revise` the offending action to a type the current caller can commit.",
+};
+
 /** Error thrown by the thread store when `converged=true` fails the Phase 1
- * forcing-function gate (empty committed actions OR empty summary). Carries
- * a domain-specific message so the caller can self-correct. */
+ * forcing-function gate or when a stage/revise/retract op is structurally
+ * invalid. Carries a `subtype` + `remediation` hint so the caller can
+ * self-correct without parsing the message string. Phase 2d CP2. */
 export class ThreadConvergenceGateError extends Error {
-  constructor(message: string) {
+  readonly subtype: ConvergenceGateSubtype;
+  readonly remediation: string;
+
+  constructor(message: string, subtype: ConvergenceGateSubtype, remediation?: string) {
     super(message);
     this.name = "ThreadConvergenceGateError";
+    this.subtype = subtype;
+    this.remediation = remediation ?? CONVERGENCE_GATE_REMEDIATION[subtype];
   }
 }
 
@@ -1409,8 +1447,15 @@ export class MemoryThreadStore implements IThreadStore {
         const reasons: string[] = [];
         if (staged.length === 0) reasons.push("no convergenceActions committed (stage at least one — Phase 1 vocab: close_no_action{reason})");
         if (summaryEmpty) reasons.push("summary is empty (narrate the agreed outcome)");
+        const bothMissing = staged.length === 0 && summaryEmpty;
+        const subtype: ConvergenceGateSubtype = staged.length === 0 ? "stage_missing" : "summary_missing";
+        const remediation = bothMissing
+          ? `${CONVERGENCE_GATE_REMEDIATION.stage_missing} Also: ${CONVERGENCE_GATE_REMEDIATION.summary_missing}`
+          : undefined;
         throw new ThreadConvergenceGateError(
           `Thread convergence rejected: ${reasons.join("; ")}.`,
+          subtype,
+          remediation,
         );
       }
 
@@ -1425,6 +1470,7 @@ export class MemoryThreadStore implements IThreadStore {
           .join("; ");
         throw new ThreadConvergenceGateError(
           `Thread convergence rejected: staged action validation failed — ${detail}.`,
+          "payload_validation",
         );
       }
 
@@ -1597,11 +1643,13 @@ export function applyStagedActionOps(
       if (!prior) {
         throw new ThreadConvergenceGateError(
           `Cannot revise action ${op.id}: no such action in thread ${thread.id}.`,
+          "revise_invalid",
         );
       }
       if (prior.status !== "staged") {
         throw new ThreadConvergenceGateError(
           `Cannot revise action ${op.id}: status is ${prior.status} (only "staged" is revisable).`,
+          "revise_invalid",
         );
       }
       prior.status = "revised";
@@ -1620,11 +1668,13 @@ export function applyStagedActionOps(
       if (!prior) {
         throw new ThreadConvergenceGateError(
           `Cannot retract action ${op.id}: no such action in thread ${thread.id}.`,
+          "retract_invalid",
         );
       }
       if (prior.status !== "staged") {
         throw new ThreadConvergenceGateError(
           `Cannot retract action ${op.id}: status is ${prior.status} (only "staged" is retractable).`,
+          "retract_invalid",
         );
       }
       prior.status = "retracted";

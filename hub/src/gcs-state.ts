@@ -55,11 +55,13 @@ import {
   applyStagedActionOps,
   upsertParticipant,
   ThreadConvergenceGateError,
+  CONVERGENCE_GATE_REMEDIATION,
   THRASHING_THRESHOLD,
   THRASHING_WINDOW_MS,
   AGENT_TOUCH_MIN_INTERVAL_MS,
   DEFAULT_AGENT_RECEIPT_SLA_MS,
 } from "./state.js";
+import type { ConvergenceGateSubtype } from "./state.js";
 import { validateStagedActions } from "./policy/staged-action-payloads.js";
 
 // ── Simple async lock ────────────────────────────────────────────────
@@ -1548,8 +1550,15 @@ export class GcsThreadStore implements IThreadStore {
             const reasons: string[] = [];
             if (staged.length === 0) reasons.push("no convergenceActions committed (stage at least one — Phase 1 vocab: close_no_action{reason})");
             if (summaryEmpty) reasons.push("summary is empty (narrate the agreed outcome)");
+            const bothMissing = staged.length === 0 && summaryEmpty;
+            const subtype: ConvergenceGateSubtype = staged.length === 0 ? "stage_missing" : "summary_missing";
+            const remediation = bothMissing
+              ? `${CONVERGENCE_GATE_REMEDIATION.stage_missing} Also: ${CONVERGENCE_GATE_REMEDIATION.summary_missing}`
+              : undefined;
             throw new ThreadConvergenceGateError(
               `Thread convergence rejected: ${reasons.join("; ")}.`,
+              subtype,
+              remediation,
             );
           }
 
@@ -1563,6 +1572,7 @@ export class GcsThreadStore implements IThreadStore {
               .join("; ");
             throw new ThreadConvergenceGateError(
               `Thread convergence rejected: staged action validation failed — ${detail}.`,
+              "payload_validation",
             );
           }
 
