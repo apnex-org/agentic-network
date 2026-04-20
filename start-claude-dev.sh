@@ -21,6 +21,7 @@ if [ "$#" -ne 1 ] || [ -z "${1:-}" ]; then
 fi
 
 export OIS_INSTANCE_ID="$1"
+export OIS_HUB_LABELS='{"env":"dev"}'
 echo "[start-claude] OIS_INSTANCE_ID=$OIS_INSTANCE_ID"
 
 exec claude --dangerously-load-development-channels plugin:agent-adapter@agentic-network
