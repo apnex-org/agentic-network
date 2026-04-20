@@ -25,14 +25,25 @@
 
 import { CognitiveTelemetry, type TelemetryEvent } from "@ois/network-adapter";
 
-/** Default sink — structured log line. Cloud Run-friendly. */
-function defaultSink(event: TelemetryEvent): void {
+/**
+ * Default sink — structured log line. Cloud Run-friendly.
+ *
+ * Exported as `architectTelemetrySink` so the architect-side cognitive
+ * pipeline (hub-adapter.ts, Phase 2b ckpt-C) can attach its own
+ * CognitiveTelemetry middleware to the same log pipe — tool-call
+ * telemetry and llm_usage events both land under the `[ArchitectTelemetry]`
+ * prefix in Cloud Run logs without touching this module.
+ */
+export function architectTelemetrySink(event: TelemetryEvent): void {
   try {
     console.log(`[ArchitectTelemetry] ${JSON.stringify(event)}`);
   } catch {
     /* never disturb the LLM loop */
   }
 }
+
+/** Internal alias preserving the prior private name for the singleton below. */
+const defaultSink = architectTelemetrySink;
 
 /**
  * Singleton — all architect callers share this instance so aggregate

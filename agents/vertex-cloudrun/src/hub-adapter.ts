@@ -18,6 +18,8 @@ import {
   type SessionState,
   type SessionReconnectReason,
 } from "@ois/network-adapter";
+import { CognitivePipeline } from "@ois/cognitive-layer";
+import { architectTelemetrySink } from "./telemetry.js";
 
 export type HubEventHandler = (eventData: Record<string, unknown>) => void;
 
@@ -77,6 +79,13 @@ export class HubAdapter {
         }
       : undefined;
 
+    // Phase 2b ckpt-C — wire the cognitive pipeline into the architect
+    // McpAgentClient so ResponseSummarizer trims oversized Hub responses
+    // (e.g. get_idea on idea-102 returns 72k tokens pre-trim), ToolResultCache
+    // collapses repeated reads within a sandwich, and WriteCallDedup
+    // collapses concurrent duplicate writes. Tool-call telemetry lands
+    // on the same `[ArchitectTelemetry]` log pipe as the llm_usage events
+    // from the sandwich bridge.
     this.agent = new McpAgentClient(
       {
         role,
@@ -87,6 +96,9 @@ export class HubAdapter {
       {
         transportConfig: { url: hubUrl, token: hubToken },
         manualSync: true,
+        cognitive: CognitivePipeline.standard({
+          telemetry: { sink: architectTelemetrySink },
+        }),
       }
     );
 
