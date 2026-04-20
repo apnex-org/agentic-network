@@ -10,8 +10,17 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { isValidTransition } from "./types.js";
 import type { FsmTransitionTable } from "./types.js";
-import type { MissionStatus } from "../entities/index.js";
-import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
+import type { Mission, MissionStatus } from "../entities/index.js";
+import {
+  LIST_PAGINATION_SCHEMA,
+  paginate,
+  buildQueryFilterSchema,
+  buildQuerySortSchema,
+  applyQueryFilter,
+  applyQuerySort,
+  type QueryableFieldSpec,
+  type FieldAccessors,
+} from "./list-filters.js";
 import { dispatchMissionCreated, dispatchMissionActivated } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
 
@@ -95,12 +104,93 @@ async function getMission(args: Record<string, unknown>, ctx: IPolicyContext): P
   };
 }
 
+// ── M-QueryShape Phase C (idea-119, task-306) ──────────────────────
+// Mission-entity field descriptors + accessors. Mirrors list_tasks /
+// list_ideas / list_threads pattern; createdBy.id is computed
+// `${role}:${agentId}` per architect-ratified virtual-field intent.
+
+const MISSION_FILTERABLE_FIELDS: QueryableFieldSpec = {
+  status: { type: "enum", values: ["proposed", "active", "completed", "abandoned"] },
+  correlationId: { type: "string" },
+  turnId: { type: "string" },
+  sourceThreadId: { type: "string" },
+  sourceActionId: { type: "string" },
+  createdAt: { type: "date" },
+  updatedAt: { type: "date" },
+  "createdBy.role": { type: "string" },
+  "createdBy.agentId": { type: "string" },
+  "createdBy.id": { type: "string" },
+};
+
+const MISSION_SORTABLE_FIELDS = [
+  "id",
+  "status",
+  "createdAt",
+  "updatedAt",
+  "correlationId",
+  "turnId",
+  "sourceThreadId",
+  "sourceActionId",
+  "createdBy.role",
+  "createdBy.agentId",
+  "createdBy.id",
+] as const;
+
+const MISSION_ACCESSORS: FieldAccessors<Mission> = {
+  id: (m) => m.id,
+  status: (m) => m.status,
+  correlationId: (m) => m.correlationId,
+  turnId: (m) => m.turnId,
+  sourceThreadId: (m) => m.sourceThreadId,
+  sourceActionId: (m) => m.sourceActionId,
+  createdAt: (m) => m.createdAt,
+  updatedAt: (m) => m.updatedAt,
+  "createdBy.role": (m) => m.createdBy?.role ?? null,
+  "createdBy.agentId": (m) => m.createdBy?.agentId ?? null,
+  "createdBy.id": (m) => (m.createdBy ? `${m.createdBy.role}:${m.createdBy.agentId}` : null),
+};
+
+const MISSION_FILTER_SCHEMA = buildQueryFilterSchema(MISSION_FILTERABLE_FIELDS);
+const MISSION_SORT_SCHEMA = buildQuerySortSchema(MISSION_SORTABLE_FIELDS);
+
 async function listMissions(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  const status = args.status as MissionStatus | undefined;
-  const missions = await ctx.stores.mission.listMissions(status);
+  let missions = await ctx.stores.mission.listMissions();
+  const totalPreFilter = missions.length;
+
+  // Backwards-compat: legacy scalar `status` arg subsumed by the new
+  // `filter.status` field. filter.status wins when both are present.
+  const legacyStatus = typeof args.status === "string" ? (args.status as MissionStatus) : undefined;
+  const filterArgRaw = args.filter as Record<string, unknown> | undefined;
+  const effectiveFilter: Record<string, unknown> = { ...(filterArgRaw ?? {}) };
+  if (legacyStatus && effectiveFilter.status === undefined) {
+    effectiveFilter.status = legacyStatus;
+  }
+  const hasFilter = Object.keys(effectiveFilter).length > 0;
+
+  if (hasFilter) {
+    missions = applyQueryFilter(missions, effectiveFilter, MISSION_ACCESSORS);
+  }
+
+  const sortArg = args.sort as ReadonlyArray<{ field: string; order: "asc" | "desc" }> | undefined;
+  missions = applyQuerySort(missions, sortArg, MISSION_ACCESSORS);
+
+  const postFilterCount = missions.length;
   const page = paginate(missions, args);
+
+  const queryUnmatched = hasFilter && postFilterCount === 0 && totalPreFilter > 0;
+
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ missions: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2) }],
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({
+        missions: page.items,
+        count: page.count,
+        total: page.total,
+        offset: page.offset,
+        limit: page.limit,
+        ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
+      }, null, 2),
+    }],
   };
 }
 
@@ -139,9 +229,25 @@ export function registerMissionPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_missions",
-    "[Any] List missions with optional status filter and pagination.",
+    "[Any] List missions with filter + sort + pagination. " +
+    "`filter` accepts a Mongo-ish object with implicit AND across fields: " +
+    "`{status: 'active'}` for eq, `{status: {$in: ['proposed','active']}}` for set membership, " +
+    "`{createdAt: {$lt: '2026-04-01T00:00:00Z'}}` for range. " +
+    "Filterable fields: status, correlationId, turnId, sourceThreadId, sourceActionId, createdAt, updatedAt, " +
+    "'createdBy.role', 'createdBy.agentId', 'createdBy.id' (computed `${role}:${agentId}`). " +
+    "Range operators ($gt/$lt/$gte/$lte) apply only to dates + numbers. " +
+    "Forbidden operators ($regex, $where, $expr, $or, $and, $not) are rejected with an error naming the permitted set. " +
+    "`sort` accepts an ordered tuple `[{field, order}]` on: id, status, createdAt, updatedAt, correlationId, turnId, sourceThreadId, sourceActionId, 'createdBy.role', 'createdBy.agentId', 'createdBy.id'. " +
+    "Implicit id:asc tie-breaker is appended for deterministic pagination. " +
+    "Returns `_ois_query_unmatched: true` when the filter yields zero matches but the collection is non-empty. " +
+    "Legacy scalar `status:` arg preserved for backwards compat; `filter.status` wins when both present.",
     {
-      status: z.enum(["proposed", "active", "completed", "abandoned"]).optional().describe("Filter by status"),
+      filter: MISSION_FILTER_SCHEMA.optional()
+        .describe("Mongo-ish filter object; see tool description for permitted fields + operators"),
+      sort: MISSION_SORT_SCHEMA
+        .describe("Ordered-tuple sort; see tool description for permitted fields"),
+      status: z.enum(["proposed", "active", "completed", "abandoned"]).optional()
+        .describe("DEPRECATED: use `filter: { status: ... }`. Preserved for backwards compat; `filter.status` wins when both present."),
       ...LIST_PAGINATION_SCHEMA,
     },
     listMissions,

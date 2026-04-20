@@ -373,6 +373,81 @@ describe("MissionPolicy", () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.count).toBe(0); // newly created missions are "proposed"
   });
+
+  // ── Phase C (task-306): createdBy.* nested paths on list_missions ──
+  describe("list_missions — M-QueryShape Phase C (task-306)", () => {
+    async function seedMissionsWithCreatedBy(): Promise<void> {
+      await router.handle("create_mission", { title: "M1", description: "D1" }, ctx);
+      await router.handle("create_mission", { title: "M2", description: "D2" }, ctx);
+      await router.handle("create_mission", { title: "M3", description: "D3" }, ctx);
+      const internal = (ctx.stores.mission as any).missions as Map<string, any>;
+      const m1 = internal.get("mission-1");
+      if (m1) m1.createdBy = { role: "architect", agentId: "eng-alpha" };
+      const m2 = internal.get("mission-2");
+      if (m2) m2.createdBy = { role: "engineer", agentId: "eng-beta" };
+      const m3 = internal.get("mission-3");
+      if (m3) m3.createdBy = { role: "architect", agentId: "eng-gamma" };
+    }
+
+    it("filter: createdBy.role selects architect-created missions only", async () => {
+      await seedMissionsWithCreatedBy();
+      const result = await router.handle(
+        "list_missions",
+        { filter: { "createdBy.role": "architect" } },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.missions.length).toBe(2);
+      expect(parsed.missions.every((m: any) => m.createdBy.role === "architect")).toBe(true);
+    });
+
+    it("filter: createdBy.agentId selects a specific agent", async () => {
+      await seedMissionsWithCreatedBy();
+      const result = await router.handle(
+        "list_missions",
+        { filter: { "createdBy.agentId": "eng-beta" } },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.missions.length).toBe(1);
+      expect(parsed.missions[0].id).toBe("mission-2");
+    });
+
+    it("filter: createdBy.id matches computed `${role}:${agentId}`", async () => {
+      await seedMissionsWithCreatedBy();
+      const result = await router.handle(
+        "list_missions",
+        { filter: { "createdBy.id": "architect:eng-gamma" } },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.missions.length).toBe(1);
+      expect(parsed.missions[0].id).toBe("mission-3");
+    });
+
+    it("sort: createdBy.id asc orders by `role:agentId` composite", async () => {
+      await seedMissionsWithCreatedBy();
+      const result = await router.handle(
+        "list_missions",
+        { sort: [{ field: "createdBy.id", order: "asc" }] },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.missions.map((m: any) => m.id)).toEqual(["mission-1", "mission-3", "mission-2"]);
+    });
+
+    it("yields _ois_query_unmatched when filter matches nothing", async () => {
+      await seedMissionsWithCreatedBy();
+      const result = await router.handle(
+        "list_missions",
+        { filter: { "createdBy.role": "director" } },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.missions.length).toBe(0);
+      expect(parsed._ois_query_unmatched).toBe(true);
+    });
+  });
 });
 
 // ── Turn Policy ─────────────────────────────────────────────────────
