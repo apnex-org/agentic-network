@@ -8,12 +8,22 @@
 
 // ── Types ────────────────────────────────────────────────────────────
 
+import type { EntityProvenance } from "../state.js";
+
 export type IdeaStatus = "open" | "triaged" | "dismissed" | "incorporated";
 
 export interface Idea {
   id: string;
   text: string;
+  /**
+   * Legacy authorship field (role string OR agentId, per call site).
+   * Superseded by `createdBy` (task-305) but retained during the C1→C4
+   * atomic migration for dual-write safety. Removed in C4 once readers
+   * all use `createdBy`.
+   */
   author: string;
+  /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
+  createdBy?: EntityProvenance;
   status: IdeaStatus;
   missionId: string | null;
   sourceThreadId: string | null;

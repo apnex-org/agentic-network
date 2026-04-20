@@ -13,6 +13,8 @@
  * Natural-key idempotency: {targetAgentId, entityRef, dispatchType}.
  */
 
+import type { EntityProvenance } from "../state.js";
+
 export type PendingActionDispatchType =
   | "thread_message"
   | "thread_convergence_finalized"
@@ -44,6 +46,9 @@ export interface PendingActionItem {
   lastAttemptAt: string | null;
   state: PendingActionState;
   escalationReason: string | null;
+  /** Mission-24 idea-120: uniform direct-create provenance (task-305).
+   *  Identity of the agent/role that enqueued this item. */
+  createdBy?: EntityProvenance;
 }
 
 export interface EnqueueOptions {

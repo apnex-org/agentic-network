@@ -14,7 +14,7 @@
  * (see `docs/decisions/011-gcs-concurrency-model.md`).
  */
 
-import type { ITaskStore } from "../state.js";
+import type { ITaskStore, EntityProvenance } from "../state.js";
 import type { IMissionStore } from "./mission.js";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -32,6 +32,8 @@ export interface Turn {
   taskIds: string[];
   tele: string[];       // Tele IDs — teleological goals for this turn
   correlationId: string | null;
+  /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
+  createdBy?: EntityProvenance;
   createdAt: string;
   updatedAt: string;
 }

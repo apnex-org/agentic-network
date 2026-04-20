@@ -7,6 +7,8 @@
  * future surface; v1 exposes list + acknowledge tools directly.
  */
 
+import type { EntityProvenance } from "../state.js";
+
 export type NotificationSeverity = "info" | "warning" | "critical";
 
 export type NotificationSource =
@@ -26,6 +28,10 @@ export interface DirectorNotification {
   createdAt: string;
   acknowledgedAt: string | null;
   acknowledgedBy: string | null;
+  /** Mission-24 idea-120: uniform direct-create provenance (task-305).
+   *  Most notifications are created by the Hub itself (watchdog,
+   *  escalator); `createdBy.role` will typically be "system". */
+  createdBy?: EntityProvenance;
 }
 
 export interface CreateNotificationOptions {

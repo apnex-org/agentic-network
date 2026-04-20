@@ -14,7 +14,7 @@
  * for the regression pin.
  */
 
-import type { ITaskStore } from "../state.js";
+import type { ITaskStore, EntityProvenance } from "../state.js";
 import type { IIdeaStore, CascadeBacklink } from "./idea.js";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -40,6 +40,8 @@ export interface Mission {
   sourceThreadId: string | null;
   sourceActionId: string | null;
   sourceThreadSummary: string | null;
+  /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
+  createdBy?: EntityProvenance;
   createdAt: string;
   updatedAt: string;
 }

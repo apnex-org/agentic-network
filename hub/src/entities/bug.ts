@@ -17,6 +17,8 @@
 
 // ── Types ────────────────────────────────────────────────────────────
 
+import type { EntityProvenance } from "../state.js";
+
 export type BugStatus = "open" | "investigating" | "resolved" | "wontfix";
 export type BugSeverity = "critical" | "major" | "minor";
 
@@ -50,8 +52,12 @@ export interface Bug {
   fixCommits: string[];
   fixRevision: string | null;
   /** Discovery channel — itw-smoke | unit-test | prod-audit |
-   *  integration-test | code-review | llm-self-review. Free text v1. */
+   *  integration-test | code-review | llm-self-review. Free text v1.
+   *  Per thread-225 ratification, `surfacedBy` stays distinct from
+   *  `createdBy`: this is the discovery mechanism, not the agent. */
   surfacedBy: string | null;
+  /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
+  createdBy?: EntityProvenance;
   createdAt: string;
   updatedAt: string;
 }

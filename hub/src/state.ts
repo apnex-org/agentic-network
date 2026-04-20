@@ -43,6 +43,8 @@ export interface Task {
   sourceThreadId: string | null;
   sourceActionId: string | null;
   sourceThreadSummary: string | null;
+  /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
+  createdBy?: EntityProvenance;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,6 +61,28 @@ export interface CascadeBacklink {
   sourceThreadId: string;
   sourceActionId: string;
   sourceThreadSummary: string;
+}
+
+/**
+ * Mission-24 idea-120 / thread-225 ratified provenance shape. Captures
+ * WHO created a given entity via a direct tool call.
+ *
+ * Orthogonal to `CascadeBacklink` (cascade-provenance) and to mutable
+ * current-owner fields like `Task.assignedEngineerId`. `createdBy` is
+ * set at creation time and never mutates after.
+ *
+ * - `role`: the caller's role at the moment of creation ("architect" |
+ *   "engineer" | "director" | "system" | "unknown" | future roles).
+ *   Stored as an open string for forward-compat; consumers should
+ *   tolerate unknown values.
+ * - `agentId`: stable agent identifier. For Hub-internal (non-agent)
+ *   creates — reaper, watchdog, backfill scripts — use "hub-system".
+ *   For legacy entities whose provenance can't be recovered from the
+ *   audit log, the backfill script writes "legacy-pre-provenance".
+ */
+export interface EntityProvenance {
+  role: string;
+  agentId: string;
 }
 
 /**
@@ -265,6 +289,8 @@ export interface Proposal {
   sourceThreadId: string | null;
   sourceActionId: string | null;
   sourceThreadSummary: string | null;
+  /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
+  createdBy?: EntityProvenance;
   createdAt: string;
   updatedAt: string;
 }
@@ -557,7 +583,15 @@ export interface Thread {
    * `thread_reaper_abandoned`.
    */
   idleExpiryMs: number | null;
+  /**
+   * Role of the thread opener. Legacy-shape field; superseded by
+   * `createdBy` (task-305) but retained during the C1→C4 atomic
+   * migration for dual-write safety. Removed in C4 once readers all
+   * use `createdBy`.
+   */
   initiatedBy: ThreadAuthor;
+  /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
+  createdBy?: EntityProvenance;
   currentTurn: ThreadAuthor;
   /**
    * Mission-21 Phase 1 (INV-TH17): when non-null, the reply turn is

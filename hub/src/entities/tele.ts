@@ -12,11 +12,15 @@
 
 // ── Types ────────────────────────────────────────────────────────────
 
+import type { EntityProvenance } from "../state.js";
+
 export interface Tele {
   id: string;
   name: string;
   description: string;
   successCriteria: string; // Markdown describing the measurable target
+  /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
+  createdBy?: EntityProvenance;
   createdAt: string;
 }
 
