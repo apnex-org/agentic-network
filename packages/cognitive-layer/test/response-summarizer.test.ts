@@ -152,6 +152,51 @@ describe("ResponseSummarizer — default shouldSummarize heuristic", () => {
 
 // ── Virtual Tokens Saved KPI ───────────────────────────────────────
 
+describe("ResponseSummarizer — respects caller's `limit` (M-QueryShape Phase 1, idea-119)", () => {
+  it("skips summarization when args.limit ≤ maxItems", async () => {
+    // Caller explicitly asked for a bounded subset that's smaller than
+    // the summarizer threshold; don't second-guess by truncating further.
+    const summarizer = new ResponseSummarizer({ maxItems: 10 });
+    const items = Array.from({ length: 3 }, (_, i) => ({ id: i }));
+    const next = vi.fn().mockResolvedValue(items);
+    const context = ctx({ tool: "list_tasks", args: { limit: 3 } });
+    const result = await summarizer.onToolCall(context, next);
+    // Result passed through reference-equal — no _ois_pagination wrap
+    expect(result).toBe(items);
+    expect(context.tags.summarized).toBeUndefined();
+  });
+
+  it("summarizes when args.limit > maxItems (caller asked for more than we'd ship)", async () => {
+    const summarizer = new ResponseSummarizer({ maxItems: 5 });
+    const items = Array.from({ length: 100 }, (_, i) => ({ id: i }));
+    const next = vi.fn().mockResolvedValue(items);
+    // Caller asked for 50 items; summarizer caps at 5
+    const context = ctx({ tool: "list_tasks", args: { limit: 50 } });
+    const result = await summarizer.onToolCall(context, next) as { _ois_pagination: unknown; items: unknown[] };
+    expect(result._ois_pagination).toBeDefined();
+    expect(result.items).toHaveLength(5);
+  });
+
+  it("summarizes when args.limit is absent (legacy behaviour preserved)", async () => {
+    const summarizer = new ResponseSummarizer({ maxItems: 5 });
+    const items = Array.from({ length: 100 }, (_, i) => ({ id: i }));
+    const next = vi.fn().mockResolvedValue(items);
+    const context = ctx({ tool: "list_tasks", args: {} });
+    const result = await summarizer.onToolCall(context, next) as { _ois_pagination: unknown };
+    expect(result._ois_pagination).toBeDefined();
+  });
+
+  it("ignores non-numeric or non-positive `limit`", async () => {
+    const summarizer = new ResponseSummarizer({ maxItems: 5 });
+    const items = Array.from({ length: 100 }, (_, i) => ({ id: i }));
+    const next = vi.fn().mockResolvedValue(items);
+    const context = ctx({ tool: "list_tasks", args: { limit: "three" } });
+    const result = await summarizer.onToolCall(context, next) as { _ois_pagination: unknown };
+    // Non-numeric limit doesn't trigger the skip path → normal summarization
+    expect(result._ois_pagination).toBeDefined();
+  });
+});
+
 describe("ResponseSummarizer — Virtual Tokens Saved tag", () => {
   it("tags ctx.tags.virtualTokensSaved + summarized=true on truncation", async () => {
     const summarizer = new ResponseSummarizer({ maxItems: 3 });

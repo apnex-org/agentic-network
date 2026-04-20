@@ -82,6 +82,67 @@ describe("CognitiveTelemetry — tool_call events", () => {
 
     expect(events[0].tags).toEqual({ cacheHit: "true" });
   });
+
+  describe("queryShape auto-tag (M-QueryShape Phase 1, idea-119)", () => {
+    it("tags 'filter_sort' when both filter + sort are in args on list_* tool", async () => {
+      const events: TelemetryEvent[] = [];
+      const t = new CognitiveTelemetry({ sink: (e) => events.push(e) });
+      await t.onToolCall(
+        ctx({ tool: "list_tasks", args: { filter: { status: "pending" }, sort: [{ field: "createdAt", order: "asc" }] } }),
+        async () => [],
+      );
+      await flushMicrotasks();
+      expect(events[0].tags?.queryShape).toBe("filter_sort");
+    });
+
+    it("tags 'filter_only' when only filter is present", async () => {
+      const events: TelemetryEvent[] = [];
+      const t = new CognitiveTelemetry({ sink: (e) => events.push(e) });
+      await t.onToolCall(
+        ctx({ tool: "list_tasks", args: { filter: { status: "pending" } } }),
+        async () => [],
+      );
+      await flushMicrotasks();
+      expect(events[0].tags?.queryShape).toBe("filter_only");
+    });
+
+    it("tags 'sort_only' when only sort is present", async () => {
+      const events: TelemetryEvent[] = [];
+      const t = new CognitiveTelemetry({ sink: (e) => events.push(e) });
+      await t.onToolCall(
+        ctx({ tool: "list_tasks", args: { sort: [{ field: "id", order: "asc" }] } }),
+        async () => [],
+      );
+      await flushMicrotasks();
+      expect(events[0].tags?.queryShape).toBe("sort_only");
+    });
+
+    it("tags 'none' on list_* tool with neither filter nor sort", async () => {
+      const events: TelemetryEvent[] = [];
+      const t = new CognitiveTelemetry({ sink: (e) => events.push(e) });
+      await t.onToolCall(ctx({ tool: "list_tasks", args: {} }), async () => []);
+      await flushMicrotasks();
+      expect(events[0].tags?.queryShape).toBe("none");
+    });
+
+    it("does NOT tag queryShape on non-list tools", async () => {
+      const events: TelemetryEvent[] = [];
+      const t = new CognitiveTelemetry({ sink: (e) => events.push(e) });
+      await t.onToolCall(ctx({ tool: "create_thread", args: {} }), async () => null);
+      await flushMicrotasks();
+      expect(events[0].tags?.queryShape).toBeUndefined();
+    });
+
+    it("preserves pre-existing queryShape tag (caller can override)", async () => {
+      const events: TelemetryEvent[] = [];
+      const t = new CognitiveTelemetry({ sink: (e) => events.push(e) });
+      const c = ctx({ tool: "list_tasks", args: { filter: { status: "pending" } } });
+      (c.tags as Record<string, string>).queryShape = "custom";
+      await t.onToolCall(c, async () => []);
+      await flushMicrotasks();
+      expect(events[0].tags?.queryShape).toBe("custom");
+    });
+  });
 });
 
 describe("CognitiveTelemetry — list_tools events", () => {

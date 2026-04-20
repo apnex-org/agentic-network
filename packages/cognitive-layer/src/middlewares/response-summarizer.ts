@@ -203,6 +203,22 @@ export class ResponseSummarizer implements CognitiveMiddleware {
     if (override === null) return result;
     const effectiveMaxItems = typeof override === "number" ? override : this.maxItems;
 
+    // M-QueryShape Phase 1 (idea-119, task-302) — respect caller's
+    // `limit` parameter. If the LLM explicitly asked for a bounded
+    // subset AND the bound is ≤ our summarize threshold, the caller
+    // got exactly what it asked for — don't second-guess by truncating
+    // further. Applies when filter+sort produced the intended subset
+    // directly, so the LLM doesn't need to chase paginated data it
+    // already decided isn't needed. Only bypasses when `limit` is
+    // present AND numeric AND within the summarizer's threshold.
+    const callerLimit =
+      ctx.args && typeof ctx.args === "object" && !Array.isArray(ctx.args)
+        ? (ctx.args as Record<string, unknown>).limit
+        : undefined;
+    if (typeof callerLimit === "number" && callerLimit > 0 && callerLimit <= effectiveMaxItems) {
+      return result;
+    }
+
     if (!this.shouldSummarize(ctx.tool, result)) return result;
 
     const summarized = summarizeResult(result, effectiveMaxItems);

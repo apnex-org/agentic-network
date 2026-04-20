@@ -104,6 +104,28 @@ const DEFAULT_MAX_QUEUE_DEPTH = 1000;
 const DEFAULT_OVERFLOW_LOG_INTERVAL_MS = 60_000;
 
 /**
+ * Classify a caller's args into a queryShape category (M-QueryShape
+ * Phase 1, idea-119). Mirrors the Hub-side `detectQueryShape` in
+ * `list-filters.ts` — kept as a local copy so this package has no
+ * dependency on `@ois/relay-hub`. Values: "none" | "filter_only" |
+ * "sort_only" | "filter_sort".
+ */
+function detectQueryShape(args: unknown): "none" | "filter_only" | "sort_only" | "filter_sort" {
+  if (args == null || typeof args !== "object" || Array.isArray(args)) return "none";
+  const a = args as Record<string, unknown>;
+  const hasFilter =
+    a.filter != null &&
+    typeof a.filter === "object" &&
+    !Array.isArray(a.filter) &&
+    Object.keys(a.filter as Record<string, unknown>).length > 0;
+  const hasSort = Array.isArray(a.sort) && a.sort.length > 0;
+  if (hasFilter && hasSort) return "filter_sort";
+  if (hasFilter) return "filter_only";
+  if (hasSort) return "sort_only";
+  return "none";
+}
+
+/**
  * Byte-length of a serialized value. Uses `JSON.stringify` length as
  * a cheap proxy — single UTF-16 char ~= 1 byte for ASCII-dominant
  * payloads (which is the typical case for MCP tool args/results).
@@ -161,6 +183,16 @@ export class CognitiveTelemetry implements CognitiveMiddleware {
   ): Promise<unknown> {
     const started = this.now();
     const inputBytes = byteLength(ctx.args);
+
+    // M-QueryShape Phase 1 (idea-119, task-302) — auto-tag queryShape
+    // on list_* tool calls so the harness can measure adoption. Detects
+    // the presence of filter / sort in ctx.args without the Hub needing
+    // to reach into architect-side context. Values:
+    //   "none" | "filter_only" | "sort_only" | "filter_sort"
+    if (ctx.tool.startsWith("list_") && !ctx.tags.queryShape) {
+      ctx.tags.queryShape = detectQueryShape(ctx.args);
+    }
+
     try {
       const result = await next(ctx);
       const outputBytes = byteLength(result);

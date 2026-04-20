@@ -13,7 +13,19 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult, FsmTransitionTable, DomainEvent } from "./types.js";
 import { isValidTransition } from "./types.js";
 import { callerLabels } from "./labels.js";
-import { LIST_PAGINATION_SCHEMA, LIST_LABELS_SCHEMA, applyLabelFilter, paginate } from "./list-filters.js";
+import {
+  LIST_PAGINATION_SCHEMA,
+  LIST_LABELS_SCHEMA,
+  applyLabelFilter,
+  paginate,
+  buildQueryFilterSchema,
+  buildQuerySortSchema,
+  applyQueryFilter,
+  applyQuerySort,
+  type QueryableFieldSpec,
+  type FieldAccessors,
+} from "./list-filters.js";
+import type { Task } from "../state.js";
 import { dispatchTaskSpawned } from "./dispatch-helpers.js";
 
 // ── Task FSM ────────────────────────────────────────────────────────
@@ -264,15 +276,94 @@ async function getReport(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   };
 }
 
+// ── M-QueryShape Phase 1 (idea-119, task-302) ─────────────────────────
+// Task-entity field descriptors + value accessors for the shared
+// filter/sort primitives in list-filters.ts. Scoped to Phase 1:
+// status + correlationId + assignedEngineerId + createdAt + updatedAt.
+// `author` was in the task-302 spec but Task has no author field (all
+// tasks are architect-issued via role-gated create_task) — dropped per
+// idea-120 (entity-provenance unification, filed separately).
+//
+// Sortable fields intentionally broader than filterable — sorting on
+// a field is always safe (no query-cost bound implications), filtering
+// on a field requires thinking about operator allowlists + value types.
+
+const TASK_FILTERABLE_FIELDS: QueryableFieldSpec = {
+  status: { type: "enum", values: ["pending", "working", "blocked", "input_required", "in_review", "completed", "failed", "cancelled", "escalated", "read_completed", "reported_completed"] },
+  correlationId: { type: "string" },
+  assignedEngineerId: { type: "string" },
+  createdAt: { type: "date" },
+  updatedAt: { type: "date" },
+};
+
+const TASK_SORTABLE_FIELDS = [
+  "id",
+  "status",
+  "createdAt",
+  "updatedAt",
+  "correlationId",
+  "assignedEngineerId",
+] as const;
+
+const TASK_ACCESSORS: FieldAccessors<Task> = {
+  id: (t) => t.id,
+  status: (t) => t.status,
+  correlationId: (t) => t.correlationId,
+  assignedEngineerId: (t) => t.assignedEngineerId,
+  createdAt: (t) => t.createdAt,
+  updatedAt: (t) => t.updatedAt,
+};
+
+const TASK_FILTER_SCHEMA = buildQueryFilterSchema(TASK_FILTERABLE_FIELDS);
+const TASK_SORT_SCHEMA = buildQuerySortSchema(TASK_SORTABLE_FIELDS);
+
 async function listTasks(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   let tasks = await ctx.stores.task.listTasks();
+  const totalPreFilter = tasks.length;
+
+  // Legacy label filter (pre-QueryShape; preserved).
   tasks = applyLabelFilter(tasks, args.labels as Record<string, string> | undefined);
+
+  // Backwards-compat: legacy scalar `status` arg subsumed by the new
+  // `filter.status` field. filter.status wins when both are present.
+  // Legacy arg deprecated in tool description; removal in Phase 3.
+  const legacyStatus = typeof args.status === "string" ? args.status : undefined;
+  const filterArgRaw = args.filter as Record<string, unknown> | undefined;
+  const effectiveFilter: Record<string, unknown> = { ...(filterArgRaw ?? {}) };
+  if (legacyStatus && effectiveFilter.status === undefined) {
+    effectiveFilter.status = legacyStatus;
+  }
+  const hasFilter = Object.keys(effectiveFilter).length > 0;
+
+  if (hasFilter) {
+    tasks = applyQueryFilter(tasks, effectiveFilter, TASK_ACCESSORS);
+  }
+
+  const sortArg = args.sort as ReadonlyArray<{ field: string; order: "asc" | "desc" }> | undefined;
+  tasks = applyQuerySort(tasks, sortArg, TASK_ACCESSORS);
+
+  const postFilterCount = tasks.length;
   const page = paginate(tasks, args);
+
+  // Empty-result sentinel: filter was applied AND yielded zero matches
+  // AND the underlying collection (pre-filter) was non-empty. Signals
+  // to the LLM "your filter was valid, nothing matched" — distinct from
+  // "tool broke". Prevents the Gemini-retry-on-empty pattern observed
+  // in Phase 2b.
+  const queryUnmatched = hasFilter && postFilterCount === 0 && totalPreFilter > 0;
+
   return {
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify({ tasks: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2),
+        text: JSON.stringify({
+          tasks: page.items,
+          count: page.count,
+          total: page.total,
+          offset: page.offset,
+          limit: page.limit,
+          ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
+        }, null, 2),
       },
     ],
   };
@@ -390,8 +481,24 @@ export function registerTaskPolicy(router: PolicyRouter): void {
   // ── list_tasks ────────────────────────────────────────────────────
   router.register(
     "list_tasks",
-    "[Any] List tasks in the hub with optional label match-all filter and pagination.",
+    "[Any] List tasks in the hub with filter + sort + pagination. " +
+    "`filter` accepts a Mongo-ish object with implicit AND across fields: " +
+    "`{status: 'pending'}` for eq, `{status: {$in: ['pending','working']}}` for set membership, " +
+    "`{createdAt: {$lt: '2026-04-01T00:00:00Z'}}` for range. " +
+    "Filterable fields: status, correlationId, assignedEngineerId, createdAt, updatedAt. " +
+    "Range operators ($gt/$lt/$gte/$lte) apply only to dates + numbers. " +
+    "Forbidden operators ($regex, $where, $expr, $or, $and, $not) are rejected with an error naming the permitted set. " +
+    "`sort` accepts an ordered tuple `[{field, order}]` on: id, status, createdAt, updatedAt, correlationId, assignedEngineerId. " +
+    "Implicit id:asc tie-breaker is appended for deterministic pagination. " +
+    "Returns `_ois_query_unmatched: true` when the filter yields zero matches but the collection is non-empty (distinct from tool error). " +
+    "Legacy scalar `status:` arg preserved for backwards compat; deprecated in favour of `filter.status`; removal in a future phase.",
     {
+      filter: TASK_FILTER_SCHEMA.optional()
+        .describe("Mongo-ish filter object; see tool description for permitted fields + operators"),
+      sort: TASK_SORT_SCHEMA
+        .describe("Ordered-tuple sort; see tool description for permitted fields"),
+      status: z.string().optional()
+        .describe("DEPRECATED: use `filter: { status: ... }`. Preserved for backwards compat; `filter.status` wins when both present."),
       ...LIST_LABELS_SCHEMA,
       ...LIST_PAGINATION_SCHEMA,
     },

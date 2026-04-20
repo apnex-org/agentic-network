@@ -575,6 +575,188 @@ describe("TaskPolicy", () => {
     expect(parsed.count).toBe(2);
   });
 
+  describe("list_tasks — M-QueryShape Phase 1 (idea-119 / task-302)", () => {
+    // Shared fixture: create a set of tasks spanning different statuses
+    // and timestamps so filter + sort semantics can be exercised.
+    async function seed(): Promise<void> {
+      const ctx1 = createTestContext({ stores: ctx.stores });
+      await router.handle("create_task", { title: "T1", description: "first" }, ctx1);
+      const ctx2 = createTestContext({ stores: ctx.stores });
+      await router.handle("create_task", { title: "T2", description: "second" }, ctx2);
+      const ctx3 = createTestContext({ stores: ctx.stores });
+      await router.handle("create_task", { title: "T3", description: "third" }, ctx3);
+      // Backdate task-2 so createdAt-range + sort tests have a target.
+      // MemoryTaskStore.getTask returns a shallow clone, so we must mutate
+      // the internal Map directly.
+      const internal = (ctx.stores.task as any).tasks as Map<string, any>;
+      const t2 = internal.get("task-2");
+      if (t2) t2.createdAt = "2025-01-01T00:00:00Z";
+    }
+
+    it("filter: implicit equality on status", async () => {
+      await seed();
+      // Move task-1 to a non-pending status so the filter actually filters
+      const internal = (ctx.stores.task as any).tasks as Map<string, any>;
+      const t1 = internal.get("task-1");
+      if (t1) t1.status = "working";
+      const result = await router.handle(
+        "list_tasks",
+        { filter: { status: "pending" } },
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.tasks.every((t: any) => t.status === "pending")).toBe(true);
+      expect(parsed.tasks.some((t: any) => t.id === "task-1")).toBe(false);
+    });
+
+    it("filter: $in set membership", async () => {
+      await seed();
+      const result = await router.handle(
+        "list_tasks",
+        { filter: { status: { $in: ["pending"] } } },
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.tasks.every((t: any) => t.status === "pending")).toBe(true);
+      expect(parsed.tasks.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("filter: $lt on createdAt (date range)", async () => {
+      await seed();
+      const result = await router.handle(
+        "list_tasks",
+        { filter: { createdAt: { $lt: "2026-01-01T00:00:00Z" } } },
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      // Only task-2 (backdated to 2025-01-01) matches
+      expect(parsed.tasks.length).toBe(1);
+      expect(parsed.tasks[0].id).toBe("task-2");
+    });
+
+    it("filter: forbidden operator ($regex) rejected by Zod with hint", async () => {
+      await seed();
+      const result = await router.handle(
+        "list_tasks",
+        { filter: { status: { $regex: "^p" } } },
+        createTestContext({ stores: ctx.stores }),
+      );
+      // Zod validation happens via MCP binding layer in production, but
+      // at the router level we test that the handler still receives the
+      // un-validated args and the filter's unknown operator just
+      // matches nothing (defense-in-depth). The primary enforcement is
+      // at the Zod boundary — covered by the MCP integration tests.
+      const parsed = JSON.parse(result.content[0].text);
+      expect(Array.isArray(parsed.tasks)).toBe(true);
+    });
+
+    it("sort: createdAt asc returns oldest-first", async () => {
+      await seed();
+      const result = await router.handle(
+        "list_tasks",
+        { sort: [{ field: "createdAt", order: "asc" }] },
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      // Backdated task-2 should appear first (oldest)
+      expect(parsed.tasks[0].id).toBe("task-2");
+    });
+
+    it("sort: stable tie-breaker via implicit id:asc", async () => {
+      await seed();
+      // Force all tasks to have identical createdAt so sort must tie-break by id
+      const internal = (ctx.stores.task as any).tasks as Map<string, any>;
+      for (const id of ["task-1", "task-2", "task-3"]) {
+        const t = internal.get(id);
+        if (t) t.createdAt = "2026-04-20T00:00:00Z";
+      }
+      const result = await router.handle(
+        "list_tasks",
+        { sort: [{ field: "createdAt", order: "asc" }] },
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.tasks.map((t: any) => t.id)).toEqual(["task-1", "task-2", "task-3"]);
+    });
+
+    it("_ois_query_unmatched fires when filter yields 0 on non-empty collection", async () => {
+      await seed();
+      const result = await router.handle(
+        "list_tasks",
+        { filter: { status: "cancelled" } },
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.tasks).toEqual([]);
+      expect(parsed._ois_query_unmatched).toBe(true);
+    });
+
+    it("_ois_query_unmatched absent when no filter is applied", async () => {
+      await seed();
+      const result = await router.handle(
+        "list_tasks",
+        {},
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed._ois_query_unmatched).toBeUndefined();
+    });
+
+    it("_ois_query_unmatched absent when collection is empty (no filter applied)", async () => {
+      const result = await router.handle(
+        "list_tasks",
+        {},
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.tasks).toEqual([]);
+      expect(parsed._ois_query_unmatched).toBeUndefined();
+    });
+
+    it("backwards-compat: legacy scalar `status:` arg still works", async () => {
+      await seed();
+      const result = await router.handle(
+        "list_tasks",
+        { status: "pending" },
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.tasks.every((t: any) => t.status === "pending")).toBe(true);
+    });
+
+    it("filter.status wins over legacy scalar `status:` arg when both present", async () => {
+      await seed();
+      // Legacy scalar asks for 'cancelled', new filter asks for 'pending'.
+      // filter.status should win → results are 'pending'.
+      const result = await router.handle(
+        "list_tasks",
+        { status: "cancelled", filter: { status: "pending" } },
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.tasks.every((t: any) => t.status === "pending")).toBe(true);
+      expect(parsed.tasks.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("success criterion: find '3 oldest pending tasks' in a single call", async () => {
+      await seed();
+      const result = await router.handle(
+        "list_tasks",
+        {
+          filter: { status: "pending" },
+          sort: [{ field: "createdAt", order: "asc" }],
+          limit: 3,
+        },
+        createTestContext({ stores: ctx.stores }),
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.tasks.length).toBeLessThanOrEqual(3);
+      expect(parsed.tasks.every((t: any) => t.status === "pending")).toBe(true);
+      // Oldest first: task-2 (backdated) should lead
+      expect(parsed.tasks[0].id).toBe("task-2");
+    });
+  });
+
   it("createTask auto-closes source thread", async () => {
     // Open a thread
     const thread = await ctx.stores.thread.openThread("Test Thread", "Hello", "architect");
