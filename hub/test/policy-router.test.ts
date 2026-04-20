@@ -403,6 +403,66 @@ describe("TaskPolicy", () => {
     expect(parsed.totalPending).toBeGreaterThanOrEqual(1);
   });
 
+  it("getPendingActions suppresses threadsAwaitingReply when a non-terminal queue item exists (Phase 2c ckpt-B, idea-117)", async () => {
+    // Regression pin: before this fix, the legacy path
+    // (threadsAwaitingReply) fired on every 300s EventLoop poll even
+    // when the thread had an active queue item in receipt_acked state.
+    // A sandwich that hit MAX_TOOL_ROUNDS left its queue item stuck
+    // AND the thread in currentTurn=architect; legacy path then
+    // re-fired the sandwich indefinitely. The fix excludes threads
+    // with in-flight queue items from threadsAwaitingReply so the
+    // legacy path only covers true gap cases.
+    const archCtx = createTestContext({ stores: ctx.stores, role: "architect" });
+    // Bind an Agent directly on the registry — avoids register_role's
+    // session-policy dependencies. engineerRegistry's M18 handshake is
+    // thoroughly covered elsewhere; this test is about getPendingActions's
+    // in-flight-queue-item suppression.
+    await ctx.stores.engineerRegistry.registerAgent(
+      archCtx.sessionId,
+      "architect",
+      {
+        globalInstanceId: `test-gid-${archCtx.sessionId}`,
+        proxyName: "test",
+        proxyVersion: "0",
+        clientName: "test",
+        clientVersion: "0",
+      } as any,
+    );
+    const architectAgent = await ctx.stores.engineerRegistry.getAgentForSession(archCtx.sessionId);
+    expect(architectAgent).not.toBeNull();
+
+    // Open a thread where architect owes a reply. Engineer opens the
+    // thread → currentTurn defaults to architect per openThread semantics.
+    const thread = await ctx.stores.thread.openThread("Stuck thread", "Hello", "engineer");
+    expect((await ctx.stores.thread.getThread(thread.id))?.currentTurn).toBe("architect");
+
+    // Baseline: no queue item → thread appears in threadsAwaitingReply
+    const before = await router.handle("get_pending_actions", {}, archCtx);
+    const beforeParsed = JSON.parse(before.content[0].text);
+    expect(beforeParsed.threadsAwaitingReply.some((t: any) => t.threadId === thread.id)).toBe(true);
+
+    // Enqueue a thread_message queue item in receipt_acked state for the architect
+    const queued = await ctx.stores.pendingAction.enqueue({
+      targetAgentId: architectAgent!.engineerId,
+      dispatchType: "thread_message",
+      entityRef: thread.id,
+      payload: {},
+    });
+    await ctx.stores.pendingAction.receiptAck(queued.id);
+
+    // After: legacy path suppresses the thread because queue is in-flight
+    const after = await router.handle("get_pending_actions", {}, archCtx);
+    const afterParsed = JSON.parse(after.content[0].text);
+    expect(afterParsed.threadsAwaitingReply.some((t: any) => t.threadId === thread.id)).toBe(false);
+
+    // Also verify: when the queue item reaches a terminal state, the
+    // thread becomes eligible for the legacy path again (recovery fallback).
+    await ctx.stores.pendingAction.abandon(queued.id, "test");
+    const afterAbandon = await router.handle("get_pending_actions", {}, archCtx);
+    const abandonParsed = JSON.parse(afterAbandon.content[0].text);
+    expect(abandonParsed.threadsAwaitingReply.some((t: any) => t.threadId === thread.id)).toBe(true);
+  });
+
   it("getPendingActions excludes reviewed in_review tasks (!reviewAssessment gate still holds)", async () => {
     // Variant of the above: after create_review writes an assessment,
     // the task should drop out of unreviewedTasks even if still in

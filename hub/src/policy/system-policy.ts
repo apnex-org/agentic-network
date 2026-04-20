@@ -16,6 +16,29 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
   const proposals = await ctx.stores.proposal.getProposals();
   const threads = await ctx.stores.thread.listThreads();
 
+  // idea-117 Phase 2c ckpt-B — suppress legacy-path re-triggers when a
+  // thread already has a non-terminal queue item for the caller. The
+  // architect's EventLoop consumes `threadsAwaitingReply` as a legacy
+  // backup path, independent of the ADR-017 queue. Before this fix, a
+  // sandwich that hit MAX_TOOL_ROUNDS left its queue item in
+  // receipt_acked forever AND the thread in currentTurn=architect —
+  // so every 300s poll re-fired the sandwich indefinitely, burning
+  // millions of Gemini tokens on failed retries. Excluding threads with
+  // enqueued/receipt_acked queue items here makes the legacy path purely
+  // a recovery fallback — it fires only when the queue has nothing
+  // actionable for that thread.
+  const callerAgent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  const inFlightThreadIds = new Set<string>();
+  if (callerAgent) {
+    const callerQueue = await ctx.stores.pendingAction.listForAgent(callerAgent.engineerId);
+    for (const item of callerQueue) {
+      if (item.dispatchType !== "thread_message") continue;
+      if (item.state === "enqueued" || item.state === "receipt_acked") {
+        inFlightThreadIds.add(item.entityRef);
+      }
+    }
+  }
+
   // Reports awaiting Architect read (exclude already-reviewed).
   // idea-89 fix: submitReport transitions task → "in_review", but this
   // filter was only matching "completed"/"failed"/"reported_*". Result:
@@ -40,9 +63,10 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
   // Proposals needing review
   const pendingProposals = proposals.filter((p) => p.status === "submitted");
 
-  // Threads awaiting Architect reply
+  // Threads awaiting Architect reply — excluding threads already
+  // in-flight via the queue (Phase 2c ckpt-B, see note above).
   const threadsAwaitingArchitect = threads.filter(
-    (t) => t.status === "active" && t.currentTurn === "architect"
+    (t) => t.status === "active" && t.currentTurn === "architect" && !inFlightThreadIds.has(t.id)
   );
 
   // Clarification requests
