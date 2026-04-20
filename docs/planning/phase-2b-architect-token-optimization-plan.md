@@ -243,6 +243,43 @@ Per-thread (ckpt-A vs baseline counterpart):
 
 Interpretation: FR-SCOPE-REJECT class is eliminated on the ckpt-A revision. Remaining token spend on design-analysis + parallel-candidate is now dominated by accumulated tool-call history (root cause #2) — exactly what ckpt-B targets.
 
+### ckpt-B measured 2026-04-20, architect revision `00043-qjf`, 6-thread Pass-2 matrix re-run (threads 175-180)
+
+| Metric | Baseline | ckpt-A | ckpt-B | Target (ckpt-B) |
+|---|---:|---:|---:|---:|
+| Total Gemini tokens | 3,705,002 | 1,300,830 | **675,217** | ≤ 750k ✅ |
+| MAX_TOOL_ROUNDS attempts | 12 | 1 | **0** | 0 ✅ |
+| Out-of-scope rejections | 9 | 0 | 0 | (ckpt-A) ✅ |
+
+Per-thread token totals across checkpoints:
+
+| # | Prompt shape | Baseline | ckpt-A | ckpt-B | ckpt-A→B Δ | Baseline→B Δ |
+|---|---|---:|---:|---:|---:|---:|
+| (169/175) | simple ack | 377,185 | 26,016 | 34,692 | +33% | −91% |
+| (170/176) | ideation | 487,717 | 114,627 | 74,299 | −35% | −85% |
+| (171/177) | tool-heavy read | 351,188 | 26,932 | 33,375 | +24% | −90% |
+| (172/178) | design analysis | 1,363,070 | 479,363 | 273,042 | **−43%** | −80% |
+| (173/179) | parallel candidate | 862,520 | 628,073 | 233,136 | **−63%** | −73% |
+| (174/180) | error path | 263,322 | 25,819 | 26,673 | ~flat | −90% |
+| — | **Total** | **3,705,002** | **1,300,830** | **675,217** | **−48%** | **−82%** |
+
+Thread-178 per-round prompt-token progression showing the trim signature:
+
+```
+round 1: 4,708
+round 2: 72,183   ← large get_idea payload enters history
+round 3: 72,531
+round 4: 72,561
+round 5:  9,833   ← trim fires: round-2 payload elided (window=3 passed)
+round 6: 12,797
+round 7: 12,920
+round 8:  9,091
+```
+
+Round 5 drops 88% from round 4, demonstrating the history-window elision is firing on schedule.
+
+Cumulative vs Phase 2a baseline: **−82% total Gemini tokens, MAX_TOOL_ROUNDS and scope-reject classes both at zero**. Remaining headroom (~175k tokens above ckpt-C target) is concentrated on design-analysis + parallel-candidate — the response-surface class that ckpt-C's architect-side cognitive pipeline (ResponseSummarizer + cache) is designed to cap.
+
 ---
 
 ## Canonical references
