@@ -155,8 +155,14 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
       matchLabels: thread.labels,
     };
   } else if (recipientAgentId) {
-    // unicast with required recipientAgentId (validator enforced)
-    openSelector = { engineerIds: [recipientAgentId], matchLabels: thread.labels };
+    // unicast with required recipientAgentId (validator enforced).
+    // bug-18: NO matchLabels filter — the recipient is explicit, labels
+    // MUST NOT gate delivery. thread.labels inherit from the opener
+    // (e.g. architect env=prod), which for cross-env unicast (kate
+    // env=dev) would silently drop SSE dispatch. The id IS the
+    // addressing; pool-filtering is irrelevant when the target is
+    // named.
+    openSelector = { engineerIds: [recipientAgentId] };
   } else {
     // multicast: participants resolve from bound entity assignee.
     // Today this doesn't yet trigger dynamic resolution (ADR-014 §189
@@ -353,10 +359,16 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
         entityRef: thread.id,
         payload: basePayload,
       });
+      // bug-18: per-participant reply dispatch is always pinpoint — the
+      // recipient is explicit (resolved from participants[]). No
+      // matchLabels filter — see create_thread unicast open for
+      // rationale. Cross-env participants (e.g. architect env=prod,
+      // engineer env=dev) must receive replies regardless of env
+      // mismatch; labels are a filing property, not a delivery gate.
       await ctx.dispatch(
         "thread_message",
         { ...basePayload, queueItemId: item.id },
-        { engineerIds: [targetId], matchLabels: thread.labels },
+        { engineerIds: [targetId] },
       );
     }
   }
