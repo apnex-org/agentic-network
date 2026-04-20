@@ -25,7 +25,7 @@
 If you're picking up cold, read in this order:
 
 1. **This file, then** `docs/audits/phase-2x-closing.md` (most recent closed phase) and `docs/audits/phase-2c-closing.md` (preceding).
-2. **Current in-flight:** D-CP1 (task-304) — Phase 2d CP1 observability + invariant audit. Architect-issued, engineer-assigned. Not yet claimed — awaiting director approval per session rhythm.
+2. **Current in-flight:** D-CP1 (task-304) — Phase 2d CP1 observability + invariant audit. Architect pre-assigned to engineer `eng-0d2c690e7dd5` on creation; Hub status = `working`. No engineer output yet — awaiting director go-ahead to begin implementation.
 3. **Awaiting architect triage:** idea-115 (dynamic tool scope), idea-116 (tele-10 Precision Context Engineering), idea-118 (cross-item circuit breaker), **idea-120 (entity-provenance unification — blocks F)**.
 4. **Deferred:** H (Phase 4 quota — no 429s observed), bug-13 (id-sort lexicographic tail refinement).
 5. **Role & session plumbing.** Role is set by the adapter at startup (plugin config / `hub-config.json`) — not by the LLM. `McpAgentClient.runHandshake` auto-calls `register_role` on connect; do not re-register. MCP tool-discovery is per-session — if Hub shipped new tools since last connect, restart the session. If role uncertain, confirm via `get_engineer_status`.
@@ -35,8 +35,8 @@ If you're picking up cold, read in this order:
 
 ## In-flight
 
-- ▶ **D-CP1 (task-304)** — Phase 2d Checkpoint 1: Observability + Invariant Audit. Shadow INV-TH* near-breach logging, cascade-failure-type metrics, idempotency-contract audit of `*ActionSpec` handlers + contract tests, baseline measurement of gap surface. Engineer-assigned; not yet claimed.
-- ▶ **idea-120** — Entity-provenance unification brainstorm pending with architect. **Blocks F (idea-119 Phase 2).** Proposal text updated with `createdBy: {role, agentId, at}` design + 6 triage questions + migration plan.
+- ▶ **D-CP1 (task-304)** — Phase 2d Checkpoint 1: Observability + Invariant Audit. Shadow INV-TH* near-breach logging, cascade-failure-type metrics, idempotency-contract audit of `*ActionSpec` handlers + contract tests, baseline measurement of gap surface. Pre-assigned on creation to `eng-0d2c690e7dd5`; Hub status = `working`; no output yet. Awaiting director go-ahead to begin implementation.
+- ▶ **idea-120** — Entity-provenance unification brainstorm open as **thread-225** (unicast, architect's turn). **Blocks F (idea-119 Phase 2).** Proposal text updated with `createdBy: {role, agentId, at}` design + 6 triage questions + migration plan.
 
 ---
 
@@ -89,7 +89,8 @@ idea-118 ○ independent
 
 ## Session log (append-only)
 
-- **2026-04-20 late** — shipped task-302 (A) + task-303 (C); opened + converged thread-223 (B) + thread-224 (D-brainstorm); filed idea-120 (provenance unification) + bug-13 (id-sort); this work-trace doc stood up (supersedes post-phase-2x-roadmap.md). Architect reviewed task-302 + task-303 as fully completed. task-304 (D-CP1) issued by architect, awaiting director go-ahead.
+- **2026-04-20 late** — shipped task-302 (A) + task-303 (C); opened + converged thread-223 (B) + thread-224 (D-brainstorm); filed idea-120 (provenance unification) + bug-13 (id-sort); this work-trace doc stood up (supersedes post-phase-2x-roadmap.md). Architect reviewed task-302 + task-303 as fully completed. task-304 (D-CP1) issued by architect, pre-assigned to `eng-0d2c690e7dd5`, awaiting director go-ahead to begin implementation.
+- **2026-04-20 evening** — opened **thread-225** for idea-120 architect triage (entity-provenance unification / `createdBy` ratification). Unicast to architect, currentTurn=architect. Trace hygiene correction: task-304 is pre-assigned + status=`working` (not "not yet claimed" as prior entry said). Diagnostic: Hub revision `hub-00037-h9t` deployed 2026-04-20T06:40:53 is current (past commits 177fb84 + 9a5e7d0); MCP plugin-proxy in this session still serves pre-Phase-1 `list_tasks` schema (no filter/sort) — schema cached in proxy, resolved by session restart. Flagged, not blocking.
 - **2026-04-20 mid** — Phase 2x shipped all 7 items (P0-1 through P2-7); closing audit committed.
 - **2026-04-20 early** — Phase 2c CLOSED (failure-amplification class squashed per idea-117).
 - **2026-04-19** — Phase 2b CLOSED (83% Gemini-token reduction; three classes squashed).
