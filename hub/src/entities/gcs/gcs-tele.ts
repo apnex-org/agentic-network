@@ -9,6 +9,7 @@ import {
   createOnly,
 } from "../../gcs-state.js";
 import type { Tele, ITeleStore } from "../tele.js";
+import type { EntityProvenance } from "../../state.js";
 
 export class GcsTeleStore implements ITeleStore {
   private bucket: string;
@@ -21,7 +22,8 @@ export class GcsTeleStore implements ITeleStore {
   async defineTele(
     name: string,
     description: string,
-    successCriteria: string
+    successCriteria: string,
+    createdBy?: EntityProvenance
   ): Promise<Tele> {
     const num = await getAndIncrementCounter(this.bucket, "teleCounter");
     const id = `tele-${num}`;
@@ -32,6 +34,7 @@ export class GcsTeleStore implements ITeleStore {
       name,
       description,
       successCriteria,
+      createdBy,
       createdAt: now,
     };
 

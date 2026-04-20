@@ -806,7 +806,7 @@ export interface IThreadStore {
 }
 
 export interface IProposalStore {
-  submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<Proposal>;
+  submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink, createdBy?: EntityProvenance): Promise<Proposal>;
   setScaffoldResult(proposalId: string, result: ScaffoldResult): Promise<boolean>;
   getProposals(status?: ProposalStatus): Promise<Proposal[]>;
   getProposal(proposalId: string): Promise<Proposal | null>;
@@ -821,7 +821,7 @@ export interface IProposalStore {
 }
 
 export interface ITaskStore {
-  submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<string>;
+  submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink, createdBy?: EntityProvenance): Promise<string>;
   findByIdempotencyKey(key: string): Promise<Task | null>;
   /**
    * Mission-24 Phase 2 (ADR-014, INV-TH20): look up a Task by the natural
@@ -961,7 +961,7 @@ export class MemoryTaskStore implements ITaskStore {
   private tasks: Map<string, Task> = new Map();
   private counter = 0;
 
-  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<string> {
+  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink, createdBy?: EntityProvenance): Promise<string> {
     this.counter++;
     const id = `task-${this.counter}`;
     const now = new Date().toISOString();
@@ -990,6 +990,7 @@ export class MemoryTaskStore implements ITaskStore {
       sourceThreadId: backlink?.sourceThreadId ?? null,
       sourceActionId: backlink?.sourceActionId ?? null,
       sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
+      createdBy,
       createdAt: now,
       updatedAt: now,
     });
@@ -1180,7 +1181,7 @@ export class MemoryProposalStore implements IProposalStore {
   private proposals: Map<string, Proposal> = new Map();
   private counter = 0;
 
-  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<Proposal> {
+  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink, createdBy?: EntityProvenance): Promise<Proposal> {
     this.counter++;
     const id = `prop-${this.counter}`;
     const now = new Date().toISOString();
@@ -1200,6 +1201,7 @@ export class MemoryProposalStore implements IProposalStore {
       sourceThreadId: backlink?.sourceThreadId ?? null,
       sourceActionId: backlink?.sourceActionId ?? null,
       sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
+      createdBy,
       createdAt: now,
       updatedAt: now,
     };

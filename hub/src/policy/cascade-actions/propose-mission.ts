@@ -14,6 +14,7 @@ import { registerActionSpec } from "../cascade-spec.js";
 import { ProposeMissionActionPayloadSchema } from "../staged-action-payloads.js";
 import { dispatchMissionCreated } from "../dispatch-helpers.js";
 import type { Mission } from "../../entities/mission.js";
+import type { EntityProvenance } from "../../state.js";
 
 registerActionSpec({
   type: "propose_mission",
@@ -21,13 +22,17 @@ registerActionSpec({
   payloadSchema: ProposeMissionActionPayloadSchema,
   auditAction: "thread_propose_mission",
   findByCascadeKey: (ctx, key) => ctx.stores.mission.findByCascadeKey(key),
-  execute: async (ctx, payload, _action, _thread, backlink): Promise<Mission> => {
+  execute: async (ctx, payload, action, _thread, backlink): Promise<Mission> => {
     const p = payload as { title: string; description: string; goals: string[] };
     const goalsBlock = p.goals.length > 0
       ? `\n\nGoals:\n${p.goals.map((g) => `- ${g}`).join("\n")}`
       : "";
     const composed = `${p.description}${goalsBlock}`;
-    return ctx.stores.mission.createMission(p.title, composed, undefined, backlink);
+    const createdBy: EntityProvenance = {
+      role: action.proposer.role,
+      agentId: action.proposer.agentId ?? `anonymous-${action.proposer.role}`,
+    };
+    return ctx.stores.mission.createMission(p.title, composed, undefined, backlink, createdBy);
   },
   auditDetails: (entity, action, thread, summary) => {
     const p = action.payload as { title: string; goals: string[] };

@@ -13,6 +13,7 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult, FsmTransitionTable, DomainEvent } from "./types.js";
 import { isValidTransition } from "./types.js";
 import { callerLabels } from "./labels.js";
+import { resolveCreatedBy } from "./caller-identity.js";
 import {
   LIST_PAGINATION_SCHEMA,
   LIST_LABELS_SCHEMA,
@@ -99,7 +100,8 @@ async function createTask(args: Record<string, unknown>, ctx: IPolicyContext): P
 
   // Mission-19: propagate caller's Agent labels onto the new Task.
   const labels = await callerLabels(ctx);
-  const taskId = await ctx.stores.task.submitDirective(resolvedDirective, correlationId, idempotencyKey, title, description, dependsOn, labels);
+  const createdBy = await resolveCreatedBy(ctx);
+  const taskId = await ctx.stores.task.submitDirective(resolvedDirective, correlationId, idempotencyKey, title, description, dependsOn, labels, undefined, createdBy);
 
   // Atomically close the source thread if provided
   if (sourceThreadId) {

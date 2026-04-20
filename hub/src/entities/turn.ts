@@ -44,7 +44,8 @@ export interface ITurnStore {
   createTurn(
     title: string,
     scope: string,
-    tele?: string[]
+    tele?: string[],
+    createdBy?: EntityProvenance
   ): Promise<Turn>;
 
   getTurn(turnId: string): Promise<Turn | null>;
@@ -71,7 +72,8 @@ export class MemoryTurnStore implements ITurnStore {
   async createTurn(
     title: string,
     scope: string,
-    tele?: string[]
+    tele?: string[],
+    createdBy?: EntityProvenance
   ): Promise<Turn> {
     this.counter++;
     const id = `turn-${this.counter}`;
@@ -86,6 +88,7 @@ export class MemoryTurnStore implements ITurnStore {
       taskIds: [],
       tele: tele || [],
       correlationId: id,
+      createdBy,
       createdAt: now,
       updatedAt: now,
     };

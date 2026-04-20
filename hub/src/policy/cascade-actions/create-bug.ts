@@ -15,6 +15,7 @@ import { registerActionSpec } from "../cascade-spec.js";
 import { CreateBugActionPayloadSchema } from "../staged-action-payloads.js";
 import { dispatchBugReported } from "../dispatch-helpers.js";
 import type { Bug, BugSeverity } from "../../entities/bug.js";
+import type { EntityProvenance } from "../../state.js";
 
 registerActionSpec({
   type: "create_bug",
@@ -22,7 +23,7 @@ registerActionSpec({
   payloadSchema: CreateBugActionPayloadSchema,
   auditAction: "thread_create_bug",
   findByCascadeKey: (ctx, key) => ctx.stores.bug.findByCascadeKey(key),
-  execute: async (ctx, payload, _action, _thread, backlink): Promise<Bug> => {
+  execute: async (ctx, payload, action, _thread, backlink): Promise<Bug> => {
     const p = payload as {
       title: string;
       description: string;
@@ -30,6 +31,10 @@ registerActionSpec({
       class?: string;
       tags?: string[];
       surfacedBy?: string;
+    };
+    const createdBy: EntityProvenance = {
+      role: action.proposer.role,
+      agentId: action.proposer.agentId ?? `anonymous-${action.proposer.role}`,
     };
     return ctx.stores.bug.createBug(
       p.title,
@@ -40,6 +45,7 @@ registerActionSpec({
         tags: p.tags,
         surfacedBy: p.surfacedBy,
         backlink,
+        createdBy,
       },
     );
   },

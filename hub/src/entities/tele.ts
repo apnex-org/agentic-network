@@ -30,7 +30,8 @@ export interface ITeleStore {
   defineTele(
     name: string,
     description: string,
-    successCriteria: string
+    successCriteria: string,
+    createdBy?: EntityProvenance
   ): Promise<Tele>;
 
   getTele(teleId: string): Promise<Tele | null>;
@@ -47,7 +48,8 @@ export class MemoryTeleStore implements ITeleStore {
   async defineTele(
     name: string,
     description: string,
-    successCriteria: string
+    successCriteria: string,
+    createdBy?: EntityProvenance
   ): Promise<Tele> {
     this.counter++;
     const id = `tele-${this.counter}`;
@@ -58,6 +60,7 @@ export class MemoryTeleStore implements ITeleStore {
       name,
       description,
       successCriteria,
+      createdBy,
       createdAt: now,
     };
 

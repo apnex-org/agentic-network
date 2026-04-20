@@ -89,6 +89,7 @@ export class GcsPendingActionStore implements IPendingActionStore {
       lastAttemptAt: null,
       state: "enqueued",
       escalationReason: null,
+      createdBy: opts.createdBy,
     };
     await createOnly<PendingActionItem>(this.bucket, `pending-actions/${id}.json`, item);
     return item;

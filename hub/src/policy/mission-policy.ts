@@ -13,6 +13,7 @@ import type { FsmTransitionTable } from "./types.js";
 import type { MissionStatus } from "../entities/index.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import { dispatchMissionCreated, dispatchMissionActivated } from "./dispatch-helpers.js";
+import { resolveCreatedBy } from "./caller-identity.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -30,7 +31,8 @@ async function createMission(args: Record<string, unknown>, ctx: IPolicyContext)
   const description = args.description as string;
   const documentRef = args.documentRef as string | undefined;
 
-  const mission = await ctx.stores.mission.createMission(title, description, documentRef);
+  const createdBy = await resolveCreatedBy(ctx);
+  const mission = await ctx.stores.mission.createMission(title, description, documentRef, undefined, createdBy);
 
   // Uses the shared helper so the cascade path (cascade-actions/
   // propose-mission.ts) fires an identically-shaped event.

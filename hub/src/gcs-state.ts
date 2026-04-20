@@ -500,7 +500,7 @@ export class GcsTaskStore implements ITaskStore {
     console.log(`[GcsTaskStore] Using bucket: gs://${bucket}`);
   }
 
-  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<string> {
+  async submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink, createdBy?: EntityProvenance): Promise<string> {
     const num = await getAndIncrementCounter(this.bucket, "taskCounter");
     const id = `task-${num}`;
     const now = new Date().toISOString();
@@ -530,6 +530,7 @@ export class GcsTaskStore implements ITaskStore {
       sourceThreadId: backlink?.sourceThreadId ?? null,
       sourceActionId: backlink?.sourceActionId ?? null,
       sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
+      createdBy,
       createdAt: now,
       updatedAt: now,
     };
@@ -1270,7 +1271,7 @@ export class GcsProposalStore implements IProposalStore {
     console.log(`[GcsProposalStore] Using bucket: gs://${bucket}`);
   }
 
-  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: import("./state.js").ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink): Promise<Proposal> {
+  async submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: import("./state.js").ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink, createdBy?: EntityProvenance): Promise<Proposal> {
     const num = await getAndIncrementCounter(this.bucket, "proposalCounter");
     const id = `prop-${num}`;
     const now = new Date().toISOString();
@@ -1291,6 +1292,7 @@ export class GcsProposalStore implements IProposalStore {
       sourceThreadId: backlink?.sourceThreadId ?? null,
       sourceActionId: backlink?.sourceActionId ?? null,
       sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
+      createdBy,
       createdAt: now,
       updatedAt: now,
     };

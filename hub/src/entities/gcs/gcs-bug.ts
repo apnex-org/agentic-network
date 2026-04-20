@@ -11,6 +11,7 @@ import {
   GcsPathNotFound,
 } from "../../gcs-state.js";
 import type { Bug, BugSeverity, BugStatus, IBugStore, CascadeBacklink } from "../bug.js";
+import type { EntityProvenance } from "../../state.js";
 
 export class GcsBugStore implements IBugStore {
   private bucket: string;
@@ -30,6 +31,7 @@ export class GcsBugStore implements IBugStore {
       sourceIdeaId?: string;
       surfacedBy?: string;
       backlink?: CascadeBacklink;
+      createdBy?: EntityProvenance;
     } = {}
   ): Promise<Bug> {
     const num = await getAndIncrementCounter(this.bucket, "bugCounter");
@@ -52,6 +54,7 @@ export class GcsBugStore implements IBugStore {
       fixCommits: [],
       fixRevision: null,
       surfacedBy: options.surfacedBy ?? null,
+      createdBy: options.createdBy,
       createdAt: now,
       updatedAt: now,
     };

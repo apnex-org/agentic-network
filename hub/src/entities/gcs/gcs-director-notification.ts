@@ -47,6 +47,7 @@ export class GcsDirectorNotificationStore implements IDirectorNotificationStore 
       createdAt: now.toISOString(),
       acknowledgedAt: null,
       acknowledgedBy: null,
+      createdBy: opts.createdBy,
     };
     await createOnly<DirectorNotification>(this.bucket, `director-notifications/${id}.json`, n);
     return n;

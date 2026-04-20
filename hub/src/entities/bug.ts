@@ -88,6 +88,7 @@ export interface IBugStore {
       sourceIdeaId?: string;
       surfacedBy?: string;
       backlink?: CascadeBacklink;
+      createdBy?: EntityProvenance;
     }
   ): Promise<Bug>;
 
@@ -146,6 +147,7 @@ export class MemoryBugStore implements IBugStore {
       sourceIdeaId?: string;
       surfacedBy?: string;
       backlink?: CascadeBacklink;
+      createdBy?: EntityProvenance;
     } = {}
   ): Promise<Bug> {
     this.counter++;
@@ -168,6 +170,7 @@ export class MemoryBugStore implements IBugStore {
       fixCommits: [],
       fixRevision: null,
       surfacedBy: options.surfacedBy ?? null,
+      createdBy: options.createdBy,
       createdAt: now,
       updatedAt: now,
     };

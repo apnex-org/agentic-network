@@ -12,6 +12,7 @@ import { isValidTransition } from "./types.js";
 import type { FsmTransitionTable } from "./types.js";
 import type { TurnStatus } from "../entities/index.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
+import { resolveCreatedBy } from "./caller-identity.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -27,7 +28,8 @@ async function createTurn(args: Record<string, unknown>, ctx: IPolicyContext): P
   const scope = args.scope as string;
   const tele = args.tele as string[] | undefined;
 
-  const turn = await ctx.stores.turn.createTurn(title, scope, tele);
+  const createdBy = await resolveCreatedBy(ctx);
+  const turn = await ctx.stores.turn.createTurn(title, scope, tele, createdBy);
 
   await ctx.emit("turn_created", {
     turnId: turn.id,

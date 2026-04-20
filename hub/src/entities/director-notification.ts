@@ -40,6 +40,9 @@ export interface CreateNotificationOptions {
   sourceRef?: string;
   title: string;
   details: string;
+  /** Mission-24 idea-120 / task-305: identity of the creator.
+   *  For hub-internal watchdog/reaper creates, use HUB_SYSTEM_PROVENANCE. */
+  createdBy?: EntityProvenance;
 }
 
 export interface IDirectorNotificationStore {
@@ -75,6 +78,7 @@ export class MemoryDirectorNotificationStore implements IDirectorNotificationSto
       createdAt: now.toISOString(),
       acknowledgedAt: null,
       acknowledgedBy: null,
+      createdBy: opts.createdBy,
     };
     this.notifications.set(id, n);
     return clone(n);

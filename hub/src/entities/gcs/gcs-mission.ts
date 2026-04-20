@@ -15,7 +15,7 @@ import {
   GcsPathNotFound,
 } from "../../gcs-state.js";
 import type { Mission, MissionStatus, IMissionStore } from "../mission.js";
-import type { ITaskStore } from "../../state.js";
+import type { ITaskStore, EntityProvenance } from "../../state.js";
 import type { IIdeaStore, CascadeBacklink } from "../idea.js";
 
 export class GcsMissionStore implements IMissionStore {
@@ -34,7 +34,8 @@ export class GcsMissionStore implements IMissionStore {
     title: string,
     description: string,
     documentRef?: string,
-    backlink?: CascadeBacklink
+    backlink?: CascadeBacklink,
+    createdBy?: EntityProvenance
   ): Promise<Mission> {
     const num = await getAndIncrementCounter(this.bucket, "missionCounter");
     const id = `mission-${num}`;
@@ -53,6 +54,7 @@ export class GcsMissionStore implements IMissionStore {
       sourceThreadId: backlink?.sourceThreadId ?? null,
       sourceActionId: backlink?.sourceActionId ?? null,
       sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
+      createdBy,
       createdAt: now,
       updatedAt: now,
     };

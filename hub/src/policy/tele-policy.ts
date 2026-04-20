@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
+import { resolveCreatedBy } from "./caller-identity.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -17,7 +18,8 @@ async function createTele(args: Record<string, unknown>, ctx: IPolicyContext): P
   const description = args.description as string;
   const successCriteria = args.successCriteria as string;
 
-  const tele = await ctx.stores.tele.defineTele(name, description, successCriteria);
+  const createdBy = await resolveCreatedBy(ctx);
+  const tele = await ctx.stores.tele.defineTele(name, description, successCriteria, createdBy);
 
   await ctx.emit("tele_defined", {
     teleId: tele.id,

@@ -15,6 +15,7 @@ import { isValidTransition } from "./types.js";
 import type { BugStatus, BugSeverity } from "../entities/bug.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import { dispatchBugReported, dispatchBugStatusChanged } from "./dispatch-helpers.js";
+import { resolveCreatedBy } from "./caller-identity.js";
 
 // ── FSM ─────────────────────────────────────────────────────────────
 
@@ -38,11 +39,13 @@ async function createBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   const surfacedBy = args.surfacedBy as string | undefined;
   const sourceIdeaId = args.sourceIdeaId as string | undefined;
 
+  const createdBy = await resolveCreatedBy(ctx);
   const bug = await ctx.stores.bug.createBug(title, description, severity, {
     classHint,
     tags,
     sourceIdeaId,
     surfacedBy,
+    createdBy,
   });
 
   // Uses the shared helper so the cascade path (cascade-actions/

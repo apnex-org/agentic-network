@@ -17,7 +17,7 @@ import {
   GcsPathNotFound,
 } from "../../gcs-state.js";
 import type { Turn, TurnStatus, ITurnStore } from "../turn.js";
-import type { ITaskStore } from "../../state.js";
+import type { ITaskStore, EntityProvenance } from "../../state.js";
 import type { IMissionStore } from "../mission.js";
 
 export class GcsTurnStore implements ITurnStore {
@@ -35,7 +35,8 @@ export class GcsTurnStore implements ITurnStore {
   async createTurn(
     title: string,
     scope: string,
-    tele?: string[]
+    tele?: string[],
+    createdBy?: EntityProvenance
   ): Promise<Turn> {
     const num = await getAndIncrementCounter(this.bucket, "turnCounter");
     const id = `turn-${num}`;
@@ -50,6 +51,7 @@ export class GcsTurnStore implements ITurnStore {
       taskIds: [],
       tele: tele || [],
       correlationId: id,
+      createdBy,
       createdAt: now,
       updatedAt: now,
     };

@@ -11,7 +11,7 @@
 import { registerActionSpec } from "../cascade-spec.js";
 import { CreateTaskActionPayloadSchema } from "../staged-action-payloads.js";
 import { dispatchTaskSpawned } from "../dispatch-helpers.js";
-import type { Task } from "../../state.js";
+import type { Task, EntityProvenance } from "../../state.js";
 
 registerActionSpec({
   type: "create_task",
@@ -19,8 +19,12 @@ registerActionSpec({
   payloadSchema: CreateTaskActionPayloadSchema,
   auditAction: "thread_create_task",
   findByCascadeKey: (ctx, key) => ctx.stores.task.findByCascadeKey(key),
-  execute: async (ctx, payload, _action, thread, backlink): Promise<Task | null> => {
+  execute: async (ctx, payload, action, thread, backlink): Promise<Task | null> => {
     const p = payload as { title: string; description: string; correlationId?: string };
+    const createdBy: EntityProvenance = {
+      role: action.proposer.role,
+      agentId: action.proposer.agentId ?? `anonymous-${action.proposer.role}`,
+    };
     const taskId = await ctx.stores.task.submitDirective(
       p.description,
       p.correlationId ?? undefined,
@@ -30,6 +34,7 @@ registerActionSpec({
       undefined,
       thread.labels,
       backlink,
+      createdBy,
     );
     return (await ctx.stores.task.getTask(taskId)) ?? null;
   },

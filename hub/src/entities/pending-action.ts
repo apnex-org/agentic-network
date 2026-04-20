@@ -58,6 +58,8 @@ export interface EnqueueOptions {
   payload: Record<string, unknown>;
   receiptSlaMs?: number;
   completionSlaMs?: number;
+  /** Mission-24 idea-120 / task-305: identity of the enqueueing agent. */
+  createdBy?: EntityProvenance;
 }
 
 // Default SLAs (per-dispatch-type overrides at the policy layer).
@@ -160,6 +162,7 @@ export class MemoryPendingActionStore implements IPendingActionStore {
       lastAttemptAt: null,
       state: "enqueued",
       escalationReason: null,
+      createdBy: opts.createdBy,
     };
     this.items.set(id, item);
     this.byNaturalKey.set(key, id);

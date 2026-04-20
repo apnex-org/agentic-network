@@ -16,6 +16,7 @@ import type { IPolicyContext, PolicyResult } from "./types.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import type { ProposedExecutionPlan, ScaffoldResult } from "../state.js";
 import { callerLabels } from "./labels.js";
+import { resolveCreatedBy } from "./caller-identity.js";
 import { dispatchProposalSubmitted } from "./dispatch-helpers.js";
 
 // ── Scaffolding ─────────────────────────────────────────────────────
@@ -230,7 +231,8 @@ async function createProposal(args: Record<string, unknown>, ctx: IPolicyContext
 
   // Mission-19: propagate caller's Agent labels onto the new Proposal.
   const labels = await callerLabels(ctx);
-  const proposal = await ctx.stores.proposal.submitProposal(title, summary, body, correlationId, executionPlan, labels);
+  const createdBy = await resolveCreatedBy(ctx);
+  const proposal = await ctx.stores.proposal.submitProposal(title, summary, body, correlationId, executionPlan, labels, undefined, createdBy);
 
   // Uses the shared helper so the cascade path (cascade-actions/
   // create-proposal.ts) fires an identically-shaped event.

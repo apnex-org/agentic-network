@@ -10,7 +10,7 @@
 import { registerActionSpec } from "../cascade-spec.js";
 import { CreateProposalActionPayloadSchema } from "../staged-action-payloads.js";
 import { dispatchProposalSubmitted } from "../dispatch-helpers.js";
-import type { Proposal } from "../../state.js";
+import type { Proposal, EntityProvenance } from "../../state.js";
 
 registerActionSpec({
   type: "create_proposal",
@@ -18,8 +18,12 @@ registerActionSpec({
   payloadSchema: CreateProposalActionPayloadSchema,
   auditAction: "thread_create_proposal",
   findByCascadeKey: (ctx, key) => ctx.stores.proposal.findByCascadeKey(key),
-  execute: async (ctx, payload, _action, thread, backlink): Promise<Proposal> => {
+  execute: async (ctx, payload, action, thread, backlink): Promise<Proposal> => {
     const p = payload as { title: string; description: string; correlationId?: string };
+    const createdBy: EntityProvenance = {
+      role: action.proposer.role,
+      agentId: action.proposer.agentId ?? `anonymous-${action.proposer.role}`,
+    };
     return ctx.stores.proposal.submitProposal(
       p.title,
       p.description,
@@ -28,6 +32,7 @@ registerActionSpec({
       undefined,
       thread.labels,
       backlink,
+      createdBy,
     );
   },
   auditDetails: (entity, action, thread, summary) => {

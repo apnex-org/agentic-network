@@ -53,7 +53,8 @@ export interface IMissionStore {
     title: string,
     description: string,
     documentRef?: string,
-    backlink?: CascadeBacklink
+    backlink?: CascadeBacklink,
+    createdBy?: EntityProvenance
   ): Promise<Mission>;
 
   getMission(missionId: string): Promise<Mission | null>;
@@ -84,7 +85,8 @@ export class MemoryMissionStore implements IMissionStore {
     title: string,
     description: string,
     documentRef?: string,
-    backlink?: CascadeBacklink
+    backlink?: CascadeBacklink,
+    createdBy?: EntityProvenance
   ): Promise<Mission> {
     this.counter++;
     const id = `mission-${this.counter}`;
@@ -103,6 +105,7 @@ export class MemoryMissionStore implements IMissionStore {
       sourceThreadId: backlink?.sourceThreadId ?? null,
       sourceActionId: backlink?.sourceActionId ?? null,
       sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
+      createdBy,
       createdAt: now,
       updatedAt: now,
     };
