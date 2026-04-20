@@ -29,7 +29,9 @@ import {
   type SessionState,
   type SessionReconnectReason,
   type HandshakeFatalError,
+  type TelemetryEvent,
 } from "@ois/network-adapter";
+import { CognitivePipeline } from "@ois/cognitive-layer";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { readFileSync, appendFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
@@ -443,6 +445,24 @@ async function connectToHub(globalInstanceId: string): Promise<void> {
     },
     {
       transportConfig: { url: config.hubUrl, token: config.hubToken },
+      // M-Cognitive-Hypervisor Phase 2x P1-5 — engineer-side pipeline
+      // wiring. Mirrors the claude-plugin change: ResponseSummarizer
+      // trims oversized Hub responses, ToolResultCache collapses
+      // repeated reads, WriteCallDedup collapses concurrent duplicate
+      // writes, CircuitBreaker fast-fails on repeated Hub failures.
+      // Telemetry events land in the plugin's diag log for parity with
+      // other plugin-side diagnostics.
+      cognitive: CognitivePipeline.standard({
+        telemetry: {
+          sink: (event: TelemetryEvent) => {
+            try {
+              log(`[OpencodePluginTelemetry] ${JSON.stringify(event)}`);
+            } catch {
+              /* never disturb the tool-call loop */
+            }
+          },
+        },
+      }),
     },
   );
   hubAdapter.setCallbacks(buildPluginCallbacks());

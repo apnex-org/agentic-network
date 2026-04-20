@@ -13,7 +13,9 @@ import {
   appendNotification,
   makeStdioFatalHalt,
   type HandshakeResponse,
+  type TelemetryEvent,
 } from "@ois/network-adapter";
+import { CognitivePipeline } from "@ois/cognitive-layer";
 import { readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createDispatcher, makePendingActionItemHandler } from "./dispatcher.js";
@@ -186,6 +188,25 @@ async function main(): Promise<void> {
         url: config.hubUrl,
         token: config.hubToken,
       },
+      // M-Cognitive-Hypervisor Phase 2x P1-5 — engineer-side pipeline
+      // wiring. Mirrors the architect's ckpt-C change (commit 0d08a33):
+      // ResponseSummarizer trims oversized Hub responses, ToolResultCache
+      // collapses repeated reads within a conversation, WriteCallDedup
+      // collapses concurrent duplicate writes, CircuitBreaker fast-fails
+      // on repeated Hub failures. Telemetry events land on stderr via
+      // the existing `log()` channel for observability parity with
+      // other plugin-side diagnostics.
+      cognitive: CognitivePipeline.standard({
+        telemetry: {
+          sink: (event: TelemetryEvent) => {
+            try {
+              log(`[ClaudePluginTelemetry] ${JSON.stringify(event)}`);
+            } catch {
+              /* never disturb the tool-call loop */
+            }
+          },
+        },
+      }),
     },
   );
 
