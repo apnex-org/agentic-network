@@ -25,7 +25,10 @@ architect_global_instance_id = "00000000-0000-0000-0000-000000000000"
 # Scaling
 # hub_min_instances       = 1
 # hub_max_instances       = 1
-# architect_min_instances = 0   # 0 = offline until started
+# architect_min_instances = 1   # 1 = always-warm (default); 0 = wake-on-demand,
+                                # but note: scale-to-zero strands pending-action
+                                # queue drains mid-measurement until an HTTP poke
+                                # or wake-endpoint fire cold-starts the service.
 # architect_max_instances = 1
 
 # Images (leave empty to use Artifact Registry convention)

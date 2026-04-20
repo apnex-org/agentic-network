@@ -80,9 +80,9 @@ variable "watchdog_enabled" {
 # ── Architect Config ───────────────────────────────────────────────────
 
 variable "architect_min_instances" {
-  description = "Minimum Cloud Run instances for Architect (0 = offline)"
+  description = "Minimum Cloud Run instances for Architect (0 = scale-to-zero / wake-on-demand, 1 = always warm). Default 1 because scale-to-zero strands pending-action queue drains until an HTTP poke or wake-endpoint fire cold-starts the service — observed during M-Cognitive-Hypervisor Phase 2b-B measurements. Set to 0 explicitly for quiet windows or once the ADR-017 wake-endpoint is confirmed load-bearing."
   type        = number
-  default     = 0
+  default     = 1
 }
 
 variable "architect_max_instances" {
