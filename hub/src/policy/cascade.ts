@@ -86,6 +86,9 @@ export async function runCascade(
       ctx,
       { relatedEntity: thread.id, extra: { depth, max: MAX_CASCADE_DEPTH, deferredCount: committed.length } },
     );
+    ctx.metrics.increment("cascade_fail.depth_exhausted", {
+      threadId: thread.id, depth, max: MAX_CASCADE_DEPTH, deferredCount: committed.length,
+    });
     console.warn(
       `[runCascade] MAX_CASCADE_DEPTH (${MAX_CASCADE_DEPTH}) reached for thread ${thread.id}; ${committed.length} action(s) reported as failed (depth-exhausted)`,
     );
@@ -135,6 +138,9 @@ async function executeAction(
 ): Promise<ConvergenceReportEntry> {
   const spec = getActionSpec(action.type);
   if (!spec) {
+    ctx.metrics.increment("cascade_fail.unknown_spec", {
+      threadId: thread.id, actionId: action.id, type: action.type,
+    });
     return {
       actionId: action.id,
       type: action.type,
@@ -160,6 +166,9 @@ async function executeAction(
           `Cascade ${action.type} skipped for ${thread.id}/${action.id}: entity ${existingId ?? "(unknown)"} already spawned from this pair.`,
           thread.id,
         );
+        ctx.metrics.increment("cascade.idempotent_skip", {
+          threadId: thread.id, actionId: action.id, type: action.type, entityId: existingId,
+        });
         return { actionId: action.id, type: action.type, status: "skipped_idempotent", entityId: existingId };
       }
     }
@@ -176,6 +185,9 @@ async function executeAction(
         `Cascade ${action.type} skipped for ${thread.id}/${action.id}: target already at desired state.`,
         thread.id,
       );
+      ctx.metrics.increment("cascade.idempotent_update_skip", {
+        threadId: thread.id, actionId: action.id, type: action.type,
+      });
       return { actionId: action.id, type: action.type, status: "skipped_idempotent", entityId: null };
     }
 
@@ -192,6 +204,10 @@ async function executeAction(
       try {
         await spec.dispatch(ctx, entity as object, thread);
       } catch (err) {
+        ctx.metrics.increment("cascade_fail.dispatch_failed", {
+          threadId: thread.id, actionId: action.id, type: action.type,
+          error: (err as Error)?.message ?? String(err),
+        });
         console.error(
           `[runCascade] dispatch failed for ${action.type}/${action.id}; subscribers will recover via poll:`,
           err,
@@ -206,6 +222,10 @@ async function executeAction(
       entityId: (entity as { id?: string } | null)?.id ?? null,
     };
   } catch (err: any) {
+    ctx.metrics.increment("cascade_fail.execute_threw", {
+      threadId: thread.id, actionId: action.id, type: action.type,
+      error: err?.message ?? String(err),
+    });
     return {
       actionId: action.id,
       type: action.type,
@@ -230,6 +250,10 @@ async function safeAudit(
   try {
     await ctx.stores.audit.logEntry("hub", action, details, relatedEntity);
   } catch (err) {
+    ctx.metrics.increment("cascade_fail.audit_failed", {
+      action, relatedEntity,
+      error: (err as Error)?.message ?? String(err),
+    });
     console.error(`[runCascade] audit write failed (action=${action}, related=${relatedEntity}):`, err);
   }
 }

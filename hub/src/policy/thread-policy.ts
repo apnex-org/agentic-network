@@ -99,6 +99,9 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
     logShadowInvariantBreach("INV-TH18", `routing-mode validation failed on create_thread: ${modeError}`, ctx, {
       extra: { routingMode, hasRecipient: !!recipientAgentId, hasContext: !!context },
     });
+    ctx.metrics.increment("create_thread.routing_mode_rejected", {
+      routingMode, hasRecipient: !!recipientAgentId, hasContext: !!context,
+    });
     return {
       content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: modeError }) }],
       isError: true,
@@ -263,6 +266,10 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
       );
       if (!anyAuthorized) {
         const authorityError = checkConvergerAuthority(callerRole as any, stagedEffective);
+        ctx.metrics.increment("convergence_gate.rejected", { threadId, subtype: "authority" });
+        ctx.metrics.increment("convergence_gate.authority_rejected", {
+          threadId, callerRole, stagedEffective,
+        });
         return {
           content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: authorityError }) }],
           isError: true,
@@ -294,6 +301,7 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
         relatedEntity: threadId,
         extra: { subtype, converged, authorAgentId },
       });
+      ctx.metrics.increment("convergence_gate.rejected", { threadId, subtype });
       return {
         content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: err.message }) }],
         isError: true,
