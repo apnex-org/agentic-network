@@ -9,6 +9,22 @@ in [`targets.yaml`](./targets.yaml).
 
 ## Run
 
+**Preferred — self-contained health check (auto-discovers latest revision):**
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json \
+  scripts/architect-telemetry/check-health.sh --freshness 1h
+```
+
+Emits a single-line marker suitable for log-based alerting:
+- `[HealthCheck] HEALTHY revision=...` — all required targets pass
+- `[HealthCheck] REGRESSION revision=... failed-targets='...'` — alert Director
+- `[HealthCheck] INFRA_ERROR ...` — gcloud auth / missing logs / etc
+
+Exit codes: `0` healthy, `1` regression, `2` infra error.
+
+**Manual aggregator invocation:**
+
 ```bash
 scripts/architect-telemetry/aggregate.py \
   --revision architect-agent-00045-2pb \
@@ -80,10 +96,57 @@ Error-path prompts (intentionally out-of-scope tool calls) are excluded from
 regression runs — they produce false-positive `out_of_scope_rejections`. Test
 those via unit tests on `ErrorNormalizer` / `sandwich-scope-override`.
 
+## Scheduling recipe (Cloud Scheduler + Cloud Run Job)
+
+`check-health.sh` is designed to run unattended. Recipe for hourly automated regression detection:
+
+1. **Build a container** that bundles the script + deps:
+
+   ```Dockerfile
+   FROM gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+   RUN apt-get update && apt-get install -y python3 && rm -rf /var/lib/apt/lists/*
+   COPY scripts/architect-telemetry /app/scripts/architect-telemetry
+   WORKDIR /app
+   CMD ["scripts/architect-telemetry/check-health.sh", "--freshness", "1h"]
+   ```
+
+2. **Create a Cloud Run Job:**
+
+   ```bash
+   gcloud run jobs create architect-telemetry-healthcheck \
+     --image=gcr.io/PROJECT/architect-telemetry-runner:latest \
+     --region=australia-southeast1 \
+     --service-account=telemetry-runner@PROJECT.iam.gserviceaccount.com
+   ```
+
+   Roles required by the runner SA: `roles/logging.viewer`, `roles/run.viewer`.
+
+3. **Wire Cloud Scheduler to invoke hourly:**
+
+   ```bash
+   gcloud scheduler jobs create http architect-telemetry-hourly \
+     --schedule="0 * * * *" \
+     --http-method=POST \
+     --uri="https://run.googleapis.com/apis/run.googleapis.com/v1/namespaces/PROJECT/jobs/architect-telemetry-healthcheck:run" \
+     --oauth-service-account-email=scheduler@PROJECT.iam.gserviceaccount.com
+   ```
+
+4. **Alert on regression** via Cloud Monitoring log-based alert:
+
+   ```
+   filter = 'resource.type="cloud_run_job"
+             textPayload=~"^\[HealthCheck\] REGRESSION"'
+   ```
+
+   Route to Director's notification channel (Slack, email, or a Hub-side
+   `list_director_notifications` poll).
+
 ## Future work
 
-- Extract a driver that opens N threads programmatically (currently manual or
-  via MCP client).
-- CI job that runs a small (N=6) smoke every N minutes on the latest revision
-  and alerts on `verdict != pass`.
+- Terraform module wrapping steps 1-3 above — gets us to "one `terraform apply`
+  enables the gate" rather than the current doc-then-click recipe.
+- Driver that opens N threads programmatically so the health check also
+  *generates* telemetry rather than only consuming ambient Cloud Run logs.
 - Confidence intervals via bootstrap resampling of the per-thread distribution.
+- Direct Hub-side Director-notification emission on regression (skip the
+  Cloud Monitoring alerting step).
