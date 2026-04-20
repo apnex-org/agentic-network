@@ -506,6 +506,9 @@ async function attemptThreadReply(
           injectRoundBudget: true,
           parallelToolCalls: true, // thread-reply allow-list tools are independent; safe to batch
           scopeOverride: buildSandwichScopeOverride(THREAD_REPLY_TOOLS),
+          historyTrimEnabled: true, // Phase 2b ckpt-B — cap round-to-round history growth
+          historyTrimWindow: 3,
+          historyTrimMinTokens: 500,
           onUsage: (u) => {
             cumPromptTokens += u.promptTokens;
             cumCompletionTokens += u.completionTokens;

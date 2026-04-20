@@ -75,6 +75,30 @@ export interface CognitiveOptions {
    * MAX_TOOL_ROUNDS.
    */
   scopeOverride?: string;
+  /**
+   * Phase 2b ckpt-B — elide stale tool-result payloads from the
+   * accumulated `contents[]` before each LLM call. Keeps the turn
+   * structure intact (Gemini requires alternating roles) but replaces
+   * the response payload with a small stub once it is older than
+   * `historyTrimWindow` rounds AND larger than `historyTrimMinTokens`
+   * tokens. Prior-round tool results are rarely acted on again — this
+   * reclaims context that otherwise grows 50-120× between round 1 and
+   * round 10 (Pass-2 baseline: thread-166 5k → 252k prompt tokens).
+   * Default: `false` (callers must opt in per call site).
+   */
+  historyTrimEnabled?: boolean;
+  /**
+   * Number of most-recent tool-result turns to keep unmodified when
+   * `historyTrimEnabled`. Older tool-result turns are candidates for
+   * elision. Default: `3`.
+   */
+  historyTrimWindow?: number;
+  /**
+   * Minimum approximate token count before a tool-result payload is
+   * considered for elision. Small results are cheap to keep and often
+   * hold useful context for the model. Default: `500`.
+   */
+  historyTrimMinTokens?: number;
 }
 
 /**
@@ -408,6 +432,9 @@ export async function generateWithTools(
 
   const injectBudget = cognitive.injectRoundBudget !== false;
   const parallelToolCalls = cognitive.parallelToolCalls === true;
+  const historyTrimEnabled = cognitive.historyTrimEnabled === true;
+  const historyTrimWindow = cognitive.historyTrimWindow ?? 3;
+  const historyTrimMinTokens = cognitive.historyTrimMinTokens ?? 500;
 
   // Phase 2b ckpt-A — scopeOverride prepended before the general prompt
   // so the LLM's first cue is the restricted-scope constraint. The
@@ -431,6 +458,13 @@ export async function generateWithTools(
 
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
+
+    // Phase 2b ckpt-B — elide stale tool-result payloads so accumulated
+    // history doesn't swamp the context window by round 10. No-op on
+    // the first round (there is nothing to trim yet).
+    if (historyTrimEnabled && rounds > 1) {
+      trimStaleToolResults(contents, historyTrimWindow, historyTrimMinTokens);
+    }
 
     // Round-budget injection: append a budget-status line to the system
     // instruction before each LLM turn so the model self-paces. Budget
@@ -603,6 +637,76 @@ export async function generateWithTools(
     text: MAX_TOOL_ROUNDS_SENTINEL,
     history: contents,
   };
+}
+
+/**
+ * Phase 2b ckpt-B — elide stale tool-result payloads from a
+ * conversation history in place.
+ *
+ * Walks `contents[]` from most-recent backward. For every turn that is
+ * a *tool-result turn* (role="user" composed entirely of
+ * functionResponse parts), counts it. The `historyTrimWindow` most-
+ * recent such turns are kept as-is. Older tool-result turns have each
+ * payload replaced with a small elision stub when the payload exceeds
+ * `historyTrimMinTokens` (approximate, using `bytes/4`).
+ *
+ * Mutates the `Content` objects in place. Preserves turn ordering +
+ * `functionResponse.id` + `functionResponse.name` (Gemini needs both
+ * for tool-call/response attribution). Idempotent — a payload already
+ * replaced with a stub is smaller than the threshold and will be
+ * skipped on subsequent calls.
+ *
+ * Exported for unit testing + so alternative callers (director-chat,
+ * future shims) can opt in with their own window/threshold knobs.
+ *
+ * Returns the approximate number of tokens reclaimed (sum across all
+ * elided payloads) so the caller can log it.
+ */
+export function trimStaleToolResults(
+  contents: Content[],
+  historyTrimWindow: number,
+  historyTrimMinTokens: number,
+): number {
+  const minBytes = historyTrimMinTokens * 4;
+  let toolResultTurnsSeen = 0;
+  let reclaimedTokens = 0;
+  for (let i = contents.length - 1; i >= 0; i--) {
+    const turn = contents[i];
+    if (turn.role !== "user" || !turn.parts || turn.parts.length === 0) continue;
+    const isToolResultTurn = turn.parts.every((p) => p.functionResponse);
+    if (!isToolResultTurn) continue;
+    toolResultTurnsSeen++;
+    if (toolResultTurnsSeen <= historyTrimWindow) continue;
+    // Past the window — elide large payloads in this turn's parts
+    turn.parts = turn.parts.map((p) => {
+      const fr = p.functionResponse;
+      if (!fr) return p;
+      // Size proxy: JSON-stringified length. Non-serializable payloads
+      // won't reach here — functionResponse.response is produced by our
+      // executor which always returns plain objects.
+      let bytes = 0;
+      try {
+        bytes = JSON.stringify(fr.response ?? {}).length;
+      } catch {
+        return p; // leave alone
+      }
+      if (bytes < minBytes) return p;
+      const originalTokens = Math.ceil(bytes / 4);
+      reclaimedTokens += originalTokens;
+      return {
+        functionResponse: {
+          id: fr.id,
+          name: fr.name,
+          response: {
+            _ois_elided: true,
+            original_tokens_approx: originalTokens,
+            note: `Prior-round result elided to reclaim context. Re-call ${fr.name ?? "this tool"} if you still need the data.`,
+          },
+        },
+      };
+    });
+  }
+  return reclaimedTokens;
 }
 
 /**
