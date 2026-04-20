@@ -326,6 +326,98 @@ describe("ThreadPolicy", () => {
     expect(parsed.count).toBe(0);
   });
 
+  // ── Phase C (task-306): createdBy.* nested paths on list_threads ──
+  describe("list_threads — M-QueryShape Phase C (task-306)", () => {
+    async function seedThreadsWithCreatedBy(): Promise<void> {
+      await router.handle("register_role", {
+        role: "architect",
+        globalInstanceId: `test-gid-${ctx.sessionId}`,
+        clientMetadata: { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" },
+      }, ctx);
+      await router.handle("create_thread", { routingMode: "broadcast", title: "T1", message: "M1" }, ctx);
+      await router.handle("create_thread", { routingMode: "broadcast", title: "T2", message: "M2" }, ctx);
+      await router.handle("create_thread", { routingMode: "broadcast", title: "T3", message: "M3" }, ctx);
+      const internal = (ctx.stores.thread as any).threads as Map<string, any>;
+      const t1 = internal.get("thread-1");
+      if (t1) t1.createdBy = { role: "architect", agentId: "eng-alpha" };
+      const t2 = internal.get("thread-2");
+      if (t2) t2.createdBy = { role: "engineer", agentId: "eng-beta" };
+      const t3 = internal.get("thread-3");
+      if (t3) t3.createdBy = { role: "architect", agentId: "eng-gamma" };
+    }
+
+    it("filter: createdBy.role selects architect-created threads only", async () => {
+      await seedThreadsWithCreatedBy();
+      const result = await router.handle(
+        "list_threads",
+        { filter: { "createdBy.role": "architect" } },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.threads.length).toBe(2);
+      expect(parsed.threads.every((t: any) => t.createdBy.role === "architect")).toBe(true);
+    });
+
+    it("filter: createdBy.agentId selects a specific agent", async () => {
+      await seedThreadsWithCreatedBy();
+      const result = await router.handle(
+        "list_threads",
+        { filter: { "createdBy.agentId": "eng-beta" } },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.threads.length).toBe(1);
+      expect(parsed.threads[0].id).toBe("thread-2");
+    });
+
+    it("filter: createdBy.id matches computed `${role}:${agentId}`", async () => {
+      await seedThreadsWithCreatedBy();
+      const result = await router.handle(
+        "list_threads",
+        { filter: { "createdBy.id": "architect:eng-gamma" } },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.threads.length).toBe(1);
+      expect(parsed.threads[0].id).toBe("thread-3");
+    });
+
+    it("sort: createdBy.id asc orders by `role:agentId` composite", async () => {
+      await seedThreadsWithCreatedBy();
+      const result = await router.handle(
+        "list_threads",
+        { sort: [{ field: "createdBy.id", order: "asc" }] },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.threads.map((t: any) => t.id)).toEqual(["thread-1", "thread-3", "thread-2"]);
+    });
+
+    it("yields _ois_query_unmatched when filter matches nothing", async () => {
+      await seedThreadsWithCreatedBy();
+      const result = await router.handle(
+        "list_threads",
+        { filter: { "createdBy.role": "director" } },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.threads.length).toBe(0);
+      expect(parsed._ois_query_unmatched).toBe(true);
+    });
+
+    it("filter: routingMode selects threads by routing shape", async () => {
+      await seedThreadsWithCreatedBy();
+      const result = await router.handle(
+        "list_threads",
+        { filter: { routingMode: "broadcast" } },
+        ctx,
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.threads.length).toBe(3);
+      expect(parsed.threads.every((t: any) => t.routingMode === "broadcast")).toBe(true);
+    });
+  });
+
   it("close_thread closes a thread", async () => {
     await router.handle("register_role", {
       role: "architect",

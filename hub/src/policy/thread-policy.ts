@@ -14,7 +14,18 @@ import type { ThreadAuthor, ThreadIntent, StagedAction, StagedActionOp, Thread, 
 import { ThreadConvergenceGateError } from "../state.js";
 import type { DomainEvent } from "./types.js";
 import { callerLabels } from "./labels.js";
-import { LIST_PAGINATION_SCHEMA, LIST_LABELS_SCHEMA, applyLabelFilter, paginate } from "./list-filters.js";
+import {
+  LIST_PAGINATION_SCHEMA,
+  LIST_LABELS_SCHEMA,
+  applyLabelFilter,
+  paginate,
+  buildQueryFilterSchema,
+  buildQuerySortSchema,
+  applyQueryFilter,
+  applyQuerySort,
+  type QueryableFieldSpec,
+  type FieldAccessors,
+} from "./list-filters.js";
 import { runCascade } from "./cascade.js";
 // Side-effect import: registers per-action-type cascade handlers
 // (create_task, create_proposal, create_idea) with the cascade
@@ -460,25 +471,125 @@ async function getThread(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   };
 }
 
+// ── M-QueryShape Phase C (idea-119, task-306) ──────────────────────
+// Thread-entity field descriptors + accessors. Mirrors list_tasks /
+// list_ideas pattern. Nested createdBy.* paths share the C1 convention;
+// createdBy.id is computed `${role}:${agentId}`.
+
+const THREAD_FILTERABLE_FIELDS: QueryableFieldSpec = {
+  status: { type: "enum", values: ["active", "converged", "round_limit", "closed", "abandoned", "cascade_failed"] },
+  routingMode: { type: "enum", values: ["unicast", "broadcast", "multicast"] },
+  currentTurn: { type: "string" },
+  currentTurnAgentId: { type: "string" },
+  roundCount: { type: "number" },
+  outstandingIntent: { type: "string" },
+  currentSemanticIntent: { type: "string" },
+  correlationId: { type: "string" },
+  recipientAgentId: { type: "string" },
+  createdAt: { type: "date" },
+  updatedAt: { type: "date" },
+  "createdBy.role": { type: "string" },
+  "createdBy.agentId": { type: "string" },
+  "createdBy.id": { type: "string" },
+};
+
+const THREAD_SORTABLE_FIELDS = [
+  "id",
+  "status",
+  "createdAt",
+  "updatedAt",
+  "roundCount",
+  "currentTurn",
+  "routingMode",
+  "correlationId",
+  "createdBy.role",
+  "createdBy.agentId",
+  "createdBy.id",
+] as const;
+
+const THREAD_ACCESSORS: FieldAccessors<Thread> = {
+  id: (t) => t.id,
+  status: (t) => t.status,
+  routingMode: (t) => t.routingMode,
+  currentTurn: (t) => t.currentTurn,
+  currentTurnAgentId: (t) => t.currentTurnAgentId ?? null,
+  roundCount: (t) => t.roundCount,
+  outstandingIntent: (t) => t.outstandingIntent,
+  currentSemanticIntent: (t) => t.currentSemanticIntent,
+  correlationId: (t) => t.correlationId,
+  recipientAgentId: (t) => t.recipientAgentId ?? null,
+  createdAt: (t) => t.createdAt,
+  updatedAt: (t) => t.updatedAt,
+  "createdBy.role": (t) => t.createdBy?.role ?? null,
+  "createdBy.agentId": (t) => t.createdBy?.agentId ?? null,
+  "createdBy.id": (t) => (t.createdBy ? `${t.createdBy.role}:${t.createdBy.agentId}` : null),
+};
+
+const THREAD_FILTER_SCHEMA = buildQueryFilterSchema(THREAD_FILTERABLE_FIELDS);
+const THREAD_SORT_SCHEMA = buildQuerySortSchema(THREAD_SORTABLE_FIELDS);
+
 async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  const status = args.status as string | undefined;
-  let threads = await ctx.stores.thread.listThreads(status as any);
+  let threads = await ctx.stores.thread.listThreads();
+  const totalPreFilter = threads.length;
+
+  // Legacy label match-all filter (pre-QueryShape; preserved).
   threads = applyLabelFilter(threads, args.labels as Record<string, string> | undefined);
+
+  // Backwards-compat: legacy scalar `status` arg subsumed by the new
+  // `filter.status` field. filter.status wins when both are present.
+  const legacyStatus = typeof args.status === "string" ? args.status : undefined;
+  const filterArgRaw = args.filter as Record<string, unknown> | undefined;
+  const effectiveFilter: Record<string, unknown> = { ...(filterArgRaw ?? {}) };
+  if (legacyStatus && effectiveFilter.status === undefined) {
+    effectiveFilter.status = legacyStatus;
+  }
+  const hasFilter = Object.keys(effectiveFilter).length > 0;
+
+  if (hasFilter) {
+    threads = applyQueryFilter(threads, effectiveFilter, THREAD_ACCESSORS);
+  }
+
+  const sortArg = args.sort as ReadonlyArray<{ field: string; order: "asc" | "desc" }> | undefined;
+  threads = applyQuerySort(threads, sortArg, THREAD_ACCESSORS);
+
+  const postFilterCount = threads.length;
+
+  // Preserve the lightweight summary projection post-filter to keep the
+  // wire payload cheap. Heavy fields (messages[], convergenceActions[],
+  // participants[]) remain accessible via get_thread.
   const summaries = threads.map((t) => ({
     id: t.id,
     title: t.title,
     status: t.status,
+    routingMode: t.routingMode,
     currentTurn: t.currentTurn,
+    currentTurnAgentId: t.currentTurnAgentId ?? null,
     roundCount: t.roundCount,
     maxRounds: t.maxRounds,
     outstandingIntent: t.outstandingIntent,
+    currentSemanticIntent: t.currentSemanticIntent,
+    correlationId: t.correlationId,
+    recipientAgentId: t.recipientAgentId ?? null,
     createdBy: t.createdBy,
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
   }));
   const page = paginate(summaries, args);
+
+  const queryUnmatched = hasFilter && postFilterCount === 0 && totalPreFilter > 0;
+
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ threads: page.items, count: page.count, total: page.total, offset: page.offset, limit: page.limit }, null, 2) }],
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({
+        threads: page.items,
+        count: page.count,
+        total: page.total,
+        offset: page.offset,
+        limit: page.limit,
+        ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
+      }, null, 2),
+    }],
   };
 }
 
@@ -854,9 +965,26 @@ export function registerThreadPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_threads",
-    "[Any] List ideation threads with optional status filter, label match-all filter, and pagination.",
+    "[Any] List ideation threads with filter + sort + pagination. " +
+    "`filter` accepts a Mongo-ish object with implicit AND across fields: " +
+    "`{status: 'active'}` for eq, `{status: {$in: ['active','converged']}}` for set membership, " +
+    "`{createdAt: {$lt: '2026-04-01T00:00:00Z'}}` for range, `{roundCount: {$gte: 5}}` for numeric range. " +
+    "Filterable fields: status, routingMode, currentTurn, currentTurnAgentId, roundCount, outstandingIntent, currentSemanticIntent, correlationId, recipientAgentId, createdAt, updatedAt, " +
+    "'createdBy.role', 'createdBy.agentId', 'createdBy.id' (computed `${role}:${agentId}`). " +
+    "Range operators ($gt/$lt/$gte/$lte) apply only to dates + numbers. " +
+    "Forbidden operators ($regex, $where, $expr, $or, $and, $not) are rejected with an error naming the permitted set. " +
+    "`sort` accepts an ordered tuple `[{field, order}]` on: id, status, createdAt, updatedAt, roundCount, currentTurn, routingMode, correlationId, 'createdBy.role', 'createdBy.agentId', 'createdBy.id'. " +
+    "Implicit id:asc tie-breaker is appended for deterministic pagination. " +
+    "Returns `_ois_query_unmatched: true` when the filter yields zero matches but the collection is non-empty. " +
+    "Response is a lightweight summary projection (no messages[], convergenceActions[], or participants[] — use get_thread for those). " +
+    "Legacy scalar `status:` arg and `labels:` match-all filter preserved for backwards compat; `filter.status` wins when both status shapes present.",
     {
-      status: z.enum(["active", "converged", "round_limit", "closed", "abandoned", "cascade_failed"]).optional().describe("Filter threads by status (optional)"),
+      filter: THREAD_FILTER_SCHEMA.optional()
+        .describe("Mongo-ish filter object; see tool description for permitted fields + operators"),
+      sort: THREAD_SORT_SCHEMA
+        .describe("Ordered-tuple sort; see tool description for permitted fields"),
+      status: z.enum(["active", "converged", "round_limit", "closed", "abandoned", "cascade_failed"]).optional()
+        .describe("DEPRECATED: use `filter: { status: ... }`. Preserved for backwards compat; `filter.status` wins when both present."),
       ...LIST_LABELS_SCHEMA,
       ...LIST_PAGINATION_SCHEMA,
     },
