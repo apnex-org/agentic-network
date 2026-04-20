@@ -204,7 +204,7 @@ export interface Agent {
   currentSessionId: string | null; // ephemeral, per SSE connection
   clientMetadata: AgentClientMetadata;
   advisoryTags: AgentAdvisoryTags;
-  labels: AgentLabels;         // Mission-19: routing metadata, immutable post-create in v1
+  labels: AgentLabels;         // Mission-19: routing metadata, refreshed on every reconnect from handshake payload (CP3 C5 / bug-16).
   firstSeenAt: string;
   lastSeenAt: string;
   // ADR-017 liveness FSM — computed from lastHeartbeatAt + receiptSla.
@@ -235,6 +235,13 @@ export interface RegisterAgentSuccess {
   clientMetadata: AgentClientMetadata;
   advisoryTags: AgentAdvisoryTags;
   labels: AgentLabels;
+  // CP3 C5 (bug-16): populated on reconnect paths only when one or more
+  // mutable handshake fields refresh stored state. `changedFields` names
+  // the top-level keys that differ (e.g., ["labels"]); `priorLabels` is
+  // the pre-refresh snapshot when labels change, for audit-diff reporting.
+  // Absent on first-contact creation and on no-op reconnects.
+  changedFields?: readonly ("labels" | "advisoryTags" | "clientMetadata")[];
+  priorLabels?: AgentLabels;
 }
 
 export interface RegisterAgentFailure {
@@ -1802,6 +1809,15 @@ export function recordDisplacementAndCheck(history: number[], now: number): bool
   return history.length > THRASHING_THRESHOLD;
 }
 
+/** CP3 C5 — key-wise equality for AgentLabels. String values only (type-enforced). */
+export function shallowEqualLabels(a: AgentLabels, b: AgentLabels): boolean {
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) if (a[k] !== b[k]) return false;
+  return true;
+}
+
 export class MemoryEngineerRegistry implements IEngineerRegistry {
   private sessionRoles: Map<string, SessionRole> = new Map();
   // M18 Agent state
@@ -1880,16 +1896,20 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
         }
       }
       // Displacement: increment epoch, rebind session.
-      // Labels are immutable post-create in v1 — payload.labels is silently ignored.
+      // CP3 C5 (bug-16): labels now refresh on reconnect when the caller supplies
+      // them in the handshake payload; omitting labels preserves the stored set.
+      const priorLabels = agent.labels ?? {};
+      const nextLabels = payload.labels ?? priorLabels;
+      const labelsChanged = !shallowEqualLabels(priorLabels, nextLabels);
       agent.sessionEpoch += 1;
       agent.currentSessionId = sessionId;
       agent.status = "online";
       agent.clientMetadata = payload.clientMetadata;
       agent.advisoryTags = payload.advisoryTags ?? {};
-      agent.labels = agent.labels ?? {};
+      agent.labels = nextLabels;
       agent.lastSeenAt = now;
       // ADR-017: liveness reset on displacement; wakeEndpoint + receiptSla
-      // are mutable config (unlike labels) and accept updates per payload.
+      // are mutable config and accept updates per payload.
       agent.livenessState = "online";
       agent.lastHeartbeatAt = now;
       agent.receiptSla = payload.receiptSla ?? agent.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS;
@@ -1898,6 +1918,8 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
       this.sessionToEngineerId.set(sessionId, agent.engineerId);
       this.lastTouchAt.set(agent.engineerId, Date.now());
       console.log(`[MemoryEngineerRegistry] Agent displaced: ${agent.engineerId} epoch=${agent.sessionEpoch}`);
+      const changedFields: ("labels" | "advisoryTags" | "clientMetadata")[] = [];
+      if (labelsChanged) changedFields.push("labels");
       return {
         ok: true,
         engineerId: agent.engineerId,
@@ -1906,6 +1928,8 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
         clientMetadata: agent.clientMetadata,
         advisoryTags: agent.advisoryTags,
         labels: agent.labels,
+        ...(changedFields.length > 0 ? { changedFields } : {}),
+        ...(labelsChanged ? { priorLabels } : {}),
       };
     }
 

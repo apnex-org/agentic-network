@@ -42,7 +42,10 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
       role: tokenRole,
       clientMetadata: clientMetadataArg,
       advisoryTags: advisoryTags ?? {},
-      labels: labels ?? {},
+      // CP3 C5 (bug-16): pass labels through as-is. `undefined` means the caller
+      // omitted labels on this handshake (store preserves stored set); a provided
+      // object (including `{}`) is an explicit refresh signal.
+      labels: labels,
     };
     const result = await ctx.stores.engineerRegistry.registerAgent(sid, tokenRole, payload, ctx.clientIp);
     if (!result.ok) {
@@ -54,6 +57,25 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
         }],
         isError: true,
       };
+    }
+    // CP3 C5 (bug-16): on reconnect, if any mutable handshake field refreshed
+    // stored state, write an audit trail so operators can forensically trace
+    // label/role/metadata drift. Best-effort: audit failure does not block
+    // the handshake response.
+    if (result.changedFields && result.changedFields.length > 0) {
+      const diffDetails = result.changedFields.includes("labels")
+        ? `changedFields=${result.changedFields.join(",")} priorLabels=${JSON.stringify(result.priorLabels ?? {})} newLabels=${JSON.stringify(result.labels)}`
+        : `changedFields=${result.changedFields.join(",")}`;
+      try {
+        await ctx.stores.audit.logEntry(
+          "hub",
+          "agent_handshake_refreshed",
+          `Agent ${result.engineerId} handshake refreshed stored state: ${diffDetails}`,
+          result.engineerId,
+        );
+      } catch (err) {
+        console.warn(`[session-policy] agent_handshake_refreshed audit write failed for ${result.engineerId}: ${(err as Error).message ?? err}`);
+      }
     }
     return {
       content: [{
@@ -185,7 +207,7 @@ export function registerSessionPolicy(router: PolicyRouter): void {
         .optional()
         .describe("M18: Mutable metadata about the client driving this session."),
       advisoryTags: z.record(z.string(), z.unknown()).optional().describe("M18: Launch-time-only tags (e.g., llmModel). Explicitly drift-prone; do NOT route on these values."),
-      labels: z.record(z.string(), z.string()).optional().describe("Mission-19: routing labels (e.g., {env: 'smoke-test', team: 'billing'}). Immutable after first registration. Reserved key 'ois.io/namespace' has no v1 semantics."),
+      labels: z.record(z.string(), z.string()).optional().describe("Mission-19: routing labels (e.g., {env: 'smoke-test', team: 'billing'}). CP3 C5 (bug-16): refreshed on every reconnect from the handshake payload — a provided object overwrites stored labels; omitting labels preserves the stored set. Reserved key 'ois.io/namespace' has no v1 semantics."),
     },
     registerRole,
   );

@@ -149,6 +149,49 @@ describe("MemoryEngineerRegistry.registerAgent", () => {
     expect(second.advisoryTags.llmModel).toBe("claude-sonnet-4-6");
   });
 
+  // CP3 C5 (bug-16): labels refresh on reconnect when the handshake payload supplies them.
+  it("reconnect with new labels overwrites stored labels and reports changedFields", async () => {
+    await reg.registerAgent("sess-1", "engineer", { ...payload("uuid-a"), labels: { env: "prod" } });
+    const second = await reg.registerAgent("sess-2", "engineer", { ...payload("uuid-a"), labels: { env: "dev" } });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.labels).toEqual({ env: "dev" });
+    expect(second.changedFields).toContain("labels");
+    expect(second.priorLabels).toEqual({ env: "prod" });
+    const stored = await reg.getAgent(second.engineerId);
+    expect(stored?.labels).toEqual({ env: "dev" });
+  });
+
+  it("reconnect omitting labels preserves stored labels and reports no changedFields", async () => {
+    await reg.registerAgent("sess-1", "engineer", { ...payload("uuid-a"), labels: { env: "prod" } });
+    const p = payload("uuid-a");
+    delete p.labels; // caller omitted
+    const second = await reg.registerAgent("sess-2", "engineer", p);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.labels).toEqual({ env: "prod" });
+    expect(second.changedFields).toBeUndefined();
+    expect(second.priorLabels).toBeUndefined();
+  });
+
+  it("reconnect with identical labels is a no-op (no changedFields)", async () => {
+    await reg.registerAgent("sess-1", "engineer", { ...payload("uuid-a"), labels: { env: "prod", team: "billing" } });
+    const second = await reg.registerAgent("sess-2", "engineer", { ...payload("uuid-a"), labels: { env: "prod", team: "billing" } });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.changedFields).toBeUndefined();
+  });
+
+  it("reconnect with explicit empty labels clears stored labels and reports change", async () => {
+    await reg.registerAgent("sess-1", "engineer", { ...payload("uuid-a"), labels: { env: "prod" } });
+    const second = await reg.registerAgent("sess-2", "engineer", { ...payload("uuid-a"), labels: {} });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.labels).toEqual({});
+    expect(second.changedFields).toContain("labels");
+    expect(second.priorLabels).toEqual({ env: "prod" });
+  });
+
   it("migrateAgentQueue reports a move count (memory stub seeds no queue)", async () => {
     const result = await reg.migrateAgentQueue("eng-src", "eng-tgt");
     expect(result.moved).toBeGreaterThanOrEqual(0);

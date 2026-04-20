@@ -51,6 +51,7 @@ import {
   shortHash,
   recordDisplacementAndCheck,
   labelsMatch,
+  shallowEqualLabels,
   taskClaimableBy,
   applyStagedActionOps,
   upsertParticipant,
@@ -1035,8 +1036,12 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
       }
 
       // Displace: increment epoch, rebind session, update mutable metadata.
-      // Labels are immutable post-create in v1 — payload.labels is silently ignored.
+      // CP3 C5 (bug-16): labels refresh on reconnect when the caller supplies
+      // them in the handshake payload; omitting labels preserves the stored set.
       // Defensive migration: older Agents may lack the labels field entirely.
+      const priorLabels = agent.labels ?? {};
+      const nextLabels = payload.labels ?? priorLabels;
+      const labelsChanged = !shallowEqualLabels(priorLabels, nextLabels);
       const updated: Agent = {
         ...agent,
         sessionEpoch: agent.sessionEpoch + 1,
@@ -1044,7 +1049,7 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
         status: "online",
         clientMetadata: payload.clientMetadata,
         advisoryTags: payload.advisoryTags ?? agent.advisoryTags ?? {},
-        labels: agent.labels ?? {},
+        labels: nextLabels,
         lastSeenAt: now,
         // ADR-017: liveness reset + mutable config re-apply.
         livenessState: "online",
@@ -1059,6 +1064,8 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
         this.sessionToEngineerId.set(sessionId, updated.engineerId);
         this.lastTouchAt.set(updated.engineerId, Date.now());
         console.log(`[GcsEngineerRegistry] Agent displaced: ${updated.engineerId} epoch=${updated.sessionEpoch}`);
+        const changedFields: ("labels" | "advisoryTags" | "clientMetadata")[] = [];
+        if (labelsChanged) changedFields.push("labels");
         return {
           ok: true,
           engineerId: updated.engineerId,
@@ -1067,6 +1074,8 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
           clientMetadata: updated.clientMetadata,
           advisoryTags: updated.advisoryTags,
           labels: updated.labels,
+          ...(changedFields.length > 0 ? { changedFields } : {}),
+          ...(labelsChanged ? { priorLabels } : {}),
         };
       } catch (err) {
         if (err instanceof GcsOccPreconditionFailed) continue; // race: retry once

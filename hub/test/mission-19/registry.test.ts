@@ -50,22 +50,24 @@ describe("Mission-19 Registry — label persistence", () => {
     expect(agent?.labels).toEqual({ team: "platform", env: "prod" });
   });
 
-  it("displacement preserves the originally-persisted labels (INV-AG1)", async () => {
+  it("displacement with new labels refreshes stored labels (CP3 C5 / bug-16; supersedes old INV-AG1)", async () => {
     // First contact with labels X.
     const first = await reg.registerAgent("sess-1", "engineer",
       payload("inst-1", "engineer", { team: "platform", env: "prod" }));
     expect(first.ok).toBe(true);
     if (!first.ok) return;
 
-    // Displacement: same fingerprint, but the caller sends different labels.
+    // Displacement: same fingerprint, caller sends different labels.
+    // Prior INV-AG1 treated labels as immutable; bug-16 surfaced this as a
+    // real dispatch-routing hazard for cross-env reconnects. CP3 C5 flips
+    // the semantics: the handshake payload is authoritative on every reconnect.
     const second = await reg.registerAgent("sess-2", "engineer",
       payload("inst-1", "engineer", { team: "network", env: "staging" }));
     expect(second.ok).toBe(true);
     if (!second.ok) return;
 
     const agent = await reg.getAgent(first.engineerId);
-    // Labels should be the ORIGINAL set — displacement cannot mutate routing.
-    expect(agent?.labels).toEqual({ team: "platform", env: "prod" });
+    expect(agent?.labels).toEqual({ team: "network", env: "staging" });
   });
 
   it("displacement with missing labels payload preserves originals", async () => {
