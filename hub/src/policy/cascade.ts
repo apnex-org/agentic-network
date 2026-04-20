@@ -26,6 +26,7 @@ import {
   type ActionSpec,
   type CascadeIdempotencyKey,
 } from "./cascade-spec.js";
+import { logShadowInvariantBreach } from "../observability/shadow-invariants.js";
 
 // Re-export for callers that import from cascade.ts (preserve API).
 export { cascadeIdempotencyKey } from "./cascade-spec.js";
@@ -79,6 +80,12 @@ export async function runCascade(
   depth: number = 0,
 ): Promise<CascadeRunResult> {
   if (depth >= MAX_CASCADE_DEPTH) {
+    logShadowInvariantBreach(
+      "INV-TH25",
+      `MAX_CASCADE_DEPTH (${MAX_CASCADE_DEPTH}) reached — ${committed.length} action(s) deferred`,
+      ctx,
+      { relatedEntity: thread.id, extra: { depth, max: MAX_CASCADE_DEPTH, deferredCount: committed.length } },
+    );
     console.warn(
       `[runCascade] MAX_CASCADE_DEPTH (${MAX_CASCADE_DEPTH}) reached for thread ${thread.id}; ${committed.length} action(s) reported as failed (depth-exhausted)`,
     );
@@ -89,6 +96,14 @@ export async function runCascade(
       error: `cascade depth ${depth} ≥ MAX_CASCADE_DEPTH (${MAX_CASCADE_DEPTH}); action deferred`,
     }));
     return { report, executedCount: 0, failedCount: report.length, skippedCount: 0, anyFailure: true };
+  }
+  if (depth >= MAX_CASCADE_DEPTH - 1) {
+    logShadowInvariantBreach(
+      "INV-TH25",
+      `cascade depth ${depth} approaching MAX_CASCADE_DEPTH (${MAX_CASCADE_DEPTH})`,
+      ctx,
+      { kind: "near_miss", relatedEntity: thread.id, extra: { depth, max: MAX_CASCADE_DEPTH } },
+    );
   }
 
   const report: ConvergenceReportEntry[] = [];

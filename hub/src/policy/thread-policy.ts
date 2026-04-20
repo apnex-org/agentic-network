@@ -22,6 +22,7 @@ import { runCascade } from "./cascade.js";
 // to cascade-actions/index.ts.
 import "./cascade-actions/index.js";
 import { AUTONOMOUS_STAGED_ACTION_TYPES, checkConvergerAuthority } from "./staged-action-payloads.js";
+import { logShadowInvariantBreach } from "../observability/shadow-invariants.js";
 
 // ── Routing Mode Validation (ADR-016, INV-TH18 + INV-TH28) ──────────
 /**
@@ -95,6 +96,9 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
   // channel per mode; inconsistent combinations reject at open.
   const modeError = validateRoutingModeArgs(routingMode, recipientAgentId, context);
   if (modeError) {
+    logShadowInvariantBreach("INV-TH18", `routing-mode validation failed on create_thread: ${modeError}`, ctx, {
+      extra: { routingMode, hasRecipient: !!recipientAgentId, hasContext: !!context },
+    });
     return {
       content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: modeError }) }],
       isError: true,
@@ -279,6 +283,17 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
     });
   } catch (err: any) {
     if (err instanceof ThreadConvergenceGateError) {
+      const msg: string = err.message ?? "";
+      let subtype = "unknown";
+      if (msg.includes("no convergenceActions committed")) subtype = "stage_missing";
+      else if (msg.includes("summary is empty")) subtype = "summary_missing";
+      else if (msg.includes("staged action validation failed")) subtype = "payload_validation";
+      else if (msg.includes("Cannot revise action")) subtype = "revise_invalid";
+      else if (msg.includes("Cannot retract action")) subtype = "retract_invalid";
+      logShadowInvariantBreach("INV-TH19", `convergence gate rejected on create_thread_reply: ${msg}`, ctx, {
+        relatedEntity: threadId,
+        extra: { subtype, converged, authorAgentId },
+      });
       return {
         content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: err.message }) }],
         isError: true,
