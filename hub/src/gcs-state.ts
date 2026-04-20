@@ -56,6 +56,7 @@ import {
   upsertParticipant,
   ThreadConvergenceGateError,
   CONVERGENCE_GATE_REMEDIATION,
+  truncateClosedThreadMessages,
   THRASHING_THRESHOLD,
   THRASHING_WINDOW_MS,
   AGENT_TOUCH_MIN_INTERVAL_MS,
@@ -1625,7 +1626,9 @@ export class GcsThreadStore implements IThreadStore {
     const scalar = await readJson<Thread>(this.bucket, `threads/${threadId}.json`);
     if (!scalar) return null;
     const normalized = normalizeThreadShape(scalar);
-    return { ...normalized, messages: await this.loadMessages(threadId, normalized) };
+    const hydrated = { ...normalized, messages: await this.loadMessages(threadId, normalized) };
+    // Phase 2d CP3 C3 — summary-only truncation on closed threads.
+    return truncateClosedThreadMessages(hydrated);
   }
 
   async listThreads(status?: ThreadStatus): Promise<Thread[]> {
@@ -1639,7 +1642,12 @@ export class GcsThreadStore implements IThreadStore {
       const t = await readJson<Thread>(this.bucket, file);
       if (t) {
         if (status && t.status !== status) continue;
-        threads.push(normalizeThreadShape(t));
+        // CP3 C3: list_threads currently returns the scalar view
+        // without hydrating per-file messages. Truncation still
+        // applies to any inline messages[] the scalar carries (pre-
+        // Phase-3 threads) — post-Phase-3 scalars have empty
+        // messages[] on disk so truncation is a no-op for them.
+        threads.push(truncateClosedThreadMessages(normalizeThreadShape(t)));
       }
     }
     return threads;

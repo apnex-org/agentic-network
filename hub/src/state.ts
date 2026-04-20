@@ -1520,13 +1520,15 @@ export class MemoryThreadStore implements IThreadStore {
 
   async getThread(threadId: string): Promise<Thread | null> {
     const t = this.threads.get(threadId);
-    return t ? cloneThread(t) : null;
+    return t ? truncateClosedThreadMessages(cloneThread(t)) : null;
   }
 
   async listThreads(status?: ThreadStatus): Promise<Thread[]> {
     const all = Array.from(this.threads.values());
-    if (status) return all.filter((t) => t.status === status).map(cloneThread);
-    return all.map(cloneThread);
+    const clones = status
+      ? all.filter((t) => t.status === status).map(cloneThread)
+      : all.map(cloneThread);
+    return clones.map(truncateClosedThreadMessages);
   }
 
   async markCascadeFailed(threadId: string): Promise<boolean> {
@@ -1632,6 +1634,30 @@ function cloneThread(t: Thread): Thread {
     messages: t.messages.map((m) => ({ ...m })),
     labels: { ...t.labels },
   };
+}
+
+/**
+ * Phase 2d CP3 C3 (task-307 audit §5.2 bullet 3) — summary-only
+ * truncation for closed threads. Applied at the read boundary so the
+ * caller of `getThread` / `listThreads` sees the trimmed view; the
+ * underlying per-message storage is unchanged (GCS per-file entries
+ * and Memory backing retain the full history as the audit snapshot).
+ *
+ * Trim rule: when `status === "closed"` AND `messages.length > 6`,
+ * keep the first 3 + last 3 messages only. All other fields
+ * (convergenceActions, summary, participants, etc.) remain intact.
+ * Non-closed threads are returned unchanged — "converged" in
+ * particular must still show full history since it may transition
+ * to cascade_failed and the forensic trail matters.
+ */
+export const CLOSED_THREAD_MESSAGE_KEEP = 3;
+
+export function truncateClosedThreadMessages(t: Thread): Thread {
+  if (t.status !== "closed") return t;
+  if (t.messages.length <= CLOSED_THREAD_MESSAGE_KEEP * 2) return t;
+  const first = t.messages.slice(0, CLOSED_THREAD_MESSAGE_KEEP);
+  const last = t.messages.slice(-CLOSED_THREAD_MESSAGE_KEEP);
+  return { ...t, messages: [...first, ...last] };
 }
 
 /** Apply a list of StagedActionOp in order to the thread's
