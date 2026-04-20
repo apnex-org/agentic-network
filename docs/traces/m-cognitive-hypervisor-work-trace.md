@@ -25,7 +25,7 @@
 If you're picking up cold, read in this order:
 
 1. **This file, then** `docs/audits/phase-2x-closing.md` (most recent closed phase) and `docs/audits/phase-2c-closing.md` (preceding).
-2. **Current in-flight (awaiting director go-ahead):** task-305 (Mission-24 Phase A — createdBy schema + `create_*` handler population, `pending` + unclaimed). task-304 (D-CP1) shipped this session and is `in_review` at the Hub awaiting architect review.
+2. **Current in-flight:** nothing. task-304 (D-CP1) + task-305 (entity-provenance atomic cutover) both shipped this session and are `in_review` at the Hub awaiting architect review.
 3. **Awaiting architect triage:** idea-115 (dynamic tool scope), idea-116 (tele-10 Precision Context Engineering), idea-118 (cross-item circuit breaker), **idea-121 (API v2.0 tool-surface modernization)**.
 4. **Deferred:** H (Phase 4 quota — no 429s observed), bug-13 (id-sort lexicographic tail refinement).
 5. **Role & session plumbing.** Role is set by the adapter at startup (plugin config / `hub-config.json`) — not by the LLM. `McpAgentClient.runHandshake` auto-calls `register_role` on connect; do not re-register. MCP tool-discovery is per-session — if Hub shipped new tools since last connect, restart the session. If role uncertain, confirm via `get_engineer_status`.
@@ -35,7 +35,7 @@ If you're picking up cold, read in this order:
 
 ## In-flight
 
-- ▶ **task-305** — Mission-24 Phase A (entity-provenance unification — `createdBy` schema + `create_*` handler population). Architect-issued from thread-225 convergence. Status = `pending`, unclaimed. Prerequisite for F (idea-119 Phase 2). Awaiting director go-ahead to claim.
+_(nothing claimed — task-304 + task-305 both in-review at Hub; architect triage pending on ideas 115/116/118/121/122 and bugs 14/15/16/17)_
 
 ---
 
@@ -45,12 +45,17 @@ If you're picking up cold, read in this order:
 - ○ **D-CP3** — Phase 2d Checkpoint 3: Reaper + lifecycle GC + queue/thread bidirectional integrity. Summary-only truncation on close; `pending_action.abandon` on thread GC; thread-side event on `prune_stuck_queue_items`. Gated on D-CP2.
 - ○ **D-CP4** — Phase 2d Checkpoint 4: `retry_cascade` tool. Gated on D-CP1's handler-idempotency-contract certification.
 - ○ **E** — Mission Phase 3 (state hydration + reconciliation, idea-114, ADR-020). Adapter preloads authoritative Hub state into prompt preamble; `verify_thread_state` pre-flight on mutating calls; re-hydrate on drift. Original canonical mission Phase 3. Gated on Phase 2d completion.
-- ○ **F** — idea-119 Phase 2. Extend filter+sort to `list_ideas` + `list_threads` + other list_* tools. idea-120 triage ratified (thread-225). Now gated on **task-305** (Phase A createdBy schema) landing.
+- ○ **F** — idea-119 Phase 2. Extend filter+sort to `list_ideas` + `list_threads` + other list_* tools. idea-120 ratified (thread-225), task-305 (Phase A createdBy) shipped this session. Now gated on architect review of task-305 + the one-shot GCS backfill run (`scripts/backfill-created-by.ts` — not yet executed).
 - ○ **G** — idea-119 Phase 3. Projection (`fields:`) + lazy indexing. Gated on F.
 - ○ **idea-115** — Dynamic tool scope management. Architect-triage-pending.
 - ○ **idea-116** — Tele-10 "Precision Context Engineering" proposal. Architect-triage-pending.
 - ○ **idea-118** — Cross-item circuit breaker (idea-117 criterion #4 deferred). Architect-triage-pending.
 - ○ **idea-121** — API v2.0 tool-surface modernization: verb-namespace discipline (`get_*` pure read vs `claim_*` dequeue), `get_resource({id})` consolidation, `get_resource_shape({entity})` introspection, pagination envelope + error-payload standardization. Absorbs `claim_task` rename + missing get-by-id. Partial superset of 115/116/119/120. Architect-triage-pending.
+- ○ **idea-122** — `reset_agent` operator affordance. Polymorphic-by-status (offline → delete; online → resync or force-kill). Complements bug-16's automatic-label-refresh fix. Architect-triage-pending.
+- ⏸ **bug-14** — update_idea / update_mission_status no-op detection gap (surfaced by Phase 2d CP1 contract tests). Minor; fix deferred; documented with failing-intent test.
+- ⏸ **bug-15** — INV-TH17 turn-pinning throws lack dedicated shadow-invariant instrumentation. Minor; D-CP2 candidate.
+- ⏸ **bug-16** — Agent entity lifecycle gaps: no reaper GC + labels/role not refreshed on reconnect. Major; surfaced during kate co-location test. D-CP3 candidate.
+- ⏸ **bug-17** — Agent.clientMetadata.clientName reports "unknown" from dev-channel plugin handshake. Minor; likely MCP initialize clientInfo announcement gap.
 - ⏸ **H** — Mission Phase 4 (quota integration, idea-109). Deferred per mission doc — no observed 429s to justify pull-forward.
 - ⏸ **bug-13** — `list_tasks` sort on `id` is lexicographic, not numeric. Minor severity; workaround = sort by `createdAt`. Absorbs into idea-119 Phase 2 scope (new `entity-id` typed field comparator).
 
@@ -64,10 +69,12 @@ If you're picking up cold, read in this order:
 - ✅ **C (task-303)** — Threads 2.0 Phase 2a: per-action commit authority (`REQUIRED_CONVERGER_ROLE` + max-privilege rule) + Director notification on `cascade_failed`. Commit `9a5e7d0`. Architect-reviewed ✓.
 - ✅ **D-brainstorm (thread-224)** — Phase 2d Robustness Audit scope. 5 rounds, bilateral convergence. Ratified 4-checkpoint path (CP1 observability → CP4 protocol → CP2 reaper → CP3 retry_cascade), idempotency-first over Hub atomicity, staging role-unrestricted, authority at convergence.
 - ✅ **D-CP1 (task-304)** — Phase 2d CP1 shipped across 5 commits (`eab52be` → `a6d5bb0`). Metrics primitive + shadow-invariant logger + cascade-failure-type buckets + idempotency contract tests (5/5 spawn handlers CERTIFIED) + audit report `docs/audits/phase-2d-cp1-observability-report.md`. 503 Hub tests + 96 network-adapter tests passing. Hub report filed; task status = `in_review`. CP2 + CP4 unblocked (CP3 was independent).
+- ✅ **task-305** — Mission-24 Phase A shipped across 4 commits (`613cf29` → `add9d0f`). Director-approved atomic A+B+D collapse (thread-226). `EntityProvenance` type; `createdBy` required on Thread + Idea (legacy `author` / `initiatedBy` REMOVED); additive on 8 other entities; `resolveCreatedBy(ctx)` helper; migrate-on-read shims; one-shot `scripts/backfill-created-by.ts`. 510 Hub tests passing. Hub report filed; task status = `in_review`. Phase C (idea-119 P2 / F) unblocks once architect reviews + backfill runs in prod.
+- ✅ **thread-226** — task-305 scope-revision heads-up converged bilaterally. Architect ratified director's atomic-cutover call with 4 technical recommendations — all absorbed into C1-C4.
 - ✅ **idea-120 triage (thread-225)** — entity-provenance unification ratified bilaterally. Canonical `createdBy: {role, agentId}`; `surfacedBy` stays distinct (Bug discovery channel ≠ agent identity); mandatory audit-trail backfill; prereq for F. Architect issued Phase A impl task.
 - ✅ **task-305 issued** — Mission-24 Phase A (createdBy schema + `create_*` handler population). Status = `pending`, unclaimed.
-- ✅ **Ideas filed:** idea-119 (query-shape engineering), idea-120 (entity-provenance unification), idea-121 (API v2.0 tool-surface modernization).
-- ✅ **Bugs filed:** bug-13 (id-sort lexicographic).
+- ✅ **Ideas filed:** idea-119 (query-shape engineering), idea-120 (entity-provenance unification), idea-121 (API v2.0 tool-surface modernization), idea-122 (`reset_agent` operator affordance).
+- ✅ **Bugs filed:** bug-13 (id-sort lexicographic), bug-14 (update-kind no-op detection gap), bug-15 (INV-TH17 shadow-instrumentation gap), bug-16 (Agent lifecycle gaps — no reaper + labels/role not refreshed on reconnect), bug-17 (clientName "unknown" from dev-channel plugin handshake).
 
 ---
 
@@ -80,19 +87,22 @@ C → D-brainstorm (thread-224) → D-CP1 (task-304) ✅
 D-CP1 ✅ → D-CP2 / D-CP4 (unblocked) → D-CP3 → E (Mission Phase 3)
 E → H (Phase 4 quota) ⏸
 
-idea-120 triage ✅ (thread-225) → task-305 ▶ (Phase A createdBy) → F (idea-119 Phase 2) → G (idea-119 Phase 3)
+idea-120 triage ✅ (thread-225) → task-305 ✅ (Phase A createdBy, 4 commits) → F (idea-119 Phase 2) → G (idea-119 Phase 3)
 bug-13 ⏸ -.-> F  (absorbable refinement)
 
 idea-115 ○ independent
 idea-116 ○ independent
 idea-118 ○ independent
 idea-121 ○ (API v2.0 meta — partial superset of 115/116/119/120)
+idea-122 ○ (reset_agent — complements bug-16)
+bug-14/15/16/17 ⏸ triage-pending (D-CP2/CP3 candidates)
 ```
 
 ---
 
 ## Session log (append-only)
 
+- **2026-04-21 early** — task-305 (Mission-24 Phase A entity-provenance unification) shipped across 4 commits `613cf29` → `add9d0f`. Director-approved atomic cutover collapsing A+B+D (thread-226 ratification). Thread + Idea legacy fields REMOVED; `createdBy: EntityProvenance` now canonical across 9 entities; migrate-on-read shims + one-shot GCS backfill script cover existing state. Surfaced 4 bugs (14/15/16/17) + filed idea-122 (reset_agent) during Kate co-location test: Agent reaper absent, labels not refreshed on reconnect, clientName reported "unknown" from dev-channel plugin. Manually deleted stale Agent `eng-2c249473aa50` via `gcloud storage rm` so Kate could reconnect with fresh dev-env labels. 510 Hub tests + 96 network-adapter tests pass; Hub report filed, task-305 status = `in_review`.
 - **2026-04-20 night** — D-CP1 (task-304) shipped across 5 commits `eab52be` → `a6d5bb0`. Scope delivered: metrics primitive + shadow-invariant logger wired at INV-TH18/19/25 sites; cascade-failure-type taxonomy (`cascade_fail.*`, `convergence_gate.*`); idempotency contract tests (5/5 spawn handlers CERTIFIED: create_task/proposal/idea/bug/propose_mission); audit report `docs/audits/phase-2d-cp1-observability-report.md` with findings (update_idea no-op-detection gap; INV-TH17 instrumentation gap; no metrics-read-endpoint yet) + recommendations for CP2/CP3/CP4. Hub report filed, task-304 status = `in_review`. 503 hub tests + 96 network-adapter tests pass. CP4 substrate ready (caveat: update-handler hardening recommended in parallel).
 - **2026-04-20 evening-late** — thread-225 (idea-120 triage) converged bilaterally in 4 rounds. Architect ratified `createdBy: {role, agentId}` (refined — dropped `at` per DRY; top-level `createdAt` is already authoritative), kept `surfacedBy` distinct on Bug (discovery channel ≠ agent identity), mandatory audit-trail backfill, prereq for F. Architect issued **task-305** (Mission-24 Phase A — createdBy schema + `create_*` handler population); `pending`, unclaimed. Filed **idea-121** (API v2.0 tool-surface modernization): verb discipline (`get_*` pure read vs `claim_*` dequeue), `get_resource({id})` consolidation, `get_resource_shape({entity})` introspection, pagination envelope + error-payload standardization. Director-surfaced during task-305 retrieval where no native get-by-id path forced `list_tasks`+jq-on-1.28MB workaround; idea-121 absorbs the minor `claim_task` rename + `get_task_by_id` fix into a strategic v2.0 arc.
 - **2026-04-20 late** — shipped task-302 (A) + task-303 (C); opened + converged thread-223 (B) + thread-224 (D-brainstorm); filed idea-120 (provenance unification) + bug-13 (id-sort); this work-trace doc stood up (supersedes post-phase-2x-roadmap.md). Architect reviewed task-302 + task-303 as fully completed. task-304 (D-CP1) issued by architect, pre-assigned to `eng-0d2c690e7dd5`, awaiting director go-ahead to begin implementation.
