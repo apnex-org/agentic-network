@@ -255,4 +255,12 @@ export class GcsPendingActionStore implements IPendingActionStore {
       return nowMs - enqueuedMs >= opts.olderThanMs;
     });
   }
+
+  async listNonTerminalByEntityRef(entityRef: string): Promise<PendingActionItem[]> {
+    const all = await this.listAll();
+    return all.filter((item) => {
+      if (item.entityRef !== entityRef) return false;
+      return item.state !== "completion_acked" && item.state !== "escalated" && item.state !== "errored";
+    });
+  }
 }

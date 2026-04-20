@@ -125,6 +125,17 @@ export interface IPendingActionStore {
     dispatchType?: PendingActionDispatchType;
     targetAgentId?: string;
   }): Promise<PendingActionItem[]>;
+  /**
+   * Phase 2d CP3 C1 — list all non-terminal queue items bound to a
+   * specific entityRef. Used by the thread reaper to enumerate queue
+   * items tied to a reaped thread so they can be `abandon`ed in the
+   * same cycle (queue-thread bidirectional integrity per thread-224
+   * consensus).
+   *
+   * Non-terminal = state in {enqueued, receipt_acked}. Terminal items
+   * (completion_acked / escalated / errored) are excluded.
+   */
+  listNonTerminalByEntityRef(entityRef: string): Promise<PendingActionItem[]>;
 }
 
 function naturalKey(opts: { targetAgentId: string; dispatchType: string; entityRef: string }): string {
@@ -289,6 +300,16 @@ export class MemoryPendingActionStore implements IPendingActionStore {
       if (opts.targetAgentId && item.targetAgentId !== opts.targetAgentId) continue;
       const enqueuedMs = new Date(item.enqueuedAt).getTime();
       if (nowMs - enqueuedMs < opts.olderThanMs) continue;
+      out.push(cloneItem(item));
+    }
+    return out;
+  }
+
+  async listNonTerminalByEntityRef(entityRef: string): Promise<PendingActionItem[]> {
+    const out: PendingActionItem[] = [];
+    for (const item of this.items.values()) {
+      if (item.entityRef !== entityRef) continue;
+      if (item.state === "completion_acked" || item.state === "escalated" || item.state === "errored") continue;
       out.push(cloneItem(item));
     }
     return out;

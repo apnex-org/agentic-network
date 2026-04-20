@@ -174,3 +174,74 @@ describe("MemoryPendingActionStore — listStuck()", () => {
     expect(filtered[0].targetAgentId).toBe("agent-A");
   });
 });
+
+// ── Phase 2d CP3 C1: listNonTerminalByEntityRef ───────────────────────
+
+describe("MemoryPendingActionStore — listNonTerminalByEntityRef (CP3 C1)", () => {
+  let store: MemoryPendingActionStore;
+
+  beforeEach(() => {
+    store = new MemoryPendingActionStore();
+  });
+
+  it("returns items in enqueued + receipt_acked states bound to the ref", async () => {
+    const enqueued = await store.enqueue({
+      targetAgentId: "agent-1",
+      dispatchType: "thread_message",
+      entityRef: "thread-42",
+      payload: {},
+    });
+    const acked = await store.enqueue({
+      targetAgentId: "agent-2",
+      dispatchType: "thread_message",
+      entityRef: "thread-42",
+      payload: {},
+    });
+    await store.receiptAck(acked.id);
+    // Unrelated entityRef — should NOT appear
+    await store.enqueue({
+      targetAgentId: "agent-3",
+      dispatchType: "thread_message",
+      entityRef: "thread-99",
+      payload: {},
+    });
+
+    const tied = await store.listNonTerminalByEntityRef("thread-42");
+    expect(tied.length).toBe(2);
+    const states = tied.map((i) => i.state).sort();
+    expect(states).toEqual(["enqueued", "receipt_acked"]);
+    expect(tied.every((i) => i.entityRef === "thread-42")).toBe(true);
+  });
+
+  it("excludes items in terminal states (completion_acked / escalated / errored)", async () => {
+    const done = await store.enqueue({
+      targetAgentId: "agent-1",
+      dispatchType: "thread_message",
+      entityRef: "thread-77",
+      payload: {},
+    });
+    const abandoned = await store.enqueue({
+      targetAgentId: "agent-2",
+      dispatchType: "thread_message",
+      entityRef: "thread-77",
+      payload: {},
+    });
+    const escalated = await store.enqueue({
+      targetAgentId: "agent-3",
+      dispatchType: "thread_message",
+      entityRef: "thread-77",
+      payload: {},
+    });
+    await store.completionAck(done.id);
+    await store.abandon(abandoned.id, "test");
+    await store.escalate(escalated.id, "test");
+
+    const tied = await store.listNonTerminalByEntityRef("thread-77");
+    expect(tied.length).toBe(0);
+  });
+
+  it("returns empty for a ref with no items", async () => {
+    const tied = await store.listNonTerminalByEntityRef("thread-does-not-exist");
+    expect(tied).toEqual([]);
+  });
+});

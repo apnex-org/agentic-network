@@ -307,6 +307,36 @@ async function runThreadReaperTick(): Promise<void> {
           matchLabels: t.labels,
         });
       }
+
+      // Phase 2d CP3 C1 — bidirectional integrity: abandon any
+      // non-terminal queue items bound to this reaped thread so they
+      // don't sit forever in receipt_acked waiting for a reply that
+      // will never come. Per thread-224 consensus: the queue is truth,
+      // but when the referenced thread goes away, the queue items
+      // referencing it must also terminate (state: errored, reason
+      // names the reap).
+      try {
+        const tied = await pendingActionStore.listNonTerminalByEntityRef(t.threadId);
+        for (const item of tied) {
+          const abandoned = await pendingActionStore.abandon(
+            item.id,
+            `thread_reaper_abandoned: thread ${t.threadId} reaped after ${Math.round(t.idleMs / 1000)}s idle`,
+          );
+          if (abandoned && abandoned.state === "errored") {
+            await auditStore.logEntry(
+              "hub",
+              "queue_item_abandoned_via_thread_reaper",
+              `Queue item ${item.id} abandoned because its parent thread ${t.threadId} was reaped (dispatchType=${item.dispatchType}, targetAgentId=${item.targetAgentId}).`,
+              item.id,
+            );
+          }
+        }
+        if (tied.length > 0) {
+          console.log(`[Reaper] thread ${t.threadId}: ${tied.length} tied queue item(s) abandoned via bidirectional wiring`);
+        }
+      } catch (queueErr) {
+        console.error(`[Reaper] failed to abandon queue items for reaped thread ${t.threadId}:`, queueErr);
+      }
     }
   } catch (err) {
     console.error("[Reaper] thread reaper tick failed:", err);
