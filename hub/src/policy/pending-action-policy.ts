@@ -115,6 +115,43 @@ async function pruneStuckQueueItems(
       `Queue item ${item.id} abandoned via prune_stuck_queue_items (reason: ${reason}, entityRef: ${item.entityRef}, dispatchType: ${item.dispatchType}, attemptCount: ${item.attemptCount}, age: ${Math.round((Date.now() - new Date(item.enqueuedAt).getTime()) / 60_000)}min)`,
       item.entityRef,
     );
+
+    // Phase 2d CP3 C2 — reverse bidirectional integrity: when the
+    // pruned item is thread-bound, emit a thread-scoped observability
+    // signal so the thread's participants + `list_audit_entries` on
+    // the thread surface the prune (CP1 audit §5.2 bullet 4).
+    if (item.dispatchType === "thread_message" || item.dispatchType === "thread_convergence_finalized") {
+      const thread = await ctx.stores.thread.getThread(item.entityRef);
+      if (thread) {
+        // Thread-scoped audit entry — distinct from the queue-item
+        // audit above; this one's relatedEntity is the thread so
+        // `list_audit_entries({relatedEntity: thread-N})` surfaces it.
+        await ctx.stores.audit.logEntry(
+          "hub",
+          "thread_queue_item_pruned",
+          `Thread ${thread.id} had queue item ${item.id} pruned (dispatchType=${item.dispatchType}, targetAgentId=${item.targetAgentId}, reason=${reason}). Thread status remains ${thread.status}; the pruned dispatch will never settle.`,
+          thread.id,
+        );
+        // Dispatch to any remaining participants with resolved agentIds
+        // so online UIs refresh without polling. Best-effort.
+        const participantAgentIds = thread.participants
+          .map((p) => p.agentId)
+          .filter((id): id is string => typeof id === "string" && id.length > 0);
+        if (participantAgentIds.length > 0) {
+          await ctx.dispatch(
+            "thread_queue_item_pruned",
+            {
+              threadId: thread.id,
+              queueItemId: item.id,
+              dispatchType: item.dispatchType,
+              targetAgentId: item.targetAgentId,
+              reason,
+            },
+            { engineerIds: participantAgentIds, matchLabels: thread.labels },
+          );
+        }
+      }
+    }
   }
 
   if (abandoned.length > 0) {

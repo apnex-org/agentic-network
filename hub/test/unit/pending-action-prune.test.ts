@@ -7,6 +7,9 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { MemoryPendingActionStore } from "../../src/entities/pending-action.js";
+import { PolicyRouter } from "../../src/policy/router.js";
+import { registerPendingActionPolicy } from "../../src/policy/pending-action-policy.js";
+import { createTestContext } from "../../src/policy/test-utils.js";
 
 describe("MemoryPendingActionStore — abandon()", () => {
   let store: MemoryPendingActionStore;
@@ -243,5 +246,80 @@ describe("MemoryPendingActionStore — listNonTerminalByEntityRef (CP3 C1)", () 
   it("returns empty for a ref with no items", async () => {
     const tied = await store.listNonTerminalByEntityRef("thread-does-not-exist");
     expect(tied).toEqual([]);
+  });
+});
+
+// ── Phase 2d CP3 C2: prune → thread-scoped observability ─────────────
+
+describe("prune_stuck_queue_items — thread-scoped audit + dispatch (CP3 C2)", () => {
+  it("writes a thread-scoped audit entry + dispatches thread_queue_item_pruned when pruning a thread_message item", async () => {
+    const router = new PolicyRouter(() => {});
+    registerPendingActionPolicy(router);
+    const ctx: any = createTestContext();
+
+    // Seed a thread so pending-action-policy can look it up on prune
+    const thread = await ctx.stores.thread.openThread("stuck-thread", "M", "architect", {
+      authorAgentId: "eng-architect",
+    });
+    // Upsert a participant so the dispatch has a non-empty agentId list
+    // (openThread auto-adds the opener as a participant).
+
+    // Enqueue a stuck thread_message item tied to the thread
+    const item = await ctx.stores.pendingAction.enqueue({
+      targetAgentId: "eng-target",
+      dispatchType: "thread_message",
+      entityRef: thread.id,
+      payload: {},
+    });
+    (ctx.stores.pendingAction as any).items.get(item.id).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    await ctx.stores.pendingAction.receiptAck(item.id);
+
+    const result = await router.handle("prune_stuck_queue_items", { olderThanMinutes: 10 }, ctx);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.abandoned).toBe(1);
+
+    // Queue-entity audit (existing behavior — pre-CP3)
+    const audits = await ctx.stores.audit.listEntries();
+    const queueAudit = audits.find((a: any) => a.action === "queue_item_abandoned");
+    expect(queueAudit).toBeDefined();
+
+    // CP3 C2: thread-scoped audit entry must also exist
+    const threadAudit = audits.find(
+      (a: any) => a.action === "thread_queue_item_pruned" && a.relatedEntity === thread.id,
+    );
+    expect(threadAudit).toBeDefined();
+    expect(threadAudit!.details).toContain(thread.id);
+    expect(threadAudit!.details).toContain("thread_message");
+
+    // CP3 C2: thread_queue_item_pruned dispatch to participants
+    const dispatched = ctx.dispatchedEvents.find((e: any) => e.event === "thread_queue_item_pruned");
+    expect(dispatched).toBeDefined();
+    expect(dispatched.data.threadId).toBe(thread.id);
+    expect(dispatched.data.queueItemId).toBe(item.id);
+  });
+
+  it("skips the thread-scoped audit + dispatch for non-thread-bound dispatch types", async () => {
+    const router = new PolicyRouter(() => {});
+    registerPendingActionPolicy(router);
+    const ctx: any = createTestContext();
+
+    // task_issued is not thread-bound
+    const item = await ctx.stores.pendingAction.enqueue({
+      targetAgentId: "eng-target",
+      dispatchType: "task_issued",
+      entityRef: "task-42",
+      payload: {},
+    });
+    (ctx.stores.pendingAction as any).items.get(item.id).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    await ctx.stores.pendingAction.receiptAck(item.id);
+
+    await router.handle("prune_stuck_queue_items", { olderThanMinutes: 10 }, ctx);
+
+    const audits = await ctx.stores.audit.listEntries();
+    const threadAudit = audits.find((a: any) => a.action === "thread_queue_item_pruned");
+    expect(threadAudit).toBeUndefined();
+
+    const dispatched = ctx.dispatchedEvents.find((e: any) => e.event === "thread_queue_item_pruned");
+    expect(dispatched).toBeUndefined();
   });
 });
