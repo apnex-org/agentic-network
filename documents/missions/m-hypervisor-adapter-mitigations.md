@@ -55,13 +55,19 @@ Combined deliverable — the measurement primitive is a prerequisite for quantif
 - **v1:** do not yet auto-correct — measurement + structured surfacing only.
 - **v2 (Task-310 follow-up or separate task):** per-subtype auto-correct rules (e.g., `summary_missing` → synthesize from message history; `stage_missing` → auto-stage `close_no_action`). Deferred because the auto-correct rules need per-subtype design discussion + tests.
 
-### Task 2 — Parallel Dispatch + Caching
+### Task 2 — Parallel Dispatch + Caching (task-311)
 
-**Parallel dispatch:** adapter concurrency manager batches independent tool calls in a single Gemini parallel-call turn. Today the vertex-cloudrun shim serializes tool calls; Gemini supports `parallel_tool_calls`.
+**Pre-existing scaffold:** on claim, the entire caching contract was already implemented. `packages/cognitive-layer/src/middlewares/tool-result-cache.ts` provides `ToolResultCache` with 30s default TTL, LRU eviction, per-session scope (INV-COG-7). `FlushAllOnWriteStrategy` detects writes via the `create_*`/`update_*`/`close_*`/… prefix heuristic and clears the entire session cache before the write's own execution — exactly the architect's "dual-trigger invalidation" direction. `CognitivePipeline.standard()` wires this middleware in position 4 of the pipeline and `agents/vertex-cloudrun/src/hub-adapter.ts` uses the standard pipeline. So Task 2's core requirement was satisfied by Phase 1 ckpt-4 (task-287) and has been shipping in prod since then.
 
-**Caching (architect-refined):** dual-trigger invalidation — short TTL (30s default, configurable) + write-action detection in the adapter's own thread history (`create_thread_reply`, `update_*`, cascade spawns) invalidates the cache entry before the next read. Strictly conservative: any agent-observable write busts the cache; no write-timestamp drift tolerance. Scope limited to read-only tools (`get_thread`, `list_tasks`, `list_threads`, `list_ideas`, `list_missions`, `list_proposals`, `list_bugs`, `list_audit_entries`, `list_tele`, `list_turns`).
+**Parallel dispatch (pre-existing):** `agents/vertex-cloudrun/src/sandwich.ts` line 526 sets `parallelToolCalls: true` on the thread-reply allow-list; `agents/vertex-cloudrun/src/director-chat.ts` line 356 keeps `parallelToolCalls: false` because ordering matters for director↔architect synchronous chat. That split is the correct "where safe" split — no further work needed.
 
-**Pre-claim design discussion:** the cache-invalidation rule should be reviewed once on a thread before implementation lands — small surface, but the "cross-agent write outside my own history" case needs a decision (TTL alone catches it; write-detection doesn't).
+**task-311 value-add (what shipped under this task):**
+1. **Observability promotion.** `TelemetryEvent` gained first-class `cacheHit?: boolean` + `cacheFlushed?: boolean` fields (previously only in `tags`). Cache hit/miss/flush rates can now be aggregated without string-parsing `tags`. `CognitiveTelemetry.onToolCall` populates the fields at emit time from `ctx.tags`.
+2. **`cacheFlushed` semantic tightened.** `applyInvalidation` now returns a boolean indicating whether the flush actually removed anything; `ctx.tags.cacheFlushed` is only set when a real flush happened (not on every write call). Measures real invalidation frequency, not write-call frequency.
+3. **TTL env var.** `HUB_ADAPTER_CACHE_TTL_MS` (default 30_000 ms) tunes the cache TTL without a redeploy-with-code-change cycle in vertex-cloudrun's hub-adapter.
+4. **End-to-end integration test.** `packages/cognitive-layer/test/cache-telemetry-integration.test.ts` pins the observable contract: get_thread cache, TTL expiry, create_thread_reply invalidation, per-session isolation, non-cacheable non-write events.
+
+**Architect-refined cache-invalidation rule (thread-235):** dual-trigger (30s TTL + write-action detection) is satisfied by the existing FlushAllOnWriteStrategy default. Cross-agent write outside one's own history: bounded by the 30s TTL (per INV-COG-7 per-session scope, one agent's writes can't invalidate another agent's cache — TTL is the only safety net for that case). No change to the strategy required.
 
 ### Task 1a — Budget Awareness (adapter-side)
 

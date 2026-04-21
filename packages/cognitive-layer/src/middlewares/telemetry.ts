@@ -116,6 +116,19 @@ export interface TelemetryEvent {
   gateSubtype?: string;
   gateRemediation?: string;
   gateMetadata?: Record<string, unknown>;
+  /**
+   * M-Hypervisor-Adapter-Mitigations Task 2 (task-311) — cache
+   * effectiveness fields promoted from `tags.cacheHit` +
+   * `tags.cacheFlushed` for direct measurement. Populated on
+   * `tool_call` events: `cacheHit=true` when ToolResultCache served
+   * the response; `cacheFlushed=true` when a write-tool triggered
+   * invalidation of the session's cache before proceeding. Omitted
+   * (undefined) when the cache middleware didn't touch the call
+   * (non-cacheable, non-write). Enables cache hit/miss/flush rate
+   * analytics without string-parsing `tags`.
+   */
+  cacheHit?: boolean;
+  cacheFlushed?: boolean;
   timestamp: number;
 }
 
@@ -228,6 +241,12 @@ export class CognitiveTelemetry implements CognitiveMiddleware {
     try {
       const result = await next(ctx);
       const outputBytes = byteLength(result);
+      // Task-311: promote cache-effectiveness tags from ctx.tags to
+      // first-class event fields so analytics can compute hit/flush
+      // rates without string-parsing `tags`. ToolResultCache sets
+      // both tags; absence = cache didn't observe this call.
+      const cacheHit = ctx.tags.cacheHit === "true" ? true : ctx.tags.cacheHit === "false" ? false : undefined;
+      const cacheFlushed = ctx.tags.cacheFlushed === "true" ? true : undefined;
       this.emit({
         kind: "tool_call",
         sessionId: ctx.sessionId,
@@ -239,6 +258,8 @@ export class CognitiveTelemetry implements CognitiveMiddleware {
         inputTokensApprox: approximateTokens(inputBytes),
         outputBytes,
         outputTokensApprox: approximateTokens(outputBytes),
+        ...(cacheHit !== undefined ? { cacheHit } : {}),
+        ...(cacheFlushed !== undefined ? { cacheFlushed } : {}),
         timestamp: this.now(),
       });
       return result;

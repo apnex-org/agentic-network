@@ -185,7 +185,15 @@ export class ToolResultCache implements CognitiveMiddleware {
     // its own execution. Pessimistic (flush even on failed writes) —
     // trade-off documented in ADR-018 §Invariants.
     const directive = this.strategy.onWrite(ctx.tool, ctx.args, ctx.sessionId);
-    this.applyInvalidation(ctx.sessionId, directive);
+    const flushed = this.applyInvalidation(ctx.sessionId, directive);
+    // Task-311 (M-Hypervisor-Adapter-Mitigations Task 2): mark the
+    // invalidation on ctx.tags so CognitiveTelemetry can promote it
+    // to a first-class `cacheFlushed` field on the emitted tool_call
+    // event. Only set when an actual flush occurred (not on every
+    // write-tool call) — measures real invalidation frequency.
+    if (flushed) {
+      ctx.tags.cacheFlushed = "true";
+    }
 
     // Non-cacheable tools pass through (writes + unclassified).
     if (!this.cacheable(ctx.tool)) {
@@ -254,19 +262,22 @@ export class ToolResultCache implements CognitiveMiddleware {
     cache.set(key, { value, storedAt });
   }
 
-  private applyInvalidation(sessionId: string, directive: InvalidationDirective): void {
-    if (directive.kind === "none") return;
+  private applyInvalidation(sessionId: string, directive: InvalidationDirective): boolean {
+    if (directive.kind === "none") return false;
     const cache = this.sessionCaches.get(sessionId);
-    if (!cache) return;
+    if (!cache || cache.size === 0) return false;
     if (directive.kind === "flush-session") {
       cache.clear();
-      return;
+      return true;
     }
     if (directive.kind === "flush-keys") {
+      let anyDeleted = false;
       for (const k of directive.keys) {
         if (k.sessionId !== sessionId) continue; // respect INV-COG-7
-        cache.delete(`${k.tool}\u0000${k.argsHash}`);
+        if (cache.delete(`${k.tool}\u0000${k.argsHash}`)) anyDeleted = true;
       }
+      return anyDeleted;
     }
+    return false;
   }
 }

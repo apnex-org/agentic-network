@@ -98,6 +98,14 @@ export class HubAdapter {
         manualSync: true,
         cognitive: CognitivePipeline.standard({
           telemetry: { sink: architectTelemetrySink },
+          // Task-311 (M-Hypervisor-Adapter-Mitigations Task 2): ToolResultCache
+          // is enabled by standard() with a 30s default TTL and
+          // FlushAllOnWriteStrategy (prefix-detected write-action
+          // invalidation). Override the TTL via HUB_ADAPTER_CACHE_TTL_MS
+          // env var for tunability without a redeploy-code-change cycle.
+          toolResultCache: {
+            ttlMs: parseInt(process.env.HUB_ADAPTER_CACHE_TTL_MS ?? "30000", 10),
+          },
         }),
       }
     );
