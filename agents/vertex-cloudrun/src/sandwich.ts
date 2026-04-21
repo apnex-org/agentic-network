@@ -41,6 +41,18 @@ const MAX_REPLY_CHUNK_SIZE = parseInt(
 const CHUNK_CONTINUATION_SUFFIX = " [CONTINUED IN NEXT TURN]";
 const CHUNK_BUFFER_TTL_MS = 30 * 60 * 1000;
 
+// ── Task 1b (task-314): Graceful Exhaustion ────────────────────────
+// When the architect's round-budget is running low, it can emit the
+// SAVE_STATE_MARKER in its output (either the final LLM text or in a
+// create_thread_reply.message). The adapter catches it, calls the
+// Hub's save_continuation tool to persist the state snapshot, and
+// terminates the current sandwich invocation gracefully. The Hub's
+// continuation sweep re-dispatches the item on the next tick with the
+// snapshot embedded in the outbound payload. v1 is reactive-only; a
+// future Task 1a extension can inject prompt-level hints nudging the
+// LLM to emit the marker when the budget crosses a critical threshold.
+export const SAVE_STATE_MARKER = "[SAVE_STATE]";
+
 interface ChunkBufferEntry {
   remainingChunks: string[];
   finalArgs: Record<string, unknown>;
@@ -729,6 +741,48 @@ async function attemptThreadReply(
       // Transient: upstream throw from Vertex / network / quota — retry
       // may succeed against a transient fault.
       return { kind: "transient_failure", reason: `LLM generation threw: ${err instanceof Error ? err.message : String(err)}` };
+    }
+
+    // Task 1b (task-314) — [SAVE_STATE] marker detection. If the LLM
+    // emitted the synthetic marker in its final text OR in the
+    // create_thread_reply.message it composed, save a continuation
+    // snapshot to the Hub and terminate gracefully. The Hub's
+    // continuation sweep will re-dispatch this queue item on the next
+    // tick with the saved state embedded in the payload. MVP v1: no
+    // active prompting of the LLM to emit the marker; detection is
+    // reactive so the feature is ready the moment the LLM learns the
+    // convention (Task 1a budget awareness can later nudge it in).
+    const rawMessage = replyArgs !== null ? (replyArgs as Record<string, unknown>).message : undefined;
+    const messageText = typeof rawMessage === "string" ? rawMessage : "";
+    const saveStateMarkerInResult = typeof result === "string" && result.includes(SAVE_STATE_MARKER);
+    const saveStateMarkerInReply = messageText.includes(SAVE_STATE_MARKER);
+    if ((saveStateMarkerInResult || saveStateMarkerInReply) && sourceQueueItemId) {
+      const snapshot = saveStateMarkerInReply ? messageText : (typeof result === "string" ? result : "");
+      console.log(
+        `[Sandwich] thread ${threadId} — [SAVE_STATE] marker detected at round ${finalRound}; persisting continuation`,
+      );
+      try {
+        await hub.callTool("save_continuation", {
+          queueItemId: sourceQueueItemId,
+          payload: {
+            kind: "llm_state",
+            snapshot: snapshot.slice(0, 10_000),
+            currentRound: finalRound,
+            threadId,
+          },
+        });
+        await hub.createAuditEntry(
+          "auto_thread_reply_save_state",
+          `Thread reply for ${threadId} saved continuation state via [SAVE_STATE] marker at round ${finalRound}`,
+          threadId,
+        );
+        return { kind: "success" };
+      } catch (saveErr) {
+        console.error(`[Sandwich] save_continuation failed for thread ${threadId}:`, saveErr);
+        // Fall through to the normal failure paths — the reply won't have
+        // landed (LLM emitted [SAVE_STATE] in place of a real reply) so
+        // the classification is effectively MAX_TOOL_ROUNDS-style.
+      }
     }
 
     if (result === MAX_TOOL_ROUNDS_SENTINEL) {

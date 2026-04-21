@@ -263,4 +263,96 @@ export class GcsPendingActionStore implements IPendingActionStore {
       return item.state !== "completion_acked" && item.state !== "escalated" && item.state !== "errored";
     });
   }
+
+  async saveContinuation(
+    id: string,
+    callerAgentId: string,
+    continuationState: Record<string, unknown>,
+  ): Promise<PendingActionItem | null> {
+    try {
+      return await updateExisting<PendingActionItem>(
+        this.bucket,
+        `pending-actions/${id}.json`,
+        (item) => {
+          // Authorization: only the item's targetAgentId can transition.
+          if (item.targetAgentId !== callerAgentId) {
+            throw new Error(
+              `save_continuation: caller ${callerAgentId} is not the targetAgentId ${item.targetAgentId} for queue item ${id}`,
+            );
+          }
+          // Terminal states cannot transition to continuation_required.
+          if (
+            item.state === "completion_acked" ||
+            item.state === "errored" ||
+            item.state === "escalated"
+          ) {
+            throw new Error(
+              `save_continuation: queue item ${id} is in terminal state ${item.state}`,
+            );
+          }
+          item.state = "continuation_required";
+          item.continuationState = { ...continuationState };
+          item.continuationSavedAt = new Date().toISOString();
+          return item;
+        },
+      );
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return null;
+      if (err instanceof Error && err.message.startsWith("save_continuation:")) {
+        // Auth/state guard failures surface as null per the interface contract.
+        console.warn(`[GcsPendingActionStore] ${err.message}`);
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async listContinuationItems(): Promise<PendingActionItem[]> {
+    const all = await this.listAll();
+    const filtered = all.filter((item) => item.state === "continuation_required");
+    filtered.sort((a, b) => {
+      const at = a.continuationSavedAt ? Date.parse(a.continuationSavedAt) : 0;
+      const bt = b.continuationSavedAt ? Date.parse(b.continuationSavedAt) : 0;
+      return at - bt;
+    });
+    return filtered;
+  }
+
+  async resumeContinuation(id: string): Promise<{
+    item: PendingActionItem;
+    continuationState: Record<string, unknown>;
+  } | null> {
+    let snapshot: Record<string, unknown> = {};
+    try {
+      const updated = await updateExisting<PendingActionItem>(
+        this.bucket,
+        `pending-actions/${id}.json`,
+        (item) => {
+          if (item.state !== "continuation_required") {
+            throw new Error(
+              `resume_continuation: queue item ${id} is in state ${item.state}, expected continuation_required`,
+            );
+          }
+          snapshot = item.continuationState ?? {};
+          item.state = "enqueued";
+          item.continuationState = undefined;
+          item.continuationSavedAt = null;
+          const now = new Date();
+          item.enqueuedAt = now.toISOString();
+          item.receiptDeadline = new Date(now.getTime() + DEFAULT_RECEIPT_SLA_MS).toISOString();
+          item.completionDeadline = new Date(now.getTime() + DEFAULT_COMPLETION_SLA_MS).toISOString();
+          item.receiptAckedAt = null;
+          return item;
+        },
+      );
+      return { item: updated, continuationState: { ...snapshot } };
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return null;
+      if (err instanceof Error && err.message.startsWith("resume_continuation:")) {
+        console.warn(`[GcsPendingActionStore] ${err.message}`);
+        return null;
+      }
+      throw err;
+    }
+  }
 }

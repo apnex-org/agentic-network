@@ -28,7 +28,22 @@ export type PendingActionState =
   | "receipt_acked"
   | "completion_acked"
   | "escalated"
-  | "errored";
+  | "errored"
+  /**
+   * M-Hypervisor-Adapter-Mitigations Task 1b (task-314) — "Graceful
+   * Exhaustion" state. Set when the target agent calls
+   * `save_continuation(queueItemId, payload)` because its
+   * round-budget is approaching the cap. The item's current dispatch
+   * is paused; `continuationState` holds the resumption payload
+   * (caller-opaque JSON, conventionally `{kind, ...}` — v1 kinds
+   * are "llm_state" for graceful-exhaustion snapshots and
+   * "chunk_buffer" for task-313 oversize-reply durability per
+   * idea-145 Path 2 unification). The Hub's dispatcher re-emits
+   * the item on the next tick with `continuationState` embedded in
+   * the payload so the adapter can resume from the snapshot rather
+   * than re-run from scratch.
+   */
+  | "continuation_required";
 
 export interface PendingActionItem {
   id: string;
@@ -49,6 +64,25 @@ export interface PendingActionItem {
   /** Mission-24 idea-120: uniform direct-create provenance (task-305).
    *  Identity of the agent/role that enqueued this item. */
   createdBy?: EntityProvenance;
+  /**
+   * M-Hypervisor-Adapter-Mitigations Task 1b (task-314). Set by
+   * `save_continuation` when the target agent's round-budget runs
+   * low. Shape is caller-opaque — v1 conventions: `{kind: "llm_state",
+   * snapshot, currentRound}` for graceful-exhaustion LLM snapshots;
+   * `{kind: "chunk_buffer", remainingChunks, finalArgs}` for the
+   * task-313 oversize-reply persistence (idea-145 Path 2). Adapter
+   * branches on `kind` at resumption time. Cleared (reset to
+   * undefined) on re-dispatch pickup so the item's FSM settles
+   * after one resumption cycle.
+   */
+  continuationState?: Record<string, unknown>;
+  /**
+   * M-Hypervisor-Adapter-Mitigations Task 1b (task-314). Timestamp
+   * when `save_continuation` most recently set `continuationState`
+   * on this item. Used by the re-dispatch sweep to prioritize
+   * oldest-first + by operators to diagnose stuck continuations.
+   */
+  continuationSavedAt?: string | null;
 }
 
 export interface EnqueueOptions {
@@ -136,6 +170,42 @@ export interface IPendingActionStore {
    * (completion_acked / escalated / errored) are excluded.
    */
   listNonTerminalByEntityRef(entityRef: string): Promise<PendingActionItem[]>;
+  /**
+   * Task 1b (task-314) — "Graceful Exhaustion" save-continuation
+   * transition. Called by the target agent via the `save_continuation`
+   * MCP tool when round-budget runs low. Transitions the item to
+   * `continuation_required` + persists the caller-opaque
+   * `continuationState` payload. Guarded: returns null if the item
+   * doesn't exist, the caller is not the item's targetAgentId, or
+   * the item is in a terminal state. Idempotent on items already
+   * in `continuation_required` (last-save-wins — the newest
+   * continuationState replaces any prior one + `continuationSavedAt`
+   * bumps).
+   */
+  saveContinuation(
+    id: string,
+    callerAgentId: string,
+    continuationState: Record<string, unknown>,
+  ): Promise<PendingActionItem | null>;
+  /**
+   * Task 1b (task-314) — list items awaiting continuation re-dispatch.
+   * Returns items in `continuation_required` state, oldest-first by
+   * `continuationSavedAt` so the dispatcher drains the queue in
+   * arrival order. Does not mutate.
+   */
+  listContinuationItems(): Promise<PendingActionItem[]>;
+  /**
+   * Task 1b (task-314) — clear continuation state as part of the
+   * re-dispatch cycle. Transitions the item from
+   * `continuation_required` back to `enqueued` + returns the former
+   * `continuationState` so the caller can embed it in the outbound
+   * dispatch payload. No-op (returns null) if the item is not in
+   * `continuation_required` state.
+   */
+  resumeContinuation(id: string): Promise<{
+    item: PendingActionItem;
+    continuationState: Record<string, unknown>;
+  } | null>;
 }
 
 function naturalKey(opts: { targetAgentId: string; dispatchType: string; entityRef: string }): string {
@@ -143,7 +213,11 @@ function naturalKey(opts: { targetAgentId: string; dispatchType: string; entityR
 }
 
 function cloneItem(item: PendingActionItem): PendingActionItem {
-  return { ...item, payload: { ...item.payload } };
+  return {
+    ...item,
+    payload: { ...item.payload },
+    ...(item.continuationState ? { continuationState: { ...item.continuationState } } : {}),
+  };
 }
 
 export class MemoryPendingActionStore implements IPendingActionStore {
@@ -285,6 +359,64 @@ export class MemoryPendingActionStore implements IPendingActionStore {
     item.state = "errored";
     item.escalationReason = reason;
     return cloneItem(item);
+  }
+
+  async saveContinuation(
+    id: string,
+    callerAgentId: string,
+    continuationState: Record<string, unknown>,
+  ): Promise<PendingActionItem | null> {
+    const item = this.items.get(id);
+    if (!item) return null;
+    if (item.targetAgentId !== callerAgentId) return null;
+    if (
+      item.state === "completion_acked" ||
+      item.state === "errored" ||
+      item.state === "escalated"
+    ) {
+      // Terminal items cannot transition to continuation_required.
+      return null;
+    }
+    item.state = "continuation_required";
+    item.continuationState = { ...continuationState };
+    item.continuationSavedAt = new Date().toISOString();
+    return cloneItem(item);
+  }
+
+  async listContinuationItems(): Promise<PendingActionItem[]> {
+    const out: PendingActionItem[] = [];
+    for (const item of this.items.values()) {
+      if (item.state !== "continuation_required") continue;
+      out.push(cloneItem(item));
+    }
+    // Oldest-first by continuationSavedAt for fair re-dispatch ordering.
+    out.sort((a, b) => {
+      const at = a.continuationSavedAt ? Date.parse(a.continuationSavedAt) : 0;
+      const bt = b.continuationSavedAt ? Date.parse(b.continuationSavedAt) : 0;
+      return at - bt;
+    });
+    return out;
+  }
+
+  async resumeContinuation(id: string): Promise<{
+    item: PendingActionItem;
+    continuationState: Record<string, unknown>;
+  } | null> {
+    const item = this.items.get(id);
+    if (!item) return null;
+    if (item.state !== "continuation_required") return null;
+    const stateSnapshot = item.continuationState ?? {};
+    item.state = "enqueued";
+    item.continuationState = undefined;
+    item.continuationSavedAt = null;
+    // Bump enqueuedAt + deadlines so the watchdog treats the resumed
+    // item as a fresh dispatch rather than an immediately-expired one.
+    const now = new Date();
+    item.enqueuedAt = now.toISOString();
+    item.receiptDeadline = new Date(now.getTime() + DEFAULT_RECEIPT_SLA_MS).toISOString();
+    item.completionDeadline = new Date(now.getTime() + DEFAULT_COMPLETION_SLA_MS).toISOString();
+    item.receiptAckedAt = null;
+    return { item: cloneItem(item), continuationState: { ...stateSnapshot } };
   }
 
   async listStuck(opts: {

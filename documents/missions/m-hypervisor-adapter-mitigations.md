@@ -108,14 +108,38 @@ Combined deliverable — the measurement primitive is a prerequisite for quantif
 
 **Testing:** 8 new in `agents/vertex-cloudrun/test/chunk-reply.test.ts` pinning the chunker's slice contract + buffer-state test hooks. 3 new in `packages/cognitive-layer/test/telemetry.test.ts` pinning `emitThreadReplyChunked` + `emitLlmOutputTruncated` shapes. 172 cognitive-layer + 62 vertex-cloudrun tests pass.
 
-### Task 1b — Graceful Exhaustion (Hub-side)
+### Task 1b — Graceful Exhaustion (task-314, Hub-side + adapter integration)
 
-Hub-side continuation primitives:
-- New queue-item state transition: `continuation_required` (budget exhausted mid-turn).
-- Resumption payload format that captures LLM state snapshot for restart.
-- Adapter emits `[SAVE_STATE]` synthetic marker when round-budget hits a critical threshold (e.g., 2 rounds remaining) so the continuation point is graceful.
+**Status:** ✅ shipped. Hub-side continuation primitive + adapter-side `[SAVE_STATE]` marker detection + Hub-driven re-dispatch sweep. Unifies task-313 chunk-buffer durability per architect direction on thread-239 (idea-145 Path 2 absorbable into `continuationState`'s flexible payload).
 
-Landed last because it introduces new queue-item semantics that Tasks 0–4 don't require.
+**Architect refinements absorbed (thread-239):**
+1. **Continuation entity shape:** extend `PendingActionItem` with `continuationState?: Record<string, unknown>` + `continuationSavedAt?: string | null` — NOT a new entity. Colocates state with the original action; lineage of intent unbroken.
+2. **Adapter→Hub signaling:** new MCP tool `save_continuation(queueItemId, payload)` — NOT overload of existing tools. Semantically precise "pause due to resource exhaustion" surface.
+3. **Resumption trigger:** Hub-driven re-dispatch on the next sweep tick, re-emits the original `dispatchType` with `continuationState` embedded in the payload. Adapter stays reactive.
+4. **idea-145 Path 2 unification:** `continuationState` payload is caller-opaque JSON; v1 conventions `{kind: "llm_state", snapshot, currentRound}` (graceful-exhaustion) and `{kind: "chunk_buffer", remainingChunks, finalArgs}` (task-313 durability) both land natively. Future kinds compose.
+
+**Implementation surface:**
+
+*Hub-side:*
+- `PendingActionItem` gains `continuationState?: Record<string, unknown>` + `continuationSavedAt?: string | null`; state enum extends with `continuation_required` alongside existing `enqueued | receipt_acked | completion_acked | escalated | errored`.
+- `IPendingActionStore.saveContinuation(id, callerAgentId, continuationState)` — auth-guarded (targetAgentId-only); rejects on terminal states; idempotent on `continuation_required` (last-save-wins). Memory + GCS impls.
+- `IPendingActionStore.listContinuationItems()` — oldest-first by `continuationSavedAt`. Memory + GCS impls.
+- `IPendingActionStore.resumeContinuation(id)` — FSM transition `continuation_required → enqueued`; returns `{item, continuationState}`; refreshes `enqueuedAt` + deadlines so watchdog treats it as a fresh dispatch; clears the saved snapshot.
+- New `[Any]` MCP tool `save_continuation(queueItemId, payload)` in `hub/src/policy/pending-action-policy.ts` — auth via session→agent resolution; emits `queue_item_continuation_saved` audit entry.
+- New `runContinuationSweepTick()` in `hub/src/index.ts` at 15s interval (env-configurable via `HUB_CONTINUATION_SWEEP_INTERVAL_MS`): drains continuation_required items + re-dispatches via `hub.dispatchEvent(dispatchType, {...payload, sourceQueueItemId, continuationState}, {engineerIds: [targetAgentId]})`; emits `queue_item_continuation_resumed` audit entry per re-dispatch. Wired into startup + SIGINT teardown alongside the thread + agent reapers.
+
+*Adapter-side (`agents/vertex-cloudrun/src/sandwich.ts`):*
+- Exported constant `SAVE_STATE_MARKER = "[SAVE_STATE]"`.
+- Detection point: after `generateWithTools` returns, before the MAX_TOOL_ROUNDS / missing-reply-args branches. If the LLM's final `result` text OR the composed `replyArgs.message` contains the marker, save a continuation snapshot to the Hub and terminate with `{kind: "success"}`. The Hub's sweep re-dispatches on the next tick.
+- Emits audit action `auto_thread_reply_save_state` so the forensic trail is self-contained.
+
+**Known v1 limitations (documented in source + mission brief):**
+- **Reactive-only marker detection.** v1 doesn't actively prompt the LLM to emit `[SAVE_STATE]` when budget is critical. Task 1a's thread-budget injection could later be extended to nudge the LLM toward the marker at budget ≤ 2. Currently the adapter is ready to handle the marker the moment the LLM learns the convention.
+- **In-memory chunk buffer (task-313) not yet migrated.** task-313's `pendingChunksByThread` Map still lives in adapter memory. idea-145 Path 2 (chunk_buffer continuationState) is now unblocked by task-314's primitive; migration is a future follow-up (additive-first, remove-in-memory-later).
+- **Simple snapshot format.** v1 `{kind: "llm_state", snapshot: string, currentRound: number, threadId}`. Snapshot is the LLM's emitted text, truncated to 10k chars. Richer formats (tool-call history, pending staged actions, prompt delta) are refinements as real continuation failures surface.
+- **Simple re-dispatch semantics.** 15s sweep tick; no exponential backoff; no retry cap on re-dispatch failures. If the adapter repeatedly fails to handle a resumed item, it will cycle. Follow-up: add retry-count + eventual escalation to `errored` after N failed resumptions.
+
+**Testing:** 6 new in `hub/test/unit/gcs-pending-action.test.ts` pinning the FSM transitions (save_continuation persists + authorization guard + terminal-state guard; listContinuationItems oldest-first; resumeContinuation resets state + returns snapshot; resume no-op on non-continuation items). 586 hub tests + 62 vertex-cloudrun tests pass.
 
 ---
 

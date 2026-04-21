@@ -159,6 +159,102 @@ describe("GcsPendingActionStore", () => {
     expect(fetched?.lastAttemptAt).not.toBeNull();
   });
 
+  it("saveContinuation transitions an item to continuation_required with the payload persisted (Task 1b)", async () => {
+    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
+    const store = new GcsPendingActionStore(BUCKET);
+    const item = await store.enqueue({
+      targetAgentId: "agent-1",
+      dispatchType: "thread_message",
+      entityRef: "thread-1",
+      payload: {},
+    });
+    const saved = await store.saveContinuation(item.id, "agent-1", {
+      kind: "llm_state",
+      snapshot: "architect was mid-analysis",
+      currentRound: 12,
+    });
+    expect(saved).not.toBeNull();
+    expect(saved?.state).toBe("continuation_required");
+    expect(saved?.continuationState).toEqual({
+      kind: "llm_state",
+      snapshot: "architect was mid-analysis",
+      currentRound: 12,
+    });
+    expect(saved?.continuationSavedAt).toBeTruthy();
+
+    // Persistence verified across a fresh store instance.
+    const freshStore = new GcsPendingActionStore(BUCKET);
+    const fetched = await freshStore.getById(item.id);
+    expect(fetched?.state).toBe("continuation_required");
+    expect(fetched?.continuationState?.kind).toBe("llm_state");
+  });
+
+  it("saveContinuation rejects callers other than the item's targetAgentId (Task 1b authorization)", async () => {
+    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
+    const store = new GcsPendingActionStore(BUCKET);
+    const item = await store.enqueue({
+      targetAgentId: "agent-1",
+      dispatchType: "thread_message",
+      entityRef: "thread-1",
+      payload: {},
+    });
+    const rejected = await store.saveContinuation(item.id, "imposter-agent", {
+      kind: "llm_state",
+    });
+    expect(rejected).toBeNull();
+    const still = await store.getById(item.id);
+    expect(still?.state).toBe("enqueued");
+  });
+
+  it("saveContinuation rejects transitions from terminal states (Task 1b FSM guard)", async () => {
+    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
+    const store = new GcsPendingActionStore(BUCKET);
+    const item = await store.enqueue({
+      targetAgentId: "agent-1",
+      dispatchType: "thread_message",
+      entityRef: "thread-1",
+      payload: {},
+    });
+    await store.receiptAck(item.id);
+    await store.completionAck(item.id);
+    const rejected = await store.saveContinuation(item.id, "agent-1", { kind: "llm_state" });
+    expect(rejected).toBeNull();
+  });
+
+  it("listContinuationItems returns continuation_required items oldest-first (Task 1b dispatch ordering)", async () => {
+    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
+    const store = new GcsPendingActionStore(BUCKET);
+    const a = await store.enqueue({ targetAgentId: "agent-1", dispatchType: "thread_message", entityRef: "thread-1", payload: {} });
+    const b = await store.enqueue({ targetAgentId: "agent-1", dispatchType: "thread_message", entityRef: "thread-2", payload: {} });
+    // A saved first; B saved second with 10ms gap.
+    await store.saveContinuation(a.id, "agent-1", { kind: "llm_state", n: 1 });
+    await new Promise((r) => setTimeout(r, 10));
+    await store.saveContinuation(b.id, "agent-1", { kind: "llm_state", n: 2 });
+    const items = await store.listContinuationItems();
+    expect(items.map((i) => i.id)).toEqual([a.id, b.id]);
+  });
+
+  it("resumeContinuation transitions back to enqueued + returns the saved continuationState (Task 1b re-dispatch)", async () => {
+    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
+    const store = new GcsPendingActionStore(BUCKET);
+    const item = await store.enqueue({ targetAgentId: "agent-1", dispatchType: "thread_message", entityRef: "thread-1", payload: {} });
+    await store.saveContinuation(item.id, "agent-1", { kind: "chunk_buffer", remainingChunks: ["a", "b"] });
+    const resumed = await store.resumeContinuation(item.id);
+    expect(resumed).not.toBeNull();
+    expect(resumed?.continuationState.kind).toBe("chunk_buffer");
+    expect(resumed?.item.state).toBe("enqueued");
+    expect(resumed?.item.continuationState).toBeUndefined();
+    expect(resumed?.item.continuationSavedAt).toBeNull();
+  });
+
+  it("resumeContinuation is a no-op on items not in continuation_required (Task 1b guard)", async () => {
+    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
+    const store = new GcsPendingActionStore(BUCKET);
+    const item = await store.enqueue({ targetAgentId: "agent-1", dispatchType: "thread_message", entityRef: "thread-1", payload: {} });
+    const resumed = await store.resumeContinuation(item.id);
+    expect(resumed).toBeNull();
+  });
+
   it("listExpired skips terminal states and returns non-terminal past-deadline items", async () => {
     const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
     const store = new GcsPendingActionStore(BUCKET);

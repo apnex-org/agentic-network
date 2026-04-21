@@ -441,10 +441,88 @@ function stopAgentReaper(): void {
   }
 }
 
+// ── Continuation Sweep (task-314, mission-38 Task 1b) ────────────────
+// Periodic background task symmetric to the reapers. Picks queue items
+// in `continuation_required` state (set by agents calling
+// save_continuation when round-budget runs low), transitions them back
+// to `enqueued` via IPendingActionStore.resumeContinuation, and re-
+// dispatches them to the target agent with the saved continuationState
+// embedded in the outbound payload. The adapter can then resume from
+// the snapshot rather than restart from scratch. Default cadence: 15s
+// (faster than the 1h reapers because continuation delivery is
+// user-latency-sensitive).
+
+const HUB_CONTINUATION_SWEEP_INTERVAL_MS = parseInt(
+  process.env.HUB_CONTINUATION_SWEEP_INTERVAL_MS || String(15 * 1000),
+  10,
+);
+
+let continuationSweepHandle: NodeJS.Timeout | null = null;
+
+async function runContinuationSweepTick(): Promise<void> {
+  try {
+    const items = await pendingActionStore.listContinuationItems();
+    if (items.length === 0) return;
+    console.log(`[Sweep] continuation: ${items.length} item(s) to re-dispatch`);
+    for (const item of items) {
+      try {
+        const resumed = await pendingActionStore.resumeContinuation(item.id);
+        if (!resumed) continue; // Race: another sweep or admin action drained it first.
+        const { item: refreshed, continuationState } = resumed;
+        // Re-emit the original dispatchType with continuationState embedded
+        // so the adapter routes via its existing event-router path.
+        try {
+          await hub.dispatchEvent(
+            refreshed.dispatchType,
+            {
+              ...refreshed.payload,
+              sourceQueueItemId: refreshed.id,
+              continuationState,
+            },
+            { engineerIds: [refreshed.targetAgentId] },
+          );
+          await auditStore.logEntry(
+            "hub",
+            "queue_item_continuation_resumed",
+            `Queue item ${refreshed.id} re-dispatched from continuation_required (kind=${typeof continuationState.kind === "string" ? continuationState.kind : "unspecified"}, target=${refreshed.targetAgentId}).`,
+            refreshed.id,
+          );
+        } catch (dispatchErr) {
+          console.error(
+            `[Sweep] continuation re-dispatch failed for ${refreshed.id}:`,
+            dispatchErr,
+          );
+        }
+      } catch (err) {
+        console.error(`[Sweep] continuation tick failed on item ${item.id}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error("[Sweep] continuation tick failed:", err);
+  }
+}
+
+function startContinuationSweep(): void {
+  if (continuationSweepHandle) return;
+  console.log(`[Hub] Starting continuation sweep: interval=${HUB_CONTINUATION_SWEEP_INTERVAL_MS}ms`);
+  continuationSweepHandle = setInterval(() => {
+    void runContinuationSweepTick();
+  }, HUB_CONTINUATION_SWEEP_INTERVAL_MS);
+  continuationSweepHandle.unref?.();
+}
+
+function stopContinuationSweep(): void {
+  if (continuationSweepHandle) {
+    clearInterval(continuationSweepHandle);
+    continuationSweepHandle = null;
+  }
+}
+
 startupSequence().then(async () => {
   await hub.start();
   startThreadReaper();
   startAgentReaper();
+  startContinuationSweep();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT}`);
   console.log(`[Hub] MCP endpoint: POST/GET/DELETE /mcp`);
   console.log(`[Hub] Health check: GET /health`);
@@ -454,6 +532,7 @@ startupSequence().then(async () => {
   await hub.start();
   startThreadReaper();
   startAgentReaper();
+  startContinuationSweep();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT} (with startup warning)`);
 });
 
@@ -462,6 +541,7 @@ process.on("SIGINT", async () => {
   console.log("[Hub] Shutting down...");
   stopThreadReaper();
   stopAgentReaper();
+  stopContinuationSweep();
   await hub.stop();
   process.exit(0);
 });

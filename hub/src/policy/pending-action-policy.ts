@@ -175,6 +175,81 @@ async function pruneStuckQueueItems(
   };
 }
 
+async function saveContinuation(
+  args: Record<string, unknown>,
+  ctx: IPolicyContext,
+): Promise<PolicyResult> {
+  const queueItemId = typeof args.queueItemId === "string" ? args.queueItemId : null;
+  const payload =
+    args.payload && typeof args.payload === "object" && !Array.isArray(args.payload)
+      ? (args.payload as Record<string, unknown>)
+      : null;
+  if (!queueItemId || !payload) {
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({
+          ok: false,
+          error: "save_continuation: queueItemId + payload are required",
+        }),
+      }],
+      isError: true,
+    };
+  }
+
+  const agent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  if (!agent) {
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({
+          ok: false,
+          error: "save_continuation: no agent bound to session — register_role first",
+        }),
+      }],
+      isError: true,
+    };
+  }
+
+  const updated = await ctx.stores.pendingAction.saveContinuation(
+    queueItemId,
+    agent.engineerId,
+    payload,
+  );
+  if (!updated) {
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({
+          ok: false,
+          error: `save_continuation: queue item ${queueItemId} not found, not owned by caller, or in terminal state`,
+        }),
+      }],
+      isError: true,
+    };
+  }
+
+  await ctx.stores.audit.logEntry(
+    "hub",
+    "queue_item_continuation_saved",
+    `Queue item ${queueItemId} transitioned to continuation_required by agent ${agent.engineerId} (payload kind: ${typeof payload.kind === "string" ? payload.kind : "unspecified"}).`,
+    queueItemId,
+  );
+
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({
+        ok: true,
+        queueItemId: updated.id,
+        state: updated.state,
+        continuationSavedAt: updated.continuationSavedAt,
+        message: `Continuation saved for queue item ${queueItemId}. Hub will re-dispatch on next continuation sweep.`,
+      }),
+    }],
+  };
+}
+
 export function registerPendingActionPolicy(router: PolicyRouter): void {
   router.register(
     "drain_pending_actions",
@@ -199,6 +274,16 @@ export function registerPendingActionPolicy(router: PolicyRouter): void {
     "[Any] ADR-017: mark a Director notification as acknowledged (idempotent). Records acknowledgement but does not delete — notifications remain append-only.",
     { id: z.string().describe("Notification ID") },
     acknowledgeDirectorNotification,
+  );
+
+  router.register(
+    "save_continuation",
+    "[Any] M-Hypervisor-Adapter-Mitigations Task 1b (task-314) — graceful exhaustion save-continuation transition. The target agent calls this when its round-budget is running low: transitions the queue item to `continuation_required` state and persists the caller-opaque `payload` as `continuationState`. Only the queue item's `targetAgentId` can call save_continuation. Terminal items (completion_acked/errored/escalated) cannot transition. The Hub's continuation sweep re-dispatches items in `continuation_required` on the next tick, embedding the saved payload so the adapter can resume from the snapshot rather than restart from scratch. Payload shape is open; reserve `{kind: 'llm_state', ...}` for graceful-exhaustion LLM snapshots and `{kind: 'chunk_buffer', ...}` for task-313 oversize-reply persistence (idea-145 Path 2 unification).",
+    {
+      queueItemId: z.string().describe("ID of the pending-action queue item to transition"),
+      payload: z.record(z.string(), z.unknown()).describe("Caller-opaque continuation payload. Conventionally include a `kind` discriminator (e.g., 'llm_state' | 'chunk_buffer') so the resumer can dispatch on it."),
+    },
+    saveContinuation,
   );
 
   router.register(
