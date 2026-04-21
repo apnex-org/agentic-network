@@ -19,7 +19,12 @@ import { TASK_FSM } from "./task-policy.js";
 async function createReview(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const taskId = args.taskId as string;
   const assessment = args.assessment as string;
-  const decision = (args.decision as string) || "approved"; // default to approved for backward compat
+  // task-316 / thread-241: accept `revision_required` as the canonical
+  // name for the revision branch (binary enum ratified per thread-241).
+  // `rejected` stays as an alias for backward-compat with pre-task-316
+  // callers + existing test corpora; both map to the same code path.
+  const rawDecision = (args.decision as string) || "approved";
+  const decision = rawDecision === "revision_required" ? "rejected" : rawDecision;
 
   // Get task to validate state and compute versioned refs
   const task = await ctx.stores.task.getTask(taskId);
@@ -74,12 +79,20 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
       taskId
     );
 
-    // Emit review_completed to the assigned engineer (P2P) or label-scoped pool fallback.
+    // task-316 / thread-241: standalone approved reviews carry
+    // `intent: "review_available"` so the engineer adapter can surface
+    // the review as a read-only notification (distinct from revision-
+    // required / address_feedback). Mission-linked approved reviews
+    // will also fire this dispatch AS WELL AS the advancement cascade
+    // downstream in handleTaskCompleted (task-policy.ts) which issues
+    // the next plannedTask — the engineer sees both the review
+    // completion and the next directive.
     await ctx.dispatch("review_completed", {
       taskId,
       reviewRef,
       assessment: assessment.substring(0, 200),
       decision: "approved",
+      intent: "review_available",
     }, task.assignedEngineerId
       ? { engineerId: task.assignedEngineerId }
       : { roles: ["engineer"], matchLabels: task.labels });
@@ -154,6 +167,15 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
         }],
       };
     } else {
+      // task-316 / thread-241: revision_required carries
+      // `intent: "address_feedback"` + `decision: "revision_required"`
+      // (canonical naming per thread-241; prose "rejected" retained in
+      // the dispatch channel name for back-compat on listeners). The
+      // adapter consumes these to surface an actionable feedback
+      // context — engineer reasoning branches: report-discrepancy /
+      // work-discrepancy / clarification-thread detour, all resolving
+      // on the replaced create_report (thread-242 FSMs).
+      //
       // Normal rejection — send back for revision (P2P to original engineer, fallback to pool).
       // Payload enrichment: include full assessment so agent loop can ingest immediately
       await ctx.dispatch("revision_required", {
@@ -163,6 +185,8 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
         previousReportRef: task.reportRef,
         reviewRef,
         revisionCount: newRevisionCount,
+        decision: "revision_required",
+        intent: "address_feedback",
       }, task.assignedEngineerId
         ? { engineerId: task.assignedEngineerId }
         : { roles: ["engineer"], matchLabels: task.labels });
@@ -225,11 +249,14 @@ async function getReview(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 export function registerReviewPolicy(router: PolicyRouter): void {
   router.register(
     "create_review",
-    "[Architect] Review a task report. If approved, transitions to completed and triggers DAG cascade. If rejected, returns to working for revision.",
+    "[Architect] Review a task report. " +
+    "If `approved`, transitions to completed and triggers DAG cascade + mission-advancement cascade (task-316 / idea-144 Path A — if the task is mission-linked AND the mission has unissued plannedTasks, the next plannedTask is auto-issued). " +
+    "If `revision_required` (or legacy `rejected`), returns to working for revision; dispatches `address_feedback` intent to the engineer; at revisionCount≥3 escalates to architect pool. " +
+    "task-316 / thread-241: canonical enum values are `approved` and `revision_required`; `rejected` is an alias for back-compat.",
     {
       taskId: z.string().describe("The task ID this review is for"),
       assessment: z.string().describe("The Architect's review assessment text"),
-      decision: z.enum(["approved", "rejected"]).optional().describe("Review decision: approved (default) transitions to completed, rejected returns to working."),
+      decision: z.enum(["approved", "revision_required", "rejected"]).optional().describe("Review decision. Canonical values: `approved` (default) or `revision_required`. `rejected` is a back-compat alias for `revision_required` (task-316 / thread-241)."),
     },
     createReview,
   );

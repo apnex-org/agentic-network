@@ -14,7 +14,7 @@ import {
   updateExisting,
   GcsPathNotFound,
 } from "../../gcs-state.js";
-import type { Mission, MissionStatus, IMissionStore } from "../mission.js";
+import type { Mission, MissionStatus, IMissionStore, PlannedTask } from "../mission.js";
 import type { ITaskStore, EntityProvenance } from "../../state.js";
 import type { IIdeaStore, CascadeBacklink } from "../idea.js";
 
@@ -35,7 +35,8 @@ export class GcsMissionStore implements IMissionStore {
     description: string,
     documentRef?: string,
     backlink?: CascadeBacklink,
-    createdBy?: EntityProvenance
+    createdBy?: EntityProvenance,
+    plannedTasks?: PlannedTask[],
   ): Promise<Mission> {
     const num = await getAndIncrementCounter(this.bucket, "missionCounter");
     const id = `mission-${num}`;
@@ -55,12 +56,13 @@ export class GcsMissionStore implements IMissionStore {
       sourceActionId: backlink?.sourceActionId ?? null,
       sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
       createdBy,
+      plannedTasks: plannedTasks ? plannedTasks.map((p) => ({ ...p })) : undefined,
       createdAt: now,
       updatedAt: now,
     };
 
     await createOnly<Mission>(this.bucket, `missions/${id}.json`, mission);
-    console.log(`[GcsMissionStore] Mission created: ${id} — ${title}${backlink ? ` (cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId})` : ""}`);
+    console.log(`[GcsMissionStore] Mission created: ${id} — ${title}${backlink ? ` (cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId})` : ""}${plannedTasks?.length ? ` [plannedTasks=${plannedTasks.length}]` : ""}`);
     return this.hydrate(mission);
   }
 
@@ -97,7 +99,12 @@ export class GcsMissionStore implements IMissionStore {
 
   async updateMission(
     missionId: string,
-    updates: { status?: MissionStatus; description?: string; documentRef?: string }
+    updates: {
+      status?: MissionStatus;
+      description?: string;
+      documentRef?: string;
+      plannedTasks?: PlannedTask[];
+    }
   ): Promise<Mission | null> {
     const path = `missions/${missionId}.json`;
     try {
@@ -105,11 +112,66 @@ export class GcsMissionStore implements IMissionStore {
         if (updates.status) m.status = updates.status;
         if (updates.description !== undefined) m.description = updates.description;
         if (updates.documentRef !== undefined) m.documentRef = updates.documentRef;
+        if (updates.plannedTasks !== undefined) m.plannedTasks = updates.plannedTasks.map((p) => ({ ...p }));
         m.updatedAt = new Date().toISOString();
         return m;
       });
-      console.log(`[GcsMissionStore] Mission updated: ${missionId} → status=${mission.status}`);
+      console.log(`[GcsMissionStore] Mission updated: ${missionId} → status=${mission.status}${updates.plannedTasks ? ` [plannedTasks=${updates.plannedTasks.length}]` : ""}`);
       return this.hydrate(mission);
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return null;
+      throw err;
+    }
+  }
+
+  async markPlannedTaskIssued(
+    missionId: string,
+    sequence: number,
+    issuedTaskId: string,
+  ): Promise<PlannedTask | null> {
+    const path = `missions/${missionId}.json`;
+    let result: PlannedTask | null = null;
+    try {
+      await updateExisting<Mission>(this.bucket, path, (m) => {
+        if (!m.plannedTasks) return m;
+        const slot = m.plannedTasks.find((p) => p.sequence === sequence);
+        if (!slot || slot.status !== "unissued") return m;
+        slot.status = "issued";
+        slot.issuedTaskId = issuedTaskId;
+        m.updatedAt = new Date().toISOString();
+        result = { ...slot };
+        return m;
+      });
+      if (result) {
+        console.log(`[GcsMissionStore] plannedTask issued: ${missionId} seq=${sequence} → ${issuedTaskId}`);
+      }
+      return result;
+    } catch (err) {
+      if (err instanceof GcsPathNotFound) return null;
+      throw err;
+    }
+  }
+
+  async markPlannedTaskCompleted(
+    missionId: string,
+    issuedTaskId: string,
+  ): Promise<PlannedTask | null> {
+    const path = `missions/${missionId}.json`;
+    let result: PlannedTask | null = null;
+    try {
+      await updateExisting<Mission>(this.bucket, path, (m) => {
+        if (!m.plannedTasks) return m;
+        const slot = m.plannedTasks.find((p) => p.issuedTaskId === issuedTaskId);
+        if (!slot || slot.status !== "issued") return m;
+        slot.status = "completed";
+        m.updatedAt = new Date().toISOString();
+        result = { ...slot };
+        return m;
+      });
+      if (result) {
+        console.log(`[GcsMissionStore] plannedTask completed: ${missionId} seq=${(result as PlannedTask).sequence} taskId=${issuedTaskId}`);
+      }
+      return result;
     } catch (err) {
       if (err instanceof GcsPathNotFound) return null;
       throw err;

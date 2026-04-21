@@ -10,7 +10,7 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { isValidTransition } from "./types.js";
 import type { FsmTransitionTable } from "./types.js";
-import type { Mission, MissionStatus } from "../entities/index.js";
+import type { Mission, MissionStatus, PlannedTask } from "../entities/index.js";
 import {
   LIST_PAGINATION_SCHEMA,
   paginate,
@@ -39,16 +39,31 @@ async function createMission(args: Record<string, unknown>, ctx: IPolicyContext)
   const title = args.title as string;
   const description = args.description as string;
   const documentRef = args.documentRef as string | undefined;
+  const plannedTasks = args.plannedTasks as PlannedTask[] | undefined;
+
+  // task-316 / idea-144 Path A: normalize plannedTasks input — fresh
+  // plannedTasks always start as `unissued` with no bound taskId.
+  // Callers can omit status/issuedTaskId; we clamp to the canonical
+  // initial state.
+  const normalizedPlans = plannedTasks
+    ? plannedTasks.map((p) => ({
+        sequence: p.sequence,
+        title: p.title,
+        description: p.description,
+        status: "unissued" as const,
+        issuedTaskId: null,
+      }))
+    : undefined;
 
   const createdBy = await resolveCreatedBy(ctx);
-  const mission = await ctx.stores.mission.createMission(title, description, documentRef, undefined, createdBy);
+  const mission = await ctx.stores.mission.createMission(title, description, documentRef, undefined, createdBy, normalizedPlans);
 
   // Uses the shared helper so the cascade path (cascade-actions/
   // propose-mission.ts) fires an identically-shaped event.
   await dispatchMissionCreated(ctx, mission);
 
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ missionId: mission.id, status: mission.status, correlationId: mission.correlationId }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ missionId: mission.id, status: mission.status, correlationId: mission.correlationId, plannedTasks: mission.plannedTasks }) }],
   };
 }
 
@@ -57,11 +72,31 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
   const status = args.status as MissionStatus | undefined;
   const description = args.description as string | undefined;
   const documentRef = args.documentRef as string | undefined;
+  const plannedTasks = args.plannedTasks as PlannedTask[] | undefined;
 
-  const updates: { status?: MissionStatus; description?: string; documentRef?: string } = {};
+  const updates: {
+    status?: MissionStatus;
+    description?: string;
+    documentRef?: string;
+    plannedTasks?: PlannedTask[];
+  } = {};
   if (status) updates.status = status;
   if (description !== undefined) updates.description = description;
   if (documentRef !== undefined) updates.documentRef = documentRef;
+  if (plannedTasks !== undefined) {
+    // task-316 / idea-144 Path A: incoming plannedTasks on update are
+    // also normalized to initial state. Callers revising an existing
+    // mission's plan are replacing the plan wholesale; advancement
+    // bookkeeping (issued/completed) belongs to the cascade handler,
+    // not direct update paths.
+    updates.plannedTasks = plannedTasks.map((p) => ({
+      sequence: p.sequence,
+      title: p.title,
+      description: p.description,
+      status: p.status ?? ("unissued" as const),
+      issuedTaskId: p.issuedTaskId ?? null,
+    }));
+  }
 
   // FSM guard: validate status transition if status is changing
   if (status) {
@@ -89,7 +124,7 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
   }
 
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ missionId: mission.id, status: mission.status, tasks: mission.tasks, ideas: mission.ideas }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ missionId: mission.id, status: mission.status, tasks: mission.tasks, ideas: mission.ideas, plannedTasks: mission.plannedTasks }) }],
   };
 }
 
@@ -194,28 +229,47 @@ async function listMissions(args: Record<string, unknown>, ctx: IPolicyContext):
   };
 }
 
+// task-316 / idea-144 Path A — plannedTasks input schema. Normalized
+// server-side: status defaults to "unissued", issuedTaskId to null.
+// Callers supplying status/issuedTaskId on create/update are ignored
+// for non-`unissued` values — the advancement cascade owns the
+// bookkeeping transitions.
+const PLANNED_TASK_INPUT_SCHEMA = z.object({
+  sequence: z.number().describe("Ordinal position in the mission's execution plan"),
+  title: z.string().describe("Short title for the spawned Task"),
+  description: z.string().describe("Directive body that becomes the spawned Task's description"),
+  status: z.enum(["unissued", "issued", "completed"]).optional().describe("Lifecycle state; defaults to 'unissued' on fresh input"),
+  issuedTaskId: z.string().nullable().optional().describe("ID of the spawned Task once issued (managed by advancement cascade; callers should leave null)"),
+});
+
 // ── Registration ────────────────────────────────────────────────────
 
 export function registerMissionPolicy(router: PolicyRouter): void {
   router.register(
     "create_mission",
-    "[Architect] Create a new mission — a committed arc of work grouping related tasks.",
+    "[Architect] Create a new mission — a committed arc of work grouping related tasks. " +
+    "task-316 / idea-144 Path A: `plannedTasks` is an optional execution plan. " +
+    "When present, the post-review advancement cascade auto-issues the next unissued plannedTask on each approved review, eliminating the nudge-per-review pattern observed in mission-38 (5 nudge threads for 5 tasks). " +
+    "Missions without plannedTasks behave exactly as before — no auto-advancement.",
     {
       title: z.string().describe("Mission title"),
       description: z.string().describe("Brief description of the mission objectives"),
       documentRef: z.string().optional().describe("GCS document path for the full brief (e.g., 'documents/missions/brief.md')"),
+      plannedTasks: z.array(PLANNED_TASK_INPUT_SCHEMA).optional().describe("Optional execution plan. Ordered task templates auto-issued by the advancement cascade on approved reviews. See thread-241/thread-242 for cascade shape + revision-loop FSMs."),
     },
     createMission,
   );
 
   router.register(
     "update_mission",
-    "[Architect] Update a mission's status, description, or document reference.",
+    "[Architect] Update a mission's status, description, document reference, or plannedTasks. " +
+    "task-316: updating `plannedTasks` replaces the existing plan wholesale; advancement bookkeeping (issued/completed) is driven by the cascade handler, not direct updates.",
     {
       missionId: z.string().describe("The mission ID to update"),
       status: z.enum(["proposed", "active", "completed", "abandoned"]).optional().describe("New status"),
       description: z.string().optional().describe("Updated description"),
       documentRef: z.string().optional().describe("Updated document reference"),
+      plannedTasks: z.array(PLANNED_TASK_INPUT_SCHEMA).optional().describe("Replace the mission's plannedTasks plan. Normalized to initial state on input."),
     },
     updateMission,
   );

@@ -28,6 +28,7 @@ import {
 } from "./list-filters.js";
 import type { Task } from "../state.js";
 import { dispatchTaskSpawned } from "./dispatch-helpers.js";
+import { findNextUnissuedPlannedTask } from "../entities/mission.js";
 
 // ── Task FSM ────────────────────────────────────────────────────────
 
@@ -428,6 +429,106 @@ async function handleTaskCompleted(event: DomainEvent, ctx: IPolicyContext): Pro
       directive: `Unblocked by completion of ${taskId}`,
       correlationId: null,
     }, { roles: ["engineer"], matchLabels: unblocked?.labels });
+  }
+
+  // task-316 / idea-144 Path A — Mission advancement cascade.
+  // When a mission-linked task completes (architect approved its
+  // review), auto-advance to the next unissued plannedTask on the
+  // parent mission. Eliminates the 5-nudge pattern observed in
+  // mission-38 (quantified cost: ~15 engineer tool-calls per mission).
+  // Cascade shape ratified on thread-241 (4-cell matrix) + thread-242
+  // (revision-loop FSMs). This path is the approved+mission-linked
+  // cell; the other 3 cells are handled by existing review-policy.ts
+  // dispatches (review_completed / revision_required).
+  //
+  // Robustness: wrapped in try/catch per tele-4 criterion #5. On any
+  // failure, emit cascade_failed + Director notification so the
+  // frictionless collaboration substrate never degrades silently.
+  try {
+    const completedTask = await ctx.stores.task.getTask(taskId);
+    if (completedTask?.correlationId) {
+      const mission = await ctx.stores.mission.getMission(completedTask.correlationId);
+      if (mission && mission.plannedTasks && mission.plannedTasks.length > 0) {
+        // Mark the just-approved plannedTask completed (keyed on the
+        // task id the architect just reviewed). No-op if this task
+        // wasn't a plannedTask-spawned Task (e.g. standalone dependsOn
+        // chain that happens to be correlationId'd to the mission).
+        await ctx.stores.mission.markPlannedTaskCompleted(mission.id, taskId);
+
+        // Find the next unissued plannedTask; if present, spawn it
+        // and transition the mission forward.
+        const refreshed = await ctx.stores.mission.getMission(mission.id);
+        const nextPlan = findNextUnissuedPlannedTask(refreshed?.plannedTasks);
+
+        if (nextPlan) {
+          // Spawn the next Task. correlationId = mission.id propagates
+          // the lineage; createdBy is attributed to hub (cascade-
+          // originated, not caller-originated).
+          const spawnLabels = completedTask.labels ?? {};
+          const spawnedId = await ctx.stores.task.submitDirective(
+            nextPlan.description,
+            mission.id, // correlationId = mission's id → Mission.tasks virtual view includes it
+            undefined, // no idempotencyKey on cascade-spawned tasks; natural-key dedupe not required (plan is append-only per v1)
+            nextPlan.title,
+            nextPlan.description,
+            undefined, // no dependsOn in v1; sequencing through plannedTasks is linear
+            spawnLabels,
+            undefined, // no cascade-backlink (this isn't thread-spawned)
+            { role: "hub", agentId: "mission-advancement-cascade" },
+          );
+
+          // Record the issuance on the plannedTask slot.
+          await ctx.stores.mission.markPlannedTaskIssued(mission.id, nextPlan.sequence, spawnedId);
+
+          // Audit the cascade for forensic lineage.
+          await ctx.stores.audit.logEntry(
+            "hub",
+            "mission_advancement_cascade",
+            `Mission ${mission.id} advanced on review approval of task ${taskId}: issued plannedTask[seq=${nextPlan.sequence}] as ${spawnedId} (title="${nextPlan.title.substring(0, 60)}")`,
+            mission.id,
+          );
+
+          // Dispatch task_issued so the engineer sees the new directive
+          // via their standard drain_pending_actions path (same as
+          // architect-direct create_task). Reuses the helper for parity.
+          const spawnedTask = await ctx.stores.task.getTask(spawnedId);
+          if (spawnedTask) {
+            await dispatchTaskSpawned(ctx, spawnedTask, spawnLabels);
+          }
+        }
+        // If no nextPlan, mission is finished by plan — caller can
+        // follow up with update_mission_status to flip active → completed
+        // if desired. Not auto-firing the status change in v1 because
+        // "all plannedTasks done" doesn't universally mean the mission
+        // is complete (out-of-plan work may remain via direct create_task).
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[TaskPolicy] Mission-advancement cascade failed for task ${taskId}: ${msg}`);
+    // cascade_failed audit + Director notification — tele-4 criterion
+    // #5 (no silent failures). Never throws; cascade-advancement is
+    // best-effort decoration on the primary review approval.
+    try {
+      await ctx.stores.audit.logEntry(
+        "hub",
+        "cascade_failed",
+        `Mission-advancement cascade failed on approval of task ${taskId}: ${msg}`,
+        taskId,
+      );
+      await ctx.stores.directorNotification.create({
+        severity: "warning",
+        source: "cascade_failed",
+        sourceRef: taskId,
+        title: `Mission-advancement cascade failed on task ${taskId}`,
+        details: `The review approval of ${taskId} completed, but the follow-on Mission-advancement cascade (task-316 / idea-144 Path A) threw an error: ${msg}. The task is still marked completed; no next plannedTask was issued. Investigate the mission entity + plannedTasks shape.`,
+      });
+    } catch (innerErr) {
+      // If audit/notification also fail, swallow — at this point the
+      // original review succeeded and we don't want to crash the
+      // internal-event runner. Re-thrown via the console.error above.
+      console.error(`[TaskPolicy] Cascade-failure bookkeeping also errored: ${innerErr}`);
+    }
   }
 }
 

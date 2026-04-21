@@ -6,8 +6,8 @@ export type { Idea, IdeaStatus, IIdeaStore } from "./idea.js";
 export { MemoryIdeaStore } from "./idea.js";
 export { GcsIdeaStore } from "./gcs/gcs-idea.js";
 
-export type { Mission, MissionStatus, IMissionStore } from "./mission.js";
-export { MemoryMissionStore } from "./mission.js";
+export type { Mission, MissionStatus, IMissionStore, PlannedTask, PlannedTaskStatus } from "./mission.js";
+export { MemoryMissionStore, findNextUnissuedPlannedTask } from "./mission.js";
 export { GcsMissionStore } from "./gcs/gcs-mission.js";
 
 export type { Turn, TurnStatus, ITurnStore } from "./turn.js";
