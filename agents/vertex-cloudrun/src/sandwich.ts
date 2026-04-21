@@ -523,6 +523,15 @@ async function attemptThreadReply(
         contextSupplement,
         {
           injectRoundBudget: true,
+          // Task 1a (task-312 / mission-38): inject the thread-level
+          // round budget on each LLM turn so the architect sees the
+          // thread's convergence pressure alongside the LLM tool-round
+          // budget. Pulled fresh from thread metadata on every sandwich
+          // invocation so mid-thread maxRounds adjustments propagate.
+          threadBudget: {
+            currentRound: typeof thread.roundCount === "number" ? thread.roundCount : 0,
+            maxRounds: typeof thread.maxRounds === "number" ? thread.maxRounds : 10,
+          },
           parallelToolCalls: true, // thread-reply allow-list tools are independent; safe to batch
           scopeOverride: buildSandwichScopeOverride(THREAD_REPLY_TOOLS),
           historyTrimEnabled: true, // Phase 2b ckpt-B — cap round-to-round history growth

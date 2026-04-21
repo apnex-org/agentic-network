@@ -69,11 +69,21 @@ Combined deliverable — the measurement primitive is a prerequisite for quantif
 
 **Architect-refined cache-invalidation rule (thread-235):** dual-trigger (30s TTL + write-action detection) is satisfied by the existing FlushAllOnWriteStrategy default. Cross-agent write outside one's own history: bounded by the 30s TTL (per INV-COG-7 per-session scope, one agent's writes can't invalidate another agent's cache — TTL is the only safety net for that case). No change to the strategy required.
 
-### Task 1a — Budget Awareness (adapter-side)
+### Task 1a — Budget Awareness (task-312, adapter-side)
 
-**Dynamic budget reflection (architect-refined):** prompt injection of `[Budget: round_count/max_rounds]` tag, recomputed per turn from the active thread's context rather than static-at-session-start.
+**Status:** ✅ shipped. Dynamic `[Thread Budget: round X/Y …]` injection on the per-turn system instruction; orthogonal to the pre-existing `[Cognitive Budget: …]` LLM-tool-round injection.
 
-**Pure adapter scope:** no Hub primitives required. Injected in the system prompt segment that the vertex-cloudrun shim composes per turn.
+**Architect refinements absorbed (thread-237):**
+1. Round counting pulled from `thread.roundCount` (committed-reply count maintained by the Hub) — numerator displayed as `currentRound + 1` to show the turn the LLM is about to take once this reply commits.
+2. Prominent placement: trailing line on the system instruction (same surface as `injectRoundBudget`'s existing cognitive-budget line) — not buried in the user prompt.
+3. `maxRounds` pulled fresh from `thread.maxRounds` at each `generateWithTools` invocation so mid-thread limit adjustments propagate without caller state change.
+
+**Implementation surface:**
+- `CognitiveOptions.threadBudget?: { currentRound, maxRounds }` in `agents/vertex-cloudrun/src/llm.ts`.
+- `formatThreadBudget()` exported helper emits the trailing line; conservative fallback to `""` on invalid / missing / non-positive inputs.
+- `sandwich.ts` call site passes `threadBudget: { currentRound: thread.roundCount, maxRounds: thread.maxRounds }` (defaults `0` / `10` when thread fields are absent).
+- `director-chat.ts` intentionally NOT wired — director↔architect chat has no thread convergence semantics; adding it there would inject a meaningless budget. Thread-budget is a thread-reply-path concern.
+- 8 new unit tests in `agents/vertex-cloudrun/test/thread-budget.test.ts` pinning the string-shape contract (turnAboutToTake = `currentRound + 1`; leading `\n\n`; conservative fallback on invalid input; stable across different limits).
 
 ### Task 4 — Chunked Reply Composition
 

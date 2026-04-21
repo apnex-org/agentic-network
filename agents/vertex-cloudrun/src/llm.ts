@@ -51,6 +51,28 @@ export interface CognitiveOptions {
    */
   injectRoundBudget?: boolean;
   /**
+   * M-Hypervisor-Adapter-Mitigations Task 1a (task-312) — dynamic
+   * thread-level budget awareness. When set, appends a `[Thread
+   * Budget: round X/Y — converge when approaching to respect the
+   * thread-level round cap]` line to the system instruction on every
+   * LLM turn. This is SEPARATE from `injectRoundBudget` (which is
+   * LLM-tool-call-rounds) — thread budget reflects the Hub-tracked
+   * per-thread convergence ceiling (`thread.maxRounds`) vs committed
+   * round count (`thread.roundCount`). Both budgets may be injected
+   * together; they measure different budgets with different timeouts.
+   * Architect direction (thread-237): pull `maxRounds` fresh from
+   * thread metadata at each generateWithTools call so mid-thread
+   * adjustments propagate without caller state change. The injection
+   * shows `currentRound + 1` as the turn-about-to-take so the LLM
+   * sees the post-commit state it should respect.
+   */
+  threadBudget?: {
+    /** Committed round count from thread metadata (pre-this-reply). */
+    currentRound: number;
+    /** Thread-level round limit from `thread.maxRounds`. */
+    maxRounds: number;
+  };
+  /**
    * When a round emits multiple tool calls, execute them in parallel
    * (via `Promise.all`) rather than serially. Safe when tools are
    * independent; can be disabled if the executor has ordering
@@ -424,6 +446,30 @@ function mapJsonSchemaType(type: string | undefined): Type {
 }
 
 /**
+ * Task 1a (task-312 / mission-38) — format the thread-budget line
+ * injected into the system instruction per LLM turn. Exported so
+ * tests can pin the exact string shape.
+ *
+ * Numerator is `currentRound + 1` — the round THIS in-flight reply
+ * WILL be when it commits (thread.roundCount advances on converged
+ * reply landing). Teaches the LLM to budget against the post-reply
+ * state it should respect, not the pre-reply count.
+ *
+ * Returns the empty string when `budget` is undefined, `maxRounds`
+ * is <= 0, or `currentRound` is negative — conservative fallback
+ * keeps the system instruction stable when caller state is unknown.
+ */
+export function formatThreadBudget(
+  budget: { currentRound: number; maxRounds: number } | undefined,
+): string {
+  if (!budget) return "";
+  if (!Number.isFinite(budget.maxRounds) || budget.maxRounds <= 0) return "";
+  if (!Number.isFinite(budget.currentRound) || budget.currentRound < 0) return "";
+  const turnAboutToTake = budget.currentRound + 1;
+  return `\n\n[Thread Budget: round ${turnAboutToTake}/${budget.maxRounds} — converge when approaching to respect the thread-level round cap]`;
+}
+
+/**
  * Run a multi-turn conversation with function calling.
  * Returns the final text response after all tool calls are resolved.
  */
@@ -480,7 +526,11 @@ export async function generateWithTools(
     const budgetNote = injectBudget
       ? `\n\n[Cognitive Budget: round ${rounds}/${MAX_TOOL_ROUNDS} — consider converging if approaching the limit]`
       : "";
-    const systemInstruction = baseSystemInstruction + budgetNote;
+    // Task 1a (task-312): thread-level budget injection. Shows the
+    // LLM the turn-about-to-take relative to the thread's round
+    // cap — orthogonal to the LLM-tool-call cognitive budget above.
+    const threadBudgetNote = formatThreadBudget(cognitive.threadBudget);
+    const systemInstruction = baseSystemInstruction + budgetNote + threadBudgetNote;
 
     // 429 retry mirrors generateText; does NOT count against MAX_TOOL_ROUNDS
     let response: Awaited<ReturnType<typeof client.models.generateContent>> | null = null;
