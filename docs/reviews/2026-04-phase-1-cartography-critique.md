@@ -328,4 +328,53 @@ What greg applies in the Pass 1 → Pass 1.1 revision:
 
 ---
 
-*End of critique. Standing by for engineer revision + Director ratification. Convergence not expected this round; thread stays open for engineer pushback on specific assignments if any.*
+*End of Pass 1 critique. Engineer revision + Director ratification expected next. Convergence not expected in the thread round; thread stays open for engineer pushback on specific assignments if any.*
+
+---
+
+## 9. Addendum — `tele-11 Cognitive Minimalism` filed 2026-04-22 AEST (post-convergence)
+
+**Status of this addendum:** Appended 2026-04-22 AEST after thread-248 converged. Director directed filing of a new tele during Phase 1 (explicit exception to review anti-goal §7 "Modifying the ratified Tele set"); tele-11 now exists in Hub + spec. This addendum updates the Pass 1 critique's assignments to reflect the new tele. Supersedes specific primary-tele assignments in §2.1 and §3.2 where the idea body maps more cleanly to tele-11 than to the originally-assigned tele.
+
+### 9.1 Cluster impact — tele-11 is populated at birth, not a reverse-gap
+
+After applying §9.2 + §9.3 below, tele-11 cluster size: **4 primary + ~8 secondary = ~12 ideas**. Viable cluster; not a reverse-gap. tele-8 Gated Recursive Integrity remains the only reverse-gap per §4.2.
+
+### 9.2 Primary-tele reassignments (move out of prior tele into tele-11)
+
+Apply during Pass 1.1 revision. These are the ideas whose body most tightly maps to tele-11's mandate ("LLM tokens as scarce economic resource; offload deterministic work to substrate"). The original tele now becomes secondary where applicable:
+
+- **idea-107** (M-Cognitive-Hypervisor umbrella) — was §2.1 tele-6 primary (post-remap). **NEW: tele-11 primary, tele-6 secondary.** Body is explicitly "cognitive hypervisor shields agent responses from LLM-infrastructure faults" with 4 phases of substrate offload — archetypal tele-11.
+- **idea-115** (dynamic tool scope) — was §3.2 tele-3 primary. **NEW: tele-11 primary, tele-3 secondary.** Body is about reducing tool-surface exposure to the LLM to cut token cost + hallucination surface.
+- **idea-119** (query-shape-engineering) — was §3.2 tele-5 primary. **NEW: tele-11 primary, tele-5 secondary.** Body is about efficient Hub query surfaces reducing LLM rounds-per-decision.
+- **idea-138** (cost-aware tier routing) — was §3.2 tele-6 primary. **NEW: tele-11 primary, tele-6 secondary.** Body is explicitly "economic optimization" + cross-tier cognition routing.
+
+### 9.3 Secondary-tele additions (tele-11 as secondary; primary unchanged)
+
+These ideas stay on their primary tele per §2.1/§3.2 but gain `audit:tele_secondary=tele-11`:
+
+- **idea-72** (on-demand context retrieval) — primary tele-5; secondary **+tele-11** (hydration-as-offload exemplar).
+- **idea-79** (JSON-schema gemini tech-debt) — primary tele-3; secondary **+tele-11** (schema drift in substrate = cognitive-layer leak).
+- **idea-108** (Hub-as-conductor) — primary tele-2 (or tele-6 if Director prefers frictionless framing); secondary **+tele-11** (Hub drives work = substrate offload).
+- **idea-109** (429 backpressure) — primary tele-7; secondary **+tele-11** (substrate handles quota so LLM doesn't waste calls).
+- **idea-110** (structural invariant enforcement) — primary tele-6; secondary **+tele-11** (substrate enforces invariants = offload).
+- **idea-113** (cascade-actions schema-drift Zod) — primary tele-3; secondary **+tele-11** (schema-drift-in-substrate prevents LLM re-learning shapes).
+- **idea-114** (state-sync drift-reconciliation) — primary tele-7; secondary **+tele-11** (state reconciliation in substrate reduces LLM burden).
+- **idea-145** (chunked reply v2) — primary tele-7; secondary **+tele-11** (efficient composition reduces LLM rounds).
+- **idea-146** (continuation v2) — primary tele-7; secondary **+tele-11** (graceful exhaustion as substrate primitive).
+
+### 9.4 Revised engineer apply-list (supersedes §7 step for `audit:tele_secondary` application)
+
+Greg's Pass 1.1 revision should now execute §7 steps 2-7 **with** the §9.2 reassignments applied (4 ideas change primary) and §9.3 additions (9 ideas gain tele-11 secondary). Net effect: ~13 ideas touched beyond the Pass 1 critique's original assignment set.
+
+### 9.5 teles.md update
+
+`docs/specs/teles.md` updated 2026-04-22 AEST in the same commit as this addendum: full § Tele #11 section inserted, Provenance table extended, Coordination artifacts note added, Hub-state parity counts revised. See commit message for scope.
+
+### 9.6 Review anti-goal §7 exception — provenance note for Phase 4 retrospective
+
+When the 2026-04 review retrospective triggers (first ratified mission ships), document this exception: Director direction to file tele-11 mid-review was made after the architect diagnostic showed tele-6/3/2/5 covered cognitive offload only compositionally, no single tele carried "LLM tokens as scarce economic resource" as first-class mandate. Rather than wait for post-review (delaying the naming + risking the principle staying implicit through another review cycle), the exception was granted. Methodology retrospective should evaluate whether this was the right call or whether the methodology should explicitly allow "tele addition via Director exception" as a formal protocol versus an ad-hoc variance.
+
+---
+
+*End of addendum. Standing by for engineer revision + Director ratification. tele-11 implications should be folded into Pass 1.1 along with the original critique scope.*
