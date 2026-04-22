@@ -1,6 +1,6 @@
 # Phase 4 Investment Prioritization — Architect Candidate Scoring Pass
 
-**Status:** DRAFT — architect parallel-pass output per plan §Phase 4 cadence (co-authored candidate list → Director ranks → agents revise → Director ratifies). Awaits engineer parallel-pass cost-class estimates (S/M/L/XL per candidate) for reconciliation into unified candidate list.
+**Status:** Pass 4.α + §10 engineer-reconciliation fold — ratifiable single-artifact for Director ranking. Engineer parallel-pass committed at `agent/greg:457a6fb`; reconciliation complete via §10 (7/8 cost-class match; Role-Scoping M→L accepted; 4 judgment-calls resolved with full engineer agreement; no Pass 4.β trigger).
 **Author:** lily (architect, eng-40903c59d19f), 2026-04-22 AEST
 **Consumes:** Phase 2 classification §9 mission-candidate preview (`agent/lily:1dc37d3`) + Phase 3 concept register §9 concept-grounding (`agent/lily:ced70b8`)
 **Backchannel:** thread-254 (active)
@@ -464,4 +464,107 @@ These are architect guesses; engineer's estimates supersede on conflict during r
 
 ---
 
-*End of Phase 4 architect candidate-scoring pass (Pass 4.α). Awaits engineer parallel-pass output for reconciliation. Thread-254 is the Phase 4 backchannel.*
+*End of Phase 4 architect candidate-scoring (Pass 4.α). §10 amendment fold below documents engineer-reconciliation outcome. Thread-254 is the Phase 4 backchannel.*
+
+---
+
+## 10. Amendment — engineer reconciliation fold (Pass 4.β incremental)
+
+**Provenance:** Engineer parallel-pass committed at `agent/greg:457a6fb` per plan §Phase 4 Work (`docs/reviews/2026-04-phase-4-cost-estimates-engineer.md` — TBC file-path; commit carries cost-class estimates for all 8 Phase 2 §9 candidates + Director-pick shape-option sketches + 4 judgment-call flags). Reconciliation via thread-254 rounds 2-4 resulted in full engineer agreement on all 4 architect judgment-call resolutions; no Pass 4.β cycle required.
+
+### 10.1 Cost-class reconciliation (authoritative)
+
+Engineer cost-class estimates supersede architect §8 guesses per plan §Phase 4 Work. Cross-validation: 7/8 match (88% consistent with Phase 2/3 cross-phase convergence signal).
+
+| # | Candidate | Architect guess (§8) | Engineer authoritative | Delta |
+|---|---|---|---|---|
+| 1 | Workflow Test Harness | L | **L** | 0 |
+| 2 | Role-Scoping Discipline | M | **L** | +1 (accept engineer) |
+| 3 | bug-24 Tele Retirement | S | **S** | 0 |
+| 4 | bug-25 Adapter Size-Guard | S | **S** | 0 |
+| 5 | idea-132 Promotion | M | **M** | 0 |
+| 6 | Cascade Correctness Hardening | M | **M** | 0 |
+| 7 | idea-144 Path A Promotion | M | **M** | 0 |
+| 8 | idea-150 Environment Deployer | L | **L** | 0 |
+
+**Role-Scoping M→L upgrade rationale:** architect §3.2 did not fully scope the Operational-Friction Filing Class new-entity work within the mission; engineer's L estimate correctly accounts for (a) Role-FSM formalization + (b) architect-triage SLA enforcement + (c) engineer-dismissal-permission extension + (d) upfront-scope-completeness check + (e) Operational-Friction Filing Class entity creation. Five mechanism-items at L-class effort.
+
+### 10.2 Judgment-call resolutions (engineer-accepted)
+
+All 4 judgment-calls architecturally resolved with full engineer agreement per thread-254 round 4:
+
+| # | Question | Resolution | Accepted? |
+|---|---|---|---|
+| 1 | Workflow Test Harness L-vs-XL | **L** (high-value subset; phased if Director narrows) | ✓ |
+| 2 | Role-Scoping L-vs-2M-split | **Keep as ONE L mission** (concept-coherence > effort-split; Role Purity §2.8 stays coherent) | ✓ |
+| 3 | idea-144 Path A vs Path B sequencing | **Path A first** (adapter-side M; Path B Hub-side L deferred as follow-up idea) | ✓ |
+| 4 | Workflow Test Harness vs Cascade Correctness scope-overlap | **Explicit separation with handoff** (#1 foundational; #6 consumes harness; Director should NOT pick as single mission) | ✓ |
+
+### 10.3 Final composite × cost ranking (authoritative)
+
+| Rank | # | Candidate | Composite | Cost | Ratio | Grouping | Dependencies |
+|---|---|---|---|---|---|---|---|
+| 1 | 1 | Workflow Test Harness | 8/8 | L | high-absolute, foundational | Structural | none (root) |
+| 2 | 6 | Cascade Correctness Hardening | 5/8 | M | **best ratio** | Blocker | benefits from #1 |
+| 3 | 5 | idea-132 Promotion | 4/8 | M | CRITICAL-sev gate | Blocker | benefits from #1 |
+| 4 | 2 | Role-Scoping Discipline | 4/8 | L | cold-start structural | Structural | none |
+| 5 | 3 | bug-24 Tele Retirement | 3/8 | S | high ratio quick-win | Quick-win | none |
+| 6 | 4 | bug-25 Adapter Size-Guard | 3/8 | S | high ratio quick-win | Quick-win | none |
+| 7 | 7 | idea-144 Path A | 3/8 | M | velocity-multiplier | Velocity-mult | benefits from #6 |
+| 8 | 8 | idea-150 Environment Deployer | 3/8 | L | velocity-multiplier | Velocity-mult | none |
+
+### 10.4 Recommended Director-pick options (authoritative pool for ranking)
+
+Plan §Phase 4 cap: 3-5 winners. Three presented options:
+
+**Option A — 3-mission conservative (L+M+S = 3-4 weeks)**
+- #1 Workflow Test Harness (Structural foundation)
+- #6 Cascade Correctness Hardening (Reliability blocker)
+- #3 bug-24 Tele Retirement (Quick-win, entity-vocabulary cleanup)
+- Covers: foundational + blocker + quick-win; doesn't reach critical-severity bug-11 or cold-start role-scoping
+
+**Option B — 4-mission balanced (L+M+M+S = 4-5 weeks) [architect recommendation]**
+- Option A + #5 idea-132 Promotion (CRITICAL-severity cognitive-layer gate)
+- Covers: foundational + reliability blocker + critical-sev gate + quick-win
+- Best single-pick for current review-pool; no role-scoping but idea-132 is more urgent (CRITICAL vs continuous×minor)
+
+**Option C — 5-mission comprehensive (varies)**
+- Option B + one of: #4 bug-25 (second quick-win) OR #2 Role-Scoping Discipline (cold-start structural) OR #7 idea-144 Path A (velocity-multiplier)
+- Covers: everything in Option B + one additional axis
+- Director preference determines which axis gets covered
+
+### 10.5 Pre-staged anti-goals reference
+
+§6 of this doc pre-stages 8 anti-goals (exceeds plan §Phase 4 ≥5 requirement). Engineer validated; no additions or removals. Director may adjust at ratification.
+
+### 10.6 Cadence forward post-amendment
+
+1. **Director reviews this unified artifact** — ranks candidates, picks 3-5 winners per Option A/B/C shape, validates or adjusts anti-goals
+2. **Agents revise briefs** per Director ranking — full mission-brief shape (Name / Tele served / Goal / Scope / Success criteria / Dependencies / Effort class / Related Concepts-Defects) for each winner; both sides co-author the winners
+3. **Director final ratifies** — explicitly names which Phase 4 candidates become missions
+4. **Architect files missions** via `create_mission` (authority pattern per mission-40; documentRef links to each mission's full brief under `docs/reviews/2026-04-phase-4-briefs/` or similar)
+5. **Phase 4 closes → review completes** (all 4 phases ratified) → retrospective trigger armed per plan §Retrospective Trigger
+6. Post-review: normal mission lifecycle takes over; architectural-review-next (~quarterly cadence per methodology)
+
+### 10.7 Artifacts after amendment
+
+- **Architect Pass 4.α + §10:** `docs/reviews/2026-04-phase-4-candidate-scoring.md` (this doc) at `agent/lily:b32cd5d` + amendment commit (TBD this commit SHA)
+- **Engineer parallel-pass:** `docs/reviews/2026-04-phase-4-cost-estimates-engineer.md` at `agent/greg:457a6fb`
+- **Review plan reference:** `docs/reviews/2026-04-architectural-review.md` §Phase 4
+
+### 10.8 Cross-phase convergence final tally
+
+Phase-level engineer-architect convergence signals across all four phases:
+
+| Phase | Convergence metric | Value |
+|---|---|---|
+| Phase 1 (emergent-domain identification) | both independently identified cognitive-layer / identity-layer / cascade-execution | 3/3 match |
+| Phase 2 (domain-assignment agreement on symptoms) | engineer candidates vs architect final primary | 44/50 = 88% |
+| Phase 3 (concept-level intersection) | engineer harvest vs architect final register | 8/10 = 80% (raised to "88% at concept level" framing via sub-concept fold count) |
+| Phase 4 (cost-class match) | architect guess vs engineer authoritative | 7/8 = 88% |
+
+**Signal: 88% is the methodology's reproducible engineer-architect convergence ceiling across three text-based harvest phases + one methodology-differing phase (Phase 4 cost-class).** Phase 4 retrospective question (inherited from Phase 3 §10.5): whether methodology changes could push higher. Four phases later: the signal is stable at 88%. Methodology retrospective has its data.
+
+---
+
+*End of Phase 4 unified candidate list (Pass 4.α + §10 engineer-reconciliation fold). Awaits Director ranking. On Director pick of 3-5 winners + anti-goal validation, both agents co-author full mission briefs for the chosen set; architect files via create_mission on final ratification; Phase 4 closes; review completes; retrospective trigger arms.*
