@@ -192,3 +192,200 @@ describe("dispatcher.getClientInfo", () => {
     expect(dispatcher.getClientInfo()).toEqual({ name: "unknown", version: "0.0.0" });
   });
 });
+
+// ── agentReady gating — pins the bug-candidate-adapter-startup-race fix ──
+//
+// Contract: the dispatcher must NOT block MCP `initialize` on the Hub
+// handshake (Claude Code's initialize timeout is tighter than the 600–
+// 1200ms handshake — the deterministic startup-failure mode that
+// motivated this gate). Tool-dispatch handlers (listTools, callTool)
+// MUST wait for the handshake so a race-window call doesn't throw
+// `session state=connecting`. See docs/reviews/bug-candidate-adapter-
+// startup-race.md.
+
+describe("dispatcher.agentReady gating", () => {
+  function makeDeferred(): {
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (err: unknown) => void;
+  } {
+    let resolve!: () => void;
+    let reject!: (err: unknown) => void;
+    const promise = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    promise.catch(() => { /* prevent unhandled-rejection in negative tests */ });
+    return { promise, resolve, reject };
+  }
+
+  it("ListTools waits for agentReady before invoking agent.listTools()", async () => {
+    const deferred = makeDeferred();
+    const agent = fakeAgent();
+    // Spy on the underlying transport call (agent.listTools internally
+    // calls transport.listToolsRaw). Reach into the same fake the agent
+    // factory wires so we can observe call-time precisely.
+    const listToolsRaw = vi.fn().mockResolvedValue([]);
+    (agent.getTransport as any).mockReturnValue({ listToolsRaw });
+    // Override agent.listTools to call the spy directly (since the real
+    // McpAgentClient.listTools wraps cognitive middleware we don't
+    // exercise here).
+    (agent as any).listTools = vi.fn(async () => {
+      const tools = await listToolsRaw();
+      return tools;
+    });
+
+    const dispatcher = createDispatcher({
+      agent,
+      proxyVersion: "test-1.0.0",
+      agentReady: deferred.promise,
+    });
+
+    // Drive a request through the server's handler map by accessing the
+    // registered handler directly. Server stores handlers internally; we
+    // cast to any to reach the protected `_requestHandlers` map.
+    const handlers = (dispatcher.server as any)._requestHandlers as Map<
+      string,
+      (req: unknown) => Promise<unknown>
+    >;
+    const listToolsHandler = handlers.get("tools/list");
+    expect(listToolsHandler).toBeTruthy();
+
+    const requestPromise = listToolsHandler!({
+      method: "tools/list",
+      params: {},
+    });
+
+    // Yield the microtask queue. agent.listTools must NOT have been
+    // called yet — handler is parked on agentReady.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect((agent as any).listTools).not.toHaveBeenCalled();
+
+    // Resolve the gate; handler should now invoke listTools.
+    deferred.resolve();
+    const result = await requestPromise;
+    expect((agent as any).listTools).toHaveBeenCalledOnce();
+    expect(result).toEqual({ tools: [] });
+  });
+
+  it("CallTool waits for agentReady before invoking agent.call()", async () => {
+    const deferred = makeDeferred();
+    const agent = fakeAgent();
+
+    const dispatcher = createDispatcher({
+      agent,
+      proxyVersion: "test-1.0.0",
+      agentReady: deferred.promise,
+    });
+
+    const handlers = (dispatcher.server as any)._requestHandlers as Map<
+      string,
+      (req: unknown) => Promise<unknown>
+    >;
+    const callToolHandler = handlers.get("tools/call");
+    expect(callToolHandler).toBeTruthy();
+
+    const requestPromise = callToolHandler!({
+      method: "tools/call",
+      params: { name: "list_tele", arguments: {} },
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(agent.call).not.toHaveBeenCalled();
+
+    deferred.resolve();
+    await requestPromise;
+    expect(agent.call).toHaveBeenCalledOnce();
+    expect(agent.call).toHaveBeenCalledWith("list_tele", {});
+  });
+
+  it("Initialize is NOT gated on agentReady — MUST ack while handshake in flight", async () => {
+    const deferred = makeDeferred(); // never resolved
+    const agent = fakeAgent();
+
+    const dispatcher = createDispatcher({
+      agent,
+      proxyVersion: "test-1.0.0",
+      agentReady: deferred.promise,
+    });
+
+    const handlers = (dispatcher.server as any)._requestHandlers as Map<
+      string,
+      (req: unknown) => Promise<unknown>
+    >;
+    const initHandler = handlers.get("initialize");
+    expect(initHandler).toBeTruthy();
+
+    // Initialize must resolve immediately, even with agentReady pending.
+    const result = (await initHandler!({
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "test-host", version: "9.9.9" },
+      },
+    })) as { protocolVersion: string; serverInfo: { name: string; version: string } };
+
+    expect(result.protocolVersion).toBe("2024-11-05");
+    expect(result.serverInfo).toEqual({ name: "proxy", version: "test-1.0.0" });
+    // clientInfo capture side-effect — verifies handler ran fully.
+    expect(dispatcher.getClientInfo()).toEqual({ name: "test-host", version: "9.9.9" });
+  });
+
+  it("CallTool surfaces agentReady rejection as MCP error (not a hang)", async () => {
+    const deferred = makeDeferred();
+    const agent = fakeAgent();
+
+    const dispatcher = createDispatcher({
+      agent,
+      proxyVersion: "test-1.0.0",
+      agentReady: deferred.promise,
+    });
+
+    const handlers = (dispatcher.server as any)._requestHandlers as Map<
+      string,
+      (req: unknown) => Promise<unknown>
+    >;
+    const callToolHandler = handlers.get("tools/call")!;
+
+    const requestPromise = callToolHandler({
+      method: "tools/call",
+      params: { name: "list_tele", arguments: {} },
+    });
+
+    deferred.reject(new Error("Hub handshake failed: 401 Unauthorized"));
+
+    const result = (await requestPromise) as {
+      content: Array<{ text: string }>;
+      isError?: boolean;
+    };
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Hub handshake failed");
+    // agent.call must never have been invoked when the gate rejected.
+    expect(agent.call).not.toHaveBeenCalled();
+  });
+
+  it("Omitted agentReady = no gating (preserves legacy / test-rig wiring)", async () => {
+    const agent = fakeAgent();
+    const dispatcher = createDispatcher({
+      agent,
+      proxyVersion: "test-1.0.0",
+      // agentReady deliberately omitted
+    });
+
+    const handlers = (dispatcher.server as any)._requestHandlers as Map<
+      string,
+      (req: unknown) => Promise<unknown>
+    >;
+    const callToolHandler = handlers.get("tools/call")!;
+
+    const result = await callToolHandler({
+      method: "tools/call",
+      params: { name: "list_tele", arguments: {} },
+    });
+    expect(agent.call).toHaveBeenCalledOnce();
+    expect(result).toBeDefined();
+  });
+});

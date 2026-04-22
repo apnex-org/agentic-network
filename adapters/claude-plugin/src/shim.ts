@@ -210,6 +210,25 @@ async function main(): Promise<void> {
     },
   );
 
+  // Hub handshake runs in parallel with stdio open (see below). The
+  // dispatcher gates its tool-dispatch handlers on `agentReady` so a
+  // listTools / callTool arriving in the race window waits rather than
+  // failing with `session state=connecting`. The MCP `initialize` handler
+  // is intentionally NOT gated — Claude Code's initialize timeout is
+  // tighter than the 600–1200ms Hub handshake, and a missed initialize
+  // ACK is a deterministic startup failure (the symptom that motivated
+  // this ordering — see docs/reviews/bug-candidate-adapter-startup-race.md).
+  let resolveAgentReady!: () => void;
+  let rejectAgentReady!: (err: unknown) => void;
+  const agentReady = new Promise<void>((resolve, reject) => {
+    resolveAgentReady = resolve;
+    rejectAgentReady = reject;
+  });
+  // Swallow unhandled rejection — main()'s catch handles fatal exit; the
+  // promise reject path exists so any awaiting tool-dispatch handler
+  // surfaces a real error instead of hanging.
+  agentReady.catch(() => { /* observed by handlers; main() rethrows */ });
+
   const dispatcher = createDispatcher({
     agent,
     proxyVersion: PROXY_VERSION,
@@ -218,20 +237,31 @@ async function main(): Promise<void> {
       logPath: LOG_FILE,
       mirror: (block) => process.stderr.write(block),
     },
+    agentReady,
   });
   dispatcherRef = dispatcher;
 
   agent.setCallbacks(dispatcher.callbacks);
 
-  await agent.start();
-  log("Hub connection established");
-
+  // Open stdio FIRST so the host's MCP `initialize` request is ACKed
+  // within its timeout, then run the Hub handshake. Tool-dispatch
+  // handlers wait on `agentReady` if they fire before the handshake
+  // resolves.
   const transport = new StdioServerTransport();
   transport.onclose = () => {
     shutdown();
   };
   await dispatcher.server.connect(transport);
-  log("MCP stdio server ready — Claude Code can now call Hub tools");
+  log("MCP stdio server ready — Claude Code can call initialize/listTools/callTool");
+
+  try {
+    await agent.start();
+    resolveAgentReady();
+    log("Hub connection established");
+  } catch (err) {
+    rejectAgentReady(err);
+    throw err;
+  }
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {

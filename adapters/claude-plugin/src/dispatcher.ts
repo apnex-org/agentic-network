@@ -43,6 +43,16 @@ export interface DispatcherOptions {
   proxyVersion: string;
   log?: (msg: string) => void;
   notification?: NotificationOptions;
+  /**
+   * Resolves when the underlying McpAgentClient has finished its Hub
+   * handshake and is safe to receive `listTools()` / `call()`. The MCP
+   * `initialize` handler is intentionally NOT gated by this — the host
+   * (e.g. Claude Code) must be able to ACK its initialize within its
+   * own timeout while the Hub handshake runs in parallel. Tool-dispatch
+   * handlers await this so a race-window tool call waits rather than
+   * fails. Omit when no gating is needed (existing tests).
+   */
+  agentReady?: Promise<void>;
 }
 
 export interface Dispatcher {
@@ -82,7 +92,7 @@ export function injectQueueItemId(
 
 export function createDispatcher(opts: DispatcherOptions): Dispatcher {
   const log = opts.log ?? (() => {});
-  const { agent, proxyVersion } = opts;
+  const { agent, proxyVersion, agentReady } = opts;
 
   // ADR-017: local map from `${dispatchType}:${entityRef}` → queueItemId.
   // Populated by onPendingActionItem on every drain AND by Phase 1.1's
@@ -186,6 +196,9 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
   });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
+    // Wait for Hub handshake to finish before fetching the tool catalog.
+    // No-op when agentReady was omitted (legacy / test wiring).
+    if (agentReady) await agentReady;
     // Route through agent.listTools() so any configured cognitive
     // pipeline's onListTools hooks (e.g. ToolDescriptionEnricher)
     // observe + modify the surface presented to Claude Code.
@@ -202,6 +215,10 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
       pendingActionMap,
     );
     try {
+      // Wait for Hub handshake before dispatching. Without this gate, a
+      // tool call arriving in the post-initialize / pre-handshake window
+      // would throw `McpAgentClient.call: session state=connecting`.
+      if (agentReady) await agentReady;
       const result = await agent.call(name, outgoingArgs);
       return {
         content: [
