@@ -1,0 +1,26 @@
+{
+  "id": "idea-156",
+  "text": "**Layer-certification registry — formal architectural-layer enumeration with per-layer pass/fail gate**\n\n## Problem\n\nPer tele-8 (Gated Recursive Integrity) Mandate: \"If it cannot be proven under chaos in a sandboxed environment, it does not exist in production.\" The Sovereign Onion principle requires each layer be bit-perfect and physically sealed before the next layer ascends. Today the architecture's layers are documented prose-only (e.g., L0 Hub protocol, L1 entity-registry, L2 policy-router, L3 threads+cascade, L4 cognitive-layer, L5 adapter) without:\n- a structured registry naming each layer,\n- a per-layer pass/fail certification gate,\n- a known-good commit pinned at the certification moment,\n- a discoverable traversal that lets reviewers verify \"Layer N+1 cannot deploy unless Layer N is green.\"\n\nCloses the **Foundation-of-Sand fault** (tele-8): \"high abstractions built on unverified assumptions\" — and the **Surface Patching fault**: \"symptoms addressed without audit of the failing layer.\"\n\n## Proposed scope (sketch)\n\nA `layer-certification-registry` artifact (Hub entity OR canonical document) carrying:\n\n```\nlayers: [\n  { id: \"L0\", name: \"Hub MCP Protocol\",     certifiedAt: <ts>, certifiedAtCommit: <sha>, gateStatus: \"green\" | \"yellow\" | \"red\", nextGateCriterion: <text> },\n  { id: \"L1\", name: \"Entity Registry SSOT\", certifiedAt: ..., gateStatus: ..., dependsOn: [\"L0\"] },\n  { id: \"L2\", name: \"Policy Router\",        certifiedAt: ..., dependsOn: [\"L1\"] },\n  { id: \"L3\", name: \"Threads 2.0 + Cascade\",dependsOn: [\"L2\"] },\n  { id: \"L4\", name: \"Cognitive Layer\",      dependsOn: [\"L3\"] },\n  { id: \"L5\", name: \"Adapter (engineer)\",   dependsOn: [\"L4\"] },\n]\n```\n\nEach layer's gate criteria explicit and machine-verifiable.\n\n## Cross-references\n\n- **tele-8** (Gated Recursive Integrity) — primary alignment\n- **2026-04 architectural review Phase 1 cartography** — tele-8 reverse-gap closure\n- **Architect critique** (`docs/reviews/2026-04-phase-1-cartography-critique.md` §4.2.1) — author of this proposal: lily (architect, eng-40903c59d19f), filed by greg (engineer) during Pass 1.1 revision\n- **bug-15** (INV-TH17 turn-pinning observability gap) — related to per-layer instrumentation\n- **idea-128** (gitops multi-engineer concurrent work) — adjacent (cross-engineer coordination, different layer)\n\n## Status\n\nReverse-gap closure seed — needs architect-led design + brief before any execution.",
+  "createdBy": {
+    "role": "system",
+    "agentId": "hub-system"
+  },
+  "status": "open",
+  "missionId": null,
+  "sourceThreadId": "thread-248",
+  "sourceActionId": null,
+  "sourceThreadSummary": null,
+  "tags": [
+    "tele-8",
+    "gated-recursive-integrity",
+    "layer-certification",
+    "architecture",
+    "seed-idea",
+    "reverse-gap-closure",
+    "from-thread-248",
+    "architect-authored-by:lily",
+    "audit:tele_primary=tele-8"
+  ],
+  "createdAt": "2026-04-22T09:18:08.484Z",
+  "updatedAt": "2026-04-22T09:18:08.484Z"
+}

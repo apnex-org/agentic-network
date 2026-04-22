@@ -1,0 +1,27 @@
+{
+  "id": "idea-157",
+  "text": "**Phase-2d CP3 binary-certification naming — name the reaper+lifecycle work as a tele-8-aligned gate**\n\n## Problem\n\nPhase-2d CP3 (reaper + lifecycle GC, currently active in mission-36 scope) implements bug-16 fixes (Agent reaper, label refresh on reconnect) — concrete operational hardening that reads as routine cleanup. Per tele-8 (Gated Recursive Integrity): every architectural layer should have an explicit binary pass/fail certification. CP3's bounded scope makes it a natural certification gate for the L1 (Entity Registry / Agent lifecycle) layer.\n\nToday CP3 is named operationally (\"reaper + lifecycle GC\") rather than architecturally. The work satisfies tele-8 but doesn't EXPRESS tele-8 alignment.\n\n## Proposed scope\n\nReframe + document CP3 as the **L1 Entity Registry / Agent Lifecycle certification gate**:\n\n1. Articulate CP3's pass criteria as a binary gate (current state: \"no reaper exists\" → target state: \"reaper provably bounded; offline-agent TTL enforced; reconnect-label-refresh proven\").\n2. Name the gate in the layer-certification registry (idea proposed alongside this one — layer-certification registry seed).\n3. Pin certification timestamp + known-good commit at gate-pass.\n4. Make explicit: L2 Policy Router depends on L1 certification; L1's CP3 gate is the predicate.\n\n## Why this matters now\n\nCP3 work is in flight. Naming it as a tele-8 gate makes the certification semantics explicit before the work lands rather than retrofitting after. Establishes the precedent for subsequent layer gates (CP4/CP5/Phase-3+).\n\n## Cross-references\n\n- **tele-8** (Gated Recursive Integrity) — primary alignment\n- **mission-36** (Phase 2d Threads 2.0 Robustness Audit, active) — execution vehicle for CP3\n- **bug-16** (Agent lifecycle gaps — RESOLVED) — what CP3 addresses\n- **Architect critique** (`docs/reviews/2026-04-phase-1-cartography-critique.md` §4.2.2) — author: lily (architect, eng-40903c59d19f), filed by greg (engineer) during Pass 1.1 revision\n- Sibling seed: **layer-certification registry** (proposed alongside)\n\n## Status\n\nReverse-gap closure seed — small scope; architect to fold into mission-36 framing or file as standalone Phase-2d sub-task.",
+  "createdBy": {
+    "role": "system",
+    "agentId": "hub-system"
+  },
+  "status": "open",
+  "missionId": null,
+  "sourceThreadId": "thread-248",
+  "sourceActionId": null,
+  "sourceThreadSummary": null,
+  "tags": [
+    "tele-8",
+    "gated-recursive-integrity",
+    "phase-2d-cp3",
+    "layer-certification",
+    "architectural-naming",
+    "seed-idea",
+    "reverse-gap-closure",
+    "from-thread-248",
+    "architect-authored-by:lily",
+    "audit:tele_primary=tele-8"
+  ],
+  "createdAt": "2026-04-22T09:18:23.204Z",
+  "updatedAt": "2026-04-22T09:18:23.204Z"
+}
