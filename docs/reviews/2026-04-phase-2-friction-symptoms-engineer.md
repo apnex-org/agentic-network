@@ -1,6 +1,10 @@
-# Phase 2 Friction Symptoms — Engineer Collection (Pass 2.A + 2.C: Bugs + Work-Traces)
+# Phase 2 Friction Symptoms — Engineer Collection (Pass 2.A + 2.B + 2.C COMPLETE)
 
-**Status:** Pass 2.C incremental — covers Pass A (bug walk, 28 symptoms) and Pass C (work-trace harvest, 10 symptoms). Pass B (thread content scan) trailing. Architect 11-domain final taxonomy ratified on thread-251 round 6 (lily independent prep converged on same 3 emergent domains as engineer Pass A — cognitive-layer / identity-layer / cascade-execution — formalized).
+**Status:** Pass 2.B (thread content scan) committed — completing the Pass A + B + C symptom-collection trilogy. **All three sources covered; engineer-side Phase 2 input artifact is now consumption-ready for architect's full classification + ranking pass.** Architect's first commit lands post this Pass B per agreed cadence (thread-251 round 6).
+
+**Cumulative symptom count: 50 (28 bugs + 12 threads + 10 traces)**.
+
+**Cross-source distribution finding** (architect-flagged on thread-251 round 8, ratified): bug-walk alone would have missed ~40% of friction surface. Coordination has 0 bugs but 4 trace symptoms; deployment has 0 bugs but 2 trace symptoms; role-scoping has 0 bugs but 3 trace symptoms. **Plan's choice to require all three sources is structurally necessary, not just thorough.**
 
 **Author:** greg (engineer, eng-0d2c690e7dd5), 2026-04-22 AEST.
 **Architect consumer:** lily (eng-40903c59d19f), classification + ranking pass.
@@ -193,13 +197,43 @@ Not a direct bug entity, but worth flagging at the symptom level: mission-40 shi
 
 ---
 
-## 7. Companion data location
+## 7. Pass B — Thread-content symptoms (12 symptoms)
 
-Authoritative TSVs:
-- `docs/reviews/2026-04-phase-2-data/bugs-symptoms.tsv` (29 rows including header)
-- `docs/reviews/2026-04-phase-2-data/traces-symptoms.tsv` (11 rows including header)
+12 symptoms extracted from priority threads (top friction-density per word-count) + architect-flagged today's substantive threads. Avoids duplication with bug-walk + work-trace symptoms; only NEW friction patterns captured.
 
-Pass B output lands at `docs/reviews/2026-04-phase-2-data/threads-symptoms.tsv` next commit. Combined view (unified ID space across A+B+C) assembled in a final Pass 2.D commit if needed.
+| Symptom | Source thread | Domain | Notes |
+|---|---|---|---|
+| sym-B-001 | thread-55 (Friction Analysis) | tool-surface | Tool Discovery Lag — plugin restart needed for new tools |
+| sym-B-002 | thread-107 (DAG-mission hardening) | cascade-execution | Mission-Task Linkage gap — task-196 missing from mission.tasks[] |
+| sym-B-003 | thread-76 (Multi-Agent Routing) | tool-surface | "Typo Black Hole" — assignedEngineerId typo silently strands tasks |
+| sym-B-004 | thread-33 (Strategic Review) | debugging-loop | No automated workflow tests — 28 invariants "Tested By: NONE" |
+| sym-B-005 | thread-33 | cascade-execution | Counter increment + state mutation race-condition risk |
+| sym-B-006 | thread-79 (Agent Entity) | identity-layer | Volatile attributes (llmModel, version) drift Hub from reality (RESOLVED via Mission-18) |
+| sym-B-007 | thread-71 (Workflow Deadlock) | cascade-execution | "Deferred FSM logic" deadlock class — task-116/117 stuck pair (Mission-9 partial fix; pattern can recur) |
+| sym-B-008 | thread-59 (Task Duplication Crisis) | cognitive-layer | 12 duplicates in single session via Architect Amnesia + voluntary idempotency-key compliance |
+| sym-B-009 | thread-107 | identity-layer | Agent orphan lifecycle from label mutation (INV-AG1 second-order effect; bug-16 reaper partial) |
+| sym-B-010 | thread-74 (Cog Architecture Review) | entity-vocabulary | "Dormant Missions" — proposed missions leak tasks to global queue; needs FSM substate |
+| sym-B-011 | thread-243 (Tele audit) | entity-vocabulary | bug-24 retirement-primitive blocker observed live during tele audit roll-out |
+| sym-B-012 | thread-244 (Tele filing) | delivery | bug-25 truncation observed live in thread-244 multi-tele drafts; live evidence of the class |
+
+**Cross-source coverage check:**
+- Pass B contributes to: tool-surface (+2), cascade-execution (+3), debugging-loop (+1), identity-layer (+2), cognitive-layer (+1), entity-vocabulary (+2), delivery (+1)
+- Pass B does NOT contribute to: coordination (already saturated by traces), deployment (no thread-friction in 14d window beyond what trace-walk captured), role-scoping (no thread evidence beyond trace-walk), observability (still empty across all 3 passes — possible plan-domain mis-naming?)
+
+**observability domain still empty across A+B+C** — flagged for architect: either (a) no observability friction exists (unlikely given bug-15 INV-TH17 instrumentation gap RESOLVED + idea-155 audit-typed-payload OPEN), (b) observability symptoms get classified into cognitive-layer / cascade-execution domains instead, or (c) observability isn't a real domain in this taxonomy and should fold into another. Defer to architect classification call.
+
+**Lily's predicted joint-attribution straddle (cognitive-layer × coordination on M-Ideas-Audit threads):** Pass B sample of thread-140-157 was deferred (already covered via bug-11 + sym-C-001 nudge-cycle). If straddle classification needed, sym-A-011 (bug-11) and sym-C-001 are the joint-attribution candidates.
+
+---
+
+## 8. Companion data location
+
+Authoritative TSVs (3 files, 51 rows total including 3 headers):
+- `docs/reviews/2026-04-phase-2-data/bugs-symptoms.tsv` (29 rows)
+- `docs/reviews/2026-04-phase-2-data/traces-symptoms.tsv` (11 rows)
+- `docs/reviews/2026-04-phase-2-data/threads-symptoms.tsv` (13 rows)
+
+Combined view available via `cat *.tsv | grep -v '^symptom_id'` (sym-A-001..028 + sym-B-001..012 + sym-C-001..010 = 50 unique symptoms).
 
 ---
 
