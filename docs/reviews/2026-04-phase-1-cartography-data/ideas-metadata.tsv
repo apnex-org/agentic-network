@@ -15,7 +15,7 @@ idea-112	open	doctrine|autonomous-mission|engineer-protocol|governance|process|t
 idea-113	open	cascade-actions|schema-drift|zod|documentation|friction-reduction|tele-3|retrospective-m-ideas-audit|audit:tele_primary=tele-3|audit:tele_secondary=tele-11			engineer	2026-04-19
 idea-114	open	state-sync|drift-reconciliation|thread-versioning|cognitive-hypervisor-phase-3|reliability|tele-3|retrospective-m-ideas-audit|audit:tele_primary=tele-7|audit:tele_secondary=tele-11			engineer	2026-04-19
 idea-115	open	dynamic-tool-scope|cognitive-layer|architecture|m-cognitive-hypervisor|strategic|needs-triage|audit:tele_primary=tele-11|audit:tele_secondary=tele-3			director	2026-04-19
-idea-116	open	tele-10-proposal|cognitive-layer|architecture|m-cognitive-hypervisor|strategic|needs-triage|audit:tele_primary=tele-11|audit:tele_secondary=tele-10|audit:eng_promoted_to_tele_11=2026-04-22-pass-1.2			engineer	2026-04-20
+idea-116	open	tele-10-proposal|cognitive-layer|architecture|m-cognitive-hypervisor|strategic|needs-triage|audit:tele_primary=tele-12|audit:tele_secondary=tele-11|audit:eng_promoted_to_tele_11=2026-04-22-pass-1.2|audit:reassigned_to_tele_12=2026-04-22-pass-1.3-mandatory			engineer	2026-04-20
 idea-117	triaged	retry-death-spiral|hub|queue|reliability|m-cognitive-hypervisor|needs-triage|cost-risk|audit:tele_primary=tele-7			engineer	2026-04-20
 idea-118	open	circuit-breaker|hub|queue|reliability|m-cognitive-hypervisor|idea-117-followup|needs-triage|audit:tele_primary=tele-7			director	2026-04-20
 idea-119	open	query-shape-engineering|tool-surface|precision-context-engineering|m-cognitive-hypervisor|needs-triage|phase-2x-followup|tele-10-adjacent|audit:tele_primary=tele-11|audit:tele_secondary=tele-5			engineer	2026-04-20

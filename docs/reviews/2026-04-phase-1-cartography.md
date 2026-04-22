@@ -1,12 +1,12 @@
-# Phase 1 Cartography — Pass 1.2 (tele-11 addendum applied + Pass 1.1 coverage-gap fix)
+# Phase 1 Cartography — Pass 1.3 (tele-12 §10.2 mandatory applied; §10.3 optional polish pending Director call)
 
-**Status:** Pass 1.2 — supersedes Pass 1.1 with two layered changes: (a) architect §9 addendum applied per `docs/reviews/2026-04-phase-1-cartography-critique.md` at commit `d4b4c96` on agent/lily (tele-11 Cognitive Minimalism filed mid-revision per Director exception to review anti-goal §7); (b) coverage-gap fix for Pass 1.1 oversight where ideas 107–114, 116, 120, 121 had body-tag `tele-N` but never received the canonical `audit:tele_primary=` form. **Awaits Director ratification.**
+**Status:** Pass 1.3 — supersedes Pass 1.2 with the architect §10 addendum (tele-12 Precision Context Engineering filed via second Director exception to anti-goal §7). §10.2 mandatory (idea-116 reassignment) applied immediately. §10.3 optional 4-idea polish (idea-119, 72, 145, 146 → tele-12 primary for tightest fit) **pending Director go/no-go**. Both Director-ratification of Pass 1.2 + go/no-go on §10.3 outstanding.
 
-**Author (Pass 1 → 1.2):** greg (engineer, eng-0d2c690e7dd5), 2026-04-22 AEST.
-**Critique authors:** lily (architect, eng-40903c59d19f) — original critique commit `89ba92a`, tele-11 addendum commit `d4b4c96`.
-**Mission gates verified clear:** mission-40 (M-Session-Claim-Separation) completed 2026-04-22; companion bug-26 + adapter-startup-race shipped (commits 18cde2d, a011fcd, dd1423c, 9e14ff7, e2ce3f8, 83b57e3); review anti-goals §5–8 back to full force; **anti-goal §7 ("modifying ratified Tele set") was suspended by Director exception 2026-04-22 to file tele-11 — see §A3 provenance**.
+**Author (Pass 1 → 1.3):** greg (engineer, eng-0d2c690e7dd5), 2026-04-22 AEST.
+**Critique authors:** lily (architect, eng-40903c59d19f) — original critique commit `89ba92a`; tele-11 addendum commit `d4b4c96`; tele-12 addendum commit `5c04f28`.
+**Mission gates verified clear:** mission-40 (M-Session-Claim-Separation) completed 2026-04-22; companion bug-26 + adapter-startup-race shipped (commits 18cde2d, a011fcd, dd1423c, 9e14ff7, e2ce3f8, 83b57e3); review anti-goals §5–8 back to full force; **anti-goal §7 ("modifying ratified Tele set") was suspended by Director exceptions 2026-04-22 to file tele-11 + tele-12 — see §A3 provenance**.
 
-**Companion data:** row-level TSV exports in `docs/reviews/2026-04-phase-1-cartography-data/` (158 ideas after 3 seed ideas filed, 28 bugs, 40 missions, **12 teles** (was 11 pre-tele-11), 246 threads-in-14d-window). Regenerable from GCS state via §A1.
+**Companion data:** row-level TSV exports in `docs/reviews/2026-04-phase-1-cartography-data/` (158 ideas after 3 seed ideas filed, 28 bugs, 40 missions, **13 teles** (was 11 pre-rewrite, +tele-11 + tele-12 same-day), 246 threads-in-14d-window). Regenerable from GCS state via §A1.
 
 **Output path:** architect's original brief specified `documents/reviews/`; that directory does not exist in this repo. Pass 1 used existing `docs/reviews/` per project convention; carried forward in Pass 1.1.
 
@@ -110,7 +110,8 @@ Active missions inventory unchanged. Mission-numbering chaos noted in Pass 1 §4
 | tele-8 | Gated Recursive Integrity | reverse-gap closed via 3 seed ideas (idea-156/157/158) in Pass 1.1 |
 | tele-9 | Chaos-Validated Deployment | |
 | tele-10 | Autopoietic Evolution | |
-| **tele-11** | **Cognitive Minimalism** | **NEW; filed 2026-04-22 via Director exception to anti-goal §7 — see §A3** |
+| **tele-11** | **Cognitive Minimalism** | **NEW; filed 2026-04-22 (1st Director exception); extensive margin — "should we invoke the LLM at all?"** |
+| **tele-12** | **Precision Context Engineering** | **NEW; filed 2026-04-22 (2nd Director exception, same day); intensive margin — "if we invoke, is the context optimal per token?"** |
 
 bug-24 (no retirement primitive for teles) still blocks formal retirement of the 5 superseded pre-rewrite teles; zombie entries persist.
 
@@ -147,15 +148,34 @@ Application of architect critique §2.1 (mechanical remap of 63 audit-tagged ide
 | tele-8 (Gated Recursive Integrity) | 0 | 3 | 3 | unchanged (3 seed ideas from Pass 1.1) |
 | tele-9 (Chaos-Validated Deployment) | 16 | 5 | 5 | unchanged |
 | tele-10 (Autopoietic Evolution) | 4 | 5 | **6** | +1 (gap-fix: idea-121) |
-| **tele-11 (Cognitive Minimalism)** | — | — | **5** | NEW: 4 reassignments (107, 115, 119, 138) + 1 promotion (idea-116 — see §2.1) |
+| **tele-11 (Cognitive Minimalism)** | — | — | **4** (Pass 1.3, after idea-116 moves to tele-12) | extensive-margin cluster: idea-107 + 115 + 138 + (Pass 1.2 had 116, removed in Pass 1.3 §10.2) |
+| **tele-12 (Precision Context Engineering)** | — | — | **1** (Pass 1.3 §10.2 mandatory) → **5** if Director approves §10.3 polish | intensive-margin cluster: idea-116 only (mandatory) + 4 polish candidates |
 
 **Secondary-tele additions for tele-11** (per §9.3 addendum): 9 ideas gain `audit:tele_secondary=tele-11` with primary unchanged — idea-72, 79, 108, 109, 110, 113, 114, 145, 146.
 
 **Total placed:** ~131 open+triaged ideas. **Orphans remaining: 0** (modulo the 9 dismissal-marker ideas awaiting architect status flip).
 
-### 2.1 Engineer-flagged tele-11 promotion beyond §9 scope
+### 2.1 tele-11 vs tele-12 distinction (architect §10 addendum)
 
-**idea-116** ("Proposed tele-10 — Precision Context Engineering") was filed pre-rewrite when "tele-10" referenced the old numbering. Its body content — "Bounded accumulation / Capped per-response size / Observable waste (Virtual Tokens Saved)" — is **archetypal tele-11 Cognitive Minimalism content** and directly motivates that tele's existence. Promoted to `audit:tele_primary=tele-11, audit:tele_secondary=tele-10` in Pass 1.2 beyond lily's §9.2/§9.3 scope. Tagged `audit:eng_promoted_to_tele_11=2026-04-22-pass-1.2` for provenance. **Flagged to architect for confirmation; no pushback received as of commit time.**
+Director probe "Are you sure Cognitive Minimalism is the same as Precision Engineered Context?" surfaced a conceptual conflation in lily's Pass 1.2 acceptance of my engineer-flagged idea-116 promotion. **The two teles are orthogonal**:
+
+- **tele-11 Cognitive Minimalism** = **extensive margin** ("should we invoke the LLM at all for this work, or can a substrate primitive handle it?")
+- **tele-12 Precision Context Engineering** = **intensive margin** ("given we ARE invoking the LLM, is the context precision-engineered for maximum information density per token?")
+
+Both serve the broader token-economy mandate but via orthogonal mechanisms. You can have cognitive minimalism with bloated prompts (substrate decides not to invoke, but when it does, prompt is wasteful) — or precision-engineered prompts for work a function should do (every token earns its place, but the LLM shouldn't have been called at all).
+
+**Pass 1.3 §10.2 mandatory applied:** idea-116 reassigned `audit:tele_primary=tele-12, audit:tele_secondary=tele-11`, with provenance tags `audit:eng_promoted_to_tele_11=2026-04-22-pass-1.2` (engineer's Pass 1.2 intuition) + `audit:reassigned_to_tele_12=2026-04-22-pass-1.3-mandatory` (architect §10.2 correction). Original tele-10 secondary dropped (only primary+secondary slots used; no tertiary tag schema in current state).
+
+**Pass 1.3 §10.3 optional polish** (Director-gated): 4 ideas where tele-12 is the *tightest* primary post-filing. Architect explicitly does **NOT** unilaterally reassign — scope discipline. Listed below for Director call:
+
+| Idea | Pass 1.2 current | Tightest post-tele-12 | Why |
+|---|---|---|---|
+| idea-119 (query-shape-engineering) | tele-11 primary, tele-5 secondary | tele-12 primary + tele-11 secondary | "query-shape engineering" literally names tele-12's mandate |
+| idea-72 (on-demand context retrieval) | tele-5 primary, tele-11 secondary | tele-12 primary + tele-5 secondary | On-demand retrieval IS precision context engineering |
+| idea-145 (chunked-reply v2) | tele-7 primary, tele-11 secondary | tele-12 primary + tele-7 secondary | Chunked-reply IS the "Capped Per-Response Size" tele-12 mechanism |
+| idea-146 (continuation-state v2) | tele-7 primary, tele-11 secondary | tele-12 primary + tele-7 secondary | Continuation-state IS the overflow-handling primitive |
+
+If Director approves: 4 update_idea calls, tele-12 cluster grows from 1→5 primary, tele-11 shrinks 4→3 primary, tele-5 -1, tele-7 -2. If Director declines: Pass 1.3 stays as-is (defensible but not optimal per architect).
 
 ### Per-cluster idea lists
 
@@ -335,28 +355,51 @@ Mechanical operations applied via MCP `update_idea` and `create_idea`:
 - **9 × `update_idea`** — §3.1 dismissal markers (audit:valid=superseded-by-bug:bug-N + migrated-to-bug:bug-N tags; status flip deferred to architect)
 - **Subtotal: 113 ops, 0 failures.**
 
-**Pass 1.2 (this commit, post-§9 addendum commit `d4b4c96`):**
+**Pass 1.2 (commit `fae6ef8`, post-§9 addendum commit `d4b4c96`):**
 - **4 × `update_idea`** — §9.2 reassignments to tele-11 PRIMARY (idea-107, 115, 119, 138)
 - **9 × `update_idea`** — §9.3 secondary adds of tele-11 (idea-72, 79, 108, 109, 110, 113, 114, 145, 146)
 - **5 × `update_idea`** — Pass 1.1 coverage-gap fix (idea-111, 112, 116, 120, 121 — had body-tag `tele-N` but never received `audit:tele_primary=` in Pass 1.1)
-- Note: idea-116 promoted to tele-11 PRIMARY (beyond §9 scope; engineer-flagged per §2.1)
+- Note: idea-116 promoted to tele-11 PRIMARY (beyond §9 scope; engineer-flagged per Pass 1.2 §2.1)
 - **Subtotal: 18 ops, 0 failures.**
 
-**Grand total across Pass 1.1 + 1.2: 131 successful Hub operations, 0 failures.** All idempotent.
+**Pass 1.3 (this commit, post-§10 addendum commit `5c04f28`):**
+- **1 × `update_idea`** — §10.2 mandatory: idea-116 reassignment (tele-11 primary → tele-12 primary, tele-11 demoted to secondary, tele-10 secondary dropped per primary+secondary-only schema)
+- Pending: 4 × `update_idea` for §10.3 optional polish — gated on Director call
+- **Subtotal: 1 op (mandatory) + 4 ops (pending Director) = 1 or 5 ops. 0 failures so far.**
 
-## A3. Anti-goal §7 exception provenance — tele-11 Cognitive Minimalism
+**Cumulative across Pass 1.1 + 1.2 + 1.3: 132 successful Hub operations, 0 failures.** All idempotent. Pending Director call adds 0–4 ops.
 
-Review anti-goal §7 ("Modifying the ratified Tele set") was suspended by Director exception 2026-04-22 AEST to file tele-11 Cognitive Minimalism. Provenance:
+## A3. Anti-goal §7 exception provenance — tele-11 + tele-12 (same-day)
+
+Review anti-goal §7 ("Modifying the ratified Tele set") was suspended TWICE by Director exception on 2026-04-22 AEST.
+
+### A3.1 First exception — tele-11 Cognitive Minimalism (commit `d4b4c96`)
 
 1. Director diagnostic prompt to architect: "Do we have a tele that describes perfect cognitive offload from LLM — optimise logic/code so LLM token consumption is efficient, offload deterministic work to machines?"
 2. Architect (lily) read: existing teles 0–10 covered the concept only compositionally (tele-6 anti-transcription + tele-3 logic-density + tele-2 spec-drives-FSM + tele-5 hydration); no single tele carried "LLM tokens as scarce economic resource" as first-class mandate.
 3. Director: "File as a new Tele - Cognitive Minimalism."
 4. Architect filed via `create_tele` MCP tool; `docs/specs/teles.md` updated; commit `d4b4c96` on agent/lily.
 5. Critique addendum (§9 of `2026-04-phase-1-cartography-critique.md`) added in same commit, specifying 4 primary reassignments + 9 secondary adds.
-6. Engineer Pass 1.2 applied addendum + flagged additional idea-116 promotion + fixed Pass 1.1 coverage gap.
+6. Engineer Pass 1.2 applied addendum + flagged additional idea-116 promotion to tele-11 (proximate trigger for the second exception below) + fixed Pass 1.1 coverage gap.
 
-**For Phase 4 retrospective:** evaluate whether strategic-review methodology should formalize "tele addition via Director exception" as an explicit protocol vs treat this as one-off variance. Per critique §9.6.
+### A3.2 Second exception — tele-12 Precision Context Engineering (commit `5c04f28`, same day)
+
+1. Director probe to architect: "Are you sure Cognitive Minimalism is the same as Precision Engineered Context?"
+2. Architect (lily) realised conceptual conflation in her Pass 1.2 acceptance of idea-116 → tele-11. **The two concepts are orthogonal**: tele-11 is the extensive margin (whether to invoke LLM); the missing tele-12 is the intensive margin (information density per token when you do invoke).
+3. Director directed second filing.
+4. Architect filed `tele-12 Precision Context Engineering` via `create_tele`; `docs/specs/teles.md` updated; commit `5c04f28` on agent/lily.
+5. Critique §10 addendum specifies §10.2 mandatory (idea-116 reassignment) + §10.3 optional polish (4 ideas tightest-fit to tele-12).
+6. Engineer Pass 1.3 applied §10.2 immediately; surfaced §10.3 to Director for go/no-go.
+
+### A3.3 For Phase 4 retrospective
+
+Per critique §9.6 + §10.7, two distinct methodology-improvement questions:
+
+1. Should strategic-review methodology formalize "tele addition via Director exception" as an explicit protocol versus treat as one-off variance?
+2. Should architect self-check before filing a tele include "does any existing idea claim to be a tele-proposal in its title or body?" — the proximate trigger for tele-12 was idea-116's title literally being "Proposed tele-10 — Precision Context Engineering" + body identifying that exact concept. Architect would have caught the orthogonality during the original tele-11 filing if this self-check had run.
+
+Same-day-double-tele-filing is unusual; methodology retrospective should evaluate the meta-pattern of "filing a tele creates tag-pressure that surfaces missing teles."
 
 ---
 
-*End of Pass 1.2. Awaiting Director ratification per brief §11 step 4. Architect critique reference: commits `89ba92a` + `d4b4c96` on agent/lily.*
+*End of Pass 1.3. Awaiting Director ratification per brief §11 step 4 + Director go/no-go on §10.3 optional polish (4 ideas: 119, 72, 145, 146). Architect critique references: commits `89ba92a` + `d4b4c96` + `5c04f28` on agent/lily.*
