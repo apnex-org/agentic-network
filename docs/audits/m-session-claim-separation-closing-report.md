@@ -305,6 +305,6 @@ Currently `register_role` + `claim_session` are the only tools that skip the fir
 
 ## 11. Mission-close confirmation
 
-bug-26 entity flipped `open → resolved` at this commit. fixCommits: `[18cde2d, a011fcd, dd1423c, 9e14ff7, <T5 commit>]`. Mission-40 entity to be flipped `active → completed` by architect via `update_mission` once T5 is approved.
+bug-26 entity flipped `open → resolved` at this commit. fixCommits: `[18cde2d, a011fcd, dd1423c, 9e14ff7, e2ce3f8]`. Mission-40 entity to be flipped `active → completed` by architect via `update_mission` once T5 is approved.
 
 Post-mission state: 2026-04 architectural-review can now resume Phase 1 cartography per the original plan. Anti-goal #6 ("don't execute open missions mid-review") returns to full force; mission-40's mid-review execution was a Director-greenlit one-off and does not establish precedent.

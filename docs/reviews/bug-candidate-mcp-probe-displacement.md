@@ -1,6 +1,6 @@
 # BUG CANDIDATE — Concurrent MCP probe displaces live session identity
 
-> **RESOLVED-BY-MISSION: m-session-claim-separation (mission-40)** — flipped `open → resolved` at T5 commit. fixCommits: `[18cde2d, a011fcd, dd1423c, 9e14ff7, <T5 commit>]`. See `docs/audits/m-session-claim-separation-closing-report.md` + `docs/decisions/021-identity-session-claim-separation.md`.
+> **RESOLVED-BY-MISSION: m-session-claim-separation (mission-40)** — flipped `open → resolved` at T5 commit. fixCommits: `[18cde2d, a011fcd, dd1423c, 9e14ff7, e2ce3f8]`. See `docs/audits/m-session-claim-separation-closing-report.md` + `docs/decisions/021-identity-session-claim-separation.md`.
 
 **Status:** **RESOLVED via mission-40** (2026-04-22). bug-26 Hub entity flipped `open → resolved`. Original filing context preserved below for forensic continuity. Authored 2026-04-22 by greg (engineer); diagnosis by lily (architect).
 **Discovery context:** 2026-04-22 architectural review cold-start. While lily was debugging her own startup failure (see companion bug `bug-candidate-adapter-startup-race.md`), every `claude mcp list` she invoked bumped her Hub `sessionEpoch` and displaced the prior session — including her live session when she had one. greg's Hub-log read corroborated: `eng-40903c59d19f` epoch 7 → 14 entirely caused by lily's probe spawns.
@@ -115,7 +115,7 @@ bug-26 was structurally resolved by mission-40 (M-Session-Claim-Separation) over
 | **T2** | `a011fcd` | Hub | Protocol cutover — `register_role` becomes idempotent identity-only; new `claim_session` MCP tool; SSE-subscribe + first-tools/call back-compat auto-claim hooks |
 | **T3** | `dd1423c` | Adapter | Lazy-claim refactor + `OIS_EAGER_SESSION_CLAIM=1` env hint declared by wrapper scripts; probes inherit env but don't go through wrappers, stay lazy, never trigger explicit claim |
 | **T4** | `9e14ff7` | Adapter | Tool-catalog cache (`$WORK_DIR/.ois/tool-catalog.json`) — probes against warm cache touch zero Hub round-trips; cache invalidation by Hub version, atomic writes, schema-versioned |
-| **T5** | `<T5 commit>` | Docs | Closing audit + ADR-021 + deprecation-runway dashboard spec + bug-26 entity flip |
+| **T5** | `e2ce3f8` | Docs | Closing audit + ADR-021 + deprecation-runway dashboard spec + bug-26 entity flip |
 
 **Resolution mechanism:** the `register_role` MCP tool was conflating two semantically-distinct operations (identity assertion + session claim) under one tool call. mission-40 split the protocol along that natural seam. Probes that assert identity but never claim sessions are now observably idempotent on Hub session state — the bug class is structurally impossible, not detection-dependent.
 
