@@ -2,9 +2,13 @@
 
 > **Live state will be tracked in `docs/traces/m-session-claim-separation-work-trace.md`** once the mission is ratified — this brief documents scope, sequencing rationale, and the design decisions absorbed during review-thread convergence.
 
+**Status:** v1.1 (2026-04-22, post-architect-review revisions absorbed; pending architect ratification on thread-245 round 4).
 **Hub mission id:** PENDING (assigned via `create_mission` after architect ratification)
 **Proposed:** 2026-04-22 (mid-architectural-review, Director-greenlit fix-now scope)
 **Proposed by:** Engineer (greg) — diagnostic discovery by Architect (lily) on 2026-04-22 cold-start session
+**Revision history:**
+- **v1.0** (2026-04-22 round 1) — initial draft on thread-245.
+- **v1.1** (2026-04-22 round 3) — absorbs lily's six revisions from thread-245 round 2: (i) T1+T2 restructured per Option (b) so each is independently deployable + reviewable, (ii) single `claimSession()` registry helper with `trigger` field on audit emissions, (iii) tele-1 added for defensive-observability, (iv) anti-goals expand with director-chat / reaper / MCP-auth-trust pins, (v) T1 references bug-16 C5 label-refresh contract + T3 keys on `sessionClaimed` field not epoch delta, (vi) idea-121 cross-ref pins `claim_session` verb stability across v2.0 envelope migration. §10 also gains 3 items.
 **Owner:** Engineer (implementation); Architect (directive issuance + per-task review)
 **Governance:** Director ratified mid-review execution; Architect issues per-task directives; Engineer implements + reports.
 **Peer of:** none directly; companion to the already-shipped startup-race fix (commit `83b57e3`). Together those two fixes close the adapter-startup defect class lily surfaced this morning.
@@ -54,48 +58,61 @@ Eliminate **probe-induced session displacement** by separating identity claim fr
 
 Five tasks, linear with one parallel branch. Each task ships independently and is architect-reviewed before the next is issued.
 
-### Task 1 — Hub: make `register_role` idempotent
+### Task 1 — Hub: introduce identity + session helpers (PURELY ADDITIVE; behavior unchanged)
+
+**Restructure rationale (v1.1, lily's review point #1).** T1 was originally "make `register_role` non-displacing" — but that left a regression window between T1 ship and T2 ship where legitimate session reclaim was broken (no path increments `sessionEpoch` or evicts prior SSE). T1 is now refactored to be **purely additive**: helpers + audit actions land internally; `register_role` STILL invokes both helpers under the hood, so externally-observable behavior is identical to today. T2 then performs the protocol cutover. Each task is independently deployable AND independently reviewable against a known-good baseline.
 
 **Scope.**
-- New `IEngineerRegistry.assertIdentity(fp, role, labels) → engineerId` method on Memory + GCS implementations. Idempotent: ensures Agent record exists with the given fingerprint; updates mutable fields per bug-16 C5 contract (label refresh on reconnect); updates `lastSeenAt`. Never increments `sessionEpoch`. Never touches `currentSessionId`. Never evicts SSE.
-- `register_role` policy handler refactored to invoke only `assertIdentity`.
-- Response shape preserved for backward compat: returns `{ engineerId, role, labels, currentSessionEpoch }` where `currentSessionEpoch` is the value as-observed (not incremented). New field `sessionClaimed: false` indicates no session claim was performed.
-- New audit action `agent_identity_asserted` emitted on every `register_role` call (replaces the implicit displacement-on-handshake audit pattern).
+- New `IEngineerRegistry.assertIdentity(fp, role, labels) → engineerId` method on Memory + GCS implementations. Idempotent: ensures Agent record exists with the given fingerprint; updates mutable fields per the **bug-16 C5 label-refresh contract** (handshake label refresh on reconnect; lily's review point #5); updates `lastSeenAt`. Never increments `sessionEpoch`. Never touches `currentSessionId`. Never evicts SSE. **Does not redefine bug-16 C5's label-refresh semantics** — invokes the same code path.
+- New `IEngineerRegistry.claimSession(engineerId, sessionId, trigger: "explicit" | "sse_subscribe" | "first_tool_call") → { sessionEpoch, displacedPriorSession?: { sessionId, epoch } }` method (Memory + GCS). **Single helper** routing all three claim paths (lily's review point #2). Increments `sessionEpoch`, sets `currentSessionId = thisSession`, evicts prior SSE stream if any.
+- Three new audit actions registered (not yet emitted from any non-T1 path):
+  - `agent_identity_asserted` — emitted on every `assertIdentity` call.
+  - `agent_session_claimed` — emitted on `claimSession(..., "explicit")`.
+  - `agent_session_implicit_claim` — emitted on `claimSession(..., "sse_subscribe" | "first_tool_call")`. **Carries `trigger` field** in audit payload distinguishing the two back-compat sub-paths (lily's review point #2 — required for §10's deprecation-runway dashboard to identify which path is still load-bearing).
+  - `agent_session_displaced` — emitted (alongside `agent_session_claimed`) when a prior session was evicted.
+- `register_role` policy handler refactored INTERNALLY to invoke `assertIdentity` then `claimSession(..., "sse_subscribe")` under the hood. Externally: zero behavior change. Response shape unchanged. Audit emissions are now the new actions (replacing the implicit pre-T1 displacement audit).
+- Reaper (`HUB_AGENT_STALE_THRESHOLD_MS`) is **untouched**. The reaper continues to read `lastSeenAt` per its existing heuristics; T1 must not shift reaper thresholds based on the new `agent_identity_asserted` event stream (lily's review point #4).
 
 **Success criteria.**
-- 100% of existing `register_role` callers continue to work without modification (response shape compatible).
-- Two consecutive `register_role` calls from the same fingerprint produce zero `Agent displaced` log lines and zero `sessionEpoch` increments.
-- Integration test: repeated `register_role` calls during an active SSE session of the same fingerprint do not disturb the SSE stream.
+- 100% of existing `register_role` callers continue to work without modification (response shape + behavior identical).
+- New helpers callable internally from policy code; covered by unit tests pinning idempotency of `assertIdentity` and displacement of `claimSession`.
+- New audit actions emit with the `trigger` field correctly populated on each claim path.
+- Existing integration tests (Mission-19 routing, bug-16 lifecycle, Threads 2.0 dispatch) continue to pass — proves T1 changed implementation without changing behavior.
 
-**Files.** `hub/src/state.ts`, `hub/src/gcs-state.ts`, `hub/src/policy/session-policy.ts`, `hub/src/audit/*` (new action), tests under `hub/test/`.
+**Files.** `hub/src/state.ts`, `hub/src/gcs-state.ts`, `hub/src/policy/session-policy.ts`, `hub/src/audit/*` (new action constants), tests under `hub/test/`.
 
 **Effort.** 1.5 engineer-days.
 
-### Task 2 — Hub: new `claim_session` tool + SSE-subscribe gate
+### Task 2 — Hub: protocol cutover — `register_role` becomes idempotent + new `claim_session` tool exposed
 
 **Scope.**
-- New MCP tool `claim_session`: takes no args (uses authenticated MCP session ID from transport). RBAC: caller must have completed `register_role` in the same session. Increments `sessionEpoch`, sets `currentSessionId = thisSession`, evicts prior SSE stream if any. Returns `{ engineerId, sessionEpoch, displacedPriorSession?: { sessionId, epoch } }`.
-- New `IEngineerRegistry.claimSession(engineerId, sessionId)` method (Memory + GCS).
-- New audit actions: `agent_session_claimed` (every claim), `agent_session_displaced` (when a prior session was evicted), `agent_session_implicit_claim` (when the SSE-subscribe auto-claim path triggers — the back-compat hook).
-- SSE stream open handler: if no prior `claim_session` for the connection, auto-claim (preserving current adapter behavior for un-updated callers). Emit `agent_session_implicit_claim` audit.
+- `register_role` policy handler stops calling `claimSession` internally — becomes pure idempotent identity assertion. Response shape gains `sessionClaimed: false` field (constant in this state; lily's review point #5 — adapters must key on this field, NOT epoch delta).
+- `currentSessionEpoch` field semantics in `register_role` response change: it now reflects the current value as-observed, NOT a just-incremented value. **Downstream callers using epoch-delta as a "I just took over" proxy will silently misread.** This is called out in T3 scope (lily's review point #5).
+- New MCP tool `claim_session` exposed on the policy router. Takes no args (uses authenticated MCP session ID from transport context — lily's review point #4 acknowledges this is a load-bearing trust assumption on MCP session-auth integrity). Calls `claimSession(engineerId, sessionId, "explicit")` from T1.
+- SSE stream open handler in `hub/src/index.ts`: if no prior `claim_session` for the connection, auto-claim via `claimSession(..., "sse_subscribe")` — preserving back-compat for un-updated adapters.
+- First-`tools/call` auto-claim hook (lily's review point #2 — second back-compat path): if no prior `claim_session` AND incoming MCP `tools/call` arrives, auto-claim via `claimSession(..., "first_tool_call")`. Same single helper, just a different `trigger` value.
+- Hub gate verifies the agent has a session-claim before dispatching SSE notifications to a connection. Without one, the connection cannot receive pushes — only pull-via-tools/call.
 
 **Success criteria.**
-- Explicit `claim_session` call increments `sessionEpoch` and emits `agent_session_claimed` audit.
-- Concurrent SSE subscribe (without prior `claim_session`) auto-claims and emits `agent_session_implicit_claim` audit.
-- Probe path (Initialize + ListTools + exit, no SSE subscribe, no `claim_session`) emits zero session-claim audits and leaves `sessionEpoch` unchanged.
-- Integration: two adapters with same fingerprint can both have asserted identity (`register_role` × 2) without displacing each other; the moment one calls `claim_session`, the other is displaced cleanly.
+- Explicit `claim_session` call increments `sessionEpoch` and emits `agent_session_claimed` + (when displacing) `agent_session_displaced` audits.
+- SSE-subscribe auto-claim emits `agent_session_implicit_claim` with `trigger: "sse_subscribe"`.
+- First-tools/call auto-claim emits `agent_session_implicit_claim` with `trigger: "first_tool_call"`.
+- Probe path (Initialize + ListTools + exit, no SSE subscribe, no `tools/call`, no `claim_session`) emits zero session-claim audits and leaves `sessionEpoch` unchanged.
+- Two adapters with same fingerprint can both have asserted identity (`register_role` × 2) without displacing each other; the moment one calls `claim_session`, the other is displaced cleanly.
+- New `register_role` response carries `sessionClaimed: false`; downstream code does not error on the new field.
 
-**Files.** Same as T1, plus `hub/src/policy/policy-router.ts` for the new tool registration; SSE stream handler under `hub/src/index.ts` for the auto-claim hook.
+**Files.** `hub/src/policy/policy-router.ts` (new tool registration + first-tools/call hook), `hub/src/policy/session-policy.ts` (handler refactor), `hub/src/index.ts` (SSE-subscribe hook), tests under `hub/test/`.
 
 **Effort.** 1.5 engineer-days.
 
 ### Task 3 — Adapter: lazy-claim refactor + eager-warmup env hint
 
 **Scope.**
-- `adapters/claude-plugin/src/shim.ts` `main()` refactored: `register_role` runs immediately (in parallel with stdio open, building on commit `83b57e3`'s ordering work). `claim_session` deferred until first SSE subscribe / first `tools/call` / explicit eager-warmup.
+- `adapters/claude-plugin/src/shim.ts` `main()` refactored: `register_role` runs immediately (in parallel with stdio open, building on commits `83b57e3` + `3bf3bdd`'s ordering + ListTools-gating work). `claim_session` deferred until first SSE subscribe / first `tools/call` / explicit eager-warmup.
 - `OIS_EAGER_SESSION_CLAIM` env var: when set, triggers `claim_session` in parallel with `register_role`. Wrapper scripts (`start-greg.sh`, `start-lily.sh`) updated to set this. Probes don't set it; they stay lazy.
-- `agentReady` deferred (from commit `83b57e3`) generalized into two phases: `identityReady` (resolves on `register_role` complete; identity established) and `sessionReady` (resolves on `claim_session` complete; safe to receive SSE notifications). Tool-dispatch handlers now gate on `sessionReady`. Initialize and ListTools handlers may proceed against `identityReady` (ListTools also has a cached-catalog fallback per Task 4).
-- Adapter logs the new path explicitly: `[Handshake] Identity asserted: eng-X` (Phase A), `[Handshake] Session claimed: epoch=N (displaced: ...)` (Phase B, when it happens).
+- `agentReady` + `handshakeComplete` deferreds (from commits `83b57e3` + `3bf3bdd`) generalized into the new model: `identityReady` (resolves on `register_role` complete — same as today's `handshakeComplete`), `sessionReady` (resolves on `claim_session` complete; safe to receive SSE notifications), `syncReady` (resolves on full agent.start() return — same as today's `agentReady`). Initialize handler ungated. ListTools gated on `identityReady` (preserves the 3bf3bdd fix). CallTool gated on `sessionReady` (semantically more correct than `syncReady` — call requires session, not full sync, but pragmatic equivalence today since they're contiguous).
+- **Detection logic must NOT key on `currentSessionEpoch` delta.** Per lily's review point #5: T2 changes `register_role` response so `currentSessionEpoch` no longer indicates "I just took over". Adapter MUST read the new `sessionClaimed: boolean` field from `claim_session` response to know whether displacement occurred. Any code using epoch-delta as a takeover indicator is silently broken.
+- Adapter logs the new path explicitly: `[Handshake] Identity asserted: eng-X` (Phase A), `[Handshake] Session claimed: epoch=N (displaced prior: ...)` (Phase B, when it happens).
 
 **Success criteria.**
 - `claude mcp list` (probe path) running while a real session is active produces zero `agent_session_claimed` audits and zero SSE-stream evictions.
@@ -205,13 +222,14 @@ Total expected new tests: ~25 across unit + integration + E2E. Existing 31 dispa
   - **bug-16** (RESOLVED in `9385290` + `6eacfca`) — covered the labels-refresh-on-reconnect and Agent reaper. This mission completes the Agent lifecycle hardening that bug-16 began (reaper + label refresh + now session-claim separation).
   - **idea-122** (`reset_agent` operator affordance — triage-pending) — distinct concern (deliberate operator-side identity reset), but `claim_session` is a building block idea-122 will consume when it lands.
   - **idea-152** (Smart NIC Adapter — target state) — would absorb identity-and-transport entirely; this mission is the correct transitional fix and idea-152 inherits the cleaner identity model.
-  - **idea-121** (API v2.0 tool-surface modernization) — orthogonal concern; this mission's protocol additions are ASCII-clean enough to retrofit into the v2.0 envelope when idea-121 lands. No sequencing dependency in either direction.
+  - **idea-121** (API v2.0 tool-surface modernization) — orthogonal concern; this mission's protocol additions are ASCII-clean enough to retrofit into the v2.0 envelope when idea-121 lands. No sequencing dependency in either direction. **Verb stability commitment** *(added v1.1 per lily's review point #6)*: the verb `claim_session` is committed as stable across any future API v2.0 envelope migration. Idea-121 may wrap the envelope shape but must not rename the verb. This guarantees adapters introduced by this mission survive the v2.0 retrofit unchanged.
 - **ADR**: a brief ADR documenting the identity-vs-session-claim separation decision would be appropriate; recommend `docs/decisions/ADR-021-identity-session-claim-separation.md` authored as part of T1 or T5.
 - **Tele alignment:**
   - **tele-3 Sovereign Composition** — separates two concerns that should never have been one. Closes Logic Leakage fault at the contract layer.
   - **tele-7 Resilient Agentic Operations** — eliminates probe-induced cascade-bombs (silent SSE eviction during operator probes).
   - **tele-5 Perceptual Parity** — operator visibility (probes) is no longer destructive. Looking at the system stops breaking the system.
   - **tele-2 Isomorphic Specification** — protocol surface matches semantic distinction; no implicit conflation of identity and session.
+  - **tele-1 Sovereign State Transparency** *(added v1.1 per lily's review point #3, defensive-observability dimension)* — the three new audit actions + explicit-vs-implicit-claim dashboard make a previously-hidden state (which protocol path triggered displacement) into perceivable state. Before this mission, displacement events were logged but the *cause* (conflation of identity and session under one tool call) was opaque — Hidden State fault. After: every claim path emits a typed audit with a `trigger` field; the deprecation-runway dashboard renders this state explicitly. The mission closes a structural observability gap, not just a functional bug.
 
 ---
 
@@ -223,6 +241,9 @@ Total expected new tests: ~25 across unit + integration + E2E. Existing 31 dispa
 4. **Removing the auto-claim-on-SSE-subscribe back-compat path.** Deferred to post-architectural-review hardening per §10.
 5. **`reset_agent` operator tool.** Distinct concern (idea-122); building blocks delivered here.
 6. **API v2.0 envelope migration** (idea-121). Orthogonal; this mission's protocol additions are forward-compatible with v2.0.
+7. **Director-chat routing changes.** *(Added v1.1 per lily's review point #4.)* The director-chat-redesign is upcoming work; this mission's session-claim changes do not pre-empt its routing decisions. If director-chat needs a different identity-vs-session model, this mission's surface composes — but the mission does not assume any specific director-chat shape.
+8. **Modifying Agent reaper / `lastSeenAt` semantics.** *(Added v1.1 per lily's review point #4.)* T1's `assertIdentity` updates `lastSeenAt` per the bug-16 C5 contract. The reaper (`HUB_AGENT_STALE_THRESHOLD_MS`) continues to use its existing liveness heuristics on `lastSeenAt` unchanged. Reaper thresholds must NOT be re-tuned based on the new `agent_identity_asserted` event stream.
+9. **Re-opening the MCP-session-authentication trust assumption.** *(Added v1.1 per lily's review point #4.)* Decision §4.1 (claim_session takes no args, uses authenticated MCP session ID) assumes MCP session auth is not weakened. **If MCP session auth is ever modified**, this mission's `claim_session` design becomes a takeover vector and must be re-opened. State this dependency as an explicit assumption now so the future change-trigger is captured.
 
 ---
 
@@ -231,10 +252,11 @@ Total expected new tests: ~25 across unit + integration + E2E. Existing 31 dispa
 - **Effort estimate:** M-class (~4-5 engineer-days end-to-end). Breakdown: T1=1.5, T2=1.5, T3=1.0, T4=0.5, T5=0.5.
 - **Risk:** medium. Touches identity-management which is load-bearing for Mission-19 routing + Threads 2.0 dispatch.
 - **Mitigations:**
-  - Backward-compat auto-claim path keeps existing adapters working unchanged (zero deploy-coordination required).
-  - All new code paths emit dedicated audit actions for observability.
+  - Backward-compat auto-claim paths (both SSE-subscribe AND first-tools/call, single helper) keep existing adapters working unchanged (zero deploy-coordination required).
+  - All new code paths emit dedicated audit actions with explicit `trigger` field for observability + deprecation-runway tracking.
   - Tests at unit + integration cover all four shapes (probe-only, real session, mixed, implicit-claim).
-  - Hub-side changes can land first; adapter migration follows independently — no atomic-deploy requirement.
+  - **T1+T2 split per Option (b)** *(refined v1.1 per lily's review point #1)*: T1 is purely additive (helpers + audits internal; `register_role` behavior unchanged externally); T2 is the protocol cutover (`register_role` becomes idempotent, `claim_session` exposed). This eliminates the regression window between T1 ship and T2 ship that the original sequence had — at no point is legitimate session reclaim broken. Each task is independently deployable AND independently architect-reviewable against a known-good baseline.
+  - T3, T4 may then land independently (adapter and Hub are now decoupled; no atomic-deploy requirement between Hub side and adapter side).
 
 ---
 
@@ -254,10 +276,13 @@ This does **not** open the door for opportunistic mid-review missions on unrelat
 
 The following items are deliberately deferred to a follow-on hardening pass after the 2026-04 architectural review concludes:
 
-1. **Deprecate the auto-claim-on-SSE-subscribe back-compat path.** Once dashboard data confirms `agent_session_implicit_claim` rate is ~zero (all adapters updated), remove the implicit hook from the SSE handler. Force explicit `claim_session` calls. Preserves cleaner protocol surface for the long term.
+1. **Deprecate BOTH auto-claim back-compat paths together.** *(Refined v1.1 per lily's review point #2.)* Once dashboard data confirms `agent_session_implicit_claim` rate is ~zero across BOTH `trigger: "sse_subscribe"` AND `trigger: "first_tool_call"`, remove both implicit hooks from the SSE handler and the policy router. They're two halves of one back-compat concession; retire as a unit, not separately. Force explicit `claim_session` calls.
 2. **Per-fingerprint session-claim rate limiting.** Defense-in-depth against rapid claim/displace churn (e.g. an adapter restart loop). Architecturally trivial once `claim_session` is its own tool.
 3. **Adapter-side: detect concurrent-fingerprint collision before claim.** Use `register_role`'s response to check if another live session exists for this fingerprint; surface a deliberate operator decision rather than silent displacement. (This is a UX-quality improvement, not a bug fix.)
 4. **Migration of internal tests away from auto-claim path** to use explicit `claim_session`. Keeps test surface aligned with the protocol's intended use.
+5. **Adapter must surface "transport disconnected, please restart" via structured MCP error on tool calls when the Hub session is dead** (instead of silently hanging). *(Added v1.1 per Director feedback during P0 diagnosis of bug-26's failure mode being silent.)* Makes the failure legible to the operator without requiring deep diagnostic work to discover.
+6. **Deprecate the `sessionClaimed: false` field on `register_role` response** *(added v1.1 per lily's review §10 add-ons)* — once both back-compat auto-claim paths are retired (§10.1), the field becomes a constant and is noise. Remove from the response shape.
+7. **PolicyLoopbackHub parity audit.** *(Added v1.1 per lily's review §10 add-ons.)* Integration tests in this mission hit the loopback Hub. Post-hardening should run a parity audit confirming the real Hub and PolicyLoopbackHub implement claim/displace/audit-emission semantics identically. Drift here would silently invalidate the mission's integration test suite's guarantees.
 
 ---
 
