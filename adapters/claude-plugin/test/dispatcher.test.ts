@@ -388,4 +388,110 @@ describe("dispatcher.agentReady gating", () => {
     expect(agent.call).toHaveBeenCalledOnce();
     expect(result).toBeDefined();
   });
+
+  // ── handshakeComplete vs agentReady — load-bearing for architects ──
+  //
+  // The `tools/list` MCP method must NOT block on the slow sync phase
+  // of `agent.start()` (which includes drain_pending_actions; multi-
+  // second for architects with non-empty queues). Splitting the ready
+  // signal allows ListTools to unblock as soon as the handshake is
+  // done, while CallTool still waits for full sync.
+
+  it("ListTools waits on handshakeComplete (NOT agentReady) when both are supplied", async () => {
+    const handshakeDeferred = makeDeferred();
+    const syncDeferred = makeDeferred();   // never resolved in this test
+    const agent = fakeAgent();
+    (agent as any).listTools = vi.fn().mockResolvedValue([]);
+
+    const dispatcher = createDispatcher({
+      agent,
+      proxyVersion: "test-1.0.0",
+      handshakeComplete: handshakeDeferred.promise,
+      agentReady: syncDeferred.promise,
+    });
+
+    const handlers = (dispatcher.server as any)._requestHandlers as Map<
+      string,
+      (req: unknown) => Promise<unknown>
+    >;
+    const listToolsHandler = handlers.get("tools/list")!;
+
+    const requestPromise = listToolsHandler({ method: "tools/list", params: {} });
+
+    // Microtask flush: nothing should have happened yet.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect((agent as any).listTools).not.toHaveBeenCalled();
+
+    // Resolve handshake only — agentReady stays pending — ListTools must complete.
+    handshakeDeferred.resolve();
+    const result = await requestPromise;
+    expect((agent as any).listTools).toHaveBeenCalledOnce();
+    expect(result).toEqual({ tools: [] });
+  });
+
+  it("CallTool still waits on agentReady even when handshakeComplete has resolved", async () => {
+    const handshakeDeferred = makeDeferred();
+    const syncDeferred = makeDeferred();
+    const agent = fakeAgent();
+
+    const dispatcher = createDispatcher({
+      agent,
+      proxyVersion: "test-1.0.0",
+      handshakeComplete: handshakeDeferred.promise,
+      agentReady: syncDeferred.promise,
+    });
+
+    const handlers = (dispatcher.server as any)._requestHandlers as Map<
+      string,
+      (req: unknown) => Promise<unknown>
+    >;
+    const callToolHandler = handlers.get("tools/call")!;
+
+    // Resolve handshake immediately (transport up) but keep sync pending.
+    handshakeDeferred.resolve();
+
+    const requestPromise = callToolHandler({
+      method: "tools/call",
+      params: { name: "list_tele", arguments: {} },
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    // agent.call must NOT have run — CallTool gates on full sync.
+    expect(agent.call).not.toHaveBeenCalled();
+
+    syncDeferred.resolve();
+    await requestPromise;
+    expect(agent.call).toHaveBeenCalledOnce();
+  });
+
+  it("ListTools falls back to agentReady when handshakeComplete is omitted (back-compat)", async () => {
+    const syncDeferred = makeDeferred();
+    const agent = fakeAgent();
+    (agent as any).listTools = vi.fn().mockResolvedValue([]);
+
+    const dispatcher = createDispatcher({
+      agent,
+      proxyVersion: "test-1.0.0",
+      // handshakeComplete deliberately omitted; only agentReady provided
+      agentReady: syncDeferred.promise,
+    });
+
+    const handlers = (dispatcher.server as any)._requestHandlers as Map<
+      string,
+      (req: unknown) => Promise<unknown>
+    >;
+    const listToolsHandler = handlers.get("tools/list")!;
+
+    const requestPromise = listToolsHandler({ method: "tools/list", params: {} });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect((agent as any).listTools).not.toHaveBeenCalled();
+
+    syncDeferred.resolve();
+    await requestPromise;
+    expect((agent as any).listTools).toHaveBeenCalledOnce();
+  });
 });

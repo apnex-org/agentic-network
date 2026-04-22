@@ -45,14 +45,31 @@ export interface DispatcherOptions {
   notification?: NotificationOptions;
   /**
    * Resolves when the underlying McpAgentClient has finished its Hub
-   * handshake and is safe to receive `listTools()` / `call()`. The MCP
-   * `initialize` handler is intentionally NOT gated by this — the host
-   * (e.g. Claude Code) must be able to ACK its initialize within its
-   * own timeout while the Hub handshake runs in parallel. Tool-dispatch
-   * handlers await this so a race-window tool call waits rather than
-   * fails. Omit when no gating is needed (existing tests).
+   * handshake AND its full synchronizing phase (drain + initial sync)
+   * — i.e. when `agent.start()` returns. Used by the `tools/call`
+   * handler to ensure the cognitive pipeline has the state it needs.
+   * For architects with non-empty pending-action queues this can take
+   * many seconds (drain_pending_actions ~6-7s observed). Omit when no
+   * gating is needed (existing tests).
    */
   agentReady?: Promise<void>;
+  /**
+   * Resolves when the Hub handshake (register_role) completes — i.e.
+   * the agent's transport is connected and identity asserted, but the
+   * full synchronizing phase may still be running. Used by `tools/list`
+   * to unblock the host's catalog fetch as soon as the transport can
+   * service `listToolsRaw()`, without waiting for the slow sync that
+   * `agentReady` captures. Resolution typically ~500ms after spawn vs.
+   * `agentReady`'s ~7s for architects. Omit when no gating is needed.
+   *
+   * Why split: gating `tools/list` on full `agentReady` blocked the
+   * host's catalog fetch on the slow sync, observed empirically as
+   * empty tool surface for architects (greg's session loaded its
+   * catalog pre-fix-deploy; lily's session post-deploy hit the gate
+   * and returned empty). See `docs/reviews/bug-candidate-tools-list-
+   * gated-on-full-sync.md` for the full RCA.
+   */
+  handshakeComplete?: Promise<void>;
 }
 
 export interface Dispatcher {
@@ -92,7 +109,11 @@ export function injectQueueItemId(
 
 export function createDispatcher(opts: DispatcherOptions): Dispatcher {
   const log = opts.log ?? (() => {});
-  const { agent, proxyVersion, agentReady } = opts;
+  const { agent, proxyVersion, agentReady, handshakeComplete } = opts;
+  // ListTools gates on the EARLIER of handshakeComplete vs agentReady.
+  // Prefer handshakeComplete when supplied (fast, ~500ms); fall back to
+  // agentReady for back-compat with callers that don't supply both.
+  const listToolsGate = handshakeComplete ?? agentReady;
 
   // ADR-017: local map from `${dispatchType}:${entityRef}` → queueItemId.
   // Populated by onPendingActionItem on every drain AND by Phase 1.1's
@@ -196,9 +217,14 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
   });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    // Wait for Hub handshake to finish before fetching the tool catalog.
-    // No-op when agentReady was omitted (legacy / test wiring).
-    if (agentReady) await agentReady;
+    // Wait only until handshake is done (transport connected + identity
+    // asserted), NOT the full agent.start() sync phase. `agent.listTools`
+    // calls `transport.listToolsRaw` which only requires transport
+    // connectivity, not full state sync. Gating on full sync produced
+    // empty tool surfaces for architects whose drain_pending_actions
+    // ran long enough to exceed the host's tools/list patience.
+    // No-op when handshakeComplete was omitted (legacy / test wiring).
+    if (listToolsGate) await listToolsGate;
     // Route through agent.listTools() so any configured cognitive
     // pipeline's onListTools hooks (e.g. ToolDescriptionEnricher)
     // observe + modify the surface presented to Claude Code.

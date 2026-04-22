@@ -166,6 +166,9 @@ async function main(): Promise<void> {
         onFatalHalt: fatalHalt,
         onHandshakeComplete: (r: HandshakeResponse) => {
           log(`[Handshake] complete: ${r.engineerId} epoch=${r.sessionEpoch}`);
+          // Resolve early-phase gate so ListTools unblocks now (~500ms
+          // post-spawn) instead of waiting for the full sync phase.
+          resolveHandshakeComplete();
         },
         onPendingTask: (task) => {
           appendNotification(
@@ -210,24 +213,44 @@ async function main(): Promise<void> {
     },
   );
 
-  // Hub handshake runs in parallel with stdio open (see below). The
-  // dispatcher gates its tool-dispatch handlers on `agentReady` so a
-  // listTools / callTool arriving in the race window waits rather than
-  // failing with `session state=connecting`. The MCP `initialize` handler
-  // is intentionally NOT gated — Claude Code's initialize timeout is
-  // tighter than the 600–1200ms Hub handshake, and a missed initialize
-  // ACK is a deterministic startup failure (the symptom that motivated
-  // this ordering — see docs/reviews/bug-candidate-adapter-startup-race.md).
+  // Two-phase ready signal:
+  //
+  //   handshakeComplete — resolves when register_role returns (transport
+  //     connected + identity asserted). ~500ms typical. Used by ListTools
+  //     so the host's catalog fetch unblocks fast.
+  //
+  //   agentReady — resolves when full agent.start() returns (handshake +
+  //     runSynchronizingPhase + initial drain). Multi-second for architects
+  //     with non-empty pending-action queues. Used by CallTool so the
+  //     cognitive pipeline runs against fully-synced state.
+  //
+  // Why split: a previous single-phase `agentReady` gate on ListTools
+  // produced empty tool surfaces for architects whose drain ran longer
+  // than the host's tools/list patience. greg's session loaded its
+  // catalog pre-fix-deploy and was unaffected; lily's session post-deploy
+  // hit the gate cold and saw no tools. Splitting the signal keeps
+  // ListTools fast while keeping CallTool safe.
+  //
+  // The MCP `initialize` handler is intentionally NOT gated — Claude
+  // Code's initialize timeout is tighter than the 600–1200ms handshake,
+  // and a missed initialize ACK is a deterministic startup failure
+  // (see docs/reviews/bug-candidate-adapter-startup-race.md).
+
   let resolveAgentReady!: () => void;
   let rejectAgentReady!: (err: unknown) => void;
   const agentReady = new Promise<void>((resolve, reject) => {
     resolveAgentReady = resolve;
     rejectAgentReady = reject;
   });
-  // Swallow unhandled rejection — main()'s catch handles fatal exit; the
-  // promise reject path exists so any awaiting tool-dispatch handler
-  // surfaces a real error instead of hanging.
   agentReady.catch(() => { /* observed by handlers; main() rethrows */ });
+
+  let resolveHandshakeComplete!: () => void;
+  let rejectHandshakeComplete!: (err: unknown) => void;
+  const handshakeComplete = new Promise<void>((resolve, reject) => {
+    resolveHandshakeComplete = resolve;
+    rejectHandshakeComplete = reject;
+  });
+  handshakeComplete.catch(() => { /* observed by ListTools; main()'s catch handles fatal */ });
 
   const dispatcher = createDispatcher({
     agent,
@@ -238,6 +261,7 @@ async function main(): Promise<void> {
       mirror: (block) => process.stderr.write(block),
     },
     agentReady,
+    handshakeComplete,
   });
   dispatcherRef = dispatcher;
 
@@ -257,8 +281,13 @@ async function main(): Promise<void> {
   try {
     await agent.start();
     resolveAgentReady();
-    log("Hub connection established");
+    log("Hub connection established (full sync done)");
   } catch (err) {
+    // Reject both gates so any awaiting handler surfaces a real error
+    // rather than hanging. handshakeComplete may already be resolved
+    // (handshake succeeded, sync failed) — a redundant reject after
+    // resolve is a no-op on the Promise.
+    rejectHandshakeComplete(err);
     rejectAgentReady(err);
     throw err;
   }
