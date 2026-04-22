@@ -1,12 +1,12 @@
-# Phase 1 Cartography — Pass 1.1 (architect-critique applied; awaiting Director ratification)
+# Phase 1 Cartography — Pass 1.2 (tele-11 addendum applied + Pass 1.1 coverage-gap fix)
 
-**Status:** Pass 1.1 — engineer revision incorporating the architect critique (`docs/reviews/2026-04-phase-1-cartography-critique.md` at commit `89ba92a` on agent/lily). Per the Phase 1 cadence (engineer draft → Director review → architect critique → engineer revise → Director ratify), this is the engineer revision step. **Awaits Director ratification.**
+**Status:** Pass 1.2 — supersedes Pass 1.1 with two layered changes: (a) architect §9 addendum applied per `docs/reviews/2026-04-phase-1-cartography-critique.md` at commit `d4b4c96` on agent/lily (tele-11 Cognitive Minimalism filed mid-revision per Director exception to review anti-goal §7); (b) coverage-gap fix for Pass 1.1 oversight where ideas 107–114, 116, 120, 121 had body-tag `tele-N` but never received the canonical `audit:tele_primary=` form. **Awaits Director ratification.**
 
-**Author (Pass 1):** greg (engineer, eng-0d2c690e7dd5), 2026-04-22 AEST.
-**Critique author:** lily (architect, eng-40903c59d19f), commit `89ba92a`.
-**Mission gates verified clear:** mission-40 (M-Session-Claim-Separation) completed 2026-04-22; companion bug-26 + adapter-startup-race shipped (commits 18cde2d, a011fcd, dd1423c, 9e14ff7, e2ce3f8, 83b57e3); review anti-goals §5–8 back to full force.
+**Author (Pass 1 → 1.2):** greg (engineer, eng-0d2c690e7dd5), 2026-04-22 AEST.
+**Critique authors:** lily (architect, eng-40903c59d19f) — original critique commit `89ba92a`, tele-11 addendum commit `d4b4c96`.
+**Mission gates verified clear:** mission-40 (M-Session-Claim-Separation) completed 2026-04-22; companion bug-26 + adapter-startup-race shipped (commits 18cde2d, a011fcd, dd1423c, 9e14ff7, e2ce3f8, 83b57e3); review anti-goals §5–8 back to full force; **anti-goal §7 ("modifying ratified Tele set") was suspended by Director exception 2026-04-22 to file tele-11 — see §A3 provenance**.
 
-**Companion data:** row-level TSV exports in `docs/reviews/2026-04-phase-1-cartography-data/` (158 ideas after 3 seed ideas filed, 28 bugs, 40 missions, 11 teles, 246 threads-in-14d-window). Regenerable from GCS state via §A1.
+**Companion data:** row-level TSV exports in `docs/reviews/2026-04-phase-1-cartography-data/` (158 ideas after 3 seed ideas filed, 28 bugs, 40 missions, **12 teles** (was 11 pre-tele-11), 246 threads-in-14d-window). Regenerable from GCS state via §A1.
 
 **Output path:** architect's original brief specified `documents/reviews/`; that directory does not exist in this repo. Pass 1 used existing `docs/reviews/` per project convention; carried forward in Pass 1.1.
 
@@ -95,21 +95,22 @@ Open/investigating bug list unchanged from Pass 1 §1.2.
 
 Active missions inventory unchanged. Mission-numbering chaos noted in Pass 1 §4.2 stays out of cartography scope per Director (post-review hardening).
 
-### 1.4 Teles (11 total — Director-ratified 2026-04-21)
+### 1.4 Teles (12 total — Director-ratified 2026-04-21 + tele-11 added mid-revision 2026-04-22)
 
-| ID | Name |
-|---|---|
-| tele-0 | Sovereign Intelligence Engine (umbrella) |
-| tele-1 | Sovereign State Transparency |
-| tele-2 | Isomorphic Specification |
-| tele-3 | Sovereign Composition |
-| tele-4 | Zero-Loss Knowledge |
-| tele-5 | Perceptual Parity |
-| tele-6 | Frictionless Agentic Collaboration |
-| tele-7 | Resilient Agentic Operations |
-| tele-8 | Gated Recursive Integrity |
-| tele-9 | Chaos-Validated Deployment |
-| tele-10 | Autopoietic Evolution |
+| ID | Name | Notes |
+|---|---|---|
+| tele-0 | Sovereign Intelligence Engine | umbrella |
+| tele-1 | Sovereign State Transparency | |
+| tele-2 | Isomorphic Specification | |
+| tele-3 | Sovereign Composition | |
+| tele-4 | Zero-Loss Knowledge | |
+| tele-5 | Perceptual Parity | |
+| tele-6 | Frictionless Agentic Collaboration | |
+| tele-7 | Resilient Agentic Operations | |
+| tele-8 | Gated Recursive Integrity | reverse-gap closed via 3 seed ideas (idea-156/157/158) in Pass 1.1 |
+| tele-9 | Chaos-Validated Deployment | |
+| tele-10 | Autopoietic Evolution | |
+| **tele-11** | **Cognitive Minimalism** | **NEW; filed 2026-04-22 via Director exception to anti-goal §7 — see §A3** |
 
 bug-24 (no retirement primitive for teles) still blocks formal retirement of the 5 superseded pre-rewrite teles; zombie entries persist.
 
@@ -131,23 +132,30 @@ The 16 stuck `Phase 2x N=20 — *` measurement-harness threads remain unreaped p
 
 Application of architect critique §2.1 (mechanical remap of 63 audit-tagged ideas) + §3.2 (placement of 38 orphans) + §3.1 (dismissal markers on 9 bug-migration legacy) + 3 newly-filed tele-8 seed ideas. **Every open and triaged idea now carries `audit:tele_primary=tele-N`** (engineer-applied via batch `update_idea` calls; status flip for §3.1 dismissals deferred to architect).
 
-### Cluster sizes after revision
+### Cluster sizes after revision (primary-tele counts)
 
-| Tele | Pass 1 sketch | Pass 1.1 (post-remap) | Δ |
-|---|---|---|---|
-| tele-0 (umbrella) | 0 | 0 | unchanged (definitionally empty) |
-| tele-1 (Sovereign State Transparency) | 4 | **10** | +6 (absorbed observability ideas + Registry/Graph + 2 post-mission-40 obs ideas) |
-| tele-2 (Isomorphic Specification) | 19 | **18** | net stable (lost frictionless ideas to tele-6, gained Isomorphic-FSM ideas from old tele-3/5) |
-| tele-3 (Sovereign Composition) | 11 | **15** | +4 (Universal Port, dedup, base-entity refactor, gemini-cli adapter, Smart NIC, adapter-core) |
-| tele-4 (Zero-Loss Knowledge) | 16 | **20** | +4 (vocabulary-chain ideas dominate: Concept, Trace+Report, Survey, Goal, concept-candidates) |
-| tele-5 (Perceptual Parity) | 11 | **15** | +4 (Hydration ideas absorbed from old tele-7; Director-surface cluster) |
-| tele-6 (Frictionless Agentic Collaboration) | 3 | **12** | +9 (Frictionless ideas absorbed from old tele-2 + operator-affordance + workflow-engine) |
-| tele-7 (Resilient Agentic Operations) | 13 | **17** | +4 (Resilient ideas absorbed from old tele-4 + cascade-replay-queue + bug-11 mitigations cluster) |
-| tele-8 (Gated Recursive Integrity) | 0 | **3** | +3 (newly-filed seed ideas — see §4 below) |
-| tele-9 (Chaos-Validated Deployment) | 16 | **5** | -11 (most "new tele-9" candidates were old umbrella; only CI/IaC/deployment ideas stay) |
-| tele-10 (Autopoietic Evolution) | 4 | **5** | +1 (idea-14 from old tele-8 audit) |
+| Tele | Pass 1 sketch | Pass 1.1 | Pass 1.2 (post-tele-11 + coverage fix) | Δ since 1.1 |
+|---|---|---|---|---|
+| tele-0 (umbrella) | 0 | 0 | 0 | unchanged (definitionally empty) |
+| tele-1 (Sovereign State Transparency) | 4 | 10 | 10 | unchanged |
+| tele-2 (Isomorphic Specification) | 19 | 18 | **20** | +2 (gap-fix: idea-108 + idea-112) |
+| tele-3 (Sovereign Composition) | 11 | 15 | **17** | +2 (gap-fix: idea-113 + idea-120; lost idea-115 to tele-11) |
+| tele-4 (Zero-Loss Knowledge) | 16 | 20 | 20 | unchanged |
+| tele-5 (Perceptual Parity) | 11 | 15 | **14** | -1 (lost idea-119 to tele-11) |
+| tele-6 (Frictionless Agentic Collaboration) | 3 | 12 | **12** | net 0 (gap-fix: idea-110 + idea-111; lost idea-107 + idea-138 to tele-11) |
+| tele-7 (Resilient Agentic Operations) | 13 | 17 | **19** | +2 (gap-fix: idea-109 + idea-114) |
+| tele-8 (Gated Recursive Integrity) | 0 | 3 | 3 | unchanged (3 seed ideas from Pass 1.1) |
+| tele-9 (Chaos-Validated Deployment) | 16 | 5 | 5 | unchanged |
+| tele-10 (Autopoietic Evolution) | 4 | 5 | **6** | +1 (gap-fix: idea-121) |
+| **tele-11 (Cognitive Minimalism)** | — | — | **5** | NEW: 4 reassignments (107, 115, 119, 138) + 1 promotion (idea-116 — see §2.1) |
 
-**Total placed:** ~120 open+triaged ideas. **Orphans remaining: 0** (modulo the 9 dismissal-marker ideas awaiting architect status flip).
+**Secondary-tele additions for tele-11** (per §9.3 addendum): 9 ideas gain `audit:tele_secondary=tele-11` with primary unchanged — idea-72, 79, 108, 109, 110, 113, 114, 145, 146.
+
+**Total placed:** ~131 open+triaged ideas. **Orphans remaining: 0** (modulo the 9 dismissal-marker ideas awaiting architect status flip).
+
+### 2.1 Engineer-flagged tele-11 promotion beyond §9 scope
+
+**idea-116** ("Proposed tele-10 — Precision Context Engineering") was filed pre-rewrite when "tele-10" referenced the old numbering. Its body content — "Bounded accumulation / Capped per-response size / Observable waste (Virtual Tokens Saved)" — is **archetypal tele-11 Cognitive Minimalism content** and directly motivates that tele's existence. Promoted to `audit:tele_primary=tele-11, audit:tele_secondary=tele-10` in Pass 1.2 beyond lily's §9.2/§9.3 scope. Tagged `audit:eng_promoted_to_tele_11=2026-04-22-pass-1.2` for provenance. **Flagged to architect for confirmation; no pushback received as of commit time.**
 
 ### Per-cluster idea lists
 
@@ -316,19 +324,39 @@ Outputs persisted to `docs/reviews/2026-04-phase-1-cartography-data/`. Regenerat
 
 ---
 
-## A2. Pass 1.1 revision audit trail
+## A2. Revision audit trail (Pass 1 → 1.2)
 
-Mechanical operations applied via MCP `update_idea` and `create_idea` between commits `6721ba3` (Pass 1) and this commit (Pass 1.1):
+Mechanical operations applied via MCP `update_idea` and `create_idea`:
 
+**Pass 1.1 (commit `6fb820e`, post-architect-critique commit `89ba92a`):**
 - **3 × `create_idea`** — tele-8 seed ideas (idea-156, idea-157, idea-158), `architect-authored-by:lily`
 - **63 × `update_idea`** — §2.1 audit-tag remaps (audit:tele_primary= rebinds + audit:tele_secondary= adds per critique table)
 - **38 × `update_idea`** — §3.2 orphan placements (audit:tele_primary= + optional secondary on previously-untagged ideas)
 - **9 × `update_idea`** — §3.1 dismissal markers (audit:valid=superseded-by-bug:bug-N + migrated-to-bug:bug-N tags; status flip deferred to architect)
+- **Subtotal: 113 ops, 0 failures.**
 
-**Total: 113 successful Hub operations.** All idempotent (re-running with the same args is a no-op). Failure count: 0.
+**Pass 1.2 (this commit, post-§9 addendum commit `d4b4c96`):**
+- **4 × `update_idea`** — §9.2 reassignments to tele-11 PRIMARY (idea-107, 115, 119, 138)
+- **9 × `update_idea`** — §9.3 secondary adds of tele-11 (idea-72, 79, 108, 109, 110, 113, 114, 145, 146)
+- **5 × `update_idea`** — Pass 1.1 coverage-gap fix (idea-111, 112, 116, 120, 121 — had body-tag `tele-N` but never received `audit:tele_primary=` in Pass 1.1)
+- Note: idea-116 promoted to tele-11 PRIMARY (beyond §9 scope; engineer-flagged per §2.1)
+- **Subtotal: 18 ops, 0 failures.**
 
-Per-operation TSVs preserved at `/tmp/cartography-pass1/{apply-list,orphan-list,dismiss-list,new-tags-apply}.tsv` (engineer scratchpad; not committed). Companion data dir contains the projected metadata snapshot from before revision.
+**Grand total across Pass 1.1 + 1.2: 131 successful Hub operations, 0 failures.** All idempotent.
+
+## A3. Anti-goal §7 exception provenance — tele-11 Cognitive Minimalism
+
+Review anti-goal §7 ("Modifying the ratified Tele set") was suspended by Director exception 2026-04-22 AEST to file tele-11 Cognitive Minimalism. Provenance:
+
+1. Director diagnostic prompt to architect: "Do we have a tele that describes perfect cognitive offload from LLM — optimise logic/code so LLM token consumption is efficient, offload deterministic work to machines?"
+2. Architect (lily) read: existing teles 0–10 covered the concept only compositionally (tele-6 anti-transcription + tele-3 logic-density + tele-2 spec-drives-FSM + tele-5 hydration); no single tele carried "LLM tokens as scarce economic resource" as first-class mandate.
+3. Director: "File as a new Tele - Cognitive Minimalism."
+4. Architect filed via `create_tele` MCP tool; `docs/specs/teles.md` updated; commit `d4b4c96` on agent/lily.
+5. Critique addendum (§9 of `2026-04-phase-1-cartography-critique.md`) added in same commit, specifying 4 primary reassignments + 9 secondary adds.
+6. Engineer Pass 1.2 applied addendum + flagged additional idea-116 promotion + fixed Pass 1.1 coverage gap.
+
+**For Phase 4 retrospective:** evaluate whether strategic-review methodology should formalize "tele addition via Director exception" as an explicit protocol vs treat this as one-off variance. Per critique §9.6.
 
 ---
 
-*End of Pass 1.1. Awaiting Director ratification per brief §11 step 4. Architect critique reference: commit `89ba92a` on agent/lily.*
+*End of Pass 1.2. Awaiting Director ratification per brief §11 step 4. Architect critique reference: commits `89ba92a` + `d4b4c96` on agent/lily.*
