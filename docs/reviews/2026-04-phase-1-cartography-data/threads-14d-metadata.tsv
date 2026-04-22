@@ -1,0 +1,246 @@
+thread-100	closed		architect	3		smoke-1776404142657	2026-04-17	[smoke] WF-005 thread (smoke-1776404142657)
+thread-101	closed		architect	3	implementation_ready		2026-04-17	Role Routing & Label-Based Selection — Mission Design
+thread-102	closed		architect	3		smoke-1776410674502	2026-04-17	[smoke] WF-005 thread (smoke-1776410674502)
+thread-103	closed		architect	3		smoke-1776411217353	2026-04-17	[smoke] WF-005 thread (smoke-1776411217353)
+thread-104	closed		architect	3		smoke-1776412123645	2026-04-17	[smoke] WF-005 thread (smoke-1776412123645)
+thread-105	closed		architect	3		smoke-1776412839619	2026-04-17	[smoke] WF-005 thread (smoke-1776412839619)
+thread-106	closed		architect	3		smoke-1776413204302	2026-04-17	[smoke] WF-005 thread (smoke-1776413204302)
+thread-107	closed		engineer	4	implementation_ready	mission-18	2026-04-17	DAG-mission hardening: consumer-update edges, orphan lifecycle, mission-integrit
+thread-108	closed		engineer	1			2026-04-17	Event Naming Audit & Consistency Brainstorm
+thread-109	closed		architect	3	implementation_ready		2026-04-17	GCS read-modify-write audit — bug class beyond task-223
+thread-10	closed		architect	3	implementation_ready		2026-04-11	Phase 13e Fix: Non-Blocking Unified Plugin Architecture
+thread-110	closed		architect	4	implementation_ready		2026-04-17	Architectural Guidance: Mission-20 Storage Naming & Structure
+thread-111	closed		architect	6			2026-04-17	Architectural Brainstorm: Generic EntityStore Base Class & Metadata Centralizati
+thread-112	closed		architect	5	implementation_ready		2026-04-17	Multi-action thread convergence & PolicyRouter hardening — workflow enhancement
+thread-113	closed		architect	3	implementation_ready		2026-04-18	Idea backlog cleanup — dismissals needed post-RBAC fix
+thread-114	closed		architect	3		smoke-1776473457430	2026-04-18	[smoke] WF-005 thread (smoke-1776473457430)
+thread-115	closed		architect	3		smoke-1776473678588	2026-04-18	[smoke] WF-005 thread (smoke-1776473678588)
+thread-116	closed		architect	4	implementation_ready		2026-04-18	Entity Registry (SSOT) & Schema Audit Brainstorm
+thread-117	closed		architect	6	implementation_ready		2026-04-18	Entity Registry (SSOT) & Schema Audit Brainstorm
+thread-118	closed		architect	3	implementation_ready		2026-04-18	[smoke] M21 Phase 1 Threads 2.0 gate validation
+thread-119	closed		architect	3	implementation_ready		2026-04-18	[T1] Phase 1 post-deploy prompt validation
+thread-11	closed		architect	3	implementation_ready		2026-04-11	Universal MCP Network Adapter: Design for Reusability
+thread-120	closed		architect	3	implementation_ready		2026-04-18	[Threads 2.0 E2E] Post-migration validation
+thread-121	closed		architect	3	implementation_ready		2026-04-18	[Threads 2.0 E2E r2] Allow-list + cascade fixes
+thread-122	closed		engineer	3	implementation_ready		2026-04-18	[P2P smoke] greg → kate direct peer thread
+thread-123	closed		engineer	3	implementation_ready		2026-04-18	[P2P smoke r2] Autonomous loop chain — greg asks kate to close + re-open
+thread-124	closed		engineer	3	implementation_ready		2026-04-18	[P2P smoke r2] kate → greg reply thread
+thread-125	closed		architect	9	implementation_ready		2026-04-18	[Threads 2.0 review] Frictionless-perfection rigorous brainstorm
+thread-126	closed		architect	3	implementation_ready		2026-04-18	[Missions kickoff] Threads 2.0 Phase 2 — create 4 missions + decompose M-Ratify
+thread-127	closed		engineer	3	implementation_ready		2026-04-18	[M-Ratify coord] greg → kate on mission-23 task split
+thread-128	closed		architect	3	implementation_ready		2026-04-18	[Missions kickoff #2] Activate mission-24 (M-Phase2-Impl) + mission-25 (M-Sandwi
+thread-129	closed		engineer	1			2026-04-18	[Coord] What task(s) are you working on?
+thread-12	closed		architect	5	implementation_ready		2026-04-11	Architecture Review: Current State and Improvement Backlog
+thread-130	round_limit		engineer	4	implementation_ready		2026-04-18	[Fix-ups] Mission activation, task-decomposition audit, thread-129 stewardship c
+thread-131	round_limit		architect	3	implementation_ready		2026-04-18	[Fix-up] Cancel 9 zombie tasks — mission-24/25 state cleanup
+thread-132	closed	targeted	architect	3	implementation_ready	mission-24	2026-04-18	[Fix-up retry] Cancel 9 zombie tasks — Hub FSM now permits working/blocked cance
+thread-133	closed	targeted	engineer	4	implementation_ready		2026-04-18	M24-T15 Phase 2 ITW smoke
+thread-134	closed	targeted	architect	3	implementation_ready		2026-04-18	M24 Phase 2 status + next-priority check-in
+thread-135	closed	targeted	engineer	4	implementation_ready		2026-04-18	task-274 Part 1 shipped + Parts 2/3 defer
+thread-136	closed	targeted	architect	3	implementation_ready	mission-cascade-perfection	2026-04-18	M-Cascade-Perfection — ADR-015 ratification + mission/task spawn
+thread-137	active	unicast	engineer	2			2026-04-19	Threads 2.0 design doc + test README review
+thread-138	closed	unicast	architect	3			2026-04-19	bug-10 closure verification — ADR-017 end-to-end
+thread-139	closed	unicast	architect	3			2026-04-19	Phase 1.1 verification — queueItemId on SSE payload
+thread-13	closed		engineer	3			2026-04-11	Push-to-LLM Validation Test
+thread-140	closed	unicast	engineer	4	implementation_ready		2026-04-19	M-Ideas-Audit kickoff — rubric + class taxonomy buy-in
+thread-141	closed	unicast	architect	3			2026-04-19	Audit idea-1 — GCS persistence verification probe
+thread-142	closed	unicast	architect	3			2026-04-19	Audit idea-100 — ADR-017 Phase 2 architect-adapter drain-on-wake
+thread-143	closed	unicast	architect	3			2026-04-19	Audit idea-101 — ADR-017 Phase 3 engineer-adapter drain-on-wake
+thread-144	closed	unicast	architect	3			2026-04-19	Audit idea-102 — Universal Port
+thread-145	closed	unicast	architect	3			2026-04-19	M-Ideas-Audit — Calibration gate (5 ideas audited)
+thread-146	closed	unicast	architect	3			2026-04-19	Audit Wave 1 — ADR-017 follow-ups (idea-97/98/99/103/104/105)
+thread-147	closed	unicast	architect	3			2026-04-19	Audit Wave 2 — shipped/implemented ideas (idea-2/3/16/32/34/36/37)
+thread-148	closed	unicast	architect	3			2026-04-19	Audit Wave 3 — cognitive architecture (idea-11/24/25/27/31/35)
+thread-149	closed	unicast	engineer	4	implementation_ready		2026-04-19	Audit Wave 4 — resilience + tooling (idea-12/13/14/15/18/33)
+thread-14	closed		engineer	3			2026-04-11	SSE Push Test 2
+thread-150	closed	unicast	architect	3			2026-04-19	Audit Wave 5 — Threads 2.0 future work (idea-90/91/92/93/94/95/96)
+thread-151	closed	unicast	architect	3			2026-04-19	Audit Wave 6 — Director/ACP/UI surface (idea-5/61/62/63/67/84/86/87)
+thread-152	closed	unicast	architect	3			2026-04-19	Audit Wave 7 — Great Normalization (idea-50/66/80/81/82/83/85)
+thread-153	closed	unicast	architect	3			2026-04-19	Audit Wave 8 — Infra + deployment (idea-54/55/74/75/78)
+thread-154	closed	unicast	architect	3			2026-04-19	Audit Wave 9 — entities + tools (idea-6/64/65/68/69/70)
+thread-155	closed	unicast	architect	3			2026-04-19	Audit Wave 10 — workflow + lifecycle (idea-20/21/23/30/56)
+thread-156	closed	unicast	architect	3			2026-04-19	Audit Wave 11 — final batch (idea-58/59/60/71/72/73/79)
+thread-157	closed	unicast	architect	3			2026-04-19	Audit Wave 12 cleanup — missed stragglers (idea-4/38/39/42/43/44/45/46/47/48)
+thread-158	closed	unicast	engineer	8	implementation_ready		2026-04-19	M-Cognitive-Hypervisor Phase 1 — design: sovereign @ois/cognitive-layer package 
+thread-159	closed	unicast	architect	3			2026-04-19	Phase 1 shim-add smoke — quick ack
+thread-15	closed		architect	3			2026-04-11	SSE Push Test 3
+thread-160	closed	unicast	architect	3			2026-04-19	M-Cognitive-Hypervisor Phase 2 — design kickoff
+thread-161	active	unicast	engineer	2	implementation_ready		2026-04-19	Phase 2a ckpt-C smoke — LLM-usage telemetry bridge
+thread-162	closed	unicast	architect	3			2026-04-19	Phase 2a ckpt-C — live verify pass 2
+thread-163	closed	unicast	architect	2	implementation_ready		2026-04-19	Phase 2a baseline — simple ack
+thread-164	closed	unicast	architect	2			2026-04-19	Phase 2a baseline — ideation
+thread-165	closed	unicast	architect	2			2026-04-19	Phase 2a baseline — tool-heavy read
+thread-166	closed	unicast	architect	2			2026-04-19	Phase 2a baseline — design analysis
+thread-167	closed	unicast	architect	2			2026-04-19	Phase 2a baseline — parallel candidate
+thread-168	closed	unicast	architect	2	implementation_ready		2026-04-19	Phase 2a baseline — error path
+thread-169	active	unicast	engineer	2	implementation_ready		2026-04-19	Phase 2b ckpt-A — simple ack
+thread-16	closed		architect	3			2026-04-11	SSE Push Test 4
+thread-170	active	unicast	engineer	2	agreement_pending		2026-04-19	Phase 2b ckpt-A — ideation
+thread-171	active	unicast	engineer	2			2026-04-19	Phase 2b ckpt-A — tool-heavy read
+thread-172	active	unicast	engineer	2	decision_needed		2026-04-19	Phase 2b ckpt-A — design analysis
+thread-173	active	unicast	engineer	2			2026-04-19	Phase 2b ckpt-A — parallel candidate
+thread-174	active	unicast	engineer	2	implementation_ready		2026-04-19	Phase 2b ckpt-A — error path
+thread-175	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2b ckpt-B — simple ack
+thread-176	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2b ckpt-B — ideation
+thread-177	active	unicast	engineer	2			2026-04-20	Phase 2b ckpt-B — tool-heavy read
+thread-178	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2b ckpt-B — design analysis
+thread-179	active	unicast	engineer	2			2026-04-20	Phase 2b ckpt-B — parallel candidate
+thread-17	closed		engineer	3			2026-04-11	SSE Push Test 5
+thread-180	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2b ckpt-B — error path
+thread-181	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2b ckpt-C — simple ack
+thread-182	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2b ckpt-C — ideation
+thread-183	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2b ckpt-C — tool-heavy read
+thread-184	active	unicast	engineer	2			2026-04-20	Phase 2b ckpt-C — design analysis
+thread-185	active	unicast	engineer	2			2026-04-20	Phase 2b ckpt-C — parallel candidate
+thread-186	active	unicast	engineer	2			2026-04-20	Phase 2b ckpt-C — error path
+thread-187	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2b-B sample — simple ack A
+thread-188	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2b-B sample — simple ack B
+thread-189	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2b-B sample — simple ack C
+thread-18	closed		engineer	3			2026-04-11	Autonomous Push Test
+thread-190	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2b-B sample — ideation A
+thread-191	active	unicast	engineer	2	decision_needed		2026-04-20	Phase 2b-B sample — ideation B
+thread-192	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2b-B sample — ideation C
+thread-193	active	unicast	engineer	2			2026-04-20	Phase 2b-B sample — tool-heavy A
+thread-194	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2b-B sample — tool-heavy B
+thread-195	closed	unicast	engineer	2			2026-04-20	Phase 2b-B sample — design A (idea-102)
+thread-196	active	unicast	engineer	2			2026-04-20	Phase 2b-B sample — design B (idea-115)
+thread-197	active	unicast	engineer	2			2026-04-20	Phase 2b-B sample — design C (idea-116)
+thread-198	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2b-B sample — design D (idea-100)
+thread-199	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2b-B sample — parallel A
+thread-19	closed		architect	3			2026-04-11	Bidirectional Thread Test — No Chat Interface
+thread-200	active	unicast	engineer	2			2026-04-20	Phase 2b-B sample — parallel B
+thread-201	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2x N=20 — ack-1
+thread-202	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2x N=20 — ack-2
+thread-203	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2x N=20 — ack-3
+thread-204	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2x N=20 — ack-4
+thread-205	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2x N=20 — ideation-1
+thread-206	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2x N=20 — ideation-2
+thread-207	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2x N=20 — ideation-4
+thread-208	active	unicast	engineer	2			2026-04-20	Phase 2x N=20 — tool-heavy-1
+thread-209	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2x N=20 — tool-heavy-2
+thread-20	closed		engineer	4	implementation_ready		2026-04-11	Full Autonomous Bidirectional Test
+thread-210	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2x N=20 — tool-heavy-3
+thread-211	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2x N=20 — tool-heavy-4
+thread-212	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2x N=20 — design-1
+thread-213	active	unicast	engineer	2			2026-04-20	Phase 2x N=20 — design-2
+thread-214	active	unicast	engineer	2			2026-04-20	Phase 2x N=20 — design-3
+thread-215	active	unicast	engineer	2			2026-04-20	Phase 2x N=20 — parallel-1
+thread-216	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2x N=20 — parallel-2
+thread-217	active	unicast	engineer	2	implementation_ready		2026-04-20	Phase 2x N=20 — parallel-4
+thread-218	active	unicast	engineer	2	agreement_pending		2026-04-20	Phase 2x N=20 — ideation-3
+thread-219	active	unicast	engineer	2			2026-04-20	Phase 2x N=20 — design-4
+thread-21	closed		architect	3	implementation_ready		2026-04-11	Phase 14: Architect Node.js Rewrite — Full Design Review
+thread-220	active	unicast	engineer	2			2026-04-20	Phase 2x N=20 — parallel-2
+thread-221	active	unicast	engineer	2			2026-04-20	Phase 2x N=20 — parallel-3
+thread-222	closed	unicast	architect	5	implementation_ready		2026-04-20	idea-119 rigorous brainstorm — query-shape engineering on entity list tools
+thread-223	closed	unicast	architect	5	implementation_ready		2026-04-20	Threads 2.0 Phase 2 rigorous design brainstorm — intent→execution linkage via ca
+thread-224	closed	unicast	architect	5	implementation_ready		2026-04-20	Threads 2.0 robustness audit — brainstorm scope + mission brief
+thread-225	closed	unicast	engineer	4	implementation_ready		2026-04-20	idea-120 triage — entity-provenance unification (createdBy shape + rollout)
+thread-226	closed	unicast	architect	3	implementation_ready		2026-04-20	task-305 scope revision heads-up — director-approved A+B+D atomic cutover
+thread-227	closed	unicast	engineer	2	implementation_ready		2026-04-20	Unicast comms smoke test — kate/dev → architect
+thread-228	active	unicast	engineer	3	implementation_ready		2026-04-20	Unicast comms smoke test v2 — architect → kate/dev
+thread-229	closed	unicast	architect	3			2026-04-20	Comms validation ping — kate (dev)
+thread-22	closed		architect	3			2026-04-11	Full Duplex Validation — Phase 14 Node.js
+thread-230	closed	unicast	architect	3			2026-04-20	Comms validation ping #2 — kate (dev)
+thread-231	closed	unicast	architect	3	implementation_ready	task-305	2026-04-20	Task-305 prod backfill executed — F unblocked; shim-cleanup window opens 2026-04
+thread-232	closed	unicast	engineer	10	implementation_ready	task-304	2026-04-20	CP2 in-flight — 3 of 6 checkpoints landed; heads-up before C4 stale-action reval
+thread-233	closed	unicast	engineer	4	implementation_ready	idea-132	2026-04-20	idea-132 triage request — Hypervisor-adapter mitigations (bug-11) needs a missio
+thread-234	closed	unicast	architect	3	implementation_ready	bug-16	2026-04-20	CP3 C4+C5 brainstorm — Agent reaper + reconnect label-refresh (bug-16)
+thread-235	closed	unicast	architect	3	implementation_ready	idea-132	2026-04-20	idea-132 mission-brief formalization — gates cleared; requesting propose_mission
+thread-236	closed	unicast	architect	3	implementation_ready	mission-38	2026-04-21	Post task-310 review — standing by for Task 2 (bug-20 captures the stall class)
+thread-237	closed	unicast	architect	3	implementation_ready	mission-38	2026-04-21	Post task-311 review — standing by for Task 1a (bug-20 recurrence, idea-144 capt
+thread-238	closed	unicast	architect	3	implementation_ready	mission-38	2026-04-21	Post task-312 review — standing by for Task 4 (Chunked Reply Composition)
+thread-239	closed	unicast	architect	3	implementation_ready	mission-38	2026-04-21	Post task-313 review — standing by for Task 1b (Graceful Exhaustion, final task 
+thread-23	closed		engineer	3	implementation_ready		2026-04-11	Improving Context Persistence and Wisdom Retention
+thread-240	closed	unicast	architect	3	implementation_ready	idea-144	2026-04-21	idea-144 Path A — v1 shape confirm + task issuance request
+thread-241	closed	unicast	engineer	2	implementation_ready	task-315	2026-04-21	task-315 scope expansion — full review-outcome cascade (no silent cells)
+thread-242	closed	unicast	architect	3	implementation_ready	task-316	2026-04-21	task-316 revision-loop FSM — director-ratified v1 shapes; scope confirmation
+thread-243	active	unicast	engineer	6	implementation_ready	idea-149	2026-04-21	Ratified tele audit — file 7 new teles; 5 retirements blocked on bug-24
+thread-244	closed	unicast	engineer	6	implementation_ready	idea-149	2026-04-21	File Tele #1 — Sovereign State Transparency (ratified, idea-149)
+thread-245	closed	unicast	architect	5	implementation_ready	bug-26	2026-04-22	M-Session-Claim-Separation mission brief — architect review (bug-26)
+thread-246	closed	unicast	architect	1		mission-40	2026-04-22	Mission-40 Director-ratified — T1 ready for issuance
+thread-247	closed	unicast	engineer	3	implementation_ready		2026-04-22	Phase 1 cartography kickoff — mission-40 gate clear; begin inventory legwork
+thread-24	closed		architect	5	implementation_ready		2026-04-11	Indestructible Notification Delivery: Resumable Message Bus
+thread-25	closed		architect	3	implementation_ready		2026-04-11	Notification Payload: Pointers vs Full Content
+thread-26	closed		architect	3			2026-04-11	Persistent Notification Test
+thread-27	closed		engineer	6	implementation_ready		2026-04-11	Planning Phases 16-18: Roadmap Ideation
+thread-28	closed		engineer	4	implementation_ready		2026-04-11	Response Quality Test: Communication Semantics Design
+thread-29	closed		engineer	4	implementation_ready		2026-04-11	Stability & Reliability Phase: Priority Bug Fixes
+thread-2	closed		architect	3	director_input		2026-04-11	The Path to Frictionless Collaboration
+thread-30	closed		engineer	4	director_input		2026-04-11	Stability Phase Validation
+thread-31	closed		engineer	4	director_input	stability-phase	2026-04-11	Universal Adapter Transport Lifecycle: Permanent Fix Design
+thread-32	closed		engineer	4			2026-04-12	ConnectionManager Stability Validation
+thread-33	closed		architect	3	director_input	task-29	2026-04-12	Strategic Architecture Review: Post-Stability Phase Planning
+thread-34	closed		architect	3	implementation_ready		2026-04-12	SSE Liveness Validation: Post-Deploy Test
+thread-35	closed		architect	6	agreement_pending		2026-04-12	Workflow Design: Multi-Document Specification Review
+thread-36	closed		engineer	5	implementation_ready		2026-04-12	Troubleshooting: Missing Notification Wakeup
+thread-37	closed		architect	9	implementation_ready		2026-04-12	Push Notification Validation: Live Test Sequence
+thread-38	closed		architect	5	implementation_ready		2026-04-12	SSE Fix A Deployed: Ready for Test 1
+thread-39	closed		architect	5	implementation_ready		2026-04-12	Test 1 Retry: Push Notification After All Fixes
+thread-3	closed		architect	4	implementation_ready		2026-04-11	Implementation Sequencing: Supervised Autonomy (Level 1)
+thread-40	closed		architect	5	implementation_ready		2026-04-12	FINAL Test 1: No More Deployments
+thread-41	closed		architect	3	implementation_ready		2026-04-12	Test 1 Final: Handler Logging Confirms SDK Delivery
+thread-42	closed		engineer	4	implementation_ready	prop-9	2026-04-12	Hardening Turn: Post-Testing Production Alignment
+thread-43	closed		engineer	4	implementation_ready		2026-04-12	E2E Smoke Test: Post-Hardening Deployment
+thread-44	closed		architect	4	implementation_ready	cognitive-architecture-turn	2026-04-12	Mission Planning: Cognitive Architecture & Workflow Fluidity
+thread-45	closed		architect	3	implementation_ready	cognitive-architecture-turn	2026-04-12	Workflow Gap: Thread Convergence Follow-Through
+thread-46	closed		engineer	3	agreement_pending	cognitive-architecture-turn	2026-04-12	Testing & Validation: Cognitive Architecture Tools
+thread-47	closed		engineer	4	implementation_ready	cognitive-architecture-turn	2026-04-12	Design: Idea & Mission Entity Data Models
+thread-48	closed		architect	3	implementation_ready	cognitive-architecture-turn	2026-04-12	Turn Review: Completed Work, Remaining Scope, and Next Turn Planning
+thread-49	closed		engineer	3	implementation_ready	cognitive-architecture-turn	2026-04-12	Entity Persistence & Tool Discovery Fixes
+thread-4	closed		architect	3	implementation_ready		2026-04-11	Phase 12 Hub Implementation Complete
+thread-50	closed		engineer	5	implementation_ready	tool-naming-consolidation	2026-04-12	Turn Planning: Tool Naming and Consolidation
+thread-51	closed		engineer	4	director_input		2026-04-12	Push System Issue - No Directives Received
+thread-52	closed		engineer	3	implementation_ready	stability-phase	2026-04-12	Critical Bug: Hub Session TTL Reaper Failure
+thread-53	closed		engineer	3		stability-phase	2026-04-12	Formal Closure Required: Task-48 Supplemental Report
+thread-54	closed		engineer	5	director_input	cleanup-optimisation	2026-04-12	Formalizing Cleanup & Optimization Activities
+thread-55	closed		engineer	5	implementation_ready	friction-analysis	2026-04-12	Friction Analysis & Workflow Hardening
+thread-56	closed		engineer	3	implementation_ready	tool-discovery-sync	2026-04-12	Simplified Tool Discovery Sync (Client-Side)
+thread-57	closed		engineer	3	implementation_ready	architect-orphan-storm	2026-04-13	Test Harness Enhancements for Client Lifecycle Simulation
+thread-58	closed		architect	3	implementation_ready	architect-orphan-storm	2026-04-13	Migration Ordering: UniversalClientAdapter Rollout
+thread-59	closed		engineer	6			2026-04-13	URGENT: Task Duplication Crisis — 12 Duplicates This Session
+thread-5	closed		architect	5			2026-04-11	Persistent MCP Sessions vs. Per-Invocation McpToolset
+thread-60	closed		engineer	5	implementation_ready	mission-2	2026-04-13	Architecture Design: Layer 7 Policy Router
+thread-61	closed		engineer	6	implementation_ready	mission-2	2026-04-13	Agentic Network Messaging Resilience Architecture
+thread-62	closed		architect	3	implementation_ready	mission-2	2026-04-13	AMP Redesign: State-Based Reconnect, Not Event Replay
+thread-63	closed		engineer	3		mission-3	2026-04-13	Deployment Coordination: State-Based Reconnect (AMP Phase 2)
+thread-64	closed		architect	4	implementation_ready	mission-4	2026-04-13	The Great Decoupling & E2E Testing Strategy
+thread-65	closed		architect	3	implementation_ready	mission-4a	2026-04-13	Mission-4a Completion Sync: The Great Decoupling Final Status
+thread-66	closed		architect	4	implementation_ready		2026-04-13	Design: E2E TestOrchestrator Architecture
+thread-67	closed		architect	3	implementation_ready	mission-4b	2026-04-13	Workflow Registry: Sovereign Specification for All State Machines & Interactions
+thread-68	closed		engineer	5	implementation_ready	turn-4-planning	2026-04-13	Design: Cross-Entity DAG Triggers & Frictionless Workflows
+thread-69	closed		architect	3	implementation_ready	task-109	2026-04-13	Mission Decomposition: Cross-Entity DAG Triggers & Frictionless Workflows
+thread-6	closed		architect	5	implementation_ready		2026-04-11	Agentic Networking Architecture: Converged Transport Design
+thread-70	closed		architect	4	implementation_ready	tele-2	2026-04-13	Design: Eliminating the Transcription Bottleneck (Tele-2)
+thread-71	closed		architect	4	implementation_ready		2026-04-13	Workflow Deadlock: Deferred FSM Logic (Task-116/117)
+thread-72	closed		architect	3	implementation_ready	task-122	2026-04-14	Deadlock Resolved: Hub Deployed with Review Decision Logic
+thread-73	closed		architect	4	implementation_ready		2026-04-14	Workflow Sync: Queue State & Deadlock Investigation
+thread-74	closed		architect	10	implementation_ready	idea-31	2026-04-14	Cognitive Architecture Hardening Review
+thread-75	closed		architect	10	director_input	idea-36	2026-04-14	Onboarding Claude Code to the Agentic Network
+thread-76	closed		architect	10	implementation_ready	idea-37	2026-04-14	Multi-Agent Targeted Routing (Idea-37)
+thread-77	closed		engineer	3	implementation_ready	mission-18	2026-04-14	State Desynchronization: Silent Report Failures
+thread-78	closed		engineer	4	director_input	mission-17	2026-04-14	engineer-claude-1: Plugin state, open issues, and next priorities
+thread-79	closed		engineer	9	implementation_ready		2026-04-14	Design: Agent as a First-Class Entity (Idea-2)
+thread-7	closed		architect	3	implementation_ready		2026-04-11	Phase 13c: Agent SSE Listeners + OpenCode Plugin
+thread-80	closed		architect	3	implementation_ready		2026-04-14	Coordination: task-145 (M18) rollout strategy
+thread-81	closed		architect	3	implementation_ready		2026-04-14	Roadblock: task-145/146/147 duplication — need consolidation before coding
+thread-82	closed		engineer	1			2026-04-14	Coordination: Task-150 Pickup Status
+thread-83	closed		architect	3			2026-04-15	Phase 7 smoke test — McpAgentClient live
+thread-84	closed		architect	3			2026-04-15	Request: send a test task to verify task flow
+thread-85	closed		engineer	2			2026-04-15	Plugin rename live verification
+thread-86	closed		engineer	6			2026-04-15	Post-rename zombie connection check
+thread-87	closed		architect	3			2026-04-15	Universal Adapter: define explicit goals at top of mission brief
+thread-88	closed		engineer	2			2026-04-16	Post-deploy validation — GCS persistence and SSE delivery
+thread-89	closed		architect	3			2026-04-16	[smoke] WF-005 thread (smoke-1776324757987)
+thread-8	closed		architect	3	implementation_ready		2026-04-11	Phase 13d: Unified OpenCode Plugin (Option D)
+thread-90	closed		architect	3			2026-04-16	[smoke] WF-005 thread (smoke-1776324959744)
+thread-91	closed		architect	3			2026-04-16	[smoke] WF-005 thread (smoke-1776325063261)
+thread-92	closed		architect	3	implementation_ready		2026-04-16	Test: Thread-to-Task auto-directive flow
+thread-93	closed		architect	3			2026-04-16	[smoke] WF-005 thread (smoke-1776329400024)
+thread-94	closed		engineer	2			2026-04-16	Test: Issue a task directive to the Engineer
+thread-95	closed		engineer	2			2026-04-16	Test: Create a task directive for the Engineer
+thread-96	closed		architect	9	implementation_ready		2026-04-16	Documentation Review and Architecture Critique
+thread-97	closed		engineer	2			2026-04-16	Flash Model Smoke Test
+thread-98	closed		architect	3			2026-04-17	[smoke] WF-005 thread (smoke-1776403336240)
+thread-99	closed		architect	3		smoke-1776403952689	2026-04-17	[smoke] WF-005 thread (smoke-1776403952689)
+thread-9	closed		architect	3	implementation_ready		2026-04-11	Push-to-LLM: Plugin-Driven Autonomous Agent Loop

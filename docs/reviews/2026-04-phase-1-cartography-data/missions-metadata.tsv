@@ -1,0 +1,40 @@
+mission-10	proposed	1			mission-10	2026-04-13	Mission-7: Report Feedback Loops
+mission-11	proposed	0			mission-11	2026-04-13	Mission-8: Thread Convergence Auto-Spawn
+mission-12	proposed	3			mission-12	2026-04-13	Mission-10: Report Feedback Loops
+mission-13	proposed	3			mission-13	2026-04-13	Mission-11: Thread Convergence Auto-Spawn
+mission-14	proposed	2	documents/planning/mission-14-client-resilience.md		mission-14	2026-04-14	Mission-14: Client-Side Resilience
+mission-15	proposed	1			mission-15	2026-04-14	Mission-14: Client-Side Resilience (Completion)
+mission-16	proposed	7			mission-16	2026-04-14	Mission-18: Targeted Routing
+mission-17	completed	3			mission-17	2026-04-14	Claude Code Integration & Push-to-LLM Equivalence
+mission-18	proposed	6			mission-18	2026-04-17	Granular Routing via Role-Labels
+mission-19	proposed	0			mission-19	2026-04-17	Mission-20: GCS read-modify-write audit & concurrency hardening
+mission-1	proposed	0			mission-1	2026-04-12	GCS Persistence Verification
+mission-20	abandoned	0			mission-20	2026-04-18	Mission-19: Entity Registry (SSOT) & Schema Audit
+mission-21	proposed	0			mission-21	2026-04-18	Entity Registry SSOT & Great Normalization
+mission-22	proposed	0			mission-22	2026-04-18	Multi-action Thread Convergence & PolicyRouter Hardening
+mission-23	proposed	0			mission-23	2026-04-18	M-Ratify: Persist Phase 2 Threads 2.0 architecture into permanent specs
+mission-24	active	0			mission-24	2026-04-18	M-Phase2-Impl: Implement Phase 2 Threads 2.0 architecture
+mission-25	active	0			mission-25	2026-04-18	M-SandwichHardening: Architect service resilience + sandwich unit-test harness
+mission-26	proposed	0			mission-26	2026-04-18	M-Phase3-Polish: Legacy removal + observability
+mission-27	proposed	0			mission-27	2026-04-18	M-Phase2-Impl (Mission-24) Activation
+mission-28	proposed	0			mission-28	2026-04-18	M-SandwichHardening (Mission-25) Activation
+mission-29	proposed	0		thread-136	mission-29	2026-04-18	Mission-Cascade-Perfection
+mission-2	proposed	4	documents/architecture/policy-router-v1.md		mission-2	2026-04-13	Agentic Application Layer (Layer 7 Policy Router)
+mission-30	proposed	0		thread-140	mission-30	2026-04-19	M-Ideas-Audit — backlog audit + synthesis
+mission-31	proposed	0			mission-31	2026-04-19	M-Cognitive-Hypervisor Phase 1: Sovereign Cognitive Layer
+mission-32	proposed	0	docs/planning/m-cognitive-hypervisor.md		mission-32	2026-04-19	M-Cognitive-Hypervisor-Phase-1
+mission-33	proposed	0	docs/planning/m-cognitive-hypervisor.md		mission-33	2026-04-19	M-Cognitive-Hypervisor Phase 1
+mission-34	proposed	0	docs/planning/m-cognitive-hypervisor.md		mission-34	2026-04-19	M-Cognitive-Hypervisor-Phase-1
+mission-35	proposed	0			mission-35	2026-04-20	Mission 24: Threads 2.0 Robustness Audit & Hardening
+mission-36	active	0			mission-36	2026-04-20	Mission Phase 2d: Threads 2.0 Robustness Audit
+mission-37	proposed	0	documents/missions/m-hypervisor-adapter-mitigations.md		mission-37	2026-04-20	M-Hypervisor-Adapter-Mitigations
+mission-38	active	0	documents/missions/m-hypervisor-adapter-mitigations.md		mission-38	2026-04-20	M-Hypervisor-Adapter-Mitigations
+mission-39	proposed	0			mission-39	2026-04-21	Mission-42: Sovereign Telemetry Filing
+mission-3	proposed	2			mission-3	2026-04-13	Agentic Messaging Protocol (AMP) Implementation
+mission-40	completed	0	documents/missions/m-session-claim-separation.md	thread-245	mission-40	2026-04-22	M-Session-Claim-Separation
+mission-4	proposed	1			mission-4	2026-04-13	E2E Agentic Messaging Network Test Harness
+mission-5	proposed	2	specs/workflow-registry.md		mission-5	2026-04-13	Remediate Workflow Registry Gaps
+mission-6	proposed	0			mission-6	2026-04-13	Mission-6: Post-Review DAG Triggers
+mission-7	proposed	0			mission-7	2026-04-13	Mission-7: Thread Convergence Follow-On Actions
+mission-8	proposed	0			mission-8	2026-04-13	Mission-8: Report Feedback Loops
+mission-9	proposed	2			mission-9	2026-04-13	Mission-6: Review-Gated DAG Cascades
