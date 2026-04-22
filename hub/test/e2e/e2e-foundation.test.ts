@@ -217,7 +217,8 @@ describe("E2E Foundation", () => {
       // (pending-action-policy tools like prune_stuck_queue_items are
       // NOT registered on the orchestrator router — orchestrator skips
       // registerPendingActionPolicy.)
-      expect(orch.router.size).toBe(48);
+      // M-Session-Claim-Separation (mission-40) T2: claim_session added → 49.
+      expect(orch.router.size).toBe(49);
     });
 
     it("multi-engineer support with distinct sessions", async () => {

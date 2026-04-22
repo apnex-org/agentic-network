@@ -1024,7 +1024,7 @@ export interface IEngineerRegistry {
    * from registerAgent() under the hood; T2 wires the new MCP tool +
    * SSE-subscribe / first-tools-call hooks.
    */
-  assertIdentity(payload: AssertIdentityPayload, address?: string): Promise<AssertIdentityResult>;
+  assertIdentity(payload: AssertIdentityPayload, sessionId?: string, address?: string): Promise<AssertIdentityResult>;
   /**
    * M-Session-Claim-Separation (mission-40) T1 — single helper for all
    * session-claim paths. Increments sessionEpoch, binds currentSessionId
@@ -2022,6 +2022,7 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
         receiptSla: payload.receiptSla,
         wakeEndpoint: payload.wakeEndpoint,
       },
+      sessionId,
       address,
     );
     if (!identity.ok) {
@@ -2059,6 +2060,7 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
 
   async assertIdentity(
     payload: AssertIdentityPayload,
+    sessionId?: string,
     _address?: string,
   ): Promise<AssertIdentityResult> {
     const fingerprint = computeFingerprint(payload.globalInstanceId);
@@ -2090,10 +2092,16 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
       agent.receiptSla = payload.receiptSla ?? agent.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS;
       agent.wakeEndpoint = payload.wakeEndpoint ?? agent.wakeEndpoint ?? null;
       // INVARIANT (T1): do NOT touch sessionEpoch, currentSessionId,
-      // status, livenessState, lastHeartbeatAt, sessionToEngineerId.
+      // status, livenessState, lastHeartbeatAt.
       // Identity assertion is identity-only; session-bound state belongs
       // to claimSession.
+      // T2 EXTENSION: when sessionId is provided, record the
+      // session→engineerId binding (without claiming) so SSE-subscribe +
+      // first-tools/call auto-claim hooks can look up identity later.
       this.agents.set(agent.engineerId, agent);
+      if (sessionId) {
+        this.sessionToEngineerId.set(sessionId, agent.engineerId);
+      }
       const changedFields: ("labels" | "advisoryTags" | "clientMetadata")[] = [];
       if (labelsChanged) changedFields.push("labels");
       return {
@@ -2135,6 +2143,10 @@ export class MemoryEngineerRegistry implements IEngineerRegistry {
     };
     this.agents.set(engineerId, agent);
     this.byFingerprint.set(fingerprint, engineerId);
+    // T2 EXTENSION: bind session→engineerId on first contact too.
+    if (sessionId) {
+      this.sessionToEngineerId.set(sessionId, engineerId);
+    }
     console.log(`[MemoryEngineerRegistry] Agent identity asserted (created): ${engineerId}`);
     return {
       ok: true,

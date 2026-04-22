@@ -166,7 +166,9 @@ describe("SessionPolicy", () => {
     expect(router.has("get_engineer_status")).toBe(true);
     expect(router.has("list_available_peers")).toBe(true);
     expect(router.has("migrate_agent_queue")).toBe(true);
-    expect(router.size).toBe(4);
+    // M-Session-Claim-Separation (mission-40) T2: claim_session added.
+    expect(router.has("claim_session")).toBe(true);
+    expect(router.size).toBe(5);
   });
 
   const engineerHandshake = {
@@ -181,14 +183,44 @@ describe("SessionPolicy", () => {
     },
   };
 
-  it("register_role as engineer (M18 handshake) creates an Agent", async () => {
+  it("register_role as engineer (M18 handshake) asserts identity (T2: sessionClaimed=false, epoch unchanged)", async () => {
     const result = await router.handle("register_role", engineerHandshake, ctx);
 
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.ok).toBe(true);
     expect(parsed.engineerId).toBeDefined();
-    expect(parsed.sessionEpoch).toBe(1);
+    // M-Session-Claim-Separation (mission-40) T2: register_role now
+    // ONLY asserts identity. sessionClaimed=false; sessionEpoch reflects
+    // current value (0 for first-contact, NOT incremented). Callers must
+    // explicitly call claim_session to bind the session as active.
+    expect(parsed.sessionClaimed).toBe(false);
+    expect(parsed.sessionEpoch).toBe(0);
+  });
+
+  it("claim_session after register_role binds the session and increments sessionEpoch (T2)", async () => {
+    // First assert identity.
+    const reg = await router.handle("register_role", engineerHandshake, ctx);
+    const regParsed = JSON.parse(reg.content[0].text);
+    expect(regParsed.sessionClaimed).toBe(false);
+    expect(regParsed.sessionEpoch).toBe(0);
+
+    // Then explicit claim.
+    const claim = await router.handle("claim_session", {}, ctx);
+    const claimParsed = JSON.parse(claim.content[0].text);
+    expect(claimParsed.ok).toBe(true);
+    expect(claimParsed.sessionClaimed).toBe(true);
+    expect(claimParsed.sessionEpoch).toBe(1);
+    expect(claimParsed.engineerId).toBe(regParsed.engineerId);
+    expect(claimParsed.displacedPriorSession).toBeUndefined();
+  });
+
+  it("claim_session without prior register_role returns no_identity_asserted (T2)", async () => {
+    const result = await router.handle("claim_session", {}, ctx);
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.code).toBe("no_identity_asserted");
   });
 
   it("register_role as architect (legacy bare path) returns role confirmation", async () => {
@@ -255,6 +287,8 @@ describe("SessionPolicy", () => {
 
   it("touchAgent bumps lastSeenAt and flips drifted status back to online", async () => {
     await router.handle("register_role", engineerHandshake, ctx);
+    // T2: claim session so the agent is online + has currentSessionId set.
+    await router.handle("claim_session", {}, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
     const eid = agents[0].engineerId;
@@ -274,6 +308,8 @@ describe("SessionPolicy", () => {
 
   it("touchAgent is rate-limited (no-op within window)", async () => {
     await router.handle("register_role", engineerHandshake, ctx);
+    // T2: claim session for parity with pre-T2 setup that established lastSeenAt + lastTouchAt.
+    await router.handle("claim_session", {}, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
     const eid = agents[0].engineerId;
@@ -288,6 +324,9 @@ describe("SessionPolicy", () => {
 
   it("markAgentOffline flips status and only affects the owning session", async () => {
     await router.handle("register_role", engineerHandshake, ctx);
+    // T2: claim session — markAgentOffline targets the session-owning agent,
+    // which requires a session to be bound first.
+    await router.handle("claim_session", {}, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
     const eid = agents[0].engineerId;
@@ -302,8 +341,9 @@ describe("SessionPolicy", () => {
   });
 
   it("get_engineer_status projects from M18 Agents store", async () => {
-    // Register an engineer via M18 handshake so an Agent exists
+    // Register + claim an engineer via M18 handshake so an Agent exists with claimed session
     await router.handle("register_role", engineerHandshake, ctx);
+    await router.handle("claim_session", {}, ctx);
 
     // Call get_engineer_status from a separate session (now [Any], any role works)
     const archCtx = createTestContext({ stores: ctx.stores, sessionId: "test-arch-session" });
@@ -333,11 +373,12 @@ describe("SessionPolicy", () => {
   };
 
   it("list_available_peers returns pruned {agentId, role, labels} shape", async () => {
-    // Register one engineer with labels
+    // Register + claim one engineer with labels (T2: claim required for online status)
     await router.handle("register_role", {
       ...engineerHandshake,
       labels: { team: "billing", env: "prod" },
     }, ctx);
+    await router.handle("claim_session", {}, ctx);
 
     // Caller: a separate session that'll list peers
     const callerCtx = createTestContext({ stores: ctx.stores, sessionId: "caller" });
@@ -355,10 +396,13 @@ describe("SessionPolicy", () => {
   });
 
   it("list_available_peers filters by role", async () => {
+    // T2: each agent needs claim_session to appear online in the peer list.
     await router.handle("register_role", engineerHandshake, ctx);
+    await router.handle("claim_session", {}, ctx);
 
     const archCtx = createTestContext({ stores: ctx.stores, sessionId: "arch-session" });
     await router.handle("register_role", architectHandshake, archCtx);
+    await router.handle("claim_session", {}, archCtx);
 
     const dirCtx = createTestContext({ stores: ctx.stores, sessionId: "dir-session" });
     await router.handle("register_role", {
@@ -369,6 +413,7 @@ describe("SessionPolicy", () => {
         proxyName: "@ois/test-plugin", proxyVersion: "0",
       },
     }, dirCtx);
+    await router.handle("claim_session", {}, dirCtx);
 
     // A fourth neutral caller session with no Agent entity.
     const caller = createTestContext({ stores: ctx.stores, sessionId: "caller" });
@@ -398,6 +443,7 @@ describe("SessionPolicy", () => {
       globalInstanceId: "gid-eng-a",
       labels: { team: "billing", env: "prod" },
     }, ctx);
+    await router.handle("claim_session", {}, ctx);
 
     const eng2 = createTestContext({ stores: ctx.stores, sessionId: "eng2" });
     await router.handle("register_role", {
@@ -405,6 +451,7 @@ describe("SessionPolicy", () => {
       globalInstanceId: "gid-eng-b",
       labels: { team: "shipping", env: "prod" },
     }, eng2);
+    await router.handle("claim_session", {}, eng2);
 
     const caller = createTestContext({ stores: ctx.stores, sessionId: "caller" });
     const result = await router.handle("list_available_peers", {
@@ -418,6 +465,7 @@ describe("SessionPolicy", () => {
 
   it("list_available_peers excludes the caller's own agentId", async () => {
     await router.handle("register_role", engineerHandshake, ctx);
+    await router.handle("claim_session", {}, ctx);
     const selfAgents = await ctx.stores.engineerRegistry.listAgents();
     const selfId = selfAgents[0].engineerId;
 
@@ -427,6 +475,7 @@ describe("SessionPolicy", () => {
       ...engineerHandshake,
       globalInstanceId: "gid-other",
     }, otherCtx);
+    await router.handle("claim_session", {}, otherCtx);
 
     // Call from the original (self) session — should exclude self.
     const result = await router.handle("list_available_peers", { role: "engineer" }, ctx);

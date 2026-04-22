@@ -248,7 +248,11 @@ const hub = new HubNetworking(
     notificationCleanupInterval: 60 * 60 * 1000,
     autoStartTimers: true,
     quiet: false,
-  }
+  },
+  // M-Session-Claim-Separation (mission-40) T2: thread audit store through
+  // for SSE-subscribe auto-claim hook to emit agent_session_implicit_claim
+  // + agent_session_displaced audits.
+  auditStore,
 );
 
 // ── Start Server ─────────────────────────────────────────────────────

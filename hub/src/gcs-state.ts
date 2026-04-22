@@ -976,6 +976,7 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
         receiptSla: payload.receiptSla,
         wakeEndpoint: payload.wakeEndpoint,
       },
+      sessionId,
       address,
     );
     if (!identity.ok) {
@@ -1012,6 +1013,7 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
 
   async assertIdentity(
     payload: AssertIdentityPayload,
+    sessionId?: string,
     _address?: string,
   ): Promise<AssertIdentityResult> {
     const fingerprint = computeFingerprint(payload.globalInstanceId);
@@ -1048,6 +1050,10 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
         try {
           await writeJsonWithPrecondition(this.bucket, fpPath, agent, 0);
           await writeJson(this.bucket, `agents/${engineerId}.json`, agent);
+          // T2 EXTENSION: bind session→engineerId on first contact (without claim).
+          if (sessionId) {
+            this.sessionToEngineerId.set(sessionId, engineerId);
+          }
           console.log(`[GcsEngineerRegistry] Agent identity asserted (created): ${engineerId}`);
           return {
             ok: true,
@@ -1097,6 +1103,10 @@ export class GcsEngineerRegistry implements IEngineerRegistry {
       try {
         await writeJsonWithPrecondition(this.bucket, fpPath, updated, generation);
         await writeJson(this.bucket, `agents/${updated.engineerId}.json`, updated);
+        // T2 EXTENSION: bind session→engineerId on identity refresh too.
+        if (sessionId) {
+          this.sessionToEngineerId.set(sessionId, updated.engineerId);
+        }
         const changedFields: ("labels" | "advisoryTags" | "clientMetadata")[] = [];
         if (labelsChanged) changedFields.push("labels");
         return {

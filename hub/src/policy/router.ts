@@ -128,6 +128,60 @@ export class PolicyRouter {
       }
     }
 
+    // ── M-Session-Claim-Separation (mission-40) T2: first-tools/call auto-claim ──
+    //
+    // Back-compat hook for adapters that haven't migrated to the explicit
+    // claim_session call. If the caller's session has asserted identity
+    // (via register_role) but has not yet claimed a session — and the
+    // incoming tool is not one of the identity-establishing tools that
+    // would create a chicken-and-egg loop — auto-claim via the T1 single
+    // claimSession helper with trigger="first_tool_call". Emits
+    // agent_session_implicit_claim audit (and agent_session_displaced
+    // when evicting a prior session). The §10 deprecation-runway
+    // dashboard tracks this trigger separately from sse_subscribe.
+    //
+    // Skip-list: register_role (establishes identity; can't pre-claim)
+    // and claim_session (does the claim itself; auto-claiming first
+    // would double-claim and emit confusing audits).
+    if (toolName !== "register_role" && toolName !== "claim_session") {
+      const agent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+      if (agent && agent.currentSessionId !== ctx.sessionId) {
+        const autoClaim = await ctx.stores.engineerRegistry.claimSession(
+          agent.engineerId,
+          ctx.sessionId,
+          "first_tool_call",
+        );
+        if (autoClaim.ok) {
+          try {
+            await ctx.stores.audit.logEntry(
+              "hub",
+              "agent_session_implicit_claim",
+              `Agent ${autoClaim.engineerId} session implicitly claimed (trigger=first_tool_call, epoch=${autoClaim.sessionEpoch}, originatingTool=${toolName})`,
+              autoClaim.engineerId,
+            );
+          } catch (err) {
+            this.log(`[T2] agent_session_implicit_claim audit write failed for ${autoClaim.engineerId}: ${(err as Error).message ?? err}`);
+          }
+          if (autoClaim.displacedPriorSession) {
+            try {
+              await ctx.stores.audit.logEntry(
+                "hub",
+                "agent_session_displaced",
+                `Agent ${autoClaim.engineerId} session displaced (priorSessionId=${autoClaim.displacedPriorSession.sessionId}, priorEpoch=${autoClaim.displacedPriorSession.epoch}, newEpoch=${autoClaim.sessionEpoch}, trigger=first_tool_call)`,
+                autoClaim.engineerId,
+              );
+            } catch (err) {
+              this.log(`[T2] agent_session_displaced audit write failed for ${autoClaim.engineerId}: ${(err as Error).message ?? err}`);
+            }
+          }
+        }
+        // Auto-claim failure (thrashing / unknown_engineer) does NOT block
+        // the tool call. Best-effort, matches T1's audit-emission philosophy.
+        // The handler may itself error if it requires a claimed session;
+        // that surfaces to the caller via the normal MCP error channel.
+      }
+    }
+
     const startTime = Date.now();
     let result: PolicyResult;
     let emittedCount = 0;

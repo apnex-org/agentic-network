@@ -47,77 +47,75 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
       // object (including `{}`) is an explicit refresh signal.
       labels: labels,
     };
-    const result = await ctx.stores.engineerRegistry.registerAgent(sid, tokenRole, payload, ctx.clientIp);
-    if (!result.ok) {
-      // MCP tool-error channel: isError=true + structured JSON body the proxy inspects.
+    // M-Session-Claim-Separation (mission-40) T2: protocol cutover.
+    // register_role no longer claims a session. It calls assertIdentity
+    // directly (passing sessionId so the binding is recorded for the
+    // SSE-subscribe / first-tools/call auto-claim hooks to find later)
+    // and returns sessionClaimed: false. Adapters call claim_session
+    // explicitly when they intend to be the active session, or rely on
+    // the back-compat auto-claim hooks (T2 §10 deprecation runway).
+    //
+    // Set sessionRoles for RBAC parity with the pre-T2 path.
+    ctx.stores.engineerRegistry.setSessionRole(sid, tokenRole as "engineer" | "architect" | "director");
+    const identity = await ctx.stores.engineerRegistry.assertIdentity(
+      {
+        globalInstanceId: payload.globalInstanceId,
+        role: tokenRole,
+        clientMetadata: payload.clientMetadata,
+        advisoryTags: payload.advisoryTags,
+        labels: payload.labels,
+        receiptSla: payload.receiptSla,
+        wakeEndpoint: payload.wakeEndpoint,
+      },
+      sid,
+      ctx.clientIp,
+    );
+    if (!identity.ok) {
       return {
         content: [{
           type: "text" as const,
-          text: JSON.stringify({ ok: false, code: result.code, message: result.message }),
+          text: JSON.stringify({ ok: false, code: identity.code, message: identity.message }),
         }],
         isError: true,
       };
     }
-    // M-Session-Claim-Separation (mission-40) T1: register_role's internal
-    // call to registerAgent always invokes assertIdentity then
-    // claimSession(..., "sse_subscribe") — emit the corresponding audits.
-    // All three audit writes are best-effort (failure does not block the
-    // handshake response, matching the pre-T1 agent_handshake_refreshed
-    // pattern).
+    // Read current sessionEpoch (as-observed, NOT incremented — adapters
+    // must key on the new sessionClaimed field, NOT epoch delta, per
+    // T2 brief §3 + anti-goal §7.5).
+    const currentAgent = await ctx.stores.engineerRegistry.getAgent(identity.engineerId);
+    const currentSessionEpoch = currentAgent?.sessionEpoch ?? 0;
+
+    // Audit emissions — T2 emits ONLY agent_identity_asserted from this
+    // path. The session-claim audits (agent_session_claimed +
+    // agent_session_displaced + agent_session_implicit_claim) move to
+    // the actual claim sites: claim_session tool handler, SSE-subscribe
+    // hook, first-tools/call hook. Best-effort (failure does not block
+    // the handshake response).
     try {
       await ctx.stores.audit.logEntry(
         "hub",
         "agent_identity_asserted",
-        `Agent ${result.engineerId} identity asserted (wasCreated=${result.wasCreated})`,
-        result.engineerId,
+        `Agent ${identity.engineerId} identity asserted (wasCreated=${identity.wasCreated})`,
+        identity.engineerId,
       );
     } catch (err) {
-      console.warn(`[session-policy] agent_identity_asserted audit write failed for ${result.engineerId}: ${(err as Error).message ?? err}`);
+      console.warn(`[session-policy] agent_identity_asserted audit write failed for ${identity.engineerId}: ${(err as Error).message ?? err}`);
     }
-    try {
-      // T1 always claims via the back-compat sse_subscribe trigger from
-      // register_role. T2's other call sites (explicit claim_session
-      // tool, first-tools/call hook) emit different actions/triggers
-      // through the same helper.
-      await ctx.stores.audit.logEntry(
-        "hub",
-        "agent_session_implicit_claim",
-        `Agent ${result.engineerId} session implicitly claimed (trigger=sse_subscribe, epoch=${result.sessionEpoch}, wasCreated=${result.wasCreated})`,
-        result.engineerId,
-      );
-    } catch (err) {
-      console.warn(`[session-policy] agent_session_implicit_claim audit write failed for ${result.engineerId}: ${(err as Error).message ?? err}`);
-    }
-    if (result.displacedPriorSession) {
-      try {
-        await ctx.stores.audit.logEntry(
-          "hub",
-          "agent_session_displaced",
-          `Agent ${result.engineerId} session displaced (priorSessionId=${result.displacedPriorSession.sessionId}, priorEpoch=${result.displacedPriorSession.epoch}, newEpoch=${result.sessionEpoch}, trigger=sse_subscribe)`,
-          result.engineerId,
-        );
-      } catch (err) {
-        console.warn(`[session-policy] agent_session_displaced audit write failed for ${result.engineerId}: ${(err as Error).message ?? err}`);
-      }
-    }
-    // CP3 C5 (bug-16): on reconnect, if any mutable handshake field refreshed
-    // stored state, write an audit trail so operators can forensically trace
-    // label/role/metadata drift. Best-effort: audit failure does not block
-    // the handshake response. Preserved from pre-T1 — separate from the new
-    // identity/claim audits (which run on every register_role).
-    if (result.changedFields && result.changedFields.length > 0) {
-      const diffDetails = result.changedFields.includes("labels")
-        ? `changedFields=${result.changedFields.join(",")} priorLabels=${JSON.stringify(result.priorLabels ?? {})} newLabels=${JSON.stringify(result.labels)}`
-        : `changedFields=${result.changedFields.join(",")}`;
+    // CP3 C5 (bug-16): preserved unchanged — emits when mutable handshake
+    // fields refresh stored state on reconnect.
+    if (identity.changedFields && identity.changedFields.length > 0) {
+      const diffDetails = identity.changedFields.includes("labels")
+        ? `changedFields=${identity.changedFields.join(",")} priorLabels=${JSON.stringify(identity.priorLabels ?? {})} newLabels=${JSON.stringify(identity.labels)}`
+        : `changedFields=${identity.changedFields.join(",")}`;
       try {
         await ctx.stores.audit.logEntry(
           "hub",
           "agent_handshake_refreshed",
-          `Agent ${result.engineerId} handshake refreshed stored state: ${diffDetails}`,
-          result.engineerId,
+          `Agent ${identity.engineerId} handshake refreshed stored state: ${diffDetails}`,
+          identity.engineerId,
         );
       } catch (err) {
-        console.warn(`[session-policy] agent_handshake_refreshed audit write failed for ${result.engineerId}: ${(err as Error).message ?? err}`);
+        console.warn(`[session-policy] agent_handshake_refreshed audit write failed for ${identity.engineerId}: ${(err as Error).message ?? err}`);
       }
     }
     return {
@@ -125,13 +123,20 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
         type: "text" as const,
         text: JSON.stringify({
           ok: true,
-          engineerId: result.engineerId,
-          sessionEpoch: result.sessionEpoch,
-          wasCreated: result.wasCreated,
-          clientMetadata: result.clientMetadata,
-          advisoryTags: result.advisoryTags,
-          labels: result.labels,
-          message: `Registered agent ${result.engineerId} (epoch=${result.sessionEpoch}${result.wasCreated ? ", newly created" : ""})`,
+          engineerId: identity.engineerId,
+          // T2: currentSessionEpoch reflects as-observed value, NOT a
+          // just-incremented value. Adapters must key on sessionClaimed
+          // (next field), not epoch delta.
+          sessionEpoch: currentSessionEpoch,
+          // T2: NEW field. False from register_role; true only from
+          // claim_session response. Adapters key on this to detect
+          // "I am the active session for this identity".
+          sessionClaimed: false,
+          wasCreated: identity.wasCreated,
+          clientMetadata: identity.clientMetadata,
+          advisoryTags: identity.advisoryTags,
+          labels: identity.labels,
+          message: `Identity asserted for agent ${identity.engineerId} (no session claim — call claim_session to bind this session as the active one${identity.wasCreated ? ", newly created" : ""})`,
         }),
       }],
     };
@@ -159,6 +164,76 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
         role,
         sessionId: sid,
         message: `Registered as ${role}`,
+      }),
+    }],
+  };
+}
+
+// ── M-Session-Claim-Separation (mission-40) T2: claim_session ──────
+
+async function claimSessionTool(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const sid = ctx.sessionId;
+  // Look up the agent bound to this session. After register_role, the
+  // session→engineerId binding is recorded by assertIdentity (T2 sig
+  // extension) so getAgentForSession returns the asserted-identity
+  // agent even though no claim has happened yet.
+  const agent = await ctx.stores.engineerRegistry.getAgentForSession(sid);
+  if (!agent) {
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({
+          ok: false,
+          code: "no_identity_asserted",
+          message: "claim_session: no identity bound to this session — call register_role first to assert identity",
+        }),
+      }],
+      isError: true,
+    };
+  }
+  const claim = await ctx.stores.engineerRegistry.claimSession(agent.engineerId, sid, "explicit");
+  if (!claim.ok) {
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({ ok: false, code: claim.code, message: claim.message }),
+      }],
+      isError: true,
+    };
+  }
+  // Audit emissions for the explicit claim path.
+  try {
+    await ctx.stores.audit.logEntry(
+      "hub",
+      "agent_session_claimed",
+      `Agent ${claim.engineerId} session claimed (trigger=explicit, epoch=${claim.sessionEpoch})`,
+      claim.engineerId,
+    );
+  } catch (err) {
+    console.warn(`[session-policy] agent_session_claimed audit write failed for ${claim.engineerId}: ${(err as Error).message ?? err}`);
+  }
+  if (claim.displacedPriorSession) {
+    try {
+      await ctx.stores.audit.logEntry(
+        "hub",
+        "agent_session_displaced",
+        `Agent ${claim.engineerId} session displaced (priorSessionId=${claim.displacedPriorSession.sessionId}, priorEpoch=${claim.displacedPriorSession.epoch}, newEpoch=${claim.sessionEpoch}, trigger=explicit)`,
+        claim.engineerId,
+      );
+    } catch (err) {
+      console.warn(`[session-policy] agent_session_displaced audit write failed for ${claim.engineerId}: ${(err as Error).message ?? err}`);
+    }
+  }
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({
+        ok: true,
+        engineerId: claim.engineerId,
+        sessionEpoch: claim.sessionEpoch,
+        sessionClaimed: true,
+        ...(claim.displacedPriorSession ? { displacedPriorSession: claim.displacedPriorSession } : {}),
+        message: `Session claimed for agent ${claim.engineerId} (epoch=${claim.sessionEpoch}${claim.displacedPriorSession ? `, displaced prior session ${claim.displacedPriorSession.sessionId} epoch=${claim.displacedPriorSession.epoch}` : ""})`,
       }),
     }],
   };
@@ -253,6 +328,13 @@ export function registerSessionPolicy(router: PolicyRouter): void {
       labels: z.record(z.string(), z.string()).optional().describe("Mission-19: routing labels (e.g., {env: 'smoke-test', team: 'billing'}). CP3 C5 (bug-16): refreshed on every reconnect from the handshake payload — a provided object overwrites stored labels; omitting labels preserves the stored set. Reserved key 'ois.io/namespace' has no v1 semantics."),
     },
     registerRole,
+  );
+
+  router.register(
+    "claim_session",
+    "[Any] M-Session-Claim-Separation (mission-40) T2: explicit session claim. Binds the caller's MCP session as the active session for the asserted identity (created via register_role). Increments sessionEpoch, evicts any prior session for the same engineerId, makes the agent eligible for SSE notification dispatch. Returns sessionClaimed=true. The verb 'claim_session' is committed as stable across future API v2.0 envelope migration (idea-121 may wrap but must not rename). Probes (claude mcp list) MUST NOT call this tool — that defeats the bug-26 structural fix. Use only when the caller intends to be the active session.",
+    {},
+    claimSessionTool,
   );
 
   router.register(

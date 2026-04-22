@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import type { IEngineerRegistry, INotificationStore, Selector } from "./state.js";
+import type { IEngineerRegistry, INotificationStore, Selector, IAuditStore } from "./state.js";
 import { fireWebhook } from "./webhook.js";
 import type { Server } from "http";
 
@@ -100,7 +100,15 @@ export class HubNetworking {
     private engineerRegistry: IEngineerRegistry,
     private notificationStore: INotificationStore,
     private createMcpServerFn: CreateMcpServerFn,
-    config: HubNetworkingConfig = {}
+    config: HubNetworkingConfig = {},
+    /**
+     * M-Session-Claim-Separation (mission-40) T2: optional audit store
+     * for emitting agent_session_implicit_claim + agent_session_displaced
+     * audits from the SSE-subscribe auto-claim hook. Optional for back-
+     * compat with test rigs that don't audit (the hook degrades gracefully:
+     * the claim still happens; audit emission is best-effort).
+     */
+    private auditStore?: IAuditStore,
   ) {
     this.config = {
       port: config.port ?? 0,
@@ -675,6 +683,50 @@ export class HubNetworking {
       this.sseActive.set(sessionId, true);
       this.activeSseResponses.set(sessionId, res);
       this.log(`[Hub] SSE stream opened for ${role} session ${sessionId.substring(0, 8)}...`);
+
+      // ── M-Session-Claim-Separation (mission-40) T2: SSE-subscribe auto-claim ──
+      //
+      // Back-compat hook for adapters that haven't migrated to the
+      // explicit claim_session call. If the caller has asserted identity
+      // (via register_role) but has not yet claimed a session, auto-claim
+      // via the T1 single claimSession helper with trigger=sse_subscribe.
+      // Best-effort: claim/audit failures do not block SSE stream open.
+      try {
+        const agent = await this.engineerRegistry.getAgentForSession(sessionId);
+        if (agent && agent.currentSessionId !== sessionId) {
+          const autoClaim = await this.engineerRegistry.claimSession(
+            agent.engineerId,
+            sessionId,
+            "sse_subscribe",
+          );
+          if (autoClaim.ok && this.auditStore) {
+            try {
+              await this.auditStore.logEntry(
+                "hub",
+                "agent_session_implicit_claim",
+                `Agent ${autoClaim.engineerId} session implicitly claimed (trigger=sse_subscribe, epoch=${autoClaim.sessionEpoch})`,
+                autoClaim.engineerId,
+              );
+            } catch (err) {
+              this.log(`[T2] agent_session_implicit_claim audit write failed for ${autoClaim.engineerId}: ${(err as Error).message ?? err}`);
+            }
+            if (autoClaim.displacedPriorSession) {
+              try {
+                await this.auditStore.logEntry(
+                  "hub",
+                  "agent_session_displaced",
+                  `Agent ${autoClaim.engineerId} session displaced (priorSessionId=${autoClaim.displacedPriorSession.sessionId}, priorEpoch=${autoClaim.displacedPriorSession.epoch}, newEpoch=${autoClaim.sessionEpoch}, trigger=sse_subscribe)`,
+                  autoClaim.engineerId,
+                );
+              } catch (err) {
+                this.log(`[T2] agent_session_displaced audit write failed for ${autoClaim.engineerId}: ${(err as Error).message ?? err}`);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        this.log(`[T2] SSE-subscribe auto-claim hook failed for session ${sessionId.substring(0, 8)}: ${(err as Error).message ?? err}`);
+      }
 
       res.on("close", () => {
         if (this.sseReplacingInProgress.has(sessionId)) return;
