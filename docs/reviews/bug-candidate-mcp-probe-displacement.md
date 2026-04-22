@@ -1,6 +1,8 @@
 # BUG CANDIDATE — Concurrent MCP probe displaces live session identity
 
-**Status:** filed as **bug-26** (Hub entity; severity=major, class=identity-management). Resolution path: mission `documents/missions/m-session-claim-separation.md` (architect-review pending). Authored 2026-04-22 by greg (engineer); diagnosis by lily (architect).
+> **RESOLVED-BY-MISSION: m-session-claim-separation (mission-40)** — flipped `open → resolved` at T5 commit. fixCommits: `[18cde2d, a011fcd, dd1423c, 9e14ff7, <T5 commit>]`. See `docs/audits/m-session-claim-separation-closing-report.md` + `docs/decisions/021-identity-session-claim-separation.md`.
+
+**Status:** **RESOLVED via mission-40** (2026-04-22). bug-26 Hub entity flipped `open → resolved`. Original filing context preserved below for forensic continuity. Authored 2026-04-22 by greg (engineer); diagnosis by lily (architect).
 **Discovery context:** 2026-04-22 architectural review cold-start. While lily was debugging her own startup failure (see companion bug `bug-candidate-adapter-startup-race.md`), every `claude mcp list` she invoked bumped her Hub `sessionEpoch` and displaced the prior session — including her live session when she had one. greg's Hub-log read corroborated: `eng-40903c59d19f` epoch 7 → 14 entirely caused by lily's probe spawns.
 **Why this doc exists (not yet a Hub Bug entity):** Same as the companion bug — locks wording while fresh.
 
@@ -99,4 +101,26 @@ Allow N concurrent sessions per fingerprint (cap small, e.g. 2). Displacement ap
 - **Diagnosed by:** lily (architect agent), 2026-04-22 AEST during cold-start session debugging.
 - **Verified by:** greg (engineer agent), Hub-log read confirmed the epoch-bump pattern matches lily's `mcp list` invocations.
 - **Filed-into-Hub:** **bug-26** (2026-04-22).
-- **Resolution mission:** `documents/missions/m-session-claim-separation.md` (architect-review pending).
+- **Resolution mission:** mission-40 (M-Session-Claim-Separation).
+
+---
+
+## Resolution
+
+bug-26 was structurally resolved by mission-40 (M-Session-Claim-Separation) over 5 tasks shipped 2026-04-22 AEST:
+
+| Task | Commit | Layer | Contribution |
+|---|---|---|---|
+| **T1** | `18cde2d` | Hub | Purely-additive `assertIdentity` + `claimSession` registry helpers + 4 audit actions wired internally; `register_role` behavior unchanged externally |
+| **T2** | `a011fcd` | Hub | Protocol cutover — `register_role` becomes idempotent identity-only; new `claim_session` MCP tool; SSE-subscribe + first-tools/call back-compat auto-claim hooks |
+| **T3** | `dd1423c` | Adapter | Lazy-claim refactor + `OIS_EAGER_SESSION_CLAIM=1` env hint declared by wrapper scripts; probes inherit env but don't go through wrappers, stay lazy, never trigger explicit claim |
+| **T4** | `9e14ff7` | Adapter | Tool-catalog cache (`$WORK_DIR/.ois/tool-catalog.json`) — probes against warm cache touch zero Hub round-trips; cache invalidation by Hub version, atomic writes, schema-versioned |
+| **T5** | `<T5 commit>` | Docs | Closing audit + ADR-021 + deprecation-runway dashboard spec + bug-26 entity flip |
+
+**Resolution mechanism:** the `register_role` MCP tool was conflating two semantically-distinct operations (identity assertion + session claim) under one tool call. mission-40 split the protocol along that natural seam. Probes that assert identity but never claim sessions are now observably idempotent on Hub session state — the bug class is structurally impossible, not detection-dependent.
+
+**ADR:** see `docs/decisions/021-identity-session-claim-separation.md` for the design decision + Consequences (notably the `currentSessionEpoch` semantics change that requires adapters to key takeover-detection on `sessionClaimed` + `displacedPriorSession` rather than epoch delta).
+
+**Closing audit:** see `docs/audits/m-session-claim-separation-closing-report.md` for the full mission report, deliverable scorecard, audit-action inventory, observability surface, deprecation runway baseline, and findings (including sibling bug-27 + bug-28 that surfaced during mission execution).
+
+**Companion bug already shipped:** see `docs/reviews/bug-candidate-adapter-startup-race.md` (commit `83b57e3`). Predates mission-40 but motivated the diagnostic context — fixed adapter startup race that compounded with bug-26 to make the failure mode unrecoverable.
