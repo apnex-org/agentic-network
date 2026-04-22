@@ -392,7 +392,7 @@ Phase 3 Concept + Defect Extraction, architect-authored register. Engineer candi
 
 | Defect | Symptom | Mechanics | Resolved-by | Tele |
 |---|---|---|---|---|
-| **Friction Fossilization** | Same operational drag recurs without surfacing | No friction-reflection in Report | Vocabulary Chain (§2.5) + Hub-as-Conductor (§2.3) | tele-10 |
+| **Friction Fossilization** | Same operational drag recurs without surfacing | No friction-reflection in Report | Vocabulary Chain (§2.5) + Hub-as-Conductor (§2.3) + Bidirectional Domain Analysis (§2.10) | tele-10 |
 | **Manual Remediation** | Humans must recognize, diagnose, and propose every fix | No auto-Bug-spawn on failure | Vocabulary Chain (§2.5) | tele-10 |
 | **Post-Mortem Debt** | Failures accumulate without formal diagnosis backlog | Post-mortem threads not primitive | Vocabulary Chain (§2.5) | tele-10 |
 
@@ -432,10 +432,10 @@ Phase 3 Concept + Defect Extraction, architect-authored register. Engineer candi
 
 | Defect | Symptom | Mechanics | Resolved-by | Tele(s) |
 |---|---|---|---|---|
-| **Race Condition / Convergence Race** | Concurrent state-mutations produce divergent outcomes (bug-2 DAG retroactive, bug-23 bilateral-seal) | No atomic-update protocol for cross-entity state | Manifest-as-Master (§2.4) + Hub-as-Conductor (§2.3) | tele-7 |
-| **Truncation / Payload Capacity Leak** | Message content delivery truncates at transport threshold (bug-25 ~10-15KB) | Transport-layer size-guard missing | Uniform Adapter Contract (§2.1) + Precision Context Engineering (§2.6) | tele-7, tele-4 |
-| **Boilerplate Burden / Manual Plumbing** | LLM must explicitly pass sourceQueueItemId (bug-19) | Queue-item settlement not inferred from reply | Substrate-First Logic (§2.2) | tele-6, tele-11 |
-| **Schedule Drift / Dep-Eval Lag** | DAG dep-resolution doesn't check already-completed parents (bug-28) | dependsOn evaluation reactive-only | Hub-as-Conductor (§2.3) | tele-7 |
+| **Race Condition** *(alternative framing: Convergence Race)* | Concurrent state-mutations produce divergent outcomes (bug-2 DAG retroactive, bug-23 bilateral-seal) | No atomic-update protocol for cross-entity state | Manifest-as-Master (§2.4) + Hub-as-Conductor (§2.3) | tele-7 |
+| **Truncation** *(alternative framing: Payload Capacity Leak)* | Message content delivery truncates at transport threshold (bug-25 ~10-15KB) | Transport-layer size-guard missing | Uniform Adapter Contract (§2.1) + Precision Context Engineering (§2.6) | tele-7, tele-4 |
+| **Boilerplate Burden** *(alternative framing: Manual Plumbing)* | LLM must explicitly pass sourceQueueItemId (bug-19) | Queue-item settlement not inferred from reply | Substrate-First Logic (§2.2) | tele-6, tele-11 |
+| **Schedule Drift** *(alternative framing: Dep-Eval Lag)* | DAG dep-resolution doesn't check already-completed parents (bug-28) | dependsOn evaluation reactive-only | Hub-as-Conductor (§2.3) | tele-7 |
 | **Duplication Drift** | Two cascade paths emit same outcome (bug-7) | No cascade-action ActionSpec registry pre-Phase-2 | Hub-as-Conductor (§2.3) [already shipped] | tele-6 |
 | **Validation-Gap** | Shipped without schema-completeness check (bug-21 chunk UTF-16) | No shape-validation at emission | Uniform Adapter Contract (§2.1) | tele-3, tele-2 |
 
@@ -543,4 +543,58 @@ Phase 4 ranking uses concept-grounding as a multiplier — a mission brief that 
 
 ---
 
-*End of Phase 3 Concept + Defect Register (architect-authored Pass 3.α). Director review expected next per plan §Phase 3 cadence; architect revises on feedback; engineer critiques naming + cross-references; Director ratifies → Phase 4 Investment Prioritization opens.*
+*End of Phase 3 Concept + Defect Register (architect-authored Pass 3.α + §10 amendment fold). Pass 3.β trigger declined (sub-5% content delta per engineer recommendation). Director final ratification expected next; Phase 4 Investment Prioritization opens on ratification.*
+
+---
+
+## 10. Amendment — engineer naming + cross-reference critique fold
+
+**Provenance:** Engineer naming + cross-reference critique committed at `agent/greg:59812e8` (`docs/reviews/2026-04-phase-3-naming-critique.md`, 183 lines) per plan §Phase 3 critique cadence. Verdict PASS on all 5 critique-scope items (naming discipline, cross-reference quality, judgment-call resolutions, architect-elevated concepts, fold decisions). Two minor amend recommendations surfaced:
+
+### 10.1 Slash-alternative naming discipline (§3.14 defects)
+
+**Engineer observation:** 4 defect entries used `Name-A / Name-B` slash-alternative form, suggesting architect uncertainty between candidates. Naming discipline calls for canonical-name + alternative-framing-in-description.
+
+**Architect acceptance:** engineer-recommended canonicals accepted; alternatives retained in italic-parenthesis annotation. Changes:
+
+| Defect (was) | Defect (now) |
+|---|---|
+| Race Condition / Convergence Race | **Race Condition** *(alternative framing: Convergence Race)* |
+| Truncation / Payload Capacity Leak | **Truncation** *(alternative framing: Payload Capacity Leak)* |
+| Boilerplate Burden / Manual Plumbing | **Boilerplate Burden** *(alternative framing: Manual Plumbing)* |
+| Schedule Drift / Dep-Eval Lag | **Schedule Drift** *(alternative framing: Dep-Eval Lag)* |
+
+Canonical names follow plan §1.3 naming discipline (crisp noun-phrase; no verb-drift). Alternative framings preserve cross-referencing with engineer harvest §Pass B.
+
+### 10.2 §2.10 × Autopoietic matrix-cell inconsistency
+
+**Engineer observation:** matrix §4 cell [§2.10 Bidirectional Domain Analysis, Autopoietic cluster] shows `partial`, but no §3.10 defect lists Bidirectional Domain Analysis as resolver. Two repair options: (a) remove matrix cell, or (b) add §2.10 to Friction Fossilization's Resolved-by list.
+
+**Architect acceptance:** engineer-recommended option (b) — substantive coupling preserved. Bidirectional Domain Analysis added to Friction Fossilization's Resolved-by list in §3.10. Rationale: bidirectional analysis surfaces friction patterns operators don't file as bugs (per Phase 2 §5 observability-absorbed finding); applied to autopoietic-evolution retrospectives, it turns operational friction into self-refinement signal.
+
+### 10.3 Not-amended catalog (scope discipline)
+
+Per plan §Phase 3 critique cadence scope (naming + cross-references only), the following were explicitly out-of-scope for engineer critique and remain unchanged:
+- §1 methodology
+- §2 Concept selection + shapes (10 concepts — architect authority)
+- §3 Defect selection (68 defects — architect authority; only naming touched in §3.14)
+- §4 matrix (only one cell surfaced; base grid preserved)
+- §5 diff analysis
+- §6 judgment-call resolutions (all engineer-ratified)
+- §7 convergence-criteria self-check
+- §8 methodology-retrospective inputs
+- §9 Phase 4 preview
+
+### 10.4 Pass 3.β trigger declined
+
+Engineer recommendation: "Both are trivial 1-line edits. Doesn't block ratification if Director prefers ship-as-is + amend post-ratification." Architect concurs — amendment scope is sub-5% content delta, zero concept/defect/convergence-criteria change. Engineer-recommended inline amend + provenance section (this §10) is cleaner than triggering full Pass 3.β cycle.
+
+**Engineer critique artifact:** `docs/reviews/2026-04-phase-3-naming-critique.md` at `agent/greg:59812e8` (183 lines) — independent validation of Pass 3.α; retained on agent/greg as engineer-authored companion to this architect-authored primary artifact.
+
+### 10.5 Cross-phase convergence signal
+
+Engineer-architect concept-level convergence = 88%. Matches Phase 2's 88% domain-convergence. **Consistent cross-phase signal** across three independent harvests suggests: 88% is the reproducible ceiling for text-based-harvest convergence in the current methodology. Retrospective input: whether methodology changes could push this higher (e.g., shared-canonical-list pre-harvest, co-located harvest session, LLM-assisted convergence pass) is a Phase 4 retrospective question.
+
+---
+
+*End of Phase 3 Concept + Defect Register (architect-authored Pass 3.α + §10 amendment fold). Director final ratification expected next per plan §Phase 3 cadence; on ratification Phase 3 closes; Phase 4 Investment Prioritization opens.*
