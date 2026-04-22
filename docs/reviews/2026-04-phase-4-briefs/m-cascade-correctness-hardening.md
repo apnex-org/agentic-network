@@ -1,6 +1,6 @@
 # Mission: M-Cascade-Correctness-Hardening
 
-**Status:** DRAFT — Phase 4 mission brief (architect-side fields); engineer scope-decomposition in parallel; unified brief ratifiable post cross-review; files as `proposed` on Director final ratification per Phase 4 §10.6 protocol.
+**Status:** Pass 4 FINAL — architect-engineer sealed per plan §Phase 4 co-authoring cadence. Architect fields (Name / Tele / Concept-grounding / Goal / Dependencies / Related Concepts-Defects) at `agent/lily:6625c24`; engineer fields (Scope 4-task decomposition with sequencing / Success criteria refinement / Engineer-flagged scope decisions) folded from `agent/greg:4ff0f6b`. Files as `proposed` on Director final ratification per Phase 4 §10.6.
 **Phase 4 pick:** #2 of 4 (M-class; reliability blocker — best composite × cost ratio in pool).
 
 ---
@@ -38,14 +38,34 @@ Resolve the four cascade-execution drift bugs clustered in Phase 2 as recurring 
 
 ---
 
-## Scope (in / out)
+## Scope
 
-### In scope (four bounded bug-fix tasks)
+Mission ships in **4 bounded bug-fix tasks** (engineer-authored decomposition + sequencing):
 
-1. **bug-22 — PendingActionItem retry-count schema + terminal escalation.** Continuation-sweep lacks retry limit; infinite re-dispatch loop on persistent failure. Fix: extend PendingActionItem with `attemptCount` + enforce terminal escalation to `errored` or `escalated` state after N retries.
-2. **bug-23 — bilateral-seal race.** Engineer reply rejected after architect cascade-converge beats the seal. Fix: explicit state-transition protocol preventing inter-party race at convergence-moment.
-3. **bug-27 — propose_mission cascade drops `documentRef`.** Silent payload-field drop between staged action and entity creation. Fix: cascade-handler payload-passthrough audit across all 8 cascade-action types; no silent field drops; mission-40 `propose_mission` specifically.
-4. **bug-28 — DAG dep-eval against already-completed task → blocked.** `dependsOn` evaluation is reactive-only; ignores already-satisfied dependencies at creation time. Fix: create-time dep-evaluation checks each depId against current task-state; if all deps completed, initial status = `pending` not `blocked`.
+### Task 1 — bug-27 `propose_mission` cascade drops `documentRef` (engineer-S, ~2 days)
+
+- Cascade-handler payload-passthrough fix: propagate `payload.documentRef` in cascade-handler entity-creation path
+- Contract test: all gate-accepted payload fields must propagate to created entity (matrix across all 8 cascade-action types — artifact for closing audit)
+- **Why first:** single-function drift, smallest scope; validates the pattern before applying to other drift
+
+### Task 2 — bug-28 DAG dep-eval against completed-task → blocked (engineer-S, ~2 days)
+
+- Initial-status computation reads dep-current-state instead of assuming not-yet-completed
+- Existing test suite extended with completed-dep test case
+- **Why second:** another single-function drift; composes cleanly after bug-27 pattern-validation
+
+### Task 3 — bug-22 continuation-sweep retry-count + terminal escalation (engineer-M, ~1 week)
+
+- Extend PendingActionItem with `attemptCount` field (additive schema change)
+- FSM: `pending → errored` or `pending → escalated` transition after N attempts (env-configurable, default 5)
+- Audit emission for terminal escalation
+- **Why third:** FSM extension = larger scope than bug-27/28
+
+### Task 4 — bug-23 thread bilateral-seal race (engineer-M, ~1 week + H1 verification)
+
+- Investigate H1 (cascade-completes-before-engineer-seal) per bug-23 §Verification attempt
+- Either: explicit `awaiting_bilateral_seal` FSM state, OR engineer-seal made idempotent post-cascade-close
+- **Why last:** may surface architectural decisions (see engineer-flagged scope); highest investigation risk
 
 ### Out of scope
 
@@ -54,19 +74,16 @@ Resolve the four cascade-execution drift bugs clustered in Phase 2 as recurring 
 - Mission-cascade drift / mission-numbering deduplication (anti-goal #2 per Phase 4 §6; post-review)
 - bug-20 workflow-advancement (superseded by idea-144 Path A; #7 non-winner this phase)
 
-### Engineer authoring handoff
-
-Four task decompositions — one per bug. Engineer scopes individual bug-fix tasks including test cross-links to #1 Workflow Test Harness. Brief references four tasks + their test-harness dependencies; engineer details the implementation.
-
 ---
 
 ## Success criteria
 
-1. **Four bugs resolved:** bug-22, bug-23, bug-27, bug-28 all flipped `open → resolved` with `fixCommits` list citing commits + `fixRevision: mission-N` (mission-N = this mission's Hub ID after filing).
-2. **Cross-test coverage:** each bug-fix has ≥1 test case in #1 Workflow Test Harness covering the specific class.
-3. **Telemetry verification:** post-fix 7-day observation window shows zero re-occurrences of each bug's class (cascade retry loop; bilateral-seal race; documentRef drop; DAG dep-eval lag).
-4. **Audit completeness:** payload-passthrough audit (for bug-27 scope) produces a matrix of all 8 cascade-action types × payload-field preservation; matrix committed to `docs/audits/` as a closing-audit artifact.
-5. **No new bugs from fix:** post-fix integration suite (full `hub/test/e2e/`) stays green.
+1. **Four bugs resolved:** bug-22, bug-23, bug-27, bug-28 all flipped `open → resolved` with `fixCommits` citing commits + `fixRevision: mission-N`
+2. **Per-bug regression tests:** each fix has ≥1 regression test (verified via failing-then-passing test commits)
+3. **Cross-test coverage:** at least 2 of 4 bug-fixes use #1 Workflow Test Harness infrastructure (validates cross-mission integration)
+4. **Telemetry verification:** post-fix 7-day observation window shows zero re-occurrences of each bug's class (cascade retry loop; bilateral-seal race; documentRef drop; DAG dep-eval lag)
+5. **Audit completeness:** payload-passthrough audit (for bug-27 scope) produces a matrix of all 8 cascade-action types × payload-field preservation; matrix committed to `docs/audits/` as closing-audit artifact
+6. **Production deploy verified:** Hub redeployed with all 4 fixes; production-traffic confirms no new regressions in full `hub/test/e2e/` suite
 
 ---
 
@@ -74,7 +91,7 @@ Four task decompositions — one per bug. Engineer scopes individual bug-fix tas
 
 | Prerequisite | Relationship | Notes |
 |---|---|---|
-| #1 M-Workflow-Test-Harness | benefits from | Test harness infrastructure verifies bug-fixes; not hard-block — can ship with mission-internal tests if #1 lags |
+| #1 M-Workflow-Test-Harness | benefits from | Test harness infrastructure verifies bug-fixes; not hard-block — can ship with mission-internal tests if #1 Wave 1 lags |
 | task-310 + mission-38 CP2 C2 (ThreadConvergenceGateError) | benefits from (shipped) | Structured error format makes bug-23 bilateral-seal race investigation tractable |
 
 ### Enables (downstream)
@@ -86,11 +103,19 @@ Four task decompositions — one per bug. Engineer scopes individual bug-fix tas
 
 ---
 
+## Engineer-flagged scope decisions (for Director)
+
+1. **Intra-mission sequencing** — bug-27/28 first (smallest scope, single-function drift), then bug-22 (FSM extension), then bug-23 (H1 verification may surface architectural decisions); engineer recommends no parallelization within mission for investigation-risk isolation
+2. **bug-23 H1 verification scope** — may surface need for separate ADR if Hub FSM extension required; engineer flags upfront so architect can decide mid-mission whether H1-ADR branches off
+3. **Cross-test integration** — engineer recommends using #1 Workflow Test Harness for bug-22 and bug-28 specifically (FSM state + DAG dep-eval are high-value invariant coverage targets); bug-23 and bug-27 may use mission-internal tests given investigation scope
+
+---
+
 ## Effort class
 
 **M** (engineer-authoritative per Phase 4 §10.1).
 
-Rationale: four bounded bugs, each S-class individually; combined M because of (a) shared cross-cutting audit work (bug-27 passthrough sweep), (b) test-harness integration (depends on #1's shape), (c) 7-day observation verification. Expected 2 engineer-weeks.
+Rationale: four bounded bugs — 2×S (bug-27/28) + 2×M (bug-22/23); combined M because of (a) shared cross-cutting audit work (bug-27 passthrough sweep matrix), (b) test-harness integration (depends on #1's shape), (c) 7-day observation verification. Expected ~2 engineer-weeks.
 
 ---
 
@@ -119,9 +144,9 @@ Rationale: four bounded bugs, each S-class individually; combined M because of (
 
 - **Status at file:** `proposed` (Mission FSM default; Director release-gate per Phase 4 §10.6)
 - **Document ref:** `docs/reviews/2026-04-phase-4-briefs/m-cascade-correctness-hardening.md`
-- **Director activation:** requires explicit Director "ready to release" signal
+- **Director activation:** requires explicit Director "ready to release" signal per-mission; no architect auto-flip to `active`
 - **Correlation:** Phase 4 winner #2
 
 ---
 
-*End of M-Cascade-Correctness-Hardening architect brief draft. Engineer 4-task decomposition + test cross-links at `agent/greg`. Cross-review on thread-254.*
+*End of M-Cascade-Correctness-Hardening final brief (architect-engineer sealed Pass 4). Awaits Director final ratification → architect files via create_mission.*
