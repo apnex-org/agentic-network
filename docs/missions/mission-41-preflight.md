@@ -4,8 +4,9 @@
 **Brief:** `docs/reviews/2026-04-phase-4-briefs/m-workflow-test-harness.md`
 **Preflight author:** architect (lily)
 **Date:** 2026-04-23
-**Verdict:** **YELLOW** (passes all checks except Category D — pre-kickoff decisions pending)
+**Verdict:** **GREEN** (all categories pass; Director ratified Category D decisions 2026-04-23)
 **Freshness:** current until 2026-05-23
+**Kickoff decisions:** `docs/missions/mission-41-kickoff-decisions.md` (ratified 2026-04-23)
 
 ---
 
@@ -45,12 +46,12 @@
 
 ## Category D — Scope-decision gating
 
-- **D1.** Engineer-flagged scope decisions resolved: **FAIL — 3 items outstanding**
-  1. **Invariant subset selection** (engineer flag #1) — brief recommends INV-TH16/17/18/19; preflight Category C2 shows TH16/17 already tested. Director + architect must ratify the ~10-invariant subset at kickoff. **Action:** kickoff decision required.
-  2. **Adapter coverage scope** (engineer flag #2) — Wave 1 Hub-only vs shim-side included? Engineer recommends shim-side in; architect position (per brief concept-grounding): include shim-side (idea-104 partial-absorb rationale). **Action:** confirm at kickoff — likely ratify as engineer-recommended.
-  3. **vertex-cloudrun architect scope** (engineer flag #3) — already OUT in brief; confirm at kickoff (no action needed beyond ratification).
-- **D2.** Director + architect alignment: **PENDING** — kickoff meeting is the ratification forum
-- **D3.** Out-of-scope boundaries confirmed: **PASS** — brief §Out of scope lists 5 explicit exclusions (full 28-invariant coverage, adapter-side integration beyond idea-104, vertex-cloudrun, per-entity FSM unit tests, production chaos-validation); no scope-creep signal detected
+- **D1.** Engineer-flagged scope decisions resolved: **PASS** — all 3 items ratified by Director 2026-04-23; captured in `docs/missions/mission-41-kickoff-decisions.md`
+  1. **Invariant subset selection** — ratified Option C hybrid: INV-TH18/19 + 8 entity-invariant NONEs (INV-T4, INV-P1, INV-P2, INV-P4, INV-TH6, INV-TH7, INV-I2, INV-M4) = 10 exactly
+  2. **Adapter coverage scope** — ratified shim-side IN per idea-104 partial-absorb rationale
+  3. **vertex-cloudrun architect scope** — ratified OUT (confirmed brief position)
+- **D2.** Director + architect alignment: **PASS** — Director ratified via chat signal 2026-04-23
+- **D3.** Out-of-scope boundaries confirmed: **PASS** — brief §Out of scope lists 5 explicit exclusions; kickoff decisions preserve boundary discipline
 
 ## Category E — Execution readiness
 
@@ -72,15 +73,15 @@
 
 ## Verdict summary
 
-**YELLOW** — Mission-41 is activation-ready pending a short kickoff meeting to ratify 3 engineer-flagged scope decisions (Category D), chief among them the ~10-invariant Wave 2 subset selection. All other categories are clean: documentation committed + pushed, Hub filing correct, referenced artifacts present and current, execution readiness verified with day-1 Wave 1 work scaffoldable, and no coherence drift since filing. Recommend Director schedule kickoff with architect + engineer, ratify the 3 decisions, re-verdict to GREEN, then issue `update_mission(missionId="mission-41", status="active")`.
+**GREEN** — Mission-41 is activation-ready. All 6 check categories pass; the 3 Category D scope decisions that gated YELLOW have been ratified by Director 2026-04-23 and captured in `docs/missions/mission-41-kickoff-decisions.md`. Architect to issue `update_mission(missionId="mission-41", status="active")` per §10.6 release-gate protocol; engineer becomes claim-eligible immediately on flip.
 
-## Pre-kickoff decisions required (for YELLOW → GREEN)
+## Ratified kickoff decisions
 
-1. **Wave 2 invariant subset — ratify the ~10 of 28.** Engineer-proposed default: INV-TH18/19 (P2 spec gaps; currently TBD) + 8 entity-invariant `NONE` entries from §7.3 "immediate" set (pure policy tests). Architect + Director alternatives welcome. Output: brief addendum OR kickoff-decisions note committed alongside mission.
-2. **Wave 1 adapter-coverage scope — ratify shim-side inclusion.** Default: include shim-side per idea-104 partial-absorb rationale.
-3. **vertex-cloudrun architect coverage — confirm OUT.** Default: OUT (real LLM; not mock-harness-targetable). No action beyond ratification.
+1. **Wave 2 invariant subset (10 of 28):** INV-TH18, INV-TH19, INV-T4, INV-P1, INV-P2, INV-P4, INV-TH6, INV-TH7, INV-I2, INV-M4
+2. **Wave 1 adapter scope:** shim-side included (absorbs idea-104 partial scope)
+3. **vertex-cloudrun:** OUT (confirmed)
 
-**Estimated kickoff duration:** ~30-45 minutes Director + architect + engineer. Decisions are well-scoped; no architectural ambiguity expected.
+Full rationale: `docs/missions/mission-41-kickoff-decisions.md`.
 
 ---
 
