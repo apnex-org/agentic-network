@@ -374,6 +374,40 @@ Captured while context is fresh; folded formally into methodology v1.1 post-miss
 
 **Delta to methodology:** `CLAUDE.md` itself is the binding document; referenced from methodology as the commit-message-policy source.
 
+### Finding 7 — Pre-existing main-CI regression inherited by mission-45
+
+At PR #1 open time (80144d7 head), the vitest matrix on 4/5 packages failed CI on the install step (`npm ci` ENOENT / lockfile-sync / tarball-cache interaction — see Finding 9 for detail). Investigation confirmed **pre-existing pattern on origin/main**: the last 3 commits before mission-45 (`e56f585 [ADR-023] Ratified`, `9b1de5d [ADR-023] draft + brief`, `de39d7f [2026-04-review] retrospective`) all failed CI the same way. Mission-45 inherited the breakage via lily's `a750cce` catch-up-merge during sovereign-branch re-baseline.
+
+**Implication:** no feedback loop has been watching main CI since mission-41-close workflow was shipped. Three red commits in a row on main went unnoticed because the only signal channel was a workflow nobody was subscribed to. This is a tele-7 Resilient Agentic Operations latent risk distinct from mission-45's scope.
+
+**Disposition:** surfaced as idea-185 (`M-CI-Health-Repair`) — candidate follow-up mission; filed 2026-04-23.
+
+### Finding 8 — Fix B aggregator validated by first real CI run (meta-irony)
+
+The first real PR run of the `test.yml` Fix B aggregator job gated correctly on the red matrix — exactly the behavior it was designed for. Had it passed despite matrix-red, that would have been a design failure. The meta-irony ("we wanted it to pass but it correctly didn't") is the right shape: the gate is doing its job, and the matrix-red is a discovery-of-debt, not a gate-failure.
+
+**Zero false-pass.** Fix B ships v1.0 with its gating semantics validated in production on the first PR that exercised it.
+
+### Finding 9 — β → γ pivot path as Option C worked-example
+
+Mission-close disposition for PR #1 initially took Option β (separate chore PR → rebase mission-45) after rigorous reasoning on thread-277. During β execution, engineer-side investigation (Node/npm version fix → tarball-cache-interaction discovery) revealed the "chore" was actually three distinct infrastructure gaps, each mission-sized in effort. Scope assumption didn't hold at runtime.
+
+Rather than force-fit β under a revised scope, architect + engineer pivoted to **Option γ (§Option C Director override)** with audit-visible reasoning: mission-45 is the methodology bootstrap; mission-45's own deliverables are provably correct (secret-scan green, CODEOWNERS routing working, Fix B gating correctly, merge queue serializing — all validated); the red matrix is orthogonal inherited debt being *discovered* by mission-45, not *caused* by it; §Option C brief language "methodology bootstrap may itself require override" covers this case exactly.
+
+**The pivot itself is the worked-example of *good* Option C usage** — not "we took a shortcut" but "scope-boundary was revealed at runtime; we pivoted with audit-visible reasoning; we filed follow-up mission for the discovered debt; we're post-mortem'ing within 48h per methodology discipline". This is the intended shape of the escape hatch.
+
+**Disposition:** candidate worked-example for `docs/methodology/multi-agent-pr-workflow.md` §Option C v1.1 patch. Will graduate from post-mortem thread into the doc post-mission (through normal methodology-evolution cadence).
+
+### Finding 10 — Follow-up mission chain
+
+Mission-45 deliverables stand as ratified (T1-T7 + Fix B + CLAUDE.md policy, all reviewed + approved Hub-side at `reviews/task-342` through `task-349`). Follow-up work lineage:
+
+- **idea-185 M-CI-Health-Repair** (filed 2026-04-23) — opencode-plugin tarball + claude-plugin cache + lockfile audit; mission-scoped; Tele-7 primary; candidate mission-43-adjacent
+- **Post-mortem thread** (forthcoming within 48h per §Option C discipline) — captures β→γ pivot, inherited-CI-debt framing, methodology-self-application observations; graduates to §Option C worked-example patch
+- **Multi-agent-pr-workflow.md v1.1 patch** (mission-43 retrospective cadence) — absorbs post-mortem worked-example + any other first-use deltas surfaced; folded via §Methodology evolution §v1.0 → v1.1 pending deltas track
+
+Mission-45 closes on its stated scope; the discovered debt has its own mission lineage.
+
 ---
 
 ## Mission-45 exit criteria
