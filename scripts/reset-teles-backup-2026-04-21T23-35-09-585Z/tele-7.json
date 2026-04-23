@@ -1,0 +1,11 @@
+{
+  "id": "tele-7",
+  "name": "Perfect Contextual Hydration",
+  "description": "The seamless, frictionless injection of absolute ground truth into the cognitive reasoning loop. The cognitive actors possess the exact, perfect subset of universal state required to make a flawless decision at any given millisecond, with zero hallucinations.",
+  "successCriteria": "1. The Architect and Engineer never ask \"What is the status of X?\"\n2. The system automatically hydrates their prompts with real-time, mathematically verified state (via `get_pending_actions` or Semantic Code Search) *before* they generate a single token.\n3. Architect Amnesia (Idea-28) is permanently eliminated.",
+  "createdAt": "2026-04-14T00:15:35.815Z",
+  "createdBy": {
+    "role": "unknown",
+    "agentId": "legacy-pre-provenance"
+  }
+}
