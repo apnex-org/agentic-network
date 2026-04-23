@@ -1,0 +1,72 @@
+name: test
+
+# Mission-41 Wave 1 T5 (task-328): workflow-test-harness CI merge-gate.
+# Runs the full vitest suite for every package on PRs and pushes to main.
+# Invariant-test regression (a failing `assertInv*` helper or any other
+# vitest failure) exits non-zero and blocks the PR merge automatically —
+# GitHub's required-status-check gate is configured against these job names.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  vitest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - hub
+          - packages/cognitive-layer
+          - packages/network-adapter
+          - adapters/claude-plugin
+          - adapters/opencode-plugin
+    name: vitest (${{ matrix.package }})
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Test
+        run: npm test
+
+  # Separate job: ensures the committed `docs/audits/workflow-test-coverage.md`
+  # is in sync with the scanner's current output. Catches "added a new
+  # assertInv* call-site but forgot to regenerate the coverage report" before
+  # merge. Uses the hub package (scanner lives in hub/scripts/).
+  coverage-report-sync:
+    runs-on: ubuntu-latest
+    name: workflow-test-coverage in-sync
+    defaults:
+      run:
+        working-directory: hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: hub/package-lock.json
+      - name: Install hub deps
+        run: npm ci
+      - name: Regenerate coverage report
+        run: npm run coverage:invariants
+      - name: Verify committed report matches
+        working-directory: ${{ github.workspace }}
+        run: |
+          if ! git diff --quiet -- docs/audits/workflow-test-coverage.md; then
+            echo "::error::docs/audits/workflow-test-coverage.md is out of sync."
+            echo "Run 'cd hub && npm run coverage:invariants' locally and commit the regenerated file."
+            git diff -- docs/audits/workflow-test-coverage.md
+            exit 1
+          fi
