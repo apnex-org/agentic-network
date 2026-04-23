@@ -4,8 +4,10 @@
 **Brief:** `docs/reviews/2026-04-phase-4-briefs/m-tele-retirement-primitive.md`
 **Preflight author:** architect (lily)
 **Date:** 2026-04-23
-**Verdict:** **YELLOW** (passes A/B/E/F; Category C has a substantive finding on scope obsolescence; Category D has the 3 original engineer-flagged items plus a new Decision 4 surfaced by the C finding)
+**Verdict:** **GREEN** (all categories pass; Director ratified all 4 Category D decisions 2026-04-23 including the zombie-cleanup scope reshape)
 **Freshness:** current until 2026-05-23
+**Kickoff decisions:** `docs/missions/mission-43-kickoff-decisions.md` (ratified 2026-04-23)
+**Activation:** mission stays `proposed` — pre-activation artifacts complete (preflight GREEN + kickoff decisions ratified); Director release-gate is a separate call
 
 ---
 
@@ -50,7 +52,13 @@
 
 ## Category D — Scope-decision gating
 
-- **D1.** Engineer-flagged scope decisions resolved: **FAIL — 3 original items + 1 new item surfaced by Category C finding**
+- **D1.** Engineer-flagged scope decisions resolved: **PASS** — all 4 items (3 original + 1 surfaced by Category C) ratified by Director 2026-04-23; captured in `docs/missions/mission-43-kickoff-decisions.md`
+  1. **Successor-mapping authority** — ratified: moot under Decision 4 Option B
+  2. **Status enum extension** — ratified as briefed (`status` + `supersededBy` + `retiredAt`; default `"active"`; idempotent on-read)
+  3. **Backward-compat default** — ratified as briefed (`includeSuperseded: false` default)
+  4. **Zombie-cleanup scope reshape** — ratified: Option B (verification-only pass); architect audits tele set, confirms no zombies, documents finding in closing audit; zero `supersede_tele` calls expected
+
+**Original FAIL details preserved for audit-trail (ratified 2026-04-23):**
 
 ### Decision 1 — Successor-mapping authority (from brief engineer flag #1)
 
@@ -111,16 +119,20 @@ Given current `list_tele` shows no zombies, the brief's "5-zombie cleanup" scope
 
 ## Verdict summary
 
-**YELLOW** — Mission-43 is mostly activation-ready, but Category C surfaced a meaningful finding: the "5-zombie cleanup" scope item appears obsolete because the zombies were already eliminated via `scripts/reset-teles.ts` direct-write (the very workaround this mission exists to replace). Current `list_tele` shows 13 clean teles with no zombies. This promotes a new Category D Decision 4 on how to reshape the cleanup scope (architect recommends Option B: verification-only pass). Original 3 engineer-flagged decisions (supersession mapping, status enum approval, backward-compat default) remain on the table — Decision 1 is moot under Option B; Decisions 2 and 3 are confirm-level.
+**GREEN** — Mission-43 is activation-ready. All 6 check categories pass; the 4 Category D decisions have been ratified by Director 2026-04-23 and captured in `docs/missions/mission-43-kickoff-decisions.md`. The substantive ratification is Decision 4 (zombie-cleanup scope reshape to verification-only pass) — reflects Category C finding that zombies were already wiped via `scripts/reset-teles.ts` direct-write. Mission remains in `proposed` status pending Director release-gate signal; activation is a separate Director call on operational readiness.
 
-## Pre-kickoff decisions required (for YELLOW → GREEN)
+## Ratified kickoff decisions
 
-1. **Decision 2 (status enum extension):** ratify as briefed (architect recommends)
-2. **Decision 3 (backward-compat default):** ratify as briefed (architect recommends)
-3. **Decision 4 (zombie-cleanup scope):** Option A/B/C (architect recommends B — verification-only pass)
-4. **Decision 1 (successor mapping):** only applies if Option C on Decision 4; otherwise moot
+1. **Successor-mapping authority:** moot under Decision 4 Option B
+2. **Status enum extension:** ratified (`status` + `supersededBy` + `retiredAt`; default `"active"`)
+3. **Backward-compat default:** ratified (`includeSuperseded: false`)
+4. **Zombie-cleanup scope:** Option B — verification-only pass (architect audits; no supersede_tele calls expected)
 
-**Estimated kickoff duration:** ~15-20 minutes. Decision 4 is the only substantive item; others are confirm-level.
+Full rationale: `docs/missions/mission-43-kickoff-decisions.md`.
+
+## Effort class
+
+S remains S (~2-3 engineer-days). Decision 4 replaces mechanical cleanup with verification audit; same time budget.
 
 ---
 
