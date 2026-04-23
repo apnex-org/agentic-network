@@ -1,7 +1,7 @@
 # Workflow-Invariant Test Coverage
 
 **Mission:** mission-41 (M-Workflow-Test-Harness) Wave 1 T5.
-**Generated:** 2026-04-23T03:47:45.981Z (via `npm run coverage:invariants` from `hub/`).
+**Generated:** 2026-04-23T03:51:58.940Z (via `npm run coverage:invariants` from `hub/`).
 **Status source:** scanner output over `assertInv*` call-sites + kickoff-decisions §Decision 1 ratified subset.
 
 ## Summary
@@ -19,7 +19,7 @@
 |---|---|---|---|
 | `INV-T4` | Tested | `hub/test/e2e/invariant-helpers.test.ts:38`, `hub/test/e2e/invariant-helpers.ts:51`, `hub/test/e2e/invariants/INV-T4.test.ts:23` | Task terminal states — completed/failed/escalated/cancelled |
 | `INV-P1` | Tested | `hub/test/e2e/invariant-helpers.test.ts:42`, `hub/test/e2e/invariant-helpers.ts:93`, `hub/test/e2e/invariants/INV-P1.test.ts:24` | Architect-only proposal review |
-| `INV-P2` | Tested | `hub/test/e2e/invariant-helpers.test.ts:47`, `hub/test/e2e/invariant-helpers.ts:131` | Only submitted proposals reviewable (gap-surfacing ratchet) |
+| `INV-P2` | Tested | `hub/test/e2e/invariant-helpers.test.ts:47`, `hub/test/e2e/invariant-helpers.ts:131`, `hub/test/e2e/invariants/INV-P2.test.ts:30` | Only submitted proposals reviewable (gap-surfacing ratchet) |
 | `INV-P4` | Tested | `hub/test/e2e/invariant-helpers.test.ts:51`, `hub/test/e2e/invariant-helpers.ts:165` | Proposal `implemented` is terminal |
 | `INV-TH6` | Tested | `hub/test/e2e/invariant-helpers.test.ts:55`, `hub/test/e2e/invariant-helpers.ts:217` | Non-active thread replies rejected |
 | `INV-TH7` | Tested | `hub/test/e2e/invariant-helpers.test.ts:59`, `hub/test/e2e/invariant-helpers.ts:249` | close_thread architect-only stewardship |
