@@ -1,17 +1,17 @@
 # Teleological Goals — Canonical Specification
 
-**Status:** Ratified 2026-04-21 AEST (Director). Hub state matches this spec exactly.
-**Source audit:** idea-149
+**Status:** Teles 0-10 ratified 2026-04-21 AEST (Director). Tele 11 Cognitive Minimalism and Tele 12 Precision Context Engineering both added 2026-04-22 AEST per Director direction during 2026-04 architectural review Phase 1 (architect-authored; explicit two-tele exception to review anti-goal §7 "Modifying the ratified Tele set"). Hub state matches this spec exactly.
+**Source audit:** idea-149 (initial 11) + architect authority 2026-04-22 (tele-11 + tele-12)
 **Template:** 4-section (Mandate → Mechanics → Rationale → Faults) + measurable Success Criteria
-**Axiom harvest source:** `/home/apnex/taceng/ois/org/gov/axioms` (OIS KMS-META-010 through KMS-META-070)
+**Axiom harvest source:** `/home/apnex/taceng/ois/org/gov/axioms` (OIS KMS-META-010 through KMS-META-070) for teles 0-10; teles 11 and 12 are architect-proposed, not AX-harvested.
 
 ## Context
 
-This document is the canonical specification of the 11 ratified teleological goals for the Agentic Network. Each tele is a declaration of perfection — a qualitative asymptote toward which the system is engineered. The list is structured as **1 umbrella vision + 10 orthogonal load-bearing asymptotes**; each orthogonal tele composes as a necessary sub-condition of the umbrella.
+This document is the canonical specification of the 13 ratified teleological goals for the Agentic Network. Each tele is a declaration of perfection — a qualitative asymptote toward which the system is engineered. The list is structured as **1 umbrella vision + 10 orthogonal load-bearing asymptotes (tele-0..tele-10, Director-ratified 2026-04-21) + 2 architect-proposed orthogonal asymptotes (tele-11 and tele-12, added 2026-04-22 per Director direction)**; each orthogonal tele composes as a necessary sub-condition of the umbrella. Teles 11 and 12 form an adjacent pair on LLM-efficiency (extensive + intensive margins respectively) distinct from but composing with tele-5 Perceptual Parity.
 
 Per Director ratification, all teles are authored in the 4-section template (Mandate / Mechanics / Rationale / Faults) with a measurable Success Criteria list. This template is adopted from the shape discipline of the OIS KMS-META axioms for orthogonal-expression consistency.
 
-**Hub state (as of 2026-04-21 23:35Z):** The Hub contains exactly **11 teles**, with Hub IDs `tele-0` through `tele-10` mapped 1-to-1 against the spec numbering below. All carry `createdBy: { role: "director", agentId: "seed-ratified-2026-04-21" }`. Full direct-write reset (`scripts/reset-teles.ts`) was used to achieve this state after architect-adapter tool-surface issues blocked the normal `create_tele` path — see Coordination artifacts below. Pre-reset Hub state (9 legacy `pre-provenance` teles + 7 seed-ratified at IDs 10-16) was backed up to `scripts/reset-teles-backup-2026-04-21T23-35-09-585Z/` before destructive operations.
+**Hub state (as of 2026-04-22):** The Hub contains exactly **13 teles**, with Hub IDs `tele-0` through `tele-12` mapped 1-to-1 against the spec numbering below. Teles 0-10 carry `createdBy: { role: "director", agentId: "seed-ratified-2026-04-21" }`. Teles 11 and 12 carry `createdBy: { role: "architect", agentId: "eng-40903c59d19f" }` with provenance: Director-directed exceptions during 2026-04 architectural review Phase 1. Original 11-tele state was reached via full direct-write reset (`scripts/reset-teles.ts`) after architect-adapter tool-surface issues blocked the normal `create_tele` path; the tele-11 and tele-12 additions both used the normal `create_tele` MCP tool successfully (role-gate did not block architect-scope invocation). Pre-reset Hub state (9 legacy `pre-provenance` teles + 7 seed-ratified at IDs 10-16) was backed up to `scripts/reset-teles-backup-2026-04-21T23-35-09-585Z/` before destructive operations.
 
 ---
 
@@ -329,6 +329,80 @@ Per Director ratification, all teles are authored in the 4-section template (Man
 
 ---
 
+## Tele #11 — Cognitive Minimalism
+
+**Hub ID:** `tele-11`. **Source:** architect-proposed 2026-04-22 AEST per Director direction during 2026-04 architectural review Phase 1. Explicit exception to review anti-goal §7 ("Modifying the ratified Tele set"). Related: idea-107 M-Cognitive-Hypervisor umbrella, mission-38 five mitigations (round-budget awareness, parallel dispatch, tool-result caching, chunked replies, graceful exhaustion), idea-115 dynamic tool scope, idea-119 query-shape-engineering, idea-138 cost-aware tier routing.
+
+**Mandate.** LLM tokens are the scarce economic resource. Every deterministic function is mechanized; the LLM is invoked only for genuinely cognitive work — judgment, creativity, ambiguity resolution. Maximum logic-per-token is the engineering objective.
+
+**Mechanics.**
+- **Substrate-First Principle** — if code can do it, code does it. LLMs handle irreducibly cognitive work only; everything else is substrate responsibility.
+- **Token Accounting** — every prompt discloses its token budget; work that fits in deterministic code does not consume budget. Token consumption is a first-class telemetry signal.
+- **Cognitive-Boundary Discipline** — the seam between deterministic substrate and cognitive agent is explicit, documented, and auditable per subsystem. Work drifts toward the cheaper side; drift the wrong way surfaces as a Fault.
+- **Hydration-as-Offload** — pre-compute state, surfaces, and scoped tool-catalogs before LLM invocation. LLM reads (cheap) rather than derives (expensive). Composes with tele-5 Perceptual Parity on the mechanism but not the mandate.
+- **Deterministic Primitives** — recurring patterns (retries, dedup, caching, routing, DAG stitching, state reconciliation, idempotency) live in substrate primitives, never in agent prompts. When an LLM-side workaround is observed for a pattern, the pattern becomes a substrate primitive candidate.
+- **Economic Telemetry** — token cost per operation is observable; outlier paths surface for refactor; model-tier migrations (Opus → Sonnet → Haiku; quota-budget changes) do not require workload redesign.
+- **Composition with adjacent teles.** tele-6 Frictionless covers anti-transcription *between actors*; Cognitive Minimalism covers the broader offload-to-substrate rule for *deterministic work within an actor's own cognitive loop*. tele-3 Sovereign Composition gives clean module boundaries; Cognitive Minimalism gives the rule for *which side of each boundary* a concern belongs on. tele-2 Isomorphic Specification says the spec drives the FSM (no LLM needed for workflow execution); Cognitive Minimalism generalizes that: no LLM needed for *any* deterministic execution.
+
+**Rationale.** LLM token consumption is the dominant variable cost driver of a multi-agent network and the primary scarce resource. Without a first-principle that drives deterministic work to the substrate, agents silently absorb toil that could be mechanized — paying in tokens what a single function invocation could do for free, and burning context windows on ceremony that displaces judgment-capacity. Mission-38 (Cognitive Hypervisor) shipped five mitigations (round-budget awareness, parallel dispatch, tool-result caching, chunked replies, graceful exhaustion) that are each instantiations of this principle — but until the principle is named as a tele, each mitigation was framed as a local fix rather than a pattern manifestation. Naming it promotes the pattern from implicit to governing.
+
+**Faults.**
+- **LLM as Calculator** — cognitive agent doing deterministic work (counting, sorting, pattern-matching, schema-validation, repetitive transformation) that a function would perform in microseconds at zero token cost.
+- **Substrate Leakage** — deterministic logic drifts into LLM prompts because the substrate doesn't expose a primitive for it; the workaround becomes permanent because no one refactors back.
+- **Token Fragility** — workload becomes brittle to model-change, quota-limits, or tier-cost changes because it's doing too much per invocation.
+- **Context Displacement** — genuinely cognitive work can't fit because administrative overhead consumed the context window; judgment quality degrades without the cause being visible.
+- **Economic Blindness** — architecture ignores marginal-token-cost as a design constraint; inefficient patterns proliferate unobserved.
+- **Prompt as Configuration** — operator parameters, routing rules, or schemas embedded in prompts where they should be explicit substrate configuration; changing behavior requires LLM-round execution instead of a config update.
+
+**Success Criteria.**
+1. Every recurring deterministic operation has a substrate primitive; LLM invocation of that operation is prevented by design (or flagged as a Fault + bug).
+2. Token consumption per operation is observable via telemetry; outlier paths surface for refactor as a matter of course.
+3. No LLM prompt contains work that a Hub primitive could perform instead; review catches violations.
+4. The cognitive-boundary between substrate and agent is explicitly documented per subsystem (adapter, policy-router, cognitive-layer, cascade, etc.).
+5. Model-tier migrations (cross-model, cross-quota, cross-vendor) do not require workload redesign — only configuration change.
+6. Prompt context is dominated by genuinely cognitive content; administrative/transcription/pattern-matching overhead is negligible by construction.
+7. When an LLM-side workaround for a deterministic pattern is observed, a substrate-primitive candidate is filed within one review cycle.
+
+---
+
+## Tele #12 — Precision Context Engineering
+
+**Hub ID:** `tele-12`. **Source:** architect-proposed 2026-04-22 AEST per Director direction during 2026-04 architectural review Phase 1. Second explicit exception to review anti-goal §7 ("Modifying the ratified Tele set") on the same day (first was tele-11). Filed after Director probe "Are you sure Cognitive Minimalism is the same as Precision Engineered Context?" surfaced the distinction between extensive margin (tele-11, invoke-or-not) and intensive margin (tele-12, context-shape-when-invoked). Related: idea-116 (Precision Context Engineering — the proximate conceptual ancestor of this tele, originally titled "Proposed tele-10 — Precision Context Engineering" when filed 2026-04-20), mission-38 task-313 chunked-reply-composition + task-314 continuation-state (tele-12 mechanism exemplars), idea-119 query-shape-engineering, idea-72 on-demand context retrieval.
+
+**Mandate.** Every LLM invocation's context is precision-engineered for maximum information density per token. Prompts are bounded, structured, and ordered so each context-window cell carries productive judgment-load, not administrative ballast. If tele-11 Cognitive Minimalism asks "should we invoke the LLM at all?" (extensive margin), this tele asks "given we invoke, is the context as efficient as possible?" (intensive margin).
+
+**Mechanics.**
+- **Bounded Accumulation** — conversation/prompt context has explicit size caps; growth beyond the cap triggers compaction or offload, not silent expansion.
+- **Capped Per-Response Size** — LLM outputs have architecturally-enforced size bounds; overflow triggers chunking or continuation primitives (e.g. mission-38 task-313 chunked-reply-composition, task-314 continuation-state), not truncation.
+- **Structured-over-Prose** — context is YAML/JSON/table-shaped where the data has shape; prose wraps structured data, not vice versa. Pattern-matching structured data costs near-zero tokens; decoding unstructured prose consumes budget on every round.
+- **Context-Ordering Discipline** — high-signal content positioned where the LLM's attention is strongest (prompt start/end per model); ceremony and boilerplate positioned where attention is cheapest.
+- **Virtual Tokens Saved** — observable metric per prompt and per subsystem: "this context could have been N tokens; is N-K after engineering." K is the precision-engineering work; trends over time are the telemetry signal.
+- **Shape-Aware Serialization** — tool-result envelopes, Hub-state projections, and audit-data shapes are LLM-ingestion-cost-optimized at their emission source (not via adapter post-processing).
+- **Composition with adjacent teles.** tele-11 Cognitive Minimalism decides WHETHER to invoke the LLM (extensive margin); tele-12 decides WHAT GOES IN when we do (intensive margin). tele-5 Perceptual Parity provides accurate state to hydrate; tele-12 engineers HOW the hydrated state is formatted. tele-4 Zero-Loss Knowledge requires expansionist documentation volume; tele-12 enforces that LLM-facing context is the precision-engineered projection of that documentation, not a raw dump.
+
+**Rationale.** Cognitive Minimalism (tele-11) minimizes LLM invocation count but does not by itself govern invocation quality. Even with full tele-11 discipline, a workload can burn context budget on administrative ballast (unstructured prose, unbounded accumulation, attention-blind ordering) that displaces the judgment capacity the invocation was meant to provide. Precision Context Engineering is the companion mandate: given an LLM invocation is justified, maximize the judgment work per token spent. Without this mandate, "Cognitive Minimalism" becomes "Cognitive Minimalism *on the margin*" rather than systemic token efficiency. Together they compose the extensive + intensive margins of the cognitive economy.
+
+**Faults.**
+- **Context Bloat** — prompts grow without explicit bounds; useful content displaced by administrative padding as conversations accumulate.
+- **Prompt Sprawl** — structured data rendered as prose; LLM pays decoding cost on every round for content that should have been a table.
+- **Unbounded Accumulation** — conversation history, tool results, or state hydration grows monotonically; eventually fills the window regardless of information content.
+- **Unstructured Hydration** — state is dumped as prose narrative where a YAML/JSON projection would convey the same content in fewer tokens and enable faster comprehension.
+- **Attention-Blind Positioning** — high-signal content placed where LLM attention is weak; ceremonial content placed where attention is strong.
+- **Waste-Blind Prompting** — prompt efficiency is never measured, never optimized; token spend is unobserved and grows without bound.
+- **Cosmetic Precision** — context is compressed visually but not semantically (e.g. removing whitespace without removing information-free tokens); Virtual Tokens Saved metric goes untracked.
+
+**Success Criteria.**
+1. Every LLM-facing prompt has an explicit size budget; overflow triggers compaction or offload, not silent truncation.
+2. Context is structured (YAML/JSON/table) wherever the data has shape; prose used only as wrapping around structured content.
+3. "Virtual Tokens Saved" (or equivalent precision-engineering metric) is observable per prompt and per subsystem; trends are telemetry.
+4. Context ordering follows model-specific attention-strength patterns; review catches attention-blind positioning as a Fault.
+5. Tool-result envelopes, state projections, and audit-data shapes are LLM-ingestion-cost-optimized at their emission source (not via adapter post-processing workarounds).
+6. Per-subsystem context-engineering budget is documented and auditable.
+7. Shape-changes to major context types (tool results, state hydration, audit payloads) go through explicit spec review for token-cost impact.
+8. Prompt precision is measured, not assumed; silent degradation surfaces as a drift bug, not invisible waste.
+
+---
+
 ## Provenance & Cross-Reference
 
 ### Spec numbering ↔ Hub ID map
@@ -346,8 +420,10 @@ Per Director ratification, all teles are authored in the 4-section template (Man
 | 8 | Gated Recursive Integrity | `tele-8` | AX-060 (layered-construction only) |
 | 9 | Chaos-Validated Deployment | `tele-9` | chaos aspect of pre-reset `tele-6` + AX-070 |
 | 10 | Autopoietic Evolution | `tele-10` | pre-reset `tele-8` |
+| 11 | Cognitive Minimalism | `tele-11` | architect-proposed 2026-04-22 per Director direction (not AX-harvested; orthogonal addition to the 2026-04-21 ratified set) |
+| 12 | Precision Context Engineering | `tele-12` | architect-proposed 2026-04-22 per Director direction (follows tele-11 as the intensive-margin companion; distinction surfaced by Director probe "Are you sure Cognitive Minimalism is the same as Precision Engineered Context?") |
 
-Spec number equals Hub ID by design; 1-to-1 mapping is an invariant of the reset.
+Spec number equals Hub ID by design; 1-to-1 mapping is an invariant of the reset and of subsequent architect-authored additions.
 
 ### External axiom harvest
 
@@ -367,10 +443,12 @@ Source: `/home/apnex/taceng/ois/org/gov/axioms` (read-only external project; not
 
 ### Coordination artifacts
 
-- **idea-149** — Tele audit + standardization pass (ratified outcome)
+- **idea-149** — Tele audit + standardization pass (ratified outcome; teles 0-10)
 - **idea-148** — Sovereign Composition source idea (landed as `tele-3`)
 - **idea-152** — Smart NIC Adapter + Cognitive Implant Layer (architectural target-state that makes bug-25 structurally impossible)
 - **idea-121** — Tool-surface v2.0 (home for `create_tele` manifest-gap diagnosis, MCP pagination class-of-defect, tool rationalisation follow-on)
+- **tele-11 provenance** — Filed via `create_tele` MCP tool 2026-04-22 AEST during 2026-04 architectural review Phase 1. Director directed filing after architect diagnostic: existing teles 0-10 cover LLM token-efficiency concerns only compositionally (tele-6 anti-transcription + tele-3 logic-density + tele-2 spec-drives-FSM + tele-5 hydration); no single tele has "LLM tokens as scarce economic resource" as a first-class mandate. Director ratified filing as explicit exception to review anti-goal §7. Architect-as-proposer provenance (`createdBy: { role: "architect", agentId: "eng-40903c59d19f" }`) retained for forensic clarity; this does NOT lower the tele's authority vs teles 0-10 — Director direction carries the ratification, architect authored the text.
+- **tele-12 provenance** — Filed via `create_tele` MCP tool 2026-04-22 AEST, later the same day as tele-11 during the same Phase 1. Director surfaced the distinction with the probe "Are you sure Cognitive Minimalism is the same as Precision Engineered Context?" after architect had provisionally accepted engineer's promotion of idea-116 (original title "Proposed tele-10 — Precision Context Engineering", filed 2026-04-20) to tele-11 primary. Architect re-examination confirmed the concepts are distinct — tele-11 = extensive margin (invoke LLM or not); tele-12 = intensive margin (context shape when invoked). idea-116 reassigned from tele-11 primary to tele-12 primary with tele-11 secondary (retains composition linkage) and tele-10 tertiary (preserves autopoietic-ancestor provenance). Same anti-goal §7 exception class as tele-11; same `architect/eng-40903c59d19f` provenance; same authority (Director direction carries ratification).
 - **thread-243** — Original Engineer↔Architect coordination (unicast, Director-ratified). Filing blocked; superseded by direct-write path.
 - **thread-244** — Per-tele filing retry for pre-reset Tele #1; content architect-ratified. Converged 2026-04-21 with direct-write resolution.
 - **task-317** — Architect's self-queue marker for pre-reset Tele #1; cancelled after direct-write path completed.
@@ -381,7 +459,7 @@ Source: `/home/apnex/taceng/ois/org/gov/axioms` (read-only external project; not
 
 ### Hub-state parity
 
-**Target achieved.** Hub contains exactly 11 teles with IDs `tele-0`..`tele-10` matching spec numbering 1-to-1. All authored in 4-section template with uniform `director/seed-ratified-2026-04-21` provenance. `teleCounter` in `meta/counter.json` set to `10`; next live `create_tele` call would assign `tele-11`.
+**Target achieved (as of 2026-04-22 — second revision, same day).** Hub contains exactly 13 teles with IDs `tele-0`..`tele-12` matching spec numbering 1-to-1. Teles 0-10 authored in 4-section template with `director/seed-ratified-2026-04-21` provenance. Teles 11 and 12 authored in the same 4-section template with `architect/eng-40903c59d19f` provenance (Director-directed additions 2026-04-22; see Coordination artifacts above). `teleCounter` in `meta/counter.json` advanced to `12`; next live `create_tele` call would assign `tele-13`.
 
 **Remaining blockers (for future tele lifecycle operations, not current state):**
 

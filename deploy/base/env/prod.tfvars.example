@@ -1,0 +1,11 @@
+# Base plan variables — foundation infrastructure (APIs, IAM, GCS bucket, Artifact Registry).
+#
+# Copy to prod.tfvars and fill in values. Do NOT commit prod.tfvars
+# (excluded by deploy/.gitignore).
+
+project_id = "<your-gcp-project-id>"
+region     = "<your-gcp-region>"
+
+# environment       = "prod"                   (default — override per environment)
+# state_bucket_name = "ois-relay-hub-state"    (default)
+# artifact_repo_name = "cloud-run-source-deploy" (default)

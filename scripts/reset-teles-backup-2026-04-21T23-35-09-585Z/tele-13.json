@@ -1,0 +1,11 @@
+{
+  "id": "tele-13",
+  "name": "Zero-Loss Knowledge",
+  "description": "**Mandate.** Information is an engineering product. Summarization is loss. All organizational knowledge is authored and maintained at bit-perfect fidelity — expansion over summarization, structure over prose, mechanics-rationale-consequence in every artifact.\n\n**Mechanics.**\n- **Expansionist Bias** — specification volume exceeds raw intent; a word is a pointer, a paragraph is a specification\n- **Load-Bearing Context** — every artifact includes Mechanics (How), Rationale (Why), Consequence (Fault)\n- **Anti-Prose Constraint** — natural language wraps structured data only; lists, diagrams, logic-trees are the primary languages\n- Documentation is the RAM of collective intelligence — an agent loaded today has identical context to the human who designed the system\n\n**Rationale.** In a zero-knowledge-engine environment, lossy documentation means the engine hallucinates the missing details. Zero-Loss fidelity ensures session handovers, agent reloads, and long-duration projects retain their design rationale perfectly. Corporate Amnesia is permanent capital destruction.\n\n**Faults.**\n- **Corporate Amnesia** — decision rationale lost in handovers\n- **Narrative Debt** — org spends more time explaining than executing\n- **Onboarding Decay** — time-to-mastery increases as docs rot\n- **Hallucinated Fill-In** — agents invent plausible details to cover gaps\n\n*Provenance: new tele from AX-030 (Knowledge Fidelity), adopted at full strength. Director-ratified 2026-04-21 via idea-149.*",
+  "successCriteria": "1. Every artifact (idea, design, manifest, mission, report) includes Mechanics + Rationale + Consequence sections.\n2. Prose appears only as wrapping around structured content.\n3. Session handover loses zero decision context (cold-session pickup produces same outputs as warm).\n4. Documentation volume exceeds raw intent volume consistently.",
+  "createdBy": {
+    "role": "director",
+    "agentId": "seed-ratified-2026-04-21"
+  },
+  "createdAt": "2026-04-21T23:12:53.599Z"
+}

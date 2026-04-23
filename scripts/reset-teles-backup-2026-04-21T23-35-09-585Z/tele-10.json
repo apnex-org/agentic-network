@@ -1,0 +1,11 @@
+{
+  "id": "tele-10",
+  "name": "Sovereign State Transparency",
+  "description": "**Mandate.** All system truth lives in a sovereign, structured, decoupled state-backplane. No functional unit possesses private, opaque, or transient truth; all state is perceivable by any authorized entity and durable across any infrastructure restart.\n\n**Mechanics.**\n- State is a Physical Object in the backplane, not a variable in a process\n- Compute kernels (agents, adapters, tools) are stateless — they read, transform, write back\n- Any authorized entity perceives any other entity's state in real-time\n- Topology (entity shape) version-locked; values change, structure changes only via formal refactor\n- Entities survive restart with identical field values\n\n**Rationale.** Eliminates the Hidden State Problem. In multi-agent systems, hidden state is the primary source of Silent Drift — different agents reasoning against different \"truths\". A sovereign backplane gives every agent (and every human audit) the same ground truth. Persistence makes transient truth physically impossible.\n\n**Faults.**\n- **Hidden State Problem** — state inside a process; other agents reason about a different reality\n- **Silent Drift** — agents acting on divergent ground truth without detection\n- **Ephemeral Truth Loss** — state evaporates on restart, mission context with it\n- **Logic Poisoning** — components depend on hidden side-effects; refactor becomes impossible\n\n*Provenance: evolves legacy `tele-1` (persistence) + absorbs external axiom AX-010 (State Sovereignty) from OIS KMS-META-010. Director-ratified 2026-04-21 via idea-149.*",
+  "successCriteria": "1. Every persistent entity (Idea, Mission, Task, Turn, Tele, etc.) survives Hub restart with identical field values.\n2. No agent or tool holds state that another authorized agent cannot query.\n3. Topology changes go through formal refactor; value changes do not.",
+  "createdBy": {
+    "role": "director",
+    "agentId": "seed-ratified-2026-04-21"
+  },
+  "createdAt": "2026-04-21T23:12:52.152Z"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "tele-14",
+  "name": "Perceptual Parity",
+  "description": "**Mandate.** Humans and agents share symmetric perception of reality. The delta between a Director's view of the system and an agent's view is <1%. Every actor's prompt is hydrated with mathematically verified ground truth before generating a single token.\n\n**Mechanics.**\n- Real-time state rendered through pre-attentive channels (human-parsable and agent-ingestible in <300ms)\n- Agents possess Synthetic Sensory Organs (framebuffers, TUI mirrors, kinetic streams) to perceive their own output in context\n- Prompts auto-hydrated with current Hub state (via `get_pending_actions`, semantic query, observability surfaces) before cognitive loops begin\n- Director↔agent perception delta measurably <1%\n\n**Rationale.** Without symmetry, agents are blind to consequences of their logic — they produce output that passes tests but fails the Reality-Test. Directors become \"eyes\" for agents, destroying workflow density. Symmetric perception enables Self-Correcting Synthesis: agents observe friction in their own output and refactor before humans notice.\n\n**Faults.**\n- **Cognitive Friction** — Director forced to act as eyes for the agent\n- **Black-Box Failure** — agent output satisfies unit tests but fails reality tests\n- **Architect Amnesia** — agents hallucinate state instead of perceiving it\n- **Operational Lag** — org reacts to logs instead of feeling system pulse\n\n*Provenance: evolves legacy `tele-7` (Perfect Contextual Hydration) + absorbs AX-040 (Observability Symmetry). Director-ratified 2026-04-21 via idea-149.*",
+  "successCriteria": "1. Agents never ask \"what is the status of X?\" — the system hydrates before the question arises.\n2. Director↔agent perception delta measurably <1% on shared entities.\n3. Agent output perceived in context (framebuffer/TUI/kinetic) before cognitive decision.\n4. Hallucinated state counts as a bug, not expected behavior.",
+  "createdBy": {
+    "role": "director",
+    "agentId": "seed-ratified-2026-04-21"
+  },
+  "createdAt": "2026-04-21T23:12:54.017Z"
+}

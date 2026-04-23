@@ -52,7 +52,7 @@ Plus one additional gain:
 | Role | Responsibility | Default loading |
 |---|---|---|
 | **Architect** | Owns methodology field-ownership (this doc); authors PR reviews; drives shared-surface design decisions; drafts ADRs + methodology deltas | Claude Code session as architect |
-| **Engineer** | Owns execution-side sections (marked `TODO(engineer)`); authors code PRs; implements per-task work; runs local pre-commit gates | Claude Code session as engineer |
+| **Engineer** | Owns execution-side sections (co-authored per Phase 4 pattern; originally marked `TODO(engineer)` in the v1.0 skeleton); authors code PRs; implements per-task work; runs local pre-commit gates | Claude Code session as engineer |
 | **Director** | Admin access (branch protection, merge queue config, CODEOWNERS overrides); ratifies strategic-scope PRs; Option C escape hatch | Human |
 
 ### Directory ownership — mechanized via CODEOWNERS

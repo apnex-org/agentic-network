@@ -1,4 +1,4 @@
-# ── Project ────────────────────────────────────────────────────────────
+# ── Project (passthrough for convenience; could be sourced from base) ─
 
 variable "project_id" {
   description = "GCP project ID"
@@ -11,13 +11,13 @@ variable "region" {
   default     = "australia-southeast1"
 }
 
-# ── Naming ─────────────────────────────────────────────────────────────
-
 variable "environment" {
   description = "Environment label (e.g. prod, staging, dev)"
   type        = string
   default     = "prod"
 }
+
+# ── Service Naming ────────────────────────────────────────────────────
 
 variable "hub_service_name" {
   description = "Cloud Run service name for the Hub"
@@ -31,19 +31,7 @@ variable "architect_service_name" {
   default     = "architect-agent"
 }
 
-variable "state_bucket_name" {
-  description = "GCS bucket for all persisted state"
-  type        = string
-  default     = "ois-relay-hub-state"
-}
-
-variable "artifact_repo_name" {
-  description = "Artifact Registry repository name"
-  type        = string
-  default     = "cloud-run-source-deploy"
-}
-
-# ── Auth ───────────────────────────────────────────────────────────────
+# ── Auth ──────────────────────────────────────────────────────────────
 
 variable "hub_api_token" {
   description = "Bearer token for Hub /mcp endpoint authentication"
@@ -51,7 +39,7 @@ variable "hub_api_token" {
   sensitive   = true
 }
 
-# ── Hub Config ─────────────────────────────────────────────────────────
+# ── Hub Config ────────────────────────────────────────────────────────
 
 variable "hub_min_instances" {
   description = "Minimum Cloud Run instances for Hub (0 = scale to zero)"
@@ -77,7 +65,7 @@ variable "watchdog_enabled" {
   default     = "true"
 }
 
-# ── Architect Config ───────────────────────────────────────────────────
+# ── Architect Config ──────────────────────────────────────────────────
 
 variable "architect_min_instances" {
   description = "Minimum Cloud Run instances for Architect (0 = scale-to-zero / wake-on-demand, 1 = always warm). Default 1 because scale-to-zero strands pending-action queue drains until an HTTP poke or wake-endpoint fire cold-starts the service — observed during M-Cognitive-Hypervisor Phase 2b-B measurements. Set to 0 explicitly for quiet windows or once the ADR-017 wake-endpoint is confirmed load-bearing."
@@ -126,7 +114,7 @@ variable "architect_labels" {
   default     = "{\"env\":\"prod\"}"
 }
 
-# ── LLM ────────────────────────────────────────────────────────────────
+# ── LLM ───────────────────────────────────────────────────────────────
 
 variable "vertex_ai_location" {
   description = "Vertex AI location for Gemini model"
@@ -134,7 +122,7 @@ variable "vertex_ai_location" {
   default     = "global"
 }
 
-# ── IAM ────────────────────────────────────────────────────────────────
+# ── IAM ───────────────────────────────────────────────────────────────
 
 variable "hub_allow_unauthenticated" {
   description = "Allow unauthenticated access to Hub (app-level token handles auth)"

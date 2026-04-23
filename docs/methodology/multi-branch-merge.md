@@ -1,7 +1,9 @@
 # Multi-Branch Merge — Methodology
 
-**Status:** v1.0 (2026-04-23). Architect-drafted; engineer co-authored `TODO(engineer)` execution sections. First worked example: mission-41 merge (see `docs/missions/mission-41-merge.md`).
-**Scope:** reusable procedure for unifying divergent sovereign-branch work into main. Applies to any multi-agent scenario where agents work on separate branches that accumulate divergent commits.
+> ⚠ **Superseded** (per ADR-023 Phase 1, 2026-04-23) by [`docs/methodology/multi-agent-pr-workflow.md`](./multi-agent-pr-workflow.md). Retained as historical reference + procedural guide for any mission that *began* on the sovereign-branch-per-agent workflow and must complete on it (e.g., mission-45 itself, per the ADR-023 bootstrap-paradox). All new missions starting post-mission-43 (ADR-023 Phase 2 validator) execute on the trunk-based PR workflow. Phase 3 formalizes full deprecation once 2-3 missions ship on the new workflow.
+
+**Status:** v1.0 worked-example complete (2026-04-23). **Superseded by [`multi-agent-pr-workflow.md`](./multi-agent-pr-workflow.md)** per ADR-023. Architect-drafted; engineer co-authored `TODO(engineer)` execution sections. First (and final representative) worked example: mission-41 merge (see `docs/missions/mission-41-merge.md`).
+**Scope:** reusable procedure for unifying divergent sovereign-branch work into main. Applies only to in-flight missions that began on this workflow; no new missions adopt this pattern.
 
 ## Purpose
 

@@ -1,0 +1,11 @@
+{
+  "id": "tele-3",
+  "name": "Absolute State Fidelity",
+  "description": "The system's state machines, entity lifecycles, and cross-domain interactions must be mathematically proven and perfectly aligned with a single, sovereign specification document. No implicit behaviors, phantom states, or unhandled events may exist in production.",
+  "successCriteria": "1. A sovereign `specs/workflow-registry.md` exists and is the absolute source of truth for all system behavior.\n2. Every state transition for every entity (Task, Proposal, Thread, Idea, Mission, Turn) is strictly enforced by the Layer 7 Policy Router.\n3. Every cross-domain interaction (e.g., DAG cascades, auto-linkage) is explicitly documented and tested.\n4. The `TestOrchestrator` suite achieves 100% coverage of all defined workflows, including negative paths (invalid transitions) and chaos paths (cascade failures, concurrency).\n5. Zero \"Unhandled event\" logs occur during normal multi-agent operation.",
+  "createdAt": "2026-04-14T00:05:04.277Z",
+  "createdBy": {
+    "role": "unknown",
+    "agentId": "legacy-pre-provenance"
+  }
+}

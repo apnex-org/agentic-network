@@ -1,0 +1,22 @@
+# CloudRun plan variables — Hub + Architect services + IAM.
+#
+# Requires the base plan in deploy/base/ to be applied first.
+# Reads service_account_email, state_bucket_name, registry_prefix
+# from deploy/base/terraform.tfstate via terraform_remote_state.
+#
+# Copy to prod.tfvars and fill in values. Do NOT commit prod.tfvars
+# (excluded by deploy/.gitignore).
+
+project_id                   = "<your-gcp-project-id>"
+region                       = "<your-gcp-region>"
+
+# Secrets — DO NOT commit real values
+hub_api_token                = "<generate-with-openssl-rand-base64-32>"
+
+# Stable agent identity (Mission-18)
+# Generate once: uuidgen
+# Changing this creates a new Agent entity and orphans the old queue.
+architect_global_instance_id = "<uuidgen-output>"
+
+# Most other vars use variables.tf defaults (min_instances=1 for both services,
+# event_loop_enabled=true, event_loop_interval=300, watchdog_enabled="true", etc.)

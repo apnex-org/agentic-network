@@ -1,0 +1,11 @@
+{
+  "id": "tele-15",
+  "name": "Gated Recursive Integrity",
+  "description": "**Mandate.** Integrity proven from the core outward. No entity, layer, or system ascends to Layer N+1 until Layer N is bit-perfect and physically sealed. There is no \"mostly verified\" state.\n\n**Mechanics.**\n- **Sovereign Onion** — systems constructed as nested layers; each layer grounds the one above\n- **Gated Ascension** — entry into any layer requires bit-perfect certification of the layer below\n- **Law of Fallback** — failure at layer N triggers recursive audit of layers N-1 through L0; surface-patching forbidden\n- **Binary Certification** — pass/fail gates only; no partial credit\n\n**Rationale.** Prevents Foundation-of-Sand syndrome. High-level logic failures are almost always low-level drift surfacing. Stable cores eliminate the bug class where an abstraction fails because its substrate was never verified. Engineering Certainty at the base is the precondition for autonomous multi-agent work at the apex.\n\n**Faults.**\n- **Debugging Quicksand** — app-layer errors take weeks because the kernel bug was never found\n- **Surface Patching** — symptoms addressed without audit of the failing layer\n- **Foundation-of-Sand** — high abstractions built on unverified assumptions\n- **Trust Collapse** — Director loses confidence because Ground Truth was never formally sealed\n\n*Provenance: new tele from AX-060 (Recursive Integrity), layered-construction aspect only (chaos-validation split to separate tele). Director-ratified 2026-04-21 via idea-149.*",
+  "successCriteria": "1. Each architectural layer has a binary pass/fail certification.\n2. Layer N+1 cannot be activated/deployed without Layer N certification.\n3. Failure at any layer triggers audit downward, not upward surface patch.\n4. Architecture layers are explicitly enumerated with known ground-truth status for each.",
+  "createdBy": {
+    "role": "director",
+    "agentId": "seed-ratified-2026-04-21"
+  },
+  "createdAt": "2026-04-21T23:12:54.401Z"
+}
