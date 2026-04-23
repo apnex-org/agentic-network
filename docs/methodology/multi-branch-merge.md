@@ -1,6 +1,6 @@
 # Multi-Branch Merge — Methodology
 
-**Status:** v1.0 DRAFT (2026-04-23). Awaiting engineer co-authorship on execution-side sections marked `TODO(engineer)`. First worked example: mission-41 merge (see `docs/missions/mission-41-merge.md`).
+**Status:** v1.0 (2026-04-23). Architect-drafted; engineer co-authored `TODO(engineer)` execution sections. First worked example: mission-41 merge (see `docs/missions/mission-41-merge.md`).
 **Scope:** reusable procedure for unifying divergent sovereign-branch work into main. Applies to any multi-agent scenario where agents work on separate branches that accumulate divergent commits.
 
 ## Purpose
@@ -92,9 +92,18 @@ Execute each category. Record PASS / FAIL / N/A per item in the merge artifact (
 | B4 | Pre-merge tags created on each branch (`<branch>-pre-merge-<YYYY-MM-DD>`) | Rollback path must exist |
 | B5 | Pre-merge tag created on main (`main-pre-<mission-or-batch>-merge`) | Main rollback path |
 
-#### C. CI status per branch *(TODO(engineer): fill)*
+#### C. CI status per branch
 
-`TODO(engineer): per-branch CI check procedure. Currently only agent/lily has a CI workflow (shipped in mission-41 T5); once merged to main, subsequent branches will inherit the gate. Engineer drafts the check list: vitest per-package clean? tsc --noEmit clean? any package with a test suite regresses?`
+Execute on **every sovereign branch** being merged (not just the merge target):
+
+| # | Check | Method | Fail mode |
+|---|---|---|---|
+| C1 | Per-package vitest clean on each branch | `cd <pkg> && npm test` in each of: `hub`, `packages/cognitive-layer`, `packages/network-adapter`, `adapters/claude-plugin`, `adapters/opencode-plugin`. Record pass counts + skipped counts | Any FAIL: merge is not eligible; fix on branch first |
+| C2 | Per-package `tsc --noEmit` clean | `cd <pkg> && npx tsc --noEmit` in each package (or `npm run build` if that's the typecheck route) | TypeScript errors: merge is not eligible |
+| C3 | No test-count regression vs branch pre-commit state | Compare current pass-count to the pre-merge-baseline recorded in the mission's closing audit (if applicable); regression = PR-blocker equivalent | Regression: investigate; regression-fix commit before merge |
+| C4 | Post-first-merge: GitHub Actions gate is active on `origin/main` | Verify `.github/workflows/test.yml` runs the 5-package matrix + the `coverage-report-sync` job on the merge commit. First post-CI-ship merge is the debut-run event (see §CI-gate debut protocol) | Workflow not triggered: check workflow-file presence on main |
+
+**Pre-first-CI-ship exception:** before `.github/workflows/test.yml` has landed on main, C1–C3 run locally only (no GitHub Actions infrastructure to exercise). This exception expires on first post-gate merge.
 
 #### D. Scope analysis (directory ownership + conflict surface)
 
@@ -116,15 +125,55 @@ Execute each category. Record PASS / FAIL / N/A per item in the merge artifact (
 
 Choice + rationale documented in the merge artifact.
 
-#### F. Rollback preparation *(TODO(engineer): fill)*
+#### F. Rollback preparation
 
-`TODO(engineer): rollback command sequence. Pre-merge tags (per B4+B5) give the targets. Engineer drafts the exact rollback git commands + Hub-state implications (does rollback require update_mission status-flip? what about task states?). Include "what gets lost" analysis.`
+Pre-merge tags (B4 + B5) define the rollback targets. Exact sequence:
+
+```bash
+# ── LOCAL ROLLBACK (before push) ──
+git checkout main
+git reset --hard main-pre-<mission-or-batch>-merge
+# Working tree returns to pre-merge main exactly.
+
+# ── POST-PUSH ROLLBACK (destructive; Director-override territory) ──
+# Only if main has already been pushed and the breakage is severe.
+# Requires explicit Director ratification + [override] commit per §Director-override.
+git push --force-with-lease origin main
+# Post-mortem thread required within 48h of the force-push.
+```
+
+**Hub-state implications** — git rollback does NOT automatically reverse Hub state:
+
+| Rollback effect on git | Hub state remains | Reconciliation action |
+|---|---|---|
+| Commits removed from main | Task `status=completed` persists | If rollback undoes shipped task work: manual review; possibly `update_turn` or `create_bug` to capture divergence |
+| Mission-status flip commit removed | `mission.status=completed` persists | Architect re-evaluates; either re-merge with the fix or file a bug + `update_mission` back to active (Director ratification) |
+| Bug-fix commit removed | `bug.status=resolved` + `fixCommits=[<now-orphaned-SHA>]` persists | `update_bug` to clear `fixCommits` + flip `status=open` (engineer authority) |
+| Audit/idea/spec commits removed | Ideas + audit entities persist in Hub storage | No Hub action needed; re-merge recovers the docs |
+
+**"What gets lost" analysis:** rollback is work-destructive for any post-tag commits. Always enumerate the specific commits being discarded in the rollback decision — log them in the merge artifact under Category F before force-pushing.
 
 ### Step 2 — Execute merge
 
 #### Option A path (per-task review → direct merge, default)
 
-1. **Merge order**: *TODO(engineer): engineer-judgment on which branch merges first. Heuristic: branch with fewer shared-surface conflicts goes first, reducing second-merge conflict surface. Document the choice.*
+1. **Merge order** — **fewer-shared-surface-conflicts-first heuristic:**
+
+   ```bash
+   # Enumerate shared-surface files per branch:
+   git diff --name-only <merge-base>..agent/greg > /tmp/greg-files
+   git diff --name-only <merge-base>..agent/lily > /tmp/lily-files
+   comm -12 <(sort /tmp/greg-files) <(sort /tmp/lily-files) > /tmp/shared
+   # Categorize /tmp/shared per §Directory ownership table.
+   # Count shared-surface entries per branch.
+   ```
+
+   **Rule:** the branch with fewer shared-surface files merges FIRST. Rationale: the second-branch author inherits the resolution burden for shared-surface conflicts involving first-branch's just-merged work; fewer-first minimizes total conflict surface on the second merge.
+
+   **Tie-breaker:** if shared-surface counts are equal or ambiguous, architect branch merges first (methodology + brief + decision files typically change less per commit than code surfaces).
+
+   **Document choice + rationale** in merge artifact Category E with the actual file-counts.
+
 2. **First branch → main**:
    - Checkout main; pull latest
    - `git merge --no-ff <first-branch>` with explicit merge commit message `[merge] <branch> into main (<mission-or-batch-ref>)`
@@ -139,7 +188,52 @@ Choice + rationale documented in the merge artifact.
 
 #### Option B path (integration branch + single-diff review)
 
-*TODO(engineer): integration-branch cadence details. Engineer-field-ownership on this pattern since it's execution-heavy. Sketch: engineer maintains integration branch with rebase-onto-main weekly (or on-demand); architect reviews via GitHub PR equivalent or diff-file; approval triggers squash to main.*
+Integration-branch workflow for bulk-review-shape missions:
+
+1. **Engineer creates integration branch** from latest main:
+   ```bash
+   git checkout main && git pull
+   git checkout -b integration/<mission-or-batch-ref>
+   ```
+2. **Engineer merges sovereign branches onto integration** (in fewer-conflicts-first order per Option A heuristic):
+   ```bash
+   git merge --no-ff <first-branch>       # conflicts resolved per directory ownership
+   git merge --no-ff <second-branch>      # conflicts resolved per directory ownership
+   ```
+   Commits accumulate on integration; sovereign branches remain untouched.
+3. **Engineer opens a thread titled** `"Integration branch ready for review: <mission-or-batch-ref>"` unicast to architect with `semanticIntent: seek_approval`. Thread body includes:
+   - Link to integration branch (`origin/integration/<mission-or-batch-ref>`)
+   - `git diff main..integration/<mission-or-batch-ref>` summary (files changed; lines added/removed; directory-ownership breakdown)
+   - Conflict-resolution log (which files conflicted; resolution applied)
+4. **Architect reviews** the single unified diff against main:
+   ```bash
+   git diff main..integration/<mission-or-batch-ref>
+   # or via GitHub PR equivalent if remote-reviewing
+   ```
+5. **On architect approval** (via thread bilateral convergence):
+   ```bash
+   git checkout main
+   git merge --ff-only integration/<mission-or-batch-ref>
+   git push origin main
+   ```
+   Fast-forward-only enforces a linear history from main's tip; if ff-only rejects, integration diverged from main since step 1 and needs rebasing.
+6. **Post-merge cleanup:**
+   ```bash
+   git branch -d integration/<mission-or-batch-ref>            # local
+   git push origin --delete integration/<mission-or-batch-ref> # remote
+   ```
+   Sovereign branches (`agent/greg`, `agent/lily`) preserved per Category I.
+
+**Use Option B when:**
+- Architect prefers single-diff review over N-per-task reports (cognitive-load reduction for large missions)
+- Many small approved tasks where per-task merge-commit noise > integration-diff clarity
+- Mission close has cross-cutting changes that benefit from unified review before merge
+- Multi-mission batch closes (e.g. mission-41 + mission-42 together)
+
+**Do NOT use Option B when:**
+- Tasks shipped asynchronously over a long period (bulk-diff loses temporal context of per-task review decisions)
+- Merge urgency is low and the per-task cadence is fine (integration adds ceremony without value)
+- Architect review of each task's report has already surfaced all the decisions that would happen in a bulk diff (re-review is redundant)
 
 #### Option C path (Director override — escape hatch)
 
@@ -156,13 +250,61 @@ See §Director-override.
 | G3 | Audit cross-refs in merged artifacts resolve (all referenced commit SHAs exist on `main`) | Orphaned SHAs mean rebase-lost commits |
 | G4 | `docs/audits/*` closing audit references match merged commit SHAs | Audit-vs-git drift |
 
-#### H. Pre-merge drift resolution *(TODO(engineer): fill)*
+#### H. Pre-merge drift resolution
 
-`TODO(engineer): verification that any [env]/[scripts] pre-merge drift commits landed correctly. Include a "pre-merge drift committed, merged, and survived" check.`
+Verify that any `[env]` / `[scripts]` pre-merge drift commits (per Category B3) landed correctly and did not contaminate the mission merge:
 
-#### I. Branch preservation *(TODO(engineer): fill)*
+| # | Check | Method | Fail mode |
+|---|---|---|---|
+| H1 | `[env]` / `[scripts]` commits present in the merged branch | `git log origin/main --grep='\[env\]\|\[scripts\]' --since=<pre-merge-tag-date>` lists them | Drift commits missing: drift came in through the merge commit itself (anti-pattern violated) |
+| H2 | Drift commits are SEPARATE from merge commits | `git log --merges origin/main` cross-ref against drift commit SHAs; drift SHAs should NOT appear under merge parents | Drift bundled into merge commit: retrospective log-only; acceptable once, fix methodology adherence next time |
+| H3 | Working tree clean post-merge | `git diff --quiet` on main post-push (and on sovereign branches post-rebase) | Drift reappeared: a file the pre-merge drift commits thought they'd captured is still drifting. Investigate (usually indicates lockfile regen at build time) |
+| H4 | Lockfile changes match `package.json` intent | Inspect `git diff <merge-base>..main -- '**/package-lock.json'` against `package.json` diffs. Unchanged `package.json` + changed lockfile = drift-induced regen (investigate) | Arbitrary lockfile regen: file as follow-up idea; recommend `npm ci` vs `npm install` discipline in the merge-performer's environment |
 
-`TODO(engineer): branch preservation policy post-merge. Architect draft position per thread-268: push-to-origin-once preserves provenance, then re-baseline at next mission activation. Engineer fills exact git command sequence + decision on whether to delete local branch / re-create at main tip / force-push branch back to new baseline.`
+**Drift reappearance is the subtle failure mode** — the pre-merge drift commit captures the lockfile state at that moment, but running `npm install` or package rebuilds after the pre-merge-drift commit can silently re-drift the lockfile before the actual merge. H3 + H4 catch this.
+
+#### I. Branch preservation
+
+Post-merge, sovereign branches are preserved to origin for provenance + re-baselined at next-mission cadence:
+
+**Sequence:**
+
+```bash
+# 1. Push each sovereign branch to origin (preserves provenance)
+git push -u origin agent/greg           # creates origin/agent/greg if it doesn't exist
+git push origin agent/lily              # updates existing origin/agent/lily
+
+# 2. Tag pre-merge branch heads for historical reference
+git tag agent/greg-pre-merge-<mission-id> agent/greg
+git tag agent/lily-pre-merge-<mission-id> agent/lily
+git push origin --tags
+
+# 3. Re-baseline sovereign branches at next mission activation (RECOMMENDED)
+#    — discards merged commits; next mission's commits start from current main baseline
+git checkout agent/greg
+git fetch origin main
+git reset --hard origin/main
+git push --force-with-lease origin agent/greg
+# Repeat for agent/lily
+
+# 4. Worktree adjustments (if using git worktrees per the standard setup):
+#    — verify the worktree's branch pointer matches the intended baseline
+#    — specifically for the greg + lily worktrees at separate directories,
+#      run the reset INSIDE the relevant worktree, not from the main repo
+```
+
+**Re-baseline timing:** ideally at next mission activation. Keep-alive (Option b) is permissible for short gaps (≤ 1 week between missions); after that, divergence grows and accumulates conflicts for the next merge.
+
+**Force-with-lease vs force:** prefer `--force-with-lease` — refuses to overwrite remote if someone else pushed in the interim, whereas `--force` is unconditional.
+
+**Local branch housekeeping after re-baseline:**
+- Local branch HEAD matches main post-reset; no deletion needed
+- Optionally clean up local tags older than N mission cycles: `git tag --list '*-pre-merge-*' | xargs git tag -d` (keep the most recent; older tags preserved on remote via step 2)
+
+**DO NOT:**
+- Delete sovereign branches from origin post-merge (loses provenance; cold-engineer readers can't reconstruct which commits came from which branch)
+- Force-push without `--force-with-lease` (race condition with any concurrent push)
+- Leave branches >1 mission-cycle without re-baseline (divergence grows; next merge becomes harder)
 
 #### J. Follow-up ideas from debut-run CI issues
 
@@ -337,18 +479,18 @@ A merge is successful if:
 6. Sovereign branches preserved to origin (provenance intact)
 7. Any debut-surfaced CI issues captured as follow-up ideas
 
-## Engineer co-authorship pending
+## Co-authorship status
 
-Sections marked `TODO(engineer)`:
-- §Step 1 Category C (CI status per branch)
-- §Step 1 Category F (Rollback preparation)
-- §Step 2 Option A path item 1 (Merge order heuristic)
-- §Step 2 Option B path (integration branch cadence)
-- §Step 3 Category H (Pre-merge drift resolution verification)
-- §Step 3 Category I (Branch preservation post-merge)
+v1.0 sections filled:
+- §Step 1 Category C (CI status per branch) — engineer-filled (2026-04-23)
+- §Step 1 Category F (Rollback preparation) — engineer-filled (2026-04-23)
+- §Step 2 Option A path item 1 (Merge order heuristic) — engineer-filled (2026-04-23)
+- §Step 2 Option B path (integration branch cadence) — engineer-filled (2026-04-23)
+- §Step 3 Category H (Pre-merge drift resolution verification) — engineer-filled (2026-04-23)
+- §Step 3 Category I (Branch preservation post-merge) — engineer-filled (2026-04-23)
 
-These are execution-heavy; engineer field-ownership applies. Engineer co-author picks these up in the next thread.
+Architect-drafted core + engineer-co-authored execution sections. First worked example: mission-41 merge (see `docs/missions/mission-41-merge.md`).
 
 ---
 
-*Methodology v1.0 DRAFT authored 2026-04-23 per Director direction via thread-268 ratification. Awaiting engineer co-authorship on marked sections; first worked example is mission-41 merge. Graduates to v1.0 ratified when engineer sections filled + mission-41 merge completes.*
+*Methodology v1.0 authored 2026-04-23 per Director direction via thread-268 ratification; architect-drafted structure + engineer co-authored execution sections via thread-269. First worked example is mission-41 merge. Graduates to v1.1 on post-merge retrospective if methodology deltas surface.*

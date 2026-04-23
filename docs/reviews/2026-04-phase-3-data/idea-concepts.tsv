@@ -1,0 +1,75 @@
+idea_id	status	concept_name_candidate	tele_primary	notes
+idea-5	open	Architect-Director Interfaces (AG-UI): Replace the synchronous CLI chat interfac	tele-5
+idea-6	open	Task Handover / Re-assign: Implement a `reassign_task` tool or automatic timeout	tele-7
+idea-11	open	Wisdom and Context Management/Engineering	tele-4
+idea-12	open	The "Dry Run" (Sandboxed Execution)	tele-6
+idea-13	open	Semantic Code Search (The "Architect's Lens")	tele-5
+idea-14	open	The "Post-Mortem" Auto-Triage	tele-10
+idea-20	open	Extend the Cognitive Architecture auto-linkage system to support Threads. Curren	tele-6
+idea-22	triaged	DAG Retroactive Unblocking (Race Condition Fix)	-
+idea-23	open	Explore and implement deep code repository integration (e.g., GitHub Actions, pr	tele-9
+idea-24	open	Formalize 'Hub' as a First-Class System Actor.	tele-2
+idea-25	open	Introduce the concept of a 'Chore' (or 'Routine') as a first-class entity in the	tele-6
+idea-27	open	Adopt the 'Declarative Controller Platform' (Kubernetes Analogy) for the Hub's C	tele-2
+idea-28	triaged	BUG: Architect Amnesia (Context Desynchronization)	-
+idea-30	open	Dormant Missions & Task Mutability	tele-2
+idea-33	open	Anomalous State Detection (State Inconsistencies)	tele-7
+idea-39	open	Implement a strict 'Read-After-Write' consistency guarantee for the Architect's 	tele-1
+idea-41	triaged	BUG: `get_task` Tool Cannot Retrieve Historical Tasks	-
+idea-42	open	Live-Environment Mock Agents (Chaos & Load Testing)	tele-6
+idea-43	open	Non-LLM Capability Endpoints (The "Machine" Role)	tele-3
+idea-45	open	Hub REST API & Client CLI (Observability)	tele-5
+idea-48	open	Hub SessionServer and Network Adapter share MCP session primitives — deduplicate	tele-3
+idea-50	open	Comprehensive module naming, portability, and code dedup brainstorm. Use docs/sd	tele-3
+idea-55	open	Deployment infrastructure hardening with Terraform. (1) IaC enforcement — deploy	tele-9
+idea-56	open	Hub-injected thread guidance: When a thread is first created, the Hub should par	tele-5
+idea-60	open	Agentic-Network Native Structured Telemetry	tele-1
+idea-61	open	Implement a new TUI for the architect-chat using ACP + Toad.	tele-5
+idea-62	open	Expose the Architect via an ACP bridge/server to enable external UI clients (lik	tele-5
+idea-64	open	Implement a 'Note' as a first-class entity. A Note is a raw, potentially ambiguo	tele-4
+idea-65	open	Define a first-class entity for a 'unit of research' (suggested name: 'Beacon').	tele-4
+idea-66	open	Rename the 'directive_issued' notification to 'task_issued' across the platform 	tele-2
+idea-67	open	First-class GitHub identities for agents in the OIS network.	tele-6
+idea-68	open	Implement an 'update_task' tool for the Architect. This tool should allow the Ar	tele-6
+idea-69	open	MCP proxy list/get-surface standardisation — consistent by-ID, by-label, and by-filter ret	tele-2
+idea-70	open	Add an ability to filter entities in any list_ tool by ID, label, role, etc. to 	tele-5
+idea-71	open	Create a functioning Gemini-CLI plugin (equivalent to the OpenCode/Claude plugin	tele-3
+idea-72	open	Advanced Cognitive Engineering — on-demand historical context retrieval for Architect	tele-5
+idea-73	open	Generalised Task Routing — Origin + Target as First-Class Fields	tele-6
+idea-75	open	Unified Layered Test Harness — 3D matrix over (layer × component × environment)	tele-6
+idea-80	open	Normalize `tags: string[]` vs `labels: Record<string, string>` across entities	tele-4
+idea-81	open	Split `correlationId` into typed per-entity reference fields	tele-4
+idea-82	open	`BaseEntityFields` refactor — promote `turnId` to every entity (M20 Phase 3 deferral)	tele-3
+idea-83	open	Codify `status` (external-facing field) vs `state` (internal FSM term) terminology	tele-4
+idea-84	open	Director as first-class networked role — SSE channel + event stream + adapter handshake	tele-3
+idea-85	open	Standardise agent/entity identifier naming across the platform — separate cleanup mission	tele-4
+idea-86	open	Director Integration: Handshake & Notification Path (deferred)	tele-5
+idea-90	open	Add `anycast` routingMode — split current broadcast's coerce-on-first-reply from strict fa	tele-2
+idea-91	open	Implement multicast dynamic membership (ADR-014 §189 deferred)	tele-2
+idea-92	open	Tighten multicast open-time dispatch semantics	tele-2
+idea-95	open	Cross-action dependencies in cascade (ADR-015 Class I — deferred)	tele-3
+idea-99	open	ADR-017 follow-up — extend enqueue path beyond thread_message	tele-7
+idea-102	open	Universal Port — standardize the network-attachment contract across all nodes, machines, a	tele-3
+idea-104	open	Adapter integration test harness — MockClaudeClient + MockOpenCodeClient driving the real 	tele-6
+idea-106	open	Deprecate Agent.status + validate wakeEndpoint-optional routing (split from idea	tele-7
+idea-107	open	M-Cognitive-Hypervisor — umbrella mission for cognitive-layer reliability	-
+idea-115	open	Dynamic tool exposure — design-space for context-aware scope management	tele-3
+idea-116	open	Proposed tele-10 — Precision Context Engineering	-
+idea-126	open	Adopt Kubernetes-style envelope for all Hub entities: `{id, name, kind, apiVersion, metada	tele-2
+idea-127	open	Map semanticIntent → mechanism defaults for thread convergence	tele-2
+idea-129	open	Rename the `proposal` entity to `design`	tele-2
+idea-130	open	First-class `Manifest` entity — the executable spec, attached to a Mission for execution	tele-2
+idea-131	open	First-class `Registry` entity — authoritative index/catalog of system primitives	tele-1
+idea-133	open	First-class `Concept` entity + concept-registry — the abstract-pattern layer above Ideas	tele-4
+idea-134	open	First-class `Trace` and `Report` entities — the engineer-execution layer of the vocabulary	tele-4
+idea-139	open	First-class `Goal` entity — concrete done-able project-level objectives bridging abstract 	tele-4
+idea-140	open	Concept candidate: *Concrete measurable asymptote***	tele-4
+idea-141	open	Concept candidate: *Hierarchical outcome grouping***	tele-4
+idea-142	open	Concept candidate: *Tele-to-execution coherence***	tele-4
+idea-143	open	Concept candidate: *Placeholder-via-tag for not-yet-instantiated entity types***	tele-4
+idea-147	open	First-class `rule` entity — project-level policy / convention / constraint layer	tele-2
+idea-148	open	New Tele — "Sovereign Composition" (internal code structure quality)	tele-3
+idea-149	open	Tele audit + standardization pass	tele-4
+idea-151	open	First-class graph relationships between ideas (and plausibly other artifacts)	tele-1
+idea-152	open	Smart NIC Adapter — MCP as Last-Mile Presentation; Cognitive Implant Transport Layer; Deco	tele-3
+idea-156	open	Layer-certification registry — formal architectural-layer enumeration with per-layer pass/	tele-8

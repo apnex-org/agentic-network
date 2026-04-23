@@ -1,0 +1,58 @@
+tele_id	tele_name	fault_class	fault_description
+tele-0	Sovereign Intelligence Engine	Fragmented Asymptote	contributors optimize locally without knowing the global target
+tele-0	Sovereign Intelligence Engine	Umbrella Amnesia	new teles proposed that contradict the vision go unchallenged
+tele-0	Sovereign Intelligence Engine	Director Fatigue	strategic intent requires translation overhead because no ground-truth vision exists
+tele-1	Sovereign State Transparency	Hidden State Problem	state inside a process; other agents reason about a different reality
+tele-1	Sovereign State Transparency	Silent Drift	agents acting on divergent ground truth without detection
+tele-1	Sovereign State Transparency	Ephemeral Truth Loss	state evaporates on restart, mission context with it
+tele-1	Sovereign State Transparency	Logic Poisoning	components depend on hidden side-effects; refactor becomes impossible
+tele-2	Isomorphic Specification	Doc-Code Drift	documentation describes an older reality than what runs
+tele-2	Isomorphic Specification	Snowflake Entropy	nodes accumulate unique tweaks; replication fails
+tele-2	Isomorphic Specification	Instructional Bloat	Director provides low-level how-to because declaration doesn't drive
+tele-2	Isomorphic Specification	Phantom State	agent operates against a transition the spec doesn't know about
+tele-3	Sovereign Composition	Logic Leakage	change in one area causes unexpected failure in another
+tele-3	Sovereign Composition	Architectural Paralysis	everything too entangled to change
+tele-3	Sovereign Composition	God-Object Accretion	"utils", "helpers", "managers" accumulating unrelated concerns
+tele-3	Sovereign Composition	Ceremony Bloat	signal drowned in scaffolding; logic density collapses
+tele-3	Sovereign Composition	Veto Paralysis	architect cannot isolate root cause; system-wide halt
+tele-4	Zero-Loss Knowledge	Corporate Amnesia	decision rationale lost in handovers
+tele-4	Zero-Loss Knowledge	Narrative Debt	org spends more time explaining than executing
+tele-4	Zero-Loss Knowledge	Onboarding Decay	time-to-mastery increases as docs rot
+tele-4	Zero-Loss Knowledge	Hallucinated Fill-In	agents invent plausible details to cover gaps
+tele-5	Perceptual Parity	Cognitive Friction	Director forced to act as eyes for the agent
+tele-5	Perceptual Parity	Black-Box Failure	agent output satisfies unit tests but fails reality tests
+tele-5	Perceptual Parity	Architect Amnesia	agents hallucinate state instead of perceiving it
+tele-5	Perceptual Parity	Operational Lag	org reacts to logs instead of feeling system pulse
+tele-6	Frictionless Agentic Collaboration	Transcription Toil	actors copy-paste approved data across entities
+tele-6	Frictionless Agentic Collaboration	Boundary Blocking	one role's tooling gap blocks another's sovereign action
+tele-6	Frictionless Agentic Collaboration	DAG Manual Stitching	engineer manually sets dependencies the Hub should infer
+tele-6	Frictionless Agentic Collaboration	Cascade Amnesia	approval doesn't propagate; human re-triggers downstream work
+tele-7	Resilient Agentic Operations	Silent Collapse	error isolated from logs; system continues on a broken branch
+tele-7	Resilient Agentic Operations	Cascade Bomb	one failure crashes the orchestrator; all in-flight work lost
+tele-7	Resilient Agentic Operations	Blocked Actor	agent paused indefinitely on transient condition with no resume path
+tele-7	Resilient Agentic Operations	Non-Actionable Failure	error surfaces but lacks the information to fix or retry
+tele-8	Gated Recursive Integrity	Debugging Quicksand	app-layer errors take weeks because the kernel bug was never found
+tele-8	Gated Recursive Integrity	Surface Patching	symptoms addressed without audit of the failing layer
+tele-8	Gated Recursive Integrity	Foundation-of-Sand	high abstractions built on unverified assumptions
+tele-8	Gated Recursive Integrity	Trust Collapse	Director loses confidence because Ground Truth was never formally sealed
+tele-9	Chaos-Validated Deployment	Production Fragility	org afraid to deploy because real-world impact is unknown
+tele-9	Chaos-Validated Deployment	Hope-Based Engineering	decisions on hunches instead of cycle-accurate data
+tele-9	Chaos-Validated Deployment	Happy-Path Brittleness	system works in tests, collapses under real-world entropy
+tele-9	Chaos-Validated Deployment	Regression Leakage	a race condition surfaces in prod that the tests didn't explore
+tele-10	Autopoietic Evolution	Friction Fossilization	the same operational drag recurs without surfacing
+tele-10	Autopoietic Evolution	Lesson Loss	a failure teaches one session; the insight dies when the session ends
+tele-10	Autopoietic Evolution	Manual Remediation	humans must recognize, diagnose, and propose every fix
+tele-10	Autopoietic Evolution	Post-Mortem Debt	failures accumulate without formal diagnosis backlog
+tele-11	Cognitive Minimalism	LLM as Calculator	cognitive agent doing deterministic work (counting, sorting, pattern-matching, schema-validation, repetitive transformation) that a function would perform in microseconds at zero token cost.
+tele-11	Cognitive Minimalism	Substrate Leakage	deterministic logic drifts into LLM prompts because the substrate doesn't expose a primitive for it; the workaround becomes permanent because no one refactors back.
+tele-11	Cognitive Minimalism	Token Fragility	workload becomes brittle to model-change, quota-limits, or tier-cost changes because it's doing too much per invocation.
+tele-11	Cognitive Minimalism	Context Displacement	genuinely cognitive work can't fit because administrative overhead consumed the context window; judgment quality degrades without the cause being visible.
+tele-11	Cognitive Minimalism	Economic Blindness	architecture ignores marginal-token-cost as a design constraint; inefficient patterns proliferate unobserved.
+tele-11	Cognitive Minimalism	Prompt as Configuration	operator parameters, routing rules, or schemas embedded in prompts where they should be explicit substrate configuration; changing behavior requires LLM-round execution instead of a config update.
+tele-12	Precision Context Engineering	Context Bloat	prompts grow without explicit bounds; useful content displaced by administrative padding as conversations accumulate.
+tele-12	Precision Context Engineering	Prompt Sprawl	structured data rendered as prose; LLM pays decoding cost on every round for content that should have been a table.
+tele-12	Precision Context Engineering	Unbounded Accumulation	conversation history, tool results, or state hydration grows monotonically; eventually fills the window regardless of information content.
+tele-12	Precision Context Engineering	Unstructured Hydration	state is dumped as prose narrative where a YAML/JSON projection would convey the same content in fewer tokens and enable faster comprehension.
+tele-12	Precision Context Engineering	Attention-Blind Positioning	high-signal content placed where LLM attention is weak; ceremonial content placed where attention is strong.
+tele-12	Precision Context Engineering	Waste-Blind Prompting	prompt efficiency is never measured, never optimized; token spend is unobserved and grows without bound.
+tele-12	Precision Context Engineering	Cosmetic Precision	context is compressed visually but not semantically (e.g. removing whitespace without removing information-free tokens); Virtual Tokens Saved metric goes untracked.

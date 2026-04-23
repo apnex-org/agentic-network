@@ -292,6 +292,23 @@ async function createProposalReview(args: Record<string, unknown>, ctx: IPolicyC
     };
   }
 
+  // INV-P2 (workflow-registry §7.2): only `submitted` proposals are
+  // reviewable. Pre-mission-41 this guard was missing (spec-runtime
+  // divergence surfaced by the T2 `assertInvP2` gap-surfacing ratchet).
+  // Mission-41 Wave 2 T3 (task-331) bundled fix + test.
+  if (proposal.status !== "submitted") {
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({
+          success: false,
+          error: `Invalid state transition: cannot review proposal in '${proposal.status}' state (must be 'submitted')`,
+        }),
+      }],
+      isError: true,
+    };
+  }
+
   const success = await ctx.stores.proposal.reviewProposal(proposalId, decision as any, feedback);
   if (!success) {
     return {

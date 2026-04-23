@@ -71,7 +71,7 @@ Reports and reviews use versioned naming based on `revisionCount`:
 | INV-T1  | A task can only be picked up by one engineer (atomic `getNextDirective`)          | `e2e-chaos.test.ts` "only one engineer" |
 | INV-T2  | A blocked task is never returned by `get_task`                                   | `e2e-workflows.test.ts` "completing parent unblocks" |
 | INV-T3  | Only pending tasks can be cancelled via `cancel_task`                            | `policy-router.test.ts` "cancelTask cancels" |
-| INV-T4  | completed, failed, escalated, cancelled are terminal — no outbound transitions   | `e2e-fsm-enforcement.test.ts` "completed is terminal" |
+| INV-T4  | completed, failed, escalated, cancelled are terminal — no outbound transitions   | `e2e-fsm-enforcement.test.ts` "completed is terminal"; `hub/test/e2e/invariants/INV-T4.test.ts` (mission-41 Wave 2 — all 4 terminals) |
 | INV-T5  | Idempotency keys prevent duplicate task creation                                 | `e2e-chaos.test.ts` "duplicate idempotency" |
 | INV-T6  | `dependsOn` references must point to existing tasks                              | `policy-router.test.ts` "validates dependsOn" |
 | INV-T7  | A task with `dependsOn` starts in `blocked`, not `pending`                       | `e2e-workflows.test.ts` "completing parent" |
@@ -119,10 +119,10 @@ Additional fields:
 
 | ID       | Invariant                                                                       | Tested By                              |
 | -------- | ------------------------------------------------------------------------------- | -------------------------------------- |
-| INV-P1   | Only the Architect can review proposals                                         | `e2e-remediation.test.ts` "RBAC enforcement" |
-| INV-P2   | Only submitted proposals can be reviewed                                        | NONE (no status guard on `reviewProposal`) |
+| INV-P1   | Only the Architect can review proposals                                         | `e2e-remediation.test.ts` "RBAC enforcement"; `hub/test/e2e/invariants/INV-P1.test.ts` (mission-41 Wave 2) |
+| INV-P2   | Only submitted proposals can be reviewed                                        | `hub/test/e2e/invariants/INV-P2.test.ts` (mission-41 Wave 2 — bundled with proposal-policy status-guard fix at `1019b4f`; ratchet closed) |
 | INV-P3   | `close_proposal` requires status in {approved, rejected, changes_requested}     | `wave3b-policies.test.ts` "close_proposal fails" |
-| INV-P4   | implemented is terminal — no outbound transitions                               | NONE                                   |
+| INV-P4   | implemented is terminal — no outbound transitions                               | `hub/test/e2e/invariants/INV-P4.test.ts` (mission-41 Wave 2) |
 | INV-P5   | A Proposal's `labels` are set at `create_proposal` from the caller Agent's labels and are immutable | `test/mission-19/labels.test.ts` "proposal inherits creator labels" |
 | INV-P6   | Scaffolded child Tasks use the Proposal's `labels`, never the approver's — so a Director-role approver cannot redirect the pool | `test/mission-19/labels.test.ts` "scaffold inherits proposal labels" |
 
@@ -177,8 +177,8 @@ Additional fields:
 | INV-TH3  | Convergence requires both parties to signal `converged: true`                   | `e2e-foundation.test.ts` "both parties converge" |
 | INV-TH4  | `thread_message` targets the other participants, not the opposite role in the abstract (see INV-TH16; legacy text said "opposite role" before participant-scoped routing shipped) | `threads-2-smoke.test.ts` WF-TH-10, WF-TH-11 |
 | INV-TH5  | `thread_converged` and `thread_convergence_completed` target participants (see INV-TH16); Phase 2 merges these into `thread_convergence_finalized` (INV-TH18–19) | `threads-2-smoke.test.ts` WF-TH-05, WF-TH-12 |
-| INV-TH6  | Replies to non-active threads are rejected                                      | NONE                                     |
-| INV-TH7  | `close_thread` is Architect-only stewardship; participants use `leave_thread` (P2 spec) | NONE (plugin-layer role guard observed on thread-123) |
+| INV-TH6  | Replies to non-active threads are rejected                                      | `hub/test/e2e/invariants/INV-TH6.test.ts` (mission-41 Wave 2 — all 5 non-active statuses) |
+| INV-TH7  | `close_thread` is Architect-only stewardship; participants use `leave_thread` (P2 spec) | `hub/test/e2e/invariants/INV-TH7.test.ts` (mission-41 Wave 2 — includes leave_thread semantic-separation contrast) |
 | INV-TH9  | A Thread's `labels` are set at `create_thread` from the opener Agent's labels and are immutable | `test/mission-19/labels.test.ts` "thread inherits opener labels" |
 | **INV-TH11** | **`converged=true` is rejected via `ThreadConvergenceGateError` unless `convergenceActions` has ≥1 entry with `status="staged"` at the moment of the transition (the forcing function that ends the prose-promise bug class — ADR-013)** | `wave3b-policies.test.ts` "rejects converged=true when convergenceActions empty" |
 | **INV-TH12** | **`converged=true` is rejected via `ThreadConvergenceGateError` unless `summary` is non-empty at the moment of the transition** | `wave3b-policies.test.ts` "rejects converged=true when summary empty" |
@@ -187,8 +187,8 @@ Additional fields:
 | **INV-TH15** | **`ThreadMessage.authorAgentId` is set from the replying Agent's `engineerId` on every reply. Null only when the caller hasn't completed the M18 handshake (legacy / test context).** | `wave3b-policies.test.ts` "authorAgentId attached to every ThreadMessage" |
 | **INV-TH16** *(ratified, live)* | **Thread dispatches (`thread_message`, `thread_converged`, `thread_convergence_completed`) are participant-scoped via `Selector.engineerIds` derived from `participants[]` (excluding the author on replies). Role-broadcast fallback applies only when no participant has a resolved `agentId` (pre-M18 legacy). Ratified in thread-125 with live prod evidence from thread-122/123/124 showing zero architect audit entries on pure engineer↔engineer threads.** | `wave3b-policies.test.ts` "participant-scoped dispatch"; `threads-2-smoke.test.ts` WF-TH-10, WF-TH-11 |
 | **INV-TH17** *(ratified, live)* | **Reply turn is pinned by `currentTurnAgentId` in addition to `currentTurn` role. A reply whose `authorAgentId` does not match the pinned agentId is rejected — the only way engineer↔engineer threads are coherent (same role, distinct agents). `currentTurnAgentId` flips on each reply to the next non-author participant.** | `wave3b-policies.test.ts` "agent-pinned turn"; `threads-2-smoke.test.ts` WF-TH-02, WF-TH-11, WF-TH-15 |
-| **INV-TH18** *(P2 spec, ratified thread-125)* | **Routing mode is one of `targeted | broadcast | context_bound`, declared at `create_thread` and immutable for the thread's lifetime. Targeted = closed 2-party set at open; Broadcast coerces to Targeted on first reply; Context-bound = dynamic membership resolved from the bound entity's current assignee(s). Legacy role+label fallback when participants lack agentIds is eliminated in Phase 2.** | TBD — `M-Phase2-Impl` |
-| **INV-TH19** *(P2 spec, ratified thread-125)* | **Cascade atomicity via validate-then-execute at the gate: every staged action's validator runs before `staged→committed` promotion; any validator failure rejects the whole convergence, leaves thread `active`, no rollback. Post-gate execute-phase infrastructure failures route the thread to `cascade_failed` terminal (high-priority alert), never revert committed state.** | TBD — `M-Phase2-Impl` |
+| **INV-TH18** *(P2 spec, ratified thread-125)* | **Routing mode is one of `targeted | broadcast | context_bound`, declared at `create_thread` and immutable for the thread's lifetime. Targeted = closed 2-party set at open; Broadcast coerces to Targeted on first reply; Context-bound = dynamic membership resolved from the bound entity's current assignee(s). Legacy role+label fallback when participants lack agentIds is eliminated in Phase 2.** | `hub/test/e2e/invariants/INV-TH18.test.ts` (mission-41 Wave 2 — ADR-016 vocabulary `unicast`/`broadcast`/`multicast`; field-consistency + broadcast→unicast coercion) |
+| **INV-TH19** *(P2 spec, ratified thread-125)* | **Cascade atomicity via validate-then-execute at the gate: every staged action's validator runs before `staged→committed` promotion; any validator failure rejects the whole convergence, leaves thread `active`, no rollback. Post-gate execute-phase infrastructure failures route the thread to `cascade_failed` terminal (high-priority alert), never revert committed state.** | `hub/test/e2e/invariants/INV-TH19.test.ts` (mission-41 Wave 2 — atomicity critical path: mixed valid+invalid rejected with VALID NOT partially spawned) |
 | **INV-TH20** *(P2 spec, ratified thread-125)* | **Idempotency key for cascade action execution is the natural `{sourceThreadId, sourceActionId}` pair. Cascade handler checks for an existing entity with this pair before create; if found, skip, audit `action_already_executed`, mark in `ConvergenceReport`. No client-supplied idempotency key required.** | TBD — `M-Phase2-Impl` |
 | **INV-TH21** *(P2 spec, ratified thread-125)* | **Thread expiry: any thread in `active` status with `now - updatedAt > thread.idleExpiryMs` (default 7 days, deployment-configurable) is reaped by a periodic Hub task (~1h cadence) and transitioned to `abandoned` with audit action `thread_reaper_abandoned`. Distinguishes from participant-initiated `leave_thread` in audit/metrics.** | TBD — `M-Phase2-Impl` |
 | **INV-TH22** *(P2 spec, ratified thread-125)* | **`StagedAction.proposer` carries `{role, agentId}` rather than role alone. Essential for audit/provenance in P2P threads where multiple agents share a role (engineer↔engineer).** | TBD — `M-Phase2-Impl` |
@@ -229,7 +229,7 @@ Terminal: (none — ideas can be re-opened in principle)
 | ID       | Invariant                                                              | Tested By                              |
 | -------- | ---------------------------------------------------------------------- | -------------------------------------- |
 | INV-I1   | Incorporating an idea into a mission auto-links it                     | `e2e-workflows.test.ts` "auto-link"   |
-| INV-I2   | Auto-linkage failure is non-fatal (idea still updated)                 | NONE                                   |
+| INV-I2   | Auto-linkage failure is non-fatal (idea still updated)                 | `hub/test/e2e/invariants/INV-I2.test.ts` (mission-41 Wave 2 — bad sourceThreadId + bad missionId paths) |
 
 **Gap: No FSM enforcement. Any status can transition to any other status. The Registry recommends adding guards: `dismissed` should be terminal (or require explicit re-opening), `incorporated` should only be reachable when `missionId` is set.**
 
@@ -260,7 +260,7 @@ Terminal: completed, abandoned
 | INV-M1   | Tasks auto-link to mission when `correlationId` matches `mission-\d+`  | `e2e-workflows.test.ts` "auto-link"   |
 | INV-M2   | Ideas auto-link to mission via `update_idea` with missionId            | `e2e-workflows.test.ts` "auto-link"   |
 | INV-M3   | Auto-linkage failure is non-fatal (task/idea still created)            | `e2e-chaos.test.ts` "non-existent mission" |
-| INV-M4   | completed and abandoned are terminal                                   | NONE                                   |
+| INV-M4   | completed and abandoned are terminal                                   | `hub/test/e2e/invariants/INV-M4.test.ts` (mission-41 Wave 2 — parametrized 2×3 rejection matrix) |
 
 **Gap: No FSM enforcement. `update_mission` sets status directly. A completed mission could be reverted to proposed. The Registry specifies that terminal states must be enforced.**
 

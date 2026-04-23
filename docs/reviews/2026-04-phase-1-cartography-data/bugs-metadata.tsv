@@ -1,0 +1,28 @@
+bug-10	resolved	critical	architect-liveness	architect|sse|thread-liveness|escalation-gap|p0|adr-017	6		2026-04-19
+bug-11	open	critical	cognitive	cognitive-layer|architect|tool-rounds|llm-harness|bug-10-scope-conflation|p0|linked:idea-132	0		2026-04-19
+bug-12	open	minor	drift	test-infrastructure|adr-017|loopback-helper|policy-context-shape|idea-104	0		2026-04-19
+bug-13	open	minor		idea-119|query-shape|m-cognitive-hypervisor|sort-refinement|list-tools	0		2026-04-20
+bug-14	resolved	minor	missing-feature	m-cognitive-hypervisor|phase-2d-cp1|cascade-handlers|idempotency|update-handler|retry-cascade-blocker	1		2026-04-20
+bug-15	resolved	minor	observability-gap	m-cognitive-hypervisor|phase-2d-cp1|observability|inv-th17|shadow-invariants	1		2026-04-20
+bug-16	resolved	major	missing-feature	m-cognitive-hypervisor|agent-lifecycle|agent-reaper|mission-19|phase-2d-cp3|labels|garbage-collection	2		2026-04-20
+bug-17	resolved	minor	identity-resolution	m-cognitive-hypervisor|agent-lifecycle|handshake|clientMetadata|observability|resolved-via-proxy-fallback	1		2026-04-20
+bug-18	resolved	major	identity-resolution	m-cognitive-hypervisor|sse|dispatch|agent-lifecycle|kate-repro|comms-reliability|session-binding	1		2026-04-20
+bug-19	resolved	minor	api-ergonomics	m-cognitive-hypervisor|pending-action|natural-key|thread-reply|api-simplification|llm-cognitive-load|api-v2	1		2026-04-20
+bug-1	resolved	minor	drift	event-loop|sandwich-handler	3		2026-04-19
+bug-20	resolved	major	missing-feature	mission-38|architect-loop|orchestration-gap|feature-gap-not-defect|superseded-by:idea-144|workflow-engine-review-advancement|observed-twice|recurrence-confirmed|resolved-by-task-316	2		2026-04-21
+bug-21	open	minor	schema-validation-gap	mission-38|task-313|chunk-boundary-semantics|v2-refinement|unicode-correctness|superseded-by:idea-145	0		2026-04-21
+bug-22	open	minor	missing-feature	mission-38|task-314|continuation-sweep|hardening-gap|tele-4-criterion-5|adjacent-to-cp4	0		2026-04-21
+bug-23	investigating	minor	race	threads-2.0|bilateral-seal|cascade-race|fsm-gap|criterion-5-violation|thread-241|thread-242-verified|adjacent-to-task-316|h1-race-supported	0		2026-04-21
+bug-24	open	major	missing-feature	tele|lifecycle|governance|tool-surface|immutability|blocks-idea-149	0		2026-04-21
+bug-25	open	major	delivery-truncation	thread|delivery|truncation|sse|adapter|mcp-transport|stdio|tool-result|size-guard|short-term-mitigation|supersedes-by-idea-152	0		2026-04-21
+bug-26	resolved	major	identity-management	adapter|hub|identity|session-takeover|probe|observed-2026-04-22|lily-discovery|compounds-with:bug-startup-race|blocks-cold-start-reproducibility|director-ratified-2026-04-22|resolved-2026-04-22|resolved-by-mission:mission-40	5	mission-40	2026-04-22
+bug-27	open	minor	drift	hub|cascade|propose_mission|payload-mapping-gap|schema-drift|observed-2026-04-22|discovered-via:mission-40|low-priority|silent-data-loss	0		2026-04-22
+bug-28	open	minor	dag-scheduling	task-dag|depends-on|dag-cascade|scheduling|mission-40|observed-2026-04-22|architect-workflow|has-workaround	0		2026-04-22
+bug-2	open	minor		architecture|policy-router|dag	0		2026-04-19
+bug-3	open	minor	architect-amnesia	cognitive-architecture	0		2026-04-19
+bug-4	open	minor		plugin|schema-cache	0		2026-04-19
+bug-5	resolved	minor	identity-resolution	routing|identity|multi-agent	0		2026-04-19
+bug-6	open	minor		tooling|cognitive-architecture	0		2026-04-19
+bug-7	resolved	minor	dedup	threads|convergence|sandwich-handler	2		2026-04-19
+bug-8	resolved	minor	drift	hub|cascade|sse-dispatch|fixed|mission-24|post-itw	1		2026-04-19
+bug-9	resolved	major	drift	hub|system-policy|review-pipeline|mission-cascade-perfection	2		2026-04-19

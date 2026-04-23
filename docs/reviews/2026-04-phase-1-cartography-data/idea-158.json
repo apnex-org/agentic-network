@@ -1,0 +1,28 @@
+{
+  "id": "idea-158",
+  "text": "**Merge-gate automation — codify \"no Layer N+1 change without Layer N green\" as CI policy + review checklist**\n\n## Problem\n\nPer tele-8 (Gated Recursive Integrity) Mandate: \"Layer N+1 cannot be activated/deployed without Layer N certification.\" Today this is a stated principle without enforcement: architects + engineers can land changes that cross layer boundaries without verifying the substrate is green. Risk: layer entropy compounds silently; failures in higher layers get patched at the surface rather than cascading downward to root cause (tele-8 Surface Patching fault).\n\n## Proposed scope\n\nTwo enforcement surfaces:\n\n1. **CI policy.** Pre-merge check: for any PR that touches files in Layer N+1's directory tree, require evidence that Layer N's certification gate is currently green. Implementation: a small pre-merge action that reads the layer-certification registry (sibling seed idea) and refuses merge if any depended-upon layer is yellow/red.\n\n2. **Review checklist.** PR template gains a \"Layer-touched + Layer-dependencies-verified\" section; reviewer ratifies before approving. Lightweight; complements (1) but doesn't depend on the registry being machine-readable yet.\n\n## Why this matters\n\nWithout enforcement, the layer principle is documentation rot waiting to happen. The first time a P0 hotfix lands in L4 against a yellow L3 will demonstrate the cost of the missing gate. Cheap to add now, expensive to add after the precedent.\n\n## Cross-references\n\n- **tele-8** (Gated Recursive Integrity) — primary alignment\n- **Sibling seed:** layer-certification registry (data source for the CI check)\n- **Sibling seed:** Phase-2d CP3 binary-certification naming (first gate to be CI-enforced)\n- **idea-128** (gitops multi-agent concurrent-engineers) — adjacent (concurrent-work coordination, different concern)\n- **Architect critique** (`docs/reviews/2026-04-phase-1-cartography-critique.md` §4.2.3) — author: lily (architect, eng-40903c59d19f), filed by greg (engineer) during Pass 1.1 revision\n\n## Status\n\nReverse-gap closure seed — depends on layer-certification registry (registry IS the data source for the CI check). Phase 4 candidate.",
+  "createdBy": {
+    "role": "system",
+    "agentId": "hub-system"
+  },
+  "status": "open",
+  "missionId": null,
+  "sourceThreadId": "thread-248",
+  "sourceActionId": null,
+  "sourceThreadSummary": null,
+  "tags": [
+    "tele-8",
+    "gated-recursive-integrity",
+    "merge-gate",
+    "ci-policy",
+    "review-checklist",
+    "layer-enforcement",
+    "seed-idea",
+    "reverse-gap-closure",
+    "from-thread-248",
+    "architect-authored-by:lily",
+    "audit:tele_primary=tele-8"
+  ],
+  "createdAt": "2026-04-22T09:18:35.933Z",
+  "updatedAt": "2026-04-22T09:18:35.933Z"
+}
