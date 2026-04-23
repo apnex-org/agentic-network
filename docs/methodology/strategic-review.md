@@ -3,6 +3,11 @@
 **Status:** v1.0 (2026-04-21). Treat as engineered component — version, critique, evolve.
 **Scope:** reusable template for high-level architectural reviews on the Agentic Network.
 
+**Pending v1.1 deltas** (captured in 2026-04 retrospective-lite at `docs/reviews/2026-04-retrospective-lite.md`; fold at formal retrospective when first 2026-04 mission ships):
+Convergence Bounds (80-90% healthy ceiling) · Phase 2 Filing-Point ≠ Fault-Domain sub-step · Amendment Protocol 3-condition fold heuristic · Phase 4 Co-authoring composition pattern · Parallel-Pass vs Sequential phase-capability · Mission Filing Protocol proposed-default release-gate · Review-Thread Cadence maxRounds:20 · Anti-Goal Growth ~2× execution pattern.
+
+**Companion methodology:** `docs/methodology/mission-preflight.md` — activation gate between review Phase 4 filing (`proposed`) and Director release-gate signal (`active`). Every Phase-4-filed mission requires a preflight artifact at `docs/missions/<mission-id>-preflight.md` before Director issues `update_mission(status="active")`.
+
 ## Purpose
 
 A strategic architectural review is a **deliberate, time-boxed pass over the system's current state to re-align trajectory with Tele**. It produces a prioritized investment plan, a ratified set of anti-goals, and a cleaned-up backlog — not code changes. It is the "run slow to run fast" counterweight to mission execution.
@@ -39,9 +44,48 @@ Director-first critique protocol per phase:
 5. Author integrates critique
 6. Director ratifies → phase closes
 
+## Review Scope — Full vs Partial
+
+Reviews can run at two scopes:
+
+### Full review (default)
+
+All 4 phases sequentially, per the structure below. Recommended when:
+- Multiple friction domains are acute simultaneously
+- Backlog scope has shifted meaningfully since last review
+- Tele set has changed
+- Direction ambiguity spans >1 friction cluster
+
+### Partial-scope review
+
+A subset of phases, with explicit scope declaration. The 4 phases have different dependency properties:
+
+| Phase | Standalone-capable? | Inherits from | Use cases |
+|---|---|---|---|
+| Phase 1 Cartography | ✓ yes | Hub state + Tele spec | Backlog-refresh after a mission lands that resolves 10+ ideas; post-Tele-audit resync; post-methodology-change |
+| Phase 2 Friction | partial | full prior Phase 1 **OR** explicit scope-limit | Narrow friction audit on specific domain (e.g., cascade-layer only, adapter-layer only) when a single cluster is acute enough for focused attention |
+| Phase 3 Concepts/Defects | ✗ no | requires Phase 2 (full or scoped) | Not standalone-runnable; would re-invent friction taxonomy implicitly |
+| Phase 4 Prioritization | partial | requires Phase 3 **OR** prior-review's Phase 3 if recent (≤60 days) | Mission-rebalance after a mission completes or fails; candidate re-scoring on existing concept/defect register |
+
+### Partial-scope guardrails
+
+Partial reviews MUST:
+1. **Declare scope explicitly** at plan-authoring time (`docs/reviews/<date>-phase-N-scoped.md`). Scope statement names which phases will run + which are inherited from prior reviews.
+2. **Cite inheriting artifacts** — every claim that depends on an unrun phase must reference the prior artifact it inherits (e.g., "Phase 3 concept register at `agent/lily:ced70b8` current; not re-authored").
+3. **Narrow convergence criteria** to the scoped phase's convergence rule only — do not assert "2 mission briefs" if only Phase 1 runs.
+4. **Flag scope creep explicitly** — if mid-execution work surfaces that the scope was wrong (e.g., Phase 2 narrow on cascade-layer reveals the friction is upstream in adapter-layer), halt + re-scope rather than silently expand.
+
+### When to avoid partial-scope
+
+- Backlog inventory stale (>90 days since full cartography) — run Phase 1 first even if the apparent trigger is Phase 4-shaped
+- Tele set changed since last full review — concept-defect grounding needs re-examination
+- Multiple friction clusters surfaced simultaneously — partial-scope forces arbitrary choice between them; full review is honest
+
+Partial-scope reviews are optimization for single-domain work. Full reviews are still the default when re-alignment across the full system is warranted.
+
 ## Four-Phase Structure
 
-Each phase produces exactly one durable artifact. Phases are sequential; no phase starts before the prior one is ratified.
+Each phase produces exactly one durable artifact. Phases are sequential within the scope of the current review; partial-scope reviews run a subset per the rules above.
 
 ### Phase 1 — Inventory & Cartography
 
@@ -140,7 +184,17 @@ A review is successful if:
 
 ## Review-of-the-Review (Retrospective)
 
-A review is not complete until it has a retrospective.
+A review is not complete until it has a retrospective. Two variants:
+
+### Retrospective-lite (optional; methodology-only; early-trigger)
+
+**Purpose:** capture methodology-level observations while session context is fresh. Input to the formal retrospective; does not supersede it.
+**When:** after mission filing but before first mission ships. Typically same-session as Phase 4 closure.
+**Scope:** methodology deltas only — observations about the review process, not about mission outcomes.
+**Artifact:** `documents/reviews/<date>-retrospective-lite.md`.
+**Authority:** architect-authored; Director-ratifiable independently of mission shipment.
+
+### Formal retrospective (required; mission-outcome-triggered)
 
 **Trigger:** when the first ratified mission output ships (or blocks on something non-trivial).
 
