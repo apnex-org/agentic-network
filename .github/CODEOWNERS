@@ -1,0 +1,77 @@
+# .github/CODEOWNERS
+#
+# Mechanizes the directory ownership + veto authority table from
+# docs/methodology/multi-branch-merge.md §Roles.
+# Ratified by ADR-023 Phase 1 (mission-45).
+#
+# Handle convention: GitHub teams @apnex/architect + @apnex/engineer
+# (Option A per thread-272 2026-04-23). Teams are created by the Director
+# in the mission-45 admin window bundled with branch protection (T2) +
+# merge queue enablement (T3). This file is inert until that activation.
+#
+# GitHub CODEOWNERS semantics: the LAST matching pattern wins.
+# Broadest patterns first; specificity increases downward.
+
+# ------------------------------------------------------------------
+# Catch-all fallback — surfaces not named below require co-author sign-off.
+# ------------------------------------------------------------------
+*                                     @apnex/architect @apnex/engineer
+
+# ------------------------------------------------------------------
+# Architect-owned (Primary owner + Veto authority: Architect)
+# ------------------------------------------------------------------
+/docs/methodology/                    @apnex/architect
+/docs/reviews/                        @apnex/architect
+/docs/planning/                       @apnex/architect
+/docs/decisions/                      @apnex/architect
+
+# ------------------------------------------------------------------
+# Engineer-owned (Primary owner + Veto authority: Engineer)
+# ------------------------------------------------------------------
+/docs/traces/                         @apnex/engineer
+
+# Code surface
+/hub/src/                             @apnex/engineer
+/adapters/*/src/                      @apnex/engineer
+/packages/*/src/                      @apnex/engineer
+
+# Test surface (includes invariant tests)
+/hub/test/                            @apnex/engineer
+/adapters/*/test/                     @apnex/engineer
+/packages/*/test/                     @apnex/engineer
+
+# Operational scripts
+/hub/scripts/                         @apnex/engineer
+/adapters/*/scripts/                  @apnex/engineer
+
+# ------------------------------------------------------------------
+# Shared (Co-author sign-off required — both approvals needed)
+# ------------------------------------------------------------------
+/docs/audits/                         @apnex/architect @apnex/engineer
+/docs/specs/                          @apnex/architect @apnex/engineer
+/.github/workflows/                   @apnex/architect @apnex/engineer
+
+# Root configs — cross-package effects
+/package.json                         @apnex/architect @apnex/engineer
+/package-lock.json                    @apnex/architect @apnex/engineer
+/tsconfig.json                        @apnex/architect @apnex/engineer
+/vitest.config.ts                     @apnex/architect @apnex/engineer
+
+# ------------------------------------------------------------------
+# docs/missions/ — mixed-by-file per §Directory ownership.
+# Ordered most-specific last per CODEOWNERS precedence rules.
+# ------------------------------------------------------------------
+/docs/missions/                       @apnex/architect @apnex/engineer
+/docs/missions/*-preflight.md         @apnex/architect
+/docs/missions/*-kickoff-decisions.md @apnex/architect
+/docs/missions/*-merge.md             @apnex/engineer
+
+# ------------------------------------------------------------------
+# Explicitly NOT covered here (by design):
+#
+# - start-*.sh, architect-chat.sh, scripts/local/ and other
+#   session-local files must not land on main at all. CODEOWNERS
+#   is review-routing; it does not prevent files from landing.
+#   That enforcement lives in secret-scan CI (T4) + pre-commit
+#   hook (T5), not here.
+# ------------------------------------------------------------------
