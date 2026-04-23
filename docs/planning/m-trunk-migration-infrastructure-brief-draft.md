@@ -1,6 +1,6 @@
 # Mission: M-Trunk-Migration-Infrastructure *(draft)*
 
-**Status:** Draft — not yet Hub-filed. Awaits ADR-023 ratification + Director release-gate signal before `create_mission(status="proposed")`.
+**Status:** Draft — ready to file as `proposed` per ADR-023 ratification 2026-04-23. Awaits Director release-gate signal for `update_mission(status="active")` following Hub-filing.
 **Type:** Mission brief draft.
 **Mission class:** Infrastructure scaffolding for ADR-023 Phase 1. Last mission on current sovereign-branch workflow; subsequent missions execute on new PR workflow per ADR-023.
 
@@ -110,6 +110,24 @@ Success:
 - Deliberate-fail test (stage sensitive filename) blocks commit
 - `--no-verify` bypass still possible (but audit-visible)
 
+### Task 7 — Environmental prerequisites documentation
+
+New doc at `docs/setup/architect-engineer-git-env.md` covering agent-local environment setup for new workflow.
+
+Content:
+- **gh CLI install + auth** — per-environment install path (`brew install gh`, `apt install gh`, etc.); `gh auth login` one-time authentication; verification step (`gh auth status`)
+- **PR review flow (Option A v1.0 MVP)** — engineer opens PR via `gh pr create`; sends Hub thread_message with PR URL + CI status; architect reads via `gh pr view` + leaves review via `gh pr review --approve|--request-changes --body "..."`; replies to Hub thread when done
+- **Web UI fallback** — when `gh` unavailable (ephemeral environments, etc.); URL-based flow
+- **PR artifact conventions** — PR title format including mission-ID + task-ID reference; PR body template; branch naming convention (`agent-<name>/<scope>`)
+- **Troubleshooting** — common gh auth errors; permission issues; token rotation
+
+Engineer-authored; architect reviews for workflow-alignment. Lives in new `docs/setup/` directory (may be repo's first such directory — confirm convention at implementation time).
+
+Success:
+- `docs/setup/architect-engineer-git-env.md` committed
+- Both architect + engineer environments have gh CLI installed + authenticated
+- Verified via deliberate-test (architect opens a no-op PR; engineer reviews it; lands via queue)
+
 ### Task 6 — Methodology v1.0 + multi-branch-merge v2.0
 
 Two related docs:
@@ -132,7 +150,8 @@ Success:
 
 ### Out of scope
 
-- **Agent-adapter PR integration** (agents communicating via GitHub API) — separate follow-up mission if/when it becomes the bottleneck; v1.0 workflow allows agents to execute via standard `git` + manual PR-open (clickable link shared via Hub thread)
+- **GitHub-webhook → Hub bridge for autonomous PR-review triggering** (Option B per ADR-023 §PR-review-triggering-model) — filed as follow-up idea during ADR ratification; activates when Option A manual-notification friction reaches signal threshold. NOT in this mission.
+- **Agent-adapter PR integration** (agents communicating via GitHub API internally) — separate follow-up mission if/when it becomes the bottleneck; v1.0 workflow allows agents to execute via standard `git` + `gh` CLI + Hub thread for PR-review triggering (Option A MVP)
 - **Mission-43 Phase 2 validation** — different mission; happens after this one
 - **Sovereign branch deprecation** — ADR-023 Phase 3; formalized after validator mission confirms workflow
 - **Third-party merge queue tooling** (`mergify`/`bors`/`Kodiak`) — GitHub-native queue suffices for v1.0 scale

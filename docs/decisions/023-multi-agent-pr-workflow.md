@@ -1,7 +1,7 @@
 # ADR-023: Multi-Agent PR Workflow — Trunk-Based Development with PR Gates
 
 **Date:** 2026-04-23
-**Status:** Draft — awaiting Director ratification
+**Status:** **Accepted** (ratified 2026-04-23 by Director; implementation proceeds via M-Trunk-Migration-Infrastructure mission + Phase 2 validator mission-43)
 **Complements:** multi-branch-merge.md v1.0 (will be deprecated upon migration completion per Phase 3); mission-preflight.md (unchanged); strategic-review.md (unchanged)
 **Supersedes (upon execution):** sovereign-branch-per-agent model currently encoded in multi-branch-merge.md §Roles
 **Source:** 2026-04 retrospective §Item-5 multi-agent git workflow design discussion
@@ -10,16 +10,30 @@
 
 ## Decision
 
-**Pending ratification.** This ADR ratifies migration from sovereign-branch-per-agent topology to **trunk-based development with PR-gated integration**, plus the infrastructure + convention stack required to make it safe + scalable.
+**Ratified 2026-04-23 by Director.** This ADR ratifies migration from sovereign-branch-per-agent topology to **trunk-based development with PR-gated integration**, plus the infrastructure + convention stack required to make it safe + scalable.
 
 Specifically the ADR ratifies:
 
-1. **Feature-branch-per-work** replaces sovereign agent branches (agents work on ephemeral branches; deleted post-merge)
+1. **Feature-branch-per-work** replaces sovereign agent branches (agents work on ephemeral branches; deleted post-merge). Per-mission branching is the initial scope; wave-scale branching reserved as engineer-judgment refinement when applicable.
 2. **PR-based integration** via GitHub-native PR workflow
 3. **CODEOWNERS** codifies directory-ownership + veto authority mechanically
 4. **Branch protection on main** requires PR + CI green + CODEOWNERS approval
 5. **Merge queue** serializes landing; parallelizes CI
 6. **4-phase migration path** (infrastructure → validator → deprecation → scale-out-ready)
+
+### PR-review triggering model
+
+**v1.0 (Option A — thread-notification MVP):** engineer opens PR via `gh` CLI, then sends a Hub thread_message to architect containing the PR URL + CI status. Architect's existing drain loop picks up; architect reads/comments on PR via Bash-tool + `gh` CLI; replies in Hub thread when review posted. Zero new infrastructure; leverages existing Hub primitives + new `gh` environmental dependency.
+
+**Medium-term (Option B — GitHub webhook → Hub bridge):** GitHub sends webhook on PR events; Hub endpoint translates to dispatch events; architect drain-loop fires autonomously. Filed as follow-up idea (see §Related ideas + backlog below); activates when Option A's manual-notification friction reaches signal-to-file threshold.
+
+### gh CLI as the agent-local GitHub client
+
+Both engineer + architect agents use `gh` CLI for all PR operations (open, view, comment, approve, merge). Install + auth is per-environment (one-time `gh auth login`). Environmental prerequisite captured in M-Trunk-Migration-Infrastructure mission T7 (docs/setup/ documentation).
+
+### Related ideas + backlog
+
+A follow-up idea is filed during ADR ratification: **"GitHub-webhook → Hub bridge for autonomous PR-review triggering"** (Option B per above). Activates when mission-43 Phase 2 validator + subsequent missions surface manual-notification friction as meaningful. No immediate commit; stays in backlog until signal.
 
 ---
 
@@ -329,16 +343,21 @@ Ratification of this ADR enables:
 
 ---
 
-## Director ratification questions
+## Director ratification questions — historical (answered 2026-04-23)
 
-| # | Question | Architect recommendation |
+| # | Question | Ratified answer |
 |---|---|---|
-| 1 | Ratify the ADR's target state (trunk-based + PR + CODEOWNERS + merge queue)? | Yes |
-| 2 | Ratify the 4-phase migration path? | Yes |
-| 3 | Ratify re-prioritized mission order (Infrastructure → Mission-43 → Mission-42 → Mission-44 → follow-ups)? | Yes |
-| 4 | Ratify mission-43 as Phase 2 validator (instead of mission-42)? | Yes — smaller + standalone + zero-dependency |
-| 5 | Scope of M-Trunk-Migration-Infrastructure: **just scaffolding** vs **scaffolding + agent-adapter PR integration** | Scaffolding only; adapter-PR-integration as separate follow-up mission if needed |
-| 6 | Ship `.husky/pre-commit` as part of infrastructure mission (from Items 4+1)? | Yes — tightly coupled to secret-scan CI job |
+| 1 | Ratify target state (trunk-based + PR + CODEOWNERS + merge queue)? | **Yes** |
+| 2 | Ratify 4-phase migration path? | **Yes** |
+| 3 | Ratify re-prioritized mission order? | **Yes** |
+| 4 | Ratify mission-43 as Phase 2 validator (vs mission-42)? | **Yes** — smaller + standalone + zero-dependency |
+| 5 | M-Trunk-Migration-Infrastructure scope (scaffolding only vs scaffolding + adapter integration)? | **Yes — scaffolding only**; adapter-PR-integration deferred to Option-B-triggered follow-up |
+| 6 | Ship `.husky/pre-commit` as part of infrastructure mission? | **Yes** |
+| 7 (surfaced during ratification discussion) | PR-review triggering model? | **Option A (thread-notification MVP) for v1.0; Option B (GitHub-webhook → Hub bridge) filed as follow-up idea for medium-term** |
+| 8 (surfaced during ratification discussion) | Per-mission branching initial scope? | **Yes — per-mission feature branches for initial scope; wave-scale at engineer judgment** |
+| 9 (surfaced during ratification discussion) | gh CLI as agent-local GitHub client? | **Yes — standard tool; per-environment install; documented in mission T7** |
+
+Preserved for historical record; canonical ratified decisions live in §Decision above.
 
 ---
 
