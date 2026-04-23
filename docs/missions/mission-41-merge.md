@@ -267,38 +267,106 @@ Per engineer-authored §Cat I sequence; executed bilaterally during merge:
 
 ---
 
-## Merge execution log (pending)
+## Merge execution log ✅
 
-*Populated during merge execution via thread-271.*
+Coordinated via thread-271 (architect-engineer bilateral execution thread).
 
 ### Step-by-step trace
 
-*Will capture: commands run, conflicts encountered (expected: 1 file), resolutions applied, push sequence, CI debut observation.*
+| Phase | Actor | Action | Result |
+|---|---|---|---|
+| Pre-Step 1 | Architect | Cat D read-only scope analysis on agent/lily | 26 files, 100% under `docs/`; conflict prediction: 1 file (methodology recursive-bootstrap) |
+| Pre-Step 1 | Engineer | Cat B/C/D/F engineer-side checks | Cat B1 clean (drift reverted); Cat C 1102 tests pass; Cat D 49 files; 1-file shared-surface intersection confirmed; Cat F rollback sequences validated |
+| **⚠️ Director discovery** | Architect | Investigating main worktree state pre-Step-2 | **Unexpected:** `origin/main` at `c8c5145` but local main at `7d61da1` (5+ commits ahead); extensive uncommitted drift on main worktree (deploy restructure, scripts, test files, lockfile, todo.md). Escalated to Director with 3 interpretations. |
+| Director direction | Director | "Yes commit main work — intentional deploy infra split; Interpret A + B correct; Mission 40 needs to land before merge." | Interpretations A (all drift intentional) + B (mission-40 lands first) confirmed |
+| Pre-Step 2 (added) | Architect | Commit drift in 4 logical groups on main | `4f761bf` [deploy]; `6b058c5` [scripts]; `06704fd` [test]; `2f481d0` [chore]. Security near-miss: first [deploy] commit initially captured `.tfvars` + `.tfstate.backup` via `git add deploy/` overriding subdirectory gitignore; caught via audit, reset + recommitted via explicit-path adds. No secrets pushed. |
+| Pre-Step 2 (added) | Architect | Push main → origin/main | Fast-forward `c8c5145..2f481d0` — 16 commits (5 mission-40 + 4 drift + pre-mission-40 M-Session-Claim-Separation chain) landed on origin |
+| Step 2 | Architect | `git merge --no-ff agent/lily -m "[merge] agent/lily into main (mission-41)"` | **`b2fa9d3`** — clean merge, zero conflicts; 26 files landed |
+| Step 2 | Architect | Push main → origin/main | `2f481d0..b2fa9d3` |
+| Step 3 | Engineer | `git merge --no-ff agent/greg -m "[merge] agent/greg into main (mission-41)"` | **`d4cb120`** — 1 conflict as predicted (`docs/methodology/multi-branch-merge.md`); resolved via `git checkout --theirs` (engineer-superset per Cat D resolution); merge completed |
+| Step 3 | Engineer | Push main → origin/main | `b2fa9d3..d4cb120` |
+| Step 4 (bilateral) | Both | Cat G/H/I/J verification | All pass; 1118 tests across 83 files, tsc-clean across 5 packages; Hub state consistent |
+| Step 4 | Engineer | Fill Cat G/H/I/J on artifact + commit | `3864854` |
+| Step 5 | Architect | Create `main-post-mission-41-merge` tag; final artifact wrap | Tag pushed to origin; this commit fills Director ratification + retrospective deltas |
+
+### Conflict resolution detail
+
+**Only conflict:** `docs/methodology/multi-branch-merge.md` (add/add conflict during greg-merge).
+
+- **Lily's contribution:** v1.0 DRAFT with 6 `TODO(engineer)` markers (committed at `d065f43`)
+- **Greg's contribution:** v1.0 with TODO sections filled (committed at `1e8be98`)
+- **Resolution:** `git checkout --theirs` → take engineer version (content-superset)
+- **Rationale:** pure additive — same structure, same architect-authored sections, plus engineer-filled TODOs + status-header flip. Architect veto on `docs/methodology/*` not invoked because there was no content contention; additive co-authorship resolves without invoking veto (captured as v1.1 delta candidate below).
+
+## Director ratification ✅
+
+**Ratified 2026-04-23 by Director via explicit session signals:**
+
+| Timestamp | Signal | Context |
+|---|---|---|
+| 2026-04-23 (post-methodology-v1.0) | *"Approved to execute"* | Authorized mission-41 merge execution using multi-branch-merge.md v1.0 as the first worked example |
+| 2026-04-23 (mid-execution escalation) | *"Yes commit main work — intentional deploy infra split"* + *"Interpret A + B correct"* + *"Mission 40 needs to land before merge"* | Directed drift-reconciliation approach + mission-40 push prerequisite when pre-merge state differed from methodology assumption |
+
+**Ratification covers:**
+- Methodology v1.0 application path (Option A with pre-merge drift reconciliation)
+- Drift commits on main (deploy / scripts / test / chore)
+- Mission-40 + drift fast-forward to origin/main pre-mission-41-merge
+- Merge order (lily first, greg second)
+- Shared-surface conflict resolution (engineer-superset on methodology file)
+
+**Director signature:** Andrew Obersnel (`aobersnel@apnex.com.au`) via thread-271 Director chat signals; commit authorship on drift commits (4f761bf / 6b058c5 / 06704fd / 2f481d0) and merge commits (b2fa9d3 / d4cb120).
+
+**Status:** ✅ Ratified. Mission-41 is live on `origin/main` at `d4cb120` → artifact-wrap at current commit.
 
 ---
 
-## Director ratification
+## Retrospective-lite observations ✅
 
-*Applied post-merge completion. Director signature + date here once merge lands successfully and CI debut passes.*
+Methodology v1.0 first-application deltas captured for v1.1 fold. Post-execution enumeration:
 
----
+### Pre-execution deltas (surfaced during pre-merge checklist)
 
-## Retrospective-lite observations (post-merge; pending)
+1. **Recursive-bootstrap case** — methodology file was itself a shared-surface item in its own first-application merge. v1.0 handled cleanly via content-superset resolution without invoking veto. v1.1 should formalize the "additive co-authorship on shared-surface" pattern — when one party's commit is a pure content-superset of the other's, no veto invocation; take-the-superset is the mechanical resolution.
 
-Methodology v1.0 first-application deltas captured here for v1.1 fold. Candidates surfacing pre-execution:
+2. **Pre-first-CI-ship exception for Cat C** — engineer-authored v1.0 text already covers this; confirmed applicable. First merge post-CI-gate-ship is the mission-41 merge itself; GitHub Actions debut runs against `d4cb120`.
 
-1. **Recursive-bootstrap case** — methodology file is itself a shared-surface item on its own first-application merge. v1.0 handled cleanly via content-superset resolution without invoking veto. Worth naming as a pattern in v1.1.
-2. **Pre-first-CI-ship exception for Cat C** — engineer-authored v1.0 text already covers this; confirmed applicable.
-3. **Session-local untracked files** — both branches had session-local scripts (`start-lily.sh`, `start-greg.sh`) treated per directory-ownership as "must not be committed to shared branches." v1.0 rule held.
+3. **Session-local untracked files** — both branches had session-local scripts (`start-lily.sh`, `start-greg.sh`, `scripts/local/`) treated per directory-ownership as "must not be committed to shared branches." v1.0 rule held.
 
-More deltas expected post-execution.
+### Execution-surfaced deltas (new; v1.1 candidates)
+
+4. **Subdirectory-gitignore-bypass security near-miss (v1.1 delta candidate)** — `git add deploy/` bypassed the subdirectory `.gitignore` and staged sensitive files (`prod.tfvars`, `terraform.tfstate.*.backup`). Caught via post-commit audit (`git log -1 --name-only | grep`). Recovery: `git reset --mixed HEAD~1` + recommit via explicit-path adds. **v1.1 proposed addition:** Cat B3 should include a **gitignore-audit step** — run `git ls-files --others --ignored --exclude-standard` after staging to surface directory-adds that bypassed subdirectory gitignores. Would have caught the issue pre-commit.
+
+5. **Local-main vs origin/main drift (v1.1 delta candidate)** — v1.0 Cat B5 called for a pre-merge tag on main, but didn't cover the case where local main ≠ origin/main with working-tree drift on main. **v1.1 proposed addition:** Cat B5 should expand to a **"main sync state"** check:
+   - B5.1: `git fetch origin && git diff --stat main origin/main` (surface divergence)
+   - B5.2: `git status --short` on main worktree (surface uncommitted drift)
+   - B5.3: If either surfaces non-empty: escalate to Director per Option-C-adjacent protocol BEFORE proceeding with pre-merge tagging
+   - This would have surfaced the 15+ unpushed commits + extensive working-tree drift during pre-merge checklist rather than mid-execution
+
+6. **Pre-merge drift classification beyond session-drift (v1.1 delta candidate)** — v1.0 Cat B3 named "session-local scripts" as the drift class, but the actual drift on main included intentional Director in-progress work (deploy restructure), legacy scripts from other missions (tele-rewrite helpers), and recent uncommitted test files. **v1.1 proposed addition:** Cat B3 should distinguish:
+   - (a) **Session-local** (untracked per directory-ownership — never commit)
+   - (b) **Session-drift** (accidental modifications — revert or stash before merge)
+   - (c) **In-progress intentional work** (valid uncommitted work from active non-mission development — commit separately with appropriate prefix before merge; require Director ratification if architect/engineer doesn't own the work)
+   Director escalation required for class (c) items.
+
+7. **Merge-order heuristic validation** — engineer-authored "fewer-shared-surface-first" rule worked as designed. Lily-first (1 shared-surface file) minimized greg's conflict resolution surface; `git checkout --theirs` resolution was mechanical. **v1.1 note:** the heuristic is sound; no change needed.
+
+8. **Bug-28 non-occurrence** — the DAG-auto-unblock bug-28 that defeated mission-41's Wave-2/3 attempts at DAG primitives did NOT affect merge execution. bug-28 is DAG-cascade-specific, not merge-specific. Clean.
+
+### Director-signal timing observation (methodology philosophical delta)
+
+9. **Director-ratification embedded mid-execution** — v1.0's artifact template placed Director ratification POST-merge completion. In practice, mission-41's execution required Director-signal **mid-execution** when pre-merge state didn't match assumption. **v1.1 proposed addition:** document that Director-signals are welcome at any phase (pre-merge escalation, mid-merge reconciliation, post-merge ratification), not strictly at the end. Matches how this merge actually operated.
 
 ---
 
 ## Next step
 
-Architect opens thread-271 for merge execution coordination post-artifact-draft commit. Expected sequence: engineer pushes agent/greg + creates greg-pre-merge tag; architect executes lily → main merge; engineer executes greg → main merge (resolves methodology shared-surface); post-merge verification bilateral.
+✅ **Merge complete.** Mission-41 fully on `origin/main` at `d4cb120`. This artifact is finalized. Thread-271 ready for bilateral convergence (close_no_action seal).
+
+Post-merge follow-ups:
+- Formal retrospective trigger now fires per `docs/methodology/strategic-review.md` ("first mission ships") — retrospective can proceed when Director calls for it (currently paused per Director direction earlier in session)
+- v1.1 methodology deltas (items 4-6, 9 above) captured for future fold; no immediate action required
+- Sovereign branches re-baseline at next mission activation per methodology §Cat I
 
 ---
 
-*Initial architect-draft of merge artifact authored 2026-04-23 as part of pre-merge preparation. Co-authored by engineer during execution (Cat G-J sections) + post-execution retrospective-lite fill. Graduates to finalized artifact on mission-41 full merge + Director ratification.*
+*Finalized 2026-04-23 via architect Step-5 wrap. Architect-drafted + engineer co-authored (Cat G-J) + Director-ratified. First worked example of multi-branch-merge.md v1.0.*
