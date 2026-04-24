@@ -12,13 +12,15 @@ import { MemoryTaskStore, MemoryEngineerRegistry, MemoryProposalStore, MemoryThr
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, INotificationStore } from "./state.js";
 import { GcsTaskStore, GcsEngineerRegistry, GcsProposalStore, GcsThreadStore, GcsAuditStore, GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
 import {
-  MemoryIdeaStore, MemoryMissionStore, MemoryTurnStore, MemoryTeleStore, MemoryBugStore,
-  GcsIdeaStore, GcsMissionStore, GcsTurnStore, GcsTeleStore, GcsBugStore,
+  MemoryIdeaStore, MemoryMissionStore, MemoryTurnStore, MemoryBugStore,
+  GcsIdeaStore, GcsMissionStore, GcsTurnStore, GcsBugStore,
   MemoryPendingActionStore, MemoryDirectorNotificationStore,
   GcsPendingActionStore, GcsDirectorNotificationStore,
+  TeleRepository, StorageBackedCounter,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
   type IPendingActionStore, type IDirectorNotificationStore,
 } from "./entities/index.js";
+import { MemoryStorageProvider, GcsStorageProvider, type StorageProvider } from "@ois/storage-provider";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy } from "./policy/index.js";
 import { registerSystemPolicy } from "./policy/system-policy.js";
@@ -72,21 +74,29 @@ let bugStore: IBugStore;
 let pendingActionStore: IPendingActionStore;
 let directorNotificationStore: IDirectorNotificationStore;
 
+// Mission-47 W1: tele store is now `TeleRepository` composed over a
+// `StorageProvider`. Provider is selected per STORAGE_BACKEND and
+// shared with the counter helper. Future waves will migrate the
+// other entities to the same pattern; during mission-47 in-flight
+// period, legacy `*Store` classes continue to coexist with
+// TeleRepository (both read/write the same GCS keyspace safely via
+// CAS on shared meta/counter.json).
+let storageProvider: StorageProvider;
+
 if (STORAGE_BACKEND === "gcs") {
   // Top-level guard above ensures GCS_BUCKET is defined here.
   const bucket = GCS_BUCKET!;
   console.log(`[Hub] Using GCS storage backend: gs://${bucket}`);
+  storageProvider = new GcsStorageProvider(bucket);
   taskStore = new GcsTaskStore(bucket);
   engineerRegistry = new GcsEngineerRegistry(bucket);
   proposalStore = new GcsProposalStore(bucket);
   threadStore = new GcsThreadStore(bucket);
   auditStore = new GcsAuditStore(bucket);
   notificationStore = new GcsNotificationStore(bucket);
-  // New entities — GCS-backed for persistence across restarts
   ideaStore = new GcsIdeaStore(bucket);
   missionStore = new GcsMissionStore(bucket, taskStore, ideaStore);
   turnStore = new GcsTurnStore(bucket, missionStore, taskStore);
-  teleStore = new GcsTeleStore(bucket);
   bugStore = new GcsBugStore(bucket);
   pendingActionStore = new GcsPendingActionStore(bucket);
   directorNotificationStore = new GcsDirectorNotificationStore(bucket);
@@ -96,6 +106,7 @@ if (STORAGE_BACKEND === "gcs") {
     process.exit(1);
   }
   console.log("[Hub] Using in-memory storage backend");
+  storageProvider = new MemoryStorageProvider();
   taskStore = new MemoryTaskStore();
   engineerRegistry = new MemoryEngineerRegistry();
   proposalStore = new MemoryProposalStore();
@@ -105,11 +116,16 @@ if (STORAGE_BACKEND === "gcs") {
   ideaStore = new MemoryIdeaStore();
   missionStore = new MemoryMissionStore(taskStore, ideaStore);
   turnStore = new MemoryTurnStore(missionStore, taskStore);
-  teleStore = new MemoryTeleStore();
   bugStore = new MemoryBugStore();
   pendingActionStore = new MemoryPendingActionStore();
   directorNotificationStore = new MemoryDirectorNotificationStore();
 }
+
+// Mission-47 W1: instantiate TeleRepository over the selected provider.
+// Counter is shared-by-design — future wave repositories will reuse
+// this same counter instance for their ID generation.
+const storageCounter = new StorageBackedCounter(storageProvider);
+teleStore = new TeleRepository(storageProvider, storageCounter);
 
 // ── Aggregate Store Object ────────────────────────────────────────────
 const allStores: AllStores = {

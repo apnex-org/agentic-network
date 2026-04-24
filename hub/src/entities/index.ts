@@ -14,9 +14,11 @@ export type { Turn, TurnStatus, ITurnStore } from "./turn.js";
 export { MemoryTurnStore } from "./turn.js";
 export { GcsTurnStore } from "./gcs/gcs-turn.js";
 
-export type { Tele, ITeleStore } from "./tele.js";
-export { MemoryTeleStore } from "./tele.js";
-export { GcsTeleStore } from "./gcs/gcs-tele.js";
+export type { Tele, TeleStatus, ITeleStore } from "./tele.js";
+export { normalizeTele } from "./tele.js";
+export { TeleRepository } from "./tele-repository.js";
+export { StorageBackedCounter } from "./counter.js";
+export type { Counters, CounterField } from "./counter.js";
 
 export type { Bug, BugStatus, BugSeverity, IBugStore } from "./bug.js";
 export { MemoryBugStore } from "./bug.js";

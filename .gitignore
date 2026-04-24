@@ -6,6 +6,17 @@ dist/
 *.tsbuildinfo
 *.tgz
 
+# Mission-47 W1 exception: @ois/storage-provider ships its built dist/
+# because hub depends on it via `file:../packages/storage-provider` and
+# CI's `npm ci` doesn't install the package's devDependencies (typescript,
+# @types/node), which the `prepare: tsc` hook would need to build on
+# install. Committing dist/ is the pragmatic workaround until idea-186
+# (npm workspaces migration) lands — once workspaces are in place, the
+# build-on-install cascade works across devDependencies natively and
+# this exception can be removed.
+!packages/storage-provider/dist/
+!packages/storage-provider/dist/**
+
 # Logs
 *.log
 .ois/

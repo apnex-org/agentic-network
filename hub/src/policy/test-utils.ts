@@ -5,7 +5,9 @@ import type { Selector } from "../state.js";
 import { MemoryIdeaStore } from "../entities/idea.js";
 import { MemoryMissionStore } from "../entities/mission.js";
 import { MemoryTurnStore } from "../entities/turn.js";
-import { MemoryTeleStore } from "../entities/tele.js";
+import { TeleRepository } from "../entities/tele-repository.js";
+import { StorageBackedCounter } from "../entities/counter.js";
+import { MemoryStorageProvider } from "@ois/storage-provider";
 import { MemoryBugStore } from "../entities/bug.js";
 import { MemoryPendingActionStore } from "../entities/pending-action.js";
 import { MemoryDirectorNotificationStore } from "../entities/director-notification.js";
@@ -35,6 +37,11 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
   const task = new MemoryTaskStore();
   const idea = new MemoryIdeaStore();
   const mission = new MemoryMissionStore(task, idea);
+  // Mission-47 W1: tele store is TeleRepository over a fresh
+  // MemoryStorageProvider + StorageBackedCounter per test context —
+  // no state leakage between test cases.
+  const storageProvider = new MemoryStorageProvider();
+  const storageCounter = new StorageBackedCounter(storageProvider);
   const stores: AllStores = {
     task,
     engineerRegistry: new MemoryEngineerRegistry(),
@@ -44,7 +51,7 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     idea,
     mission,
     turn: new MemoryTurnStore(mission, task),
-    tele: new MemoryTeleStore(),
+    tele: new TeleRepository(storageProvider, storageCounter),
     bug: new MemoryBugStore(),
     pendingAction: new MemoryPendingActionStore(),
     directorNotification: new MemoryDirectorNotificationStore(),

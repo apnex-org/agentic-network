@@ -27,12 +27,11 @@ If you're picking up cold on mission-47:
 
 ## In-flight
 
-- ▶ **T1 — storage-provider contract + 3 providers + conformance suite + ADR-024.** Shipped locally; PR pending push. Next: push branch, open PR, ping lily for post-T1 acceptance thread.
+- ▶ **T2-W1 — tele repository migration.** Shipped locally; PR pending push. Thread-290 §3 contract-validation ground. Hub suite 725/730 pass (baseline preserved); no regressions. Next: push branch, open PR, ping lily for post-W1 contract-validation checkpoint thread per Option C.
 
 ## Queued / filed
 
-- ○ **T2-W1 tele repository migration** — blocked on T1 post-acceptance.
-- ○ **T2-W2 bug + idea** — blocked on W1.
+- ○ **T2-W2 bug + idea** — blocked on W1 post-checkpoint acceptance.
 - ○ **T2-W3 director-notification** — blocked on W2.
 - ○ **T2-W4 mission** — blocked on W3.
 - ○ **T2-W5 task + proposal** — blocked on W4.
@@ -45,6 +44,18 @@ If you're picking up cold on mission-47:
 ---
 
 ## Done this session
+
+### T2-W1 (tele repository migration) — shipped 2026-04-24
+
+- ✅ **`hub/src/entities/counter.ts` — `StorageBackedCounter`.** Provider-agnostic CAS counter (replaces GCS-specific `getAndIncrementCounter` at the repository layer per ADR-024 §2.5). Uses `getWithToken` + `createOnly` bootstrap + `putIfMatch` retry loop. MAX_CAS_RETRIES=50; in-process Mutex preserves the serialized-counter guarantee from the historical `counterLock`. Full `Counters` interface preserved (`taskCounter`, `teleCounter`, ...) so wave-by-wave rollout doesn't require counter-file renumbering.
+- ✅ **`hub/src/entities/tele-repository.ts` — `TeleRepository implements ITeleStore`.** Composes any `StorageProvider` + `StorageBackedCounter`. Layout `tele/<teleId>.json` matches historical GCS keyspace exactly. Read-side `normalizeTele` preserved (mission-43 zero-backfill). `supersedeTele` + `retireTele` via internal `casUpdate` method (read-with-token → transform → putIfMatch with retry; surfaces loudly on exhausted retries rather than silent stale state).
+- ✅ **Legacy classes deleted.** `MemoryTeleStore` removed from `hub/src/entities/tele.ts`. `hub/src/entities/gcs/gcs-tele.ts` deleted entirely. `hub/src/entities/index.ts` barrel replaces `{Memory,Gcs}TeleStore` exports with `{TeleRepository, StorageBackedCounter, normalizeTele, Counters, CounterField, TeleStatus}`.
+- ✅ **`hub/src/index.ts` startup.** Builds `StorageProvider` (MemoryStorageProvider for memory-mode, GcsStorageProvider for gcs-mode); shares it with `StorageBackedCounter`; instantiates `TeleRepository`. `let teleStore: ITeleStore` declaration unchanged — policy layer untouched.
+- ✅ **Test scaffolds updated.** `hub/src/policy/test-utils.ts` + `hub/test/e2e/orchestrator.ts` — both now build MemoryStorageProvider + StorageBackedCounter + TeleRepository instead of MemoryTeleStore. Fresh provider per test-context (no state leakage).
+- ✅ **Hub dependency added.** `hub/package.json` gains `"@ois/storage-provider": "file:../packages/storage-provider"`. `prepare: tsc` script on storage-provider triggers automatic build during `npm install`; no tarball ceremony (distinct class from bug-30 adapter tarball issue).
+- ✅ **Verification.** tsc strict-mode clean. Full hub suite 725 passing / 5 skipped / 0 failing — identical to pre-W1 baseline. No regressions; structural refactor only.
+
+### T1 (contract + 3 providers + conformance suite + ADR-024) — shipped 2026-04-24
 
 - ✅ **Design round thread-290 convergence.** Architect (lily) + engineer (greg) converged on revised brief. Key engineer-driven refinements: contract surface expanded to 6 primitives (added `createOnly` as first-class); CAS-is-prod-floor reframing (`cas:false` dev-only); counter-primitives-as-repository-helpers. 7-wave migration sequencing accepted as engineer-authored. Agent W7 pre-authorized carve-out with L-escalation honest-flag.
 - ✅ **Release-gate thread-291 convergence.** Director approved via architect; Option C hybrid coordination model accepted; DAG + checkpoint gates agreed.
