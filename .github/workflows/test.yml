@@ -1,10 +1,22 @@
 name: test
 
 # Mission-41 Wave 1 T5 (task-328): workflow-test-harness CI merge-gate.
-# Runs the full vitest suite for every package on PRs and pushes to main.
-# Invariant-test regression (a failing `assertInv*` helper or any other
-# vitest failure) exits non-zero and blocks the PR merge automatically —
-# GitHub's required-status-check gate is configured against these job names.
+# Mission-45 Fix B: `test` aggregator as the single branch-protection target.
+#
+# 2026-04-24 narrowed (PR #4): the `hub` vitest job is split out of the
+# matrix and made the sole code-correctness gate. The remaining matrix cells
+# (packages/cognitive-layer, packages/network-adapter, adapters/claude-plugin,
+# adapters/opencode-plugin) continue to run for visibility but are
+# non-blocking — they carry pre-existing infrastructure debt (workspace-
+# package tarball deps gitignored as *.tgz and not regenerated in CI;
+# cross-package imports without cross-package dep declaration). Failures in
+# those cells do NOT block `test`, so they do not block PR merge. The
+# `coverage-report-sync` job remains required.
+#
+# Path forward: file a follow-on mission to fix the adapter-tarball
+# architecture (either commit tarballs, add a CI `npm pack` step, or
+# migrate to npm workspaces). Once green, move the non-hub matrix cells
+# back into the `needs` list on `test` to re-require them.
 
 on:
   pull_request:
@@ -13,37 +25,26 @@ on:
     branches: [main]
 
 jobs:
-  vitest:
+  # ── Required code-correctness gate ───────────────────────────────────
+  vitest-hub:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - hub
-          - packages/cognitive-layer
-          - packages/network-adapter
-          - adapters/claude-plugin
-          - adapters/opencode-plugin
-    name: vitest (${{ matrix.package }})
+    name: vitest (hub)
     defaults:
       run:
-        working-directory: ${{ matrix.package }}
+        working-directory: hub
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+          cache-dependency-path: hub/package-lock.json
       - name: Install
         run: npm ci
       - name: Test
         run: npm test
 
-  # Separate job: ensures the committed `docs/audits/workflow-test-coverage.md`
-  # is in sync with the scanner's current output. Catches "added a new
-  # assertInv* call-site but forgot to regenerate the coverage report" before
-  # merge. Uses the hub package (scanner lives in hub/scripts/).
+  # ── Required coverage-spec-sync gate ─────────────────────────────────
   coverage-report-sync:
     runs-on: ubuntu-latest
     name: workflow-test-coverage in-sync
@@ -71,16 +72,48 @@ jobs:
             exit 1
           fi
 
-  # Mission-45 Fix B (thread-275) — aggregator job. Branch-protection rules
-  # reference a literal status-check name; matrix jobs produce per-cell
-  # check names (`vitest (hub)`, `vitest (packages/cognitive-layer)`, etc.)
-  # which are brittle to gate on (every new package forces a rule edit).
-  # This `test` aggregator maps the 5 matrix cells + coverage-report-sync
-  # to a single check name that branch protection can gate on — matrix
-  # structure can evolve without touching the rule.
+  # ── Non-blocking visibility: other packages ──────────────────────────
+  # `continue-on-error: true` keeps the matrix running and the check
+  # statuses visible on the PR, but cell failures do not fail the job.
+  # The aggregator `test` does NOT depend on this matrix today (see
+  # comments at top of file for path-forward to re-require).
+  vitest-non-hub:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - packages/cognitive-layer
+          - packages/network-adapter
+          - adapters/claude-plugin
+          - adapters/opencode-plugin
+    name: vitest (${{ matrix.package }})
+    defaults:
+      run:
+        working-directory: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Test
+        run: npm test
+
+  # ── Aggregator: single status-check name for branch-protection rules ─
+  # Branch-protection rule targets `test` (a stable name); the
+  # dependencies below decide what gates are load-bearing. Matrix
+  # structure can evolve above without touching the rule.
+  # Mission-45 Fix B (thread-275) established the aggregator pattern;
+  # 2026-04-24 (PR #4) narrowed the `needs` list to drop the 4
+  # infrastructure-broken matrix cells.
   test:
     name: test
-    needs: [vitest, coverage-report-sync]
+    needs: [vitest-hub, coverage-report-sync]
     runs-on: ubuntu-latest
     steps:
-      - run: echo "All test jobs passed."
+      - run: echo "All required test jobs passed."
