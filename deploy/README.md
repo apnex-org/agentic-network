@@ -120,7 +120,7 @@ Both plans use the **local backend** as of the split (state files kept in-dir). 
   - `deploy/build-architect.sh` — mirror of build-hub for agents/vertex-cloudrun.
   - `deploy/deploy-architect.sh` — mirror of deploy-hub for architect-<env>.
 
-- **New-environment bootstrap wrapper (`deploy/new-environment-bootstrap.sh`)** — pending mission-46 T2. Single-command scaffold: takes `project_id` + `region` + `<env-name>`, generates per-env tfvars from templates + auto-gens secrets (openssl rand + uuidgen), runs `gcloud services enable`, applies base terraform, builds + deploys Hub + Architect, reports URLs.
+- **New-environment bootstrap wrapper** — COMPLETE as of mission-46 T2: `deploy/new-environment-bootstrap.sh`. Single-command scaffold: takes `--project-id` + `--region` + `--env`, scaffolds per-env tfvars from templates (idempotent), auto-generates `hub_api_token` (openssl rand) + `architect_global_instance_id` (uuidgen), enables bootstrap GCP APIs, applies base terraform, builds + deploys Hub + Architect via the T1 wrappers, reports service URLs. Optional `--provision-local-key` flag generates an SA key JSON at repo root for local-dev (opt-in; default off). Secrets written to `.bootstrap-secrets-<env>.txt` (gitignored, chmod 600). Idempotent end-to-end; safe to re-run.
 
 - **End-to-end `build.sh`** — historical successor (previously `archive-pre-split-2026-04-22/build.sh`, assumed monolithic apply in `deploy/` root) still needs a tracked wrapper that applies base + cloudrun in correct order and handles `deploy-ts` label bumps per service. Candidate script-rationalisation mission.
 
