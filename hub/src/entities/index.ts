@@ -6,8 +6,8 @@ export type { Idea, IdeaStatus, IIdeaStore, CascadeBacklink as IdeaCascadeBackli
 export { IdeaRepository } from "./idea-repository.js";
 
 export type { Mission, MissionStatus, IMissionStore, PlannedTask, PlannedTaskStatus } from "./mission.js";
-export { MemoryMissionStore, findNextUnissuedPlannedTask } from "./mission.js";
-export { GcsMissionStore } from "./gcs/gcs-mission.js";
+export { findNextUnissuedPlannedTask } from "./mission.js";
+export { MissionRepository } from "./mission-repository.js";
 
 export type { Turn, TurnStatus, ITurnStore } from "./turn.js";
 export { MemoryTurnStore } from "./turn.js";

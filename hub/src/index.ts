@@ -12,11 +12,12 @@ import { MemoryTaskStore, MemoryEngineerRegistry, MemoryProposalStore, MemoryThr
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, INotificationStore } from "./state.js";
 import { GcsTaskStore, GcsEngineerRegistry, GcsProposalStore, GcsThreadStore, GcsAuditStore, GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
 import {
-  MemoryMissionStore, MemoryTurnStore,
-  GcsMissionStore, GcsTurnStore,
+  MemoryTurnStore,
+  GcsTurnStore,
   MemoryPendingActionStore,
   GcsPendingActionStore,
   TeleRepository, IdeaRepository, BugRepository, DirectorNotificationRepository,
+  MissionRepository,
   StorageBackedCounter,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
   type IPendingActionStore, type IDirectorNotificationStore,
@@ -112,25 +113,26 @@ if (STORAGE_BACKEND === "gcs") {
   pendingActionStore = new MemoryPendingActionStore();
 }
 
-// Mission-47 W1/W2/W3: instantiate StorageProvider-backed repositories.
+// Mission-47 W1/W2/W3/W4: instantiate StorageProvider-backed repositories.
 // Counter is shared-by-design across all repositories — issues a
 // monotonic ID sequence per entity-type field (teleCounter, ideaCounter,
-// bugCounter, directorNotificationCounter, ...) via a single
-// meta/counter.json blob.
+// bugCounter, directorNotificationCounter, missionCounter, ...) via a
+// single meta/counter.json blob.
 const storageCounter = new StorageBackedCounter(storageProvider);
 ideaStore = new IdeaRepository(storageProvider, storageCounter);
 bugStore = new BugRepository(storageProvider, storageCounter);
 teleStore = new TeleRepository(storageProvider, storageCounter);
 directorNotificationStore = new DirectorNotificationRepository(storageProvider, storageCounter);
+// MissionRepository takes taskStore + ideaStore for virtual-view hydration.
+missionStore = new MissionRepository(storageProvider, storageCounter, taskStore, ideaStore);
 
-// missionStore + turnStore depend on ideaStore (cascade back-links) and
-// taskStore, so construct them after the repository instantiation above.
+// turnStore still has a backend-specific class (W6); construct it after
+// missionStore since it depends on the mission store for virtual-view
+// composition.
 if (STORAGE_BACKEND === "gcs") {
   const bucket = GCS_BUCKET!;
-  missionStore = new GcsMissionStore(bucket, taskStore, ideaStore);
   turnStore = new GcsTurnStore(bucket, missionStore, taskStore);
 } else {
-  missionStore = new MemoryMissionStore(taskStore, ideaStore);
   turnStore = new MemoryTurnStore(missionStore, taskStore);
 }
 

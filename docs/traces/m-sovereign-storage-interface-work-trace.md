@@ -28,7 +28,8 @@ If you're picking up cold on mission-47:
 ## In-flight
 
 - ▶ **T2-W2 — bug + idea repository migrations.** PR #12 open against main. Hub suite 723/728 pass (5 skipped; zero regressions). Awaiting architect routine-review + CI green.
-- ▶ **T2-W3 — director-notification repository migration.** Shipped locally on `agent-greg/mission-47-t2-w3-director-notification` (stacked on W2). Hub suite 723/728 pass (identical baseline). Next: push branch, open PR, hand off via standard PR-review to lily. Routine wave (not a checkpoint gate).
+- ▶ **T2-W3 — director-notification repository migration.** PR #13 open stacked on #12. Hub suite 723/728 pass. Awaiting review.
+- ▶ **T2-W4 — mission repository migration.** Shipped locally on `agent-greg/mission-47-t2-w4-mission-repository` (stacked on W3). Hub suite 722/727 pass (1 obsolete GcsMissionStore P2 reproduction removed). Virtual-view hydration preserved; plannedTasks cascade (task-316) preserved. Next: push + open PR stacked on W3.
 
 ## Queued / filed
 - ○ **T2-W4 mission** — blocked on W3.
@@ -42,6 +43,17 @@ If you're picking up cold on mission-47:
 ---
 
 ## Done this session
+
+### T2-W4 (mission repository migration) — shipped 2026-04-24
+
+- ✅ **`hub/src/entities/mission-repository.ts` — `MissionRepository implements IMissionStore`.** Composes `StorageProvider` + shared `StorageBackedCounter` + the hydration dependencies `taskStore` + `ideaStore`. Layout `missions/<missionId>.json`; counter field `missionCounter`. Virtual-view hydration preserved — `tasks` + `ideas` computed on read from the injected stores by `correlationId` / `missionId`, matching the historical comment in `mission.ts` about why hydration lives on the read path (prior stored-array implementation lost writes under concurrent auto-linkage).
+- ✅ **task-316 / idea-144 Path A preserved.** `markPlannedTaskIssued` + `markPlannedTaskCompleted` both routed through the shared internal `casUpdate` helper. Transform predicate short-circuits (no mutation) when the slot is already transitioned — matches the legacy FSM gates. Returns the transitioned PlannedTask via a closed-over `result` variable (the transform returns the mission itself).
+- ✅ **Legacy classes deleted.** `MemoryMissionStore` removed from `hub/src/entities/mission.ts` (unused `ITaskStore` import also dropped). `hub/src/entities/gcs/gcs-mission.ts` deleted. `entities/index.ts` barrel now exports `MissionRepository`.
+- ✅ **`hub/src/index.ts` startup.** `missionStore` instantiated via `new MissionRepository(storageProvider, storageCounter, taskStore, ideaStore)` — unified with the other repositories. `turnStore` construction remains backend-specific (W6) but now only sees a single if/else branch.
+- ✅ **Test scaffolds updated.** `hub/src/policy/test-utils.ts` + `hub/test/e2e/orchestrator.ts` — both now build `MissionRepository` through the shared provider/counter.
+- ✅ **Obsolete P2 reproduction removed.** `hub/test/unit/gcs-p2-repro.test.ts` — `GcsMissionStore.updateMission` lost-update reproduction deleted (equivalent coverage via storage-provider conformance suite + MissionRepository `casUpdate`).
+- ✅ **Wave2-policies.test.ts seed updated.** `seedMissionsWithCreatedBy` rewritten to use the public `createMission(title, description, undefined, undefined, createdBy)` API (was poking the now-removed internal `(ctx.stores.mission as any).missions` Map).
+- ✅ **Verification.** tsc strict-mode clean; hub suite 722/727 pass (5 skipped; baseline delta: 1 obsolete GcsMissionStore reproduction removed; zero regressions).
 
 ### T2-W3 (director-notification repository migration) — shipped 2026-04-24
 
@@ -116,6 +128,8 @@ If you're picking up cold on mission-47:
 - **2026-04-24 ~19:00-19:15Z** — T2-W2 (bug + idea repository migrations) authored locally: IdeaRepository + BugRepository + idea.ts/bug.ts MemoryStore deletions + gcs-idea.ts/gcs-bug.ts deletion + index.ts barrel update + hub/src/index.ts startup restructure + test-utils.ts + orchestrator.ts migration + wave2 seedWithCreatedBy rewrite + gcs-p2-repro.test.ts obsolete GcsIdeaStore section removal. tsc clean; hub suite 723/728 pass (baseline preserved).
 - **2026-04-24 ~19:15Z** — W2 pushed + PR #12 opened against main (routine wave per Option C).
 - **2026-04-24 ~19:15-19:20Z** — T2-W3 (director-notification repository migration) authored locally on stacked branch `agent-greg/mission-47-t2-w3-director-notification`: DirectorNotificationRepository + MemoryDirectorNotificationStore deletion + gcs-director-notification.ts deletion + index.ts barrel update + hub/src/index.ts startup + test-utils.ts + orchestrator.ts migration. tsc clean; hub suite 723/728 pass (identical baseline).
+- **2026-04-24 ~19:20Z** — W3 pushed + PR #13 opened stacked on W2 #12.
+- **2026-04-24 ~19:20-19:30Z** — T2-W4 (mission repository migration) authored locally on stacked branch `agent-greg/mission-47-t2-w4-mission-repository`: MissionRepository (virtual-view hydration preserved; plannedTasks cascade preserved) + MemoryMissionStore deletion + gcs-mission.ts deletion + index.ts barrel update + hub/src/index.ts startup + test-utils + orchestrator migration + wave2 seedMissionsWithCreatedBy rewrite + gcs-p2-repro.test.ts obsolete GcsMissionStore section removal. tsc clean; hub suite 722/727 pass.
 
 ## Canonical references
 

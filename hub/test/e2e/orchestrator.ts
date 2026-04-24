@@ -39,7 +39,7 @@ import {
   MemoryAuditStore,
 } from "../../src/state.js";
 import { IdeaRepository } from "../../src/entities/idea-repository.js";
-import { MemoryMissionStore } from "../../src/entities/mission.js";
+import { MissionRepository } from "../../src/entities/mission-repository.js";
 import { MemoryTurnStore } from "../../src/entities/turn.js";
 import { TeleRepository } from "../../src/entities/tele-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
@@ -492,7 +492,7 @@ export class TestOrchestrator {
     const storageProvider = new MemoryStorageProvider();
     const storageCounter = new StorageBackedCounter(storageProvider);
     const idea = new IdeaRepository(storageProvider, storageCounter);
-    const mission = new MemoryMissionStore(task, idea);
+    const mission = new MissionRepository(storageProvider, storageCounter, task, idea);
     return {
       task,
       engineerRegistry: new MemoryEngineerRegistry(),

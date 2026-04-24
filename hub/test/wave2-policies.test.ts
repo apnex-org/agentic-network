@@ -383,16 +383,22 @@ describe("MissionPolicy", () => {
   // ── Phase C (task-306): createdBy.* nested paths on list_missions ──
   describe("list_missions — M-QueryShape Phase C (task-306)", () => {
     async function seedMissionsWithCreatedBy(): Promise<void> {
-      await router.handle("create_mission", { title: "M1", description: "D1" }, ctx);
-      await router.handle("create_mission", { title: "M2", description: "D2" }, ctx);
-      await router.handle("create_mission", { title: "M3", description: "D3" }, ctx);
-      const internal = (ctx.stores.mission as any).missions as Map<string, any>;
-      const m1 = internal.get("mission-1");
-      if (m1) m1.createdBy = { role: "architect", agentId: "eng-alpha" };
-      const m2 = internal.get("mission-2");
-      if (m2) m2.createdBy = { role: "engineer", agentId: "eng-beta" };
-      const m3 = internal.get("mission-3");
-      if (m3) m3.createdBy = { role: "architect", agentId: "eng-gamma" };
+      // Mission-47 W4: Mission store is StorageProvider-backed — the
+      // legacy internal `missions` Map no longer exists. Create missions
+      // directly through the store API with the desired createdBy
+      // provenance instead of mutating internal state.
+      await ctx.stores.mission.createMission(
+        "M1", "D1", undefined, undefined,
+        { role: "architect", agentId: "eng-alpha" },
+      );
+      await ctx.stores.mission.createMission(
+        "M2", "D2", undefined, undefined,
+        { role: "engineer", agentId: "eng-beta" },
+      );
+      await ctx.stores.mission.createMission(
+        "M3", "D3", undefined, undefined,
+        { role: "architect", agentId: "eng-gamma" },
+      );
     }
 
     it("filter: createdBy.role selects architect-created missions only", async () => {

@@ -24,11 +24,10 @@ vi.mock("@google-cloud/storage", () => ({ Storage: GcsFakeStorage }));
 
 // Imports must be AFTER vi.mock so the mocked Storage is picked up
 // when `gcs-state.ts` constructs `new Storage()` at module init.
-// Mission-47 W2: GcsIdeaStore deleted — Idea concurrency is now
-// exercised via the storage-provider conformance suite (CAS primitive)
-// plus IdeaRepository unit tests, so the GcsIdeaStore.updateIdea
-// reproduction below is removed.
-const { GcsMissionStore } = await import("../../src/entities/gcs/gcs-mission.js");
+// Mission-47 W2/W4: GcsIdeaStore + GcsMissionStore deleted — their
+// concurrency is now exercised via the storage-provider conformance
+// suite (CAS primitive) plus the Repository-class casUpdate loops.
+// Obsolete reproduction blocks removed.
 const { GcsTurnStore } = await import("../../src/entities/gcs/gcs-turn.js");
 const {
   GcsTaskStore,
@@ -40,39 +39,6 @@ const BUCKET = "test-bucket";
 
 beforeEach(() => {
   installGcsFake();
-});
-
-// ── GcsMissionStore ──────────────────────────────────────────────────
-
-describe("GcsMissionStore.updateMission — lost-update reproduction", () => {
-  it("preserves status + description mutations under concurrent writers", async () => {
-    const taskStore = { listTasks: async () => [] } as any;
-    const ideaStore = { listIdeas: async () => [] } as any;
-    const store = new GcsMissionStore(BUCKET, taskStore, ideaStore);
-
-    gcsFake().put("missions/mission-1.json", {
-      id: "mission-1",
-      title: "Seed",
-      description: "orig",
-      documentRef: null,
-      status: "proposed",
-      tasks: [],
-      ideas: [],
-      correlationId: "mission-1",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    });
-
-    await Promise.all([
-      store.updateMission("mission-1", { status: "active" }),
-      store.updateMission("mission-1", { description: "revised" }),
-    ]);
-
-    const final = await store.getMission("mission-1");
-    expect(final).not.toBeNull();
-    expect(final!.status).toBe("active");
-    expect(final!.description).toBe("revised");
-  });
 });
 
 // ── GcsTurnStore ────────────────────────────────────────────────────

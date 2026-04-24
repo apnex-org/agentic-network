@@ -14,8 +14,8 @@
  * for the regression pin.
  */
 
-import type { ITaskStore, EntityProvenance } from "../state.js";
-import type { IIdeaStore, CascadeBacklink } from "./idea.js";
+import type { EntityProvenance } from "../state.js";
+import type { CascadeBacklink } from "./idea.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -176,138 +176,6 @@ export function findNextUnissuedPlannedTask(
   return sorted.find((p) => p.status === "unissued") ?? null;
 }
 
-// ── Memory Implementation ────────────────────────────────────────────
-
-export class MemoryMissionStore implements IMissionStore {
-  private missions = new Map<string, Mission>();
-  private counter = 0;
-
-  constructor(
-    private readonly taskStore: ITaskStore,
-    private readonly ideaStore: IIdeaStore,
-  ) {}
-
-  async createMission(
-    title: string,
-    description: string,
-    documentRef?: string,
-    backlink?: CascadeBacklink,
-    createdBy?: EntityProvenance,
-    plannedTasks?: PlannedTask[],
-  ): Promise<Mission> {
-    this.counter++;
-    const id = `mission-${this.counter}`;
-    const now = new Date().toISOString();
-
-    const mission: Mission = {
-      id,
-      title,
-      description,
-      documentRef: documentRef || null,
-      status: "proposed",
-      tasks: [],
-      ideas: [],
-      correlationId: id,
-      turnId: null,
-      sourceThreadId: backlink?.sourceThreadId ?? null,
-      sourceActionId: backlink?.sourceActionId ?? null,
-      sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
-      createdBy,
-      plannedTasks: plannedTasks ? plannedTasks.map((p) => ({ ...p })) : undefined,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    this.missions.set(id, mission);
-    console.log(`[MemoryMissionStore] Mission created: ${id} — ${title}${backlink ? ` (cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId})` : ""}${plannedTasks?.length ? ` [plannedTasks=${plannedTasks.length}]` : ""}`);
-    return this.hydrate(mission);
-  }
-
-  async findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Mission | null> {
-    for (const m of this.missions.values()) {
-      if (m.sourceThreadId === key.sourceThreadId && m.sourceActionId === key.sourceActionId) {
-        return this.hydrate(m);
-      }
-    }
-    return null;
-  }
-
-  async getMission(missionId: string): Promise<Mission | null> {
-    const mission = this.missions.get(missionId);
-    return mission ? this.hydrate(mission) : null;
-  }
-
-  async listMissions(statusFilter?: MissionStatus): Promise<Mission[]> {
-    const all = Array.from(this.missions.values());
-    const filtered = statusFilter
-      ? all.filter((m) => m.status === statusFilter)
-      : all;
-    return Promise.all(filtered.map((m) => this.hydrate(m)));
-  }
-
-  async updateMission(
-    missionId: string,
-    updates: {
-      status?: MissionStatus;
-      description?: string;
-      documentRef?: string;
-      plannedTasks?: PlannedTask[];
-    }
-  ): Promise<Mission | null> {
-    const mission = this.missions.get(missionId);
-    if (!mission) return null;
-
-    if (updates.status) mission.status = updates.status;
-    if (updates.description !== undefined) mission.description = updates.description;
-    if (updates.documentRef !== undefined) mission.documentRef = updates.documentRef;
-    if (updates.plannedTasks !== undefined) {
-      mission.plannedTasks = updates.plannedTasks.map((p) => ({ ...p }));
-    }
-    mission.updatedAt = new Date().toISOString();
-
-    console.log(`[MemoryMissionStore] Mission updated: ${missionId} → status=${mission.status}${updates.plannedTasks ? ` [plannedTasks=${updates.plannedTasks.length}]` : ""}`);
-    return this.hydrate(mission);
-  }
-
-  async markPlannedTaskIssued(
-    missionId: string,
-    sequence: number,
-    issuedTaskId: string,
-  ): Promise<PlannedTask | null> {
-    const mission = this.missions.get(missionId);
-    if (!mission || !mission.plannedTasks) return null;
-    const slot = mission.plannedTasks.find((p) => p.sequence === sequence);
-    if (!slot || slot.status !== "unissued") return null;
-    slot.status = "issued";
-    slot.issuedTaskId = issuedTaskId;
-    mission.updatedAt = new Date().toISOString();
-    console.log(`[MemoryMissionStore] plannedTask issued: ${missionId} seq=${sequence} → ${issuedTaskId}`);
-    return { ...slot };
-  }
-
-  async markPlannedTaskCompleted(
-    missionId: string,
-    issuedTaskId: string,
-  ): Promise<PlannedTask | null> {
-    const mission = this.missions.get(missionId);
-    if (!mission || !mission.plannedTasks) return null;
-    const slot = mission.plannedTasks.find((p) => p.issuedTaskId === issuedTaskId);
-    if (!slot || slot.status !== "issued") return null;
-    slot.status = "completed";
-    mission.updatedAt = new Date().toISOString();
-    console.log(`[MemoryMissionStore] plannedTask completed: ${missionId} seq=${slot.sequence} taskId=${issuedTaskId}`);
-    return { ...slot };
-  }
-
-  private async hydrate(stored: Mission): Promise<Mission> {
-    const [tasks, ideas] = await Promise.all([
-      this.taskStore.listTasks(),
-      this.ideaStore.listIdeas(),
-    ]);
-    return {
-      ...stored,
-      tasks: tasks.filter((t) => t.correlationId === stored.id).map((t) => t.id),
-      ideas: ideas.filter((i) => i.missionId === stored.id).map((i) => i.id),
-    };
-  }
-}
+// Mission-47 W4: `MemoryMissionStore` deleted. `MissionRepository`
+// in `mission-repository.ts` composes any `StorageProvider` (including
+// `MemoryStorageProvider` for tests) via the IMissionStore interface.

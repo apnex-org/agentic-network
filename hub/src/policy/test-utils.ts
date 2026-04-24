@@ -3,7 +3,7 @@ import type { IPolicyContext, AllStores, DomainEvent } from "./types.js";
 import { MemoryTaskStore, MemoryEngineerRegistry, MemoryProposalStore, MemoryThreadStore, MemoryAuditStore } from "../state.js";
 import type { Selector } from "../state.js";
 import { IdeaRepository } from "../entities/idea-repository.js";
-import { MemoryMissionStore } from "../entities/mission.js";
+import { MissionRepository } from "../entities/mission-repository.js";
 import { MemoryTurnStore } from "../entities/turn.js";
 import { TeleRepository } from "../entities/tele-repository.js";
 import { StorageBackedCounter } from "../entities/counter.js";
@@ -41,7 +41,7 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
   const storageProvider = new MemoryStorageProvider();
   const storageCounter = new StorageBackedCounter(storageProvider);
   const idea = new IdeaRepository(storageProvider, storageCounter);
-  const mission = new MemoryMissionStore(task, idea);
+  const mission = new MissionRepository(storageProvider, storageCounter, task, idea);
   const stores: AllStores = {
     task,
     engineerRegistry: new MemoryEngineerRegistry(),
