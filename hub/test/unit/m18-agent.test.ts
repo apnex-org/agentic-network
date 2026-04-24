@@ -8,7 +8,6 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  MemoryEngineerRegistry,
   computeFingerprint,
   shortHash,
   recordDisplacementAndCheck,
@@ -17,6 +16,8 @@ import {
   type RegisterAgentPayload,
   type AgentClientMetadata,
 } from "../../src/state.js";
+import { AgentRepository } from "../../src/entities/agent-repository.js";
+import { MemoryStorageProvider } from "@ois/storage-provider";
 
 const CLIENT: AgentClientMetadata = {
   clientName: "claude-code",
@@ -78,10 +79,10 @@ describe("M18 thrashing detector", () => {
   });
 });
 
-describe("MemoryEngineerRegistry.registerAgent", () => {
-  let reg: MemoryEngineerRegistry;
+describe("AgentRepository.registerAgent", () => {
+  let reg: AgentRepository;
   beforeEach(() => {
-    reg = new MemoryEngineerRegistry();
+    reg = new AgentRepository(new MemoryStorageProvider());
   });
 
   it("first-contact creates a new Agent with epoch=1 and wasCreated=true", async () => {
@@ -199,10 +200,12 @@ describe("MemoryEngineerRegistry.registerAgent", () => {
 });
 
 // CP3 C4 (bug-16 part 1): agent reaper — listOfflineAgentsOlderThan + deleteAgent.
-describe("MemoryEngineerRegistry agent reaper (CP3 C4)", () => {
-  let reg: MemoryEngineerRegistry;
+describe("AgentRepository agent reaper (CP3 C4)", () => {
+  let reg: AgentRepository;
+  let provider: MemoryStorageProvider;
   beforeEach(() => {
-    reg = new MemoryEngineerRegistry();
+    provider = new MemoryStorageProvider();
+    reg = new AgentRepository(provider);
   });
 
   async function offlineAgentSeenAt(instanceId: string, lastSeenIsoOverride?: string): Promise<string> {
@@ -212,13 +215,18 @@ describe("MemoryEngineerRegistry agent reaper (CP3 C4)", () => {
     // Flip to offline and (optionally) rewind lastSeenAt to force a stale window.
     await reg.markAgentOffline(`sess-${instanceId}`);
     if (lastSeenIsoOverride) {
-      // Direct write into the registry for test fixtures — the public API
-      // has no "set lastSeenAt to an arbitrary past time" tool, which is
-      // fine: only the reaper cares about this, and the test is what
-      // proves the reaper's threshold math.
+      // Direct write into the storage provider for test fixtures — the
+      // public API has no "set lastSeenAt to an arbitrary past time"
+      // tool, which is fine: only the reaper cares about this, and the
+      // test is what proves the reaper's threshold math.
       const agent = await reg.getAgent(first.engineerId);
       expect(agent).not.toBeNull();
-      (reg as any).agents.get(first.engineerId).lastSeenAt = lastSeenIsoOverride;
+      const path = `agents/${first.engineerId}.json`;
+      const raw = await provider.get(path);
+      if (!raw) throw new Error("agent blob not found in provider");
+      const blob = JSON.parse(new TextDecoder().decode(raw));
+      blob.lastSeenAt = lastSeenIsoOverride;
+      await provider.put(path, new TextEncoder().encode(JSON.stringify(blob, null, 2)));
     }
     return first.engineerId;
   }

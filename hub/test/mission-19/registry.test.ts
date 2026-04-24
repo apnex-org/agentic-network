@@ -10,12 +10,13 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  MemoryEngineerRegistry,
   type RegisterAgentPayload,
   type AgentClientMetadata,
   type AgentLabels,
   type AgentRole,
 } from "../../src/state.js";
+import { AgentRepository } from "../../src/entities/agent-repository.js";
+import { MemoryStorageProvider } from "@ois/storage-provider";
 
 const CLIENT: AgentClientMetadata = {
   clientName: "claude-code",
@@ -34,10 +35,10 @@ function payload(instanceId: string, role: AgentRole, labels?: AgentLabels): Reg
 }
 
 describe("Mission-19 Registry — label persistence", () => {
-  let reg: MemoryEngineerRegistry;
+  let reg: AgentRepository;
 
   beforeEach(() => {
-    reg = new MemoryEngineerRegistry();
+    reg = new AgentRepository(new MemoryStorageProvider());
   });
 
   it("first registration persists the declared labels (INV-AG5)", async () => {
@@ -111,10 +112,10 @@ describe("Mission-19 Registry — label persistence", () => {
 });
 
 describe("Mission-19 Registry — session resolution for P2P routing", () => {
-  let reg: MemoryEngineerRegistry;
+  let reg: AgentRepository;
 
   beforeEach(() => {
-    reg = new MemoryEngineerRegistry();
+    reg = new AgentRepository(new MemoryStorageProvider());
   });
 
   it("getAgentForSession returns the Agent bound to the current session", async () => {

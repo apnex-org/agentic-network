@@ -15,6 +15,24 @@ import type { IPolicyContext } from "../src/policy/types.js";
 
 const noop = () => {};
 
+// Mission-47 W7b: the legacy `MemoryEngineerRegistry.agents` Map was
+// replaced by a StorageProvider-backed AgentRepository. Test fixtures
+// that previously mutated `reg.agents.get(eid).<field>` now read-modify-
+// write the `agents/<eid>.json` blob through the internal provider.
+async function mutateAgentBlob(
+  reg: any,
+  engineerId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const provider = reg.provider;
+  const path = `agents/${engineerId}.json`;
+  const raw = await provider.get(path);
+  if (!raw) throw new Error(`agent blob not found for ${engineerId}`);
+  const blob = JSON.parse(new TextDecoder().decode(raw));
+  Object.assign(blob, patch);
+  await provider.put(path, new TextEncoder().encode(JSON.stringify(blob, null, 2)));
+}
+
 // ── Tele Policy ─────────────────────────────────────────────────────
 
 describe("TelePolicy", () => {
@@ -382,8 +400,10 @@ describe("SessionPolicy", () => {
     // Simulate drift: force lastTouchAt old and status offline
     reg.lastTouchAt.set(eid, 0);
     (await reg.getAgent(eid)); // noop — ensures agent exists
-    reg.agents.get(eid).status = "offline";
-    reg.agents.get(eid).lastSeenAt = "1970-01-01T00:00:00.000Z";
+    await mutateAgentBlob(reg, eid, {
+      status: "offline",
+      lastSeenAt: "1970-01-01T00:00:00.000Z",
+    });
 
     await reg.touchAgent(ctx.sessionId);
 
@@ -574,7 +594,7 @@ describe("SessionPolicy", () => {
     await router.handle("register_role", engineerHandshake, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
-    reg.agents.get(agents[0].engineerId).status = "offline";
+    await mutateAgentBlob(reg, agents[0].engineerId, { status: "offline" });
 
     const caller = createTestContext({ stores: ctx.stores, sessionId: "caller" });
     const result = await router.handle("list_available_peers", {}, caller);
