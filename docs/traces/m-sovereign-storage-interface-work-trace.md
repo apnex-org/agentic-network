@@ -33,7 +33,8 @@ If you're picking up cold on mission-47:
 - ▶ **T2-W5 — task + proposal repository migrations.** PR #15 stacked on #14. FSM gates preserved via TransitionRejected sentinel → boolean/null mapping. Awaiting review.
 - ▶ **T2-W6 — thread repository migration.** PR #16 stacked on #15. Awaiting review.
 - ▶ **T2-W7a — turn + pending-action repository migrations.** PR #17 stacked on #16. Awaiting review.
-- ▶ **T2-W7b — agent repository migration (shipped).** Shipped locally on `agent-greg/mission-47-t2-w7b-agent-repository` (stacked on #17). Hub suite 706/711 pass. AgentRepository composes StorageProvider; sessionToEngineerId + displacementHistory + lastTouchAt preserved as in-memory fields (same as legacy — wipes on Hub restart, no blob-CRUD drift); M18 handshake + assertIdentity/claimSession split + OCC retry budget (2 attempts) + thrashing rate-limit + agent reaper all preserved byte-for-byte. **Bonus correctness fix:** ported MemoryEngineerRegistry's read-time `computeLivenessState` recompute to AgentRepository.getAgent/getAgentForSession/listAgents — this closes a latent INV-COMMS-L03 gap in pre-migration GcsEngineerRegistry (which had no read-time recompute), unifying invariant enforcement across backends.
+- ▶ **T2-W7b — agent repository migration.** PR #18 stacked on #17. Includes INV-COMMS-L03 correctness fix (ported Memory's read-time `computeLivenessState` recompute — closes latent gap in pre-migration GCS). Lily notified via thread-299.
+- ▶ **T3 — sync script + STORAGE_BACKEND=local-fs wiring.** Shipped locally on `agent-greg/mission-47-t3-local-fs-wiring` (stacked on #18). Hub suite 706/711 pass. `STORAGE_BACKEND=local-fs` branch added to `hub/src/index.ts` with `OIS_LOCAL_FS_ROOT` env var + prod-guard (local-fs dev-only per `concurrent:false`). `scripts/state-sync.sh` mirrors `gs://bucket/` → local dir via `gsutil -m rsync -r -d` (parallel, mirror semantics). Sibling-script rather than `--no-tar` flag on existing `state-backup.sh` — different semantics (archival vs live-usable mirror). Next: push + open PR.
 
 ## Queued / filed
 - ○ **T3 sync script + STORAGE_BACKEND=local-fs wiring** — blocked on W7.
@@ -43,6 +44,13 @@ If you're picking up cold on mission-47:
 ---
 
 ## Done this session
+
+### T3 (sync script + STORAGE_BACKEND=local-fs wiring) — shipped 2026-04-24
+
+- ✅ **`hub/src/index.ts` — `STORAGE_BACKEND=local-fs` branch added.** Imports `LocalFsStorageProvider` from `@ois/storage-provider`; new `OIS_LOCAL_FS_ROOT` env var (required) points at the root directory; fail-fast if unset (prevents accidental write to CWD). Prod-guard: `NODE_ENV=production` + `local-fs` combo is fatal — `local-fs` provider is `cas:true, durable:true, concurrent:false` (single-writer), so running it in prod would corrupt under multi-writer load. `AuditStore` + `NotificationStore` remain in-memory on local-fs backend (those entities aren't mission-47-migrated); logged explicitly at startup.
+- ✅ **`scripts/state-sync.sh` — new dev script.** Mirrors `gs://bucket/` → local directory via `gsutil -m rsync -r -d` (parallel, mirror-delete semantics). Default target `./local-state/`; configurable via 1st arg or `GCS_BUCKET` env. Prints usage instructions for the `STORAGE_BACKEND=local-fs` + `OIS_LOCAL_FS_ROOT` workflow after sync completes. Safety notes in header: single-writer caveat, delete-local-only warning, audit/notification reset caveat.
+- ✅ **ADR-024 follow-up interpretation.** ADR said "extend `scripts/state-backup.sh` to emit gsutil rsync output without tar". Chose sibling-script (`state-sync.sh`) over `--no-tar` flag because semantics differ: `state-backup.sh` creates timestamped compressed archives for operator-run backup; `state-sync.sh` creates a live-usable mirror for dev-hub use. Keeping both scripts separate preserves each one's clarity.
+- ✅ **Verification.** tsc strict-mode clean; hub suite 706/711 pass (identical to W7b baseline — zero regressions). `LocalFsStorageProvider` conformance already validated in the `@ois/storage-provider` suite from T1 (20/20 tests); no new tests needed at the hub layer.
 
 ### T2-W7b (agent repository migration) — shipped 2026-04-24
 

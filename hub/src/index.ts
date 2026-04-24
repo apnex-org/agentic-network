@@ -21,7 +21,7 @@ import {
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
   type IPendingActionStore, type IDirectorNotificationStore,
 } from "./entities/index.js";
-import { MemoryStorageProvider, GcsStorageProvider, type StorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider, GcsStorageProvider, LocalFsStorageProvider, type StorageProvider } from "@ois/storage-provider";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy } from "./policy/index.js";
 import { registerSystemPolicy } from "./policy/system-policy.js";
@@ -54,6 +54,17 @@ if (STORAGE_BACKEND === "gcs" && !GCS_BUCKET) {
   throw new Error(
     "[hub] GCS_BUCKET env var is required when STORAGE_BACKEND=gcs. " +
     "Set via deploy/cloudrun/env/<env>.tfvars or local env override.",
+  );
+}
+// Mission-47 T3: local-fs backend writes to OIS_LOCAL_FS_ROOT (a directory
+// path). Intended for dev — run hub against a gsutil-rsynced snapshot of
+// prod state without touching GCS. Fail-fast if unset to avoid
+// accidentally writing to CWD.
+const OIS_LOCAL_FS_ROOT = process.env.OIS_LOCAL_FS_ROOT;
+if (STORAGE_BACKEND === "local-fs" && !OIS_LOCAL_FS_ROOT) {
+  throw new Error(
+    "[hub] OIS_LOCAL_FS_ROOT env var is required when STORAGE_BACKEND=local-fs. " +
+    "Point it at a directory (e.g., ./local-state/). Populate with scripts/state-sync.sh.",
   );
 }
 
@@ -91,6 +102,20 @@ if (STORAGE_BACKEND === "gcs") {
   storageProvider = new GcsStorageProvider(bucket);
   auditStore = new GcsAuditStore(bucket);
   notificationStore = new GcsNotificationStore(bucket);
+} else if (STORAGE_BACKEND === "local-fs") {
+  if (process.env.NODE_ENV === "production") {
+    console.error("[Hub] FATAL: STORAGE_BACKEND is 'local-fs' in production. local-fs is a dev-only backend (cas:true, durable:true, concurrent:false — single-writer only). Use STORAGE_BACKEND=gcs in prod.");
+    process.exit(1);
+  }
+  const root = OIS_LOCAL_FS_ROOT!;
+  console.log(`[Hub] Using local-fs storage backend at: ${root}`);
+  console.log(`[Hub] Note: AuditStore + NotificationStore remain in-memory on local-fs backend (not yet migrated); they reset on restart.`);
+  storageProvider = new LocalFsStorageProvider(root);
+  // AuditStore + NotificationStore aren't mission-47-migrated entities;
+  // local-fs dev-mode uses the Memory variants — they reset on restart
+  // like they would in a pure `memory` backend run.
+  auditStore = new MemoryAuditStore();
+  notificationStore = new MemoryNotificationStore();
 } else {
   if (process.env.NODE_ENV === "production") {
     console.error("[Hub] FATAL: STORAGE_BACKEND is 'memory' in production. Set STORAGE_BACKEND=gcs to prevent silent state loss.");
