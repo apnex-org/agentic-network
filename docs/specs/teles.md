@@ -403,6 +403,64 @@ Per Director ratification, all teles are authored in the 4-section template (Man
 
 ---
 
+## Tele Lifecycle
+
+Mission-43 (M-Tele-Retirement-Primitive) added lifecycle primitives that replace the direct-write workaround used during the 2026-04-21 tele-audit reset. Content fields (`name`, `description`, `successCriteria`) remain immutable once a tele is filed; only the lifecycle state (`status`, `supersededBy`, `retiredAt`) mutates through the dedicated tools.
+
+### States
+
+| Status | Meaning | Reachable via | Terminal |
+|---|---|---|---|
+| `active` | Live teleological goal; included in default `list_tele` results | `create_tele` (default); `supersede_tele` source is `active` pre-call | No |
+| `superseded` | Replaced by a successor tele; preserved for lineage queries | `supersede_tele` | No — could in theory be re-superseded if the successor is itself retired, but this is not an intended flow |
+| `retired` | Terminal state; preserved for audit only | `retire_tele` | Yes — retired teles cannot be un-retired or subsequently superseded |
+
+### Tool surface
+
+- `create_tele(name, description, successCriteria)` — Architect-labelled. Writes `status: "active"`. Content immutable post-call.
+- `supersede_tele(teleId, successorId)` — Architect-labelled. Successor must already exist and need not be `active`. Source tele must not be `retired`. Sets `status: "superseded"` + `supersededBy: successorId`. Idempotent-safe on repeat calls with same successor (no-op semantics; current impl re-writes the same values — callers should avoid redundant calls but no corruption results).
+- `retire_tele(teleId)` — Architect-labelled. Sets `status: "retired"` + `retiredAt: <ISO-8601>`. Terminal.
+- `list_tele({includeSuperseded, includeRetired, limit, offset})` — Default excludes both `superseded` and `retired`. Opt-in flags for lineage queries (`includeSuperseded: true`) and audit queries (`includeRetired: true`); flags compose.
+- `get_tele(teleId)` — Returns the tele at any status (no filter).
+
+**Role gate.** The `[Architect]` prefix on tool descriptions is advisory, not enforced. Any registered role can currently call the lifecycle tools; genuine role-gating is deferred to idea-121 (tool-surface v2.0). This preserves consistency with the pre-existing `create_tele` posture.
+
+### Schema
+
+```ts
+interface Tele {
+  id: string;
+  name: string;
+  description: string;
+  successCriteria: string;
+  status: "active" | "superseded" | "retired";   // mission-43
+  supersededBy?: string;                         // set by supersede_tele
+  retiredAt?: string;                            // ISO-8601, set by retire_tele
+  createdBy?: EntityProvenance;
+  createdAt: string;
+}
+```
+
+### Backward compatibility
+
+Legacy docs stored before mission-43 lack the `status` field. The stores perform read-side normalization — any tele document missing `status` is returned as `"active"` without being written back. This is intentional zero-backfill behaviour per mission-43 Decision 2. No migration job, no startup rewrite, no write amplification.
+
+### Audit emissions
+
+Every write tool emits a broadcast event to `architect` + `engineer` scopes:
+
+- `tele_defined` (pre-existing)
+- `tele_superseded` — payload: `{ teleId, successorId }`
+- `tele_retired` — payload: `{ teleId, retiredAt }`
+
+Emissions use the simple `ctx.emit(event, payload, scopes)` pattern consistent with `create_tele`. Mission-43 deliberately does not adopt idea-155 typed-payload format; that remains a separate design round with a deliberate first-consumer choice.
+
+### Resolution of bug-24
+
+Bug-24 ("No retirement primitive for teles — create_tele is immutable with no delete/supersede/update") closes at mission-43 ship. The pre-reset zombie teles referenced in bug-24 were already wiped via `scripts/reset-teles.ts` during the 2026-04-21 audit (see Coordination artifacts), so mission-43 does not execute retroactive supersessions. The primitive is shipped for future tele-audit operations; preflight Category C verification confirmed no zombies exist in the current 13-tele set.
+
+---
+
 ## Provenance & Cross-Reference
 
 ### Spec numbering ↔ Hub ID map
@@ -453,8 +511,8 @@ Source: `/home/apnex/taceng/ois/org/gov/axioms` (read-only external project; not
 - **thread-244** — Per-tele filing retry for pre-reset Tele #1; content architect-ratified. Converged 2026-04-21 with direct-write resolution.
 - **task-317** — Architect's self-queue marker for pre-reset Tele #1; cancelled after direct-write path completed.
 - **scripts/seed-new-teles.ts** — Director-approved seed script (2026-04-21). Filed 7 new teles via `GcsTeleStore.defineTele` at IDs `tele-10`..`tele-16` as interim state.
-- **scripts/reset-teles.ts** — Director-approved full reset script (2026-04-21). Backed up, deleted, and rewrote tele storage to achieve 1-to-1 spec-number ↔ Hub-ID mapping. Backup dir: `scripts/reset-teles-backup-2026-04-21T23-35-09-585Z/`.
-- **bug-24** — Major: no retirement/supersede primitive for teles. 5 pre-reset retirements + 4 retroactive 4-section rewrites executed via direct-write workaround on 2026-04-21. Primitive still missing; bug remains open for future tele lifecycle operations.
+- **scripts/reset-teles.ts** — Director-approved full reset script (2026-04-21). Backed up, deleted, and rewrote tele storage to achieve 1-to-1 spec-number ↔ Hub-ID mapping. Deleted as closing hygiene during mission-43 (2026-04-24) along with its backup sibling `scripts/reset-teles-backup-2026-04-21T23-35-09-585Z/`; no longer needed now that `supersede_tele` / `retire_tele` exist.
+- **bug-24** — Major: no retirement/supersede primitive for teles. 5 pre-reset retirements + 4 retroactive 4-section rewrites executed via direct-write workaround on 2026-04-21. **Resolved by mission-43** (2026-04-24) — primitive shipped as `supersede_tele` + `retire_tele`; see §Tele Lifecycle above.
 - **bug-25** — Major: thread-message delivery truncation at ~10-15KB. Short-term mitigation (adapter size-guard) stance ratified; long-term fix via idea-152.
 
 ### Hub-state parity
@@ -463,9 +521,9 @@ Source: `/home/apnex/taceng/ois/org/gov/axioms` (read-only external project; not
 
 **Remaining blockers (for future tele lifecycle operations, not current state):**
 
-| Blocker | Impact | Resolution requires |
-|---|---|---|
-| bug-24 | Future tele supersessions must use direct-write workaround | `supersede_tele` or equivalent lifecycle primitive |
-| bug-25 | Large ratified specs truncate on delivery | Short-term: adapter size-guard on oversized tool_result. Long-term: idea-152 Smart NIC + Cognitive Implant Layer. |
+| Blocker | Impact | Resolution requires | Status |
+|---|---|---|---|
+| bug-24 | Future tele supersessions would require direct-write workaround | `supersede_tele` or equivalent lifecycle primitive | **Resolved by mission-43 (2026-04-24)** |
+| bug-25 | Large ratified specs truncate on delivery | Short-term: adapter size-guard on oversized tool_result. Long-term: idea-152 Smart NIC + Cognitive Implant Layer. | Open |
 
 **`create_tele` role gate + architect-adapter manifest issues** — both surfaced during this audit; both resolved via the direct-write workaround. Root causes deferred to idea-121 for proper diagnosis.
