@@ -1,32 +1,45 @@
 /**
- * Phase 2x P0-1 — GcsPendingActionStore round-trip tests.
+ * PendingActionRepository persistence + FSM tests.
  *
- * Exercise the GCS-backed pending-action store against the fake GCS
- * bucket (_gcs-fake.ts) to pin serialization + state-transition
- * semantics. The MemoryPendingActionStore is already covered by
- * pending-action-prune.test.ts; this file pins the GCS-specific
- * behaviour (persistence across Hub restart — simulated by
- * constructing a fresh store instance against the same fake bucket).
+ * Mission-47 W7: `GcsPendingActionStore` deleted; replaced by
+ * `PendingActionRepository` composed over any `StorageProvider`.
+ * The GCS-specific round-trip behaviour this file used to pin is now
+ * covered at two layers:
+ *
+ *   1. Storage layer — the @ois/storage-provider conformance suite
+ *      exercises CAS/createOnly/getWithToken against GcsStorageProvider,
+ *      MemoryStorageProvider, and LocalFsStorageProvider identically.
+ *   2. Entity layer — this file pins `PendingActionRepository`'s FSM
+ *      + persistence semantics against a shared `MemoryStorageProvider`
+ *      instance. Two repository instances over the same provider
+ *      simulate the "Hub restart" read-after-write assertion that the
+ *      prior GcsPendingActionStore tests relied on, without GCS mocks.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { GcsFakeStorage, installGcsFake, gcsFake } from "./_gcs-fake.js";
+import { describe, it, expect, beforeEach } from "vitest";
+import { MemoryStorageProvider } from "@ois/storage-provider";
+import { PendingActionRepository } from "../../src/entities/pending-action-repository.js";
+import { StorageBackedCounter } from "../../src/entities/counter.js";
 
-vi.mock("@google-cloud/storage", () => ({ Storage: GcsFakeStorage }));
+describe("PendingActionRepository", () => {
+  let provider: MemoryStorageProvider;
 
-const BUCKET = "test-bucket";
+  function newStore(): PendingActionRepository {
+    // Shared provider + counter so sibling store instances see the same
+    // persisted state (the "Hub restart" equivalent).
+    const counter = new StorageBackedCounter(provider);
+    return new PendingActionRepository(provider, counter);
+  }
 
-describe("GcsPendingActionStore", () => {
   beforeEach(() => {
-    installGcsFake();
+    provider = new MemoryStorageProvider();
   });
 
   it("enqueue persists item + counter; getById round-trips across a fresh store instance", async () => {
-    // Simulate Hub restart: create a store, enqueue, drop the reference,
-    // create a NEW store instance against the same bucket, verify
-    // getById finds the item.
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store1 = new GcsPendingActionStore(BUCKET);
+    // Simulate Hub restart: enqueue via one store instance, drop the
+    // reference, construct a NEW instance against the same provider,
+    // verify getById finds the item.
+    const store1 = newStore();
     const item = await store1.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -36,7 +49,7 @@ describe("GcsPendingActionStore", () => {
     expect(item.id).toMatch(/^pa-/);
     expect(item.state).toBe("enqueued");
 
-    const store2 = new GcsPendingActionStore(BUCKET);
+    const store2 = newStore();
     const fetched = await store2.getById(item.id);
     expect(fetched).not.toBeNull();
     expect(fetched?.state).toBe("enqueued");
@@ -45,8 +58,7 @@ describe("GcsPendingActionStore", () => {
   });
 
   it("enqueue idempotent on same naturalKey while non-terminal", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const a = await store.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -65,8 +77,7 @@ describe("GcsPendingActionStore", () => {
   });
 
   it("enqueue re-opens when prior item is terminal (completion_acked)", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const a = await store.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -85,8 +96,7 @@ describe("GcsPendingActionStore", () => {
   });
 
   it("state transitions: receiptAck → completionAck", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const item = await store.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -102,8 +112,7 @@ describe("GcsPendingActionStore", () => {
   });
 
   it("abandon transitions non-terminal item to errored; idempotent on terminal", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const item = await store.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -120,8 +129,7 @@ describe("GcsPendingActionStore", () => {
   });
 
   it("listStuck scans and filters across fresh store instances (persistence)", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store1 = new GcsPendingActionStore(BUCKET);
+    const store1 = newStore();
     const stale = await store1.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -129,22 +137,21 @@ describe("GcsPendingActionStore", () => {
       payload: {},
     });
     await store1.receiptAck(stale.id);
-    // Backdate the enqueuedAt on the persisted JSON so the "age" predicate
-    // matches. Using the fake's raceWrite to mutate the blob.
-    const snapshot = JSON.parse(gcsFake().get(`pending-actions/${stale.id}.json`)!.data.toString("utf-8"));
-    snapshot.enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
-    gcsFake().raceWrite(`pending-actions/${stale.id}.json`, snapshot);
+    // Backdate the persisted enqueuedAt via the repository's test-only
+    // escape hatch so the "age" predicate matches.
+    await store1.__debugSetItem(stale.id, {
+      enqueuedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+    });
 
     // Fresh store instance — still sees the stale item
-    const store2 = new GcsPendingActionStore(BUCKET);
+    const store2 = newStore();
     const stuck = await store2.listStuck({ olderThanMs: 10 * 60_000 });
     expect(stuck.length).toBe(1);
     expect(stuck[0].entityRef).toBe("thread-stale");
   });
 
   it("incrementAttempt accumulates across calls with persistence", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const item = await store.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -153,15 +160,14 @@ describe("GcsPendingActionStore", () => {
     });
     await store.incrementAttempt(item.id);
     await store.incrementAttempt(item.id);
-    const freshStore = new GcsPendingActionStore(BUCKET);
+    const freshStore = newStore();
     const fetched = await freshStore.getById(item.id);
     expect(fetched?.attemptCount).toBe(2);
     expect(fetched?.lastAttemptAt).not.toBeNull();
   });
 
   it("saveContinuation transitions an item to continuation_required with the payload persisted (Task 1b)", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const item = await store.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -183,15 +189,14 @@ describe("GcsPendingActionStore", () => {
     expect(saved?.continuationSavedAt).toBeTruthy();
 
     // Persistence verified across a fresh store instance.
-    const freshStore = new GcsPendingActionStore(BUCKET);
+    const freshStore = newStore();
     const fetched = await freshStore.getById(item.id);
     expect(fetched?.state).toBe("continuation_required");
     expect(fetched?.continuationState?.kind).toBe("llm_state");
   });
 
   it("saveContinuation rejects callers other than the item's targetAgentId (Task 1b authorization)", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const item = await store.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -207,8 +212,7 @@ describe("GcsPendingActionStore", () => {
   });
 
   it("saveContinuation rejects transitions from terminal states (Task 1b FSM guard)", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const item = await store.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -222,8 +226,7 @@ describe("GcsPendingActionStore", () => {
   });
 
   it("listContinuationItems returns continuation_required items oldest-first (Task 1b dispatch ordering)", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const a = await store.enqueue({ targetAgentId: "agent-1", dispatchType: "thread_message", entityRef: "thread-1", payload: {} });
     const b = await store.enqueue({ targetAgentId: "agent-1", dispatchType: "thread_message", entityRef: "thread-2", payload: {} });
     // A saved first; B saved second with 10ms gap.
@@ -235,8 +238,7 @@ describe("GcsPendingActionStore", () => {
   });
 
   it("resumeContinuation transitions back to enqueued + returns the saved continuationState (Task 1b re-dispatch)", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const item = await store.enqueue({ targetAgentId: "agent-1", dispatchType: "thread_message", entityRef: "thread-1", payload: {} });
     await store.saveContinuation(item.id, "agent-1", { kind: "chunk_buffer", remainingChunks: ["a", "b"] });
     const resumed = await store.resumeContinuation(item.id);
@@ -248,16 +250,14 @@ describe("GcsPendingActionStore", () => {
   });
 
   it("resumeContinuation is a no-op on items not in continuation_required (Task 1b guard)", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const item = await store.enqueue({ targetAgentId: "agent-1", dispatchType: "thread_message", entityRef: "thread-1", payload: {} });
     const resumed = await store.resumeContinuation(item.id);
     expect(resumed).toBeNull();
   });
 
   it("listExpired skips terminal states and returns non-terminal past-deadline items", async () => {
-    const { GcsPendingActionStore } = await import("../../src/entities/gcs/gcs-pending-action.js");
-    const store = new GcsPendingActionStore(BUCKET);
+    const store = newStore();
     const stale = await store.enqueue({
       targetAgentId: "agent-1",
       dispatchType: "thread_message",
@@ -272,10 +272,10 @@ describe("GcsPendingActionStore", () => {
     });
     await store.receiptAck(completed.id);
     await store.completionAck(completed.id);
-    // Backdate stale item's deadline by mutating the persisted JSON
-    const snapshot = JSON.parse(gcsFake().get(`pending-actions/${stale.id}.json`)!.data.toString("utf-8"));
-    snapshot.receiptDeadline = new Date(Date.now() - 60_000).toISOString();
-    gcsFake().raceWrite(`pending-actions/${stale.id}.json`, snapshot);
+    // Backdate the stale item's receipt deadline so listExpired matches.
+    await store.__debugSetItem(stale.id, {
+      receiptDeadline: new Date(Date.now() - 60_000).toISOString(),
+    });
 
     const expired = await store.listExpired(Date.now());
     expect(expired.length).toBe(1);

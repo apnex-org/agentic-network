@@ -6,16 +6,28 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { MemoryPendingActionStore } from "../../src/entities/pending-action.js";
+import { MemoryStorageProvider } from "@ois/storage-provider";
+import { PendingActionRepository } from "../../src/entities/pending-action-repository.js";
+import { StorageBackedCounter } from "../../src/entities/counter.js";
 import { PolicyRouter } from "../../src/policy/router.js";
 import { registerPendingActionPolicy } from "../../src/policy/pending-action-policy.js";
 import { createTestContext } from "../../src/policy/test-utils.js";
 
-describe("MemoryPendingActionStore — abandon()", () => {
-  let store: MemoryPendingActionStore;
+// Mission-47 W7: MemoryPendingActionStore replaced by PendingActionRepository
+// over a fresh MemoryStorageProvider + StorageBackedCounter per test. The
+// legacy direct-Map-mutation pattern is replaced by the repository's
+// test-only escape hatch `__debugSetItem(id, patch)`.
+function freshStore(): PendingActionRepository {
+  const provider = new MemoryStorageProvider();
+  const counter = new StorageBackedCounter(provider);
+  return new PendingActionRepository(provider, counter);
+}
+
+describe("PendingActionRepository — abandon()", () => {
+  let store: PendingActionRepository;
 
   beforeEach(() => {
-    store = new MemoryPendingActionStore();
+    store = freshStore();
   });
 
   it("transitions a non-terminal item to errored with the supplied reason", async () => {
@@ -64,11 +76,11 @@ describe("MemoryPendingActionStore — abandon()", () => {
   });
 });
 
-describe("MemoryPendingActionStore — listStuck()", () => {
-  let store: MemoryPendingActionStore;
+describe("PendingActionRepository — listStuck()", () => {
+  let store: PendingActionRepository;
 
   beforeEach(() => {
-    store = new MemoryPendingActionStore();
+    store = freshStore();
   });
 
   it("returns only receipt_acked items older than the threshold", async () => {
@@ -78,11 +90,10 @@ describe("MemoryPendingActionStore — listStuck()", () => {
       entityRef: "thread-stale",
       payload: {},
     });
-    // Backdate the enqueue time to make it stale
-    (stale as any).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
-    // Mutate the underlying item too (clone was returned; mutate via store internal)
-    const internal = (store as any).items.get(stale.id);
-    internal.enqueuedAt = (stale as any).enqueuedAt;
+    // Backdate the persisted enqueuedAt so listStuck() age predicate matches.
+    await store.__debugSetItem(stale.id, {
+      enqueuedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+    });
     await store.receiptAck(stale.id);
 
     const fresh = await store.enqueue({
@@ -99,14 +110,14 @@ describe("MemoryPendingActionStore — listStuck()", () => {
   });
 
   it("skips items in enqueued, completion_acked, escalated, errored states", async () => {
+    const backdated = new Date(Date.now() - 30 * 60_000).toISOString();
     const enq = await store.enqueue({
       targetAgentId: "a",
       dispatchType: "thread_message",
       entityRef: "r-enq",
       payload: {},
     });
-    // Backdate
-    (store as any).items.get(enq.id).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    await store.__debugSetItem(enq.id, { enqueuedAt: backdated });
     // Leave in "enqueued" state — should not match
 
     const completed = await store.enqueue({
@@ -115,7 +126,7 @@ describe("MemoryPendingActionStore — listStuck()", () => {
       entityRef: "r-done",
       payload: {},
     });
-    (store as any).items.get(completed.id).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    await store.__debugSetItem(completed.id, { enqueuedAt: backdated });
     await store.receiptAck(completed.id);
     await store.completionAck(completed.id);
 
@@ -125,7 +136,7 @@ describe("MemoryPendingActionStore — listStuck()", () => {
       entityRef: "r-abandon",
       payload: {},
     });
-    (store as any).items.get(abandoned.id).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    await store.__debugSetItem(abandoned.id, { enqueuedAt: backdated });
     await store.receiptAck(abandoned.id);
     await store.abandon(abandoned.id, "prior");
 
@@ -134,6 +145,7 @@ describe("MemoryPendingActionStore — listStuck()", () => {
   });
 
   it("respects dispatchType filter", async () => {
+    const backdated = new Date(Date.now() - 30 * 60_000).toISOString();
     for (const ref of ["t1", "t2"]) {
       const item = await store.enqueue({
         targetAgentId: "a",
@@ -141,7 +153,7 @@ describe("MemoryPendingActionStore — listStuck()", () => {
         entityRef: ref,
         payload: {},
       });
-      (store as any).items.get(item.id).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+      await store.__debugSetItem(item.id, { enqueuedAt: backdated });
       await store.receiptAck(item.id);
     }
     const taskItem = await store.enqueue({
@@ -150,7 +162,7 @@ describe("MemoryPendingActionStore — listStuck()", () => {
       entityRef: "task-1",
       payload: {},
     });
-    (store as any).items.get(taskItem.id).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    await store.__debugSetItem(taskItem.id, { enqueuedAt: backdated });
     await store.receiptAck(taskItem.id);
 
     const threadsOnly = await store.listStuck({ olderThanMs: 10 * 60_000, dispatchType: "thread_message" });
@@ -162,6 +174,7 @@ describe("MemoryPendingActionStore — listStuck()", () => {
   });
 
   it("respects targetAgentId filter", async () => {
+    const backdated = new Date(Date.now() - 30 * 60_000).toISOString();
     for (const agent of ["agent-A", "agent-B"]) {
       const item = await store.enqueue({
         targetAgentId: agent,
@@ -169,7 +182,7 @@ describe("MemoryPendingActionStore — listStuck()", () => {
         entityRef: `t-${agent}`,
         payload: {},
       });
-      (store as any).items.get(item.id).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+      await store.__debugSetItem(item.id, { enqueuedAt: backdated });
       await store.receiptAck(item.id);
     }
     const filtered = await store.listStuck({ olderThanMs: 10 * 60_000, targetAgentId: "agent-A" });
@@ -180,11 +193,11 @@ describe("MemoryPendingActionStore — listStuck()", () => {
 
 // ── Phase 2d CP3 C1: listNonTerminalByEntityRef ───────────────────────
 
-describe("MemoryPendingActionStore — listNonTerminalByEntityRef (CP3 C1)", () => {
-  let store: MemoryPendingActionStore;
+describe("PendingActionRepository — listNonTerminalByEntityRef (CP3 C1)", () => {
+  let store: PendingActionRepository;
 
   beforeEach(() => {
-    store = new MemoryPendingActionStore();
+    store = freshStore();
   });
 
   it("returns items in enqueued + receipt_acked states bound to the ref", async () => {
@@ -271,7 +284,9 @@ describe("prune_stuck_queue_items — thread-scoped audit + dispatch (CP3 C2)", 
       entityRef: thread.id,
       payload: {},
     });
-    (ctx.stores.pendingAction as any).items.get(item.id).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    await (ctx.stores.pendingAction as PendingActionRepository).__debugSetItem(item.id, {
+      enqueuedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+    });
     await ctx.stores.pendingAction.receiptAck(item.id);
 
     const result = await router.handle("prune_stuck_queue_items", { olderThanMinutes: 10 }, ctx);
@@ -310,7 +325,9 @@ describe("prune_stuck_queue_items — thread-scoped audit + dispatch (CP3 C2)", 
       entityRef: "task-42",
       payload: {},
     });
-    (ctx.stores.pendingAction as any).items.get(item.id).enqueuedAt = new Date(Date.now() - 30 * 60_000).toISOString();
+    await (ctx.stores.pendingAction as PendingActionRepository).__debugSetItem(item.id, {
+      enqueuedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+    });
     await ctx.stores.pendingAction.receiptAck(item.id);
 
     await router.handle("prune_stuck_queue_items", { olderThanMinutes: 10 }, ctx);

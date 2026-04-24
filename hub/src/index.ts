@@ -12,10 +12,8 @@ import { MemoryEngineerRegistry, MemoryAuditStore, MemoryNotificationStore } fro
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, INotificationStore } from "./state.js";
 import { GcsEngineerRegistry, GcsAuditStore, GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
 import {
-  MemoryTurnStore,
-  GcsTurnStore,
-  MemoryPendingActionStore,
-  GcsPendingActionStore,
+  TurnRepository,
+  PendingActionRepository,
   TeleRepository, IdeaRepository, BugRepository, DirectorNotificationRepository,
   MissionRepository, TaskRepository, ProposalRepository, ThreadRepository,
   StorageBackedCounter,
@@ -93,7 +91,6 @@ if (STORAGE_BACKEND === "gcs") {
   engineerRegistry = new GcsEngineerRegistry(bucket);
   auditStore = new GcsAuditStore(bucket);
   notificationStore = new GcsNotificationStore(bucket);
-  pendingActionStore = new GcsPendingActionStore(bucket);
 } else {
   if (process.env.NODE_ENV === "production") {
     console.error("[Hub] FATAL: STORAGE_BACKEND is 'memory' in production. Set STORAGE_BACKEND=gcs to prevent silent state loss.");
@@ -104,14 +101,12 @@ if (STORAGE_BACKEND === "gcs") {
   engineerRegistry = new MemoryEngineerRegistry();
   auditStore = new MemoryAuditStore();
   notificationStore = new MemoryNotificationStore();
-  pendingActionStore = new MemoryPendingActionStore();
 }
 
-// Mission-47 W1/W2/W3/W4/W5: instantiate StorageProvider-backed
-// repositories. Counter is shared-by-design across all repositories —
-// issues a monotonic ID sequence per entity-type field (teleCounter,
-// ideaCounter, bugCounter, directorNotificationCounter, missionCounter,
-// taskCounter, proposalCounter, ...) via a single meta/counter.json blob.
+// Mission-47 W1-W7: instantiate StorageProvider-backed repositories.
+// Counter is shared-by-design across all repositories — issues a
+// monotonic ID sequence per entity-type field via a single
+// meta/counter.json blob.
 const storageCounter = new StorageBackedCounter(storageProvider);
 taskStore = new TaskRepository(storageProvider, storageCounter);
 proposalStore = new ProposalRepository(storageProvider, storageCounter);
@@ -120,18 +115,11 @@ bugStore = new BugRepository(storageProvider, storageCounter);
 teleStore = new TeleRepository(storageProvider, storageCounter);
 directorNotificationStore = new DirectorNotificationRepository(storageProvider, storageCounter);
 threadStore = new ThreadRepository(storageProvider, storageCounter);
+pendingActionStore = new PendingActionRepository(storageProvider, storageCounter);
 // MissionRepository takes taskStore + ideaStore for virtual-view hydration.
 missionStore = new MissionRepository(storageProvider, storageCounter, taskStore, ideaStore);
-
-// turnStore still has a backend-specific class (W6); construct it after
-// missionStore since it depends on the mission store for virtual-view
-// composition.
-if (STORAGE_BACKEND === "gcs") {
-  const bucket = GCS_BUCKET!;
-  turnStore = new GcsTurnStore(bucket, missionStore, taskStore);
-} else {
-  turnStore = new MemoryTurnStore(missionStore, taskStore);
-}
+// TurnRepository takes missionStore + taskStore for virtual-view hydration.
+turnStore = new TurnRepository(storageProvider, storageCounter, missionStore, taskStore);
 
 // ── Aggregate Store Object ────────────────────────────────────────────
 const allStores: AllStores = {

@@ -14,8 +14,7 @@ export { findNextUnissuedPlannedTask } from "./mission.js";
 export { MissionRepository } from "./mission-repository.js";
 
 export type { Turn, TurnStatus, ITurnStore } from "./turn.js";
-export { MemoryTurnStore } from "./turn.js";
-export { GcsTurnStore } from "./gcs/gcs-turn.js";
+export { TurnRepository } from "./turn-repository.js";
 
 export type { Tele, TeleStatus, ITeleStore } from "./tele.js";
 export { normalizeTele } from "./tele.js";
@@ -33,8 +32,8 @@ export type {
   IPendingActionStore,
   EnqueueOptions,
 } from "./pending-action.js";
-export { MemoryPendingActionStore, DEFAULT_RECEIPT_SLA_MS, DEFAULT_COMPLETION_SLA_MS } from "./pending-action.js";
-export { GcsPendingActionStore } from "./gcs/gcs-pending-action.js";
+export { DEFAULT_RECEIPT_SLA_MS, DEFAULT_COMPLETION_SLA_MS } from "./pending-action.js";
+export { PendingActionRepository } from "./pending-action-repository.js";
 
 export type {
   DirectorNotification,

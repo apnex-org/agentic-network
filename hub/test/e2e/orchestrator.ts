@@ -40,12 +40,12 @@ import { ProposalRepository } from "../../src/entities/proposal-repository.js";
 import { ThreadRepository } from "../../src/entities/thread-repository.js";
 import { IdeaRepository } from "../../src/entities/idea-repository.js";
 import { MissionRepository } from "../../src/entities/mission-repository.js";
-import { MemoryTurnStore } from "../../src/entities/turn.js";
+import { TurnRepository } from "../../src/entities/turn-repository.js";
 import { TeleRepository } from "../../src/entities/tele-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
 import { MemoryStorageProvider } from "@ois/storage-provider";
 import { BugRepository } from "../../src/entities/bug-repository.js";
-import { MemoryPendingActionStore } from "../../src/entities/pending-action.js";
+import { PendingActionRepository } from "../../src/entities/pending-action-repository.js";
 import { DirectorNotificationRepository } from "../../src/entities/director-notification-repository.js";
 import { createMetricsCounter, type MetricsCounter } from "../../src/observability/metrics.js";
 
@@ -502,10 +502,10 @@ export class TestOrchestrator {
       audit: new MemoryAuditStore(),
       idea,
       mission,
-      turn: new MemoryTurnStore(mission, task),
+      turn: new TurnRepository(storageProvider, storageCounter, mission, task),
       tele: new TeleRepository(storageProvider, storageCounter),
       bug: new BugRepository(storageProvider, storageCounter),
-      pendingAction: new MemoryPendingActionStore(),
+      pendingAction: new PendingActionRepository(storageProvider, storageCounter),
       directorNotification: new DirectorNotificationRepository(storageProvider, storageCounter),
     };
   }

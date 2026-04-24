@@ -14,8 +14,7 @@
  * (see `docs/decisions/011-gcs-concurrency-model.md`).
  */
 
-import type { ITaskStore, EntityProvenance } from "../state.js";
-import type { IMissionStore } from "./mission.js";
+import type { EntityProvenance } from "../state.js";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -58,85 +57,6 @@ export interface ITurnStore {
   ): Promise<Turn | null>;
 }
 
-// ── Memory Implementation ────────────────────────────────────────────
-
-export class MemoryTurnStore implements ITurnStore {
-  private turns = new Map<string, Turn>();
-  private counter = 0;
-
-  constructor(
-    private readonly missionStore: IMissionStore,
-    private readonly taskStore: ITaskStore,
-  ) {}
-
-  async createTurn(
-    title: string,
-    scope: string,
-    tele?: string[],
-    createdBy?: EntityProvenance
-  ): Promise<Turn> {
-    this.counter++;
-    const id = `turn-${this.counter}`;
-    const now = new Date().toISOString();
-
-    const turn: Turn = {
-      id,
-      title,
-      scope,
-      status: "planning",
-      missionIds: [],
-      taskIds: [],
-      tele: tele || [],
-      correlationId: id,
-      createdBy,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    this.turns.set(id, turn);
-    console.log(`[MemoryTurnStore] Turn created: ${id} — ${title}`);
-    return this.hydrate(turn);
-  }
-
-  async getTurn(turnId: string): Promise<Turn | null> {
-    const turn = this.turns.get(turnId);
-    return turn ? this.hydrate(turn) : null;
-  }
-
-  async listTurns(statusFilter?: TurnStatus): Promise<Turn[]> {
-    const all = Array.from(this.turns.values());
-    const filtered = statusFilter
-      ? all.filter((t) => t.status === statusFilter)
-      : all;
-    return Promise.all(filtered.map((t) => this.hydrate(t)));
-  }
-
-  async updateTurn(
-    turnId: string,
-    updates: { status?: TurnStatus; scope?: string; tele?: string[] }
-  ): Promise<Turn | null> {
-    const turn = this.turns.get(turnId);
-    if (!turn) return null;
-
-    if (updates.status) turn.status = updates.status;
-    if (updates.scope !== undefined) turn.scope = updates.scope;
-    if (updates.tele) turn.tele = updates.tele;
-    turn.updatedAt = new Date().toISOString();
-
-    console.log(`[MemoryTurnStore] Turn updated: ${turnId} → status=${turn.status}`);
-    return this.hydrate(turn);
-  }
-
-  private async hydrate(stored: Turn): Promise<Turn> {
-    const [missions, tasks] = await Promise.all([
-      this.missionStore.listMissions(),
-      this.taskStore.listTasks(),
-    ]);
-    return {
-      ...stored,
-      missionIds: missions.filter((m) => m.turnId === stored.id).map((m) => m.id),
-      taskIds: tasks.filter((t) => t.turnId === stored.id).map((t) => t.id),
-      tele: [...stored.tele],
-    };
-  }
-}
+// Mission-47 W7: `MemoryTurnStore` deleted. `TurnRepository` in
+// entities/turn-repository.ts composes any `StorageProvider` via the
+// ITurnStore interface.
