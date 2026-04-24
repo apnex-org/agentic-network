@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { TestOrchestrator } from "../orchestrator.js";
 import { assertInvTH6 } from "../invariant-helpers.js";
+import type { ThreadRepository } from "../../../src/entities/thread-repository.js";
 
 describe("INV-TH6 — reply to non-active thread is rejected", () => {
   let orch: TestOrchestrator;
@@ -56,13 +57,12 @@ describe("INV-TH6 — reply to non-active thread is rejected", () => {
       const eng = orch.asEngineer();
 
       await arch.createThread(`TH6 ${status}`, "init", { routingMode: "broadcast" });
-      // Force status.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const storeInternals = (orch.stores.thread as any).threads as Map<string, { status: string; updatedAt: string }>;
-      const threadRec = storeInternals.get("thread-1");
-      expect(threadRec).toBeDefined();
-      threadRec!.status = status;
-      threadRec!.updatedAt = new Date().toISOString();
+      // Force status via the test-only escape hatch (ThreadRepository
+      // has no mutable in-memory Map to poke post-Mission-47 W6).
+      await (orch.stores.thread as ThreadRepository).__debugSetThread("thread-1", {
+        status,
+        updatedAt: new Date().toISOString(),
+      });
 
       const reply = await eng.call("create_thread_reply", {
         threadId: "thread-1", message: `attempt on ${status}`,

@@ -33,11 +33,11 @@ import {
 import type { AllStores, IPolicyContext, PolicyResult } from "../../src/policy/types.js";
 import {
   MemoryEngineerRegistry,
-  MemoryThreadStore,
   MemoryAuditStore,
 } from "../../src/state.js";
 import { TaskRepository } from "../../src/entities/task-repository.js";
 import { ProposalRepository } from "../../src/entities/proposal-repository.js";
+import { ThreadRepository } from "../../src/entities/thread-repository.js";
 import { IdeaRepository } from "../../src/entities/idea-repository.js";
 import { MissionRepository } from "../../src/entities/mission-repository.js";
 import { MemoryTurnStore } from "../../src/entities/turn.js";
@@ -498,7 +498,7 @@ export class TestOrchestrator {
       task,
       engineerRegistry: new MemoryEngineerRegistry(),
       proposal: new ProposalRepository(storageProvider, storageCounter),
-      thread: new MemoryThreadStore(),
+      thread: new ThreadRepository(storageProvider, storageCounter),
       audit: new MemoryAuditStore(),
       idea,
       mission,

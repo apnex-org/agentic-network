@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { IPolicyContext, AllStores, DomainEvent } from "./types.js";
-import { MemoryEngineerRegistry, MemoryThreadStore, MemoryAuditStore } from "../state.js";
+import { MemoryEngineerRegistry, MemoryAuditStore } from "../state.js";
 import type { Selector } from "../state.js";
 import { TaskRepository } from "../entities/task-repository.js";
 import { ProposalRepository } from "../entities/proposal-repository.js";
+import { ThreadRepository } from "../entities/thread-repository.js";
 import { IdeaRepository } from "../entities/idea-repository.js";
 import { MissionRepository } from "../entities/mission-repository.js";
 import { MemoryTurnStore } from "../entities/turn.js";
@@ -49,7 +50,7 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     task,
     engineerRegistry: new MemoryEngineerRegistry(),
     proposal: new ProposalRepository(storageProvider, storageCounter),
-    thread: new MemoryThreadStore(),
+    thread: new ThreadRepository(storageProvider, storageCounter),
     audit: new MemoryAuditStore(),
     idea,
     mission,

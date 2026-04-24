@@ -7,6 +7,7 @@ export { IdeaRepository } from "./idea-repository.js";
 
 export { TaskRepository } from "./task-repository.js";
 export { ProposalRepository } from "./proposal-repository.js";
+export { ThreadRepository } from "./thread-repository.js";
 
 export type { Mission, MissionStatus, IMissionStore, PlannedTask, PlannedTaskStatus } from "./mission.js";
 export { findNextUnissuedPlannedTask } from "./mission.js";

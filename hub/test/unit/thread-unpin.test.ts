@@ -1,32 +1,33 @@
 /**
  * Phase 2d CP3 C4 (bug-16 part 1) — cascade unpin of currentTurnAgentId
- * when the agent is reaped. Pins MemoryThreadStore.unpinCurrentTurnAgent.
+ * when the agent is reaped. Pins ThreadRepository.unpinCurrentTurnAgent.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { MemoryThreadStore } from "../../src/state.js";
+import { ThreadRepository } from "../../src/entities/thread-repository.js";
+import { StorageBackedCounter } from "../../src/entities/counter.js";
+import { MemoryStorageProvider } from "@ois/storage-provider";
 
-describe("MemoryThreadStore.unpinCurrentTurnAgent (CP3 C4)", () => {
-  let store: MemoryThreadStore;
+describe("ThreadRepository.unpinCurrentTurnAgent (CP3 C4)", () => {
+  let store: ThreadRepository;
 
   beforeEach(() => {
-    store = new MemoryThreadStore();
+    const provider = new MemoryStorageProvider();
+    const counter = new StorageBackedCounter(provider);
+    store = new ThreadRepository(provider, counter);
   });
 
   async function openActiveUnicast(title: string, pinnedAgentId: string): Promise<string> {
-    const t = await store.openThread(title, "seed", {
-      author: "engineer",
-      authorAgentId: pinnedAgentId,
-    }, {
+    const t = await store.openThread(title, "seed", "engineer", {
       routingMode: "unicast",
       recipientAgentId: "eng-architect",
-      createdBy: { role: "engineer", agentId: pinnedAgentId },
+      authorAgentId: pinnedAgentId,
     });
     // Thread-policy pins the opener's agentId as currentTurnAgentId on
     // create when the routing is unicast-with-architect-recipient — we
-    // emulate that by directly assigning for the memory test harness,
-    // which bypasses the policy layer.
-    (store as any).threads.get(t.id).currentTurnAgentId = pinnedAgentId;
+    // emulate that by directly patching the scalar for the memory test
+    // harness, which bypasses the policy layer.
+    await store.__debugSetThread(t.id, { currentTurnAgentId: pinnedAgentId });
     return t.id;
   }
 

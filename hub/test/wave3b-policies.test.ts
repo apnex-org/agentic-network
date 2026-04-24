@@ -12,6 +12,8 @@ import { registerThreadPolicy } from "../src/policy/thread-policy.js";
 import { registerSessionPolicy } from "../src/policy/session-policy.js";
 import { createTestContext } from "../src/policy/test-utils.js";
 import type { IPolicyContext } from "../src/policy/types.js";
+import type { ThreadRepository } from "../src/entities/thread-repository.js";
+import type { Thread } from "../src/state.js";
 
 const noop = () => {};
 
@@ -361,13 +363,10 @@ describe("ThreadPolicy", () => {
       await router.handle("create_thread", { routingMode: "broadcast", title: "T1", message: "M1" }, ctx);
       await router.handle("create_thread", { routingMode: "broadcast", title: "T2", message: "M2" }, ctx);
       await router.handle("create_thread", { routingMode: "broadcast", title: "T3", message: "M3" }, ctx);
-      const internal = (ctx.stores.thread as any).threads as Map<string, any>;
-      const t1 = internal.get("thread-1");
-      if (t1) t1.createdBy = { role: "architect", agentId: "eng-alpha" };
-      const t2 = internal.get("thread-2");
-      if (t2) t2.createdBy = { role: "engineer", agentId: "eng-beta" };
-      const t3 = internal.get("thread-3");
-      if (t3) t3.createdBy = { role: "architect", agentId: "eng-gamma" };
+      const repo = ctx.stores.thread as ThreadRepository;
+      await repo.__debugSetThread("thread-1", { createdBy: { role: "architect", agentId: "eng-alpha" } });
+      await repo.__debugSetThread("thread-2", { createdBy: { role: "engineer", agentId: "eng-beta" } });
+      await repo.__debugSetThread("thread-3", { createdBy: { role: "architect", agentId: "eng-gamma" } });
     }
 
     it("filter: createdBy.role selects architect-created threads only", async () => {
@@ -723,9 +722,10 @@ describe("ThreadPolicy — Threads 2.0 (Mission-21 Phase 1)", () => {
       }, engCtx);
       // Corrupt the stored payload so validateStagedActions at the
       // bilateral-commit moment will reject it.
-      const threadInternal = (archCtx.stores.thread as any).threads as Map<string, any>;
-      const t = threadInternal.get(threadId);
-      t.convergenceActions[0].payload = {};
+      const threadRepo = archCtx.stores.thread as ThreadRepository;
+      const tCur = (await threadRepo.getThread(threadId))!;
+      tCur.convergenceActions[0].payload = {};
+      await threadRepo.__debugSetThread(threadId, { convergenceActions: tCur.convergenceActions });
       // Architect's converged=true triggers the bilateral commit →
       // validateStagedActions fires → payload_validation.
       const r2 = await router.handle("create_thread_reply", {
@@ -1174,16 +1174,18 @@ describe("ThreadStore — reapIdleThreads (M24-T7)", () => {
   }
 
   /** Force a thread's updatedAt to simulate elapsed idle time. */
-  function ageThread(ctx: IPolicyContext, threadId: string, idleMs: number): void {
-    const store = ctx.stores.thread as unknown as { threads: Map<string, { updatedAt: string }> };
-    const t = store.threads.get(threadId);
+  async function ageThread(ctx: IPolicyContext, threadId: string, idleMs: number): Promise<void> {
+    const repo = ctx.stores.thread as ThreadRepository;
+    const t = await repo.getThread(threadId);
     if (!t) throw new Error(`thread ${threadId} not found`);
-    t.updatedAt = new Date(Date.now() - idleMs).toISOString();
+    await repo.__debugSetThread(threadId, {
+      updatedAt: new Date(Date.now() - idleMs).toISOString(),
+    });
   }
 
   it("reaps an active thread whose idle time exceeds the deployment default", async () => {
     const threadId = await openThread();
-    ageThread(eng1Ctx, threadId, 60_000); // 1 min idle
+    await ageThread(eng1Ctx, threadId, 60_000); // 1 min idle
 
     const reaped = await eng1Ctx.stores.thread.reapIdleThreads(30_000); // threshold 30s
     expect(reaped).toHaveLength(1);
@@ -1209,12 +1211,10 @@ describe("ThreadStore — reapIdleThreads (M24-T7)", () => {
     const threadId = await openThread();
     // Override the thread's idleExpiryMs to 5s, age it to 10s idle,
     // keep deployment default high (7d). Override should fire.
-    const store = eng1Ctx.stores.thread as unknown as {
-      threads: Map<string, { updatedAt: string; idleExpiryMs: number | null }>;
-    };
-    const t = store.threads.get(threadId)!;
-    t.idleExpiryMs = 5_000;
-    t.updatedAt = new Date(Date.now() - 10_000).toISOString();
+    await (eng1Ctx.stores.thread as ThreadRepository).__debugSetThread(threadId, {
+      idleExpiryMs: 5_000,
+      updatedAt: new Date(Date.now() - 10_000).toISOString(),
+    });
 
     const reaped = await eng1Ctx.stores.thread.reapIdleThreads(7 * 24 * 60 * 60 * 1000);
     expect(reaped).toHaveLength(1);
@@ -1224,12 +1224,10 @@ describe("ThreadStore — reapIdleThreads (M24-T7)", () => {
   it("honours per-thread idleExpiryMs override (looser than default)", async () => {
     const threadId = await openThread();
     // Override to 1h, age to only 10s idle, default 5s. Override wins → skip.
-    const store = eng1Ctx.stores.thread as unknown as {
-      threads: Map<string, { updatedAt: string; idleExpiryMs: number | null }>;
-    };
-    const t = store.threads.get(threadId)!;
-    t.idleExpiryMs = 60 * 60 * 1000;
-    t.updatedAt = new Date(Date.now() - 10_000).toISOString();
+    await (eng1Ctx.stores.thread as ThreadRepository).__debugSetThread(threadId, {
+      idleExpiryMs: 60 * 60 * 1000,
+      updatedAt: new Date(Date.now() - 10_000).toISOString(),
+    });
 
     const reaped = await eng1Ctx.stores.thread.reapIdleThreads(5_000);
     expect(reaped).toHaveLength(0);
@@ -1249,7 +1247,7 @@ describe("ThreadStore — reapIdleThreads (M24-T7)", () => {
       stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "from eng-1" } }],
     }, eng1Ctx);
 
-    ageThread(eng1Ctx, threadId, 10 * 60 * 1000);
+    await ageThread(eng1Ctx, threadId, 10 * 60 * 1000);
     await eng1Ctx.stores.thread.reapIdleThreads(60_000);
 
     const getResult = await router.handle("get_thread", { threadId }, eng1Ctx);
@@ -1273,12 +1271,10 @@ describe("ThreadStore — reapIdleThreads (M24-T7)", () => {
     // Thread labels come from caller-agent labels, which are empty in
     // this test harness. Stamp them directly so we can assert the
     // reaper preserves the map intact in the ReapedThread envelope.
-    const store = eng1Ctx.stores.thread as unknown as {
-      threads: Map<string, { updatedAt: string; labels: Record<string, string> }>;
-    };
-    const t = store.threads.get(threadId)!;
-    t.labels = { kind: "test", mission: "m24" };
-    t.updatedAt = new Date(Date.now() - 90_000).toISOString();
+    await (eng1Ctx.stores.thread as ThreadRepository).__debugSetThread(threadId, {
+      labels: { kind: "test", mission: "m24" },
+      updatedAt: new Date(Date.now() - 90_000).toISOString(),
+    });
 
     const reaped = await eng1Ctx.stores.thread.reapIdleThreads(30_000);
     expect(reaped).toHaveLength(1);
@@ -1293,17 +1289,17 @@ describe("ThreadStore — reapIdleThreads (M24-T7)", () => {
   it("skips non-active threads (closed, converged, already abandoned)", async () => {
     // Active, idle → will reap
     const activeId = await openThread();
-    ageThread(eng1Ctx, activeId, 90_000);
+    await ageThread(eng1Ctx, activeId, 90_000);
 
     // Closed thread, also artificially aged
     const closedId = await openThread();
     await router.handle("close_thread", { threadId: closedId }, archCtx);
-    ageThread(eng1Ctx, closedId, 90_000);
+    await ageThread(eng1Ctx, closedId, 90_000);
 
     // Abandoned thread (via leave_thread), also aged
     const abandonedId = await openThread();
     await router.handle("leave_thread", { threadId: abandonedId }, eng1Ctx);
-    ageThread(eng1Ctx, abandonedId, 90_000);
+    await ageThread(eng1Ctx, abandonedId, 90_000);
 
     const reaped = await eng1Ctx.stores.thread.reapIdleThreads(30_000);
     expect(reaped).toHaveLength(1);
@@ -1318,9 +1314,9 @@ describe("ThreadStore — reapIdleThreads (M24-T7)", () => {
     const a = await openThread();
     const b = await openThread();
     const c = await openThread();
-    ageThread(eng1Ctx, a, 90_000);
-    ageThread(eng1Ctx, b, 90_000);
-    ageThread(eng1Ctx, c, 90_000);
+    await ageThread(eng1Ctx, a, 90_000);
+    await ageThread(eng1Ctx, b, 90_000);
+    await ageThread(eng1Ctx, c, 90_000);
 
     const reaped = await eng1Ctx.stores.thread.reapIdleThreads(30_000);
     expect(reaped).toHaveLength(3);
@@ -1593,9 +1589,12 @@ describe("ThreadPolicy — cascade infrastructure (M24-T4)", () => {
     }, engCtx);
 
     // Poison the staged payload so validate phase fires at the gate.
-    const store = archCtx.stores.thread as any;
-    const poisoned = store.threads.get(threadId);
-    poisoned.convergenceActions[0].payload = {}; // drop `reason`
+    {
+      const repo = archCtx.stores.thread as ThreadRepository;
+      const poisoned = (await repo.getThread(threadId))!;
+      poisoned.convergenceActions[0].payload = {}; // drop `reason`
+      await repo.__debugSetThread(threadId, { convergenceActions: poisoned.convergenceActions });
+    }
 
     // Architect converges (round 3) → gate runs validate → rejects.
     const badConverge = await router.handle("create_thread_reply", {
@@ -1653,8 +1652,9 @@ describe("ThreadPolicy — cascade infrastructure (M24-T4)", () => {
     }, archCtx);
     // The happy path closed the thread — force it back to converged
     // via direct store mutation so we can test the primitive.
-    const store = archCtx.stores.thread as any;
-    store.threads.get(threadId).status = "converged";
+    await (archCtx.stores.thread as ThreadRepository).__debugSetThread(threadId, {
+      status: "converged",
+    });
     const ok = await archCtx.stores.thread.markCascadeFailed(threadId);
     expect(ok).toBe(true);
     const final = JSON.parse((await router.handle("get_thread", { threadId }, archCtx)).content[0].text);
@@ -1802,16 +1802,17 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
    * close_no_action) by staging via direct store mutation. The gate's
    * validateStagedActions() still runs against the Phase 2 payload
    * schema registry, so payloads must be valid Phase 2 shapes. */
-  function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): void {
-    const store = ctx.stores.thread as any;
-    const t = store.threads.get(threadId);
+  async function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): Promise<void> {
+    const repo = ctx.stores.thread as ThreadRepository;
+    const t = (await repo.getThread(threadId))!;
     const id = `action-${t.convergenceActions.length + 1}`;
     t.convergenceActions.push({
       id, type, status: "staged",
       proposer: { role: "engineer", agentId: null },
       timestamp: new Date().toISOString(),
       payload,
-    });
+    } as Thread["convergenceActions"][number]);
+    await repo.__debugSetThread(threadId, { convergenceActions: t.convergenceActions });
   }
 
   /** Minimal convergence flow using direct-injection for staging: arch
@@ -1834,7 +1835,7 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
     const threadId = JSON.parse(r.content[0].text).threadId;
     // Stage via direct injection BEFORE the eng converge reply.
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
-    injectStagedAction(threadId, type, payload, archCtx);
+    await injectStagedAction(threadId, type, payload, archCtx);
     // eng converges (round 3). Summary set via message param path.
     await router.handle("create_thread_reply", {
       threadId, message: "arch-round", summary,
@@ -1981,8 +1982,8 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
     // Inject 2 actions of different types.
-    injectStagedAction(threadId, "create_task", { title: "T1", description: "dt" }, archCtx);
-    injectStagedAction(threadId, "create_idea", { title: "I1", description: "di" }, archCtx);
+    await injectStagedAction(threadId, "create_task", { title: "T1", description: "dt" }, archCtx);
+    await injectStagedAction(threadId, "create_idea", { title: "I1", description: "di" }, archCtx);
     await router.handle("create_thread_reply", { threadId, message: "arch", summary: "Multi-action test." }, archCtx);
     await router.handle("create_thread_reply", { threadId, message: "eng-converge", converged: true }, engCtx);
     await router.handle("create_thread_reply", { threadId, message: "arch-converge", converged: true }, archCtx);
@@ -2004,11 +2005,12 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
     // Open with architect-authored labels via direct setting
     const r = await router.handle("create_thread", { routingMode: "broadcast",title: "lab", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
-    const store = archCtx.stores.thread as any;
-    store.threads.get(threadId).labels = { team: "platform", env: "prod" };
+    await (archCtx.stores.thread as ThreadRepository).__debugSetThread(threadId, {
+      labels: { team: "platform", env: "prod" },
+    });
 
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
-    injectStagedAction(threadId, "create_task", { title: "T", description: "d" }, archCtx);
+    await injectStagedAction(threadId, "create_task", { title: "T", description: "d" }, archCtx);
     await router.handle("create_thread_reply", { threadId, message: "arch", summary: "Label inheritance test." }, archCtx);
     await router.handle("create_thread_reply", { threadId, message: "e", converged: true }, engCtx);
     await router.handle("create_thread_reply", { threadId, message: "a", converged: true }, archCtx);
@@ -2071,16 +2073,17 @@ describe("ThreadPolicy — cascade handlers part 2 (M24-T9)", () => {
     });
   });
 
-  function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): void {
-    const store = ctx.stores.thread as any;
-    const t = store.threads.get(threadId);
+  async function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): Promise<void> {
+    const repo = ctx.stores.thread as ThreadRepository;
+    const t = (await repo.getThread(threadId))!;
     const id = `action-${t.convergenceActions.length + 1}`;
     t.convergenceActions.push({
       id, type, status: "staged",
       proposer: { role: "engineer", agentId: null },
       timestamp: new Date().toISOString(),
       payload,
-    });
+    } as Thread["convergenceActions"][number]);
+    await repo.__debugSetThread(threadId, { convergenceActions: t.convergenceActions });
   }
 
   async function convergeWithInjectedAction(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
@@ -2096,7 +2099,7 @@ describe("ThreadPolicy — cascade handlers part 2 (M24-T9)", () => {
     const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
-    injectStagedAction(threadId, type, payload, archCtx);
+    await injectStagedAction(threadId, type, payload, archCtx);
     await router.handle("create_thread_reply", { threadId, message: "arch", summary }, archCtx);
     await router.handle("create_thread_reply", { threadId, message: "eng-c", converged: true }, engCtx);
     const finalReply = await router.handle("create_thread_reply", { threadId, message: "arch-c", converged: true }, archCtx);
@@ -2387,8 +2390,9 @@ describe("Phase 2 invariants (M24-T11)", () => {
     expect(spawned!.sourceThreadSummary).toBe("COMMIT-TIME SUMMARY");
 
     // Mutate the thread's summary post-commit
-    const store = archCtx.stores.thread as any;
-    store.threads.get(threadId).summary = "POST-COMMIT MUTATION";
+    await (archCtx.stores.thread as ThreadRepository).__debugSetThread(threadId, {
+      summary: "POST-COMMIT MUTATION",
+    });
     // Re-read the entity — still the frozen commit-time summary.
     const after = await archCtx.stores.task.getTask(spawned!.id);
     expect(after!.sourceThreadSummary).toBe("COMMIT-TIME SUMMARY");
@@ -2441,8 +2445,12 @@ describe("Phase 2 invariants (M24-T11)", () => {
     }, engCtx);
 
     // Poison the staged action's payload to force validate failure.
-    const store = archCtx.stores.thread as any;
-    store.threads.get(threadId).convergenceActions[0].payload = {}; // drop `reason`
+    {
+      const repo = archCtx.stores.thread as ThreadRepository;
+      const t = (await repo.getThread(threadId))!;
+      t.convergenceActions[0].payload = {}; // drop `reason`
+      await repo.__debugSetThread(threadId, { convergenceActions: t.convergenceActions });
+    }
 
     // Architect tries to converge → gate runs validate → rejects.
     const badConverge = await router.handle("create_thread_reply", {
@@ -2719,23 +2727,24 @@ describe("Cascade-path SSE parity (dispatch-helpers)", () => {
     });
   });
 
-  function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): void {
-    const store = ctx.stores.thread as any;
-    const t = store.threads.get(threadId);
+  async function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): Promise<void> {
+    const repo = ctx.stores.thread as ThreadRepository;
+    const t = (await repo.getThread(threadId))!;
     const id = `action-${t.convergenceActions.length + 1}`;
     t.convergenceActions.push({
       id, type, status: "staged",
       proposer: { role: "engineer", agentId: null },
       timestamp: new Date().toISOString(),
       payload,
-    });
+    } as Thread["convergenceActions"][number]);
+    await repo.__debugSetThread(threadId, { convergenceActions: t.convergenceActions });
   }
 
   async function runConverge(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
     const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
-    injectStagedAction(threadId, type, payload, archCtx);
+    await injectStagedAction(threadId, type, payload, archCtx);
     await router.handle("create_thread_reply", { threadId, message: "arch", summary }, archCtx);
     await router.handle("create_thread_reply", { threadId, message: "eng-c", converged: true }, engCtx);
     await router.handle("create_thread_reply", { threadId, message: "arch-c", converged: true }, archCtx);
@@ -3180,23 +3189,24 @@ describe("Cascade: create_bug (Phase 2 validation)", () => {
     });
   });
 
-  function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): void {
-    const store = ctx.stores.thread as any;
-    const t = store.threads.get(threadId);
+  async function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): Promise<void> {
+    const repo = ctx.stores.thread as ThreadRepository;
+    const t = (await repo.getThread(threadId))!;
     const id = `action-${t.convergenceActions.length + 1}`;
     t.convergenceActions.push({
       id, type, status: "staged",
       proposer: { role: "engineer", agentId: null },
       timestamp: new Date().toISOString(),
       payload,
-    });
+    } as Thread["convergenceActions"][number]);
+    await repo.__debugSetThread(threadId, { convergenceActions: t.convergenceActions });
   }
 
   async function runConverge(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
     const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
-    injectStagedAction(threadId, type, payload, archCtx);
+    await injectStagedAction(threadId, type, payload, archCtx);
     await router.handle("create_thread_reply", { threadId, message: "arch", summary }, archCtx);
     await router.handle("create_thread_reply", { threadId, message: "eng-c", converged: true }, engCtx);
     await router.handle("create_thread_reply", { threadId, message: "arch-c", converged: true }, archCtx);

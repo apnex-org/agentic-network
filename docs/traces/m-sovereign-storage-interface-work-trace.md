@@ -30,10 +30,10 @@ If you're picking up cold on mission-47:
 - ▶ **T2-W2 — bug + idea repository migrations.** PR #12 open against main. Hub CI green (`vitest (hub)` passing; continue-on-error cells as expected). Awaiting architect routine-review.
 - ▶ **T2-W3 — director-notification repository migration.** PR #13 stacked on #12. Awaiting review.
 - ▶ **T2-W4 — mission repository migration.** PR #14 stacked on #13. Virtual-view hydration + plannedTasks cascade preserved. Awaiting review.
-- ▶ **T2-W5 — task + proposal repository migrations.** Shipped locally on `agent-greg/mission-47-t2-w5-task-proposal` (stacked on W4). Hub suite 711/716 pass (baseline: 722→711 delta = 11 obsolete GcsTaskStore + GcsProposalStore P2 reproductions removed; zero functional regressions). FSM gates preserved via TransitionRejected sentinel → boolean/null mapping. Next: push + open PR stacked on W4.
+- ▶ **T2-W5 — task + proposal repository migrations.** PR #15 stacked on #14. FSM gates preserved via TransitionRejected sentinel → boolean/null mapping. Awaiting review.
+- ▶ **T2-W6 — thread repository migration.** Shipped locally on `agent-greg/mission-47-t2-w6-thread-repository` (stacked on W5). Hub suite 707/712 pass. Per-file messages split preserved (threads/<id>/messages/<seq>.json); staged-action convergence bilateral-seal preserved; all INV-TH17/18/19/20/22/23 still exercised; `__debugSetThread` test-only escape hatch added. Next: push + open PR stacked on W5.
 
 ## Queued / filed
-- ○ **T2-W6 thread** — blocked on W5.
 - ○ **T2-W7 turn + pending-action + agent** — blocked on W6; L-escalation candidate.
 - ○ **T3 sync script + STORAGE_BACKEND=local-fs wiring** — blocked on W7.
 - ○ **T4 comparative latency measurement** — blocked on T3.
@@ -42,6 +42,22 @@ If you're picking up cold on mission-47:
 ---
 
 ## Done this session
+
+### T2-W6 (thread repository migration) — shipped 2026-04-24
+
+- ✅ **`hub/src/entities/thread-repository.ts` — `ThreadRepository implements IThreadStore`.** Composes `StorageProvider` + shared `StorageBackedCounter`. Largest repository. Per-file messages split preserved: scalar at `threads/<id>.json` + per-round entries at `threads/<id>/messages/<seq>.json` (ADR-011 Phase 3). Reply-path transform never RMWs a `messages[]` array — each new round appends a new per-file via `createOnly`.
+- ✅ **Convergence bilateral-seal preserved.** `willConverge = converged && prevConverged` + forcing-function gate (Mission-21 Phase 1) + staged-action payload validation (Mission-24 Phase 2, M24-T4, INV-TH19) + `staged → committed` promotion. `ThreadConvergenceGateError` thrown from inside the transform propagates through CAS untouched (caller sees the domain-specific message to self-correct).
+- ✅ **INV-TH17/18/20/22/23 preserved.** Agent-pinned turn enforcement; broadcast → unicast coercion on first reply; cascade back-link natural key; proposer shape `{role, agentId}` backfill-on-read; Summary-as-Living-Record at commit.
+- ✅ **Reaper + unpin preserved.** `reapIdleThreads` uses listThreads → per-thread casUpdate with re-verification of idleness inside the transform (stale-snapshot-prefilter → authoritative-transform pattern). `unpinCurrentTurnAgent` similarly listThreads → per-match casUpdate with "still pinned to victim?" re-check inside the transform.
+- ✅ **`normalizeThreadShape` + helpers (`normalizeRoutingMode`, `isThreadContext`, `normalizeStagedActionShape`) ported into the repository module** — they were `GcsThreadStore`-internal read-side normalisation. Backfill-on-read behavior preserved verbatim: convergenceActions default, routingMode normalisation, idleExpiryMs default, legacy proposer shape widening.
+- ✅ **`cloneThread` exported from state.ts** (was private). Repository uses it for transform-isolation: transform mutates a clone of the normalized read; on throw (TransitionRejected / ThreadConvergenceGateError), the clone is discarded and CAS is never attempted.
+- ✅ **Legacy classes deleted.** `MemoryThreadStore` removed from `state.ts` (309 lines). `GcsThreadStore` + all normalizeThreadShape helpers removed from `gcs-state.ts` (462 lines). `normalizeAgentShape` (still used by GcsEngineerRegistry) retained with its JSDoc intact. `entities/index.ts` barrel exports `ThreadRepository`.
+- ✅ **`hub/src/index.ts` startup.** `threadStore` now constructed unconditionally via `new ThreadRepository(storageProvider, storageCounter)` in the shared repository block.
+- ✅ **Test scaffolds updated.** `test-utils.ts` + `orchestrator.ts` both build ThreadRepository.
+- ✅ **`__debugSetThread` test-only escape hatch.** Lets tests directly patch thread scalar state (bypassing FSM gates) for setup-only scenarios — symmetric to `__debugSetTask` added in W5.
+- ✅ **Test sweep (delegated to Agent).** 16 direct-mutation sites across 4 test files rewritten: `thread-unpin.test.ts` (Category A — full rewrite to ThreadRepository), `thread-truncation.test.ts` (3 store constructions + listThreads assertion reframed to match shipped contract: listThreads does not hydrate per-file messages), `INV-TH6.test.ts` (1 mutation pattern), `wave3b-policies.test.ts` (12 mutation sites including 4 `injectStagedAction` helper conversions sync→async with 8 call sites updated). Also fixed a pre-existing bug in `thread-unpin.test.ts` where `openThread(...)` was being called with wrong positional arg shape.
+- ✅ **Obsolete P2 reproduction removed.** `gcs-p2-repro.test.ts` GcsThreadStore section deleted (equivalent coverage in storage-provider conformance suite + Repository casUpdate). File now only retains `GcsTurnStore` reproduction (only entity not yet migrated — W7).
+- ✅ **Verification.** tsc strict-mode clean; hub suite 707/712 pass (5 skipped; 711→707 delta = 4 obsolete GcsThreadStore P2 reproductions removed; zero functional regressions).
 
 ### T2-W5 (task + proposal repository migrations) — shipped 2026-04-24
 
@@ -147,6 +163,8 @@ If you're picking up cold on mission-47:
 - **2026-04-24 ~19:20-19:30Z** — T2-W4 (mission repository migration) authored locally on stacked branch `agent-greg/mission-47-t2-w4-mission-repository`: MissionRepository (virtual-view hydration preserved; plannedTasks cascade preserved) + MemoryMissionStore deletion + gcs-mission.ts deletion + index.ts barrel update + hub/src/index.ts startup + test-utils + orchestrator migration + wave2 seedMissionsWithCreatedBy rewrite + gcs-p2-repro.test.ts obsolete GcsMissionStore section removal. tsc clean; hub suite 722/727 pass.
 - **2026-04-24 ~19:30Z** — W4 pushed + PR #14 opened stacked on W3 #13.
 - **2026-04-24 ~19:30-19:50Z** — T2-W5 (task + proposal repository migrations) authored locally on stacked branch `agent-greg/mission-47-t2-w5-task-proposal`. TaskRepository (~500 lines, largest yet) + ProposalRepository; FSM gates preserved via TransitionRejected sentinel pattern; report/review Markdown blobs preserved; claim-serialization Mutex preserved; dependency cascade preserved. Legacy MemoryTaskStore + MemoryProposalStore + GcsTaskStore + GcsProposalStore removed. `__debugSetTask` test-only escape hatch added. Test sweep delegated to Agent — 16 direct-mutation sites rewritten across 4 test files. `mission-19/claim.test.ts` rewritten to use TaskRepository. Obsolete P2 reproductions removed. tsc clean; hub suite 711/716 pass.
+- **2026-04-24 ~19:50Z** — W5 pushed + PR #15 opened stacked on W4 #14.
+- **2026-04-24 ~19:50-20:10Z** — T2-W6 (thread repository migration) authored locally on stacked branch `agent-greg/mission-47-t2-w6-thread-repository`. ThreadRepository (~500 lines) with per-file messages split preserved; staged-action convergence bilateral-seal preserved; INV-TH17/18/19/20/22/23 preserved; `normalizeThreadShape` helpers ported in; `cloneThread` exported from state.ts. MemoryThreadStore (309 lines) + GcsThreadStore (462 lines) removed. `__debugSetThread` escape hatch added. Agent test sweep: 16 direct-mutation sites across 4 files rewritten (thread-unpin full rewrite, thread-truncation adjustment for listThreads contract delta, INV-TH6 + wave3b-policies 12 sites including 4 injectStagedAction sync→async conversions). GcsThreadStore P2 reproduction deleted. tsc clean; hub suite 707/712 pass.
 
 ## Canonical references
 

@@ -28,11 +28,8 @@ vi.mock("@google-cloud/storage", () => ({ Storage: GcsFakeStorage }));
 // GcsProposalStore deleted — their concurrency is now exercised via
 // the storage-provider conformance suite (CAS primitive) plus the
 // Repository-class casUpdate loops. Obsolete reproduction blocks
-// removed. GcsTurnStore + GcsThreadStore reproductions stay (W6).
+// removed. GcsTurnStore reproduction stays (W7 — only entity not yet migrated).
 const { GcsTurnStore } = await import("../../src/entities/gcs/gcs-turn.js");
-const {
-  GcsThreadStore,
-} = await import("../../src/gcs-state.js");
 
 const BUCKET = "test-bucket";
 
@@ -73,94 +70,8 @@ describe("GcsTurnStore.updateTurn — lost-update reproduction", () => {
 });
 
 
-// Mission-47 W5: GcsTaskStore + GcsProposalStore sections removed
-// — those stores are now TaskRepository + ProposalRepository, exercised
-// via the @ois/storage-provider conformance suite + Repository casUpdate
-// loops. Sections kept: GcsTurnStore + GcsThreadStore (not yet migrated).
-
-// ── GcsThreadStore per-file messages split (Phase 3 P1) ─────────────
-
-describe("GcsThreadStore per-file messages — concurrent reply reproduction", () => {
-  it("alternating-author concurrent calls: only current-turn author wins, no message corruption", async () => {
-    const store = new GcsThreadStore(BUCKET);
-    const thread = await store.openThread("t", "hello", "architect", 10);
-
-    // After openThread, currentTurn=engineer. Fire engineer's reply
-    // concurrently with architect's reply. Turn-gate rejects the
-    // off-turn author (TransitionRejected → null); engineer wins.
-    const [rEng, rArch] = await Promise.all([
-      store.replyToThread(thread.id, "eng msg", "engineer"),
-      store.replyToThread(thread.id, "arch msg", "architect"),
-    ]);
-
-    expect(rEng).not.toBeNull();
-    expect(rArch).toBeNull();
-
-    // Per-file hydration preserves both the opener and the winning
-    // reply in sequence; no messages[] RMW means no corruption.
-    const final = await store.getThread(thread.id);
-    expect(final!.roundCount).toBe(2);
-    expect(final!.messages.length).toBe(2);
-    expect(final!.messages[0].text).toBe("hello");
-    expect(final!.messages[1].text).toBe("eng msg");
-  });
-
-  it("sequential alternating replies hydrate per-file messages in order", async () => {
-    const store = new GcsThreadStore(BUCKET);
-    const thread = await store.openThread("t", "hello", "architect", 10);
-
-    const r1 = await store.replyToThread(thread.id, "eng msg", "engineer");
-    const r2 = await store.replyToThread(thread.id, "arch msg", "architect");
-
-    expect(r1).not.toBeNull();
-    expect(r2).not.toBeNull();
-
-    const final = await store.getThread(thread.id);
-    expect(final!.roundCount).toBe(3);
-    expect(final!.messages.length).toBe(3);
-    expect(final!.messages.map((m) => m.text)).toEqual(["hello", "eng msg", "arch msg"]);
-  });
-
-  it("two same-author concurrent replies — exactly one wins the turn gate", async () => {
-    const store = new GcsThreadStore(BUCKET);
-    const thread = await store.openThread("t", "hello", "architect", 10);
-
-    // Both claim to be engineer; only one can pass the turn-gate in
-    // its transform. The loser's retry sees currentTurn=architect and
-    // TransitionRejected fires → null.
-    const [a, b] = await Promise.all([
-      store.replyToThread(thread.id, "first eng msg", "engineer"),
-      store.replyToThread(thread.id, "second eng msg", "engineer"),
-    ]);
-
-    const winners = [a, b].filter((r) => r !== null);
-    expect(winners).toHaveLength(1);
-
-    const final = await store.getThread(thread.id);
-    expect(final!.roundCount).toBe(2);
-    expect(final!.messages.length).toBe(2);
-  });
-
-  it("convergence trips when two consecutive replies are both converged=true (with gate satisfied)", async () => {
-    const store = new GcsThreadStore(BUCKET);
-    const thread = await store.openThread("t", "hello", "architect", 10);
-
-    // Mission-21 Phase 1: converged=true alone is not enough — the
-    // gate requires at least one committed action and a non-empty
-    // summary. Attach them on the first converging reply; the second
-    // reply inherits the staged actions + summary and commits at the
-    // turn transition.
-    const r1 = await store.replyToThread(thread.id, "eng agrees", "engineer", {
-      converged: true,
-      stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "nothing to do" } }],
-      summary: "Both agreed: no action required.",
-    });
-    expect(r1!.status).toBe("active"); // one converged flag not enough
-    expect(r1!.lastMessageConverged).toBe(true);
-
-    const r2 = await store.replyToThread(thread.id, "arch agrees", "architect", { converged: true });
-    expect(r2!.status).toBe("converged");
-    expect(r2!.convergenceActions.filter((a) => a.status === "committed").length).toBe(1);
-  });
-});
+// Mission-47 W5/W6: GcsTaskStore + GcsProposalStore + GcsThreadStore
+// sections removed — now TaskRepository + ProposalRepository +
+// ThreadRepository, exercised via the @ois/storage-provider conformance
+// suite + Repository casUpdate loops.
 

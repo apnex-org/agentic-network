@@ -8,16 +8,16 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { MemoryEngineerRegistry, MemoryThreadStore, MemoryAuditStore, MemoryNotificationStore } from "./state.js";
+import { MemoryEngineerRegistry, MemoryAuditStore, MemoryNotificationStore } from "./state.js";
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, INotificationStore } from "./state.js";
-import { GcsEngineerRegistry, GcsThreadStore, GcsAuditStore, GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
+import { GcsEngineerRegistry, GcsAuditStore, GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
 import {
   MemoryTurnStore,
   GcsTurnStore,
   MemoryPendingActionStore,
   GcsPendingActionStore,
   TeleRepository, IdeaRepository, BugRepository, DirectorNotificationRepository,
-  MissionRepository, TaskRepository, ProposalRepository,
+  MissionRepository, TaskRepository, ProposalRepository, ThreadRepository,
   StorageBackedCounter,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
   type IPendingActionStore, type IDirectorNotificationStore,
@@ -91,7 +91,6 @@ if (STORAGE_BACKEND === "gcs") {
   console.log(`[Hub] Using GCS storage backend: gs://${bucket}`);
   storageProvider = new GcsStorageProvider(bucket);
   engineerRegistry = new GcsEngineerRegistry(bucket);
-  threadStore = new GcsThreadStore(bucket);
   auditStore = new GcsAuditStore(bucket);
   notificationStore = new GcsNotificationStore(bucket);
   pendingActionStore = new GcsPendingActionStore(bucket);
@@ -103,7 +102,6 @@ if (STORAGE_BACKEND === "gcs") {
   console.log("[Hub] Using in-memory storage backend");
   storageProvider = new MemoryStorageProvider();
   engineerRegistry = new MemoryEngineerRegistry();
-  threadStore = new MemoryThreadStore();
   auditStore = new MemoryAuditStore();
   notificationStore = new MemoryNotificationStore();
   pendingActionStore = new MemoryPendingActionStore();
@@ -121,6 +119,7 @@ ideaStore = new IdeaRepository(storageProvider, storageCounter);
 bugStore = new BugRepository(storageProvider, storageCounter);
 teleStore = new TeleRepository(storageProvider, storageCounter);
 directorNotificationStore = new DirectorNotificationRepository(storageProvider, storageCounter);
+threadStore = new ThreadRepository(storageProvider, storageCounter);
 // MissionRepository takes taskStore + ideaStore for virtual-view hydration.
 missionStore = new MissionRepository(storageProvider, storageCounter, taskStore, ideaStore);
 
