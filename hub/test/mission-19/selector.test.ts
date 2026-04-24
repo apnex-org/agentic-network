@@ -9,13 +9,14 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  MemoryEngineerRegistry,
   labelsMatch,
   type RegisterAgentPayload,
   type AgentClientMetadata,
   type AgentLabels,
   type AgentRole,
 } from "../../src/state.js";
+import { AgentRepository } from "../../src/entities/agent-repository.js";
+import { MemoryStorageProvider } from "@ois/storage-provider";
 
 const CLIENT: AgentClientMetadata = {
   clientName: "claude-code",
@@ -59,10 +60,10 @@ describe("Mission-19 Selector — labelsMatch helper", () => {
 });
 
 describe("Mission-19 Selector — selectAgents", () => {
-  let reg: MemoryEngineerRegistry;
+  let reg: AgentRepository;
 
   beforeEach(async () => {
-    reg = new MemoryEngineerRegistry();
+    reg = new AgentRepository(new MemoryStorageProvider());
     // Three agents with varied roles and labels.
     await reg.registerAgent("sess-eng-a", "engineer",
       makePayload("inst-eng-a", "engineer", { team: "platform", env: "prod" }));

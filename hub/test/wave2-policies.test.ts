@@ -11,7 +11,7 @@ import { registerIdeaPolicy } from "../src/policy/idea-policy.js";
 import { registerMissionPolicy } from "../src/policy/mission-policy.js";
 import { registerTurnPolicy } from "../src/policy/turn-policy.js";
 import { createTestContext } from "../src/policy/test-utils.js";
-import { MemoryEngineerRegistry } from "../src/state.js";
+import { AgentRepository } from "../src/entities/agent-repository.js";
 import type { IPolicyContext } from "../src/policy/types.js";
 
 const noop = () => {};
@@ -222,7 +222,7 @@ describe("IdeaPolicy", () => {
   // ── Engineer RBAC (idea-49 / -52) ────────────────────────────────
   describe("Engineer role RBAC", () => {
     const asEngineer = (c: IPolicyContext) => {
-      (c.stores.engineerRegistry as MemoryEngineerRegistry).setSessionRole(c.sessionId, "engineer");
+      (c.stores.engineerRegistry as AgentRepository).setSessionRole(c.sessionId, "engineer");
       return c;
     };
 

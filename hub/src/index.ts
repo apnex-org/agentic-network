@@ -8,14 +8,15 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { MemoryEngineerRegistry, MemoryAuditStore, MemoryNotificationStore } from "./state.js";
+import { MemoryAuditStore, MemoryNotificationStore } from "./state.js";
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, INotificationStore } from "./state.js";
-import { GcsEngineerRegistry, GcsAuditStore, GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
+import { GcsAuditStore, GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
 import {
   TurnRepository,
   PendingActionRepository,
   TeleRepository, IdeaRepository, BugRepository, DirectorNotificationRepository,
   MissionRepository, TaskRepository, ProposalRepository, ThreadRepository,
+  AgentRepository,
   StorageBackedCounter,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
   type IPendingActionStore, type IDirectorNotificationStore,
@@ -88,7 +89,6 @@ if (STORAGE_BACKEND === "gcs") {
   const bucket = GCS_BUCKET!;
   console.log(`[Hub] Using GCS storage backend: gs://${bucket}`);
   storageProvider = new GcsStorageProvider(bucket);
-  engineerRegistry = new GcsEngineerRegistry(bucket);
   auditStore = new GcsAuditStore(bucket);
   notificationStore = new GcsNotificationStore(bucket);
 } else {
@@ -98,7 +98,6 @@ if (STORAGE_BACKEND === "gcs") {
   }
   console.log("[Hub] Using in-memory storage backend");
   storageProvider = new MemoryStorageProvider();
-  engineerRegistry = new MemoryEngineerRegistry();
   auditStore = new MemoryAuditStore();
   notificationStore = new MemoryNotificationStore();
 }
@@ -116,6 +115,8 @@ teleStore = new TeleRepository(storageProvider, storageCounter);
 directorNotificationStore = new DirectorNotificationRepository(storageProvider, storageCounter);
 threadStore = new ThreadRepository(storageProvider, storageCounter);
 pendingActionStore = new PendingActionRepository(storageProvider, storageCounter);
+// AgentRepository does not use counter — engineerIds are fingerprint-derived.
+engineerRegistry = new AgentRepository(storageProvider);
 // MissionRepository takes taskStore + ideaStore for virtual-view hydration.
 missionStore = new MissionRepository(storageProvider, storageCounter, taskStore, ideaStore);
 // TurnRepository takes missionStore + taskStore for virtual-view hydration.

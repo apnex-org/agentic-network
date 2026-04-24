@@ -20,13 +20,14 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  MemoryEngineerRegistry,
   type AgentClientMetadata,
   type AgentLabels,
   type AgentRole,
   type AssertIdentityPayload,
   type ClaimSessionTrigger,
 } from "../../src/state.js";
+import { AgentRepository } from "../../src/entities/agent-repository.js";
+import { MemoryStorageProvider } from "@ois/storage-provider";
 
 const CLIENT: AgentClientMetadata = {
   clientName: "claude-code",
@@ -49,9 +50,9 @@ function identityPayload(
 }
 
 describe("M-Session-Claim-Separation T1 — assertIdentity (Memory)", () => {
-  let reg: MemoryEngineerRegistry;
+  let reg: AgentRepository;
   beforeEach(() => {
-    reg = new MemoryEngineerRegistry();
+    reg = new AgentRepository(new MemoryStorageProvider());
   });
 
   it("first-contact creates an Agent with sessionEpoch=0 and status=offline (no session bound)", async () => {
@@ -125,10 +126,10 @@ describe("M-Session-Claim-Separation T1 — assertIdentity (Memory)", () => {
 });
 
 describe("M-Session-Claim-Separation T1 — claimSession (Memory)", () => {
-  let reg: MemoryEngineerRegistry;
+  let reg: AgentRepository;
   let engineerId: string;
   beforeEach(async () => {
-    reg = new MemoryEngineerRegistry();
+    reg = new AgentRepository(new MemoryStorageProvider());
     const id = await reg.assertIdentity(identityPayload("inst-A", "engineer"));
     if (!id.ok) throw new Error("setup failed");
     engineerId = id.engineerId;
@@ -170,7 +171,7 @@ describe("M-Session-Claim-Separation T1 — claimSession (Memory)", () => {
   it("trigger value preserved across all three legal values", async () => {
     const triggers: ClaimSessionTrigger[] = ["explicit", "sse_subscribe", "first_tool_call"];
     for (const trigger of triggers) {
-      const reg2 = new MemoryEngineerRegistry();
+      const reg2 = new AgentRepository(new MemoryStorageProvider());
       const id = await reg2.assertIdentity(identityPayload("inst-A", "engineer"));
       if (!id.ok) throw new Error("setup");
       const claim = await reg2.claimSession(id.engineerId, `sess-${trigger}`, trigger);
@@ -192,9 +193,9 @@ describe("M-Session-Claim-Separation T1 — registerAgent external behavior pres
   // Load-bearing T1 invariant: registerAgent (now refactored to call
   // assertIdentity + claimSession internally) must produce externally-
   // identical responses to the pre-T1 implementation.
-  let reg: MemoryEngineerRegistry;
+  let reg: AgentRepository;
   beforeEach(() => {
-    reg = new MemoryEngineerRegistry();
+    reg = new AgentRepository(new MemoryStorageProvider());
   });
 
   it("first-contact registerAgent returns sessionEpoch=1, wasCreated=true, status online", async () => {
