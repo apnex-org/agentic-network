@@ -27,13 +27,15 @@ If you're picking up cold:
 3. **Current in-flight:** T3 (specs + verification + hygiene + Hub redeploy) — in progress. T1 (schema) + T2 (tools + filter + tests) shipped locally; awaiting commit + Hub deploy step.
 4. **Ratified scope inputs (do NOT re-litigate):** the 5 architect-resolved clarifications above; Decision 4 Option B (verification-only zombie pass, no supersede_tele calls during this mission).
 5. **Anti-goals (hold firm):** no idea-155 typed-payload adoption here; no role-gate enforcement (idea-121 territory); no cross-mission coupling; no scope creep into `seed-new-teles.ts` cleanup (not in architect scope).
-6. **Deploy gate:** Hub redeploy required on ship (new MCP tools go live via Hub container). Architect Cloud Run redeploy NOT required.
+6. **Deploy gate:** Hub ships via **local Docker container** (`ois-hub:local`), NOT via Cloud Run. The Cloud Run `hub` service was intentionally destroyed 2026-04-24 during this mission after an exploratory push — local Docker is the delivery target. Architect Cloud Run redeploy NOT required. `deploy/build-hub.sh` + `deploy/deploy-hub.sh` are tracked for the rare prod-push case but NOT part of normal mission flow.
 
 ---
 
 ## In-flight
 
-- ▶ **T3 — Specs + verification audit + hygiene + Hub redeploy.** Spec edits to `docs/specs/teles.md` (§Tele Lifecycle) + `docs/specs/entities.md` (audit matrix row) complete. `scripts/reset-teles.ts` + backup dir deleted. Pending: architect-side verification-only zombie pass (per Decision 4 Option B); closing report; commit; Hub redeploy (user-gated).
+- ▶ **T3 — Specs + verification audit + hygiene + local Docker rebuild.** Spec edits to `docs/specs/teles.md` (§Tele Lifecycle) + `docs/specs/entities.md` (audit matrix row) complete. `scripts/reset-teles.ts` + backup dir deleted. Code committed (`e75db98`). Deploy-tooling additions `deploy/build-hub.sh` + `deploy/deploy-hub.sh` committed (`47957eb`, `95a4ea6`) — useful tracked assets even though Cloud Run is not the normal target. Pending: architect-side verification-only zombie pass (per Decision 4 Option B); local Docker rebuild via `scripts/local/build-hub.sh` to materialize new tools for the running `ois-hub:local`; closing report; PR open; bug-24 flip.
+
+**Cloud Run status note (2026-04-24):** an exploratory Cloud Run push + roll completed successfully during this mission (build `2f95e631`, image `hub:mission-43-20260424-015414`, revision `hub-00001-8bt` at 100% traffic); Director then confirmed local Docker is the delivery target and the Cloud Run `hub` service was destroyed the same day. Artifact Registry image retained (cheap; not load-bearing).
 
 ---
 
@@ -72,6 +74,9 @@ If you're picking up cold:
 - **2026-04-24 01:27Z** — Engineer replied on thread-280 with 3-task decomposition (T1 schema ~0.5d, T2 tools+filter+tests ~1d, T3 specs+hygiene+deploy ~0.5-1d) + converged. Bilateral seal.
 - **2026-04-24 01:30-01:40Z approx** — T1 + T2 shipped locally. Test suite confirmed green (725/730). Tsc clean.
 - **2026-04-24 01:40-01:50Z approx** — T3 spec edits + closing hygiene executed. Reset script + backup deleted.
+- **2026-04-24 01:50-02:00Z approx** — Code committed as `e75db98`. Branched `agent-greg/mission-43-tele-lifecycle` off main per ADR-023 trunk-based workflow.
+- **2026-04-24 02:05Z** — Director requested Cloud Build wrapper as tracked deploy tooling. Promoted local `scripts/local/build-hub.sh` pattern to tracked `deploy/build-hub.sh` (commit `47957eb`). Paired with `deploy/deploy-hub.sh` for Cloud Run roll (commit `95a4ea6`). Director approved build; `deploy/build-hub.sh --tag mission-43-20260424-015414` succeeded in 1m27s (build `2f95e631`). `deploy/deploy-hub.sh --image ...` rolled Cloud Run revision `hub-00001-8bt`.
+- **2026-04-24 02:10Z** — Director clarified: local Docker is the delivery target, not Cloud Run. Cloud Run `hub` service destroyed. Memory updated (`project_local_docker_testing.md`). Mission trace updated to reflect local-Docker-as-target.
 
 ---
 
