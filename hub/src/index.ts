@@ -12,11 +12,11 @@ import { MemoryTaskStore, MemoryEngineerRegistry, MemoryProposalStore, MemoryThr
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, INotificationStore } from "./state.js";
 import { GcsTaskStore, GcsEngineerRegistry, GcsProposalStore, GcsThreadStore, GcsAuditStore, GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
 import {
-  MemoryIdeaStore, MemoryMissionStore, MemoryTurnStore, MemoryBugStore,
-  GcsIdeaStore, GcsMissionStore, GcsTurnStore, GcsBugStore,
+  MemoryMissionStore, MemoryTurnStore,
+  GcsMissionStore, GcsTurnStore,
   MemoryPendingActionStore, MemoryDirectorNotificationStore,
   GcsPendingActionStore, GcsDirectorNotificationStore,
-  TeleRepository, StorageBackedCounter,
+  TeleRepository, IdeaRepository, BugRepository, StorageBackedCounter,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
   type IPendingActionStore, type IDirectorNotificationStore,
 } from "./entities/index.js";
@@ -94,10 +94,6 @@ if (STORAGE_BACKEND === "gcs") {
   threadStore = new GcsThreadStore(bucket);
   auditStore = new GcsAuditStore(bucket);
   notificationStore = new GcsNotificationStore(bucket);
-  ideaStore = new GcsIdeaStore(bucket);
-  missionStore = new GcsMissionStore(bucket, taskStore, ideaStore);
-  turnStore = new GcsTurnStore(bucket, missionStore, taskStore);
-  bugStore = new GcsBugStore(bucket);
   pendingActionStore = new GcsPendingActionStore(bucket);
   directorNotificationStore = new GcsDirectorNotificationStore(bucket);
 } else {
@@ -113,19 +109,29 @@ if (STORAGE_BACKEND === "gcs") {
   threadStore = new MemoryThreadStore();
   auditStore = new MemoryAuditStore();
   notificationStore = new MemoryNotificationStore();
-  ideaStore = new MemoryIdeaStore();
-  missionStore = new MemoryMissionStore(taskStore, ideaStore);
-  turnStore = new MemoryTurnStore(missionStore, taskStore);
-  bugStore = new MemoryBugStore();
   pendingActionStore = new MemoryPendingActionStore();
   directorNotificationStore = new MemoryDirectorNotificationStore();
 }
 
-// Mission-47 W1: instantiate TeleRepository over the selected provider.
-// Counter is shared-by-design — future wave repositories will reuse
-// this same counter instance for their ID generation.
+// Mission-47 W1/W2: instantiate StorageProvider-backed repositories.
+// Counter is shared-by-design across all repositories — issues a
+// monotonic ID sequence per entity-type field (teleCounter, ideaCounter,
+// bugCounter, ...) via a single meta/counter.json blob.
 const storageCounter = new StorageBackedCounter(storageProvider);
+ideaStore = new IdeaRepository(storageProvider, storageCounter);
+bugStore = new BugRepository(storageProvider, storageCounter);
 teleStore = new TeleRepository(storageProvider, storageCounter);
+
+// missionStore + turnStore depend on ideaStore (cascade back-links) and
+// taskStore, so construct them after the repository instantiation above.
+if (STORAGE_BACKEND === "gcs") {
+  const bucket = GCS_BUCKET!;
+  missionStore = new GcsMissionStore(bucket, taskStore, ideaStore);
+  turnStore = new GcsTurnStore(bucket, missionStore, taskStore);
+} else {
+  missionStore = new MemoryMissionStore(taskStore, ideaStore);
+  turnStore = new MemoryTurnStore(missionStore, taskStore);
+}
 
 // ── Aggregate Store Object ────────────────────────────────────────────
 const allStores: AllStores = {

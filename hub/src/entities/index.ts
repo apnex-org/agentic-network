@@ -2,9 +2,8 @@
  * Entity module re-exports.
  */
 
-export type { Idea, IdeaStatus, IIdeaStore } from "./idea.js";
-export { MemoryIdeaStore } from "./idea.js";
-export { GcsIdeaStore } from "./gcs/gcs-idea.js";
+export type { Idea, IdeaStatus, IIdeaStore, CascadeBacklink as IdeaCascadeBacklink } from "./idea.js";
+export { IdeaRepository } from "./idea-repository.js";
 
 export type { Mission, MissionStatus, IMissionStore, PlannedTask, PlannedTaskStatus } from "./mission.js";
 export { MemoryMissionStore, findNextUnissuedPlannedTask } from "./mission.js";
@@ -20,9 +19,8 @@ export { TeleRepository } from "./tele-repository.js";
 export { StorageBackedCounter } from "./counter.js";
 export type { Counters, CounterField } from "./counter.js";
 
-export type { Bug, BugStatus, BugSeverity, IBugStore } from "./bug.js";
-export { MemoryBugStore } from "./bug.js";
-export { GcsBugStore } from "./gcs/gcs-bug.js";
+export type { Bug, BugStatus, BugSeverity, IBugStore, CascadeBacklink as BugCascadeBacklink } from "./bug.js";
+export { BugRepository } from "./bug-repository.js";
 
 export type {
   PendingActionItem,

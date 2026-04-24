@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { IPolicyContext, AllStores, DomainEvent } from "./types.js";
 import { MemoryTaskStore, MemoryEngineerRegistry, MemoryProposalStore, MemoryThreadStore, MemoryAuditStore } from "../state.js";
 import type { Selector } from "../state.js";
-import { MemoryIdeaStore } from "../entities/idea.js";
+import { IdeaRepository } from "../entities/idea-repository.js";
 import { MemoryMissionStore } from "../entities/mission.js";
 import { MemoryTurnStore } from "../entities/turn.js";
 import { TeleRepository } from "../entities/tele-repository.js";
 import { StorageBackedCounter } from "../entities/counter.js";
 import { MemoryStorageProvider } from "@ois/storage-provider";
-import { MemoryBugStore } from "../entities/bug.js";
+import { BugRepository } from "../entities/bug-repository.js";
 import { MemoryPendingActionStore } from "../entities/pending-action.js";
 import { MemoryDirectorNotificationStore } from "../entities/director-notification.js";
 import { createMetricsCounter } from "../observability/metrics.js";
@@ -35,13 +35,13 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
   const dispatchedEvents: DispatchedEvent[] = [];
 
   const task = new MemoryTaskStore();
-  const idea = new MemoryIdeaStore();
-  const mission = new MemoryMissionStore(task, idea);
-  // Mission-47 W1: tele store is TeleRepository over a fresh
-  // MemoryStorageProvider + StorageBackedCounter per test context —
-  // no state leakage between test cases.
+  // Mission-47 W1/W2: tele/idea/bug stores are *Repository classes over
+  // a fresh MemoryStorageProvider + StorageBackedCounter per test
+  // context — no state leakage between test cases.
   const storageProvider = new MemoryStorageProvider();
   const storageCounter = new StorageBackedCounter(storageProvider);
+  const idea = new IdeaRepository(storageProvider, storageCounter);
+  const mission = new MemoryMissionStore(task, idea);
   const stores: AllStores = {
     task,
     engineerRegistry: new MemoryEngineerRegistry(),
@@ -52,7 +52,7 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     mission,
     turn: new MemoryTurnStore(mission, task),
     tele: new TeleRepository(storageProvider, storageCounter),
-    bug: new MemoryBugStore(),
+    bug: new BugRepository(storageProvider, storageCounter),
     pendingAction: new MemoryPendingActionStore(),
     directorNotification: new MemoryDirectorNotificationStore(),
   };

@@ -27,12 +27,11 @@ If you're picking up cold on mission-47:
 
 ## In-flight
 
-- ▶ **T2-W1 — tele repository migration.** Shipped locally; PR pending push. Thread-290 §3 contract-validation ground. Hub suite 725/730 pass (baseline preserved); no regressions. Next: push branch, open PR, ping lily for post-W1 contract-validation checkpoint thread per Option C.
+- ▶ **T2-W2 — bug + idea repository migrations.** Shipped locally on `agent-greg/mission-47-t2-w2-bug-idea-repository` (T1 #10 + W1 #11 merged to main). Hub suite 723/728 pass (5 skipped; zero regressions). Next: push branch, open PR, single CI-check verify per thread-294 agreed pattern, hand off via standard PR-review to lily (W2 is routine — not a dedicated gate).
 
 ## Queued / filed
 
-- ○ **T2-W2 bug + idea** — blocked on W1 post-checkpoint acceptance.
-- ○ **T2-W3 director-notification** — blocked on W2.
+- ○ **T2-W3 director-notification** — blocked on W2 merge.
 - ○ **T2-W4 mission** — blocked on W3.
 - ○ **T2-W5 task + proposal** — blocked on W4.
 - ○ **T2-W6 thread** — blocked on W5.
@@ -44,6 +43,17 @@ If you're picking up cold on mission-47:
 ---
 
 ## Done this session
+
+### T2-W2 (bug + idea repository migrations) — shipped 2026-04-24
+
+- ✅ **`hub/src/entities/idea-repository.ts` — `IdeaRepository implements IIdeaStore`.** Composes any `StorageProvider` + the shared `StorageBackedCounter` (same instance as W1's tele repo). Layout `ideas/<ideaId>.json` matches historical GCS keyspace. `updateIdea` via internal `casUpdate` (read-with-token → transform → putIfMatch). Missing-idea returns null; all other errors propagate. `findByCascadeKey` uses list+filter (suitable for v1 volumes; indexed lookup deferred to idea-186 if needed).
+- ✅ **`hub/src/entities/bug-repository.ts` — `BugRepository implements IBugStore`.** Symmetric pattern to IdeaRepository. Layout `bugs/<bugId>.json`; counter field `bugCounter`. `findByCascadeKey` + `findBySourceIdeaId` via list+filter. Defensive clones on read/returns (bug.tags, linkedTaskIds, fixCommits are mutable arrays).
+- ✅ **Legacy classes deleted.** `MemoryIdeaStore` removed from `hub/src/entities/idea.ts`, `MemoryBugStore` from `hub/src/entities/bug.ts`. `hub/src/entities/gcs/gcs-idea.ts` + `hub/src/entities/gcs/gcs-bug.ts` deleted entirely. `hub/src/entities/index.ts` barrel replaces `{Memory,Gcs}{Idea,Bug}Store` exports with `{IdeaRepository, BugRepository}`.
+- ✅ **`hub/src/index.ts` startup restructure.** Repository instantiation block now builds Idea/Bug/Tele repositories up-front (single shared counter + provider). `missionStore` + `turnStore` construction moved below the repository block — they depend on `ideaStore`, so ordering matters. GCS vs memory branches now only allocate provider + legacy backend-specific stores; repository construction is backend-agnostic.
+- ✅ **Test scaffolds updated.** `hub/src/policy/test-utils.ts` + `hub/test/e2e/orchestrator.ts` — both now build IdeaRepository + BugRepository + TeleRepository instead of legacy memory classes. Fresh provider + counter per test-context.
+- ✅ **Obsolete P2 reproduction tests removed.** `hub/test/unit/gcs-p2-repro.test.ts` — the `GcsIdeaStore.updateIdea` lost-update reproduction section removed (GcsIdeaStore no longer exists). Equivalent concurrency coverage now lives in the storage-provider conformance suite (CAS primitive) + implicit in IdeaRepository `casUpdate`. Other P2 reproductions (mission/turn/task/proposal/thread) retained — those entities are not yet migrated.
+- ✅ **Wave2-policies.test.ts seed updated.** 5 `seedWithCreatedBy` tests poked at internal `(ctx.stores.idea as any).ideas` Map. Rewritten to use the public `submitIdea(text, createdBy)` API directly, which is backend-agnostic.
+- ✅ **Verification.** tsc strict-mode clean. Full hub suite 723 passing / 5 skipped / 0 failing — baseline preserved (725→723 delta explained: 2 obsolete GcsIdeaStore reproductions deleted; no new regressions).
 
 ### T2-W1 (tele repository migration) — shipped 2026-04-24
 
@@ -95,6 +105,8 @@ If you're picking up cold on mission-47:
 - **2026-04-24 ~09:00Z** — `npm install` + `npx tsc --noEmit` clean + `npx vitest run` green (40/40 tests across memory + local-fs).
 - **2026-04-24 ~09:00-09:15Z** — ADR-024 authored (full ratification document; 5 alternatives considered).
 - **2026-04-24 ~09:15Z** — README + work trace (this file).
+- **2026-04-24 ~17:00Z** — T2-W1 (tele repository migration) merged to main via PR #11 (stacked on T1 PR #10). Architect post-W1 contract-validation thread closed; W2 unblocked.
+- **2026-04-24 ~19:00-19:15Z** — T2-W2 (bug + idea repository migrations) authored locally: IdeaRepository + BugRepository + idea.ts/bug.ts MemoryStore deletions + gcs-idea.ts/gcs-bug.ts deletion + index.ts barrel update + hub/src/index.ts startup restructure + test-utils.ts + orchestrator.ts migration + wave2 seedWithCreatedBy rewrite + gcs-p2-repro.test.ts obsolete GcsIdeaStore section removal. tsc clean; hub suite 723/728 pass (baseline preserved).
 
 ## Canonical references
 

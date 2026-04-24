@@ -70,16 +70,22 @@ describe("IdeaPolicy", () => {
   // ── Phase C (task-306): createdBy.* nested paths ─────────────────
   describe("list_ideas — M-QueryShape Phase C (task-306)", () => {
     async function seedWithCreatedBy(): Promise<void> {
-      await router.handle("create_idea", { text: "Idea 1" }, ctx);
-      await router.handle("create_idea", { text: "Idea 2" }, ctx);
-      await router.handle("create_idea", { text: "Idea 3" }, ctx);
-      const internal = (ctx.stores.idea as any).ideas as Map<string, any>;
-      const i1 = internal.get("idea-1");
-      if (i1) i1.createdBy = { role: "architect", agentId: "eng-alpha" };
-      const i2 = internal.get("idea-2");
-      if (i2) i2.createdBy = { role: "engineer", agentId: "eng-beta" };
-      const i3 = internal.get("idea-3");
-      if (i3) i3.createdBy = { role: "architect", agentId: "eng-gamma" };
+      // Mission-47 W2: Idea store is StorageProvider-backed — the
+      // legacy internal `ideas` Map no longer exists. Submit ideas
+      // directly through the store API with the desired createdBy
+      // provenance instead of mutating internal state.
+      await ctx.stores.idea.submitIdea(
+        "Idea 1",
+        { role: "architect", agentId: "eng-alpha" },
+      );
+      await ctx.stores.idea.submitIdea(
+        "Idea 2",
+        { role: "engineer", agentId: "eng-beta" },
+      );
+      await ctx.stores.idea.submitIdea(
+        "Idea 3",
+        { role: "architect", agentId: "eng-gamma" },
+      );
     }
 
     it("filter: createdBy.role selects architect-created ideas only", async () => {

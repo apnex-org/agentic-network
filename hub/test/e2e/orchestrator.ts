@@ -38,13 +38,13 @@ import {
   MemoryThreadStore,
   MemoryAuditStore,
 } from "../../src/state.js";
-import { MemoryIdeaStore } from "../../src/entities/idea.js";
+import { IdeaRepository } from "../../src/entities/idea-repository.js";
 import { MemoryMissionStore } from "../../src/entities/mission.js";
 import { MemoryTurnStore } from "../../src/entities/turn.js";
 import { TeleRepository } from "../../src/entities/tele-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
 import { MemoryStorageProvider } from "@ois/storage-provider";
-import { MemoryBugStore } from "../../src/entities/bug.js";
+import { BugRepository } from "../../src/entities/bug-repository.js";
 import { MemoryPendingActionStore } from "../../src/entities/pending-action.js";
 import { MemoryDirectorNotificationStore } from "../../src/entities/director-notification.js";
 import { createMetricsCounter, type MetricsCounter } from "../../src/observability/metrics.js";
@@ -488,11 +488,11 @@ export class TestOrchestrator {
 
   private createStores(): AllStores {
     const task = new MemoryTaskStore();
-    const idea = new MemoryIdeaStore();
-    const mission = new MemoryMissionStore(task, idea);
-    // Mission-47 W1: tele via TeleRepository + MemoryStorageProvider.
+    // Mission-47 W1/W2: tele/idea/bug via *Repository + MemoryStorageProvider.
     const storageProvider = new MemoryStorageProvider();
     const storageCounter = new StorageBackedCounter(storageProvider);
+    const idea = new IdeaRepository(storageProvider, storageCounter);
+    const mission = new MemoryMissionStore(task, idea);
     return {
       task,
       engineerRegistry: new MemoryEngineerRegistry(),
@@ -503,7 +503,7 @@ export class TestOrchestrator {
       mission,
       turn: new MemoryTurnStore(mission, task),
       tele: new TeleRepository(storageProvider, storageCounter),
-      bug: new MemoryBugStore(),
+      bug: new BugRepository(storageProvider, storageCounter),
       pendingAction: new MemoryPendingActionStore(),
       directorNotification: new MemoryDirectorNotificationStore(),
     };

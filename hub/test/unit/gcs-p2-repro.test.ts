@@ -24,7 +24,10 @@ vi.mock("@google-cloud/storage", () => ({ Storage: GcsFakeStorage }));
 
 // Imports must be AFTER vi.mock so the mocked Storage is picked up
 // when `gcs-state.ts` constructs `new Storage()` at module init.
-const { GcsIdeaStore } = await import("../../src/entities/gcs/gcs-idea.js");
+// Mission-47 W2: GcsIdeaStore deleted — Idea concurrency is now
+// exercised via the storage-provider conformance suite (CAS primitive)
+// plus IdeaRepository unit tests, so the GcsIdeaStore.updateIdea
+// reproduction below is removed.
 const { GcsMissionStore } = await import("../../src/entities/gcs/gcs-mission.js");
 const { GcsTurnStore } = await import("../../src/entities/gcs/gcs-turn.js");
 const {
@@ -37,50 +40,6 @@ const BUCKET = "test-bucket";
 
 beforeEach(() => {
   installGcsFake();
-});
-
-// ── GcsIdeaStore ─────────────────────────────────────────────────────
-
-describe("GcsIdeaStore.updateIdea — lost-update reproduction", () => {
-  it("preserves both field mutations under concurrent writers", async () => {
-    const store = new GcsIdeaStore(BUCKET);
-    gcsFake().put("ideas/idea-1.json", {
-      id: "idea-1",
-      text: "seed",
-      author: "alice",
-      status: "open",
-      missionId: null,
-      sourceThreadId: null,
-      tags: [],
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    });
-
-    const [a, b] = await Promise.all([
-      store.updateIdea("idea-1", { status: "accepted" }),
-      store.updateIdea("idea-1", { tags: ["priority-a"] }),
-    ]);
-
-    expect(a).not.toBeNull();
-    expect(b).not.toBeNull();
-
-    const final = await store.getIdea("idea-1");
-    expect(final).not.toBeNull();
-    expect(final!.status).toBe("accepted");
-    expect(final!.tags).toEqual(["priority-a"]);
-
-    // Harness self-check: the two concurrent writers must have forced
-    // at least one CAS precondition failure. If this drops to 0 the
-    // fake is not actually producing contention and the test above
-    // is passing trivially.
-    expect(gcsFake().preconditionFailureCount).toBeGreaterThanOrEqual(1);
-  });
-
-  it("returns null when the idea does not exist", async () => {
-    const store = new GcsIdeaStore(BUCKET);
-    const result = await store.updateIdea("idea-404", { status: "accepted" });
-    expect(result).toBeNull();
-  });
 });
 
 // ── GcsMissionStore ──────────────────────────────────────────────────
