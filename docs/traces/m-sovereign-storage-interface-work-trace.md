@@ -27,23 +27,42 @@ If you're picking up cold on mission-47:
 
 ## In-flight
 
-- ▶ **T2-W2 — bug + idea repository migrations.** PR #12 open against main. Hub CI green (`vitest (hub)` passing; continue-on-error cells as expected). Awaiting architect routine-review.
-- ▶ **T2-W3 — director-notification repository migration.** PR #13 stacked on #12. Awaiting review.
-- ▶ **T2-W4 — mission repository migration.** PR #14 stacked on #13. Virtual-view hydration + plannedTasks cascade preserved. Awaiting review.
-- ▶ **T2-W5 — task + proposal repository migrations.** PR #15 stacked on #14. FSM gates preserved via TransitionRejected sentinel → boolean/null mapping. Awaiting review.
-- ▶ **T2-W6 — thread repository migration.** PR #16 stacked on #15. Awaiting review.
-- ▶ **T2-W7a — turn + pending-action repository migrations.** PR #17 stacked on #16. Awaiting review.
-- ▶ **T2-W7b — agent repository migration.** PR #18 stacked on #17. Includes INV-COMMS-L03 correctness fix (ported Memory's read-time `computeLivenessState` recompute — closes latent gap in pre-migration GCS). Lily notified via thread-299.
-- ▶ **T3 — sync script + STORAGE_BACKEND=local-fs wiring.** Shipped locally on `agent-greg/mission-47-t3-local-fs-wiring` (stacked on #18). Hub suite 706/711 pass. `STORAGE_BACKEND=local-fs` branch added to `hub/src/index.ts` with `OIS_LOCAL_FS_ROOT` env var + prod-guard (local-fs dev-only per `concurrent:false`). `scripts/state-sync.sh` mirrors `gs://bucket/` → local dir via `gsutil -m rsync -r -d` (parallel, mirror semantics). Sibling-script rather than `--no-tar` flag on existing `state-backup.sh` — different semantics (archival vs live-usable mirror). Next: push + open PR.
+- ▶ **T4 — comparative latency measurement.** Shipped locally on `agent-greg/mission-47-t4-latency-measurement` (fresh off main per thread-302 convention). `packages/storage-provider/scripts/latency-benchmark.ts` (harness) + `docs/history/mission-47-t4-latency-results.md` (results). Memory + local-fs measured @ 1000 iters. Per-op p50/p95/p99 tables delivered. Key decomposition: memory → local-fs ranges 5× (list-small) to 148× (putIfMatch-contention); writes pay the heaviest filesystem cost; list degrades non-linearly with prefix size (bug-29 surface). GCS deferred to operator-run when credentials available (harness supports it). Next: push + open PR.
+
+## Merged (core mission)
+
+- ✅ **T1** — @ois/storage-provider contract + 3 providers + conformance suite + ADR-024 (PR #10 merged pre-session).
+- ✅ **T2-W1** — tele repository migration (PR #11 merged pre-session).
+- ✅ **T2-W2** — bug + idea repository migrations (PR #12 merged 2026-04-24 10:51Z).
+- ✅ **T2-W3** — director-notification repository migration (PR #13 merged 11:36Z via cascade).
+- ✅ **T2-W4** — mission repository migration (PR #14 merged 11:46Z).
+- ✅ **T2-W5** — task + proposal repository migrations (PR #15 merged 11:49Z).
+- ✅ **T2-W6** — thread repository migration (PR #16 merged 11:52Z).
+- ✅ **T2-W7a** — turn + pending-action repository migrations (PR #17 merged 11:53Z).
+- ✅ **T2-W7b** — agent repository migration + INV-COMMS-L03 correctness fix (PR #18 merged 11:55Z).
+- ✅ **T3** — sync script + STORAGE_BACKEND=local-fs wiring (PR #19 merged 11:56Z).
+
+Main at `eab4cbc`. Core mission (T1 + T2 all 7 waves + T3) = 100% shipped. All 10 PRs merged; zero orphan branches; zero contract drift; 706/711 hub tests green throughout. Cascade-unwind at thread-300/301 (post-#12-merge stacked divergence) resolved cleanly via cascade-one-at-a-time rebase + re-approval pattern; captured in `feedback_stacked_pr_merge_cadence.md`.
 
 ## Queued / filed
-- ○ **T3 sync script + STORAGE_BACKEND=local-fs wiring** — blocked on W7.
-- ○ **T4 comparative latency measurement** — blocked on T3.
-- ○ **T5 closing audit + hygiene** — blocked on T4; mission-status flip architect-gated.
+
+- ○ **T5 closing audit + hygiene** — to be shipped in a fresh session per thread-302 architect lean (fresh eyes on closing audit). Captures pending: INV-COMMS-L03 latent-gap discovery retrospective, orphan-branch cleanup gotcha, session-wake primitive idea-121/187 input, Director interrogation→honest-reframe lesson pattern, cascade-convention retrospective (already in memory; replicates to retrospective section).
 
 ---
 
 ## Done this session
+
+### T4 (comparative latency measurement) — shipped 2026-04-24
+
+- ✅ **`packages/storage-provider/scripts/latency-benchmark.ts` — reusable harness.** CLI `npx tsx … <backend> [iters]`. Runs 7-phase workload: `createOnly → get → put → putIfMatch (happy) → putIfMatch (contention) → list-small (20 entries) → list-large (200 entries)`. Per-op p50/p95/p99 via sorted-sample percentiles over `performance.now()` timings. Cleans up its own `bench/` prefix keys; local-fs uses `mkdtemp` for root + `rm -rf` on completion. Architect workload guidance (thread-302) incorporated: read-heavy + write-heavy ops, high-concurrency CAS pattern (contention phase), list-heavy pattern at a size where bug-29-adjacent non-linearity starts surfacing.
+- ✅ **`docs/history/mission-47-t4-latency-results.md` — results document.** Per-backend per-op tables (p50/p95/p99/mean/max), decomposition ratio table (memory → local-fs per op), application-layer implications (Repository-pattern cost overhead; list-then-fetch linear scaling; putIfMatch-50-retry worst case bounded), architect-flagged SC compliance, follow-ups for idea-188 + bug-29 + GCS operator-run.
+- ✅ **Harness validation (Option C pre-flight).** Memory @ 500 iters confirmed plausible numbers (sub-µs reads; ~25µs list) + no harness bugs before committing the full 1000-iter Option A runs. Per architect-preferred A + C hybrid from thread-302.
+- ✅ **Key findings:**
+  - Memory: all single-op p50 < 2µs; list at 20 entries is 25.8µs p50, at 200 entries is 32.6µs p50 (near-constant — Map.keys() is O(1)-ish).
+  - Local-fs: writes ~60-100µs (O_EXCL + rename syscalls dominate); reads ~40µs (page cache helps); list non-linear — 135µs for 20 entries vs 517µs for 200 entries.
+  - putIfMatch contention is the largest divergence: 148× slower on local-fs because memory fast-fails on in-process token-mismatch while local-fs pays full read+check+abort cost.
+  - Per-operation decomposition (not aggregate) is the primary deliverable — feeds idea-188 directly. Architect's SC #5 met.
+- ⏸ **GCS measurement deferred.** Session lacks bucket credentials. Harness supports it (`gcs <bucket> <iters>`); operator-run recommended against isolated test bucket to avoid prod-state contamination. Results doc has an "Expected from prior bug-29 observations" section sketching the ballpark to match.
 
 ### T3 (sync script + STORAGE_BACKEND=local-fs wiring) — shipped 2026-04-24
 
