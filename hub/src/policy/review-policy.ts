@@ -13,6 +13,7 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { isValidTransition } from "./types.js";
 import { TASK_FSM } from "./task-policy.js";
+import { runTriggers } from "./triggers.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -103,6 +104,31 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
       payload: { taskId },
     });
 
+    // Mission-51 W3: state-transition trigger for review-submitted.
+    // Best-effort emission; failures are logged + non-fatal.
+    try {
+      await runTriggers(
+        "review",
+        null,
+        "submitted",
+        {
+          id: reviewRef,
+          taskId,
+          decision: "approved",
+          reviewerAgentId: ctx.sessionId,
+          reportAuthorAgentId: task.assignedEngineerId ?? undefined,
+        },
+        ctx,
+      );
+    } catch (err) {
+      ctx.metrics.increment("trigger.runner_error", {
+        entityType: "review",
+        toStatus: "submitted",
+        error: (err as Error)?.message ?? String(err),
+      });
+      console.warn(`[ReviewPolicy] runTriggers failed for review of task ${taskId} (approved); review still committed:`, err);
+    }
+
     return {
       content: [{
         type: "text" as const,
@@ -190,6 +216,31 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
       }, task.assignedEngineerId
         ? { engineerId: task.assignedEngineerId }
         : { roles: ["engineer"], matchLabels: task.labels });
+
+      // Mission-51 W3: state-transition trigger (same shape as the
+      // approved-path; payload.decision differentiates).
+      try {
+        await runTriggers(
+          "review",
+          null,
+          "submitted",
+          {
+            id: reviewRef,
+            taskId,
+            decision: "revision_required",
+            reviewerAgentId: ctx.sessionId,
+            reportAuthorAgentId: task.assignedEngineerId ?? undefined,
+          },
+          ctx,
+        );
+      } catch (err) {
+        ctx.metrics.increment("trigger.runner_error", {
+          entityType: "review",
+          toStatus: "submitted",
+          error: (err as Error)?.message ?? String(err),
+        });
+        console.warn(`[ReviewPolicy] runTriggers failed for review of task ${taskId} (revision_required); review still committed:`, err);
+      }
 
       return {
         content: [{
