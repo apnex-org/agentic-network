@@ -20,7 +20,7 @@ If you're picking up cold on mission-48:
 1. **Read this file first**, then thread-303 for design-round context, then `docs/decisions/024-sovereign-storage-provider.md` §6.1 for the ADR-024 amendment.
 2. **DAG:** T1 → T2a → T2b → T2c → T3 → T4. Strictly sequential per ship-green discipline + thread-306 PR cadence.
 3. **Issuance pattern (architect-side):** mission-48 runs **without `plannedTasks`** as an explicit bypass of bug-31 (variant-1 cascade-auto-duplicate + variant-2 cascade-stall, both observed twice on mission-49). Architect manually `create_task`s each subsequent task on prior approval. Saves ~10-15 min of duplicate-detection cycles per mission.
-4. **Current state:** T1 ✅ merged at `1e61226` (PR #24); T2a ✅ merged at `bc5dbb6` (PR #25); T2b ✅ merged at `34b225a` (PR #26); T2c shipped locally (task code at `3745367`); awaiting trace-commit + push + PR open. After T2c merges, architect issues T3 manually per the bug-31-bypass cadence.
+4. **Current state:** T1/T2a/T2b/T2c ✅ all merged on main (PRs #24/#25/#26/#27 at `1e61226` / `bc5dbb6` / `34b225a` / `8c420c7`). T3 shipped locally on `agent-greg/mission-48-t3` — operator-side drill procedures documented at `docs/runbooks/m-local-fs-cutover-drills.md`. Live drill execution deferred to operator (Director α-path on thread-307 round 3) — engineer's MCP session is bound to the running Hub container, so engineer can't safely restart from this worktree. After T3 PR merges, architect issues T4 (closing hygiene). Mission-48 close: T4 merge + Director-signaled satisfactory drill outputs → architect flips mission-48 → `completed`.
 5. **Pre-authorized scope discipline:** uid/gid mitigation = `docker run -u $(id -u):$(id -g)` (architect-confirmed thread-306); `local-state/` is gitignored; ADR-024 amendment is single-writer-laptop-prod-eligible only — multi-writer / Cloud Run continue to require `STORAGE_BACKEND=gcs` per the still-intact `concurrent:false` capability flag.
 6. **Bug carry-forward:** bug-32 (cross-package CI debt — `network-adapter` + `claude-plugin` + `opencode-plugin` test cells red on every PR) — pre-existing pattern. Verify hub scope green; ignore the 3 known-noisy cells.
 7. **Mission-49 dependency:** ✅ resolved. AuditStore + NotificationStore now migrated to Repository pattern; durable on local-fs. mission-48's success-criterion 5 (no audit/notification regression post-cutover) is now structurally provable.
@@ -29,7 +29,7 @@ If you're picking up cold on mission-48:
 
 ## In-flight
 
-- ▶ **T2c — Reverse-direction sync (local→GCS) with --yes safety + symmetric invariant.** Shipped on `agent-greg/mission-48-t2c` (fresh off `origin/main` at `34b225a`). Task commit `3745367`. 2 files changed (1 rewrite + 1 modified); +277/-158 LOC (state-sync.sh ~76% rewrite for bidirectional structure; deploy/README adds reverse-section + rollback-flow code-block). Hub tests untouched at 52/755/5 (shell-only). 5-test smoke matrix passed against fake-gsutil harness (forward baseline / reverse-without-yes refused / reverse-with-yes succeeds + sentinel stays local / reverse idempotent rerun / .tmp.* exclusion). Live GCS smoke deferred to T3 dogfood per task-358 scope. Awaiting trace-commit + push + PR open.
+- ▶ **T3 — Dogfood validation + Hub-restart-mid-mission readback assertion + live rollback drill.** Shipped on `agent-greg/mission-48-t3` (fresh off `origin/main` at `8c420c7`). New file `docs/runbooks/m-local-fs-cutover-drills.md` (~270 lines) — operator-side drill procedures + dogfood entity-type enumeration + container-rebuild verification. Hub tests untouched at 52/755/5 (no source changes — operational verification task). Engineer-side scope: documentation. Live drill execution: operator-side per Director α-path (thread-307 round 3); engineer can't safely restart the running Hub from this worktree because MCP session is bound to it.
 
 ## Queued / filed
 - ○ **T2c — Reverse-direction sync (local→GCS manual backup).** `state-sync.sh --reverse` capability + tmp-file filter (`.tmp.*` files never cross the wire); runbook entry for on-demand backup; feeds rollback procedure directly.
@@ -41,7 +41,17 @@ If you're picking up cold on mission-48:
 
 ## Done this session
 
-### T2c (Reverse-direction sync with --yes safety) — shipped locally 2026-04-25
+### T3 (Dogfood + Hub-restart-mid-mission readback + live rollback drill) — shipped locally 2026-04-25
+
+- ✅ **`docs/runbooks/m-local-fs-cutover-drills.md` — new operator-side runbook (~270 lines).** Establishes a new `docs/runbooks/` directory convention (T4 will reference; sister docs to `docs/onboarding/` but execution-focused). Sections: §0 Pre-flight container rebuild + bootstrap + start; §1 Dogfood entity-type enumeration (with explicit honesty: dogfood proved Hub data plane on GCS-deployed pre-mission-48 image, NOT the local-fs cutover specifically); §2 Hub-restart-mid-mission readback assertion (load-bearing — pre/post entity-type counts + ID-set equality across all entities); §3 Live rollback drill consuming T2c (post-cutover write → reverse-sync → flip env-var → restart on GCS → verify entity preserved); §4 Reporting-back semantics (thread-307 reply OR PR amendment OR retrospective inclusion); cross-references to mission entity / design round / ADR / trace / bugs.
+- ✅ **Engineer-side container-rebuild verification.** `bash -n scripts/local/build-hub.sh` clean; `deploy/env/prod.tfvars` populated; gcloud SDK 512+ installed; build prerequisites verified locally without invoking real Cloud Build (cost discipline). Documented exact rebuild command for Director: `OIS_ENV=prod scripts/local/build-hub.sh`.
+- ✅ **Deployment-state finding surfaced honestly on thread-307 (round 2):** running `ois-hub-local` container on pre-mission-48 image (SHA `7601261e8…`, 2026-04-24 02:46 UTC), `STORAGE_BACKEND=gcs`, no bind mount, no `-u` uid override, container started PRE-mission-48-activation. Mission-48 work merged to main but not redeployed; the dogfood claim "running this mission against the local-fs default" doesn't hold as stated. Director ratified α-path 2026-04-25 (round 3): operator runs live drill; engineer documents.
+- ✅ **Side observation captured for architect retrospective:** "Hub redeploy is not gated on mission-merge events" — distinct from idea-191/idea-192 (CD-pipeline territory; benefits-from but its own scope). Architect ack'd; will file as discrete idea post-mission-48-close.
+- ✅ **Verification.** `npm test` (hub): 52 files / 755 passed / 5 skipped (unchanged from T2c-merged baseline; T3 is docs-only — no source changes). `npm run build`: clean. `bash -n scripts/local/build-hub.sh`: clean. `bash -n scripts/local/start-hub.sh`: clean. `bash -n scripts/state-sync.sh`: clean. `@ois/storage-provider` conformance suite: unchanged.
+
+### T2c (Reverse-direction sync with --yes safety) — shipped + merged 2026-04-25
+
+- ✅ **PR #27 merged at `8c420c7`** (architect-merged 2026-04-25; bug-32 CI pattern matched).
 
 - ✅ **`scripts/state-sync.sh` — bidirectional refactor.** New flags: `--reverse` (flip direction local-fs → GCS), `--yes` (required when --reverse), `-h/--help`. Without `--yes`, `--reverse` refuses with an explicit "rollback-path most-expensive-mistake" diagnostic + exit 1. Constants extracted: `TMP_FILE_EXCLUDE_REGEX` (T2a-preserved), `SCRIPT_ARTIFACT_REGEX` (T2a; loosened from `^\.` to unanchored `\.` so it matches in subdirs), `SYNC_EXCLUDE_REGEX` (composed; passed to gsutil rsync `-x` in both directions). Direction-specific source/target via a case block.
 - ✅ **Sentinel handling — forward writes; reverse leaves alone.** Forward direction writes `.cutover-complete` after invariant green (T2a behavior preserved). Reverse direction explicitly does NOT touch the sentinel — it reflects the LAST FORWARD bootstrap, not the last reverse upload. Rewriting on reverse would mislead future cold-engineer pickup into thinking a fresh bootstrap occurred.
@@ -94,9 +104,13 @@ If you're picking up cold on mission-48:
 mission-49 ✅────────────[Audit + Notification Repository migration shipped on main; durable on local-fs]
                                                                     │
                                                                     ▼
-T1 ✅ ──→ T2a ✅ ──→ T2b ✅ ──→ T2c ▶ ──→ T3 ○ ──→ T4 ○ ──→ mission-48 close
-[merged    [merged    [merged                                   │
- 1e61226]   bc5dbb6]   34b225a]                                 └─[unblocks]─→ idea-191 / idea-192
+T1 ✅ ──→ T2a ✅ ──→ T2b ✅ ──→ T2c ✅ ──→ T3 ▶ ──→ T4 ○ ──→ mission-48 close
+[merged    [merged    [merged    [merged                          │
+ 1e61226]   bc5dbb6]   34b225a]   8c420c7]                        └─[unblocks]─→ idea-191 / idea-192
+
+Operator-side drill execution (§2 Hub-restart readback + §3 rollback drill) explicitly deferred per
+Director α-path call on thread-307 round 3. Mission-48 status flip to `completed` gates on T4 merge
++ Director-signaled drill outputs (or close-without-drill signal).
                                                                               (workflow-primitive design rounds —
                                                                                blocked on mission-48 per thread-303)
 
@@ -109,6 +123,8 @@ Outside-mission downstream: idea-191 (GH event bridge) + idea-192 (Hub triggers 
 ---
 
 ## Session log (append-only)
+
+- **2026-04-25 late (T3)** — T2c PR #27 merged at `8c420c7` (architect-merged; bug-32 CI pattern matched). thread-306 round-limited at PR #27 announce; architect opened thread-307 to continue PR coordination through T3 + T4. Architect issued task-359 (T3) on thread-307 round 1. Engineer inspected the running `ois-hub-local` container before committing to the live drill and surfaced a critical deployment-state finding: container is on pre-mission-48 image (SHA `7601261e8…`, started 2026-04-24 02:46 UTC, before mission-48 even activated), `STORAGE_BACKEND=gcs`, no bind mount, no `-u` uid override. The dogfood claim asserted in thread-303 + task-359 ("running this mission against the local-fs default") is therefore honestly inaccurate as stated — engineer's mission-48 MCP traffic exercised the Hub data plane on the GCS-deployed pre-mission-48 image, not the local-fs cutover path. Three paths (α/β/γ) surfaced for Director's call; Director ratified α (operator runs live drill; engineer documents) on thread-307 round 3 with explicit container-rebuild ask attached. Engineer shipped T3 as docs-only PR: `docs/runbooks/m-local-fs-cutover-drills.md` (~270-line operator-side runbook covering pre-flight container rebuild + bootstrap + start, dogfood entity-type enumeration, Hub-restart-mid-mission readback assertion, live rollback drill consuming T2c, reporting-back semantics) + container-rebuild verification (build-hub.sh syntax + tfvars + gcloud check; documented exact rebuild command for Director). Hub tests untouched at 52/755/5. Side observation ack'd for architect retrospective: "Hub redeploy is not gated on mission-merge events" (CD-pipeline scope; will file as discrete idea post-close). Mission-48 progress: 4/6 PRs merged; T3 docs PR open next; T4 closing hygiene remains; mission status flip to `completed` gates on T4 merge + Director-signaled drill outputs.
 
 - **2026-04-25 late (T2c)** — T2b PR #26 merged at `34b225a` (architect-merged; bug-32 CI pattern matched, no triage). Architect issued task-358 (T2c) manually per bug-31 bypass. Engineer shipped T2c locally on `agent-greg/mission-48-t2c` (fresh off `34b225a`): scripts/state-sync.sh ~76% rewrite for bidirectional structure (forward + --reverse --yes flags, symmetric invariant, direction-specific failure-cause output, sentinel handling — forward writes, reverse leaves alone); deploy/README mount-section gains reverse-section + Operator rollback flow code-block. Smoke matrix (5 tests via fake-gsutil) all matched: forward baseline green / reverse-without-yes refused with exit 1 / reverse-with-yes succeeds + sentinel stays local-only / reverse idempotent rerun green / .tmp.* exclusion verified. Live GCS smoke deferred to T3 dogfood. Hub tests untouched at 52/755/5. Task commit `3745367`. Mission-48 progress: 4/6 PRs after this lands; T3 (dogfood + Hub-restart-mid-mission readback) is next; T4 (closing hygiene + fold idea-193) closes the mission.
 
