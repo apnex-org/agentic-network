@@ -125,7 +125,7 @@ The conformance fixture (`test/conformance/gh-events.fixture.json`) is the canon
 | T1 | This contract — `EventSource` interface + translator + sink stub + conformance fixture | This package |
 | T2 | `PollSource` impl — PAT auth, cadence, cursor + dedupe via StorageProvider, Retry-After-honoring 429 path | Future |
 | T3 | Hub integration — in-Hub component loading, `start-hub.sh` env-var wiring, per-PR/per-review/per-merge handling | Future |
-| T4 | `WebhookSource` design doc (no runtime stub — T1 contract IS the proof of source-pluggability) | Future |
+| T4 | `WebhookSource` design doc (no runtime stub — T1 contract IS the proof of source-pluggability) | [docs/webhook-source-design.md](./docs/webhook-source-design.md) |
 | T5 | Closing audit — sovereign-package #5 empirical proof; future-mission seeds (PII / multi-tenancy / adaptive-cadence / translator-schema-evolution) | Future |
 
 ## Provenance
