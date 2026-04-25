@@ -142,6 +142,16 @@ function dispatchPullRequest(
   if (!payload) return "unknown";
   const action = payload.action;
   if (action === "opened") return "pr-opened";
+  // GH Events API emits action="merged" directly (no nested pull_request.merged
+  // discriminator). Webhook delivery emits action="closed" + pull_request.merged
+  // = true (handled below). Both shapes exist in the wild — bug-39 surfaced
+  // when the live events-API path was dispatched to "unknown" by an earlier
+  // version of this function that only handled the webhook shape.
+  if (action === "merged") return "pr-merged";
+  // Reopens are functionally equivalent to opens for downstream consumers
+  // (PR is alive again; may need triage). Both events-API and webhook shapes
+  // emit action="reopened".
+  if (action === "reopened") return "pr-opened";
   if (action === "closed") {
     const pr = isRecord(payload.pull_request) ? payload.pull_request : undefined;
     return pr?.merged === true ? "pr-merged" : "pr-closed";

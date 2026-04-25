@@ -65,6 +65,39 @@ describe("dispatchSubkind — pull request lifecycle", () => {
     ).toBe("pr-merged");
   });
 
+  // bug-39: GH Events API emits action="merged" directly (no nested
+  // pull_request.merged). Earlier translator only handled the webhook shape
+  // (action="closed" + pull_request.merged=true) and dispatched live
+  // events-API merge events to "unknown".
+  it("merged action (events-API shape) → pr-merged", () => {
+    expect(
+      dispatchSubkind({
+        type: "PullRequestEvent",
+        payload: { action: "merged", pull_request: { number: 1 } },
+      }),
+    ).toBe("pr-merged");
+  });
+
+  it("merged action without pull_request still → pr-merged", () => {
+    // Defensive: even if the events-API drops pull_request, the action alone
+    // discriminates correctly.
+    expect(
+      dispatchSubkind({
+        type: "PullRequestEvent",
+        payload: { action: "merged" },
+      }),
+    ).toBe("pr-merged");
+  });
+
+  it("reopened action → pr-opened (alias for opens)", () => {
+    expect(
+      dispatchSubkind({
+        type: "PullRequestEvent",
+        payload: { action: "reopened", pull_request: { number: 1 } },
+      }),
+    ).toBe("pr-opened");
+  });
+
   it("unrecognized PR action → unknown", () => {
     expect(
       dispatchSubkind({
