@@ -15,10 +15,11 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "dependencies": {
-    "@ois/storage-provider": "file:../storage-provider"
+  "peerDependencies": {
+    "@ois/storage-provider": "*"
   },
   "devDependencies": {
+    "@ois/storage-provider": "file:../storage-provider",
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.4"
