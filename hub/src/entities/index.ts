@@ -46,3 +46,32 @@ export type {
   CreateNotificationOptions,
 } from "./director-notification.js";
 export { DirectorNotificationRepository } from "./director-notification-repository.js";
+
+// Mission-51 W1: Message sovereign primitive
+export type {
+  Message,
+  MessageKind,
+  MessageAuthorRole,
+  MessageDelivery,
+  MessageStatus,
+  MessageTarget,
+  KindAxes,
+  IMessageStore,
+  CreateMessageInput,
+  MessageQuery,
+} from "./message.js";
+export {
+  MESSAGE_KINDS,
+  MESSAGE_AUTHOR_ROLES,
+  MESSAGE_DELIVERY_MODES,
+  MESSAGE_STATUSES,
+  KIND_AXES,
+  MessageSchema,
+  checkAuthorAuthorized,
+  requiresTurn,
+  shiftsTurn,
+  messagePath,
+  threadIndexPath,
+  makeMigrationSourceId,
+} from "./message.js";
+export { MessageRepository } from "./message-repository.js";

@@ -13,6 +13,7 @@ import { AuditRepository } from "../entities/audit-repository.js";
 import { StorageBackedCounter } from "../entities/counter.js";
 import { MemoryStorageProvider } from "@ois/storage-provider";
 import { BugRepository } from "../entities/bug-repository.js";
+import { MessageRepository } from "../entities/message-repository.js";
 import { PendingActionRepository } from "../entities/pending-action-repository.js";
 import { DirectorNotificationRepository } from "../entities/director-notification-repository.js";
 import { createMetricsCounter } from "../observability/metrics.js";
@@ -60,6 +61,7 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     bug: new BugRepository(storageProvider, storageCounter),
     pendingAction: new PendingActionRepository(storageProvider, storageCounter),
     directorNotification: new DirectorNotificationRepository(storageProvider, storageCounter),
+    message: new MessageRepository(storageProvider),
   };
 
   return {

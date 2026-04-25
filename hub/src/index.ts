@@ -21,9 +21,10 @@ import {
   AgentRepository,
   AuditRepository,
   NotificationRepository,
+  MessageRepository,
   StorageBackedCounter,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
-  type IPendingActionStore, type IDirectorNotificationStore,
+  type IPendingActionStore, type IDirectorNotificationStore, type IMessageStore,
 } from "./entities/index.js";
 import { MemoryStorageProvider, GcsStorageProvider, LocalFsStorageProvider, type StorageProvider } from "@ois/storage-provider";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
@@ -89,6 +90,8 @@ let bugStore: IBugStore;
 // identically to other entities.
 let pendingActionStore: IPendingActionStore;
 let directorNotificationStore: IDirectorNotificationStore;
+// Mission-51 W1: universal Message primitive store.
+let messageStore: IMessageStore;
 
 // Mission-47 W1: tele store is now `TeleRepository` composed over a
 // `StorageProvider`. Provider is selected per STORAGE_BACKEND and
@@ -187,6 +190,8 @@ teleStore = new TeleRepository(storageProvider, storageCounter);
 directorNotificationStore = new DirectorNotificationRepository(storageProvider, storageCounter);
 threadStore = new ThreadRepository(storageProvider, storageCounter);
 pendingActionStore = new PendingActionRepository(storageProvider, storageCounter);
+// Mission-51 W1: MessageRepository — sovereign Message primitive over StorageProvider.
+messageStore = new MessageRepository(storageProvider);
 // AgentRepository does not use counter — engineerIds are fingerprint-derived.
 engineerRegistry = new AgentRepository(storageProvider);
 // MissionRepository takes taskStore + ideaStore for virtual-view hydration.
@@ -208,6 +213,7 @@ const allStores: AllStores = {
   bug: bugStore,
   pendingAction: pendingActionStore,
   directorNotification: directorNotificationStore,
+  message: messageStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────

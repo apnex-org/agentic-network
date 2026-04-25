@@ -151,6 +151,38 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
     context,
   });
 
+  // ── Mission-51 W1: Message primitive write-through migration shim ──
+  // Mirror of the create_thread_reply shim — also project the OPENING
+  // message (round 1) into the universal Message namespace so
+  // list_messages({threadId}) returns the full ordered conversation.
+  // Same idempotency + non-fatal failure semantics as the reply shim
+  // (see create_thread_reply for full rationale).
+  try {
+    const openAuthorRole: "engineer" | "architect" =
+      author === "engineer" ? "engineer" : "architect";
+    const openAuthorAgentId = authorAgentId ?? `anonymous-${author}`;
+    await ctx.stores.message.createMessage({
+      kind: "reply",
+      authorRole: openAuthorRole,
+      authorAgentId: openAuthorAgentId,
+      target: null,
+      delivery: "push-immediate",
+      threadId: thread.id,
+      payload: { text: message },
+      migrationSourceId: `thread-message:${thread.id}/1`,
+    });
+  } catch (shimErr) {
+    ctx.metrics.increment("message_shim.thread_open_write_failed", {
+      threadId: thread.id,
+      author,
+      error: (shimErr as Error)?.message ?? String(shimErr),
+    });
+    console.warn(
+      `[ThreadPolicy] message-shim write-through failed for thread-open ${thread.id}; legacy path remains authoritative:`,
+      shimErr,
+    );
+  }
+
   // INV-TH16 + ADR-016 INV-TH27: thread open dispatch is always
   // agent-targeted in unicast/multicast modes. Broadcast mode
   // EXPLICITLY opts in to role-pool discovery via the routingMode
@@ -441,6 +473,58 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
       content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Thread ${threadId} not found, not active, or not your turn` }) }],
       isError: true,
     };
+  }
+
+  // ── Mission-51 W1: Message primitive write-through migration shim ──
+  // After the legacy thread-message append (`replyToThread` already
+  // wrote `threads/<id>/messages/<seq>.json`), also create a Message
+  // entity with `kind=reply` and the migration-source pointer. Both
+  // paths are populated during the W1→W6 transition; W2 will
+  // normalize the read path; W6 will sunset the legacy inline append.
+  //
+  // Idempotency: createMessage with a populated `migrationSourceId`
+  // does find-or-create — if the same source pointer already maps to
+  // a Message, the existing Message is returned and no new write
+  // happens. Safe under retry / sweeper-replay.
+  //
+  // Failure handling: this is a write-through shim, NOT a hard
+  // dependency for the reply path. If the Message write fails, log
+  // and continue — the legacy thread-message is already persisted,
+  // so the reply is visible via the legacy read path. Bug-classes:
+  // mirror the cascade-runner's INV-TH26 audit-recoverability stance
+  // (audit failures don't block dispatch; here, shadow-write failures
+  // don't block the reply response).
+  try {
+    const replyAuthorRole: "engineer" | "architect" =
+      author === "engineer" ? "engineer" : "architect";
+    const replyAuthorAgentId = authorAgentId ?? `anonymous-${author}`;
+    const sourceSeq = thread.roundCount;
+    const sourceId = `${threadId}/${sourceSeq}`;
+    await ctx.stores.message.createMessage({
+      kind: "reply",
+      authorRole: replyAuthorRole,
+      authorAgentId: replyAuthorAgentId,
+      target: null,
+      delivery: "push-immediate",
+      threadId,
+      payload: { text: message },
+      intent: intent ?? undefined,
+      semanticIntent: semanticIntent ?? undefined,
+      converged,
+      migrationSourceId: `thread-message:${sourceId}`,
+    });
+  } catch (shimErr) {
+    // Non-fatal — shim is write-through; legacy path is authoritative
+    // until W2 normalization. Log + metric + continue.
+    ctx.metrics.increment("message_shim.thread_reply_write_failed", {
+      threadId,
+      author,
+      error: (shimErr as Error)?.message ?? String(shimErr),
+    });
+    console.warn(
+      `[ThreadPolicy] message-shim write-through failed for thread=${threadId} round=${thread.roundCount}; legacy path remains authoritative:`,
+      shimErr,
+    );
   }
 
   // INV-TH16 + ADR-016 INV-TH27: reply dispatch is strictly

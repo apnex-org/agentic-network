@@ -12,6 +12,7 @@ import type {
   IBugStore,
   IPendingActionStore,
   IDirectorNotificationStore,
+  IMessageStore,
 } from "../entities/index.js";
 import type { MetricsCounter } from "../observability/metrics.js";
 
@@ -37,6 +38,8 @@ export interface AllStores {
   bug: IBugStore;
   pendingAction: IPendingActionStore;
   directorNotification: IDirectorNotificationStore;
+  /** Mission-51 W1: universal Message primitive store. */
+  message: IMessageStore;
 }
 
 // ── Policy Context (the Layer 4 ↔ Layer 7 seam) ─────────────────────
