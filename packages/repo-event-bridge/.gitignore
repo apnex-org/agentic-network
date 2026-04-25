@@ -1,6 +1,3 @@
 node_modules/
+dist/
 *.tsbuildinfo
-# dist/ is committed (root .gitignore allows it via the
-# `!packages/repo-event-bridge/dist/` exception) so hub's
-# file:../packages/repo-event-bridge install resolves built artifacts
-# without needing to run a build step on consumer install.

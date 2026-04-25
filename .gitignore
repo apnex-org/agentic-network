@@ -17,12 +17,6 @@ dist/
 !packages/storage-provider/dist/
 !packages/storage-provider/dist/**
 
-# Mission-52 T3 exception (same workaround as storage-provider): hub
-# depends on @ois/repo-event-bridge via file:../packages/repo-event-bridge,
-# so the built dist/ ships alongside src/ until idea-186 lands.
-!packages/repo-event-bridge/dist/
-!packages/repo-event-bridge/dist/**
-
 # Logs
 *.log
 .ois/
