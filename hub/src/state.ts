@@ -1290,32 +1290,9 @@ export function upsertParticipant(
   }
 }
 
-export class MemoryAuditStore implements IAuditStore {
-  private entries: AuditEntry[] = [];
-  private counter = 0;
-
-  async logEntry(actor: AuditEntry["actor"], action: string, details: string, relatedEntity?: string): Promise<AuditEntry> {
-    this.counter++;
-    const entry: AuditEntry = {
-      id: `audit-${this.counter}`,
-      timestamp: new Date().toISOString(),
-      actor,
-      action,
-      details,
-      relatedEntity: relatedEntity || null,
-    };
-    this.entries.push(entry);
-    console.log(`[MemoryAuditStore] ${entry.actor}/${entry.action}: ${entry.details.substring(0, 80)}`);
-    return { ...entry };
-  }
-
-  async listEntries(limit = 50, actor?: AuditEntry["actor"]): Promise<AuditEntry[]> {
-    let filtered = this.entries;
-    if (actor) filtered = filtered.filter((e) => e.actor === actor);
-    // Return most recent first
-    return filtered.slice(-limit).reverse().map((e) => ({ ...e }));
-  }
-}
+// Mission-49 W8: MemoryAuditStore deleted. AuditRepository in
+// entities/audit-repository.ts composes any StorageProvider (including
+// MemoryStorageProvider for tests) via the IAuditStore interface.
 
 // ── M18 Shared Helpers ───────────────────────────────────────────────
 

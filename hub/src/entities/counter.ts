@@ -46,6 +46,7 @@ export interface Counters {
   bugCounter: number;
   pendingActionCounter: number;
   directorNotificationCounter: number;
+  auditCounter: number;
 }
 
 export type CounterField = keyof Counters;
@@ -67,6 +68,7 @@ function zeroCounters(): Counters {
     bugCounter: 0,
     pendingActionCounter: 0,
     directorNotificationCounter: 0,
+    auditCounter: 0,
   };
 }
 
