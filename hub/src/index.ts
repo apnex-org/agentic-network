@@ -45,6 +45,7 @@ import { registerBugPolicy } from "./policy/bug-policy.js";
 import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
 import { Watchdog } from "./policy/watchdog.js";
 import { MessageProjectionSweeper } from "./policy/message-projection-sweeper.js";
+import { ScheduledMessageSweeper } from "./policy/scheduled-message-sweeper.js";
 import { bindRouterToMcp } from "./policy/mcp-binding.js";
 import type { AllStores } from "./policy/index.js";
 import { createMetricsCounter } from "./observability/metrics.js";
@@ -636,6 +637,33 @@ const messageProjectionSweeper = new MessageProjectionSweeper(
   { intervalMs: 5000 },
 );
 
+// Mission-51 W4: scheduled-message sweeper. Polls every 1s for
+// scheduled+pending messages whose fireAt has been reached; evaluates
+// optional precondition; transitions scheduledState pending→delivered
+// (fire) or pending→precondition-failed (cancel + audit-entry).
+// Hub-startup full-sweep catches anything pending across restart.
+const scheduledMessageSweeper = new ScheduledMessageSweeper(
+  messageStore,
+  auditStore,
+  {
+    forSweeper: () => ({
+      stores: allStores,
+      metrics: createMetricsCounter(),
+      emit: async () => {},
+      dispatch: async () => {},
+      sessionId: "scheduled-message-sweeper",
+      clientIp: "127.0.0.1",
+      role: "system",
+      internalEvents: [],
+      config: {
+        storageBackend: STORAGE_BACKEND,
+        gcsBucket: GCS_BUCKET ?? "",
+      },
+    } as unknown as import("./policy/types.js").IPolicyContext),
+  },
+  { intervalMs: parseInt(process.env.OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS ?? "1000", 10) },
+);
+
 startupSequence().then(async () => {
   await hub.start();
   startThreadReaper();
@@ -655,6 +683,20 @@ startupSequence().then(async () => {
     console.warn("[Hub] Startup message-projection sweep failed; sweeper still starts:", err);
   }
   messageProjectionSweeper.start();
+  // Mission-51 W4: full-sweep before announcing readiness so any
+  // scheduled-pending messages that became due during the previous
+  // Hub-down window fire promptly.
+  try {
+    const swept = await scheduledMessageSweeper.fullSweep();
+    if (swept.fired > 0 || swept.cancelled > 0 || swept.errors > 0) {
+      console.log(
+        `[Hub] Startup scheduled-message sweep: scanned=${swept.scanned} fired=${swept.fired} cancelled=${swept.cancelled} errors=${swept.errors}`,
+      );
+    }
+  } catch (err) {
+    console.warn("[Hub] Startup scheduled-message sweep failed; sweeper still starts:", err);
+  }
+  scheduledMessageSweeper.start();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT}`);
   console.log(`[Hub] MCP endpoint: POST/GET/DELETE /mcp`);
   console.log(`[Hub] Health check: GET /health`);
@@ -666,6 +708,7 @@ startupSequence().then(async () => {
   startAgentReaper();
   startContinuationSweep();
   messageProjectionSweeper.start();
+  scheduledMessageSweeper.start();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT} (with startup warning)`);
 });
 
@@ -676,6 +719,7 @@ process.on("SIGINT", async () => {
   stopAgentReaper();
   stopContinuationSweep();
   messageProjectionSweeper.stop();
+  scheduledMessageSweeper.stop();
   await hub.stop();
   process.exit(0);
 });
