@@ -41,6 +41,7 @@ import { registerClarificationPolicy } from "./policy/clarification-policy.js";
 import { registerReviewPolicy } from "./policy/review-policy.js";
 import { registerProposalPolicy } from "./policy/proposal-policy.js";
 import { registerThreadPolicy } from "./policy/thread-policy.js";
+import { registerMessagePolicy } from "./policy/message-policy.js";
 import { registerBugPolicy } from "./policy/bug-policy.js";
 import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
 import { Watchdog } from "./policy/watchdog.js";
@@ -238,6 +239,8 @@ registerProposalPolicy(policyRouter);
 registerThreadPolicy(policyRouter);
 registerBugPolicy(policyRouter);
 registerPendingActionPolicy(policyRouter);
+// Mission-51 W6: list_messages + create_message MCP verbs.
+registerMessagePolicy(policyRouter);
 console.log(`[Hub] PolicyRouter initialized with ${policyRouter.size} tool(s): ${policyRouter.getRegisteredTools().join(", ")}`);
 
 // ADR-017: start the comms-reliability watchdog. Stateless scanner over

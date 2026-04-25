@@ -14,5 +14,6 @@ export { registerClarificationPolicy } from "./clarification-policy.js";
 export { registerReviewPolicy } from "./review-policy.js";
 export { registerProposalPolicy } from "./proposal-policy.js";
 export { registerThreadPolicy } from "./thread-policy.js";
+export { registerMessagePolicy } from "./message-policy.js";
 export { bindRouterToMcp } from "./mcp-binding.js";
 export type { PolicyContextFactory } from "./mcp-binding.js";
