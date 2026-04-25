@@ -90,6 +90,49 @@ scripts/local/stop-hub.sh                    # auto-detects the running env
 
 Default `OIS_ENV` is `prod` — existing single-env operators see unchanged behavior.
 
+## Cloud Build tarball staging (mission-50)
+
+Mission-50 (closed 2026-04-25) codified the storage-provider tarball staging that `scripts/local/build-hub.sh` performs as a pre-build hook before `gcloud builds submit`. This section documents the rationale, mechanics, sunset condition, CI parity expectation, and ADR-024 boundary.
+
+### Why
+
+Hub depends on `@ois/storage-provider` (a sovereign package living at `packages/storage-provider/`) via `"file:../packages/storage-provider"` in `hub/package.json`. That ref works for local dev (`cd hub && npm install` walks up one level), but it breaks under Cloud Build: `gcloud builds submit hub/` uploads only the contents of `hub/`, so the `..` escape leaves the storage-provider source unreachable inside the build container. That's the failure mode bug-33 hit on the post-mission-49 redeploy attempt.
+
+### How (transient swap)
+
+`scripts/local/build-hub.sh` runs a pre-build hook before `gcloud builds submit`:
+
+1. `npm pack --pack-destination "$HUB_DIR"` against `packages/storage-provider/` — produces `ois-storage-provider-<version>.tgz` inside `hub/` (filename auto-detected from `npm pack` stdout, so storage-provider version bumps require zero manual coordination).
+2. `sed` substitutes the `file:../packages/storage-provider` ref → `file:./<tarball>` in a transient `hub/package.json` swap.
+3. `npm install --package-lock-only --ignore-scripts --no-audit --no-fund` regenerates `hub/package-lock.json` against the tarball resolution.
+4. `gcloud builds submit "$REPO_ROOT/hub"` then uploads the prepared `hub/` directory.
+5. A trap on `EXIT INT TERM HUP` restores `package.json` + `package-lock.json` to their committed state and removes the staged tarball — committed git state stays clean even on signal interrupt. Backups land in a `mktemp -d` outside `hub/` so the gcloud build context isn't polluted.
+
+`hub/Dockerfile` permanently includes `COPY ois-storage-provider-*.tgz ./` before each `RUN npm ci` line in BOTH builder + production stages. The wildcard match keeps the line stable across storage-provider version bumps. `hub/.gitignore` permanently excludes `ois-storage-provider-*.tgz` so a staged tarball can never be accidentally committed.
+
+### Stays clean in git
+
+`hub/package.json` keeps `"file:../packages/storage-provider"` as the dev-mode source-of-truth; `hub/package-lock.json` stays at the file: resolution. Local dev (`cd hub && npm install`) is unchanged. The transient swap is invisible to anything outside the `build-hub.sh` process lifetime.
+
+### CI parity note (forward-look)
+
+`scripts/local/build-hub.sh` is the canonical Hub-build entry-point until idea-186 (npm workspaces adoption) lands and supersedes it. Future auto-redeploy mechanisms — including idea-197 / M-Auto-Redeploy-on-Merge when that ships — MUST invoke this script (or a workspaces-aware successor that inherits equivalent behavior) rather than calling `gcloud builds submit hub/` directly. Bypassing the script would re-introduce bug-33 (cross-package context trap on Cloud Build) and silently regress.
+
+### Sunset condition
+
+The tarball staging is a workaround. The sunset trigger: idea-186 (npm workspaces adoption) ratified + Hub migrated to workspace resolution. At that point, npm workspaces resolve the cross-package dependency natively; the tarball staging becomes dead weight. Cleanup at sunset:
+
+- Delete the §"Storage-provider tarball staging (mission-50 T1)" section from `scripts/local/build-hub.sh`.
+- Delete the `COPY ois-storage-provider-*.tgz ./` lines from `hub/Dockerfile` (both stages).
+- Delete the `ois-storage-provider-*.tgz` line from `hub/.gitignore`.
+- Delete this `Cloud Build tarball staging` section from `deploy/README.md`.
+
+`scripts/local/build-hub.sh` carries an inline `TODO(idea-186)` comment naming the sunset condition + cleanup steps so the trigger is discoverable from the workaround itself.
+
+### ADR-024 boundary statement
+
+Mission-50 does NOT amend [`ADR-024`](../docs/decisions/024-sovereign-storage-provider.md) (StorageProvider sovereign-package contract). The `@ois/storage-provider` 6-primitive contract surface is unchanged; the `capabilities.concurrent` flag is unchanged; both `LocalFsStorageProvider` and `GcsStorageProvider` implementations are untouched. The tarball staging is a build-pipeline pattern adapting AROUND the contract, not a contract change. Per methodology v1.0 §ADR-amendment-scope-discipline, ADR amendments are reserved for contract changes; deployment-pattern adaptations live in build-pipeline + runbook docs — i.e., here.
+
 ## Backends
 
 Both plans use the **local backend** as of the split (state files kept in-dir). Migration to GCS remote backend is a planned future improvement — bucket exists (per-env `gs://<env>-state` or `gs://ois-relay-hub-state` for prod), so bootstrap will be straightforward once we cut over. Until then: do not operate simultaneously from multiple machines.
