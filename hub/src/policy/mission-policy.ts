@@ -23,6 +23,7 @@ import {
 } from "./list-filters.js";
 import { dispatchMissionCreated, dispatchMissionActivated } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
+import { runTriggers } from "./triggers.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -99,11 +100,13 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
   }
 
   // FSM guard: validate status transition if status is changing
+  let priorStatus: string | null = null;
   if (status) {
     const current = await ctx.stores.mission.getMission(missionId);
     if (!current) {
       return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Mission not found: ${missionId}` }) }], isError: true };
     }
+    priorStatus = current.status;
     if (current.status !== status && !isValidTransition(MISSION_FSM, current.status, status)) {
       return {
         content: [{ type: "text" as const, text: JSON.stringify({ error: `Invalid state transition: cannot move mission from '${current.status}' to '${status}'` }) }],
@@ -121,6 +124,24 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
     // Uses the shared helper so the cascade path (cascade-actions/
     // update-mission-status.ts) fires an identically-shaped event.
     await dispatchMissionActivated(ctx, mission);
+  }
+
+  // Mission-51 W3: state-transition triggers. Best-effort emission of
+  // a Message on the (priorStatus → status) transition; failures are
+  // logged + metric'd + non-fatal (entity update is the source of
+  // truth). See `hub/src/policy/triggers.ts` for the registry.
+  if (status && priorStatus && priorStatus !== status) {
+    try {
+      await runTriggers("mission", priorStatus, status, mission as unknown as Record<string, unknown>, ctx);
+    } catch (err) {
+      ctx.metrics.increment("trigger.runner_error", {
+        entityType: "mission",
+        fromStatus: priorStatus,
+        toStatus: status,
+        error: (err as Error)?.message ?? String(err),
+      });
+      console.warn(`[MissionPolicy] runTriggers failed for mission ${mission.id}; entity update succeeded:`, err);
+    }
   }
 
   return {
