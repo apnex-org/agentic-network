@@ -80,25 +80,49 @@ REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy"
 REMOTE_TAG="${REGISTRY}/hub:latest"
 LOCAL_TAG="ois-hub:local"
 
-# ── Storage-provider tarball staging (mission-50 T1) ───────────────────
+# ── Storage-provider tarball staging (mission-50 T1+T5) ────────────────
 #
 # Hub depends on @ois/storage-provider via a `file:../packages/...` ref
 # that works for local dev (`cd hub && npm install`) but not for Cloud
 # Build (the build context is hub/ only — `..` escapes the upload).
 #
 # Pre-build hook: pack storage-provider into hub/ as a tarball, swap
-# package.json to a `file:./<tarball>` ref, regenerate package-lock.json
-# against the tarball resolution, then let gcloud builds submit upload
-# the prepared hub/ directory. Trap on EXIT/INT/TERM/HUP restores
-# package.json + package-lock.json and removes the staged tarball, so
-# committed state stays clean even on signal interrupt.
+# package.json to a `file:./<tarball>` ref, then let gcloud builds
+# submit upload the prepared hub/ directory. The container resolves
+# its own dep tree at build time (Dockerfile uses `npm install`, not
+# `npm ci`). Trap on EXIT/INT/TERM/HUP restores package.json and
+# removes the staged tarball, so committed state stays clean even on
+# signal interrupt.
+#
+# Why the script does NOT regenerate hub/package-lock.json (bug-38, T5):
+# Earlier mission-50 iterations regenerated the lockfile on the host
+# before the gcloud upload (T1: `npm install --package-lock-only`; T4:
+# full `npm install`). Both produced lockfiles that were structurally
+# fragile against (a) host-vs-container npm/node version drift (host
+# npm 11 / node 24 vs container npm 10 / node 22), (b) registry state
+# at regen time (different runs produced different @emnapi/* version
+# pinnings), and (c) operator-environment variation (different hosts
+# produce different lockfiles for identical inputs). The Cloud Build
+# container demanded multiple @emnapi/* versions simultaneously that
+# host-side regen could not consistently produce. T5 removed host-side
+# regen entirely; the container does its own resolution against the
+# swap-modified package.json (file:./tarball ref) using its own
+# toolchain. Tradeoff: Dockerfile uses `npm install` not `npm ci` for
+# the build path, so strict lockfile-validation is removed for that
+# path — acceptable because the lockfile was already transient (regen
+# per build before T5; never reaching commit-state-strictness anyway)
+# and `cd hub && npm install` local dev keeps using the committed
+# lockfile via the file:../packages/storage-provider ref.
 #
 # TODO(idea-186): When npm workspaces lands, this transient-swap hook
 # becomes obsolete — workspaces resolve internal packages without
 # tarball staging. Sunset condition: idea-186 ratified + Hub migrated
 # to workspace resolution. At that point, delete this entire section,
-# the `COPY ois-storage-provider-*.tgz` lines from hub/Dockerfile, and
-# the tarball exclusion from hub/.gitignore.
+# the `COPY ois-storage-provider-*.tgz` lines from hub/Dockerfile,
+# the tarball exclusion from hub/.gitignore, and hub/.gcloudignore;
+# the Dockerfile's `npm install` reverts to `npm ci` for strict
+# lockfile-validation against the committed (workspaces-resolved)
+# lockfile.
 
 HUB_DIR="$REPO_ROOT/hub"
 SP_DIR="$REPO_ROOT/packages/storage-provider"
@@ -111,7 +135,6 @@ cleanup_tarball_swap() {
   trap - EXIT INT TERM HUP
   if [[ $SWAP_APPLIED -eq 1 && -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
     [[ -f "$BACKUP_DIR/package.json" ]] && mv -f "$BACKUP_DIR/package.json" "$HUB_DIR/package.json"
-    [[ -f "$BACKUP_DIR/package-lock.json" ]] && mv -f "$BACKUP_DIR/package-lock.json" "$HUB_DIR/package-lock.json"
   fi
   if [[ -n "$STAGED_TARBALL" && -f "$STAGED_TARBALL" ]]; then
     rm -f "$STAGED_TARBALL"
@@ -134,12 +157,12 @@ STAGED_TARBALL="$HUB_DIR/$TARBALL_NAME"
 echo "[build-hub] Tarball: $TARBALL_NAME"
 
 cp "$HUB_DIR/package.json" "$BACKUP_DIR/package.json"
-cp "$HUB_DIR/package-lock.json" "$BACKUP_DIR/package-lock.json"
 SWAP_APPLIED=1
 
 # Swap file:../packages/storage-provider → file:./<tarball> in hub/package.json.
 # The build context for gcloud builds submit is hub/, so the tarball ref
-# must resolve relative to hub/.
+# must resolve relative to hub/. The container resolves its own dep tree
+# at build time via Dockerfile's `npm install` (T5; bug-38).
 sed -i.sedbak "s|\"@ois/storage-provider\": \"file:\\.\\./packages/storage-provider\"|\"@ois/storage-provider\": \"file:./${TARBALL_NAME}\"|" "$HUB_DIR/package.json"
 rm -f "$HUB_DIR/package.json.sedbak"
 
@@ -147,18 +170,6 @@ if ! grep -q "file:./${TARBALL_NAME}" "$HUB_DIR/package.json"; then
   echo "[build-hub] ERROR: storage-provider ref swap did not take effect in hub/package.json." >&2
   exit 1
 fi
-
-echo "[build-hub] ──────── Regen package-lock.json ────────"
-# Full `npm install` (NOT `--package-lock-only`) — required for complete
-# platform-conditional / optional-dep resolution. bug-37 (closed by T4
-# 2026-04-25): `--package-lock-only` produced an incomplete lockfile
-# missing 11 `@emnapi/*` entries, causing `npm ci` to fail inside the
-# Cloud Build container with `Missing: @emnapi/runtime@... from lock file`.
-# Full install populates the platform-conditional graph so `npm ci`
-# strict-validation passes. Side-effect: hub/node_modules/ accumulates as
-# a cached dev install (already excluded from .gitignore + .gcloudignore;
-# does not pollute git status or Cloud Build upload context).
-( cd "$HUB_DIR" && npm install --ignore-scripts --no-audit --no-fund --silent )
 
 # ── Build via Cloud Build ──────────────────────────────────────────────
 
