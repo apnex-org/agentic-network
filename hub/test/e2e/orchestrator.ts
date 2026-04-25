@@ -29,6 +29,7 @@ import {
   registerReviewPolicy,
   registerProposalPolicy,
   registerThreadPolicy,
+  registerMessagePolicy,
 } from "../../src/policy/index.js";
 import type { AllStores, IPolicyContext, PolicyResult } from "../../src/policy/types.js";
 import { AgentRepository } from "../../src/entities/agent-repository.js";
@@ -523,6 +524,7 @@ export class TestOrchestrator {
     registerReviewPolicy(router);
     registerProposalPolicy(router);
     registerThreadPolicy(router);
+    registerMessagePolicy(router);
     return router;
   }
 }
