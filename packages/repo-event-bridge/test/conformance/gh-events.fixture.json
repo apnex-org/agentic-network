@@ -1,0 +1,194 @@
+{
+  "description": "Canonical GH event fixture — mission-52 T1 conformance corpus. Each entry pairs a GH event envelope (Events-API shape: {type, repo, payload}) with the expected translator output. Authored to cover every v1 RepoEventSubkind (per thread-312 round-2 ratification) plus one unknown-fallback case. PollSource conformance (T2) replays this fixture through the source→translator→sink pipeline and asserts the same expectations.",
+  "events": [
+    {
+      "name": "pr-opened",
+      "input": {
+        "type": "PullRequestEvent",
+        "repo": { "name": "apnex-org/agentic-network" },
+        "payload": {
+          "action": "opened",
+          "pull_request": {
+            "number": 101,
+            "title": "Add fixture-driven conformance suite",
+            "html_url": "https://github.com/apnex-org/agentic-network/pull/101",
+            "user": { "login": "engineer-greg" },
+            "merged": false,
+            "base": { "ref": "main", "sha": "f00ba2" },
+            "head": { "ref": "agent-greg/mission-52-w1", "sha": "fac3b00c" }
+          }
+        }
+      },
+      "expectedSubkind": "pr-opened",
+      "expectedPayload": {
+        "repo": "apnex-org/agentic-network",
+        "action": "opened",
+        "number": 101,
+        "title": "Add fixture-driven conformance suite",
+        "url": "https://github.com/apnex-org/agentic-network/pull/101",
+        "author": "engineer-greg",
+        "merged": false
+      }
+    },
+    {
+      "name": "pr-closed-without-merge",
+      "input": {
+        "type": "PullRequestEvent",
+        "repo": { "name": "apnex-org/agentic-network" },
+        "payload": {
+          "action": "closed",
+          "pull_request": {
+            "number": 102,
+            "title": "Abandoned spike",
+            "user": { "login": "architect-lily" },
+            "merged": false
+          }
+        }
+      },
+      "expectedSubkind": "pr-closed",
+      "expectedPayload": {
+        "repo": "apnex-org/agentic-network",
+        "number": 102,
+        "merged": false
+      }
+    },
+    {
+      "name": "pr-merged",
+      "input": {
+        "type": "PullRequestEvent",
+        "repo": { "name": "apnex-org/agentic-network" },
+        "payload": {
+          "action": "closed",
+          "pull_request": {
+            "number": 103,
+            "title": "Mission-51 W6 — closing wave",
+            "user": { "login": "engineer-greg" },
+            "merged": true,
+            "base": { "ref": "main", "sha": "ab1413d" }
+          }
+        }
+      },
+      "expectedSubkind": "pr-merged",
+      "expectedPayload": {
+        "repo": "apnex-org/agentic-network",
+        "number": 103,
+        "merged": true,
+        "author": "engineer-greg"
+      }
+    },
+    {
+      "name": "pr-review-submitted-changes-requested",
+      "input": {
+        "type": "PullRequestReviewEvent",
+        "repo": { "name": "apnex-org/agentic-network" },
+        "payload": {
+          "action": "submitted",
+          "review": {
+            "user": { "login": "architect-lily" },
+            "state": "changes_requested",
+            "body": "Subkind taxonomy needs an unknown-fallback case in the fixture."
+          },
+          "pull_request": { "number": 101 }
+        }
+      },
+      "expectedSubkind": "pr-review-submitted",
+      "expectedPayload": {
+        "repo": "apnex-org/agentic-network",
+        "prNumber": 101,
+        "reviewer": "architect-lily",
+        "state": "changes_requested"
+      }
+    },
+    {
+      "name": "pr-review-approved",
+      "input": {
+        "type": "PullRequestReviewEvent",
+        "repo": { "name": "apnex-org/agentic-network" },
+        "payload": {
+          "action": "submitted",
+          "review": {
+            "user": { "login": "architect-lily" },
+            "state": "approved",
+            "body": "lgtm — ship"
+          },
+          "pull_request": { "number": 101 }
+        }
+      },
+      "expectedSubkind": "pr-review-approved",
+      "expectedPayload": {
+        "repo": "apnex-org/agentic-network",
+        "prNumber": 101,
+        "reviewer": "architect-lily",
+        "state": "approved"
+      }
+    },
+    {
+      "name": "pr-review-comment",
+      "input": {
+        "type": "PullRequestReviewCommentEvent",
+        "repo": { "name": "apnex-org/agentic-network" },
+        "payload": {
+          "action": "created",
+          "comment": {
+            "user": { "login": "architect-lily" },
+            "body": "Should `repo` be required? Mark optional in the contract.",
+            "html_url": "https://github.com/apnex-org/agentic-network/pull/101#discussion_r1"
+          },
+          "pull_request": { "number": 101 }
+        }
+      },
+      "expectedSubkind": "pr-review-comment",
+      "expectedPayload": {
+        "repo": "apnex-org/agentic-network",
+        "prNumber": 101,
+        "commenter": "architect-lily"
+      }
+    },
+    {
+      "name": "commit-pushed",
+      "input": {
+        "type": "PushEvent",
+        "repo": { "name": "apnex-org/agentic-network" },
+        "payload": {
+          "ref": "refs/heads/main",
+          "pusher": { "login": "engineer-greg" },
+          "commits": [
+            { "sha": "deadbe0", "message": "[mission-52] T1 — repo-event-bridge contract", "author": { "name": "engineer-greg" } },
+            { "sha": "deadbe1", "message": "[mission-52] T1 — translator + conformance fixture", "author": { "name": "engineer-greg" } }
+          ]
+        }
+      },
+      "expectedSubkind": "commit-pushed",
+      "expectedPayload": {
+        "repo": "apnex-org/agentic-network",
+        "ref": "refs/heads/main",
+        "pusher": "engineer-greg",
+        "commitCount": 2
+      }
+    },
+    {
+      "name": "unknown-fallback-gollum",
+      "input": {
+        "type": "GollumEvent",
+        "repo": { "name": "apnex-org/agentic-network" },
+        "payload": {
+          "pages": [
+            { "page_name": "Home", "title": "Home", "action": "edited" }
+          ]
+        }
+      },
+      "expectedSubkind": "unknown",
+      "expectedPayload": {
+        "raw": {
+          "type": "GollumEvent",
+          "repo": { "name": "apnex-org/agentic-network" },
+          "payload": {
+            "pages": [
+              { "page_name": "Home", "title": "Home", "action": "edited" }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@ois/repo-event-bridge",
+  "version": "1.0.0",
+  "description": "Sovereign repo-event bridge — pluggable EventSource contract + GH-event translator + create_message sink for the OIS agentic network",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4"
+  }
+}
