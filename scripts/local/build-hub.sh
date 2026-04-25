@@ -80,6 +80,77 @@ REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy"
 REMOTE_TAG="${REGISTRY}/hub:latest"
 LOCAL_TAG="ois-hub:local"
 
+# ── Storage-provider tarball staging (mission-50 T1) ───────────────────
+#
+# Hub depends on @ois/storage-provider via a `file:../packages/...` ref
+# that works for local dev (`cd hub && npm install`) but not for Cloud
+# Build (the build context is hub/ only — `..` escapes the upload).
+#
+# Pre-build hook: pack storage-provider into hub/ as a tarball, swap
+# package.json to a `file:./<tarball>` ref, regenerate package-lock.json
+# against the tarball resolution, then let gcloud builds submit upload
+# the prepared hub/ directory. Trap on EXIT/INT/TERM/HUP restores
+# package.json + package-lock.json and removes the staged tarball, so
+# committed state stays clean even on signal interrupt.
+#
+# TODO(idea-186): When npm workspaces lands, this transient-swap hook
+# becomes obsolete — workspaces resolve internal packages without
+# tarball staging. Sunset condition: idea-186 ratified + Hub migrated
+# to workspace resolution. At that point, delete this entire section,
+# the `COPY ois-storage-provider-*.tgz` lines from hub/Dockerfile, and
+# the tarball exclusion from hub/.gitignore.
+
+HUB_DIR="$REPO_ROOT/hub"
+SP_DIR="$REPO_ROOT/packages/storage-provider"
+BACKUP_DIR=""
+STAGED_TARBALL=""
+SWAP_APPLIED=0
+
+cleanup_tarball_swap() {
+  local rc=$?
+  trap - EXIT INT TERM HUP
+  if [[ $SWAP_APPLIED -eq 1 && -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
+    [[ -f "$BACKUP_DIR/package.json" ]] && mv -f "$BACKUP_DIR/package.json" "$HUB_DIR/package.json"
+    [[ -f "$BACKUP_DIR/package-lock.json" ]] && mv -f "$BACKUP_DIR/package-lock.json" "$HUB_DIR/package-lock.json"
+  fi
+  if [[ -n "$STAGED_TARBALL" && -f "$STAGED_TARBALL" ]]; then
+    rm -f "$STAGED_TARBALL"
+  fi
+  if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
+    rm -rf "$BACKUP_DIR"
+  fi
+  exit "$rc"
+}
+trap cleanup_tarball_swap EXIT INT TERM HUP
+
+echo "[build-hub] ──────── Pack storage-provider ────────"
+BACKUP_DIR=$(mktemp -d -t build-hub-XXXXXX)
+TARBALL_NAME=$( cd "$SP_DIR" && npm pack --pack-destination "$HUB_DIR" --silent )
+if [[ -z "$TARBALL_NAME" || ! -f "$HUB_DIR/$TARBALL_NAME" ]]; then
+  echo "[build-hub] ERROR: npm pack did not produce a tarball." >&2
+  exit 1
+fi
+STAGED_TARBALL="$HUB_DIR/$TARBALL_NAME"
+echo "[build-hub] Tarball: $TARBALL_NAME"
+
+cp "$HUB_DIR/package.json" "$BACKUP_DIR/package.json"
+cp "$HUB_DIR/package-lock.json" "$BACKUP_DIR/package-lock.json"
+SWAP_APPLIED=1
+
+# Swap file:../packages/storage-provider → file:./<tarball> in hub/package.json.
+# The build context for gcloud builds submit is hub/, so the tarball ref
+# must resolve relative to hub/.
+sed -i.sedbak "s|\"@ois/storage-provider\": \"file:\\.\\./packages/storage-provider\"|\"@ois/storage-provider\": \"file:./${TARBALL_NAME}\"|" "$HUB_DIR/package.json"
+rm -f "$HUB_DIR/package.json.sedbak"
+
+if ! grep -q "file:./${TARBALL_NAME}" "$HUB_DIR/package.json"; then
+  echo "[build-hub] ERROR: storage-provider ref swap did not take effect in hub/package.json." >&2
+  exit 1
+fi
+
+echo "[build-hub] ──────── Regen package-lock.json ────────"
+( cd "$HUB_DIR" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund --silent )
+
 # ── Build via Cloud Build ──────────────────────────────────────────────
 
 echo "[build-hub] OIS_ENV:  $OIS_ENV"

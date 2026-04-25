@@ -3,6 +3,7 @@ FROM node:22-slim AS builder
 WORKDIR /app
 
 COPY package*.json ./
+COPY ois-storage-provider-*.tgz ./
 RUN npm ci
 
 COPY tsconfig.json ./
@@ -15,6 +16,7 @@ FROM node:22-slim
 WORKDIR /app
 
 COPY package*.json ./
+COPY ois-storage-provider-*.tgz ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
