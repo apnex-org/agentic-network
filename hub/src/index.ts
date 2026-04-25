@@ -44,6 +44,7 @@ import { registerThreadPolicy } from "./policy/thread-policy.js";
 import { registerBugPolicy } from "./policy/bug-policy.js";
 import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
 import { Watchdog } from "./policy/watchdog.js";
+import { MessageProjectionSweeper } from "./policy/message-projection-sweeper.js";
 import { bindRouterToMcp } from "./policy/mcp-binding.js";
 import type { AllStores } from "./policy/index.js";
 import { createMetricsCounter } from "./observability/metrics.js";
@@ -624,11 +625,36 @@ function stopContinuationSweep(): void {
   }
 }
 
+// Mission-51 W2: bounded-shadow message-projection sweeper. Runs a
+// full-sweep on Hub startup (catches anything orphaned mid-projection
+// by the previous Hub instance dying), then ticks every 5s as a
+// backstop to the in-process W1 migration shim. Idempotent via
+// findByMigrationSourceId; safe under concurrent thread-reply commits.
+const messageProjectionSweeper = new MessageProjectionSweeper(
+  threadStore,
+  messageStore,
+  { intervalMs: 5000 },
+);
+
 startupSequence().then(async () => {
   await hub.start();
   startThreadReaper();
   startAgentReaper();
   startContinuationSweep();
+  // Mission-51 W2: full-sweep before announcing readiness so any
+  // unprojected messages from the previous Hub instance are caught up
+  // before traffic starts flowing.
+  try {
+    const swept = await messageProjectionSweeper.fullSweep();
+    if (swept.messagesProjected > 0 || swept.errors > 0) {
+      console.log(
+        `[Hub] Startup message-projection sweep: scanned=${swept.threadsScanned} projected=${swept.threadsProjected} messages=${swept.messagesProjected} errors=${swept.errors}`,
+      );
+    }
+  } catch (err) {
+    console.warn("[Hub] Startup message-projection sweep failed; sweeper still starts:", err);
+  }
+  messageProjectionSweeper.start();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT}`);
   console.log(`[Hub] MCP endpoint: POST/GET/DELETE /mcp`);
   console.log(`[Hub] Health check: GET /health`);
@@ -639,6 +665,7 @@ startupSequence().then(async () => {
   startThreadReaper();
   startAgentReaper();
   startContinuationSweep();
+  messageProjectionSweeper.start();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT} (with startup warning)`);
 });
 
@@ -648,6 +675,7 @@ process.on("SIGINT", async () => {
   stopThreadReaper();
   stopAgentReaper();
   stopContinuationSweep();
+  messageProjectionSweeper.stop();
   await hub.stop();
   process.exit(0);
 });

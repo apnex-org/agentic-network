@@ -419,6 +419,33 @@ export class ThreadRepository implements IThreadStore {
     }
   }
 
+  /**
+   * Mission-51 W2: bounded-shadow projection-sweeper progress marker.
+   * Forward-progress only — no-op if `projectedAt` is not strictly newer
+   * than the current value. Idempotent.
+   */
+  async markLastMessageProjected(threadId: string, projectedAt: string): Promise<boolean> {
+    try {
+      let advanced = false;
+      await this.casUpdateOrThrow(threadId, (thread) => {
+        const current = thread.lastMessageProjectedAt;
+        if (current && current >= projectedAt) {
+          throw new TransitionRejected(
+            `marker not advanced: current ${current} >= proposed ${projectedAt}`,
+          );
+        }
+        thread.lastMessageProjectedAt = projectedAt;
+        advanced = true;
+        return thread;
+      });
+      return advanced;
+    } catch (err) {
+      if (err instanceof TransitionRejected) return false;
+      if (err instanceof Error && err.message === `Thread not found: ${threadId}`) return false;
+      throw err;
+    }
+  }
+
   async leaveThread(threadId: string, leaverAgentId: string): Promise<Thread | null> {
     let updated: Thread;
     try {

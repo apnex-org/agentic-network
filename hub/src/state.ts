@@ -790,6 +790,18 @@ export interface Thread {
   lastMessageConverged?: boolean;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Mission-51 W2: ISO-8601 timestamp of the latest projection write
+   * to the sovereign Message store. Bounded-lag sweeper compares this
+   * to `updatedAt` — if `lastMessageProjectedAt < updatedAt` (or
+   * absent), the thread has unprojected messages and the sweeper will
+   * re-project on next tick. Optional for forward compat with
+   * pre-W2 stored threads (treated as "never projected"). Idempotency
+   * via `findByMigrationSourceId` short-circuit means re-projection
+   * produces no duplicates; the marker is an OPTIMIZATION to skip
+   * already-projected threads, NOT a correctness gate.
+   */
+  lastMessageProjectedAt?: string;
 }
 
 // ── Audit Types ──────────────────────────────────────────────────────
@@ -927,6 +939,16 @@ export interface IThreadStore {
    * tell a clean close from a post-gate infrastructure failure.
    */
   markCascadeFailed(threadId: string): Promise<boolean>;
+  /**
+   * Mission-51 W2: bump `lastMessageProjectedAt` on a thread to track
+   * the bounded-shadow projection sweeper's progress. Idempotent — only
+   * advances forward (refuses to write a value older than the current
+   * one to avoid races between the in-process projector and the
+   * sweeper). Returns true on successful bump (forward-progress), false
+   * when the thread doesn't exist OR the proposed value is not strictly
+   * newer than the current value (no-op idempotent).
+   */
+  markLastMessageProjected(threadId: string, projectedAt: string): Promise<boolean>;
   /**
    * Mission-24 Phase 2 (ADR-014, M24-T7, INV-TH21): scan all active
    * threads and transition to `abandoned` any whose idle time

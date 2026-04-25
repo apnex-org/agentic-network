@@ -171,6 +171,9 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
       payload: { text: message },
       migrationSourceId: `thread-message:${thread.id}/1`,
     });
+    // Mission-51 W2: bump bounded-shadow projection marker (see
+    // create_thread_reply for full rationale).
+    await ctx.stores.thread.markLastMessageProjected(thread.id, thread.updatedAt);
   } catch (shimErr) {
     ctx.metrics.increment("message_shim.thread_open_write_failed", {
       threadId: thread.id,
@@ -513,6 +516,12 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
       converged,
       migrationSourceId: `thread-message:${sourceId}`,
     });
+    // Mission-51 W2: bump bounded-shadow projection marker. Best-effort
+    // (forward-progress only); the sweeper is the safety net for races
+    // (e.g., a fresh reply landing between this projection and the
+    // marker bump). The sweeper sees `lastMessageProjectedAt < updatedAt`
+    // and re-projects via findByMigrationSourceId-idempotent createMessage.
+    await ctx.stores.thread.markLastMessageProjected(threadId, thread.updatedAt);
   } catch (shimErr) {
     // Non-fatal — shim is write-through; legacy path is authoritative
     // until W2 normalization. Log + metric + continue.
