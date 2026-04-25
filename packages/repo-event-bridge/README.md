@@ -89,6 +89,22 @@ await sink.emit(event);
 
 T3 wires the concrete `invoke` callable (in-process / MCP-stdio / MCP-HTTP). T1 leaves the choice abstract — the contract stands without binding to a transport.
 
+## Building
+
+```bash
+npm run build    # compiles src/ → dist/
+```
+
+**TODO(idea-186):** This package commits its built `dist/` to git as a workaround for the cross-package `file:` ref limitation in non-workspaces monorepos. Hub depends on `@ois/repo-event-bridge` via `file:../packages/repo-event-bridge`; CI runs `npm install` (not `npm ci`) per the mission-50 T5 + T3-revision-v3 fix, but a `prepare: tsc` hook on this package fails because cross-package file: refs are install-order-dependent (tsc runs before `@ois/storage-provider` is reachable in the package's local `node_modules`). Committed `dist/` is the lesser evil. **Sunset when idea-186 (npm workspaces migration) lands** — workspaces resolve internal package refs natively, dist/ becomes regenerable per environment, and the `dist/` exception in root `.gitignore` + this section can be removed.
+
+When making source changes:
+
+```bash
+npm run build && git add dist/    # commit the regenerated dist/ alongside src/
+```
+
+The same precedent applies to `@ois/storage-provider` — see root `.gitignore` for the parallel exception.
+
 ## Testing
 
 ```bash

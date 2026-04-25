@@ -17,6 +17,17 @@ dist/
 !packages/storage-provider/dist/
 !packages/storage-provider/dist/**
 
+# Mission-52 T3 exception (same workaround as storage-provider): hub
+# depends on @ois/repo-event-bridge via file:../packages/repo-event-bridge.
+# Methodology calibration #20 (2026-04-25): tried prepare-script on
+# revision v2 — failed because cross-package file: refs in a non-
+# workspaces monorepo are install-order-dependent (tsc runs before
+# @ois/storage-provider is reachable in the package's local
+# node_modules). Committed dist/ is the lesser evil until idea-186
+# (npm workspaces migration) lands.
+!packages/repo-event-bridge/dist/
+!packages/repo-event-bridge/dist/**
+
 # Logs
 *.log
 .ois/

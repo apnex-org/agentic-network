@@ -1,3 +1,14 @@
 node_modules/
-dist/
 *.tsbuildinfo
+# dist/ is committed (root .gitignore allows it via the
+# `!packages/repo-event-bridge/dist/` exception) so hub's
+# file:../packages/repo-event-bridge install resolves built artifacts
+# without needing a build step on consumer install.
+#
+# Mission-52 T3 revision v3 + methodology calibration #20: tried
+# prepare-script in revision v2 — failed because cross-package file:
+# refs in a non-workspaces monorepo are install-order-dependent (tsc
+# runs before @ois/storage-provider is reachable in the package's
+# local node_modules; install fails before dist/ can be built). Until
+# idea-186 (npm workspaces) lands, committed dist/ is the lesser
+# evil. See root .gitignore for the parallel storage-provider note.
