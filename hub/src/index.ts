@@ -8,15 +8,16 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { MemoryAuditStore, MemoryNotificationStore } from "./state.js";
+import { MemoryNotificationStore } from "./state.js";
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, INotificationStore } from "./state.js";
-import { GcsAuditStore, GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
+import { GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
 import {
   TurnRepository,
   PendingActionRepository,
   TeleRepository, IdeaRepository, BugRepository, DirectorNotificationRepository,
   MissionRepository, TaskRepository, ProposalRepository, ThreadRepository,
   AgentRepository,
+  AuditRepository,
   StorageBackedCounter,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
   type IPendingActionStore, type IDirectorNotificationStore,
@@ -100,7 +101,6 @@ if (STORAGE_BACKEND === "gcs") {
   const bucket = GCS_BUCKET!;
   console.log(`[Hub] Using GCS storage backend: gs://${bucket}`);
   storageProvider = new GcsStorageProvider(bucket);
-  auditStore = new GcsAuditStore(bucket);
   notificationStore = new GcsNotificationStore(bucket);
 } else if (STORAGE_BACKEND === "local-fs") {
   if (process.env.NODE_ENV === "production") {
@@ -109,12 +109,11 @@ if (STORAGE_BACKEND === "gcs") {
   }
   const root = OIS_LOCAL_FS_ROOT!;
   console.log(`[Hub] Using local-fs storage backend at: ${root}`);
-  console.log(`[Hub] Note: AuditStore + NotificationStore remain in-memory on local-fs backend (not yet migrated); they reset on restart.`);
+  console.log(`[Hub] Note: NotificationStore remains in-memory on local-fs backend (mission-49 T2/W9 migrates it); resets on restart.`);
   storageProvider = new LocalFsStorageProvider(root);
-  // AuditStore + NotificationStore aren't mission-47-migrated entities;
-  // local-fs dev-mode uses the Memory variants — they reset on restart
-  // like they would in a pure `memory` backend run.
-  auditStore = new MemoryAuditStore();
+  // NotificationStore is the only remaining non-Repository store after
+  // mission-49 W8 (audit migration); local-fs dev-mode uses the Memory
+  // variant — resets on restart like in a pure `memory` backend run.
   notificationStore = new MemoryNotificationStore();
 } else {
   if (process.env.NODE_ENV === "production") {
@@ -123,15 +122,15 @@ if (STORAGE_BACKEND === "gcs") {
   }
   console.log("[Hub] Using in-memory storage backend");
   storageProvider = new MemoryStorageProvider();
-  auditStore = new MemoryAuditStore();
   notificationStore = new MemoryNotificationStore();
 }
 
-// Mission-47 W1-W7: instantiate StorageProvider-backed repositories.
-// Counter is shared-by-design across all repositories — issues a
-// monotonic ID sequence per entity-type field via a single
+// Mission-47 W1-W7 + Mission-49 W8: instantiate StorageProvider-backed
+// repositories. Counter is shared-by-design across all repositories —
+// issues a monotonic ID sequence per entity-type field via a single
 // meta/counter.json blob.
 const storageCounter = new StorageBackedCounter(storageProvider);
+auditStore = new AuditRepository(storageProvider, storageCounter);
 taskStore = new TaskRepository(storageProvider, storageCounter);
 proposalStore = new ProposalRepository(storageProvider, storageCounter);
 ideaStore = new IdeaRepository(storageProvider, storageCounter);

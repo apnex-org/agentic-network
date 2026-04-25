@@ -23,14 +23,12 @@ import type {
   ThreadAuthor,
   ThreadIntent,
   SemanticIntent,
-  AuditEntry,
   Notification,
   EngineerStatusEntry,
   SessionRole,
   ITaskStore,
   IProposalStore,
   IThreadStore,
-  IAuditStore,
   INotificationStore,
   IEngineerRegistry,
   Agent,
@@ -522,52 +520,13 @@ export { reconcileCounters, cleanupOrphanedFiles };
 // (they were GcsThreadStore-internal read-side normalisation).
 
 
-// ── GCS Audit Store ──────────────────────────────────────────────────
+// Mission-49 W8: GcsAuditStore removed — AuditRepository in
+// hub/src/entities/audit-repository.ts composes any StorageProvider
+// (including GcsStorageProvider) via the IAuditStore interface. Pre-
+// migration entries at `gs://$bucket/audit/${ts}.json` (legacy
+// timestamp-ID format) freeze as historical / grep-only; new entries
+// land at `gs://$bucket/audit/v2/audit-${N}.json`.
 
-export class GcsAuditStore implements IAuditStore {
-  private bucket: string;
-
-  constructor(bucket: string) {
-    this.bucket = bucket;
-    console.log(`[GcsAuditStore] Using bucket: gs://${bucket}`);
-  }
-
-  async logEntry(actor: AuditEntry["actor"], action: string, details: string, relatedEntity?: string): Promise<AuditEntry> {
-    const now = new Date();
-    // Use timestamp-based ID for natural chronological ordering in GCS
-    const ts = now.toISOString().replace(/[:.]/g, "-");
-    const id = `audit-${ts}`;
-
-    const entry: AuditEntry = {
-      id,
-      timestamp: now.toISOString(),
-      actor,
-      action,
-      details,
-      relatedEntity: relatedEntity || null,
-    };
-
-    await createOnly<AuditEntry>(this.bucket, `audit/${id}.json`, entry);
-    console.log(`[GcsAuditStore] ${actor}/${action}: ${details.substring(0, 80)}`);
-    return { ...entry };
-  }
-
-  async listEntries(limit = 50, actor?: AuditEntry["actor"]): Promise<AuditEntry[]> {
-    const files = await listFiles(this.bucket, "audit/");
-    const entries: AuditEntry[] = [];
-    const jsonFiles = files.filter((f) => f.endsWith(".json")).sort().reverse();
-
-    for (const file of jsonFiles) {
-      if (entries.length >= limit) break;
-      const entry = await readJson<AuditEntry>(this.bucket, file);
-      if (entry) {
-        if (actor && entry.actor !== actor) continue;
-        entries.push(entry);
-      }
-    }
-    return entries;
-  }
-}
 
 // ── GCS Notification Store ───────────────────────────────────────────
 

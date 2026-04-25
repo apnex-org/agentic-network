@@ -31,9 +31,6 @@ import {
   registerThreadPolicy,
 } from "../../src/policy/index.js";
 import type { AllStores, IPolicyContext, PolicyResult } from "../../src/policy/types.js";
-import {
-  MemoryAuditStore,
-} from "../../src/state.js";
 import { AgentRepository } from "../../src/entities/agent-repository.js";
 import { TaskRepository } from "../../src/entities/task-repository.js";
 import { ProposalRepository } from "../../src/entities/proposal-repository.js";
@@ -42,6 +39,7 @@ import { IdeaRepository } from "../../src/entities/idea-repository.js";
 import { MissionRepository } from "../../src/entities/mission-repository.js";
 import { TurnRepository } from "../../src/entities/turn-repository.js";
 import { TeleRepository } from "../../src/entities/tele-repository.js";
+import { AuditRepository } from "../../src/entities/audit-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
 import { MemoryStorageProvider } from "@ois/storage-provider";
 import { BugRepository } from "../../src/entities/bug-repository.js";
@@ -499,7 +497,7 @@ export class TestOrchestrator {
       engineerRegistry: new AgentRepository(storageProvider),
       proposal: new ProposalRepository(storageProvider, storageCounter),
       thread: new ThreadRepository(storageProvider, storageCounter),
-      audit: new MemoryAuditStore(),
+      audit: new AuditRepository(storageProvider, storageCounter),
       idea,
       mission,
       turn: new TurnRepository(storageProvider, storageCounter, mission, task),
