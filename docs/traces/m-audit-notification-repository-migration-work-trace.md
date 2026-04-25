@@ -16,27 +16,34 @@
 
 If you're picking up cold on mission-49:
 
-1. **Read this file first**, then thread-304 for design-round context, then `hub/src/entities/audit-repository.ts` + `hub/src/entities/notification-repository.ts` for the established repository pattern.
-2. **DAG:** T1 (W8 Audit) → T2 (W9 Notification) → T3 (closing audit). Architect issued W8 + W9 in flight without waiting for T1 PR merge — both shipped locally on the same working tree.
-3. **Current state:** T1/W8 + T2/W9 BOTH shipped on working tree (no commits yet); reports filed via `create_report(task-350)` and `create_report(task-352)`, both `in_review`. The mission's entity-store migration scope is structurally complete; T3 retrospective is the only remaining task. Architect may issue T3 once W8 + W9 PRs merge OR review-and-merge in flight.
-4. **Pre-authorized scope discipline:** `@ois/storage-provider` conformance suite UNCHANGED (Point C); legacy `audit/${ts}` GCS namespace freezes — no migration script (anti-goal); `cleanup()` O(N) characteristic preserved (filed as idea-195 follow-up); `notifications/v2/` namespace preserved byte-identically (no second cutover for W9).
-5. **Ship-green discipline:** each wave adds repository-level cross-provider tests + removes legacy dual-backend implementations in its own PR. Cumulative diff (W8 + W9): +36/-222 LOC across 7 modified + 4 new files; 51 test files / 748 passed (delta vs pre-mission-49 baseline 49/706/5: +2 files / +42 tests; zero regressions).
-6. **Duplicate task heads-up:** task-351 was an architect-side duplicate of task-350 (same title/scope/correlationId). Filed `create_report(task-351)` as duplicate-detection cross-referencing task-350's shipped artifacts. Both report-statuses `in_review`.
+1. **Read this file first**, then `docs/audits/m-audit-notification-repository-migration-closing-report.md` for the full closing audit, then thread-304 for design-round context.
+2. **DAG:** T1 (W8 Audit) → T2 (W9 Notification) → T3 (closing audit + hygiene). All 3 shipped 2026-04-25 in a single session.
+3. **Current state:** **engineer-side scope complete.** All 3 tasks shipped; reports task-350 / task-351 (duplicate) / task-352 / task-353 all `in_review`. Code for W8 + W9 is staged on `agent-greg/mission-47-t4-latency-measurement` working tree (uncommitted); closing report + deploy/README addition also on working tree. Architect-owned remaining: `docs/reviews/mission-49-retrospective.md` retrospective + mission-status flip to `completed` — neither in engineer scope.
+4. **Pre-authorized scope discipline:** `@ois/storage-provider` conformance suite UNCHANGED (Point C); legacy `audit/${ts}` GCS namespace freezes — no migration script (anti-goal); `cleanup()` O(N) characteristic preserved (filed as idea-195 follow-up); `notifications/v2/` namespace preserved byte-identically (no second cutover for W9). ADR-024 delta evaluated: no contract change (closing report §6).
+5. **Ship-green discipline:** each wave adds repository-level cross-provider tests + removes legacy dual-backend implementations in its own PR. Cumulative diff (W8 + W9): +36/-222 LOC across 7 modified + 4 new files; T3 is docs-only (~250 lines closing report + ~20 lines deploy/README §Hub GCS state layout). Final test suite: 51 files / 748 passed / 5 skipped (delta vs pre-mission-49 baseline 49/706/5: +2 files / +42 tests; zero regressions).
+6. **Duplicate task heads-up:** task-351 was an architect-side duplicate of task-350 (same title/scope/correlationId). Filed `create_report(task-351)` as duplicate-detection cross-referencing task-350's shipped artifacts.
+7. **Bug-31 amendment heads-up:** task-353 was issued manually (rather than via mission-advancement-cascade) due to MCP timeout on task-352 review. Captured by architect in bug-31 amendment.
 
 ---
 
 ## In-flight
 
-- (none) — mission-49 entity-store migration scope structurally complete on the working tree. T3 retrospective awaits architect-issued task. The `agent-greg/mission-47-t4-latency-measurement` branch carries both W8 + W9 staged (uncommitted) at `cc1d252` HEAD plus the work-trace commit at `6be7bc2`.
+- (none) — mission-49 engineer-side scope complete. The `agent-greg/mission-47-t4-latency-measurement` branch carries: W8 + W9 staged (uncommitted) at `cc1d252` HEAD; closing-report + deploy/README addition also staged (uncommitted); plus 3 work-trace `[planning]` commits. Architect-owned remaining (retrospective + mission-status flip) is out of engineer scope.
 
 ## Queued / filed
 
-- ○ **T3 — Closing audit + retrospective.** Mission-43/46/47-shape closing report. Captures: emergent createOnly `{ok}`-checking correctness win (W8); ULID monotonicity-under-concurrency verification (W9); `deploy/README` v2-namespace archaeology pointer for audit; ADR-024 delta evaluation (expected: no contract change — 6-primitive surface held across 12 entity stores total).
 - ○ **idea-195 — NotificationRepository.cleanup() O(N) → range-scan optimization.** Filed post-thread-304-seal per architect's ack. Pre-existing characteristic preserved through this mission (anti-goal); follow-up when GCS read-billing or cleanup latency surfaces it.
 
 ---
 
 ## Done this session
+
+### T3 (Closing audit + engineer-side hygiene) — shipped locally 2026-04-25
+
+- ✅ **`docs/audits/m-audit-notification-repository-migration-closing-report.md` — new file (~250 lines).** Mission-43/46/47-shape, modeled on `m-multi-env-substrate-closing-report.md`. Sections: (1) deliverable scorecard with W8/W9 marked `pending PR open + merge` since code is uncommitted; (2) mission goal + 7 success criteria all MET (one anti-criterion MET); (3) per-task architecture recap; (4) aggregate stats including a per-task estimate-vs-actual table — mission shipped at ~5.5 hours single-session vs ~1–1.25 eng-day estimate; (5) emergent-correctness capture (full narrative of the same-ms collision class fixed structurally by counter+CAS, with the 100-rapid-fire-IDs test cited as empirical floor); (6) ADR-024 delta evaluation — confirmed no contract change, contract validated across 12 entity stores spanning 3 ID schemes (counter / fingerprint / ULID); (7) structural asymmetry note (NotificationStore is NOT in policy AllStores — wire-layer-only injection at hub-networking.ts:101); (8) out-of-scope deliverables; (9) cross-references including downstream blocked-on for mission-48.
+- ✅ **`deploy/README.md` — new §Hub GCS state layout section.** Documents pre-vs-post-2026-04-25 audit namespace conventions + pre-vs-post-AMP-cutover notification conventions. Catch-all guidance for blobs outside the documented paths: treat as historical artifacts, not Hub-API-visible. Per task-353 deliverable #4.
+- ✅ **`create_report(task-353)` filed.** Status `in_review`. `reportRef: reports/task-353-v1-report.md`. All 6 task-353 deliverables checked; ship-green at 51 files / 748 tests (unchanged — docs-only PR).
+- ✅ **Calibration data captured.** Sizing band M-low (1–1.25 eng-days) vs actual ~5.5 hours = pattern-replication missions trend toward the lower edge. Useful for future repository-pattern-continuation work.
 
 ### T2/W9 (NotificationStore → NotificationRepository) — shipped locally 2026-04-25
 
@@ -68,18 +75,24 @@ If you're picking up cold on mission-49:
 ## Edges (dependency chains)
 
 ```
-T1/W8 ✅────────────┐
-T2/W9 ✅────────────┼─[both ship-green merge]─→ T3 (closing) ─[unblocks]─→ mission-48 M-Local-FS-Cutover
-                    │                                                       (inherited-verification dependency)
-[architect issued W8 + W9 in flight; both shipped local before
- first PR merge — pattern is "report+review per wave" not "merge-then-issue"]
+T1/W8 ✅─┐
+T2/W9 ✅─┼─[merge gates]─→ mission-48 M-Local-FS-Cutover (inherited-verification dependency)
+T3    ✅─┘                  ↑
+                            └─[unblocks on merge of W8+W9 only — T3 is docs-only,
+                               not a structural prerequisite for mission-48]
+
+Architect-owned remaining (out of engineer scope):
+  • docs/reviews/mission-49-retrospective.md (architect retrospective)
+  • mission-status flip mission-49 → completed (architect-gated)
 ```
 
-Outside-mission downstream: mission-48's success-criterion 5 ("no regression in audit or notification durability post-cutover") is verifiable as soon as W8 + W9 PRs both merge. Director's β split sequencing (thread-303 round 5) chose this mission first explicitly to satisfy that dependency. T3 retrospective is non-blocking for mission-48 activation since the durability surface is already structurally closed once W8+W9 merge.
+Outside-mission downstream: mission-48's success-criterion 5 ("no regression in audit or notification durability post-cutover") is verifiable as soon as W8 + W9 PRs both merge. Director's β split sequencing (thread-303 round 5) chose this mission first explicitly to satisfy that dependency.
 
 ---
 
 ## Session log (append-only)
+
+- **2026-04-25 late** — Architect issued task-353 (T3 closing audit) manually due to mission-advancement-cascade stall after MCP timeout on task-352 review (architect-noted bug-31 amendment). Engineer shipped T3 deliverables in a docs-only patch: ~250-line closing report at `docs/audits/m-audit-notification-repository-migration-closing-report.md` (mission-43/46/47-shape; full deliverable scorecard + emergent-correctness narrative + ADR-024 no-delta confirmation + structural asymmetry note for the AllStores vs HubNetworking divergence) plus a new §Hub GCS state layout section in `deploy/README.md` documenting the audit `audit/v2/` cutover + the preserved `notifications/v2/` namespace + a catch-all guidance for non-Hub-API-visible historical blobs. Filed `create_report(task-353)`; status `in_review`. Calibration data captured: thread-304 sized M-low (1–1.25 eng-days); actual was ~5.5 hours single-session — pattern-replication missions trend toward the lower edge of the sizing band. Engineer-side scope complete; architect-owned retrospective + mission-status flip remain.
 
 - **2026-04-25 mid (continuation)** — Architect issued task-352 for T2/W9 NotificationStore migration in flight (without waiting for T1 PR merge); also issued task-351 which was a duplicate of task-350. Engineer filed duplicate-detection report on task-351, then shipped T2/W9 on the same working tree as T1/W8: `NotificationRepository` (~145 LOC) over StorageProvider; ULID IDs preserved; `notifications/v2/` namespace preserved byte-identically; `MemoryNotificationStore` (40 LOC) + `GcsNotificationStore` (84 LOC) deleted with tombstone comments; 22 cross-provider tests added. Discovery: `AllStores` does NOT include `NotificationStore` — it's injected directly into `HubNetworking` at hub-networking.ts:101, so `policy/test-utils.ts` + `test/e2e/orchestrator.ts` needed no notification fixture changes (quieter wiring than W8). Cumulative mission-49 diff (W8+W9): +36/-222 LOC across 7 modified + 4 new files; 51 test files / 748 passed (vs pre-mission-49 baseline 49/706/5: +2 files / +42 tests / 0 regressions). Filed `create_report(task-352)`; status `in_review`. Mission-49 entity-store migration scope is structurally complete on the working tree; T3 retrospective queued.
 
