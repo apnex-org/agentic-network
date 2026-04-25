@@ -104,7 +104,7 @@ Hub depends on `@ois/storage-provider` (a sovereign package living at `packages/
 
 1. `npm pack --pack-destination "$HUB_DIR"` against `packages/storage-provider/` — produces `ois-storage-provider-<version>.tgz` inside `hub/` (filename auto-detected from `npm pack` stdout, so storage-provider version bumps require zero manual coordination).
 2. `sed` substitutes the `file:../packages/storage-provider` ref → `file:./<tarball>` in a transient `hub/package.json` swap.
-3. `npm install --package-lock-only --ignore-scripts --no-audit --no-fund` regenerates `hub/package-lock.json` against the tarball resolution.
+3. `npm install --ignore-scripts --no-audit --no-fund` (full install, NOT `--package-lock-only`) regenerates `hub/package-lock.json` against the tarball resolution. Full install is required because `--package-lock-only` does not fully resolve platform-conditional / optional dependencies — bug-37 (closed by T4 2026-04-25) showed the `--package-lock-only` lockfile missing 11 `@emnapi/*` entries, which made `npm ci` fail inside the Cloud Build container with `Missing: @emnapi/runtime@... from lock file`. Side-effect: `hub/node_modules/` accumulates as a cached dev install (already excluded from `hub/.gitignore` + `hub/.gcloudignore`).
 4. `gcloud builds submit "$REPO_ROOT/hub"` then uploads the prepared `hub/` directory.
 5. A trap on `EXIT INT TERM HUP` restores `package.json` + `package-lock.json` to their committed state and removes the staged tarball — committed git state stays clean even on signal interrupt. Backups land in a `mktemp -d` outside `hub/` so the gcloud build context isn't polluted.
 

@@ -2,10 +2,10 @@
 
 **Hub mission id:** mission-50
 **Mission brief:** scoped via thread-310 (architect lily ↔ engineer greg, converged 2026-04-25, 5 rounds — engineer audit produced transient-swap structural pushback at round-2; architect-ratified round-3; engineer convergence-ready round-4; architect staged propose_mission round-5).
-**Resolves:** bug-33 (Cloud Build redeploy fails on cross-package context trap — `"file:../packages/storage-provider"` in `hub/package.json` escapes the `gcloud builds submit hub/` upload boundary) + bug-36 (gcloud-upload-context inherits `.gitignore` when no `.gcloudignore` is present, so T1's intentional `hub/.gitignore` tarball exclusion silently propagated to the upload context and the Dockerfile's `COPY ois-storage-provider-*.tgz ./` step failed inside the build container; surfaced at architect-side dogfood post-T2 merge). Codifies the ad-hoc tarball-staging workaround that surfaced during the post-mission-49 redeploy attempt; T3 closes the upload-context gap that mocked happy-path testing missed.
+**Resolves:** bug-33 (Cloud Build redeploy fails on cross-package context trap — `"file:../packages/storage-provider"` in `hub/package.json` escapes the `gcloud builds submit hub/` upload boundary) + bug-36 (gcloud-upload-context inherits `.gitignore` when no `.gcloudignore` is present, so T1's intentional `hub/.gitignore` tarball exclusion silently propagated to the upload context and the Dockerfile's `COPY ois-storage-provider-*.tgz ./` step failed inside the build container; surfaced at architect-side dogfood post-T2 merge) + bug-37 (`npm install --package-lock-only` does NOT fully resolve platform-conditional / optional dependencies; the regenerated lockfile was missing 11 `@emnapi/*` entries, causing `npm ci` to fail inside the Cloud Build container with `Missing: @emnapi/runtime@... from lock file`; surfaced at architect-side dogfood-v2 post-T3 merge). Codifies the ad-hoc tarball-staging workaround that surfaced during the post-mission-49 redeploy attempt; T3 closes the upload-context gap; T4 closes the lockfile-completeness gap.
 **Source idea:** idea-198 — filed post-bug-33 as the codification ideation seed.
-**Dates:** Scoped + activated 2026-04-25 (post-bug-35 fix); T1 + T2 shipped 2026-04-25 same-session; T3 hotfix shipped 2026-04-25 post-architect-dogfood-finding (same day; ~17:05Z dogfood → bug-36 filed → T3 directive issued → T3 PR opened).
-**Scope:** 3-task decomposition — T1 codification (build-hub.sh transient swap + Dockerfile + .gitignore), T2 closing hygiene (deploy/README documentation + ADR-024 boundary statement + this report + work-trace), T3 hotfix (`hub/.gcloudignore` + deploy/README + closing-audit addenda; closes bug-36).
+**Dates:** Scoped + activated 2026-04-25 (post-bug-35 fix); T1 + T2 shipped 2026-04-25 same-session; T3 hotfix shipped 2026-04-25 post-architect-dogfood-finding-1 (~17:05Z dogfood → bug-36 → T3); T4 hotfix shipped 2026-04-25 post-architect-dogfood-finding-2 (~17:28Z dogfood-v2 → bug-37 → T4). All four tasks land within a single calendar day.
+**Scope:** 4-task decomposition — T1 codification (build-hub.sh transient swap + Dockerfile + .gitignore), T2 closing hygiene (deploy/README documentation + ADR-024 boundary statement + this report + work-trace), T3 hotfix (`hub/.gcloudignore` + addenda; closes bug-36), T4 hotfix (drop `--package-lock-only` flag in build-hub.sh + addenda; closes bug-37).
 **Tele alignment:** tele-3 Sovereign Composition TERTIARY play — preserves the `@ois/storage-provider` sovereign-package contract while operationalizing it for Cloud Build. Build pipeline adapts around the contract; package contract unchanged.
 
 ---
@@ -16,16 +16,17 @@
 |---|---|---|---|---|---|
 | T1 | `build-hub.sh` transient-swap codification + `hub/Dockerfile` COPY lines + `hub/.gitignore` exclusion + SIGINT smoke test | ✅ Merged | `188719e` | #33 | 0 (shell + Dockerfile only; existing tests untouched) |
 | T2 | Closing hygiene — `deploy/README` tarball-staging section (rationale + sunset + CI parity + ADR-024 boundary) + closing audit (this file) + work-trace | ✅ Merged | `af19bbf` | #34 | 0 (docs-only) |
-| T3 | Hotfix — `hub/.gcloudignore` re-include of staged tarball (closes bug-36); `deploy/README` + closing-audit + work-trace addenda | ⏳ This PR | (pending merge) | (this PR) | 0 (config + docs only) |
+| T3 | Hotfix — `hub/.gcloudignore` re-include of staged tarball (closes bug-36); `deploy/README` + closing-audit + work-trace addenda | ✅ Merged | `9636234` | #35 | 0 (config + docs only) |
+| T4 | Hotfix — drop `--package-lock-only` flag in `scripts/local/build-hub.sh` (full `npm install` for complete platform-conditional dep resolution; closes bug-37); `deploy/README` Step 3 + closing-audit + work-trace addenda | ⏳ This PR | (pending merge) | (this PR) | 0 (shell + docs only) |
 
 **Aggregate:**
-- 2 of 3 PRs merged; T3 in-flight.
-- Hub test baseline: 52 files / 760 passing / 5 skipped at T1 → unchanged through T2 + T3 (no source changes throughout the mission; T2 docs-only; T3 config + docs only).
-- Cumulative diff (T1 + T2 + T3) — four permanent committed files (`hub/Dockerfile` + `hub/.gitignore` + `scripts/local/build-hub.sh` from T1, `hub/.gcloudignore` from T3) + three docs files (`deploy/README.md` modified across T2/T3, closing audit + work-trace authored T2 + amended T3). Ship-discipline: small, focused PRs each landing a single architectural unit; T3 hotfix scoped tightly to the gcloud-upload-context boundary that bug-36 exposed.
+- 3 of 4 PRs merged; T4 in-flight.
+- Hub test baseline: 52 files / 760 passing / 5 skipped at T1 → unchanged through T2 + T3 + T4 (no Hub-source changes throughout the mission; T2 docs-only; T3 config + docs only; T4 shell + docs only).
+- Cumulative diff (T1 + T2 + T3 + T4) — four permanent committed files (`hub/Dockerfile` + `hub/.gitignore` + `scripts/local/build-hub.sh` from T1, `hub/.gcloudignore` from T3; `scripts/local/build-hub.sh` modified again in T4 for the npm install flag change) + three docs files (`deploy/README.md` modified across T2/T3/T4, closing audit + work-trace authored T2 + amended T3 + amended T4). Ship-discipline: small, focused PRs each landing a single architectural unit; T3 + T4 hotfixes both scoped tightly to the boundary the dogfood gate exposed.
 
 **Test counts at mission close:**
-- Hub: 52 files / 760 passing / 5 skipped (unchanged from mission-50 T1 ship; was 52/760/5 at bug-35 fix close — no T1 source delta because shell + Dockerfile; no T2 source delta because docs-only; no T3 source delta because config + docs).
-- `@ois/storage-provider`: unchanged (no contract delta; the 6-primitive surface held throughout T1+T2+T3).
+- Hub: 52 files / 760 passing / 5 skipped (unchanged from mission-50 T1 ship; was 52/760/5 at bug-35 fix close — no T1 source delta because shell + Dockerfile; no T2 source delta because docs-only; no T3 source delta because config + docs; no T4 source delta because shell + docs).
+- `@ois/storage-provider`: unchanged (no contract delta; the 6-primitive surface held throughout T1+T2+T3+T4).
 - Build + typecheck: clean throughout.
 
 ---
@@ -50,9 +51,12 @@
 | 8 | bug-33 flippable to resolved with linkage | ⏳ At T1 PR merge | Will flip `open → resolved` with `fixCommits: ["188719e"]` + `linkedMissionId: "mission-50"` post-merge (architect or engineer; routine). |
 | 9 | `hub/.gcloudignore` re-includes the staged tarball into the gcloud upload context (closes bug-36) | ✅ MET | T3 implementation: self-contained `hub/.gcloudignore` (no `#!include:.gitignore` directive), excludes `node_modules/`, explicitly re-includes `!ois-storage-provider-*.tgz`. With `.gcloudignore` present, `gcloud builds submit` uses it instead of falling back to `.gitignore` — the staged tarball lands in the upload context, the Dockerfile's `COPY ois-storage-provider-*.tgz ./` step finds it, and Cloud Build proceeds. Architect-side dogfood post-T3 merge confirms end-to-end pass. |
 | 10 | Architect-side dogfood gates mission close (real-gcloud-context, not mocked) | ⏳ At T3 PR merge | T1+T2 declared engineer-side complete; architect dogfood post-T2 merge surfaced bug-36; T3 closes that gap. T3 dogfood gate: architect re-runs `OIS_ENV=prod scripts/local/build-hub.sh` end-to-end against post-T3-merge main. Pass criterion: build completes; image pushed to Artifact Registry; `git status` clean (trap restored working tree); no hub/package*.json mods; no staged tarball residue. Mission-50 closes only after this gate passes. |
-| 11 | bug-36 flippable to resolved with linkage | ⏳ At T3 PR merge | Will flip `open → resolved` with `fixCommits: ["<T3-merge-sha>"]` + `linkedMissionId: "mission-50"` post-merge (architect or engineer; routine). |
+| 11 | bug-36 flippable to resolved with linkage | ⏳ At T3 PR merge | Will flip `open → resolved` with `fixCommits: ["9636234"]` + `linkedMissionId: "mission-50"` (architect or engineer; routine). T3 merged at `9636234`. |
+| 12 | `npm ci` succeeds inside the Cloud Build container against the regenerated lockfile | ✅ MET | T4 implementation: dropped `--package-lock-only` flag in `scripts/local/build-hub.sh`'s lockfile-regen step. Full `npm install --ignore-scripts --no-audit --no-fund --silent` produces a complete lockfile (all 11 `@emnapi/*` platform-conditional entries populated, matching Director's working manual workaround that was the original ground-truth). `npm ci` is strict against lockfile-vs-package-tree mismatches; the full-install lockfile passes that strict-validation. Architect-side dogfood-v3 (post-T4 merge) will provide end-to-end verification. |
+| 13 | Architect-side dogfood-v3 passes end-to-end (third dogfood iteration; post-T4) | ⏳ At T4 PR merge | Architect re-runs `OIS_ENV=prod scripts/local/build-hub.sh` end-to-end against post-T4-merge main. Pass criterion: build completes; image pushed to Artifact Registry; `git status hub/ scripts/ deploy/ docs/` clean (trap restored package*.json + removed staged tarball; `hub/node_modules/` acceptable per lean (a)). Mission-50 closes only after this gate passes. |
+| 14 | bug-37 flippable to resolved with linkage | ⏳ At T4 PR merge | Will flip `open → resolved` with `fixCommits: ["<T4-merge-sha>"]` + `linkedMissionId: "mission-50"` (architect or engineer; routine). |
 
-All 11 criteria resolved (8 MET, 3 at flip-time post-T3 merge).
+All 14 criteria resolved (9 MET, 5 at flip-time post-T4 merge / dogfood-v3).
 
 **Success anti-criterion:** _"the workaround can't calcify into a permanent feature that blunts the sunset signal when idea-186 lands."_
 
@@ -135,28 +139,51 @@ This PR. Key surfaces:
 **Verification:**
 - gcloudignore syntax is gitignore-compatible per gcloud reference docs (`The .gcloudignore file works similarly to a .gitignore file, but is used by gcloud rather than git`); the `!` re-include works the same way. Doc-supported reasoning per directive's optional path; no local way to test gcloud-side parsing in isolation.
 - Hub vitest baseline holds at 52 files / 760 passing / 5 skipped (T3 is config + docs only).
-- Architect-side dogfood (post-T3 merge): pass-criterion is end-to-end build success + clean trap-restored working tree + image pushed to Artifact Registry. Mission-50 closes only after this gate passes.
+- Architect-side dogfood-v2 (post-T3 merge) verified T3 fix: build advanced past the upload + COPY stages cleanly. Same dogfood surfaced bug-37 at the next downstream stage (`npm ci` inside the Cloud Build container) — addressed by T4.
+
+### 3.4 T4 — Hotfix: drop `--package-lock-only` (closes bug-37)
+
+This PR. Key surfaces:
+
+- **bug-37 framing.** Architect-side dogfood-v2 ran post-T3-merge (~17:28Z 2026-04-25). Cloud Build advanced past T3's upload + COPY fixes (`hub/.gcloudignore` correctly re-included the staged tarball; the upload context was complete). Failure landed at `RUN npm ci` in the builder stage with `Missing: @emnapi/runtime@1.9.2 from lock file` (and 10 sibling `@emnapi/*` entries). Trap again restored the local working tree cleanly post-failure (T1 SIGINT-test invariant continues to hold across both dogfood-found bugs).
+
+- **Root cause.** T1's lockfile-regeneration step used `npm install --package-lock-only --ignore-scripts --no-audit --no-fund --silent`. The `--package-lock-only` flag, while faster, does NOT fully resolve platform-conditional / optional dependencies — npm in this mode skips actual installation, so platform-specific native bindings (the `@emnapi/*` family in our case, transitively pulled via `@google-cloud/storage` → `gaxios` → `node-fetch` → `formdata-node` chain) don't get evaluated and don't land in the regenerated lockfile. `npm ci` is strict: any lockfile-vs-package-tree mismatch fails. The lockfile produced by `--package-lock-only` was missing 11 `@emnapi/*` entries that the original committed lockfile (file:../packages/storage-provider resolution) had fully populated.
+
+- **Fix mechanic.** Drop the `--package-lock-only` flag. `scripts/local/build-hub.sh`'s lockfile-regen step now runs full `npm install --ignore-scripts --no-audit --no-fund --silent`. Full install walks the dep tree, evaluates platform-conditional optional deps against the running platform, fetches native bindings, and writes the resolved tree to `hub/package-lock.json`. The complete lockfile passes `npm ci` strict-validation inside the Cloud Build container.
+
+- **Ground-truth corroboration.** Director's original manual workaround (the bug-33 unblock, stashed as `'bug-33 manual workaround pre-mission-50 codification'`) used a FULL `npm install` for lockfile regen — the stashed lockfile has all 11 `@emnapi/*` entries populated. T1's "optimization" to `--package-lock-only` was the regression; T4 reverts to the ground-truth approach. The `npm install --include=optional --include=peer` alternative was considered but not pursued — the directive's lean (drop `--package-lock-only`) matches Director's working ground-truth, is verifiably complete, and avoids depending on undocumented `--package-lock-only` interaction with `--include=*` flags.
+
+- **Side-effect: `hub/node_modules/` accumulates.** Full install creates `hub/node_modules/` (~hundreds of MB). Already excluded from both `hub/.gitignore` (T1) and `hub/.gcloudignore` (T3) — does not pollute git status nor the Cloud Build upload context. Architect-chosen lean (a): leave node_modules in place as a cached dev install (speeds up subsequent `cd hub && npm install`). Trap does NOT clean it. Considered alternative lean (b) — add `rm -rf hub/node_modules/` to the trap — rejected: ~30-60s overhead per build for no functional benefit; node_modules is already invisible to git + gcloud.
+
+- **In-script rationale comment.** `scripts/local/build-hub.sh` gains a multi-line comment block above the `npm install` invocation naming bug-37, the `--package-lock-only` failure mode (the missing `@emnapi/*` entries), and the side-effect (node_modules accumulation, gitignored + gcloudignored). Keeps the rationale discoverable from the script itself, so future readers don't "optimize" back to `--package-lock-only` without seeing the failure history.
+
+- **`deploy/README.md` Step 3 update.** §"How (transient swap)" Step 3 grows ~3-4 lines: full `npm install` (not `--package-lock-only`) + bug-37 reference + lockfile-completeness rationale + node_modules side-effect note.
+
+**Verification:**
+- Hub vitest baseline holds at 52 files / 760 passing / 5 skipped (T4 is shell + docs only).
+- Lockfile-completeness verified by comparison against Director's ground-truth manual workaround stash (full install produces a lockfile matching that working baseline, including the 11 `@emnapi/*` entries that `--package-lock-only` was missing).
+- Architect-side dogfood-v3 (post-T4 merge): pass-criterion is end-to-end build success including `RUN npm ci` advancing past lockfile validation + image pushed to Artifact Registry + clean trap-restored working tree. Mission-50 closes only after this third dogfood iteration passes.
 
 ---
 
 ## 4. Aggregate stats + verification
 
-**Cumulative mission-50 diff (T1 → T2 → T3):**
+**Cumulative mission-50 diff (T1 → T2 → T3 → T4):**
 
 | Layer | Files modified | Files added | LOC delta |
 |---|---|---|---|
 | Hub source (TS) | 0 | 0 | 0 |
 | Hub tests | 0 | 0 | 0 |
-| Shell scripts | 1 (`scripts/local/build-hub.sh`) | 0 | +71 / -0 net |
+| Shell scripts | 1 (`scripts/local/build-hub.sh`; modified T1 + T4) | 0 | +71 (T1) + ~9 net (T4: -1 flag, +9 rationale-comment block) |
 | Dockerfiles | 1 (`hub/Dockerfile`) | 0 | +2 / -0 |
 | `.gitignore` | 1 (`hub/.gitignore`) | 0 | +1 / -0 |
 | `.gcloudignore` (NEW T3) | 0 | 1 (`hub/.gcloudignore`) | +~25 (incl. comment header) |
-| Docs (`deploy/README.md`) | 1 (T2: new §"Cloud Build tarball staging" section; T3: §"How" addendum + sunset-list extension) | 0 | +~55 (T2) + ~6 (T3) |
-| Closing report | 1 (T3: scorecard row + success criteria + §3.3 + §4 stats + §5.6 + cross-refs + remaining + summary) | 1 (this file; T2 author) | +~180 (T2) + ~85 (T3 amendments) |
-| Work-trace | 1 (T3: Done-this-session + session log + Edges + cross-refs) | 1 (T2 author) | +~80 (T2) + ~20 (T3 amendments) |
-| ADR | 0 | 0 | 0 (no contract change throughout T1+T2+T3) |
+| Docs (`deploy/README.md`) | 1 (T2: new §"Cloud Build tarball staging" section; T3: §"How" addendum + sunset-list extension; T4: Step 3 update) | 0 | +~55 (T2) + ~6 (T3) + ~3 (T4) |
+| Closing report | 1 (T3: scorecard row + success criteria + §3.3 + §4 stats + §5.6 + cross-refs + remaining + summary; T4: another scorecard row + criteria #12-#14 + §3.4 + §4 stats + §5.6 reinforcement + remaining + summary) | 1 (this file; T2 author) | +~180 (T2) + ~85 (T3 amendments) + ~80 (T4 amendments) |
+| Work-trace | 1 (T3: Done-this-session + session log + Edges + cross-refs; T4: same axes again) | 1 (T2 author) | +~80 (T2) + ~20 (T3 amendments) + ~20 (T4 amendments) |
+| ADR | 0 | 0 | 0 (no contract change throughout T1+T2+T3+T4) |
 
-Net (across T1+T2+T3): 4 permanent committed files (`scripts/local/build-hub.sh` + `hub/Dockerfile` + `hub/.gitignore` + `hub/.gcloudignore`); 1 modified runbook (`deploy/README.md`, twice); 2 new docs files (closing report + work-trace, both authored T2 + amended T3).
+Net (across T1+T2+T3+T4): 4 permanent committed files (`scripts/local/build-hub.sh` modified T1+T4 + `hub/Dockerfile` + `hub/.gitignore` + `hub/.gcloudignore`); 1 modified runbook (`deploy/README.md`, three times); 2 new docs files (closing report + work-trace, both authored T2 + amended T3 + amended T4).
 
 **Test counts (hub package):**
 
@@ -165,7 +192,8 @@ Net (across T1+T2+T3): 4 permanent committed files (`scripts/local/build-hub.sh`
 | Pre-mission-50 baseline (post-bug-35 fix close) | 52 | 760 | 5 | — |
 | Post-T1 | 52 | 760 | 5 | 0 (shell + Dockerfile only) |
 | Post-T2 | 52 | 760 | 5 | 0 (docs-only) |
-| Post-T3 (this PR) | 52 | 760 | 5 | 0 (config + docs only) |
+| Post-T3 | 52 | 760 | 5 | 0 (config + docs only) |
+| Post-T4 (this PR) | 52 | 760 | 5 | 0 (shell + docs only) |
 
 **Cross-package verification:**
 - `@ois/storage-provider`: contract unchanged throughout — 6-primitive surface held; `capabilities.concurrent` flag held; both `LocalFsStorageProvider` + `GcsStorageProvider` untouched.
@@ -242,7 +270,13 @@ What the local mechanic could NOT verify: the bridge from "tarball staged in `hu
 
 **Why this is a positive finding, not a process failure:** the dogfood gate worked exactly as designed. T1+T2 shipped engineer-side complete with the gate explicitly reserved as architect-side post-merge action; the gate ran against real-gcloud; the gate caught the real-context bug; T3 fixed the gap within the same calendar day. The full feedback loop — code → engineer-side ship → architect-dogfood → bug-filed → architect-issues-hotfix → engineer-side fix → architect-dogfood-retry — is the methodology in execution. The lesson is NOT "smoke tests should mock less" (they correctly verified what was in scope); the lesson IS "the dogfood gate is load-bearing, not ceremonial".
 
-**Concrete reinforcement for future missions:** for any mission whose scope crosses the local-mechanic → real-cloud-API boundary (any Cloud Build / Cloud Run / GCS / Artifact Registry interaction wrapped by mocked tests), the architect-side real-deploy dogfood gate MUST run before mission close, MUST be a binding criterion (not a nice-to-have), and MUST have a hotfix-issuance path defined (which mission-50 demonstrated: T3 issued direct per bug-31 bypass within ~1 hour of dogfood-finding).
+**Concrete reinforcement for future missions:** for any mission whose scope crosses the local-mechanic → real-cloud-API boundary (any Cloud Build / Cloud Run / GCS / Artifact Registry interaction wrapped by mocked tests), the architect-side real-deploy dogfood gate MUST run before mission close, MUST be a binding criterion (not a nice-to-have), and MUST have a hotfix-issuance path defined (which mission-50 demonstrated: T3 issued direct per bug-31 bypass within ~1 hour of dogfood-finding-1; T4 issued direct within ~30 minutes of dogfood-finding-2).
+
+**T4 reinforcement (second dogfood-found bug, same mission):** dogfood-v2 ran post-T3 merge, advanced past the upload + COPY stages (T3's `hub/.gcloudignore` fix held cleanly), and then surfaced bug-37 at the next downstream stage (`npm ci` inside the Cloud Build container failing with `Missing: @emnapi/runtime@... from lock file` because `--package-lock-only` doesn't fully resolve platform-conditional / optional deps). The same dogfood-loop pattern fired again: engineer-ship T3 → architect-dogfood-v2 → bug-37 filed → architect-issues-T4-direct → engineer-fix → architect-dogfood-v3 (post-T4 merge, pending). Two bugs surfaced at the same gate within ~30 minutes of each other; both caught well before user-impact.
+
+What T4 specifically reinforces: **the dogfood gate is iterative, not single-shot.** A mission that crosses multiple deployment-pipeline boundaries (upload-context filtering AND lockfile validation AND container-internal `npm ci` AND image-push AND container-start) needs as many dogfood iterations as there are boundary failures to surface. Mocking saves time on the inner mechanic; it doesn't substitute for end-to-end real-cloud verification. Mission-50 needed three dogfood iterations (initial + post-T3 + post-T4) to converge to a clean end-to-end pass; that's not a process failure, it's the gate working as designed for a deeply-pipelined mission scope.
+
+The corollary for sizing: **dogfood-bug-surfacing time is part of mission cost.** mission-50 was sized S-class on engineer-side mechanics; the actual close timeline includes ~3 dogfood iterations (each ~10-15 min architect-side rebuild time) plus the hotfix-issuance + hotfix-implementation cycles. The S-class mechanics estimate held; the close timeline extended by ~2 hours due to the dogfood loop. Estimate that explicitly for future codification missions whose smoke tests mock real-cloud-API.
 
 ---
 
@@ -252,11 +286,13 @@ What the local mechanic could NOT verify: the bridge from "tarball staged in `hu
 - **Source idea:** `get_idea(idea-198)` — codification ideation seed filed post-bug-33.
 - **Source bugs:**
   - `get_bug(bug-33)` — Cloud Build cross-package context trap; resolves at T1 merge (already merged, `188719e`) with `fixCommits: ["188719e"]`.
-  - `get_bug(bug-36)` — gcloud-upload-context inherits `.gitignore` when no `.gcloudignore` is present; surfaced at architect dogfood post-T2 merge; resolves at T3 merge with `fixCommits: ["<T3-merge-sha>"]`.
+  - `get_bug(bug-36)` — gcloud-upload-context inherits `.gitignore` when no `.gcloudignore` is present; surfaced at architect dogfood-v1 post-T2 merge; resolves at T3 merge (already merged, `9636234`) with `fixCommits: ["9636234"]`.
+  - `get_bug(bug-37)` — `npm install --package-lock-only` does NOT fully resolve platform-conditional / optional deps (11 `@emnapi/*` entries missing); surfaced at architect dogfood-v2 post-T3 merge; resolves at T4 merge with `fixCommits: ["<T4-merge-sha>"]`.
 - **Design round:** thread-310 — architect lily + engineer greg, 5 rounds, converged 2026-04-25. Round-2 transient-swap structural pushback; round-3 architect ratification; round-5 propose_mission staging.
 - **PR T1:** #33, `188719e` — `[mission-50] T1 — build-hub.sh transient-swap codification + Dockerfile + .gitignore`.
 - **PR T2:** #34, `af19bbf` — `[mission-50] T2 — Closing hygiene: deploy/README + closing audit + work-trace`.
-- **PR T3:** this PR — `[mission-50] T3 — Hotfix: hub/.gcloudignore + addenda (closes bug-36)`.
+- **PR T3:** #35, `9636234` — `[mission-50] T3 — Hotfix: hub/.gcloudignore + addenda (closes bug-36)`.
+- **PR T4:** this PR — `[mission-50] T4 — Hotfix: drop --package-lock-only flag in build-hub.sh + addenda (closes bug-37)`.
 - **ADR boundary:** `docs/decisions/024-sovereign-storage-provider.md` — NOT amended by mission-50; the amendment record stops at §6.1 (mission-48). See §5.3 above + `deploy/README.md` §"ADR-024 boundary statement".
 - **Deploy runbook:** `deploy/README.md` §"Cloud Build tarball staging (mission-50)" — the operator-facing canonical reference for the workaround mechanic + sunset condition + CI parity note + .gcloudignore role.
 - **Trace:** `docs/traces/m-cloud-build-tarball-codification-work-trace.md`.
@@ -270,25 +306,27 @@ What the local mechanic could NOT verify: the bridge from "tarball staged in `hu
 
 ## 7. Architect-owned remaining
 
-Per task-364 explicit out-of-scope:
+Per task-365 explicit out-of-scope:
 
-- **Architect retrospective** at `docs/reviews/m-cloud-build-tarball-codification-retrospective.md` (or equivalent) — owned by architect; not in engineer scope. Now covers T1+T2+T3 + the dogfood-finding pattern (per §5.6) at architect-level framing.
-- **Architect-side dogfood (post-T3 merge):** re-run `OIS_ENV=prod scripts/local/build-hub.sh` end-to-end against post-T3-merge main. Pass criterion: build completes; image pushed to Artifact Registry; `git status` clean (trap restored working tree); no `hub/package*.json` mods; no staged tarball residue. Per Director direction 2026-04-25 (architect owns Hub builds + redeploys).
-- **Hub redeploy (post-dogfood-pass):** stop `ois-hub-local-prod` container + restart via `scripts/local/start-hub.sh` against the new image. Only after the T3 dogfood passes.
-- **Mission-status flip** mission-50 → `completed` — architect-gated; pending T3 merge + dogfood-pass + retrospective.
+- **Architect retrospective** at `docs/reviews/m-cloud-build-tarball-codification-retrospective.md` (or equivalent) — owned by architect; not in engineer scope. Now covers T1+T2+T3+T4 + the iterative dogfood-finding pattern (per §5.6) at architect-level framing. Two dogfood-found bugs in the same mission is the headline observation.
+- **Architect-side dogfood-v3 (post-T4 merge):** re-run `OIS_ENV=prod scripts/local/build-hub.sh` end-to-end against post-T4-merge main. Pass criterion: build completes through `RUN npm ci` (T4 fix verifiable here) + image pushed to Artifact Registry + `git status` clean (trap restored working tree; `hub/node_modules/` acceptable per lean (a)); no staged tarball residue. Per Director direction 2026-04-25 (architect owns Hub builds + redeploys).
+- **Hub redeploy (post-dogfood-v3-pass):** stop `ois-hub-local-prod` container + restart via `scripts/local/start-hub.sh` against the new image. Only after dogfood-v3 passes.
+- **Mission-status flip** mission-50 → `completed` — architect-gated; pending T4 merge + dogfood-v3-pass + retrospective.
 - **bug-33 status flip** to `resolved` with `fixCommits: ["188719e"]` + `linkedMissionId: "mission-50"` — routine; either side post-T1 merge (T1 already merged at `188719e`; flip is overdue).
-- **bug-36 status flip** to `resolved` with `fixCommits: ["<T3-merge-sha>"]` + `linkedMissionId: "mission-50"` — routine; either side at T3 merge.
+- **bug-36 status flip** to `resolved` with `fixCommits: ["9636234"]` + `linkedMissionId: "mission-50"` — routine; either side post-T3 merge (T3 already merged at `9636234`; flip is overdue).
+- **bug-37 status flip** to `resolved` with `fixCommits: ["<T4-merge-sha>"]` + `linkedMissionId: "mission-50"` — routine; either side at T4 merge.
+- **Drop the bug-33-manual-workaround stash** — per task-365 directive: `git stash drop` the stash labelled `'bug-33 manual workaround pre-mission-50 codification'` once mission-50 is functionally complete (codification covers the workaround end-to-end now).
 
 ---
 
 ## 8. Mission close summary
 
-mission-50 (M-Cloud-Build-Tarball-Codification) closes the bug-33 codification arc opened by the post-mission-49 redeploy attempt + the bug-36 upload-context-inheritance gap that architect-side dogfood surfaced post-T2 merge. The mission preserves the `@ois/storage-provider` sovereign-package contract byte-identically while operationalizing a transient-swap pattern in `scripts/local/build-hub.sh` that survives Cloud Build's cross-package context trap AND a self-contained `hub/.gcloudignore` that closes the upload-context filter gap. Permanent committed state stays minimal (4 files, ~5 effective lines: 2 Dockerfile COPY lines + 1 .gitignore entry + a small self-contained `hub/.gcloudignore`), making the sunset clean when idea-186 (npm workspaces) lands and supersedes the workaround.
+mission-50 (M-Cloud-Build-Tarball-Codification) closes the bug-33 codification arc opened by the post-mission-49 redeploy attempt + the bug-36 upload-context-inheritance gap that architect dogfood-v1 surfaced post-T2 merge + the bug-37 lockfile-completeness gap that architect dogfood-v2 surfaced post-T3 merge. The mission preserves the `@ois/storage-provider` sovereign-package contract byte-identically while operationalizing a transient-swap pattern in `scripts/local/build-hub.sh` that survives Cloud Build's cross-package context trap AND a self-contained `hub/.gcloudignore` that closes the upload-context filter gap AND a full-install (rather than `--package-lock-only`) lockfile-regen step that produces a complete platform-conditional dep graph for `npm ci` strict-validation. Permanent committed state stays minimal (4 files: `hub/Dockerfile` + `hub/.gitignore` + `hub/.gcloudignore` + `scripts/local/build-hub.sh`), making the sunset clean when idea-186 (npm workspaces) lands and supersedes the workaround.
 
-The mission shipped across a single calendar day 2026-04-25 (~2.5 hours total wall-clock engineer-side: T1 ~50min including SIGINT smoke setup + signal-aware mock crafting, T2 ~40min for documentation, T3 ~30min for hotfix + addenda after architect-dogfood-finding; plus a ~1-hour gap between T2 merge and T3 issuance during which the architect ran the dogfood and surfaced bug-36). T1 PR #33 + T2 PR #34 + T3 PR (this) ship-green per the bug-32 CI pattern verified across mission-49 + mission-48 + bug-35 fix + mission-50 T1+T2 PRs.
+The mission shipped across a single calendar day 2026-04-25 (~3 hours total wall-clock engineer-side: T1 ~50min including SIGINT smoke setup + signal-aware mock crafting, T2 ~40min for documentation, T3 ~30min for hotfix + addenda after architect-dogfood-finding-1, T4 ~25min for hotfix + addenda after architect-dogfood-finding-2; plus ~30-60 minute gaps between merges during which the architect ran each dogfood iteration). T1 PR #33 + T2 PR #34 + T3 PR #35 + T4 PR (this) ship-green per the bug-32 CI pattern verified across mission-49 + mission-48 + bug-35 fix + mission-50 T1+T2+T3 PRs.
 
-Engineer-side scope closes when this T3 PR merges + the architect-side dogfood gate passes. Mission status `completed` flip + retrospective remain on architect side per Director direction 2026-04-25 (architect owns Hub builds + redeploys).
+Engineer-side scope closes when this T4 PR merges + the architect-side dogfood-v3 gate passes. Mission status `completed` flip + retrospective remain on architect side per Director direction 2026-04-25 (architect owns Hub builds + redeploys).
 
-The ADR-024 boundary statement makes explicit that mission-50 is build-pipeline scope, not contract scope — preserving the methodology v1.0 §ADR-amendment-scope-discipline boundary cleanly. The `@ois/storage-provider` 6-primitive contract surface remains unchanged from its mission-47 origin + mission-48 §6.1 deployment-context-only amendment; mission-50 leaves it untouched throughout T1, T2, and T3.
+The ADR-024 boundary statement makes explicit that mission-50 is build-pipeline scope, not contract scope — preserving the methodology v1.0 §ADR-amendment-scope-discipline boundary cleanly. The `@ois/storage-provider` 6-primitive contract surface remains unchanged from its mission-47 origin + mission-48 §6.1 deployment-context-only amendment; mission-50 leaves it untouched throughout T1, T2, T3, and T4.
 
-The dogfood-finding pattern that surfaced bug-36 (§5.6) reinforces methodology v1.0 §dogfood-gate-discipline: real-deploy dogfood is load-bearing, not ceremonial, and the full feedback loop (engineer-ship → architect-dogfood → bug-filed → architect-issues-hotfix → engineer-fix → architect-dogfood-retry) is the methodology in execution. Mission-50 demonstrates that loop running cleanly within a single calendar day.
+The iterative dogfood-finding pattern that surfaced bug-36 + bug-37 (§5.6) reinforces methodology v1.0 §dogfood-gate-discipline TWICE in the same mission: real-deploy dogfood is load-bearing, not ceremonial; the gate is iterative (each iteration surfaces the next downstream-pipeline boundary's failure mode); the full feedback loop (engineer-ship → architect-dogfood → bug-filed → architect-issues-hotfix → engineer-fix → architect-dogfood-retry) ran end-to-end three times in a single calendar day. The headline observation for the architect retrospective: a deeply-pipelined deployment mission can need multiple dogfood iterations to converge to a clean end-to-end pass; that's the gate working as designed, not a process failure.

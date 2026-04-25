@@ -149,7 +149,16 @@ if ! grep -q "file:./${TARBALL_NAME}" "$HUB_DIR/package.json"; then
 fi
 
 echo "[build-hub] ──────── Regen package-lock.json ────────"
-( cd "$HUB_DIR" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund --silent )
+# Full `npm install` (NOT `--package-lock-only`) — required for complete
+# platform-conditional / optional-dep resolution. bug-37 (closed by T4
+# 2026-04-25): `--package-lock-only` produced an incomplete lockfile
+# missing 11 `@emnapi/*` entries, causing `npm ci` to fail inside the
+# Cloud Build container with `Missing: @emnapi/runtime@... from lock file`.
+# Full install populates the platform-conditional graph so `npm ci`
+# strict-validation passes. Side-effect: hub/node_modules/ accumulates as
+# a cached dev install (already excluded from .gitignore + .gcloudignore;
+# does not pollute git status or Cloud Build upload context).
+( cd "$HUB_DIR" && npm install --ignore-scripts --no-audit --no-fund --silent )
 
 # ── Build via Cloud Build ──────────────────────────────────────────────
 
