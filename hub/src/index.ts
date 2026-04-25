@@ -8,9 +8,8 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { MemoryNotificationStore } from "./state.js";
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, INotificationStore } from "./state.js";
-import { GcsNotificationStore, reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
+import { reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
 import {
   TurnRepository,
   PendingActionRepository,
@@ -18,6 +17,7 @@ import {
   MissionRepository, TaskRepository, ProposalRepository, ThreadRepository,
   AgentRepository,
   AuditRepository,
+  NotificationRepository,
   StorageBackedCounter,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
   type IPendingActionStore, type IDirectorNotificationStore,
@@ -101,7 +101,6 @@ if (STORAGE_BACKEND === "gcs") {
   const bucket = GCS_BUCKET!;
   console.log(`[Hub] Using GCS storage backend: gs://${bucket}`);
   storageProvider = new GcsStorageProvider(bucket);
-  notificationStore = new GcsNotificationStore(bucket);
 } else if (STORAGE_BACKEND === "local-fs") {
   if (process.env.NODE_ENV === "production") {
     console.error("[Hub] FATAL: STORAGE_BACKEND is 'local-fs' in production. local-fs is a dev-only backend (cas:true, durable:true, concurrent:false — single-writer only). Use STORAGE_BACKEND=gcs in prod.");
@@ -109,12 +108,7 @@ if (STORAGE_BACKEND === "gcs") {
   }
   const root = OIS_LOCAL_FS_ROOT!;
   console.log(`[Hub] Using local-fs storage backend at: ${root}`);
-  console.log(`[Hub] Note: NotificationStore remains in-memory on local-fs backend (mission-49 T2/W9 migrates it); resets on restart.`);
   storageProvider = new LocalFsStorageProvider(root);
-  // NotificationStore is the only remaining non-Repository store after
-  // mission-49 W8 (audit migration); local-fs dev-mode uses the Memory
-  // variant — resets on restart like in a pure `memory` backend run.
-  notificationStore = new MemoryNotificationStore();
 } else {
   if (process.env.NODE_ENV === "production") {
     console.error("[Hub] FATAL: STORAGE_BACKEND is 'memory' in production. Set STORAGE_BACKEND=gcs to prevent silent state loss.");
@@ -122,15 +116,15 @@ if (STORAGE_BACKEND === "gcs") {
   }
   console.log("[Hub] Using in-memory storage backend");
   storageProvider = new MemoryStorageProvider();
-  notificationStore = new MemoryNotificationStore();
 }
 
-// Mission-47 W1-W7 + Mission-49 W8: instantiate StorageProvider-backed
+// Mission-47 W1-W7 + Mission-49 W8-W9: instantiate StorageProvider-backed
 // repositories. Counter is shared-by-design across all repositories —
 // issues a monotonic ID sequence per entity-type field via a single
 // meta/counter.json blob.
 const storageCounter = new StorageBackedCounter(storageProvider);
 auditStore = new AuditRepository(storageProvider, storageCounter);
+notificationStore = new NotificationRepository(storageProvider);
 taskStore = new TaskRepository(storageProvider, storageCounter);
 proposalStore = new ProposalRepository(storageProvider, storageCounter);
 ideaStore = new IdeaRepository(storageProvider, storageCounter);

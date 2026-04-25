@@ -1108,48 +1108,10 @@ export function computeLivenessState(
   return "unresponsive";
 }
 
-// ── In-Memory Implementation ─────────────────────────────────────────
-
-export class MemoryNotificationStore implements INotificationStore {
-  private notifications: Notification[] = [];
-  private ulidGen: (() => string) | null = null;
-
-  async persist(event: string, data: Record<string, unknown>, targetRoles: string[]): Promise<Notification> {
-    const { monotonicFactory } = await import("ulidx");
-    if (!this.ulidGen) this.ulidGen = monotonicFactory();
-    const id = this.ulidGen();
-    const notification: Notification = {
-      id,
-      event,
-      targetRoles,
-      data,
-      timestamp: new Date().toISOString(),
-    };
-    this.notifications.push(notification);
-    return notification;
-  }
-
-  async listSince(afterId: number | string, role?: string): Promise<Notification[]> {
-    const afterStr = String(afterId);
-    return this.notifications.filter((n) => {
-      // For ULID comparison: lexicographic string compare
-      // For legacy integer: convert and compare numerically
-      const nStr = String(n.id);
-      if (nStr <= afterStr) return false;
-      if (role && !n.targetRoles.includes(role)) return false;
-      return true;
-    });
-  }
-
-  async cleanup(maxAgeMs: number): Promise<number> {
-    const cutoff = Date.now() - maxAgeMs;
-    const before = this.notifications.length;
-    this.notifications = this.notifications.filter(
-      (n) => new Date(n.timestamp).getTime() > cutoff
-    );
-    return before - this.notifications.length;
-  }
-}
+// Mission-49 W9: MemoryNotificationStore deleted. NotificationRepository
+// in entities/notification-repository.ts composes any StorageProvider
+// (including MemoryStorageProvider for tests) via the INotificationStore
+// interface.
 
 // Mission-47 W5: `MemoryTaskStore` + `MemoryProposalStore` deleted.
 // `TaskRepository` (entities/task-repository.ts) + `ProposalRepository`

@@ -23,13 +23,11 @@ import type {
   ThreadAuthor,
   ThreadIntent,
   SemanticIntent,
-  Notification,
   EngineerStatusEntry,
   SessionRole,
   ITaskStore,
   IProposalStore,
   IThreadStore,
-  INotificationStore,
   IEngineerRegistry,
   Agent,
   AgentLivenessState,
@@ -528,87 +526,10 @@ export { reconcileCounters, cleanupOrphanedFiles };
 // land at `gs://$bucket/audit/v2/audit-${N}.json`.
 
 
-// ── GCS Notification Store ───────────────────────────────────────────
-
-export class GcsNotificationStore implements INotificationStore {
-  private bucket: string;
-  private ulidGen: (() => string) | null = null;
-
-  // AMP namespace cutover: new ULID notifications go to v2/, legacy stays frozen
-  private static readonly V2_PREFIX = "notifications/v2/";
-
-  constructor(bucket: string) {
-    this.bucket = bucket;
-    console.log(`[GcsNotificationStore] Using bucket: gs://${bucket} (v2 namespace: ${GcsNotificationStore.V2_PREFIX})`);
-  }
-
-  async persist(
-    event: string,
-    data: Record<string, unknown>,
-    targetRoles: string[]
-  ): Promise<Notification> {
-    const { monotonicFactory } = await import("ulidx");
-    if (!this.ulidGen) this.ulidGen = monotonicFactory();
-    const id = this.ulidGen();
-
-    const notification: Notification = {
-      id,
-      event,
-      targetRoles,
-      data,
-      timestamp: new Date().toISOString(),
-    };
-
-    // Write to v2/ namespace — ULIDs are lexicographically sortable
-    await createOnly<Notification>(this.bucket, `${GcsNotificationStore.V2_PREFIX}${id}.json`, notification);
-
-    console.log(`[GcsNotificationStore] Persisted ${id}: ${event} → [${targetRoles.join(",")}]`);
-    return notification;
-  }
-
-  async listSince(afterId: number | string, role?: string): Promise<Notification[]> {
-    const afterStr = String(afterId);
-
-    // Only read from v2/ namespace — legacy integer notifications are frozen
-    const files = await listFiles(this.bucket, GcsNotificationStore.V2_PREFIX);
-    const jsonFiles = files
-      .filter((f) => f.endsWith(".json"))
-      .sort(); // Lexicographic sort — natural for ULIDs
-
-    const notifications: Notification[] = [];
-    for (const file of jsonFiles) {
-      const notification = await readJson<Notification>(this.bucket, file);
-      if (!notification) continue;
-      // ULID string comparison — all v2 notifications have ULID IDs
-      const nStr = String(notification.id);
-      if (afterStr && nStr <= afterStr) continue;
-      if (role && !notification.targetRoles.includes(role)) continue;
-      notifications.push(notification);
-    }
-
-    return notifications;
-  }
-
-  async cleanup(maxAgeMs: number): Promise<number> {
-    const cutoff = Date.now() - maxAgeMs;
-    // Clean up from v2/ namespace only
-    const files = await listFiles(this.bucket, GcsNotificationStore.V2_PREFIX);
-    let deleted = 0;
-
-    for (const file of files) {
-      if (!file.endsWith(".json")) continue;
-      const notification = await readJson<Notification>(this.bucket, file);
-      if (!notification) continue;
-
-      if (new Date(notification.timestamp).getTime() < cutoff) {
-        await deleteFile(this.bucket, file);
-        deleted++;
-      }
-    }
-
-    if (deleted > 0) {
-      console.log(`[GcsNotificationStore] Cleaned up ${deleted} expired notifications`);
-    }
-    return deleted;
-  }
-}
+// Mission-49 W9: GcsNotificationStore removed — NotificationRepository
+// in hub/src/entities/notification-repository.ts composes any
+// StorageProvider (including GcsStorageProvider) via the
+// INotificationStore interface. The `notifications/v2/` namespace
+// (originally introduced for the AMP envelope cutover) is preserved
+// byte-identically; pre-v2 integer-id notifications stay frozen in
+// the legacy keyspace.
