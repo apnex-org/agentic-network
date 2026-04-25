@@ -110,6 +110,8 @@ Hub depends on `@ois/storage-provider` (a sovereign package living at `packages/
 
 `hub/Dockerfile` permanently includes `COPY ois-storage-provider-*.tgz ./` before each `RUN npm ci` line in BOTH builder + production stages. The wildcard match keeps the line stable across storage-provider version bumps. `hub/.gitignore` permanently excludes `ois-storage-provider-*.tgz` so a staged tarball can never be accidentally committed.
 
+`hub/.gcloudignore` permanently re-includes the staged tarball into the Cloud Build upload context. This file is load-bearing: `gcloud builds submit` falls back to `.gitignore` when no `.gcloudignore` is present, which means the tarball-exclusion in `hub/.gitignore` (intentional, to prevent accidental commits) silently propagates to the gcloud upload context too — the tarball gets staged locally, then dropped from the upload, and the Dockerfile's `COPY ois-storage-provider-*.tgz` step fails with `no source files were specified` inside the build container. That's the failure mode bug-36 hit at architect-side dogfood post-mission-50 T2 merge. `hub/.gcloudignore` is self-contained (does NOT use `#!include:.gitignore`); it mirrors the meaningful excludes (currently `node_modules/`) and explicitly re-includes the staged tarball via `!ois-storage-provider-*.tgz`. With this file present, gcloud uses it instead of `.gitignore` for upload-context filtering, and the staged tarball lands in the build container as expected.
+
 ### Stays clean in git
 
 `hub/package.json` keeps `"file:../packages/storage-provider"` as the dev-mode source-of-truth; `hub/package-lock.json` stays at the file: resolution. Local dev (`cd hub && npm install`) is unchanged. The transient swap is invisible to anything outside the `build-hub.sh` process lifetime.
@@ -125,6 +127,7 @@ The tarball staging is a workaround. The sunset trigger: idea-186 (npm workspace
 - Delete the §"Storage-provider tarball staging (mission-50 T1)" section from `scripts/local/build-hub.sh`.
 - Delete the `COPY ois-storage-provider-*.tgz ./` lines from `hub/Dockerfile` (both stages).
 - Delete the `ois-storage-provider-*.tgz` line from `hub/.gitignore`.
+- Delete `hub/.gcloudignore` entirely (the file becomes obsolete once the underlying tarball-staging mechanic is gone — there is nothing to re-include).
 - Delete this `Cloud Build tarball staging` section from `deploy/README.md`.
 
 `scripts/local/build-hub.sh` carries an inline `TODO(idea-186)` comment naming the sunset condition + cleanup steps so the trigger is discoverable from the workaround itself.

@@ -1,0 +1,25 @@
+# hub/.gcloudignore (mission-50 T3 — closes bug-36)
+#
+# `gcloud builds submit` reads `.gcloudignore` if present, else falls back to
+# `.gitignore`. `hub/.gitignore` excludes `ois-storage-provider-*.tgz`
+# (intentional, to prevent accidental commits of the transient tarball staged
+# by `scripts/local/build-hub.sh`). Without this `.gcloudignore`, that
+# exclusion propagates to the Cloud Build upload context and Step
+# `COPY ois-storage-provider-*.tgz` fails because the tarball is missing.
+#
+# This file is self-contained (does NOT use `#!include:.gitignore`). We mirror
+# the meaningful excludes here, then re-include the staged tarball.
+#
+# TODO(idea-186): when npm workspaces lands, this file + the hub/.gitignore
+# tarball exclusion + the build-hub.sh transient-swap mechanic + the
+# Dockerfile COPY lines all become obsolete. Sunset together — see
+# `deploy/README.md` §"Cloud Build tarball staging (mission-50)" for the full
+# cleanup list.
+
+node_modules/
+
+# Re-include the storage-provider tarball staged by scripts/local/build-hub.sh.
+# (The leading `!` is documentation-style here — with self-contained
+# .gcloudignore there's no prior exclusion to override — but it makes intent
+# explicit and stays correct if a broader exclude is added above.)
+!ois-storage-provider-*.tgz
