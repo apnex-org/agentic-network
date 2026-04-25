@@ -125,6 +125,39 @@ function applyLivenessRecompute(a: Agent, nowMs: number): Agent {
   };
 }
 
+/**
+ * bug-35 fix: presence-projection window for `selectAgents` (peer-discovery
+ * + thread-message dispatcher selector). Decouples the projection's notion
+ * of "available" from the ADR-017 queue-drain liveness FSM — agents that
+ * are tool-call-active but haven't drained recently must still be reachable
+ * for new dispatch.
+ *
+ * Why not reuse `livenessState`/`status`: those derive from `lastHeartbeatAt`
+ * (ADR-017 — bumped only on `refreshHeartbeat`/`claim_session`/etc.).
+ * `lastSeenAt` is bumped by `touchAgent` on every tool call (rate-limited to
+ * AGENT_TOUCH_MIN_INTERVAL_MS = 30s), making it the right signal for
+ * "session is active, please route work here."
+ *
+ * Window of 60s = AGENT_TOUCH_MIN_INTERVAL_MS (30s rate-limit slack) +
+ * one tool-call-budget worth of headroom. Wider than the rate-limit, narrow
+ * enough that genuinely-stalled sessions age out within ~one ladder step.
+ */
+const PEER_PRESENCE_WINDOW_MS = 60_000;
+
+/** Predicate: is this Agent eligible for `selectAgents` projection?
+ *  - archived → no (lifecycle-pruned)
+ *  - livenessState === "offline" → no (explicit teardown via markAgentOffline,
+ *    or stored offline; sticky per ADR-017)
+ *  - lastSeenAt within PEER_PRESENCE_WINDOW_MS → yes (recent tool-call activity)
+ *  - else → no (stale; agent has gone quiet) */
+function isPeerPresent(a: Agent, nowMs: number): boolean {
+  if (a.archived) return false;
+  if (a.livenessState === "offline") return false;
+  const lastSeenMs = Date.parse(a.lastSeenAt);
+  if (!Number.isFinite(lastSeenMs)) return false;
+  return nowMs - lastSeenMs <= PEER_PRESENCE_WINDOW_MS;
+}
+
 type GetWithToken = (path: string) => Promise<{ data: Uint8Array; token: string } | null>;
 
 export class AgentRepository implements IEngineerRegistry {
@@ -456,6 +489,7 @@ export class AgentRepository implements IEngineerRegistry {
   }
 
   async selectAgents(selector: Selector): Promise<Agent[]> {
+    const nowMs = Date.now();
     const engineerIdSet = selector.engineerIds && selector.engineerIds.length > 0
       ? new Set(selector.engineerIds)
       : null;
@@ -463,8 +497,7 @@ export class AgentRepository implements IEngineerRegistry {
     if (selector.engineerId) {
       const a = await this.getAgent(selector.engineerId);
       if (!a) return [];
-      if (a.archived) return [];
-      if (a.status !== "online") return [];
+      if (!isPeerPresent(a, nowMs)) return [];
       if (engineerIdSet && !engineerIdSet.has(a.engineerId)) return [];
       if (selector.roles && !selector.roles.includes(a.role)) return [];
       if (!labelsMatch(a.labels ?? {}, selector.matchLabels)) return [];
@@ -476,8 +509,7 @@ export class AgentRepository implements IEngineerRegistry {
       for (const id of engineerIdSet) {
         const a = await this.getAgent(id);
         if (!a) continue;
-        if (a.archived) continue;
-        if (a.status !== "online") continue;
+        if (!isPeerPresent(a, nowMs)) continue;
         if (selector.roles && !selector.roles.includes(a.role)) continue;
         if (!labelsMatch(a.labels ?? {}, selector.matchLabels)) continue;
         out.push(a);
@@ -486,8 +518,7 @@ export class AgentRepository implements IEngineerRegistry {
     }
     const all = await this.listAgents();
     return all.filter((a) => {
-      if (a.archived) return false;
-      if (a.status !== "online") return false;
+      if (!isPeerPresent(a, nowMs)) return false;
       if (selector.roles && !selector.roles.includes(a.role)) return false;
       if (!labelsMatch(a.labels ?? {}, selector.matchLabels)) return false;
       return true;

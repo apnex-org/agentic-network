@@ -7,7 +7,7 @@
  * Registry invariants: INV-SYS-L01..L04, INV-AG3.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   labelsMatch,
   type RegisterAgentPayload,
@@ -202,5 +202,93 @@ describe("Mission-19 Selector — selectAgents", () => {
     });
     expect(matched).toHaveLength(1);
     expect(matched[0].engineerId).toBe(engA.engineerId);
+  });
+});
+
+// bug-35 fix: presence-projection filter must gate on lastSeenAt (tool-call
+// recency) rather than lastHeartbeatAt (queue-drain liveness FSM). Agents
+// that are actively tool-calling but haven't drained their pending-actions
+// queue recently must remain reachable for new dispatch.
+describe("Mission-19 Selector — bug-35 lastSeenAt-vs-lastHeartbeatAt presence projection", () => {
+  let reg: AgentRepository;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-25T00:00:00.000Z"));
+    reg = new AgentRepository(new MemoryStorageProvider());
+    await reg.registerAgent("sess-eng", "engineer",
+      makePayload("inst-eng", "engineer", { env: "prod" }));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("includes agent with stale lastHeartbeatAt but fresh lastSeenAt (regression: bug-35)", async () => {
+    // Register set lastSeenAt + lastHeartbeatAt to T0. Advance past 2 * receiptSla
+    // (default 60s → 120s threshold) so the FSM would demote livenessState
+    // to "unresponsive" via computeLivenessState.
+    vi.advanceTimersByTime(5 * 60 * 1000); // T+5min
+    // Tool-call simulation: bump lastSeenAt without touching lastHeartbeatAt.
+    // touchAgent is rate-limited via lastTouchAt; claimSession set it at T0,
+    // 5min later we are well past AGENT_TOUCH_MIN_INTERVAL_MS (30s).
+    await reg.touchAgent("sess-eng");
+
+    // Pre-fix the recompute would demote status to "offline" (lastHeartbeatAt
+    // 5min stale > 2*receiptSla=120s) and selectAgents drops the agent.
+    // Post-fix selectAgents gates on lastSeenAt presence-window, so the
+    // agent remains reachable.
+    const peers = await reg.selectAgents({ roles: ["engineer"] });
+    expect(peers).toHaveLength(1);
+    expect(peers[0].engineerId).toMatch(/^eng-/);
+  });
+
+  it("excludes agent with stale lastSeenAt (presence window aged out)", async () => {
+    // Advance past the presence window (60s) without any tool-call activity.
+    vi.advanceTimersByTime(2 * 60 * 1000); // T+2min — both heartbeat and lastSeenAt stale
+    const peers = await reg.selectAgents({ roles: ["engineer"] });
+    expect(peers).toHaveLength(0);
+  });
+
+  it("preserves explicit teardown — markAgentOffline still excludes regardless of lastSeenAt", async () => {
+    await reg.markAgentOffline("sess-eng");
+    // markAgentOffline bumps lastSeenAt, so a naive lastSeenAt-only filter
+    // would incorrectly include the just-torn-down agent. The
+    // livenessState==="offline" sticky check guards against that.
+    const peers = await reg.selectAgents({ roles: ["engineer"] });
+    expect(peers).toHaveLength(0);
+  });
+
+  it("engineerIds pin path also honours the presence projection", async () => {
+    // Bug-35 site: hub-networking dispatcher selector resolution uses
+    // engineerIds pin. Same projection contract as the broadcast path.
+    const all = await reg.listAgents();
+    const target = all[0];
+
+    vi.advanceTimersByTime(5 * 60 * 1000);
+    await reg.touchAgent("sess-eng");
+
+    const pinnedActive = await reg.selectAgents({ engineerIds: [target.engineerId] });
+    expect(pinnedActive).toHaveLength(1);
+
+    // Now let lastSeenAt age out without touching, then verify pin returns empty.
+    vi.advanceTimersByTime(5 * 60 * 1000);
+    const pinnedStale = await reg.selectAgents({ engineerIds: [target.engineerId] });
+    expect(pinnedStale).toHaveLength(0);
+  });
+
+  it("single-engineerId fast path also honours the presence projection", async () => {
+    const all = await reg.listAgents();
+    const target = all[0];
+
+    vi.advanceTimersByTime(5 * 60 * 1000);
+    await reg.touchAgent("sess-eng");
+
+    const fast = await reg.selectAgents({ engineerId: target.engineerId });
+    expect(fast).toHaveLength(1);
+
+    vi.advanceTimersByTime(5 * 60 * 1000);
+    const fastStale = await reg.selectAgents({ engineerId: target.engineerId });
+    expect(fastStale).toHaveLength(0);
   });
 });
