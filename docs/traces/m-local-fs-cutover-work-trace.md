@@ -20,7 +20,7 @@ If you're picking up cold on mission-48:
 1. **Read this file first**, then thread-303 for design-round context, then `docs/decisions/024-sovereign-storage-provider.md` §6.1 for the ADR-024 amendment.
 2. **DAG:** T1 → T2a → T2b → T2c → T3 → T4. Strictly sequential per ship-green discipline + thread-306 PR cadence.
 3. **Issuance pattern (architect-side):** mission-48 runs **without `plannedTasks`** as an explicit bypass of bug-31 (variant-1 cascade-auto-duplicate + variant-2 cascade-stall, both observed twice on mission-49). Architect manually `create_task`s each subsequent task on prior approval. Saves ~10-15 min of duplicate-detection cycles per mission.
-4. **Current state:** T1 ✅ merged at `1e61226` (PR #24); T2a ✅ merged at `bc5dbb6` (PR #25); T2b shipped locally (task code at `a02637e`); awaiting trace-commit + push + PR open. After T2b merges, architect issues T2c manually per the bug-31-bypass cadence.
+4. **Current state:** T1 ✅ merged at `1e61226` (PR #24); T2a ✅ merged at `bc5dbb6` (PR #25); T2b ✅ merged at `34b225a` (PR #26); T2c shipped locally (task code at `3745367`); awaiting trace-commit + push + PR open. After T2c merges, architect issues T3 manually per the bug-31-bypass cadence.
 5. **Pre-authorized scope discipline:** uid/gid mitigation = `docker run -u $(id -u):$(id -g)` (architect-confirmed thread-306); `local-state/` is gitignored; ADR-024 amendment is single-writer-laptop-prod-eligible only — multi-writer / Cloud Run continue to require `STORAGE_BACKEND=gcs` per the still-intact `concurrent:false` capability flag.
 6. **Bug carry-forward:** bug-32 (cross-package CI debt — `network-adapter` + `claude-plugin` + `opencode-plugin` test cells red on every PR) — pre-existing pattern. Verify hub scope green; ignore the 3 known-noisy cells.
 7. **Mission-49 dependency:** ✅ resolved. AuditStore + NotificationStore now migrated to Repository pattern; durable on local-fs. mission-48's success-criterion 5 (no audit/notification regression post-cutover) is now structurally provable.
@@ -29,7 +29,7 @@ If you're picking up cold on mission-48:
 
 ## In-flight
 
-- ▶ **T2b — Flip default + bootstrap-required sentinel guard.** Shipped on `agent-greg/mission-48-t2b` (fresh off `origin/main` at `bc5dbb6`). Task commit `a02637e`. 5 files changed (3 modified + 2 new); +152/-9 LOC. New `hub/src/lib/cutover-sentinel.ts` helper + `hub/test/unit/cutover-sentinel.test.ts` (+7 unit tests). Hub tests green at 52/755/5 (was 51/748/5 — delta +1 file / +7 tests / 0 regressions; architect estimated +1 test). Manual smoke: empty-dir guard fires FATAL exit 1; sentinel-touched proceeds. Live Docker restart cycle deferred to T3 dogfood per task-357 scope. Awaiting trace-commit (this file) + push + PR open. Will reply on thread-306 with PR URL.
+- ▶ **T2c — Reverse-direction sync (local→GCS) with --yes safety + symmetric invariant.** Shipped on `agent-greg/mission-48-t2c` (fresh off `origin/main` at `34b225a`). Task commit `3745367`. 2 files changed (1 rewrite + 1 modified); +277/-158 LOC (state-sync.sh ~76% rewrite for bidirectional structure; deploy/README adds reverse-section + rollback-flow code-block). Hub tests untouched at 52/755/5 (shell-only). 5-test smoke matrix passed against fake-gsutil harness (forward baseline / reverse-without-yes refused / reverse-with-yes succeeds + sentinel stays local / reverse idempotent rerun / .tmp.* exclusion). Live GCS smoke deferred to T3 dogfood per task-358 scope. Awaiting trace-commit + push + PR open.
 
 ## Queued / filed
 - ○ **T2c — Reverse-direction sync (local→GCS manual backup).** `state-sync.sh --reverse` capability + tmp-file filter (`.tmp.*` files never cross the wire); runbook entry for on-demand backup; feeds rollback procedure directly.
@@ -41,7 +41,19 @@ If you're picking up cold on mission-48:
 
 ## Done this session
 
-### T2b (Flip default + bootstrap-required sentinel guard) — shipped locally 2026-04-25
+### T2c (Reverse-direction sync with --yes safety) — shipped locally 2026-04-25
+
+- ✅ **`scripts/state-sync.sh` — bidirectional refactor.** New flags: `--reverse` (flip direction local-fs → GCS), `--yes` (required when --reverse), `-h/--help`. Without `--yes`, `--reverse` refuses with an explicit "rollback-path most-expensive-mistake" diagnostic + exit 1. Constants extracted: `TMP_FILE_EXCLUDE_REGEX` (T2a-preserved), `SCRIPT_ARTIFACT_REGEX` (T2a; loosened from `^\.` to unanchored `\.` so it matches in subdirs), `SYNC_EXCLUDE_REGEX` (composed; passed to gsutil rsync `-x` in both directions). Direction-specific source/target via a case block.
+- ✅ **Sentinel handling — forward writes; reverse leaves alone.** Forward direction writes `.cutover-complete` after invariant green (T2a behavior preserved). Reverse direction explicitly does NOT touch the sentinel — it reflects the LAST FORWARD bootstrap, not the last reverse upload. Rewriting on reverse would mislead future cold-engineer pickup into thinking a fresh bootstrap occurred.
+- ✅ **Symmetric invariant.** Same set-equality check (gsutil ls vs find), same normalization, same diff. Output customizes the failure-cause guidance per direction (forward: interrupted rsync / GCS modified during sync / local writes during sync / .tmp.* leak; reverse: interrupted rsync / local-fs modified during sync — Hub still running? / GCS write conflict; reverse explicitly notes sentinel-NOT-touched so rerun is safe).
+- ✅ **`deploy/README.md` — Local-fs Hub state directory section.** New bullet for T2c (`--reverse --yes` flag, .tmp.* + sentinel exclusion, sentinel-stays-local). New "Operator rollback flow" code-block adjacent to "Operator first-launch flow" — three-step rollback procedure (stop hub / reverse-sync / restart with `STORAGE_BACKEND=gcs`). Full runbook still defers to T4.
+- ✅ **5-test smoke matrix against fake-gsutil harness.** TEST 1: forward baseline → green, sentinel written, exit 0. TEST 2: `--reverse` without `--yes` → refuses with explicit error, exit 1, no rsync invoked. TEST 3: reverse with --yes after a post-cutover local write (new entity in local-fs) → invariant green, GCS gains the entity, sentinel did NOT cross to GCS (verified by listing fake-gcs after — no `.cutover-complete` file). TEST 4: reverse idempotent rerun → green, exit 0. TEST 5: `task-1.tmp.abc123` left in local-fs → reverse-sync excludes it via `-x SYNC_EXCLUDE_REGEX`; GCS unchanged. All matched expected behavior.
+- ✅ **Live GCS smoke deferred to T3 dogfood** per task-358 scope. T2c ships the script + the fake-harness logic correctness.
+- ✅ **Verification.** `bash -n scripts/state-sync.sh`: clean. `npm test` (hub): 52/755/5 unchanged (shell-only, no Hub source touched). `chmod +x` preserved.
+
+### T2b (Flip default + bootstrap-required sentinel guard) — shipped + merged 2026-04-25
+
+- ✅ **PR #26 merged at `34b225a`** (architect-merged 2026-04-25; bug-32 CI pattern matched).
 
 - ✅ **`scripts/local/start-hub.sh` — laptop-Hub default flipped `gcs` → `local-fs`.** Comment updated to note the rollback path (`STORAGE_BACKEND=gcs`) + ADR-024 amendment §6.1 reference + T4 rollback runbook reference.
 - ✅ **`hub/src/lib/cutover-sentinel.ts` — new helper.** `CUTOVER_SENTINEL_FILENAME = ".cutover-complete"` constant; `cutoverSentinelPath(root)` + `isCutoverComplete(root)`. Defensive: returns false on non-existent root, fs errors, and `.cutover-complete/` as a directory (sentinel contract is "regular file with provenance"). Extracted as a helper rather than inlined for testability.
@@ -82,9 +94,9 @@ If you're picking up cold on mission-48:
 mission-49 ✅────────────[Audit + Notification Repository migration shipped on main; durable on local-fs]
                                                                     │
                                                                     ▼
-T1 ✅ ──→ T2a ✅ ──→ T2b ▶ ──→ T2c ○ ──→ T3 ○ ──→ T4 ○ ──→ mission-48 close
-[merged    [merged                                              │
- 1e61226]   bc5dbb6]                                            └─[unblocks]─→ idea-191 / idea-192
+T1 ✅ ──→ T2a ✅ ──→ T2b ✅ ──→ T2c ▶ ──→ T3 ○ ──→ T4 ○ ──→ mission-48 close
+[merged    [merged    [merged                                   │
+ 1e61226]   bc5dbb6]   34b225a]                                 └─[unblocks]─→ idea-191 / idea-192
                                                                               (workflow-primitive design rounds —
                                                                                blocked on mission-48 per thread-303)
 
@@ -97,6 +109,8 @@ Outside-mission downstream: idea-191 (GH event bridge) + idea-192 (Hub triggers 
 ---
 
 ## Session log (append-only)
+
+- **2026-04-25 late (T2c)** — T2b PR #26 merged at `34b225a` (architect-merged; bug-32 CI pattern matched, no triage). Architect issued task-358 (T2c) manually per bug-31 bypass. Engineer shipped T2c locally on `agent-greg/mission-48-t2c` (fresh off `34b225a`): scripts/state-sync.sh ~76% rewrite for bidirectional structure (forward + --reverse --yes flags, symmetric invariant, direction-specific failure-cause output, sentinel handling — forward writes, reverse leaves alone); deploy/README mount-section gains reverse-section + Operator rollback flow code-block. Smoke matrix (5 tests via fake-gsutil) all matched: forward baseline green / reverse-without-yes refused with exit 1 / reverse-with-yes succeeds + sentinel stays local-only / reverse idempotent rerun green / .tmp.* exclusion verified. Live GCS smoke deferred to T3 dogfood. Hub tests untouched at 52/755/5. Task commit `3745367`. Mission-48 progress: 4/6 PRs after this lands; T3 (dogfood + Hub-restart-mid-mission readback) is next; T4 (closing hygiene + fold idea-193) closes the mission.
 
 - **2026-04-25 late (T2b)** — T2a PR #25 merged at `bc5dbb6` (architect-merged; bug-32 CI pattern matched, no triage). Architect issued task-357 (T2b) manually per bug-31 bypass. Engineer shipped T2b locally on `agent-greg/mission-48-t2b` (fresh off `bc5dbb6`): scripts/local/start-hub.sh STORAGE_BACKEND default flipped from `gcs` to `local-fs`; hub/src/lib/cutover-sentinel.ts new helper (`CUTOVER_SENTINEL_FILENAME` + `cutoverSentinelPath()` + `isCutoverComplete()`); hub/src/index.ts wired with bootstrap-required guard between the T1 writability assertion and LocalFsStorageProvider construction; hub/test/unit/cutover-sentinel.test.ts new test file with 7 unit tests covering both happy + edge cases (sentinel-as-directory defensiveness, non-existent root, non-existent path); deploy/README.md mount-section updated with default-flip + rollback + bootstrap-required dependency + first-launch-flow code-block. Manual smoke (best-effort; no live Docker): empty-dir guard fires FATAL exit 1; sentinel-touched proceeds — both verified via `node -e` against compiled dist. Live Docker restart cycle deferred to T3 dogfood per task-357 scope. Hub tests green at 52/755/5 (delta +1 file / +7 tests vs T2a baseline; architect estimated +1 test). Task commit `a02637e`. Trace + push + PR open next.
 
