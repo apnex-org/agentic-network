@@ -1,6 +1,6 @@
 # Multi-Agent PR Workflow — Methodology
 
-**Status:** v1.0 DRAFT (2026-04-23). Architect-drafted skeleton + engineer co-authorship on execution-side sections complete (2026-04-23; see §Engineer co-authorship). Awaiting architect final-review + mission-43 worked-example before promoting to v1.0 ratified. Supersedes `docs/methodology/multi-branch-merge.md` per ADR-023 Phase 3. First worked example: mission-43 (ADR-023 Phase 2 validator).
+**Status:** v1.0 RATIFIED (2026-04-25). Engineer co-authorship complete (2026-04-23). Architect spec-alignment review + worked-example validation across 5 missions on new workflow (mission-43, 46, 47, 49, 48 in chronological completion order). Calibrations from missions 47/48/49 captured in §v1.0 ratified-with calibrations. Supersedes `docs/methodology/multi-branch-merge.md` per ADR-023 Phase 3.
 **Scope:** reusable procedure for agents collaborating via trunk-based development with PR-gated integration. Replaces the sovereign-branch-per-agent + periodic-merge model.
 **Supersedes:** `docs/methodology/multi-branch-merge.md` v1.0 (retained as historical reference; see its Superseded header).
 
@@ -545,17 +545,69 @@ Together, these cover the full mission lifecycle — backlog triage → mission 
 
 ---
 
+## v1.0 ratified-with calibrations (2026-04-25)
+
+The DRAFT → RATIFIED transition is informed by 5 missions of worked-example evidence (mission-43 validator + mission-46 multi-env + mission-47 sovereign-storage + mission-49 audit/notification migration + mission-48 local-fs cutover). The following calibrations are bedded in and ratified into v1.0.
+
+### Auto-merge as default-on (calibration A)
+
+Mission-47 retrospective §3.1 committed to per-PR auto-merge (`gh pr merge --auto`) as the mechanical fix for stacked-PR-cadence drift. Mission-49 + Mission-48 attempted `gh api -X PATCH ... allow_auto_merge=true` and it 403'd against the repo (current gh tokens lack repo-admin scope). Manual `gh pr merge --squash --delete-branch` per-PR worked at ~3-min wall-clock per turnaround under direct architect-engineer thread coordination. **v1.0 ratifies:** prefer auto-merge when repo settings permit; fall back to manual squash-merge with `--delete-branch` flag without further consultation. Architect targets <5min approve+merge from CI-green per PR.
+
+### Fresh-off-main per task (calibration B)
+
+Mission-49 and Mission-48 explicitly avoided stacked-PR cadence via fresh-off-main per task. **v1.0 ratifies:** stacked-PR is an explicit exception requiring scope justification in the PR body; default is fresh-off-main per task with cherry-picked trace + task commits in a 2-commit PR.
+
+### Director-input filter (calibration E)
+
+Coordination thread engagement defaults to architect-engineer pair-resolution; escalation to Director only for: scope decisions, methodology choices, budget/priority calls, genuine ambiguity. **v1.0 ratifies:** thread `intent: director_input` is the explicit escalation surface; routine coordination stays bilateral. Director ownership of operational coordination (per Director direction 2026-04-25 — "I need you to coordinate all outstanding PR and closure activities directly with greg") is now the default cadence pattern, not the exception.
+
+### Bug-31 bypass technique — skip-plannedTasks
+
+Mission-49 fired bug-31 variant-1 twice (cascade-duplicate plannedTask) + variant-2 once (timeout-disrupts-atomicity). Mission-48 ran without `plannedTasks` deliberately, manually issuing each task — zero cascade duplicates over 6 tasks. **v1.0 ratifies:** missions activate without `plannedTasks` field until bug-31 is structurally fixed; architect manually issues each task as the prior approves. Mission entity description retains the full task plan from `propose_mission` cascade. Memory: `feedback_plannedtasks_manual_create_mismatch.md`. Sunset clause: bypass deprecates when bug-31 fix lands (idea-192 absorbs the cascade-bookkeeping work).
+
+### Thread maxRounds=20 for ≥4-task PR-coordination missions
+
+Mission-48 needed mid-mission thread rotation (thread-306 → thread-307) because default `maxRounds=10` was hit at PR #5/6 of 6. **v1.0 ratifies:** at coordination-thread open-time, set `maxRounds` proportional to expected exchange volume (~2× task count + 4); default 10 remains fine for design-round threads (3-5 rounds typical) but is too low for per-PR coordination in 4+ task missions. Sunset clause: rotation discipline becomes obsolete when idea-192's inbox primitive removes the round-cap class entirely.
+
+### ADR-amendment scope discipline
+
+Mission-48 T1 amended ADR-024 with §6.1 reclassifying local-fs from dev-only to single-writer-laptop-prod-eligible. The amendment was deployment-context reclassification, NOT a contract change. **v1.0 ratifies:** ADR amendments classify by *what they change*. Contract-change amendments require a new ADR (or numbered version-bump per project convention). Deployment-context amendments (where to use the contract, under what operational discipline) sit cleanly as in-place §Amendments sections on the existing ADR. The distinction matters for forward-compatibility audits.
+
+### β-split methodology — split-when-scope-creeps
+
+Mission-48 design-round Flag #1 surfaced material hidden scope (Audit/Notification migration prerequisite) that would have bundled poorly into the cutover mission's tele framing. Director ratified β-split: spawn mission-49 as prerequisite, sequence both. Both shipped clean in single ~13-hour session. **v1.0 ratifies:** when design-round surfaces material hidden scope, default is split-into-sequential-missions (β) over bundle-into-one (α). Bundling is the explicit exception requiring justification (typically: scope coupling is so tight that splitting would re-do work). Tele cleanliness, narrow debug surface, and pattern-preservation are the load-bearing arguments for β.
+
+### Pattern-replication sizing calibration
+
+Three worked-example data points:
+- Mission-47 W1-W7: 4-5 eng-days estimated; ~1 day actual
+- Mission-49 W8-W9 + closing: M-low (1-1.25 eng-days) estimated; ~5.5h actual
+- Mission-48 6 tasks: M estimated; ~6h actual
+
+**v1.0 ratifies:** when sizing a mission whose primary character is "apply established pattern X to N entities/configurations," size at S not M; budget design-round cost separately as fixed up-front cost. Pattern-replication missions trend to the lower edge of the sizing band — sometimes substantially below it.
+
+### Pre-classified CI debt accelerates PR cadence
+
+Mission-49 PR #21 triaged cross-package adapter CI failures + filed as bug-32 same-day. All subsequent PRs (mission-49 + mission-48 = 9 total) rode the pre-classification — no fresh triage required. Per-PR turnaround dropped from ~5min (PR #21 with triage) to ~3min (PRs #22-#29 without). **v1.0 ratifies:** CI debt should be classified as a bug the moment it's triaged; subsequent PRs ride pre-classification for free. The architect's first-occurrence triage cost (~5min) amortizes across the whole mission flow at zero ongoing cost.
+
+### Cross-package Cloud Build context (bug-33 carry-forward)
+
+Mission-48 redeploy attempt 2026-04-25 surfaced bug-33 (cross-package Cloud Build context excludes sovereign-package deps). Mission-47 retrospective §3.3 documented the trap class but the comprehensive fix never landed because Cloud Build wasn't actually exercised. **v1.0 acknowledges:** Cloud Build is a separate test surface from GitHub Actions CI; redeploy gating on actual Cloud Build execution is required per code-shipping mission. idea-198 (M-Cloud-Build-Tarball-Codification) is the Tier 0 fix; idea-186 (npm workspaces) is the structural fix.
+
+---
+
 ## Methodology evolution
 
 Treat as engineered component — version, critique, evolve.
 
-### v1.0 → v1.1 pending deltas
+### v1.1 pending deltas
 
-To be captured post-mission-43 (the first worked example on new workflow):
-- Any unanticipated review-cadence friction
-- Any CODEOWNERS gap or false-trigger
-- Any merge-queue behavior that surprised
-- Option A → Option B transition signal (when does thread-notification friction hit the threshold?)
+To be captured post-Tier-1 workflow-primitives missions (idea-191 + idea-192) and post-CD-pipeline mission (idea-197):
+- Bug-31 bypass deprecation timing (post-idea-192 fix)
+- Thread maxRounds discipline deprecation (post-idea-192 inbox primitive)
+- Auto-merge re-attempt (post-repo-admin-grant or post-idea-197)
+- Cross-package CI architecture rationalization (post-idea-186 workspaces)
+- Hub-redeploy-on-merge integration (post-idea-197)
 
 ### Retrospective cadence
 
@@ -563,7 +615,7 @@ Follow the retrospective-lite pattern from `strategic-review.md` §Retrospective
 - **Retrospective-lite** (same-PR-session, optional): methodology deltas while context is fresh
 - **Formal retrospective** (mission-outcome-triggered): fold into this doc's next version
 
-First retrospective expected after mission-43 close.
+5 missions on the new workflow have produced retrospectives at `docs/reviews/mission-{43,46,47,49,48}-retrospective.md` (or equivalents). Calibrations above were synthesized from missions 47/48/49 retrospectives + this session's strategic discussion.
 
 ---
 
@@ -603,11 +655,13 @@ All previously-marked `TODO(engineer)` sections have been filled:
 | §PR labels | v1.1 taxonomy proposal (auto / author / reviewer tiers), implementation estimate, explicit v1.0 skip rationale | ✅ |
 | §CODEOWNERS-gap escalation | agent-departure process (simple / split / sunset cases), chicken-and-egg Option-C escape, team-level granularity prevention | ✅ |
 
-v1.0 DRAFT → v1.0 ratified transitions when:
-- Architect reviews the engineer fills for spec-alignment
-- Mission-43 (first worked example on new workflow) ships + retrospective-lite lands
-- Any v1.1 deltas surface as edit-queue for the next rev
+v1.0 DRAFT → v1.0 RATIFIED transition completed 2026-04-25:
+- ✅ Architect reviewed engineer fills for spec-alignment
+- ✅ Mission-43 (first worked example on new workflow) shipped + retrospective-lite landed
+- ✅ Mission-46 / 47 / 49 / 48 produced four additional worked examples
+- ✅ Calibrations from missions 47/48/49 captured in §v1.0 ratified-with calibrations
+- v1.1 deltas tracked via §Methodology evolution
 
 ---
 
-*Methodology v1.0 DRAFT authored 2026-04-23 per ADR-023 Phase 3 direction. Mission-45 T6a artifact. Awaiting engineer co-authorship on marked sections; first worked example is mission-43 (Phase 2 validator). Graduates to v1.0 ratified when engineer sections filled + mission-43 ships on new workflow.*
+*Methodology v1.0 RATIFIED 2026-04-25. Authored 2026-04-23 per ADR-023 Phase 3 direction. Mission-45 T6a artifact. Engineer co-authorship completed 2026-04-23. Architect spec-alignment review + worked-example validation across 5 missions completed 2026-04-25. Calibrations from missions 47/48/49 captured in §v1.0 ratified-with calibrations.*
