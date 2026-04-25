@@ -122,6 +122,7 @@ Mission-48 T1 (2026-04-25) wired the `local-fs` Hub profile into `scripts/local/
 - **Single-writer enforcement:** `scripts/local/start-hub.sh:148-161` enforces one `ois-hub-local-*` container at a time per host. Concurrent hubs against the same state directory will corrupt state — the enforcement script makes this hard to do accidentally.
 - **Defense-in-depth writability check:** the start-hub.sh shell-layer pre-flights writability before `docker run`; the Hub container also runs an internal writability assertion in `hub/src/index.ts` and fail-fasts on `EACCES`/`EPERM` with a uid/gid-diagnostic message.
 - **Bootstrap-required guard (T2b):** Hub startup under `STORAGE_BACKEND=local-fs` checks for `${OIS_LOCAL_FS_ROOT}/.cutover-complete`; refuses to start without it. The sentinel is written by `scripts/state-sync.sh` only after the post-copy set-equality invariant passes — guarantees Hub never operates on a half-bootstrapped or never-bootstrapped state directory. Fresh-start scenarios: `state-sync.sh` against an empty bucket trivially passes the invariant and writes the sentinel.
+- **Reverse-sync (T2c):** `scripts/state-sync.sh --reverse --yes` pushes local-fs state UP to GCS — the rollback path. `--yes` is required because the reverse direction can overwrite the canonical GCS state; accidental invocation is the most expensive mistake. The reverse path uses the same set-equality invariant as forward; tmp-file artifacts (`.tmp.*`) and the local-fs-only sentinel (`.cutover-complete`) are excluded from the upload by construction. Reverse direction does NOT touch the local sentinel — it reflects the LAST FORWARD bootstrap, not the last reverse upload.
 
 Operator first-launch flow:
 ```bash
@@ -131,6 +132,18 @@ scripts/state-sync.sh
 
 # Subsequent launches: default backend is local-fs
 scripts/local/start-hub.sh
+```
+
+Operator rollback flow (when post-cutover writes need to land in GCS first):
+```bash
+# 1. Stop the local-fs Hub so reverse-sync sees a stable local-state.
+scripts/local/stop-hub.sh
+
+# 2. Push local-fs state UP to GCS (--yes required — overwrites canonical state).
+scripts/state-sync.sh --reverse --yes
+
+# 3. Restart Hub explicitly under the GCS backend.
+STORAGE_BACKEND=gcs scripts/local/start-hub.sh
 ```
 
 Full cutover + rollback runbook lands under mission-48 T4.
