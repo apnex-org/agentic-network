@@ -286,14 +286,98 @@ export async function runTriggers(
         error: (err as Error)?.message ?? String(err),
       });
       console.warn(
-        `[Triggers] ${trigger.name}: createMessage failed; entity transition still succeeded — W4 will add scheduled retry:`,
+        `[Triggers] ${trigger.name}: createMessage failed; scheduling W4 retry:`,
         err,
       );
-      // Per W3 scope: failed-trigger emission does NOT retry here.
-      // W4 introduces scheduled-message retry; failed-trigger payload
-      // can be re-enqueued at that point.
+      // Mission-51 W4: failed-trigger retry interlock. Schedule a
+      // retry-message with backoff fireAt + retryCount metadata. The
+      // scheduled-message sweeper picks it up at fireAt and re-attempts
+      // the original emission. If THIS createMessage also fails, the
+      // retry can't be enqueued — log + continue (no infinite recursion).
+      try {
+        await retryFailedTrigger(trigger, shape, ctx, 1);
+      } catch (retryErr) {
+        ctx.metrics.increment("trigger.retry_enqueue_failed", {
+          trigger: trigger.name,
+          error: (retryErr as Error)?.message ?? String(retryErr),
+        });
+        console.warn(
+          `[Triggers] ${trigger.name}: retry-enqueue ALSO failed (storage unhealthy?); giving up:`,
+          retryErr,
+        );
+      }
     }
   }
 
   return result;
+}
+
+// ── retryFailedTrigger (W4 interlock) ───────────────────────────────
+
+/**
+ * Mission-51 W4: failed-trigger retry interlock.
+ *
+ * Backoff schedule (configurable via env vars, with sensible defaults):
+ *   attempt 1 → fireAt = now + RETRY_BACKOFF_MS_1 (default 30s)
+ *   attempt 2 → fireAt = now + RETRY_BACKOFF_MS_2 (default 5min)
+ *   attempt 3+ → max retries reached; give up (log + metric)
+ *
+ * The retry-message carries the original trigger's emit shape (kind,
+ * target, payload) plus retry metadata (retryCount, maxRetries) so
+ * the sweeper-side fire path can re-attempt the original emission with
+ * those original parameters.
+ */
+const DEFAULT_MAX_RETRIES = parseInt(process.env.OIS_TRIGGER_MAX_RETRIES ?? "3", 10);
+const DEFAULT_BACKOFF_MS_1 = parseInt(process.env.OIS_TRIGGER_RETRY_BACKOFF_1_MS ?? "30000", 10);
+const DEFAULT_BACKOFF_MS_2 = parseInt(process.env.OIS_TRIGGER_RETRY_BACKOFF_2_MS ?? "300000", 10);
+
+function backoffMsForAttempt(attempt: number): number {
+  if (attempt <= 1) return DEFAULT_BACKOFF_MS_1;
+  return DEFAULT_BACKOFF_MS_2;
+}
+
+export async function retryFailedTrigger(
+  trigger: TransitionTrigger,
+  shape: { target: import("../entities/index.js").MessageTarget | null; payload: unknown },
+  ctx: IPolicyContext,
+  attempt: number,
+): Promise<void> {
+  const maxRetries = DEFAULT_MAX_RETRIES;
+  if (attempt > maxRetries) {
+    ctx.metrics.increment("trigger.retry_exhausted", {
+      trigger: trigger.name,
+      attempts: attempt,
+    });
+    console.warn(
+      `[Triggers] ${trigger.name}: retry exhausted after ${maxRetries} attempts; giving up`,
+    );
+    return;
+  }
+
+  const fireAt = new Date(Date.now() + backoffMsForAttempt(attempt)).toISOString();
+  await ctx.stores.message.createMessage({
+    kind: trigger.emitKind,
+    authorRole: "system",
+    authorAgentId: "hub",
+    target: shape.target,
+    delivery: "scheduled",
+    payload: {
+      ...((shape.payload && typeof shape.payload === "object")
+        ? (shape.payload as Record<string, unknown>)
+        : {}),
+      _retryContext: {
+        triggerName: trigger.name,
+        retryCount: attempt,
+        maxRetries,
+      },
+    },
+    fireAt,
+    retryCount: attempt,
+    maxRetries,
+  });
+  ctx.metrics.increment("trigger.retry_scheduled", {
+    trigger: trigger.name,
+    attempt,
+    fireAt,
+  });
 }

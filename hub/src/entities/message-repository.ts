@@ -217,6 +217,13 @@ export class MessageRepository implements IMessageStore {
     if (input.precondition !== undefined) message.precondition = input.precondition;
     if (input.fireAt !== undefined) message.fireAt = input.fireAt;
     if (input.migrationSourceId !== undefined) message.migrationSourceId = input.migrationSourceId;
+    // Mission-51 W4: scheduled messages start at scheduledState='pending'.
+    // Non-scheduled messages have scheduledState undefined.
+    if (input.delivery === "scheduled") {
+      message.scheduledState = "pending";
+    }
+    if (input.retryCount !== undefined) message.retryCount = input.retryCount;
+    if (input.maxRetries !== undefined) message.maxRetries = input.maxRetries;
 
     const result = await this.provider.createOnly(messagePath(id), encodeMessage(message));
     if (!result.ok) {
@@ -357,6 +364,50 @@ export class MessageRepository implements IMessageStore {
     await this.provider.put(path, encodeMessage(updated));
     return updated;
   }
+
+  /**
+   * Mission-51 W4: transition scheduledState. Same CAS-flip pattern
+   * as ackMessage. Idempotent — already-at-state returns unchanged.
+   */
+  async markScheduledState(
+    id: string,
+    state: import("./message.js").MessageScheduledState,
+  ): Promise<Message | null> {
+    const provider = this.provider as StorageProvider & {
+      getWithToken?: (path: string) => Promise<{ data: Uint8Array; token: string } | null>;
+    };
+    const path = messagePath(id);
+
+    if (typeof provider.getWithToken === "function") {
+      const read = await provider.getWithToken(path);
+      if (!read) return null;
+      const message = decodeMessage(read.data);
+      if (message.scheduledState === state) return message;
+      const updated: Message = {
+        ...message,
+        scheduledState: state,
+        updatedAt: new Date().toISOString(),
+      };
+      const writeResult = await this.provider.putIfMatch(
+        path,
+        encodeMessage(updated),
+        read.token,
+      );
+      if (writeResult.ok) return updated;
+      return this.getMessage(id);
+    }
+
+    const message = await this.getMessage(id);
+    if (!message) return null;
+    if (message.scheduledState === state) return message;
+    const updated: Message = {
+      ...message,
+      scheduledState: state,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.provider.put(path, encodeMessage(updated));
+    return updated;
+  }
 }
 
 // ── Filter helpers ───────────────────────────────────────────────────
@@ -372,6 +423,9 @@ function matchesAdditionalFilters(m: Message, q: MessageQuery): boolean {
     return false;
   }
   if (q.status !== undefined && m.status !== q.status) return false;
+  // Mission-51 W4: delivery + scheduledState filters.
+  if (q.delivery !== undefined && m.delivery !== q.delivery) return false;
+  if (q.scheduledState !== undefined && m.scheduledState !== q.scheduledState) return false;
   return true;
 }
 

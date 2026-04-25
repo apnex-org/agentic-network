@@ -104,6 +104,30 @@ export const MESSAGE_STATUSES = ["new", "acked"] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 
 /**
+ * Mission-51 W4: scheduled-message lifecycle (orthogonal to `status`).
+ *
+ * Only set on messages with `delivery: "scheduled"`. Captures the
+ * fire/cancel state of the scheduling decision, distinct from the
+ * recipient-ack lifecycle on `status` (`status` continues to mean
+ * "recipient ack" for delivered messages).
+ *
+ * State transitions:
+ *   pending → delivered             (fireAt reached + precondition
+ *                                     true/absent; sweeper fires)
+ *   pending → precondition-failed   (fireAt reached + precondition
+ *                                     false; sweeper cancels;
+ *                                     audit-entry retains forensics)
+ *
+ * For non-scheduled messages: this field is `undefined`.
+ */
+export const MESSAGE_SCHEDULED_STATES = [
+  "pending",
+  "delivered",
+  "precondition-failed",
+] as const;
+export type MessageScheduledState = (typeof MESSAGE_SCHEDULED_STATES)[number];
+
+/**
  * Target audience. `null` = broadcast (every subscriber to the relevant
  * fanout). Specific role | agentId restricts the inbox view to that
  * audience. Both fields optional to allow role-only fanout (any agent
@@ -155,11 +179,45 @@ export interface Message {
   /** Future: escalation policy. W3 trigger surface. */
   escalation?: { timeoutMs: number; targetRole: string };
 
-  /** Future: scheduled-message firing precondition. W4. */
+  /**
+   * Mission-51 W4: scheduled-message firing precondition. Predicate
+   * registry shape per `hub/src/policy/preconditions.ts`:
+   *   `{ fn: string; args: Record<string, unknown> }`
+   * The sweeper looks up `fn` in the predicate registry and calls
+   * the predicate with `args` + ctx; absent / true → fire; false →
+   * cancel (status flips to scheduledState='precondition-failed').
+   * Untyped here (`unknown`) so the entity contract stays decoupled
+   * from the registry's runtime evaluation surface.
+   */
   precondition?: unknown;
 
-  /** Future: scheduled-message firing time (ISO-8601). W4. */
+  /** Mission-51 W4: scheduled-message firing time (ISO-8601). */
   fireAt?: string;
+
+  /**
+   * Mission-51 W4: scheduled-message lifecycle state. Set on creation
+   * for messages with `delivery: "scheduled"` (initial value =
+   * "pending"); transitioned by the scheduled-message sweeper.
+   * Undefined for non-scheduled messages.
+   */
+  scheduledState?: MessageScheduledState;
+
+  /**
+   * Mission-51 W4: failed-trigger retry interlock — current attempt
+   * number for retry-scheduled messages. 1 = first retry attempt;
+   * incremented on each subsequent retry. Undefined for non-retry
+   * scheduled messages.
+   */
+  retryCount?: number;
+
+  /**
+   * Mission-51 W4: failed-trigger retry interlock — max retries before
+   * giving up. Sweeper checks `retryCount < maxRetries` before
+   * scheduling the next retry; on `>=` it gives up (logs + metrics).
+   * Default 3 (configurable via env at the trigger-runner level).
+   * Undefined for non-retry scheduled messages.
+   */
+  maxRetries?: number;
 
   /** Per-turn metadata (lifted from inline thread.messages[]). */
   intent?: string;
@@ -206,6 +264,9 @@ export const MessageSchema = z.object({
   }).optional(),
   precondition: z.unknown().optional(),
   fireAt: z.string().optional(),
+  scheduledState: z.enum(MESSAGE_SCHEDULED_STATES).optional(),
+  retryCount: z.number().int().nonnegative().optional(),
+  maxRetries: z.number().int().positive().optional(),
   intent: z.string().optional(),
   semanticIntent: z.string().optional(),
   converged: z.boolean().optional(),
@@ -281,6 +342,14 @@ export interface CreateMessageInput {
   escalation?: { timeoutMs: number; targetRole: string };
   precondition?: unknown;
   fireAt?: string;
+  /**
+   * Mission-51 W4: explicit retry-attempt count (for retryFailedTrigger
+   * interlock). When set on a fresh scheduled-message, the sweeper
+   * uses this + maxRetries to decide whether to schedule another
+   * retry on failure. Default omitted = first emission (no retry yet).
+   */
+  retryCount?: number;
+  maxRetries?: number;
   migrationSourceId?: string;
 }
 
@@ -290,6 +359,14 @@ export interface MessageQuery {
   targetAgentId?: string;
   authorAgentId?: string;
   status?: MessageStatus;
+  /** Mission-51 W4: filter by delivery mode. */
+  delivery?: MessageDelivery;
+  /**
+   * Mission-51 W4: filter by scheduled-message lifecycle state.
+   * Combine with `delivery: "scheduled"` to query the sweeper's
+   * input set (`scheduled + pending`).
+   */
+  scheduledState?: MessageScheduledState;
 }
 
 export interface IMessageStore {
@@ -324,6 +401,18 @@ export interface IMessageStore {
    * Returns null if the Message doesn't exist.
    */
   ackMessage(id: string): Promise<Message | null>;
+
+  /**
+   * Mission-51 W4: transition a scheduled-message's `scheduledState`
+   * field. Used by the scheduled-message sweeper to flip pending →
+   * delivered (on fire) or pending → precondition-failed (on cancel).
+   * Idempotent: if the message already has the proposed state,
+   * returns it unchanged. Returns null when the message doesn't exist.
+   */
+  markScheduledState(
+    id: string,
+    state: MessageScheduledState,
+  ): Promise<Message | null>;
 }
 
 // ── Path helpers (exported for repository + tests) ───────────────────

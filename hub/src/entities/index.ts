@@ -48,12 +48,14 @@ export type {
 export { DirectorNotificationRepository } from "./director-notification-repository.js";
 
 // Mission-51 W1: Message sovereign primitive
+// Mission-51 W4: scheduledState lifecycle + retry interlock fields
 export type {
   Message,
   MessageKind,
   MessageAuthorRole,
   MessageDelivery,
   MessageStatus,
+  MessageScheduledState,
   MessageTarget,
   KindAxes,
   IMessageStore,
@@ -65,6 +67,7 @@ export {
   MESSAGE_AUTHOR_ROLES,
   MESSAGE_DELIVERY_MODES,
   MESSAGE_STATUSES,
+  MESSAGE_SCHEDULED_STATES,
   KIND_AXES,
   MessageSchema,
   checkAuthorAuthorized,
