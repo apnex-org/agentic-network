@@ -110,6 +110,22 @@ Both plans use the **local backend** as of the split (state files kept in-dir). 
 **Per-env fields recommended in `base/env/<env>.tfvars`:**
 - `state_bucket_name = "<project-id>-hub-state"` or similar uniqueness-guaranteed name (GCS bucket names are global-namespaced — don't reuse `ois-relay-hub-state` across envs)
 
+## Hub GCS state layout (post-mission-49)
+
+Hub state is keyed under the env's state bucket (e.g. `gs://<env>-state` or `gs://ois-relay-hub-state` for prod). Mission-49 (2026-04-25) introduced a v2 audit namespace; pre-migration audit blobs are frozen-but-grep-accessible.
+
+**Audit entries:**
+
+- **Pre-2026-04-25 (legacy timestamp-ID format):** `gs://$bucket/audit/audit-${ISO-timestamp}.json`. Frozen — Hub no longer reads or writes here. Grep-accessible for forensic / archaeology purposes only.
+- **Post-2026-04-25 (counter-ID format):** `gs://$bucket/audit/v2/audit-${N}.json` where `N` is the unpadded monotonic counter from `meta/counter.json`'s `auditCounter` field. Hub `list_audit_entries` API returns only this v2 namespace.
+
+**Internal notifications (SSE fan-out + reconnect-backfill):**
+
+- **Pre-AMP-cutover (legacy integer-id format):** any objects directly under `gs://$bucket/notifications/` that pre-date the v2 cutover. Frozen.
+- **Post-AMP-cutover (ULID format):** `gs://$bucket/notifications/v2/${ulid}.json`. Hub reads/writes here exclusively. Mission-49 W9 preserved this namespace byte-identically (no second cutover; no migration script).
+
+If you find blobs at any other path under `audit/` or `notifications/` outside these conventions, treat them as historical artifacts — they're not Hub-API-visible and won't affect the running system.
+
 ## Outstanding
 
 - **Hub deploy pipeline (build + roll)** — COMPLETE as of mission-43 + mission-46 T1:
