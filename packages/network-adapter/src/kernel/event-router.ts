@@ -34,7 +34,14 @@ export type HubEventType =
   | "turn_updated"
   | "tele_defined"
   | "director_attention_required"
-  | "cascade_failure";
+  | "cascade_failure"
+  // Mission-56 W1a: push-on-Message-create. Hub fires this when a
+  // Message with delivery="push-immediate" lands a target the
+  // subscriber matches. Payload is an inline Message envelope. Layer
+  // 2 (`@ois/message-router`) routes Message kind/subkind onto host
+  // hooks; classification at Layer 1 dispositions all engineer +
+  // architect deliveries as actionable so the wake-the-LLM path fires.
+  | "message_arrived";
 
 /** Parsed, typed event envelope */
 export interface HubEvent {
@@ -58,6 +65,11 @@ const ENGINEER_ACTIONABLE: ReadonlySet<string> = new Set([
   // thread_convergence_finalized.
   "thread_convergence_finalized",
   "revision_required",
+  // Mission-56 W2.2: Hub-side push-on-Message-create. Layer-2
+  // `@ois/message-router` does kind/subkind-aware Message routing;
+  // Layer-1 dispositioning treats every push as wake-the-LLM since
+  // delivery="push-immediate" is itself the actionable signal.
+  "message_arrived",
 ]);
 
 /** Engineer events that are FYI (context injection, no response) */
@@ -81,6 +93,9 @@ const ARCHITECT_ACTIONABLE: ReadonlySet<string> = new Set([
   // Mission-24 Phase 2 (M24-T3): thread_converged merged into
   // thread_convergence_finalized.
   "thread_convergence_finalized",
+  // Mission-56 W2.2: same dispositioning as engineer — push delivery
+  // is itself the wake-the-LLM signal.
+  "message_arrived",
 ]);
 
 /** Architect events that are FYI */

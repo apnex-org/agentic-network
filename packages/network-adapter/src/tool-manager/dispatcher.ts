@@ -25,6 +25,7 @@ import {
   CallToolRequestSchema,
   InitializeRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { MessageRouter, SeenIdCache } from "@ois/message-router";
 import type {
   AgentClientCallbacks,
   AgentEvent,
@@ -231,25 +232,55 @@ export function createSharedDispatcher(
     }
   };
 
+  // Mission-56 W2.2: Layer-2 routing. Every classified event goes
+  // through `@ois/message-router` so Message-ID dedup (push+poll
+  // race) + kind→hook mapping live in one place. The host's
+  // `notificationHooks` bag is the router's hook surface — no
+  // shape adapter needed (the router's NotificationHooks interface
+  // mirrors DispatcherNotificationHooks exactly).
+  //
+  // The seen-id cache is shared across the construction-time router
+  // and any per-call routers minted by `makePendingActionItemHandler`,
+  // so a Message ID seen on the SSE inline path will dedup a later
+  // drain-path replay (and vice-versa).
+  const seenIdCache = new SeenIdCache();
+  const router = new MessageRouter({
+    hooks: opts.notificationHooks ?? {},
+    seenIdCache,
+  });
+
   const callbacks: AgentClientCallbacks = {
     onActionableEvent: (event) => {
       captureQueueItemFromEvent(event);
-      opts.notificationHooks?.onActionableEvent?.(event);
+      router.route({ kind: "notification.actionable", event });
+      // TODO(mission-56-W3): post-render `claimMessage(event.id)` for
+      // event.event === "message_arrived" — flips Message new→received
+      // in the two-step claim/ack semantics. Stubbed in W2.2.
     },
     onInformationalEvent: (event) => {
-      opts.notificationHooks?.onInformationalEvent?.(event);
+      router.route({ kind: "notification.informational", event });
     },
     onStateChange: (state, previous, reason) => {
       log(`Connection: ${previous} → ${state}${reason ? ` (${reason})` : ""}`);
-      opts.notificationHooks?.onStateChange?.(state, previous, reason);
+      router.route({ kind: "state.change", state, previous, reason });
     },
   };
 
   const makePendingActionItemHandler =
-    (hooks?: DispatcherNotificationHooks) =>
-    (item: DrainedPendingAction): void => {
-      pendingActionMap.set(pendingKey(item.dispatchType, item.entityRef), item.id);
-      hooks?.onPendingActionItem?.(item);
+    (hooks?: DispatcherNotificationHooks) => {
+      // Per-call hooks override the construction-time bag for the
+      // drain path (preserves the original makePendingActionItemHandler
+      // contract — claude-plugin shim uses this to bind a custom log
+      // sink). Share the seen-id cache so drain-path replays dedup
+      // against SSE-path inline deliveries.
+      const drainRouter = new MessageRouter({
+        hooks: hooks ?? {},
+        seenIdCache,
+      });
+      return (item: DrainedPendingAction): void => {
+        pendingActionMap.set(pendingKey(item.dispatchType, item.entityRef), item.id);
+        drainRouter.route({ kind: "pending-action.dispatch", item });
+      };
     };
 
   function createMcpServer(): Server {

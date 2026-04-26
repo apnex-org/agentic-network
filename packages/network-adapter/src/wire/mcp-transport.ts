@@ -90,6 +90,7 @@ interface ResolvedConfig {
   firstKeepaliveDeadline: number;
   sseWatchdogInterval: number;
   reconnectDelay: number;
+  getLastEventId?: () => string | undefined;
 }
 
 export class McpTransport implements ITransport {
@@ -132,6 +133,7 @@ export class McpTransport implements ITransport {
       firstKeepaliveDeadline: config.firstKeepaliveDeadline ?? 60_000,
       sseWatchdogInterval: config.sseWatchdogInterval ?? 30_000,
       reconnectDelay: config.reconnectDelay ?? 5_000,
+      getLastEventId: config.getLastEventId,
     };
     this.log = normalizeToILogger(config.logger, "McpTransport");
   }
@@ -270,6 +272,16 @@ export class McpTransport implements ITransport {
     };
     if (this.cfg.token) {
       headers["Authorization"] = `Bearer ${this.cfg.token}`;
+    }
+    // Mission-56 W2.2: attach `Last-Event-ID` when the layer above
+    // (McpAgentClient) has observed at least one Hub event. The Hub's
+    // W1b wrapper backfills Messages with id > lastEventId before
+    // resuming live emit. Cold-start (provider returns undefined or no
+    // provider configured) falls through to the stream-all-with-soft-cap
+    // path on the Hub side.
+    const lastEventId = this.cfg.getLastEventId?.();
+    if (lastEventId !== undefined && lastEventId !== "") {
+      headers["Last-Event-ID"] = lastEventId;
     }
 
     // Same rationale as McpConnectionManager: disable the SDK's

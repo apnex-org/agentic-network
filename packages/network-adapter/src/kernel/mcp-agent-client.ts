@@ -157,6 +157,12 @@ export class McpAgentClient implements IAgentClient {
   private totalSessionInvalidRetries = 0;
   private dedupDropCount = 0;
 
+  // Mission-56 W2.2: most-recent Hub event id observed on the SSE
+  // stream. Surfaced to the wire layer via the `getLastEventId`
+  // TransportConfig hook so reconnects send the canonical
+  // `Last-Event-ID` header to drive Hub-side W1b backfill replay.
+  private lastEventId: string | undefined;
+
   constructor(config: AgentClientConfig, options: McpAgentClientOptions = {}) {
     this.cfg = config;
     this.log = normalizeToILogger(config.logger, "McpAgentClient");
@@ -176,6 +182,10 @@ export class McpAgentClient implements IAgentClient {
       this.transport = new McpTransport({
         ...options.transportConfig,
         logger: config.logger ?? options.transportConfig.logger,
+        // Caller-supplied provider wins; otherwise the kernel's tracked
+        // lastEventId backs the SSE Last-Event-ID header on reconnect.
+        getLastEventId:
+          options.transportConfig.getLastEventId ?? (() => this.lastEventId),
       });
       this.ownsTransport = true;
     } else {
@@ -609,6 +619,15 @@ export class McpAgentClient implements IAgentClient {
       data: parsed.data,
       timestamp: parsed.timestamp,
     };
+
+    // Mission-56 W2.2: the Hub stamps every SSE event's `id:` field
+    // with a Message ID (ULID monotonic) — track the most-recent one
+    // so a subsequent reconnect's Last-Event-ID header can drive the
+    // Hub W1b backfill replay. Skip when no id was present on the
+    // event (legacy / non-Hub events).
+    if (event.id !== undefined) {
+      this.lastEventId = String(event.id);
+    }
 
     // Buffer during any non-streaming state so shims don't see events
     // from a half-bound (or torn-down) session.

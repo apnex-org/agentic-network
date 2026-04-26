@@ -110,6 +110,18 @@ export interface TransportConfig {
    * wire up a transport without being rewritten first.
    */
   logger?: ILogger | LegacyStringLogger;
+
+  /**
+   * Mission-56 W2.2: optional provider for the most-recent Hub event id
+   * the layer above has observed. The transport reads this at
+   * (re)connect time and, when a value is returned, attaches it as the
+   * canonical SSE `Last-Event-ID` header on the inbound stream. The
+   * Hub-side W1b wrapper consumes the header to backfill missed
+   * Messages before resuming live emit. Returning `undefined` (no
+   * value yet) means cold-start — Hub falls through to the
+   * stream-all-with-soft-cap path.
+   */
+  getLastEventId?: () => string | undefined;
 }
 
 /**
