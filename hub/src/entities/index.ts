@@ -11,8 +11,26 @@ export { ThreadRepository } from "./thread-repository.js";
 export { AgentRepository } from "./agent-repository.js";
 export { AuditRepository } from "./audit-repository.js";
 
-export type { Mission, MissionStatus, IMissionStore, PlannedTask, PlannedTaskStatus } from "./mission.js";
-export { findNextUnissuedPlannedTask } from "./mission.js";
+export type {
+  Mission,
+  MissionStatus,
+  IMissionStore,
+  PlannedTask,
+  PlannedTaskStatus,
+  MissionClass,
+  MissionPulses,
+  PulseConfig,
+  PulseKey,
+  PulseResponseShape,
+} from "./mission.js";
+export {
+  findNextUnissuedPlannedTask,
+  MISSION_CLASSES,
+  PULSE_KEYS,
+  PULSE_RESPONSE_SHAPES,
+  PULSE_INTERVAL_FLOOR_SECONDS,
+  DEFAULT_MISSED_THRESHOLD,
+} from "./mission.js";
 export { MissionRepository } from "./mission-repository.js";
 
 export type { Turn, TurnStatus, ITurnStore } from "./turn.js";

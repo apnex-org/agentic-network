@@ -24,13 +24,75 @@ import type {
   MissionStatus,
   IMissionStore,
   PlannedTask,
+  MissionClass,
+  MissionPulses,
+  PulseConfig,
+  PulseKey,
 } from "./mission.js";
+import { PULSE_KEYS } from "./mission.js";
 import { StorageBackedCounter } from "./counter.js";
 
 const MAX_CAS_RETRIES = 50;
 
 function missionPath(missionId: string): string {
   return `missions/${missionId}.json`;
+}
+
+/**
+ * Mission-57 W1: merge incoming pulse updates with existing on-disk
+ * sweeper-managed bookkeeping (lastFiredAt / lastResponseAt / missedCount /
+ * lastEscalatedAt). Used by `updateMission` so callers replacing
+ * engineer-authored config don't accidentally clobber sweeper bookkeeping.
+ *
+ * Per Design v1.0 §3 default-injection semantics: sweeper-managed fields
+ * are read-only via MCP tools (stripped at `mission-policy.ts:update_mission`
+ * boundary). They reach this repository only via direct PulseSweeper
+ * updates. So a typical MCP-driven `updateMission` call has incoming
+ * pulses with NO bookkeeping fields; existing on-disk bookkeeping must be
+ * preserved.
+ *
+ * Merge rules per pulse-key:
+ *   - Both sides absent → result absent
+ *   - Only existing-side present → preserve it
+ *   - Only incoming present → take incoming verbatim (no existing bookkeeping)
+ *   - Both present → take incoming engineer-authored fields; preserve
+ *     existing sweeper bookkeeping ONLY when incoming bookkeeping fields
+ *     are explicitly undefined (the MCP-stripping case)
+ */
+function mergePulsesPreservingBookkeeping(
+  existing: MissionPulses | undefined,
+  incoming: MissionPulses,
+): MissionPulses {
+  const result: MissionPulses = {};
+  for (const key of PULSE_KEYS) {
+    const e = existing?.[key];
+    const i = incoming[key];
+    if (!e && !i) continue;
+    if (!i) {
+      result[key] = { ...e! };
+      continue;
+    }
+    if (!e) {
+      result[key] = { ...i };
+      continue;
+    }
+    // Both present — take incoming engineer-authored; preserve existing
+    // sweeper bookkeeping when incoming bookkeeping fields are undefined.
+    const merged: PulseConfig = {
+      intervalSeconds: i.intervalSeconds,
+      message: i.message,
+      responseShape: i.responseShape,
+      missedThreshold: i.missedThreshold,
+      precondition: i.precondition,
+      firstFireDelaySeconds: i.firstFireDelaySeconds,
+      lastFiredAt: i.lastFiredAt ?? e.lastFiredAt,
+      lastResponseAt: i.lastResponseAt ?? e.lastResponseAt,
+      missedCount: i.missedCount ?? e.missedCount,
+      lastEscalatedAt: i.lastEscalatedAt ?? e.lastEscalatedAt,
+    };
+    result[key] = merged;
+  }
+  return result;
 }
 
 function encode(m: Mission): Uint8Array {
@@ -62,6 +124,8 @@ export class MissionRepository implements IMissionStore {
     backlink?: CascadeBacklink,
     createdBy?: EntityProvenance,
     plannedTasks?: PlannedTask[],
+    missionClass?: MissionClass,
+    pulses?: MissionPulses,
   ): Promise<Mission> {
     const num = await this.counter.next("missionCounter");
     const id = `mission-${num}`;
@@ -82,6 +146,13 @@ export class MissionRepository implements IMissionStore {
       sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
       createdBy,
       plannedTasks: plannedTasks ? plannedTasks.map((p) => ({ ...p })) : undefined,
+      missionClass,
+      pulses: pulses
+        ? {
+            engineerPulse: pulses.engineerPulse ? { ...pulses.engineerPulse } : undefined,
+            architectPulse: pulses.architectPulse ? { ...pulses.architectPulse } : undefined,
+          }
+        : undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -142,6 +213,8 @@ export class MissionRepository implements IMissionStore {
       description?: string;
       documentRef?: string;
       plannedTasks?: PlannedTask[];
+      missionClass?: MissionClass;
+      pulses?: MissionPulses;
     },
   ): Promise<Mission | null> {
     try {
@@ -152,12 +225,28 @@ export class MissionRepository implements IMissionStore {
         if (updates.plannedTasks !== undefined) {
           m.plannedTasks = updates.plannedTasks.map((p) => ({ ...p }));
         }
+        if (updates.missionClass !== undefined) {
+          m.missionClass = updates.missionClass;
+        }
+        if (updates.pulses !== undefined) {
+          // Mission-57 W1: pulses replacement is wholesale per pulse-key.
+          // Sweeper-managed bookkeeping fields (lastFiredAt / lastResponseAt /
+          // missedCount / lastEscalatedAt) are stripped at the MCP-tool
+          // boundary in `mission-policy.ts:update_mission` before calling
+          // here — only PulseSweeper writes those via direct repository
+          // updates that bypass the MCP surface. Preserve any
+          // sweeper-managed bookkeeping that already exists when callers
+          // update only engineer-authored fields.
+          m.pulses = mergePulsesPreservingBookkeeping(m.pulses, updates.pulses);
+        }
         m.updatedAt = new Date().toISOString();
         return m;
       });
       console.log(
         `[MissionRepository] Mission updated: ${missionId} → status=${updated.status}` +
-          (updates.plannedTasks ? ` [plannedTasks=${updates.plannedTasks.length}]` : ""),
+          (updates.plannedTasks ? ` [plannedTasks=${updates.plannedTasks.length}]` : "") +
+          (updates.missionClass ? ` [missionClass=${updates.missionClass}]` : "") +
+          (updates.pulses ? ` [pulses-updated]` : ""),
       );
       return this.hydrate(updated);
     } catch (err) {

@@ -57,6 +57,100 @@ export interface PlannedTask {
 export const TERMINAL_MISSION_STATUSES: ReadonlySet<MissionStatus> = new Set(["completed", "abandoned"]);
 
 /**
+ * Mission-57 W1: mission-class taxonomy per mission-56 retrospective §5.4.1.
+ * Used by `mission-lifecycle.md` v1.0 (co-shipped at W4 D5) to look up
+ * per-class default pulse cadence templates. Optional on the entity;
+ * legacy missions without `missionClass` get NO PULSE per Design v1.0 §6
+ * `(unset)/legacy` row (backward-compat).
+ */
+export const MISSION_CLASSES = [
+  "spike",
+  "substrate-introduction",
+  "pre-substrate-cleanup",
+  "structural-inflection",
+  "coordination-primitive-shipment",
+  "saga-substrate-completion",
+  "substrate-cleanup-wave",
+  "distribution-packaging",
+] as const;
+export type MissionClass = (typeof MISSION_CLASSES)[number];
+
+/**
+ * Mission-57 W1: pulse response-shape declaration. Engineer-authored;
+ * no default at Hub level (Survey Q4 anti-goal). Per Design v1.0 §6
+ * mission-lifecycle.md conventions, both engineerPulse and architectPulse
+ * default to `short_status` at the methodology-doc layer (NOT Hub primitives).
+ */
+export const PULSE_RESPONSE_SHAPES = ["ack", "short_status", "full_status"] as const;
+export type PulseResponseShape = (typeof PULSE_RESPONSE_SHAPES)[number];
+
+/**
+ * Mission-57 W1: per-pulse declarative configuration on a Mission entity.
+ * Per Design v1.0 §3 (PulseConfig schema) + §6 (default-injection semantics).
+ *
+ * Fields split into two classes:
+ *
+ * **Engineer-authored** (validated at MCP boundary; persisted on entity):
+ *   - intervalSeconds: cadence (≥60s enforced; ≥300s recommended; sub-minute is anti-pattern per Survey Q5)
+ *   - message: payload prompt rendered at adapter
+ *   - responseShape: pulse-response-shape declaration
+ *   - missedThreshold: architect-side escalation threshold (auto-injected default 3 per Design v1.0 §3 + §6)
+ *   - precondition: optional W4-precondition-registry fn-by-name + args (auto-injected `mission_idle_for_at_least` default per Design v1.0 §3; explicit `null` to disable)
+ *   - firstFireDelaySeconds: optional first-fire delay (auto-injected to intervalSeconds)
+ *
+ * **Sweeper-managed bookkeeping** (read-only via MCP tools; only PulseSweeper
+ * writes via direct repository update; stripped at MCP boundary in
+ * `mission-policy.ts:update_mission`):
+ *   - lastFiredAt: ISO-8601 timestamp of most recent pulse fire
+ *   - lastResponseAt: ISO-8601 timestamp of most recent ack via webhook
+ *   - missedCount: increments on missed-pulse detection (E2 3-condition guard)
+ *   - lastEscalatedAt: suppresses escalation-storm
+ */
+export interface PulseConfig {
+  // Engineer-authored config
+  intervalSeconds: number;
+  message: string;
+  responseShape: PulseResponseShape;
+  missedThreshold: number;
+  precondition?: { fn: string; args: Record<string, unknown> } | null;
+  firstFireDelaySeconds?: number;
+
+  // Sweeper-managed bookkeeping
+  lastFiredAt?: string;
+  lastResponseAt?: string | null;
+  missedCount?: number;
+  lastEscalatedAt?: string | null;
+}
+
+/**
+ * Mission-57 W1: pulse keys. Per Survey Q2 envelope: engineer + architect
+ * default; Director-watchdog OUT. Named fields (not keyed dict) per
+ * Design v1.0 §3 + bilateral round-1 thread-349.
+ */
+export interface MissionPulses {
+  engineerPulse?: PulseConfig;
+  architectPulse?: PulseConfig;
+}
+
+/** Mission-57 W1: pulse keys enum-style for sweeper iteration. */
+export const PULSE_KEYS = ["engineerPulse", "architectPulse"] as const;
+export type PulseKey = (typeof PULSE_KEYS)[number];
+
+/**
+ * Mission-57 W1: floor on pulse cadence per Survey Q5 anti-pattern guard.
+ * Sub-minute cadences cause pulse-storm + missedThreshold semantics
+ * break down. 60s is the absolute minimum; ≥300s recommended.
+ */
+export const PULSE_INTERVAL_FLOOR_SECONDS = 60;
+
+/**
+ * Mission-57 W1: default `missedThreshold` per Design v1.0 §3 + §6
+ * (matches W3.2 ADR-017 receipt-deadline-missed-3x precedent for COMMS
+ * escalation; reduces false-positive rate vs 2). Per-mission overridable.
+ */
+export const DEFAULT_MISSED_THRESHOLD = 3;
+
+/**
  * Phase 2d CP2 C4 (task-307): "committable" convention per architect
  * brainstorm thread-232. A mission is committable when it's in a
  * non-terminal state — new tasks / ideas / status transitions can still
@@ -100,6 +194,20 @@ export interface Mission {
    * cascade shape + revision-loop FSMs.
    */
   plannedTasks?: PlannedTask[];
+  /**
+   * Mission-57 W1: mission-class taxonomy per mission-56 retrospective
+   * §5.4.1. Drives per-class default pulse cadence template lookup at the
+   * mission-lifecycle.md v1.0 layer (co-shipped W4 D5). Optional;
+   * `(unset)/legacy missionClass` = NO PULSE (Design v1.0 §6 backward-compat).
+   */
+  missionClass?: MissionClass;
+  /**
+   * Mission-57 W1: declarative per-mission pulse configuration. Drives
+   * PulseSweeper (W2). Optional; missions without `pulses` field get no
+   * automatic pulses. Per-pulse-key (engineerPulse / architectPulse)
+   * named-field schema per bilateral round-1 thread-349.
+   */
+  pulses?: MissionPulses;
   createdAt: string;
   updatedAt: string;
 }
@@ -114,6 +222,8 @@ export interface IMissionStore {
     backlink?: CascadeBacklink,
     createdBy?: EntityProvenance,
     plannedTasks?: PlannedTask[],
+    missionClass?: MissionClass,
+    pulses?: MissionPulses,
   ): Promise<Mission>;
 
   getMission(missionId: string): Promise<Mission | null>;
@@ -127,6 +237,8 @@ export interface IMissionStore {
       description?: string;
       documentRef?: string;
       plannedTasks?: PlannedTask[];
+      missionClass?: MissionClass;
+      pulses?: MissionPulses;
     }
   ): Promise<Mission | null>;
 
