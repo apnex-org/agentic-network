@@ -396,6 +396,13 @@ Plus 5 design-walkthrough ratifications same window:
 | tool-manager naming (was `mcp-boundary`) | Director ratified rename 2026-04-26: "Lets rename MCP-boundary to 'tool-manager' perhaps? Says what it does" — adopted; small standalone rename PR queued post-retrospective |
 | Mission workflow source-of-truth doc | Director-validated `mission-lifecycle.md` v0.1 already exists; converge + ratify v1.0 post-M-Push-Foundation |
 
+Plus 2 retrospective-walkthrough codifications (binding patterns added to §1):
+
+| Pattern | Director ratification |
+|---|---|
+| Autonomous-arc-driving pattern | "Architect (you, lily) is in full control of a mission once it has become activated — leading all coordination with engaged engineer and managing through to completion. Surfacing appropriately categorised Director concerns" — codified in §1; first canonical execution this arc; binding for future arcs |
+| Communication mediation invariant (Director ↔ Engineer through Architect) | "Workflows, entities, primitives and coordination mechanisms should all exist such that the Director need not ever directly consult the Engineer — only through Architect" — structural design constraint on workflow primitives; codified in §1; binding for future Hub primitives |
+
 ---
 
 ## §7 Plugin architecture confirmed
