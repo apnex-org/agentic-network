@@ -199,6 +199,40 @@ describe("list_messages — query primitives", () => {
     const body = JSON.parse((result.content[0] as { text: string }).text);
     expect(body.count).toBe(1);
   });
+
+  it("since cursor (mission-56 W3.1) flows through args → returns only delta", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
+
+    const m1 = await messageStore.createMessage({
+      kind: "note",
+      authorRole: "engineer",
+      authorAgentId: "eng-1",
+      target: { role: "architect" },
+      delivery: "push-immediate",
+      payload: {},
+    });
+    const m2 = await messageStore.createMessage({
+      kind: "note",
+      authorRole: "engineer",
+      authorAgentId: "eng-1",
+      target: { role: "architect" },
+      delivery: "push-immediate",
+      payload: {},
+    });
+
+    const result = await router.handle(
+      "list_messages",
+      { targetRole: "architect", since: m1.id },
+      ctx,
+    );
+    expect(result.isError).not.toBe(true);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    // Strict: m1 excluded; only m2 in delta.
+    expect(body.count).toBe(1);
+    expect(body.messages[0].id).toBe(m2.id);
+  });
 });
 
 describe("create_message — authorization axes", () => {

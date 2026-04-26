@@ -268,6 +268,136 @@ describe("MessageRepository.listMessages — multi-membership views", () => {
   });
 });
 
+// ── Mission-56 W3.1 — listMessages.since cursor tests ────────────────
+
+describe("MessageRepository.listMessages — since cursor (mission-56 W3.1)", () => {
+  it("since undefined: returns all matching (no cursor filter)", async () => {
+    const repo = newRepo();
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    const all = await repo.listMessages({ targetRole: "architect" });
+    expect(all).toHaveLength(3);
+  });
+
+  it("since cursor: strictly excludes IDs <= since (ULID lex-asc)", async () => {
+    const repo = newRepo();
+    const m1 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    const m2 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    const m3 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    const delta = await repo.listMessages({
+      targetRole: "architect",
+      since: m1.id,
+    });
+    // Strict: m1 itself excluded; m2 + m3 included.
+    expect(delta.map((m) => m.id).sort()).toEqual([m2.id, m3.id].sort());
+  });
+
+  it("since matching most recent: returns empty (no delta to deliver)", async () => {
+    const repo = newRepo();
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    const m2 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    const delta = await repo.listMessages({
+      targetRole: "architect",
+      since: m2.id,
+    });
+    expect(delta).toEqual([]);
+  });
+
+  it("since combines with status filter (poll-backstop pattern: new + delta)", async () => {
+    const repo = newRepo();
+    const m1 = await repo.createMessage({ ...baseInput, target: { role: "engineer" } });
+    const m2 = await repo.createMessage({ ...baseInput, target: { role: "engineer" } });
+    const m3 = await repo.createMessage({ ...baseInput, target: { role: "engineer" } });
+    // Adapter has acked m1; poll-backstop wants new-since-m1.
+    await repo.ackMessage(m1.id);
+
+    const delta = await repo.listMessages({
+      targetRole: "engineer",
+      status: "new",
+      since: m1.id,
+    });
+    // m1 excluded by both since (strict) AND status (acked). m2 + m3 included.
+    expect(delta.map((m) => m.id).sort()).toEqual([m2.id, m3.id].sort());
+  });
+
+  it("since combines with targetAgentId (pinpoint poll-backstop)", async () => {
+    const repo = newRepo();
+    const m1 = await repo.createMessage({
+      ...baseInput,
+      target: { role: "engineer", agentId: "eng-7" },
+    });
+    await repo.createMessage({
+      ...baseInput,
+      target: { role: "engineer", agentId: "eng-3" },
+    });
+    const m3 = await repo.createMessage({
+      ...baseInput,
+      target: { role: "engineer", agentId: "eng-7" },
+    });
+
+    const delta = await repo.listMessages({
+      targetAgentId: "eng-7",
+      since: m1.id,
+    });
+    // Only eng-7 messages with id > m1.id; only m3 matches.
+    expect(delta.map((m) => m.id)).toEqual([m3.id]);
+  });
+
+  it("since on threadId-scoped query: excludes thread messages with id <= since", async () => {
+    const repo = newRepo();
+    // Thread-A messages — sequenceInThread allocated, but cursor filter is on ULID id.
+    const m1 = await repo.createMessage({ ...baseInput, threadId: "thread-A" });
+    const m2 = await repo.createMessage({ ...baseInput, threadId: "thread-A" });
+    const m3 = await repo.createMessage({ ...baseInput, threadId: "thread-A" });
+
+    const delta = await repo.listMessages({
+      threadId: "thread-A",
+      since: m1.id,
+    });
+    // m1 excluded; thread order preserved (sequenceInThread asc).
+    expect(delta.map((m) => m.id)).toEqual([m2.id, m3.id]);
+    expect(delta.map((m) => m.sequenceInThread)).toEqual([1, 2]);
+  });
+
+  it("since with non-existent cursor (forged future ULID): returns empty", async () => {
+    const repo = newRepo();
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    // ULID max sentinel — strictly greater than any allocated ULID.
+    const delta = await repo.listMessages({
+      targetRole: "architect",
+      since: "ZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    });
+    expect(delta).toEqual([]);
+  });
+
+  it("since cursor matches replayFromCursor semantics (same delta on shared inputs)", async () => {
+    const repo = newRepo();
+    const m1 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    const viaList = await repo.listMessages({
+      targetRole: "architect",
+      status: "new",
+      since: m1.id,
+    });
+    const viaReplay = await repo.replayFromCursor({
+      targetRole: "architect",
+      status: "new",
+      since: m1.id,
+      limit: 1000,
+    });
+    // Cursor + filter semantics agree across the two query surfaces.
+    expect(viaList.map((m) => m.id).sort()).toEqual(viaReplay.map((m) => m.id).sort());
+  });
+});
+
 // ── Mission-56 W1b — replayFromCursor tests ──────────────────────────
 
 describe("MessageRepository.replayFromCursor — Hub-internal cursor query", () => {
