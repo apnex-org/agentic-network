@@ -59,6 +59,7 @@ async function listMessages(
   const authorAgentId = args.authorAgentId as string | undefined;
   const status = args.status as MessageStatus | undefined;
   const delivery = args.delivery as MessageDelivery | undefined;
+  const since = args.since as string | undefined;
 
   try {
     const messages = await ctx.stores.message.listMessages({
@@ -68,6 +69,7 @@ async function listMessages(
       authorAgentId,
       status,
       delivery,
+      since,
     });
     return {
       content: [
@@ -284,8 +286,13 @@ export function registerMessagePolicy(router: PolicyRouter): void {
     "[Any] List messages from the sovereign Message store with multi-membership query primitives. " +
       "Supply any combination of `threadId` (thread view, ordered by sequenceInThread), " +
       "`targetRole` + `targetAgentId` (inbox view), `authorAgentId` (outbox view), " +
-      "`status` ('new' | 'acked'), `delivery` ('push-immediate' | 'queued' | 'scheduled'). " +
-      "Multi-membership: a single message belongs to thread + inbox + outbox simultaneously.",
+      "`status` ('new' | 'acked'), `delivery` ('push-immediate' | 'queued' | 'scheduled'), " +
+      "`since` (ULID-cursor; return only messages with `id > since` — strict). " +
+      "Multi-membership: a single message belongs to thread + inbox + outbox simultaneously. " +
+      "Cursor semantics (mission-56 W3.1): Message IDs are ULIDs (lex-order = time-order); " +
+      "passing the last-seen Message ID as `since` returns only the delta. Powers the adapter-side " +
+      "hybrid poll-backstop (Design v1.2 commitment #5) and shares cursor semantics with the " +
+      "SSE Last-Event-ID protocol (W1b).",
     {
       threadId: z
         .string()
@@ -311,6 +318,15 @@ export function registerMessagePolicy(router: PolicyRouter): void {
         .enum(MESSAGE_DELIVERY_MODES)
         .optional()
         .describe("Filter by delivery mode"),
+      since: z
+        .string()
+        .optional()
+        .describe(
+          "ULID-cursor (strict): return only messages with id > since. " +
+            "Adapter-side hybrid poll-backstop persists last-seen Message ID and " +
+            "passes it here to fetch only the delta on each poll-tick. " +
+            "Combines with all other filters via AND.",
+        ),
     },
     listMessages,
   );

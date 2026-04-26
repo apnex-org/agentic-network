@@ -486,6 +486,10 @@ function matchesAdditionalFilters(m: Message, q: MessageQuery): boolean {
   // Mission-51 W4: delivery + scheduledState filters.
   if (q.delivery !== undefined && m.delivery !== q.delivery) return false;
   if (q.scheduledState !== undefined && m.scheduledState !== q.scheduledState) return false;
+  // Mission-56 W3.1: strict ULID-cursor filter — id > since (lex-asc =
+  // time-asc). Same comparison shape as `replayFromCursor` (W1b) so the
+  // poll-backstop and SSE-replay paths agree on cursor semantics.
+  if (q.since !== undefined && m.id <= q.since) return false;
   return true;
 }
 

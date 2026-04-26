@@ -367,6 +367,21 @@ export interface MessageQuery {
    * input set (`scheduled + pending`).
    */
   scheduledState?: MessageScheduledState;
+  /**
+   * Mission-56 W3.1: ULID-cursor filter — return only messages with
+   * `id > since` (strict; ULID lex-order = time-monotonic). Powers the
+   * adapter-side hybrid poll-backstop (Design v1.2 commitment #5):
+   * adapter persists the last-seen Message ID and requeries only the
+   * delta on each poll-tick. Forward-compatible with the SSE Last-
+   * Event-ID protocol (W1b) and the Hub-internal `replayFromCursor`
+   * (which uses the same ULID-cursor semantics on the SSE replay path).
+   *
+   * Combines with all other filters (target/status/delivery/etc.) via
+   * AND. `since` undefined → no cursor filter (return from beginning of
+   * matching set). Cursor is *strict* (`id > since`, not `id >= since`)
+   * so the adapter never re-receives the message it already last-saw.
+   */
+  since?: string;
 }
 
 export interface IMessageStore {
