@@ -78,7 +78,7 @@ This arc is the **third canonical execution example** of calibration #23:
 
 **This pattern operationalizes Director's bar from `mission-lifecycle.md`:** *"For missions that are well shaped and planned, Lily+Greg must be able to coordinate end to end without intervention — unless that intervention warrants Director input."*
 
-The pattern's success is measured by *Director-intervention-density* — for mission-54 + mission-55, Director surfaced concerns at: foreign-code path share, "greg is online" + "please begin", post-Q10 layered model walkthrough, "@apnex namespace" announcement, this retrospective. Five interventions across ~5 hours of architect-engineer coordination — all categorised + warranted.
+The pattern's success is measured by *Director-intervention-density* — for mission-54 + mission-55 + Design v1.2 + round-2 audit, **9 interventions across ~3 hours of active arc execution** (see §2 timeline for the full chronological list). All categorised + warranted per the table above; none were day-to-day mechanics. Density of ~1 every 20min is acceptable for active co-design; would drop substantially in steady-state mission execution where Director-ratified scope holds without re-litigation.
 
 #### Communication mediation invariant — Director ↔ Engineer through Architect (BINDING)
 
