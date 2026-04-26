@@ -122,21 +122,21 @@ When adapter connects without prior Last-Event-ID (first-ever connection, post-c
 │   1a. src/wire/         — TCP/SSE conn lifecycle; reconnect; backoff;       │
 │                           heartbeat; atomic teardown; wire FSM              │
 │                           (mcp-transport.ts, transport.ts)                  │
-│   1b. src/session/      — register_role handshake; session-claim;           │
+│   1b. src/kernel/       — register_role handshake; session-claim;           │
 │                           session FSM 5-state; agent identity;              │
 │                           instance lifecycle; SSE watchdog                  │
 │                           (mcp-agent-client.ts, agent-client.ts,            │
 │                            handshake.ts, session-claim.ts, instance.ts,     │
 │                            state-sync.ts, event-router.ts)                  │
-│   1c. src/mcp-boundary/ — MCP-boundary handler factory:                     │
+│   1c. src/tool-manager/ — MCP protocol tool-manager handler factory:        │
 │                           Initialize/ListTools/CallTool; pendingActionMap   │
 │                           for queueItemId injection; tool-catalog cache;    │
 │                           cache-fallback paths; error envelope              │
 │                           (dispatcher.ts, tool-catalog-cache.ts)            │
 │                           ← NEW post-cleanup; foreign-engineer-as-          │
-│                             inspiration; "MCP-boundary dispatcher"          │
-│                             semantics qualified always to disambiguate      │
-│                             from Message-router                             │
+│                             inspiration; "tool-manager" semantics           │
+│                             qualified always to disambiguate from           │
+│                             Message-router                                  │
 └─────────────────────────────────────────────────────────────────────────────┘
                                    │
                                    ▼
@@ -338,7 +338,7 @@ The architect's pre-look (in mission-54 preflight) speculated the foreign engine
 
 **Reusable patterns to adopt as inspiration:**
 
-1. **Code-dedup hoist + module sub-organization** — duplicated dispatcher / claim / cache code per-plugin → consolidated shared modules in `@ois/network-adapter` with hooks-pattern for host-injection. **Sub-organize `src/` into subdirs during the hoist:** `src/wire/` (transport / wire FSM), `src/session/` (handshake / session-claim / agent identity / instance lifecycle), `src/mcp-boundary/` (Initialize/ListTools/CallTool / pendingActionMap / tool-catalog cache). Naming-disciplined: `src/mcp-boundary/` modules are MCP-boundary-handler-factory concerns (foreign "dispatcher" semantics); does NOT live in or depend on the future Message-router (sovereign-package #6).
+1. **Code-dedup hoist + module sub-organization** — duplicated dispatcher / claim / cache code per-plugin → consolidated shared modules in `@ois/network-adapter` with hooks-pattern for host-injection. **Sub-organize `src/` into subdirs during the hoist:** `src/wire/` (transport / wire FSM), `src/kernel/` (handshake / session-claim / agent identity / instance lifecycle), `src/tool-manager/` (Initialize/ListTools/CallTool / pendingActionMap / tool-catalog cache). Naming-disciplined: `src/tool-manager/` modules are tool-manager-handler-factory concerns (foreign "dispatcher" semantics); does NOT live in or depend on the future Message-router (sovereign-package #6).
 2. **`notificationHooks` callback bag pattern** — generic shim-injection contract: `{onActionableEvent, onInformationalEvent, onStateChange, onPendingActionItem}`. **This is the Universal Adapter notification contract** (Director-ratified). Adoptable as the host-injection contract shape for both the cleanup-mission MCP-boundary refactor AND the future Message-router-shim contract (commitment #4 inheriting the same hooks-shape). Spec'd in this mission per deliverable below.
 3. **Lazy `createMcpServer()` factory** (vs eager `dispatcher.server`) — adoptable in HEAD as a clarity/correctness win independent of push-foundation work; supports per-session lifecycle for hosts with HTTP-session models (opencode-style).
 4. **Tool-catalog cache distillation** (157→77 lines per recon §4) — schema-version + atomic write + null-tolerant `isCacheValid`. Reusable as inspiration only; properties don't transfer wholesale to commitment #4's seen-id LRU (different cache semantics: bounded LRU N=1000 in-memory vs schema-versioned-on-disk).
@@ -377,7 +377,7 @@ Spec covers:
 M-Pre-Push-Adapter-Cleanup ships → engineer round-2 audit of Design v1.2 (against post-cleanup adapter) → propose_mission cascade for M-Push-Foundation → Director activates M-Push-Foundation → W0-W7 ship.
 
 **Cleanup mission deliverables checklist:**
-1. Hoist dispatcher/claim/cache from per-plugin shims into `@ois/network-adapter` sub-organized into `src/wire/` + `src/session/` + `src/mcp-boundary/` subdirs (engineer-authored from scratch; foreign work as inspiration only)
+1. Hoist dispatcher/claim/cache from per-plugin shims into `@ois/network-adapter` sub-organized into `src/wire/` + `src/kernel/` + `src/tool-manager/` subdirs (engineer-authored from scratch; foreign work as inspiration only)
 2. `notificationHooks` callback bag pattern adopted as Universal Adapter notification contract
 3. Lazy `createMcpServer()` factory replaces eager `dispatcher.server`
 4. Tool-catalog cache distilled (schema-version + atomic write + null-tolerant `isCacheValid`)

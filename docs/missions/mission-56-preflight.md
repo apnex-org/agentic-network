@@ -19,7 +19,7 @@
   - `docs/designs/m-push-foundational-adapter-recon.md` ✓ (commit `f519f74`)
   - `docs/specs/universal-adapter-notification-contract.md` ✓ (commit `736e13d`)
   - `docs/audits/m-pre-push-adapter-cleanup-closing-report.md` ✓ (commit `ef633144`)
-  - `packages/network-adapter/src/{wire,session,mcp-boundary}/` ✓ (current names; rename pending)
+  - `packages/network-adapter/src/{wire,kernel,tool-manager}/` ✓ (post-rename; Director-ratified naming-coherence)
   - thread-325 round-2 audit ✓ (closed; converged)
   - `docs/methodology/mission-lifecycle.md` v0.1 ✓ (cited as prime source of truth)
 

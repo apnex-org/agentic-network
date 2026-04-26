@@ -1,5 +1,5 @@
 /**
- * dispatcher.ts — MCP-boundary handler factory (Layer 1c).
+ * dispatcher.ts — tool-manager handler factory (Layer 1c).
  *
  * Host-independent shared abstraction that owns the MCP server's
  * Initialize / ListTools / CallTool handlers and the supporting
@@ -11,11 +11,12 @@
  * via the `notificationHooks` callback bag (Universal Adapter
  * notification contract).
  *
- * This module is the "MCP-boundary dispatcher" per Design v1.2 §4
- * naming discipline — distinct from the "Message-router" which is
- * sovereign-package #6 (`@ois/message-router`) landing in
- * M-Push-Foundation W4. Always qualify ("MCP-boundary dispatcher" or
- * "Message-router") in new code; avoid bare "dispatcher".
+ * This module is the "tool-manager" per Design v1.2 §4 naming discipline
+ * (Director-ratified rename from "MCP-boundary dispatcher" 2026-04-26)
+ * — distinct from the "Message-router" which is sovereign-package #6
+ * (`@ois/message-router`) landing in M-Push-Foundation W4. Always
+ * qualify ("tool-manager" or "Message-router") in new code; avoid bare
+ * "dispatcher".
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -29,9 +30,9 @@ import type {
   AgentEvent,
   SessionState,
   SessionReconnectReason,
-} from "../session/agent-client.js";
-import type { McpAgentClient } from "../session/mcp-agent-client.js";
-import type { DrainedPendingAction } from "../session/state-sync.js";
+} from "../kernel/agent-client.js";
+import type { McpAgentClient } from "../kernel/mcp-agent-client.js";
+import type { DrainedPendingAction } from "../kernel/state-sync.js";
 import type { CachedCatalog } from "./tool-catalog-cache.js";
 
 export interface DispatcherClientInfo {

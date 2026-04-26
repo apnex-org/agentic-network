@@ -19,8 +19,8 @@ import { randomUUID } from "node:crypto";
 import { LoopbackTransport } from "../helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../helpers/policy-loopback.js";
 import { waitFor, LogCapture } from "../helpers/test-utils.js";
-import { McpAgentClient } from "../../src/session/mcp-agent-client.js";
-import type { AgentEvent } from "../../src/session/agent-client.js";
+import { McpAgentClient } from "../../src/kernel/mcp-agent-client.js";
+import type { AgentEvent } from "../../src/kernel/agent-client.js";
 
 interface ActorHandle {
   client: McpAgentClient;

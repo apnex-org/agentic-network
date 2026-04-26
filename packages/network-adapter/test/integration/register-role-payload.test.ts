@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { LoopbackHub, LoopbackTransport } from "../helpers/loopback-transport.js";
 import { LogCapture, waitFor } from "../helpers/test-utils.js";
-import { McpAgentClient } from "../../src/session/mcp-agent-client.js";
+import { McpAgentClient } from "../../src/kernel/mcp-agent-client.js";
 
 describe("Invariant #9 — plain vs enriched register_role", () => {
   let hub: LoopbackHub;
