@@ -107,6 +107,21 @@ This is a **structural design invariant** on the agentic network. Concrete impli
 
 **This arc validates the invariant:** Director sent ~5 messages directly to Architect; ZERO direct Director → Engineer messages flowed during mission-54 + mission-55 execution. The "greg is online" status check came to Architect (who relayed via thread); the foreign-code path was shared to Architect (who relayed via T1 directive). Mediation chain intact end-to-end.
 
+#### Source-of-truth doc for mission coordination + state machine
+
+**Per Director ratification 2026-04-26:** `docs/methodology/mission-lifecycle.md` IS the prime source of truth for mission coordination and the mission state machine.
+
+**Status:** v0.1 draft (2026-04-25, lily-authored). Currently a MAP of mechanics, not yet a binding policy doc.
+
+**v1.0 RATIFIED update scope (queued; bakes in this retrospective's patterns):**
+- Autonomous-arc-driving pattern formalization (architect-as-mission-execution-leader post-activation; categorised Director concerns table)
+- Communication mediation invariant (Director ↔ Engineer through Architect; binding structural constraint on workflow primitives)
+- Now-mechanised state post-M-Push-Foundation merge (idea-191 + idea-192 + push-pipeline + Message-router + claim/ack two-step + legacy entity sunset all shipped)
+- Calibration #23 references (3 canonical execution examples)
+- Cross-approval pattern reference (formalized in `multi-agent-pr-workflow.md` v1.1)
+
+**Sequencing:** v1.0 RATIFIED ratification post-M-Push-Foundation merge — captures the full mechanised state in one ratification round. The patterns codified in this retrospective become binding policy at v1.0.
+
 ---
 
 ## §2 Timeline
