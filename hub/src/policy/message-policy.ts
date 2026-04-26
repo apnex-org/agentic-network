@@ -253,6 +253,171 @@ async function createMessage(
   }
 }
 
+// ── claim_message + ack_message (mission-56 W3.2) ────────────────────
+
+/**
+ * Resolve the caller's agentId from the policy context (the same shape
+ * used by createMessage for authorRole/authorAgentId resolution). Used
+ * by claim_message to populate Message.claimedBy with the winning agent.
+ */
+async function resolveCallerAgentId(ctx: IPolicyContext): Promise<string> {
+  const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
+  const fallbackRole: MessageAuthorRole =
+    callerRole === "engineer"
+      ? "engineer"
+      : callerRole === "director"
+        ? "director"
+        : "architect";
+  const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(
+    ctx.sessionId,
+  ).catch(() => null);
+  return agent?.engineerId ?? `anonymous-${fallbackRole}`;
+}
+
+async function claimMessage(
+  args: Record<string, unknown>,
+  ctx: IPolicyContext,
+): Promise<PolicyResult> {
+  const id = args.id as string | undefined;
+  if (!id) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            error: "claim_message requires `id` (Message ULID)",
+            subtype: "validation",
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  try {
+    const claimerAgentId = await resolveCallerAgentId(ctx);
+    const message = await ctx.stores.message.claimMessage(id, claimerAgentId);
+    if (!message) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              error: `claim_message: Message ${id} not found`,
+              subtype: "not_found",
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+    // Caller observes outcome via the returned Message:
+    //   message.claimedBy === claimerAgentId → won the claim
+    //   message.claimedBy !== claimerAgentId → lost (silent-drop in adapter)
+    //   message.status === "acked"           → claim too late (already acked)
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              message,
+              wonClaim:
+                message.status === "received" &&
+                message.claimedBy === claimerAgentId,
+              callerAgentId: claimerAgentId,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            error: `claim_message failed: ${(err as Error)?.message ?? String(err)}`,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+}
+
+async function ackMessage(
+  args: Record<string, unknown>,
+  ctx: IPolicyContext,
+): Promise<PolicyResult> {
+  const id = args.id as string | undefined;
+  if (!id) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            error: "ack_message requires `id` (Message ULID)",
+            subtype: "validation",
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  try {
+    const message = await ctx.stores.message.ackMessage(id);
+    if (!message) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              error: `ack_message: Message ${id} not found`,
+              subtype: "not_found",
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+    // Caller observes outcome via message.status:
+    //   "acked"    → ack succeeded (or idempotent on already-acked)
+    //   "received" → unexpected (CAS lost a race; caller can retry)
+    //   "new"      → must claim first (FSM-violation observation)
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(
+            {
+              message,
+              acked: message.status === "acked",
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            error: `ack_message failed: ${(err as Error)?.message ?? String(err)}`,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+}
+
 /**
  * Map a MessageTarget to a dispatch Selector for SSE push delivery.
  * - `target == null` → empty selector (broadcast to all online agents)
@@ -392,5 +557,38 @@ export function registerMessagePolicy(router: PolicyRouter): void {
         ),
     },
     createMessage,
+  );
+
+  router.register(
+    "claim_message",
+    "[Any] Claim a Message — atomic CAS `new → received` + record claimedBy. " +
+      "Mission-56 W3.2: adapter-shim post-render call (Design v1.2 commitment #6 + " +
+      "thread-325 round-2 Option (i) explicit-ack-on-action). Idempotent on `received` " +
+      "(returns existing state, preserving the original winning claimedBy) and on `acked`. " +
+      "Multi-agent same-role contract: winner-takes-all via putIfMatch CAS — losers see " +
+      "claimedBy !== myAgentId on fresh-read and silently drop. Returns `{message, wonClaim, " +
+      "callerAgentId}`; caller observes `wonClaim` to gate render/act.",
+    {
+      id: z
+        .string()
+        .describe("Message ID (ULID) to claim"),
+    },
+    claimMessage,
+  );
+
+  router.register(
+    "ack_message",
+    "[Any] Ack a Message — atomic CAS `received → acked`. " +
+      "Mission-56 W3.2: LLM-consumer call after acting (or actively-deferring). " +
+      "Tightened from the mission-51 W1 baseline (`* → acked`) per Design v1.2 commitment #6 " +
+      "explicit-ack-on-action: ack is tied to consumer-action, not auto-on-render. Caller " +
+      "must invoke claim_message first (post-render); ack on `new` is a no-op (returns " +
+      "unchanged so the caller can observe the FSM violation). Idempotent on `acked`.",
+    {
+      id: z
+        .string()
+        .describe("Message ID (ULID) to ack"),
+    },
+    ackMessage,
   );
 }

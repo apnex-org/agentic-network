@@ -75,16 +75,18 @@ function setupRouter(): PolicyRouter {
 }
 
 describe("registerMessagePolicy — registration", () => {
-  it("registers list_messages and create_message", () => {
+  it("registers list_messages, create_message, claim_message, ack_message", () => {
     const router = setupRouter();
     const tools = router.getRegisteredTools();
     expect(tools).toContain("list_messages");
     expect(tools).toContain("create_message");
+    expect(tools).toContain("claim_message");
+    expect(tools).toContain("ack_message");
   });
 
-  it("router.size includes the 2 new W6 tools", () => {
+  it("router.size = 4 (W6 list+create + W3.2 claim+ack)", () => {
     const router = setupRouter();
-    expect(router.size).toBe(2);
+    expect(router.size).toBe(4);
   });
 });
 
@@ -189,6 +191,8 @@ describe("list_messages — query primitives", () => {
       delivery: "push-immediate",
       payload: {},
     });
+    // Mission-56 W3.2: ack now requires prior claim (FSM new→received→acked).
+    await messageStore.claimMessage(m1.id, "test-agent");
     await messageStore.ackMessage(m1.id);
 
     const result = await router.handle(
@@ -598,5 +602,223 @@ describe("create_message — payload + metadata propagation", () => {
     expect(persisted?.intent).toBe("decision_needed");
     expect(persisted?.semanticIntent).toBe("seek_rigorous_critique");
     expect(persisted?.target).toEqual({ role: "engineer" });
+  });
+});
+
+// ── Mission-56 W3.2 — claim_message + ack_message MCP verbs ──────────
+
+describe("claim_message — MCP verb", () => {
+  it("flips status new → received and reports wonClaim=true for the winner", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
+
+    const m = await messageStore.createMessage({
+      kind: "note",
+      authorRole: "architect",
+      authorAgentId: "arch-1",
+      target: { role: "engineer" },
+      delivery: "push-immediate",
+      payload: {},
+    });
+
+    const result = await router.handle("claim_message", { id: m.id }, ctx);
+    expect(result.isError).not.toBe(true);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    expect(body.wonClaim).toBe(true);
+    expect(body.callerAgentId).toBe("eng-A");
+    expect(body.message.status).toBe("received");
+    expect(body.message.claimedBy).toBe("eng-A");
+  });
+
+  it("multi-agent same-role: loser observes wonClaim=false (sees winner's claimedBy)", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctxA = makeCtx(
+      messageStore,
+      makeRegistry("engineer", "eng-A", "session-A"),
+      "session-A",
+    );
+    const ctxB = makeCtx(
+      messageStore,
+      makeRegistry("engineer", "eng-B", "session-B"),
+      "session-B",
+    );
+
+    const m = await messageStore.createMessage({
+      kind: "note",
+      authorRole: "architect",
+      authorAgentId: "arch-1",
+      target: { role: "engineer" },
+      delivery: "push-immediate",
+      payload: {},
+    });
+
+    // eng-A wins.
+    await router.handle("claim_message", { id: m.id }, ctxA);
+    // eng-B loses.
+    const result = await router.handle("claim_message", { id: m.id }, ctxB);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    expect(body.wonClaim).toBe(false);
+    expect(body.callerAgentId).toBe("eng-B");
+    expect(body.message.status).toBe("received");
+    expect(body.message.claimedBy).toBe("eng-A");
+  });
+
+  it("missing id arg returns validation error", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
+
+    const result = await router.handle("claim_message", {}, ctx);
+    expect(result.isError).toBe(true);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    expect(body.subtype).toBe("validation");
+  });
+
+  it("non-existent Message returns not_found error", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
+
+    const result = await router.handle("claim_message", { id: "missing-ulid" }, ctx);
+    expect(result.isError).toBe(true);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    expect(body.subtype).toBe("not_found");
+  });
+});
+
+describe("ack_message — MCP verb", () => {
+  it("flips status received → acked when called after claim", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
+
+    const m = await messageStore.createMessage({
+      kind: "note",
+      authorRole: "architect",
+      authorAgentId: "arch-1",
+      target: { role: "engineer" },
+      delivery: "push-immediate",
+      payload: {},
+    });
+    await router.handle("claim_message", { id: m.id }, ctx);
+
+    const result = await router.handle("ack_message", { id: m.id }, ctx);
+    expect(result.isError).not.toBe(true);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    expect(body.acked).toBe(true);
+    expect(body.message.status).toBe("acked");
+    // claimedBy preserved across ack flip.
+    expect(body.message.claimedBy).toBe("eng-A");
+  });
+
+  it("ack on `new` (skip-claim) is a no-op (acked=false; status stays new)", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
+
+    const m = await messageStore.createMessage({
+      kind: "note",
+      authorRole: "architect",
+      authorAgentId: "arch-1",
+      target: { role: "engineer" },
+      delivery: "push-immediate",
+      payload: {},
+    });
+
+    const result = await router.handle("ack_message", { id: m.id }, ctx);
+    expect(result.isError).not.toBe(true);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    expect(body.acked).toBe(false);
+    expect(body.message.status).toBe("new");
+  });
+
+  it("idempotent on already-acked (acked=true; second call returns same state)", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
+
+    const m = await messageStore.createMessage({
+      kind: "note",
+      authorRole: "architect",
+      authorAgentId: "arch-1",
+      target: { role: "engineer" },
+      delivery: "push-immediate",
+      payload: {},
+    });
+    await router.handle("claim_message", { id: m.id }, ctx);
+    await router.handle("ack_message", { id: m.id }, ctx);
+
+    const result = await router.handle("ack_message", { id: m.id }, ctx);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    expect(body.acked).toBe(true);
+    expect(body.message.status).toBe("acked");
+  });
+
+  it("missing id arg returns validation error", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
+
+    const result = await router.handle("ack_message", {}, ctx);
+    expect(result.isError).toBe(true);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    expect(body.subtype).toBe("validation");
+  });
+
+  it("non-existent Message returns not_found error", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
+
+    const result = await router.handle("ack_message", { id: "missing-ulid" }, ctx);
+    expect(result.isError).toBe(true);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    expect(body.subtype).toBe("not_found");
+  });
+
+  it("status filter on list_messages excludes received + acked (W3.3 poll-backstop pattern)", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
+
+    const m1 = await messageStore.createMessage({
+      kind: "note",
+      authorRole: "architect",
+      authorAgentId: "arch-1",
+      target: { role: "engineer" },
+      delivery: "push-immediate",
+      payload: {},
+    });
+    const m2 = await messageStore.createMessage({
+      kind: "note",
+      authorRole: "architect",
+      authorAgentId: "arch-1",
+      target: { role: "engineer" },
+      delivery: "push-immediate",
+      payload: {},
+    });
+    await messageStore.createMessage({
+      kind: "note",
+      authorRole: "architect",
+      authorAgentId: "arch-1",
+      target: { role: "engineer" },
+      delivery: "push-immediate",
+      payload: {},
+    });
+    // m1 received-only; m2 received+acked; m3 stays new.
+    await router.handle("claim_message", { id: m1.id }, ctx);
+    await router.handle("claim_message", { id: m2.id }, ctx);
+    await router.handle("ack_message", { id: m2.id }, ctx);
+
+    const result = await router.handle(
+      "list_messages",
+      { targetRole: "engineer", status: "new" },
+      ctx,
+    );
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    // Only m3 (status: new); m1 (received) + m2 (acked) excluded.
+    expect(body.count).toBe(1);
   });
 });

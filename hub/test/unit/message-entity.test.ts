@@ -307,7 +307,7 @@ describe("Constant arrays — completeness check", () => {
     ]);
   });
 
-  it("MESSAGE_STATUSES = [new, acked]", () => {
-    expect(MESSAGE_STATUSES).toEqual(["new", "acked"]);
+  it("MESSAGE_STATUSES = [new, received, acked] (mission-56 W3.2 FSM extension)", () => {
+    expect(MESSAGE_STATUSES).toEqual(["new", "received", "acked"]);
   });
 });

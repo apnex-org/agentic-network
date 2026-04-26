@@ -240,6 +240,8 @@ describe("MessageRepository.listMessages — multi-membership views", () => {
       ...baseInput,
       target: { role: "architect" },
     });
+    // Mission-56 W3.2: ack now requires prior claim (FSM new→received→acked).
+    await repo.claimMessage(m1.id, "test-agent");
     await repo.ackMessage(m1.id);
 
     const newOnly = await repo.listMessages({
@@ -312,7 +314,8 @@ describe("MessageRepository.listMessages — since cursor (mission-56 W3.1)", ()
     const m1 = await repo.createMessage({ ...baseInput, target: { role: "engineer" } });
     const m2 = await repo.createMessage({ ...baseInput, target: { role: "engineer" } });
     const m3 = await repo.createMessage({ ...baseInput, target: { role: "engineer" } });
-    // Adapter has acked m1; poll-backstop wants new-since-m1.
+    // Adapter has claim+acked m1; poll-backstop wants new-since-m1.
+    await repo.claimMessage(m1.id, "test-agent");
     await repo.ackMessage(m1.id);
 
     const delta = await repo.listMessages({
@@ -496,6 +499,8 @@ describe("MessageRepository.replayFromCursor — Hub-internal cursor query", () 
     const repo = newRepo();
     const m1 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
     await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    // Mission-56 W3.2: claim before ack (FSM new→received→acked).
+    await repo.claimMessage(m1.id, "test-agent");
     await repo.ackMessage(m1.id);
 
     const replay = await repo.replayFromCursor({
@@ -536,11 +541,12 @@ describe("MessageRepository.replayFromCursor — Hub-internal cursor query", () 
   });
 });
 
-describe("MessageRepository.ackMessage — lifecycle flip", () => {
-  it("flips status from new → acked, bumps updatedAt", async () => {
+describe("MessageRepository.ackMessage — lifecycle flip (post-W3.2 FSM)", () => {
+  it("flips status from received → acked, bumps updatedAt", async () => {
     const repo = newRepo();
     const m = await repo.createMessage(baseInput);
     expect(m.status).toBe("new");
+    await repo.claimMessage(m.id, "test-agent");
     // Ensure timestamp granularity is observable.
     await new Promise((r) => setTimeout(r, 5));
     const acked = await repo.ackMessage(m.id);
@@ -554,6 +560,7 @@ describe("MessageRepository.ackMessage — lifecycle flip", () => {
   it("re-ack on already-acked message is a no-op (idempotent)", async () => {
     const repo = newRepo();
     const m = await repo.createMessage(baseInput);
+    await repo.claimMessage(m.id, "test-agent");
     const first = await repo.ackMessage(m.id);
     const second = await repo.ackMessage(m.id);
     expect(second).toEqual(first);
@@ -562,6 +569,131 @@ describe("MessageRepository.ackMessage — lifecycle flip", () => {
   it("ackMessage on non-existent id returns null", async () => {
     const repo = newRepo();
     expect(await repo.ackMessage("missing")).toBeNull();
+  });
+});
+
+// ── Mission-56 W3.2 — claim/ack FSM tests ────────────────────────────
+
+describe("MessageRepository.claimMessage — winner-takes-all CAS (mission-56 W3.2)", () => {
+  it("flips status new → received and records claimedBy on first claim", async () => {
+    const repo = newRepo();
+    const m = await repo.createMessage(baseInput);
+    expect(m.status).toBe("new");
+    expect(m.claimedBy).toBeUndefined();
+
+    const claimed = await repo.claimMessage(m.id, "agent-A");
+    expect(claimed).not.toBeNull();
+    expect(claimed!.status).toBe("received");
+    expect(claimed!.claimedBy).toBe("agent-A");
+  });
+
+  it("idempotent on already-claimed by same agent (returns existing state)", async () => {
+    const repo = newRepo();
+    const m = await repo.createMessage(baseInput);
+    const first = await repo.claimMessage(m.id, "agent-A");
+    const second = await repo.claimMessage(m.id, "agent-A");
+    expect(second).toEqual(first);
+    expect(second!.claimedBy).toBe("agent-A");
+  });
+
+  it("multi-agent same-role: winner-takes-all (loser sees winner's claimedBy)", async () => {
+    const repo = newRepo();
+    const m = await repo.createMessage(baseInput);
+    // agent-A wins by claiming first.
+    const winnerView = await repo.claimMessage(m.id, "agent-A");
+    // agent-B (loser) sees existing state with claimedBy = "agent-A".
+    const loserView = await repo.claimMessage(m.id, "agent-B");
+    expect(loserView).not.toBeNull();
+    expect(loserView!.status).toBe("received");
+    expect(loserView!.claimedBy).toBe("agent-A");
+    expect(loserView!.id).toBe(winnerView!.id);
+  });
+
+  it("claim on already-acked message returns existing acked state (claim too late)", async () => {
+    const repo = newRepo();
+    const m = await repo.createMessage(baseInput);
+    await repo.claimMessage(m.id, "agent-A");
+    await repo.ackMessage(m.id);
+
+    const lateClaim = await repo.claimMessage(m.id, "agent-B");
+    expect(lateClaim).not.toBeNull();
+    expect(lateClaim!.status).toBe("acked");
+    // claimedBy preserved from original winner; not overwritten by late claimer.
+    expect(lateClaim!.claimedBy).toBe("agent-A");
+  });
+
+  it("claim on non-existent id returns null", async () => {
+    const repo = newRepo();
+    expect(await repo.claimMessage("missing", "agent-A")).toBeNull();
+  });
+
+  it("listMessages({status: 'received'}) surfaces claimed-but-not-acked messages", async () => {
+    const repo = newRepo();
+    const m1 = await repo.createMessage({ ...baseInput, target: { role: "engineer" } });
+    const m2 = await repo.createMessage({ ...baseInput, target: { role: "engineer" } });
+    const m3 = await repo.createMessage({ ...baseInput, target: { role: "engineer" } });
+    // Claim m1 + m2; ack m1; m3 stays new.
+    await repo.claimMessage(m1.id, "agent-A");
+    await repo.claimMessage(m2.id, "agent-A");
+    await repo.ackMessage(m1.id);
+
+    const received = await repo.listMessages({
+      targetRole: "engineer",
+      status: "received",
+    });
+    expect(received).toHaveLength(1);
+    expect(received[0].id).toBe(m2.id);
+  });
+});
+
+describe("MessageRepository.ackMessage — FSM tightening (mission-56 W3.2)", () => {
+  it("ack on `new` is a no-op (returns unchanged; caller should claim first)", async () => {
+    const repo = newRepo();
+    const m = await repo.createMessage(baseInput);
+    expect(m.status).toBe("new");
+
+    const result = await repo.ackMessage(m.id);
+    expect(result).not.toBeNull();
+    expect(result!.status).toBe("new"); // FSM-violation observation; no flip.
+  });
+
+  it("ack on `received` flips to `acked`", async () => {
+    const repo = newRepo();
+    const m = await repo.createMessage(baseInput);
+    await repo.claimMessage(m.id, "agent-A");
+
+    const acked = await repo.ackMessage(m.id);
+    expect(acked!.status).toBe("acked");
+    // claimedBy preserved across ack flip.
+    expect(acked!.claimedBy).toBe("agent-A");
+  });
+
+  it("MESSAGE_STATUSES enum includes the W3.2 'received' state", async () => {
+    // Module-level enum access; protects against accidental enum-shape regression.
+    const { MESSAGE_STATUSES } = await import("../../src/entities/message.js");
+    expect(MESSAGE_STATUSES).toContain("new");
+    expect(MESSAGE_STATUSES).toContain("received");
+    expect(MESSAGE_STATUSES).toContain("acked");
+    expect(MESSAGE_STATUSES.length).toBe(3);
+  });
+
+  it("FSM monotonicity: full new → received → acked roundtrip preserves invariants", async () => {
+    const repo = newRepo();
+    const m0 = await repo.createMessage(baseInput);
+    expect(m0.status).toBe("new");
+    expect(m0.claimedBy).toBeUndefined();
+
+    const m1 = await repo.claimMessage(m0.id, "agent-A");
+    expect(m1!.status).toBe("received");
+    expect(m1!.claimedBy).toBe("agent-A");
+
+    const m2 = await repo.ackMessage(m0.id);
+    expect(m2!.status).toBe("acked");
+    expect(m2!.claimedBy).toBe("agent-A");
+
+    // No regress: idempotent re-ack stays at acked.
+    const m3 = await repo.ackMessage(m0.id);
+    expect(m3).toEqual(m2);
   });
 });
 

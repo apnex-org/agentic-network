@@ -378,10 +378,23 @@ export class MessageRepository implements IMessageStore {
     return out;
   }
 
-  async ackMessage(id: string): Promise<Message | null> {
-    // Read-modify-write via putIfMatch. We don't expose the token to
-    // callers; ack is idempotent — if the message is already acked,
-    // a re-ack is a no-op (returns existing message unchanged).
+  /**
+   * Mission-56 W3.2: claim — atomic CAS `new → received` + set
+   * claimedBy. Idempotent on `received` (returns existing,
+   * preserving the original winning claimedBy) + on `acked`
+   * (returns existing). Token-stale → fresh-read fallthrough
+   * (returns whatever the winner persisted; caller observes
+   * claimedBy to detect loss).
+   *
+   * Multi-agent same-role contract: winner-takes-all via the
+   * putIfMatch CAS — only the agent whose putIfMatch succeeds
+   * sets `claimedBy`. Losing agents see the winner's `claimedBy`
+   * on fresh-read and self-arbitrate (silent drop).
+   */
+  async claimMessage(
+    id: string,
+    claimerAgentId: string,
+  ): Promise<Message | null> {
     const provider = this.provider as StorageProvider & {
       getWithToken?: (path: string) => Promise<{ data: Uint8Array; token: string } | null>;
     };
@@ -391,7 +404,63 @@ export class MessageRepository implements IMessageStore {
       const read = await provider.getWithToken(path);
       if (!read) return null;
       const message = decodeMessage(read.data);
-      if (message.status === "acked") return message;
+      // Idempotent / no-op states: only `new` triggers a CAS.
+      if (message.status !== "new") return message;
+      const updated: Message = {
+        ...message,
+        status: "received",
+        claimedBy: claimerAgentId,
+        updatedAt: new Date().toISOString(),
+      };
+      const writeResult = await this.provider.putIfMatch(
+        path,
+        encodeMessage(updated),
+        read.token,
+      );
+      if (writeResult.ok) return updated;
+      // Token stale — another agent (or this agent on retry) won the
+      // race. Fresh-read returns whatever the winner persisted; caller
+      // observes `claimedBy` to detect win vs loss.
+      return this.getMessage(id);
+    }
+
+    // Fallback: providers without getWithToken use put-clobber. Race
+    // is bounded — final state converges on `received` with one of
+    // the racing agents' claimedBy. Non-CAS providers are dev-only
+    // anyway per StorageProvider contract.
+    const message = await this.getMessage(id);
+    if (!message) return null;
+    if (message.status !== "new") return message;
+    const updated: Message = {
+      ...message,
+      status: "received",
+      claimedBy: claimerAgentId,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.provider.put(path, encodeMessage(updated));
+    return updated;
+  }
+
+  /**
+   * Mission-56 W3.2: ack — atomic CAS `received → acked`.
+   *
+   * Tightened from the mission-51 W1 baseline (`* → acked`) per
+   * Design v1.2 commitment #6 explicit-ack-on-action. Idempotent on
+   * `acked`. No-op on `new` (returns unchanged; caller should call
+   * claimMessage first). Returns null on missing.
+   */
+  async ackMessage(id: string): Promise<Message | null> {
+    const provider = this.provider as StorageProvider & {
+      getWithToken?: (path: string) => Promise<{ data: Uint8Array; token: string } | null>;
+    };
+    const path = messagePath(id);
+
+    if (typeof provider.getWithToken === "function") {
+      const read = await provider.getWithToken(path);
+      if (!read) return null;
+      const message = decodeMessage(read.data);
+      // Idempotent / no-op: only `received` triggers a CAS.
+      if (message.status !== "received") return message;
       const updated: Message = {
         ...message,
         status: "acked",
@@ -415,7 +484,7 @@ export class MessageRepository implements IMessageStore {
     // anyway per StorageProvider contract.
     const message = await this.getMessage(id);
     if (!message) return null;
-    if (message.status === "acked") return message;
+    if (message.status !== "received") return message;
     const updated: Message = {
       ...message,
       status: "acked",

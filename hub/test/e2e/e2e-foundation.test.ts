@@ -210,7 +210,7 @@ describe("E2E Foundation", () => {
   // ── Orchestrator Infrastructure ─────────────────────────────────
 
   describe("Orchestrator Infrastructure", () => {
-    it("registers all 53 tools on the PolicyRouter", () => {
+    it("registers all 55 tools on the PolicyRouter", () => {
       // 44 pre-M24; M24-T6 added leave_thread → 45; M24-T8 added
       // list_available_peers → 46; idea-117 Phase 2c ckpt-C added
       // force_close_thread → 47; Phase 2d CP2 added get_metrics → 48.
@@ -222,7 +222,8 @@ describe("E2E Foundation", () => {
       // retire_tele added → 51.
       // M-Message-Primitive (mission-51) W6: list_messages +
       // create_message added → 53.
-      expect(orch.router.size).toBe(53);
+      // mission-56 W3.2: claim_message + ack_message added → 55.
+      expect(orch.router.size).toBe(55);
     });
 
     it("multi-engineer support with distinct sessions", async () => {

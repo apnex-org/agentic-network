@@ -100,7 +100,34 @@ export type MessageAuthorRole = (typeof MESSAGE_AUTHOR_ROLES)[number];
 export const MESSAGE_DELIVERY_MODES = ["push-immediate", "queued", "scheduled"] as const;
 export type MessageDelivery = (typeof MESSAGE_DELIVERY_MODES)[number];
 
-export const MESSAGE_STATUSES = ["new", "acked"] as const;
+/**
+ * Message lifecycle status FSM (mission-56 W3.2 extension to the
+ * mission-51 W1 baseline `new | acked`).
+ *
+ * Linear, monotonic transitions: `new → received → acked`. No regress
+ * paths. Each transition is an atomic CAS via `putIfMatch` (winner-
+ * takes-all under concurrent claim).
+ *
+ * - `new`     — Message created; not yet rendered to a host.
+ * - `received` — `claimMessage(id, agentId)` flipped status; the
+ *                Message has been rendered to a specific consumer
+ *                (`claimedBy` records the winning agent). Subsequent
+ *                claim attempts (same or different agent) return the
+ *                existing state — winner-takes-all means the loser
+ *                observes `claimedBy !== myAgentId` and silently drops.
+ * - `acked`   — `ackMessage(id)` flipped status; the consumer (LLM)
+ *                acted on or actively-deferred the Message. Per
+ *                Option (i) explicit-ack-on-action ratified at
+ *                thread-325 round-2: ack is tied to consumer-action,
+ *                not auto-on-render. Adapter-side hybrid poll backstop
+ *                + reconnect-replay queries filter `status === "new"`
+ *                to exclude both `received` + `acked`.
+ *
+ * Cross-version compatibility: existing Messages persisted with the
+ * pre-W3.2 enum (`new | acked`) parse against the extended enum
+ * unchanged (additive). No serialized state needs migration.
+ */
+export const MESSAGE_STATUSES = ["new", "received", "acked"] as const;
 export type MessageStatus = (typeof MESSAGE_STATUSES)[number];
 
 /**
@@ -162,6 +189,16 @@ export interface Message {
 
   /** Lifecycle. ADR-017 shape: receipt vs completion ack mapping. */
   status: MessageStatus;
+
+  /**
+   * Mission-56 W3.2: agent that won the `claimMessage` race. Set when
+   * status flips `new → received`. Used by adapter-side multi-agent
+   * same-role consumers to detect loser-of-claim ("I called claim and
+   * got back a Message with claimedBy !== myAgentId → another adapter
+   * already rendered this; drop silently"). Undefined while status is
+   * `new`; never cleared once set.
+   */
+  claimedBy?: string;
 
   /** Optional thread membership. */
   threadId?: string;
@@ -255,6 +292,7 @@ export const MessageSchema = z.object({
   target: MessageTargetSchema.nullable(),
   delivery: z.enum(MESSAGE_DELIVERY_MODES),
   status: z.enum(MESSAGE_STATUSES),
+  claimedBy: z.string().optional(),
   threadId: z.string().optional(),
   sequenceInThread: z.number().int().nonnegative().optional(),
   payload: z.unknown(),
@@ -445,9 +483,37 @@ export interface IMessageStore {
   }): Promise<Message[]>;
 
   /**
-   * Flip a Message's status to `acked` (ADR-017 receipt-acked-equivalent
-   * for messages). Idempotent: already-acked messages return unchanged.
-   * Returns null if the Message doesn't exist.
+   * Mission-56 W3.2: claim a Message — atomic CAS `new → received`.
+   *
+   * Sets `claimedBy = claimerAgentId` on first successful flip
+   * (winner-takes-all under multi-agent same-role race). Idempotent:
+   *   - status `new` + CAS-win   → flip + set claimedBy; return updated.
+   *   - status `received`         → no-op return existing (preserves
+   *                                  original claimedBy; loser detects
+   *                                  loss via claimedBy !== myAgentId).
+   *   - status `acked`            → no-op return existing (claim too
+   *                                  late observation).
+   *   - missing                   → null.
+   *
+   * Called by the adapter shim post-render (Design v1.2 commitment #6
+   * + thread-325 round-2 Option (i)). Token-stale CAS retries via
+   * fresh-read fallthrough.
+   */
+  claimMessage(id: string, claimerAgentId: string): Promise<Message | null>;
+
+  /**
+   * Mission-56 W3.2: ack a Message — atomic CAS `received → acked`.
+   *
+   * Tightened from the mission-51 W1 baseline (`* → acked`) per
+   * Design v1.2 commitment #6 explicit-ack-on-action: ack is tied to
+   * consumer-action, not auto-on-render. The adapter must call
+   * `claimMessage` first (post-render) and only call `ackMessage`
+   * once the consumer (LLM) has acted on or actively-deferred.
+   *
+   * Idempotent: already-acked messages return unchanged. Messages
+   * still at status `new` are returned unchanged (no flip; caller
+   * should observe status and call claim first). Returns null if
+   * the Message doesn't exist.
    */
   ackMessage(id: string): Promise<Message | null>;
 
