@@ -15,6 +15,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { IEngineerRegistry, INotificationStore, Selector, IAuditStore } from "./state.js";
 import { fireWebhook } from "./webhook.js";
+import { emitLegacyNotification } from "./policy/notification-helpers.js";
 import type { Server } from "http";
 
 // Mission-56 W1b: soft-cap on SSE Last-Event-ID + cold-start replay.
@@ -345,8 +346,14 @@ export class HubNetworking {
     data: Record<string, unknown>,
     targetRoles: string[] = ["architect"]
   ): Promise<void> {
-    // 1. PERSIST FIRST
-    const notification = await this.notificationStore.persist(event, data, targetRoles);
+    // 1. PERSIST FIRST (mission-56 W4.2: Notification entity sunset —
+    // emits as a Message via emitLegacyNotification instead of the
+    // legacy notificationStore.persist; SSE event-id continues to be
+    // the persisted record's id, now a Message ULID forward-compatible
+    // with the W1b Last-Event-ID protocol).
+    const notification = this.messageStore
+      ? await emitLegacyNotification(this.messageStore, event, data, targetRoles)
+      : await this.notificationStore.persist(event, data, targetRoles);
     this.log(`[Notify] Persisted notif-${notification.id}: ${event}`);
 
     // 2. Attempt SSE delivery
@@ -374,7 +381,12 @@ export class HubNetworking {
     const targetRoles = selector.roles && selector.roles.length > 0
       ? [...selector.roles]
       : ["architect", "engineer", "director"];
-    const notification = await this.notificationStore.persist(event, data, targetRoles);
+    // mission-56 W4.2: see notifyEvent comment above. Same Message-store
+    // cut-over with notificationStore as a fallback for test rigs that
+    // don't supply a Message store.
+    const notification = this.messageStore
+      ? await emitLegacyNotification(this.messageStore, event, data, targetRoles)
+      : await this.notificationStore.persist(event, data, targetRoles);
     const matched = await this.engineerRegistry.selectAgents(selector);
     const selStr = JSON.stringify(selector);
     this.log(`[Dispatch] Persisted notif-${notification.id}: ${event} selector=${selStr} matched=${matched.length} agent(s)`);
