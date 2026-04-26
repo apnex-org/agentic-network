@@ -31,6 +31,7 @@ import { z } from "zod";
 
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
+import type { Selector } from "../state.js";
 import {
   MESSAGE_KINDS,
   MESSAGE_AUTHOR_ROLES,
@@ -183,6 +184,40 @@ async function createMessage(
 
   try {
     const message = await ctx.stores.message.createMessage(input);
+
+    // Mission-56 W1a: push-on-Message-create (Design v1.2 commitment #1).
+    // After successful Message commit, fire an SSE event so active
+    // subscribers matching the target receive the Message inline. The
+    // Message is already persisted at this point; dispatch failure is
+    // logged non-fatal (cold reconnect-replay arrives in W1b; poll
+    // backstop in W3 — both recover any pushed-but-undelivered events).
+    //
+    // Subscriber resolution maps MessageTarget → Selector:
+    //   target.role        → selector.roles = [target.role]
+    //   target.agentId     → selector.engineerId = target.agentId
+    //   target == null     → empty selector (broadcast to all online)
+    //   delivery !== "push-immediate" → no fire (queued + scheduled
+    //                                   land on poll backstop / sweeper)
+    //
+    // Event payload: inline Message envelope (sub-1KB typical).
+    // Event id semantic: Message ID (ULID-monotonic) — forward-compatible
+    // with W1b Last-Event-ID protocol where SSE `id:` field carries this
+    // for replay-cursor semantics.
+    if (message.delivery === "push-immediate") {
+      try {
+        const selector: Selector = pushSelector(target);
+        await ctx.dispatch("message_arrived", { message }, selector);
+      } catch (err) {
+        // Non-fatal: Message commits regardless of push delivery success.
+        // Adapter recovers via cold reconnect-replay (W1b) or poll
+        // backstop (W3). Log captures the failure for diagnostic
+        // observability without affecting the create_message ACK.
+        console.error(
+          `[message-policy] push-on-create dispatch failed for ${message.id} (non-fatal): ${(err as Error)?.message ?? String(err)}`,
+        );
+      }
+    }
+
     return {
       content: [
         {
@@ -214,6 +249,31 @@ async function createMessage(
       isError: true,
     };
   }
+}
+
+/**
+ * Map a MessageTarget to a dispatch Selector for SSE push delivery.
+ * - `target == null` → empty selector (broadcast to all online agents)
+ * - `target.role` (architect/engineer/director) → selector.roles
+ * - `target.role === "system"` → role filter omitted (no Agent has the
+ *   "system" role; "system"-targeted Messages are Hub-internal and
+ *   shouldn't push to live subscribers)
+ * - `target.agentId` → selector.engineerId (single-agent pin)
+ *
+ * Both role + agentId together produce an AND filter (only the agent
+ * with that engineerId AND in that role). Mission-19 selector
+ * semantics apply.
+ *
+ * Exported for unit testing.
+ */
+export function pushSelector(target: MessageTarget | null): Selector {
+  if (target == null) return {};
+  const sel: Selector = {};
+  if (target.role && target.role !== "system") {
+    sel.roles = [target.role];
+  }
+  if (target.agentId) sel.engineerId = target.agentId;
+  return sel;
 }
 
 // ── Registration ─────────────────────────────────────────────────────

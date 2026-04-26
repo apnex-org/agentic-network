@@ -17,8 +17,9 @@ import { MemoryStorageProvider } from "@ois/storage-provider";
 
 import { MessageRepository } from "../../src/entities/message-repository.js";
 import { PolicyRouter } from "../../src/policy/router.js";
-import { registerMessagePolicy } from "../../src/policy/message-policy.js";
+import { registerMessagePolicy, pushSelector } from "../../src/policy/message-policy.js";
 import type { IPolicyContext } from "../../src/policy/types.js";
+import type { Selector } from "../../src/state.js";
 
 interface MockEngineerRegistry {
   getRole(sessionId: string): string;
@@ -35,11 +36,22 @@ function makeRegistry(role: string, agentId: string, sessionId: string = "test-s
   };
 }
 
+interface DispatchCall {
+  event: string;
+  data: Record<string, unknown>;
+  selector: Selector;
+}
+
 function makeCtx(
   messageStore: MessageRepository,
   registry: MockEngineerRegistry,
   sessionId: string = "test-session",
+  dispatchCalls?: DispatchCall[],
+  dispatchImpl?: (event: string, data: Record<string, unknown>, selector: Selector) => Promise<void>,
 ): IPolicyContext {
+  const dispatch = dispatchImpl ?? (async (event, data, selector) => {
+    if (dispatchCalls) dispatchCalls.push({ event, data, selector });
+  });
   return {
     stores: {
       message: messageStore,
@@ -47,7 +59,7 @@ function makeCtx(
     } as unknown as IPolicyContext["stores"],
     metrics: { increment: () => {} } as IPolicyContext["metrics"],
     emit: async () => {},
-    dispatch: async () => {},
+    dispatch,
     sessionId,
     clientIp: "127.0.0.1",
     role: "engineer",
@@ -356,6 +368,174 @@ describe("create_message — scheduled-delivery validation", () => {
     expect(persisted?.delivery).toBe("scheduled");
     expect(persisted?.fireAt).toBe(fireAt);
     expect(persisted?.scheduledState).toBe("pending");
+  });
+});
+
+// ── Mission-56 W1a — push-on-Message-create tests ────────────────────
+
+describe("pushSelector — MessageTarget → Selector mapping", () => {
+  it("null target → empty selector (broadcast to all online)", () => {
+    expect(pushSelector(null)).toEqual({});
+  });
+
+  it("target.role → selector.roles", () => {
+    expect(pushSelector({ role: "architect" })).toEqual({ roles: ["architect"] });
+  });
+
+  it("target.agentId → selector.engineerId", () => {
+    expect(pushSelector({ agentId: "eng-7" })).toEqual({ engineerId: "eng-7" });
+  });
+
+  it("target.role + target.agentId → both fields (AND filter)", () => {
+    expect(pushSelector({ role: "engineer", agentId: "eng-3" })).toEqual({
+      roles: ["engineer"],
+      engineerId: "eng-3",
+    });
+  });
+
+  it("target.role === 'system' is omitted (system isn't an Agent role)", () => {
+    expect(pushSelector({ role: "system" })).toEqual({});
+    expect(pushSelector({ role: "system", agentId: "eng-9" })).toEqual({ engineerId: "eng-9" });
+  });
+});
+
+describe("create_message — push-on-create (Mission-56 W1a)", () => {
+  it("delivery='push-immediate' + target.role → fires message_arrived with role selector", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const dispatchCalls: DispatchCall[] = [];
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"), "test-session", dispatchCalls);
+
+    const result = await router.handle(
+      "create_message",
+      {
+        kind: "note",
+        target: { role: "architect" },
+        delivery: "push-immediate",
+        payload: { hello: "world" },
+      },
+      ctx,
+    );
+    expect(result.isError).not.toBe(true);
+
+    expect(dispatchCalls).toHaveLength(1);
+    expect(dispatchCalls[0].event).toBe("message_arrived");
+    expect(dispatchCalls[0].selector).toEqual({ roles: ["architect"] });
+    // Inline Message envelope
+    const dispatched = dispatchCalls[0].data as { message: { id: string; payload: { hello: string } } };
+    expect(dispatched.message).toBeTruthy();
+    expect(dispatched.message.id).toBeTruthy();
+    expect(dispatched.message.payload).toEqual({ hello: "world" });
+  });
+
+  it("delivery='push-immediate' + target.agentId → fires with engineerId selector", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const dispatchCalls: DispatchCall[] = [];
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"), "test-session", dispatchCalls);
+
+    await router.handle(
+      "create_message",
+      {
+        kind: "note",
+        target: { role: "engineer", agentId: "eng-7" },
+        delivery: "push-immediate",
+        payload: {},
+      },
+      ctx,
+    );
+
+    expect(dispatchCalls).toHaveLength(1);
+    expect(dispatchCalls[0].selector).toEqual({ roles: ["engineer"], engineerId: "eng-7" });
+  });
+
+  it("delivery='push-immediate' + target=null → fires with empty selector (broadcast)", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const dispatchCalls: DispatchCall[] = [];
+    const ctx = makeCtx(messageStore, makeRegistry("architect", "arch-1"), "test-session", dispatchCalls);
+
+    await router.handle(
+      "create_message",
+      {
+        kind: "note",
+        target: null,
+        delivery: "push-immediate",
+        payload: {},
+      },
+      ctx,
+    );
+
+    expect(dispatchCalls).toHaveLength(1);
+    expect(dispatchCalls[0].selector).toEqual({});
+  });
+
+  it("delivery='queued' → does NOT fire (poll-backstop / sweeper recovery)", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const dispatchCalls: DispatchCall[] = [];
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"), "test-session", dispatchCalls);
+
+    const result = await router.handle(
+      "create_message",
+      {
+        kind: "note",
+        target: { role: "architect" },
+        delivery: "queued",
+        payload: {},
+      },
+      ctx,
+    );
+    expect(result.isError).not.toBe(true);
+    expect(dispatchCalls).toHaveLength(0);
+  });
+
+  it("delivery='scheduled' → does NOT fire (sweeper handles fire-time)", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const dispatchCalls: DispatchCall[] = [];
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"), "test-session", dispatchCalls);
+
+    const result = await router.handle(
+      "create_message",
+      {
+        kind: "note",
+        target: null,
+        delivery: "scheduled",
+        payload: {},
+        fireAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+      ctx,
+    );
+    expect(result.isError).not.toBe(true);
+    expect(dispatchCalls).toHaveLength(0);
+  });
+
+  it("dispatch throwing is non-fatal — Message commits regardless", async () => {
+    const router = setupRouter();
+    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const dispatchImpl = async () => {
+      throw new Error("simulated SSE delivery failure");
+    };
+    const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"), "test-session", undefined, dispatchImpl);
+
+    const result = await router.handle(
+      "create_message",
+      {
+        kind: "note",
+        target: { role: "architect" },
+        delivery: "push-immediate",
+        payload: { resilient: true },
+      },
+      ctx,
+    );
+    // Create succeeds even though dispatch threw.
+    expect(result.isError).not.toBe(true);
+    const body = JSON.parse((result.content[0] as { text: string }).text);
+    expect(body.messageId).toBeTruthy();
+    // Message is persisted.
+    const persisted = await messageStore.getMessage(body.messageId);
+    expect(persisted?.payload).toEqual({ resilient: true });
   });
 });
 
