@@ -28,6 +28,13 @@ dist/
 !packages/repo-event-bridge/dist/
 !packages/repo-event-bridge/dist/**
 
+# Mission-56 W2.1 exception (calibration #20): @ois/message-router is
+# the Layer-2 sovereign package consumed by adapters via file:../packages/
+# message-router. Same install-order-dependence story — commit dist/
+# until idea-186 npm-workspaces migration lands.
+!packages/message-router/dist/
+!packages/message-router/dist/**
+
 # Logs
 *.log
 .ois/
