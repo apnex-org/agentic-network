@@ -80,6 +80,33 @@ This arc is the **third canonical execution example** of calibration #23:
 
 The pattern's success is measured by *Director-intervention-density* — for mission-54 + mission-55, Director surfaced concerns at: foreign-code path share, "greg is online" + "please begin", post-Q10 layered model walkthrough, "@apnex namespace" announcement, this retrospective. Five interventions across ~5 hours of architect-engineer coordination — all categorised + warranted.
 
+#### Communication mediation invariant — Director ↔ Engineer through Architect (BINDING)
+
+**Per Director ratification 2026-04-26:** *"Workflows, entities, primitives and coordination mechanisms should all exist such that the Director need not ever directly consult the Engineer — only through Architect."*
+
+This is a **structural design invariant** on the agentic network. Concrete implications:
+
+| Direction | Path |
+|---|---|
+| Director → Engineer | Director consults **Architect**; Architect translates intent → dispatches to Engineer (T1+ directives, threads, mission scoping) |
+| Engineer → Director | Engineer surfaces concern to **Architect**; Architect categorises (per categorised-concerns table above); Architect translates + escalates to Director only when warranted |
+| Director ↔ Architect | Direct (Director chat; design questions; ratifications; HOLD gates) |
+| Architect ↔ Engineer | Direct (T1+ directives; thread coordination; PR cross-approval) |
+
+**Design constraints on future workflow primitives:**
+- New Hub primitives must NOT introduce direct Director → Engineer dispatch surfaces (e.g., a `direct_dispatch_to_engineer` verb would violate this)
+- Thread routing (today's `unicast` / `broadcast` / `multicast`) currently supports the invariant — Director-initiated threads route via Architect's pool by default
+- M-Push-Foundation Layer 2 Message-Router must preserve the mediation chain — Director-originated Messages route to Architect's adapter; Architect-originated Messages can route to Engineer's adapter
+- `<channel>` source-attribute taxonomy stays mediated — `plugin:agent-adapter:directive` for Director-issued architect-bound directives; engineer-bound directives carry architect provenance
+- `multi-agent-pr-workflow.md` v1.1 must codify: Director PR comments are advisory to Architect (not directly actionable by Engineer); Architect translates Director's PR feedback into engineer-actionable form
+
+**Why this matters for tele:**
+- **tele-3 Sovereign Composition** — preserves clean role boundaries; Director-Engineer direct path would create role-leak
+- **tele-9 Frictionless Director Coordination** — Director's coord interface is uniformly the Architect; reduces Director-side cognitive overhead (one peer not two)
+- **tele-10 Hub-as-Single-Source-of-Truth** — Architect-mediated communication ensures the source of truth for engineer-bound work is always architect-owned (Mission + Design)
+
+**This arc validates the invariant:** Director sent ~5 messages directly to Architect; ZERO direct Director → Engineer messages flowed during mission-54 + mission-55 execution. The "greg is online" status check came to Architect (who relayed via thread); the foreign-code path was shared to Architect (who relayed via T1 directive). Mediation chain intact end-to-end.
+
 ---
 
 ## §2 Timeline
