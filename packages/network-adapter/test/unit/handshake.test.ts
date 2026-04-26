@@ -25,7 +25,7 @@ import {
   type HandshakeConfig,
   type HandshakeFatalError,
   type HandshakeResponse,
-} from "../../src/session/handshake.js";
+} from "../../src/kernel/handshake.js";
 
 const baseConfig: HandshakeConfig = {
   role: "engineer",

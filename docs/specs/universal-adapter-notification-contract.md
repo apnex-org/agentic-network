@@ -25,8 +25,8 @@ The spec is **descriptive of what landed in mission-55 PR 1** + **prescriptive f
     │ EMITS notifications (this contract)
     │
     ├─ src/wire/        — TCP/SSE conn lifecycle; reconnect; backoff
-    ├─ src/session/     — handshake; session FSM; agent identity
-    └─ src/mcp-boundary/ — Initialize/ListTools/CallTool factory;
+    ├─ src/kernel/      — handshake; session FSM; agent identity
+    └─ src/tool-manager/ — Initialize/ListTools/CallTool factory;
                           pendingActionMap; tool-catalog cache
                           ← exposes SharedDispatcher.callbacks
                             + SharedDispatcherOptions.notificationHooks
@@ -298,7 +298,7 @@ The Universal Adapter does not need source modification to onboard a new host.
 
 ## Cross-references
 
-- `@ois/network-adapter` (Layer 1) — `packages/network-adapter/src/{wire,session,mcp-boundary}/`; `mcp-boundary/dispatcher.ts` exposes `SharedDispatcherOptions.notificationHooks`
+- `@ois/network-adapter` (Layer 1) — `packages/network-adapter/src/{wire,kernel,tool-manager}/`; `tool-manager/dispatcher.ts` exposes `SharedDispatcherOptions.notificationHooks`
 - `adapters/claude-plugin/src/shim.ts` — Layer-3 worked example (stdio + `<channel>`)
 - `adapters/opencode-plugin/src/shim.ts` — Layer-3 worked example (Bun-HTTP + promptAsync)
 - `docs/designs/m-push-foundation-design.md` v1.2 §"M-Pre-Push-Adapter-Cleanup" — Universal Adapter framing (Director-confirmed); Layer-1 sub-organization (1a/1b/1c)

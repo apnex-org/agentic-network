@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { loadOrCreateGlobalInstanceId } from "../../src/session/instance.js";
+import { loadOrCreateGlobalInstanceId } from "../../src/kernel/instance.js";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

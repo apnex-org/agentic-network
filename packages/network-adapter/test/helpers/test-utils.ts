@@ -2,7 +2,7 @@
  * Test utilities for hub-connection tests.
  */
 
-import type { SessionState, SessionReconnectReason } from "../../src/session/agent-client.js";
+import type { SessionState, SessionReconnectReason } from "../../src/kernel/agent-client.js";
 
 /** Wait for a specified duration */
 export function wait(ms: number): Promise<void> {

@@ -12,10 +12,10 @@ export type {
 
 export { McpTransport } from "./wire/mcp-transport.js";
 
-// ── Layer 1b: Session (handshake / session FSM / agent client) ─────
+// ── Layer 1b: Kernel (handshake / session FSM / agent client) ──────
 
-export { McpAgentClient } from "./session/mcp-agent-client.js";
-export type { McpAgentClientOptions } from "./session/mcp-agent-client.js";
+export { McpAgentClient } from "./kernel/mcp-agent-client.js";
+export type { McpAgentClientOptions } from "./kernel/mcp-agent-client.js";
 
 export type {
   IAgentClient,
@@ -26,22 +26,22 @@ export type {
   AgentHandshakeConfig,
   SessionState,
   SessionReconnectReason,
-} from "./session/agent-client.js";
+} from "./kernel/agent-client.js";
 
 export type {
   HubEventType,
   HubEvent,
   EventDisposition,
-} from "./session/event-router.js";
+} from "./kernel/event-router.js";
 
 export {
   classifyEvent,
   parseHubEvent,
   createDedupFilter,
-} from "./session/event-router.js";
+} from "./kernel/event-router.js";
 
-export { loadOrCreateGlobalInstanceId } from "./session/instance.js";
-export type { LoadInstanceOptions } from "./session/instance.js";
+export { loadOrCreateGlobalInstanceId } from "./kernel/instance.js";
+export type { LoadInstanceOptions } from "./kernel/instance.js";
 
 export {
   FATAL_CODES,
@@ -50,7 +50,7 @@ export {
   buildHandshakePayload,
   performHandshake,
   makeStdioFatalHalt,
-} from "./session/handshake.js";
+} from "./kernel/handshake.js";
 export type {
   HandshakeClientMetadata,
   HandshakeAdvisoryTags,
@@ -60,37 +60,38 @@ export type {
   HandshakeConfig,
   HandshakeContext,
   HandshakeResult,
-} from "./session/handshake.js";
+} from "./kernel/handshake.js";
 
-export { performStateSync } from "./session/state-sync.js";
-export type { StateSyncContext, DrainedPendingAction } from "./session/state-sync.js";
+export { performStateSync } from "./kernel/state-sync.js";
+export type { StateSyncContext, DrainedPendingAction } from "./kernel/state-sync.js";
 
 export {
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,
-} from "./session/session-claim.js";
-export type { ClaimSessionParsed } from "./session/session-claim.js";
+} from "./kernel/session-claim.js";
+export type { ClaimSessionParsed } from "./kernel/session-claim.js";
 
-// ── Layer 1c: MCP-boundary (Initialize/ListTools/CallTool factory) ──
+// ── Layer 1c: tool-manager (Initialize/ListTools/CallTool factory) ──
 //
-// The "MCP-boundary dispatcher" per Design v1.2 §4 naming discipline.
+// The MCP protocol tool-manager per Design v1.2 §4 naming discipline
+// (Director-ratified rename from "MCP-boundary dispatcher" 2026-04-26).
 // Distinct from the future Message-router (sovereign-package #6,
 // `@ois/message-router`, M-Push-Foundation W4). Always qualify
-// ("MCP-boundary dispatcher" or "Message-router") in new code; avoid
-// bare "dispatcher".
+// ("tool-manager" or "Message-router") in new code; avoid bare
+// "dispatcher".
 
 export {
   createSharedDispatcher,
   pendingKey,
   injectQueueItemId,
-} from "./mcp-boundary/dispatcher.js";
+} from "./tool-manager/dispatcher.js";
 export type {
   DispatcherClientInfo,
   DispatcherNotificationHooks,
   SharedDispatcherOptions,
   SharedDispatcher,
-} from "./mcp-boundary/dispatcher.js";
+} from "./tool-manager/dispatcher.js";
 
 export {
   CATALOG_SCHEMA_VERSION,
@@ -98,11 +99,11 @@ export {
   readCache,
   writeCache,
   isCacheValid,
-} from "./mcp-boundary/tool-catalog-cache.js";
+} from "./tool-manager/tool-catalog-cache.js";
 export type {
   ToolCatalog,
   CachedCatalog,
-} from "./mcp-boundary/tool-catalog-cache.js";
+} from "./tool-manager/tool-catalog-cache.js";
 
 // ── Cross-cutting primitives (root) ─────────────────────────────────
 
