@@ -98,7 +98,7 @@ interface HubConfig {
   /**
    * Mission-19 routing labels. Stamped onto the Agent entity via the
    * enriched register_role handshake; scoped dispatches filter by these.
-   * From hub-config.json `labels` field or OIS_HUB_LABELS env var (JSON).
+   * From adapter-config.json `labels` field or OIS_HUB_LABELS env var (JSON).
    */
   labels?: Record<string, string>;
 }
@@ -128,7 +128,7 @@ function loadConfig(directory: string): HubConfig {
     role: "engineer",
   };
   try {
-    const configPath = join(directory, ".ois", "hub-config.json");
+    const configPath = join(directory, ".ois", "adapter-config.json");
     const raw = readFileSync(configPath, "utf-8");
     cfg = { ...cfg, ...JSON.parse(raw) };
   } catch {

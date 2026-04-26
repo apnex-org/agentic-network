@@ -280,7 +280,7 @@ Extension of greg's §4.4 sketch. Evidence in parentheses; missions + commits ci
 | Universal Port (idea-102) | Open | Supersedes idea-17 (dismissed) |
 | Adapter-core extraction (idea-153) | Open | Transitional vs idea-152 target-state; explicitly noted as superseded-by-idea-152 in its body |
 | Director-chat redesign | Pending architect-adapter redesign (my memory refs this) | No mission yet |
-| Wrapper-script tracking (idea-154) | Open post-mission-40 | Small cleanup; hub-config.json candidate |
+| Wrapper-script tracking (idea-154) | Open post-mission-40 | Small cleanup; adapter-config.json candidate |
 
 ---
 

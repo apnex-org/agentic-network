@@ -169,7 +169,7 @@ Even the pulled image crashed on startup with the same libuv error without `--se
 
 ### Agent config migration — DONE
 
-**greg (engineer):** `/home/apnex/taceng/agentic-network/.ois/greg/.ois/hub-config.json` (inside a single `.ois/` parent with per-agent subfolders; gitignored).
+**greg (engineer):** `/home/apnex/taceng/agentic-network/.ois/greg/.ois/adapter-config.json` (inside a single `.ois/` parent with per-agent subfolders; gitignored).
 ```json
 {
   "hubUrl": "http://localhost:8080/mcp",
@@ -179,7 +179,7 @@ Even the pulled image crashed on startup with the same libuv error without `--se
 }
 ```
 
-**lily (architect):** `/home/apnex/taceng/agentic-network/.ois/lily/.ois/hub-config.json` (isolated state under the shared `.ois/` parent; gitignored).
+**lily (architect):** `/home/apnex/taceng/agentic-network/.ois/lily/.ois/adapter-config.json` (isolated state under the shared `.ois/` parent; gitignored).
 ```json
 {
   "hubUrl": "http://localhost:8080/mcp",
@@ -205,13 +205,13 @@ cd /home/apnex/taceng/agentic-network
 
 These wrap `OIS_INSTANCE_ID=<name>` + `OIS_HUB_LABELS='{"env":"prod"}'` + `WORK_DIR=<repo>/.ois/<name>` + the required `--dangerously-load-development-channels plugin:agent-adapter@agentic-network` flag. Scripts validate the per-agent config exists before launching; passthrough args forward to `claude` (e.g. `./start-greg.sh -p "Read docs/reviews/HANDOVER-greg.md"` for scripted first-turn).
 
-Why the `WORK_DIR` split: shim.ts reads `.ois/hub-config.json` relative to `$WORK_DIR` and also writes a per-session `global-instance-id` + notification log there. If both agents shared one `.ois/` dir, they'd overwrite each other's agent identity and log streams. Separating via per-agent `WORK_DIR` (inside a single `.ois/` parent for operational tidiness) gives each its own state directory while both read the same git repo source.
+Why the `WORK_DIR` split: shim.ts reads `.ois/adapter-config.json` relative to `$WORK_DIR` and also writes a per-session `global-instance-id` + notification log there. If both agents shared one `.ois/` dir, they'd overwrite each other's agent identity and log streams. Separating via per-agent `WORK_DIR` (inside a single `.ois/` parent for operational tidiness) gives each its own state directory while both read the same git repo source.
 
 Layout:
 ```
 .ois/
-├── greg/.ois/hub-config.json   (engineer)
-└── lily/.ois/hub-config.json   (architect)
+├── greg/.ois/adapter-config.json   (engineer)
+└── lily/.ois/adapter-config.json   (architect)
 ```
 The inner `.ois/` under each agent dir is the shim's required convention (hardcoded `$WORK_DIR/.ois/` path); hidden from Director view, the user-facing abstraction is "`.ois/<agent-name>/` is that agent's home."
 

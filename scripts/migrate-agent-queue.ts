@@ -7,7 +7,7 @@
  *
  * Registers an ephemeral architect session via `withArchitectClient` and
  * invokes migrate_agent_queue once per source. Reads hub credentials
- * from .ois/hub-config.json or OIS_HUB_URL / OIS_HUB_TOKEN env vars.
+ * from .ois/adapter-config.json or OIS_HUB_URL / OIS_HUB_TOKEN env vars.
  *
  * Usage:
  *   npx tsx scripts/migrate-agent-queue.ts <target> <source1> [source2 ...]

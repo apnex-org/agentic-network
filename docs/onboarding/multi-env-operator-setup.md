@@ -178,11 +178,11 @@ HUB_API_TOKEN="$(grep '^hub_api_token' deploy/cloudrun/env/<your-env-name>.tfvar
 
 ### 5.2 Configure the plugin for your OpenCode workspace
 
-Pick a working directory for OpenCode. Inside it, create `.ois/hub-config.json`:
+Pick a working directory for OpenCode. Inside it, create `.ois/adapter-config.json`:
 
 ```bash
 mkdir -p .ois
-cat > .ois/hub-config.json <<EOF
+cat > .ois/adapter-config.json <<EOF
 {
   "hubUrl": "$HUB_MCP_URL",
   "hubToken": "$HUB_API_TOKEN",
@@ -190,7 +190,7 @@ cat > .ois/hub-config.json <<EOF
   "autoPrompt": true
 }
 EOF
-chmod 600 .ois/hub-config.json
+chmod 600 .ois/adapter-config.json
 ```
 
 Alternative: set `OIS_HUB_URL` / `OIS_HUB_TOKEN` / `OIS_HUB_ROLE` env vars (they override the config file). See the plugin's QUICKSTART §Configuration reference for the full precedence table.

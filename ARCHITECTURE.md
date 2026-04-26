@@ -47,7 +47,7 @@ All communication flows through a central **Hub** using the MCP (Model Context P
 │          │ ───── tool calls ─────────► │   Dynamic tool discovery           │
 │          │     architect-hub_*         │   SSE listener + Push-to-LLM      │
 └──────────┘                             │   Notification queue + safety      │
-                                         │   Config: .opencode/hub-config.json│
+                                         │   Config: .opencode/adapter-config.json│
                                          └────────────────────────────────────┘
 ```
 
@@ -132,7 +132,7 @@ The Universal MCP Network Adapter shim for OpenCode. Manages the single MCP conn
 
 - **Runtime:** Bun (via OpenCode Plugin system)
 - **Architecture:** MCP-to-MCP proxy — local MCP Server (Bun.serve) forwarding to remote Hub via `@ois/network-adapter` `McpAgentClient`
-- **Config:** `.opencode/hub-config.json` (hubUrl, hubToken, role, autoPrompt)
+- **Config:** `.opencode/adapter-config.json` (hubUrl, hubToken, role, autoPrompt)
 - **Registration:** calls `client.mcp.add("architect-hub", ...)` to register proxy with OpenCode dynamically
 
 **Push-to-LLM:** SSE notifications from Hub → Plugin notification handler → `client.session.promptAsync()` injects prompt into OpenCode session → LLM responds autonomously.

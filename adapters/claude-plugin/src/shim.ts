@@ -43,7 +43,7 @@ interface HubConfig {
   /**
    * Mission-19 routing labels. Stamped onto the Agent entity via the
    * enriched register_role handshake; scoped dispatches (tasks, threads,
-   * etc.) filter by these. Read from hub-config.json `labels` field or
+   * etc.) filter by these. Read from adapter-config.json `labels` field or
    * the `OIS_HUB_LABELS` env var (JSON-encoded). Omit for broadcast.
    */
   labels?: Record<string, string>;
@@ -68,7 +68,7 @@ function parseLabels(raw: string | undefined, source: string): Record<string, st
 
 function loadConfig(): HubConfig {
   const workDir = process.env.WORK_DIR || process.cwd();
-  const configPath = resolve(workDir, ".ois", "hub-config.json");
+  const configPath = resolve(workDir, ".ois", "adapter-config.json");
 
   let fileConfig: Partial<HubConfig> = {};
   if (existsSync(configPath)) {
@@ -93,7 +93,7 @@ function loadConfig(): HubConfig {
 
   if (!hubUrl || !hubToken) {
     console.error(
-      "ERROR: Hub credentials not found. Checked .ois/hub-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars",
+      "ERROR: Hub credentials not found. Checked .ois/adapter-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars",
     );
     process.exit(1);
   }

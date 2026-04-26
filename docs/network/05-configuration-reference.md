@@ -78,7 +78,7 @@ When any of these appear in a tool call error, the ConnectionManager triggers `r
 
 ### Config File
 
-**Path:** `.opencode/hub-config.json`
+**Path:** `.opencode/adapter-config.json`
 
 ```json
 {
@@ -117,7 +117,7 @@ Environment variables override config file values:
 | ------------------------------ | ------------------------------------------ | ---------------------------------------- |
 | `.opencode/hub-plugin-state.json` | Persists `lastSeenNotificationId` across restarts | `{ "lastSeenNotificationId": <number> }`   |
 | `.opencode/hub-plugin.log`       | Plugin diagnostic log                      | Timestamped line-per-entry               |
-| `.opencode/hub-config.json`      | Plugin configuration                       | JSON object                              |
+| `.opencode/adapter-config.json`      | Plugin configuration                       | JSON object                              |
 
 ## Timer Tuning Guide
 

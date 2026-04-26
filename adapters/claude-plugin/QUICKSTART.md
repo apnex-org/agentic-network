@@ -35,7 +35,7 @@ Create a config file in your working directory (the project you'll run Claude Co
 
 ```bash
 mkdir -p .ois
-cat > .ois/hub-config.json << 'EOF'
+cat > .ois/adapter-config.json << 'EOF'
 {
   "hubUrl": "https://your-hub-instance.run.app",
   "hubToken": "your-auth-token",
@@ -91,7 +91,7 @@ You should see Hub tools available when you type `/` in Claude Code. The adapter
 
 | Source | Location | Priority |
 |---|---|---|
-| Config file | `<workdir>/.ois/hub-config.json` | Default |
+| Config file | `<workdir>/.ois/adapter-config.json` | Default |
 | Environment | `OIS_HUB_URL`, `OIS_HUB_TOKEN`, `OIS_HUB_ROLE` | Overrides config file |
 
 | Field | Required | Default | Description |
@@ -102,6 +102,6 @@ You should see Hub tools available when you type `/` in Claude Code. The adapter
 
 ## Troubleshooting
 
-- **"Hub credentials not found"** — Neither config file nor env vars are set. Check that `.ois/hub-config.json` exists in your working directory, or set `OIS_HUB_URL` and `OIS_HUB_TOKEN`.
+- **"Hub credentials not found"** — Neither config file nor env vars are set. Check that `.ois/adapter-config.json` exists in your working directory, or set `OIS_HUB_URL` and `OIS_HUB_TOKEN`.
 - **Plugin not found** — Ensure the marketplace was added with the correct absolute path to the `agentic-network` root directory.
 - **Build errors** — Run `npm install` again. The `@ois/network-adapter` dependency resolves from a local tarball (`ois-network-adapter-2.0.0.tgz`) which must be present in the plugin directory.

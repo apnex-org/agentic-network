@@ -3,7 +3,7 @@
  *
  * Most admin tooling (migrate_agent_queue, cleanup jobs, ad-hoc reconciliation)
  * needs an architect-role session to call `[Architect]`-gated tools. Each
- * script was re-implementing the same bootstrap: read `.ois/hub-config.json`,
+ * script was re-implementing the same bootstrap: read `.ois/adapter-config.json`,
  * mint a random `globalInstanceId`, construct `McpAgentClient`, start it.
  * This helper collapses that into one call.
  *
@@ -15,7 +15,7 @@
  *     console.log(result);
  *   });
  *
- * Reads credentials from `.ois/hub-config.json` or
+ * Reads credentials from `.ois/adapter-config.json` or
  * `OIS_HUB_URL` / `OIS_HUB_TOKEN` env vars (env overrides file).
  */
 
@@ -27,21 +27,21 @@ import { randomUUID } from "node:crypto";
 export interface ArchitectClientOptions {
   /** Short identifier that shows up in Hub audit logs as proxyName / clientInfo. */
   scriptName: string;
-  /** Override config path (default: `<cwd>/.ois/hub-config.json`). */
+  /** Override config path (default: `<cwd>/.ois/adapter-config.json`). */
   configPath?: string;
   /** Optional logger — defaults to silent. */
   logger?: (line: string) => void;
 }
 
 export function loadHubConfig(configPath?: string): { hubUrl: string; hubToken: string } {
-  const path = configPath ?? resolve(process.cwd(), ".ois", "hub-config.json");
+  const path = configPath ?? resolve(process.cwd(), ".ois", "adapter-config.json");
   if (!existsSync(path)) {
     throw new Error(`No hub config at ${path}`);
   }
   const raw = JSON.parse(readFileSync(path, "utf-8"));
   const hubUrl = process.env.OIS_HUB_URL || raw.hubUrl;
   const hubToken = process.env.OIS_HUB_TOKEN || raw.hubToken;
-  if (!hubUrl) throw new Error("hubUrl missing (set OIS_HUB_URL or .ois/hub-config.json)");
+  if (!hubUrl) throw new Error("hubUrl missing (set OIS_HUB_URL or .ois/adapter-config.json)");
   return { hubUrl, hubToken };
 }
 

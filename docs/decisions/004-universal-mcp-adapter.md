@@ -30,7 +30,7 @@ The `opencode.json` MCP server config entry for `architect-hub` was removed. Pre
 - Dynamic tool discovery — tools auto-sync when Hub adds/removes tools
 - Non-blocking startup — all network deferred to `setTimeout(3000)`
 - Push-to-LLM via `client.session.promptAsync()` on Hub notifications
-- Configuration via `.opencode/hub-config.json` (no opencode.json changes needed)
+- Configuration via `.opencode/adapter-config.json` (no opencode.json changes needed)
 - Plugin logs to `.opencode/hub-plugin.log` (no TUI interference)
 - `Bun.serve({ idleTimeout: 0 })` required to prevent SSE stream closure
 - `StreamableHTTPClientTransport({ maxRetries: Infinity })` required for persistent SSE

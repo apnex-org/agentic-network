@@ -9,7 +9,7 @@ You are running from a **dedicated git worktree**, isolated from lily:
 - **cwd**: `/home/apnex/taceng/agentic-network-greg`
 - **branch**: `agent/greg` (forked from main at c8c5145)
 - **Hub**: `http://localhost:8080/mcp` (Docker container `ois-hub-local`, local only)
-- **Adapter config**: `.ois/hub-config.json` (flat — no `.ois/greg/.ois/` nesting anymore)
+- **Adapter config**: `.ois/adapter-config.json` (flat — no `.ois/greg/.ois/` nesting anymore)
 - **WORK_DIR**: equals your worktree root; set automatically by `start-greg.sh`
 - **Identity**: `OIS_INSTANCE_ID=greg`, role=engineer, env=prod
 - **Auto-memory dir**: `~/.claude/projects/-home-apnex-taceng-agentic-network-greg/memory/` — **a fresh empty pool**, isolated from lily's and from any prior kate/shared pool
@@ -56,7 +56,7 @@ Your peer **lily** (architect) handles Tele-alignment scoring, orphan detection,
    - `list_missions`
    - `list_tele` (expect 11 teles, `tele-0`..`tele-10`)
    - `list_threads` (recent — last 14 days or relevant ones)
-5. **Role registration is automatic** via the adapter handshake from `.ois/hub-config.json`. Do NOT call `register_role`.
+5. **Role registration is automatic** via the adapter handshake from `.ois/adapter-config.json`. Do NOT call `register_role`.
 6. Check `list_available_peers` — lily should already be visible as architect/env=prod (she runs concurrently in her own worktree). If she is not visible, flag it to the Director before proceeding.
 
 ## After cold-start — report readiness

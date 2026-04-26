@@ -412,7 +412,7 @@ Unified OpenCode Plugin acting as MCP-to-MCP proxy with Push-to-LLM.
 - No `opencode.json` MCP server config needed — Plugin is self-contained
 
 **Configuration:**
-- `.opencode/hub-config.json` — hubUrl, hubToken, autoPrompt, role
+- `.opencode/adapter-config.json` — hubUrl, hubToken, autoPrompt, role
 - Environment variable overrides: `MCP_HUB_URL`, `HUB_API_TOKEN`, `HUB_PLUGIN_AUTO_PROMPT`, `HUB_PLUGIN_ROLE`
 
 **Push-to-LLM:**

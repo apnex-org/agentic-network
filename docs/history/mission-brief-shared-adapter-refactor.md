@@ -63,7 +63,7 @@ None of this was discoverable without auditing both the shared package and both 
 - My transport session: `c428e592-a6bb-4289-9edc-f1e6485ca551` (as returned to architect via `get_engineer_status`).
 - OpenCode's transport session (fresh restart): `ses_2720...`. Source: user observation on the OpenCode machine, file `hub-plugin.log` line `Tracking session: ses_2720...`.
 - OpenCode's log contains zero `[M18]` lines, zero `globalInstanceId` references, zero `wasCreated`/`sessionEpoch` references, and zero task IDs on `Hub event: directive_issued` lines.
-- The two engineers share the same `hubToken` in `.opencode/hub-config.json` (Director-approved MVP shortcut documented in thread-78 / task-140 onboarding brief).
+- The two engineers share the same `hubToken` in `.opencode/adapter-config.json` (Director-approved MVP shortcut documented in thread-78 / task-140 onboarding brief).
 
 ### 3.2 Isolation probes
 
@@ -127,7 +127,7 @@ Section-by-section classification:
 
 | Lines | Section | Where it should live |
 |---|---|---|
-| 38-80 | Config loader reading `.opencode/hub-config.json` + env overrides | Per-engineer (file path is local) or shared helper with path parameter |
+| 38-80 | Config loader reading `.opencode/adapter-config.json` + env overrides | Per-engineer (file path is local) or shared helper with path parameter |
 | 85-127 | File logger + structured `logNotification` that extracts `taskId`, `threadId`, `proposalId`, `assessment`, `decision`, `intent`, `revisionCount`, `previousReportRef` | **Shared** — OpenCode has no equivalent; this is the root cause of tonight's "no task IDs in OpenCode log" telemetry gap |
 | 129-175 | M18 `globalInstanceId` bootstrap — reads/writes `~/.ois/instance.json` (0600, owner-private, `homedir()`-scoped) | **Shared** — zero Claude-specifics |
 | 177-187 | `capturedClientInfo` module-scoped mutable from the MCP `initialize` request | Per-engineer capture hook, but the payload shape is shared |
@@ -149,7 +149,7 @@ Section-by-section classification:
 | Lines | Section | Where it should live |
 |---|---|---|
 | 27-48 | File logger — **minimal**, just `${new Date().toISOString()} ${msg}`. No structured notification extraction. | **Shared** structured logger. This is why OpenCode's log has no taskIds. |
-| 56-90 | Config loader reading `.opencode/hub-config.json` + env overrides | Per-engineer (file path is local) or shared helper |
+| 56-90 | Config loader reading `.opencode/adapter-config.json` + env overrides | Per-engineer (file path is local) or shared helper |
 | 94-100 | Module-scope state: `hubAdapter`, `proxyPort`, `sdkClient`, `currentSessionId`, `sessionActive`, `config`, `pluginDirectory` | Per-engineer (OpenCode plugin lifecycle) |
 | 117-131 | 30-second rate limiter (`RATE_LIMIT_MS`, `lastPromptTime`, `isRateLimited`) | **Per-engineer** — OpenCode's `promptAsync` is expensive; Claude's channel push is cheap. Do not lift. |
 | 133-146 | `notificationQueue` + `deferredBacklog` for rate-limited follow-up | **Per-engineer** |

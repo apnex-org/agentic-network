@@ -20,7 +20,7 @@
  *   npx tsx scripts/migrate-bug-ideas.ts           # dry-run (default)
  *   npx tsx scripts/migrate-bug-ideas.ts --apply   # execute migrations
  *
- * Credentials read from .ois/hub-config.json (via scripts/lib/architect-client.ts).
+ * Credentials read from .ois/adapter-config.json (via scripts/lib/architect-client.ts).
  */
 
 import { withArchitectClient } from "./lib/architect-client.js";

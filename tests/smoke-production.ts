@@ -10,7 +10,7 @@
  * form the system's core contract.
  *
  * Usage:
- *   npx tsx tests/smoke-production.ts                      # uses .ois/hub-config.json
+ *   npx tsx tests/smoke-production.ts                      # uses .ois/adapter-config.json
  *   OIS_HUB_URL=https://... OIS_HUB_TOKEN=... npx tsx tests/smoke-production.ts
  *
  * Workflows tested (from workflow-registry.md):
@@ -47,7 +47,7 @@ function loadConfig(): HubConfig {
     };
   }
 
-  const configPath = resolve(process.cwd(), ".ois", "hub-config.json");
+  const configPath = resolve(process.cwd(), ".ois", "adapter-config.json");
   if (existsSync(configPath)) {
     const raw = JSON.parse(readFileSync(configPath, "utf-8"));
     return {
@@ -58,7 +58,7 @@ function loadConfig(): HubConfig {
 
   console.error(
     "FATAL: No Hub configuration found.\n" +
-    "  Set OIS_HUB_URL + OIS_HUB_TOKEN env vars, or create .ois/hub-config.json"
+    "  Set OIS_HUB_URL + OIS_HUB_TOKEN env vars, or create .ois/adapter-config.json"
   );
   process.exit(1);
 }

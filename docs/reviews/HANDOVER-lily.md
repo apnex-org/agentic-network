@@ -9,7 +9,7 @@ You are running from a **dedicated git worktree**, isolated from greg:
 - **cwd**: `/home/apnex/taceng/agentic-network-lily`
 - **branch**: `agent/lily` (forked from main at c8c5145)
 - **Hub**: `http://localhost:8080/mcp` (Docker container `ois-hub-local`, local only)
-- **Adapter config**: `.ois/hub-config.json` (flat — no `.ois/lily/.ois/` nesting anymore)
+- **Adapter config**: `.ois/adapter-config.json` (flat — no `.ois/lily/.ois/` nesting anymore)
 - **WORK_DIR**: equals your worktree root; set automatically by `start-lily.sh`
 - **Identity**: `OIS_INSTANCE_ID=lily`, role=architect, env=prod
 - **Auto-memory dir**: `~/.claude/projects/-home-apnex-taceng-agentic-network-lily/memory/` — **a fresh empty pool**, isolated from greg's and from any prior shared pool
@@ -57,7 +57,7 @@ Remember: you operate at **spec level, not code**. Don't read source files to an
    - `list_missions`
    - `list_tele` (expect 11 teles, `tele-0`..`tele-10`)
    - `list_threads` (recent — last 14 days or relevant ones)
-5. **Role registration is automatic** via the adapter handshake from `.ois/hub-config.json`. Do NOT call `register_role`.
+5. **Role registration is automatic** via the adapter handshake from `.ois/adapter-config.json`. Do NOT call `register_role`.
 6. Check `list_available_peers` — greg should already be visible as engineer/env=prod (he runs concurrently in his own worktree). If he is not visible, flag it to the Director before proceeding.
 
 ## After cold-start — report readiness

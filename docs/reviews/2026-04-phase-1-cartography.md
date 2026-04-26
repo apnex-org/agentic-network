@@ -282,7 +282,7 @@ Per critique §5 — replaces Pass 1 §4.4 sketch with deeper three-table breakd
 | Universal Port (idea-102) | Open | Supersedes idea-17 (dismissed) |
 | Adapter-core extraction (idea-153) | Open | Transitional vs idea-152 target-state |
 | Director-chat redesign | Pending architect-adapter redesign | No mission yet |
-| Wrapper-script tracking (idea-154) | Open post-mission-40 | Small cleanup; hub-config.json candidate |
+| Wrapper-script tracking (idea-154) | Open post-mission-40 | Small cleanup; adapter-config.json candidate |
 | Layer-certification registry (idea-156) | Open (NEW Pass 1.1) | tele-8 reverse-gap seed |
 | Merge-gate automation (idea-158) | Open (NEW Pass 1.1) | Depends on idea-156 |
 
