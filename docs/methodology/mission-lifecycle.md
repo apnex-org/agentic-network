@@ -1,8 +1,17 @@
 # Mission Lifecycle — formal lifecycle methodology
 
-**Status:** v1.0 (Director-ratified 2026-04-26 post mission-57 W4 ratification; supersedes v0.1 audit-only draft). v1.0 codifies the formal mission lifecycle phases + Survey-then-Design transition + mission-class taxonomy + per-class pulse cadence conventions + autonomous-arc-driving pattern + substrate-self-dogfood discipline. v0.1's lifecycle audit content preserved as appendix §A for forward-compat reference.
+**Status:** v1.1 (Director-ratified 2026-04-26 post mission-57 retrospective close + housekeeping discussion). v1.1 adds RACI matrix + per-phase detail enrichment + sub-execution overview + 3-mode retrospective taxonomy reference + entity-mechanics.md companion doc cross-links.
 
-**v0.1 → v1.0 delta:**
+**v1.0 → v1.1 delta:**
+| Section | Change |
+|---|---|
+| §1 Phase descriptions | ENRICHED — Phase 5/7/8/9/10 prose detail expanded; Phase 10 references 3-mode retrospective taxonomy (`feedback_retrospective_modes.md`) |
+| §1.5 RACI matrix | NEW — per-phase × per-role responsibilities (Director / Architect / Engineer; standard RACI semantics) |
+| §7 Sub-execution mechanics | NEW — brief overview of Task entity FSM + Trace discipline + cascade behaviors; references `entity-mechanics.md` for per-entity detail |
+| `entity-mechanics.md` (companion) | NEW companion doc — per-entity FSM + status transitions + cascade behaviors + Hub primitives reference |
+| §6 Substrate-self-dogfood | Memory cross-link updated (`feedback_substrate_self_dogfood_discipline.md` v2 codifies substrate-vs-enrichment refinement) |
+
+**v0.1 → v1.0 delta** (preserved for historical reference):
 | Section | Change |
 |---|---|
 | §1 Lifecycle phases | NEW — formal phase enumeration (Concept → Idea → Survey → Design → Manifest → Preflight → Release-gate → Execution → Close → Retrospective) |
@@ -29,8 +38,25 @@ Phase 6  — Preflight         Architect authors preflight artifact; verdict GRE
 Phase 7  — Release-gate      Director ratifies preflight; architect flips status: proposed → active
 Phase 8  — Execution         W0-Wn wave cascade; per-wave PR + cross-approval + admin-merge
 Phase 9  — Close             W5-equivalent closing wave; status: active → completed
-Phase 10 — Retrospective     Architect-authored retrospective draft + Director ratification + HOLD
+Phase 10 — Retrospective     Architect-authored retrospective; Director-ratified mode (walkthrough/summary-review/skip per `feedback_retrospective_modes.md`)
 ```
+
+### §1.x Per-phase detail (v1.1 enrichment)
+
+**Phase 5 — Manifest:** Architect calls `create_mission` with `plannedTasks[]` array binding the W0-Wn wave plan + `missionClass` field per §3 taxonomy. Mission entity status flips to `proposed`. plannedTasks remain `unissued` until first wave dispatch (cascade auto-issuance OR architect-direct dispatch via thread per `multi-agent-pr-workflow.md` cross-approval pattern). Architect also flips source `Idea.status` → `incorporated` + sets `Idea.missionId` for traceability.
+
+**Phase 7 — Release-gate:** Architect surfaces preflight verdict + release-gate ratification ask to Director (categorised: HOLD-point gate per §5 categorised-concerns table). Director ratifies (or redirects); architect calls `update_mission(status="active")` per autonomous-arc-driving authority (Director may also signal directly). Mission moves to `Phase 8 Execution`.
+
+**Phase 8 — Execution:** W0-Wn wave cascade; per-wave architect dispatch via fresh thread → engineer claim + work + PR → cross-approval per `multi-agent-pr-workflow.md` (engineer-pool ✓ on architect-content; architect-pool ✓ on engineer-content) → admin-merge. Per-wave bilateral seal of dispatch thread. Cross-package vitest baseline (bug-32) admin-merge per established lineage. See §7 sub-execution mechanics + companion `entity-mechanics.md` for per-entity FSM detail.
+
+**Phase 9 — Close:** Final wave (W5-equivalent / closing wave) per Design's wave plan; typically includes closing audit + ADR + methodology codifications (e.g., mission-56 W5; mission-57 W4). Architect flips `mission.status` → `completed`. Pulses auto-suspend on close (per §4.3 when-to-disable table).
+
+**Phase 10 — Retrospective:** Mode determined by mission class per `feedback_retrospective_modes.md`:
+- **Walkthrough** (Director-paced section-by-section; ~30-60min Director time) — for structural-inflection / substrate-introduction class missions; mission-56 first canonical
+- **Summary-review** (architect-prepared full doc; Director reviews Closing summary; ~5-10min Director time) — for coordination-primitive-shipment / saga-substrate-completion / smaller-scope missions; mission-57 first canonical
+- **Skip** (closing audit + mission-class signature suffices; no separate retrospective doc) — for spike / substrate-cleanup-wave / rare bug-fix-as-mission
+
+Architect surfaces mode-pick options to Director at mission-close moment; Director picks; architect proceeds. Retrospective doc (when authored) lives at `docs/reviews/<mission>-retrospective.md`.
 
 **Phase artifact summary:**
 
@@ -48,9 +74,34 @@ Phase 10 — Retrospective     Architect-authored retrospective draft + Director
 **Director-engagement points** (per autonomous-arc-driving pattern §5):
 - Phase 3 Survey (~5min Director-time; 6 picks)
 - Phase 7 Release-gate ratification (preflight verdict ratification)
-- Phase 10 Retrospective ratification
+- Phase 10 Retrospective ratification (mode-pick + ratification per chosen mode)
 
 All other phases are architect+engineer scope.
+
+---
+
+## §1.5 RACI matrix (per-phase × per-role)
+
+Standard RACI semantics: **R**esponsible (does the work) / **A**ccountable (final decision authority) / **C**onsulted (input solicited) / **I**nformed (notified of outcome). Per-phase per-role:
+
+| Phase | Director | Architect | Engineer |
+|---|---|---|---|
+| **1 Concept** | A (originates concept; or accepts from agent) | C (shapes intent if architect-originated) | I |
+| **2 Idea** | A (ratifies triage at Phase 3 entry) | R (files Idea entity; triages) | I |
+| **3 Survey** | A (picks 6 answers across 2 rounds; ~5min) | R (designs questions; interprets responses per `idea-survey.md` v1.0) | I |
+| **4 Design** | C (out of mechanics; intent ratified via Survey envelope at Phase 3) | R (drafts Design v0.1 → v1.0; bilateral with engineer) | R (round-1 + round-2 audit; bilateral ratifies v1.0) |
+| **5 Manifest** | I | R (calls `create_mission`; updates Idea entity link) | I |
+| **6 Preflight** | C (preflight ratification at Phase 7) | R (authors preflight artifact; runs 6-category audit) | I |
+| **7 Release-gate** | A (ratifies preflight; signals/approves status=active) | R (architect-flips status per autonomous-arc authority) | I |
+| **8 Execution** | C (categorised concerns only per §5.1; surface only when warranted) | R (per-wave dispatch + cross-approval + admin-merge; mission-coordination) | R (claim + work + PR + Trace + closing audit) |
+| **9 Close** | I | R (flips status=completed; verifies mission-state) | R (closing audit doc; final state verification) |
+| **10 Retrospective** | A (mode-picks; reviews retrospective per chosen mode; ratifies) | R (drafts retrospective per chosen mode) | C (cross-approve PR; engineer-spec input if relevant) |
+
+**Notes:**
+- **Mediation invariant** (§5.3) governs cross-role information flow: Director ↔ Engineer routes through Architect. RACI does not authorize direct Director↔Engineer mechanics surfaces.
+- **Pulse-driven coordination** (§4) does NOT change RACI; pulses are structured-mediation channels, not role-shifts.
+- **Bypass cases**: Survey bypass per `idea-survey.md` §8 still preserves RACI; spawned-Idea linkage MANDATORY for traceability.
+- **First-canonical-execution missions** may have higher Director engagement (active-collaborator mode per §5.2); does not violate RACI as long as architect holds the gate on routine mechanics per §5.1 categorised-concerns table.
 
 ---
 
@@ -237,6 +288,72 @@ For substrate-self-dogfood-applicable missions, the architect (with engineer inp
 3. If enrichment: defer is acceptable; document substrate-vs-enrichment reasoning; verification via tests + integration; live dogfood deferred to a future mission OR reproducible-by-CI dogfood automation (idea-208)
 
 mission-57's first canonical DEFERRED execution validates the pattern accommodates defer when reasoned.
+
+**Memory:** `feedback_substrate_self_dogfood_discipline.md` v2 codifies the substrate-vs-enrichment refinement + cites mission-56 W2.2 (substrate canonical) + mission-57 W2 thread-355 r3 (enrichment-defer canonical) as the two execution examples.
+
+---
+
+## §7 Sub-execution mechanics (overview)
+
+Phase 8 Execution is the heaviest phase by elapsed time + mechanics; this section is a brief overview of sub-execution mechanics. **Per-entity FSM + status transitions + cascade behaviors detail lives in `docs/methodology/entity-mechanics.md` (companion doc).**
+
+### §7.1 Engineer-side execution loop (per-wave)
+
+For each wave Wi within Phase 8:
+
+```
+architect dispatch (thread)
+  → engineer claim (claim_session if needed; thread engagement)
+  → engineer work (implementation; tests; commits on dedicated branch)
+  → engineer opens PR (GitHub event; cross-package vitest baseline; bug-32 admin-merge baseline)
+  → engineer thread-message PR-review thread to architect (engineer-pool ✓ ask context)
+  → architect cross-approve (gh pr review --approve) + admin-merge (gh pr merge --squash --admin)
+  → engineer ack on thread + bilateral seal of PR-review thread
+  → architect dispatch next wave (or close mission if final wave)
+```
+
+### §7.2 Trace discipline (engineer-owned)
+
+Engineer maintains work-trace at `docs/traces/<task-or-mission>-work-trace.md` per `reference_work_traces_dir.md`. Trace is engineer-owned; architect reads for context but does NOT patch. Trace shape is engineer-flexible (typically per-task progress notes + decision points + blockers).
+
+Trace timestamps use AEST per `project_session_log_timezone.md` (~10h forward skew vs UTC).
+
+### §7.3 Task entity FSM (canonical)
+
+`pending` → `working` → `needs_review` → `completed` (or `abandoned`; revision loop via `working`).
+
+Task entity is mostly orthogonal to mission-57's plannedTasks-based execution (which uses thread-dispatch instead of formal Task entities). Per `feedback_plannedtasks_manual_create_mismatch.md`: missions with plannedTasks should NOT manual-create Task entities (cascade-binding mismatch). Future cascade-execution missions may consume Task entity FSM directly when task-316 cascade is fully exercised.
+
+**Per-entity FSM + cascade detail:** see `entity-mechanics.md` §3 Task entity section.
+
+### §7.4 Cross-approval pattern (mission-execution-discipline)
+
+Per `multi-agent-pr-workflow.md` v1.0:
+- Architect-content PRs: engineer-pool ✓ on thread + GitHub-side
+- Engineer-content PRs: architect-pool ✓ on thread + GitHub-side
+- Repo last-pusher rule: any push after a review invalidates that review; re-approval needed
+- Cross-package vitest fails per bug-32 baseline → admin-merge per established lineage (mission-54 + mission-55 + mission-56 + mission-57 = 35-PR consecutive at mission-57 close)
+
+### §7.5 Per-wave bilateral seal discipline
+
+Each dispatch thread + each PR-review thread is bilateral-sealed via `create_thread_reply(converged=true)` with `stagedActions: [{kind:"stage", type:"close_no_action", payload:{reason:...}}]` + non-empty `summary`. Threads 2.0 discipline; convergence finalization happens via Hub cascade.
+
+### §7.6 Cascade-driven mechanics (overview)
+
+Some sub-execution transitions are Hub-cascade-driven:
+- Mission `plannedTasks` cascade auto-issues next-unissued task on review-approval (task-316 / idea-144 Path A) — applies when missions use formal Task entities (NOT mission-57's thread-dispatch pattern)
+- Thread convergence cascade fires `close_no_action` / `update_mission_status` / `propose_mission` / `create_idea` / `create_task` / `create_proposal` actions per Threads 2.0 (ADR-013/014)
+- Pulse-fire cascade on PulseSweeper tick (per §4)
+- ack_message webhook on Message status flip to `acked` (mission-56 W3.2 + mission-57 W2 webhook composition)
+
+**Per-cascade detail:** see `entity-mechanics.md` §4 Cascade catalog.
+
+### §7.7 Anti-patterns retired
+
+- **Manual-create Task on plannedTasks-bound mission** — per `feedback_plannedtasks_manual_create_mismatch.md` (bug-31); causes cascade duplication
+- **Architect proactive ping for recurring case** — retired by pulse primitive (mission-57 substrate); recurring use → pulse, one-off → local ScheduleWakeup per §4.4
+- **Director-led Design walkthrough section-by-section** — retired by Survey-then-Design (per §2 + idea-survey.md v1.0)
+- **Architect aggregate-only Survey interpretation** — retired by per-question multi-dim-context interpretation loop (per idea-survey.md §9)
 
 ---
 
