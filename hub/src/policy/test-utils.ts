@@ -15,7 +15,6 @@ import { MemoryStorageProvider } from "@ois/storage-provider";
 import { BugRepository } from "../entities/bug-repository.js";
 import { MessageRepository } from "../entities/message-repository.js";
 import { PendingActionRepository } from "../entities/pending-action-repository.js";
-import { DirectorNotificationRepository } from "../entities/director-notification-repository.js";
 import { createMetricsCounter } from "../observability/metrics.js";
 
 interface EmittedEvent {
@@ -39,10 +38,12 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
   const emittedEvents: EmittedEvent[] = [];
   const dispatchedEvents: DispatchedEvent[] = [];
 
-  // Mission-47 W1-W5: task/proposal/idea/mission/tele/bug/director-notification
+  // Mission-47 W1-W5 + mission-56 W5: task/proposal/idea/mission/tele/bug
   // are all *Repository classes over a fresh MemoryStorageProvider +
   // StorageBackedCounter per test context — no state leakage between
-  // test cases.
+  // test cases. (DirectorNotification + Notification stores removed in
+  // mission-56 W5 cleanup; Director-targeted alerts now flow through
+  // the Message store via director-notification-helpers.ts.)
   const storageProvider = new MemoryStorageProvider();
   const storageCounter = new StorageBackedCounter(storageProvider);
   const task = new TaskRepository(storageProvider, storageCounter);
@@ -60,7 +61,6 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     tele: new TeleRepository(storageProvider, storageCounter),
     bug: new BugRepository(storageProvider, storageCounter),
     pendingAction: new PendingActionRepository(storageProvider, storageCounter),
-    directorNotification: new DirectorNotificationRepository(storageProvider, storageCounter),
     message: new MessageRepository(storageProvider),
   };
 

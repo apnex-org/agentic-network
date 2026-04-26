@@ -38,6 +38,9 @@ export interface Counters {
   proposalCounter: number;
   engineerCounter: number;
   threadCounter: number;
+  /** Mission-56 W5: Notification entity removed. Field retained for
+   *  backward-compat with existing meta/counter.json blobs (legacy
+   *  values remain on disk; nothing increments this going forward). */
   notificationCounter: number;
   ideaCounter: number;
   missionCounter: number;
@@ -45,6 +48,8 @@ export interface Counters {
   teleCounter: number;
   bugCounter: number;
   pendingActionCounter: number;
+  /** Mission-56 W5: DirectorNotification entity removed. Field retained
+   *  for backward-compat with existing meta/counter.json blobs. */
   directorNotificationCounter: number;
   auditCounter: number;
 }

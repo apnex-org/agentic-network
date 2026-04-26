@@ -11,7 +11,6 @@ import type {
   ITeleStore,
   IBugStore,
   IPendingActionStore,
-  IDirectorNotificationStore,
   IMessageStore,
 } from "../entities/index.js";
 import type { MetricsCounter } from "../observability/metrics.js";
@@ -37,7 +36,6 @@ export interface AllStores {
   tele: ITeleStore;
   bug: IBugStore;
   pendingAction: IPendingActionStore;
-  directorNotification: IDirectorNotificationStore;
   /** Mission-51 W1: universal Message primitive store. */
   message: IMessageStore;
 }

@@ -526,10 +526,10 @@ export { reconcileCounters, cleanupOrphanedFiles };
 // land at `gs://$bucket/audit/v2/audit-${N}.json`.
 
 
-// Mission-49 W9: GcsNotificationStore removed — NotificationRepository
-// in hub/src/entities/notification-repository.ts composes any
-// StorageProvider (including GcsStorageProvider) via the
-// INotificationStore interface. The `notifications/v2/` namespace
-// (originally introduced for the AMP envelope cutover) is preserved
-// byte-identically; pre-v2 integer-id notifications stay frozen in
-// the legacy keyspace.
+// Mission-56 W5: NotificationRepository removed entirely (write paths
+// migrated to Message store in W4.2; cleanup landed in W5). The
+// `notifications/v2/` GCS namespace + pre-v2 integer-id notifications
+// remain on disk as frozen historical data; nothing reads them.
+// Director-targeted notifications + Hub-event-bus → SSE injection now
+// flow through the Message store (`hub/src/policy/notification-helpers.ts`
+// + `hub/src/policy/director-notification-helpers.ts`).

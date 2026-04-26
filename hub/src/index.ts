@@ -11,20 +11,19 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { cutoverSentinelPath, isCutoverComplete } from "./lib/cutover-sentinel.js";
-import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, INotificationStore } from "./state.js";
+import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore } from "./state.js";
 import { reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
 import {
   TurnRepository,
   PendingActionRepository,
-  TeleRepository, IdeaRepository, BugRepository, DirectorNotificationRepository,
+  TeleRepository, IdeaRepository, BugRepository,
   MissionRepository, TaskRepository, ProposalRepository, ThreadRepository,
   AgentRepository,
   AuditRepository,
-  NotificationRepository,
   MessageRepository,
   StorageBackedCounter,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
-  type IPendingActionStore, type IDirectorNotificationStore, type IMessageStore,
+  type IPendingActionStore, type IMessageStore,
 } from "./entities/index.js";
 import { MemoryStorageProvider, GcsStorageProvider, LocalFsStorageProvider, type StorageProvider } from "@ois/storage-provider";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
@@ -87,7 +86,6 @@ let engineerRegistry: IEngineerRegistry;
 let proposalStore: IProposalStore;
 let threadStore: IThreadStore;
 let auditStore: IAuditStore;
-let notificationStore: INotificationStore;
 let ideaStore: IIdeaStore;
 let missionStore: IMissionStore;
 let turnStore: ITurnStore;
@@ -98,7 +96,6 @@ let bugStore: IBugStore;
 // during Phase 2b-B measurement). Queue state now survives restart
 // identically to other entities.
 let pendingActionStore: IPendingActionStore;
-let directorNotificationStore: IDirectorNotificationStore;
 // Mission-51 W1: universal Message primitive store.
 let messageStore: IMessageStore;
 
@@ -190,13 +187,11 @@ if (STORAGE_BACKEND === "gcs") {
 // meta/counter.json blob.
 const storageCounter = new StorageBackedCounter(storageProvider);
 auditStore = new AuditRepository(storageProvider, storageCounter);
-notificationStore = new NotificationRepository(storageProvider);
 taskStore = new TaskRepository(storageProvider, storageCounter);
 proposalStore = new ProposalRepository(storageProvider, storageCounter);
 ideaStore = new IdeaRepository(storageProvider, storageCounter);
 bugStore = new BugRepository(storageProvider, storageCounter);
 teleStore = new TeleRepository(storageProvider, storageCounter);
-directorNotificationStore = new DirectorNotificationRepository(storageProvider, storageCounter);
 threadStore = new ThreadRepository(storageProvider, storageCounter);
 pendingActionStore = new PendingActionRepository(storageProvider, storageCounter);
 // Mission-51 W1: MessageRepository — sovereign Message primitive over StorageProvider.
@@ -221,7 +216,6 @@ const allStores: AllStores = {
   tele: teleStore,
   bug: bugStore,
   pendingAction: pendingActionStore,
-  directorNotification: directorNotificationStore,
   message: messageStore,
 };
 
@@ -346,7 +340,6 @@ const createMcpServerFactory: CreateMcpServerFn = (getSessionId, getClientIp, no
 
 const hub = new HubNetworking(
   engineerRegistry,
-  notificationStore,
   createMcpServerFactory,
   {
     port: PORT,
@@ -356,8 +349,6 @@ const hub = new HubNetworking(
     sessionTtl: 180_000,
     reaperInterval: 60_000,
     orphanTtl: 60_000,
-    notificationMaxAge: 24 * 60 * 60 * 1000,
-    notificationCleanupInterval: 60 * 60 * 1000,
     autoStartTimers: true,
     quiet: false,
   },

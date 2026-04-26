@@ -45,7 +45,7 @@ import { StorageBackedCounter } from "../../src/entities/counter.js";
 import { MemoryStorageProvider } from "@ois/storage-provider";
 import { BugRepository } from "../../src/entities/bug-repository.js";
 import { PendingActionRepository } from "../../src/entities/pending-action-repository.js";
-import { DirectorNotificationRepository } from "../../src/entities/director-notification-repository.js";
+import { MessageRepository } from "../../src/entities/message-repository.js";
 import { createMetricsCounter, type MetricsCounter } from "../../src/observability/metrics.js";
 
 // ── Captured Event ──────────────────────────────────────────────────
@@ -486,8 +486,11 @@ export class TestOrchestrator {
   // ── Private ─────────────────────────────────────────────────────
 
   private createStores(): AllStores {
-    // Mission-47 W1-W5: task/proposal/idea/mission/tele/bug/director-notification
-    // via *Repository classes over a fresh MemoryStorageProvider.
+    // Mission-47 W1-W5 + mission-51 W1 + mission-56 W5: task / proposal /
+    // idea / mission / tele / bug / message via *Repository classes over
+    // a fresh MemoryStorageProvider. (DirectorNotification + Notification
+    // stores removed in mission-56 W5 cleanup; alerts now flow through
+    // the Message store.)
     const storageProvider = new MemoryStorageProvider();
     const storageCounter = new StorageBackedCounter(storageProvider);
     const task = new TaskRepository(storageProvider, storageCounter);
@@ -505,7 +508,7 @@ export class TestOrchestrator {
       tele: new TeleRepository(storageProvider, storageCounter),
       bug: new BugRepository(storageProvider, storageCounter),
       pendingAction: new PendingActionRepository(storageProvider, storageCounter),
-      directorNotification: new DirectorNotificationRepository(storageProvider, storageCounter),
+      message: new MessageRepository(storageProvider),
     };
   }
 

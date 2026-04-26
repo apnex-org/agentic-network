@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import type { IEngineerRegistry, INotificationStore, Selector, IAuditStore } from "./state.js";
+import type { IEngineerRegistry, Selector, IAuditStore } from "./state.js";
 import { fireWebhook } from "./webhook.js";
 import { emitLegacyNotification } from "./policy/notification-helpers.js";
 import type { Server } from "http";
@@ -40,10 +40,6 @@ export interface HubNetworkingConfig {
   reaperInterval?: number;
   /** Orphan session TTL in ms (default: 60000) */
   orphanTtl?: number;
-  /** Notification max age in ms (default: 86400000 / 24h) */
-  notificationMaxAge?: number;
-  /** Notification cleanup interval in ms (default: 3600000 / 1h) */
-  notificationCleanupInterval?: number;
   /** Webhook URL for fallback when no SSE sessions (default: none) */
   webhookUrl?: string;
   /** Whether to start timers automatically (default: true). Set false for tests. */
@@ -99,7 +95,6 @@ export class HubNetworking {
   // On cap-hit, emit synthetic replay-truncated SSE event + signal
   // adapter to reconnect with lastStreamedId as next Last-Event-ID.
   private reaperTimer: ReturnType<typeof setInterval> | null = null;
-  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   // Shutdown signal for cancelling outstanding replay operations
   private _stopping = false;
@@ -111,31 +106,30 @@ export class HubNetworking {
 
   constructor(
     private engineerRegistry: IEngineerRegistry,
-    private notificationStore: INotificationStore,
     private createMcpServerFn: CreateMcpServerFn,
     config: HubNetworkingConfig = {},
     /**
-     * M-Session-Claim-Separation (mission-40) T2: optional audit store
-     * for emitting agent_session_implicit_claim + agent_session_displaced
-     * audits from the SSE-subscribe auto-claim hook. Optional for back-
-     * compat with test rigs that don't audit (the hook degrades gracefully:
-     * the claim still happens; audit emission is best-effort).
+     * M-Session-Claim-Separation (mission-40) T2: audit store for
+     * emitting agent_session_implicit_claim + agent_session_displaced
+     * audits from the SSE-subscribe auto-claim hook. Mission-56 W5:
+     * required (was optional during M-Session-Claim-Separation rollout);
+     * the W5 cleanup made messageStore required and the parameter list
+     * tail must consistently be required to satisfy TS.
      */
-    private auditStore?: IAuditStore,
+    private auditStore: IAuditStore,
     /**
-     * Mission-56 W1b: optional Message store for SSE Last-Event-ID
-     * replay + cold-start stream-all paths. When supplied, the SSE GET
-     * handler intercepts Last-Event-ID before delegating to
+     * Mission-56 W1b: Message store for SSE Last-Event-ID replay +
+     * cold-start stream-all paths. The SSE GET handler intercepts
+     * Last-Event-ID before delegating to
      * StreamableHTTPServerTransport.handleRequest, emits replayed
      * Messages via mcpServer.server.sendLoggingMessage with Message ID
      * as the SSE event id, then continues with live emits.
      *
-     * When omitted (test rigs without Message-store wiring), the
-     * SSE GET handler degrades to existing state-based-reconnect
-     * behavior — no replay, clients call get_pending_actions() +
-     * completeSync() per the legacy path.
+     * Mission-56 W5: required (was optional during W1b rollout); the
+     * legacy `notificationStore` was removed in W5 cleanup, so the
+     * push pipeline now flows exclusively through the Message store.
      */
-    private messageStore?: import("./entities/message.js").IMessageStore,
+    private messageStore: import("./entities/message.js").IMessageStore,
   ) {
     this.config = {
       port: config.port ?? 0,
@@ -144,8 +138,6 @@ export class HubNetworking {
       sessionTtl: config.sessionTtl ?? 180_000,
       reaperInterval: config.reaperInterval ?? 60_000,
       orphanTtl: config.orphanTtl ?? 60_000,
-      notificationMaxAge: config.notificationMaxAge ?? 24 * 60 * 60 * 1000,
-      notificationCleanupInterval: config.notificationCleanupInterval ?? 60 * 60 * 1000,
       webhookUrl: config.webhookUrl ?? "",
       autoStartTimers: config.autoStartTimers ?? true,
       quiet: config.quiet ?? false,
@@ -190,7 +182,6 @@ export class HubNetworking {
         if (this.config.autoStartTimers) {
           this.startKeepalive();
           this.startSessionReaper();
-          this.startNotificationCleanup();
         }
 
         resolve();
@@ -202,7 +193,6 @@ export class HubNetworking {
     this._stopping = true;
     this.stopKeepalive();
     this.stopSessionReaper();
-    this.stopNotificationCleanup();
 
     // Close all sessions (with per-transport timeout to avoid hangs)
     const closePromises = [];
@@ -262,28 +252,6 @@ export class HubNetworking {
     }
   }
 
-  startNotificationCleanup(intervalOverride?: number): void {
-    this.stopNotificationCleanup();
-    const interval = intervalOverride ?? this.config.notificationCleanupInterval;
-    this.cleanupTimer = setInterval(async () => {
-      try {
-        const deleted = await this.notificationStore.cleanup(this.config.notificationMaxAge);
-        if (deleted > 0) {
-          this.log(`[Cleanup] Removed ${deleted} expired notifications`);
-        }
-      } catch (err) {
-        this.log(`[Cleanup] Failed: ${err}`);
-      }
-    }, interval);
-  }
-
-  stopNotificationCleanup(): void {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
-  }
-
   // ── Manually callable operations (for testing) ─────────────────────
 
   /** Send keepalive to all SSE-active sessions.
@@ -340,20 +308,18 @@ export class HubNetworking {
     return pruned;
   }
 
-  /** Send a hub-event notification via the persist-first pipeline */
+  /** Send a hub-event notification via the persist-first pipeline.
+   *  Mission-56 W4.2 cut over the persist-first write to the Message
+   *  store; W5 removed the legacy notificationStore entirely. SSE event-
+   *  id is the Message ULID — forward-compatible with the W1b Last-
+   *  Event-ID protocol. */
   async notifyEvent(
     event: string,
     data: Record<string, unknown>,
     targetRoles: string[] = ["architect"]
   ): Promise<void> {
-    // 1. PERSIST FIRST (mission-56 W4.2: Notification entity sunset —
-    // emits as a Message via emitLegacyNotification instead of the
-    // legacy notificationStore.persist; SSE event-id continues to be
-    // the persisted record's id, now a Message ULID forward-compatible
-    // with the W1b Last-Event-ID protocol).
-    const notification = this.messageStore
-      ? await emitLegacyNotification(this.messageStore, event, data, targetRoles)
-      : await this.notificationStore.persist(event, data, targetRoles);
+    // 1. PERSIST FIRST
+    const notification = await emitLegacyNotification(this.messageStore, event, data, targetRoles);
     this.log(`[Notify] Persisted notif-${notification.id}: ${event}`);
 
     // 2. Attempt SSE delivery
@@ -381,12 +347,8 @@ export class HubNetworking {
     const targetRoles = selector.roles && selector.roles.length > 0
       ? [...selector.roles]
       : ["architect", "engineer", "director"];
-    // mission-56 W4.2: see notifyEvent comment above. Same Message-store
-    // cut-over with notificationStore as a fallback for test rigs that
-    // don't supply a Message store.
-    const notification = this.messageStore
-      ? await emitLegacyNotification(this.messageStore, event, data, targetRoles)
-      : await this.notificationStore.persist(event, data, targetRoles);
+    // mission-56 W4.2 + W5: persist-first writes to the Message store.
+    const notification = await emitLegacyNotification(this.messageStore, event, data, targetRoles);
     const matched = await this.engineerRegistry.selectAgents(selector);
     const selStr = JSON.stringify(selector);
     this.log(`[Dispatch] Persisted notif-${notification.id}: ${event} selector=${selStr} matched=${matched.length} agent(s)`);

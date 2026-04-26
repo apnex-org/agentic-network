@@ -10,7 +10,6 @@ export { ProposalRepository } from "./proposal-repository.js";
 export { ThreadRepository } from "./thread-repository.js";
 export { AgentRepository } from "./agent-repository.js";
 export { AuditRepository } from "./audit-repository.js";
-export { NotificationRepository } from "./notification-repository.js";
 
 export type { Mission, MissionStatus, IMissionStore, PlannedTask, PlannedTaskStatus } from "./mission.js";
 export { findNextUnissuedPlannedTask } from "./mission.js";
@@ -37,15 +36,6 @@ export type {
 } from "./pending-action.js";
 export { DEFAULT_RECEIPT_SLA_MS, DEFAULT_COMPLETION_SLA_MS } from "./pending-action.js";
 export { PendingActionRepository } from "./pending-action-repository.js";
-
-export type {
-  DirectorNotification,
-  NotificationSeverity,
-  NotificationSource,
-  IDirectorNotificationStore,
-  CreateNotificationOptions,
-} from "./director-notification.js";
-export { DirectorNotificationRepository } from "./director-notification-repository.js";
 
 // Mission-51 W1: Message sovereign primitive
 // Mission-51 W4: scheduledState lifecycle + retry interlock fields

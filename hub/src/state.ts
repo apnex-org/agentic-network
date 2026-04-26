@@ -845,23 +845,12 @@ export interface AuditEntry {
   relatedEntity: string | null; // e.g., "task-24", "prop-7", "thread-3"
 }
 
-// ── Notification Types ───────────────────────────────────────────────
-
-export interface Notification {
-  id: number | string;  // number (legacy) or ULID string (AMP v2)
-  event: string;
-  targetRoles: string[];
-  data: Record<string, unknown>;
-  timestamp: string;
-}
-
 // ── Interfaces ───────────────────────────────────────────────────────
 
-export interface INotificationStore {
-  persist(event: string, data: Record<string, unknown>, targetRoles: string[]): Promise<Notification>;
-  listSince(afterId: number | string, role?: string): Promise<Notification[]>;
-  cleanup(maxAgeMs: number): Promise<number>;
-}
+// Mission-56 W4.2 + W5: legacy `Notification` entity + `INotificationStore`
+// removed. Hub-event-bus → SSE injection now flows through the Message
+// store as `kind: "external-injection"` Messages (see
+// `hub/src/policy/notification-helpers.ts`).
 
 export interface IAuditStore {
   logEntry(actor: AuditEntry["actor"], action: string, details: string, relatedEntity?: string): Promise<AuditEntry>;
@@ -1185,10 +1174,11 @@ export function computeLivenessState(
   return "unresponsive";
 }
 
-// Mission-49 W9: MemoryNotificationStore deleted. NotificationRepository
-// in entities/notification-repository.ts composes any StorageProvider
-// (including MemoryStorageProvider for tests) via the INotificationStore
-// interface.
+// Mission-56 W5: `Notification` entity + `NotificationRepository` +
+// `INotificationStore` removed. Hub-event-bus → SSE injection flows
+// through the Message store via `emitLegacyNotification` (see
+// `hub/src/policy/notification-helpers.ts`). Legacy GCS namespace
+// `notifications/v2/` is frozen historical data.
 
 // Mission-47 W5: `MemoryTaskStore` + `MemoryProposalStore` deleted.
 // `TaskRepository` (entities/task-repository.ts) + `ProposalRepository`

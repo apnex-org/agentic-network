@@ -42,10 +42,22 @@ import type {
   IMessageStore,
   Message,
 } from "../entities/index.js";
-import type {
-  NotificationSeverity,
-  NotificationSource,
-} from "../entities/director-notification.js";
+
+/**
+ * Mission-56 W5: severity + source enums inlined here from the deleted
+ * `director-notification.ts` entity file. The legacy entity store was
+ * removed in W5 cleanup; these enums remain the canonical taxonomy for
+ * Director-targeted notification payloads (subkind discriminator inside
+ * `Message.payload.source`).
+ */
+export type NotificationSeverity = "info" | "warning" | "critical";
+
+export type NotificationSource =
+  | "queue_item_escalated"
+  | "agent_unresponsive"
+  | "agent_stuck"
+  | "cascade_failed"
+  | "manual";
 
 export interface DirectorNotificationEmitOptions {
   severity: NotificationSeverity;
