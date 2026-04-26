@@ -396,6 +396,40 @@ export interface IMessageStore {
   listMessages(query: MessageQuery): Promise<Message[]>;
 
   /**
+   * Mission-56 W1b: Hub-internal cursor-based replay query for the SSE
+   * Last-Event-ID protocol + cold-start stream-all path.
+   *
+   * Returns Messages with id > since (or all if `since` is undefined),
+   * filtered by target/status, ordered by id ASC (ULID time-monotonic),
+   * limited to `limit`.
+   *
+   * Hub-internal: NOT exposed via MCP tool surface (defers to idea-121
+   * public API redesign). Powers `hub-networking.ts` SSE GET handler's
+   * Hub-level wrapper around `StreamableHTTPServerTransport.handleRequest`.
+   *
+   * Soft-cap signaling: when `result.length === limit`, the caller
+   * (SSE wrapper) emits a synthetic `replay-truncated` event and
+   * returns; adapter reconnects with `lastStreamedId` as Last-Event-ID
+   * for the next batch.
+   *
+   * @param opts.since - ULID cursor; messages with id > since are
+   *                     returned. Undefined → cold-start (return from
+   *                     beginning of retention window).
+   * @param opts.targetRole - filter by target.role
+   * @param opts.targetAgentId - filter by target.agentId
+   * @param opts.status - filter by status (typically "new" for replay)
+   * @param opts.limit - soft-cap (e.g. 1000); caller signals truncation
+   *                     if length === limit
+   */
+  replayFromCursor(opts: {
+    since?: string;
+    targetRole?: MessageAuthorRole;
+    targetAgentId?: string;
+    status?: MessageStatus;
+    limit: number;
+  }): Promise<Message[]>;
+
+  /**
    * Flip a Message's status to `acked` (ADR-017 receipt-acked-equivalent
    * for messages). Idempotent: already-acked messages return unchanged.
    * Returns null if the Message doesn't exist.

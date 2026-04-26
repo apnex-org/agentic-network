@@ -318,6 +318,66 @@ export class MessageRepository implements IMessageStore {
     return out;
   }
 
+  /**
+   * Mission-56 W1b: Hub-internal cursor-based replay for SSE
+   * Last-Event-ID protocol + cold-start stream-all.
+   *
+   * Returns Messages with id > since (or all if !since), filtered by
+   * target/status, ordered by id ASC (ULID lex-sort = time-asc),
+   * limited to `limit`.
+   *
+   * Hub-internal: NOT exposed via MCP tool surface (idea-121 defers).
+   * Implementation: scan PRIMARY_NAMESPACE; ULID id-comparison filter;
+   * skip thread-index keys; apply target/status filters; cap at limit.
+   *
+   * Same scan-and-filter shape as `listFiltered`, with cursor short-
+   * circuit + soft-cap. Bounded by total Message count post-retention
+   * cleanup; fast enough at the typical message rates this layer
+   * handles per Design v1.2 §3.
+   */
+  async replayFromCursor(opts: {
+    since?: string;
+    targetRole?: import("./message.js").MessageAuthorRole;
+    targetAgentId?: string;
+    status?: import("./message.js").MessageStatus;
+    limit: number;
+  }): Promise<Message[]> {
+    const keys = await this.provider.list(PRIMARY_NAMESPACE);
+    const ordered = keys
+      .filter((k) => k.endsWith(".json"))
+      .filter((k) => !k.startsWith(THREAD_INDEX_NAMESPACE))
+      .sort(); // ULID lex-sort = time-asc; cursor filter walks in order
+
+    const out: Message[] = [];
+    for (const key of ordered) {
+      if (out.length >= opts.limit) break;
+
+      // Extract ID from "messages/<id>.json" path; cursor filter is
+      // string-comparison on ULIDs (lex-monotonic).
+      const idMatch = key.match(/messages\/([^/]+)\.json$/);
+      if (!idMatch) continue;
+      const id = idMatch[1];
+
+      if (opts.since !== undefined && id <= opts.since) continue;
+
+      const raw = await this.provider.get(key);
+      if (!raw) continue;
+      const m = decodeMessage(raw);
+
+      // Target + status filters.
+      if (opts.targetRole !== undefined) {
+        if (!m.target || m.target.role !== opts.targetRole) continue;
+      }
+      if (opts.targetAgentId !== undefined) {
+        if (!m.target || m.target.agentId !== opts.targetAgentId) continue;
+      }
+      if (opts.status !== undefined && m.status !== opts.status) continue;
+
+      out.push(m);
+    }
+    return out;
+  }
+
   async ackMessage(id: string): Promise<Message | null> {
     // Read-modify-write via putIfMatch. We don't expose the token to
     // callers; ack is idempotent — if the message is already acked,

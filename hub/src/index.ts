@@ -365,6 +365,11 @@ const hub = new HubNetworking(
   // for SSE-subscribe auto-claim hook to emit agent_session_implicit_claim
   // + agent_session_displaced audits.
   auditStore,
+  // Mission-56 W1b: Message store for SSE Last-Event-ID + cold-start
+  // replay paths. Hub-internal cursor query (replayFromCursor) emits
+  // backfill via sendLoggingMessage before transport.handleRequest
+  // takes over for live emit. Coexists with state-based-reconnect.
+  messageStore,
 );
 
 // ── Start Server ─────────────────────────────────────────────────────

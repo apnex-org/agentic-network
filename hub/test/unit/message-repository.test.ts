@@ -268,6 +268,144 @@ describe("MessageRepository.listMessages — multi-membership views", () => {
   });
 });
 
+// ── Mission-56 W1b — replayFromCursor tests ──────────────────────────
+
+describe("MessageRepository.replayFromCursor — Hub-internal cursor query", () => {
+  it("cold-start (no since): returns all matching ordered by id ASC", async () => {
+    const repo = newRepo();
+    const m1 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    const m2 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    const m3 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    const replay = await repo.replayFromCursor({
+      targetRole: "architect",
+      status: "new",
+      limit: 1000,
+    });
+    expect(replay).toHaveLength(3);
+    expect(replay.map((m) => m.id)).toEqual([m1.id, m2.id, m3.id]);
+  });
+
+  it("cursor (since): filters out IDs <= since (ULID lex-asc)", async () => {
+    const repo = newRepo();
+    const m1 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    const m2 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    const m3 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    const replay = await repo.replayFromCursor({
+      since: m1.id,
+      targetRole: "architect",
+      status: "new",
+      limit: 1000,
+    });
+    // m1 itself excluded (since strictly greater); m2 + m3 included.
+    expect(replay.map((m) => m.id)).toEqual([m2.id, m3.id]);
+  });
+
+  it("since matching most recent: returns empty (caller continues to live emit)", async () => {
+    const repo = newRepo();
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    const m2 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    const replay = await repo.replayFromCursor({
+      since: m2.id,
+      targetRole: "architect",
+      status: "new",
+      limit: 1000,
+    });
+    expect(replay).toEqual([]);
+  });
+
+  it("limit caps result size; caller signals replay-truncated when length === limit", async () => {
+    const repo = newRepo();
+    for (let i = 0; i < 5; i++) {
+      await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    }
+
+    const replay = await repo.replayFromCursor({
+      targetRole: "architect",
+      status: "new",
+      limit: 3,
+    });
+    expect(replay).toHaveLength(3);
+    // Caller reads .length === limit as soft-cap-hit signal.
+  });
+
+  it("targetRole filter: only returns Messages whose target.role matches", async () => {
+    const repo = newRepo();
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    await repo.createMessage({ ...baseInput, target: { role: "engineer" } });
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    const replay = await repo.replayFromCursor({
+      targetRole: "architect",
+      status: "new",
+      limit: 1000,
+    });
+    expect(replay).toHaveLength(2);
+    expect(replay.every((m) => m.target?.role === "architect")).toBe(true);
+  });
+
+  it("targetAgentId filter: pins to a specific agent (AND with role)", async () => {
+    const repo = newRepo();
+    await repo.createMessage({ ...baseInput, target: { role: "engineer", agentId: "eng-7" } });
+    await repo.createMessage({ ...baseInput, target: { role: "engineer", agentId: "eng-3" } });
+    await repo.createMessage({ ...baseInput, target: { role: "engineer", agentId: "eng-7" } });
+
+    const replay = await repo.replayFromCursor({
+      targetRole: "engineer",
+      targetAgentId: "eng-7",
+      status: "new",
+      limit: 1000,
+    });
+    expect(replay).toHaveLength(2);
+    expect(replay.every((m) => m.target?.agentId === "eng-7")).toBe(true);
+  });
+
+  it("status filter: excludes acked Messages from replay", async () => {
+    const repo = newRepo();
+    const m1 = await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+    await repo.ackMessage(m1.id);
+
+    const replay = await repo.replayFromCursor({
+      targetRole: "architect",
+      status: "new",
+      limit: 1000,
+    });
+    expect(replay).toHaveLength(1);
+    expect(replay[0].id).not.toBe(m1.id);
+  });
+
+  it("broadcast Messages (target=null) NOT replayed (only targeted Messages match)", async () => {
+    const repo = newRepo();
+    await repo.createMessage({ ...baseInput, target: null });
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    const replay = await repo.replayFromCursor({
+      targetRole: "architect",
+      status: "new",
+      limit: 1000,
+    });
+    // Only the targeted message; broadcast excluded by targetRole filter.
+    expect(replay).toHaveLength(1);
+    expect(replay[0].target?.role).toBe("architect");
+  });
+
+  it("forward-compat: cursor + cold-start composes (since=undefined coexists with status filter)", async () => {
+    const repo = newRepo();
+    await repo.createMessage({ ...baseInput, target: { role: "architect" } });
+
+    // No `since` AND with status filter → cold-start path with status.
+    const replay = await repo.replayFromCursor({
+      targetRole: "architect",
+      status: "new",
+      limit: 1000,
+    });
+    expect(replay).toHaveLength(1);
+  });
+});
+
 describe("MessageRepository.ackMessage — lifecycle flip", () => {
   it("flips status from new → acked, bumps updatedAt", async () => {
     const repo = newRepo();

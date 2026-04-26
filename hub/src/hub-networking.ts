@@ -17,6 +17,13 @@ import type { IEngineerRegistry, INotificationStore, Selector, IAuditStore } fro
 import { fireWebhook } from "./webhook.js";
 import type { Server } from "http";
 
+// Mission-56 W1b: soft-cap on SSE Last-Event-ID + cold-start replay.
+// Symmetric with the adapter-side seen-id LRU N=1000 per round-2
+// audit answer #4. On cap-hit, emit replay-truncated synthetic SSE
+// event + close the connection; adapter reconnects with the last
+// streamed Message.id as the next Last-Event-ID for the next batch.
+const REPLAY_SOFT_CAP = 1000;
+
 // ── Configuration ────────────────────────────────────────────────────
 
 export interface HubNetworkingConfig {
@@ -85,6 +92,11 @@ export class HubNetworking {
 
   // Timers
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+  // Mission-56 W1b: SSE Last-Event-ID + cold-start replay soft-cap
+  // (symmetric with seen-id LRU N=1000 per round-2 audit answer #4).
+  // On cap-hit, emit synthetic replay-truncated SSE event + signal
+  // adapter to reconnect with lastStreamedId as next Last-Event-ID.
   private reaperTimer: ReturnType<typeof setInterval> | null = null;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -109,6 +121,20 @@ export class HubNetworking {
      * the claim still happens; audit emission is best-effort).
      */
     private auditStore?: IAuditStore,
+    /**
+     * Mission-56 W1b: optional Message store for SSE Last-Event-ID
+     * replay + cold-start stream-all paths. When supplied, the SSE GET
+     * handler intercepts Last-Event-ID before delegating to
+     * StreamableHTTPServerTransport.handleRequest, emits replayed
+     * Messages via mcpServer.server.sendLoggingMessage with Message ID
+     * as the SSE event id, then continues with live emits.
+     *
+     * When omitted (test rigs without Message-store wiring), the
+     * SSE GET handler degrades to existing state-based-reconnect
+     * behavior — no replay, clients call get_pending_actions() +
+     * completeSync() per the legacy path.
+     */
+    private messageStore?: import("./entities/message.js").IMessageStore,
   ) {
     this.config = {
       port: config.port ?? 0,
@@ -463,6 +489,120 @@ export class HubNetworking {
 
   // ── Internal ───────────────────────────────────────────────────────
 
+  /**
+   * Mission-56 W1b: SSE Last-Event-ID + cold-start replay emit.
+   *
+   * Resolves subscriber identity → calls messageStore.replayFromCursor
+   * for backfill window → emits each Message via sendLoggingMessage
+   * with Message.id as the SSE event id (ULID-monotonic) → on soft-cap
+   * emits synthetic replay-truncated event + signals truncation.
+   *
+   * Returns true if soft-cap was hit (caller closes response so adapter
+   * reconnects with lastStreamedId as next Last-Event-ID).
+   * Returns false if all matching Messages drained within the cap;
+   * caller delegates to transport.handleRequest for live emits.
+   *
+   * Defensive: any thrown error is logged + treated as "no replay";
+   * caller continues to transport.handleRequest. The Message store
+   * being unavailable should never prevent SSE stream-up.
+   */
+  private async emitW1bReplay(
+    sessionId: string,
+    role: string,
+    lastEventId: string | undefined,
+  ): Promise<boolean> {
+    if (!this.messageStore) return false;
+    try {
+      // Subscriber identity: role + (optional) engineerId. The replay
+      // filter is target.role match; target.agentId match further
+      // narrows when supplied. State-based-reconnect adapters won't
+      // send Last-Event-ID; the cold-start path applies (since=undefined).
+      const agent = await this.engineerRegistry
+        .getAgentForSession(sessionId)
+        .catch(() => null);
+      const engineerId = agent?.engineerId;
+
+      // Filter: replay Messages whose target matches subscriber AND
+      // status === "new" (acked/received Messages have already been
+      // processed; no replay needed).
+      // For role-only filter we omit targetAgentId (matches any agent
+      // in that role); for fully-pinned target we use both. Broadcast
+      // (target=null) Messages won't match this filter — they're not
+      // replayed via Last-Event-ID since they have no specific target.
+      // Engineer-final on broadcast handling: deferring to W2 adapter
+      // dedup / W3 poll-backstop per Design v1.2.
+      const replay = await this.messageStore.replayFromCursor({
+        since: lastEventId,
+        targetRole: role as import("./entities/message.js").MessageAuthorRole,
+        targetAgentId: engineerId,
+        status: "new",
+        limit: REPLAY_SOFT_CAP,
+      });
+
+      if (replay.length === 0) return false;
+
+      const mcpServer = this.servers.get(sessionId);
+      if (!mcpServer) return false;
+
+      for (const msg of replay) {
+        try {
+          await mcpServer.server.sendLoggingMessage({
+            level: "info",
+            logger: "hub-event",
+            data: {
+              id: msg.id,
+              event: "message_arrived",
+              data: { message: msg },
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } catch (err) {
+          // Per-message emission failure is non-fatal; continue with
+          // remaining replay batch. Adapter sees gap; poll-backstop
+          // (W3) recovers.
+          this.log(
+            `[W1b-Replay] Per-message emit failed for ${msg.id} on session ${sessionId.substring(0, 8)}: ${(err as Error)?.message ?? err}`,
+          );
+        }
+      }
+
+      const truncated = replay.length === REPLAY_SOFT_CAP;
+      if (truncated) {
+        const lastStreamedId = replay[replay.length - 1].id;
+        try {
+          await mcpServer.server.sendLoggingMessage({
+            level: "info",
+            logger: "hub-event",
+            data: {
+              id: lastStreamedId,
+              event: "replay-truncated",
+              data: { lastStreamedId },
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } catch (err) {
+          this.log(
+            `[W1b-Replay] replay-truncated emit failed on session ${sessionId.substring(0, 8)}: ${(err as Error)?.message ?? err}`,
+          );
+        }
+        this.log(
+          `[W1b-Replay] Soft-cap hit (${REPLAY_SOFT_CAP}); session ${sessionId.substring(0, 8)} closing for adapter reconnect with lastStreamedId=${lastStreamedId}`,
+        );
+        return true;
+      }
+
+      this.log(
+        `[W1b-Replay] Replayed ${replay.length} Message(s) to ${role} session ${sessionId.substring(0, 8)}${lastEventId ? ` (since=${lastEventId})` : " (cold-start)"}`,
+      );
+      return false;
+    } catch (err) {
+      this.log(
+        `[W1b-Replay] Replay failed on session ${sessionId.substring(0, 8)} (non-fatal): ${(err as Error)?.message ?? err}`,
+      );
+      return false;
+    }
+  }
+
   private async notifyConnectedAgents(
     event: string,
     data: Record<string, unknown>,
@@ -738,6 +878,50 @@ export class HubNetworking {
       // State-Based Reconnect: No event replay. Clients call
       // get_pending_actions() + completeSync() after connecting.
       // See docs/network/07-agentic-messaging-protocol.md.
+      //
+      // Mission-56 W1b coexistence: when messageStore is wired AND the
+      // request carries a Last-Event-ID header, OR when no Last-Event-ID
+      // header is present (cold-start path), the wrapper below emits
+      // replayed Messages via sendLoggingMessage BEFORE delegating to
+      // transport.handleRequest. Both reconnect models coexist:
+      // adapters that send Last-Event-ID consume the new replay path;
+      // legacy adapters use the state-based path (no header → no
+      // replay if messageStore unwired).
+
+      // ── Mission-56 W1b: Last-Event-ID + cold-start replay wrapper ──
+      //
+      // Replay events MUST emit BEFORE transport.handleRequest takes
+      // over for live emit, otherwise live events could fire mid-replay
+      // creating duplicates/gaps (per Design v1.2 architectural
+      // commitment + thread-330 round-5 ratification).
+      //
+      // sendLoggingMessage works against in-progress sessions whose
+      // sseActive flag is true (line 683). The emit happens in the
+      // current async tick before the await on transport.handleRequest
+      // — so replay Messages land on the SSE stream first; transport
+      // then takes over for live emits.
+      //
+      // Soft-cap: emit at most REPLAY_SOFT_CAP Messages per replay; on
+      // cap-hit, emit synthetic replay-truncated event with
+      // lastStreamedId payload + return early (skip transport.handleRequest;
+      // adapter reconnects with that ID as the next Last-Event-ID).
+      if (this.messageStore !== undefined) {
+        const lastEventIdRaw = req.headers["last-event-id"];
+        const lastEventId =
+          typeof lastEventIdRaw === "string" ? lastEventIdRaw : undefined;
+        const truncated = await this.emitW1bReplay(
+          sessionId,
+          role,
+          lastEventId,
+        );
+        if (truncated) {
+          // Soft-cap reached; adapter reconnects with last-streamed-id.
+          // Do NOT delegate to transport.handleRequest for live emit on
+          // this connection — close the response so adapter reconnects.
+          try { res.end(); } catch { /* already closed */ }
+          return;
+        }
+      }
 
       const transport = this.transports.get(sessionId)!;
       await transport.handleRequest(req, res);
