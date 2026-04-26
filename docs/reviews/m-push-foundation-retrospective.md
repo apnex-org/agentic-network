@@ -18,7 +18,7 @@ This is the post-mission retrospective the pattern scheduled. It captures what t
 
 ### What the mission execution covered
 
-5 wave-clusters across 13 deliverables in 8 PRs:
+5 wave-clusters across 13 deliverables in 13 PRs:
 
 1. **W0** — spike report + read-path grep audit + structural decisions for W1–W4
 2. **W1a + W1b** — Hub-side push-on-Message-create + Last-Event-ID SSE protocol + cold-start replay
@@ -27,7 +27,7 @@ This is the post-mission retrospective the pattern scheduled. It captures what t
 5. **W4.1 + W4.2 + W4.3** — DirectorNotification sunset + Notification sunset + PendingActionItem **scope correction** (doc-only; Option C deferral to idea-207)
 6. **W5** — closing audit + ADR-026 + entity-store removal cleanup
 
-**Cumulative ship:** 8 PRs (#70–#82) merged 2026-04-26; ~3h 33min real-time end-to-end (mission-active 05:32Z → mission-completed 09:05Z); +19 net hub vitest cases + 45 adapter cases; new sovereign-package #6 + 2 new MCP verbs + 9 production call-sites migrated.
+**Cumulative ship:** 13 PRs (#70–#82) merged 2026-04-26; ~3h 33min real-time end-to-end (mission-active 05:32Z → mission-completed 09:05Z); +19 net hub vitest cases + 45 adapter cases; new sovereign-package #6 + 2 new MCP verbs + 9 production call-sites migrated.
 
 ### Predecessor context
 
@@ -41,7 +41,7 @@ The pre-mission retro was the *ratification* moment; this retro is the *first ca
 ### What's complete
 
 - **mission-56 status:** `completed` (flipped 2026-04-26 ~09:05Z post W5 PR merge)
-- **All 13 deliverables shipped:** 12 substantive + 1 closing wave; cleanly across 8 PRs (one PR per sub-deliverable + W5 closer)
+- **All 13 deliverables shipped:** 12 substantive + 1 closing wave; cleanly across 13 PRs (one PR per sub-deliverable + W5 closer)
 - **Engineer-authored closing audit:** `docs/audits/m-push-foundation-closing-audit.md` (W5 PR #82) — 8-section deliverable-scorecard + per-wave architecture recap + side findings; engineer-perspective
 - **ADR-026 ratified:** `docs/decisions/026-push-pipeline-and-message-router.md` (W5 PR #82) — Universal Adapter 3-layer Phase 1 push-pipeline architecture; companions ADR-024 (StorageProvider) + ADR-025 (Message primitive)
 - **Mechanise+declare retirements landed:** DirectorNotification entity, Notification entity, calibration #4 architect manual ping discipline (push pipeline structurally closes via W2.x adapter SSE handler)
@@ -428,25 +428,25 @@ These were earned by greg during mission-56 execution. Architect should referenc
 
 #### §4.3.1 Re-grep-at-start-of-each-sub-PR discipline (`feedback_w4_subpr_regrep`)
 
-**Source:** Engineer earned post-W4.1 (W0 §D1 grep undercount surfaced).
+**Source:** Engineer pre-existing; first canonical execution example post-W4.1 (W0 §D1 grep undercount surfaced; re-grep discipline applied + paid off).
 
-**Why earned:** Design-time grep estimates are necessarily approximate; sub-PR opening is the right moment to re-validate against current main.
+**Why earned (originally):** Design-time grep estimates are necessarily approximate; sub-PR opening is the right moment to re-validate against current main.
 
 **Architect-side relevance:** Future Designs that include "sunset / migrate / refactor entity X" should explicitly require re-grep + structural-difference analysis at each sub-PR open, not just at Design time. Add to mission-design template post-mission-lifecycle.md v1.0.
 
 #### §4.3.2 Proactive context-budget surface (`feedback_proactive_context_budget_surface`)
 
-**Source:** Engineer earned post-thread-332.
+**Source:** Engineer pre-existing (architect-flagged at thread-332 2026-04-26 pre-mission-56); first canonical execution example during mission-56 W4.3 scope-flex via thread-345.
 
-**Why earned:** Surface scope-flex with full ratified state at the start of substantive new work, not mid-implementation. Caught W4.3 scope-flex BEFORE any saga-rewrite damage.
+**Why earned (originally):** Surface scope-flex with full ratified state at the start of substantive new work, not mid-implementation. Caught W4.3 scope-flex BEFORE any saga-rewrite damage.
 
 **Architect-side relevance:** Future autonomous-arc-driving missions should expect engineer-side proactive surfaces; architect's role is to recognize them as legitimate (not "noise") and translate to Director-categorisation when warranted.
 
 #### §4.3.3 Defer-calibration (explicit thread flag rather than unilateral pause)
 
-**Source:** Engineer earned during W4.3 scope-flex.
+**Source:** Engineer pre-existing; first canonical execution example during mission-56 W4.3 scope-flex.
 
-**Why earned:** Explicit thread flag preserves coordination; unilateral pause strands the architect waiting + risks pattern violation (architect surface to Director "engineer is silent" rather than engineer surfacing the actual scope concern).
+**Why earned (originally):** Explicit thread flag preserves coordination; unilateral pause strands the architect waiting + risks pattern violation (architect surface to Director "engineer is silent" rather than engineer surfacing the actual scope concern).
 
 **Architect-side relevance:** Future mission Designs should explicitly anticipate scope-flex moments and document the thread-flag-not-pause discipline as expected behavior.
 
