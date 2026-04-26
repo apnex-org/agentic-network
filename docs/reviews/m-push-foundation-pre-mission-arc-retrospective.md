@@ -32,7 +32,7 @@ This is the retrospective the directive scheduled. It captures what happened in 
 The autonomous arc itself was the second half of a longer arc starting earlier in the day:
 
 - **mission-54 (M-Push-Foundational-Adapter-Recon)** — Director-disclosed foreign-engineer adapter cleanup work at `/home/apnex/taceng/codex/agentic-network`. greg performed spec-level recon; produced 8-section Recon Report at `docs/designs/m-push-foundational-adapter-recon.md` (PR #61 merged 2026-04-26 ~01:26Z); architect tele-evaluated. Closed ~01:33Z. **Surfaced 5 reusable patterns + 10 architect-tele-evaluation questions including the load-bearing 2-vs-3-layer (Q1), dispatcher naming role-overload (Q2), and adapter-layer-clean-FIRST sequencing (Q10).**
-- **Design v1.2 authoring** — architect-authored revision of v1.1 incorporating Q1/Q2/Q10 outcomes + Director-ratified Universal Adapter framing (`@ois/network-adapter` IS the Universal Adapter) + Layer-1 module sub-organization (wire/Kernel/mcp-boundary) + Universal Adapter notification contract spec deliverable + foreign-tree-deletion success criterion + future M-Adapter-Distribution flag (`@apnex/*` namespace). PR #62 merged ~02:05Z.
+- **Design v1.2 authoring** — architect-authored revision of v1.1 incorporating Q1/Q2/Q10 outcomes + Director-ratified Universal Adapter framing (`@ois/network-adapter` IS the Universal Adapter) + Layer-1 module sub-organization (wire/Kernel/tool-manager) + Universal Adapter notification contract spec deliverable + foreign-tree-deletion success criterion + future M-Adapter-Distribution flag (`@apnex/*` namespace). PR #62 merged ~02:05Z.
 
 ### What's at HOLD
 
@@ -92,7 +92,7 @@ Also the second canonical execution of the **autonomous-arc-driving pattern** (a
 - Foreign engineer (`/home/apnex/taceng/codex/agentic-network` HEAD `f29635d`) implemented a **2-layer hoist**, NOT 3-layer as architect's pre-look had assumed
 - ~835 lines duplicate-across-plugins → ~430 shared (~500 line dedup)
 - Wire/transport/session FSM untouched by foreign work — preserved from L4/L7 ADR-008 split
-- Foreign work is **MCP-boundary refactor**, not push-foundation work; pre-Message-primitive baseline (predates mission-51 W6 + mission-52)
+- Foreign work is **tool-manager refactor**, not push-foundation work; pre-Message-primitive baseline (predates mission-51 W6 + mission-52)
 
 **5 reusable patterns surfaced:**
 1. Code-dedup hoist (per-plugin → shared with hooks-pattern)
@@ -108,13 +108,13 @@ Also the second canonical execution of the **autonomous-arc-driving pattern** (a
 **Output:** `docs/designs/m-push-foundation-design.md` v1.2 (commit `cc90174`).
 
 **Architect tele-evaluation outcomes folded in:**
-- **Q1: 3-layer KEPT** — sovereign-package #6 boundary earned by separability of Message-routing from MCP-boundary handler-factory
+- **Q1: 3-layer KEPT** — sovereign-package #6 boundary earned by separability of Message-routing from tool-manager handler-factory
 - **Q2: Rename** — Design's "dispatcher" → "Message-router"; sovereign-package `@ois/message-dispatcher` → `@ois/message-router`
 - **Q10: (a) separate predecessor mission** — M-Pre-Push-Adapter-Cleanup scaffolds reusable patterns ahead of M-Push-Foundation
 
 **Director-ratified additions:**
 - Universal Adapter framing — `@ois/network-adapter` IS the Universal Adapter
-- Layer-1 module sub-organization — `src/wire/` (transport) + `src/session/` (Kernel) + `src/mcp-boundary/` (MCP request handlers)
+- Layer-1 module sub-organization — `src/wire/` (transport) + `src/session/` (Kernel) + `src/tool-manager/` (MCP request handlers)
 - Universal Adapter notification contract spec deliverable
 - Foreign-tree-deletion success criterion
 - Future M-Adapter-Distribution flag — `@apnex/*` namespace migration
@@ -124,7 +124,7 @@ Also the second canonical execution of the **autonomous-arc-driving pattern** (a
 **Output:** 10 deliverables across PR #63/#64/#65.
 
 **Concrete shipped:**
-- `packages/network-adapter/src/{wire,session,mcp-boundary}/` — Layer-1 sub-organization on main
+- `packages/network-adapter/src/{wire,session,tool-manager}/` — Layer-1 sub-organization on main
 - `notificationHooks` callback bag pattern — Universal Adapter notification contract surface
 - Lazy `createMcpServer()` factory + tool-catalog cache distillation + gate naming refinement
 - `docs/specs/universal-adapter-notification-contract.md` — generic shim-agnostic spec (commit `736e13d`)
@@ -292,7 +292,7 @@ Plus 5 design-walkthrough ratifications same window:
 | Kernel naming for `src/session/` | "I like term Kernel" — adopted as canonical name |
 | Cognition Substrate keep-separate vs consolidate | "Agree with 'Keep Separate'" — `@ois/cognitive-layer` stays peer sovereign-package |
 | Cognition Substrate cross-cutting framing | Architect-clarified: cross-cutting sovereign-package consumed by Layer 1 + (future) Layer 2 + Layer 3; no boundary/duty/interface change |
-| mcp-boundary vs Kernel — keep `mcp-boundary` name? | (in flight; awaiting Director response) |
+| tool-manager naming (was `mcp-boundary`) | Director ratified rename 2026-04-26: "Lets rename MCP-boundary to 'tool-manager' perhaps? Says what it does" — adopted; small standalone rename PR queued post-retrospective |
 | Mission workflow source-of-truth doc | Director-validated `mission-lifecycle.md` v0.1 already exists; converge + ratify v1.0 post-M-Push-Foundation |
 
 ---
@@ -312,7 +312,7 @@ Plus 5 design-walkthrough ratifications same window:
 │   1b. src/session/      — Kernel: register_role handshake; session-claim;   │
 │                           session FSM 5-state; agent identity;              │
 │                           instance lifecycle; SSE watchdog                  │
-│   1c. src/mcp-boundary/ — MCP protocol handler factory:                     │
+│   1c. src/tool-manager/ — MCP protocol handler factory:                     │
 │                           Initialize/ListTools/CallTool; pendingActionMap   │
 │                           for queueItemId injection; tool-catalog cache;    │
 │                           cache-fallback paths; error envelope              │
@@ -365,7 +365,7 @@ Plus 5 design-walkthrough ratifications same window:
 
 | # | Package | Concern | Layer |
 |---|---|---|---|
-| 1 | `@ois/network-adapter` | Layer 1 (wire + Kernel + mcp-boundary) | Layer 1 |
+| 1 | `@ois/network-adapter` | Layer 1 (wire + Kernel + tool-manager) | Layer 1 |
 | 2 | `@ois/cognitive-layer` | Cognition Substrate | Cross-cutting |
 | 3 | `@ois/storage-provider` | Storage primitive (Hub-side) | Hub-side |
 | 4 | `@ois/repo-event-bridge` | GH event source (Hub-side; mission-52) | Hub-side |
@@ -377,12 +377,12 @@ Plus 5 design-walkthrough ratifications same window:
 - "Network Adapter" / `@ois/network-adapter` = Layer 1 (Universal Adapter)
 - "Kernel" = Layer 1b sub-concern (`src/session/`); session FSM + agent identity + lifecycle
 - "Transport" = Layer 1a sub-concern (`src/wire/`); TCP/SSE wire FSM
-- "MCP-boundary" = Layer 1c sub-concern (`src/mcp-boundary/`); MCP protocol handler factory at the host-network-adapter edge
+- "tool-manager" = Layer 1c sub-concern (`src/tool-manager/`); MCP protocol handler factory at the host-network-adapter edge
 - "Message-Router" = Layer 2 (`@ois/message-router`); Message kind/subkind routing; sovereign-package #6
 - "Shim" = Layer 3 (per-host plugin); host-binding render-surface implementer
 - "Cognition Substrate" = `@ois/cognitive-layer`; cross-cutting; consumed by all layers
 
-Avoid bare "dispatcher" in new code — always qualify ("MCP-boundary dispatcher" for Layer 1c, "Message-router" for Layer 2).
+Avoid bare "dispatcher" in new code — always qualify ("tool-manager dispatcher" for Layer 1c, "Message-router" for Layer 2).
 
 ### Future-host extension
 
