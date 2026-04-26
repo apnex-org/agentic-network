@@ -384,6 +384,26 @@ async function ackMessage(
         isError: true,
       };
     }
+    // Mission-57 W2 Item-2 webhook composition: when a pulse Message
+    // (kind=external-injection + payload.pulseKind === "status_check")
+    // transitions to acked, invoke the registered PulseSweeper hook so
+    // it can reset missedCount + update lastResponseAt. Fire-and-forget;
+    // hook errors are non-fatal (logged + swallowed; ack itself succeeds).
+    if (
+      message.status === "acked" &&
+      typeof (message.payload as { pulseKind?: unknown })?.pulseKind === "string" &&
+      (message.payload as { pulseKind: string }).pulseKind === "status_check"
+    ) {
+      try {
+        await ctx.stores.pulseSweeper?.onPulseAcked(message);
+      } catch (err) {
+        console.warn(
+          `[message-policy] pulseSweeper.onPulseAcked failed for ${message.id} (non-fatal):`,
+          err,
+        );
+      }
+    }
+
     // Caller observes outcome via message.status:
     //   "acked"    → ack succeeded (or idempotent on already-acked)
     //   "received" → unexpected (CAS lost a race; caller can retry)

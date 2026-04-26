@@ -47,6 +47,7 @@ import { Watchdog } from "./policy/watchdog.js";
 import { MessageProjectionSweeper } from "./policy/message-projection-sweeper.js";
 import { ScheduledMessageSweeper } from "./policy/scheduled-message-sweeper.js";
 import { CascadeReplaySweeper } from "./policy/cascade-replay-sweeper.js";
+import { PulseSweeper } from "./policy/pulse-sweeper.js";
 import {
   RepoEventBridge,
   createPolicyRouterInvoker,
@@ -696,6 +697,37 @@ const cascadeReplaySweeper = new CascadeReplaySweeper(
   },
 );
 
+// Mission-57 W2: PulseSweeper — single-instance recurring sweeper that
+// drives declarative per-mission pulse coordination. 60s tick; iterates
+// active missions with `pulses.{engineerPulse, architectPulse}` config;
+// per-pulse evaluates fire-due / missed-threshold / precondition; emits
+// pulse Messages via the existing message-store; observes acks via the
+// `message-policy.ts:ackMessage` webhook hook (Item-2 composition).
+const pulseSweeper = new PulseSweeper(
+  missionStore,
+  messageStore,
+  {
+    forSweeper: () => ({
+      stores: allStores,
+      metrics: createMetricsCounter(),
+      emit: async () => {},
+      dispatch: async () => {},
+      sessionId: "pulse-sweeper",
+      clientIp: "127.0.0.1",
+      role: "system",
+      internalEvents: [],
+      config: {
+        storageBackend: STORAGE_BACKEND,
+        gcsBucket: GCS_BUCKET ?? "",
+      },
+    } as unknown as import("./policy/types.js").IPolicyContext),
+  },
+  {
+    intervalMs: parseInt(process.env.OIS_PULSE_SWEEPER_INTERVAL_MS ?? "60000", 10),
+  },
+);
+allStores.pulseSweeper = pulseSweeper;
+
 // Mission-52 T3: repo-event-bridge composition. Conditional on
 // OIS_GH_API_TOKEN — absent → bridge skipped, Hub starts cleanly.
 // PAT scope/auth failures are caught inside RepoEventBridge.start()
@@ -778,6 +810,9 @@ startupSequence().then(async () => {
     console.warn("[Hub] Startup scheduled-message sweep failed; sweeper still starts:", err);
   }
   scheduledMessageSweeper.start();
+  // Mission-57 W2: PulseSweeper — drives declarative per-mission pulse
+  // coordination. 60s tick (configurable via OIS_PULSE_SWEEPER_INTERVAL_MS).
+  pulseSweeper.start();
   // Mission-51 W5: cascade-replay sweeper. Hub-startup full-sweep
   // catches threads orphaned mid-cascade by previous Hub instance
   // dying. Idempotent on already-completed actions (cascade-key
@@ -810,6 +845,7 @@ startupSequence().then(async () => {
   startContinuationSweep();
   messageProjectionSweeper.start();
   scheduledMessageSweeper.start();
+  pulseSweeper.start();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT} (with startup warning)`);
 });
 
@@ -821,6 +857,7 @@ process.on("SIGINT", async () => {
   stopContinuationSweep();
   messageProjectionSweeper.stop();
   scheduledMessageSweeper.stop();
+  pulseSweeper.stop();
   // Mission-52 T3: stop the bridge before the Hub network so any
   // in-flight create_message dispatches land cleanly.
   if (repoEventBridge) {
