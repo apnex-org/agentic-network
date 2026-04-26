@@ -1,6 +1,11 @@
 # Mission Lifecycle — formal lifecycle methodology
 
-**Status:** v1.1 (Director-ratified 2026-04-26 post mission-57 retrospective close + housekeeping discussion). v1.1 adds RACI matrix + per-phase detail enrichment + sub-execution overview + 3-mode retrospective taxonomy reference + entity-mechanics.md companion doc cross-links.
+**Status:** v1.2 (Director-ratified 2026-04-26 post mission-58 W1+W2 dispatch + cadence-recalibration discussion). v1.2 recalibrates §4.1 per-class default cadences anchored in empirical 10-15min active-arc baseline (was concept-memo aspirational 30-60min). v1.1 added RACI matrix + per-phase detail enrichment + sub-execution overview + 3-mode retrospective taxonomy reference + entity-mechanics.md companion doc cross-links.
+
+**v1.1 → v1.2 delta** (2026-04-26 post mission-58 dispatch + Director cadence-recalibration):
+| Section | Change |
+|---|---|
+| §4.1 Per-class default cadence | RECALIBRATED — defaults anchored in empirical 10-15min active-arc baseline (was concept-memo aspirational 30-60min). Per Director observation: pulse primitive replaces manual 10-15min loops from mission-56/57 active arcs. New defaults: most classes converge on 15min engineer / 30min architect; spike 10/20; distribution-packaging 30/60 (async work) |
 
 **v1.0 → v1.1 delta:**
 | Section | Change |
@@ -157,17 +162,19 @@ Per ADR-027; mission entity gains `pulses.{engineerPulse, architectPulse}` decla
 
 **Conventions, NOT Hub primitives** (per Survey Q3+Q4+Q6 anti-goal). Mission entity always-canonical for runtime config; missions opt-in by declaring `pulses.*`.
 
+**v1.2 recalibration note:** defaults below are anchored in empirical 10-15min active-arc baseline (mission-56/57 PRs shipped ~10-15min apart consistently; `feedback_wakeup_cadence_15min_max.md` 15min cap already primary default). Pulse primitive replaces manual 10-15min loops; cadence reflects the loop-replacement reality, not aspirational watchdog cadences.
+
 | missionClass | engineerPulse default | architectPulse default | Notes |
 |---|---|---|---|
 | **(unset / legacy)** | **NO PULSE** | **NO PULSE** | Backward-compat: legacy missions without `missionClass` declaration get no auto-pulses; explicit opt-in via `pulses.*` declaration only |
-| `spike` | 30min | 60min | Short missions; firstFireDelay protects against low-utility fires |
-| `substrate-introduction` | 30min | 60min | Standard cadence; substrate work has natural sub-PR rhythm |
-| `pre-substrate-cleanup` | 30min | 60min | Standard cadence |
-| `structural-inflection` | 60min | 60min | Longer pulses; high cognitive load per sub-PR; reduce noise (mission-56 evidence: ~10-15min sub-PRs → 60min pulse fires every ~5 PRs) |
-| `coordination-primitive-shipment` | 30min | 60min | Standard cadence (mission-57's class) |
-| `saga-substrate-completion` | 30min | 60min | Standard cadence |
-| `substrate-cleanup-wave` | 60min | 120min | Less interactive; longer cadence acceptable |
-| `distribution-packaging` | 60min | 120min | Async work; longer cadence |
+| `spike` | 10min | 20min | Short missions; quick check-ins; firstFireDelay still protects against low-utility fires |
+| `substrate-introduction` | 15min | 30min | Standard active-arc cadence; substrate work has natural sub-PR rhythm |
+| `pre-substrate-cleanup` | 15min | 30min | Standard active-arc cadence |
+| `structural-inflection` | 15min | 30min | Standard active-arc cadence (mission-56 evidence: ~10-15min sub-PRs → engineer pulse fires every ~1 PR; high cognitive load handled via responseShape design, not longer cadence) |
+| `coordination-primitive-shipment` | 15min | 30min | Standard active-arc cadence (mission-57's class) |
+| `saga-substrate-completion` | 15min | 30min | Standard active-arc cadence |
+| `substrate-cleanup-wave` | 15min | 30min | Standard active-arc cadence (mission-58's class; smaller missions still benefit from tight cadence) |
+| `distribution-packaging` | 30min | 60min | Async work; longer cadence acceptable (only class with >15min engineer default; reflects async-coord nature) |
 
 **Default `missedThreshold`**: 3 across all classes (matches W3.2 ADR-017 receipt-deadline-missed-3x precedent).
 
