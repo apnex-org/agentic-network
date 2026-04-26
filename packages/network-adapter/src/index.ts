@@ -66,6 +66,14 @@ export { performStateSync } from "./kernel/state-sync.js";
 export type { StateSyncContext, DrainedPendingAction } from "./kernel/state-sync.js";
 
 export {
+  PollBackstop,
+  defaultCursorFile,
+  readCursor,
+  writeCursor,
+} from "./kernel/poll-backstop.js";
+export type { PollBackstopOptions } from "./kernel/poll-backstop.js";
+
+export {
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,

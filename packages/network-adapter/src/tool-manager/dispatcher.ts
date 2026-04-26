@@ -33,6 +33,7 @@ import type {
   SessionReconnectReason,
 } from "../kernel/agent-client.js";
 import type { McpAgentClient } from "../kernel/mcp-agent-client.js";
+import { PollBackstop, type PollBackstopOptions } from "../kernel/poll-backstop.js";
 import type { DrainedPendingAction } from "../kernel/state-sync.js";
 import type { CachedCatalog } from "./tool-catalog-cache.js";
 
@@ -140,6 +141,20 @@ export interface SharedDispatcherOptions {
    * render-surface bindings here.
    */
   notificationHooks?: DispatcherNotificationHooks;
+
+  /**
+   * Mission-56 W3.3: opt-in adapter-side hybrid poll backstop. When
+   * supplied, the dispatcher constructs a PollBackstop (Design v1.2
+   * commitment #5) that periodically calls `list_messages` with a
+   * `since` cursor + `status: "new"` filter and surfaces each delta
+   * Message via the same MessageRouter as the SSE inline path
+   * (preserving seen-id LRU dedup across both paths).
+   *
+   * Pass `{ role: "engineer" | "architect" }` minimum; cadence
+   * defaults to 5min (`OIS_ADAPTER_POLL_BACKSTOP_S` env override).
+   * Omit to disable polling (push-only mode).
+   */
+  pollBackstop?: Omit<PollBackstopOptions, "onPolledMessage">;
 }
 
 export interface SharedDispatcher {
@@ -167,6 +182,28 @@ export interface SharedDispatcher {
   makePendingActionItemHandler: (
     hooks?: DispatcherNotificationHooks,
   ) => (item: DrainedPendingAction) => void;
+
+  /**
+   * Mission-56 W3.3: PollBackstop instance, present iff `opts.pollBackstop`
+   * was supplied. Hosts MAY call `pollBackstop.start(getAgent)` at the
+   * appropriate lifecycle moment (typically post-handshake, when the
+   * agent reaches `streaming`). Hosts MUST call `pollBackstop.stop()`
+   * on shutdown to clear the timer. Omitted (`undefined`) when polling
+   * is disabled (push-only mode).
+   */
+  pollBackstop?: PollBackstop;
+
+  /**
+   * Mission-56 W3.3: explicit-ack-on-action surface. Host shims call
+   * this when the consumer (LLM) has acted on or actively-deferred a
+   * Message that was previously claimed (per Option (i) ratified at
+   * thread-325 round-2). Idempotent: re-acks on already-acked Messages
+   * are no-ops. Errors swallowed (logged, non-fatal) — a missed ack
+   * leaves the Message at status `received`, which the next poll-tick
+   * naturally excludes from `status: "new"` so the consumer doesn't
+   * re-render it.
+   */
+  ackMessage: (messageId: string) => Promise<void>;
 }
 
 /** Compose the pendingActionMap key. Pure helper; exported for tests. */
@@ -249,13 +286,47 @@ export function createSharedDispatcher(
     seenIdCache,
   });
 
+  // Mission-56 W3.3: post-render claim. Extracts the Message ID from
+  // `message_arrived` events (W1a SSE shape: event.data.message.id)
+  // and fires `claim_message(id)` against the Hub via the agent. Per
+  // architect-issued W3 directive: claim happens AFTER the host hook
+  // renders (the ordering matches "shim calls after successful render
+  // to host" from Design v1.2 commitment #6). Errors are swallowed +
+  // logged — claim failure is non-fatal (the SSE path still rendered;
+  // the next poll-tick will pick up any unclaimed Message in the
+  // status === "new" set if needed).
+  //
+  // Multi-agent same-role: the Hub-side CAS enforces winner-takes-all
+  // (mission-56 W3.2). The wonClaim signal is informational; even if
+  // we lost, the host has already rendered (claim is post-render), so
+  // the loser still sees the Message — but only the winner's claim
+  // flips status to `received`, gating subsequent ack to a single
+  // canonical actor.
+  function fireClaimMessage(event: AgentEvent): void {
+    if (event.event !== "message_arrived") return;
+    const data = event.data as Record<string, unknown> | undefined;
+    const message = data?.message as { id?: string } | undefined;
+    const messageId = message?.id;
+    if (typeof messageId !== "string") return;
+
+    const agent = opts.getAgent();
+    if (!agent || agent.state !== "streaming") return;
+
+    void agent
+      .call("claim_message", { id: messageId })
+      .catch((err: unknown) => {
+        log(
+          `[claim_message] non-fatal failure for ${messageId}: ${(err as Error)?.message ?? String(err)}`,
+        );
+      });
+  }
+
   const callbacks: AgentClientCallbacks = {
     onActionableEvent: (event) => {
       captureQueueItemFromEvent(event);
       router.route({ kind: "notification.actionable", event });
-      // TODO(mission-56-W3): post-render `claimMessage(event.id)` for
-      // event.event === "message_arrived" — flips Message new→received
-      // in the two-step claim/ack semantics. Stubbed in W2.2.
+      // Mission-56 W3.3: post-render claim (replaces W2.2 stub-claim TODO).
+      fireClaimMessage(event);
     },
     onInformationalEvent: (event) => {
       router.route({ kind: "notification.informational", event });
@@ -265,6 +336,40 @@ export function createSharedDispatcher(
       router.route({ kind: "state.change", state, previous, reason });
     },
   };
+
+  // Mission-56 W3.3: PollBackstop construction (opt-in via opts.pollBackstop).
+  // The backstop fires `list_messages({status:"new", since:<lastSeen>})`
+  // periodically and routes each delta Message through the same
+  // MessageRouter as the SSE inline path so seen-id LRU dedup catches
+  // push+poll race overlap. Polled Messages also fire claim_message
+  // (the router invocation goes through onActionableEvent which
+  // already includes fireClaimMessage).
+  const pollBackstop = opts.pollBackstop
+    ? new PollBackstop({
+        ...opts.pollBackstop,
+        log: opts.pollBackstop.log ?? log,
+        onPolledMessage: (event) => {
+          router.route({ kind: "notification.actionable", event });
+          fireClaimMessage(event);
+        },
+      })
+    : undefined;
+
+  // Mission-56 W3.3: explicit-ack-on-action helper. Host shims wire
+  // this to fire when the LLM consumer has acted on (or actively
+  // deferred) a Message — per Option (i) ratified at thread-325 round-2,
+  // ack is tied to consumer-action, not auto-on-render.
+  async function ackMessage(messageId: string): Promise<void> {
+    const agent = opts.getAgent();
+    if (!agent || agent.state !== "streaming") return;
+    try {
+      await agent.call("ack_message", { id: messageId });
+    } catch (err) {
+      log(
+        `[ack_message] non-fatal failure for ${messageId}: ${(err as Error)?.message ?? String(err)}`,
+      );
+    }
+  }
 
   const makePendingActionItemHandler =
     (hooks?: DispatcherNotificationHooks) => {
@@ -432,5 +537,7 @@ export function createSharedDispatcher(
     callbacks,
     getClientInfo,
     makePendingActionItemHandler,
+    pollBackstop,
+    ackMessage,
   };
 }

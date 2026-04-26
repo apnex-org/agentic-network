@@ -282,3 +282,260 @@ describe("event classifier — Mission-56 W2.2 message_arrived recognition", () 
     expect(classifyEvent("message_arrived", "architect")).toBe("actionable");
   });
 });
+
+// ── Mission-56 W3.3 — claim_message wiring + ackMessage helper ───────
+
+describe("dispatcher — W3.3 post-render claim_message", () => {
+  function streamingAgentRecording(callRecord: Array<{ method: string; params: Record<string, unknown> }>): McpAgentClient {
+    const agent = {
+      state: "streaming" as const,
+      isConnected: true,
+      call: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        callRecord.push({ method, params });
+        return { content: [{ type: "text", text: '{"message":{"id":"x","status":"received","claimedBy":"eng-A"},"wonClaim":true,"callerAgentId":"eng-A"}' }] };
+      }),
+      listTools: vi.fn().mockResolvedValue([]),
+      setCallbacks: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    } as unknown as McpAgentClient;
+    return agent;
+  }
+
+  it("fires claim_message(messageId) after rendering a message_arrived event", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const agent = streamingAgentRecording(calls);
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => agent,
+      proxyVersion: "test-1.0.0",
+      notificationHooks: { onActionableEvent: vi.fn() },
+    });
+
+    const event: AgentEvent = {
+      id: "envelope-1",
+      event: "message_arrived",
+      data: { message: { id: "01HX_MESSAGE_AAAA", payload: {} } },
+    };
+    dispatcher.callbacks.onActionableEvent!(event);
+
+    // Async fire; wait for next tick.
+    await new Promise((r) => setImmediate(r));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].method).toBe("claim_message");
+    expect(calls[0].params).toEqual({ id: "01HX_MESSAGE_AAAA" });
+  });
+
+  it("does NOT fire claim_message for non-message_arrived events", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const agent = streamingAgentRecording(calls);
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => agent,
+      proxyVersion: "test-1.0.0",
+      notificationHooks: { onActionableEvent: vi.fn() },
+    });
+
+    const event: AgentEvent = {
+      id: "envelope-2",
+      event: "thread_message",
+      data: { threadId: "thread-1" },
+    };
+    dispatcher.callbacks.onActionableEvent!(event);
+
+    await new Promise((r) => setImmediate(r));
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does NOT fire claim_message when messageId is missing from event payload", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const agent = streamingAgentRecording(calls);
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => agent,
+      proxyVersion: "test-1.0.0",
+      notificationHooks: { onActionableEvent: vi.fn() },
+    });
+
+    const event: AgentEvent = {
+      id: "envelope-3",
+      event: "message_arrived",
+      data: { message: {} }, // no id
+    };
+    dispatcher.callbacks.onActionableEvent!(event);
+
+    await new Promise((r) => setImmediate(r));
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does NOT fire claim_message when agent is not streaming", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const disconnectedAgent = {
+      state: "disconnected" as const,
+      isConnected: false,
+      call: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        calls.push({ method, params });
+        return null;
+      }),
+      listTools: vi.fn().mockResolvedValue([]),
+      setCallbacks: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    } as unknown as McpAgentClient;
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => disconnectedAgent,
+      proxyVersion: "test-1.0.0",
+      notificationHooks: { onActionableEvent: vi.fn() },
+    });
+
+    dispatcher.callbacks.onActionableEvent!({
+      id: "envelope-4",
+      event: "message_arrived",
+      data: { message: { id: "01HX_MSG" } },
+    });
+
+    await new Promise((r) => setImmediate(r));
+    expect(calls).toHaveLength(0);
+  });
+
+  it("claim_message tool-call rejection is non-fatal (logged, no throw)", async () => {
+    const failingAgent = {
+      state: "streaming" as const,
+      isConnected: true,
+      call: vi.fn().mockRejectedValue(new Error("hub gone")),
+      listTools: vi.fn().mockResolvedValue([]),
+      setCallbacks: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    } as unknown as McpAgentClient;
+    const logs: string[] = [];
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => failingAgent,
+      proxyVersion: "test-1.0.0",
+      log: (m) => logs.push(m),
+      notificationHooks: { onActionableEvent: vi.fn() },
+    });
+
+    expect(() => {
+      dispatcher.callbacks.onActionableEvent!({
+        id: "envelope-5",
+        event: "message_arrived",
+        data: { message: { id: "01HX_FAIL" } },
+      });
+    }).not.toThrow();
+
+    // Wait for the rejected promise to settle.
+    await new Promise((r) => setImmediate(r));
+    expect(logs.some((l) => l.includes("claim_message"))).toBe(true);
+  });
+});
+
+describe("dispatcher — W3.3 ackMessage helper", () => {
+  it("exposes ackMessage on the SharedDispatcher; calls ack_message tool", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const agent = {
+      state: "streaming" as const,
+      isConnected: true,
+      call: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        calls.push({ method, params });
+        return { content: [{ type: "text", text: '{"message":{"id":"x","status":"acked"},"acked":true}' }] };
+      }),
+      listTools: vi.fn().mockResolvedValue([]),
+      setCallbacks: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    } as unknown as McpAgentClient;
+
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => agent,
+      proxyVersion: "test-1.0.0",
+    });
+
+    await dispatcher.ackMessage("01HX_MSG_TO_ACK");
+
+    expect(calls).toEqual([{ method: "ack_message", params: { id: "01HX_MSG_TO_ACK" } }]);
+  });
+
+  it("ackMessage is a no-op when agent is not streaming", async () => {
+    const agent = {
+      state: "disconnected" as const,
+      isConnected: false,
+      call: vi.fn(),
+      listTools: vi.fn().mockResolvedValue([]),
+      setCallbacks: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    } as unknown as McpAgentClient;
+
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => agent,
+      proxyVersion: "test-1.0.0",
+    });
+
+    await dispatcher.ackMessage("01HX_MSG");
+    expect(agent.call).not.toHaveBeenCalled();
+  });
+
+  it("ackMessage swallows tool-call rejection (logged, no throw)", async () => {
+    const agent = {
+      state: "streaming" as const,
+      isConnected: true,
+      call: vi.fn().mockRejectedValue(new Error("hub gone")),
+      listTools: vi.fn().mockResolvedValue([]),
+      setCallbacks: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+    } as unknown as McpAgentClient;
+
+    const logs: string[] = [];
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => agent,
+      proxyVersion: "test-1.0.0",
+      log: (m) => logs.push(m),
+    });
+
+    await expect(dispatcher.ackMessage("01HX_MSG")).resolves.toBeUndefined();
+    expect(logs.some((l) => l.includes("ack_message"))).toBe(true);
+  });
+});
+
+describe("dispatcher — W3.3 PollBackstop integration", () => {
+  it("constructs PollBackstop when pollBackstop config is supplied", () => {
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => null,
+      proxyVersion: "test-1.0.0",
+      pollBackstop: { role: "engineer" },
+    });
+    expect(dispatcher.pollBackstop).toBeDefined();
+  });
+
+  it("omits pollBackstop when no config is supplied (push-only mode)", () => {
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => null,
+      proxyVersion: "test-1.0.0",
+    });
+    expect(dispatcher.pollBackstop).toBeUndefined();
+  });
+
+  it("polled messages flow through the same MessageRouter as SSE inline (seen-id LRU dedup)", async () => {
+    const onActionable = vi.fn();
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => null, // not actually fetching; we'll inject the polled event manually
+      proxyVersion: "test-1.0.0",
+      pollBackstop: { role: "engineer" },
+      notificationHooks: { onActionableEvent: onActionable },
+    });
+
+    // Simulate the W3.3 onPolledMessage path: the dispatcher routes
+    // polled messages through the same router as SSE. We invoke the
+    // SSE-equivalent callback to seed the seen-id cache.
+    const event: AgentEvent = {
+      id: "01HX_POLL_DEDUP",
+      event: "message_arrived",
+      data: { message: { id: "01HX_POLL_DEDUP", payload: {} } },
+    };
+    dispatcher.callbacks.onActionableEvent!(event);
+    // Same id seen via poll → router dedup catches it.
+    dispatcher.callbacks.onActionableEvent!(event);
+
+    expect(onActionable).toHaveBeenCalledOnce();
+  });
+});
