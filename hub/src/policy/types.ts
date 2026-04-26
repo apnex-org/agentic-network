@@ -38,6 +38,13 @@ export interface AllStores {
   pendingAction: IPendingActionStore;
   /** Mission-51 W1: universal Message primitive store. */
   message: IMessageStore;
+  /**
+   * Mission-57 W2: PulseSweeper instance (optional; not all test rigs
+   * wire it). When present, `message-policy.ts:ackMessage` invokes
+   * `onPulseAcked` post-status-flip when payload.pulseKind === "status_check"
+   * (Item-2 webhook composition per Design v1.0 §4).
+   */
+  pulseSweeper?: import("./pulse-sweeper.js").PulseSweeper;
 }
 
 // ── Policy Context (the Layer 4 ↔ Layer 7 seam) ─────────────────────
