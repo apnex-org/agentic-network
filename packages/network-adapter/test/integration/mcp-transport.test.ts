@@ -30,8 +30,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { TestHub } from "../helpers/test-hub.js";
 import { LogCapture, waitFor, wait } from "../helpers/test-utils.js";
-import { McpTransport } from "../../src/mcp-transport.js";
-import type { WireEvent } from "../../src/transport.js";
+import { McpTransport } from "../../src/wire/mcp-transport.js";
+import type { WireEvent } from "../../src/wire/transport.js";
 
 function createTransport(hub: TestHub, log: LogCapture): McpTransport {
   return new McpTransport({

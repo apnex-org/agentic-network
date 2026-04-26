@@ -44,7 +44,8 @@ import {
 } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../packages/network-adapter/test/helpers/policy-loopback.js";
-import { createDispatcher, pendingKey } from "../src/dispatcher.js";
+import { createSharedDispatcher, pendingKey } from "@ois/network-adapter";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now();
@@ -64,7 +65,8 @@ interface EngineerHarness {
   agent: McpAgentClient;
   transport: LoopbackTransport;
   engineerId: string;
-  dispatcher: ReturnType<typeof createDispatcher>;
+  dispatcher: ReturnType<typeof createSharedDispatcher>;
+  dispatcherServer: Server;
   mcpClient: Client;
 }
 
@@ -107,7 +109,7 @@ async function createEngineerWithShim(
   // Build dispatcher lazily — agent needs it for handshake.getClientInfo
   // and onPendingActionItem, but dispatcher needs agent. Mirrors the
   // production shim's forward-reference wiring.
-  let dispatcherRef: ReturnType<typeof createDispatcher> | null = null;
+  let dispatcherRef: ReturnType<typeof createSharedDispatcher> | null = null;
 
   const agent = new McpAgentClient(
     {
@@ -133,8 +135,8 @@ async function createEngineerWithShim(
     { transport, cognitive: opts.cognitive },
   );
 
-  const dispatcher = createDispatcher({
-    agent,
+  const dispatcher = createSharedDispatcher({
+    getAgent: () => agent,
     proxyVersion: "e2e-1.0.0",
   });
   dispatcherRef = dispatcher;
@@ -148,16 +150,17 @@ async function createEngineerWithShim(
   if (!engineerId) throw new Error("engineer Agent was not created");
 
   // Wire MCP InMemoryTransport pair — the test-driven MCP client
-  // stands in for Claude Code; dispatcher.server is the real proxy.
+  // stands in for Claude Code; the dispatcher's MCP Server is the real proxy.
   const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
-  await dispatcher.server.connect(serverTx);
+  const dispatcherServer = dispatcher.createMcpServer();
+  await dispatcherServer.connect(serverTx);
   const mcpClient = new Client(
     { name: "mock-claude-code", version: "1.0.0" },
     { capabilities: {} },
   );
   await mcpClient.connect(clientTx);
 
-  return { agent, transport, engineerId, dispatcher, mcpClient };
+  return { agent, transport, engineerId, dispatcher, dispatcherServer, mcpClient };
 }
 
 describe("claude-plugin shim — full-loopback E2E", () => {

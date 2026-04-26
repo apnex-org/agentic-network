@@ -41,8 +41,8 @@
  * `IClientShim` consumers onto `IAgentClient` to make this explicit.
  */
 
-import type { ILogger, LegacyStringLogger } from "./logger.js";
-import type { ITransport } from "./transport.js";
+import type { ILogger, LegacyStringLogger } from "../logger.js";
+import type { ITransport } from "../wire/transport.js";
 import type { HandshakeFatalError, HandshakeResponse } from "./handshake.js";
 import type { DrainedPendingAction } from "./state-sync.js";
 

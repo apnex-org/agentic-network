@@ -47,18 +47,18 @@ import type {
   TransportConfig,
   WireEvent,
   WireReconnectCause,
-} from "./transport.js";
-import type { ILogger } from "./logger.js";
+} from "../wire/transport.js";
+import type { ILogger } from "../logger.js";
 
-import { McpTransport } from "./mcp-transport.js";
-import { normalizeToILogger } from "./logger.js";
+import { McpTransport } from "../wire/mcp-transport.js";
+import { normalizeToILogger } from "../logger.js";
 import {
   parseHubEvent,
   classifyEvent,
   createDedupFilter,
 } from "./event-router.js";
 import { performHandshake } from "./handshake.js";
-import { HubReturnedError, isErrorEnvelope } from "./hub-error.js";
+import { HubReturnedError, isErrorEnvelope } from "../hub-error.js";
 import type {
   CognitivePipeline,
   ToolCallContext,

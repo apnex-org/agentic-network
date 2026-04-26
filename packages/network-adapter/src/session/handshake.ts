@@ -17,8 +17,8 @@
  */
 
 import { hostname, platform as osPlatform } from "node:os";
-import type { ILogger, LegacyStringLogger } from "./logger.js";
-import { normalizeToILogger } from "./logger.js";
+import type { ILogger, LegacyStringLogger } from "../logger.js";
+import { normalizeToILogger } from "../logger.js";
 
 export const FATAL_CODES: ReadonlySet<string> = new Set([
   "agent_thrashing_detected",

@@ -1,9 +1,9 @@
 /**
- * Dispatcher unit tests — host-independent.
+ * Shared dispatcher unit tests — host-independent.
  *
- * Covers the core claude-plugin shim behaviors that previously had
- * ZERO test coverage. Each test exercises real dispatcher code with a
- * minimal stub McpAgentClient; no stdio, no Hub, no MCP wire.
+ * Exercises the @ois/network-adapter MCP-boundary dispatcher (Layer 1c
+ * per Design v1.2) with a minimal stub McpAgentClient; no stdio, no
+ * Hub, no MCP wire.
  *
  * Key invariants pinned here:
  *   - ADR-017 Phase 1.1: SSE thread_message with inline queueItemId
@@ -11,38 +11,47 @@
  *   - sourceQueueItemId injection on create_thread_reply uses the map.
  *   - Explicit sourceQueueItemId wins over the map (no silent override).
  *   - InitializeRequest captures clientInfo for the handshake.
- *   - Drain-path handler (makePendingActionItemHandler) populates map
- *     symmetrically with the SSE-path handler.
+ *   - Drain-path handler (dispatcher.makePendingActionItemHandler())
+ *     populates map symmetrically with the SSE-path handler.
+ *   - listToolsGate / callToolGate decouple slow-sync from fast-handshake.
+ *   - Initialize is NOT gated (host MCP timeouts are tighter than handshake).
  */
 
 import { describe, it, expect, vi } from "vitest";
-import type { McpAgentClient } from "@ois/network-adapter";
 import {
-  createDispatcher,
+  createSharedDispatcher,
   injectQueueItemId,
-  makePendingActionItemHandler,
   pendingKey,
-} from "../src/dispatcher.js";
+  type McpAgentClient,
+} from "@ois/network-adapter";
 
 // ── Fake agent ──────────────────────────────────────────────────────
 
 function fakeAgent(): McpAgentClient {
   return {
     call: vi.fn().mockResolvedValue("ok"),
+    listTools: vi.fn().mockResolvedValue([]),
     getTransport: vi.fn().mockReturnValue({ listToolsRaw: vi.fn().mockResolvedValue([]) }),
     setCallbacks: vi.fn(),
     start: vi.fn(),
     stop: vi.fn(),
+    isConnected: true,
   } as unknown as McpAgentClient;
 }
 
-function makeDispatcher() {
+function makeDispatcher(extraOpts: Record<string, unknown> = {}) {
   const agent = fakeAgent();
-  const dispatcher = createDispatcher({
-    agent,
+  const dispatcher = createSharedDispatcher({
+    getAgent: () => agent,
     proxyVersion: "test-1.0.0",
+    ...extraOpts,
   });
   return { agent, dispatcher };
+}
+
+function getHandlers(server: ReturnType<typeof createSharedDispatcher>["createMcpServer"] extends () => infer S ? S : never): Map<string, (req: unknown) => Promise<unknown>> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (server as any)._requestHandlers as Map<string, (req: unknown) => Promise<unknown>>;
 }
 
 // ── injectQueueItemId — pure helper ─────────────────────────────────
@@ -94,7 +103,7 @@ describe("dispatcher.callbacks", () => {
   it("onActionableEvent with thread_message + queueItemId populates pendingActionMap (INV-COMMS-L04 / thread-138 regression)", () => {
     const { dispatcher } = makeDispatcher();
 
-    dispatcher.callbacks.onActionableEvent({
+    dispatcher.callbacks.onActionableEvent!({
       event: "thread_message",
       data: {
         threadId: "thread-Y",
@@ -111,7 +120,7 @@ describe("dispatcher.callbacks", () => {
   it("onActionableEvent without queueItemId does NOT populate map (legacy SSE tolerated)", () => {
     const { dispatcher } = makeDispatcher();
 
-    dispatcher.callbacks.onActionableEvent({
+    dispatcher.callbacks.onActionableEvent!({
       event: "thread_message",
       data: { threadId: "thread-Z", currentTurn: "architect" },
     });
@@ -122,7 +131,7 @@ describe("dispatcher.callbacks", () => {
   it("onActionableEvent for non-thread_message does not touch map", () => {
     const { dispatcher } = makeDispatcher();
 
-    dispatcher.callbacks.onActionableEvent({
+    dispatcher.callbacks.onActionableEvent!({
       event: "task_issued",
       data: { taskId: "task-1", queueItemId: "pa-should-not-stick" },
     });
@@ -132,19 +141,39 @@ describe("dispatcher.callbacks", () => {
 
   it("onStateChange fires the logger (no throw)", () => {
     const log = vi.fn();
-    const agent = fakeAgent();
-    const d = createDispatcher({ agent, proxyVersion: "t", log });
-    d.callbacks.onStateChange!("connected", "disconnected");
+    const { dispatcher } = makeDispatcher({ log });
+    dispatcher.callbacks.onStateChange!("connected", "disconnected");
     expect(log).toHaveBeenCalled();
+  });
+
+  it("notificationHooks bag is invoked for actionable + informational + state-change", () => {
+    const onActionable = vi.fn();
+    const onInfo = vi.fn();
+    const onState = vi.fn();
+    const { dispatcher } = makeDispatcher({
+      notificationHooks: {
+        onActionableEvent: onActionable,
+        onInformationalEvent: onInfo,
+        onStateChange: onState,
+      },
+    });
+
+    dispatcher.callbacks.onActionableEvent!({ event: "task_issued", data: { taskId: "t" } });
+    dispatcher.callbacks.onInformationalEvent!({ event: "info_event", data: {} });
+    dispatcher.callbacks.onStateChange!("connected", "disconnected");
+
+    expect(onActionable).toHaveBeenCalledOnce();
+    expect(onInfo).toHaveBeenCalledOnce();
+    expect(onState).toHaveBeenCalledOnce();
   });
 });
 
-// ── Drain-path handler ──────────────────────────────────────────────
+// ── Drain-path handler (dispatcher.makePendingActionItemHandler) ────
 
-describe("makePendingActionItemHandler", () => {
+describe("dispatcher.makePendingActionItemHandler", () => {
   it("populates pendingActionMap symmetrically with the SSE path", () => {
     const { dispatcher } = makeDispatcher();
-    const handler = makePendingActionItemHandler(dispatcher);
+    const handler = dispatcher.makePendingActionItemHandler();
 
     handler({
       id: "pa-789",
@@ -158,11 +187,26 @@ describe("makePendingActionItemHandler", () => {
     );
   });
 
+  it("forwards onPendingActionItem hook when supplied", () => {
+    const { dispatcher } = makeDispatcher();
+    const onPending = vi.fn();
+    const handler = dispatcher.makePendingActionItemHandler({ onPendingActionItem: onPending });
+
+    const item = {
+      id: "pa-hook",
+      dispatchType: "thread_message" as const,
+      entityRef: "thread-H",
+      payload: {},
+    };
+    handler(item);
+
+    expect(onPending).toHaveBeenCalledWith(item);
+  });
+
   it("SSE path and drain path converge on the same key — last-write-wins", () => {
     const { dispatcher } = makeDispatcher();
-    const drain = makePendingActionItemHandler(dispatcher);
+    const drain = dispatcher.makePendingActionItemHandler();
 
-    // Drain arrives first with one id.
     drain({
       id: "pa-from-drain",
       dispatchType: "thread_message",
@@ -173,8 +217,7 @@ describe("makePendingActionItemHandler", () => {
       "pa-from-drain",
     );
 
-    // SSE arrives later with a fresher id (the canonical one).
-    dispatcher.callbacks.onActionableEvent({
+    dispatcher.callbacks.onActionableEvent!({
       event: "thread_message",
       data: { threadId: "thread-R", queueItemId: "pa-from-sse", currentTurn: "architect" },
     });
@@ -193,17 +236,15 @@ describe("dispatcher.getClientInfo", () => {
   });
 });
 
-// ── agentReady gating — pins the bug-candidate-adapter-startup-race fix ──
+// ── listToolsGate / callToolGate gating ─────────────────────────────
 //
-// Contract: the dispatcher must NOT block MCP `initialize` on the Hub
-// handshake (Claude Code's initialize timeout is tighter than the 600–
-// 1200ms handshake — the deterministic startup-failure mode that
-// motivated this gate). Tool-dispatch handlers (listTools, callTool)
-// MUST wait for the handshake so a race-window call doesn't throw
-// `session state=connecting`. See docs/reviews/bug-candidate-adapter-
+// Pins the bug-candidate-adapter-startup-race fix: Initialize must NOT
+// be gated (host MCP timeouts are tighter than the Hub handshake).
+// ListTools waits on listToolsGate (fast-handshake); CallTool waits on
+// callToolGate (full-sync). See docs/reviews/bug-candidate-adapter-
 // startup-race.md.
 
-describe("dispatcher.agentReady gating", () => {
+describe("dispatcher gates", () => {
   function makeDeferred(): {
     promise: Promise<void>;
     resolve: () => void;
@@ -219,74 +260,34 @@ describe("dispatcher.agentReady gating", () => {
     return { promise, resolve, reject };
   }
 
-  it("ListTools waits for agentReady before invoking agent.listTools()", async () => {
+  it("ListTools waits on listToolsGate before invoking agent.listTools()", async () => {
     const deferred = makeDeferred();
-    const agent = fakeAgent();
-    // Spy on the underlying transport call (agent.listTools internally
-    // calls transport.listToolsRaw). Reach into the same fake the agent
-    // factory wires so we can observe call-time precisely.
-    const listToolsRaw = vi.fn().mockResolvedValue([]);
-    (agent.getTransport as any).mockReturnValue({ listToolsRaw });
-    // Override agent.listTools to call the spy directly (since the real
-    // McpAgentClient.listTools wraps cognitive middleware we don't
-    // exercise here).
-    (agent as any).listTools = vi.fn(async () => {
-      const tools = await listToolsRaw();
-      return tools;
-    });
+    const { agent, dispatcher } = makeDispatcher({ listToolsGate: deferred.promise });
+    const server = dispatcher.createMcpServer();
+    const handlers = getHandlers(server);
+    const listToolsHandler = handlers.get("tools/list")!;
 
-    const dispatcher = createDispatcher({
-      agent,
-      proxyVersion: "test-1.0.0",
-      agentReady: deferred.promise,
-    });
+    const requestPromise = listToolsHandler({ method: "tools/list", params: {} });
 
-    // Drive a request through the server's handler map by accessing the
-    // registered handler directly. Server stores handlers internally; we
-    // cast to any to reach the protected `_requestHandlers` map.
-    const handlers = (dispatcher.server as any)._requestHandlers as Map<
-      string,
-      (req: unknown) => Promise<unknown>
-    >;
-    const listToolsHandler = handlers.get("tools/list");
-    expect(listToolsHandler).toBeTruthy();
-
-    const requestPromise = listToolsHandler!({
-      method: "tools/list",
-      params: {},
-    });
-
-    // Yield the microtask queue. agent.listTools must NOT have been
-    // called yet — handler is parked on agentReady.
+    // Yield microtasks; agent.listTools must NOT have been called yet.
     await Promise.resolve();
     await Promise.resolve();
-    expect((agent as any).listTools).not.toHaveBeenCalled();
+    expect(agent.listTools).not.toHaveBeenCalled();
 
-    // Resolve the gate; handler should now invoke listTools.
     deferred.resolve();
     const result = await requestPromise;
-    expect((agent as any).listTools).toHaveBeenCalledOnce();
+    expect(agent.listTools).toHaveBeenCalledOnce();
     expect(result).toEqual({ tools: [] });
   });
 
-  it("CallTool waits for agentReady before invoking agent.call()", async () => {
+  it("CallTool waits on callToolGate before invoking agent.call()", async () => {
     const deferred = makeDeferred();
-    const agent = fakeAgent();
+    const { agent, dispatcher } = makeDispatcher({ callToolGate: deferred.promise });
+    const server = dispatcher.createMcpServer();
+    const handlers = getHandlers(server);
+    const callToolHandler = handlers.get("tools/call")!;
 
-    const dispatcher = createDispatcher({
-      agent,
-      proxyVersion: "test-1.0.0",
-      agentReady: deferred.promise,
-    });
-
-    const handlers = (dispatcher.server as any)._requestHandlers as Map<
-      string,
-      (req: unknown) => Promise<unknown>
-    >;
-    const callToolHandler = handlers.get("tools/call");
-    expect(callToolHandler).toBeTruthy();
-
-    const requestPromise = callToolHandler!({
+    const requestPromise = callToolHandler({
       method: "tools/call",
       params: { name: "list_tele", arguments: {} },
     });
@@ -301,25 +302,18 @@ describe("dispatcher.agentReady gating", () => {
     expect(agent.call).toHaveBeenCalledWith("list_tele", {});
   });
 
-  it("Initialize is NOT gated on agentReady — MUST ack while handshake in flight", async () => {
-    const deferred = makeDeferred(); // never resolved
-    const agent = fakeAgent();
-
-    const dispatcher = createDispatcher({
-      agent,
-      proxyVersion: "test-1.0.0",
-      agentReady: deferred.promise,
+  it("Initialize is NOT gated — MUST ack while gates pending", async () => {
+    const listGate = makeDeferred(); // never resolved
+    const callGate = makeDeferred(); // never resolved
+    const { dispatcher } = makeDispatcher({
+      listToolsGate: listGate.promise,
+      callToolGate: callGate.promise,
     });
+    const server = dispatcher.createMcpServer();
+    const handlers = getHandlers(server);
+    const initHandler = handlers.get("initialize")!;
 
-    const handlers = (dispatcher.server as any)._requestHandlers as Map<
-      string,
-      (req: unknown) => Promise<unknown>
-    >;
-    const initHandler = handlers.get("initialize");
-    expect(initHandler).toBeTruthy();
-
-    // Initialize must resolve immediately, even with agentReady pending.
-    const result = (await initHandler!({
+    const result = (await initHandler({
       method: "initialize",
       params: {
         protocolVersion: "2024-11-05",
@@ -330,24 +324,14 @@ describe("dispatcher.agentReady gating", () => {
 
     expect(result.protocolVersion).toBe("2024-11-05");
     expect(result.serverInfo).toEqual({ name: "proxy", version: "test-1.0.0" });
-    // clientInfo capture side-effect — verifies handler ran fully.
     expect(dispatcher.getClientInfo()).toEqual({ name: "test-host", version: "9.9.9" });
   });
 
-  it("CallTool surfaces agentReady rejection as MCP error (not a hang)", async () => {
+  it("CallTool surfaces callToolGate rejection as MCP error (not a hang)", async () => {
     const deferred = makeDeferred();
-    const agent = fakeAgent();
-
-    const dispatcher = createDispatcher({
-      agent,
-      proxyVersion: "test-1.0.0",
-      agentReady: deferred.promise,
-    });
-
-    const handlers = (dispatcher.server as any)._requestHandlers as Map<
-      string,
-      (req: unknown) => Promise<unknown>
-    >;
+    const { agent, dispatcher } = makeDispatcher({ callToolGate: deferred.promise });
+    const server = dispatcher.createMcpServer();
+    const handlers = getHandlers(server);
     const callToolHandler = handlers.get("tools/call")!;
 
     const requestPromise = callToolHandler({
@@ -363,22 +347,13 @@ describe("dispatcher.agentReady gating", () => {
     };
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Hub handshake failed");
-    // agent.call must never have been invoked when the gate rejected.
     expect(agent.call).not.toHaveBeenCalled();
   });
 
-  it("Omitted agentReady = no gating (preserves legacy / test-rig wiring)", async () => {
-    const agent = fakeAgent();
-    const dispatcher = createDispatcher({
-      agent,
-      proxyVersion: "test-1.0.0",
-      // agentReady deliberately omitted
-    });
-
-    const handlers = (dispatcher.server as any)._requestHandlers as Map<
-      string,
-      (req: unknown) => Promise<unknown>
-    >;
+  it("Omitted gates = no gating (preserves test-rig wiring)", async () => {
+    const { agent, dispatcher } = makeDispatcher();
+    const server = dispatcher.createMcpServer();
+    const handlers = getHandlers(server);
     const callToolHandler = handlers.get("tools/call")!;
 
     const result = await callToolHandler({
@@ -389,109 +364,60 @@ describe("dispatcher.agentReady gating", () => {
     expect(result).toBeDefined();
   });
 
-  // ── handshakeComplete vs agentReady — load-bearing for architects ──
-  //
-  // The `tools/list` MCP method must NOT block on the slow sync phase
-  // of `agent.start()` (which includes drain_pending_actions; multi-
-  // second for architects with non-empty queues). Splitting the ready
-  // signal allows ListTools to unblock as soon as the handshake is
-  // done, while CallTool still waits for full sync.
-
-  it("ListTools waits on handshakeComplete (NOT agentReady) when both are supplied", async () => {
-    const handshakeDeferred = makeDeferred();
-    const syncDeferred = makeDeferred();   // never resolved in this test
-    const agent = fakeAgent();
-    (agent as any).listTools = vi.fn().mockResolvedValue([]);
-
-    const dispatcher = createDispatcher({
-      agent,
-      proxyVersion: "test-1.0.0",
-      handshakeComplete: handshakeDeferred.promise,
-      agentReady: syncDeferred.promise,
+  it("ListTools gates independently from CallTool — fast-handshake decouples slow-sync", async () => {
+    const listGate = makeDeferred();
+    const callGate = makeDeferred(); // never resolved here
+    const { agent, dispatcher } = makeDispatcher({
+      listToolsGate: listGate.promise,
+      callToolGate: callGate.promise,
     });
-
-    const handlers = (dispatcher.server as any)._requestHandlers as Map<
-      string,
-      (req: unknown) => Promise<unknown>
-    >;
+    const server = dispatcher.createMcpServer();
+    const handlers = getHandlers(server);
     const listToolsHandler = handlers.get("tools/list")!;
 
     const requestPromise = listToolsHandler({ method: "tools/list", params: {} });
-
-    // Microtask flush: nothing should have happened yet.
     await Promise.resolve();
     await Promise.resolve();
-    expect((agent as any).listTools).not.toHaveBeenCalled();
+    expect(agent.listTools).not.toHaveBeenCalled();
 
-    // Resolve handshake only — agentReady stays pending — ListTools must complete.
-    handshakeDeferred.resolve();
+    listGate.resolve();
     const result = await requestPromise;
-    expect((agent as any).listTools).toHaveBeenCalledOnce();
+    expect(agent.listTools).toHaveBeenCalledOnce();
+    expect(result).toEqual({ tools: [] });
+  });
+});
+
+// ── Hub-not-connected error envelope ────────────────────────────────
+
+describe("Hub-not-connected handling", () => {
+  it("ListTools returns empty tools[] when getAgent() returns null", async () => {
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => null,
+      proxyVersion: "test-1.0.0",
+    });
+    const server = dispatcher.createMcpServer();
+    const handlers = getHandlers(server);
+    const listToolsHandler = handlers.get("tools/list")!;
+
+    const result = await listToolsHandler({ method: "tools/list", params: {} });
     expect(result).toEqual({ tools: [] });
   });
 
-  it("CallTool still waits on agentReady even when handshakeComplete has resolved", async () => {
-    const handshakeDeferred = makeDeferred();
-    const syncDeferred = makeDeferred();
-    const agent = fakeAgent();
-
-    const dispatcher = createDispatcher({
-      agent,
+  it("CallTool returns Hub-not-connected error envelope when getAgent() returns null", async () => {
+    const dispatcher = createSharedDispatcher({
+      getAgent: () => null,
       proxyVersion: "test-1.0.0",
-      handshakeComplete: handshakeDeferred.promise,
-      agentReady: syncDeferred.promise,
     });
-
-    const handlers = (dispatcher.server as any)._requestHandlers as Map<
-      string,
-      (req: unknown) => Promise<unknown>
-    >;
+    const server = dispatcher.createMcpServer();
+    const handlers = getHandlers(server);
     const callToolHandler = handlers.get("tools/call")!;
 
-    // Resolve handshake immediately (transport up) but keep sync pending.
-    handshakeDeferred.resolve();
-
-    const requestPromise = callToolHandler({
+    const result = (await callToolHandler({
       method: "tools/call",
       params: { name: "list_tele", arguments: {} },
-    });
+    })) as { content: Array<{ text: string }>; isError?: boolean };
 
-    await Promise.resolve();
-    await Promise.resolve();
-    // agent.call must NOT have run — CallTool gates on full sync.
-    expect(agent.call).not.toHaveBeenCalled();
-
-    syncDeferred.resolve();
-    await requestPromise;
-    expect(agent.call).toHaveBeenCalledOnce();
-  });
-
-  it("ListTools falls back to agentReady when handshakeComplete is omitted (back-compat)", async () => {
-    const syncDeferred = makeDeferred();
-    const agent = fakeAgent();
-    (agent as any).listTools = vi.fn().mockResolvedValue([]);
-
-    const dispatcher = createDispatcher({
-      agent,
-      proxyVersion: "test-1.0.0",
-      // handshakeComplete deliberately omitted; only agentReady provided
-      agentReady: syncDeferred.promise,
-    });
-
-    const handlers = (dispatcher.server as any)._requestHandlers as Map<
-      string,
-      (req: unknown) => Promise<unknown>
-    >;
-    const listToolsHandler = handlers.get("tools/list")!;
-
-    const requestPromise = listToolsHandler({ method: "tools/list", params: {} });
-
-    await Promise.resolve();
-    await Promise.resolve();
-    expect((agent as any).listTools).not.toHaveBeenCalled();
-
-    syncDeferred.resolve();
-    await requestPromise;
-    expect((agent as any).listTools).toHaveBeenCalledOnce();
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Hub not connected");
   });
 });

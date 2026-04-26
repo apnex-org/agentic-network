@@ -40,7 +40,7 @@
  * Callers (the adapter) validate response shapes at the L7 seam.
  */
 
-import type { ILogger, LegacyStringLogger } from "./logger.js";
+import type { ILogger, LegacyStringLogger } from "../logger.js";
 
 /**
  * Coarse-grained wire state.

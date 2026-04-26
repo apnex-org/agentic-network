@@ -51,7 +51,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpAgentClient, CognitivePipeline } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../../packages/network-adapter/test/helpers/policy-loopback.js";
-import { createDispatcher, pendingKey } from "../../src/dispatcher.js";
+import { createSharedDispatcher, pendingKey } from "@ois/network-adapter";
 
 // ── Public types ────────────────────────────────────────────────────
 
@@ -65,7 +65,7 @@ export interface ActorHandle {
 
 export interface EngineerActorHandle extends ActorHandle {
   readonly role: "engineer";
-  readonly dispatcher: ReturnType<typeof createDispatcher>;
+  readonly dispatcher: ReturnType<typeof createSharedDispatcher>;
   readonly mcpClient: Client;
 }
 
@@ -183,7 +183,7 @@ async function buildEngineerWithShim(
   // Forward-reference wiring (mirrors production shim.ts):
   // agent needs dispatcher's callbacks + getClientInfo + onPendingActionItem;
   // dispatcher needs the agent. Same pattern as shim.e2e.test.ts.
-  let dispatcherRef: ReturnType<typeof createDispatcher> | null = null;
+  let dispatcherRef: ReturnType<typeof createSharedDispatcher> | null = null;
 
   const agent = new McpAgentClient(
     {
@@ -209,7 +209,7 @@ async function buildEngineerWithShim(
     { transport, cognitive },
   );
 
-  const dispatcher = createDispatcher({ agent, proxyVersion: "mock-claude-client-1.0.0" });
+  const dispatcher = createSharedDispatcher({ getAgent: () => agent, proxyVersion: "mock-claude-client-1.0.0" });
   dispatcherRef = dispatcher;
   agent.setCallbacks(dispatcher.callbacks);
 
@@ -222,7 +222,8 @@ async function buildEngineerWithShim(
 
   // Wire MCP InMemoryTransport pair — the client simulates Claude Code.
   const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
-  await dispatcher.server.connect(serverTx);
+  const dispatcherServer = dispatcher.createMcpServer();
+  await dispatcherServer.connect(serverTx);
   const mcpClient = new Client(
     { name: "mock-claude-code", version: "1.0.0" },
     { capabilities: {} },

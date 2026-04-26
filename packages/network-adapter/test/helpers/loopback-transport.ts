@@ -31,7 +31,7 @@ import type {
   WireEventHandler,
   WireReconnectCause,
   WireState,
-} from "../../src/transport.js";
+} from "../../src/wire/transport.js";
 
 export interface ToolCall {
   tool: string;

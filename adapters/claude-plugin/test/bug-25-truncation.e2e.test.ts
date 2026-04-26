@@ -37,7 +37,7 @@ import { McpAgentClient, CognitivePipeline } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../packages/network-adapter/test/helpers/policy-loopback.js";
 import { createLinkedStdioPair } from "../../../packages/network-adapter/test/helpers/stdio-linked-transport.js";
-import { createDispatcher } from "../src/dispatcher.js";
+import { createSharedDispatcher } from "@ois/network-adapter";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -119,7 +119,7 @@ interface AgentHarness {
   engineerId: string;
   agent: McpAgentClient;
   transport: LoopbackTransport;
-  dispatcher: ReturnType<typeof createDispatcher>;
+  dispatcher: ReturnType<typeof createSharedDispatcher>;
   mcpClient: Client;
   mcpPair: TransportPair;
   capturedNotifications: unknown[];
@@ -132,7 +132,7 @@ async function createAgentWithMcpShim(
   cognitiveFactory: CognitiveFactory,
 ): Promise<AgentHarness> {
   const transport = new LoopbackTransport(hub);
-  let dispatcherRef: ReturnType<typeof createDispatcher> | null = null;
+  let dispatcherRef: ReturnType<typeof createSharedDispatcher> | null = null;
 
   const agent = new McpAgentClient(
     {
@@ -156,8 +156,8 @@ async function createAgentWithMcpShim(
     },
   );
 
-  const dispatcher = createDispatcher({
-    agent,
+  const dispatcher = createSharedDispatcher({
+    getAgent: () => agent,
     proxyVersion: "e2e-1.0.0",
   });
   dispatcherRef = dispatcher;
@@ -171,7 +171,8 @@ async function createAgentWithMcpShim(
   if (!engineerId) throw new Error(`${role} Agent was not created`);
 
   const mcpPair = transportFactory();
-  await dispatcher.server.connect(mcpPair.serverTransport);
+  const dispatcherServer = dispatcher.createMcpServer();
+  await dispatcherServer.connect(mcpPair.serverTransport);
   const mcpClient = new Client(
     { name: `bug-25-${role}-client`, version: "1.0.0" },
     { capabilities: {} },

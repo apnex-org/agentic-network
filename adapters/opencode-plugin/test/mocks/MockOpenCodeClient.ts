@@ -48,7 +48,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpAgentClient, CognitivePipeline } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../../packages/network-adapter/test/helpers/policy-loopback.js";
-import { createDispatcher, pendingKey } from "../../src/dispatcher.js";
+import { createSharedDispatcher, pendingKey } from "@ois/network-adapter";
 
 // ── Public types ────────────────────────────────────────────────────
 
@@ -62,7 +62,7 @@ export interface ActorHandle {
 
 export interface EngineerActorHandle extends ActorHandle {
   readonly role: "engineer";
-  readonly dispatcher: ReturnType<typeof createDispatcher>;
+  readonly dispatcher: ReturnType<typeof createSharedDispatcher>;
   readonly mcpClient: Client;
 }
 
@@ -181,9 +181,11 @@ async function buildEngineerWithShim(
   // first, then agent, then agentRef is set so dispatcher can reach it.
   // This mirrors production shim.ts wiring.
   let agentRef: McpAgentClient | null = null;
-  const dispatcher = createDispatcher({
+  const dispatcher = createSharedDispatcher({
     getAgent: () => agentRef,
     proxyVersion: "mock-opencode-client-1.0.0",
+    serverName: "hub-proxy",
+    serverCapabilities: { tools: {}, logging: {} },
   });
 
   const pendingActionItemHandler = dispatcher.makePendingActionItemHandler();
@@ -211,7 +213,7 @@ async function buildEngineerWithShim(
   // ADR-017 + workflow-invariant surface this mock targets).
   agent.setCallbacks({
     onActionableEvent: (event) => {
-      dispatcher.queueMapCallbacks.onActionableEvent?.(event);
+      dispatcher.callbacks.onActionableEvent?.(event);
     },
     onInformationalEvent: () => {},
   });

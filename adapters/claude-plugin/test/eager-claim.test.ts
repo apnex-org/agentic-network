@@ -14,7 +14,7 @@ import {
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,
-} from "../src/eager-claim.js";
+} from "@ois/network-adapter";
 
 describe("M-Session-Claim-Separation T3 — isEagerWarmupEnabled", () => {
   it("returns true when OIS_EAGER_SESSION_CLAIM === '1'", () => {

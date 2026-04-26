@@ -60,8 +60,8 @@ import type {
   WireEvent,
   WireEventHandler,
 } from "./transport.js";
-import type { ILogger } from "./logger.js";
-import { normalizeToILogger } from "./logger.js";
+import type { ILogger } from "../logger.js";
+import { normalizeToILogger } from "../logger.js";
 
 /**
  * Wire-level reconnect backoff curve. Pure function so the invariant

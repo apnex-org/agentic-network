@@ -48,7 +48,7 @@ import {
 } from "@ois/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../packages/network-adapter/test/helpers/policy-loopback.js";
-import { createDispatcher, pendingKey } from "../src/dispatcher.js";
+import { createSharedDispatcher, pendingKey } from "@ois/network-adapter";
 
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now();
@@ -68,7 +68,7 @@ interface EngineerHarness {
   agent: McpAgentClient;
   transport: LoopbackTransport;
   engineerId: string;
-  dispatcher: ReturnType<typeof createDispatcher>;
+  dispatcher: ReturnType<typeof createSharedDispatcher>;
   mcpClient: Client;
 }
 
@@ -110,9 +110,11 @@ async function createEngineerWithShim(
 
   // Late-binding ref for the dispatcher's getAgent() callback.
   let agentRef: McpAgentClient | null = null;
-  const dispatcher = createDispatcher({
+  const dispatcher = createSharedDispatcher({
     getAgent: () => agentRef,
     proxyVersion: "opencode-e2e-1.0.0",
+    serverName: "hub-proxy",
+    serverCapabilities: { tools: {}, logging: {} },
   });
 
   const pendingActionItemHandler = dispatcher.makePendingActionItemHandler();
@@ -141,7 +143,7 @@ async function createEngineerWithShim(
   // orthogonal to the ADR-017 invariants pinned by this suite.
   agent.setCallbacks({
     onActionableEvent: (event) => {
-      dispatcher.queueMapCallbacks.onActionableEvent?.(event);
+      dispatcher.callbacks.onActionableEvent?.(event);
     },
     onInformationalEvent: () => {},
   });

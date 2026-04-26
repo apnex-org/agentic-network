@@ -19,8 +19,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { LoopbackHub, LoopbackTransport } from "../helpers/loopback-transport.js";
 import { LogCapture, waitFor } from "../helpers/test-utils.js";
-import { McpAgentClient } from "../../src/mcp-agent-client.js";
-import type { AgentEvent } from "../../src/agent-client.js";
+import { McpAgentClient } from "../../src/session/mcp-agent-client.js";
+import type { AgentEvent } from "../../src/session/agent-client.js";
 
 describe("Invariant gaps — G2/G3/G4", () => {
   let hub: LoopbackHub;

@@ -1,9 +1,21 @@
-// ── Session surface (L7) ────────────────────────────────────────────
+// ── Layer 1a: Wire (transport / wire FSM) ──────────────────────────
 
-export { McpAgentClient } from "./mcp-agent-client.js";
-export type { McpAgentClientOptions } from "./mcp-agent-client.js";
+export type {
+  ITransport,
+  TransportConfig,
+  TransportMetrics,
+  WireState,
+  WireReconnectCause,
+  WireEvent,
+  WireEventHandler,
+} from "./wire/transport.js";
 
-export { HubReturnedError, isErrorEnvelope } from "./hub-error.js";
+export { McpTransport } from "./wire/mcp-transport.js";
+
+// ── Layer 1b: Session (handshake / session FSM / agent client) ─────
+
+export { McpAgentClient } from "./session/mcp-agent-client.js";
+export type { McpAgentClientOptions } from "./session/mcp-agent-client.js";
 
 export type {
   IAgentClient,
@@ -14,42 +26,22 @@ export type {
   AgentHandshakeConfig,
   SessionState,
   SessionReconnectReason,
-} from "./agent-client.js";
-
-// ── Transport surface (L4) ───────────────────────────────────────────
-
-export type {
-  ITransport,
-  TransportConfig,
-  TransportMetrics,
-  WireState,
-  WireReconnectCause,
-  WireEvent,
-  WireEventHandler,
-} from "./transport.js";
-
-export { McpTransport } from "./mcp-transport.js";
-
-// ── Shared primitives ───────────────────────────────────────────────
+} from "./session/agent-client.js";
 
 export type {
   HubEventType,
   HubEvent,
   EventDisposition,
-} from "./event-router.js";
+} from "./session/event-router.js";
 
 export {
   classifyEvent,
   parseHubEvent,
   createDedupFilter,
-} from "./event-router.js";
+} from "./session/event-router.js";
 
-export type { ILogger, LegacyStringLogger, LogField, LogFields } from "./logger.js";
-
-// ── Handshake + instance identity ───────────────────────────────────
-
-export { loadOrCreateGlobalInstanceId } from "./instance.js";
-export type { LoadInstanceOptions } from "./instance.js";
+export { loadOrCreateGlobalInstanceId } from "./session/instance.js";
+export type { LoadInstanceOptions } from "./session/instance.js";
 
 export {
   FATAL_CODES,
@@ -58,7 +50,7 @@ export {
   buildHandshakePayload,
   performHandshake,
   makeStdioFatalHalt,
-} from "./handshake.js";
+} from "./session/handshake.js";
 export type {
   HandshakeClientMetadata,
   HandshakeAdvisoryTags,
@@ -68,12 +60,55 @@ export type {
   HandshakeConfig,
   HandshakeContext,
   HandshakeResult,
-} from "./handshake.js";
+} from "./session/handshake.js";
 
-export { performStateSync } from "./state-sync.js";
-export type { StateSyncContext, DrainedPendingAction } from "./state-sync.js";
+export { performStateSync } from "./session/state-sync.js";
+export type { StateSyncContext, DrainedPendingAction } from "./session/state-sync.js";
 
-// ── Engineer-side helpers ───────────────────────────────────────────
+export {
+  isEagerWarmupEnabled,
+  parseClaimSessionResponse,
+  formatSessionClaimedLogLine,
+} from "./session/session-claim.js";
+export type { ClaimSessionParsed } from "./session/session-claim.js";
+
+// ── Layer 1c: MCP-boundary (Initialize/ListTools/CallTool factory) ──
+//
+// The "MCP-boundary dispatcher" per Design v1.2 §4 naming discipline.
+// Distinct from the future Message-router (sovereign-package #6,
+// `@ois/message-router`, M-Push-Foundation W4). Always qualify
+// ("MCP-boundary dispatcher" or "Message-router") in new code; avoid
+// bare "dispatcher".
+
+export {
+  createSharedDispatcher,
+  pendingKey,
+  injectQueueItemId,
+} from "./mcp-boundary/dispatcher.js";
+export type {
+  DispatcherClientInfo,
+  DispatcherNotificationHooks,
+  SharedDispatcherOptions,
+  SharedDispatcher,
+} from "./mcp-boundary/dispatcher.js";
+
+export {
+  CATALOG_SCHEMA_VERSION,
+  cachePathFor,
+  readCache,
+  writeCache,
+  isCacheValid,
+} from "./mcp-boundary/tool-catalog-cache.js";
+export type {
+  ToolCatalog,
+  CachedCatalog,
+} from "./mcp-boundary/tool-catalog-cache.js";
+
+// ── Cross-cutting primitives (root) ─────────────────────────────────
+
+export { HubReturnedError, isErrorEnvelope } from "./hub-error.js";
+
+export type { ILogger, LegacyStringLogger, LogField, LogFields } from "./logger.js";
 
 export {
   getActionText,

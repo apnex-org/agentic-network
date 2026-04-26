@@ -1,33 +1,32 @@
 /**
  * fetch-handler.test.ts — HTTP routing branches unique to opencode.
  *
- * The opencode-plugin shim mounts the MCP dispatcher behind Bun.serve
- * because OpenCode consumes MCP over HTTP, not stdio. The HTTP routing
- * layer lives in dispatcher.makeFetchHandler() — a fetch(Request) ⇒
- * Promise<Response> adapter.
+ * The opencode-plugin shim mounts the shared MCP-boundary dispatcher
+ * behind Bun.serve because OpenCode consumes MCP over HTTP, not stdio.
+ * Layer-3 host-specific HTTP plumbing lives in
+ * shim.makeOpenCodeFetchHandler() — a fetch(Request) ⇒ Promise<Response>
+ * adapter that wraps the shared dispatcher's createMcpServer factory.
  *
  * This suite tests the routing branches directly by constructing
  * synthetic Request objects. No Bun, no listening socket, no real MCP
  * session — just the request-dispatch logic.
- *
- * Coverage complement: shim.e2e.test.ts uses InMemoryTransport to
- * exercise the same MCP Server the fetchHandler instantiates. That
- * covers the business-logic paths. This file covers the HTTP-edge
- * routing that's orthogonal to MCP.
  */
 
 import { describe, it, expect } from "vitest";
-import { createDispatcher } from "../src/dispatcher.js";
+import { createSharedDispatcher } from "@ois/network-adapter";
+import { makeOpenCodeFetchHandler } from "../src/shim.js";
 
 function makeHandler() {
-  const d = createDispatcher({
+  const d = createSharedDispatcher({
     getAgent: () => null,
     proxyVersion: "fetch-handler-test-1.0.0",
+    serverName: "hub-proxy",
+    serverCapabilities: { tools: {}, logging: {} },
   });
-  return d.makeFetchHandler();
+  return makeOpenCodeFetchHandler(d, []);
 }
 
-describe("dispatcher.makeFetchHandler", () => {
+describe("makeOpenCodeFetchHandler", () => {
   it("returns 404 for non-/mcp paths", async () => {
     const fetchHandler = makeHandler();
     const res = await fetchHandler(new Request("http://localhost/not-mcp", { method: "GET" }));

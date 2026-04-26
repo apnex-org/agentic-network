@@ -18,12 +18,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { LoopbackHub, LoopbackTransport } from "../helpers/loopback-transport.js";
 import { LogCapture, waitFor } from "../helpers/test-utils.js";
-import { McpAgentClient } from "../../src/mcp-agent-client.js";
+import { McpAgentClient } from "../../src/session/mcp-agent-client.js";
 import type {
   AgentClientCallbacks,
   SessionState,
   SessionReconnectReason,
-} from "../../src/agent-client.js";
+} from "../../src/session/agent-client.js";
 
 interface StateTick {
   state: SessionState;

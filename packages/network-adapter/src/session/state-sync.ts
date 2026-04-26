@@ -9,8 +9,8 @@
  * engineer has its canonical engineerId by the time it queries pending state.
  */
 
-import type { ILogger, LegacyStringLogger } from "./logger.js";
-import { normalizeToILogger } from "./logger.js";
+import type { ILogger, LegacyStringLogger } from "../logger.js";
+import { normalizeToILogger } from "../logger.js";
 
 /**
  * A PendingActionItem as returned by `drain_pending_actions` (ADR-017).

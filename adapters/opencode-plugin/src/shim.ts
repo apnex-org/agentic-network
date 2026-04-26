@@ -3,16 +3,14 @@
  *
  * OpenCode-specific wiring only:
  *   - Bun.serve local MCP proxy (OpenCode consumes MCP over HTTP)
+ *   - HTTP fetch handler routing /mcp requests to per-session transports
  *   - OpenCode SDK integration (promptAsync, showToast, session events)
  *   - Rate-limited prompt queue + deferred backlog
  *   - Tool discovery sync (tools/list_changed after Hub reconnect)
- *   - HubPlugin export (what OpenCode's plugin loader picks up)
+ *   - HubPlugin export
  *
- * All MCP tool dispatching, pendingActionMap, queueItemId injection,
- * and fetch-handler plumbing lives in dispatcher.ts (host-independent
- * and testable).
- *
- * Configuration: .ois/hub-config.json (env vars override).
+ * The MCP-boundary handler factory + pendingActionMap + queueItemId
+ * injection live in `@ois/network-adapter` (Layer 1c per Design v1.2).
  */
 
 import type { Plugin } from "@opencode-ai/plugin";
@@ -21,26 +19,29 @@ import {
   McpTransport,
   loadOrCreateGlobalInstanceId,
   appendNotification,
-  getActionText,
   buildPromptText,
   buildToastMessage,
+  createSharedDispatcher,
+  getActionText,
   type AgentClientCallbacks,
   type AgentEvent,
   type SessionState,
   type SessionReconnectReason,
   type HandshakeFatalError,
+  type SharedDispatcher,
   type TelemetryEvent,
 } from "@ois/network-adapter";
 import { CognitivePipeline } from "@ois/cognitive-layer";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { readFileSync, appendFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
-import { createDispatcher } from "./dispatcher.js";
 
 // ── Module state ─────────────────────────────────────────────────────
 
-const PROXY_VERSION = "4.2.0";
-const SDK_VERSION = "@ois/network-adapter@2.0.0";
+const PROXY_VERSION = "4.3.0";
+const SDK_VERSION = "@ois/network-adapter@2.1.0";
 const RATE_LIMIT_MS = 30_000;
 
 let diagLogPath = "";
@@ -56,12 +57,13 @@ let lastPromptTime = 0;
 let lastToolHash = "";
 const activeProxyServers: Server[] = [];
 
-// The dispatcher owns the MCP Server factory + fetch handler + pendingActionMap.
-const dispatcher = createDispatcher({
+// Shared MCP-boundary dispatcher. Layer-1c factory; see Design v1.2.
+const dispatcher = createSharedDispatcher({
   getAgent: () => hubAdapter,
   proxyVersion: PROXY_VERSION,
+  serverName: "hub-proxy",
+  serverCapabilities: { tools: {}, logging: {} },
   log: (m) => log(m),
-  activeServers: activeProxyServers,
 });
 
 // ── Diagnostic logger ───────────────────────────────────────────────
@@ -342,15 +344,15 @@ async function syncTools(): Promise<void> {
 
 // ── Plugin Callbacks ─────────────────────────────────────────────────
 //
-// Composes the dispatcher's host-independent queueMap-population logic
+// Composes the shared dispatcher's pendingActionMap-population callback
 // with OpenCode-specific notification/prompt/toast handling. Exported
 // for the shim.e2e test to drive synthetic events in isolation.
 
 export function buildPluginCallbacks(): AgentClientCallbacks {
   return {
     onActionableEvent: (event: AgentEvent) => {
-      // Dispatcher's pendingActionMap population (ADR-017 Phase 1.1).
-      dispatcher.queueMapCallbacks.onActionableEvent?.(event);
+      // Shared dispatcher's pendingActionMap population (ADR-017 Phase 1.1).
+      dispatcher.callbacks.onActionableEvent?.(event);
 
       const action = getActionText(event.event, event.data);
       appendNotification(
@@ -445,13 +447,6 @@ async function connectToHub(globalInstanceId: string): Promise<void> {
     },
     {
       transportConfig: { url: config.hubUrl, token: config.hubToken },
-      // M-Cognitive-Hypervisor Phase 2x P1-5 — engineer-side pipeline
-      // wiring. Mirrors the claude-plugin change: ResponseSummarizer
-      // trims oversized Hub responses, ToolResultCache collapses
-      // repeated reads, WriteCallDedup collapses concurrent duplicate
-      // writes, CircuitBreaker fast-fails on repeated Hub failures.
-      // Telemetry events land in the plugin's diag log for parity with
-      // other plugin-side diagnostics.
       cognitive: CognitivePipeline.standard({
         telemetry: {
           sink: (event: TelemetryEvent) => {
@@ -471,10 +466,70 @@ async function connectToHub(globalInstanceId: string): Promise<void> {
   log("Connected to remote Hub via McpAgentClient");
 }
 
-// ── Local MCP proxy server (Bun.serve) ───────────────────────────────
+// ── Local MCP proxy server (Bun.serve) + HTTP fetch handler ─────────
+//
+// Layer-3 host-specific HTTP plumbing. OpenCode's plugin runtime opens
+// a fresh MCP session per Initialize request via
+// WebStandardStreamableHTTPServerTransport — so the fetch handler
+// constructs a new Server (via dispatcher.createMcpServer()) per
+// session and routes subsequent requests by mcp-session-id header.
+
+export function makeOpenCodeFetchHandler(
+  sharedDispatcher: SharedDispatcher = dispatcher,
+  servers: Server[] = activeProxyServers,
+): (req: Request) => Promise<Response> {
+  const proxyTransports = new Map<string, WebStandardStreamableHTTPServerTransport>();
+  const proxyServers = new Map<string, Server>();
+
+  return async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+    if (url.pathname !== "/mcp") return new Response("Not found", { status: 404 });
+
+    const sessionId = req.headers.get("mcp-session-id");
+    if (sessionId && proxyTransports.has(sessionId)) {
+      return proxyTransports.get(sessionId)!.handleRequest(req);
+    }
+
+    if (req.method === "POST") {
+      const body = await req.json();
+      if (isInitializeRequest(body)) {
+        const transport = new WebStandardStreamableHTTPServerTransport({
+          sessionIdGenerator: () => crypto.randomUUID(),
+          onsessioninitialized: (sid) => {
+            proxyTransports.set(sid, transport);
+          },
+        });
+        const server = sharedDispatcher.createMcpServer();
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid) {
+            proxyTransports.delete(sid);
+            proxyServers.delete(sid);
+          }
+          const idx = servers.indexOf(server);
+          if (idx !== -1) servers.splice(idx, 1);
+        };
+        servers.push(server);
+        await server.connect(transport);
+        if (transport.sessionId) proxyServers.set(transport.sessionId, server);
+        log("[OpenCodeHTTP] new MCP session initialized");
+        return transport.handleRequest(req, { parsedBody: body });
+      }
+    }
+
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Bad Request" },
+        id: null,
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  };
+}
 
 async function startProxyServer(): Promise<number> {
-  const fetchHandler = dispatcher.makeFetchHandler();
+  const fetchHandler = makeOpenCodeFetchHandler();
 
   // Bun is only available inside the OpenCode runtime. Use a runtime
   // probe so TypeScript doesn't complain and so tests importing this
@@ -507,7 +562,7 @@ export const HubPlugin: Plugin = async (ctx) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (ctx as any).directory ?? ctx.app?.path?.cwd ?? process.cwd();
   initLogger(workDir);
-  log(`Phase 16 — shim+dispatcher split (${SDK_VERSION})`);
+  log(`mission-55 cleanup — shared MCP-boundary dispatcher (${SDK_VERSION})`);
 
   config = loadConfig(workDir);
   log(`Auto-prompt: ${config.autoPrompt ? "enabled" : "DISABLED"}`);
@@ -611,11 +666,11 @@ export const HubPlugin: Plugin = async (ctx) => {
   };
 };
 
-// Test-only exports — the dispatcher + fetch handler are what the
-// shim.e2e.test.ts drives directly to validate production code paths
+// Test-only exports — let tests validate production code paths
 // without spinning up Bun or OpenCode runtime.
 export const _testOnly = {
   dispatcher,
+  makeOpenCodeFetchHandler,
   getHubAdapter: () => hubAdapter,
   setHubAdapter: (agent: McpAgentClient | null) => {
     hubAdapter = agent;

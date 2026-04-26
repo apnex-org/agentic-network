@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { computeReconnectBackoff } from "../../src/mcp-transport.js";
+import { computeReconnectBackoff } from "../../src/wire/mcp-transport.js";
 
 describe("computeReconnectBackoff", () => {
   it("first attempt uses baseDelay unchanged", () => {

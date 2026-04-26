@@ -1,9 +1,8 @@
 /**
- * Dispatcher unit tests — host-independent.
+ * Shared dispatcher unit tests via opencode-plugin lens.
  *
- * Parallels adapters/claude-plugin/test/dispatcher.test.ts. Covers the
- * previously-untested opencode-plugin dispatching core with a minimal
- * stub McpAgentClient; no Bun, no OpenCode SDK, no MCP wire.
+ * Parallels adapters/claude-plugin/test/dispatcher.test.ts — both
+ * exercise the same @ois/network-adapter MCP-boundary dispatcher.
  *
  * Key invariants pinned here:
  *   - ADR-017 Phase 1.1: SSE thread_message with inline queueItemId
@@ -15,16 +14,17 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import type { McpAgentClient } from "@ois/network-adapter";
 import {
-  createDispatcher,
+  createSharedDispatcher,
   injectQueueItemId,
   pendingKey,
-} from "../src/dispatcher.js";
+  type McpAgentClient,
+} from "@ois/network-adapter";
 
 function fakeAgent(overrides: Partial<McpAgentClient> = {}): McpAgentClient {
   return {
     call: vi.fn().mockResolvedValue("ok"),
+    listTools: vi.fn().mockResolvedValue([]),
     getTransport: vi.fn().mockReturnValue({ listToolsRaw: vi.fn().mockResolvedValue([]) }),
     setCallbacks: vi.fn(),
     start: vi.fn(),
@@ -76,16 +76,16 @@ describe("injectQueueItemId", () => {
   });
 });
 
-// ── queueMapCallbacks — SSE path ────────────────────────────────────
+// ── callbacks — SSE path ────────────────────────────────────────────
 
-describe("dispatcher.queueMapCallbacks", () => {
+describe("dispatcher.callbacks", () => {
   it("onActionableEvent with thread_message + queueItemId populates pendingActionMap (INV-COMMS-L04 / thread-138 regression)", () => {
-    const d = createDispatcher({
+    const d = createSharedDispatcher({
       getAgent: () => fakeAgent(),
       proxyVersion: "test-1.0.0",
     });
 
-    d.queueMapCallbacks.onActionableEvent?.({
+    d.callbacks.onActionableEvent?.({
       event: "thread_message",
       data: {
         threadId: "thread-Y",
@@ -98,12 +98,12 @@ describe("dispatcher.queueMapCallbacks", () => {
   });
 
   it("onActionableEvent without queueItemId does NOT populate map", () => {
-    const d = createDispatcher({
+    const d = createSharedDispatcher({
       getAgent: () => fakeAgent(),
       proxyVersion: "test-1.0.0",
     });
 
-    d.queueMapCallbacks.onActionableEvent?.({
+    d.callbacks.onActionableEvent?.({
       event: "thread_message",
       data: { threadId: "thread-Z", currentTurn: "engineer" },
     });
@@ -112,12 +112,12 @@ describe("dispatcher.queueMapCallbacks", () => {
   });
 
   it("onActionableEvent for non-thread_message does not touch map", () => {
-    const d = createDispatcher({
+    const d = createSharedDispatcher({
       getAgent: () => fakeAgent(),
       proxyVersion: "test-1.0.0",
     });
 
-    d.queueMapCallbacks.onActionableEvent?.({
+    d.callbacks.onActionableEvent?.({
       event: "task_issued",
       data: { taskId: "task-1", queueItemId: "pa-should-not-stick" },
     });
@@ -130,7 +130,7 @@ describe("dispatcher.queueMapCallbacks", () => {
 
 describe("dispatcher.makePendingActionItemHandler", () => {
   it("populates pendingActionMap symmetrically with the SSE path", () => {
-    const d = createDispatcher({
+    const d = createSharedDispatcher({
       getAgent: () => fakeAgent(),
       proxyVersion: "test-1.0.0",
     });
@@ -147,7 +147,7 @@ describe("dispatcher.makePendingActionItemHandler", () => {
   });
 
   it("SSE path and drain path converge on the same key — last-write-wins", () => {
-    const d = createDispatcher({
+    const d = createSharedDispatcher({
       getAgent: () => fakeAgent(),
       proxyVersion: "test-1.0.0",
     });
@@ -163,7 +163,7 @@ describe("dispatcher.makePendingActionItemHandler", () => {
       "pa-from-drain",
     );
 
-    d.queueMapCallbacks.onActionableEvent?.({
+    d.callbacks.onActionableEvent?.({
       event: "thread_message",
       data: { threadId: "thread-R", queueItemId: "pa-from-sse", currentTurn: "engineer" },
     });
@@ -177,8 +177,8 @@ describe("dispatcher.makePendingActionItemHandler", () => {
 
 describe("dispatcher late-binding", () => {
   it("pendingActionMap is a fresh instance per dispatcher (no cross-test bleed)", () => {
-    const d1 = createDispatcher({ getAgent: () => null, proxyVersion: "a" });
-    const d2 = createDispatcher({ getAgent: () => null, proxyVersion: "b" });
+    const d1 = createSharedDispatcher({ getAgent: () => null, proxyVersion: "a" });
+    const d2 = createSharedDispatcher({ getAgent: () => null, proxyVersion: "b" });
     d1.pendingActionMap.set("k1", "v1");
     expect(d2.pendingActionMap.has("k1")).toBe(false);
   });
