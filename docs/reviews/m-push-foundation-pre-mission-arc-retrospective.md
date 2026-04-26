@@ -40,12 +40,45 @@ The autonomous arc itself was the second half of a longer arc starting earlier i
 
 ### Methodology framing
 
-This arc is the **third canonical execution example of methodology calibration #23** (formal-Design-phase-per-idea + tele-pre-check):
+#### Calibration #23 — formal-Design-phase-per-idea + tele-pre-check
+
+This arc is the **third canonical execution example** of calibration #23:
 - mission-54 = first execution (recon as Design-phase spike)
 - mission-55 = second execution (cleanup against ratified Design v1.2)
 - M-Push-Foundation = third execution (substantive feature mission against post-cleanup baseline; pending)
 
-Also the second canonical execution of the **autonomous-arc-driving pattern** (architect drives N steps; Director defines HOLD points; ratifies at boundaries).
+#### Autonomous-arc-driving pattern (codified at this retrospective)
+
+**First canonical execution** of the autonomous-arc-driving pattern, formally defined here per Director ratification 2026-04-26:
+
+**Pattern statement:** *Architect (lily) is in full control of a mission once it has become activated — leading all coordination with the engaged engineer and managing through to completion. Architect surfaces only appropriately categorised Director concerns; routine execution mechanics stay architect-owned.*
+
+**Implications for the role surfaces:**
+
+| Role | Pre-activation | Post-activation |
+|---|---|---|
+| **Director** | Release-gate signal (`update_mission(status=active)`); ratifies design questions; defines HOLD points + retrospective gates | Receives only *categorised concerns* (see below); not bothered with day-to-day mechanics |
+| **Architect (lily)** | Files preflight; surfaces design questions; awaits Director release-gate | **Full control of mission execution.** Issues T1+ directives; coordinates with engineer; reviews + cross-approves PRs; drives multi-PR coordination; flips mission status as appropriate; decides architectural details within ratified design scope; surfaces categorised concerns to Director only when warranted |
+| **Engineer (greg)** | Engineer-side scaffolding; round-1 audit if calibration #23 | Receives T1+ directives from architect; ships PRs; participates in cross-approval pattern; surfaces engineer-spec concerns to architect (NOT Director) |
+
+**Categorised Director concerns** — when architect surfaces to Director:
+
+| Category | Surface? | Examples |
+|---|---|---|
+| **Strategic / architectural** | YES | New sovereign-package boundary; cross-mission sequencing; novel pattern needing ratification |
+| **Out-of-scope risks** | YES | Deployment-affecting changes; broad-tele-impact decisions; security-class concerns |
+| **HOLD-point gates** | YES | Pre-defined retrospective points (this retrospective); pre-staging-decisions per Director directive |
+| **RED preflight / blocking failures** | YES | Mission stuck; structural blocker requiring Director input |
+| **Novel calibrations needing formalization** | YES | Insights worth methodology-doc ratification (this retrospective's calibrations 1-7) |
+| **Resource / scope decisions** | YES | Mission-scope changes mid-flight; new mission proposals; package distribution choices |
+| **Routine PR review / merge** | NO | Standard cross-approval pattern; admin-merge of bug-32 pattern |
+| **Engineer task issuance / coordination** | NO | T1+ directives; thread coordination; bilateral seals |
+| **Mission status flips (when delegated)** | NO | active→completed when criteria met; preflight artifact authoring |
+| **Day-to-day execution mechanics** | NO | Branch management; commit messages; PR descriptions |
+
+**This pattern operationalizes Director's bar from `mission-lifecycle.md`:** *"For missions that are well shaped and planned, Lily+Greg must be able to coordinate end to end without intervention — unless that intervention warrants Director input."*
+
+The pattern's success is measured by *Director-intervention-density* — for mission-54 + mission-55, Director surfaced concerns at: foreign-code path share, "greg is online" + "please begin", post-Q10 layered model walkthrough, "@apnex namespace" announcement, this retrospective. Five interventions across ~5 hours of architect-engineer coordination — all categorised + warranted.
 
 ---
 
