@@ -126,34 +126,49 @@ This is a **structural design invariant** on the agentic network. Concrete impli
 
 ## §2 Timeline
 
-| Time (UTC) | Milestone | Commit | Notes |
-|---|---|---|---|
-| 00:50Z | mission-54 recon mission filed | — | Architect-staged; Director-ratified |
-| 01:12Z | T1 dispatched to greg (thread-318) | — | Foreign-code path shared by Director ~13:45 AEST |
-| 01:24Z | Recon Report PR #61 opened | — | greg-authored; spec-level discipline; 8 sections |
-| 01:26Z | PR #61 merged | `f519f74` | architect-pool ✓ + admin-merge per bug-32 pattern |
-| 01:33Z | mission-54 closed | — | post architect ratification of Recon Report |
-| 01:33Z | PR #60 (Design v1.1 + 2 preflights) merged | `08643e5` | doc-queue close-out |
-| 02:05Z | **PR #62 Design v1.2 merged** | `cc90174` | Q1/Q2/Q10 + Universal Adapter framing folded in |
-| 02:07Z | mission-55 created + flipped active | — | architect-flip per autonomous-arc directive |
-| 02:07Z | T1 dispatched to greg (thread-321) | — | greg ratified 3-PR plan in ~1 min |
-| 02:32Z | PR #63 (cleanup PR 1: hoist + 7 deliverables) opened | — | ~24min from T1 dispatch |
-| 02:33Z | PR #63 merged | `983e926` | architect-pool ✓; ~80sec from open |
-| 02:55Z | greg observed idle (~22min) | — | **coordination handoff gap surfaced** |
-| 02:56Z | Architect ping (thread-322) | — | nudge after Director observation |
-| 03:00Z | PR #64 (cleanup PR 2: spec) opened | — | ~4min from nudge |
-| 03:01Z | PR #64 merged | `736e13d` | spec is high-quality; substantive review |
-| 03:02Z | Architect ping (thread-323) — proactive | — | **lesson applied; no idle gap this time** |
-| 03:08Z | PR #65 (cleanup PR 3: closing audit) opened | — | ~6min from ping |
-| 03:10Z | PR #65 merged | `ef633144` | mission-55 closing PR |
-| 03:10Z | mission-55 closed | — | architect-flip; routine |
-| 03:11Z | Architect ping (thread-324) — proactive | — | step 5 nudge |
-| 03:14Z | Round-2 audit (thread-325) — greg-initiated | — | comprehensive; all 10 asks ratified |
-| 03:15Z | **Round-2 bilateral seal** | — | HOLD point reached |
+| Time (UTC) | Actor | Milestone | Commit | Notes |
+|---|---|---|---|---|
+| ~00:30Z | **[Director]** | Foreign-engineer adapter cleanup work disclosed; recon-mission proposal greenlit | — | Out-of-band disclosure; uncommitted-local; engineer not onboarded |
+| 00:50Z | Architect | mission-54 recon mission filed | — | Architect-staged; Director-ratified |
+| ~01:10Z | **[Director]** | Foreign-code directory path shared: `/home/apnex/taceng/codex/agentic-network` | — | Activation prerequisite #1 resolved |
+| ~01:11Z | **[Director]** | "Greg is online. Please begin" | — | Activation prerequisite #2 resolved + autonomous-arc-style green-light |
+| 01:12Z | Architect | T1 dispatched to greg (thread-318) | — | Foreign-code audit directive; 8-section Recon Report template |
+| 01:24Z | Engineer | Recon Report PR #61 opened | — | greg-authored; spec-level discipline; 8 sections |
+| 01:26Z | Architect | PR #61 merged | `f519f74` | architect-pool ✓ + admin-merge per bug-32 pattern |
+| 01:33Z | Architect | mission-54 closed | — | post architect ratification of Recon Report |
+| 01:33Z | Architect | PR #60 (Design v1.1 + 2 preflights) merged | `08643e5` | doc-queue close-out |
+| ~01:35Z | **[Director]** | "PR approval is not part of Director scope - coordinate with Greg when convenient" | — | Cross-approval-pattern scoping (saved as feedback memory) |
+| ~01:45Z | **[Director]** | Q1/Q2/Q10 design walkthrough + ratification (post-Recon Report) | — | "I like the foreign deduplication work for the core layer ... message-router is a good name. Agree with full adapter cleanup ..." |
+| ~01:50Z | **[Director]** | `@apnex` npm namespace announced for future M-Adapter-Distribution | — | Saved as project memory |
+| ~01:55Z | **[Director]** | Universal Adapter framing + Layer-1 sub-org + foreign-tree-deletion + plugin architecture confirmed | — | Q1-Q5 layered-model walkthrough ratified |
+| ~02:00Z | **[Director]** | "drive full autonomous next steps until step 5 ... hold once M-Push-Foundation mission is ready to be staged" | — | **Autonomous-arc directive issued** |
+| 02:05Z | Architect | **PR #62 Design v1.2 merged** | `cc90174` | Q1/Q2/Q10 + Universal Adapter framing folded in |
+| 02:07Z | Architect | mission-55 created + flipped active | — | architect-flip per autonomous-arc directive |
+| 02:07Z | Architect | T1 dispatched to greg (thread-321) | — | greg ratified 3-PR plan in ~1 min |
+| 02:32Z | Engineer | PR #63 (cleanup PR 1: hoist + 7 deliverables) opened | — | ~24min from T1 dispatch |
+| 02:33Z | Architect | PR #63 merged | `983e926` | architect-pool ✓; ~80sec from open |
+| 02:55Z | — | **greg observed idle (~22min)** | — | **coordination handoff gap surfaced** |
+| ~02:55Z | **[Director]** | "You have stopped. Greg is idle. What is status?" | — | Director observation surfaces coord gap before architect noticed |
+| 02:56Z | Architect | Ping (thread-322) — reactive nudge | — | greg surfaced shipped PR 2 in ~4 min |
+| 03:00Z | Engineer | PR #64 (cleanup PR 2: spec) opened | — | ~4min from nudge |
+| 03:01Z | Architect | PR #64 merged | `736e13d` | spec is high-quality; substantive review |
+| 03:02Z | Architect | Ping (thread-323) — proactive | — | **lesson applied; no idle gap this time** |
+| 03:08Z | Engineer | PR #65 (cleanup PR 3: closing audit) opened | — | ~6min from ping |
+| 03:10Z | Architect | PR #65 merged | `ef633144` | mission-55 closing PR |
+| 03:10Z | Architect | mission-55 closed | — | architect-flip; routine |
+| 03:11Z | Architect | Ping (thread-324) — proactive | — | step 5 nudge |
+| 03:14Z | Engineer | Round-2 audit (thread-325) — greg-initiated | — | comprehensive; all 10 asks ratified |
+| 03:15Z | Architect | **Round-2 bilateral seal** | — | **HOLD point reached** |
+| ~03:15Z | **[Director]** | Retrospective conducted (this doc; collaborative walkthrough) | — | Director-conducted ratification gate per autonomous-arc directive |
 
-**Total real-time arc:** ~85 minutes from PR #62 merge → round-2 convergence.
-**Total engineer-time mission-55:** ~3 hours across 3 PRs (lower edge of S sizing per pattern-replication-sizing calibration).
-**Architect cross-approval velocity:** PR open → merge ~80-90 sec average.
+**Director-intervention density (visualized in column 2):** 9 interventions across the ~3-hour arc — all categorised as warranted per §1's table. None of them were day-to-day mechanics; all were strategic / architectural / scoping / HOLD-gate / observation-of-coord-gap / namespace-decision / retrospective-trigger.
+
+**Aggregate stats:**
+- Total real-time arc: ~85 minutes from PR #62 merge → round-2 convergence
+- Total engineer-time mission-55: ~3 hours across 3 PRs (lower edge of S sizing per pattern-replication-sizing calibration)
+- Architect cross-approval velocity: PR open → merge ~80-90 sec average
+- Engineer-time per cleanup PR: 24min / 4min / 6min (PR 1 / PR 2 / PR 3) — load-bearing PR is the hoist; spec + closing audit ship faster
+- Director-intervention density: 9 interventions / ~3 hours = ~1 every 20 min (acceptable for an active co-design arc; would drop substantially in steady-state)
 
 ---
 
