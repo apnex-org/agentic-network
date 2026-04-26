@@ -18,6 +18,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveSourceAttribute,
+  isPulseEvent,
   SOURCE_ATTRIBUTE_FAMILIES,
 } from "../src/source-attribute.js";
 
@@ -110,12 +111,124 @@ describe("resolveSourceAttribute — proxy fallback", () => {
 });
 
 describe("resolveSourceAttribute — exhaustive families", () => {
-  it("exposes the four ratified family strings on SOURCE_ATTRIBUTE_FAMILIES", () => {
+  it("exposes the five ratified family strings on SOURCE_ATTRIBUTE_FAMILIES", () => {
     expect(SOURCE_ATTRIBUTE_FAMILIES.REPO_EVENT).toBe("plugin:agent-adapter:repo-event");
     expect(SOURCE_ATTRIBUTE_FAMILIES.DIRECTIVE).toBe("plugin:agent-adapter:directive");
     expect(SOURCE_ATTRIBUTE_FAMILIES.NOTIFICATION).toBe(
       "plugin:agent-adapter:notification",
     );
+    expect(SOURCE_ATTRIBUTE_FAMILIES.PULSE).toBe("plugin:agent-adapter:pulse");
     expect(SOURCE_ATTRIBUTE_FAMILIES.PROXY).toBe("plugin:agent-adapter:proxy");
+  });
+});
+
+// Mission-57 W3 — pulse-family extension tests
+
+describe("resolveSourceAttribute — pulse family (mission-57 W3)", () => {
+  const pulseStatusCheck = {
+    message: {
+      kind: "external-injection",
+      payload: { pulseKind: "status_check", missionId: "mission-57", message: "status?" },
+    },
+  };
+
+  const pulseEscalation = {
+    message: {
+      kind: "external-injection",
+      payload: { pulseKind: "missed_threshold_escalation", missionId: "mission-57", silentRole: "engineer" },
+    },
+  };
+
+  it("routes message_arrived + pulseKind=status_check → pulse family", () => {
+    expect(resolveSourceAttribute("message_arrived", pulseStatusCheck)).toBe(
+      SOURCE_ATTRIBUTE_FAMILIES.PULSE,
+    );
+  });
+
+  it("routes message_arrived + pulseKind=missed_threshold_escalation → pulse family", () => {
+    expect(resolveSourceAttribute("message_arrived", pulseEscalation)).toBe(
+      SOURCE_ATTRIBUTE_FAMILIES.PULSE,
+    );
+  });
+
+  it("routes message_arrived without pulseKind → notification family (existing behavior)", () => {
+    const nonPulseMessage = {
+      message: {
+        kind: "reply",
+        payload: { text: "thread reply" },
+      },
+    };
+    expect(resolveSourceAttribute("message_arrived", nonPulseMessage)).toBe(
+      SOURCE_ATTRIBUTE_FAMILIES.NOTIFICATION,
+    );
+  });
+
+  it("backward-compat: message_arrived without eventData → notification family", () => {
+    expect(resolveSourceAttribute("message_arrived")).toBe(
+      SOURCE_ATTRIBUTE_FAMILIES.NOTIFICATION,
+    );
+  });
+
+  it("does NOT route non-message_arrived events with pulseKind payload → falls through normal taxonomy", () => {
+    expect(resolveSourceAttribute("thread_message", pulseStatusCheck)).toBe(
+      SOURCE_ATTRIBUTE_FAMILIES.NOTIFICATION,
+    );
+  });
+
+  it("rejects unknown pulseKind values → notification family", () => {
+    const unknownPulseKind = {
+      message: {
+        payload: { pulseKind: "not-a-real-pulse-kind" },
+      },
+    };
+    expect(resolveSourceAttribute("message_arrived", unknownPulseKind)).toBe(
+      SOURCE_ATTRIBUTE_FAMILIES.NOTIFICATION,
+    );
+  });
+});
+
+describe("isPulseEvent (mission-57 W3)", () => {
+  it("returns true for message_arrived + pulseKind=status_check", () => {
+    expect(
+      isPulseEvent("message_arrived", {
+        message: { payload: { pulseKind: "status_check" } },
+      }),
+    ).toBe(true);
+  });
+
+  it("returns true for message_arrived + pulseKind=missed_threshold_escalation", () => {
+    expect(
+      isPulseEvent("message_arrived", {
+        message: { payload: { pulseKind: "missed_threshold_escalation" } },
+      }),
+    ).toBe(true);
+  });
+
+  it("returns false for non-message_arrived eventType", () => {
+    expect(
+      isPulseEvent("thread_message", {
+        message: { payload: { pulseKind: "status_check" } },
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false when payload lacks pulseKind", () => {
+    expect(
+      isPulseEvent("message_arrived", {
+        message: { payload: { text: "regular reply" } },
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false when eventData is omitted", () => {
+    expect(isPulseEvent("message_arrived")).toBe(false);
+  });
+
+  it("returns false for unknown pulseKind values", () => {
+    expect(
+      isPulseEvent("message_arrived", {
+        message: { payload: { pulseKind: "not-a-real-pulse-kind" } },
+      }),
+    ).toBe(false);
   });
 });

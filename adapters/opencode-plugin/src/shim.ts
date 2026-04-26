@@ -342,6 +342,31 @@ async function syncTools(): Promise<void> {
   }
 }
 
+// ── Mission-57 W3: pulse-event detection helper ─────────────────────
+//
+// Mirrors `claude-plugin/src/source-attribute.ts:isPulseEvent`. Inlined
+// here (vs imported) because opencode-plugin doesn't share helpers with
+// claude-plugin; the function is small + has no other dependencies.
+// Pulse Messages arrive via `message_arrived` events with payload
+// containing `pulseKind: "status_check" | "missed_threshold_escalation"`
+// (per Hub-side PulseSweeper W2 wire format in Design v1.0 §4 + §5).
+//
+// Render-side effect: detected pulses downgrade level from "actionable"
+// to "informational" (S3 noise mitigation per Design v1.0 §4) so they
+// don't wake the LLM during high-activity sub-PR cascades.
+
+const PULSE_KINDS_SET: ReadonlySet<string> = new Set([
+  "status_check",
+  "missed_threshold_escalation",
+]);
+
+function isPulseEvent(eventType: string, eventData: Record<string, unknown>): boolean {
+  if (eventType !== "message_arrived" || !eventData) return false;
+  const message = eventData.message as { payload?: unknown } | undefined;
+  const payload = message?.payload as { pulseKind?: unknown } | undefined;
+  return typeof payload?.pulseKind === "string" && PULSE_KINDS_SET.has(payload.pulseKind);
+}
+
 // ── Plugin Callbacks ─────────────────────────────────────────────────
 //
 // Composes the shared dispatcher's pendingActionMap-population callback
@@ -355,13 +380,25 @@ export function buildPluginCallbacks(): AgentClientCallbacks {
       dispatcher.callbacks.onActionableEvent?.(event);
 
       const action = getActionText(event.event, event.data);
+      // Mission-57 W3: pulse Messages downgrade level from "actionable"
+      // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
+      // noise reduction during high-activity sub-PR cascades). Mirrors
+      // claude-plugin's `isPulseEvent` discrimination on
+      // `event.event === "message_arrived"` + `payload.pulseKind ∈
+      // {status_check, missed_threshold_escalation}`.
+      const isPulse = isPulseEvent(event.event, event.data);
+      const actionLabel = isPulse ? `[PULSE] ${action}` : action;
       appendNotification(
-        { event: event.event, data: event.data, action },
+        { event: event.event, data: event.data, action: actionLabel },
         { logPath: notificationLogPath },
       );
       const message = buildToastMessage(event.event, event.data);
       const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
-      const notification: QueuedNotification = { level: "actionable", message, promptText };
+      const notification: QueuedNotification = {
+        level: isPulse ? "informational" : "actionable",
+        message,
+        promptText,
+      };
       if (sessionActive) {
         notificationQueue.push(notification);
       } else {

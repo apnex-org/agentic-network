@@ -32,7 +32,7 @@ import { CognitivePipeline } from "@ois/cognitive-layer";
 import { readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { resolveSourceAttribute } from "./source-attribute.js";
+import { resolveSourceAttribute, isPulseEvent } from "./source-attribute.js";
 
 // ── Configuration ───────────────────────────────────────────────────
 
@@ -139,7 +139,12 @@ function pushChannelNotification(
     // example. Replaces the flat "hub" fallback so consumers (LLM
     // prompts, dashboards) can disambiguate repo-events / directives /
     // general notifications without parsing the inner subkind.
-    source: resolveSourceAttribute(event.event),
+    // Mission-57 W3: pulse detection takes precedence over the
+    // mission-56 W2.3 4-kind taxonomy. Pulse Messages arrive via
+    // `message_arrived` but render with pulse source-attribute family
+    // (avoids cognitive noise during high-activity sub-PR cascades —
+    // S3 mitigation per Design v1.0 §4).
+    source: resolveSourceAttribute(event.event, event.data),
     level,
   };
   const data = event.data as Record<string, unknown>;
@@ -404,7 +409,13 @@ async function main(): Promise<void> {
     notificationHooks: {
       onActionableEvent: (event) => {
         appendActionableLog(event, buildPromptText(event.event, event.data, { toolPrefix: "mcp__plugin_agent-adapter_proxy__" }));
-        pushChannelNotification(mcpServer, event, "actionable");
+        // Mission-57 W3: pulse Messages downgrade level from "actionable"
+        // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
+        // noise reduction during high-activity sub-PR cascades).
+        // Detection: eventType `message_arrived` + payload.pulseKind ∈
+        // {status_check, missed_threshold_escalation}.
+        const level = isPulseEvent(event.event, event.data) ? "informational" : "actionable";
+        pushChannelNotification(mcpServer, event, level);
       },
       onInformationalEvent: (event) => {
         // Informational events log only — `<channel>` push would otherwise
