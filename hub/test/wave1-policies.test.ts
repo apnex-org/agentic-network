@@ -21,13 +21,13 @@ const noop = () => {};
 // write the `agents/<eid>.json` blob through the internal provider.
 async function mutateAgentBlob(
   reg: any,
-  engineerId: string,
+  agentId: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
   const provider = reg.provider;
-  const path = `agents/${engineerId}.json`;
+  const path = `agents/${agentId}.json`;
   const raw = await provider.get(path);
-  if (!raw) throw new Error(`agent blob not found for ${engineerId}`);
+  if (!raw) throw new Error(`agent blob not found for ${agentId}`);
   const blob = JSON.parse(new TextDecoder().decode(raw));
   Object.assign(blob, patch);
   await provider.put(path, new TextEncoder().encode(JSON.stringify(blob, null, 2)));
@@ -301,7 +301,7 @@ describe("SessionPolicy", () => {
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.ok).toBe(true);
-    expect(parsed.engineerId).toBeDefined();
+    expect(parsed.agentId).toBeDefined();
     // M-Session-Claim-Separation (mission-40) T2: register_role now
     // ONLY asserts identity. sessionClaimed=false; sessionEpoch reflects
     // current value (0 for first-contact, NOT incremented). Callers must
@@ -323,7 +323,7 @@ describe("SessionPolicy", () => {
     expect(claimParsed.ok).toBe(true);
     expect(claimParsed.sessionClaimed).toBe(true);
     expect(claimParsed.sessionEpoch).toBe(1);
-    expect(claimParsed.engineerId).toBe(regParsed.engineerId);
+    expect(claimParsed.agentId).toBe(regParsed.agentId);
     expect(claimParsed.displacedPriorSession).toBeUndefined();
   });
 
@@ -360,10 +360,10 @@ describe("SessionPolicy", () => {
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.ok).toBe(true);
-    expect(parsed.engineerId).toMatch(/^director-/);
+    expect(parsed.agentId).toMatch(/^director-/);
     // Engineer + architect stay on the eng-* prefix for backward compatibility
     // with existing audit trails + label selectors.
-    expect(parsed.engineerId).not.toMatch(/^eng-/);
+    expect(parsed.agentId).not.toMatch(/^eng-/);
   });
 
   it("registered director SessionRole is 'director' (not mapped to 'unknown')", async () => {
@@ -393,8 +393,8 @@ describe("SessionPolicy", () => {
       clientMetadata: { clientName: "c", clientVersion: "0", proxyName: "p", proxyVersion: "0" },
     }, dirCtx);
 
-    expect(JSON.parse(engResult.content[0].text).engineerId).toMatch(/^eng-/);
-    expect(JSON.parse(dirResult.content[0].text).engineerId).toMatch(/^director-/);
+    expect(JSON.parse(engResult.content[0].text).agentId).toMatch(/^eng-/);
+    expect(JSON.parse(dirResult.content[0].text).agentId).toMatch(/^director-/);
   });
 
   it("touchAgent bumps lastSeenAt and flips drifted status back to online", async () => {
@@ -403,7 +403,7 @@ describe("SessionPolicy", () => {
     await router.handle("claim_session", {}, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
-    const eid = agents[0].engineerId;
+    const eid = agents[0].agentId;
 
     // Simulate drift: force lastTouchAt old and status offline
     reg.lastTouchAt.set(eid, 0);
@@ -426,7 +426,7 @@ describe("SessionPolicy", () => {
     await router.handle("claim_session", {}, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
-    const eid = agents[0].engineerId;
+    const eid = agents[0].agentId;
     const firstSeen = (await reg.getAgent(eid)).lastSeenAt;
 
     // Second touch inside the window — should NOT update lastSeenAt.
@@ -443,7 +443,7 @@ describe("SessionPolicy", () => {
     await router.handle("claim_session", {}, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
-    const eid = agents[0].engineerId;
+    const eid = agents[0].agentId;
 
     // Different (unrelated) session should NOT touch the agent.
     await reg.markAgentOffline("some-other-session");
@@ -467,7 +467,7 @@ describe("SessionPolicy", () => {
     expect(parsed.engineers).toBeDefined();
     expect(parsed.engineers.length).toBeGreaterThanOrEqual(1);
     const eng = parsed.engineers[0];
-    expect(eng.engineerId).toBeDefined();
+    expect(eng.agentId).toBeDefined();
     expect(eng.status).toBe("online");
     expect(eng.clientMetadata.proxyName).toBe("@ois/test-plugin");
     expect(eng.sessionEpoch).toBe(1);
@@ -581,7 +581,7 @@ describe("SessionPolicy", () => {
     await router.handle("register_role", engineerHandshake, ctx);
     await router.handle("claim_session", {}, ctx);
     const selfAgents = await ctx.stores.engineerRegistry.listAgents();
-    const selfId = selfAgents[0].engineerId;
+    const selfId = selfAgents[0].agentId;
 
     // Register a second engineer in a separate session
     const otherCtx = createTestContext({ stores: ctx.stores, sessionId: "other" });
@@ -602,7 +602,7 @@ describe("SessionPolicy", () => {
     await router.handle("register_role", engineerHandshake, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
-    await mutateAgentBlob(reg, agents[0].engineerId, { status: "offline" });
+    await mutateAgentBlob(reg, agents[0].agentId, { status: "offline" });
 
     const caller = createTestContext({ stores: ctx.stores, sessionId: "caller" });
     const result = await router.handle("list_available_peers", {}, caller);

@@ -1,12 +1,12 @@
 /**
  * Mission-19 — P2P routing via assignedEngineerId for reviews & clarifications.
  *
- * Covers: reviews dispatch with {engineerId} pin to the original claimant,
+ * Covers: reviews dispatch with {agentId} pin to the original claimant,
  * fallback to label-scoped pool when assignedEngineerId is null,
  * clarification_answered routes P2P, revision_required routes P2P.
  *
  * Registry invariants: INV-T15 (assignedEngineerId persisted), INV-AG2
- * (P2P via engineerId, not sessionId), INV-SYS-L05 (stale pin falls through).
+ * (P2P via agentId, not sessionId), INV-SYS-L05 (stale pin falls through).
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -39,7 +39,7 @@ async function register(ctx: TestPolicyContext, role: AgentRole, labels: AgentLa
     payload(`inst-${ctx.sessionId}`, role, labels),
   );
   if (!result.ok) throw new Error(`register failed: ${result.code}`);
-  return result.engineerId;
+  return result.agentId;
 }
 
 describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
@@ -47,7 +47,7 @@ describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
   let archCtx: TestPolicyContext;
   let engCtx: TestPolicyContext;
   let taskId: string;
-  let engineerId: string;
+  let agentId: string;
 
   beforeEach(async () => {
     router = new PolicyRouter(noop);
@@ -63,7 +63,7 @@ describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
       sessionId: "sess-eng",
       role: "engineer",
     });
-    engineerId = await register(engCtx, "engineer", { team: "platform" });
+    agentId = await register(engCtx, "engineer", { team: "platform" });
 
     // Architect creates a task; Engineer claims it.
     const created = await router.handle("create_task", { title: "T", description: "D" }, archCtx);
@@ -71,7 +71,7 @@ describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
 
     await router.handle("get_task", {}, engCtx);
     const task = await archCtx.stores.task.getTask(taskId);
-    expect(task?.assignedEngineerId).toBe(engineerId);
+    expect(task?.assignedEngineerId).toBe(agentId);
 
     // Engineer reports.
     await router.handle("create_report", {
@@ -81,7 +81,7 @@ describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
     }, engCtx);
   });
 
-  it("review_completed (approved) dispatches to the claimant's engineerId (P2P)", async () => {
+  it("review_completed (approved) dispatches to the claimant's agentId (P2P)", async () => {
     const reviewCtx = createTestContext({ stores: archCtx.stores, sessionId: "sess-arch-2", role: "architect" });
     await register(reviewCtx, "architect", { team: "platform" });
 
@@ -93,13 +93,13 @@ describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
 
     const dispatched = reviewCtx.dispatchedEvents.find((e) => e.event === "review_completed");
     expect(dispatched).toBeDefined();
-    // P2P: selector pins to the engineerId, not to a role/label pool.
-    expect(dispatched!.selector.engineerId).toBe(engineerId);
+    // P2P: selector pins to the agentId, not to a role/label pool.
+    expect(dispatched!.selector.agentId).toBe(agentId);
     expect(dispatched!.selector.roles).toBeUndefined();
     expect(dispatched!.selector.matchLabels).toBeUndefined();
   });
 
-  it("revision_required (rejected, normal) also dispatches P2P to the same engineerId", async () => {
+  it("revision_required (rejected, normal) also dispatches P2P to the same agentId", async () => {
     const reviewCtx = createTestContext({ stores: archCtx.stores, sessionId: "sess-arch-2", role: "architect" });
     await register(reviewCtx, "architect", { team: "platform" });
 
@@ -111,7 +111,7 @@ describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
 
     const dispatched = reviewCtx.dispatchedEvents.find((e) => e.event === "revision_required");
     expect(dispatched).toBeDefined();
-    expect(dispatched!.selector.engineerId).toBe(engineerId);
+    expect(dispatched!.selector.agentId).toBe(agentId);
   });
 
   it("director_attention_required (escalation) targets architects in the task's label scope, NOT P2P", async () => {
@@ -131,7 +131,7 @@ describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
     const dispatched = reviewCtx.dispatchedEvents.find((e) => e.event === "director_attention_required");
     expect(dispatched).toBeDefined();
     // Escalation broadcasts to architects in the label scope — not P2P.
-    expect(dispatched!.selector.engineerId).toBeUndefined();
+    expect(dispatched!.selector.agentId).toBeUndefined();
     expect(dispatched!.selector.roles).toEqual(["architect"]);
     expect(dispatched!.selector.matchLabels).toEqual({ team: "platform" });
   });
@@ -142,7 +142,7 @@ describe("Mission-19 P2P — Clarification routes to assignedEngineerId", () => 
   let archCtx: TestPolicyContext;
   let engCtx: TestPolicyContext;
   let taskId: string;
-  let engineerId: string;
+  let agentId: string;
 
   beforeEach(async () => {
     router = new PolicyRouter(noop);
@@ -158,7 +158,7 @@ describe("Mission-19 P2P — Clarification routes to assignedEngineerId", () => 
       sessionId: "sess-eng",
       role: "engineer",
     });
-    engineerId = await register(engCtx, "engineer", { team: "platform" });
+    agentId = await register(engCtx, "engineer", { team: "platform" });
 
     const created = await router.handle("create_task", { title: "T", description: "D" }, archCtx);
     taskId = JSON.parse(created.content[0].text).taskId;
@@ -177,7 +177,7 @@ describe("Mission-19 P2P — Clarification routes to assignedEngineerId", () => 
     expect(requested).toBeDefined();
     expect(requested!.selector.roles).toEqual(["architect"]);
     expect(requested!.selector.matchLabels).toEqual({ team: "platform" });
-    expect(requested!.selector.engineerId).toBeUndefined();
+    expect(requested!.selector.agentId).toBeUndefined();
   });
 
   it("clarification_answered routes P2P back to the original asker", async () => {
@@ -191,7 +191,7 @@ describe("Mission-19 P2P — Clarification routes to assignedEngineerId", () => 
 
     const answered = answerCtx.dispatchedEvents.find((e) => e.event === "clarification_answered");
     expect(answered).toBeDefined();
-    expect(answered!.selector.engineerId).toBe(engineerId);
+    expect(answered!.selector.agentId).toBe(agentId);
   });
 });
 
@@ -231,8 +231,8 @@ describe("Mission-19 P2P — Fallback when task has no assignedEngineerId", () =
 
     const dispatched = reviewCtx.dispatchedEvents.find((e) => e.event === "review_completed");
     expect(dispatched).toBeDefined();
-    // No engineerId pin — fell back to label-scoped pool.
-    expect(dispatched!.selector.engineerId).toBeUndefined();
+    // No agentId pin — fell back to label-scoped pool.
+    expect(dispatched!.selector.agentId).toBeUndefined();
     expect(dispatched!.selector.roles).toEqual(["engineer"]);
     expect(dispatched!.selector.matchLabels).toEqual({ team: "platform" });
   });

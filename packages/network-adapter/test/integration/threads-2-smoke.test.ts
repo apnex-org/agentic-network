@@ -29,7 +29,7 @@ import type { AgentEvent } from "../../src/kernel/agent-client.js";
 interface ActorHandle {
   client: McpAgentClient;
   transport: LoopbackTransport;
-  engineerId: string;
+  agentId: string;
   actionable: AgentEvent[];
 }
 
@@ -62,9 +62,9 @@ async function createActor(
   await waitFor(() => client.isConnected, 5_000);
   const loopbackSid = transport.getSessionId();
   if (!loopbackSid) throw new Error("LoopbackTransport did not bind a session id");
-  const engineerId = await hub.engineerIdForSession(loopbackSid);
-  if (!engineerId) throw new Error(`Agent entity was not created for session ${loopbackSid}`);
-  return { client, transport, engineerId, actionable };
+  const agentId = await hub.agentIdForSession(loopbackSid);
+  if (!agentId) throw new Error(`Agent entity was not created for session ${loopbackSid}`);
+  return { client, transport, agentId, actionable };
 }
 
 async function stopAll(actors: ActorHandle[]): Promise<void> {
@@ -114,7 +114,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
     await eng1.client.call("create_thread", {
       title: "eng1 to arch",
       message: "hello architect",
-      recipientAgentId: arch.engineerId,
+      recipientAgentId: arch.agentId,
     });
     await waitFor(() => eventsFor(arch, "thread_message").length === 1, 2_000);
     expect(eventsFor(arch, "thread_message")).toHaveLength(1);
@@ -127,7 +127,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
     const r = parseResult(await eng1.client.call("create_thread", {
       title: "turn test",
       message: "open",
-      recipientAgentId: arch.engineerId,
+      recipientAgentId: arch.agentId,
     }));
     const threadId = r.threadId;
 
@@ -156,7 +156,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
 
   it("WF-TH-03: gate rejects converged=true when summary empty", async () => {
     const r = parseResult(await eng1.client.call("create_thread", {
-      title: "gate test", message: "open", recipientAgentId: arch.engineerId,
+      title: "gate test", message: "open", recipientAgentId: arch.agentId,
     }));
     const threadId = r.threadId;
     // Arch stages action, does not author summary, sets converged=true.
@@ -174,7 +174,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
 
   it("WF-TH-04: gate rejects converged=true when no stagedActions", async () => {
     const r = parseResult(await eng1.client.call("create_thread", {
-      title: "gate test 2", message: "open", recipientAgentId: arch.engineerId,
+      title: "gate test 2", message: "open", recipientAgentId: arch.agentId,
     }));
     const threadId = r.threadId;
     await arch.client.call("create_thread_reply", {
@@ -191,7 +191,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
 
   it("WF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close", async () => {
     const r = parseResult(await eng1.client.call("create_thread", {
-      title: "happy path", message: "open", recipientAgentId: arch.engineerId,
+      title: "happy path", message: "open", recipientAgentId: arch.agentId,
     }));
     const threadId = r.threadId;
 
@@ -223,7 +223,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
 
   it("WF-TH-06: stage → revise → retract lineage", async () => {
     const r = parseResult(await eng1.client.call("create_thread", {
-      title: "lineage", message: "open", recipientAgentId: arch.engineerId,
+      title: "lineage", message: "open", recipientAgentId: arch.agentId,
     }));
     const threadId = r.threadId;
 
@@ -256,7 +256,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
 
   it("WF-TH-07: roundCount == maxRounds transitions to round_limit", async () => {
     const r = parseResult(await eng1.client.call("create_thread", {
-      title: "short", message: "open", maxRounds: 2, recipientAgentId: arch.engineerId,
+      title: "short", message: "open", maxRounds: 2, recipientAgentId: arch.agentId,
     }));
     const threadId = r.threadId;
     // Round 1 is the open; round 2 should trigger round_limit.
@@ -270,7 +270,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
 
   it("WF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent", async () => {
     const r = parseResult(await eng1.client.call("create_thread", {
-      title: "participants", message: "open", recipientAgentId: arch.engineerId,
+      title: "participants", message: "open", recipientAgentId: arch.agentId,
     }));
     const threadId = r.threadId;
     await arch.client.call("create_thread_reply", { threadId, message: "arch 1" });
@@ -289,7 +289,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
     // on a fast loopback (ISO-string resolution). The idempotency property
     // is what this test pins.
     expect(thread.participants).toHaveLength(2);
-    const engEntry = thread.participants.find((p: any) => p.agentId === eng1.engineerId);
+    const engEntry = thread.participants.find((p: any) => p.agentId === eng1.agentId);
     expect(engEntry).toBeDefined();
     expect(engEntry.role).toBe("engineer");
   });
@@ -298,7 +298,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
 
   it("WF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants", async () => {
     const r = parseResult(await eng1.client.call("create_thread", {
-      title: "peer review", message: "hey eng-2", recipientAgentId: eng2.engineerId,
+      title: "peer review", message: "hey eng-2", recipientAgentId: eng2.agentId,
     }));
     const threadId = r.threadId;
 
@@ -314,12 +314,12 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
 
     const thread = parseResult(await eng1.client.call("get_thread", { threadId }));
     const ids = thread.participants.map((p: any) => p.agentId).sort();
-    expect(ids).toEqual([eng1.engineerId, eng2.engineerId].sort());
+    expect(ids).toEqual([eng1.agentId, eng2.agentId].sort());
   });
 
   it("WF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread", async () => {
     const r = parseResult(await eng1.client.call("create_thread", {
-      title: "peer review 2", message: "hey eng-2", recipientAgentId: eng2.engineerId,
+      title: "peer review 2", message: "hey eng-2", recipientAgentId: eng2.agentId,
     }));
     const threadId = r.threadId;
     // Architect tries to reply — blocked (currentTurn=engineer + pin=eng2).
@@ -333,7 +333,7 @@ describe("Threads 2.0 — 3-agent smoke (Mission-21 Phase 1)", () => {
 
   it("WF-TH-13: latest-author's summary persists; earlier values are overwritten", async () => {
     const r = parseResult(await eng1.client.call("create_thread", {
-      title: "summary refinement", message: "open", recipientAgentId: arch.engineerId,
+      title: "summary refinement", message: "open", recipientAgentId: arch.agentId,
     }));
     const threadId = r.threadId;
     await arch.client.call("create_thread_reply", {

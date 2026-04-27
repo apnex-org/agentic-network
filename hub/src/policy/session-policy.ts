@@ -82,7 +82,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
     // Read current sessionEpoch (as-observed, NOT incremented — adapters
     // must key on the new sessionClaimed field, NOT epoch delta, per
     // T2 brief §3 + anti-goal §7.5).
-    const currentAgent = await ctx.stores.engineerRegistry.getAgent(identity.engineerId);
+    const currentAgent = await ctx.stores.engineerRegistry.getAgent(identity.agentId);
     const currentSessionEpoch = currentAgent?.sessionEpoch ?? 0;
 
     // Audit emissions — T2 emits ONLY agent_identity_asserted from this
@@ -95,11 +95,11 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
       await ctx.stores.audit.logEntry(
         "hub",
         "agent_identity_asserted",
-        `Agent ${identity.engineerId} identity asserted (wasCreated=${identity.wasCreated})`,
-        identity.engineerId,
+        `Agent ${identity.agentId} identity asserted (wasCreated=${identity.wasCreated})`,
+        identity.agentId,
       );
     } catch (err) {
-      console.warn(`[session-policy] agent_identity_asserted audit write failed for ${identity.engineerId}: ${(err as Error).message ?? err}`);
+      console.warn(`[session-policy] agent_identity_asserted audit write failed for ${identity.agentId}: ${(err as Error).message ?? err}`);
     }
     // CP3 C5 (bug-16): preserved unchanged — emits when mutable handshake
     // fields refresh stored state on reconnect.
@@ -111,11 +111,11 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
         await ctx.stores.audit.logEntry(
           "hub",
           "agent_handshake_refreshed",
-          `Agent ${identity.engineerId} handshake refreshed stored state: ${diffDetails}`,
-          identity.engineerId,
+          `Agent ${identity.agentId} handshake refreshed stored state: ${diffDetails}`,
+          identity.agentId,
         );
       } catch (err) {
-        console.warn(`[session-policy] agent_handshake_refreshed audit write failed for ${identity.engineerId}: ${(err as Error).message ?? err}`);
+        console.warn(`[session-policy] agent_handshake_refreshed audit write failed for ${identity.agentId}: ${(err as Error).message ?? err}`);
       }
     }
     return {
@@ -123,7 +123,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
         type: "text" as const,
         text: JSON.stringify({
           ok: true,
-          engineerId: identity.engineerId,
+          agentId: identity.agentId,
           // T2: currentSessionEpoch reflects as-observed value, NOT a
           // just-incremented value. Adapters must key on sessionClaimed
           // (next field), not epoch delta.
@@ -136,7 +136,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
           clientMetadata: identity.clientMetadata,
           advisoryTags: identity.advisoryTags,
           labels: identity.labels,
-          message: `Identity asserted for agent ${identity.engineerId} (no session claim — call claim_session to bind this session as the active one${identity.wasCreated ? ", newly created" : ""})`,
+          message: `Identity asserted for agent ${identity.agentId} (no session claim — call claim_session to bind this session as the active one${identity.wasCreated ? ", newly created" : ""})`,
         }),
       }],
     };
@@ -174,7 +174,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
 async function claimSessionTool(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const sid = ctx.sessionId;
   // Look up the agent bound to this session. After register_role, the
-  // session→engineerId binding is recorded by assertIdentity (T2 sig
+  // session→agentId binding is recorded by assertIdentity (T2 sig
   // extension) so getAgentForSession returns the asserted-identity
   // agent even though no claim has happened yet.
   const agent = await ctx.stores.engineerRegistry.getAgentForSession(sid);
@@ -191,7 +191,7 @@ async function claimSessionTool(_args: Record<string, unknown>, ctx: IPolicyCont
       isError: true,
     };
   }
-  const claim = await ctx.stores.engineerRegistry.claimSession(agent.engineerId, sid, "explicit");
+  const claim = await ctx.stores.engineerRegistry.claimSession(agent.agentId, sid, "explicit");
   if (!claim.ok) {
     return {
       content: [{
@@ -206,22 +206,22 @@ async function claimSessionTool(_args: Record<string, unknown>, ctx: IPolicyCont
     await ctx.stores.audit.logEntry(
       "hub",
       "agent_session_claimed",
-      `Agent ${claim.engineerId} session claimed (trigger=explicit, epoch=${claim.sessionEpoch})`,
-      claim.engineerId,
+      `Agent ${claim.agentId} session claimed (trigger=explicit, epoch=${claim.sessionEpoch})`,
+      claim.agentId,
     );
   } catch (err) {
-    console.warn(`[session-policy] agent_session_claimed audit write failed for ${claim.engineerId}: ${(err as Error).message ?? err}`);
+    console.warn(`[session-policy] agent_session_claimed audit write failed for ${claim.agentId}: ${(err as Error).message ?? err}`);
   }
   if (claim.displacedPriorSession) {
     try {
       await ctx.stores.audit.logEntry(
         "hub",
         "agent_session_displaced",
-        `Agent ${claim.engineerId} session displaced (priorSessionId=${claim.displacedPriorSession.sessionId}, priorEpoch=${claim.displacedPriorSession.epoch}, newEpoch=${claim.sessionEpoch}, trigger=explicit)`,
-        claim.engineerId,
+        `Agent ${claim.agentId} session displaced (priorSessionId=${claim.displacedPriorSession.sessionId}, priorEpoch=${claim.displacedPriorSession.epoch}, newEpoch=${claim.sessionEpoch}, trigger=explicit)`,
+        claim.agentId,
       );
     } catch (err) {
-      console.warn(`[session-policy] agent_session_displaced audit write failed for ${claim.engineerId}: ${(err as Error).message ?? err}`);
+      console.warn(`[session-policy] agent_session_displaced audit write failed for ${claim.agentId}: ${(err as Error).message ?? err}`);
     }
   }
   return {
@@ -229,11 +229,11 @@ async function claimSessionTool(_args: Record<string, unknown>, ctx: IPolicyCont
       type: "text" as const,
       text: JSON.stringify({
         ok: true,
-        engineerId: claim.engineerId,
+        agentId: claim.agentId,
         sessionEpoch: claim.sessionEpoch,
         sessionClaimed: true,
         ...(claim.displacedPriorSession ? { displacedPriorSession: claim.displacedPriorSession } : {}),
-        message: `Session claimed for agent ${claim.engineerId} (epoch=${claim.sessionEpoch}${claim.displacedPriorSession ? `, displaced prior session ${claim.displacedPriorSession.sessionId} epoch=${claim.displacedPriorSession.epoch}` : ""})`,
+        message: `Session claimed for agent ${claim.agentId} (epoch=${claim.sessionEpoch}${claim.displacedPriorSession ? `, displaced prior session ${claim.displacedPriorSession.sessionId} epoch=${claim.displacedPriorSession.epoch}` : ""})`,
       }),
     }],
   };
@@ -284,11 +284,11 @@ async function listAvailablePeers(args: Record<string, unknown>, ctx: IPolicyCon
   });
 
   const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
-  const selfId = self?.engineerId;
+  const selfId = self?.agentId;
   const peers = agents
-    .filter((a) => a.engineerId !== selfId)
+    .filter((a) => a.agentId !== selfId)
     .map((a) => ({
-      agentId: a.engineerId,
+      agentId: a.agentId,
       role: a.role,
       labels: a.labels ?? {},
     }));
@@ -395,7 +395,7 @@ async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Pr
     if (livenessAllow && !livenessAllow.has(a.livenessState)) continue;
     if (activityAllow && !activityAllow.has(a.activityState)) continue;
     if (labelFilter && !labelsMatchAll(a.labels ?? {}, labelFilter)) continue;
-    if (agentIdSet && !agentIdSet.has(a.engineerId)) continue;
+    if (agentIdSet && !agentIdSet.has(a.agentId)) continue;
     // currentMissionId filter: only match if we have a derived value (skip
     // until derivation is wired; for now no-match if filter set since stored
     // is always null per Design §11.1 derive-on-read).
@@ -403,7 +403,7 @@ async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 
     const proj: AgentProjection = {};
     if (fieldGroups.has("identity")) {
-      proj.id = a.engineerId;
+      proj.id = a.agentId;
       proj.name = a.name;
       proj.role = a.role;
       proj.labels = a.labels ?? {};
@@ -503,7 +503,7 @@ function buildAgentStateChangedPayload(
   }
   return {
     event: "agent_state_changed",
-    agentId: before.engineerId,
+    agentId: before.agentId,
     fromLivenessState: before.livenessState,
     toLivenessState: before.livenessState, // unchanged by activity-only transitions
     fromActivityState: before.activityState,
@@ -528,11 +528,11 @@ async function signalWorkingStarted(args: Record<string, unknown>, ctx: IPolicyC
       isError: true,
     };
   }
-  await ctx.stores.engineerRegistry.recordToolCallStart(self.engineerId, toolName);
+  await ctx.stores.engineerRegistry.recordToolCallStart(self.agentId, toolName);
   const payload = buildAgentStateChangedPayload(self, "online_working", ["lastToolCallAt", "lastToolCallName", "workingSince"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_working", toolName }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.agentId, activityState: "online_working", toolName }) }],
   };
 }
 
@@ -544,11 +544,11 @@ async function signalWorkingCompleted(_args: Record<string, unknown>, ctx: IPoli
       isError: true,
     };
   }
-  await ctx.stores.engineerRegistry.recordToolCallComplete(self.engineerId);
+  await ctx.stores.engineerRegistry.recordToolCallComplete(self.agentId);
   const payload = buildAgentStateChangedPayload(self, "online_idle", ["idleSince", "workingSince"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_idle" }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.agentId, activityState: "online_idle" }) }],
   };
 }
 
@@ -567,11 +567,11 @@ async function signalQuotaBlocked(args: Record<string, unknown>, ctx: IPolicyCon
       isError: true,
     };
   }
-  await ctx.stores.engineerRegistry.recordQuotaBlocked(self.engineerId, retryAfterSeconds);
+  await ctx.stores.engineerRegistry.recordQuotaBlocked(self.agentId, retryAfterSeconds);
   const payload = buildAgentStateChangedPayload(self, "online_quota_blocked", ["quotaBlockedUntil", "workingSince"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_quota_blocked", retryAfterSeconds }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.agentId, activityState: "online_quota_blocked", retryAfterSeconds }) }],
   };
 }
 
@@ -583,11 +583,11 @@ async function signalQuotaRecovered(_args: Record<string, unknown>, ctx: IPolicy
       isError: true,
     };
   }
-  await ctx.stores.engineerRegistry.recordQuotaRecovered(self.engineerId);
+  await ctx.stores.engineerRegistry.recordQuotaRecovered(self.agentId);
   const payload = buildAgentStateChangedPayload(self, "online_idle", ["idleSince", "quotaBlockedUntil"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_idle" }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.agentId, activityState: "online_idle" }) }],
   };
 }
 
@@ -596,7 +596,7 @@ async function signalQuotaRecovered(_args: Record<string, unknown>, ctx: IPolicy
 export function registerSessionPolicy(router: PolicyRouter): void {
   router.register(
     "register_role",
-    "[Any] Register this session's role and, optionally (M18), the full Agent handshake payload (globalInstanceId, clientMetadata, advisoryTags) to obtain a stable engineerId with displacement-safe session rebinding.",
+    "[Any] Register this session's role and, optionally (M18), the full Agent handshake payload (globalInstanceId, clientMetadata, advisoryTags) to obtain a stable agentId with displacement-safe session rebinding.",
     {
       role: z.enum(["engineer", "architect", "director"]).describe("The role of this session: 'engineer', 'architect', or 'director'"),
       globalInstanceId: z.string().optional().describe("M18: Client-side stable UUID from ~/.ois/instance.json. When present, triggers the Agent handshake path."),
@@ -622,7 +622,7 @@ export function registerSessionPolicy(router: PolicyRouter): void {
 
   router.register(
     "claim_session",
-    "[Any] M-Session-Claim-Separation (mission-40) T2: explicit session claim. Binds the caller's MCP session as the active session for the asserted identity (created via register_role). Increments sessionEpoch, evicts any prior session for the same engineerId, makes the agent eligible for SSE notification dispatch. Returns sessionClaimed=true. The verb 'claim_session' is committed as stable across future API v2.0 envelope migration (idea-121 may wrap but must not rename). Probes (claude mcp list) MUST NOT call this tool — that defeats the bug-26 structural fix. Use only when the caller intends to be the active session.",
+    "[Any] M-Session-Claim-Separation (mission-40) T2: explicit session claim. Binds the caller's MCP session as the active session for the asserted identity (created via register_role). Increments sessionEpoch, evicts any prior session for the same agentId, makes the agent eligible for SSE notification dispatch. Returns sessionClaimed=true. The verb 'claim_session' is committed as stable across future API v2.0 envelope migration (idea-121 may wrap but must not rename). Probes (claude mcp list) MUST NOT call this tool — that defeats the bug-26 structural fix. Use only when the caller intends to be the active session.",
     {},
     claimSessionTool,
   );
@@ -646,7 +646,7 @@ export function registerSessionPolicy(router: PolicyRouter): void {
 
   router.register(
     "migrate_agent_queue",
-    "[Architect] M18 admin: move pending notifications from a source engineerId to a target engineerId (used for 'my laptop died, new globalInstanceId' recovery). Agents are append-only and are never deleted.",
+    "[Architect] M18 admin: move pending notifications from a source agentId to a target agentId (used for 'my laptop died, new globalInstanceId' recovery). Agents are append-only and are never deleted.",
     {
       sourceEngineerId: z.string().describe("Engineer ID whose queue should be drained"),
       targetEngineerId: z.string().describe("Engineer ID to receive the pending notifications"),

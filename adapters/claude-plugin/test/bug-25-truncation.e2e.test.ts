@@ -116,7 +116,7 @@ async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
 
 interface AgentHarness {
   role: "engineer" | "architect";
-  engineerId: string;
+  agentId: string;
   agent: McpAgentClient;
   transport: LoopbackTransport;
   dispatcher: ReturnType<typeof createSharedDispatcher>;
@@ -167,8 +167,8 @@ async function createAgentWithMcpShim(
   await waitFor(() => agent.isConnected, 5_000);
   const sid = transport.getSessionId();
   if (!sid) throw new Error(`${role} transport did not bind a session`);
-  const engineerId = await hub.engineerIdForSession(sid);
-  if (!engineerId) throw new Error(`${role} Agent was not created`);
+  const agentId = await hub.agentIdForSession(sid);
+  if (!agentId) throw new Error(`${role} Agent was not created`);
 
   const mcpPair = transportFactory();
   const dispatcherServer = dispatcher.createMcpServer();
@@ -188,7 +188,7 @@ async function createAgentWithMcpShim(
 
   return {
     role,
-    engineerId,
+    agentId,
     agent,
     transport,
     dispatcher,
@@ -236,7 +236,7 @@ describe.each(VARIANTS)(
         title: "bug-25 Hub storage check",
         message: TELES_FIXTURE,
         routingMode: "unicast",
-        recipientAgentId: receiver.engineerId,
+        recipientAgentId: receiver.agentId,
       });
       const openText = typeof openRaw === "string" ? openRaw : JSON.stringify(openRaw);
       const parsed = JSON.parse(openText);
@@ -256,7 +256,7 @@ describe.each(VARIANTS)(
           title: "bug-25 SEND path",
           message: TELES_FIXTURE,
           routingMode: "unicast",
-          recipientAgentId: receiver.engineerId,
+          recipientAgentId: receiver.agentId,
         },
       });
       expect((openResult as { isError?: boolean }).isError).toBeFalsy();
@@ -279,7 +279,7 @@ describe.each(VARIANTS)(
         title: "bug-25 RECEIVE path",
         message: TELES_FIXTURE,
         routingMode: "unicast",
-        recipientAgentId: receiver.engineerId,
+        recipientAgentId: receiver.agentId,
       });
       const openText = typeof openRaw === "string" ? openRaw : JSON.stringify(openRaw);
       const threadId = JSON.parse(openText).threadId;
@@ -311,7 +311,7 @@ describe.each(VARIANTS)(
           title: "bug-25 round-trip",
           message: TELES_FIXTURE,
           routingMode: "unicast",
-          recipientAgentId: receiver.engineerId,
+          recipientAgentId: receiver.agentId,
         },
       });
       const threadId = JSON.parse(extractToolResultText(openResult)).threadId;

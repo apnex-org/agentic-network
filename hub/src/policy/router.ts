@@ -147,7 +147,7 @@ export class PolicyRouter {
       const agent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
       if (agent && agent.currentSessionId !== ctx.sessionId) {
         const autoClaim = await ctx.stores.engineerRegistry.claimSession(
-          agent.engineerId,
+          agent.agentId,
           ctx.sessionId,
           "first_tool_call",
         );
@@ -156,22 +156,22 @@ export class PolicyRouter {
             await ctx.stores.audit.logEntry(
               "hub",
               "agent_session_implicit_claim",
-              `Agent ${autoClaim.engineerId} session implicitly claimed (trigger=first_tool_call, epoch=${autoClaim.sessionEpoch}, originatingTool=${toolName})`,
-              autoClaim.engineerId,
+              `Agent ${autoClaim.agentId} session implicitly claimed (trigger=first_tool_call, epoch=${autoClaim.sessionEpoch}, originatingTool=${toolName})`,
+              autoClaim.agentId,
             );
           } catch (err) {
-            this.log(`[T2] agent_session_implicit_claim audit write failed for ${autoClaim.engineerId}: ${(err as Error).message ?? err}`);
+            this.log(`[T2] agent_session_implicit_claim audit write failed for ${autoClaim.agentId}: ${(err as Error).message ?? err}`);
           }
           if (autoClaim.displacedPriorSession) {
             try {
               await ctx.stores.audit.logEntry(
                 "hub",
                 "agent_session_displaced",
-                `Agent ${autoClaim.engineerId} session displaced (priorSessionId=${autoClaim.displacedPriorSession.sessionId}, priorEpoch=${autoClaim.displacedPriorSession.epoch}, newEpoch=${autoClaim.sessionEpoch}, trigger=first_tool_call)`,
-                autoClaim.engineerId,
+                `Agent ${autoClaim.agentId} session displaced (priorSessionId=${autoClaim.displacedPriorSession.sessionId}, priorEpoch=${autoClaim.displacedPriorSession.epoch}, newEpoch=${autoClaim.sessionEpoch}, trigger=first_tool_call)`,
+                autoClaim.agentId,
               );
             } catch (err) {
-              this.log(`[T2] agent_session_displaced audit write failed for ${autoClaim.engineerId}: ${(err as Error).message ?? err}`);
+              this.log(`[T2] agent_session_displaced audit write failed for ${autoClaim.agentId}: ${(err as Error).message ?? err}`);
             }
           }
         }

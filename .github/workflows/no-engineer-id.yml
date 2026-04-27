@@ -1,0 +1,69 @@
+name: no-engineer-id
+
+# Mission-62 W1+W2 Pass 9 — CI hook for engineerId regression detection.
+#
+# Per Design v1.0 §7.2 + ratified on thread-387: post-rename CI gate
+# blocks any commit that re-introduces `engineerId` / `engineer_id`
+# tokens in active code surfaces.
+#
+# The engineerId → agentId rename landed in mission-62 W1+W2 (PR #112);
+# this workflow prevents regression by failing the build on any future
+# diff that re-adds the legacy token.
+#
+# Carve-outs: ADRs, audits, work-traces, and CHANGELOG-style docs may
+# legitimately reference engineerId historically — those paths are
+# excluded from the grep.
+#
+# Pairs with the .husky/pre-commit local fast-fail hook (same logic
+# applied at commit time).
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  no-engineer-id:
+    name: no-engineer-id
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Block engineerId / engineer_id regression in active code
+        run: |
+          set -euo pipefail
+          # Carve-outs preserve historical/narrative references in:
+          # - docs/         (entire docs tree: ADRs, audits, traces, architecture,
+          #                  designs, missions, history, planning, network,
+          #                  observability, reviews, specs, sdk-guide, methodology)
+          #                  — documentation by nature narrates the rename verbatim
+          # - CHANGELOG*    (release-note historical references)
+          # - test README.md files (test-mock API docs; lower priority than active code)
+          # - this workflow file itself + the husky hook (self-reference)
+          # - package-lock.json (mechanically generated)
+          MATCHES=$(git grep -nE 'engineerId|engineer_id' \
+            -- \
+            ':!docs/' \
+            ':!CHANGELOG*' \
+            ':!**/test/README.md' \
+            ':!**/test/**/README.md' \
+            ':!.github/workflows/no-engineer-id.yml' \
+            ':!.husky/pre-commit' \
+            ':!package-lock.json' \
+            ':!**/package-lock.json' \
+            || true)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::engineerId/engineer_id token found in active code surface."
+            echo "::error::Per mission-62 (M-Agent-Entity-Revisit) Pass 6 rename, agentId is the canonical cross-ref name."
+            echo ""
+            echo "$MATCHES"
+            echo ""
+            echo "Resolution: rename to agentId. If the reference is genuinely historical"
+            echo "(ADR, closing audit, work-trace, CHANGELOG), add the file's directory to"
+            echo "the carve-out list in .github/workflows/no-engineer-id.yml."
+            exit 1
+          fi
+          echo "no engineerId / engineer_id regressions detected in active code surfaces"

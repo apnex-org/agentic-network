@@ -262,7 +262,7 @@ export class TaskRepository implements ITaskStore {
   }
 
   async getNextDirective(
-    claimant?: { engineerId?: string; labels?: Record<string, string> },
+    claimant?: { agentId?: string; labels?: Record<string, string> },
   ): Promise<Task | null> {
     await this.taskLock.acquire();
     try {
@@ -281,7 +281,7 @@ export class TaskRepository implements ITaskStore {
             throw new TransitionRejected("labels diverged");
           }
           current.status = "working";
-          current.assignedEngineerId = claimant?.engineerId ?? null;
+          current.assignedEngineerId = claimant?.agentId ?? null;
           current.updatedAt = new Date().toISOString();
           claimed = { ...current };
           return current;

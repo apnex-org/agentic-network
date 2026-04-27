@@ -525,7 +525,7 @@ describe("TaskPolicy", () => {
 
     // Enqueue a thread_message queue item in receipt_acked state for the architect
     const queued = await ctx.stores.pendingAction.enqueue({
-      targetAgentId: architectAgent!.engineerId,
+      targetAgentId: architectAgent!.agentId,
       dispatchType: "thread_message",
       entityRef: thread.id,
       payload: {},

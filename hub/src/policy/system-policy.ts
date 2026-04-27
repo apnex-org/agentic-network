@@ -32,7 +32,7 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
   const callerAgent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
   const inFlightThreadIds = new Set<string>();
   if (callerAgent) {
-    const callerQueue = await ctx.stores.pendingAction.listForAgent(callerAgent.engineerId);
+    const callerQueue = await ctx.stores.pendingAction.listForAgent(callerAgent.agentId);
     for (const item of callerQueue) {
       if (item.dispatchType !== "thread_message") continue;
       if (item.state === "enqueued" || item.state === "receipt_acked") {

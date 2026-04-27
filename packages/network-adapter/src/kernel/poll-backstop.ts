@@ -14,7 +14,7 @@
  *
  * Cursor persistence: last-seen Message ID is persisted across adapter
  * restarts so the poll fetches only the delta on each tick. Default
- * cursor file: `~/.ois/poll-cursor-<role>-<engineerId>.json`. The
+ * cursor file: `~/.ois/poll-cursor-<role>-<agentId>.json`. The
  * `since` cursor is REQUIRED on every poll — initial-state (no cursor
  * file) sends `since` undefined and treats the first poll's results as
  * the cold-start baseline (which the seen-id LRU dedup in the
@@ -54,7 +54,7 @@ export interface PollBackstopOptions {
 
   /**
    * Override cursor-file location. Defaults to
-   * `~/.ois/poll-cursor-<role>-<engineerId>.json`. Tests inject a
+   * `~/.ois/poll-cursor-<role>-<agentId>.json`. Tests inject a
    * temp path here; production callers can override to land cursors
    * in workspace-local state (e.g. `.ois/poll-cursor.json`).
    */
@@ -86,12 +86,12 @@ interface CursorFile {
 
 /**
  * Resolve the cursor file path. Defaults to
- * `~/.ois/poll-cursor-<role>-<engineerId>.json`. The engineerId is
+ * `~/.ois/poll-cursor-<role>-<agentId>.json`. The agentId is
  * stable across restarts (mission-19 Agent identity) so a single
  * adapter instance always writes/reads the same cursor file.
  */
-export function defaultCursorFile(role: string, engineerId: string): string {
-  return join(homedir(), ".ois", `poll-cursor-${role}-${engineerId}.json`);
+export function defaultCursorFile(role: string, agentId: string): string {
+  return join(homedir(), ".ois", `poll-cursor-${role}-${agentId}.json`);
 }
 
 /**
@@ -243,18 +243,18 @@ export class PollBackstop {
       const agent = getAgent();
       if (!agent || agent.state !== "streaming") return;
 
-      // Cursor file resolution: lazy on first tick (engineerId only
+      // Cursor file resolution: lazy on first tick (agentId only
       // becomes known post-handshake).
       if (!this.resolvedCursorFile) {
         if (this.opts.cursorFile) {
           this.resolvedCursorFile = this.opts.cursorFile;
         } else {
-          const engineerId = agent.getSessionId() ?? "unknown";
-          // Prefer `getMetrics().engineerId` when available — it's the
+          const agentId = agent.getSessionId() ?? "unknown";
+          // Prefer `getMetrics().agentId` when available — it's the
           // post-handshake stable Agent identity, distinct from the
           // session id which cycles on reconnect.
           const metrics = agent.getMetrics?.();
-          const id = metrics?.engineerId ?? engineerId;
+          const id = metrics?.agentId ?? agentId;
           this.resolvedCursorFile = defaultCursorFile(this.opts.role, id);
         }
       }

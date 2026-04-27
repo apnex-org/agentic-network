@@ -85,7 +85,7 @@ describe("McpTransport — L4 wire surface", () => {
     try {
       await t.connect();
       const result = await t.request("register_role", { role: "engineer" });
-      // Real Hub returns an engineerId on successful register.
+      // Real Hub returns an agentId on successful register.
       expect(result).toBeTruthy();
       const calls = hub.getToolCalls("register_role");
       expect(calls.length).toBeGreaterThanOrEqual(1);

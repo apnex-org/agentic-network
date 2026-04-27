@@ -51,7 +51,7 @@ async function resolveClarification(args: Record<string, unknown>, ctx: IPolicyC
   const task = await ctx.stores.task.getTask(taskId);
   await ctx.dispatch("clarification_answered", { taskId, answer: answer.substring(0, 200) },
     task?.assignedEngineerId
-      ? { engineerId: task.assignedEngineerId }
+      ? { agentId: task.assignedEngineerId }
       : { roles: ["engineer"], matchLabels: task?.labels });
 
   return {

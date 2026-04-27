@@ -129,7 +129,7 @@ async function createMessage(
     ctx.sessionId,
   ).catch(() => null);
   const authorAgentId: string =
-    agent?.engineerId ?? `anonymous-${authorRole}`;
+    agent?.agentId ?? `anonymous-${authorRole}`;
 
   // Author authorization gate per W1's checkAuthorAuthorized helper.
   const authError = checkAuthorAuthorized(
@@ -196,7 +196,7 @@ async function createMessage(
     //
     // Subscriber resolution maps MessageTarget → Selector:
     //   target.role        → selector.roles = [target.role]
-    //   target.agentId     → selector.engineerId = target.agentId
+    //   target.agentId     → selector.agentId = target.agentId
     //   target == null     → empty selector (broadcast to all online)
     //   delivery !== "push-immediate" → no fire (queued + scheduled
     //                                   land on poll backstop / sweeper)
@@ -271,7 +271,7 @@ async function resolveCallerAgentId(ctx: IPolicyContext): Promise<string> {
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(
     ctx.sessionId,
   ).catch(() => null);
-  return agent?.engineerId ?? `anonymous-${fallbackRole}`;
+  return agent?.agentId ?? `anonymous-${fallbackRole}`;
 }
 
 async function claimMessage(
@@ -445,10 +445,10 @@ async function ackMessage(
  * - `target.role === "system"` → role filter omitted (no Agent has the
  *   "system" role; "system"-targeted Messages are Hub-internal and
  *   shouldn't push to live subscribers)
- * - `target.agentId` → selector.engineerId (single-agent pin)
+ * - `target.agentId` → selector.agentId (single-agent pin)
  *
  * Both role + agentId together produce an AND filter (only the agent
- * with that engineerId AND in that role). Mission-19 selector
+ * with that agentId AND in that role). Mission-19 selector
  * semantics apply.
  *
  * Exported for unit testing.
@@ -459,7 +459,7 @@ export function pushSelector(target: MessageTarget | null): Selector {
   if (target.role && target.role !== "system") {
     sel.roles = [target.role];
   }
-  if (target.agentId) sel.engineerId = target.agentId;
+  if (target.agentId) sel.agentId = target.agentId;
   return sel;
 }
 

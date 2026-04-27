@@ -46,7 +46,7 @@ async function createAgent(
 ): Promise<{
   agent: McpAgentClient;
   transport: LoopbackTransport;
-  engineerId: string;
+  agentId: string;
 }> {
   const transport = new LoopbackTransport(hub);
   const agent = new McpAgentClient(
@@ -68,9 +68,9 @@ async function createAgent(
   await waitFor(() => agent.isConnected, 5_000);
   const sid = transport.getSessionId();
   if (!sid) throw new Error("transport did not bind a session");
-  const engineerId = await hub.engineerIdForSession(sid);
-  if (!engineerId) throw new Error("Agent entity not created");
-  return { agent, transport, engineerId };
+  const agentId = await hub.agentIdForSession(sid);
+  if (!agentId) throw new Error("Agent entity not created");
+  return { agent, transport, agentId };
 }
 
 describe("McpAgentClient cognitive integration", () => {

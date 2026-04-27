@@ -49,7 +49,7 @@ function fakeStreamingAgent(callImpl: (m: string, p: Record<string, unknown>) =>
     getSessionId: () => "test-session",
     getMetrics: () => ({
       sessionState: "streaming",
-      engineerId: "eng-test",
+      agentId: "eng-test",
       sessionEpoch: 1,
       totalHandshakes: 1,
       totalSessionInvalidRetries: 0,

@@ -182,15 +182,15 @@ export class ActorFacade {
         this.eventCapture.capture(event, data, targetRoles);
       },
       dispatch: async (event, data, selector) => {
-        // ADR-014 §115 soft-cutover: dispatches now prefer engineerIds
-        // or engineerId (singular — used by review-policy etc.). For
+        // ADR-014 §115 soft-cutover: dispatches now prefer agentIds
+        // or agentId (singular — used by review-policy etc.). For
         // role-targeted assertions (expectEventFor(event, role)), resolve
         // any engineer-id form → role via the registry so role-fallback
-        // and engineerId-targeted paths both populate targetRoles.
+        // and agentId-targeted paths both populate targetRoles.
         let targetRoles: string[] | undefined = selector.roles ? [...selector.roles] : undefined;
         const idsToResolve: string[] = [];
-        if (selector.engineerIds && selector.engineerIds.length > 0) idsToResolve.push(...selector.engineerIds);
-        if (selector.engineerId) idsToResolve.push(selector.engineerId);
+        if (selector.agentIds && selector.agentIds.length > 0) idsToResolve.push(...selector.agentIds);
+        if (selector.agentId) idsToResolve.push(selector.agentId);
         if (idsToResolve.length > 0) {
           const resolved = new Set<string>(targetRoles ?? []);
           const registry = this.stores.engineerRegistry as any;
@@ -463,12 +463,12 @@ export class TestOrchestrator {
   }
 
   /** Get an Engineer actor facade. Supports multiple engineers. */
-  asEngineer(engineerId: string = "default"): ActorFacade {
-    const key = `engineer-${engineerId}`;
+  asEngineer(agentId: string = "default"): ActorFacade {
+    const key = `engineer-${agentId}`;
     if (!this.actorCache.has(key)) {
       this.actorCache.set(key, new ActorFacade(
         this.router, this.stores, this.events,
-        "engineer", `session-engineer-${engineerId}`,
+        "engineer", `session-engineer-${agentId}`,
         this.config, this.metrics,
       ));
     }

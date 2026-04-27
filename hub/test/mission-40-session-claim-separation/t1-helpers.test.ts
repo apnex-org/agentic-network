@@ -61,7 +61,7 @@ describe("M-Session-Claim-Separation T1 — assertIdentity (Memory)", () => {
     if (!result.ok) return;
     expect(result.wasCreated).toBe(true);
 
-    const agent = await reg.getAgent(result.engineerId);
+    const agent = await reg.getAgent(result.agentId);
     expect(agent).toBeTruthy();
     expect(agent?.sessionEpoch).toBe(0);
     expect(agent?.currentSessionId).toBeNull();
@@ -78,9 +78,9 @@ describe("M-Session-Claim-Separation T1 — assertIdentity (Memory)", () => {
     expect(second.ok).toBe(true);
     if (!second.ok) return;
 
-    expect(second.engineerId).toBe(first.engineerId);
+    expect(second.agentId).toBe(first.agentId);
     expect(second.wasCreated).toBe(false);
-    const agent = await reg.getAgent(first.engineerId);
+    const agent = await reg.getAgent(first.agentId);
     expect(agent?.sessionEpoch).toBe(0); // unchanged
     expect(agent?.currentSessionId).toBeNull(); // unchanged
   });
@@ -106,7 +106,7 @@ describe("M-Session-Claim-Separation T1 — assertIdentity (Memory)", () => {
     expect(second.priorLabels).toEqual({ team: "platform" });
     expect(second.labels).toEqual({ team: "infra", env: "prod" });
 
-    const agent = await reg.getAgent(first.engineerId);
+    const agent = await reg.getAgent(first.agentId);
     expect(agent?.labels).toEqual({ team: "infra", env: "prod" });
   });
 
@@ -127,31 +127,31 @@ describe("M-Session-Claim-Separation T1 — assertIdentity (Memory)", () => {
 
 describe("M-Session-Claim-Separation T1 — claimSession (Memory)", () => {
   let reg: AgentRepository;
-  let engineerId: string;
+  let agentId: string;
   beforeEach(async () => {
     reg = new AgentRepository(new MemoryStorageProvider());
     const id = await reg.assertIdentity(identityPayload("inst-A", "engineer"));
     if (!id.ok) throw new Error("setup failed");
-    engineerId = id.engineerId;
+    agentId = id.agentId;
   });
 
   it("first claim increments sessionEpoch from 0 to 1, binds session, marks online", async () => {
-    const claim = await reg.claimSession(engineerId, "sess-1", "explicit");
+    const claim = await reg.claimSession(agentId, "sess-1", "explicit");
     expect(claim.ok).toBe(true);
     if (!claim.ok) return;
     expect(claim.sessionEpoch).toBe(1);
     expect(claim.trigger).toBe("explicit");
     expect(claim.displacedPriorSession).toBeUndefined();
 
-    const agent = await reg.getAgent(engineerId);
+    const agent = await reg.getAgent(agentId);
     expect(agent?.sessionEpoch).toBe(1);
     expect(agent?.currentSessionId).toBe("sess-1");
     expect(agent?.status).toBe("online");
   });
 
   it("second claim from a different sessionId returns displacedPriorSession", async () => {
-    await reg.claimSession(engineerId, "sess-1", "explicit");
-    const second = await reg.claimSession(engineerId, "sess-2", "sse_subscribe");
+    await reg.claimSession(agentId, "sess-1", "explicit");
+    const second = await reg.claimSession(agentId, "sess-2", "sse_subscribe");
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     expect(second.sessionEpoch).toBe(2);
@@ -160,8 +160,8 @@ describe("M-Session-Claim-Separation T1 — claimSession (Memory)", () => {
   });
 
   it("claim with same sessionId does NOT report displacement (no-op rebind preserves audit clarity)", async () => {
-    await reg.claimSession(engineerId, "sess-1", "explicit");
-    const second = await reg.claimSession(engineerId, "sess-1", "first_tool_call");
+    await reg.claimSession(agentId, "sess-1", "explicit");
+    const second = await reg.claimSession(agentId, "sess-1", "first_tool_call");
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     expect(second.displacedPriorSession).toBeUndefined();
@@ -174,14 +174,14 @@ describe("M-Session-Claim-Separation T1 — claimSession (Memory)", () => {
       const reg2 = new AgentRepository(new MemoryStorageProvider());
       const id = await reg2.assertIdentity(identityPayload("inst-A", "engineer"));
       if (!id.ok) throw new Error("setup");
-      const claim = await reg2.claimSession(id.engineerId, `sess-${trigger}`, trigger);
+      const claim = await reg2.claimSession(id.agentId, `sess-${trigger}`, trigger);
       expect(claim.ok).toBe(true);
       if (!claim.ok) continue;
       expect(claim.trigger).toBe(trigger);
     }
   });
 
-  it("claim on unknown engineerId returns unknown_engineer failure", async () => {
+  it("claim on unknown agentId returns unknown_engineer failure", async () => {
     const result = await reg.claimSession("eng-does-not-exist", "sess-X", "explicit");
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -213,7 +213,7 @@ describe("M-Session-Claim-Separation T1 — registerAgent external behavior pres
     expect(result.changedFields).toBeUndefined();
     expect(result.displacedPriorSession).toBeUndefined();
 
-    const agent = await reg.getAgent(result.engineerId);
+    const agent = await reg.getAgent(result.agentId);
     expect(agent?.sessionEpoch).toBe(1);
     expect(agent?.currentSessionId).toBe("sess-1");
     expect(agent?.status).toBe("online");

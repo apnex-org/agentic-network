@@ -56,7 +56,7 @@ export interface ActorHandle {
   readonly role: "architect" | "engineer";
   readonly agent: McpAgentClient;
   readonly transport: LoopbackTransport;
-  readonly engineerId: string;
+  readonly agentId: string;
   call(tool: string, args: Record<string, unknown>): Promise<unknown>;
 }
 
@@ -159,13 +159,13 @@ async function buildArchitect(
   await waitForImpl(() => agent.isConnected, 5_000);
   const sid = transport.getSessionId();
   if (!sid) throw new Error("MockOpenCodeClient: architect transport did not bind a session");
-  const engineerId = await hub.engineerIdForSession(sid);
-  if (!engineerId) throw new Error("MockOpenCodeClient: architect Agent was not created");
+  const agentId = await hub.agentIdForSession(sid);
+  if (!agentId) throw new Error("MockOpenCodeClient: architect Agent was not created");
   return {
     role: "architect",
     agent,
     transport,
-    engineerId,
+    agentId,
     call: (tool, args) => agent.call(tool, args),
   };
 }
@@ -222,8 +222,8 @@ async function buildEngineerWithShim(
   await waitForImpl(() => agent.isConnected, 5_000);
   const sid = transport.getSessionId();
   if (!sid) throw new Error("MockOpenCodeClient: engineer transport did not bind a session");
-  const engineerId = await hub.engineerIdForSession(sid);
-  if (!engineerId) throw new Error("MockOpenCodeClient: engineer Agent was not created");
+  const agentId = await hub.agentIdForSession(sid);
+  if (!agentId) throw new Error("MockOpenCodeClient: engineer Agent was not created");
 
   // opencode dispatcher exposes createMcpServer() — the same factory the
   // production fetchHandler uses per Initialize. Wiring it via
@@ -241,7 +241,7 @@ async function buildEngineerWithShim(
     role: "engineer",
     agent,
     transport,
-    engineerId,
+    agentId,
     dispatcher,
     mcpClient,
     call: (tool, args) => agent.call(tool, args),

@@ -18,16 +18,16 @@ import { assertInvTH18 } from "../invariant-helpers.js";
 
 /**
  * Resolve engineer-role agentId via the registry after first-tool-call
- * registration. ActorFacade doesn't expose engineerId directly; the
+ * registration. ActorFacade doesn't expose agentId directly; the
  * sessionId is deterministic (`session-engineer-<name>`) so we look up
  * the Agent record post-ensureRegistered.
  */
-async function engineerIdFor(orch: TestOrchestrator, name: string = "default"): Promise<string> {
+async function agentIdFor(orch: TestOrchestrator, name: string = "default"): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reg = orch.stores.engineerRegistry as any;
   const agent = await reg.getAgentForSession(`session-engineer-${name}`);
-  if (!agent?.engineerId) throw new Error(`engineer '${name}' not registered — call a tool first via the engineer facade`);
-  return agent.engineerId as string;
+  if (!agent?.agentId) throw new Error(`engineer '${name}' not registered — call a tool first via the engineer facade`);
+  return agent.agentId as string;
 }
 
 describe("INV-TH18 — thread routing mode immutability + field consistency", () => {
@@ -46,7 +46,7 @@ describe("INV-TH18 — thread routing mode immutability + field consistency", ()
       const arch = orch.asArchitect();
       const eng = orch.asEngineer();
       await eng.listTasks();
-      const engId = await engineerIdFor(orch);
+      const engId = await agentIdFor(orch);
       await arch.createThread("TH18 unicast", "open", {
         routingMode: "unicast",
         recipientAgentId: engId,
@@ -148,7 +148,7 @@ describe("INV-TH18 — thread routing mode immutability + field consistency", ()
       const arch = orch.asArchitect();
       const eng = orch.asEngineer();
       await eng.listTasks();
-      const engId = await engineerIdFor(orch);
+      const engId = await agentIdFor(orch);
       await arch.createThread("TH18 unicast immutable", "open", {
         routingMode: "unicast",
         recipientAgentId: engId,

@@ -1,7 +1,7 @@
 /**
  * Mission-19 — Selector engine semantics.
  *
- * Covers: labelsMatch AND-equality, role OR × label AND, engineerId pin,
+ * Covers: labelsMatch AND-equality, role OR × label AND, agentId pin,
  * empty-selector matches-all, empty-labels matches empty-selector only.
  *
  * Registry invariants: INV-SYS-L01..L04, INV-AG3.
@@ -90,8 +90,8 @@ describe("Mission-19 Selector — selectAgents", () => {
   it("matchLabels-only filters by AND-equality on labels (INV-SYS-L02)", async () => {
     const prod = await reg.selectAgents({ matchLabels: { env: "prod" } });
     expect(prod).toHaveLength(2); // eng-a + arch
-    const engineerIds = prod.map((a) => a.engineerId).sort();
-    expect(engineerIds).toEqual(prod.map((a) => a.engineerId).sort());
+    const agentIds = prod.map((a) => a.agentId).sort();
+    expect(agentIds).toEqual(prod.map((a) => a.agentId).sort());
     expect(prod.every((a) => a.labels.env === "prod")).toBe(true);
   });
 
@@ -113,31 +113,31 @@ describe("Mission-19 Selector — selectAgents", () => {
     expect(matched).toHaveLength(0);
   });
 
-  it("engineerId pin overrides pool selection (INV-SYS-L04)", async () => {
+  it("agentId pin overrides pool selection (INV-SYS-L04)", async () => {
     const ab = await reg.selectAgents({ roles: ["engineer"] });
     expect(ab).toHaveLength(2);
     const target = ab[0];
 
-    const pinned = await reg.selectAgents({ engineerId: target.engineerId });
+    const pinned = await reg.selectAgents({ agentId: target.agentId });
     expect(pinned).toHaveLength(1);
-    expect(pinned[0].engineerId).toBe(target.engineerId);
+    expect(pinned[0].agentId).toBe(target.agentId);
   });
 
-  it("engineerId + matchLabels: the pinned agent must also satisfy the label filter", async () => {
+  it("agentId + matchLabels: the pinned agent must also satisfy the label filter", async () => {
     const engineers = await reg.selectAgents({ roles: ["engineer"] });
     const engA = engineers.find((a) => a.labels.env === "prod")!;
     const engB = engineers.find((a) => a.labels.env === "staging")!;
 
     // Prod pin + prod label → hit
     const hit = await reg.selectAgents({
-      engineerId: engA.engineerId,
+      agentId: engA.agentId,
       matchLabels: { env: "prod" },
     });
     expect(hit).toHaveLength(1);
 
     // Staging pin + prod label → miss (the pin is valid but the labels don't match)
     const miss = await reg.selectAgents({
-      engineerId: engB.engineerId,
+      agentId: engB.agentId,
       matchLabels: { env: "prod" },
     });
     expect(miss).toHaveLength(0);
@@ -153,55 +153,55 @@ describe("Mission-19 Selector — selectAgents", () => {
     expect(prodOrStaging[0].labels.env).toBe("prod");
   });
 
-  it("stale/unknown engineerId returns zero matches (INV-SYS-L05)", async () => {
-    const miss = await reg.selectAgents({ engineerId: "eng-does-not-exist" });
+  it("stale/unknown agentId returns zero matches (INV-SYS-L05)", async () => {
+    const miss = await reg.selectAgents({ agentId: "eng-does-not-exist" });
     expect(miss).toHaveLength(0);
   });
 
-  // ── Mission-21 Phase 1 (INV-TH16): engineerIds pool ─────────────────
+  // ── Mission-21 Phase 1 (INV-TH16): agentIds pool ─────────────────
 
-  it("engineerIds selects the exact set and nothing else", async () => {
+  it("agentIds selects the exact set and nothing else", async () => {
     const all = await reg.listAgents();
     const engA = all.find((a) => a.labels.env === "prod" && a.role === "engineer")!;
     const arch = all.find((a) => a.role === "architect")!;
 
     const matched = await reg.selectAgents({
-      engineerIds: [engA.engineerId, arch.engineerId],
+      agentIds: [engA.agentId, arch.agentId],
     });
-    const ids = matched.map((a) => a.engineerId).sort();
-    expect(ids).toEqual([engA.engineerId, arch.engineerId].sort());
+    const ids = matched.map((a) => a.agentId).sort();
+    expect(ids).toEqual([engA.agentId, arch.agentId].sort());
   });
 
-  it("engineerIds with a single element behaves like a pinpoint", async () => {
+  it("agentIds with a single element behaves like a pinpoint", async () => {
     const all = await reg.listAgents();
     const engA = all.find((a) => a.labels.env === "prod" && a.role === "engineer")!;
-    const matched = await reg.selectAgents({ engineerIds: [engA.engineerId] });
+    const matched = await reg.selectAgents({ agentIds: [engA.agentId] });
     expect(matched).toHaveLength(1);
-    expect(matched[0].engineerId).toBe(engA.engineerId);
+    expect(matched[0].agentId).toBe(engA.agentId);
   });
 
-  it("engineerIds empty array falls through (same as not-supplied)", async () => {
-    const matched = await reg.selectAgents({ engineerIds: [] });
+  it("agentIds empty array falls through (same as not-supplied)", async () => {
+    const matched = await reg.selectAgents({ agentIds: [] });
     expect(matched).toHaveLength(3); // all three online agents
   });
 
-  it("engineerIds unknown ids silently miss (no error)", async () => {
-    const matched = await reg.selectAgents({ engineerIds: ["eng-nope-1", "eng-nope-2"] });
+  it("agentIds unknown ids silently miss (no error)", async () => {
+    const matched = await reg.selectAgents({ agentIds: ["eng-nope-1", "eng-nope-2"] });
     expect(matched).toHaveLength(0);
   });
 
-  it("engineerIds AND-combines with matchLabels", async () => {
+  it("agentIds AND-combines with matchLabels", async () => {
     const all = await reg.listAgents();
     const engA = all.find((a) => a.labels.env === "prod" && a.role === "engineer")!;
     const engB = all.find((a) => a.labels.env === "staging" && a.role === "engineer")!;
 
     // Both engineers in the pool, but matchLabels filters to prod only.
     const matched = await reg.selectAgents({
-      engineerIds: [engA.engineerId, engB.engineerId],
+      agentIds: [engA.agentId, engB.agentId],
       matchLabels: { env: "prod" },
     });
     expect(matched).toHaveLength(1);
-    expect(matched[0].engineerId).toBe(engA.engineerId);
+    expect(matched[0].agentId).toBe(engA.agentId);
   });
 });
 
@@ -240,7 +240,7 @@ describe("Mission-19 Selector — bug-35 lastSeenAt-vs-lastHeartbeatAt presence 
     // agent remains reachable.
     const peers = await reg.selectAgents({ roles: ["engineer"] });
     expect(peers).toHaveLength(1);
-    expect(peers[0].engineerId).toMatch(/^eng-/);
+    expect(peers[0].agentId).toMatch(/^eng-/);
   });
 
   it("excludes agent with stale lastSeenAt (presence window aged out)", async () => {
@@ -259,36 +259,36 @@ describe("Mission-19 Selector — bug-35 lastSeenAt-vs-lastHeartbeatAt presence 
     expect(peers).toHaveLength(0);
   });
 
-  it("engineerIds pin path also honours the presence projection", async () => {
+  it("agentIds pin path also honours the presence projection", async () => {
     // Bug-35 site: hub-networking dispatcher selector resolution uses
-    // engineerIds pin. Same projection contract as the broadcast path.
+    // agentIds pin. Same projection contract as the broadcast path.
     const all = await reg.listAgents();
     const target = all[0];
 
     vi.advanceTimersByTime(5 * 60 * 1000);
     await reg.touchAgent("sess-eng");
 
-    const pinnedActive = await reg.selectAgents({ engineerIds: [target.engineerId] });
+    const pinnedActive = await reg.selectAgents({ agentIds: [target.agentId] });
     expect(pinnedActive).toHaveLength(1);
 
     // Now let lastSeenAt age out without touching, then verify pin returns empty.
     vi.advanceTimersByTime(5 * 60 * 1000);
-    const pinnedStale = await reg.selectAgents({ engineerIds: [target.engineerId] });
+    const pinnedStale = await reg.selectAgents({ agentIds: [target.agentId] });
     expect(pinnedStale).toHaveLength(0);
   });
 
-  it("single-engineerId fast path also honours the presence projection", async () => {
+  it("single-agentId fast path also honours the presence projection", async () => {
     const all = await reg.listAgents();
     const target = all[0];
 
     vi.advanceTimersByTime(5 * 60 * 1000);
     await reg.touchAgent("sess-eng");
 
-    const fast = await reg.selectAgents({ engineerId: target.engineerId });
+    const fast = await reg.selectAgents({ agentId: target.agentId });
     expect(fast).toHaveLength(1);
 
     vi.advanceTimersByTime(5 * 60 * 1000);
-    const fastStale = await reg.selectAgents({ engineerId: target.engineerId });
+    const fastStale = await reg.selectAgents({ agentId: target.agentId });
     expect(fastStale).toHaveLength(0);
   });
 });

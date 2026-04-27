@@ -5,7 +5,7 @@
  *      on the enriched payload.
  *   2. Enriched — full M18 shape: `{ role, globalInstanceId,
  *      clientMetadata, advisoryTags }`. This call is the M18 handshake
- *      itself and produces `engineerId` + `sessionEpoch`.
+ *      itself and produces `agentId` + `sessionEpoch`.
  *
  * Post-Phase-6: both calls live in `McpAgentClient.runHandshake()`.
  * After the refactor, the agent must still emit both payload shapes in

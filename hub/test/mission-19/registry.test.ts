@@ -3,7 +3,7 @@
  *
  * Covers: first-create persists labels, displacement preserves labels
  * (incoming ignored), legacy agents default to empty labels, P2P via
- * engineerId stable across reconnects.
+ * agentId stable across reconnects.
  *
  * Registry invariants: INV-AG1, INV-AG2, INV-AG4, INV-AG5.
  */
@@ -47,7 +47,7 @@ describe("Mission-19 Registry — label persistence", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    const agent = await reg.getAgent(result.engineerId);
+    const agent = await reg.getAgent(result.agentId);
     expect(agent?.labels).toEqual({ team: "platform", env: "prod" });
   });
 
@@ -67,7 +67,7 @@ describe("Mission-19 Registry — label persistence", () => {
     expect(second.ok).toBe(true);
     if (!second.ok) return;
 
-    const agent = await reg.getAgent(first.engineerId);
+    const agent = await reg.getAgent(first.agentId);
     expect(agent?.labels).toEqual({ team: "network", env: "staging" });
   });
 
@@ -81,7 +81,7 @@ describe("Mission-19 Registry — label persistence", () => {
     await reg.registerAgent("sess-2", "engineer",
       payload("inst-1", "engineer", undefined));
 
-    const agent = await reg.getAgent(first.engineerId);
+    const agent = await reg.getAgent(first.agentId);
     expect(agent?.labels).toEqual({ team: "platform" });
   });
 
@@ -91,22 +91,22 @@ describe("Mission-19 Registry — label persistence", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    const agent = await reg.getAgent(result.engineerId);
+    const agent = await reg.getAgent(result.agentId);
     expect(agent?.labels).toEqual({});
   });
 
-  it("sessionEpoch increments on displacement but engineerId stays stable (INV-AG2)", async () => {
+  it("sessionEpoch increments on displacement but agentId stays stable (INV-AG2)", async () => {
     const first = await reg.registerAgent("sess-1", "engineer", payload("inst-1", "engineer"));
     expect(first.ok).toBe(true);
     if (!first.ok) return;
-    const engineerId = first.engineerId;
+    const agentId = first.agentId;
     const firstEpoch = first.sessionEpoch;
 
     const second = await reg.registerAgent("sess-2", "engineer", payload("inst-1", "engineer"));
     expect(second.ok).toBe(true);
     if (!second.ok) return;
 
-    expect(second.engineerId).toBe(engineerId); // stable identity
+    expect(second.agentId).toBe(agentId); // stable identity
     expect(second.sessionEpoch).toBe(firstEpoch + 1);
   });
 });
@@ -125,7 +125,7 @@ describe("Mission-19 Registry — session resolution for P2P routing", () => {
     if (!result.ok) return;
 
     const agent = await reg.getAgentForSession("sess-1");
-    expect(agent?.engineerId).toBe(result.engineerId);
+    expect(agent?.agentId).toBe(result.agentId);
     expect(agent?.labels).toEqual({ team: "platform" });
   });
 
@@ -149,7 +149,7 @@ describe("Mission-19 Registry — session resolution for P2P routing", () => {
     expect(agentOnNew).not.toBeNull();
   });
 
-  it("P2P routing via engineerId survives reconnection (INV-AG2)", async () => {
+  it("P2P routing via agentId survives reconnection (INV-AG2)", async () => {
     const first = await reg.registerAgent("sess-1", "engineer",
       payload("inst-1", "engineer", { team: "platform" }));
     expect(first.ok).toBe(true);
@@ -162,9 +162,9 @@ describe("Mission-19 Registry — session resolution for P2P routing", () => {
     expect(second.ok).toBe(true);
     if (!second.ok) return;
 
-    // The engineerId is unchanged; a P2P selector pinned to it resolves.
-    expect(second.engineerId).toBe(first.engineerId);
-    const matched = await reg.selectAgents({ engineerId: first.engineerId });
+    // The agentId is unchanged; a P2P selector pinned to it resolves.
+    expect(second.agentId).toBe(first.agentId);
+    const matched = await reg.selectAgents({ agentId: first.agentId });
     expect(matched).toHaveLength(1);
     expect(matched[0].currentSessionId).toBe("sess-2");
   });

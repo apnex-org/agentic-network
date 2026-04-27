@@ -34,7 +34,7 @@ async function createAgent(
   hub: PolicyLoopbackHub,
   role: "architect" | "engineer",
   cognitive?: CognitivePipeline,
-): Promise<{ agent: McpAgentClient; engineerId: string }> {
+): Promise<{ agent: McpAgentClient; agentId: string }> {
   const transport = new LoopbackTransport(hub);
   const agent = new McpAgentClient(
     {
@@ -54,8 +54,8 @@ async function createAgent(
   await agent.start();
   await waitFor(() => agent.isConnected, 5_000);
   const sid = transport.getSessionId();
-  const engineerId = sid ? (await hub.engineerIdForSession(sid)) ?? "" : "";
-  return { agent, engineerId };
+  const agentId = sid ? (await hub.agentIdForSession(sid)) ?? "" : "";
+  return { agent, agentId };
 }
 
 interface RunResult {
@@ -93,8 +93,8 @@ async function runScenarios(mode: "baseline" | "cognitive"): Promise<RunResult> 
     const ctx: ScenarioContext = {
       eng: eng.agent,
       arch: arch.agent,
-      engEngineerId: eng.engineerId,
-      archEngineerId: arch.engineerId,
+      engEngineerId: eng.agentId,
+      archEngineerId: arch.agentId,
     };
 
     // Reset the hub log after seeding so we only count scenario-run calls

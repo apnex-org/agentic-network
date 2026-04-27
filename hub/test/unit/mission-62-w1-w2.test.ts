@@ -34,7 +34,7 @@ async function setupEngineer(router: PolicyRouter, ctx: TestPolicyContext): Prom
   await router.handle("register_role", engineerHandshake, ctx);
   const claim = await router.handle("claim_session", {}, ctx);
   const claimParsed = JSON.parse(claim.content[0].text);
-  return claimParsed.engineerId as string;
+  return claimParsed.agentId as string;
 }
 
 describe("Mission-62 W1+W2 Pass 1 — additive Agent schema + auto-clamp invariant", () => {
@@ -52,7 +52,7 @@ describe("Mission-62 W1+W2 Pass 1 — additive Agent schema + auto-clamp invaria
     const agent = await ctx.stores.engineerRegistry.getAgent(eid);
     expect(agent).not.toBeNull();
     if (!agent) return;
-    expect(agent.name).toBe(eid); // defaults to engineerId until adapter handshake supplies OIS_INSTANCE_ID (W3)
+    expect(agent.name).toBe(eid); // defaults to agentId until adapter handshake supplies OIS_INSTANCE_ID (W3)
     expect(agent.adapterVersion).toBe("@ois/network-adapter@2.1.0");
     // claimSession promotes activityState + stamps sessionStartedAt + idleSince
     expect(agent.activityState).toBe("online_idle");
@@ -243,7 +243,7 @@ describe("Mission-62 W1+W2 Pass 4 — get_agents pull primitive", () => {
     const agent = parsed.agents[0];
     // identity group
     expect(agent.id).toBe(eid);
-    expect(agent.name).toBe(eid); // defaults to engineerId pre-W3
+    expect(agent.name).toBe(eid); // defaults to agentId pre-W3
     expect(agent.role).toBe("engineer");
     expect(agent.labels).toBeDefined();
     // session group

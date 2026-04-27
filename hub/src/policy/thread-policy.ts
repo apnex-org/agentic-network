@@ -129,7 +129,7 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
   // Mission-21 Phase 1: resolve the caller's agentId so openThread can
   // seed the participants[] array with a full {role, agentId} entry.
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(ctx.sessionId).catch(() => null);
-  const authorAgentId: string | null = agent?.engineerId ?? null;
+  const authorAgentId: string | null = agent?.agentId ?? null;
   // INV-TH17: when the opener pinned a recipientAgentId, resolve that
   // agent's role from the registry so openThread can set currentTurn
   // correctly — otherwise engineer↔engineer threads would incorrectly
@@ -211,7 +211,7 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
     // env=dev) would silently drop SSE dispatch. The id IS the
     // addressing; pool-filtering is irrelevant when the target is
     // named.
-    openSelector = { engineerIds: [recipientAgentId] };
+    openSelector = { agentIds: [recipientAgentId] };
   } else {
     // multicast: participants resolve from bound entity assignee.
     // Today this doesn't yet trigger dynamic resolution (ADR-014 §189
@@ -281,7 +281,7 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   // Mission-21 Phase 1: resolve the caller's agentId so the store can
   // attach it to the ThreadMessage and upsert into participants[].
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(ctx.sessionId).catch(() => null);
-  const authorAgentId: string | null = agent?.engineerId ?? null;
+  const authorAgentId: string | null = agent?.agentId ?? null;
 
   // Phase 2a (task-303, thread-223) — per-action commit authority.
   // When bilateral convergence fires, at least ONE converger must have
@@ -582,7 +582,7 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
       await ctx.dispatch(
         "thread_message",
         { ...basePayload, queueItemId: item.id },
-        { engineerIds: [targetId] },
+        { agentIds: [targetId] },
       );
     }
   }
@@ -918,7 +918,7 @@ async function leaveThread(args: Record<string, unknown>, ctx: IPolicyContext): 
   // Resolve caller's agentId. Without an M18 agentId we can't verify
   // participant membership — leave_thread requires a resolved identity.
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(ctx.sessionId).catch(() => null);
-  const leaverAgentId: string | null = agent?.engineerId ?? null;
+  const leaverAgentId: string | null = agent?.agentId ?? null;
   if (!leaverAgentId) {
     return {
       content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "leave_thread requires an M18-resolved agentId; caller session has no bound Agent" }) }],
@@ -947,7 +947,7 @@ async function leaveThread(args: Record<string, unknown>, ctx: IPolicyContext): 
       leaverAgentId,
       reason: reason ?? "(no reason provided)",
       retractedActionCount: updated.convergenceActions.filter((a) => a.status === "retracted" && a.proposer.agentId === leaverAgentId).length,
-    }, { engineerIds: remainingParticipantIds, matchLabels: updated.labels });
+    }, { agentIds: remainingParticipantIds, matchLabels: updated.labels });
   }
 
   await ctx.stores.audit.logEntry(
@@ -1121,7 +1121,7 @@ async function handleThreadConvergedWithAction(
     warning: cascadeResult.anyFailure,
     threadTerminal: cascadeResult.anyFailure ? "cascade_failed" : "closed",
     report: cascadeResult.report,
-  }, { engineerIds: cascadeParticipantIds, matchLabels: inheritedLabels });
+  }, { agentIds: cascadeParticipantIds, matchLabels: inheritedLabels });
 
   console.log(
     `[ThreadPolicy] Cascade finalized for ${threadId}: ${cascadeResult.executedCount}/${actions.length} executed, ${cascadeResult.failedCount} failed, ${cascadeResult.skippedCount} skipped`,

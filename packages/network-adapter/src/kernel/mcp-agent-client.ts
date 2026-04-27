@@ -149,7 +149,7 @@ export class McpAgentClient implements IAgentClient {
   private stopped = false;
 
   // Session identity + metrics.
-  private _engineerId?: string;
+  private _agentId?: string;
   private _sessionEpoch?: number;
   private _lastEpoch = 0;
 
@@ -270,7 +270,7 @@ export class McpAgentClient implements IAgentClient {
       tool: method,
       args: params,
       sessionId: this.transport.getSessionId() ?? "",
-      agentId: this._engineerId,
+      agentId: this._agentId,
       startedAt,
       tags: {},
     };
@@ -292,7 +292,7 @@ export class McpAgentClient implements IAgentClient {
         tool: method,
         args: params,
         sessionId: ctx.sessionId,
-        agentId: this._engineerId,
+        agentId: this._agentId,
         error: err,
         durationMs: Date.now() - startedAt,
         startedAt,
@@ -323,7 +323,7 @@ export class McpAgentClient implements IAgentClient {
 
     const ctx: ListToolsContext = {
       sessionId: this.transport.getSessionId() ?? "",
-      agentId: this._engineerId,
+      agentId: this._agentId,
       startedAt: Date.now(),
       tags: {},
     };
@@ -371,7 +371,7 @@ export class McpAgentClient implements IAgentClient {
   getMetrics(): AgentClientMetrics {
     return {
       sessionState: this._state,
-      engineerId: this._engineerId,
+      agentId: this._agentId,
       sessionEpoch: this._sessionEpoch,
       totalHandshakes: this.totalHandshakes,
       totalSessionInvalidRetries: this.totalSessionInvalidRetries,
@@ -556,7 +556,7 @@ export class McpAgentClient implements IAgentClient {
     if (result.response) {
       this._lastEpoch = result.epoch;
       this._sessionEpoch = result.response.sessionEpoch;
-      this._engineerId = result.response.engineerId;
+      this._agentId = result.response.agentId;
       if (handshake.onHandshakeComplete) {
         try {
           handshake.onHandshakeComplete(result.response);

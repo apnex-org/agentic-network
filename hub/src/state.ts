@@ -92,7 +92,7 @@ export interface EntityProvenance {
  * caller's live MCP session without knowing the M18 field name.
  */
 export interface EngineerStatusEntry {
-  engineerId: string;
+  agentId: string;
   sessionId: string | null;
   status: "online" | "offline";
   sessionEpoch: number;
@@ -140,19 +140,19 @@ export type AgentLabels = Record<string, string>;
  * Mission-19: routing selector. Equality-only matchLabels in v1.
  * An Agent matches iff every (key, value) pair in matchLabels is
  * present and equal in agent.labels. `roles`, when set, further
- * filters to agents whose role ∈ roles. `engineerId`, when set,
+ * filters to agents whose role ∈ roles. `agentId`, when set,
  * pins dispatch to that specific Agent (P2P routing — t5). An
  * empty selector matches all non-archived, online agents.
  */
 export interface Selector {
-  engineerId?: string;
+  agentId?: string;
   /**
-   * Pin dispatch to a specific set of Agents by engineerId. Used by
+   * Pin dispatch to a specific set of Agents by agentId. Used by
    * Threads 2.0 participant-scoped routing (INV-TH16) so replies land
    * only on the actual thread participants, not every Agent sharing
    * the target role. Applied as an AND filter on top of role/labels.
    */
-  engineerIds?: string[];
+  agentIds?: string[];
   roles?: AgentRole[];
   matchLabels?: Record<string, string>;
 }
@@ -230,7 +230,7 @@ export const AGENT_RESTART_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
 export const AGENT_RESTART_HISTORY_CAP = 50;
 
 export interface Agent {
-  engineerId: string;          // e.g., "eng-abc123xyz" (Hub-issued); mission-62 W1+W2 Pass 6 renames cross-refs to agentId; entity-internal `id` rename also Pass 6
+  agentId: string;          // e.g., "eng-abc123xyz" (Hub-issued); mission-62 W1+W2 Pass 6 renames cross-refs to agentId; entity-internal `id` rename also Pass 6
   fingerprint: string;         // sha256(globalInstanceId) — token NOT included
   role: AgentRole;
   status: AgentStatus;
@@ -252,7 +252,7 @@ export interface Agent {
 
   // ── Mission-62 (M-Agent-Entity-Revisit) — additive Pass 1 ──────────
   // Identity-display field; populated from `OIS_INSTANCE_ID` env at handshake (W3).
-  // Defaults to engineerId for legacy blobs.
+  // Defaults to agentId for legacy blobs.
   name: string;
   // Activity FSM — orthogonal to liveness FSM. See ActivityState comment.
   // Auto-clamped to "offline" when livenessState !== "online".
@@ -294,7 +294,7 @@ export interface RegisterAgentPayload {
 
 export interface RegisterAgentSuccess {
   ok: true;
-  engineerId: string;
+  agentId: string;
   sessionEpoch: number;
   wasCreated: boolean;
   clientMetadata: AgentClientMetadata;
@@ -345,7 +345,7 @@ export interface AssertIdentityPayload {
 
 export interface AssertIdentitySuccess {
   ok: true;
-  engineerId: string;
+  agentId: string;
   wasCreated: boolean;
   clientMetadata: AgentClientMetadata;
   advisoryTags: AgentAdvisoryTags;
@@ -365,10 +365,10 @@ export type AssertIdentityResult = AssertIdentitySuccess | AssertIdentityFailure
 
 export interface ClaimSessionSuccess {
   ok: true;
-  engineerId: string;
+  agentId: string;
   sessionEpoch: number;
   trigger: ClaimSessionTrigger;
-  // Set when a prior session for this engineerId was evicted by the claim.
+  // Set when a prior session for this agentId was evicted by the claim.
   // Absent when no prior session existed (first claim after assertIdentity)
   // or when the same sessionId is re-claiming (no-op re-bind).
   displacedPriorSession?: { sessionId: string; epoch: number };
@@ -499,7 +499,7 @@ export type SemanticIntent =
 
 export interface ThreadMessage {
   author: ThreadAuthor;
-  /** Mission-21 Phase 1: the Agent.engineerId of the specific agent that
+  /** Mission-21 Phase 1: the Agent.agentId of the specific agent that
    * sent this message. Null for legacy messages from before Threads 2.0. */
   authorAgentId: string | null;
   text: string;
@@ -517,7 +517,7 @@ export type ParticipantRole = "engineer" | "architect" | "director";
 
 export interface ThreadParticipant {
   role: ParticipantRole;
-  /** Agent.engineerId. Null for future Director pre-idea-84 activation. */
+  /** Agent.agentId. Null for future Director pre-idea-84 activation. */
   agentId: string | null;
   joinedAt: string;
   lastActiveAt: string;
@@ -833,7 +833,7 @@ export interface Thread {
   /**
    * Mission-21 Phase 1 (INV-TH16): optional intended recipient at open.
    * When set, the open-time `thread_message` dispatch is scoped to this
-   * specific agent (via Selector.engineerIds) rather than broadcasting
+   * specific agent (via Selector.agentIds) rather than broadcasting
    * to the recipient role. Enables engineer↔engineer threads with true
    * isolation from other engineers sharing the same role/labels. Reply
    * dispatch always routes to thread.participants[] — `recipientAgentId`
@@ -936,7 +936,7 @@ export interface ReplyToThreadOptions {
   /** Optional summary update. Accumulates across rounds; non-empty
    * required at convergence. */
   summary?: string;
-  /** Agent.engineerId of the author (from engineerRegistry.getAgentForSession).
+  /** Agent.agentId of the author (from engineerRegistry.getAgentForSession).
    * Attached to the new ThreadMessage and upserted into participants. */
   authorAgentId?: string | null;
 }
@@ -1116,10 +1116,10 @@ export interface ITaskStore {
    * in task.labels is present and equal in `claimant.labels` (subset).
    * When `claimant` is omitted, behaves like the pre-Mission-19 FIFO pull
    * (used by legacy paths that have not yet completed M18 handshake).
-   * `claimant.engineerId`, when set, is persisted on the task as
+   * `claimant.agentId`, when set, is persisted on the task as
    * `assignedEngineerId` for P2P routing of subsequent events.
    */
-  getNextDirective(claimant?: { engineerId?: string; labels?: Record<string, string> }): Promise<Task | null>;
+  getNextDirective(claimant?: { agentId?: string; labels?: Record<string, string> }): Promise<Task | null>;
   submitReport(taskId: string, report: string, summary: string, success: boolean, verification?: string): Promise<boolean>;
   getNextReport(): Promise<Task | null>;
   getTask(taskId: string): Promise<Task | null>;
@@ -1173,8 +1173,8 @@ export interface IEngineerRegistry {
    * the policy layer uses this to emit `agent_session_displaced` audit
    * alongside the claim audit.
    */
-  claimSession(engineerId: string, sessionId: string, trigger: ClaimSessionTrigger): Promise<ClaimSessionResult>;
-  getAgent(engineerId: string): Promise<Agent | null>;
+  claimSession(agentId: string, sessionId: string, trigger: ClaimSessionTrigger): Promise<ClaimSessionResult>;
+  getAgent(agentId: string): Promise<Agent | null>;
   /** Mission-19: resolve the Agent bound to an SSE session (null if none). */
   getAgentForSession(sessionId: string): Promise<Agent | null>;
   listAgents(): Promise<Agent[]>;
@@ -1189,37 +1189,37 @@ export interface IEngineerRegistry {
    *  an agent that demonstrably drained its queue. Unlike touchAgent (which is
    *  rate-limited), this is called only on authentic drain events and is not
    *  rate-limited — drains are infrequent enough to flush every time. */
-  refreshHeartbeat(engineerId: string): Promise<void>;
+  refreshHeartbeat(agentId: string): Promise<void>;
   /** ADR-017: flip `livenessState` on an agent (used by the watchdog's
    *  demotion ladder). No-op for unknown agents. */
-  setLivenessState(engineerId: string, state: AgentLivenessState): Promise<void>;
+  setLivenessState(agentId: string, state: AgentLivenessState): Promise<void>;
   // ── Mission-62 (M-Agent-Entity-Revisit) — activity FSM transition handlers ──
   /** Mission-62 W1+W2 Pass 2: write `activityState`. Auto-clamp invariant
    *  (livenessState !== "online" → activityState = "offline") is enforced
    *  read-side in normalizeAgentShape; this writer accepts any value and
    *  the projection clamps on subsequent reads. No-op for unknown agents. */
-  setActivityState(engineerId: string, state: ActivityState): Promise<void>;
+  setActivityState(agentId: string, state: ActivityState): Promise<void>;
   /** Mission-62 W1+W2 Pass 2: tool-call-start FSM transition. Sets
    *  activityState=online_working + lastToolCallAt + lastToolCallName +
    *  workingSince; clears idleSince. No-op for unknown agents. */
-  recordToolCallStart(engineerId: string, toolName: string): Promise<void>;
+  recordToolCallStart(agentId: string, toolName: string): Promise<void>;
   /** Mission-62 W1+W2 Pass 2: tool-call-complete FSM transition. Sets
    *  activityState=online_idle + idleSince=now; clears workingSince.
    *  No-op for unknown agents. */
-  recordToolCallComplete(engineerId: string): Promise<void>;
+  recordToolCallComplete(agentId: string): Promise<void>;
   /** Mission-62 W1+W2 Pass 2: quota-block FSM transition (composes with
    *  idea-109 signal_quota_blocked). Sets activityState=online_quota_blocked
    *  + quotaBlockedUntil = now + retryAfterSeconds * 1000; clears
    *  workingSince. No-op for unknown agents. */
-  recordQuotaBlocked(engineerId: string, retryAfterSeconds: number): Promise<void>;
+  recordQuotaBlocked(agentId: string, retryAfterSeconds: number): Promise<void>;
   /** Mission-62 W1+W2 Pass 2: quota-recovery FSM transition. Sets
    *  activityState=online_idle + idleSince=now; clears quotaBlockedUntil.
    *  No-op for unknown agents. */
-  recordQuotaRecovered(engineerId: string): Promise<void>;
+  recordQuotaRecovered(agentId: string): Promise<void>;
   /** Mission-62 W1+W2 Pass 2: append a tool-error entry to the agent's
    *  recentErrors ring buffer (FIFO eviction; cap=AGENT_RECENT_ERRORS_CAP).
    *  No-op for unknown agents. */
-  recordAgentError(engineerId: string, error: AgentErrorRecord): Promise<void>;
+  recordAgentError(agentId: string, error: AgentErrorRecord): Promise<void>;
   /**
    * CP3 C4 (bug-16 part 1): return Agent records whose last-seen timestamp
    * is older than `staleThresholdMs` AND whose current state is offline
@@ -1230,12 +1230,12 @@ export interface IEngineerRegistry {
   listOfflineAgentsOlderThan(staleThresholdMs: number): Promise<Agent[]>;
   /**
    * CP3 C4 (bug-16 part 1): permanently delete the Agent record + the
-   * by-fingerprint alias for this engineerId. Returns `true` if a record
+   * by-fingerprint alias for this agentId. Returns `true` if a record
    * was removed, `false` if no such agent existed. The caller (reaper)
    * is responsible for the audit + any pre-delete cascades (thread
    * unpinning in particular).
    */
-  deleteAgent(engineerId: string): Promise<boolean>;
+  deleteAgent(agentId: string): Promise<boolean>;
 }
 
 /** Minimum interval between persisted Agent heartbeat writes (per agent). */
@@ -1425,7 +1425,7 @@ export function computeFingerprint(globalInstanceId: string): string {
   return createHash("sha256").update(globalInstanceId).digest("hex");
 }
 
-/** Compact hash suffix for display engineerIds (first 12 hex chars of fingerprint). */
+/** Compact hash suffix for display agentIds (first 12 hex chars of fingerprint). */
 export function shortHash(fingerprint: string): string {
   return fingerprint.slice(0, 12);
 }

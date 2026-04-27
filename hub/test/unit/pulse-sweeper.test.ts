@@ -46,7 +46,7 @@ function buildSweeperRig() {
   const dispatched: Array<{
     event: string;
     data: Record<string, unknown>;
-    selector: { roles?: string[]; engineerId?: string };
+    selector: { roles?: string[]; agentId?: string };
   }> = [];
   const sweeper = new PulseSweeper(
     missionStore,
@@ -61,7 +61,7 @@ function buildSweeperRig() {
         },
         metrics: createMetricsCounter(),
         emit: async () => {},
-        dispatch: async (event: string, data: Record<string, unknown>, selector: { roles?: string[]; engineerId?: string }) => {
+        dispatch: async (event: string, data: Record<string, unknown>, selector: { roles?: string[]; agentId?: string }) => {
           dispatched.push({ event, data, selector });
         },
         sessionId: "test-pulse-sweeper",

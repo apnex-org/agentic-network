@@ -374,7 +374,7 @@ export class HubNetworking {
           },
         });
         notified++;
-        this.log(`[Dispatch] Sent notif-${notification.id} (${event}) to ${agent.engineerId}/${agent.role} session ${sessionId.substring(0, 8)}...`);
+        this.log(`[Dispatch] Sent notif-${notification.id} (${event}) to ${agent.agentId}/${agent.role} session ${sessionId.substring(0, 8)}...`);
       } catch (err) {
         this.log(`[Dispatch] Failed to notify ${sessionId.substring(0, 8)}...: ${err}`);
         this.sseActive.set(sessionId, false);
@@ -487,14 +487,14 @@ export class HubNetworking {
   ): Promise<boolean> {
     if (!this.messageStore) return false;
     try {
-      // Subscriber identity: role + (optional) engineerId. The replay
+      // Subscriber identity: role + (optional) agentId. The replay
       // filter is target.role match; target.agentId match further
       // narrows when supplied. State-based-reconnect adapters won't
       // send Last-Event-ID; the cold-start path applies (since=undefined).
       const agent = await this.engineerRegistry
         .getAgentForSession(sessionId)
         .catch(() => null);
-      const engineerId = agent?.engineerId;
+      const agentId = agent?.agentId;
 
       // Filter: replay Messages whose target matches subscriber AND
       // status === "new" (acked/received Messages have already been
@@ -508,7 +508,7 @@ export class HubNetworking {
       const replay = await this.messageStore.replayFromCursor({
         since: lastEventId,
         targetRole: role as import("./entities/message.js").MessageAuthorRole,
-        targetAgentId: engineerId,
+        targetAgentId: agentId,
         status: "new",
         limit: REPLAY_SOFT_CAP,
       });
@@ -809,7 +809,7 @@ export class HubNetworking {
         const agent = await this.engineerRegistry.getAgentForSession(sessionId);
         if (agent && agent.currentSessionId !== sessionId) {
           const autoClaim = await this.engineerRegistry.claimSession(
-            agent.engineerId,
+            agent.agentId,
             sessionId,
             "sse_subscribe",
           );
@@ -818,22 +818,22 @@ export class HubNetworking {
               await this.auditStore.logEntry(
                 "hub",
                 "agent_session_implicit_claim",
-                `Agent ${autoClaim.engineerId} session implicitly claimed (trigger=sse_subscribe, epoch=${autoClaim.sessionEpoch})`,
-                autoClaim.engineerId,
+                `Agent ${autoClaim.agentId} session implicitly claimed (trigger=sse_subscribe, epoch=${autoClaim.sessionEpoch})`,
+                autoClaim.agentId,
               );
             } catch (err) {
-              this.log(`[T2] agent_session_implicit_claim audit write failed for ${autoClaim.engineerId}: ${(err as Error).message ?? err}`);
+              this.log(`[T2] agent_session_implicit_claim audit write failed for ${autoClaim.agentId}: ${(err as Error).message ?? err}`);
             }
             if (autoClaim.displacedPriorSession) {
               try {
                 await this.auditStore.logEntry(
                   "hub",
                   "agent_session_displaced",
-                  `Agent ${autoClaim.engineerId} session displaced (priorSessionId=${autoClaim.displacedPriorSession.sessionId}, priorEpoch=${autoClaim.displacedPriorSession.epoch}, newEpoch=${autoClaim.sessionEpoch}, trigger=sse_subscribe)`,
-                  autoClaim.engineerId,
+                  `Agent ${autoClaim.agentId} session displaced (priorSessionId=${autoClaim.displacedPriorSession.sessionId}, priorEpoch=${autoClaim.displacedPriorSession.epoch}, newEpoch=${autoClaim.sessionEpoch}, trigger=sse_subscribe)`,
+                  autoClaim.agentId,
                 );
               } catch (err) {
-                this.log(`[T2] agent_session_displaced audit write failed for ${autoClaim.engineerId}: ${(err as Error).message ?? err}`);
+                this.log(`[T2] agent_session_displaced audit write failed for ${autoClaim.agentId}: ${(err as Error).message ?? err}`);
               }
             }
           }

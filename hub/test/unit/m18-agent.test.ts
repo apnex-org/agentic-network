@@ -91,15 +91,15 @@ describe("AgentRepository.registerAgent", () => {
     if (!result.ok) return;
     expect(result.wasCreated).toBe(true);
     expect(result.sessionEpoch).toBe(1);
-    expect(result.engineerId).toBe(`eng-${shortHash(computeFingerprint("uuid-a"))}`);
+    expect(result.agentId).toBe(`eng-${shortHash(computeFingerprint("uuid-a"))}`);
   });
 
-  it("same globalInstanceId maps to the same engineerId across calls", async () => {
+  it("same globalInstanceId maps to the same agentId across calls", async () => {
     const a = await reg.registerAgent("sess-1", "engineer", payload("uuid-a"));
     const b = await reg.registerAgent("sess-2", "engineer", payload("uuid-a"));
     expect(a.ok && b.ok).toBe(true);
     if (!a.ok || !b.ok) return;
-    expect(a.engineerId).toBe(b.engineerId);
+    expect(a.agentId).toBe(b.agentId);
     expect(b.wasCreated).toBe(false);
     expect(b.sessionEpoch).toBe(2); // displacement incremented
   });
@@ -109,7 +109,7 @@ describe("AgentRepository.registerAgent", () => {
     const b = await reg.registerAgent("sess-2", "engineer", payload("uuid-b"));
     expect(a.ok && b.ok).toBe(true);
     if (!a.ok || !b.ok) return;
-    expect(a.engineerId).not.toBe(b.engineerId);
+    expect(a.agentId).not.toBe(b.agentId);
     // This is the exact task-140 fix: two agents under a shared token stay separate.
   });
 
@@ -159,7 +159,7 @@ describe("AgentRepository.registerAgent", () => {
     expect(second.labels).toEqual({ env: "dev" });
     expect(second.changedFields).toContain("labels");
     expect(second.priorLabels).toEqual({ env: "prod" });
-    const stored = await reg.getAgent(second.engineerId);
+    const stored = await reg.getAgent(second.agentId);
     expect(stored?.labels).toEqual({ env: "dev" });
   });
 
@@ -219,16 +219,16 @@ describe("AgentRepository agent reaper (CP3 C4)", () => {
       // public API has no "set lastSeenAt to an arbitrary past time"
       // tool, which is fine: only the reaper cares about this, and the
       // test is what proves the reaper's threshold math.
-      const agent = await reg.getAgent(first.engineerId);
+      const agent = await reg.getAgent(first.agentId);
       expect(agent).not.toBeNull();
-      const path = `agents/${first.engineerId}.json`;
+      const path = `agents/${first.agentId}.json`;
       const raw = await provider.get(path);
       if (!raw) throw new Error("agent blob not found in provider");
       const blob = JSON.parse(new TextDecoder().decode(raw));
       blob.lastSeenAt = lastSeenIsoOverride;
       await provider.put(path, new TextEncoder().encode(JSON.stringify(blob, null, 2)));
     }
-    return first.engineerId;
+    return first.agentId;
   }
 
   it("listOfflineAgentsOlderThan returns only stale-and-offline records", async () => {
@@ -242,7 +242,7 @@ describe("AgentRepository agent reaper (CP3 C4)", () => {
     expect(onlineResult.ok).toBe(true);
 
     const stale = await reg.listOfflineAgentsOlderThan(7 * 24 * 60 * 60 * 1000);
-    expect(stale.map((a) => a.engineerId)).toEqual([staleId]);
+    expect(stale.map((a) => a.agentId)).toEqual([staleId]);
   });
 
   it("deleteAgent removes the record so subsequent getAgent returns null", async () => {
@@ -253,7 +253,7 @@ describe("AgentRepository agent reaper (CP3 C4)", () => {
     expect(await reg.getAgent(id)).toBeNull();
   });
 
-  it("deleteAgent on a missing engineerId returns false without error", async () => {
+  it("deleteAgent on a missing agentId returns false without error", async () => {
     const deleted = await reg.deleteAgent("eng-never-existed");
     expect(deleted).toBe(false);
   });
@@ -264,9 +264,9 @@ describe("AgentRepository agent reaper (CP3 C4)", () => {
     const next = await reg.registerAgent("sess-2", "engineer", payload("reusable-inst"));
     expect(next.ok).toBe(true);
     if (!next.ok) return;
-    // Same fingerprint → same derived engineerId; wasCreated=true proves
+    // Same fingerprint → same derived agentId; wasCreated=true proves
     // the old record did not survive.
-    expect(next.engineerId).toBe(id);
+    expect(next.agentId).toBe(id);
     expect(next.wasCreated).toBe(true);
     expect(next.sessionEpoch).toBe(1);
   });

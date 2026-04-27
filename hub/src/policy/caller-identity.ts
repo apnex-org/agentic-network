@@ -7,7 +7,7 @@
  *
  * Resolution precedence:
  *   1. Session-registered agent — `role` from ctx, `agentId` from
- *      engineerRegistry.getAgentForSession(ctx.sessionId).engineerId.
+ *      engineerRegistry.getAgentForSession(ctx.sessionId).agentId.
  *   2. Session-registered role only (no agent record yet — e.g. a
  *      create_* call arriving before an M18 handshake completes) —
  *      `role` from ctx, `agentId` = `anonymous-<role>` placeholder.
@@ -35,11 +35,11 @@ export async function resolveCreatedBy(ctx: IPolicyContext): Promise<EntityProve
   let agentId: string | null = null;
   try {
     const registry = ctx.stores.engineerRegistry as unknown as {
-      getAgentForSession?: (sid: string) => Promise<{ engineerId?: string } | null>;
+      getAgentForSession?: (sid: string) => Promise<{ agentId?: string } | null>;
     };
     if (typeof registry.getAgentForSession === "function") {
       const agent = await registry.getAgentForSession(ctx.sessionId);
-      agentId = agent?.engineerId ?? null;
+      agentId = agent?.agentId ?? null;
     }
   } catch {
     // Registry lookup failure is non-fatal — caller gets a role-only

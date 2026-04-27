@@ -7,7 +7,7 @@
  *
  *   1. Re-calls `register_role` with full payload (globalInstanceId,
  *      clientMetadata, advisoryTags).
- *   2. Parses the response for `engineerId`/`sessionEpoch`/`wasCreated`.
+ *   2. Parses the response for `agentId`/`sessionEpoch`/`wasCreated`.
  *   3. Tracks epoch displacement across reconnects.
  *   4. Halts on fatal codes (`agent_thrashing_detected`, `role_mismatch`).
  *
@@ -52,7 +52,7 @@ export interface HandshakePayload {
 }
 
 export interface HandshakeResponse {
-  engineerId: string;
+  agentId: string;
   sessionEpoch: number;
   wasCreated: boolean;
 }
@@ -98,9 +98,9 @@ export function parseHandshakeResponse(result: unknown): HandshakeResponse | nul
     } else {
       body = r as Record<string, unknown>;
     }
-    if (typeof body.engineerId === "string" && typeof body.sessionEpoch === "number") {
+    if (typeof body.agentId === "string" && typeof body.sessionEpoch === "number") {
       return {
-        engineerId: body.engineerId,
+        agentId: body.agentId,
         sessionEpoch: body.sessionEpoch,
         wasCreated: Boolean(body.wasCreated),
       };
@@ -290,11 +290,11 @@ export async function performHandshake(
   log.log(
     "agent.handshake.registered",
     {
-      engineerId: response.engineerId,
+      agentId: response.agentId,
       epoch: response.sessionEpoch,
       wasCreated: response.wasCreated,
     },
-    `[Handshake] Registered as ${response.engineerId} (epoch=${response.sessionEpoch}${response.wasCreated ? ", newly created" : ""})`
+    `[Handshake] Registered as ${response.agentId} (epoch=${response.sessionEpoch}${response.wasCreated ? ", newly created" : ""})`
   );
 
   return { response, epoch: response.sessionEpoch };

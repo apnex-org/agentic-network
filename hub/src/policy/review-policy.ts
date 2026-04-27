@@ -95,7 +95,7 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
       decision: "approved",
       intent: "review_available",
     }, task.assignedEngineerId
-      ? { engineerId: task.assignedEngineerId }
+      ? { agentId: task.assignedEngineerId }
       : { roles: ["engineer"], matchLabels: task.labels });
 
     // Push task_completed internal event for DAG cascade
@@ -214,7 +214,7 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
         decision: "revision_required",
         intent: "address_feedback",
       }, task.assignedEngineerId
-        ? { engineerId: task.assignedEngineerId }
+        ? { agentId: task.assignedEngineerId }
         : { roles: ["engineer"], matchLabels: task.labels });
 
       // Mission-51 W3: state-transition trigger (same shape as the

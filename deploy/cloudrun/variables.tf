@@ -104,7 +104,7 @@ variable "event_loop_interval" {
 }
 
 variable "architect_global_instance_id" {
-  description = "Stable Mission-18 globalInstanceId for the Architect Agent entity. Generate once with uuidgen and keep in tfvars — changing this creates a new Agent and orphans the queue on the old engineerId (use migrate_agent_queue to recover)."
+  description = "Stable Mission-18 globalInstanceId for the Architect Agent entity. Generate once with uuidgen and keep in tfvars — changing this creates a new Agent and orphans the queue on the old agentId (use migrate_agent_queue to recover)."
   type        = string
 }
 

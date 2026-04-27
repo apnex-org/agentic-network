@@ -1,8 +1,8 @@
 #!/usr/bin/env npx tsx
 /**
- * Admin: drain pending notifications from stale engineerIds into a
- * target engineerId. For the M18 "laptop died, new globalInstanceId"
- * recovery path — Agents are append-only, so the old engineerId stays
+ * Admin: drain pending notifications from stale agentIds into a
+ * target agentId. For the M18 "laptop died, new globalInstanceId"
+ * recovery path — Agents are append-only, so the old agentId stays
  * but its queue must be migrated to the replacement Agent.
  *
  * Registers an ephemeral architect session via `withArchitectClient` and

@@ -56,7 +56,7 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
     );
 
     const claimed = await store.getNextDirective({
-      engineerId: "eng-abc",
+      agentId: "eng-abc",
       labels: { team: "platform" },
     });
 
@@ -76,13 +76,13 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
     );
 
     const miss = await store.getNextDirective({
-      engineerId: "eng-xyz",
+      agentId: "eng-xyz",
       labels: { team: "network" },
     });
     expect(miss).toBeNull();
 
     const hit = await store.getNextDirective({
-      engineerId: "eng-abc",
+      agentId: "eng-abc",
       labels: { team: "platform" },
     });
     expect(hit).not.toBeNull();
@@ -101,7 +101,7 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
     );
 
     // Unlabeled claimant (no labels provided).
-    const claim = await store.getNextDirective({ engineerId: "eng-legacy" });
+    const claim = await store.getNextDirective({ agentId: "eng-legacy" });
     // It must skip the labeled task and return the unlabeled one.
     expect(claim?.id).toBe(unlabeled);
 
@@ -117,21 +117,21 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
 
     // Claimant can claim team:a tasks — should get t1 first.
     const first = await store.getNextDirective({
-      engineerId: "eng-a1",
+      agentId: "eng-a1",
       labels: { team: "a" },
     });
     expect(first?.id).toBe(t1);
 
     // Next call, claimant can claim team:b — should get t2.
     const second = await store.getNextDirective({
-      engineerId: "eng-b1",
+      agentId: "eng-b1",
       labels: { team: "b" },
     });
     expect(second?.id).toBe(t2);
 
     // Another team:a claimant gets t3.
     const third = await store.getNextDirective({
-      engineerId: "eng-a2",
+      agentId: "eng-a2",
       labels: { team: "a" },
     });
     expect(third?.id).toBe(t3);
@@ -140,11 +140,11 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
   it("already-working tasks are never re-claimed", async () => {
     const taskId = await store.submitDirective("One", undefined, undefined, "T", "D", undefined, {});
 
-    const first = await store.getNextDirective({ engineerId: "eng-a" });
+    const first = await store.getNextDirective({ agentId: "eng-a" });
     expect(first?.id).toBe(taskId);
     expect(first?.assignedEngineerId).toBe("eng-a");
 
-    const second = await store.getNextDirective({ engineerId: "eng-b" });
+    const second = await store.getNextDirective({ agentId: "eng-b" });
     expect(second).toBeNull();
   });
 
@@ -152,7 +152,7 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
     const taskId = await store.submitDirective("Legacy", undefined, undefined, "T", "D", undefined, undefined);
 
     const claimed = await store.getNextDirective({
-      engineerId: "eng-abc",
+      agentId: "eng-abc",
       labels: { team: "platform", env: "prod" },
     });
 

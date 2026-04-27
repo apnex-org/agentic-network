@@ -89,4 +89,41 @@ if [[ ${#violations[@]} -gt 0 ]]; then
   exit 1
 fi
 
+# ── Mission-62 W1+W2 Pass 9 — engineerId regression check ──────────
+#
+# Per Design v1.0 §7.2: local fast-fail mirrors the GHA workflow at
+# .github/workflows/no-engineer-id.yml. Blocks staged diffs that ADD
+# engineerId / engineer_id tokens to active code surfaces.
+#
+# Carve-outs (same as CI workflow): ADRs, audits, traces, CHANGELOG.
+
+ENGINEER_ID_VIOLATIONS=$(git diff --cached \
+  -- \
+  ':(exclude)docs/' \
+  ':(exclude)CHANGELOG*' \
+  ':(exclude)**/test/README.md' \
+  ':(exclude)**/test/**/README.md' \
+  ':(exclude).github/workflows/no-engineer-id.yml' \
+  ':(exclude).husky/pre-commit' \
+  ':(exclude)package-lock.json' \
+  ':(exclude)**/package-lock.json' \
+  | grep -E '^\+[^+].*\b(engineerId|engineer_id)\b' || true)
+
+if [ -n "$ENGINEER_ID_VIOLATIONS" ]; then
+  {
+    printf '\n'
+    printf 'ERROR: pre-commit engineerId-regression check blocked this commit.\n'
+    printf 'Mission-62 W1+W2 Pass 9 detected engineerId/engineer_id additions:\n\n'
+    printf '%s\n' "$ENGINEER_ID_VIOLATIONS" | head -20
+    printf '\n'
+    printf 'Per mission-62 (M-Agent-Entity-Revisit) Pass 6 rename, agentId\n'
+    printf 'is the canonical cross-ref name across Hub source + SDK + tests.\n\n'
+    printf 'Resolution: rename to agentId. If genuinely historical (ADR,\n'
+    printf 'audit, work-trace, CHANGELOG), add the directory to the carve-out\n'
+    printf 'list in .husky/pre-commit + .github/workflows/no-engineer-id.yml.\n\n'
+    printf 'Bypass (emergency only, audit-visible):   git commit --no-verify\n'
+  } >&2
+  exit 1
+fi
+
 exit 0

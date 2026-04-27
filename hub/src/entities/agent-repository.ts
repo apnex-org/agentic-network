@@ -6,14 +6,14 @@
  * unchanged.
  *
  * Layout preserved byte-for-byte:
- *   agents/<engineerId>.json             — per-engineer blob (session state source-of-truth)
+ *   agents/<agentId>.json             — per-engineer blob (session state source-of-truth)
  *   agents/by-fingerprint/<fp>.json      — fingerprint → agent mirror (identity lookup fast path)
  *
  * In-memory bookkeeping (wipes on Hub restart, identical to legacy):
  *   - sessionRoles          sessionId → SessionRole
  *   - displacementHistory   fingerprint → number[] (timestamps for rate-limit)
- *   - sessionToEngineerId   sessionId → engineerId
- *   - lastTouchAt           engineerId → heartbeat rate-limit accounting
+ *   - sessionToEngineerId   sessionId → agentId
+ *   - lastTouchAt           agentId → heartbeat rate-limit accounting
  *
  * Mission-47 context (W7b architect watch-points per thread-296/298):
  *   1. sessionToEngineerId map — kept in-memory (same as legacy).
@@ -69,8 +69,8 @@ import {
   AGENT_RECENT_ERRORS_CAP,
 } from "../state.js";
 
-function agentPath(engineerId: string): string {
-  return `agents/${engineerId}.json`;
+function agentPath(agentId: string): string {
+  return `agents/${agentId}.json`;
 }
 
 function fpPath(fingerprint: string): string {
@@ -112,7 +112,7 @@ function normalizeAgentShape(a: Agent): Agent {
     receiptSla: typeof a.receiptSla === "number" ? a.receiptSla : DEFAULT_AGENT_RECEIPT_SLA_MS,
     wakeEndpoint: typeof a.wakeEndpoint === "string" ? a.wakeEndpoint : null,
     // Mission-62 W1+W2 Pass 1 — additive defaults for legacy blobs.
-    name: typeof a.name === "string" ? a.name : a.engineerId,
+    name: typeof a.name === "string" ? a.name : a.agentId,
     activityState,
     sessionStartedAt: typeof a.sessionStartedAt === "string" ? a.sessionStartedAt : null,
     lastToolCallAt: typeof a.lastToolCallAt === "string" ? a.lastToolCallAt : null,
@@ -228,7 +228,7 @@ export class AgentRepository implements IEngineerRegistry {
     const engineers: EngineerStatusEntry[] = agents
       .filter((a) => !a.archived)
       .map((a) => ({
-        engineerId: a.engineerId,
+        agentId: a.agentId,
         sessionId: a.currentSessionId,
         status: a.status,
         sessionEpoch: a.sessionEpoch,
@@ -269,18 +269,18 @@ export class AgentRepository implements IEngineerRegistry {
     if (!identity.ok) {
       return identity;
     }
-    const claim = await this.claimSession(identity.engineerId, sessionId, "sse_subscribe");
+    const claim = await this.claimSession(identity.agentId, sessionId, "sse_subscribe");
     if (!claim.ok) {
       if (claim.code === "unknown_engineer") {
         throw new Error(
-          `Internal invariant violation: assertIdentity wrote ${identity.engineerId} but claimSession could not read it`,
+          `Internal invariant violation: assertIdentity wrote ${identity.agentId} but claimSession could not read it`,
         );
       }
       return { ok: false, code: claim.code, message: claim.message };
     }
     return {
       ok: true,
-      engineerId: claim.engineerId,
+      agentId: claim.agentId,
       sessionEpoch: claim.sessionEpoch,
       wasCreated: identity.wasCreated,
       clientMetadata: identity.clientMetadata,
@@ -307,9 +307,9 @@ export class AgentRepository implements IEngineerRegistry {
       if (!existing) {
         // First-contact create: NO session bound (claimSession's job).
         const agentIdPrefix = payload.role === "director" ? "director" : "eng";
-        const engineerId = `${agentIdPrefix}-${shortHash(fingerprint)}`;
+        const agentId = `${agentIdPrefix}-${shortHash(fingerprint)}`;
         const agent: Agent = {
-          engineerId,
+          agentId,
           fingerprint,
           role: payload.role,
           status: "offline",
@@ -326,8 +326,8 @@ export class AgentRepository implements IEngineerRegistry {
           receiptSla: payload.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS,
           wakeEndpoint: payload.wakeEndpoint ?? null,
           // Mission-62 W1+W2 Pass 1 — additive defaults at first-contact create.
-          // `name` defaults to engineerId until adapter handshake supplies OIS_INSTANCE_ID (W3).
-          name: engineerId,
+          // `name` defaults to agentId until adapter handshake supplies OIS_INSTANCE_ID (W3).
+          name: agentId,
           activityState: "offline", // first-contact has no SSE stream yet
           sessionStartedAt: null,
           lastToolCallAt: null,
@@ -347,14 +347,14 @@ export class AgentRepository implements IEngineerRegistry {
           continue;
         }
         // Mirror the identity on agents/<eid>.json (source of truth for session state).
-        await this.provider.put(agentPath(engineerId), encode(agent));
+        await this.provider.put(agentPath(agentId), encode(agent));
         if (sessionId) {
-          this.sessionToEngineerId.set(sessionId, engineerId);
+          this.sessionToEngineerId.set(sessionId, agentId);
         }
-        console.log(`[AgentRepository] Agent identity asserted (created): ${engineerId}`);
+        console.log(`[AgentRepository] Agent identity asserted (created): ${agentId}`);
         return {
           ok: true,
-          engineerId,
+          agentId,
           wasCreated: true,
           clientMetadata: agent.clientMetadata,
           advisoryTags: agent.advisoryTags,
@@ -369,7 +369,7 @@ export class AgentRepository implements IEngineerRegistry {
         return {
           ok: false,
           code: "role_mismatch",
-          message: `Token role '${payload.role}' does not match persisted agent role '${agent.role}' for engineerId=${agent.engineerId}`,
+          message: `Token role '${payload.role}' does not match persisted agent role '${agent.role}' for agentId=${agent.agentId}`,
         };
       }
 
@@ -395,15 +395,15 @@ export class AgentRepository implements IEngineerRegistry {
         // OCC lost — retry.
         continue;
       }
-      await this.provider.put(agentPath(updated.engineerId), encode(updated));
+      await this.provider.put(agentPath(updated.agentId), encode(updated));
       if (sessionId) {
-        this.sessionToEngineerId.set(sessionId, updated.engineerId);
+        this.sessionToEngineerId.set(sessionId, updated.agentId);
       }
       const changedFields: ("labels" | "advisoryTags" | "clientMetadata")[] = [];
       if (labelsChanged) changedFields.push("labels");
       return {
         ok: true,
-        engineerId: updated.engineerId,
+        agentId: updated.agentId,
         wasCreated: false,
         clientMetadata: updated.clientMetadata,
         advisoryTags: updated.advisoryTags,
@@ -422,18 +422,18 @@ export class AgentRepository implements IEngineerRegistry {
   }
 
   async claimSession(
-    engineerId: string,
+    agentId: string,
     sessionId: string,
     trigger: ClaimSessionTrigger,
   ): Promise<ClaimSessionResult> {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const path = agentPath(engineerId);
+      const path = agentPath(agentId);
       const existing = await this.getWithToken(path);
       if (!existing) {
         return {
           ok: false,
           code: "unknown_engineer",
-          message: `claimSession: engineerId=${engineerId} not found — call assertIdentity first`,
+          message: `claimSession: agentId=${agentId} not found — call assertIdentity first`,
         };
       }
       const agent = normalizeAgentShape(decode(existing.data));
@@ -446,7 +446,7 @@ export class AgentRepository implements IEngineerRegistry {
           return {
             ok: false,
             code: "agent_thrashing_detected",
-            message: `Agent ${agent.engineerId} exceeded ${THRASHING_THRESHOLD} displacements in ${THRASHING_WINDOW_MS / 1000}s — halting to prevent fork-bomb. Check ~/.ois/instance.json for duplicate processes.`,
+            message: `Agent ${agent.agentId} exceeded ${THRASHING_THRESHOLD} displacements in ${THRASHING_WINDOW_MS / 1000}s — halting to prevent fork-bomb. Check ~/.ois/instance.json for duplicate processes.`,
           };
         }
       }
@@ -485,7 +485,7 @@ export class AgentRepository implements IEngineerRegistry {
         continue;
       }
       // Best-effort mirror update on by-fingerprint; OCC failure here
-      // is non-fatal because the per-engineerId file is source of truth.
+      // is non-fatal because the per-agentId file is source of truth.
       try {
         const fpExisting = await this.getWithToken(fpPath(agent.fingerprint));
         if (fpExisting) {
@@ -494,20 +494,20 @@ export class AgentRepository implements IEngineerRegistry {
       } catch (err) {
         if (!(err instanceof StoragePathNotFoundError)) throw err;
       }
-      this.sessionToEngineerId.set(sessionId, updated.engineerId);
-      this.lastTouchAt.set(updated.engineerId, Date.now());
+      this.sessionToEngineerId.set(sessionId, updated.agentId);
+      this.lastTouchAt.set(updated.agentId, Date.now());
       if (displaced) {
         console.log(
-          `[AgentRepository] Agent displaced: ${updated.engineerId} epoch=${updated.sessionEpoch} (trigger=${trigger}, prior sessionId=${displaced.sessionId} epoch=${displaced.epoch})`,
+          `[AgentRepository] Agent displaced: ${updated.agentId} epoch=${updated.sessionEpoch} (trigger=${trigger}, prior sessionId=${displaced.sessionId} epoch=${displaced.epoch})`,
         );
       } else {
         console.log(
-          `[AgentRepository] Agent session claimed: ${updated.engineerId} epoch=${updated.sessionEpoch} (trigger=${trigger})`,
+          `[AgentRepository] Agent session claimed: ${updated.agentId} epoch=${updated.sessionEpoch} (trigger=${trigger})`,
         );
       }
       return {
         ok: true,
-        engineerId: updated.engineerId,
+        agentId: updated.agentId,
         sessionEpoch: updated.sessionEpoch,
         trigger,
         ...(displaced ? { displacedPriorSession: displaced } : {}),
@@ -517,20 +517,20 @@ export class AgentRepository implements IEngineerRegistry {
     return {
       ok: false,
       code: "agent_thrashing_detected",
-      message: `OCC contention exceeded retry budget on claimSession for engineerId=${engineerId}; likely concurrent claim storm.`,
+      message: `OCC contention exceeded retry budget on claimSession for agentId=${agentId}; likely concurrent claim storm.`,
     };
   }
 
-  async getAgent(engineerId: string): Promise<Agent | null> {
-    const raw = await this.provider.get(agentPath(engineerId));
+  async getAgent(agentId: string): Promise<Agent | null> {
+    const raw = await this.provider.get(agentPath(agentId));
     if (!raw) return null;
     return applyLivenessRecompute(normalizeAgentShape(decode(raw)), Date.now());
   }
 
   async getAgentForSession(sessionId: string): Promise<Agent | null> {
-    const engineerId = this.sessionToEngineerId.get(sessionId);
-    if (!engineerId) return null;
-    const raw = await this.provider.get(agentPath(engineerId));
+    const agentId = this.sessionToEngineerId.get(sessionId);
+    if (!agentId) return null;
+    const raw = await this.provider.get(agentPath(agentId));
     if (!raw) return null;
     return applyLivenessRecompute(normalizeAgentShape(decode(raw)), Date.now());
   }
@@ -540,7 +540,7 @@ export class AgentRepository implements IEngineerRegistry {
     const agents: Agent[] = [];
     const nowMs = Date.now();
     for (const key of keys) {
-      // Only read top-level per-engineerId file, not by-fingerprint mirror.
+      // Only read top-level per-agentId file, not by-fingerprint mirror.
       if (key.startsWith("agents/by-fingerprint/")) continue;
       if (!key.endsWith(".json")) continue;
       const raw = await this.provider.get(key);
@@ -552,23 +552,23 @@ export class AgentRepository implements IEngineerRegistry {
 
   async selectAgents(selector: Selector): Promise<Agent[]> {
     const nowMs = Date.now();
-    const engineerIdSet = selector.engineerIds && selector.engineerIds.length > 0
-      ? new Set(selector.engineerIds)
+    const agentIdSet = selector.agentIds && selector.agentIds.length > 0
+      ? new Set(selector.agentIds)
       : null;
-    // Fast path: single engineerId pinpoint.
-    if (selector.engineerId) {
-      const a = await this.getAgent(selector.engineerId);
+    // Fast path: single agentId pinpoint.
+    if (selector.agentId) {
+      const a = await this.getAgent(selector.agentId);
       if (!a) return [];
       if (!isPeerPresent(a, nowMs)) return [];
-      if (engineerIdSet && !engineerIdSet.has(a.engineerId)) return [];
+      if (agentIdSet && !agentIdSet.has(a.agentId)) return [];
       if (selector.roles && !selector.roles.includes(a.role)) return [];
       if (!labelsMatch(a.labels ?? {}, selector.matchLabels)) return [];
       return [a];
     }
-    // Fast path: engineerIds pinpoint — fetch each directly.
-    if (engineerIdSet) {
+    // Fast path: agentIds pinpoint — fetch each directly.
+    if (agentIdSet) {
       const out: Agent[] = [];
-      for (const id of engineerIdSet) {
+      for (const id of agentIdSet) {
         const a = await this.getAgent(id);
         if (!a) continue;
         if (!isPeerPresent(a, nowMs)) continue;
@@ -594,15 +594,15 @@ export class AgentRepository implements IEngineerRegistry {
    * carried a fresher lastSeenAt, so we silently skip.
    */
   async touchAgent(sessionId: string): Promise<void> {
-    const engineerId = this.sessionToEngineerId.get(sessionId);
-    if (!engineerId) return;
+    const agentId = this.sessionToEngineerId.get(sessionId);
+    if (!agentId) return;
     const now = Date.now();
-    const last = this.lastTouchAt.get(engineerId) ?? 0;
+    const last = this.lastTouchAt.get(agentId) ?? 0;
     if (now - last < AGENT_TOUCH_MIN_INTERVAL_MS) return;
     // Reserve the slot up front so concurrent touches collapse to one write.
-    this.lastTouchAt.set(engineerId, now);
+    this.lastTouchAt.set(agentId, now);
 
-    const path = agentPath(engineerId);
+    const path = agentPath(agentId);
     const existing = await this.getWithToken(path);
     if (!existing) return;
     const agent = normalizeAgentShape(decode(existing.data));
@@ -621,8 +621,8 @@ export class AgentRepository implements IEngineerRegistry {
   /** ADR-017: refresh heartbeat on drain. Not rate-limited — drains
    *  are infrequent so a write every time is acceptable. Resets
    *  livenessState to online on the authoritative proof-of-life. */
-  async refreshHeartbeat(engineerId: string): Promise<void> {
-    const path = agentPath(engineerId);
+  async refreshHeartbeat(agentId: string): Promise<void> {
+    const path = agentPath(agentId);
     const existing = await this.getWithToken(path);
     if (!existing) return;
     const agent = normalizeAgentShape(decode(existing.data));
@@ -636,8 +636,8 @@ export class AgentRepository implements IEngineerRegistry {
     await this.provider.put(fpPath(agent.fingerprint), encode(updated));
   }
 
-  async setLivenessState(engineerId: string, state: AgentLivenessState): Promise<void> {
-    const path = agentPath(engineerId);
+  async setLivenessState(agentId: string, state: AgentLivenessState): Promise<void> {
+    const path = agentPath(agentId);
     const existing = await this.getWithToken(path);
     if (!existing) return;
     const agent = normalizeAgentShape(decode(existing.data));
@@ -649,8 +649,8 @@ export class AgentRepository implements IEngineerRegistry {
 
   // ── Mission-62 W1+W2 Pass 2: activity FSM transition handlers ──────
 
-  async setActivityState(engineerId: string, state: ActivityState): Promise<void> {
-    const path = agentPath(engineerId);
+  async setActivityState(agentId: string, state: ActivityState): Promise<void> {
+    const path = agentPath(agentId);
     const existing = await this.getWithToken(path);
     if (!existing) return;
     const agent = normalizeAgentShape(decode(existing.data));
@@ -660,8 +660,8 @@ export class AgentRepository implements IEngineerRegistry {
     await this.provider.put(fpPath(agent.fingerprint), encode(updated));
   }
 
-  async recordToolCallStart(engineerId: string, toolName: string): Promise<void> {
-    const path = agentPath(engineerId);
+  async recordToolCallStart(agentId: string, toolName: string): Promise<void> {
+    const path = agentPath(agentId);
     const existing = await this.getWithToken(path);
     if (!existing) return;
     const agent = normalizeAgentShape(decode(existing.data));
@@ -679,8 +679,8 @@ export class AgentRepository implements IEngineerRegistry {
     await this.provider.put(fpPath(agent.fingerprint), encode(updated));
   }
 
-  async recordToolCallComplete(engineerId: string): Promise<void> {
-    const path = agentPath(engineerId);
+  async recordToolCallComplete(agentId: string): Promise<void> {
+    const path = agentPath(agentId);
     const existing = await this.getWithToken(path);
     if (!existing) return;
     const agent = normalizeAgentShape(decode(existing.data));
@@ -696,8 +696,8 @@ export class AgentRepository implements IEngineerRegistry {
     await this.provider.put(fpPath(agent.fingerprint), encode(updated));
   }
 
-  async recordQuotaBlocked(engineerId: string, retryAfterSeconds: number): Promise<void> {
-    const path = agentPath(engineerId);
+  async recordQuotaBlocked(agentId: string, retryAfterSeconds: number): Promise<void> {
+    const path = agentPath(agentId);
     const existing = await this.getWithToken(path);
     if (!existing) return;
     const agent = normalizeAgentShape(decode(existing.data));
@@ -714,8 +714,8 @@ export class AgentRepository implements IEngineerRegistry {
     await this.provider.put(fpPath(agent.fingerprint), encode(updated));
   }
 
-  async recordQuotaRecovered(engineerId: string): Promise<void> {
-    const path = agentPath(engineerId);
+  async recordQuotaRecovered(agentId: string): Promise<void> {
+    const path = agentPath(agentId);
     const existing = await this.getWithToken(path);
     if (!existing) return;
     const agent = normalizeAgentShape(decode(existing.data));
@@ -731,8 +731,8 @@ export class AgentRepository implements IEngineerRegistry {
     await this.provider.put(fpPath(agent.fingerprint), encode(updated));
   }
 
-  async recordAgentError(engineerId: string, error: AgentErrorRecord): Promise<void> {
-    const path = agentPath(engineerId);
+  async recordAgentError(agentId: string, error: AgentErrorRecord): Promise<void> {
+    const path = agentPath(agentId);
     const existing = await this.getWithToken(path);
     if (!existing) return;
     const agent = normalizeAgentShape(decode(existing.data));
@@ -751,11 +751,11 @@ export class AgentRepository implements IEngineerRegistry {
    * (displacement) must not be clobbered.
    */
   async markAgentOffline(sessionId: string): Promise<void> {
-    const engineerId = this.sessionToEngineerId.get(sessionId);
+    const agentId = this.sessionToEngineerId.get(sessionId);
     this.sessionToEngineerId.delete(sessionId);
-    if (!engineerId) return;
+    if (!agentId) return;
 
-    const path = agentPath(engineerId);
+    const path = agentPath(agentId);
     const existing = await this.getWithToken(path);
     if (!existing) return;
     const agent = normalizeAgentShape(decode(existing.data));
@@ -769,11 +769,11 @@ export class AgentRepository implements IEngineerRegistry {
     const result = await this.provider.putIfMatch(path, encode(updated), existing.token);
     if (!result.ok) return; // displaced mid-cleanup
     await this.provider.put(fpPath(agent.fingerprint), encode(updated));
-    console.log(`[AgentRepository] Agent marked offline: ${engineerId}`);
+    console.log(`[AgentRepository] Agent marked offline: ${agentId}`);
   }
 
   async migrateAgentQueue(sourceEngineerId: string, targetEngineerId: string): Promise<{ moved: number }> {
-    // Placeholder: hub-networking owns the engineerId-keyed queue.
+    // Placeholder: hub-networking owns the agentId-keyed queue.
     // Matches the legacy stub exactly; queue-rewire is deferred to
     // OpenCode integration coverage per thread-79.
     console.log(
@@ -797,21 +797,21 @@ export class AgentRepository implements IEngineerRegistry {
     return stale;
   }
 
-  async deleteAgent(engineerId: string): Promise<boolean> {
-    const raw = await this.provider.get(agentPath(engineerId));
+  async deleteAgent(agentId: string): Promise<boolean> {
+    const raw = await this.provider.get(agentPath(agentId));
     if (!raw) return false;
     const agent = decode(raw);
-    // Delete per-engineerId file first, then by-fingerprint alias — preserves
+    // Delete per-agentId file first, then by-fingerprint alias — preserves
     // crash-safety (alias-only remnant would let a concurrent registerAgent
     // retry create fresh state cleanly).
-    await this.provider.delete(agentPath(engineerId));
+    await this.provider.delete(agentPath(agentId));
     await this.provider.delete(fpPath(agent.fingerprint));
     this.displacementHistory.delete(agent.fingerprint);
-    this.lastTouchAt.delete(engineerId);
+    this.lastTouchAt.delete(agentId);
     for (const [sid, eid] of this.sessionToEngineerId.entries()) {
-      if (eid === engineerId) this.sessionToEngineerId.delete(sid);
+      if (eid === agentId) this.sessionToEngineerId.delete(sid);
     }
-    console.log(`[AgentRepository] Agent deleted: ${engineerId} (via reaper)`);
+    console.log(`[AgentRepository] Agent deleted: ${agentId} (via reaper)`);
     return true;
   }
 }

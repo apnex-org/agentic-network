@@ -82,26 +82,26 @@ describe("parseHandshakeError", () => {
 
 describe("parseHandshakeResponse", () => {
   it("parses a direct object response", () => {
-    const body = { engineerId: "eng-abc123", sessionEpoch: 1, wasCreated: true };
+    const body = { agentId: "eng-abc123", sessionEpoch: 1, wasCreated: true };
     expect(parseHandshakeResponse(body)).toEqual(body);
   });
 
   it("parses a {content:[{text}]} envelope", () => {
-    const body = { engineerId: "eng-abc123", sessionEpoch: 2, wasCreated: false };
+    const body = { agentId: "eng-abc123", sessionEpoch: 2, wasCreated: false };
     const result = { content: [{ text: JSON.stringify(body) }] };
     expect(parseHandshakeResponse(result)).toEqual(body);
   });
 
-  it("returns null for missing engineerId", () => {
+  it("returns null for missing agentId", () => {
     expect(parseHandshakeResponse({ sessionEpoch: 1 })).toBeNull();
   });
 
   it("returns null for missing sessionEpoch", () => {
-    expect(parseHandshakeResponse({ engineerId: "eng-x" })).toBeNull();
+    expect(parseHandshakeResponse({ agentId: "eng-x" })).toBeNull();
   });
 
   it("coerces wasCreated to boolean", () => {
-    const body = { engineerId: "eng-x", sessionEpoch: 1 };
+    const body = { agentId: "eng-x", sessionEpoch: 1 };
     expect(parseHandshakeResponse(body)?.wasCreated).toBe(false);
   });
 });
@@ -183,7 +183,7 @@ describe("resolveClientVersion (bug-17)", () => {
 
 describe("performHandshake", () => {
   it("returns parsed response on success and logs the [Handshake] Registered line", async () => {
-    const body: HandshakeResponse = { engineerId: "eng-abc", sessionEpoch: 1, wasCreated: true };
+    const body: HandshakeResponse = { agentId: "eng-abc", sessionEpoch: 1, wasCreated: true };
     const executeTool = vi.fn().mockResolvedValue(body);
     const log = vi.fn();
 
@@ -248,7 +248,7 @@ describe("performHandshake", () => {
     // Post-mission-40-T2: register_role no longer increments epoch on its own.
     // ANY positive delta (epoch grew between our two register_role calls)
     // means an external claim_session displaced our prior session in between.
-    const body: HandshakeResponse = { engineerId: "eng-x", sessionEpoch: 5, wasCreated: false };
+    const body: HandshakeResponse = { agentId: "eng-x", sessionEpoch: 5, wasCreated: false };
     const executeTool = vi.fn().mockResolvedValue(body);
     const log = vi.fn();
 
@@ -266,7 +266,7 @@ describe("performHandshake", () => {
   it("logs epoch advancement on +1 delta (any positive delta is external displacement post-T2)", async () => {
     // Pre-mission-40-T2: +1 was a normal register_role-bump (no log).
     // Post-T2: +1 means an external claim_session displaced us (DO log).
-    const body: HandshakeResponse = { engineerId: "eng-x", sessionEpoch: 3, wasCreated: false };
+    const body: HandshakeResponse = { agentId: "eng-x", sessionEpoch: 3, wasCreated: false };
     const executeTool = vi.fn().mockResolvedValue(body);
     const log = vi.fn();
 
@@ -284,7 +284,7 @@ describe("performHandshake", () => {
   it("does NOT log epoch advancement when epoch unchanged (idempotent register_role under T2)", async () => {
     // T2: register_role is pure identity assertion. Repeated calls leave
     // the epoch unchanged unless an external claim happened.
-    const body: HandshakeResponse = { engineerId: "eng-x", sessionEpoch: 2, wasCreated: false };
+    const body: HandshakeResponse = { agentId: "eng-x", sessionEpoch: 2, wasCreated: false };
     const executeTool = vi.fn().mockResolvedValue(body);
     const log = vi.fn();
 

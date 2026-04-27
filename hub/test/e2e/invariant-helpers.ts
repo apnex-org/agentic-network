@@ -361,20 +361,20 @@ export async function assertInvTH18(o: TestOrchestrator, mode: InvariantMode = "
   const eng = o.asEngineer();
 
   // Resolve the engineer's agentId via the registry after first-tool-call
-  // registration. ActorFacade doesn't expose engineerId directly, but the
+  // registration. ActorFacade doesn't expose agentId directly, but the
   // derived sessionId is stable (`session-engineer-<name>`; default name).
-  async function engineerIdFor(orch: TestOrchestrator): Promise<string> {
+  async function agentIdFor(orch: TestOrchestrator): Promise<string> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const reg = orch.stores.engineerRegistry as any;
     const agent = await reg.getAgentForSession("session-engineer-default");
-    if (!agent?.engineerId) throw new Error("INV-TH18 helper: engineer not registered — call eng.listTasks() or similar first");
-    return agent.engineerId as string;
+    if (!agent?.agentId) throw new Error("INV-TH18 helper: engineer not registered — call eng.listTasks() or similar first");
+    return agent.agentId as string;
   }
 
   if (shouldRun(mode, "positive")) {
     // unicast: requires recipientAgentId; persists routingMode='unicast'.
     await eng.listTasks();
-    const engId = await engineerIdFor(o);
+    const engId = await agentIdFor(o);
     await arch.createThread("TH18 unicast positive", "msg", {
       routingMode: "unicast",
       recipientAgentId: engId,

@@ -23,7 +23,7 @@ import type { Selector } from "../../src/state.js";
 
 interface MockEngineerRegistry {
   getRole(sessionId: string): string;
-  getAgentForSession(sessionId: string): Promise<{ engineerId: string; currentSessionId: string } | null>;
+  getAgentForSession(sessionId: string): Promise<{ agentId: string; currentSessionId: string } | null>;
   claimSession?: (...args: unknown[]) => Promise<unknown>;
 }
 
@@ -32,7 +32,7 @@ function makeRegistry(role: string, agentId: string, sessionId: string = "test-s
     getRole: () => role,
     // Return currentSessionId matching ctx.sessionId so the router's
     // auto-claim branch doesn't fire (its claimSession isn't stubbed).
-    getAgentForSession: async () => ({ engineerId: agentId, currentSessionId: sessionId }),
+    getAgentForSession: async () => ({ agentId: agentId, currentSessionId: sessionId }),
   };
 }
 
@@ -420,20 +420,20 @@ describe("pushSelector — MessageTarget → Selector mapping", () => {
     expect(pushSelector({ role: "architect" })).toEqual({ roles: ["architect"] });
   });
 
-  it("target.agentId → selector.engineerId", () => {
-    expect(pushSelector({ agentId: "eng-7" })).toEqual({ engineerId: "eng-7" });
+  it("target.agentId → selector.agentId", () => {
+    expect(pushSelector({ agentId: "eng-7" })).toEqual({ agentId: "eng-7" });
   });
 
   it("target.role + target.agentId → both fields (AND filter)", () => {
     expect(pushSelector({ role: "engineer", agentId: "eng-3" })).toEqual({
       roles: ["engineer"],
-      engineerId: "eng-3",
+      agentId: "eng-3",
     });
   });
 
   it("target.role === 'system' is omitted (system isn't an Agent role)", () => {
     expect(pushSelector({ role: "system" })).toEqual({});
-    expect(pushSelector({ role: "system", agentId: "eng-9" })).toEqual({ engineerId: "eng-9" });
+    expect(pushSelector({ role: "system", agentId: "eng-9" })).toEqual({ agentId: "eng-9" });
   });
 });
 
@@ -466,7 +466,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
     expect(dispatched.message.payload).toEqual({ hello: "world" });
   });
 
-  it("delivery='push-immediate' + target.agentId → fires with engineerId selector", async () => {
+  it("delivery='push-immediate' + target.agentId → fires with agentId selector", async () => {
     const router = setupRouter();
     const messageStore = new MessageRepository(new MemoryStorageProvider());
     const dispatchCalls: DispatchCall[] = [];
@@ -484,7 +484,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
     );
 
     expect(dispatchCalls).toHaveLength(1);
-    expect(dispatchCalls[0].selector).toEqual({ roles: ["engineer"], engineerId: "eng-7" });
+    expect(dispatchCalls[0].selector).toEqual({ roles: ["engineer"], agentId: "eng-7" });
   });
 
   it("delivery='push-immediate' + target=null → fires with empty selector (broadcast)", async () => {

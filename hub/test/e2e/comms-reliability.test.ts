@@ -50,7 +50,7 @@ async function registerUnresponsiveArchitect(ctx: TestPolicyContext): Promise<st
     },
   );
   if (!result.ok) throw new Error(`registerAgent failed: ${(result as any).code}`);
-  return result.engineerId;
+  return result.agentId;
 }
 
 async function registerEngineer(ctx: TestPolicyContext) {
@@ -465,16 +465,16 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
       // Architect's reply dispatches a thread_message to the engineer.
       // That event MUST carry a queueItemId — the engineer's queue item.
       const replyDispatch = archCtx.dispatchedEvents.find(
-        (e) => e.event === "thread_message" && (e.selector.engineerIds ?? []).length > 0,
+        (e) => e.event === "thread_message" && (e.selector.agentIds ?? []).length > 0,
       );
       expect(replyDispatch).toBeDefined();
       expect(replyDispatch!.data.queueItemId).toBeDefined();
       expect((replyDispatch!.data.queueItemId as string).startsWith("pa-")).toBe(true);
-      expect(replyDispatch!.selector.engineerIds).toContain("eng-fake-engineer-id".length > 0 ? replyDispatch!.selector.engineerIds![0] : "");
+      expect(replyDispatch!.selector.agentIds).toContain("eng-fake-engineer-id".length > 0 ? replyDispatch!.selector.agentIds![0] : "");
 
       // The reply's queueItemId matches a real enqueued item for the engineer.
       const engAgent = await engCtx.stores.engineerRegistry.getAgentForSession(engCtx.sessionId);
-      const engItems = await pendingStore.listForAgent(engAgent!.engineerId);
+      const engItems = await pendingStore.listForAgent(engAgent!.agentId);
       expect(engItems.map((i: any) => i.id)).toContain(replyDispatch!.data.queueItemId);
     });
 

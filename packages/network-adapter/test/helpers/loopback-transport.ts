@@ -69,7 +69,7 @@ export class LoopbackHub {
   private errorQueue: ToolErrorInjection[] = [];
   private nextSessionId = 1;
   private nextEventId = 1;
-  private engineerIds = new Map<string, string>(); // sessionId → engineerId
+  private agentIds = new Map<string, string>(); // sessionId → agentId
   private handlers: Map<string, ToolHandler> = new Map();
 
   constructor() {
@@ -80,16 +80,16 @@ export class LoopbackHub {
         (c) => c.tool === "register_role" && c.sessionId === sessionId
       ).length;
       const sessionEpoch = registerCalls; // includes this call
-      let engineerId = this.engineerIds.get(sessionId);
-      if (!engineerId) {
-        engineerId = `eng-${sessionId.slice(0, 8)}`;
-        this.engineerIds.set(sessionId, engineerId);
+      let agentId = this.agentIds.get(sessionId);
+      if (!agentId) {
+        agentId = `eng-${sessionId.slice(0, 8)}`;
+        this.agentIds.set(sessionId, agentId);
       }
       return {
         success: true,
         role,
         sessionId,
-        engineerId,
+        agentId,
         sessionEpoch,
         wasCreated: sessionEpoch === 1,
       };
@@ -111,7 +111,7 @@ export class LoopbackHub {
 
   detach(sessionId: string): void {
     this.sessions.delete(sessionId);
-    this.engineerIds.delete(sessionId);
+    this.agentIds.delete(sessionId);
   }
 
   async dispatch(

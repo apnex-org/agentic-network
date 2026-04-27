@@ -251,7 +251,7 @@ async function main() {
             llmModel: process.env.HUB_LLM_MODEL,
             onFatalHalt: fatalHalt,
             onHandshakeComplete: (r) => {
-                log(`[Handshake] Identity asserted: ${r.engineerId}`);
+                log(`[Handshake] Identity asserted: ${r.agentId}`);
                 resolveIdentityReady();
                 // Lazy-claim semantics: lazy mode resolves sessionReady
                 // immediately (Hub-side auto-claim handles the actual claim);

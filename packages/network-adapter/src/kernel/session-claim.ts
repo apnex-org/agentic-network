@@ -18,7 +18,7 @@
  */
 
 export interface ClaimSessionParsed {
-  engineerId?: string;
+  agentId?: string;
   sessionEpoch?: number;
   sessionClaimed?: boolean;
   displacedPriorSession?: { sessionId: string; epoch: number };

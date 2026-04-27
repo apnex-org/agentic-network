@@ -7,13 +7,13 @@ import { createTestContext, type TestPolicyContext } from "../../src/policy/test
  * bug-18 — thread-policy unicast dispatch must not gate on labels.
  *
  * When a unicast thread pins `recipientAgentId`, the dispatch selector
- * used for SSE delivery must be pinpoint (engineerIds only) — NO
+ * used for SSE delivery must be pinpoint (agentIds only) — NO
  * matchLabels filter. Without this, thread.labels inherited from the
  * opener (e.g. architect env=prod) gate delivery to a differently-
  * labelled target (e.g. kate env=dev), silently dropping the dispatch.
  *
  * The store-layer selectAgents intentionally retains the
- * Mission-19 `engineerId + matchLabels → must-match` contract (it's a
+ * Mission-19 `agentId + matchLabels → must-match` contract (it's a
  * legitimate safety-check semantic). The fix is in the caller — policy
  * layer stops including matchLabels for explicit-recipient dispatches.
  */
@@ -47,7 +47,7 @@ describe("bug-18 — unicast thread dispatch is not label-gated", () => {
     );
   });
 
-  it("create_thread unicast: selector has engineerIds but NO matchLabels (kate cross-env fix)", async () => {
+  it("create_thread unicast: selector has agentIds but NO matchLabels (kate cross-env fix)", async () => {
     // Kate-style dev engineer — env=dev.
     const kateResult = await archCtx.stores.engineerRegistry.registerAgent(
       "session-kate",
@@ -60,7 +60,7 @@ describe("bug-18 — unicast thread dispatch is not label-gated", () => {
       } as any,
     );
     if (!kateResult.ok) throw new Error("kate register failed");
-    const kateId = kateResult.engineerId;
+    const kateId = kateResult.agentId;
 
     await archRouter.handle(
       "create_thread",
@@ -76,7 +76,7 @@ describe("bug-18 — unicast thread dispatch is not label-gated", () => {
     const msg = archCtx.dispatchedEvents.find((e) => e.event === "thread_message");
     expect(msg).toBeDefined();
     const selector = msg!.selector as Record<string, unknown>;
-    expect(selector.engineerIds).toEqual([kateId]);
+    expect(selector.agentIds).toEqual([kateId]);
     // The specific assertion: no matchLabels on pinpoint unicast dispatch.
     expect(selector.matchLabels).toBeUndefined();
   });

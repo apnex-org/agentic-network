@@ -23,14 +23,14 @@ describe("MockClaudeClient", () => {
   it("factory wires architect + engineer-with-dispatcher + MCP client correctly", async () => {
     mock = await createMockClaudeClient();
     expect(mock.architect.role).toBe("architect");
-    expect(mock.architect.engineerId).toMatch(/^eng-/);
+    expect(mock.architect.agentId).toMatch(/^eng-/);
     expect(mock.engineer.role).toBe("engineer");
-    expect(mock.engineer.engineerId).toMatch(/^eng-/);
+    expect(mock.engineer.agentId).toMatch(/^eng-/);
     expect(mock.engineer.dispatcher).toBeDefined();
     expect(mock.engineer.mcpClient).toBeDefined();
     expect(mock.hub).toBeDefined();
-    // architect and engineer get different engineerIds
-    expect(mock.architect.engineerId).not.toBe(mock.engineer.engineerId);
+    // architect and engineer get different agentIds
+    expect(mock.architect.agentId).not.toBe(mock.engineer.agentId);
   });
 
   it("round-trip: architect opens thread → engineer dispatcher captures → Claude replies → Hub acks", async () => {
@@ -41,7 +41,7 @@ describe("MockClaudeClient", () => {
       title: "smoke round-trip",
       message: "please review",
       routingMode: "unicast",
-      recipientAgentId: mock.engineer.engineerId,
+      recipientAgentId: mock.engineer.agentId,
     });
     const threadId = parseJsonResult<{ threadId: string }>(openRaw).threadId;
     expect(threadId).toMatch(/^thread-/);
@@ -73,7 +73,7 @@ describe("MockClaudeClient", () => {
 
   it("playTape runs a scripted round-trip with capture interpolation", async () => {
     mock = await createMockClaudeClient();
-    const recipientId = mock.engineer.engineerId;
+    const recipientId = mock.engineer.agentId;
 
     const { captures } = await mock.playTape([
       {

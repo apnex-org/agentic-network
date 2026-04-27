@@ -24,13 +24,13 @@ describe("MockOpenCodeClient", () => {
   it("factory wires architect + engineer-with-dispatcher + MCP client correctly", async () => {
     mock = await createMockOpenCodeClient();
     expect(mock.architect.role).toBe("architect");
-    expect(mock.architect.engineerId).toMatch(/^eng-/);
+    expect(mock.architect.agentId).toMatch(/^eng-/);
     expect(mock.engineer.role).toBe("engineer");
-    expect(mock.engineer.engineerId).toMatch(/^eng-/);
+    expect(mock.engineer.agentId).toMatch(/^eng-/);
     expect(mock.engineer.dispatcher).toBeDefined();
     expect(mock.engineer.mcpClient).toBeDefined();
     expect(mock.hub).toBeDefined();
-    expect(mock.architect.engineerId).not.toBe(mock.engineer.engineerId);
+    expect(mock.architect.agentId).not.toBe(mock.engineer.agentId);
   });
 
   it("notification round-trip: architect opens thread → engineer dispatcher captures → opencode replies → Hub acks", async () => {
@@ -40,7 +40,7 @@ describe("MockOpenCodeClient", () => {
       title: "opencode smoke",
       message: "please review",
       routingMode: "unicast",
-      recipientAgentId: mock.engineer.engineerId,
+      recipientAgentId: mock.engineer.agentId,
     });
     const threadId = parseJsonResult<{ threadId: string }>(openRaw).threadId;
     expect(threadId).toMatch(/^thread-/);
@@ -73,7 +73,7 @@ describe("MockOpenCodeClient", () => {
 
   it("playTape runs a scripted round-trip with capture interpolation", async () => {
     mock = await createMockOpenCodeClient();
-    const recipientId = mock.engineer.engineerId;
+    const recipientId = mock.engineer.agentId;
 
     const { captures } = await mock.playTape([
       {

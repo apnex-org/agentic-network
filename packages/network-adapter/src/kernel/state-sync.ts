@@ -6,7 +6,7 @@
  *
  * The enriched handshake is NOT called here — `McpAgentClient.runHandshake`
  * invokes it before this function runs, so `state-sync.ts` can assume the
- * engineer has its canonical engineerId by the time it queries pending state.
+ * engineer has its canonical agentId by the time it queries pending state.
  */
 
 import type { ILogger, LegacyStringLogger } from "../logger.js";

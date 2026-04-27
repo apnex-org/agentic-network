@@ -37,7 +37,7 @@ describe("M-Session-Claim-Separation T3 — isEagerWarmupEnabled", () => {
 
 describe("M-Session-Claim-Separation T3 — parseClaimSessionResponse", () => {
   const FULL_PAYLOAD = {
-    engineerId: "eng-abc123",
+    agentId: "eng-abc123",
     sessionEpoch: 7,
     sessionClaimed: true,
     displacedPriorSession: { sessionId: "sess-old", epoch: 6 },
@@ -75,7 +75,7 @@ describe("M-Session-Claim-Separation T3 — parseClaimSessionResponse", () => {
       content: [{
         type: "text" as const,
         text: JSON.stringify({
-          engineerId: "eng-x",
+          agentId: "eng-x",
           sessionEpoch: 9,
           sessionClaimed: true,
           displacedPriorSession: { sessionId: "sess-prior", epoch: 8 },
@@ -95,7 +95,7 @@ describe("M-Session-Claim-Separation T3 — parseClaimSessionResponse", () => {
       content: [{
         type: "text" as const,
         text: JSON.stringify({
-          engineerId: "eng-fresh",
+          agentId: "eng-fresh",
           sessionEpoch: 1,
           sessionClaimed: true,
           // displacedPriorSession omitted on first-claim
@@ -111,7 +111,7 @@ describe("M-Session-Claim-Separation T3 — parseClaimSessionResponse", () => {
 describe("M-Session-Claim-Separation T3 — formatSessionClaimedLogLine", () => {
   it("matches HC #5 structured-parseable contract — full payload", () => {
     const parsed = {
-      engineerId: "eng-abc",
+      agentId: "eng-abc",
       sessionEpoch: 5,
       sessionClaimed: true,
       displacedPriorSession: { sessionId: "sess-old", epoch: 4 },
@@ -122,7 +122,7 @@ describe("M-Session-Claim-Separation T3 — formatSessionClaimedLogLine", () => 
   });
 
   it("renders 'displaced prior: none' when no prior session was evicted", () => {
-    const parsed = { engineerId: "eng-x", sessionEpoch: 1, sessionClaimed: true };
+    const parsed = { agentId: "eng-x", sessionEpoch: 1, sessionClaimed: true };
     expect(formatSessionClaimedLogLine(parsed)).toBe(
       "[Handshake] Session claimed: epoch=1 (displaced prior: none)"
     );

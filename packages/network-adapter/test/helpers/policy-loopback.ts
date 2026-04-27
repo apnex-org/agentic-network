@@ -35,7 +35,7 @@ export interface DispatchedEvent {
   event: string;
   data: Record<string, unknown>;
   selector: Selector;
-  deliveredTo: string[]; // engineerIds notified via _deliverPush
+  deliveredTo: string[]; // agentIds notified via _deliverPush
   timestamp: number;
 }
 
@@ -119,9 +119,9 @@ export class PolicyLoopbackHub implements ILoopbackHub {
   }
 
   /** Engineer ID currently bound to a loopback session, if any. */
-  async engineerIdForSession(sessionId: string): Promise<string | null> {
+  async agentIdForSession(sessionId: string): Promise<string | null> {
     const agent = await this.stores.engineerRegistry.getAgentForSession(sessionId);
-    return agent?.engineerId ?? null;
+    return agent?.agentId ?? null;
   }
 
   // ── Internal ────────────────────────────────────────────────────────
@@ -147,7 +147,7 @@ export class PolicyLoopbackHub implements ILoopbackHub {
           if (!targetSid) continue;
           if (!this.sessions.has(targetSid)) continue;
           this.pushToSession(targetSid, event, data);
-          delivered.push(agent.engineerId);
+          delivered.push(agent.agentId);
         }
         this.dispatched.push({
           event,

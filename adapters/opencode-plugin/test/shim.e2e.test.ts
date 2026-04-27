@@ -67,7 +67,7 @@ function parseResult<T = any>(res: unknown): T {
 interface EngineerHarness {
   agent: McpAgentClient;
   transport: LoopbackTransport;
-  engineerId: string;
+  agentId: string;
   dispatcher: ReturnType<typeof createSharedDispatcher>;
   mcpClient: Client;
 }
@@ -75,7 +75,7 @@ interface EngineerHarness {
 async function createArchitect(hub: PolicyLoopbackHub): Promise<{
   agent: McpAgentClient;
   transport: LoopbackTransport;
-  engineerId: string;
+  agentId: string;
 }> {
   const transport = new LoopbackTransport(hub);
   const agent = new McpAgentClient(
@@ -97,9 +97,9 @@ async function createArchitect(hub: PolicyLoopbackHub): Promise<{
   await waitFor(() => agent.isConnected, 5_000);
   const sid = transport.getSessionId();
   if (!sid) throw new Error("architect transport did not bind a session");
-  const engineerId = await hub.engineerIdForSession(sid);
-  if (!engineerId) throw new Error("architect Agent was not created");
-  return { agent, transport, engineerId };
+  const agentId = await hub.agentIdForSession(sid);
+  if (!agentId) throw new Error("architect Agent was not created");
+  return { agent, transport, agentId };
 }
 
 async function createEngineerWithShim(
@@ -152,8 +152,8 @@ async function createEngineerWithShim(
   await waitFor(() => agent.isConnected, 5_000);
   const sid = transport.getSessionId();
   if (!sid) throw new Error("engineer transport did not bind a session");
-  const engineerId = await hub.engineerIdForSession(sid);
-  if (!engineerId) throw new Error("engineer Agent was not created");
+  const agentId = await hub.agentIdForSession(sid);
+  if (!agentId) throw new Error("engineer Agent was not created");
 
   // Wire MCP InMemoryTransport pair. The dispatcher's createMcpServer()
   // is the same factory the fetchHandler uses for every new Initialize;
@@ -168,7 +168,7 @@ async function createEngineerWithShim(
   );
   await mcpClient.connect(clientTx);
 
-  return { agent, transport, engineerId, dispatcher, mcpClient };
+  return { agent, transport, agentId, dispatcher, mcpClient };
 }
 
 describe("opencode-plugin shim — full-loopback E2E", () => {
@@ -195,7 +195,7 @@ describe("opencode-plugin shim — full-loopback E2E", () => {
       title: "review",
       message: "please review",
       routingMode: "unicast",
-      recipientAgentId: eng.engineerId,
+      recipientAgentId: eng.agentId,
     });
     const threadId = parseResult<{ threadId: string }>(openRaw).threadId;
 
@@ -212,7 +212,7 @@ describe("opencode-plugin shim — full-loopback E2E", () => {
       title: "review",
       message: "please review",
       routingMode: "unicast",
-      recipientAgentId: eng.engineerId,
+      recipientAgentId: eng.agentId,
     });
     const threadId = parseResult<{ threadId: string }>(openRaw).threadId;
 
@@ -236,7 +236,7 @@ describe("opencode-plugin shim — full-loopback E2E", () => {
     const finalCall = replyCalls[replyCalls.length - 1];
     expect(finalCall.args.sourceQueueItemId).toBe(capturedQueueItem);
 
-    const items = await hub.stores.pendingAction.listForAgent(eng.engineerId);
+    const items = await hub.stores.pendingAction.listForAgent(eng.agentId);
     expect(items).toHaveLength(1);
     expect(items[0].state).toBe("completion_acked");
   });
@@ -248,7 +248,7 @@ describe("opencode-plugin shim — full-loopback E2E", () => {
       title: "explicit",
       message: "open",
       routingMode: "unicast",
-      recipientAgentId: eng.engineerId,
+      recipientAgentId: eng.agentId,
     });
     const threadId = parseResult<{ threadId: string }>(openRaw).threadId;
 
@@ -344,7 +344,7 @@ describe("opencode-plugin shim — cognitive layer integration", () => {
       title: "cog-telemetry",
       message: "test",
       routingMode: "unicast",
-      recipientAgentId: eng.engineerId,
+      recipientAgentId: eng.agentId,
     });
     const threadId = parseResult<{ threadId: string }>(openRaw).threadId;
 
@@ -543,7 +543,7 @@ describe("opencode-plugin shim — cognitive layer integration", () => {
       title: "dedup-opencode",
       message: "dedup",
       routingMode: "unicast" as const,
-      recipientAgentId: arch.engineerId,
+      recipientAgentId: arch.agentId,
     };
 
     const [r1, r2] = await Promise.all([

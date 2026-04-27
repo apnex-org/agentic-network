@@ -4,7 +4,7 @@
  * strictly before the state transitions to `streaming`.
  *
  * Ordering matters: the Hub uses the enriched register_role to bind the
- * session to an engineerId + sessionEpoch. The sync RPCs then fetch the
+ * session to an agentId + sessionEpoch. The sync RPCs then fetch the
  * directive and pending actions scoped to *that* engineer. If sync ran
  * before the enriched handshake, the Hub wouldn't know which engineer to
  * sync; if sync ran after streaming started, live events would race the

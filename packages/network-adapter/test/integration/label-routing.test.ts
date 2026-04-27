@@ -25,7 +25,7 @@ import type { AgentEvent } from "../../src/kernel/agent-client.js";
 interface ActorHandle {
   client: McpAgentClient;
   transport: LoopbackTransport;
-  engineerId: string;
+  agentId: string;
   actionable: AgentEvent[];
 }
 
@@ -60,9 +60,9 @@ async function createActor(
   await waitFor(() => client.isConnected, 5_000);
   const loopbackSid = transport.getSessionId();
   if (!loopbackSid) throw new Error("LoopbackTransport did not bind a session id");
-  const engineerId = await hub.engineerIdForSession(loopbackSid);
-  if (!engineerId) throw new Error(`Agent entity was not created for session ${loopbackSid}`);
-  return { client, transport, engineerId, actionable };
+  const agentId = await hub.agentIdForSession(loopbackSid);
+  if (!agentId) throw new Error(`Agent entity was not created for session ${loopbackSid}`);
+  return { client, transport, agentId, actionable };
 }
 
 async function stopAll(actors: ActorHandle[]): Promise<void> {
@@ -82,7 +82,7 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
     it("stamps labels on Agent entity when provided", async () => {
       const eng = await createActor(hub, "engineer", { env: "prod", team: "billing" });
       try {
-        const agent = await hub.stores.engineerRegistry.getAgent(eng.engineerId);
+        const agent = await hub.stores.engineerRegistry.getAgent(eng.agentId);
         expect(agent).not.toBeNull();
         expect(agent!.labels).toEqual({ env: "prod", team: "billing" });
 
@@ -99,7 +99,7 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
     it("persists empty labels when none are provided (legacy broadcast)", async () => {
       const eng = await createActor(hub, "engineer");
       try {
-        const agent = await hub.stores.engineerRegistry.getAgent(eng.engineerId);
+        const agent = await hub.stores.engineerRegistry.getAgent(eng.agentId);
         expect(agent!.labels).toEqual({});
       } finally {
         await stopAll([eng]);
@@ -136,7 +136,7 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
         const dispatches = hub.dispatched.filter((d) => d.event === "task_issued");
         expect(dispatches.length).toBe(1);
         expect(dispatches[0].selector.matchLabels).toEqual({ env: "prod" });
-        expect(dispatches[0].deliveredTo).toEqual([engProd.engineerId]);
+        expect(dispatches[0].deliveredTo).toEqual([engProd.agentId]);
       } finally {
         await stopAll([arch, engProd, engSmoke]);
       }
@@ -168,7 +168,7 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
         expect(dispatches.length).toBe(1);
         expect(dispatches[0].selector.matchLabels).toEqual({});
         expect(dispatches[0].deliveredTo.sort()).toEqual(
-          [engProd.engineerId, engSmoke.engineerId, engBare.engineerId].sort(),
+          [engProd.agentId, engSmoke.agentId, engBare.agentId].sort(),
         );
       } finally {
         await stopAll([arch, engProd, engSmoke, engBare]);
@@ -180,7 +180,7 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
     it("re-registering with different labels does not rewrite Agent.labels", async () => {
       // First handshake: prod
       const first = await createActor(hub, "engineer", { env: "prod" });
-      const engineerId = first.engineerId;
+      const agentId = first.agentId;
       await first.client.stop();
 
       // Same globalInstanceId → same fingerprint → same Agent.
@@ -206,7 +206,7 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
         labels: { env: "smoke" },
       });
 
-      const agent = await hub.stores.engineerRegistry.getAgent(engineerId);
+      const agent = await hub.stores.engineerRegistry.getAgent(agentId);
       expect(agent!.labels).toEqual({ env: "prod" });
 
       await transport2.close();

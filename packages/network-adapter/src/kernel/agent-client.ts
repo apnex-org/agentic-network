@@ -15,7 +15,7 @@
  *      streaming → reconnecting). Phase 3 moves this out of
  *      `McpConnectionManager` and into the AgentClient implementation.
  *   2. Role registration and the enriched handshake that binds a session
- *      to an engineerId + sessionEpoch.
+ *      to an agentId + sessionEpoch.
  *   3. State sync on entry to `synchronizing` (get_task,
  *      get_pending_actions, state reconciliation).
  *   4. Session-level reconnect policy on top of the wire: retry-once on
@@ -160,7 +160,7 @@ export interface AgentClientConfig {
  */
 export interface AgentClientMetrics {
   readonly sessionState: SessionState;
-  readonly engineerId?: string;
+  readonly agentId?: string;
   readonly sessionEpoch?: number;
   readonly totalHandshakes: number;
   readonly totalSessionInvalidRetries: number;

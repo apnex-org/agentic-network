@@ -197,7 +197,7 @@ threadStore = new ThreadRepository(storageProvider, storageCounter);
 pendingActionStore = new PendingActionRepository(storageProvider, storageCounter);
 // Mission-51 W1: MessageRepository — sovereign Message primitive over StorageProvider.
 messageStore = new MessageRepository(storageProvider);
-// AgentRepository does not use counter — engineerIds are fingerprint-derived.
+// AgentRepository does not use counter — agentIds are fingerprint-derived.
 engineerRegistry = new AgentRepository(storageProvider);
 // MissionRepository takes taskStore + ideaStore for virtual-view hydration.
 missionStore = new MissionRepository(storageProvider, storageCounter, taskStore, ideaStore);
@@ -417,7 +417,7 @@ async function runThreadReaperTick(): Promise<void> {
           idleMs: t.idleMs,
           retractedActionCount: 0, // counted in-store; keep payload tight
         }, {
-          engineerIds: t.participantAgentIds,
+          agentIds: t.participantAgentIds,
           matchLabels: t.labels,
         });
       }
@@ -504,34 +504,34 @@ async function runAgentReaperTick(): Promise<void> {
       // that still pins them to its currentTurnAgentId. Audited per
       // thread so forensic readers can trace the transition.
       try {
-        const unpinned = await threadStore.unpinCurrentTurnAgent(agent.engineerId);
+        const unpinned = await threadStore.unpinCurrentTurnAgent(agent.agentId);
         for (const threadId of unpinned) {
           await auditStore.logEntry(
             "hub",
             "thread_currentturn_unpinned_via_agent_reaper",
-            `Thread ${threadId} currentTurnAgentId cleared because pinned agent ${agent.engineerId} (role=${agent.role}) was reaped after ${Math.round(staleMs / 1000)}s offline.`,
+            `Thread ${threadId} currentTurnAgentId cleared because pinned agent ${agent.agentId} (role=${agent.role}) was reaped after ${Math.round(staleMs / 1000)}s offline.`,
             threadId,
           );
         }
         if (unpinned.length > 0) {
-          console.log(`[Reaper] agent ${agent.engineerId}: ${unpinned.length} thread(s) unpinned via cascade`);
+          console.log(`[Reaper] agent ${agent.agentId}: ${unpinned.length} thread(s) unpinned via cascade`);
         }
       } catch (unpinErr) {
-        console.error(`[Reaper] cascade unpin failed for agent ${agent.engineerId}:`, unpinErr);
+        console.error(`[Reaper] cascade unpin failed for agent ${agent.agentId}:`, unpinErr);
       }
 
       try {
-        const deleted = await engineerRegistry.deleteAgent(agent.engineerId);
+        const deleted = await engineerRegistry.deleteAgent(agent.agentId);
         if (deleted) {
           await auditStore.logEntry(
             "hub",
             "agent_reaper_deleted",
-            `Agent ${agent.engineerId} (role=${agent.role}, fingerprint=${agent.fingerprint.slice(0, 12)}…) deleted after ${Math.round(staleMs / 1000)}s offline (threshold ${Math.round(HUB_AGENT_STALE_THRESHOLD_MS / 1000)}s). lastSeenAt=${agent.lastSeenAt}.`,
-            agent.engineerId,
+            `Agent ${agent.agentId} (role=${agent.role}, fingerprint=${agent.fingerprint.slice(0, 12)}…) deleted after ${Math.round(staleMs / 1000)}s offline (threshold ${Math.round(HUB_AGENT_STALE_THRESHOLD_MS / 1000)}s). lastSeenAt=${agent.lastSeenAt}.`,
+            agent.agentId,
           );
         }
       } catch (deleteErr) {
-        console.error(`[Reaper] deleteAgent failed for ${agent.engineerId}:`, deleteErr);
+        console.error(`[Reaper] deleteAgent failed for ${agent.agentId}:`, deleteErr);
       }
     }
   } catch (err) {
@@ -593,7 +593,7 @@ async function runContinuationSweepTick(): Promise<void> {
               sourceQueueItemId: refreshed.id,
               continuationState,
             },
-            { engineerIds: [refreshed.targetAgentId] },
+            { agentIds: [refreshed.targetAgentId] },
           );
           await auditStore.logEntry(
             "hub",

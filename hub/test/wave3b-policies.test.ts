@@ -481,7 +481,7 @@ describe("ThreadPolicy", () => {
 
     // Simulate a stuck queue item for the architect on this thread
     const queued = await ctx.stores.pendingAction.enqueue({
-      targetAgentId: architectAgent!.engineerId,
+      targetAgentId: architectAgent!.agentId,
       dispatchType: "thread_message",
       entityRef: threadId,
       payload: {},
@@ -955,9 +955,9 @@ describe("ThreadPolicy — participant-scoped dispatch (INV-TH16)", () => {
     const eng2Reg = await reg.registerAgent("s-eng-2", "engineer", {
       globalInstanceId: "inst-eng-2", role: "engineer", clientMetadata: client,
     });
-    archId = archReg.engineerId;
-    eng1Id = eng1Reg.engineerId;
-    eng2Id = eng2Reg.engineerId;
+    archId = archReg.agentId;
+    eng1Id = eng1Reg.agentId;
+    eng2Id = eng2Reg.agentId;
   });
 
   it("open without recipientAgentId falls back to role broadcast", async () => {
@@ -965,10 +965,10 @@ describe("ThreadPolicy — participant-scoped dispatch (INV-TH16)", () => {
     const openEvent = (eng1Ctx as any).dispatchedEvents.find((e: any) => e.event === "thread_message");
     expect(openEvent).toBeDefined();
     expect(openEvent.selector.roles).toEqual(["architect"]);
-    expect(openEvent.selector.engineerIds).toBeUndefined();
+    expect(openEvent.selector.agentIds).toBeUndefined();
   });
 
-  it("open with recipientAgentId pins dispatch to that engineerId and omits role broadcast", async () => {
+  it("open with recipientAgentId pins dispatch to that agentId and omits role broadcast", async () => {
     await router.handle("create_thread", {
       title: "eng↔eng",
       message: "hey eng-2",
@@ -976,11 +976,11 @@ describe("ThreadPolicy — participant-scoped dispatch (INV-TH16)", () => {
     }, eng1Ctx);
     const openEvent = (eng1Ctx as any).dispatchedEvents.find((e: any) => e.event === "thread_message");
     expect(openEvent).toBeDefined();
-    expect(openEvent.selector.engineerIds).toEqual([eng2Id]);
+    expect(openEvent.selector.agentIds).toEqual([eng2Id]);
     expect(openEvent.selector.roles).toBeUndefined();
   });
 
-  it("reply dispatch scopes to non-author participants by engineerId", async () => {
+  it("reply dispatch scopes to non-author participants by agentId", async () => {
     // eng-1 opens with recipientAgentId=eng-2 → participants now include eng-1 only.
     const openResult = await router.handle("create_thread", {
       title: "eng↔eng",
@@ -994,7 +994,7 @@ describe("ThreadPolicy — participant-scoped dispatch (INV-TH16)", () => {
     const replyEvent = (eng2Ctx as any).dispatchedEvents.find((e: any) => e.event === "thread_message");
     expect(replyEvent).toBeDefined();
     // Target is participants minus author = [eng-1].
-    expect(replyEvent.selector.engineerIds).toEqual([eng1Id]);
+    expect(replyEvent.selector.agentIds).toEqual([eng1Id]);
     expect(replyEvent.selector.roles).toBeUndefined();
   });
 
@@ -1035,9 +1035,9 @@ describe("ThreadPolicy — leave_thread (M24-T6)", () => {
     const eng2Reg = await reg.registerAgent("s-eng-2", "engineer", {
       globalInstanceId: "inst-eng-2", role: "engineer", clientMetadata: client,
     });
-    if (archReg.ok) archId = archReg.engineerId;
-    if (eng1Reg.ok) eng1Id = eng1Reg.engineerId;
-    if (eng2Reg.ok) eng2Id = eng2Reg.engineerId;
+    if (archReg.ok) archId = archReg.agentId;
+    if (eng1Reg.ok) eng1Id = eng1Reg.agentId;
+    if (eng2Reg.ok) eng2Id = eng2Reg.agentId;
   });
 
   async function openEng1Eng2Thread(): Promise<string> {
@@ -1115,7 +1115,7 @@ describe("ThreadPolicy — leave_thread (M24-T6)", () => {
 
     const abandonedEvents = (eng1Ctx as any).dispatchedEvents.filter((e: any) => e.event === "thread_abandoned");
     expect(abandonedEvents).toHaveLength(1);
-    expect(abandonedEvents[0].selector.engineerIds).toEqual([eng2Id]);
+    expect(abandonedEvents[0].selector.agentIds).toEqual([eng2Id]);
     expect(abandonedEvents[0].selector.roles).toBeUndefined();
     expect(abandonedEvents[0].data.leaverAgentId).toBe(eng1Id);
     expect(abandonedEvents[0].data.reason).toBe("done here");
@@ -1163,8 +1163,8 @@ describe("ThreadStore — reapIdleThreads (M24-T7)", () => {
     const eng2Reg = await reg.registerAgent("s-eng-2", "engineer", {
       globalInstanceId: "inst-eng-2", role: "engineer", clientMetadata: client,
     });
-    if (eng1Reg.ok) eng1Id = eng1Reg.engineerId;
-    if (eng2Reg.ok) eng2Id = eng2Reg.engineerId;
+    if (eng1Reg.ok) eng1Id = eng1Reg.agentId;
+    if (eng2Reg.ok) eng2Id = eng2Reg.agentId;
   });
 
   async function openThread(): Promise<string> {
@@ -1349,8 +1349,8 @@ describe("ThreadPolicy — routingMode enforcement (M24-T2)", () => {
     await reg.registerAgent("s-arch", "architect", { globalInstanceId: "inst-arch", role: "architect", clientMetadata: client });
     const eng1Reg = await reg.registerAgent("s-eng-1", "engineer", { globalInstanceId: "inst-eng-1", role: "engineer", clientMetadata: client });
     const eng2Reg = await reg.registerAgent("s-eng-2", "engineer", { globalInstanceId: "inst-eng-2", role: "engineer", clientMetadata: client });
-    if (eng1Reg.ok) eng1Id = eng1Reg.engineerId;
-    if (eng2Reg.ok) eng2Id = eng2Reg.engineerId;
+    if (eng1Reg.ok) eng1Id = eng1Reg.agentId;
+    if (eng2Reg.ok) eng2Id = eng2Reg.agentId;
   });
 
   // ── Open-time validation ──────────────────────────────────────
@@ -2317,8 +2317,8 @@ describe("Phase 2 invariants (M24-T11)", () => {
     const client = { clientName: "test", clientVersion: "0", proxyName: "test", proxyVersion: "0" };
     const archReg = await reg.registerAgent("s-arch", "architect", { globalInstanceId: "arch-i", role: "architect", clientMetadata: client });
     const engReg = await reg.registerAgent("s-eng", "engineer", { globalInstanceId: "eng-i", role: "engineer", clientMetadata: client });
-    if (archReg.ok) archId = archReg.engineerId;
-    if (engReg.ok) engId = engReg.engineerId;
+    if (archReg.ok) archId = archReg.agentId;
+    if (engReg.ok) engId = engReg.agentId;
   });
 
   // ── INV-TH22: StagedAction.proposer carries {role, agentId} ──
