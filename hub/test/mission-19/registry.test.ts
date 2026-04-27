@@ -125,7 +125,7 @@ describe("Mission-19 Registry — session resolution for P2P routing", () => {
     if (!result.ok) return;
 
     const agent = await reg.getAgentForSession("sess-1");
-    expect(agent?.agentId).toBe(result.agentId);
+    expect(agent?.id).toBe(result.agentId);
     expect(agent?.labels).toEqual({ team: "platform" });
   });
 

@@ -129,7 +129,7 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
   // Mission-21 Phase 1: resolve the caller's agentId so openThread can
   // seed the participants[] array with a full {role, agentId} entry.
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(ctx.sessionId).catch(() => null);
-  const authorAgentId: string | null = agent?.agentId ?? null;
+  const authorAgentId: string | null = agent?.id ?? null;
   // INV-TH17: when the opener pinned a recipientAgentId, resolve that
   // agent's role from the registry so openThread can set currentTurn
   // correctly — otherwise engineer↔engineer threads would incorrectly
@@ -281,7 +281,7 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   // Mission-21 Phase 1: resolve the caller's agentId so the store can
   // attach it to the ThreadMessage and upsert into participants[].
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(ctx.sessionId).catch(() => null);
-  const authorAgentId: string | null = agent?.agentId ?? null;
+  const authorAgentId: string | null = agent?.id ?? null;
 
   // Phase 2a (task-303, thread-223) — per-action commit authority.
   // When bilateral convergence fires, at least ONE converger must have
@@ -918,7 +918,7 @@ async function leaveThread(args: Record<string, unknown>, ctx: IPolicyContext): 
   // Resolve caller's agentId. Without an M18 agentId we can't verify
   // participant membership — leave_thread requires a resolved identity.
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(ctx.sessionId).catch(() => null);
-  const leaverAgentId: string | null = agent?.agentId ?? null;
+  const leaverAgentId: string | null = agent?.id ?? null;
   if (!leaverAgentId) {
     return {
       content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "leave_thread requires an M18-resolved agentId; caller session has no bound Agent" }) }],

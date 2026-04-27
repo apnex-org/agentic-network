@@ -403,7 +403,7 @@ describe("SessionPolicy", () => {
     await router.handle("claim_session", {}, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
-    const eid = agents[0].agentId;
+    const eid = agents[0].id;
 
     // Simulate drift: force lastTouchAt old and status offline
     reg.lastTouchAt.set(eid, 0);
@@ -426,7 +426,7 @@ describe("SessionPolicy", () => {
     await router.handle("claim_session", {}, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
-    const eid = agents[0].agentId;
+    const eid = agents[0].id;
     const firstSeen = (await reg.getAgent(eid)).lastSeenAt;
 
     // Second touch inside the window — should NOT update lastSeenAt.
@@ -443,7 +443,7 @@ describe("SessionPolicy", () => {
     await router.handle("claim_session", {}, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
-    const eid = agents[0].agentId;
+    const eid = agents[0].id;
 
     // Different (unrelated) session should NOT touch the agent.
     await reg.markAgentOffline("some-other-session");
@@ -581,7 +581,7 @@ describe("SessionPolicy", () => {
     await router.handle("register_role", engineerHandshake, ctx);
     await router.handle("claim_session", {}, ctx);
     const selfAgents = await ctx.stores.engineerRegistry.listAgents();
-    const selfId = selfAgents[0].agentId;
+    const selfId = selfAgents[0].id;
 
     // Register a second engineer in a separate session
     const otherCtx = createTestContext({ stores: ctx.stores, sessionId: "other" });
@@ -602,7 +602,7 @@ describe("SessionPolicy", () => {
     await router.handle("register_role", engineerHandshake, ctx);
     const reg = ctx.stores.engineerRegistry as any;
     const agents = await reg.listAgents();
-    await mutateAgentBlob(reg, agents[0].agentId, { status: "offline" });
+    await mutateAgentBlob(reg, agents[0].id, { status: "offline" });
 
     const caller = createTestContext({ stores: ctx.stores, sessionId: "caller" });
     const result = await router.handle("list_available_peers", {}, caller);

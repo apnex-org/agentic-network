@@ -481,7 +481,7 @@ describe("ThreadPolicy", () => {
 
     // Simulate a stuck queue item for the architect on this thread
     const queued = await ctx.stores.pendingAction.enqueue({
-      targetAgentId: architectAgent!.agentId,
+      targetAgentId: architectAgent!.id,
       dispatchType: "thread_message",
       entityRef: threadId,
       payload: {},

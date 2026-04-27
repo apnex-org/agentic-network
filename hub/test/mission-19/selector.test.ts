@@ -90,8 +90,8 @@ describe("Mission-19 Selector — selectAgents", () => {
   it("matchLabels-only filters by AND-equality on labels (INV-SYS-L02)", async () => {
     const prod = await reg.selectAgents({ matchLabels: { env: "prod" } });
     expect(prod).toHaveLength(2); // eng-a + arch
-    const agentIds = prod.map((a) => a.agentId).sort();
-    expect(agentIds).toEqual(prod.map((a) => a.agentId).sort());
+    const agentIds = prod.map((a) => a.id).sort();
+    expect(agentIds).toEqual(prod.map((a) => a.id).sort());
     expect(prod.every((a) => a.labels.env === "prod")).toBe(true);
   });
 
@@ -118,9 +118,9 @@ describe("Mission-19 Selector — selectAgents", () => {
     expect(ab).toHaveLength(2);
     const target = ab[0];
 
-    const pinned = await reg.selectAgents({ agentId: target.agentId });
+    const pinned = await reg.selectAgents({ agentId: target.id });
     expect(pinned).toHaveLength(1);
-    expect(pinned[0].agentId).toBe(target.agentId);
+    expect(pinned[0].id).toBe(target.id);
   });
 
   it("agentId + matchLabels: the pinned agent must also satisfy the label filter", async () => {
@@ -130,14 +130,14 @@ describe("Mission-19 Selector — selectAgents", () => {
 
     // Prod pin + prod label → hit
     const hit = await reg.selectAgents({
-      agentId: engA.agentId,
+      agentId: engA.id,
       matchLabels: { env: "prod" },
     });
     expect(hit).toHaveLength(1);
 
     // Staging pin + prod label → miss (the pin is valid but the labels don't match)
     const miss = await reg.selectAgents({
-      agentId: engB.agentId,
+      agentId: engB.id,
       matchLabels: { env: "prod" },
     });
     expect(miss).toHaveLength(0);
@@ -166,18 +166,18 @@ describe("Mission-19 Selector — selectAgents", () => {
     const arch = all.find((a) => a.role === "architect")!;
 
     const matched = await reg.selectAgents({
-      agentIds: [engA.agentId, arch.agentId],
+      agentIds: [engA.id, arch.id],
     });
-    const ids = matched.map((a) => a.agentId).sort();
-    expect(ids).toEqual([engA.agentId, arch.agentId].sort());
+    const ids = matched.map((a) => a.id).sort();
+    expect(ids).toEqual([engA.id, arch.id].sort());
   });
 
   it("agentIds with a single element behaves like a pinpoint", async () => {
     const all = await reg.listAgents();
     const engA = all.find((a) => a.labels.env === "prod" && a.role === "engineer")!;
-    const matched = await reg.selectAgents({ agentIds: [engA.agentId] });
+    const matched = await reg.selectAgents({ agentIds: [engA.id] });
     expect(matched).toHaveLength(1);
-    expect(matched[0].agentId).toBe(engA.agentId);
+    expect(matched[0].id).toBe(engA.id);
   });
 
   it("agentIds empty array falls through (same as not-supplied)", async () => {
@@ -197,11 +197,11 @@ describe("Mission-19 Selector — selectAgents", () => {
 
     // Both engineers in the pool, but matchLabels filters to prod only.
     const matched = await reg.selectAgents({
-      agentIds: [engA.agentId, engB.agentId],
+      agentIds: [engA.id, engB.id],
       matchLabels: { env: "prod" },
     });
     expect(matched).toHaveLength(1);
-    expect(matched[0].agentId).toBe(engA.agentId);
+    expect(matched[0].id).toBe(engA.id);
   });
 });
 
@@ -240,7 +240,7 @@ describe("Mission-19 Selector — bug-35 lastSeenAt-vs-lastHeartbeatAt presence 
     // agent remains reachable.
     const peers = await reg.selectAgents({ roles: ["engineer"] });
     expect(peers).toHaveLength(1);
-    expect(peers[0].agentId).toMatch(/^eng-/);
+    expect(peers[0].id).toMatch(/^eng-/);
   });
 
   it("excludes agent with stale lastSeenAt (presence window aged out)", async () => {
@@ -268,12 +268,12 @@ describe("Mission-19 Selector — bug-35 lastSeenAt-vs-lastHeartbeatAt presence 
     vi.advanceTimersByTime(5 * 60 * 1000);
     await reg.touchAgent("sess-eng");
 
-    const pinnedActive = await reg.selectAgents({ agentIds: [target.agentId] });
+    const pinnedActive = await reg.selectAgents({ agentIds: [target.id] });
     expect(pinnedActive).toHaveLength(1);
 
     // Now let lastSeenAt age out without touching, then verify pin returns empty.
     vi.advanceTimersByTime(5 * 60 * 1000);
-    const pinnedStale = await reg.selectAgents({ agentIds: [target.agentId] });
+    const pinnedStale = await reg.selectAgents({ agentIds: [target.id] });
     expect(pinnedStale).toHaveLength(0);
   });
 
@@ -284,11 +284,11 @@ describe("Mission-19 Selector — bug-35 lastSeenAt-vs-lastHeartbeatAt presence 
     vi.advanceTimersByTime(5 * 60 * 1000);
     await reg.touchAgent("sess-eng");
 
-    const fast = await reg.selectAgents({ agentId: target.agentId });
+    const fast = await reg.selectAgents({ agentId: target.id });
     expect(fast).toHaveLength(1);
 
     vi.advanceTimersByTime(5 * 60 * 1000);
-    const fastStale = await reg.selectAgents({ agentId: target.agentId });
+    const fastStale = await reg.selectAgents({ agentId: target.id });
     expect(fastStale).toHaveLength(0);
   });
 });

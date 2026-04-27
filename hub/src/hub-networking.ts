@@ -374,7 +374,7 @@ export class HubNetworking {
           },
         });
         notified++;
-        this.log(`[Dispatch] Sent notif-${notification.id} (${event}) to ${agent.agentId}/${agent.role} session ${sessionId.substring(0, 8)}...`);
+        this.log(`[Dispatch] Sent notif-${notification.id} (${event}) to ${agent.id}/${agent.role} session ${sessionId.substring(0, 8)}...`);
       } catch (err) {
         this.log(`[Dispatch] Failed to notify ${sessionId.substring(0, 8)}...: ${err}`);
         this.sseActive.set(sessionId, false);
@@ -494,7 +494,7 @@ export class HubNetworking {
       const agent = await this.engineerRegistry
         .getAgentForSession(sessionId)
         .catch(() => null);
-      const agentId = agent?.agentId;
+      const agentId = agent?.id;
 
       // Filter: replay Messages whose target matches subscriber AND
       // status === "new" (acked/received Messages have already been
@@ -809,7 +809,7 @@ export class HubNetworking {
         const agent = await this.engineerRegistry.getAgentForSession(sessionId);
         if (agent && agent.currentSessionId !== sessionId) {
           const autoClaim = await this.engineerRegistry.claimSession(
-            agent.agentId,
+            agent.id,
             sessionId,
             "sse_subscribe",
           );

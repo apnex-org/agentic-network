@@ -242,7 +242,7 @@ describe("AgentRepository agent reaper (CP3 C4)", () => {
     expect(onlineResult.ok).toBe(true);
 
     const stale = await reg.listOfflineAgentsOlderThan(7 * 24 * 60 * 60 * 1000);
-    expect(stale.map((a) => a.agentId)).toEqual([staleId]);
+    expect(stale.map((a) => a.id)).toEqual([staleId]);
   });
 
   it("deleteAgent removes the record so subsequent getAgent returns null", async () => {

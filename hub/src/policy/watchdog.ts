@@ -104,7 +104,7 @@ export class Watchdog {
       this.log(`[Watchdog] Stage 1 re-dispatch: ${item.id}`);
     } else if (stage === 2) {
       if (agent) {
-        await this.stores.engineerRegistry.setLivenessState(agent.agentId, "degraded");
+        await this.stores.engineerRegistry.setLivenessState(agent.id, "degraded");
       }
       await this.stores.audit.logEntry(
         "hub",
@@ -119,7 +119,7 @@ export class Watchdog {
       // Stage 3+: escalate terminally.
       await this.stores.pendingAction.escalate(item.id, "receipt_deadline_missed_3x");
       if (agent) {
-        await this.stores.engineerRegistry.setLivenessState(agent.agentId, "unresponsive");
+        await this.stores.engineerRegistry.setLivenessState(agent.id, "unresponsive");
       }
       await emitDirectorNotification(this.stores.message, {
         severity: "critical",
@@ -143,7 +143,7 @@ export class Watchdog {
     try {
       await this.wakeClient(agent.wakeEndpoint, _item);
     } catch (err) {
-      this.log(`[Watchdog] wake POST failed for ${agent.agentId}: ${(err as any)?.message ?? err}`);
+      this.log(`[Watchdog] wake POST failed for ${agent.id}: ${(err as any)?.message ?? err}`);
       // Wake failure is NOT terminal. The watchdog will try again on the
       // next tick; eventually Stage 3 escalates if no drain arrives.
     }

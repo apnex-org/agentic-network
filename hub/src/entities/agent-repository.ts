@@ -112,7 +112,7 @@ function normalizeAgentShape(a: Agent): Agent {
     receiptSla: typeof a.receiptSla === "number" ? a.receiptSla : DEFAULT_AGENT_RECEIPT_SLA_MS,
     wakeEndpoint: typeof a.wakeEndpoint === "string" ? a.wakeEndpoint : null,
     // Mission-62 W1+W2 Pass 1 — additive defaults for legacy blobs.
-    name: typeof a.name === "string" ? a.name : a.agentId,
+    name: typeof a.name === "string" ? a.name : a.id,
     activityState,
     sessionStartedAt: typeof a.sessionStartedAt === "string" ? a.sessionStartedAt : null,
     lastToolCallAt: typeof a.lastToolCallAt === "string" ? a.lastToolCallAt : null,
@@ -228,7 +228,7 @@ export class AgentRepository implements IEngineerRegistry {
     const engineers: EngineerStatusEntry[] = agents
       .filter((a) => !a.archived)
       .map((a) => ({
-        agentId: a.agentId,
+        agentId: a.id,
         sessionId: a.currentSessionId,
         status: a.status,
         sessionEpoch: a.sessionEpoch,
@@ -309,7 +309,7 @@ export class AgentRepository implements IEngineerRegistry {
         const agentIdPrefix = payload.role === "director" ? "director" : "eng";
         const agentId = `${agentIdPrefix}-${shortHash(fingerprint)}`;
         const agent: Agent = {
-          agentId,
+          id: agentId,
           fingerprint,
           role: payload.role,
           status: "offline",
@@ -369,7 +369,7 @@ export class AgentRepository implements IEngineerRegistry {
         return {
           ok: false,
           code: "role_mismatch",
-          message: `Token role '${payload.role}' does not match persisted agent role '${agent.role}' for agentId=${agent.agentId}`,
+          message: `Token role '${payload.role}' does not match persisted agent role '${agent.role}' for agentId=${agent.id}`,
         };
       }
 
@@ -395,15 +395,15 @@ export class AgentRepository implements IEngineerRegistry {
         // OCC lost — retry.
         continue;
       }
-      await this.provider.put(agentPath(updated.agentId), encode(updated));
+      await this.provider.put(agentPath(updated.id), encode(updated));
       if (sessionId) {
-        this.sessionToEngineerId.set(sessionId, updated.agentId);
+        this.sessionToEngineerId.set(sessionId, updated.id);
       }
       const changedFields: ("labels" | "advisoryTags" | "clientMetadata")[] = [];
       if (labelsChanged) changedFields.push("labels");
       return {
         ok: true,
-        agentId: updated.agentId,
+        agentId: updated.id,
         wasCreated: false,
         clientMetadata: updated.clientMetadata,
         advisoryTags: updated.advisoryTags,
@@ -446,7 +446,7 @@ export class AgentRepository implements IEngineerRegistry {
           return {
             ok: false,
             code: "agent_thrashing_detected",
-            message: `Agent ${agent.agentId} exceeded ${THRASHING_THRESHOLD} displacements in ${THRASHING_WINDOW_MS / 1000}s — halting to prevent fork-bomb. Check ~/.ois/instance.json for duplicate processes.`,
+            message: `Agent ${agent.id} exceeded ${THRASHING_THRESHOLD} displacements in ${THRASHING_WINDOW_MS / 1000}s — halting to prevent fork-bomb. Check ~/.ois/instance.json for duplicate processes.`,
           };
         }
       }
@@ -494,20 +494,20 @@ export class AgentRepository implements IEngineerRegistry {
       } catch (err) {
         if (!(err instanceof StoragePathNotFoundError)) throw err;
       }
-      this.sessionToEngineerId.set(sessionId, updated.agentId);
-      this.lastTouchAt.set(updated.agentId, Date.now());
+      this.sessionToEngineerId.set(sessionId, updated.id);
+      this.lastTouchAt.set(updated.id, Date.now());
       if (displaced) {
         console.log(
-          `[AgentRepository] Agent displaced: ${updated.agentId} epoch=${updated.sessionEpoch} (trigger=${trigger}, prior sessionId=${displaced.sessionId} epoch=${displaced.epoch})`,
+          `[AgentRepository] Agent displaced: ${updated.id} epoch=${updated.sessionEpoch} (trigger=${trigger}, prior sessionId=${displaced.sessionId} epoch=${displaced.epoch})`,
         );
       } else {
         console.log(
-          `[AgentRepository] Agent session claimed: ${updated.agentId} epoch=${updated.sessionEpoch} (trigger=${trigger})`,
+          `[AgentRepository] Agent session claimed: ${updated.id} epoch=${updated.sessionEpoch} (trigger=${trigger})`,
         );
       }
       return {
         ok: true,
-        agentId: updated.agentId,
+        agentId: updated.id,
         sessionEpoch: updated.sessionEpoch,
         trigger,
         ...(displaced ? { displacedPriorSession: displaced } : {}),
@@ -560,7 +560,7 @@ export class AgentRepository implements IEngineerRegistry {
       const a = await this.getAgent(selector.agentId);
       if (!a) return [];
       if (!isPeerPresent(a, nowMs)) return [];
-      if (agentIdSet && !agentIdSet.has(a.agentId)) return [];
+      if (agentIdSet && !agentIdSet.has(a.id)) return [];
       if (selector.roles && !selector.roles.includes(a.role)) return [];
       if (!labelsMatch(a.labels ?? {}, selector.matchLabels)) return [];
       return [a];

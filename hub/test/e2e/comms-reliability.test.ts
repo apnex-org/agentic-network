@@ -150,7 +150,7 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
         entityRef: "thread-1",
         payload: {},
       });
-      expect(first.id).toBe(second.id);
+      expect(first.agentId).toBe(second.agentId);
     });
   });
 
@@ -474,7 +474,7 @@ describe("ADR-017 — persist-first comms queue + liveness FSM", () => {
 
       // The reply's queueItemId matches a real enqueued item for the engineer.
       const engAgent = await engCtx.stores.engineerRegistry.getAgentForSession(engCtx.sessionId);
-      const engItems = await pendingStore.listForAgent(engAgent!.agentId);
+      const engItems = await pendingStore.listForAgent(engAgent!.id);
       expect(engItems.map((i: any) => i.id)).toContain(replyDispatch!.data.queueItemId);
     });
 

@@ -29,7 +29,7 @@ async function drainPendingActions(
     };
   }
 
-  const enqueued = await ctx.stores.pendingAction.listForAgent(agent.agentId, { state: "enqueued" });
+  const enqueued = await ctx.stores.pendingAction.listForAgent(agent.id, { state: "enqueued" });
   const drained = [];
   for (const item of enqueued) {
     const acked = await ctx.stores.pendingAction.receiptAck(item.id);
@@ -39,7 +39,7 @@ async function drainPendingActions(
   // Heartbeat: the drain itself is proof of liveness. Update the agent's
   // lastHeartbeatAt + force livenessState back to online regardless of
   // prior degraded/unresponsive state (the agent is demonstrably alive).
-  await (ctx.stores.engineerRegistry as any).refreshHeartbeat?.(agent.agentId);
+  await (ctx.stores.engineerRegistry as any).refreshHeartbeat?.(agent.id);
 
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ items: drained }) }],
@@ -66,7 +66,7 @@ async function acknowledgeDirectorNotification(
 ): Promise<PolicyResult> {
   const id = args.id as string;
   const agent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
-  const acknowledgedBy = agent?.agentId ?? ctx.sessionId;
+  const acknowledgedBy = agent?.id ?? ctx.sessionId;
   const result = await acknowledgeDirectorNotificationMessage(
     ctx.stores.message,
     id,
@@ -222,7 +222,7 @@ async function saveContinuation(
 
   const updated = await ctx.stores.pendingAction.saveContinuation(
     queueItemId,
-    agent.agentId,
+    agent.id,
     payload,
   );
   if (!updated) {
@@ -241,7 +241,7 @@ async function saveContinuation(
   await ctx.stores.audit.logEntry(
     "hub",
     "queue_item_continuation_saved",
-    `Queue item ${queueItemId} transitioned to continuation_required by agent ${agent.agentId} (payload kind: ${typeof payload.kind === "string" ? payload.kind : "unspecified"}).`,
+    `Queue item ${queueItemId} transitioned to continuation_required by agent ${agent.id} (payload kind: ${typeof payload.kind === "string" ? payload.kind : "unspecified"}).`,
     queueItemId,
   );
 

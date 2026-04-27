@@ -23,7 +23,7 @@ import type { Selector } from "../../src/state.js";
 
 interface MockEngineerRegistry {
   getRole(sessionId: string): string;
-  getAgentForSession(sessionId: string): Promise<{ agentId: string; currentSessionId: string } | null>;
+  getAgentForSession(sessionId: string): Promise<{ id: string; currentSessionId: string } | null>;
   claimSession?: (...args: unknown[]) => Promise<unknown>;
 }
 
@@ -32,7 +32,8 @@ function makeRegistry(role: string, agentId: string, sessionId: string = "test-s
     getRole: () => role,
     // Return currentSessionId matching ctx.sessionId so the router's
     // auto-claim branch doesn't fire (its claimSession isn't stubbed).
-    getAgentForSession: async () => ({ agentId: agentId, currentSessionId: sessionId }),
+    // Mission-62 sub-rename: Agent uses `id` field (not `agentId`).
+    getAgentForSession: async () => ({ id: agentId, currentSessionId: sessionId }),
   };
 }
 
@@ -420,11 +421,11 @@ describe("pushSelector — MessageTarget → Selector mapping", () => {
     expect(pushSelector({ role: "architect" })).toEqual({ roles: ["architect"] });
   });
 
-  it("target.agentId → selector.agentId", () => {
+  it("target.id → selector.agentId", () => {
     expect(pushSelector({ agentId: "eng-7" })).toEqual({ agentId: "eng-7" });
   });
 
-  it("target.role + target.agentId → both fields (AND filter)", () => {
+  it("target.role + target.id → both fields (AND filter)", () => {
     expect(pushSelector({ role: "engineer", agentId: "eng-3" })).toEqual({
       roles: ["engineer"],
       agentId: "eng-3",
@@ -466,7 +467,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
     expect(dispatched.message.payload).toEqual({ hello: "world" });
   });
 
-  it("delivery='push-immediate' + target.agentId → fires with agentId selector", async () => {
+  it("delivery='push-immediate' + target.id → fires with agentId selector", async () => {
     const router = setupRouter();
     const messageStore = new MessageRepository(new MemoryStorageProvider());
     const dispatchCalls: DispatchCall[] = [];

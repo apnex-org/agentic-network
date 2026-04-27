@@ -35,11 +35,11 @@ export async function resolveCreatedBy(ctx: IPolicyContext): Promise<EntityProve
   let agentId: string | null = null;
   try {
     const registry = ctx.stores.engineerRegistry as unknown as {
-      getAgentForSession?: (sid: string) => Promise<{ agentId?: string } | null>;
+      getAgentForSession?: (sid: string) => Promise<{ id?: string } | null>;
     };
     if (typeof registry.getAgentForSession === "function") {
       const agent = await registry.getAgentForSession(ctx.sessionId);
-      agentId = agent?.agentId ?? null;
+      agentId = agent?.id ?? null;
     }
   } catch {
     // Registry lookup failure is non-fatal — caller gets a role-only

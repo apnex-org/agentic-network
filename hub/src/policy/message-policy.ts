@@ -129,7 +129,7 @@ async function createMessage(
     ctx.sessionId,
   ).catch(() => null);
   const authorAgentId: string =
-    agent?.agentId ?? `anonymous-${authorRole}`;
+    agent?.id ?? `anonymous-${authorRole}`;
 
   // Author authorization gate per W1's checkAuthorAuthorized helper.
   const authError = checkAuthorAuthorized(
@@ -271,7 +271,7 @@ async function resolveCallerAgentId(ctx: IPolicyContext): Promise<string> {
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(
     ctx.sessionId,
   ).catch(() => null);
-  return agent?.agentId ?? `anonymous-${fallbackRole}`;
+  return agent?.id ?? `anonymous-${fallbackRole}`;
 }
 
 async function claimMessage(

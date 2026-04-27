@@ -26,8 +26,8 @@ async function agentIdFor(orch: TestOrchestrator, name: string = "default"): Pro
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const reg = orch.stores.engineerRegistry as any;
   const agent = await reg.getAgentForSession(`session-engineer-${name}`);
-  if (!agent?.agentId) throw new Error(`engineer '${name}' not registered — call a tool first via the engineer facade`);
-  return agent.agentId as string;
+  if (!agent?.id) throw new Error(`engineer '${name}' not registered — call a tool first via the engineer facade`);
+  return agent.id as string;
 }
 
 describe("INV-TH18 — thread routing mode immutability + field consistency", () => {

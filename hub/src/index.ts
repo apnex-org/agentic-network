@@ -504,34 +504,34 @@ async function runAgentReaperTick(): Promise<void> {
       // that still pins them to its currentTurnAgentId. Audited per
       // thread so forensic readers can trace the transition.
       try {
-        const unpinned = await threadStore.unpinCurrentTurnAgent(agent.agentId);
+        const unpinned = await threadStore.unpinCurrentTurnAgent(agent.id);
         for (const threadId of unpinned) {
           await auditStore.logEntry(
             "hub",
             "thread_currentturn_unpinned_via_agent_reaper",
-            `Thread ${threadId} currentTurnAgentId cleared because pinned agent ${agent.agentId} (role=${agent.role}) was reaped after ${Math.round(staleMs / 1000)}s offline.`,
+            `Thread ${threadId} currentTurnAgentId cleared because pinned agent ${agent.id} (role=${agent.role}) was reaped after ${Math.round(staleMs / 1000)}s offline.`,
             threadId,
           );
         }
         if (unpinned.length > 0) {
-          console.log(`[Reaper] agent ${agent.agentId}: ${unpinned.length} thread(s) unpinned via cascade`);
+          console.log(`[Reaper] agent ${agent.id}: ${unpinned.length} thread(s) unpinned via cascade`);
         }
       } catch (unpinErr) {
-        console.error(`[Reaper] cascade unpin failed for agent ${agent.agentId}:`, unpinErr);
+        console.error(`[Reaper] cascade unpin failed for agent ${agent.id}:`, unpinErr);
       }
 
       try {
-        const deleted = await engineerRegistry.deleteAgent(agent.agentId);
+        const deleted = await engineerRegistry.deleteAgent(agent.id);
         if (deleted) {
           await auditStore.logEntry(
             "hub",
             "agent_reaper_deleted",
-            `Agent ${agent.agentId} (role=${agent.role}, fingerprint=${agent.fingerprint.slice(0, 12)}…) deleted after ${Math.round(staleMs / 1000)}s offline (threshold ${Math.round(HUB_AGENT_STALE_THRESHOLD_MS / 1000)}s). lastSeenAt=${agent.lastSeenAt}.`,
-            agent.agentId,
+            `Agent ${agent.id} (role=${agent.role}, fingerprint=${agent.fingerprint.slice(0, 12)}…) deleted after ${Math.round(staleMs / 1000)}s offline (threshold ${Math.round(HUB_AGENT_STALE_THRESHOLD_MS / 1000)}s). lastSeenAt=${agent.lastSeenAt}.`,
+            agent.id,
           );
         }
       } catch (deleteErr) {
-        console.error(`[Reaper] deleteAgent failed for ${agent.agentId}:`, deleteErr);
+        console.error(`[Reaper] deleteAgent failed for ${agent.id}:`, deleteErr);
       }
     }
   } catch (err) {

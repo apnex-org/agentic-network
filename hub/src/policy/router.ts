@@ -147,7 +147,7 @@ export class PolicyRouter {
       const agent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
       if (agent && agent.currentSessionId !== ctx.sessionId) {
         const autoClaim = await ctx.stores.engineerRegistry.claimSession(
-          agent.agentId,
+          agent.id,
           ctx.sessionId,
           "first_tool_call",
         );

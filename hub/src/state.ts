@@ -230,7 +230,7 @@ export const AGENT_RESTART_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
 export const AGENT_RESTART_HISTORY_CAP = 50;
 
 export interface Agent {
-  agentId: string;          // e.g., "eng-abc123xyz" (Hub-issued); mission-62 W1+W2 Pass 6 renames cross-refs to agentId; entity-internal `id` rename also Pass 6
+  id: string;                  // e.g., "eng-abc123xyz" (Hub-issued); entity-internal field per Director Q4 inline-refinement (mission-62 sub-rename). Cross-refs in other entities use `agentId: string`.
   fingerprint: string;         // sha256(globalInstanceId) — token NOT included
   role: AgentRole;
   status: AgentStatus;

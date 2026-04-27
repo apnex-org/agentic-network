@@ -191,7 +191,7 @@ async function claimSessionTool(_args: Record<string, unknown>, ctx: IPolicyCont
       isError: true,
     };
   }
-  const claim = await ctx.stores.engineerRegistry.claimSession(agent.agentId, sid, "explicit");
+  const claim = await ctx.stores.engineerRegistry.claimSession(agent.id, sid, "explicit");
   if (!claim.ok) {
     return {
       content: [{
@@ -284,11 +284,11 @@ async function listAvailablePeers(args: Record<string, unknown>, ctx: IPolicyCon
   });
 
   const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
-  const selfId = self?.agentId;
+  const selfId = self?.id;
   const peers = agents
-    .filter((a) => a.agentId !== selfId)
+    .filter((a) => a.id !== selfId)
     .map((a) => ({
-      agentId: a.agentId,
+      agentId: a.id,
       role: a.role,
       labels: a.labels ?? {},
     }));
@@ -395,7 +395,7 @@ async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Pr
     if (livenessAllow && !livenessAllow.has(a.livenessState)) continue;
     if (activityAllow && !activityAllow.has(a.activityState)) continue;
     if (labelFilter && !labelsMatchAll(a.labels ?? {}, labelFilter)) continue;
-    if (agentIdSet && !agentIdSet.has(a.agentId)) continue;
+    if (agentIdSet && !agentIdSet.has(a.id)) continue;
     // currentMissionId filter: only match if we have a derived value (skip
     // until derivation is wired; for now no-match if filter set since stored
     // is always null per Design §11.1 derive-on-read).
@@ -403,7 +403,7 @@ async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 
     const proj: AgentProjection = {};
     if (fieldGroups.has("identity")) {
-      proj.id = a.agentId;
+      proj.id = a.id;
       proj.name = a.name;
       proj.role = a.role;
       proj.labels = a.labels ?? {};
@@ -503,7 +503,7 @@ function buildAgentStateChangedPayload(
   }
   return {
     event: "agent_state_changed",
-    agentId: before.agentId,
+    agentId: before.id,
     fromLivenessState: before.livenessState,
     toLivenessState: before.livenessState, // unchanged by activity-only transitions
     fromActivityState: before.activityState,
@@ -528,11 +528,11 @@ async function signalWorkingStarted(args: Record<string, unknown>, ctx: IPolicyC
       isError: true,
     };
   }
-  await ctx.stores.engineerRegistry.recordToolCallStart(self.agentId, toolName);
+  await ctx.stores.engineerRegistry.recordToolCallStart(self.id, toolName);
   const payload = buildAgentStateChangedPayload(self, "online_working", ["lastToolCallAt", "lastToolCallName", "workingSince"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.agentId, activityState: "online_working", toolName }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.id, activityState: "online_working", toolName }) }],
   };
 }
 
@@ -544,11 +544,11 @@ async function signalWorkingCompleted(_args: Record<string, unknown>, ctx: IPoli
       isError: true,
     };
   }
-  await ctx.stores.engineerRegistry.recordToolCallComplete(self.agentId);
+  await ctx.stores.engineerRegistry.recordToolCallComplete(self.id);
   const payload = buildAgentStateChangedPayload(self, "online_idle", ["idleSince", "workingSince"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.agentId, activityState: "online_idle" }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.id, activityState: "online_idle" }) }],
   };
 }
 
@@ -567,11 +567,11 @@ async function signalQuotaBlocked(args: Record<string, unknown>, ctx: IPolicyCon
       isError: true,
     };
   }
-  await ctx.stores.engineerRegistry.recordQuotaBlocked(self.agentId, retryAfterSeconds);
+  await ctx.stores.engineerRegistry.recordQuotaBlocked(self.id, retryAfterSeconds);
   const payload = buildAgentStateChangedPayload(self, "online_quota_blocked", ["quotaBlockedUntil", "workingSince"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.agentId, activityState: "online_quota_blocked", retryAfterSeconds }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.id, activityState: "online_quota_blocked", retryAfterSeconds }) }],
   };
 }
 
@@ -583,11 +583,11 @@ async function signalQuotaRecovered(_args: Record<string, unknown>, ctx: IPolicy
       isError: true,
     };
   }
-  await ctx.stores.engineerRegistry.recordQuotaRecovered(self.agentId);
+  await ctx.stores.engineerRegistry.recordQuotaRecovered(self.id);
   const payload = buildAgentStateChangedPayload(self, "online_idle", ["idleSince", "quotaBlockedUntil"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.agentId, activityState: "online_idle" }) }],
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.id, activityState: "online_idle" }) }],
   };
 }
 

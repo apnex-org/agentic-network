@@ -155,7 +155,7 @@ async function getTask(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   // P2P routing of subsequent events (review, clarification, revision).
   const claimant = await ctx.stores.engineerRegistry.getAgentForSession(sid);
   const task = await ctx.stores.task.getNextDirective(
-    claimant ? { agentId: claimant.agentId, labels: claimant.labels ?? {} } : undefined,
+    claimant ? { agentId: claimant.id, labels: claimant.labels ?? {} } : undefined,
   );
   if (!task) {
     return {
@@ -171,7 +171,7 @@ async function getTask(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   // Fire notification to notify Architect that work has started (routed by task labels)
   await ctx.dispatch("directive_acknowledged", {
     taskId: task.id,
-    agentId: task.assignedEngineerId || claimant?.agentId || "unknown",
+    agentId: task.assignedEngineerId || claimant?.id || "unknown",
     directive: task.description?.substring(0, 100) || task.title || "",
   }, { roles: ["architect"], matchLabels: task.labels });
 

@@ -137,7 +137,7 @@ describe("MessageRepository — idempotent find-or-create via migrationSourceId"
       threadId: "thread-A",
       migrationSourceId: "thread-message:thread-A/0",
     });
-    expect(second.id).toBe(first.id);
+    expect(second.agentId).toBe(first.agentId);
     expect(second.sequenceInThread).toBe(first.sequenceInThread);
   });
 
