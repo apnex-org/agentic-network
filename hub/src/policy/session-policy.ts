@@ -301,6 +301,84 @@ async function listAvailablePeers(args: Record<string, unknown>, ctx: IPolicyCon
   };
 }
 
+// ── Mission-62 W1+W2 Pass 3: signal_working_* + signal_quota_* tools ──
+//
+// Adapter signals tool-call boundaries + idea-109 quota-block transitions
+// to the Hub. Hub mutates the agent's activity FSM. Per Design v1.0 §5.2,
+// LLM-to-MCP-tool-call path doesn't enqueue items, so implicit-only
+// (drain+completion-ack) inference would be blind to most tool calls;
+// explicit signaling is required.
+
+async function signalWorkingStarted(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const toolName = (args.toolName as string | undefined) ?? "";
+  if (!toolName) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "invalid_args", message: "toolName required" }) }],
+      isError: true,
+    };
+  }
+  const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  if (!self) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "no_session_identity", message: "no agent bound to session — call register_role first" }) }],
+      isError: true,
+    };
+  }
+  await ctx.stores.engineerRegistry.recordToolCallStart(self.engineerId, toolName);
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_working", toolName }) }],
+  };
+}
+
+async function signalWorkingCompleted(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  if (!self) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "no_session_identity", message: "no agent bound to session — call register_role first" }) }],
+      isError: true,
+    };
+  }
+  await ctx.stores.engineerRegistry.recordToolCallComplete(self.engineerId);
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_idle" }) }],
+  };
+}
+
+async function signalQuotaBlocked(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const retryAfterSeconds = typeof args.retryAfterSeconds === "number" ? args.retryAfterSeconds : 0;
+  if (retryAfterSeconds < 0) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "invalid_args", message: "retryAfterSeconds must be >= 0" }) }],
+      isError: true,
+    };
+  }
+  const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  if (!self) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "no_session_identity", message: "no agent bound to session — call register_role first" }) }],
+      isError: true,
+    };
+  }
+  await ctx.stores.engineerRegistry.recordQuotaBlocked(self.engineerId, retryAfterSeconds);
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_quota_blocked", retryAfterSeconds }) }],
+  };
+}
+
+async function signalQuotaRecovered(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  if (!self) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "no_session_identity", message: "no agent bound to session — call register_role first" }) }],
+      isError: true,
+    };
+  }
+  await ctx.stores.engineerRegistry.recordQuotaRecovered(self.engineerId);
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_idle" }) }],
+  };
+}
+
 // ── Registration ────────────────────────────────────────────────────
 
 export function registerSessionPolicy(router: PolicyRouter): void {
@@ -362,5 +440,39 @@ export function registerSessionPolicy(router: PolicyRouter): void {
       targetEngineerId: z.string().describe("Engineer ID to receive the pending notifications"),
     },
     migrateAgentQueue,
+  );
+
+  // ── Mission-62 (M-Agent-Entity-Revisit) W1+W2 Pass 3 — activity FSM signaling ──
+
+  router.register(
+    "signal_working_started",
+    "[Any] Mission-62: signal that this agent has started a tool call (transitions activityState to online_working). Adapter wraps each tool-call dispatch with this RPC before the call. Hub stamps lastToolCallAt + lastToolCallName + workingSince. Composes with future agent_state_changed SSE event (Pass 5).",
+    {
+      toolName: z.string().describe("The MCP tool name about to be invoked (for telemetry; e.g. 'create_thread_reply')."),
+    },
+    signalWorkingStarted,
+  );
+
+  router.register(
+    "signal_working_completed",
+    "[Any] Mission-62: signal that this agent's tool call has completed (transitions activityState to online_idle). Adapter wraps each tool-call dispatch with this RPC after the call. Hub stamps idleSince + clears workingSince. Composes with future agent_state_changed SSE event (Pass 5).",
+    {},
+    signalWorkingCompleted,
+  );
+
+  router.register(
+    "signal_quota_blocked",
+    "[Any] Mission-62 + idea-109 composability: signal that this agent has hit a quota / 429 backpressure response (transitions activityState to online_quota_blocked). Hub stamps quotaBlockedUntil = now + retryAfterSeconds * 1000. Routing peers prefer non-quota-blocked agents until quotaBlockedUntil elapses or signal_quota_recovered fires.",
+    {
+      retryAfterSeconds: z.number().describe("Server-supplied retry-after window in seconds; quotaBlockedUntil is computed as now + retryAfterSeconds * 1000."),
+    },
+    signalQuotaBlocked,
+  );
+
+  router.register(
+    "signal_quota_recovered",
+    "[Any] Mission-62 + idea-109 composability: signal that the quota-block has cleared early (transitions activityState back to online_idle). Hub clears quotaBlockedUntil. Optional — Hub auto-promotes online_quota_blocked → online_idle when quotaBlockedUntil elapses on next-touch even without this RPC.",
+    {},
+    signalQuotaRecovered,
   );
 }

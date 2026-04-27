@@ -272,7 +272,13 @@ describe("SessionPolicy", () => {
     expect(router.has("migrate_agent_queue")).toBe(true);
     // M-Session-Claim-Separation (mission-40) T2: claim_session added.
     expect(router.has("claim_session")).toBe(true);
-    expect(router.size).toBe(5);
+    // mission-62 W1+W2 Pass 3: signal_working_started/completed +
+    // signal_quota_blocked/recovered added.
+    expect(router.has("signal_working_started")).toBe(true);
+    expect(router.has("signal_working_completed")).toBe(true);
+    expect(router.has("signal_quota_blocked")).toBe(true);
+    expect(router.has("signal_quota_recovered")).toBe(true);
+    expect(router.size).toBe(9);
   });
 
   const engineerHandshake = {
