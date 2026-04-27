@@ -711,7 +711,16 @@ const pulseSweeper = new PulseSweeper(
       stores: allStores,
       metrics: createMetricsCounter(),
       emit: async () => {},
-      dispatch: async () => {},
+      // Mission-61 W1 Fix #1: wire dispatch through HubNetworking so
+      // PulseSweeper-fired Messages reach operator sessions via SSE.
+      // Previously a no-op (mission-60 Gap #1 root cause at the wiring
+      // layer): pulses were created in storage but no SSE push fired.
+      // Path A symmetry with the MCP-tool boundary's `ctx.dispatch` at
+      // `message-policy.ts:208-221`. The adapter is already wired for
+      // `message_arrived` events with `payload.pulseKind` per mission-57
+      // W3 (`adapters/claude-plugin/src/source-attribute.ts:80-141`);
+      // this wire-up makes that adapter handler spring to life.
+      dispatch: hub.dispatchEvent.bind(hub),
       sessionId: "pulse-sweeper",
       clientIp: "127.0.0.1",
       role: "system",
