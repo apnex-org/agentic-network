@@ -223,7 +223,8 @@ describe("E2E Foundation", () => {
       // M-Message-Primitive (mission-51) W6: list_messages +
       // create_message added → 53.
       // mission-56 W3.2: claim_message + ack_message added → 55.
-      expect(orch.router.size).toBe(55);
+      // mission-61 W1 Fix #2: force_fire_pulse admin tool added → 56.
+      expect(orch.router.size).toBe(56);
     });
 
     it("multi-engineer support with distinct sessions", async () => {
