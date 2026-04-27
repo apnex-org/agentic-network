@@ -20,7 +20,7 @@ import { MessageRepository } from "../../src/entities/message-repository.js";
 import { TaskRepository } from "../../src/entities/task-repository.js";
 import { IdeaRepository } from "../../src/entities/idea-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
-import { PulseSweeper } from "../../src/policy/pulse-sweeper.js";
+import { PulseSweeper, pulseSelector } from "../../src/policy/pulse-sweeper.js";
 import { createMetricsCounter } from "../../src/observability/metrics.js";
 import type { IPolicyContext } from "../../src/policy/types.js";
 import type { Mission, Message, MissionPulses } from "../../src/entities/index.js";
@@ -41,6 +41,13 @@ function buildSweeperRig() {
   const setNow = (ms: number) => {
     nowMs = ms;
   };
+  // Mission-61 W1 Fix #1: capture dispatch calls for verification of
+  // Path A SSE-push wiring.
+  const dispatched: Array<{
+    event: string;
+    data: Record<string, unknown>;
+    selector: { roles?: string[]; engineerId?: string };
+  }> = [];
   const sweeper = new PulseSweeper(
     missionStore,
     messageStore,
@@ -54,7 +61,9 @@ function buildSweeperRig() {
         },
         metrics: createMetricsCounter(),
         emit: async () => {},
-        dispatch: async () => {},
+        dispatch: async (event: string, data: Record<string, unknown>, selector: { roles?: string[]; engineerId?: string }) => {
+          dispatched.push({ event, data, selector });
+        },
         sessionId: "test-pulse-sweeper",
         clientIp: "127.0.0.1",
         role: "system",
@@ -64,7 +73,7 @@ function buildSweeperRig() {
     },
     { graceMs: 30_000, now: () => nowMs, intervalMs: 60_000 },
   );
-  return { sweeper, missionStore, messageStore, taskStore, ideaStore, advance, setNow, getNowMs: () => nowMs };
+  return { sweeper, missionStore, messageStore, taskStore, ideaStore, advance, setNow, getNowMs: () => nowMs, dispatched };
 }
 
 async function createPulseMission(
@@ -478,5 +487,137 @@ describe("PulseSweeper — backward-compat", () => {
     await rig.missionStore.updateMission(mission.id, { status: "active" });
     const result = await rig.sweeper.tick();
     expect(result.scanned).toBe(0);
+  });
+});
+
+// ── Mission-61 W1 Fix #1+#2: Path A SSE wiring + force-fire ─────────
+
+describe("pulseSelector helper", () => {
+  it("produces single-role selector for engineer", () => {
+    expect(pulseSelector("engineer")).toEqual({ roles: ["engineer"] });
+  });
+  it("produces single-role selector for architect", () => {
+    expect(pulseSelector("architect")).toEqual({ roles: ["architect"] });
+  });
+});
+
+describe("PulseSweeper — Mission-61 W1 Fix #1 (Path A SSE wiring)", () => {
+  it("dispatches message_arrived event after firing engineerPulse", async () => {
+    const rig = buildSweeperRig();
+    const mission = await createPulseMission(rig, {
+      engineerPulse: {
+        intervalSeconds: 60,
+        message: "status?",
+        responseShape: "ack",
+        missedThreshold: 3,
+        firstFireDelaySeconds: 60,
+      },
+    });
+    rig.setNow(new Date(mission.createdAt).getTime() + MS(120));
+    const result = await rig.sweeper.tick();
+    expect(result.fired).toBe(1);
+
+    // mission-60 Gap #1 closure verification: PulseSweeper now fires
+    // the same `message_arrived` event the MCP-tool boundary fires
+    // (Path A symmetry per `message-policy.ts:208-221`).
+    expect(rig.dispatched.length).toBe(1);
+    const dispatched = rig.dispatched[0];
+    expect(dispatched.event).toBe("message_arrived");
+    expect(dispatched.selector).toEqual({ roles: ["engineer"] });
+    const message = (dispatched.data as { message: Message }).message;
+    expect(message.kind).toBe("external-injection");
+    expect((message.payload as { pulseKind?: string }).pulseKind).toBe("status_check");
+  });
+
+  it("dispatches message_arrived event for architect-routed escalation", async () => {
+    const rig = buildSweeperRig();
+    const mission = await createPulseMission(rig, {
+      engineerPulse: {
+        intervalSeconds: 60,
+        message: "status?",
+        responseShape: "ack",
+        missedThreshold: 1, // Threshold = 1 → first miss escalates immediately
+        firstFireDelaySeconds: 60,
+      },
+    });
+    // Tick 1: fire pulse #1 (cadence-due at +60s)
+    rig.setNow(new Date(mission.createdAt).getTime() + MS(120));
+    await rig.sweeper.tick();
+    rig.dispatched.length = 0; // clear; only assert on tick-2 dispatches
+    // Tick 2: pulse #1 unacked past grace window → missedCount=1 = threshold → escalate
+    rig.setNow(rig.getNowMs() + MS(120));
+    const result = await rig.sweeper.tick();
+    expect(result.escalated).toBe(1);
+
+    // mission-60 bonus surface 1 closure: escalation Messages also flow
+    // through Path A SSE wiring (architect-routed).
+    expect(rig.dispatched.length).toBe(1);
+    const dispatched = rig.dispatched[0];
+    expect(dispatched.event).toBe("message_arrived");
+    expect(dispatched.selector).toEqual({ roles: ["architect"] });
+    const message = (dispatched.data as { message: Message }).message;
+    expect((message.payload as { pulseKind?: string }).pulseKind).toBe(
+      "missed_threshold_escalation",
+    );
+  });
+});
+
+describe("PulseSweeper — Mission-61 W1 Fix #2 (forceFire admin path)", () => {
+  it("forceFire bypasses cadence + precondition; fires immediately", async () => {
+    const rig = buildSweeperRig();
+    const mission = await createPulseMission(rig, {
+      engineerPulse: {
+        intervalSeconds: 600, // Long cadence — ordinary tick would NOT fire
+        message: "status?",
+        responseShape: "ack",
+        missedThreshold: 3,
+        firstFireDelaySeconds: 600,
+        // Precondition that always fails (impossible-to-meet idle)
+        precondition: {
+          fn: "mission_idle_for_at_least",
+          args: { seconds: 9999 },
+        },
+      },
+    });
+    // Set now within the firstFireDelay window — natural tick should
+    // skip (cadence + precondition both blocking)
+    rig.setNow(new Date(mission.createdAt).getTime() + MS(60));
+    const tickResult = await rig.sweeper.tick();
+    expect(tickResult.fired).toBe(0);
+    expect(rig.dispatched.length).toBe(0);
+
+    // Now force-fire from "architect" — bypass both gates
+    const fireAt = await rig.sweeper.forceFire(mission.id, "engineerPulse");
+    expect(fireAt).toBeTruthy();
+
+    // Bookkeeping advanced
+    const fresh = await rig.missionStore.getMission(mission.id);
+    expect(fresh?.pulses?.engineerPulse?.lastFiredAt).toBe(fireAt);
+
+    // SSE dispatch fired (Path A wiring)
+    expect(rig.dispatched.length).toBe(1);
+    expect(rig.dispatched[0].event).toBe("message_arrived");
+    expect(rig.dispatched[0].selector).toEqual({ roles: ["engineer"] });
+  });
+
+  it("forceFire throws on missing mission OR missing pulse config", async () => {
+    const rig = buildSweeperRig();
+    await expect(rig.sweeper.forceFire("mission-nonexistent", "engineerPulse")).rejects.toThrow(
+      /mission-nonexistent not found/,
+    );
+
+    const mission = await createPulseMission(rig, {
+      engineerPulse: {
+        intervalSeconds: 60,
+        message: "x",
+        responseShape: "ack",
+        missedThreshold: 3,
+        firstFireDelaySeconds: 60,
+      },
+    });
+    // Mission has engineerPulse but not architectPulse
+    await expect(rig.sweeper.forceFire(mission.id, "architectPulse")).rejects.toThrow(
+      /no architectPulse configured/,
+    );
   });
 });

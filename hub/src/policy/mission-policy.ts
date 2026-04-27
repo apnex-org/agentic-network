@@ -348,6 +348,63 @@ async function getMission(args: Record<string, unknown>, ctx: IPolicyContext): P
   };
 }
 
+// ── Mission-61 W1 Fix #2: force_fire_pulse admin tool ────────────────
+
+/**
+ * Mission-61 W1 Fix #2: architect-callable force-fire admin tool.
+ * Closes mission-60 Gap #2 (architect-fallback force-fire mechanism
+ * missing — sweeper-managed bookkeeping fields stripped at the policy
+ * boundary so `update_mission(pulses.lastFiredAt=<old>)` is structurally
+ * a no-op).
+ *
+ * Operator-intent semantics: architect explicitly intervening; bypass
+ * cadence + precondition checks; fire NOW. Delegates to
+ * PulseSweeper.forceFire which handles bookkeeping advance + SSE
+ * dispatch via the same Path A wiring as natural fires (Fix #1).
+ */
+async function forceFirePulse(
+  args: Record<string, unknown>,
+  ctx: IPolicyContext,
+): Promise<PolicyResult> {
+  const missionId = args.missionId as string;
+  const pulseKey = args.pulseKey as PulseKey;
+  if (!PULSE_KEYS.includes(pulseKey)) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({
+        error: `force_fire_pulse: pulseKey must be one of: ${PULSE_KEYS.join(", ")}`,
+      }) }],
+      isError: true,
+    };
+  }
+  const sweeper = ctx.stores.pulseSweeper;
+  if (!sweeper) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({
+        error: "force_fire_pulse: PulseSweeper not wired into this Hub instance",
+      }) }],
+      isError: true,
+    };
+  }
+  try {
+    const firedAt = await sweeper.forceFire(missionId, pulseKey);
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({
+        missionId,
+        pulseKey,
+        firedAt,
+        message: `Force-fired ${pulseKey} on ${missionId} at ${firedAt}; cadence + precondition bypassed (operator-intent)`,
+      }) }],
+    };
+  } catch (err) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({
+        error: `force_fire_pulse failed: ${(err as Error)?.message ?? String(err)}`,
+      }) }],
+      isError: true,
+    };
+  }
+}
+
 // ── M-QueryShape Phase C (idea-119, task-306) ──────────────────────
 // Mission-entity field descriptors + accessors. Mirrors list_tasks /
 // list_ideas / list_threads pattern; createdBy.id is computed
@@ -523,6 +580,32 @@ export function registerMissionPolicy(router: PolicyRouter): void {
     "[Any] Read a specific mission with all linked tasks and ideas.",
     { missionId: z.string().describe("The mission ID") },
     getMission,
+  );
+
+  router.register(
+    "force_fire_pulse",
+    "[Architect] Force-fire a configured pulse on a mission immediately, " +
+    "bypassing cadence + precondition checks. Operator-intent semantic: " +
+    "architect is explicitly intervening (e.g., recovering from missed-threshold " +
+    "pause, validating pulse delivery, or unblocking a stuck idle precondition) " +
+    "and wants the pulse to fire NOW rather than waiting for the next sweeper " +
+    "tick. " +
+    "Mission-61 W1 Fix #2 (closes mission-60 Gap #2): sweeper-managed bookkeeping " +
+    "fields are stripped at the `update_mission(pulses=...)` policy boundary, so " +
+    "rewriting `lastFiredAt` is structurally a no-op. This is the dedicated " +
+    "architect path. lastFiredAt advances to fire-time post-execution; missedCount " +
+    "is NOT reset (separate concern; ack flow drives reset). " +
+    "Idempotency: migrationSourceId uses now-timestamp; sub-second collision rare " +
+    "and acceptable. SSE delivery flows through the same Path A wiring as natural " +
+    "fires (Fix #1) — operator session receives `message_arrived` event with " +
+    "`payload.pulseKind=status_check`.",
+    {
+      missionId: z.string().describe("The mission ID whose pulse should fire"),
+      pulseKey: z
+        .enum(PULSE_KEYS)
+        .describe("Which pulse to fire: 'engineerPulse' or 'architectPulse'"),
+    },
+    forceFirePulse,
   );
 
   router.register(

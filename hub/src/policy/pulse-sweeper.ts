@@ -51,11 +51,24 @@ import type {
   Message,
 } from "../entities/index.js";
 import { PULSE_KEYS } from "../entities/index.js";
+import type { Selector } from "../state.js";
 import type { IPolicyContext } from "./types.js";
 import { evaluatePrecondition } from "./preconditions.js";
 
 const DEFAULT_TICK_INTERVAL_MS = 60_000;
 const DEFAULT_GRACE_MS = 30_000;
+
+/**
+ * Mission-61 W1: map a pulse target-role to a dispatch Selector for SSE
+ * push delivery. Symmetric with `pushSelector(target)` at
+ * `message-policy.ts:456` — pulses always target a role (never an
+ * agentId) so the selector is a single-role roles[] filter.
+ *
+ * Exported for unit testing.
+ */
+export function pulseSelector(targetRole: "engineer" | "architect"): Selector {
+  return { roles: [targetRole] };
+}
 
 /**
  * Subset of the policy context that PulseSweeper needs at evaluation
@@ -299,7 +312,7 @@ export class PulseSweeper {
 
     const targetRole = pulseKey === "engineerPulse" ? "engineer" : "architect";
 
-    await this.messageStore.createMessage({
+    const message = await this.messageStore.createMessage({
       kind: "external-injection",
       authorRole: "system",
       authorAgentId: "hub",
@@ -320,6 +333,68 @@ export class PulseSweeper {
     this.logger.log(
       `Fired ${pulseKey} for ${mission.id} at ${fireAt} (cadence ${config.intervalSeconds}s)`,
     );
+
+    // Mission-61 W1 Fix #1: Path A SSE-push wiring. PulseSweeper bypassed
+    // the MCP-tool boundary (`message-policy.ts:208-221` `ctx.dispatch
+    // ("message_arrived")`) and the legacy entity-event path
+    // (`hub-networking.ts:316-334` `notifyEvent`), so pulse Messages
+    // persisted but never reached operator sessions (mission-60 Gap #1).
+    // Fix is symmetric with the MCP-tool boundary: dispatch
+    // `message_arrived` post-create. The adapter is already wired for
+    // this event-kind with `payload.pulseKind` detection per mission-57
+    // W3 (`adapters/claude-plugin/src/source-attribute.ts:80-141`).
+    // Non-fatal on dispatch failure — Message already persisted; cold
+    // reconnect-replay (W1b) or poll backstop (W3) recover.
+    try {
+      const ctx = this.contextProvider.forSweeper();
+      await ctx.dispatch("message_arrived", { message }, pulseSelector(targetRole));
+    } catch (err) {
+      this.logger.warn(
+        `[PulseSweeper] push-on-fire dispatch failed for ${message.id} (non-fatal)`,
+        err,
+      );
+    }
+  }
+
+  /**
+   * Mission-61 W1 Fix #2: architect-callable force-fire (Option α from
+   * idea-213). Bypasses cadence + precondition checks; fires the pulse
+   * NOW with operator-intent semantics (architect explicitly intervening,
+   * wants fire immediately not after idle window).
+   *
+   * Mission-60 Gap #2: there was no MCP-tool path to force-fire because
+   * sweeper-managed fields (lastFiredAt etc.) are stripped at
+   * `mission-policy.ts:508` policy boundary — `update_mission` cannot
+   * rewrite lastFiredAt. This method is the dedicated admin path,
+   * invoked by the `force_fire_pulse` MCP tool (architect-only role-
+   * gating at the tool layer).
+   *
+   * Semantics:
+   *   - Skip computeNextFireDueMs (cadence-window irrelevant)
+   *   - Skip evaluatePrecondition (idle-window override)
+   *   - Direct firePulse(mission, pulseKey, config, baseFireMs=now)
+   *   - lastFiredAt advances to fire time; missedCount NOT reset
+   *     (separate concern; ack flow drives reset)
+   *   - Idempotency: migrationSourceId uses now-timestamp (sub-second
+   *     unique; collision rare and acceptable)
+   *
+   * Returns the fire-time ISO string on success; throws on
+   * mission-not-found / pulse-not-configured / fire-error.
+   */
+  async forceFire(missionId: string, pulseKey: PulseKey): Promise<string> {
+    const mission = await this.missionStore.getMission(missionId);
+    if (!mission) {
+      throw new Error(`forceFire: mission ${missionId} not found`);
+    }
+    const config = mission.pulses?.[pulseKey];
+    if (!config) {
+      throw new Error(
+        `forceFire: mission ${missionId} has no ${pulseKey} configured`,
+      );
+    }
+    const nowMs = this.now();
+    await this.firePulse(mission, pulseKey, config, nowMs);
+    return new Date(nowMs).toISOString();
   }
 
   /**
@@ -383,7 +458,7 @@ export class PulseSweeper {
   ): Promise<void> {
     const silentRole = pulseKey === "engineerPulse" ? "engineer" : "architect";
 
-    await this.messageStore.createMessage({
+    const message = await this.messageStore.createMessage({
       kind: "external-injection",
       authorRole: "system",
       authorAgentId: "hub",
@@ -416,6 +491,21 @@ export class PulseSweeper {
     this.logger.warn(
       `Escalated ${pulseKey} on ${mission.id} (missed ${missedCount}/${config.missedThreshold})`,
     );
+
+    // Mission-61 W1 Fix #1: Path A SSE-push wiring also for escalation
+    // Messages. mission-60 surfaced that the same Path C bypass affected
+    // escalation Message creation here — architect never saw missed-
+    // threshold escalations either. Same dispatch pattern as firePulse;
+    // architect-routed selector matches mediation-invariant target.
+    try {
+      const ctx = this.contextProvider.forSweeper();
+      await ctx.dispatch("message_arrived", { message }, pulseSelector("architect"));
+    } catch (err) {
+      this.logger.warn(
+        `[PulseSweeper] push-on-escalate dispatch failed for ${message.id} (non-fatal)`,
+        err,
+      );
+    }
   }
 
   /**
