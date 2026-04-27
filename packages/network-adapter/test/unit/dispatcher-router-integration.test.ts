@@ -283,6 +283,18 @@ describe("event classifier — Mission-56 W2.2 message_arrived recognition", () 
   });
 });
 
+describe("event classifier — Mission-62 W1+W2 Pass 5 agent_state_changed recognition", () => {
+  it("dispositions agent_state_changed as informational for engineer (cache-coherence; LLM wake suppressed)", async () => {
+    const { classifyEvent } = await import("../../src/kernel/event-router.js");
+    expect(classifyEvent("agent_state_changed", "engineer")).toBe("informational");
+  });
+
+  it("dispositions agent_state_changed as informational for architect (cache-coherence; LLM wake suppressed)", async () => {
+    const { classifyEvent } = await import("../../src/kernel/event-router.js");
+    expect(classifyEvent("agent_state_changed", "architect")).toBe("informational");
+  });
+});
+
 // ── Mission-56 W3.3 — claim_message wiring + ackMessage helper ───────
 
 describe("dispatcher — W3.3 post-render claim_message", () => {

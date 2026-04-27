@@ -455,6 +455,15 @@ export class AgentRepository implements IEngineerRegistry {
         agent.currentSessionId && agent.currentSessionId !== sessionId
           ? { sessionId: agent.currentSessionId, epoch: agent.sessionEpoch }
           : undefined;
+      // Mission-62 W1+W2 Pass 1: claimSession promotes activityState to
+      // online_idle (agent now eligible for work assignment) + stamps
+      // sessionStartedAt + bumps restartCount/restartHistoryMs accounting.
+      const nowMs = Date.parse(now);
+      const restartHistoryMs = [...(agent.restartHistoryMs ?? []), nowMs];
+      while (restartHistoryMs.length > 50) restartHistoryMs.shift(); // AGENT_RESTART_HISTORY_CAP
+      const restartCount = restartHistoryMs.filter(
+        (t) => nowMs - t <= 24 * 60 * 60 * 1000, // AGENT_RESTART_WINDOW_MS
+      ).length;
       const updated: Agent = {
         ...agent,
         sessionEpoch: agent.sessionEpoch + 1,
@@ -463,6 +472,12 @@ export class AgentRepository implements IEngineerRegistry {
         lastSeenAt: now,
         livenessState: "online",
         lastHeartbeatAt: now,
+        activityState: "online_idle",
+        sessionStartedAt: now,
+        idleSince: now,
+        workingSince: null,
+        restartHistoryMs,
+        restartCount,
       };
       const result = await this.provider.putIfMatch(path, encode(updated), existing.token);
       if (!result.ok) {
