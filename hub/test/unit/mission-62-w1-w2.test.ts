@@ -52,7 +52,9 @@ describe("Mission-62 W1+W2 Pass 1 — additive Agent schema + auto-clamp invaria
     const agent = await ctx.stores.engineerRegistry.getAgent(eid);
     expect(agent).not.toBeNull();
     if (!agent) return;
-    expect(agent.name).toBe(eid); // defaults to agentId until adapter handshake supplies OIS_INSTANCE_ID (W3)
+    // Mission-62 W3: name now populated from globalInstanceId (the
+    // OIS_INSTANCE_ID env value carried through the M18 handshake).
+    expect(agent.name).toBe("test-gid-mission-62-engineer");
     expect(agent.adapterVersion).toBe("@ois/network-adapter@2.1.0");
     // claimSession promotes activityState + stamps sessionStartedAt + idleSince
     expect(agent.activityState).toBe("online_idle");
@@ -243,7 +245,8 @@ describe("Mission-62 W1+W2 Pass 4 — get_agents pull primitive", () => {
     const agent = parsed.agents[0];
     // identity group
     expect(agent.id).toBe(eid);
-    expect(agent.name).toBe(eid); // defaults to agentId pre-W3
+    // Mission-62 W3: name from globalInstanceId.
+    expect(agent.name).toBe("test-gid-mission-62-engineer");
     expect(agent.role).toBe("engineer");
     expect(agent.labels).toBeDefined();
     // session group

@@ -325,9 +325,11 @@ export class AgentRepository implements IEngineerRegistry {
           lastHeartbeatAt: now,
           receiptSla: payload.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS,
           wakeEndpoint: payload.wakeEndpoint ?? null,
-          // Mission-62 W1+W2 Pass 1 — additive defaults at first-contact create.
-          // `name` defaults to agentId until adapter handshake supplies OIS_INSTANCE_ID (W3).
-          name: agentId,
+          // Mission-62 W3 — `name` populated from globalInstanceId (which
+          // the M18 handshake derives from the OIS_INSTANCE_ID env var per
+          // Design v1.0 §5.1); falls back to agentId if globalInstanceId
+          // is somehow unavailable.
+          name: payload.globalInstanceId ?? agentId,
           activityState: "offline", // first-contact has no SSE stream yet
           sessionStartedAt: null,
           lastToolCallAt: null,

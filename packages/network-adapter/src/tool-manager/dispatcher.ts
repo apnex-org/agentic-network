@@ -207,6 +207,22 @@ export interface SharedDispatcher {
 }
 
 /** Compose the pendingActionMap key. Pure helper; exported for tests. */
+/**
+ * Mission-62 W3: tools that should NOT trigger signal_working_*
+ * wrapping. The signal_* tools themselves would recurse infinitely;
+ * register_role + claim_session + drain_pending_actions are lifecycle
+ * tools, not semantic tool-call-work.
+ */
+export const TOOL_CALL_SIGNAL_SKIP: ReadonlySet<string> = new Set([
+  "signal_working_started",
+  "signal_working_completed",
+  "signal_quota_blocked",
+  "signal_quota_recovered",
+  "register_role",
+  "claim_session",
+  "drain_pending_actions",
+]);
+
 export function pendingKey(dispatchType: string, entityRef: string): string {
   return `${dispatchType}:${entityRef}`;
 }
@@ -505,7 +521,38 @@ export function createSharedDispatcher(
           incomingArgs,
           pendingActionMap,
         );
-        const result = await agent.call(name, outgoingArgs);
+        // ── Mission-62 W3 — activity FSM signal wrapping ─────────────
+        //
+        // Wrap each LLM-driven tool call with signal_working_started +
+        // signal_working_completed RPCs (fire-and-forget; eventual-
+        // consistency on Hub-side activity FSM). Per Design v1.0 §5.2:
+        // implicit-only inference infeasible (LLM-to-MCP-tool-call
+        // path doesn't enqueue items per ADR-017 §M1-M2); explicit
+        // signaling required for routing peers to see this agent's
+        // working state.
+        //
+        // Skip-list prevents infinite recursion (signal_* calls would
+        // wrap themselves) + handshake/lifecycle tools that are not
+        // semantically tool-call-work (register_role, claim_session,
+        // drain_pending_actions).
+        const wrapWithSignal = !TOOL_CALL_SIGNAL_SKIP.has(name);
+        if (wrapWithSignal) {
+          // Fire-and-forget: don't await; Hub-side eventual-consistency
+          // is acceptable for v1.0 routing-cache use case.
+          agent.call("signal_working_started", { toolName: name }).catch((err: unknown) => {
+            log(`[mission-62] signal_working_started fire-and-forget failed (non-fatal): ${(err as Error)?.message ?? err}`);
+          });
+        }
+        let result: unknown;
+        try {
+          result = await agent.call(name, outgoingArgs);
+        } finally {
+          if (wrapWithSignal) {
+            agent.call("signal_working_completed", {}).catch((err: unknown) => {
+              log(`[mission-62] signal_working_completed fire-and-forget failed (non-fatal): ${(err as Error)?.message ?? err}`);
+            });
+          }
+        }
         return {
           content: [
             {
