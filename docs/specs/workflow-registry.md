@@ -341,7 +341,7 @@ Mutability: Overwritable (create_document overwrites existing)
 
 | ID       | Invariant                                                           | Tested By |
 | -------- | ------------------------------------------------------------------- | --------- |
-| INV-D1   | `create_document` path must start with `documents/`                 | NONE      |
+| INV-D1   | `create_document` path must start with `docs/`                      | NONE      |
 | INV-D2   | Document operations require GCS storage backend                     | NONE      |
 
 ---

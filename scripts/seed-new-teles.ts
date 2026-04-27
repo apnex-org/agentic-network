@@ -26,7 +26,7 @@
  *   `legacy-pre-provenance` entries and future live-path creations.
  *
  * SOURCE OF TRUTH:
- *   `docs/specs/teles.md` + `documents/specs/teles.md` (Hub Document).
+ *   `docs/specs/teles.md` (git-tracked spec; mirrored as Hub Document at the same GCS path).
  *   Any edits to the tele bodies below MUST be mirrored to both.
  */
 

@@ -363,7 +363,7 @@ This layering lets a client rotate its token (authentication) or bounce its sess
 | **Turn** | _TBD_ | virtual-view scalar | `hub/src/policy/turn-policy.ts` | `turns/{turnId}.json` | workflow-registry §1.X | Mission, Task (virtual view via turnId) |
 | **Tele** | _TBD_ | content-immutable; status-mutable via supersede_tele / retire_tele (mission-43) | `hub/src/policy/tele-policy.ts` | `tele/{teleId}.json` | `docs/specs/teles.md §Tele Lifecycle` | Turn (tele[]) |
 | **Audit** | _TBD_ | immutable append | `hub/src/policy/audit-policy.ts` | `audit/{auditId}.json` | — (no FSM) | any entity (relatedEntity) |
-| **Document** | _TBD_ | free-form, create-or-overwrite | `hub/src/policy/document-policy.ts` | `documents/**` | — (no FSM) | referenced by reportRef, proposalRef, documentRef |
+| **Document** | _TBD_ | free-form, create-or-overwrite | `hub/src/policy/document-policy.ts` | `docs/**` | — (no FSM) | referenced by reportRef, proposalRef, documentRef |
 
 **_TBD_ rows** are placeholders. A follow-up task (to be created after thread-116 review of this draft) will fill them in parallel — each entity's fill-in is mechanical: read `hub/src/entities/<name>.ts` (or `state.ts`), the owning policy file, and the corresponding workflow-registry FSM section.
 
@@ -417,7 +417,7 @@ The list below enumerates inconsistencies discovered during the v1.0 draft. Each
   - Task, Mission, Idea, Thread, Proposal, Turn, Tele: **human-readable counter** (`task-{N}`, `mission-{N}`, etc.) via `getAndIncrementCounter` in `gcs-state.ts`.
   - Audit: **ULID-style** for chronological sort (inferred from `audit/{id}.json` sorted/reversed behaviour).
   - Agent: **Hub-issued prefixed random** (`eng-{random}`) — not a monotonic counter; stable across reconnects via fingerprint.
-  - Document: **path-based** (`documents/<arbitrary>/<path>.md`) — no ID per se.
+  - Document: **path-based** (`docs/<arbitrary>/<path>.md`) — no ID per se.
 - **Why it matters:** Counter-based IDs require centralised coordination (getAndIncrementCounter is currently P3-safe only under `max-instances=1` per ADR-009). Scale-out without migrating off counters means duplicate IDs become possible. ULID or UUID per-entity would remove the coordination dependency.
 - **Resolution direction:** Document in this registry (already done above per-entity). The migration to ULID is a downstream mission when scale-out forces the issue. Cross-reference ADR-011 which already flags this. Idea filing: low priority; covered by the ADR.
 

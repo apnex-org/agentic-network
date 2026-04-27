@@ -101,7 +101,7 @@ Each phase produces exactly one durable artifact. Phases are sequential within t
 - Concepts (proto-documented from already-ratified architectural ideas — Smart NIC, vocabulary chain, etc.)
 - Tele with zero inbound ideas or zero forward motion (reverse gaps)
 
-**Artifact:** `documents/reviews/<date>-phase-1-cartography.md`
+**Artifact:** `docs/reviews/<date>-phase-1-cartography.md`
 
 **Convergence:** every open idea appears in at least one cluster; every Tele is either populated or flagged as reverse-gap.
 
@@ -116,7 +116,7 @@ Each phase produces exactly one durable artifact. Phases are sequential within t
 - For each domain: symptoms (cite specific bugs/threads), existing ratified fixes in backlog, remaining gaps
 - Ranking by (exercise frequency × cost per exercise)
 
-**Artifact:** `documents/reviews/<date>-phase-2-friction.md`
+**Artifact:** `docs/reviews/<date>-phase-2-friction.md`
 
 **Convergence:** every significant bug and every major in-thread friction report maps to a domain; domains are ranked with rationale.
 
@@ -124,13 +124,13 @@ Each phase produces exactly one durable artifact. Phases are sequential within t
 
 **Goal:** pull implicit patterns out of the backlog into **named Concepts** and **named Defect classes**. Cross-reference which concepts resolve which defect classes.
 
-**Approach:** use lightweight Document-form proxies (`documents/concepts/*.md`, `documents/defects/*.md`) rather than first-class Hub entities. Minimal shape:
+**Approach:** use lightweight Document-form proxies (`docs/concepts/*.md`, `docs/defects/*.md`) rather than first-class Hub entities. Minimal shape:
 - Concept: name, mandate, mechanics, rationale, resolves-defects, instances-in-backlog
 - Defect: name, symptom, mechanics, example-instances, resolved-by-concepts
 
 **Inputs:** Phases 1 + 2 artifacts, current Tele set.
 
-**Artifact:** `documents/reviews/<date>-phase-3-concepts-and-defects.md` (or split across `documents/concepts/` + `documents/defects/` directory structures).
+**Artifact:** `docs/reviews/<date>-phase-3-concepts-and-defects.md` (or split across `docs/concepts/` + `docs/defects/` directory structures).
 
 **Convergence:** every Tele fault (from the 4-section template) maps to at least one defect class; every velocity-multiplier idea maps to at least one concept. Orphans are either named as new concepts/defects or explicitly deferred.
 
@@ -146,7 +146,7 @@ Each phase produces exactly one durable artifact. Phases are sequential within t
 - 3–5 ratified mission briefs, each with: name, Tele served, scope, success criteria, dependencies, estimated effort class (S/M/L/XL)
 - Explicit anti-goals: what this review *deliberately did not* commit to, with rationale
 
-**Artifact:** `documents/reviews/<date>-phase-4-investment-plan.md`
+**Artifact:** `docs/reviews/<date>-phase-4-investment-plan.md`
 
 **Convergence:** ratified mission set is achievable within the next mission cycle; anti-goals list is non-empty and specific.
 
@@ -191,7 +191,7 @@ A review is not complete until it has a retrospective. Two variants:
 **Purpose:** capture methodology-level observations while session context is fresh. Input to the formal retrospective; does not supersede it.
 **When:** after mission filing but before first mission ships. Typically same-session as Phase 4 closure.
 **Scope:** methodology deltas only — observations about the review process, not about mission outcomes.
-**Artifact:** `documents/reviews/<date>-retrospective-lite.md`.
+**Artifact:** `docs/reviews/<date>-retrospective-lite.md`.
 **Authority:** architect-authored; Director-ratifiable independently of mission shipment.
 
 ### Formal retrospective (required; mission-outcome-triggered)
@@ -205,7 +205,7 @@ A review is not complete until it has a retrospective. Two variants:
 - Did Concept + Defect proxies earn their keep?
 - What should change in the methodology for next time?
 
-**Artifact:** `documents/reviews/<date>-retrospective.md`. Feed any methodology edits back into this document (versioned).
+**Artifact:** `docs/reviews/<date>-retrospective.md`. Feed any methodology edits back into this document (versioned).
 
 ## Anti-patterns (do not do)
 

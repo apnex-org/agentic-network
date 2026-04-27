@@ -493,7 +493,7 @@ export function registerMissionPolicy(router: PolicyRouter): void {
     {
       title: z.string().describe("Mission title"),
       description: z.string().describe("Brief description of the mission objectives"),
-      documentRef: z.string().optional().describe("GCS document path for the full brief (e.g., 'documents/missions/brief.md')"),
+      documentRef: z.string().optional().describe("GCS document path for the full brief (e.g., 'docs/missions/brief.md')"),
       plannedTasks: z.array(PLANNED_TASK_INPUT_SCHEMA).optional().describe("Optional execution plan. Ordered task templates auto-issued by the advancement cascade on approved reviews. See thread-241/thread-242 for cascade shape + revision-loop FSMs."),
       missionClass: MISSION_CLASS_INPUT_SCHEMA.optional(),
       pulses: MISSION_PULSES_INPUT_SCHEMA.optional().describe("Optional declarative pulse configuration (mission-57 W1). PulseSweeper consumes; engineer + architect pulses with cadence + response-shape + missed-threshold. See Design v1.0 §3 for schema; §6 for per-class default cadence templates (codified in mission-lifecycle.md v1.0)."),

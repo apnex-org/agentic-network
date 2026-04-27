@@ -173,7 +173,7 @@ Combined deliverable — the measurement primitive is a prerequisite for quantif
 
 During the 2026-04-20 23:30Z formalization flow, two missions with the same title (`M-Hypervisor-Adapter-Mitigations`) landed 2 minutes apart:
 
-- **mission-37** — created 23:30:16Z. Has `documentRef: "documents/missions/m-hypervisor-adapter-mitigations.md"` (this file). No tasks attached.
+- **mission-37** — created 23:30:16Z. Has `documentRef: "docs/missions/m-hypervisor-adapter-mitigations.md"` (this file). No tasks attached.
 - **mission-38** — created 23:32:17Z. Has `task-310` attached. `documentRef: null`.
 
 The engineer is proceeding against **mission-38** (the one carrying `task-310`) and referencing this brief from the filesystem path. Architect should: (a) attach `documentRef` to mission-38, (b) mark mission-37 as `archived` or reuse it, and (c) perform the `update_idea` transition on `idea-132` (`triaged → incorporated` with `missionId: mission-38`). All three transitions are architect-only per the current Hub ACL. Not a blocker for task-310 implementation.

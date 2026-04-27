@@ -46,9 +46,9 @@ async function createDocument(args: Record<string, unknown>, ctx: IPolicyContext
   const path = args.path as string;
   const content = args.content as string;
 
-  if (!path.startsWith("documents/")) {
+  if (!path.startsWith("docs/")) {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: "Path must start with 'documents/' to use create_document. Other namespaces (reports/, proposals/, tasks/) are managed by their respective workflows." }) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ error: "Path must start with 'docs/' to use create_document. Other namespaces (reports/, proposals/, tasks/) are managed by their respective workflows." }) }],
       isError: true,
     };
   }
@@ -110,9 +110,9 @@ export function registerDocumentPolicy(router: PolicyRouter): void {
 
   router.register(
     "create_document",
-    "[Any] Write a document to the Hub's state storage. Path must start with 'documents/'. Overwrites if file already exists. Use for collaborative authoring, mission briefs, and shared documents.",
+    "[Any] Write a document to the Hub's state storage. Path must start with 'docs/'. Overwrites if file already exists. Use for collaborative authoring, mission briefs, and shared documents.",
     {
-      path: z.string().describe("The document path (must start with 'documents/', e.g., 'documents/planning/mission-1.md')"),
+      path: z.string().describe("The document path (must start with 'docs/', e.g., 'docs/planning/mission-1.md')"),
       content: z.string().describe("The document content (Markdown)"),
     },
     createDocument,

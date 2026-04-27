@@ -218,11 +218,11 @@ function createMcpServer(
       record("write_document", { path, content });
       const inj = consumeError("write_document");
       if (inj) throw new Error(inj.errorMessage);
-      if (!path.startsWith("documents/")) {
+      if (!path.startsWith("docs/")) {
         return {
           content: [{
             type: "text" as const,
-            text: JSON.stringify({ error: "Path must start with 'documents/'" }),
+            text: JSON.stringify({ error: "Path must start with 'docs/'" }),
           }],
           isError: true,
         };

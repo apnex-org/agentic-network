@@ -252,15 +252,15 @@ The Hub provides a shared document workspace via GCS, accessible to both Archite
 
 ### `write_document`
 - **Access:** Any role
-- **Parameters:** `path` (must start with `documents/`), `content` (string)
+- **Parameters:** `path` (must start with `docs/`), `content` (string)
 - **Behavior:** Writes content to GCS at the specified path. Blind overwrite if file exists (V1).
-- **Namespace enforcement:** Rejects paths not starting with `documents/` to prevent writes to workflow-managed namespaces (`reports/`, `proposals/`, `tasks/`)
+- **Namespace enforcement:** Rejects paths not starting with `docs/` to prevent writes to workflow-managed namespaces (`reports/`, `proposals/`, `tasks/`)
 - **Path validation:** Rejects directory traversal (`..`) and absolute paths (`/`)
 - **Pairs with:** `read_document` (read any path), `list_documents` (list by prefix)
 
 ### Co-Authoring Pattern (Option A)
-1. Architect writes a draft: `write_document({ path: "documents/planning/brief.md", content: "..." })`
-2. Architect opens a Thread: "Review the document at documents/planning/brief.md"
+1. Architect writes a draft: `write_document({ path: "docs/planning/brief.md", content: "..." })`
+2. Architect opens a Thread: "Review the document at docs/planning/brief.md"
 3. Engineer reads via `read_document`, modifies via `write_document`, replies in Thread
 4. Turn-based soft locking via Thread turn-taking prevents concurrent edits
 5. When mature, Architect issues a Task for the Engineer to commit the document to git
