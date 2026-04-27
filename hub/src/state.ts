@@ -194,8 +194,43 @@ export function taskClaimableBy(
  */
 export type AgentLivenessState = "online" | "degraded" | "unresponsive" | "offline";
 
+/**
+ * Mission-62 (M-Agent-Entity-Revisit) activity FSM — orthogonal to the
+ * existing liveness FSM. Tool-call-driven; populated via explicit
+ * signal_working_* / signal_quota_* RPCs (W3). Auto-clamp invariant:
+ * `livenessState !== "online"` → `activityState = "offline"`.
+ *
+ * `online_paused` is schema-only this mission; no transitions wired.
+ */
+export type ActivityState =
+  | "offline"
+  | "online_idle"
+  | "online_working"
+  | "online_quota_blocked"
+  | "online_paused";
+
+/**
+ * Mission-62 error-record entry — populated by adapter-side handshake
+ * sweep (W3) on tool-call failures. Size-bounded ring buffer per Agent.
+ */
+export interface AgentErrorRecord {
+  at: string;                          // ISO timestamp
+  toolCall: string;                    // tool that errored
+  errorClass: string;                  // categorical (e.g. "timeout", "validation", "auth", "internal")
+  message: string;                     // truncated free-form
+}
+
+/** Mission-62 ring-buffer cap for `recentErrors`. FIFO eviction. */
+export const AGENT_RECENT_ERRORS_CAP = 10;
+
+/** Mission-62 rolling-window for `restartCount` accounting. */
+export const AGENT_RESTART_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h
+
+/** Mission-62 ring-buffer cap for restart-bump timestamps. */
+export const AGENT_RESTART_HISTORY_CAP = 50;
+
 export interface Agent {
-  engineerId: string;          // e.g., "eng-abc123xyz" (Hub-issued)
+  engineerId: string;          // e.g., "eng-abc123xyz" (Hub-issued); mission-62 W1+W2 Pass 6 renames cross-refs to agentId; entity-internal `id` rename also Pass 6
   fingerprint: string;         // sha256(globalInstanceId) — token NOT included
   role: AgentRole;
   status: AgentStatus;
@@ -214,6 +249,36 @@ export interface Agent {
   wakeEndpoint: string | null; // optional durable-wake URL (Cloud Run, etc.)
   // Displacement rate-limit accounting (in-memory, not persisted):
   // see GcsEngineerRegistry.displacementHistory for the in-memory map.
+
+  // ── Mission-62 (M-Agent-Entity-Revisit) — additive Pass 1 ──────────
+  // Identity-display field; populated from `OIS_INSTANCE_ID` env at handshake (W3).
+  // Defaults to engineerId for legacy blobs.
+  name: string;
+  // Activity FSM — orthogonal to liveness FSM. See ActivityState comment.
+  // Auto-clamped to "offline" when livenessState !== "online".
+  activityState: ActivityState;
+  // Distinct from firstSeenAt; populated at handshake completion (W3).
+  sessionStartedAt: string | null;
+  // Last tool-call telemetry — un-rate-limited (every call) per Design §2.
+  lastToolCallAt: string | null;
+  lastToolCallName: string | null;
+  // FSM-transition timestamps.
+  idleSince: string | null;
+  workingSince: string | null;
+  // Quota-recovery timer; auto-promotes online_quota_blocked → online_idle on elapse.
+  quotaBlockedUntil: string | null;
+  // Adapter source-of-truth (e.g. "@ois/network-adapter@2.1.0"); set at handshake.
+  // Distinct from clientMetadata.sdkVersion (which is the raw client-supplied value).
+  adapterVersion: string;
+  // Hub-side derived from socket peer addr at SSE-stream-open. NOT adapter-supplied (security).
+  ipAddress: string | null;
+  // Count of sessionEpoch bumps within `AGENT_RESTART_WINDOW_MS` rolling window.
+  restartCount: number;
+  // FIFO ring buffer; cap=AGENT_RECENT_ERRORS_CAP. Mutated by tool-error hook (W3).
+  recentErrors: AgentErrorRecord[];
+  // Internal: ring of recent sessionEpoch-bump timestamps (ms epoch). Cap=AGENT_RESTART_HISTORY_CAP.
+  // restartCount is computed by filtering this ring against AGENT_RESTART_WINDOW_MS.
+  restartHistoryMs: number[];
 }
 
 export interface RegisterAgentPayload {
