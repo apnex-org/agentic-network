@@ -278,7 +278,9 @@ describe("SessionPolicy", () => {
     expect(router.has("signal_working_completed")).toBe(true);
     expect(router.has("signal_quota_blocked")).toBe(true);
     expect(router.has("signal_quota_recovered")).toBe(true);
-    expect(router.size).toBe(9);
+    // mission-62 W1+W2 Pass 4: get_agents added.
+    expect(router.has("get_agents")).toBe(true);
+    expect(router.size).toBe(10);
   });
 
   const engineerHandshake = {

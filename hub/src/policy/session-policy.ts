@@ -301,6 +301,161 @@ async function listAvailablePeers(args: Record<string, unknown>, ctx: IPolicyCon
   };
 }
 
+// ── Mission-62 W1+W2 Pass 4: get_agents pull primitive ────────────────
+//
+// One canonical tool. Replaces get_engineer_status as the routing-path
+// projection per Design v1.0 §4.1. Sub-100ms p99 target on the routing
+// hot-path (filter + default fields). [Any] role-callable per Q2=B+C+D.
+
+type AgentFieldGroup = "identity" | "session" | "fsm" | "client" | "errors" | "all";
+
+const ALL_FIELDS_EXPANDED: readonly AgentFieldGroup[] = ["identity", "session", "fsm", "client", "errors"] as const;
+const DEFAULT_FIELD_GROUPS: readonly AgentFieldGroup[] = ["identity", "session", "fsm"] as const;
+
+interface AgentProjection {
+  // identity group
+  id?: string;
+  name?: string;
+  role?: AgentRole;
+  labels?: Record<string, string>;
+  // session group
+  sessionId?: string | null;
+  sessionEpoch?: number;
+  sessionStartedAt?: string | null;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  // fsm group
+  livenessState?: string;
+  activityState?: string;
+  idleSince?: string | null;
+  workingSince?: string | null;
+  quotaBlockedUntil?: string | null;
+  lastToolCallAt?: string | null;
+  lastToolCallName?: string | null;
+  currentMissionId?: string | null;
+  currentTaskId?: string | null;
+  currentThreadId?: string | null;
+  // client group
+  adapterVersion?: string;
+  clientMetadata?: unknown;
+  ipAddress?: string | null;
+  restartCount?: number;
+  // errors group
+  recentErrors?: unknown[];
+}
+
+function expandFieldGroups(groups: readonly AgentFieldGroup[]): Set<AgentFieldGroup> {
+  const out = new Set<AgentFieldGroup>();
+  for (const g of groups) {
+    if (g === "all") {
+      for (const f of ALL_FIELDS_EXPANDED) out.add(f);
+    } else {
+      out.add(g);
+    }
+  }
+  return out;
+}
+
+async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const filter = (args.filter as Record<string, unknown> | undefined) ?? {};
+  const fieldsArg = args.fields as readonly AgentFieldGroup[] | undefined;
+  const fieldGroups = expandFieldGroups(fieldsArg && fieldsArg.length > 0 ? fieldsArg : DEFAULT_FIELD_GROUPS);
+
+  // Filter setup. selectAgents handles role + matchLabels; livenessState +
+  // activityState + currentMissionId + agentId we filter post-fetch.
+  const roleFilter = filter.role as AgentRole | AgentRole[] | undefined;
+  const livenessFilter = filter.livenessState as string | string[] | undefined;
+  const activityFilter = filter.activityState as string | string[] | undefined;
+  const labelFilter = filter.label as Record<string, string> | undefined;
+  const missionFilter = filter.currentMissionId as string | undefined;
+  const agentIdFilter = filter.agentId as string | string[] | undefined;
+
+  const roles: AgentRole[] | undefined = roleFilter
+    ? (Array.isArray(roleFilter) ? roleFilter : [roleFilter])
+    : undefined;
+  const agentIdSet: Set<string> | null = agentIdFilter
+    ? new Set(Array.isArray(agentIdFilter) ? agentIdFilter : [agentIdFilter])
+    : null;
+
+  // Pull all agents (selectAgents excludes archived + offline; we want the
+  // full population for activityState filtering and self-introspection per
+  // Design §4.1). Use listAgents which returns the full set.
+  const agents = await ctx.stores.engineerRegistry.listAgents();
+  const livenessAllow = livenessFilter
+    ? new Set(Array.isArray(livenessFilter) ? livenessFilter : [livenessFilter])
+    : null;
+  const activityAllow = activityFilter
+    ? new Set(Array.isArray(activityFilter) ? activityFilter : [activityFilter])
+    : null;
+
+  const results: AgentProjection[] = [];
+  for (const a of agents) {
+    if (a.archived) continue;
+    if (roles && !roles.includes(a.role)) continue;
+    if (livenessAllow && !livenessAllow.has(a.livenessState)) continue;
+    if (activityAllow && !activityAllow.has(a.activityState)) continue;
+    if (labelFilter && !labelsMatchAll(a.labels ?? {}, labelFilter)) continue;
+    if (agentIdSet && !agentIdSet.has(a.engineerId)) continue;
+    // currentMissionId filter: only match if we have a derived value (skip
+    // until derivation is wired; for now no-match if filter set since stored
+    // is always null per Design §11.1 derive-on-read).
+    if (missionFilter) continue; // TODO(pass-4b): derivation
+
+    const proj: AgentProjection = {};
+    if (fieldGroups.has("identity")) {
+      proj.id = a.engineerId;
+      proj.name = a.name;
+      proj.role = a.role;
+      proj.labels = a.labels ?? {};
+    }
+    if (fieldGroups.has("session")) {
+      proj.sessionId = a.currentSessionId;
+      proj.sessionEpoch = a.sessionEpoch;
+      proj.sessionStartedAt = a.sessionStartedAt;
+      proj.firstSeenAt = a.firstSeenAt;
+      proj.lastSeenAt = a.lastSeenAt;
+    }
+    if (fieldGroups.has("fsm")) {
+      proj.livenessState = a.livenessState;
+      proj.activityState = a.activityState;
+      proj.idleSince = a.idleSince;
+      proj.workingSince = a.workingSince;
+      proj.quotaBlockedUntil = a.quotaBlockedUntil;
+      proj.lastToolCallAt = a.lastToolCallAt;
+      proj.lastToolCallName = a.lastToolCallName;
+      // TODO(pass-4b): derive currentMissionId/TaskId/ThreadId from
+      // task/thread stores per Design §11.1; for now null.
+      proj.currentMissionId = null;
+      proj.currentTaskId = null;
+      proj.currentThreadId = null;
+    }
+    if (fieldGroups.has("client")) {
+      proj.adapterVersion = a.adapterVersion;
+      proj.clientMetadata = a.clientMetadata;
+      proj.ipAddress = a.ipAddress;
+      proj.restartCount = a.restartCount;
+    }
+    if (fieldGroups.has("errors")) {
+      proj.recentErrors = a.recentErrors;
+    }
+    results.push(proj);
+  }
+
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ count: results.length, agents: results }),
+    }],
+  };
+}
+
+function labelsMatchAll(labels: Record<string, string>, match: Record<string, string>): boolean {
+  for (const [k, v] of Object.entries(match)) {
+    if (labels[k] !== v) return false;
+  }
+  return true;
+}
+
 // ── Mission-62 W1+W2 Pass 3: signal_working_* + signal_quota_* tools ──
 //
 // Adapter signals tool-call boundaries + idea-109 quota-block transitions
@@ -474,5 +629,31 @@ export function registerSessionPolicy(router: PolicyRouter): void {
     "[Any] Mission-62 + idea-109 composability: signal that the quota-block has cleared early (transitions activityState back to online_idle). Hub clears quotaBlockedUntil. Optional — Hub auto-promotes online_quota_blocked → online_idle when quotaBlockedUntil elapses on next-touch even without this RPC.",
     {},
     signalQuotaRecovered,
+  );
+
+  router.register(
+    "get_agents",
+    "[Any] Mission-62 (M-Agent-Entity-Revisit): live-query the agent population with optional filters and a fields-projection. Replaces get_engineer_status as the routing-path projection. Self-introspectable (caller sees themselves). Default fields = identity+session+fsm (cheap routing path). Defers final tool-surface naming to idea-121.",
+    {
+      filter: z.object({
+        role: z.union([
+          z.enum(["engineer", "architect", "director"]),
+          z.array(z.enum(["engineer", "architect", "director"])),
+        ]).optional().describe("Filter by role; single or array."),
+        livenessState: z.union([
+          z.enum(["online", "degraded", "unresponsive", "offline"]),
+          z.array(z.enum(["online", "degraded", "unresponsive", "offline"])),
+        ]).optional().describe("Filter by ADR-017 liveness FSM state; single or array."),
+        activityState: z.union([
+          z.enum(["offline", "online_idle", "online_working", "online_quota_blocked", "online_paused"]),
+          z.array(z.enum(["offline", "online_idle", "online_working", "online_quota_blocked", "online_paused"])),
+        ]).optional().describe("Filter by mission-62 activity FSM state; single or array."),
+        label: z.record(z.string(), z.string()).optional().describe("Match-all label filter."),
+        currentMissionId: z.string().optional().describe("Filter by currently-active mission (derived). Not yet wired in Pass 4 — reserved."),
+        agentId: z.union([z.string(), z.array(z.string())]).optional().describe("Filter by agent ID; single or array."),
+      }).optional().describe("Multi-axis filter. All axes ANDed."),
+      fields: z.array(z.enum(["identity", "session", "fsm", "client", "errors", "all"])).optional().describe("Field-projection groups: identity (id+name+role+labels), session (sessionId+sessionEpoch+sessionStartedAt+firstSeenAt+lastSeenAt), fsm (liveness+activity+idle/workingSince+lastToolCall+current*), client (adapterVersion+clientMetadata+ipAddress+restartCount), errors (recentErrors), or 'all' to expand to all groups. Default: identity+session+fsm."),
+    },
+    getAgents,
   );
 }

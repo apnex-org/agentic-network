@@ -210,7 +210,7 @@ describe("E2E Foundation", () => {
   // ── Orchestrator Infrastructure ─────────────────────────────────
 
   describe("Orchestrator Infrastructure", () => {
-    it("registers all 60 tools on the PolicyRouter", () => {
+    it("registers all 61 tools on the PolicyRouter", () => {
       // 44 pre-M24; M24-T6 added leave_thread → 45; M24-T8 added
       // list_available_peers → 46; idea-117 Phase 2c ckpt-C added
       // force_close_thread → 47; Phase 2d CP2 added get_metrics → 48.
@@ -226,7 +226,8 @@ describe("E2E Foundation", () => {
       // mission-61 W1 Fix #2: force_fire_pulse admin tool added → 56.
       // mission-62 W1+W2 Pass 3: signal_working_started/completed +
       // signal_quota_blocked/recovered added → 60.
-      expect(orch.router.size).toBe(60);
+      // mission-62 W1+W2 Pass 4: get_agents added → 61.
+      expect(orch.router.size).toBe(61);
     });
 
     it("multi-engineer support with distinct sessions", async () => {
