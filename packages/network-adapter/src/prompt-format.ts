@@ -99,6 +99,71 @@ export function buildPromptText(
         `Committed actions: ${data.committedActionCount ?? 0} (executed=${data.executedCount ?? 0}, failed=${data.failedCount ?? 0}${data.warning ? ", WARNING" : ""}). ` +
         `Review the full ConvergenceReport in the event payload for any follow-up action.`
       );
+    case "message_arrived": {
+      // Mission-62 W1+W2 Pass 7 — note-kind + pulse-content rendering fix
+      // (per thread-391 + Design v1.0 §6 ratification). Pre-Pass 7, this
+      // case fell through to the default "[Hub] Notification: message_arrived."
+      // envelope-only render — the LLM saw the envelope but no payload
+      // content. Now branches on payload discriminators to surface the
+      // actual Message body inline.
+      const msg = (data.message as Record<string, unknown>) ?? {};
+      const payload = (msg.payload as Record<string, unknown>) ?? {};
+      const msgId = (msg.id as string) || "?";
+      const kind = (msg.kind as string) || "unknown";
+
+      // Pulse fire — payload.pulseKind set (e.g. status_check). Surface
+      // the pulse-config message + responseShape so the LLM has actionable
+      // content to respond to (was the gap surfaced on thread-391).
+      if (payload.pulseKind && typeof payload.pulseKind === "string") {
+        const pMissionId = (payload.missionId as string) || "?";
+        const pMessage = (payload.message as string) || "(empty pulse message)";
+        const pResponseShape = (payload.responseShape as string) || "short_status";
+        return (
+          `[Hub] Pulse fired (${payload.pulseKind}) for mission ${pMissionId}. ${pMessage} ` +
+          `Respond with shape "${pResponseShape}" via the appropriate channel ` +
+          `(typically ${p}create_message kind=note OR a short status reply on the active coord-thread). ` +
+          `Message ID: ${msgId}.`
+        );
+      }
+
+      // External-injection — legacy SSE-event wrapper from
+      // emitLegacyNotification. payload.event + payload.data carry the
+      // wrapped Hub event. Re-render via the wrapped event type for
+      // continuity with pre-mission-56 SSE behavior.
+      if (payload.event && typeof payload.event === "string") {
+        return (
+          `[Hub] Hub event injected: ${payload.event}. ` +
+          `${getActionText(payload.event, (payload.data as Record<string, unknown>) ?? {})}. ` +
+          `Message ID: ${msgId}.`
+        );
+      }
+
+      // Note-kind — peer agent (or system) sent a kind=note Message.
+      // Surface the body + sender inline. Body field is conventionally
+      // payload.body OR payload.text OR payload.message (carrier choice
+      // depends on author).
+      if (kind === "note") {
+        const body =
+          (payload.body as string) ||
+          (payload.text as string) ||
+          (payload.message as string) ||
+          "(empty note body)";
+        const sender = (msg.authorAgentId as string) || "unknown";
+        const senderRole = (msg.authorRole as string) || "agent";
+        return (
+          `[${senderRole}/${sender}] Note: ${body} ` +
+          `(Message ID: ${msgId}; respond via ${p}create_message kind=note targeting the sender.)`
+        );
+      }
+
+      // Generic Message with unrecognized kind/payload — render with
+      // enough context for the LLM to fetch full details via
+      // list_messages / claim_message.
+      return (
+        `[Hub] Message ${msgId} (kind=${kind}) arrived. ` +
+        `Use ${p}list_messages or ${p}claim_message to fetch full content + ack.`
+      );
+    }
     default:
       return `[Hub] Notification: ${event}.`;
   }
