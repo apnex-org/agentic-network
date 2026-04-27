@@ -99,11 +99,10 @@ fi
 
 ENGINEER_ID_VIOLATIONS=$(git diff --cached \
   -- \
-  ':(exclude)docs/decisions/' \
-  ':(exclude)docs/audits/' \
-  ':(exclude)docs/traces/' \
-  ':(exclude)docs/methodology/superseded/' \
+  ':(exclude)docs/' \
   ':(exclude)CHANGELOG*' \
+  ':(exclude)**/test/README.md' \
+  ':(exclude)**/test/**/README.md' \
   ':(exclude).github/workflows/no-engineer-id.yml' \
   ':(exclude).husky/pre-commit' \
   ':(exclude)package-lock.json' \

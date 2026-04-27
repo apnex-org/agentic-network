@@ -35,20 +35,21 @@ jobs:
       - name: Block engineerId / engineer_id regression in active code
         run: |
           set -euo pipefail
-          # Carve-outs preserve historical references in:
-          # - docs/decisions/ (ADRs reference historical engineerId field)
-          # - docs/audits/    (closing audits reference historical state)
-          # - docs/traces/    (work-traces are engineer-frozen artifacts)
-          # - docs/methodology/superseded/ (already removed; kept for safety)
-          # - CHANGELOG*      (release-note historical references)
-          # - this workflow file itself (self-reference)
+          # Carve-outs preserve historical/narrative references in:
+          # - docs/         (entire docs tree: ADRs, audits, traces, architecture,
+          #                  designs, missions, history, planning, network,
+          #                  observability, reviews, specs, sdk-guide, methodology)
+          #                  — documentation by nature narrates the rename verbatim
+          # - CHANGELOG*    (release-note historical references)
+          # - test README.md files (test-mock API docs; lower priority than active code)
+          # - this workflow file itself + the husky hook (self-reference)
+          # - package-lock.json (mechanically generated)
           MATCHES=$(git grep -nE 'engineerId|engineer_id' \
             -- \
-            ':!docs/decisions/' \
-            ':!docs/audits/' \
-            ':!docs/traces/' \
-            ':!docs/methodology/superseded/' \
+            ':!docs/' \
             ':!CHANGELOG*' \
+            ':!**/test/README.md' \
+            ':!**/test/**/README.md' \
             ':!.github/workflows/no-engineer-id.yml' \
             ':!.husky/pre-commit' \
             ':!package-lock.json' \
