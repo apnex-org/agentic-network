@@ -301,6 +301,296 @@ async function listAvailablePeers(args: Record<string, unknown>, ctx: IPolicyCon
   };
 }
 
+// ── Mission-62 W1+W2 Pass 4: get_agents pull primitive ────────────────
+//
+// One canonical tool. Replaces get_engineer_status as the routing-path
+// projection per Design v1.0 §4.1. Sub-100ms p99 target on the routing
+// hot-path (filter + default fields). [Any] role-callable per Q2=B+C+D.
+
+type AgentFieldGroup = "identity" | "session" | "fsm" | "client" | "errors" | "all";
+
+const ALL_FIELDS_EXPANDED: readonly AgentFieldGroup[] = ["identity", "session", "fsm", "client", "errors"] as const;
+const DEFAULT_FIELD_GROUPS: readonly AgentFieldGroup[] = ["identity", "session", "fsm"] as const;
+
+interface AgentProjection {
+  // identity group
+  id?: string;
+  name?: string;
+  role?: AgentRole;
+  labels?: Record<string, string>;
+  // session group
+  sessionId?: string | null;
+  sessionEpoch?: number;
+  sessionStartedAt?: string | null;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  // fsm group
+  livenessState?: string;
+  activityState?: string;
+  idleSince?: string | null;
+  workingSince?: string | null;
+  quotaBlockedUntil?: string | null;
+  lastToolCallAt?: string | null;
+  lastToolCallName?: string | null;
+  currentMissionId?: string | null;
+  currentTaskId?: string | null;
+  currentThreadId?: string | null;
+  // client group
+  adapterVersion?: string;
+  clientMetadata?: unknown;
+  ipAddress?: string | null;
+  restartCount?: number;
+  // errors group
+  recentErrors?: unknown[];
+}
+
+function expandFieldGroups(groups: readonly AgentFieldGroup[]): Set<AgentFieldGroup> {
+  const out = new Set<AgentFieldGroup>();
+  for (const g of groups) {
+    if (g === "all") {
+      for (const f of ALL_FIELDS_EXPANDED) out.add(f);
+    } else {
+      out.add(g);
+    }
+  }
+  return out;
+}
+
+async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const filter = (args.filter as Record<string, unknown> | undefined) ?? {};
+  const fieldsArg = args.fields as readonly AgentFieldGroup[] | undefined;
+  const fieldGroups = expandFieldGroups(fieldsArg && fieldsArg.length > 0 ? fieldsArg : DEFAULT_FIELD_GROUPS);
+
+  // Filter setup. selectAgents handles role + matchLabels; livenessState +
+  // activityState + currentMissionId + agentId we filter post-fetch.
+  const roleFilter = filter.role as AgentRole | AgentRole[] | undefined;
+  const livenessFilter = filter.livenessState as string | string[] | undefined;
+  const activityFilter = filter.activityState as string | string[] | undefined;
+  const labelFilter = filter.label as Record<string, string> | undefined;
+  const missionFilter = filter.currentMissionId as string | undefined;
+  const agentIdFilter = filter.agentId as string | string[] | undefined;
+
+  const roles: AgentRole[] | undefined = roleFilter
+    ? (Array.isArray(roleFilter) ? roleFilter : [roleFilter])
+    : undefined;
+  const agentIdSet: Set<string> | null = agentIdFilter
+    ? new Set(Array.isArray(agentIdFilter) ? agentIdFilter : [agentIdFilter])
+    : null;
+
+  // Pull all agents (selectAgents excludes archived + offline; we want the
+  // full population for activityState filtering and self-introspection per
+  // Design §4.1). Use listAgents which returns the full set.
+  const agents = await ctx.stores.engineerRegistry.listAgents();
+  const livenessAllow = livenessFilter
+    ? new Set(Array.isArray(livenessFilter) ? livenessFilter : [livenessFilter])
+    : null;
+  const activityAllow = activityFilter
+    ? new Set(Array.isArray(activityFilter) ? activityFilter : [activityFilter])
+    : null;
+
+  const results: AgentProjection[] = [];
+  for (const a of agents) {
+    if (a.archived) continue;
+    if (roles && !roles.includes(a.role)) continue;
+    if (livenessAllow && !livenessAllow.has(a.livenessState)) continue;
+    if (activityAllow && !activityAllow.has(a.activityState)) continue;
+    if (labelFilter && !labelsMatchAll(a.labels ?? {}, labelFilter)) continue;
+    if (agentIdSet && !agentIdSet.has(a.engineerId)) continue;
+    // currentMissionId filter: only match if we have a derived value (skip
+    // until derivation is wired; for now no-match if filter set since stored
+    // is always null per Design §11.1 derive-on-read).
+    if (missionFilter) continue; // TODO(pass-4b): derivation
+
+    const proj: AgentProjection = {};
+    if (fieldGroups.has("identity")) {
+      proj.id = a.engineerId;
+      proj.name = a.name;
+      proj.role = a.role;
+      proj.labels = a.labels ?? {};
+    }
+    if (fieldGroups.has("session")) {
+      proj.sessionId = a.currentSessionId;
+      proj.sessionEpoch = a.sessionEpoch;
+      proj.sessionStartedAt = a.sessionStartedAt;
+      proj.firstSeenAt = a.firstSeenAt;
+      proj.lastSeenAt = a.lastSeenAt;
+    }
+    if (fieldGroups.has("fsm")) {
+      proj.livenessState = a.livenessState;
+      proj.activityState = a.activityState;
+      proj.idleSince = a.idleSince;
+      proj.workingSince = a.workingSince;
+      proj.quotaBlockedUntil = a.quotaBlockedUntil;
+      proj.lastToolCallAt = a.lastToolCallAt;
+      proj.lastToolCallName = a.lastToolCallName;
+      // TODO(pass-4b): derive currentMissionId/TaskId/ThreadId from
+      // task/thread stores per Design §11.1; for now null.
+      proj.currentMissionId = null;
+      proj.currentTaskId = null;
+      proj.currentThreadId = null;
+    }
+    if (fieldGroups.has("client")) {
+      proj.adapterVersion = a.adapterVersion;
+      proj.clientMetadata = a.clientMetadata;
+      proj.ipAddress = a.ipAddress;
+      proj.restartCount = a.restartCount;
+    }
+    if (fieldGroups.has("errors")) {
+      proj.recentErrors = a.recentErrors;
+    }
+    results.push(proj);
+  }
+
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ count: results.length, agents: results }),
+    }],
+  };
+}
+
+function labelsMatchAll(labels: Record<string, string>, match: Record<string, string>): boolean {
+  for (const [k, v] of Object.entries(match)) {
+    if (labels[k] !== v) return false;
+  }
+  return true;
+}
+
+// ── Mission-62 W1+W2 Pass 3: signal_working_* + signal_quota_* tools ──
+//
+// Adapter signals tool-call boundaries + idea-109 quota-block transitions
+// to the Hub. Hub mutates the agent's activity FSM. Per Design v1.0 §5.2,
+// LLM-to-MCP-tool-call path doesn't enqueue items, so implicit-only
+// (drain+completion-ack) inference would be blind to most tool calls;
+// explicit signaling is required.
+//
+// Pass 5: each handler dispatches `agent_state_changed` SSE event after
+// successful state mutation per Design §4.2. broadcast-by-role-targeting
+// v1.0 (peers + architects); per-event-class subscription deferred to
+// idea-121.
+
+import type { Agent, ActivityState as ActivityStateType } from "../state.js";
+
+/**
+ * Mission-62 W1+W2 Pass 5: selector for agent_state_changed SSE event.
+ * Broadcast-by-role-targeting v1.0 — both architects + engineers see
+ * all transitions. Per-event-class subscription deferred to idea-121.
+ */
+function agentStateChangedSelector(): import("../state.js").Selector {
+  return { roles: ["architect", "engineer"] };
+}
+
+interface AgentStateChangedPayload {
+  event: "agent_state_changed";
+  agentId: string;
+  fromLivenessState: string | null;
+  toLivenessState: string;
+  fromActivityState: string | null;
+  toActivityState: string;
+  changedFields: string[];
+  at: string;
+}
+
+function buildAgentStateChangedPayload(
+  before: Agent,
+  toActivityState: ActivityStateType,
+  extraChangedFields: string[] = [],
+): AgentStateChangedPayload {
+  const changedFields: string[] = [];
+  if (before.activityState !== toActivityState) changedFields.push("activityState");
+  for (const f of extraChangedFields) {
+    if (!changedFields.includes(f)) changedFields.push(f);
+  }
+  return {
+    event: "agent_state_changed",
+    agentId: before.engineerId,
+    fromLivenessState: before.livenessState,
+    toLivenessState: before.livenessState, // unchanged by activity-only transitions
+    fromActivityState: before.activityState,
+    toActivityState,
+    changedFields,
+    at: new Date().toISOString(),
+  };
+}
+
+async function signalWorkingStarted(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const toolName = (args.toolName as string | undefined) ?? "";
+  if (!toolName) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "invalid_args", message: "toolName required" }) }],
+      isError: true,
+    };
+  }
+  const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  if (!self) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "no_session_identity", message: "no agent bound to session — call register_role first" }) }],
+      isError: true,
+    };
+  }
+  await ctx.stores.engineerRegistry.recordToolCallStart(self.engineerId, toolName);
+  const payload = buildAgentStateChangedPayload(self, "online_working", ["lastToolCallAt", "lastToolCallName", "workingSince"]);
+  await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_working", toolName }) }],
+  };
+}
+
+async function signalWorkingCompleted(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  if (!self) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "no_session_identity", message: "no agent bound to session — call register_role first" }) }],
+      isError: true,
+    };
+  }
+  await ctx.stores.engineerRegistry.recordToolCallComplete(self.engineerId);
+  const payload = buildAgentStateChangedPayload(self, "online_idle", ["idleSince", "workingSince"]);
+  await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_idle" }) }],
+  };
+}
+
+async function signalQuotaBlocked(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const retryAfterSeconds = typeof args.retryAfterSeconds === "number" ? args.retryAfterSeconds : 0;
+  if (retryAfterSeconds < 0) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "invalid_args", message: "retryAfterSeconds must be >= 0" }) }],
+      isError: true,
+    };
+  }
+  const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  if (!self) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "no_session_identity", message: "no agent bound to session — call register_role first" }) }],
+      isError: true,
+    };
+  }
+  await ctx.stores.engineerRegistry.recordQuotaBlocked(self.engineerId, retryAfterSeconds);
+  const payload = buildAgentStateChangedPayload(self, "online_quota_blocked", ["quotaBlockedUntil", "workingSince"]);
+  await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_quota_blocked", retryAfterSeconds }) }],
+  };
+}
+
+async function signalQuotaRecovered(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const self = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  if (!self) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, code: "no_session_identity", message: "no agent bound to session — call register_role first" }) }],
+      isError: true,
+    };
+  }
+  await ctx.stores.engineerRegistry.recordQuotaRecovered(self.engineerId);
+  const payload = buildAgentStateChangedPayload(self, "online_idle", ["idleSince", "quotaBlockedUntil"]);
+  await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.engineerId, activityState: "online_idle" }) }],
+  };
+}
+
 // ── Registration ────────────────────────────────────────────────────
 
 export function registerSessionPolicy(router: PolicyRouter): void {
@@ -362,5 +652,65 @@ export function registerSessionPolicy(router: PolicyRouter): void {
       targetEngineerId: z.string().describe("Engineer ID to receive the pending notifications"),
     },
     migrateAgentQueue,
+  );
+
+  // ── Mission-62 (M-Agent-Entity-Revisit) W1+W2 Pass 3 — activity FSM signaling ──
+
+  router.register(
+    "signal_working_started",
+    "[Any] Mission-62: signal that this agent has started a tool call (transitions activityState to online_working). Adapter wraps each tool-call dispatch with this RPC before the call. Hub stamps lastToolCallAt + lastToolCallName + workingSince. Composes with future agent_state_changed SSE event (Pass 5).",
+    {
+      toolName: z.string().describe("The MCP tool name about to be invoked (for telemetry; e.g. 'create_thread_reply')."),
+    },
+    signalWorkingStarted,
+  );
+
+  router.register(
+    "signal_working_completed",
+    "[Any] Mission-62: signal that this agent's tool call has completed (transitions activityState to online_idle). Adapter wraps each tool-call dispatch with this RPC after the call. Hub stamps idleSince + clears workingSince. Composes with future agent_state_changed SSE event (Pass 5).",
+    {},
+    signalWorkingCompleted,
+  );
+
+  router.register(
+    "signal_quota_blocked",
+    "[Any] Mission-62 + idea-109 composability: signal that this agent has hit a quota / 429 backpressure response (transitions activityState to online_quota_blocked). Hub stamps quotaBlockedUntil = now + retryAfterSeconds * 1000. Routing peers prefer non-quota-blocked agents until quotaBlockedUntil elapses or signal_quota_recovered fires.",
+    {
+      retryAfterSeconds: z.number().describe("Server-supplied retry-after window in seconds; quotaBlockedUntil is computed as now + retryAfterSeconds * 1000."),
+    },
+    signalQuotaBlocked,
+  );
+
+  router.register(
+    "signal_quota_recovered",
+    "[Any] Mission-62 + idea-109 composability: signal that the quota-block has cleared early (transitions activityState back to online_idle). Hub clears quotaBlockedUntil. Optional — Hub auto-promotes online_quota_blocked → online_idle when quotaBlockedUntil elapses on next-touch even without this RPC.",
+    {},
+    signalQuotaRecovered,
+  );
+
+  router.register(
+    "get_agents",
+    "[Any] Mission-62 (M-Agent-Entity-Revisit): live-query the agent population with optional filters and a fields-projection. Replaces get_engineer_status as the routing-path projection. Self-introspectable (caller sees themselves). Default fields = identity+session+fsm (cheap routing path). Defers final tool-surface naming to idea-121.",
+    {
+      filter: z.object({
+        role: z.union([
+          z.enum(["engineer", "architect", "director"]),
+          z.array(z.enum(["engineer", "architect", "director"])),
+        ]).optional().describe("Filter by role; single or array."),
+        livenessState: z.union([
+          z.enum(["online", "degraded", "unresponsive", "offline"]),
+          z.array(z.enum(["online", "degraded", "unresponsive", "offline"])),
+        ]).optional().describe("Filter by ADR-017 liveness FSM state; single or array."),
+        activityState: z.union([
+          z.enum(["offline", "online_idle", "online_working", "online_quota_blocked", "online_paused"]),
+          z.array(z.enum(["offline", "online_idle", "online_working", "online_quota_blocked", "online_paused"])),
+        ]).optional().describe("Filter by mission-62 activity FSM state; single or array."),
+        label: z.record(z.string(), z.string()).optional().describe("Match-all label filter."),
+        currentMissionId: z.string().optional().describe("Filter by currently-active mission (derived). Not yet wired in Pass 4 — reserved."),
+        agentId: z.union([z.string(), z.array(z.string())]).optional().describe("Filter by agent ID; single or array."),
+      }).optional().describe("Multi-axis filter. All axes ANDed."),
+      fields: z.array(z.enum(["identity", "session", "fsm", "client", "errors", "all"])).optional().describe("Field-projection groups: identity (id+name+role+labels), session (sessionId+sessionEpoch+sessionStartedAt+firstSeenAt+lastSeenAt), fsm (liveness+activity+idle/workingSince+lastToolCall+current*), client (adapterVersion+clientMetadata+ipAddress+restartCount), errors (recentErrors), or 'all' to expand to all groups. Default: identity+session+fsm."),
+    },
+    getAgents,
   );
 }

@@ -41,7 +41,16 @@ export type HubEventType =
   // 2 (`@ois/message-router`) routes Message kind/subkind onto host
   // hooks; classification at Layer 1 dispositions all engineer +
   // architect deliveries as actionable so the wake-the-LLM path fires.
-  | "message_arrived";
+  | "message_arrived"
+  // Mission-62 W1+W2 Pass 5 (M-Agent-Entity-Revisit): cache-coherence
+  // notification for the Agent population. Fires on every activity FSM
+  // transition (signal_working_started/completed, signal_quota_blocked/
+  // recovered) and on field changes that affect routing. Adapters
+  // maintain a local agent-population cache refreshed on these events
+  // (W3 cache wiring). Classified as informational at Layer 1 — peer
+  // routing is the primary consumer; the LLM is not woken on every
+  // transition (broadcast volume).
+  | "agent_state_changed";
 
 /** Parsed, typed event envelope */
 export interface HubEvent {
@@ -82,6 +91,9 @@ const ENGINEER_INFORMATIONAL: ReadonlySet<string> = new Set([
   "turn_created",
   "turn_updated",
   "tele_defined",
+  // Mission-62 W1+W2 Pass 5: agent population cache-coherence updates.
+  // Adapter maintains a local cache (W3 wiring); LLM wake suppressed.
+  "agent_state_changed",
 ]);
 
 /** Architect events that require a sandwich handler response */
@@ -107,6 +119,8 @@ const ARCHITECT_INFORMATIONAL: ReadonlySet<string> = new Set([
   "tele_defined",
   "director_attention_required",
   "cascade_failure",
+  // Mission-62 W1+W2 Pass 5: agent population cache-coherence updates.
+  "agent_state_changed",
 ]);
 
 /**
