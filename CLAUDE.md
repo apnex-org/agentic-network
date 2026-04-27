@@ -12,7 +12,7 @@ Project-level guidance binding all Claude Code instances working on this reposit
 
 Reason: Director's preference (ratified 2026-04-23). The `Co-Authored-By:` trailer surfaces on GitHub's repo Contributors view as a co-author; Director wants a clean contributor graph without AI attribution. Write plain commit messages.
 
-This applies to every commit on every branch (main, `agent/*`, feature branches, etc.) and to every Claude Code session.
+This applies to every commit on every branch (main, `agent-{lily,greg}/*` per-PR branches, etc.) and to every Claude Code session.
 
 ## Companion policies
 
