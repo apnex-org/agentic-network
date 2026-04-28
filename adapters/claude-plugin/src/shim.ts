@@ -27,10 +27,12 @@ import {
   type HandshakeResponse,
   type SharedDispatcher,
   type TelemetryEvent,
+  type ILogger,
+  type LogFields,
 } from "@ois/network-adapter";
 import { CognitivePipeline } from "@ois/cognitive-layer";
-import { readFileSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, existsSync, appendFileSync, statSync, renameSync, mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 import { resolveSourceAttribute, isPulseEvent } from "./source-attribute.js";
 
@@ -108,12 +110,131 @@ const SHUTDOWN_TIMEOUT_MS = 3000;
 const PROXY_VERSION = "1.2.0";
 const SDK_VERSION = "@ois/network-adapter@2.1.0";
 
-// ── Logging (stderr) ────────────────────────────────────────────────
+// OIS_COGNITIVE_BYPASS=1 → pass cognitive=undefined to McpAgentClient.
+// Operator-facing kill-switch for the cognitive pipeline; mcp-agent-client
+// takes the legacy passthrough (rawCall directly) when cognitive is unset.
+// Diagnostic surface for cognitive-layer triage; per-middleware opt-out
+// follow-on tracked separately.
+const COGNITIVE_BYPASS = process.env.OIS_COGNITIVE_BYPASS === "1";
+
+// ── Telemetry sinks (stderr + file + ndjson events) ─────────────────
+//
+// P0 triage 2026-04-28 — shim observability gap surfaced during mission-62
+// W4 dogfood. Phase 1 implementation: durable file sinks for the existing
+// stderr-only log path + structured ILogger emissions to NDJSON. Formal
+// observability contract + rotation policy + level filter follow in Phase 2
+// (idea-219). Per Director-approved architect-direct exception until greg
+// online.
+const SHIM_LOG_FILE = process.env.OIS_SHIM_LOG_FILE || join(WORK_DIR, ".ois", "shim.log");
+const SHIM_EVENTS_FILE = process.env.OIS_SHIM_EVENTS_FILE || join(WORK_DIR, ".ois", "shim-events.ndjson");
+const SHIM_LOG_ROTATE_BYTES = Number(process.env.OIS_SHIM_LOG_ROTATE_BYTES) || 10 * 1024 * 1024;
+
+function ensureDir(path: string): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
+function rotateIfNeeded(file: string): void {
+  try {
+    const stat = statSync(file);
+    if (stat.size > SHIM_LOG_ROTATE_BYTES) {
+      const rotated = `${file}.${Date.now()}`;
+      renameSync(file, rotated);
+    }
+  } catch {
+    /* file doesn't exist yet, that's fine */
+  }
+}
+
+ensureDir(SHIM_LOG_FILE);
+ensureDir(SHIM_EVENTS_FILE);
+rotateIfNeeded(SHIM_LOG_FILE);
+rotateIfNeeded(SHIM_EVENTS_FILE);
+
+function appendText(line: string): void {
+  try {
+    appendFileSync(SHIM_LOG_FILE, line);
+  } catch {
+    /* best-effort — never disturb the call loop */
+  }
+}
+
+// Sensitive field names that MUST be redacted before persisting to the
+// events file. Defensive — current callers don't pass these, but a
+// future field rename could accidentally leak. Redaction is whole-key:
+// any field whose name matches (case-insensitive) is replaced with
+// `<redacted>`. Add new patterns here as the surface evolves.
+const REDACT_KEYS = new Set(["hubtoken", "token", "authorization", "bearer", "apikey", "api_key", "secret", "password"]);
+
+function redactFields(fields: LogFields): LogFields {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(fields)) {
+    out[k] = REDACT_KEYS.has(k.toLowerCase()) ? "<redacted>" : fields[k];
+  }
+  return out as LogFields;
+}
+
+function appendEvent(event: string, fields: LogFields, message?: string): void {
+  const line = JSON.stringify({
+    ts: new Date().toISOString(),
+    event,
+    fields: redactFields(fields),
+    message: message ?? null,
+    pid: process.pid,
+  }) + "\n";
+  try {
+    appendFileSync(SHIM_EVENTS_FILE, line);
+  } catch {
+    /* best-effort */
+  }
+}
+
+// ── Logging (stderr + file) ─────────────────────────────────────────
 
 function log(msg: string): void {
   const ts = new Date().toISOString().replace("T", " ").replace("Z", "");
-  process.stderr.write(`[${ts}] ${msg}\n`);
+  const line = `[${ts}] ${msg}\n`;
+  process.stderr.write(line);
+  appendText(line);
 }
+
+// FileBackedLogger — concrete ILogger that fans out to:
+//   1. NDJSON events file (every .log call, structured fields preserved)
+//   2. text log file + stderr (rendered friendly form)
+// Bound fields apply to every emission via `child()` for scoped loggers
+// (per-session, per-reconnect, etc.).
+class FileBackedLogger implements ILogger {
+  constructor(private readonly bound: LogFields = {}) {}
+
+  log(event: string, fields?: LogFields, message?: string): void {
+    const merged: LogFields = { ...this.bound, ...(fields ?? {}) };
+    appendEvent(event, merged, message);
+    if (message) {
+      log(`[${event}] ${message}`);
+    } else {
+      const fieldsStr = renderFields(merged);
+      log(fieldsStr ? `[${event}]${fieldsStr}` : `[${event}]`);
+    }
+  }
+
+  child(fields: LogFields): ILogger {
+    return new FileBackedLogger({ ...this.bound, ...fields });
+  }
+}
+
+function renderFields(fields: LogFields): string {
+  const parts: string[] = [];
+  for (const k of Object.keys(fields)) {
+    const v = fields[k];
+    parts.push(` ${k}=${Array.isArray(v) ? `[${v.join(",")}]` : String(v)}`);
+  }
+  return parts.join("");
+}
+
+const eventsLogger: ILogger = new FileBackedLogger({ pid: process.pid, role: config.role });
 
 // ── Render-surface: Claude `<channel>` notification injection ───────
 //
@@ -209,7 +330,19 @@ async function main(): Promise<void> {
   log("=== Claude Plugin Agent Adapter starting ===");
   log(`Hub: ${config.hubUrl}`);
   log(`Role: ${config.role}`);
-  log(`Log: ${LOG_FILE}`);
+  log(`Notifications log: ${LOG_FILE}`);
+  log(`Shim text log: ${SHIM_LOG_FILE}`);
+  log(`Shim events log: ${SHIM_EVENTS_FILE}`);
+  log(`Cognitive: ${COGNITIVE_BYPASS ? "BYPASS (OIS_COGNITIVE_BYPASS=1; legacy passthrough)" : "ON (standard pipeline)"}`);
+  appendEvent("shim.startup", {
+    pid: process.pid,
+    hubUrl: config.hubUrl,
+    role: config.role,
+    cognitiveBypass: COGNITIVE_BYPASS,
+    eagerWarmup: isEagerWarmupEnabled(process.env),
+    proxyVersion: PROXY_VERSION,
+    sdkVersion: SDK_VERSION,
+  });
 
   const globalInstanceId = loadOrCreateGlobalInstanceId({ log });
   log(`[Handshake] globalInstanceId=${globalInstanceId}`);
@@ -311,7 +444,7 @@ async function main(): Promise<void> {
     {
       role: config.role,
       labels: config.labels,
-      logger: log,
+      logger: eventsLogger,
       handshake: {
         globalInstanceId,
         proxyName: "@ois/claude-plugin",
@@ -370,17 +503,26 @@ async function main(): Promise<void> {
         url: config.hubUrl,
         token: config.hubToken,
       },
-      cognitive: CognitivePipeline.standard({
-        telemetry: {
-          sink: (event: TelemetryEvent) => {
-            try {
-              log(`[ClaudePluginTelemetry] ${JSON.stringify(event)}`);
-            } catch {
-              /* never disturb the tool-call loop */
-            }
-          },
-        },
-      }),
+      cognitive: COGNITIVE_BYPASS
+        ? undefined
+        : CognitivePipeline.standard({
+            telemetry: {
+              sink: (event: TelemetryEvent) => {
+                try {
+                  // Mirror to text log (existing behaviour) + structured
+                  // events file (Phase 1 obs; richer than the rendered
+                  // string for downstream telemetry pipelines).
+                  log(`[ClaudePluginTelemetry] ${JSON.stringify(event)}`);
+                  appendEvent(
+                    "cognitive.telemetry",
+                    event as unknown as LogFields,
+                  );
+                } catch {
+                  /* never disturb the tool-call loop */
+                }
+              },
+            },
+          }),
     },
   );
 
