@@ -349,6 +349,116 @@ PR-land doesn't automatically advance Hub task state. The transition sequence is
 
 ---
 
+## Adapter-restart rebuild protocol (Pass 10)
+
+When a PR lands on main that touches Hub source, SDK source, or persisted-state schema, the running adapter+Hub installation does NOT auto-pick-up the change. A coordinated rebuild + restart sequence is required before any agent process resumes work post-merge. This protocol is the codification of the **Pass 10 rebuild sequence** referenced in mission-62 PRs #112 + #114 and mission-63 PRs #118 + #119.
+
+The protocol is **adapter-restart-gating**: the next adapter restart after a covered PR merge MUST execute the steps below in order, OR the restart will fail (parse_failed, `agent_thrashing_detected`, or stalled CallTool gate).
+
+### When this protocol applies
+
+A PR triggers Pass 10 if **any** of the following are true:
+
+| PR touches | Pass 10 step required | Mission-of-record |
+|---|---|---|
+| `hub/src/**` (Hub source) | **§A — Hub container rebuild** (calibration #17) | mission-62 W4 P0 |
+| `packages/network-adapter/src/**` (SDK source) | **§B — SDK package rebuild + tgz repack + reinstall** (calibration #25) | mission-63 W3 P0 |
+| Persisted Agent / Mission / Thread schema (code-only renames) | **§C — State-migration script run** (calibration #19) | mission-62 W4 P0 |
+| `adapters/*/src/**` (claude-plugin / vertex-cloudrun) | **§D — claude-plugin reinstall** (existing baseline; not a Pass 10 extension) | mission-61 Layer-3 |
+
+PRs that touch ONLY documentation, methodology, audits, ADRs, or non-code surfaces do NOT need Pass 10.
+
+### §A — Hub container rebuild (calibration #17)
+
+```bash
+scripts/local/build-hub.sh        # Cloud Build; ~1m26s typical
+scripts/local/start-hub.sh         # restart container on freshly-built image
+```
+
+**Verification:** `docker ps | grep ois-hub-local-prod` shows the new image SHA256. Hub log first line confirms boot timestamp post-rebuild. `curl -s localhost:8080/mcp` returns the canonical envelope shape (or expected error envelope).
+
+**Why required:** Hub container does NOT auto-rebuild on Hub-source PR merge. A restart on the stale image preserves pre-merge Hub code regardless of how many times the container restarts. Mission-62 W4 P0 (smoking gun layer 1) is the canonical incident — image built ~8h before PR #112 merged; restart on stale image surfaced as `engineerId`-not-`agentId` deployment skew.
+
+### §B — SDK package rebuild + tgz repack + reinstall (calibration #25 NEW from mission-63)
+
+```bash
+cd packages/network-adapter
+rm -rf dist
+npm run build
+npm pack
+cp ois-network-adapter-2.0.0.tgz <adapters/claude-plugin>/lib/
+cd <adapters/claude-plugin>
+rm -rf node_modules
+./install.sh
+# Then full adapter restart
+```
+
+(Repeat the rebuild + repack for any other SDK package touched by the PR — `@ois/message-router`, `@ois/cognitive-layer`, etc.)
+
+**Verification:** new `dist/` mtime is post-rebuild; `npm pack` produces a tgz with the new code; `install.sh` runs clean; adapter restart shows `parseHandshakeResponse` consuming the new envelope shape (no `parse_failed` events in `.ois/shim-events.ndjson`).
+
+**Why required:** `install.sh` rebuilds claude-plugin/dist but does NOT rebuild the network-adapter SDK or refresh `ois-network-adapter-2.0.0.tgz`. Adapter restart on stale tgz preserves pre-merge SDK code regardless of `install.sh` runs. Mission-63 W3 P0 is the canonical incident — `parseHandshakeResponse` change in PR #119 was silently ignored on adapter restart because the SDK tgz was pre-merge code.
+
+**Adjacency to mission-61 Layer-2/Layer-3 lesson:** SDK-tgz-stale is the Layer-2 root cause class; mission-61's Layer-3 was the same architectural class one tier down (canonical-tree shim binary stale). Pass 10 §B closes the Layer-2 gap symmetrically with how mission-62 closed the Layer-1 (Hub container) gap.
+
+### §C — State-migration script run (calibration #19)
+
+When a PR renames or restructures persisted entity fields (Agent, Mission, Thread, Task, etc.), the persisted state on local-fs (or GCS in cloud deployments) does NOT auto-migrate. The PR MUST ship a one-shot idempotent migration script under `scripts/migrate-*.ts` and the operator MUST run it Hub-stopped before adapter restart.
+
+**Required script invariants:**
+1. **Hub-stopped self-check** — script verifies `curl localhost:8080/mcp` returns ECONNREFUSED before mutating state (prevents concurrent-write race).
+2. **Backup-before-mutation** — tarball snapshot of current state at `/tmp/<entity>-pre-<migration-name>-<ts>.tar.gz`.
+3. **Idempotent** — re-running on already-migrated state is a no-op; per-record migration logic checks for new-shape fields before writing.
+4. **Fallback discipline** — for fields renamed-and-restructured (mission-63's `name = id` fallback for legacy records lacking the new field), script applies the fallback explicitly rather than leaving fields undefined.
+5. **PR description includes operator-runbook section** — `## Operator runbook` block with stop-Hub command, run-migration command, restart-Hub command, verification steps, and rollback path.
+
+**Why required:** Code-only renames (TS-LSP-equivalent rename in source + tests) leave persisted state with old field names. New code reads `agent.id` (= undefined when state has legacy `engineerId`); response builders drop the field via JSON.stringify undefined-omission; downstream parsers return null; CallTool gate stalls. Mission-62 W4 P0 (smoking gun layer 2) is the canonical incident.
+
+**Reference implementations:**
+- `scripts/migrate-canonical-envelope-state.ts` (mission-63 W3) — Agent record `name = id` fallback + clientMetadata/advisoryTags default
+- `scripts/migrate-engineerId-to-id.ts` (mission-62 W4 ad-hoc; not committed; superseded by canonical-envelope script) — primary key + by-fingerprint index files migration
+
+### §D — claude-plugin reinstall (existing baseline)
+
+```bash
+cd adapters/claude-plugin
+./install.sh
+# Then full adapter restart
+```
+
+This step is **not new** — it's the existing post-PR adapter-side update path. Mission-61 Layer-3 (canonical-tree shim binary stale) surfaced as a reminder that `install.sh` is the operative reinstall sequence; force-bypass via `git push origin main && remote-pull` does NOT work because canonical-tree shim is rebuilt locally, not pulled.
+
+### Coordination — who runs Pass 10
+
+| Pass 10 step | Driven by | When |
+|---|---|---|
+| §A Hub rebuild | Whoever merged the Hub-source PR (architect or engineer) | Immediately after merge; before notifying peer agents to restart |
+| §B SDK rebuild + tgz repack | Whoever merged the SDK-source PR | Immediately after merge; before notifying peer agents to restart |
+| §C State-migration | Operator (Director typically) | Hub-stopped between rebuild + adapter restart |
+| §D claude-plugin reinstall | Each agent in their own session, OR operator coordinating restart | After §A/§B/§C complete |
+
+**Bilateral coordination pattern:** for missions where both agents need to restart (substrate-affecting PRs), open a coordination thread with sub-status updates per Pass 10 step (`§A complete; §B complete; §C complete; safe to restart`). Director-coordinated full-restart cycle is the typical recovery posture.
+
+### Verification post-Pass 10
+
+After all applicable steps complete + adapter restart:
+1. **Handshake parses cleanly** — no `agent.handshake.parse_failed` events in `.ois/shim-events.ndjson`
+2. **`claim_session` returns in normal time** — typical <100ms; stalls or timeouts indicate residual gap
+3. **First LLM-driven tool call lands** — typical Hub-side log shows `[Dispatch]` event for the call response
+4. **Self-dogfood test** — for substrate-affecting PRs, run a substrate-self-dogfood verification thread (mission-lifecycle.md §6.1; mission-63 W4 thread-403 is the canonical second-execution example)
+
+If any step fails, do NOT proceed with mission work. Hold-on-failure is the discipline; investigate via shim observability (`.ois/shim.log` + `.ois/shim-events.ndjson`); fix-forward; re-run Pass 10 from the failed step.
+
+### Forward-pointer: thread_message truncation marker (calibration #26 NEW from mission-63 W4)
+
+Mission-63 W4 substrate-self-dogfood surfaced a Hub-side gap: `thread_message` event envelopes are silently truncated at ~250 chars with no marker. Other event types (`message_arrived` pulse + `thread_convergence_finalized`) render full body verbatim — the truncation is `thread_message`-event-type-specific.
+
+This is **not a Pass 10 step** (it's not a deployment-skew or rebuild concern); it's a low-priority Hub-side envelope-builder design gap. **Future fix surface:** Hub-side `thread_message` envelope-builder either (a) embeds marker token at truncation boundary OR (b) adds `<channel>` attribute `truncated="true" fullBytes="<n>"`. Design + implementation deferred to **idea-220 Phase 2**; tracking via `docs/audits/m-wire-entity-convergence-w4-validation.md` calibration #26 narrative.
+
+Pass 10 protocol does NOT require operator action for this gap; it's documented here as a forward-pointer so future PR work touching `thread_message` envelope generation knows to address marker-spec design.
+
+---
+
 ## Review discipline — deeper
 
 ### Review scope by CODEOWNER

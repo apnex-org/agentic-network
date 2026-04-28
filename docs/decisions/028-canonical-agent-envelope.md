@@ -1,9 +1,10 @@
 # ADR-028 — Canonical Agent Envelope: Wire = Projection of Entity
 
-**Status:** SCAFFOLD — drafted at mission-63 Phase 5 Manifest; final ratification at mission-63 W5 closing wave (bilateral architect+engineer ratify).
+**Status:** RATIFIED 2026-04-28 at mission-63 W5 closing wave. Bilateral architect+engineer ratify per mission-63 close protocol; W4 substrate-self-dogfood evidence (thread-403 converged 05:08:27.632Z) referenced.
 **Mission:** mission-63 M-Wire-Entity-Convergence
-**Date drafted:** 2026-04-28
-**Authors:** lily / architect (scaffold); bilateral ratify pending W5
+**Date drafted:** 2026-04-28 (SCAFFOLD at Phase 5 Manifest)
+**Date ratified:** 2026-04-28 (W5 closing wave; this commit)
+**Authors:** lily / architect (scaffold + ratification text); greg / engineer (bilateral ratify)
 
 ---
 
@@ -11,11 +12,11 @@
 
 | Phase | State | Target |
 |---|---|---|
-| Scaffold | SCAFFOLD (this commit; W0 bundle PR) | Provides ADR number assignment + initial decision framing |
-| W1+W2 | (no change; Hub-side response builders ship; ADR text stable) | — |
-| W3 | (no change; adapter-side parsers + render registry ship; ADR text stable) | — |
-| W4 | (no change; substrate-self-dogfood verifies; ADR text stable) | — |
-| W5 | RATIFIED (bilateral architect+engineer at W5 closing) | Final text incorporates W4 evidence + any in-flight refinements |
+| Scaffold | SCAFFOLD (PR #117 W0 bundle) | Provided ADR number assignment + initial decision framing |
+| W1+W2 | (no change; PR #118 Hub-side response builders shipped; ADR text stable) | — |
+| W3 | (no change; PR #119 adapter-side parsers + render registry shipped; ADR text stable) | — |
+| W4 | (no change; substrate-self-dogfood verified GREEN-with-AMBER on thread-403; ADR text stable) | — |
+| W5 | **RATIFIED** (bilateral architect+engineer at W5 closing) | Final text incorporates W4 evidence + in-flight refinements |
 
 ---
 
@@ -130,14 +131,25 @@ Schema-rename PRs that touch persisted entity fields MUST include a migration sc
 
 ---
 
-## Status flow at W5
+## Status flow at W5 — RATIFIED
 
-At W5 closing, this ADR scaffold is bilaterally ratified by architect+engineer:
-1. W4 dogfood evidence captured in `docs/audits/m-wire-entity-convergence-w4-validation.md` is referenced
-2. Implementation refinements surfaced during W1-W3 are folded into the ADR text
-3. Status flips from SCAFFOLD → RATIFIED
-4. Ratification thread (similar to mission-62's thread-393 pattern) bilateral seal
+At W5 closing, this ADR was bilaterally ratified by architect+engineer:
+1. ✅ W4 dogfood evidence captured in `docs/audits/m-wire-entity-convergence-w4-validation.md` referenced (5 GREEN + 1 AMBER + 1 OUT-OF-SCOPE; canonical envelope ships end-to-end through all 4 covered event types).
+2. ✅ Implementation refinements from W1-W3 folded:
+   - PR #118 shipped `projectAgent` helper at `hub/src/policy/agent-projection.ts` as single point-of-truth for internal Agent → wire AgentProjection (optional-field emit pattern: `if (agent.clientMetadata) proj.clientMetadata = agent.clientMetadata`).
+   - PR #119 shipped render-template registry replacing if-ladder; 4 templates (`message_arrived`, `thread_message`, `thread_convergence_finalized`, `agent_state_changed`); registry dispatches by exact event match with operational-error-on-unmapped (no silent generic fallthrough).
+   - PR #119 shipped `scripts/migrate-canonical-envelope-state.ts` (248 lines) with Hub-stopped self-check, idempotency, backup-before-mutation, `name = id` fallback for legacy records.
+3. ✅ Status flipped SCAFFOLD → RATIFIED at W5 closing (this commit).
+4. ✅ W5 closing audit `docs/audits/m-wire-entity-convergence-w5-closing-audit.md` documents bilateral ratify; per W5-close protocol the audit doc itself + this status update + the W5 follow-on PR merge constitute the bilateral seal.
+
+### W4-surfaced refinements folded post-ratify
+
+Two NEW calibrations surfaced at W4 dogfood (#25 + #26) are NOT folded into this ADR's decision text — they belong in operational/protocol surfaces, not in the architectural-decision contract:
+- **#25** Pass 10 protocol gap on SDK tgz rebuild → folded into `docs/methodology/multi-agent-pr-workflow.md` Pass 10 §B (W5 protocol-extension PR)
+- **#26** Silent thread_message body truncation marker missing → forward-pointer in Pass 10 §"thread_message truncation marker" + design+implementation deferred to idea-220 Phase 2
+
+The canonical-envelope contract itself stands unchanged from the v0.2-ratified text. W4 evidence confirms the contract is sound; the residual issues are at adjacent layers (protocol + Hub-side envelope-builder).
 
 ---
 
-*Scaffold drafted at mission-63 Phase 5 Manifest 2026-04-28; final ratification pending W5 closing wave.*
+*Scaffold drafted at mission-63 Phase 5 Manifest 2026-04-28; ratified 2026-04-28 at W5 closing wave (bilateral architect+engineer; W4 thread-403 evidence + W1-W3 implementation refinements folded; sealed companions ADR-013/014 + ADR-017 + ADR-018 unchanged).*
