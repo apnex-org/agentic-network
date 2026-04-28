@@ -17,6 +17,13 @@
  * old name implied an eager-only scope that no longer fits.
  */
 
+/**
+ * Surface fields the adapter consumes from `claim_session` response.
+ * mission-63 W3: flattened from the canonical wire envelope per Design
+ * v1.0 §3.2 + ADR-028 (`{ok, agent: {id, ...}, session: {epoch, claimed,
+ * trigger, displacedPriorSession?}, message?}`). Adapter doesn't carry
+ * the full canonical nested shape — flatten at parse-time.
+ */
 export interface ClaimSessionParsed {
   agentId?: string;
   sessionEpoch?: number;
@@ -42,33 +49,55 @@ export function isEagerWarmupEnabled(
  *   - string (JSON-encoded payload)
  *   - { content: [{ text: JSON_STRING }] } (canonical MCP result)
  *   - already-parsed object
- * Returns an empty object on any parse failure (callers fall back
- * to "unknown" / "none" when emitting the [Handshake] log line).
+ *
+ * mission-63 W3: reads canonical envelope per Design §3.2 — `body.agent.id`
+ * + `body.session.{epoch, claimed, trigger, displacedPriorSession?}`.
+ * Flattens the nested shape into ClaimSessionParsed for adapter consumers
+ * that don't need the full canonical nesting. Returns an empty object on
+ * any parse failure (callers fall back to "unknown" / "none" when emitting
+ * the [Handshake] log line).
  */
 export function parseClaimSessionResponse(wrapper: unknown): ClaimSessionParsed {
   if (wrapper === null || wrapper === undefined) return {};
   try {
+    let body: unknown;
     if (typeof wrapper === "string") {
-      const out = JSON.parse(wrapper);
-      return typeof out === "object" && out !== null
-        ? (out as ClaimSessionParsed)
-        : {};
-    }
-    if (typeof wrapper === "object") {
+      body = JSON.parse(wrapper);
+    } else if (typeof wrapper === "object") {
       const w = wrapper as { content?: Array<{ text?: string }> };
       if (
         Array.isArray(w.content) &&
         w.content[0]?.text &&
         typeof w.content[0].text === "string"
       ) {
-        const out = JSON.parse(w.content[0].text);
-        return typeof out === "object" && out !== null
-          ? (out as ClaimSessionParsed)
-          : {};
+        body = JSON.parse(w.content[0].text);
+      } else {
+        body = wrapper;
       }
-      // Already-parsed: trust the shape (may be a mock from a test rig).
-      return wrapper as ClaimSessionParsed;
+    } else {
+      return {};
     }
+    if (typeof body !== "object" || body === null) return {};
+    const b = body as Record<string, unknown>;
+    const agent = b.agent as Record<string, unknown> | undefined;
+    const session = b.session as Record<string, unknown> | undefined;
+    const out: ClaimSessionParsed = {};
+    if (agent && typeof agent.id === "string") out.agentId = agent.id;
+    if (session) {
+      if (typeof session.epoch === "number") out.sessionEpoch = session.epoch;
+      if (typeof session.claimed === "boolean") out.sessionClaimed = session.claimed;
+      const dps = session.displacedPriorSession as
+        | { sessionId?: string; epoch?: number }
+        | undefined;
+      if (
+        dps &&
+        typeof dps.sessionId === "string" &&
+        typeof dps.epoch === "number"
+      ) {
+        out.displacedPriorSession = { sessionId: dps.sessionId, epoch: dps.epoch };
+      }
+    }
+    return out;
   } catch {
     /* fall through to empty */
   }

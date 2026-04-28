@@ -80,29 +80,61 @@ describe("parseHandshakeError", () => {
   });
 });
 
-describe("parseHandshakeResponse", () => {
-  it("parses a direct object response", () => {
-    const body = { agentId: "eng-abc123", sessionEpoch: 1, wasCreated: true };
-    expect(parseHandshakeResponse(body)).toEqual(body);
+describe("parseHandshakeResponse (mission-63 W3 canonical envelope)", () => {
+  // mission-63 W3: parses canonical wire shape per Design v1.0 §3.1 + ADR-028:
+  // `{ok, agent: {id, ...}, session: {epoch, claimed:false}, wasCreated, message?}`.
+  // Adapter flattens to internal HandshakeResponse `{agentId, sessionEpoch, wasCreated}`.
+  // Legacy flat-field shape (`agentId` + `sessionEpoch` at top level) is gone post-W1+W2
+  // (anti-goal §8.1 clean cutover); parser does NOT accept it.
+  it("parses canonical envelope direct object", () => {
+    const wire = {
+      ok: true,
+      agent: { id: "eng-abc123", name: "eng-abc123", role: "engineer", livenessState: "online", activityState: "online_idle", labels: {} },
+      session: { epoch: 1, claimed: false },
+      wasCreated: true,
+    };
+    expect(parseHandshakeResponse(wire)).toEqual({
+      agentId: "eng-abc123",
+      sessionEpoch: 1,
+      wasCreated: true,
+    });
   });
 
-  it("parses a {content:[{text}]} envelope", () => {
-    const body = { agentId: "eng-abc123", sessionEpoch: 2, wasCreated: false };
-    const result = { content: [{ text: JSON.stringify(body) }] };
-    expect(parseHandshakeResponse(result)).toEqual(body);
+  it("parses canonical envelope inside {content:[{text}]} wrapper", () => {
+    const wire = {
+      ok: true,
+      agent: { id: "eng-abc123", name: "n", role: "engineer", livenessState: "online", activityState: "online_idle", labels: {} },
+      session: { epoch: 2, claimed: false },
+      wasCreated: false,
+    };
+    const result = { content: [{ text: JSON.stringify(wire) }] };
+    expect(parseHandshakeResponse(result)).toEqual({
+      agentId: "eng-abc123",
+      sessionEpoch: 2,
+      wasCreated: false,
+    });
   });
 
-  it("returns null for missing agentId", () => {
-    expect(parseHandshakeResponse({ sessionEpoch: 1 })).toBeNull();
+  it("returns null for missing agent.id", () => {
+    expect(parseHandshakeResponse({ session: { epoch: 1, claimed: false } })).toBeNull();
   });
 
-  it("returns null for missing sessionEpoch", () => {
-    expect(parseHandshakeResponse({ agentId: "eng-x" })).toBeNull();
+  it("returns null for missing session.epoch", () => {
+    expect(parseHandshakeResponse({ agent: { id: "eng-x" } })).toBeNull();
   });
 
-  it("coerces wasCreated to boolean", () => {
-    const body = { agentId: "eng-x", sessionEpoch: 1 };
-    expect(parseHandshakeResponse(body)?.wasCreated).toBe(false);
+  it("returns null for legacy flat-field shape (anti-goal §8.1: no co-existence)", () => {
+    expect(parseHandshakeResponse({ agentId: "eng-x", sessionEpoch: 1 })).toBeNull();
+  });
+
+  it("coerces wasCreated to boolean (default false when absent)", () => {
+    const wire = {
+      ok: true,
+      agent: { id: "eng-x", name: "x", role: "engineer", livenessState: "online", activityState: "online_idle", labels: {} },
+      session: { epoch: 1, claimed: false },
+      // wasCreated absent
+    };
+    expect(parseHandshakeResponse(wire)?.wasCreated).toBe(false);
   });
 });
 
@@ -181,10 +213,27 @@ describe("resolveClientVersion (bug-17)", () => {
   });
 });
 
+// Helper: build a canonical envelope wire shape per mission-63 W3.
+function canonicalRegisterRoleWire(
+  agentId: string,
+  sessionEpoch: number,
+  wasCreated: boolean,
+): Record<string, unknown> {
+  return {
+    ok: true,
+    agent: {
+      id: agentId, name: agentId, role: "engineer",
+      livenessState: "online", activityState: "online_idle", labels: {},
+    },
+    session: { epoch: sessionEpoch, claimed: false },
+    wasCreated,
+  };
+}
+
 describe("performHandshake", () => {
   it("returns parsed response on success and logs the [Handshake] Registered line", async () => {
-    const body: HandshakeResponse = { agentId: "eng-abc", sessionEpoch: 1, wasCreated: true };
-    const executeTool = vi.fn().mockResolvedValue(body);
+    const wire = canonicalRegisterRoleWire("eng-abc", 1, true);
+    const executeTool = vi.fn().mockResolvedValue(wire);
     const log = vi.fn();
 
     const result = await performHandshake({
@@ -198,7 +247,7 @@ describe("performHandshake", () => {
       role: "engineer",
       globalInstanceId: "uuid-test",
     }));
-    expect(result.response).toEqual(body);
+    expect(result.response).toEqual<HandshakeResponse>({ agentId: "eng-abc", sessionEpoch: 1, wasCreated: true });
     expect(result.epoch).toBe(1);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("[Handshake] Registered as eng-abc"));
     expect(log).toHaveBeenCalledWith(expect.stringContaining("newly created"));
@@ -248,8 +297,8 @@ describe("performHandshake", () => {
     // Post-mission-40-T2: register_role no longer increments epoch on its own.
     // ANY positive delta (epoch grew between our two register_role calls)
     // means an external claim_session displaced our prior session in between.
-    const body: HandshakeResponse = { agentId: "eng-x", sessionEpoch: 5, wasCreated: false };
-    const executeTool = vi.fn().mockResolvedValue(body);
+    const wire = canonicalRegisterRoleWire("eng-x", 5, false);
+    const executeTool = vi.fn().mockResolvedValue(wire);
     const log = vi.fn();
 
     await performHandshake({
@@ -266,8 +315,8 @@ describe("performHandshake", () => {
   it("logs epoch advancement on +1 delta (any positive delta is external displacement post-T2)", async () => {
     // Pre-mission-40-T2: +1 was a normal register_role-bump (no log).
     // Post-T2: +1 means an external claim_session displaced us (DO log).
-    const body: HandshakeResponse = { agentId: "eng-x", sessionEpoch: 3, wasCreated: false };
-    const executeTool = vi.fn().mockResolvedValue(body);
+    const wire = canonicalRegisterRoleWire("eng-x", 3, false);
+    const executeTool = vi.fn().mockResolvedValue(wire);
     const log = vi.fn();
 
     await performHandshake({
@@ -284,8 +333,8 @@ describe("performHandshake", () => {
   it("does NOT log epoch advancement when epoch unchanged (idempotent register_role under T2)", async () => {
     // T2: register_role is pure identity assertion. Repeated calls leave
     // the epoch unchanged unless an external claim happened.
-    const body: HandshakeResponse = { agentId: "eng-x", sessionEpoch: 2, wasCreated: false };
-    const executeTool = vi.fn().mockResolvedValue(body);
+    const wire = canonicalRegisterRoleWire("eng-x", 2, false);
+    const executeTool = vi.fn().mockResolvedValue(wire);
     const log = vi.fn();
 
     await performHandshake({
