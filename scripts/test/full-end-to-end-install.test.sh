@@ -165,6 +165,31 @@ else
   fi
 fi
 
+# Step 7 — Verify .mcp.json delivered to npm-install location (Calibration #38)
+# Without .mcp.json at the npm-installed path, Claude Code cannot register the
+# plugin's MCP server even though plugin install + manifest validation pass.
+# The shim subprocess is silently never spawned. Smoking-gun symptom: claude
+# plugin list shows agent-adapter enabled, but claude mcp list does NOT show
+# the registered server, and ToolSearch finds no mcp__plugin_agent-adapter_*
+# tool schemas.
+echo ""
+echo "Section 6: .mcp.json delivered to npm-install location (Calibration #38 root-cause fix)"
+INSTALLED_MCP_JSON="$INSTALL_PREFIX/node_modules/@apnex/claude-plugin/.mcp.json"
+if [ -f "$INSTALLED_MCP_JSON" ]; then
+  assert_pass "6.1 .mcp.json present at npm-installed path"
+  installed_proxy="$(node -e "
+    const m = JSON.parse(require('fs').readFileSync('$INSTALLED_MCP_JSON', 'utf8'));
+    process.stdout.write(Object.keys(m.mcpServers || {}).join(','));
+  " 2>/dev/null)"
+  if echo "$installed_proxy" | grep -q "proxy"; then
+    assert_pass "6.2 installed .mcp.json declares mcpServers.proxy (Claude Code will spawn shim)"
+  else
+    assert_fail "6.2 installed .mcp.json missing mcpServers.proxy" "Actual servers: '$installed_proxy'"
+  fi
+else
+  assert_fail "6.1 .mcp.json MISSING from npm-installed path" "Calibration #38 — Claude Code cannot register MCP server; ToolSearch will find no schemas"
+fi
+
 # Cleanup: revert source-tree to placeholder
 node scripts/version-rewrite.js --revert >/dev/null 2>&1
 

@@ -1,10 +1,20 @@
 {
   "name": "@apnex/claude-plugin",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Claude Code host bundle — Universal Agent Adapter for the OIS agentic network",
   "license": "MIT",
   "type": "module",
   "main": "dist/shim.js",
+  "files": [
+    "dist/",
+    ".claude-plugin/",
+    ".mcp.json",
+    "install.sh",
+    "QUICKSTART.md",
+    "tsconfig.json",
+    "src/",
+    "test/"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/shim.js",

@@ -173,6 +173,31 @@ if [ -f "$PKG_ROOT/install.sh" ]; then
   fi
 fi
 
+# Test 8 — .mcp.json bundled (Calibration #38 NEW; mission-64 W1+W2-fix-3)
+# .mcp.json registers the MCP server with Claude Code. Without it, Claude
+# Code loads the plugin (manifest validation passes) but never spawns the
+# shim subprocess. Root-cause class: gitignore-root-anchor-leakage — repo
+# root .gitignore rule "/.mcp.json" is re-anchored by npm-packlist to each
+# workspace root, silently excluding adapters/claude-plugin/.mcp.json from
+# publish. Structural fix: explicit "files" field in package.json bypasses
+# gitignore-fallback path entirely.
+echo ""
+echo "Section 7: .mcp.json bundled (Calibration #38 root-cause fix)"
+if [ -f "$PKG_ROOT/.mcp.json" ]; then
+  assert_pass "7.1 .mcp.json present in tarball (Claude Code MCP server registration)"
+  mcp_proxy="$(node -e "
+    const m = JSON.parse(require('fs').readFileSync('$PKG_ROOT/.mcp.json', 'utf8'));
+    process.stdout.write(Object.keys(m.mcpServers || {}).join(','));
+  ")"
+  if echo "$mcp_proxy" | grep -q "proxy"; then
+    assert_pass "7.2 .mcp.json declares mcpServers.proxy (canonical server name)"
+  else
+    assert_fail "7.2 .mcp.json missing mcpServers.proxy declaration" "Actual servers: '$mcp_proxy'"
+  fi
+else
+  assert_fail "7.1 .mcp.json MISSING from tarball" "Calibration #38 defect class — Claude Code will not spawn MCP server"
+fi
+
 # Cleanup: revert version-rewrite back to placeholder
 node scripts/version-rewrite.js --revert >/dev/null 2>&1
 
