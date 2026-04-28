@@ -368,6 +368,8 @@ A PR triggers Pass 10 if **any** of the following are true:
 
 PRs that touch ONLY documentation, methodology, audits, ADRs, or non-code surfaces do NOT need Pass 10.
 
+**Out of scope for Pass 10:** PR-rebase hygiene (stale-branch-against-current-main) is a separate concern not covered by §A–§D. Pass 10 protocol assumes the merging branch is rebased onto current `origin/main` (mergeStateStatus=CLEAN); a DIRTY/CONFLICTING merge state is a per-PR pre-merge concern handled by the standard rebase + force-push-with-lease sequence (Step 4 merge-queue failure recovery above), not by Pass 10's adapter-restart sequencing.
+
 ### §A — Hub container rebuild (calibration #17)
 
 ```bash
@@ -386,9 +388,9 @@ cd packages/network-adapter
 rm -rf dist
 npm run build
 npm pack
-cp ois-network-adapter-2.0.0.tgz <adapters/claude-plugin>/lib/
+cp ois-network-adapter-2.0.0.tgz <adapters/claude-plugin>/        # root of claude-plugin, NOT a /lib/ subdirectory
 cd <adapters/claude-plugin>
-rm -rf node_modules
+rm -rf node_modules package-lock.json                              # lockfile removal forces fresh resolve against new tgz hash
 ./install.sh
 # Then full adapter restart
 ```

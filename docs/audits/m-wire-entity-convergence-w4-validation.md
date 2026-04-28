@@ -51,7 +51,7 @@ Substrate-self-dogfood 5-requirement pattern checklist (per mission-lifecycle.md
 | 2 | Verbatim canonical envelope at handshake response | ✓ | ✓ | **GREEN** | #18 retire (wire-shape ↔ entity-shape unified) |
 | 3 | agent_state_changed SSE round-trip (previous + at + cause) | ✓ via Hub log dispatch | ✓ via Hub log dispatch | **GREEN** | core canonical-envelope wire conformance |
 | 4 | Pulse content rendering inline symmetric | ✓ architectPulse ~440 chars inline | ✓ engineerPulse ~440 chars inline | **GREEN** | #20 sub-finding retire (pulse path) |
-| 5 | Thread_message body inline | ⚠ inline + ~250-char silent truncation | ⚠ inline + ~250-char silent truncation | **AMBER** | #20 main partial-retire; **#26 NEW** (truncation marker missing) |
+| 5 | Thread_message body inline | ⚠ (greg→lily direction) inline + ~250-char silent truncation | ⚠ (lily→greg direction) inline + ~250-char silent truncation | **AMBER** (symmetric both directions) | #20 main partial-retire; **#26 NEW** (truncation marker missing) |
 | 6 | Thread_convergence_finalized full inline | ✓ ~1900 chars full verbatim (thread-402 close) | ✓ ~1900 chars full verbatim (thread-402 close) | **GREEN** | #20 sub-finding retire (convergence path) |
 | 7 | get_agents engineer-callable | n/a | OUT-OF-SCOPE per W1+W2 ratified narrowing | **OUT-OF-SCOPE** | #21 stays deferred to idea-220 Phase 2 |
 
