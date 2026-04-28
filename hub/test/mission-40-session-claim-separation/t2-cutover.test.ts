@@ -66,12 +66,13 @@ describe("M-Session-Claim-Separation T2 — register_role cutover", () => {
     ctx = createTestContext();
   });
 
-  it("register_role response carries sessionClaimed=false + sessionEpoch=0 on first contact", async () => {
+  it("register_role response carries session.claimed=false + session.epoch=0 on first contact (mission-63 canonical)", async () => {
     const result = await router.handle("register_role", ENGINEER_HANDSHAKE, ctx);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.ok).toBe(true);
-    expect(parsed.sessionClaimed).toBe(false);
-    expect(parsed.sessionEpoch).toBe(0);
+    expect(parsed.session.claimed).toBe(false);
+    expect(parsed.session.epoch).toBe(0);
+    expect(parsed.agent.id).toBeDefined();
   });
 
   it("register_role does NOT emit session-claim audits — bug-26 probe-resolution test", async () => {
@@ -84,13 +85,13 @@ describe("M-Session-Claim-Separation T2 — register_role cutover", () => {
     expect(audits.some((a) => a.action === "agent_identity_asserted")).toBe(true);
   });
 
-  it("repeated register_role calls do NOT bump sessionEpoch (idempotent identity)", async () => {
+  it("repeated register_role calls do NOT bump session.epoch (idempotent identity)", async () => {
     const first = await router.handle("register_role", ENGINEER_HANDSHAKE, ctx);
     const firstParsed = JSON.parse(first.content[0].text);
     const second = await router.handle("register_role", ENGINEER_HANDSHAKE, ctx);
     const secondParsed = JSON.parse(second.content[0].text);
-    expect(secondParsed.sessionEpoch).toBe(firstParsed.sessionEpoch);
-    expect(secondParsed.sessionClaimed).toBe(false);
+    expect(secondParsed.session.epoch).toBe(firstParsed.session.epoch);
+    expect(secondParsed.session.claimed).toBe(false);
   });
 });
 
@@ -103,14 +104,16 @@ describe("M-Session-Claim-Separation T2 — explicit claim_session", () => {
     ctx = createTestContext();
   });
 
-  it("claim_session after register_role binds session + increments epoch", async () => {
+  it("claim_session after register_role binds session + increments epoch (mission-63 canonical)", async () => {
     await router.handle("register_role", ENGINEER_HANDSHAKE, ctx);
     const claim = await router.handle("claim_session", {}, ctx);
     const parsed = JSON.parse(claim.content[0].text);
     expect(parsed.ok).toBe(true);
-    expect(parsed.sessionClaimed).toBe(true);
-    expect(parsed.sessionEpoch).toBe(1);
-    expect(parsed.displacedPriorSession).toBeUndefined();
+    expect(parsed.agent.id).toBeDefined();
+    expect(parsed.session.claimed).toBe(true);
+    expect(parsed.session.epoch).toBe(1);
+    expect(parsed.session.trigger).toBe("explicit");
+    expect(parsed.session.displacedPriorSession).toBeUndefined();
   });
 
   it("claim_session emits agent_session_claimed audit with trigger=explicit", async () => {
@@ -127,8 +130,8 @@ describe("M-Session-Claim-Separation T2 — explicit claim_session", () => {
     await router.handle("claim_session", {}, ctx);
     const second = await router.handle("claim_session", {}, ctx);
     const parsed = JSON.parse(second.content[0].text);
-    expect(parsed.sessionClaimed).toBe(true);
-    expect(parsed.displacedPriorSession).toBeUndefined();
+    expect(parsed.session.claimed).toBe(true);
+    expect(parsed.session.displacedPriorSession).toBeUndefined();
     const audits = await snapshotAudits(ctx);
     expect(audits.filter((a) => a.action === "agent_session_displaced").length).toBe(0);
   });
@@ -171,9 +174,10 @@ describe("M-Session-Claim-Separation T2 — same-fingerprint two-adapter coexist
     await router.handle("register_role", ENGINEER_HANDSHAKE, ctxB);
     const claimB = await router.handle("claim_session", {}, ctxB);
     const parsedB = JSON.parse(claimB.content[0].text);
-    expect(parsedB.sessionClaimed).toBe(true);
-    expect(parsedB.sessionEpoch).toBe(2);
-    expect(parsedB.displacedPriorSession).toEqual({ sessionId: "sess-A", epoch: 1 });
+    expect(parsedB.session.claimed).toBe(true);
+    expect(parsedB.session.epoch).toBe(2);
+    expect(parsedB.session.trigger).toBe("explicit");
+    expect(parsedB.session.displacedPriorSession).toEqual({ sessionId: "sess-A", epoch: 1 });
 
     const audits = await stores.audit.listEntries(500);
     const displaced = audits.filter((a) => a.action === "agent_session_displaced");
