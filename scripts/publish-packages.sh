@@ -93,6 +93,23 @@ done
 
 echo "[publish-packages] Pre-flight checks passed"
 
+# Hoist version-rewrite into publish-packages.sh explicitly (Calibration #35 fix).
+# npm `--workspace=X` flag uses the workspace's own lifecycle hooks, NOT root's;
+# so root package.json's `prepublishOnly: node scripts/version-rewrite.js` never
+# fires when this script invokes `npm publish --workspace=...`. We hoist the
+# rewrite call here as architect-lean (a): single-source-of-truth; bypasses
+# npm lifecycle quirk; controls the whole flow.
+#
+# Trap revert on any exit (success or failure) so source-tree always returns
+# to placeholder state for dev workflow continuity.
+echo ""
+echo "[publish-packages] Rewriting cross-@apnex/* deps * → ^X.Y.Z (pre-publish)"
+node "$REPO_ROOT/scripts/version-rewrite.js" || {
+  echo "[publish-packages] ✗ version-rewrite failed; aborting"
+  exit 2
+}
+trap 'echo "[publish-packages] Reverting cross-@apnex/* deps ^X.Y.Z → * (post-publish)"; node "$REPO_ROOT/scripts/version-rewrite.js" --revert' EXIT
+
 # Publish each package in topological order
 for pkg in "${PACKAGES[@]}"; do
   echo ""

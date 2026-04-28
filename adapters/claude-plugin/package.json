@@ -1,6 +1,6 @@
 {
   "name": "@apnex/claude-plugin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Claude Code host bundle — Universal Agent Adapter for the OIS agentic network",
   "license": "MIT",
   "type": "module",

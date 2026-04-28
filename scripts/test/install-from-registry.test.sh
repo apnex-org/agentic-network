@@ -90,13 +90,18 @@ if [ -f "$PKG_ROOT/.claude-plugin/marketplace.json" ]; then
     process.stdout.write(m.plugins[0].source || '');
   ")"
   if [ -n "$src_path" ]; then
-    # Resolve path relative to marketplace.json's location
-    resolved="$(cd "$PKG_ROOT/.claude-plugin" && cd "$src_path" 2>/dev/null && pwd)"
-    if [ -n "$resolved" ] && [ -d "$resolved" ] && [ -f "$resolved/.claude-plugin/plugin.json" ]; then
-      assert_pass "1.2 marketplace.json source resolves to plugin dir with plugin.json: $src_path"
-    else
-      assert_fail "1.2 marketplace.json source path '$src_path' doesn't resolve to a valid plugin dir"
-    fi
+    # claude marketplace parser empirically requires leading "./" (Calibration #36; verified
+    # on claude 2.1.121 — bare ".." or "." rejected as "source type your Claude Code version
+    # does not support"). Validate format-only here; full e2e exercises actual claude plugin
+    # install in scripts/test/full-end-to-end-install.test.sh.
+    case "$src_path" in
+      ./|./.|./*)
+        assert_pass "1.2 marketplace.json source format claude-parser-friendly: '$src_path' (starts with ./)"
+        ;;
+      *)
+        assert_fail "1.2 marketplace.json source format will reject from claude-parser" "Actual: '$src_path' — Calibration #36 defect class (need leading ./)"
+        ;;
+    esac
   else
     assert_fail "1.2 marketplace.json missing plugins[0].source field"
   fi

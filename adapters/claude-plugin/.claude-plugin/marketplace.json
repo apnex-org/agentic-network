@@ -9,7 +9,7 @@
       "description": "Universal agent adapter bridging Claude Code to the cloud MCP Relay Hub with autonomous channel-based wakeup",
       "author": { "name": "OIS Director", "email": "director@ois.local" },
       "category": "development",
-      "source": ".."
+      "source": "./"
     }
   ]
 }

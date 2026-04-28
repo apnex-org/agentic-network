@@ -1,6 +1,6 @@
 {
   "name": "@apnex/message-router",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Sovereign Message-router (Layer 2) — kind/subkind dispatch + seen-id LRU dedup + hooks-pattern host-injection for the OIS Universal Adapter",
   "type": "module",
   "main": "dist/index.js",
