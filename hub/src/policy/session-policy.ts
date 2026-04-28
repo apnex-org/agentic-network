@@ -9,6 +9,8 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { AgentRole, RegisterAgentPayload, AgentClientMetadata } from "../state.js";
+import { projectAgent } from "./agent-projection.js";
+import type { AgentProjection, SessionBindingState } from "./agent-projection.js";
 
 // ── M18 Handshake: register_role ────────────────────────────────────
 
@@ -118,24 +120,35 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
         console.warn(`[session-policy] agent_handshake_refreshed audit write failed for ${identity.agentId}: ${(err as Error).message ?? err}`);
       }
     }
+    // mission-63 W1+W2: canonical envelope per Design §3.1. Project the
+    // agent record to wire shape; session-binding state under `session`;
+    // `wasCreated` at root. Replaces the legacy flat-field shape (agentId,
+    // sessionEpoch, sessionClaimed, clientMetadata, advisoryTags, labels
+    // at top level). Adapter parser reads body.agent.id post-W3.
+    if (!currentAgent) {
+      // assertIdentity returned ok but the agent record isn't present
+      // — internal invariant violation (registry write didn't land).
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({ ok: false, code: "agent_record_missing", message: `assertIdentity succeeded but agent ${identity.agentId} not found in registry` }),
+        }],
+        isError: true,
+      };
+    }
+    const agentProjection: AgentProjection = projectAgent(currentAgent);
+    const session: SessionBindingState = {
+      epoch: currentSessionEpoch,
+      claimed: false,
+    };
     return {
       content: [{
         type: "text" as const,
         text: JSON.stringify({
           ok: true,
-          agentId: identity.agentId,
-          // T2: currentSessionEpoch reflects as-observed value, NOT a
-          // just-incremented value. Adapters must key on sessionClaimed
-          // (next field), not epoch delta.
-          sessionEpoch: currentSessionEpoch,
-          // T2: NEW field. False from register_role; true only from
-          // claim_session response. Adapters key on this to detect
-          // "I am the active session for this identity".
-          sessionClaimed: false,
+          agent: agentProjection,
+          session,
           wasCreated: identity.wasCreated,
-          clientMetadata: identity.clientMetadata,
-          advisoryTags: identity.advisoryTags,
-          labels: identity.labels,
           message: `Identity asserted for agent ${identity.agentId} (no session claim — call claim_session to bind this session as the active one${identity.wasCreated ? ", newly created" : ""})`,
         }),
       }],
@@ -224,15 +237,35 @@ async function claimSessionTool(_args: Record<string, unknown>, ctx: IPolicyCont
       console.warn(`[session-policy] agent_session_displaced audit write failed for ${claim.agentId}: ${(err as Error).message ?? err}`);
     }
   }
+  // mission-63 W1+W2: canonical envelope per Design §3.2. Re-fetch agent
+  // post-claim so the projection reflects post-claim state (claimSession
+  // bumps sessionEpoch + currentSessionId). Session-binding state under
+  // `session`; trigger + displacedPriorSession surface there per §2.1
+  // canonical shape.
+  const postClaimAgent = await ctx.stores.engineerRegistry.getAgent(claim.agentId);
+  if (!postClaimAgent) {
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({ ok: false, code: "agent_record_missing", message: `claimSession succeeded but agent ${claim.agentId} not found in registry` }),
+      }],
+      isError: true,
+    };
+  }
+  const agentProjection: AgentProjection = projectAgent(postClaimAgent);
+  const session: SessionBindingState = {
+    epoch: claim.sessionEpoch,
+    claimed: true,
+    trigger: claim.trigger,
+    ...(claim.displacedPriorSession ? { displacedPriorSession: claim.displacedPriorSession } : {}),
+  };
   return {
     content: [{
       type: "text" as const,
       text: JSON.stringify({
         ok: true,
-        agentId: claim.agentId,
-        sessionEpoch: claim.sessionEpoch,
-        sessionClaimed: true,
-        ...(claim.displacedPriorSession ? { displacedPriorSession: claim.displacedPriorSession } : {}),
+        agent: agentProjection,
+        session,
         message: `Session claimed for agent ${claim.agentId} (epoch=${claim.sessionEpoch}${claim.displacedPriorSession ? `, displaced prior session ${claim.displacedPriorSession.sessionId} epoch=${claim.displacedPriorSession.epoch}` : ""})`,
       }),
     }],
@@ -301,68 +334,25 @@ async function listAvailablePeers(args: Record<string, unknown>, ctx: IPolicyCon
   };
 }
 
-// ── Mission-62 W1+W2 Pass 4: get_agents pull primitive ────────────────
+// ── mission-63 W1+W2: get_agents pull primitive (canonical envelope) ──
 //
 // One canonical tool. Replaces get_engineer_status as the routing-path
-// projection per Design v1.0 §4.1. Sub-100ms p99 target on the routing
-// hot-path (filter + default fields). [Any] role-callable per Q2=B+C+D.
-
-type AgentFieldGroup = "identity" | "session" | "fsm" | "client" | "errors" | "all";
-
-const ALL_FIELDS_EXPANDED: readonly AgentFieldGroup[] = ["identity", "session", "fsm", "client", "errors"] as const;
-const DEFAULT_FIELD_GROUPS: readonly AgentFieldGroup[] = ["identity", "session", "fsm"] as const;
-
-interface AgentProjection {
-  // identity group
-  id?: string;
-  name?: string;
-  role?: AgentRole;
-  labels?: Record<string, string>;
-  // session group
-  sessionId?: string | null;
-  sessionEpoch?: number;
-  sessionStartedAt?: string | null;
-  firstSeenAt?: string;
-  lastSeenAt?: string;
-  // fsm group
-  livenessState?: string;
-  activityState?: string;
-  idleSince?: string | null;
-  workingSince?: string | null;
-  quotaBlockedUntil?: string | null;
-  lastToolCallAt?: string | null;
-  lastToolCallName?: string | null;
-  currentMissionId?: string | null;
-  currentTaskId?: string | null;
-  currentThreadId?: string | null;
-  // client group
-  adapterVersion?: string;
-  clientMetadata?: unknown;
-  ipAddress?: string | null;
-  restartCount?: number;
-  // errors group
-  recentErrors?: unknown[];
-}
-
-function expandFieldGroups(groups: readonly AgentFieldGroup[]): Set<AgentFieldGroup> {
-  const out = new Set<AgentFieldGroup>();
-  for (const g of groups) {
-    if (g === "all") {
-      for (const f of ALL_FIELDS_EXPANDED) out.add(f);
-    } else {
-      out.add(g);
-    }
-  }
-  return out;
-}
+// projection per Design v1.0 §3.3. Returns `{agents: AgentProjection[]}`
+// per §2.1 canonical wire shape; selective surfacing of operational
+// fields is sub-deferred to idea-220 Phase 2 (calibration #21
+// engineer-side LLM-callable + per-role field-set policy). [Any]
+// role-callable.
+//
+// Field-group projection retired per anti-goal §8.1 clean cutover —
+// the `fields` parameter is removed from the schema; output is always
+// canonical AgentProjection. Filters (role, livenessState, activityState,
+// label, agentId) preserved.
 
 async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const filter = (args.filter as Record<string, unknown> | undefined) ?? {};
-  const fieldsArg = args.fields as readonly AgentFieldGroup[] | undefined;
-  const fieldGroups = expandFieldGroups(fieldsArg && fieldsArg.length > 0 ? fieldsArg : DEFAULT_FIELD_GROUPS);
 
-  // Filter setup. selectAgents handles role + matchLabels; livenessState +
-  // activityState + currentMissionId + agentId we filter post-fetch.
+  // Filter setup. listAgents returns the full population (including
+  // archived/offline); we filter in-memory.
   const roleFilter = filter.role as AgentRole | AgentRole[] | undefined;
   const livenessFilter = filter.livenessState as string | string[] | undefined;
   const activityFilter = filter.activityState as string | string[] | undefined;
@@ -377,9 +367,6 @@ async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Pr
     ? new Set(Array.isArray(agentIdFilter) ? agentIdFilter : [agentIdFilter])
     : null;
 
-  // Pull all agents (selectAgents excludes archived + offline; we want the
-  // full population for activityState filtering and self-introspection per
-  // Design §4.1). Use listAgents which returns the full set.
   const agents = await ctx.stores.engineerRegistry.listAgents();
   const livenessAllow = livenessFilter
     ? new Set(Array.isArray(livenessFilter) ? livenessFilter : [livenessFilter])
@@ -396,55 +383,17 @@ async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Pr
     if (activityAllow && !activityAllow.has(a.activityState)) continue;
     if (labelFilter && !labelsMatchAll(a.labels ?? {}, labelFilter)) continue;
     if (agentIdSet && !agentIdSet.has(a.id)) continue;
-    // currentMissionId filter: only match if we have a derived value (skip
-    // until derivation is wired; for now no-match if filter set since stored
-    // is always null per Design §11.1 derive-on-read).
-    if (missionFilter) continue; // TODO(pass-4b): derivation
-
-    const proj: AgentProjection = {};
-    if (fieldGroups.has("identity")) {
-      proj.id = a.id;
-      proj.name = a.name;
-      proj.role = a.role;
-      proj.labels = a.labels ?? {};
-    }
-    if (fieldGroups.has("session")) {
-      proj.sessionId = a.currentSessionId;
-      proj.sessionEpoch = a.sessionEpoch;
-      proj.sessionStartedAt = a.sessionStartedAt;
-      proj.firstSeenAt = a.firstSeenAt;
-      proj.lastSeenAt = a.lastSeenAt;
-    }
-    if (fieldGroups.has("fsm")) {
-      proj.livenessState = a.livenessState;
-      proj.activityState = a.activityState;
-      proj.idleSince = a.idleSince;
-      proj.workingSince = a.workingSince;
-      proj.quotaBlockedUntil = a.quotaBlockedUntil;
-      proj.lastToolCallAt = a.lastToolCallAt;
-      proj.lastToolCallName = a.lastToolCallName;
-      // TODO(pass-4b): derive currentMissionId/TaskId/ThreadId from
-      // task/thread stores per Design §11.1; for now null.
-      proj.currentMissionId = null;
-      proj.currentTaskId = null;
-      proj.currentThreadId = null;
-    }
-    if (fieldGroups.has("client")) {
-      proj.adapterVersion = a.adapterVersion;
-      proj.clientMetadata = a.clientMetadata;
-      proj.ipAddress = a.ipAddress;
-      proj.restartCount = a.restartCount;
-    }
-    if (fieldGroups.has("errors")) {
-      proj.recentErrors = a.recentErrors;
-    }
-    results.push(proj);
+    // currentMissionId derivation deferred — stored is always null per
+    // Design §11.1 derive-on-read (mission-62 sub-deferral); idea-220
+    // Phase 2 wires it.
+    if (missionFilter) continue;
+    results.push(projectAgent(a));
   }
 
   return {
     content: [{
       type: "text" as const,
-      text: JSON.stringify({ count: results.length, agents: results }),
+      text: JSON.stringify({ agents: results }),
     }],
   };
 }
@@ -456,59 +405,98 @@ function labelsMatchAll(labels: Record<string, string>, match: Record<string, st
   return true;
 }
 
-// ── Mission-62 W1+W2 Pass 3: signal_working_* + signal_quota_* tools ──
+// ── signal_working_* + signal_quota_* tools ───────────────────────────
 //
 // Adapter signals tool-call boundaries + idea-109 quota-block transitions
-// to the Hub. Hub mutates the agent's activity FSM. Per Design v1.0 §5.2,
+// to the Hub. Hub mutates the agent's activity FSM. Per Design §5.2,
 // LLM-to-MCP-tool-call path doesn't enqueue items, so implicit-only
 // (drain+completion-ack) inference would be blind to most tool calls;
 // explicit signaling is required.
 //
-// Pass 5: each handler dispatches `agent_state_changed` SSE event after
-// successful state mutation per Design §4.2. broadcast-by-role-targeting
-// v1.0 (peers + architects); per-event-class subscription deferred to
-// idea-121.
+// Each handler dispatches `agent_state_changed` SSE event after successful
+// state mutation per Design §4.2. broadcast-by-role-targeting v1.0
+// (peers + architects); per-event-class subscription deferred to idea-121.
+//
+// mission-63 W1+W2: payload converted to canonical envelope per Design
+// §3.4 — `{event, agent: AgentProjection, previous: {livenessState?,
+// activityState?}, changed[], cause, at}`. The `previous` sub-object
+// preserves prior FSM state for diff-rendering subscribers (round-1
+// audit ask 4) — only fields that changed appear (TS optional-key
+// absent semantics; round-2 audit observation flagged for unit-test
+// coverage).
 
-import type { Agent, ActivityState as ActivityStateType } from "../state.js";
+import type { Agent } from "../state.js";
 
 /**
- * Mission-62 W1+W2 Pass 5: selector for agent_state_changed SSE event.
- * Broadcast-by-role-targeting v1.0 — both architects + engineers see
- * all transitions. Per-event-class subscription deferred to idea-121.
+ * FSM-transition cause for agent_state_changed events. Stable identifiers
+ * mirroring the originating tool name (or auto-claim hook for future
+ * first_tool_call / sse_subscribe paths). Adapter render-templates
+ * dispatch on `cause` post-W3.
  */
+type AgentStateChangedCause =
+  | "signal_working_started"
+  | "signal_working_completed"
+  | "signal_quota_blocked"
+  | "signal_quota_recovered"
+  | "first_tool_call"
+  | "sse_subscribe"
+  | "explicit_claim";
+
 function agentStateChangedSelector(): import("../state.js").Selector {
   return { roles: ["architect", "engineer"] };
 }
 
+/**
+ * Canonical agent_state_changed payload per Design §3.4 + ADR-028.
+ * `previous` contains only fields that changed (TS optional-key absent
+ * semantics — fields are absent in JSON when unchanged; round-2 audit
+ * observation: subscribers should treat absent and explicitly-undefined
+ * as no-change, since most JSON parsers serialize as absent).
+ */
 interface AgentStateChangedPayload {
   event: "agent_state_changed";
-  agentId: string;
-  fromLivenessState: string | null;
-  toLivenessState: string;
-  fromActivityState: string | null;
-  toActivityState: string;
-  changedFields: string[];
+  agent: AgentProjection;
+  previous: {
+    livenessState?: Agent["livenessState"];
+    activityState?: Agent["activityState"];
+  };
+  changed: string[];
+  cause: AgentStateChangedCause;
   at: string;
 }
 
+/**
+ * Build canonical agent_state_changed payload. `before` is the agent
+ * pre-mutation; `after` is the agent post-mutation. `previous` carries
+ * only the fields that differ between before and after; `changed[]`
+ * lists the field names (sorted; deduplicated against extraChangedFields
+ * for non-FSM mutations like lastToolCallAt or workingSince).
+ */
 function buildAgentStateChangedPayload(
   before: Agent,
-  toActivityState: ActivityStateType,
+  after: Agent,
+  cause: AgentStateChangedCause,
   extraChangedFields: string[] = [],
 ): AgentStateChangedPayload {
-  const changedFields: string[] = [];
-  if (before.activityState !== toActivityState) changedFields.push("activityState");
+  const previous: AgentStateChangedPayload["previous"] = {};
+  const changed: string[] = [];
+  if (before.livenessState !== after.livenessState) {
+    previous.livenessState = before.livenessState;
+    changed.push("livenessState");
+  }
+  if (before.activityState !== after.activityState) {
+    previous.activityState = before.activityState;
+    changed.push("activityState");
+  }
   for (const f of extraChangedFields) {
-    if (!changedFields.includes(f)) changedFields.push(f);
+    if (!changed.includes(f)) changed.push(f);
   }
   return {
     event: "agent_state_changed",
-    agentId: before.id,
-    fromLivenessState: before.livenessState,
-    toLivenessState: before.livenessState, // unchanged by activity-only transitions
-    fromActivityState: before.activityState,
-    toActivityState,
-    changedFields,
+    agent: projectAgent(after),
+    previous,
+    changed,
+    cause,
     at: new Date().toISOString(),
   };
 }
@@ -529,7 +517,8 @@ async function signalWorkingStarted(args: Record<string, unknown>, ctx: IPolicyC
     };
   }
   await ctx.stores.engineerRegistry.recordToolCallStart(self.id, toolName);
-  const payload = buildAgentStateChangedPayload(self, "online_working", ["lastToolCallAt", "lastToolCallName", "workingSince"]);
+  const after = (await ctx.stores.engineerRegistry.getAgent(self.id)) ?? self;
+  const payload = buildAgentStateChangedPayload(self, after, "signal_working_started", ["lastToolCallAt", "lastToolCallName", "workingSince"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.id, activityState: "online_working", toolName }) }],
@@ -545,7 +534,8 @@ async function signalWorkingCompleted(_args: Record<string, unknown>, ctx: IPoli
     };
   }
   await ctx.stores.engineerRegistry.recordToolCallComplete(self.id);
-  const payload = buildAgentStateChangedPayload(self, "online_idle", ["idleSince", "workingSince"]);
+  const after = (await ctx.stores.engineerRegistry.getAgent(self.id)) ?? self;
+  const payload = buildAgentStateChangedPayload(self, after, "signal_working_completed", ["idleSince", "workingSince"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.id, activityState: "online_idle" }) }],
@@ -568,7 +558,8 @@ async function signalQuotaBlocked(args: Record<string, unknown>, ctx: IPolicyCon
     };
   }
   await ctx.stores.engineerRegistry.recordQuotaBlocked(self.id, retryAfterSeconds);
-  const payload = buildAgentStateChangedPayload(self, "online_quota_blocked", ["quotaBlockedUntil", "workingSince"]);
+  const after = (await ctx.stores.engineerRegistry.getAgent(self.id)) ?? self;
+  const payload = buildAgentStateChangedPayload(self, after, "signal_quota_blocked", ["quotaBlockedUntil", "workingSince"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.id, activityState: "online_quota_blocked", retryAfterSeconds }) }],
@@ -584,7 +575,8 @@ async function signalQuotaRecovered(_args: Record<string, unknown>, ctx: IPolicy
     };
   }
   await ctx.stores.engineerRegistry.recordQuotaRecovered(self.id);
-  const payload = buildAgentStateChangedPayload(self, "online_idle", ["idleSince", "quotaBlockedUntil"]);
+  const after = (await ctx.stores.engineerRegistry.getAgent(self.id)) ?? self;
+  const payload = buildAgentStateChangedPayload(self, after, "signal_quota_recovered", ["idleSince", "quotaBlockedUntil"]);
   await ctx.dispatch("agent_state_changed", payload as unknown as Record<string, unknown>, agentStateChangedSelector());
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ ok: true, agentId: self.id, activityState: "online_idle" }) }],
@@ -690,7 +682,7 @@ export function registerSessionPolicy(router: PolicyRouter): void {
 
   router.register(
     "get_agents",
-    "[Any] Mission-62 (M-Agent-Entity-Revisit): live-query the agent population with optional filters and a fields-projection. Replaces get_engineer_status as the routing-path projection. Self-introspectable (caller sees themselves). Default fields = identity+session+fsm (cheap routing path). Defers final tool-surface naming to idea-121.",
+    "[Any] mission-63 (M-Wire-Entity-Convergence): live-query the agent population with optional filters. Returns canonical AgentProjection[] per Design §3.3 + ADR-028 (id, name, role, livenessState, activityState, labels, clientMetadata?, advisoryTags?). Internal/operational fields stay OFF wire (Design §2.3). Selective surfacing of operational fields is sub-deferred to idea-220 Phase 2 (calibration #21). Self-introspectable; [Any] role-callable.",
     {
       filter: z.object({
         role: z.union([
@@ -706,10 +698,9 @@ export function registerSessionPolicy(router: PolicyRouter): void {
           z.array(z.enum(["offline", "online_idle", "online_working", "online_quota_blocked", "online_paused"])),
         ]).optional().describe("Filter by mission-62 activity FSM state; single or array."),
         label: z.record(z.string(), z.string()).optional().describe("Match-all label filter."),
-        currentMissionId: z.string().optional().describe("Filter by currently-active mission (derived). Not yet wired in Pass 4 — reserved."),
+        currentMissionId: z.string().optional().describe("Filter by currently-active mission (derived). Reserved; derivation deferred to idea-220 Phase 2."),
         agentId: z.union([z.string(), z.array(z.string())]).optional().describe("Filter by agent ID; single or array."),
       }).optional().describe("Multi-axis filter. All axes ANDed."),
-      fields: z.array(z.enum(["identity", "session", "fsm", "client", "errors", "all"])).optional().describe("Field-projection groups: identity (id+name+role+labels), session (sessionId+sessionEpoch+sessionStartedAt+firstSeenAt+lastSeenAt), fsm (liveness+activity+idle/workingSince+lastToolCall+current*), client (adapterVersion+clientMetadata+ipAddress+restartCount), errors (recentErrors), or 'all' to expand to all groups. Default: identity+session+fsm."),
     },
     getAgents,
   );

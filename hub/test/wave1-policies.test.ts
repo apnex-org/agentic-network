@@ -295,36 +295,38 @@ describe("SessionPolicy", () => {
     },
   };
 
-  it("register_role as engineer (M18 handshake) asserts identity (T2: sessionClaimed=false, epoch unchanged)", async () => {
+  it("register_role as engineer (M18 handshake) asserts identity (mission-63 canonical envelope: session.claimed=false, epoch unchanged)", async () => {
     const result = await router.handle("register_role", engineerHandshake, ctx);
 
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.ok).toBe(true);
-    expect(parsed.agentId).toBeDefined();
-    // M-Session-Claim-Separation (mission-40) T2: register_role now
-    // ONLY asserts identity. sessionClaimed=false; sessionEpoch reflects
-    // current value (0 for first-contact, NOT incremented). Callers must
-    // explicitly call claim_session to bind the session as active.
-    expect(parsed.sessionClaimed).toBe(false);
-    expect(parsed.sessionEpoch).toBe(0);
+    // mission-63 W1+W2: canonical envelope per Design §3.1 — agent under
+    // `agent`, session-binding under `session`. Replaces flat-field shape.
+    expect(parsed.agent).toBeDefined();
+    expect(parsed.agent.id).toBeDefined();
+    expect(parsed.agent.role).toBe("engineer");
+    expect(parsed.session).toBeDefined();
+    expect(parsed.session.claimed).toBe(false);
+    expect(parsed.session.epoch).toBe(0);
   });
 
-  it("claim_session after register_role binds the session and increments sessionEpoch (T2)", async () => {
+  it("claim_session after register_role binds the session and increments session.epoch (mission-63 canonical)", async () => {
     // First assert identity.
     const reg = await router.handle("register_role", engineerHandshake, ctx);
     const regParsed = JSON.parse(reg.content[0].text);
-    expect(regParsed.sessionClaimed).toBe(false);
-    expect(regParsed.sessionEpoch).toBe(0);
+    expect(regParsed.session.claimed).toBe(false);
+    expect(regParsed.session.epoch).toBe(0);
 
     // Then explicit claim.
     const claim = await router.handle("claim_session", {}, ctx);
     const claimParsed = JSON.parse(claim.content[0].text);
     expect(claimParsed.ok).toBe(true);
-    expect(claimParsed.sessionClaimed).toBe(true);
-    expect(claimParsed.sessionEpoch).toBe(1);
-    expect(claimParsed.agentId).toBe(regParsed.agentId);
-    expect(claimParsed.displacedPriorSession).toBeUndefined();
+    expect(claimParsed.agent.id).toBe(regParsed.agent.id);
+    expect(claimParsed.session.claimed).toBe(true);
+    expect(claimParsed.session.epoch).toBe(1);
+    expect(claimParsed.session.trigger).toBe("explicit");
+    expect(claimParsed.session.displacedPriorSession).toBeUndefined();
   });
 
   it("claim_session without prior register_role returns no_identity_asserted (T2)", async () => {
@@ -360,10 +362,10 @@ describe("SessionPolicy", () => {
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.ok).toBe(true);
-    expect(parsed.agentId).toMatch(/^director-/);
+    expect(parsed.agent.id).toMatch(/^director-/);
     // Engineer + architect stay on the eng-* prefix for backward compatibility
     // with existing audit trails + label selectors.
-    expect(parsed.agentId).not.toMatch(/^eng-/);
+    expect(parsed.agent.id).not.toMatch(/^eng-/);
   });
 
   it("registered director SessionRole is 'director' (not mapped to 'unknown')", async () => {
@@ -393,8 +395,8 @@ describe("SessionPolicy", () => {
       clientMetadata: { clientName: "c", clientVersion: "0", proxyName: "p", proxyVersion: "0" },
     }, dirCtx);
 
-    expect(JSON.parse(engResult.content[0].text).agentId).toMatch(/^eng-/);
-    expect(JSON.parse(dirResult.content[0].text).agentId).toMatch(/^director-/);
+    expect(JSON.parse(engResult.content[0].text).agent.id).toMatch(/^eng-/);
+    expect(JSON.parse(dirResult.content[0].text).agent.id).toMatch(/^director-/);
   });
 
   it("touchAgent bumps lastSeenAt and flips drifted status back to online", async () => {

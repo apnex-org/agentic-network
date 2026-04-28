@@ -34,7 +34,9 @@ async function setupEngineer(router: PolicyRouter, ctx: TestPolicyContext): Prom
   await router.handle("register_role", engineerHandshake, ctx);
   const claim = await router.handle("claim_session", {}, ctx);
   const claimParsed = JSON.parse(claim.content[0].text);
-  return claimParsed.agentId as string;
+  // mission-63 W1+W2: canonical envelope per Design §3.2 — agent.id under
+  // `agent` (was top-level agentId pre-mission-63).
+  return claimParsed.agent.id as string;
 }
 
 describe("Mission-62 W1+W2 Pass 1 — additive Agent schema + auto-clamp invariant", () => {
@@ -226,7 +228,7 @@ describe("Mission-62 W1+W2 Pass 3 — signal_working_* + signal_quota_* MCP tool
   });
 });
 
-describe("Mission-62 W1+W2 Pass 4 — get_agents pull primitive", () => {
+describe("mission-63 W1+W2 — get_agents canonical AgentProjection", () => {
   let router: PolicyRouter;
   let ctx: TestPolicyContext;
 
@@ -236,38 +238,42 @@ describe("Mission-62 W1+W2 Pass 4 — get_agents pull primitive", () => {
     ctx = createTestContext();
   });
 
-  it("get_agents with default fields returns identity+session+fsm groups", async () => {
+  it("get_agents returns canonical AgentProjection per Design §3.3 + §2.1", async () => {
     const eid = await setupEngineer(router, ctx);
     const result = await router.handle("get_agents", {}, ctx);
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.count).toBe(1);
+    // mission-63 W1+W2: { agents: AgentProjection[] } per Design §3.3.
+    // No `count` field (anti-goal §8.1 clean cutover; callers compute
+    // from .length). No field-groups; canonical projection only.
+    expect(parsed.count).toBeUndefined();
+    expect(parsed.agents.length).toBe(1);
     const agent = parsed.agents[0];
-    // identity group
+    // Required canonical fields per §2.1
     expect(agent.id).toBe(eid);
-    // Mission-62 W3: name from globalInstanceId.
     expect(agent.name).toBe("test-gid-mission-62-engineer");
     expect(agent.role).toBe("engineer");
-    expect(agent.labels).toBeDefined();
-    // session group
-    expect(agent.sessionEpoch).toBeGreaterThanOrEqual(0);
-    expect(agent.firstSeenAt).toBeDefined();
-    // fsm group
     expect(agent.livenessState).toBeDefined();
     expect(agent.activityState).toBeDefined();
-    // client + errors NOT in default projection
-    expect(agent.clientMetadata).toBeUndefined();
-    expect(agent.recentErrors).toBeUndefined();
-  });
-
-  it("get_agents with fields=['all'] expands to all groups", async () => {
-    await setupEngineer(router, ctx);
-    const result = await router.handle("get_agents", { fields: ["all"] }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    const agent = parsed.agents[0];
+    expect(agent.labels).toBeDefined();
+    // Optional fields surface when present (clientMetadata + advisoryTags)
     expect(agent.clientMetadata).toBeDefined();
-    expect(agent.recentErrors).toBeDefined();
-    expect(agent.adapterVersion).toBeDefined();
+    expect(agent.advisoryTags).toBeDefined();
+    // Internal fields stay OFF wire per Design §2.3 (idea-220 Phase 2
+    // territory): no fingerprint, currentSessionId, lastSeenAt, etc.
+    expect(agent.fingerprint).toBeUndefined();
+    expect(agent.currentSessionId).toBeUndefined();
+    expect(agent.sessionId).toBeUndefined();
+    expect(agent.sessionEpoch).toBeUndefined();
+    expect(agent.firstSeenAt).toBeUndefined();
+    expect(agent.lastSeenAt).toBeUndefined();
+    expect(agent.adapterVersion).toBeUndefined();
+    expect(agent.ipAddress).toBeUndefined();
+    expect(agent.recentErrors).toBeUndefined();
+    expect(agent.restartCount).toBeUndefined();
+    expect(agent.workingSince).toBeUndefined();
+    expect(agent.idleSince).toBeUndefined();
+    expect(agent.lastToolCallAt).toBeUndefined();
   });
 
   it("get_agents filter.activityState filters correctly", async () => {
@@ -275,32 +281,32 @@ describe("Mission-62 W1+W2 Pass 4 — get_agents pull primitive", () => {
     await ctx.stores.engineerRegistry.recordToolCallStart(eid, "x");
     // Working state
     let result = await router.handle("get_agents", { filter: { activityState: "online_working" } }, ctx);
-    expect(JSON.parse(result.content[0].text).count).toBe(1);
+    expect(JSON.parse(result.content[0].text).agents.length).toBe(1);
     // Idle state — should not match
     result = await router.handle("get_agents", { filter: { activityState: "online_idle" } }, ctx);
-    expect(JSON.parse(result.content[0].text).count).toBe(0);
+    expect(JSON.parse(result.content[0].text).agents.length).toBe(0);
   });
 
   it("get_agents filter.role filters by single + array", async () => {
     await setupEngineer(router, ctx);
     let result = await router.handle("get_agents", { filter: { role: "engineer" } }, ctx);
-    expect(JSON.parse(result.content[0].text).count).toBe(1);
+    expect(JSON.parse(result.content[0].text).agents.length).toBe(1);
     result = await router.handle("get_agents", { filter: { role: "architect" } }, ctx);
-    expect(JSON.parse(result.content[0].text).count).toBe(0);
+    expect(JSON.parse(result.content[0].text).agents.length).toBe(0);
     result = await router.handle("get_agents", { filter: { role: ["engineer", "architect"] } }, ctx);
-    expect(JSON.parse(result.content[0].text).count).toBe(1);
+    expect(JSON.parse(result.content[0].text).agents.length).toBe(1);
   });
 
   it("get_agents filter.agentId pins to specific agent", async () => {
     const eid = await setupEngineer(router, ctx);
     let result = await router.handle("get_agents", { filter: { agentId: eid } }, ctx);
-    expect(JSON.parse(result.content[0].text).count).toBe(1);
+    expect(JSON.parse(result.content[0].text).agents.length).toBe(1);
     result = await router.handle("get_agents", { filter: { agentId: "eng-nonexistent" } }, ctx);
-    expect(JSON.parse(result.content[0].text).count).toBe(0);
+    expect(JSON.parse(result.content[0].text).agents.length).toBe(0);
   });
 });
 
-describe("Mission-62 W1+W2 Pass 5 — agent_state_changed SSE dispatch", () => {
+describe("mission-63 W1+W2 — agent_state_changed canonical payload (Design §3.4)", () => {
   let router: PolicyRouter;
   let ctx: TestPolicyContext;
 
@@ -310,26 +316,95 @@ describe("Mission-62 W1+W2 Pass 5 — agent_state_changed SSE dispatch", () => {
     ctx = createTestContext();
   });
 
-  it("signal_working_started dispatches agent_state_changed event", async () => {
+  it("signal_working_started dispatches canonical {agent, previous, changed, cause, at}", async () => {
     const eid = await setupEngineer(router, ctx);
     ctx.dispatchedEvents.length = 0;
     await router.handle("signal_working_started", { toolName: "test" }, ctx);
     const dispatched = ctx.dispatchedEvents.find((e) => e.event === "agent_state_changed");
     expect(dispatched).toBeDefined();
-    expect(dispatched?.data.agentId).toBe(eid);
-    expect(dispatched?.data.toActivityState).toBe("online_working");
-    expect(dispatched?.data.fromActivityState).toBe("online_idle");
-    expect(dispatched?.data.changedFields).toContain("activityState");
+    const payload = dispatched?.data as Record<string, any>;
+    // mission-63 W1+W2: canonical envelope per Design §3.4 — agent under
+    // `agent` (full new state); `previous` carries prior values for fields
+    // that changed; `changed[]` lists field names; `cause` names the FSM
+    // transition trigger; `at` is the ISO timestamp.
+    expect(payload.event).toBe("agent_state_changed");
+    expect(payload.agent.id).toBe(eid);
+    expect(payload.agent.activityState).toBe("online_working");
+    expect(payload.previous.activityState).toBe("online_idle");
+    expect(payload.changed).toContain("activityState");
+    expect(payload.cause).toBe("signal_working_started");
+    expect(payload.at).toBeDefined();
+    expect(typeof payload.at).toBe("string");
     expect(dispatched?.selector.roles).toEqual(["architect", "engineer"]);
   });
 
-  it("signal_quota_blocked dispatches agent_state_changed with quotaBlockedUntil in changedFields", async () => {
+  it("agent_state_changed.previous OMITS unchanged fields (round-2 audit JSON absent semantics)", async () => {
+    // Round-2 audit observation: `previous` uses TS optional-key semantics
+    // — fields are absent (NOT explicitly undefined) in JSON when unchanged.
+    // signal_working_started transitions activityState only; livenessState
+    // stays "online" unchanged → previous.livenessState should be ABSENT
+    // from the JSON, not surface as null/undefined-key.
+    const eid = await setupEngineer(router, ctx);
+    ctx.dispatchedEvents.length = 0;
+    await router.handle("signal_working_started", { toolName: "test" }, ctx);
+    const dispatched = ctx.dispatchedEvents.find((e) => e.event === "agent_state_changed");
+    expect(dispatched).toBeDefined();
+    const payload = dispatched?.data as Record<string, any>;
+    void eid;
+    // activityState changed → present in previous
+    expect("activityState" in payload.previous).toBe(true);
+    expect(payload.previous.activityState).toBe("online_idle");
+    // livenessState UNCHANGED → ABSENT from previous (no key at all)
+    expect("livenessState" in payload.previous).toBe(false);
+    // changed[] reflects this asymmetry — only activityState listed
+    expect(payload.changed).toContain("activityState");
+    expect(payload.changed).not.toContain("livenessState");
+
+    // Verify JSON round-trip preserves absent semantics (catches drift
+    // across SSE-event subscribers parsing JSON differently).
+    const json = JSON.stringify(payload);
+    const reparsed = JSON.parse(json);
+    expect("activityState" in reparsed.previous).toBe(true);
+    expect("livenessState" in reparsed.previous).toBe(false);
+  });
+
+  it("signal_quota_blocked dispatches canonical with cause=signal_quota_blocked + quotaBlockedUntil in changed[]", async () => {
     await setupEngineer(router, ctx);
     ctx.dispatchedEvents.length = 0;
     await router.handle("signal_quota_blocked", { retryAfterSeconds: 30 }, ctx);
     const dispatched = ctx.dispatchedEvents.find((e) => e.event === "agent_state_changed");
     expect(dispatched).toBeDefined();
-    expect(dispatched?.data.toActivityState).toBe("online_quota_blocked");
-    expect(dispatched?.data.changedFields).toContain("quotaBlockedUntil");
+    const payload = dispatched?.data as Record<string, any>;
+    expect(payload.agent.activityState).toBe("online_quota_blocked");
+    expect(payload.previous.activityState).toBe("online_idle");
+    expect(payload.changed).toContain("activityState");
+    expect(payload.changed).toContain("quotaBlockedUntil");
+    expect(payload.cause).toBe("signal_quota_blocked");
+  });
+
+  it("signal_working_completed dispatches canonical with cause=signal_working_completed", async () => {
+    await setupEngineer(router, ctx);
+    await router.handle("signal_working_started", { toolName: "x" }, ctx);
+    ctx.dispatchedEvents.length = 0;
+    await router.handle("signal_working_completed", {}, ctx);
+    const dispatched = ctx.dispatchedEvents.find((e) => e.event === "agent_state_changed");
+    expect(dispatched).toBeDefined();
+    const payload = dispatched?.data as Record<string, any>;
+    expect(payload.agent.activityState).toBe("online_idle");
+    expect(payload.previous.activityState).toBe("online_working");
+    expect(payload.cause).toBe("signal_working_completed");
+  });
+
+  it("signal_quota_recovered dispatches canonical with cause=signal_quota_recovered", async () => {
+    await setupEngineer(router, ctx);
+    await router.handle("signal_quota_blocked", { retryAfterSeconds: 60 }, ctx);
+    ctx.dispatchedEvents.length = 0;
+    await router.handle("signal_quota_recovered", {}, ctx);
+    const dispatched = ctx.dispatchedEvents.find((e) => e.event === "agent_state_changed");
+    expect(dispatched).toBeDefined();
+    const payload = dispatched?.data as Record<string, any>;
+    expect(payload.agent.activityState).toBe("online_idle");
+    expect(payload.previous.activityState).toBe("online_quota_blocked");
+    expect(payload.cause).toBe("signal_quota_recovered");
   });
 });
