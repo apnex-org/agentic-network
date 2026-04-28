@@ -1,7 +1,8 @@
 {
-  "name": "@ois/opencode-plugin",
-  "version": "1.0.0",
-  "description": "OpenCode host bundle — Universal Agent Adapter for the OIS agentic network",
+  "name": "@apnex/opencode-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenCode host bundle — stub-only at mission-64 W1+W2 (per anti-goal §4.2 #5); namespace migrated to @apnex; full parity in dedicated future mission. Not published to registry this mission.",
   "license": "MIT",
   "type": "module",
   "main": "src/shim.ts",
@@ -11,9 +12,9 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@ois/cognitive-layer": "file:ois-cognitive-layer-0.1.0.tgz",
-    "@ois/message-router": "file:ois-message-router-1.0.0.tgz",
-    "@ois/network-adapter": "file:ois-network-adapter-2.0.0.tgz"
+    "@apnex/cognitive-layer": "*",
+    "@apnex/message-router": "*",
+    "@apnex/network-adapter": "*"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^0.4.30",

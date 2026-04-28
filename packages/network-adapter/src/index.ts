@@ -85,7 +85,7 @@ export type { ClaimSessionParsed } from "./kernel/session-claim.js";
 // The MCP protocol tool-manager per Design v1.2 §4 naming discipline
 // (Director-ratified rename from "MCP-boundary dispatcher" 2026-04-26).
 // Distinct from the future Message-router (sovereign-package #6,
-// `@ois/message-router`, M-Push-Foundation W4). Always qualify
+// `@apnex/message-router`, M-Push-Foundation W4). Always qualify
 // ("tool-manager" or "Message-router") in new code; avoid bare
 // "dispatcher".
 
@@ -134,7 +134,7 @@ export type {
 
 // ── Cognitive layer re-exports (ADR-018) ────────────────────────────
 // The `cognitive` option on `McpAgentClient` accepts any
-// `@ois/cognitive-layer` `CognitivePipeline`. Re-exporting the
+// `@apnex/cognitive-layer` `CognitivePipeline`. Re-exporting the
 // essentials keeps downstream consumers from needing a separate
 // dependency declaration for the standard-pipeline pattern.
 
@@ -153,7 +153,7 @@ export {
   ResponseSummarizer,
   summarizeResult,
   buildPaginationHint,
-} from "@ois/cognitive-layer";
+} from "@apnex/cognitive-layer";
 export type {
   CognitiveMiddleware,
   ToolCallContext,
@@ -178,4 +178,4 @@ export type {
   ErrorRule,
   CascadeDriftRule,
   ResponseSummarizerConfig,
-} from "@ois/cognitive-layer";
+} from "@apnex/cognitive-layer";

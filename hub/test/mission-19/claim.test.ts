@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { taskClaimableBy } from "../../src/state.js";
 import { TaskRepository } from "../../src/entities/task-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 
 describe("Mission-19 Claim — taskClaimableBy helper", () => {
   it("unlabeled task is claimable by anyone (even unlabeled claimant)", () => {

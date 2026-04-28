@@ -25,7 +25,7 @@
 | #20 | T4 — comparative latency measurement | 12:18 |
 
 **Architectural deliverables:**
-- `packages/storage-provider/` — third sovereign package alongside `@ois/network-adapter` + `@ois/cognitive-layer`
+- `packages/storage-provider/` — third sovereign package alongside `@apnex/network-adapter` + `@apnex/cognitive-layer`
 - Six-primitive `StorageProvider` contract (`get / list / delete / put / createOnly / putIfMatch`) with capability-gating (`cas / durable / concurrent`)
 - 11 entity stores unified under a single `*Repository` pattern over the provider; `hub/src/entities/gcs/` directory eliminated
 - Bonus **INV-COMMS-L03 correctness fix** (Memory/Gcs read-time liveness-recompute divergence closed as emergent property of unification)

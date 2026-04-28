@@ -395,7 +395,7 @@ rm -rf node_modules package-lock.json                              # lockfile re
 # Then full adapter restart
 ```
 
-(Repeat the rebuild + repack for any other SDK package touched by the PR — `@ois/message-router`, `@ois/cognitive-layer`, etc.)
+(Repeat the rebuild + repack for any other SDK package touched by the PR — `@apnex/message-router`, `@apnex/cognitive-layer`, etc.)
 
 **Verification:** new `dist/` mtime is post-rebuild; `npm pack` produces a tgz with the new code; `install.sh` runs clean; adapter restart shows `parseHandshakeResponse` consuming the new envelope shape (no `parse_failed` events in `.ois/shim-events.ndjson`).
 

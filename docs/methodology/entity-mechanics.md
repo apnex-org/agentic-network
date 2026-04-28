@@ -210,7 +210,7 @@ All entity persistence uses these primitives. No separate per-entity storage lay
 
 - Hub-side push-on-Message-create — SSE event fires synchronously after Message commit
 - Last-Event-ID protocol — cold-start replay with soft-cap synthetic event (~1000)
-- @ois/message-router — Layer-2 router; seen-id LRU N=1000; kind/subkind routing
+- @apnex/message-router — Layer-2 router; seen-id LRU N=1000; kind/subkind routing
 - Adapter Layer-3 shims — claude-plugin + opencode-plugin source-attribute taxonomy
 
 ### §5.4 Scheduled-Message primitive (mission-51 W4)

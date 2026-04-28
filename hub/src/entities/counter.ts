@@ -25,8 +25,8 @@
  *     `gcs-state.ts`.
  */
 
-import type { StorageProvider } from "@ois/storage-provider";
-import { hasGetWithToken, StoragePathNotFoundError } from "@ois/storage-provider";
+import type { StorageProvider } from "@apnex/storage-provider";
+import { hasGetWithToken, StoragePathNotFoundError } from "@apnex/storage-provider";
 
 /**
  * All-entity counter object layout. Matches the existing

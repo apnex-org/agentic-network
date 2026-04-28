@@ -1,6 +1,6 @@
 {
-  "name": "@ois/message-router",
-  "version": "1.0.0",
+  "name": "@apnex/message-router",
+  "version": "0.1.0",
   "description": "Sovereign Message-router (Layer 2) — kind/subkind dispatch + seen-id LRU dedup + hooks-pattern host-injection for the OIS Universal Adapter",
   "type": "module",
   "main": "dist/index.js",
@@ -16,7 +16,7 @@
     "test:watch": "vitest"
   },
   "peerDependencies": {
-    "@ois/network-adapter": "*"
+    "@apnex/network-adapter": "*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

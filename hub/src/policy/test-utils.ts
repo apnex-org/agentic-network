@@ -11,7 +11,7 @@ import { TurnRepository } from "../entities/turn-repository.js";
 import { TeleRepository } from "../entities/tele-repository.js";
 import { AuditRepository } from "../entities/audit-repository.js";
 import { StorageBackedCounter } from "../entities/counter.js";
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 import { BugRepository } from "../entities/bug-repository.js";
 import { MessageRepository } from "../entities/message-repository.js";
 import { PendingActionRepository } from "../entities/pending-action-repository.js";

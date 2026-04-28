@@ -43,7 +43,7 @@
 
 **Cumulative test surface across mission-51:** +10 new test files; +159 tests; 0 regressions; baseline holds throughout.
 
-**Cross-package verification:** `@ois/storage-provider` contract surface unchanged from mission-47 origin (6-primitive contract held throughout mission-51's 7 waves). ADR-024 §2 not amended. Build + typecheck clean throughout.
+**Cross-package verification:** `@apnex/storage-provider` contract surface unchanged from mission-47 origin (6-primitive contract held throughout mission-51's 7 waves). ADR-024 §2 not amended. Build + typecheck clean throughout.
 
 ---
 
@@ -191,7 +191,7 @@ Net (across W0-W6): ~24 modified production files; ~25 new files; ~7000 LOC delt
 | **W6 (this PR)** | **62** | **919** | 5 | **+159** |
 
 **Cross-package verification:**
-- `@ois/storage-provider`: contract unchanged throughout; 6-primitive surface held; capabilities flag unchanged.
+- `@apnex/storage-provider`: contract unchanged throughout; 6-primitive surface held; capabilities flag unchanged.
 - `npm run build` (hub): clean throughout.
 - `npx tsc --noEmit` (hub): clean throughout.
 - Cross-package failures (network-adapter, claude-plugin, opencode-plugin): match pre-existing bug-32 pattern.

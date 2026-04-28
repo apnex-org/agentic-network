@@ -75,7 +75,7 @@ When a session is pruned (by reaper, explicit DELETE, or transport close):
 
 ## 2. Session FSM (McpAgentClient)
 
-The L7 session surface (`McpAgentClient` in `@ois/network-adapter`) runs an
+The L7 session surface (`McpAgentClient` in `@apnex/network-adapter`) runs an
 explicit 5-state session FSM, exposed to shims via
 `AgentClientCallbacks.onStateChange(state, previous, reason?)`. The L4
 transport (`McpTransport`) has its own coarse 3-state wire surface

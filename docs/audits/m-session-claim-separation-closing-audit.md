@@ -258,7 +258,7 @@ For the post-architectural-review hardening pass + Phase 1 cartography to absorb
 When the deprecation-runway dashboard data eventually justifies retirement, these specific call sites must be updated to use explicit `claim_session` instead of relying on the back-compat hooks:
 
 - **All un-updated adapters** (any adapter version pre-T2 deploy that calls `register_role` without `claim_session`): they implicitly claim via SSE-subscribe (when they open SSE) or first-tools/call (when they first invoke a tool). Specific adapter versions to enumerate:
-  - `@ois/claude-plugin@1.0.0` and earlier (today's adapter version)
+  - `@apnex/claude-plugin@1.0.0` and earlier (today's adapter version)
   - Any future opencode-plugin version that doesn't adopt the explicit `claim_session` flow
 - **Director-chat plumbing** (future): inherits the new model when it lands.
 - **`/health`-driven cache bootstrap path**: currently the very first `register_role` + ListTools sequence on a fresh install relies on the bootstrap fetch + Hub auto-claim (when a tool call lands). Consider pre-warming the cache in `install.sh` — out of mission-40 scope.

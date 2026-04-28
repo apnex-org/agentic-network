@@ -23,7 +23,7 @@
  *     replace the default logger with an in-memory collector.
  */
 
-import { CognitiveTelemetry, type TelemetryEvent } from "@ois/network-adapter";
+import { CognitiveTelemetry, type TelemetryEvent } from "@apnex/network-adapter";
 
 /**
  * Default sink — structured log line. Cloud Run-friendly.

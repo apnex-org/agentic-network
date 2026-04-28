@@ -65,7 +65,7 @@ import type {
   ToolErrorContext,
   ListToolsContext,
   Tool as CognitiveTool,
-} from "@ois/cognitive-layer";
+} from "@apnex/cognitive-layer";
 import { performStateSync } from "./state-sync.js";
 
 // Same list as McpConnectionManager. Matched case-insensitively.
@@ -99,7 +99,7 @@ export interface McpAgentClientOptions {
   /** Dedup cache size. Default 100, matching `UniversalClientAdapter`. */
   dedupCacheSize?: number;
   /**
-   * Opt-in cognitive-layer pipeline (ADR-018 / `@ois/cognitive-layer`).
+   * Opt-in cognitive-layer pipeline (ADR-018 / `@apnex/cognitive-layer`).
    * When provided, every `call()` is wrapped through the pipeline's
    * `runToolCall` phase with the raw transport request as the terminal;
    * thrown errors are routed through `runToolError`. Omit for legacy

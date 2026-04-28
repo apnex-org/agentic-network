@@ -32,7 +32,7 @@ This is the retrospective the directive scheduled. It captures what happened in 
 The autonomous arc itself was the second half of a longer arc starting earlier in the day:
 
 - **mission-54 (M-Push-Foundational-Adapter-Recon)** — Director-disclosed foreign-engineer adapter cleanup work at `/home/apnex/taceng/codex/agentic-network`. greg performed spec-level recon; produced 8-section Recon Report at `docs/designs/m-push-foundational-adapter-recon.md` (PR #61 merged 2026-04-26 ~01:26Z); architect tele-evaluated. Closed ~01:33Z. **Surfaced 5 reusable patterns + 10 architect-tele-evaluation questions including the load-bearing 2-vs-3-layer (Q1), dispatcher naming role-overload (Q2), and adapter-layer-clean-FIRST sequencing (Q10).**
-- **Design v1.2 authoring** — architect-authored revision of v1.1 incorporating Q1/Q2/Q10 outcomes + Director-ratified Universal Adapter framing (`@ois/network-adapter` IS the Universal Adapter) + Layer-1 module sub-organization (wire/Kernel/tool-manager) + Universal Adapter notification contract spec deliverable + foreign-tree-deletion success criterion + future M-Adapter-Distribution flag (`@apnex/*` namespace). PR #62 merged ~02:05Z.
+- **Design v1.2 authoring** — architect-authored revision of v1.1 incorporating Q1/Q2/Q10 outcomes + Director-ratified Universal Adapter framing (`@apnex/network-adapter` IS the Universal Adapter) + Layer-1 module sub-organization (wire/Kernel/tool-manager) + Universal Adapter notification contract spec deliverable + foreign-tree-deletion success criterion + future M-Adapter-Distribution flag (`@apnex/*` namespace). PR #62 merged ~02:05Z.
 
 ### What's at HOLD
 
@@ -199,11 +199,11 @@ This is a **structural design invariant** on the agentic network. Concrete impli
 
 **Architect tele-evaluation outcomes folded in:**
 - **Q1: 3-layer KEPT** — sovereign-package #6 boundary earned by separability of Message-routing from tool-manager handler-factory
-- **Q2: Rename** — Design's "dispatcher" → "Message-router"; sovereign-package `@ois/message-dispatcher` → `@ois/message-router`
+- **Q2: Rename** — Design's "dispatcher" → "Message-router"; sovereign-package `@apnex/message-dispatcher` → `@apnex/message-router`
 - **Q10: (a) separate predecessor mission** — M-Pre-Push-Adapter-Cleanup scaffolds reusable patterns ahead of M-Push-Foundation
 
 **Director-ratified additions:**
-- Universal Adapter framing — `@ois/network-adapter` IS the Universal Adapter
+- Universal Adapter framing — `@apnex/network-adapter` IS the Universal Adapter
 - Layer-1 module sub-organization — `src/wire/` (transport) + `src/kernel/` (Kernel) + `src/tool-manager/` (MCP request handlers)
 - Universal Adapter notification contract spec deliverable
 - Foreign-tree-deletion success criterion
@@ -391,7 +391,7 @@ Plus 5 design-walkthrough ratifications same window:
 | Topic | Director ratification |
 |---|---|
 | Kernel naming for `src/kernel/` | "I like term Kernel" — adopted as canonical name |
-| Cognition Substrate keep-separate vs consolidate | "Agree with 'Keep Separate'" — `@ois/cognitive-layer` stays peer sovereign-package |
+| Cognition Substrate keep-separate vs consolidate | "Agree with 'Keep Separate'" — `@apnex/cognitive-layer` stays peer sovereign-package |
 | Cognition Substrate cross-cutting framing | Architect-clarified: cross-cutting sovereign-package consumed by Layer 1 + (future) Layer 2 + Layer 3; no boundary/duty/interface change |
 | tool-manager naming (was `mcp-boundary`) | Director ratified rename 2026-04-26: "Lets rename MCP-boundary to 'tool-manager' perhaps? Says what it does" — adopted; bundled rename PR queued post-retrospective |
 | `src/kernel/` directory naming (was `src/session/`) | Director surfaced naming inconsistency between canonical "Kernel" + shipped `src/session/` — rename bundled with tool-manager rename PR |
@@ -413,7 +413,7 @@ Plus 2 retrospective-walkthrough codifications (binding patterns added to §1):
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ LAYER 1 — Network Adapter / Universal Adapter                               │
-│ Sovereign-package: @ois/network-adapter                                     │
+│ Sovereign-package: @apnex/network-adapter                                     │
 │                                                                             │
 │ Internal sub-concerns (sub-organized into src/ subdirs; mission-55 PR #63): │
 │   1a. src/wire/         — Transport: TCP/SSE conn lifecycle; reconnect;     │
@@ -430,8 +430,8 @@ Plus 2 retrospective-walkthrough codifications (binding patterns added to §1):
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ LAYER 2 — Message-Router                                          ← NEW     │
-│ Sovereign-package: @ois/message-router                                      │
-│                  (sovereign-package #6; Q2-renamed from @ois/message-       │
+│ Sovereign-package: @apnex/message-router                                      │
+│                  (sovereign-package #6; Q2-renamed from @apnex/message-       │
 │                   dispatcher; lands in M-Push-Foundation W2)                │
 │                                                                             │
 │ Concerns: Message kind/subkind routing                                      │
@@ -458,7 +458,7 @@ Plus 2 retrospective-walkthrough codifications (binding patterns added to §1):
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ CROSS-CUTTING — Cognition Substrate                                         │
-│ Sovereign-package: @ois/cognitive-layer                                     │
+│ Sovereign-package: @apnex/cognitive-layer                                     │
 │                                                                             │
 │ Consumed by: Layer 1 (network-adapter; e.g., prompt-format.ts cross-cutting │
 │              primitive) + future Layer 2 (Message-Router for context-       │
@@ -474,22 +474,22 @@ Plus 2 retrospective-walkthrough codifications (binding patterns added to §1):
 
 | # | Package | Concern | Layer |
 |---|---|---|---|
-| 1 | `@ois/network-adapter` | Layer 1 (wire + kernel + tool-manager) | Layer 1 |
-| 2 | `@ois/cognitive-layer` | Cognition Substrate | Cross-cutting |
-| 3 | `@ois/storage-provider` | Storage primitive (Hub-side) | Hub-side |
-| 4 | `@ois/repo-event-bridge` | GH event source (Hub-side; mission-52) | Hub-side |
-| 5 | `@ois/message-primitive` | Unified Message entity (mission-51 W6) | Hub-side |
-| 6 | **`@ois/message-router`** | **Layer 2 (NEW; M-Push-Foundation W2)** | **Layer 2** |
+| 1 | `@apnex/network-adapter` | Layer 1 (wire + kernel + tool-manager) | Layer 1 |
+| 2 | `@apnex/cognitive-layer` | Cognition Substrate | Cross-cutting |
+| 3 | `@apnex/storage-provider` | Storage primitive (Hub-side) | Hub-side |
+| 4 | `@apnex/repo-event-bridge` | GH event source (Hub-side; mission-52) | Hub-side |
+| 5 | `@apnex/message-primitive` | Unified Message entity (mission-51 W6) | Hub-side |
+| 6 | **`@apnex/message-router`** | **Layer 2 (NEW; M-Push-Foundation W2)** | **Layer 2** |
 
 ### Naming discipline
 
-- "Network Adapter" / `@ois/network-adapter` = Layer 1 (Universal Adapter)
+- "Network Adapter" / `@apnex/network-adapter` = Layer 1 (Universal Adapter)
 - "Kernel" = Layer 1b sub-concern (`src/kernel/`); session FSM + agent identity + lifecycle
 - "Transport" = Layer 1a sub-concern (`src/wire/`); TCP/SSE wire FSM
 - "tool-manager" = Layer 1c sub-concern (`src/tool-manager/`); MCP protocol handler factory at the host-network-adapter edge
-- "Message-Router" = Layer 2 (`@ois/message-router`); Message kind/subkind routing; sovereign-package #6
+- "Message-Router" = Layer 2 (`@apnex/message-router`); Message kind/subkind routing; sovereign-package #6
 - "Shim" = Layer 3 (per-host plugin); host-binding render-surface implementer
-- "Cognition Substrate" = `@ois/cognitive-layer`; cross-cutting; consumed by all layers
+- "Cognition Substrate" = `@apnex/cognitive-layer`; cross-cutting; consumed by all layers
 
 Avoid bare "dispatcher" in new code — always qualify ("tool-manager dispatcher" for Layer 1c, "Message-router" for Layer 2).
 
@@ -528,7 +528,7 @@ The Universal Adapter does not need source modification to onboard a new host.
 **6-bundled wave decomposition:**
 - W0 spike — legacy-entity grep + thread-313 cross-map + trigger-probability confirm
 - W1 — Hub-side push-on-Message-create + Last-Event-ID protocol + cold-start
-- W2 — Adapter-side: SSE event-handler + Message-router (sovereign-package #6 `@ois/message-router`) + render-surface
+- W2 — Adapter-side: SSE event-handler + Message-router (sovereign-package #6 `@apnex/message-router`) + render-surface
 - W3 — Adapter-side hybrid poll backstop + claim/ack two-step semantics
 - W4 — Legacy entity sunset (DirectorNotification → Notification → PendingActionItem)
 - W5 — Tests + docs + ADR-026 + closing audit

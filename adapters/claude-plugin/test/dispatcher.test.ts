@@ -1,7 +1,7 @@
 /**
  * Shared dispatcher unit tests — host-independent.
  *
- * Exercises the @ois/network-adapter MCP-boundary dispatcher (Layer 1c
+ * Exercises the @apnex/network-adapter MCP-boundary dispatcher (Layer 1c
  * per Design v1.2) with a minimal stub McpAgentClient; no stdio, no
  * Hub, no MCP wire.
  *
@@ -23,7 +23,7 @@ import {
   injectQueueItemId,
   pendingKey,
   type McpAgentClient,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 
 // ── Fake agent ──────────────────────────────────────────────────────
 

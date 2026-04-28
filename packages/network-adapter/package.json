@@ -1,6 +1,6 @@
 {
-  "name": "@ois/network-adapter",
-  "version": "2.0.0",
+  "name": "@apnex/network-adapter",
+  "version": "0.1.0",
   "description": "Universal MCP Network Adapter — L4/L7 transport for OIS agentic network",
   "type": "module",
   "main": "dist/index.js",
@@ -17,8 +17,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@ois/cognitive-layer": "*",
-    "@ois/message-router": "*"
+    "@apnex/cognitive-layer": "*",
+    "@apnex/message-router": "*"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

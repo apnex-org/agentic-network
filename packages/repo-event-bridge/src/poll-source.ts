@@ -5,7 +5,7 @@
  * contract. Polls a configured set of GitHub repos on a constant
  * cadence; translates raw GH events into RepoEvents via the W1
  * translator; persists per-repo cursor + bounded recent-event-id
- * dedupe set via @ois/storage-provider (eats own dogfood per
+ * dedupe set via @apnex/storage-provider (eats own dogfood per
  * audit-emerged commitment).
  *
  * Per thread-312 round-2 design ratification:

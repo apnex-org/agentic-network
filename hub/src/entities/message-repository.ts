@@ -37,7 +37,7 @@
  * count which is tracked Hub-wide).
  */
 
-import type { StorageProvider } from "@ois/storage-provider";
+import type { StorageProvider } from "@apnex/storage-provider";
 
 import type {
   IMessageStore,

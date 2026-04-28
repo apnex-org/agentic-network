@@ -13,7 +13,7 @@
 
 - **A1.** Brief location: PASS — entity description (~6 paragraphs covering scope, architecture, EventSource contract, task decomposition sketch, audit-emerged design commitments, anti-goals, sizing, sequencing).
 - **A2.** N/A — no separate file.
-- **A3.** Cross-referenced artifacts exist: PASS — methodology v1.0 (merged), mission-51 (just completed; closing audit landed), idea-191 (source), idea-197 (downstream consumer), idea-186 (workspaces; orthogonal), idea-121 (API v2.0; verb redesign defer), bug-32 (open; orthogonal); `@ois/storage-provider` + `@ois/network-adapter` + `@ois/cognitive-layer` + (mission-51) message-primitive sovereign packages all present establishing sovereign-package #1-4 precedent.
+- **A3.** Cross-referenced artifacts exist: PASS — methodology v1.0 (merged), mission-51 (just completed; closing audit landed), idea-191 (source), idea-197 (downstream consumer), idea-186 (workspaces; orthogonal), idea-121 (API v2.0; verb redesign defer), bug-32 (open; orthogonal); `@apnex/storage-provider` + `@apnex/network-adapter` + `@apnex/cognitive-layer` + (mission-51) message-primitive sovereign packages all present establishing sovereign-package #1-4 precedent.
 
 ## Category B — Hub filing integrity
 

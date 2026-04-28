@@ -1,7 +1,7 @@
 /**
  * RepoEventBridge — mission-52 T3 Hub-side composition.
  *
- * Wires the @ois/repo-event-bridge sovereign package into the Hub:
+ * Wires the @apnex/repo-event-bridge sovereign package into the Hub:
  *   - Constructs a `PollSource` against the Hub's StorageProvider
  *   - Constructs a `CreateMessageSink` whose `invoke` callable
  *     dispatches in-process to the Hub's `create_message` MCP verb
@@ -31,8 +31,8 @@ import {
   CreateMessageSink,
   PollSource,
   type CreateMessageInvoker,
-} from "@ois/repo-event-bridge";
-import type { StorageProvider } from "@ois/storage-provider";
+} from "@apnex/repo-event-bridge";
+import type { StorageProvider } from "@apnex/storage-provider";
 
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext } from "./types.js";

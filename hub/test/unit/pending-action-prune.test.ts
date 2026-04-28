@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 import { PendingActionRepository } from "../../src/entities/pending-action-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
 import { PolicyRouter } from "../../src/policy/router.js";

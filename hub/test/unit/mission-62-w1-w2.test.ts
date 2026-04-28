@@ -24,9 +24,9 @@ const engineerHandshake = {
   clientMetadata: {
     clientName: "test-client",
     clientVersion: "0.0.0",
-    proxyName: "@ois/test-plugin",
+    proxyName: "@apnex/test-plugin",
     proxyVersion: "0.0.0",
-    sdkVersion: "@ois/network-adapter@2.1.0",
+    sdkVersion: "@apnex/network-adapter@2.1.0",
   },
 };
 
@@ -57,7 +57,7 @@ describe("Mission-62 W1+W2 Pass 1 — additive Agent schema + auto-clamp invaria
     // Mission-62 W3: name now populated from globalInstanceId (the
     // OIS_INSTANCE_ID env value carried through the M18 handshake).
     expect(agent.name).toBe("test-gid-mission-62-engineer");
-    expect(agent.adapterVersion).toBe("@ois/network-adapter@2.1.0");
+    expect(agent.adapterVersion).toBe("@apnex/network-adapter@2.1.0");
     // claimSession promotes activityState + stamps sessionStartedAt + idleSince
     expect(agent.activityState).toBe("online_idle");
     expect(agent.sessionStartedAt).not.toBeNull();

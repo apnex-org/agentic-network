@@ -24,7 +24,7 @@ M-Cognitive-Hypervisor has 4 phases (per `docs/planning/m-cognitive-hypervisor.m
 
 ## Decision
 
-Introduce `@ois/cognitive-layer` as a **sovereign sibling package** to `@ois/network-adapter`. The package owns the cognitive-enforcement-layer contract, pipeline composer, standard-pipeline factory, and an initial middleware catalog. Agents opt in via a `cognitive` config on `McpAgentClient`.
+Introduce `@apnex/cognitive-layer` as a **sovereign sibling package** to `@apnex/network-adapter`. The package owns the cognitive-enforcement-layer contract, pipeline composer, standard-pipeline factory, and an initial middleware catalog. Agents opt in via a `cognitive` config on `McpAgentClient`.
 
 ### Why sovereign (not a sub-module of network-adapter)
 
@@ -54,16 +54,16 @@ Introduce `@ois/cognitive-layer` as a **sovereign sibling package** to `@ois/net
                                     │
                                     ▼
         ┌───────────────────────────────────────────────────┐
-        │   @ois/network-adapter  (SHARED — every agent)    │
+        │   @apnex/network-adapter  (SHARED — every agent)    │
         │                                                    │
         │   McpAgentClient  ↔  McpTransport                 │
         │                                                    │
-        │   Consumes @ois/cognitive-layer via opt-in config │
+        │   Consumes @apnex/cognitive-layer via opt-in config │
         └────────────────────────┬──────────────────────────┘
                                  │
                                  ▼
         ┌───────────────────────────────────────────────────┐
-        │   @ois/cognitive-layer  (SHARED — sovereign)       │
+        │   @apnex/cognitive-layer  (SHARED — sovereign)       │
         │                                                    │
         │   CognitivePipeline + CognitiveMiddleware contract │
         │                                                    │
@@ -154,7 +154,7 @@ Factory `CognitivePipeline.standard({ ...configs })` returns the canonical order
 
 Each middleware added to the package registers at its ratified position; `.standard()` grows as checkpoints land. **Ad-hoc `.use()` composition remains available** for tests and custom pipelines; `.standard()` is the blessed production path.
 
-## Integration with `@ois/network-adapter`
+## Integration with `@apnex/network-adapter`
 
 ```ts
 new McpAgentClient({

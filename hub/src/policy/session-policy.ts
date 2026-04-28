@@ -155,7 +155,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
     };
   }
 
-  // Legacy path: bare {role} call, backwards-compatible with @ois/hub-connection <= 1.3.0.
+  // Legacy path: bare {role} call, backwards-compatible with @apnex/hub-connection <= 1.3.0.
   // Records the role in the sessionRoles map for RBAC; no Agent entity is created.
   //
   // Mission-19 label routing requires an Agent entity (labels are persisted on

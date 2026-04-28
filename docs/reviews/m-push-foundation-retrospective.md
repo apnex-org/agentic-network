@@ -22,7 +22,7 @@ This is the post-mission retrospective the pattern scheduled. It captures what t
 
 1. **W0** — spike report + read-path grep audit + structural decisions for W1–W4
 2. **W1a + W1b** — Hub-side push-on-Message-create + Last-Event-ID SSE protocol + cold-start replay
-3. **W2.1 + W2.2 + W2.3** — `@ois/message-router` sovereign-package #6 + adapter SSE handler integration + claude-plugin source-attribute taxonomy
+3. **W2.1 + W2.2 + W2.3** — `@apnex/message-router` sovereign-package #6 + adapter SSE handler integration + claude-plugin source-attribute taxonomy
 4. **W3.1 + W3.2 + W3.3** — `list_messages.since` cursor + `claim_message`/`ack_message` MCP verbs + Message status FSM + adapter hybrid poll backstop
 5. **W4.1 + W4.2 + W4.3** — DirectorNotification sunset + Notification sunset + PendingActionItem **scope correction** (doc-only; Option C deferral to idea-207)
 6. **W5** — closing audit + ADR-026 + entity-store removal cleanup
@@ -97,7 +97,7 @@ Mission-56 ran continuously from activation gate to mission-status flip; ~3h 33m
 | ~05:54 | thread-330 W1b T1 dispatch (Last-Event-ID protocol) | W1b | After W1a self-launched in same wave |
 | ~06:10 | PR #71 W1a + PR #72 W1b merged | W1a/b | First substantive ship; push-on-create + Last-Event-ID live in Hub source |
 | ~06:18 | thread-331 fresh-context re-onboarding for W2 cascade | W2 | Engineer context-budget surface; full-state re-onboarding thread |
-| ~06:38 | PR #73 W2.1 (`@ois/message-router` sovereign-package #6) merged | W2.1 | New package; calibration #20 file:-ref dist/-commit pattern |
+| ~06:38 | PR #73 W2.1 (`@apnex/message-router` sovereign-package #6) merged | W2.1 | New package; calibration #20 file:-ref dist/-commit pattern |
 | ~06:55 | PR #74 W2.2 adapter SSE handler integration merged | W2.2 | **Push pipeline NOT YET LIVE in adapter** (greg's running adapter still loaded pre-W2.2 code) |
 | ~07:00 | Director: "I will restart greg" → context-reset gate | W2/W3 boundary | Director operational support (architect lacks restart capability per bug-34) |
 | ~07:05 | thread-333 fresh-context re-onboarding post-restart | W2 | Architect translated W2.2 ratified state for fresh-context greg |
@@ -218,7 +218,7 @@ Design v1.2 §"Architectural commitments" locked 7 commitments before mission ac
 |---|---|---|---|---|
 | 1 | **Push-on-Message-create** — SSE event fires synchronously after Message commit | ✅ as designed | No drift | message-policy.ts:188-221; non-fatal on dispatch failure |
 | 2 | **Last-Event-ID SSE protocol + cold-start replay** | ✅ as designed | No drift | Hub-internal `replayFromCursor`; soft-cap synthetic event at 1000 |
-| 3 | **`@ois/message-router` sovereign-package #6** | ✅ as designed | No drift | Layer-2 router; seen-id LRU N=1000; kind/subkind routing skeleton |
+| 3 | **`@apnex/message-router` sovereign-package #6** | ✅ as designed | No drift | Layer-2 router; seen-id LRU N=1000; kind/subkind routing skeleton |
 | 4 | **Per-host source-attribute taxonomy at Layer-3** | ✅ as designed | No drift | claude-plugin shim; 4-kind taxonomy + per-subkind discrimination |
 | 5 | **Hybrid push+poll backstop with `since` cursor** | ✅ as designed | No drift | 5min default; OIS_ADAPTER_POLL_BACKSTOP_S env override; 60s floor |
 | 6 | **claim/ack two-step semantics + Message status FSM** | ✅ as designed | No drift | `new → received → acked` linear monotonic CAS; multi-agent winner-takes-all |
@@ -639,11 +639,11 @@ This section catalogues the patterns that mission-56 either *operationalized* (m
 
 #### §5.3.4 file:-ref dist/-commit pattern for sovereign packages
 
-**Current pattern:** new sovereign-packages (mission-56 W2.1 `@ois/message-router` is the latest) ship dist/ committed for file:-ref consumption. Calibration #20 (mission-50 lineage) codifies this.
+**Current pattern:** new sovereign-packages (mission-56 W2.1 `@apnex/message-router` is the latest) ship dist/ committed for file:-ref consumption. Calibration #20 (mission-50 lineage) codifies this.
 
 **Retirement vehicle:** M-Adapter-Distribution mission — npm publish under @apnex/* namespace. Package-specific publish stories; replaces file:-ref + dist/-commit with semver pull from registry.
 
-**Sequencing:** Tier 2 follow-on; pre-W5 staged. Pairs with idea-186 (npm workspaces) which sunsets the file:-ref dance. Rename @ois/* → @apnex/* internal namespaces is part of this work.
+**Sequencing:** Tier 2 follow-on; pre-W5 staged. Pairs with idea-186 (npm workspaces) which sunsets the file:-ref dance. Rename @apnex/* → @apnex/* internal namespaces is part of this work.
 
 ### §5.4 What the operationalize/retire balance says about mission-56 as a structural inflection
 
@@ -811,7 +811,7 @@ Design v1.2 declared mission-56 tele alignment as **Primary tele-3 + tele-9; Sec
 
 **Post-mission state:** 2/3 mechanisms collapsed into Message-store projection (DirectorNotification + Notification → `kind`-discriminated payload on the unified Message primitive). PendingActionItem retained as the saga primitive (per Option C structural-difference recognition); idea-207 captures its proper migration as a Tier 2 follow-on.
 
-**Sovereign-package count:** mission-56 added `@ois/message-router` as sovereign-package #6 — a new Layer-2 router primitive that composes with mission-51's Message primitive (sovereign-package #5) + mission-48's StorageProvider (sovereign-package boundary).
+**Sovereign-package count:** mission-56 added `@apnex/message-router` as sovereign-package #6 — a new Layer-2 router primitive that composes with mission-51's Message primitive (sovereign-package #5) + mission-48's StorageProvider (sovereign-package boundary).
 
 **Tele-3 advance:** **substantial.** Two notification entities collapsed; Layer-2 router becomes the single composable routing primitive consumed by future workflow primitives (idea-199 FSM-completeness; idea-194 mid-thread-amend; idea-206 pulse). Sovereign composition now operates via Message+Router substrate; mechanise+declare principle (extracted this mission; see §7.4) is the binding tele-3 design discipline going forward.
 

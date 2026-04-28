@@ -51,7 +51,7 @@ This document describes the agentic network infrastructure — the transport, ro
 
 **What is NOT infrastructure:** The 28 tool implementations (task management, proposals, threads, etc.) are workflow logic built on top of the router. The router does not know or care what the tools do.
 
-### 2. Network Adapter Package (`@ois/network-adapter`)
+### 2. Network Adapter Package (`@apnex/network-adapter`)
 
 **What it is:** A reusable client library that any agent imports to connect to the Hub. Split into two layers: an L4 wire transport (`ITransport` / `McpTransport`) that owns the MCP streamable-HTTP socket, SSE watchdog, and wire-level reconnect, and an L7 session client (`IAgentClient` / `McpAgentClient`) that owns the session FSM, enriched handshake, state sync, and session-invalid retry. Dual-channel health monitoring and automatic reconnection at both layers.
 
@@ -172,7 +172,7 @@ Hub → [SSE sendLoggingMessage logger="keepalive"] → All SSE sessions (every 
 | ADR-001 | MCP as universal transport — foundational network decision                     |
 | ADR-004 | Universal MCP Network Adapter — the Plugin proxy architecture                  |
 | ADR-005 | Persist-first notification delivery — notification broker design               |
-| ADR-008 | Shared ConnectionManager — the `@ois/network-adapter` package (formerly `@ois/hub-connection`) |
+| ADR-008 | Shared ConnectionManager — the `@apnex/network-adapter` package (formerly `@apnex/hub-connection`) |
 | ADR-009 | SSE liveness monitoring — dual-channel health model                            |
 | ADR-002 | Sandwich pattern — agent logic, NOT network infrastructure                     |
 | ADR-003 | Node.js rewrite — agent decision, NOT network (though it unified the runtime)  |

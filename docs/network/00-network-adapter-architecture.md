@@ -1,14 +1,14 @@
 ---
 title: Network Adapter Architecture — L4/L7 Split
 status: canonical reference
-version: "@ois/network-adapter@2.0.0"
+version: "@apnex/network-adapter@2.0.0"
 updated: 2026-04-16
 ---
 
 # Network Adapter Architecture
 
 This document is the single source of truth for the shared network-adapter
-package (`@ois/network-adapter`, formerly `@ois/hub-connection`): what it
+package (`@apnex/network-adapter`, formerly `@apnex/hub-connection`): what it
 owns, what it delegates to shims, how the two internal
 layers (L4 wire / L7 session) fit together, and how to stand up a new
 shim on top of it.
@@ -358,7 +358,7 @@ import {
   McpTransport,
   type AgentClientCallbacks,
   makeStdioFatalHalt,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 
 // 1. Build callbacks.
 const callbacks: AgentClientCallbacks = {
@@ -374,10 +374,10 @@ const agent = new McpAgentClient(
     logger: myLogger,
     handshake: {
       globalInstanceId,
-      proxyName: "@ois/claude-plugin",
+      proxyName: "@apnex/claude-plugin",
       proxyVersion: "1.2.3",
       transport: "stdio",
-      sdkVersion: "@ois/network-adapter@2.0.0",
+      sdkVersion: "@apnex/network-adapter@2.0.0",
       getClientInfo: () => ({ name: "Claude Code", version: "..." }),
       onFatalHalt: makeStdioFatalHalt(),
     },
@@ -411,7 +411,7 @@ two-layer split exists specifically so that shims talk to L7 only.
 
 ## 8. Shims today
 
-Three shims consume `@ois/network-adapter@2.0.0`.
+Three shims consume `@apnex/network-adapter@2.0.0`.
 
 | Shim                                              | Transport host   | Manual sync | Notes                                                                                                 |
 | ------------------------------------------------- | ---------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
@@ -427,7 +427,7 @@ funnels everything else through `McpAgentClient`.
 
 The checklist:
 
-1. **Pin the tarball.** Add `"@ois/network-adapter": "file:./ois-network-adapter-2.0.0.tgz"` (or newer) to your `package.json`. Don't float it.
+1. **Pin the tarball.** Add `"@apnex/network-adapter": "file:./ois-network-adapter-2.0.0.tgz"` (or newer) to your `package.json`. Don't float it.
 2. **Bootstrap identity.** Call `loadOrCreateGlobalInstanceId()` once per process with a host-appropriate path (e.g. `~/.ois/<host>-instance.json`). Persist the result across restarts.
 3. **Build callbacks.** Implement `AgentClientCallbacks` — only the handlers you actually need. Shims that don't prompt LLMs can omit `onActionableEvent`.
 4. **Construct.** `new McpAgentClient({role, handshake, logger}, {transportConfig})`. Pass the full enriched handshake unless you genuinely don't care about the M18 identity (Architect is the only such case, and it's grandfathered).
@@ -439,7 +439,7 @@ The checklist:
 
 | Component                         | Version                    |
 | --------------------------------- | -------------------------- |
-| `@ois/network-adapter` (package)  | 2.0.0                      |
+| `@apnex/network-adapter` (package)  | 2.0.0                      |
 | Tarball consumers                 | pinned via `file:` path    |
 | Phase 7 refactor                  | complete (2026-04-15)       |
 | Phase 8 doc / test cleanup        | in progress                 |

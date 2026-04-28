@@ -6,9 +6,9 @@ This document catalogues every module in the OIS agentic network, its public sur
 
 ---
 
-## 1. `packages/network-adapter/` — `@ois/network-adapter@2.0.0`
+## 1. `packages/network-adapter/` — `@apnex/network-adapter@2.0.0`
 
-Universal MCP network adapter. Published to npm as `@ois/network-adapter`. Provides L4 (wire) and L7 (session) abstractions consumed by all adapters and agents.
+Universal MCP network adapter. Published to npm as `@apnex/network-adapter`. Provides L4 (wire) and L7 (session) abstractions consumed by all adapters and agents.
 
 ### 1.1 Transport Layer (L4) — `mcp-transport.ts`
 
@@ -168,7 +168,7 @@ Transport layer: session management, SSE delivery, keepalive, session reaper.
 | `CreateMcpServerFn` | type | Factory for MCP server with tool registration |
 | `NotifyEventFn` | type | Persist-first notification pipeline function |
 
-**Naming verdict:** `HubNetworking` leaks deployment identity into what is structurally a reusable MCP session server. **Recommend: rename to `SessionServer` / `session-server.ts`** — describes what it does (MCP session lifecycle, SSE push, keepalive) without coupling to what it's deployed as. Additionally, server-side and client-side share MCP session wire primitives that could be deduplicated into `@ois/network-adapter`. The conceptual model is **TX/RX**: `McpTransport` is the TX (transmit/client) half and `SessionServer` is the RX (receive/server) half of the same wire protocol — SSE framing, keepalive semantics, session lifecycle, all mirrored. The network-adapter package becomes the canonical wire spec, and each side pulls what it needs. See **idea-51**.
+**Naming verdict:** `HubNetworking` leaks deployment identity into what is structurally a reusable MCP session server. **Recommend: rename to `SessionServer` / `session-server.ts`** — describes what it does (MCP session lifecycle, SSE push, keepalive) without coupling to what it's deployed as. Additionally, server-side and client-side share MCP session wire primitives that could be deduplicated into `@apnex/network-adapter`. The conceptual model is **TX/RX**: `McpTransport` is the TX (transmit/client) half and `SessionServer` is the RX (receive/server) half of the same wire protocol — SSE framing, keepalive semantics, session lifecycle, all mirrored. The network-adapter package becomes the canonical wire spec, and each side pulls what it needs. See **idea-51**.
 
 ### 2.2 State & Entity Types — `state.ts`
 
@@ -404,7 +404,7 @@ Cloud Run Node.js agent running `gemini-3-flash-preview` via Vertex AI (`@google
 | `HubAdapter` | class | Typed wrapper around McpAgentClient with convenience methods per tool |
 | `HubEventHandler` | type | `(eventData: Record<string, unknown>) => void` |
 
-**Naming verdict:** `HubAdapter` is accurate but could collide conceptually with `@ois/network-adapter`. The distinction is that `HubAdapter` is an Architect-specific convenience layer over `McpAgentClient`, not a generic adapter. **Recommend: keep as-is** — the scope is clear within the agent package.
+**Naming verdict:** `HubAdapter` is accurate but could collide conceptually with `@apnex/network-adapter`. The distinction is that `HubAdapter` is an Architect-specific convenience layer over `McpAgentClient`, not a generic adapter. **Recommend: keep as-is** — the scope is clear within the agent package.
 
 ### 5.2 LLM Integration — `llm.ts`
 

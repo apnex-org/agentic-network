@@ -55,7 +55,7 @@ Edit `agents/vertex-cloudrun/src/sandwich.ts` and `agents/vertex-cloudrun/src/di
 
 ```ts
 // At module scope in sandwich.ts (or pass in via DI)
-import { CognitiveTelemetry } from "@ois/network-adapter";
+import { CognitiveTelemetry } from "@apnex/network-adapter";
 const architectTelemetry = new CognitiveTelemetry({
   sink: (event) => console.log(`[Telemetry] ${JSON.stringify(event)}`),
 });

@@ -139,8 +139,8 @@ SWAP_APPLIED=0
 # Sovereign packages staged into hub/ as tarballs for Cloud Build.
 # Format: "<package-name>:<source-dir-relative-to-REPO_ROOT>"
 SOVEREIGN_PACKAGES=(
-  "@ois/storage-provider:packages/storage-provider"
-  "@ois/repo-event-bridge:packages/repo-event-bridge"
+  "@apnex/storage-provider:packages/storage-provider"
+  "@apnex/repo-event-bridge:packages/repo-event-bridge"
 )
 
 cleanup_tarball_swap() {

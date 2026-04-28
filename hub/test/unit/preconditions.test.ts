@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 
 import { ThreadRepository } from "../../src/entities/thread-repository.js";
 import { TaskRepository } from "../../src/entities/task-repository.js";

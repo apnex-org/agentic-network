@@ -110,10 +110,10 @@ export interface EngineerStatusEntry {
 export interface AgentClientMetadata {
   clientName: string;          // MCP initialize.clientInfo.name (e.g., "claude-code")
   clientVersion: string;       // MCP initialize.clientInfo.version
-  proxyName: string;           // e.g., "@ois/claude-plugin"
+  proxyName: string;           // e.g., "@apnex/claude-plugin"
   proxyVersion: string;        // e.g., "1.0.0"
   transport?: string;          // "stdio-mcp-proxy" | "plugin-native"
-  sdkVersion?: string;         // e.g., "@ois/network-adapter@2.0.0"
+  sdkVersion?: string;         // e.g., "@apnex/network-adapter@2.0.0"
   hostname?: string;
   platform?: string;
   pid?: number;
@@ -267,7 +267,7 @@ export interface Agent {
   workingSince: string | null;
   // Quota-recovery timer; auto-promotes online_quota_blocked → online_idle on elapse.
   quotaBlockedUntil: string | null;
-  // Adapter source-of-truth (e.g. "@ois/network-adapter@2.1.0"); set at handshake.
+  // Adapter source-of-truth (e.g. "@apnex/network-adapter@2.1.0"); set at handshake.
   // Distinct from clientMetadata.sdkVersion (which is the raw client-supplied value).
   adapterVersion: string;
   // Hub-side derived from socket peer addr at SSE-stream-open. NOT adapter-supplied (security).

@@ -22,14 +22,14 @@ import type {
   DrainedPendingAction,
   SessionState,
   SessionReconnectReason,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 
 import type { Message } from "./message.js";
 import { SeenIdCache, type SeenIdCacheOptions } from "./seen-id-cache.js";
 
 /**
  * Host-injected callback bag. Mirrors `SharedDispatcherOptions.notificationHooks`
- * in `@ois/network-adapter` so a Layer-3 shim can pass the same bag
+ * in `@apnex/network-adapter` so a Layer-3 shim can pass the same bag
  * through Layer 2 without any shape adapters.
  *
  * All hooks are optional — omitting one silently disables that

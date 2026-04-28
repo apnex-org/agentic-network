@@ -30,7 +30,7 @@
 - NO idea-102 Universal Port absorption
 - NO Hub-served adapter shape (option 5 from idea-217 ruled out)
 
-**Q6 NOT-A resolved at Design v0.2:** namespace decision **β (`@apnex/*` clean cutover)** with conditional `@ois/*` cleanup step in update script (per §2.3 below).
+**Q6 NOT-A resolved at Design v0.2:** namespace decision **β (`@apnex/*` clean cutover)** with conditional `@apnex/*` cleanup step in update script (per §2.3 below).
 
 ---
 
@@ -82,10 +82,10 @@ if [ -d .git ]; then
   git pull origin main || true
 fi
 
-# 1. Cleanup legacy @ois/* installs (conditional; skips on fresh-install consumers)
-if npm ls -g @ois/claude-plugin >/dev/null 2>&1; then
-  echo "Removing legacy @ois/* installation..."
-  npm uninstall -g @ois/claude-plugin @ois/network-adapter @ois/cognitive-layer @ois/message-router
+# 1. Cleanup legacy @apnex/* installs (conditional; skips on fresh-install consumers)
+if npm ls -g @apnex/claude-plugin >/dev/null 2>&1; then
+  echo "Removing legacy @apnex/* installation..."
+  npm uninstall -g @apnex/claude-plugin @apnex/network-adapter @apnex/cognitive-layer @apnex/message-router
 fi
 
 # 2. Install latest @apnex/* package
@@ -137,7 +137,7 @@ Per Survey Q5 C narrow scope, this mission mechanises Pass 10 §B + §D ONLY (co
 
 ### §2.3 Namespace decision + migration sequence (Q6 NOT-A resolved)
 
-**Decision: β (`@apnex/*` clean cutover).** Move from current internal `@ois/*` namespace to public `@apnex/*` per Director-prior-preference signal (`project_npm_namespace_apnex.md`).
+**Decision: β (`@apnex/*` clean cutover).** Move from current internal `@apnex/*` namespace to public `@apnex/*` per Director-prior-preference signal (`project_npm_namespace_apnex.md`).
 
 **Reasoning:**
 1. Director-prior-preference signal
@@ -146,14 +146,14 @@ Per Survey Q5 C narrow scope, this mission mechanises Pass 10 §B + §D ONLY (co
 4. Namespace migration cost is small one-time (~10 places: package.json files, install.sh scripts, file:tgz refs, doc references) amortized over future external-consumer surface
 
 **Migration sequence (covers existing-installation cleanup; per round-1 audit Fold 1):**
-1. Code-side rename: TS-LSP-bulk-rename of every `import` from `@ois/*` to `@apnex/*` across hub/, packages/, adapters/, scripts/
-2. Update script handles consumer-side cleanup conditionally (per §2.1.B): skips uninstall on fresh-install consumers; runs explicit `npm uninstall -g @ois/{claude-plugin,network-adapter,cognitive-layer,message-router}` on existing-installation consumers
+1. Code-side rename: TS-LSP-bulk-rename of every `import` from `@apnex/*` to `@apnex/*` across hub/, packages/, adapters/, scripts/
+2. Update script handles consumer-side cleanup conditionally (per §2.1.B): skips uninstall on fresh-install consumers; runs explicit `npm uninstall -g @apnex/{claude-plugin,network-adapter,cognitive-layer,message-router}` on existing-installation consumers
 3. Operator-runbook in W1+W2 PR description includes:
    - "First-time consumers: skip uninstall; script handles automatically"
    - "Existing consumers: run `update-adapter.sh` once; cleanup is conditional"
    - "Coordinated rollout across active sessions: see §3 active-session coordination protocol"
 
-**No shell-glob risk:** `@ois/*` is npm-scope-syntax (not shell-glob). Update script uses explicit package list, not wildcards.
+**No shell-glob risk:** `@apnex/*` is npm-scope-syntax (not shell-glob). Update script uses explicit package list, not wildcards.
 
 ### §2.4 Workspace publish flow (workspace:^ + W0 dry-run gate)
 
@@ -303,11 +303,11 @@ This is symmetric with mission-63 §6.3 9-step protocol but at the namespace-cut
 5. **NO opencode-plugin full parity** (stub-only; mirrors mission-62/63 vertex-cloudrun precedent)
 6. **NO CLI middleware** (per Survey Q4 A thin bundle; CLI-as-frontend-to-npm rejected; script + npm install suffices)
 7. **NO npm postinstall hook for install.sh** (v0.2 reframe per round-1 audit Fold 3; script-driven §D mechanisation)
-8. **NO `@ois/*` deprecation alias** (γ hybrid rejected; clean cutover per Q6 β architect-pick)
+8. **NO `@apnex/*` deprecation alias** (γ hybrid rejected; clean cutover per Q6 β architect-pick)
 
 ### §4.3 Q6 NOT-A resolved at v0.2
 
-`@ois/*` → `@apnex/*` namespace migration **IS in-scope** this mission (Survey Q6 NOT-A signal); v0.2 §2.3 specifies migration sequence + conditional cleanup.
+`@apnex/*` → `@apnex/*` namespace migration **IS in-scope** this mission (Survey Q6 NOT-A signal); v0.2 §2.3 specifies migration sequence + conditional cleanup.
 
 ---
 
@@ -332,7 +332,7 @@ This is symmetric with mission-63 §6.3 9-step protocol but at the namespace-cut
 
 1. **Q11 (NEW):** Active-session coordination protocol concrete enough at §3 sub-section? OR needs sub-thread protocol like mission-63 §6.3 9-step? Engineer-side ergonomics-check.
 2. **Tests scope (W1+W2 PR includes):**
-   - Namespace-migration smoke (zero `@ois/*` refs remaining post-rename)
+   - Namespace-migration smoke (zero `@apnex/*` refs remaining post-rename)
    - Workspace-protocol publish-correctness (registry-pinned semver in published `package.json`; NOT `workspace:^`)
    - Update-script idempotency (run twice; second run is no-op)
    - install.sh post-npm-cutover correctness (handshake parses cleanly post-update)
@@ -355,7 +355,7 @@ This is symmetric with mission-63 §6.3 9-step protocol but at the namespace-cut
 - npm-publish IS the canonical adapter distribution channel (not git checkout + manual rebuild)
 - Pass 10 §B mechanisation embedded in published packages; §D mechanisation script-driven (not postinstall-driven; v0.2 reframe)
 - Local script invokes install.sh; npm package ships clean artifacts (separation of artifact-distribution from system-side install action)
-- Namespace decision: `@apnex/*` (β; clean cutover from `@ois/*`)
+- Namespace decision: `@apnex/*` (β; clean cutover from `@apnex/*`)
 - CLI contract: exit codes 0/1/2/3; structured stdout final-line; `--pin <version>` + `--dry-run` flags; no interactive prompts (idea-221 pre-anchoring)
 
 **Sealed companions:**

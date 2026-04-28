@@ -104,4 +104,4 @@ You should see Hub tools available when you type `/` in Claude Code. The adapter
 
 - **"Hub credentials not found"** — Neither config file nor env vars are set. Check that `.ois/adapter-config.json` exists in your working directory, or set `OIS_HUB_URL` and `OIS_HUB_TOKEN`.
 - **Plugin not found** — Ensure the marketplace was added with the correct absolute path to the `agentic-network` root directory.
-- **Build errors** — Run `npm install` again. The `@ois/network-adapter` dependency resolves from a local tarball (`ois-network-adapter-2.0.0.tgz`) which must be present in the plugin directory.
+- **Build errors** — Run `npm install` again. The `@apnex/network-adapter` dependency resolves from a local tarball (`ois-network-adapter-2.0.0.tgz`) which must be present in the plugin directory.

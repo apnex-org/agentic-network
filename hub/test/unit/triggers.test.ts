@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 
 import { MessageRepository } from "../../src/entities/message-repository.js";
 import { TRIGGERS, runTriggers } from "../../src/policy/triggers.js";

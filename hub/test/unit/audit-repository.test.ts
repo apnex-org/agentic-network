@@ -17,7 +17,7 @@
  *   - `audit/v2/` namespace isolation: writes do not land under the
  *     legacy `audit/` prefix.
  *
- * GCS provider variant is exercised via the @ois/storage-provider
+ * GCS provider variant is exercised via the @apnex/storage-provider
  * conformance suite at the primitive layer (createOnly/list/get
  * semantics that AuditRepository composes over), which is not in scope
  * here — repository-level invariants only.
@@ -32,7 +32,7 @@ import {
   LocalFsStorageProvider,
   MemoryStorageProvider,
   type StorageProvider,
-} from "@ois/storage-provider";
+} from "@apnex/storage-provider";
 
 import { AuditRepository } from "../../src/entities/audit-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";

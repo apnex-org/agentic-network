@@ -20,7 +20,7 @@ import {
   type CachedCatalog,
   type McpAgentClient,
   type SharedDispatcherOptions,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 
 function fakeAgent(): McpAgentClient {
   return {

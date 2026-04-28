@@ -10,7 +10,7 @@
  *   - HubPlugin export
  *
  * The MCP-boundary handler factory + pendingActionMap + queueItemId
- * injection live in `@ois/network-adapter` (Layer 1c per Design v1.2).
+ * injection live in `@apnex/network-adapter` (Layer 1c per Design v1.2).
  */
 
 import type { Plugin } from "@opencode-ai/plugin";
@@ -30,8 +30,8 @@ import {
   type HandshakeFatalError,
   type SharedDispatcher,
   type TelemetryEvent,
-} from "@ois/network-adapter";
-import { CognitivePipeline } from "@ois/cognitive-layer";
+} from "@apnex/network-adapter";
+import { CognitivePipeline } from "@apnex/cognitive-layer";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -41,7 +41,7 @@ import { join, dirname } from "path";
 // ── Module state ─────────────────────────────────────────────────────
 
 const PROXY_VERSION = "4.3.0";
-const SDK_VERSION = "@ois/network-adapter@2.1.0";
+const SDK_VERSION = "@apnex/network-adapter@2.1.0";
 const RATE_LIMIT_MS = 30_000;
 
 let diagLogPath = "";
@@ -453,7 +453,7 @@ async function connectToHub(globalInstanceId: string): Promise<void> {
       logger: log,
       handshake: {
         globalInstanceId,
-        proxyName: "@ois/opencode-plugin",
+        proxyName: "@apnex/opencode-plugin",
         proxyVersion: PROXY_VERSION,
         transport: "bun-serve-proxy",
         sdkVersion: SDK_VERSION,

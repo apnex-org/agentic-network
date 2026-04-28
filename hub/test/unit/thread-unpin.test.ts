@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ThreadRepository } from "../../src/entities/thread-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 
 describe("ThreadRepository.unpinCurrentTurnAgent (CP3 C4)", () => {
   let store: ThreadRepository;

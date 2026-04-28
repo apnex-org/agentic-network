@@ -5,7 +5,7 @@ import type {
   DrainedPendingAction,
   SessionReconnectReason,
   SessionState,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 
 import { MessageRouter, type NotificationHooks } from "../src/message-router.js";
 

@@ -53,7 +53,7 @@ All communication flows through a central **Hub** using the MCP (Model Context P
 
 ## Shared Packages
 
-### `@ois/network-adapter` (`packages/network-adapter/`)
+### `@apnex/network-adapter` (`packages/network-adapter/`)
 
 Shared Universal MCP Network Adapter package used by the Architect, the Claude Code plugin (`adapters/claude-plugin/`, a.k.a. `plugin:agent-adapter:proxy`), and the OpenCode plugin (`adapters/opencode-plugin/`). Split into two layers:
 
@@ -117,7 +117,7 @@ The governance and planning agent. Reviews work, issues directives, manages thre
 
 - **Runtime:** Node.js 22 on Cloud Run
 - **LLM:** `gemini-3-flash-preview` via `@google/genai` (Vertex AI). The model ID is hardcoded at `agents/vertex-cloudrun/src/llm.ts:19`; see ADR-012 for the error-surfacing and context-economy contracts around Gemini calls.
-- **Hub connection:** `hub-adapter.ts` → `@ois/network-adapter` `McpAgentClient` with `manualSync: true` (shared with Plugin)
+- **Hub connection:** `hub-adapter.ts` → `@apnex/network-adapter` `McpAgentClient` with `manualSync: true` (shared with Plugin)
 - **Director interface:** `POST /chat/session`, `POST /chat/message` (multi-turn with function calling)
 
 **Key patterns:**
@@ -131,7 +131,7 @@ The governance and planning agent. Reviews work, issues directives, manages thre
 The Universal MCP Network Adapter shim for OpenCode. Manages the single MCP connection from OpenCode to the Hub.
 
 - **Runtime:** Bun (via OpenCode Plugin system)
-- **Architecture:** MCP-to-MCP proxy — local MCP Server (Bun.serve) forwarding to remote Hub via `@ois/network-adapter` `McpAgentClient`
+- **Architecture:** MCP-to-MCP proxy — local MCP Server (Bun.serve) forwarding to remote Hub via `@apnex/network-adapter` `McpAgentClient`
 - **Config:** `.opencode/adapter-config.json` (hubUrl, hubToken, role, autoPrompt)
 - **Registration:** calls `client.mcp.add("architect-hub", ...)` to register proxy with OpenCode dynamically
 
@@ -175,7 +175,7 @@ Either agent calls open_thread → Hub stores, SSE notifies other party
 See `docs/decisions/` for detailed ADRs. Summary:
 
 - **MCP as universal transport** — all communication over MCP Streamable HTTP + SSE (ADR-001)
-- **Single connection per agent** — each agent has one MCP session to the Hub, managed by `@ois/network-adapter` — split into L4 `McpTransport` + L7 `McpAgentClient` (ADR-008)
+- **Single connection per agent** — each agent has one MCP session to the Hub, managed by `@apnex/network-adapter` — split into L4 `McpTransport` + L7 `McpAgentClient` (ADR-008)
 - **Persist-first notifications** — write to GCS before SSE delivery, replay via Last-Event-ID (ADR-005)
 - **Sandwich pattern** — deterministic fetch/execute, LLM only for reasoning (ADR-002)
 - **Node.js everywhere** — Hub, Architect, Plugin all TypeScript (ADR-003)

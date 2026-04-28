@@ -1,5 +1,5 @@
 /**
- * @ois/cognitive-layer — sovereign cognitive-middleware layer for the
+ * @apnex/cognitive-layer — sovereign cognitive-middleware layer for the
  * OIS agentic network. Chain-of-responsibility augments that intercept
  * the tool-call boundary of every agent, providing transparent
  * caching, dedup, telemetry, description enrichment, and error
@@ -8,7 +8,7 @@
  * Design and ratification: see ADR-018 + thread-158.
  *
  * Consumer integration: opt-in `cognitive` config on
- * `@ois/network-adapter`'s `McpAgentClient`. Factory-composed pipeline
+ * `@apnex/network-adapter`'s `McpAgentClient`. Factory-composed pipeline
  * recommended via `CognitivePipeline.standard({ ... })`.
  */
 

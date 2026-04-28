@@ -27,7 +27,7 @@
 
 **Test counts at mission close:**
 - Hub: **51 files / 748 passing / 5 skipped / 0 failing** (vs pre-mission-49 baseline 49/706/5: **+2 files / +42 tests / 0 regressions**)
-- @ois/storage-provider: 2 files / 40 passing (unchanged — no contract delta as expected)
+- @apnex/storage-provider: 2 files / 40 passing (unchanged — no contract delta as expected)
 - Build + typecheck: clean
 
 ---
@@ -44,7 +44,7 @@
 |---|---|---|---|
 | 1 | Both stores implement Repository pattern over StorageProvider; legacy dual-implementation code deleted | ✅ MET | `entities/audit-repository.ts` + `entities/notification-repository.ts` shipped; `MemoryAuditStore` (state.ts:1293-1318) + `GcsAuditStore` (gcs-state.ts:527-570) + `MemoryNotificationStore` (state.ts:1113-1152) + `GcsNotificationStore` (gcs-state.ts:574-655) all deleted with mission-49-W8/W9 tombstone comments |
 | 2 | GCS prod behavior byte-identical post-refactor — zero behavioral regression on existing consumers | ✅ MET | `IAuditStore` + `INotificationStore` interfaces unchanged in `state.ts:818-827`; consumers in `hub/src/index.ts:344,379,448,465,537` + `hub-networking.ts:243,323,351,704,715` untouched; W9 `notifications/v2/` namespace preserved byte-identically |
-| 3 | Repository-level test coverage passes for both stores against memory + local-fs + gcs providers | ✅ MET (via composition) | 42 new repository-level tests parameterized over Memory + LocalFs; GCS provider variant covered at the primitive layer by the @ois/storage-provider conformance suite (per thread-304 Point C terminology — repository-level tests, NOT conformance-suite extensions) |
+| 3 | Repository-level test coverage passes for both stores against memory + local-fs + gcs providers | ✅ MET (via composition) | 42 new repository-level tests parameterized over Memory + LocalFs; GCS provider variant covered at the primitive layer by the @apnex/storage-provider conformance suite (per thread-304 Point C terminology — repository-level tests, NOT conformance-suite extensions) |
 | 4 | Hub test baseline preserved or improved | ✅ MET | 706→748 passing (+42 tests added; 0 regressions). Mission-47's `-N-for-obsolete-duplicate-tests` pattern not applicable — legacy Audit + Notification dual-backend tests existed only as integration coverage via `policy/test-utils.ts` test fixtures, which migrated cleanly to the new Repository (no test removals) |
 | 5 | On local-fs backend: audit entries + notifications now persist across Hub restart — mission-48 inherited-verification dependency satisfied | ✅ MET (provable on PR merge) | Post-merge: `STORAGE_BACKEND=local-fs` will instantiate `AuditRepository` + `NotificationRepository` (single wiring path; no Memory variant exists), writing through `LocalFsStorageProvider` to disk. Verifiable empirically once mission-48 T2b restart-smoke runs |
 | 6 | Audit ID collision class eliminated by construction (counter-with-CAS) | ✅ MET | See §5 emergent-correctness narrative; verified by 100-rapid-fire-IDs test in `audit-repository.test.ts` |
@@ -115,7 +115,7 @@ Deliverables per task-353:
 | Post-T3 (this PR; docs-only) | 51 | 748 | 5 | unchanged |
 
 **Cross-package verification:**
-- @ois/storage-provider: 2 files / 40 passing (unchanged — no contract delta as expected)
+- @apnex/storage-provider: 2 files / 40 passing (unchanged — no contract delta as expected)
 - `npm run build` (hub): clean
 - `npx tsc --noEmit` (hub): clean
 

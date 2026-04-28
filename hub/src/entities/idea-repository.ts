@@ -18,11 +18,11 @@
  * the backfilled state and does not re-introduce the shim.
  */
 
-import type { StorageProvider } from "@ois/storage-provider";
+import type { StorageProvider } from "@apnex/storage-provider";
 import {
   hasGetWithToken,
   StoragePathNotFoundError,
-} from "@ois/storage-provider";
+} from "@apnex/storage-provider";
 
 import type { EntityProvenance } from "../state.js";
 import type {

@@ -92,11 +92,11 @@ Default `OIS_ENV` is `prod` — existing single-env operators see unchanged beha
 
 ## Cloud Build tarball staging (mission-50 + task-386 extension)
 
-Mission-50 (closed 2026-04-25) codified the sovereign-package tarball staging that `scripts/local/build-hub.sh` performs as a pre-build hook before `gcloud builds submit`. Task-386 (2026-04-26) extended the codification to cover a second sovereign package (`@ois/repo-event-bridge`) added by mission-52 T3 — same root cause, same fix shape, generalized to a loop over all sovereign packages. This section documents the rationale, mechanics, sunset condition, CI parity expectation, and ADR-024 boundary.
+Mission-50 (closed 2026-04-25) codified the sovereign-package tarball staging that `scripts/local/build-hub.sh` performs as a pre-build hook before `gcloud builds submit`. Task-386 (2026-04-26) extended the codification to cover a second sovereign package (`@apnex/repo-event-bridge`) added by mission-52 T3 — same root cause, same fix shape, generalized to a loop over all sovereign packages. This section documents the rationale, mechanics, sunset condition, CI parity expectation, and ADR-024 boundary.
 
 ### Why
 
-Hub depends on multiple sovereign packages — `@ois/storage-provider` (`packages/storage-provider/`) and `@ois/repo-event-bridge` (`packages/repo-event-bridge/`) — via `"file:../packages/<pkg>"` refs in `hub/package.json`. Those refs work for local dev (`cd hub && npm install` walks up one level), but they break under Cloud Build: `gcloud builds submit hub/` uploads only the contents of `hub/`, so the `..` escape leaves the sovereign package sources unreachable inside the build container. That's the failure mode bug-33 hit on the post-mission-49 redeploy attempt; task-386 catches the same gap retroactively for the second sovereign package introduced by mission-52 T3.
+Hub depends on multiple sovereign packages — `@apnex/storage-provider` (`packages/storage-provider/`) and `@apnex/repo-event-bridge` (`packages/repo-event-bridge/`) — via `"file:../packages/<pkg>"` refs in `hub/package.json`. Those refs work for local dev (`cd hub && npm install` walks up one level), but they break under Cloud Build: `gcloud builds submit hub/` uploads only the contents of `hub/`, so the `..` escape leaves the sovereign package sources unreachable inside the build container. That's the failure mode bug-33 hit on the post-mission-49 redeploy attempt; task-386 catches the same gap retroactively for the second sovereign package introduced by mission-52 T3.
 
 ### How (transient swap)
 
@@ -150,9 +150,9 @@ If additional sovereign packages get added between now and idea-186 sunset, repe
 
 ### ADR-024 boundary statement
 
-Mission-50 does NOT amend [`ADR-024`](../docs/decisions/024-sovereign-storage-provider.md) (StorageProvider sovereign-package contract). The `@ois/storage-provider` 6-primitive contract surface is unchanged; the `capabilities.concurrent` flag is unchanged; both `LocalFsStorageProvider` and `GcsStorageProvider` implementations are untouched. The tarball staging is a build-pipeline pattern adapting AROUND the contract, not a contract change. Per methodology v1.0 §ADR-amendment-scope-discipline, ADR amendments are reserved for contract changes; deployment-pattern adaptations live in build-pipeline + runbook docs — i.e., here.
+Mission-50 does NOT amend [`ADR-024`](../docs/decisions/024-sovereign-storage-provider.md) (StorageProvider sovereign-package contract). The `@apnex/storage-provider` 6-primitive contract surface is unchanged; the `capabilities.concurrent` flag is unchanged; both `LocalFsStorageProvider` and `GcsStorageProvider` implementations are untouched. The tarball staging is a build-pipeline pattern adapting AROUND the contract, not a contract change. Per methodology v1.0 §ADR-amendment-scope-discipline, ADR amendments are reserved for contract changes; deployment-pattern adaptations live in build-pipeline + runbook docs — i.e., here.
 
-The same boundary holds for the task-386 extension: `@ois/repo-event-bridge`'s sovereign-package contract (the `EventSource` interface, `CursorStore`, GH event translator surface introduced by mission-52 T1) is unchanged; the extension only adds the second package to the build-pipeline tarball-staging loop and matching ignore/Dockerfile lines.
+The same boundary holds for the task-386 extension: `@apnex/repo-event-bridge`'s sovereign-package contract (the `EventSource` interface, `CursorStore`, GH event translator surface introduced by mission-52 T1) is unchanged; the extension only adds the second package to the build-pipeline tarball-staging loop and matching ignore/Dockerfile lines.
 
 ## Backends
 

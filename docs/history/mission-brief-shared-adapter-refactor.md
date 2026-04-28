@@ -40,7 +40,7 @@ This eliminates dual-implementation drift entirely. It is strictly an interim un
 
 ## 2. Summary of the finding
 
-**M18 client-side code (`globalInstanceId` bootstrap, enriched `register_role` handshake, epoch tracking, fatal-halt handling, structured notification logging) lives only in `claude-engineer/src/hub-proxy.ts`. It is not in `packages/hub-connection/`. Therefore OpenCode, which consumes `@ois/hub-connection` via the shared `UniversalClientAdapter`, has none of it.**
+**M18 client-side code (`globalInstanceId` bootstrap, enriched `register_role` handshake, epoch tracking, fatal-halt handling, structured notification logging) lives only in `claude-engineer/src/hub-proxy.ts`. It is not in `packages/hub-connection/`. Therefore OpenCode, which consumes `@apnex/hub-connection` via the shared `UniversalClientAdapter`, has none of it.**
 
 Consequences observed tonight:
 
@@ -186,7 +186,7 @@ Section-by-section classification:
 
 > The shared adapter carries all common network protocol, identity, observability, and state-sync behavior. Per-engineer shims are strictly last-mile: they exist only to bridge the adapter to the specific host's delivery channel (Claude Code `notifications/claude/channel`, OpenCode `sdkClient.session.promptAsync`) and to perform host-specific bootstrap (Claude's stdio `Server`, OpenCode's Bun.serve proxy).
 
-If a piece of code could be written once and consumed by both engineers, it **must** live in `@ois/hub-connection`. Engineer-specific means "the code physically cannot run in the other host" — not "the code was written while working on Claude."
+If a piece of code could be written once and consumed by both engineers, it **must** live in `@apnex/hub-connection`. Engineer-specific means "the code physically cannot run in the other host" — not "the code was written while working on Claude."
 
 ### 5.2 New files in `packages/hub-connection/src/`
 
@@ -278,7 +278,7 @@ All authoring steps (1–6) are performed by Claude-engineer in the single worki
 1. **Implement** the five new shared modules and adapter changes directly in `packages/hub-connection/src/`.
 2. **Unit tests** for `m18-handshake.ts` (happy path, fatal code, malformed response, transport error) and `instance.ts` (first create, load existing, corrupted file regeneration, missing directory).
 3. **Integration test** in `mcp-relay-hub/test/unit/m18-agent.test.ts` (or a new file) mounting the shared adapter against a mock Hub, verifying bare→enriched `register_role` sequence, response parsing, fatal-code callback, and epoch displacement logging.
-4. **Version bump** `@ois/hub-connection` to `1.4.0`. Whether this is a workspace-path import or a published package determines whether step 4 is just a rebuild or an actual `npm publish`. See risk § 7.6 — I must resolve this before step 5.
+4. **Version bump** `@apnex/hub-connection` to `1.4.0`. Whether this is a workspace-path import or a published package determines whether step 4 is just a rebuild or an actual `npm publish`. See risk § 7.6 — I must resolve this before step 5.
 5. **Claude-engineer rewrite** — rewrite `claude-engineer/src/hub-proxy.ts` to the ~150-line target, install new adapter, build, smoke test locally (reconnect, verify `[M18] Registered as ...` appears in log with new structured format, verify channel push still works).
 6. **OpenCode rewrite (authored by me)** — rewrite `.opencode/plugins/hub-notifications.ts` to the ~300-line target in the local tree. I do not run it — I just produce the file. I also stage any required adjacent changes (e.g. updated `.opencode/plugins/package.json` if the adapter import path changes).
 7. **OpenCode mirror** — OpenCode machine pulls the updated files over the LAN:
@@ -322,13 +322,13 @@ OpenCode currently maps `unhandled` → `informational` to avoid dropping events
 
 The current code (lines 611-631) overrides the default `initialize` handler to capture `clientInfo`. The comment acknowledges this is subtle: the SDK's low-level `Server` normally handles `initialize` internally. The override returns a handcrafted response. If the SDK is updated, this may break. Safer approach: add an SDK-level hook or use a request-interception middleware pattern. Not blocking — the current implementation works against the current SDK version.
 
-### 7.6 Workspace vs published package resolution for `@ois/hub-connection`
+### 7.6 Workspace vs published package resolution for `@apnex/hub-connection`
 
-The import `from "@ois/hub-connection"` could resolve via npm registry, local workspace, or path-based `node_modules` link. Determine which by reading the root `package.json` or workspace config. This is the **single most important open question for the revised single-author delivery model**, because it decides what OpenCode has to mirror:
+The import `from "@apnex/hub-connection"` could resolve via npm registry, local workspace, or path-based `node_modules` link. Determine which by reading the root `package.json` or workspace config. This is the **single most important open question for the revised single-author delivery model**, because it decides what OpenCode has to mirror:
 
-- **If workspace-path** (`"@ois/hub-connection": "workspace:*"` or `"file:../packages/hub-connection"`): OpenCode must mirror the entire `packages/hub-connection/` directory (including its built `dist/`) plus the plugin file. OpenCode's `bun install` will then relink the local path.
-- **If published**: I publish `@ois/hub-connection@1.4.0` to whatever registry the project uses; OpenCode only needs the plugin file and runs `bun install` to pull the new adapter version from the registry. No `packages/` mirror required.
-- **If pre-built `node_modules` commit**: neither — both engineers would need the `node_modules/@ois/hub-connection/` directory mirrored. Unlikely but possible.
+- **If workspace-path** (`"@apnex/hub-connection": "workspace:*"` or `"file:../packages/hub-connection"`): OpenCode must mirror the entire `packages/hub-connection/` directory (including its built `dist/`) plus the plugin file. OpenCode's `bun install` will then relink the local path.
+- **If published**: I publish `@apnex/hub-connection@1.4.0` to whatever registry the project uses; OpenCode only needs the plugin file and runs `bun install` to pull the new adapter version from the registry. No `packages/` mirror required.
+- **If pre-built `node_modules` commit**: neither — both engineers would need the `node_modules/@apnex/hub-connection/` directory mirrored. Unlikely but possible.
 
 I must resolve this in step 4 before I can give OpenCode a correct `wget` command list in step 7.
 
@@ -338,7 +338,7 @@ Does `mcp-relay-hub/test/` have a mock Hub harness suitable for testing the shar
 
 ### 7.8 Rollback plan
 
-If the refactor breaks in production, rollback is: revert `@ois/hub-connection` to `1.3.0`, revert both engineer shims. The downside is that Claude-engineer's current M18 code in `hub-proxy.ts` is working today — reverting it means temporarily losing M18 on Claude. Mitigation: keep the Claude-local M18 code in a feature-flagged branch until the shared version is proven stable, then delete.
+If the refactor breaks in production, rollback is: revert `@apnex/hub-connection` to `1.3.0`, revert both engineer shims. The downside is that Claude-engineer's current M18 code in `hub-proxy.ts` is working today — reverting it means temporarily losing M18 on Claude. Mitigation: keep the Claude-local M18 code in a feature-flagged branch until the shared version is proven stable, then delete.
 
 ---
 
@@ -347,7 +347,7 @@ If the refactor breaks in production, rollback is: revert `@ois/hub-connection` 
 - Fixing any real or imagined bug in the Hub's SSE push-path routing. We do not have evidence that such a bug exists on a symmetric two-M18-engineer configuration. The refactor should establish that symmetric configuration first; only then can routing bugs be tested for.
 - Renaming the `sessionId` field in `get_engineer_status`. Follow-up.
 - Fixing the Hub session TTL reaper (unless § 7.1 investigation reveals it's broken, in which case handle in parallel).
-- Extracting the adapter as a standalone npm-published SDK (`@ois/claude-engineer-proxy` or similar). That was discussed in thread-78 and deferred — still deferred.
+- Extracting the adapter as a standalone npm-published SDK (`@apnex/claude-engineer-proxy` or similar). That was discussed in thread-78 and deferred — still deferred.
 - Adding `revision_required` actionable-payload inspection in the proxy as a defensive belt-and-braces against Hub FSM violations (discussed in thread-78). Follow-up.
 - Any ADR writing. The refactor is faithful to existing ADR-008 (shared adapter decoupling); no new ADR is required unless the M18 payload shape changes.
 

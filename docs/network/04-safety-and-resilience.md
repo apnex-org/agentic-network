@@ -2,7 +2,7 @@
 
 ## Connection Guarantees (G1-G5)
 
-These are the invariants enforced by the L4/L7 split in `@ois/network-adapter`. G1–G4 live in the L4 transport (`McpTransport`) which owns the wire, SSE watchdog, and heartbeat POST. G5 lives in the L7 session client (`McpAgentClient`) which owns the session FSM and propagates `SessionReconnectReason` to shim callbacks. See `src/transport.ts` and `src/agent-client.ts` for the contracts.
+These are the invariants enforced by the L4/L7 split in `@apnex/network-adapter`. G1–G4 live in the L4 transport (`McpTransport`) which owns the wire, SSE watchdog, and heartbeat POST. G5 lives in the L7 session client (`McpAgentClient`) which owns the session FSM and propagates `SessionReconnectReason` to shim callbacks. See `src/transport.ts` and `src/agent-client.ts` for the contracts.
 
 ### G1: If connected, SSE is proven alive
 

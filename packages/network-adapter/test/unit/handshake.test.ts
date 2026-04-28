@@ -31,10 +31,10 @@ const baseConfig: HandshakeConfig = {
   role: "engineer",
   globalInstanceId: "uuid-test",
   clientInfo: { name: "claude-code", version: "0.1.0" },
-  proxyName: "@ois/claude-plugin",
+  proxyName: "@apnex/claude-plugin",
   proxyVersion: "1.0.0",
   transport: "stdio-mcp-proxy",
-  sdkVersion: "@ois/network-adapter@2.0.0",
+  sdkVersion: "@apnex/network-adapter@2.0.0",
   llmModel: "claude-opus-4-6",
 };
 
@@ -144,7 +144,7 @@ describe("buildHandshakePayload", () => {
     expect(payload.role).toBe("engineer");
     expect(payload.globalInstanceId).toBe("uuid-test");
     expect(payload.clientMetadata.clientName).toBe("claude-code");
-    expect(payload.clientMetadata.proxyName).toBe("@ois/claude-plugin");
+    expect(payload.clientMetadata.proxyName).toBe("@apnex/claude-plugin");
     expect(payload.clientMetadata.pid).toBe(process.pid);
     expect(payload.advisoryTags.llmModel).toBe("claude-opus-4-6");
   });
@@ -160,7 +160,7 @@ describe("buildHandshakePayload", () => {
       ...baseConfig,
       clientInfo: { name: "unknown", version: "0.1.0" },
     });
-    expect(payload.clientMetadata.clientName).toBe("@ois/claude-plugin");
+    expect(payload.clientMetadata.clientName).toBe("@apnex/claude-plugin");
     expect(payload.clientMetadata.clientVersion).toBe("0.1.0"); // version was fine — stays
   });
 
@@ -178,23 +178,23 @@ describe("buildHandshakePayload", () => {
       ...baseConfig,
       clientInfo: { name: "", version: "" },
     });
-    expect(payload.clientMetadata.clientName).toBe("@ois/claude-plugin");
+    expect(payload.clientMetadata.clientName).toBe("@apnex/claude-plugin");
     expect(payload.clientMetadata.clientVersion).toBe("1.0.0");
   });
 });
 
 describe("resolveClientName (bug-17)", () => {
   it("returns the raw value when non-empty and not 'unknown'", () => {
-    expect(resolveClientName("claude-code", "@ois/claude-plugin")).toBe("claude-code");
+    expect(resolveClientName("claude-code", "@apnex/claude-plugin")).toBe("claude-code");
   });
   it("falls back to proxyName on empty string", () => {
-    expect(resolveClientName("", "@ois/claude-plugin")).toBe("@ois/claude-plugin");
+    expect(resolveClientName("", "@apnex/claude-plugin")).toBe("@apnex/claude-plugin");
   });
   it("falls back to proxyName on 'unknown' sentinel", () => {
-    expect(resolveClientName("unknown", "@ois/claude-plugin")).toBe("@ois/claude-plugin");
+    expect(resolveClientName("unknown", "@apnex/claude-plugin")).toBe("@apnex/claude-plugin");
   });
   it("falls back to proxyName on undefined", () => {
-    expect(resolveClientName(undefined, "@ois/vertex-cloudrun")).toBe("@ois/vertex-cloudrun");
+    expect(resolveClientName(undefined, "@apnex/vertex-cloudrun")).toBe("@apnex/vertex-cloudrun");
   });
 });
 

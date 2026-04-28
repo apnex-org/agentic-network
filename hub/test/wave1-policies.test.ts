@@ -289,7 +289,7 @@ describe("SessionPolicy", () => {
     clientMetadata: {
       clientName: "test-client",
       clientVersion: "0.0.0",
-      proxyName: "@ois/test-plugin",
+      proxyName: "@apnex/test-plugin",
       proxyVersion: "0.0.0",
       transport: "stdio-mcp-proxy",
     },
@@ -354,7 +354,7 @@ describe("SessionPolicy", () => {
       clientMetadata: {
         clientName: "director-chat",
         clientVersion: "0.0.0",
-        proxyName: "@ois/director-plugin",
+        proxyName: "@apnex/director-plugin",
         proxyVersion: "0.0.0",
       },
     };
@@ -373,7 +373,7 @@ describe("SessionPolicy", () => {
       role: "director",
       globalInstanceId: "test-gid-director-2",
       clientMetadata: {
-        clientName: "d", clientVersion: "0", proxyName: "@ois/d", proxyVersion: "0",
+        clientName: "d", clientVersion: "0", proxyName: "@apnex/d", proxyVersion: "0",
       },
     };
     await router.handle("register_role", directorHandshake, ctx);
@@ -471,7 +471,7 @@ describe("SessionPolicy", () => {
     const eng = parsed.engineers[0];
     expect(eng.agentId).toBeDefined();
     expect(eng.status).toBe("online");
-    expect(eng.clientMetadata.proxyName).toBe("@ois/test-plugin");
+    expect(eng.clientMetadata.proxyName).toBe("@apnex/test-plugin");
     expect(eng.sessionEpoch).toBe(1);
   });
 
@@ -483,7 +483,7 @@ describe("SessionPolicy", () => {
     clientMetadata: {
       clientName: "test-arch-client",
       clientVersion: "0.0.0",
-      proxyName: "@ois/test-plugin",
+      proxyName: "@apnex/test-plugin",
       proxyVersion: "0.0.0",
     },
   };
@@ -526,7 +526,7 @@ describe("SessionPolicy", () => {
       globalInstanceId: "test-gid-director",
       clientMetadata: {
         clientName: "dir-client", clientVersion: "0",
-        proxyName: "@ois/test-plugin", proxyVersion: "0",
+        proxyName: "@apnex/test-plugin", proxyVersion: "0",
       },
     }, dirCtx);
     await router.handle("claim_session", {}, dirCtx);

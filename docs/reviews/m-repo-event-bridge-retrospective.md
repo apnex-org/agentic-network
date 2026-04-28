@@ -13,8 +13,8 @@
 | Wave | Scope | Outcome | Merge SHA | PR |
 |---|---|---|---|---|
 | Preflight | mission-52 preflight check (verdict GREEN; one E2 YELLOW-on-coherence-not-blocker) | Approved | `a5828b1` | #51 |
-| T1 | @ois/repo-event-bridge sovereign-package contract (EventSource async-iterator + capability flags + health() + 8-subkind translator + CreateMessageSink stub + 45-test conformance suite) | Approved | `906f6bf` | #52 |
-| T2 | PollSource implementation (PAT auth + scope-validation; 30s cadence + soft-limit budget log; 3-layer 429 handling; per-repo cursor + bounded LRU dedupe via @ois/storage-provider) | Approved | `2fc554d` | #53 |
+| T1 | @apnex/repo-event-bridge sovereign-package contract (EventSource async-iterator + capability flags + health() + 8-subkind translator + CreateMessageSink stub + 45-test conformance suite) | Approved | `906f6bf` | #52 |
+| T2 | PollSource implementation (PAT auth + scope-validation; 30s cadence + soft-limit budget log; 3-layer 429 handling; per-repo cursor + bounded LRU dedupe via @apnex/storage-provider) | Approved | `2fc554d` | #53 |
 | T3 | Hub integration (in-Hub component loading + start-hub.sh env-var + create_message wired + RepoEventBridge state machine; describe.skip + TODO(idea-186) on integration test) | Approved (Path 2 after 3-revision-arc) | `614211a` | #54 |
 | T4 | WebhookSource design doc (doc-only per thread-312 round-2 scope reduction; replaces stub-skeleton) | Approved | `2b37a44` | #55 |
 | T5 | Closing audit (304 lines per canonical 8-section shape) | Approved | `76836ed` | #56 |
@@ -81,8 +81,8 @@ Each revision-round I authored confidently as the right next step; each was wron
 ### 3.2 Cross-package install-order fragility surfaced 3 distinct mechanisms; all 3 sunset on idea-186
 
 mission-50 papered over the storage-provider cross-package issue with tarball-staging in build-hub.sh (consumed only by hub). mission-52 hit the issue twice as deep (repo-event-bridge depends on storage-provider AND is consumed by hub — two-hop chain). The 3 mechanisms tried in T3:
-- **Prepare-script with tsc** — fails because @ois/storage-provider not yet installed in package's local node_modules at install time
-- **Committed dist/** — works for install-time resolution but fails at runtime because resolution from packages/repo-event-bridge/dist/ doesn't reach hub/node_modules where @ois/storage-provider lives
+- **Prepare-script with tsc** — fails because @apnex/storage-provider not yet installed in package's local node_modules at install time
+- **Committed dist/** — works for install-time resolution but fails at runtime because resolution from packages/repo-event-bridge/dist/ doesn't reach hub/node_modules where @apnex/storage-provider lives
 - **Vitest preserveSymlinks** — would solve runtime resolution but cascaded to 58 tests because it broke storage-provider/dist/gcs.js's resolution of @google-cloud/storage
 
 Each mechanism has a different failure mode; all three sunset cleanly when idea-186 (npm workspaces) lands and the hoisted node_modules layout makes cross-package resolution natural.
@@ -91,7 +91,7 @@ Each mechanism has a different failure mode; all three sunset cleanly when idea-
 
 ### 3.3 CI workflow npm ci → npm install gap was missed in mission-50 retrospective
 
-Mission-50 T5 fixed the lockfile-incompatibility issue at the Dockerfile path by switching to `npm install`. The CI workflow path was not modified at the time because no PR since had touched hub/package-lock.json — the issue was latent. Mission-52 T3 was the first PR to touch hub/package-lock.json (because it added @ois/repo-event-bridge as a dep); CI immediately failed.
+Mission-50 T5 fixed the lockfile-incompatibility issue at the Dockerfile path by switching to `npm install`. The CI workflow path was not modified at the time because no PR since had touched hub/package-lock.json — the issue was latent. Mission-52 T3 was the first PR to touch hub/package-lock.json (because it added @apnex/repo-event-bridge as a dep); CI immediately failed.
 
 **Methodology calibration #18 candidate (extends mission-50 §calibration #16):** deploy-pipeline + CI-pipeline are TWO independent install paths; lockfile-compatibility fixes need to apply to both. Mission-50's fix at the Dockerfile shipped; mission-52 T3 round-2 fix at the CI workflow ships now; lesson should be locked in for any future mission touching install-path config.
 
@@ -159,7 +159,7 @@ Both paths set distinct health-state markers (e.g., `pausedReason: 'rate-limit'`
 
 ## 6. Closing reflection
 
-Mission-52 was scoped as the **Tier 1 follow-on to mission-51**, sinking GitHub repository events into the message primitive via @ois/repo-event-bridge sovereign package. It shipped the architectural deliverables cleanly: sovereign-package #5 contract; PollSource concrete with 3-layer 429 handling; Hub integration with PAT failure isolation; WebhookSource design doc; closing audit.
+Mission-52 was scoped as the **Tier 1 follow-on to mission-51**, sinking GitHub repository events into the message primitive via @apnex/repo-event-bridge sovereign package. It shipped the architectural deliverables cleanly: sovereign-package #5 contract; PollSource concrete with 3-layer 429 handling; Hub integration with PAT failure isolation; WebhookSource design doc; closing audit.
 
 The mission demonstrated **multiple methodology v1.0 patterns in concert**:
 - Thread-312 design round (engineer audit produced T4 doc-only scope reduction; architect ratified) ✓

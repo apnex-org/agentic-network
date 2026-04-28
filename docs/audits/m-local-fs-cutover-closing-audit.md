@@ -28,7 +28,7 @@
 
 **Test counts at mission close:**
 - Hub: 52 files / 755 passing / 5 skipped (was 51/748/5 at mission-49 close — delta +1 file / +7 tests / 0 regressions; all from T2b's cutover-sentinel.test.ts).
-- @ois/storage-provider: 2 files / 40 passing (unchanged — no contract delta; the 6-primitive surface held).
+- @apnex/storage-provider: 2 files / 40 passing (unchanged — no contract delta; the 6-primitive surface held).
 - Build + typecheck: clean throughout.
 
 ---
@@ -151,7 +151,7 @@ Net: 6 modified production / docs files; 5 new files (1 helper + 1 unit-test + 1
 | Post-T4 (this PR) | 52 | 755 | 5 | unchanged (docs-only) |
 
 **Cross-package verification:**
-- @ois/storage-provider: 2 files / 40 passing (unchanged throughout — no contract delta)
+- @apnex/storage-provider: 2 files / 40 passing (unchanged throughout — no contract delta)
 - `npm run build` (hub): clean throughout
 - `npx tsc --noEmit` (hub): clean throughout
 - `bash -n` on every modified shell script: clean throughout

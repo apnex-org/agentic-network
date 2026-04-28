@@ -6,7 +6,7 @@
  * The GCS-specific round-trip behaviour this file used to pin is now
  * covered at two layers:
  *
- *   1. Storage layer — the @ois/storage-provider conformance suite
+ *   1. Storage layer — the @apnex/storage-provider conformance suite
  *      exercises CAS/createOnly/getWithToken against GcsStorageProvider,
  *      MemoryStorageProvider, and LocalFsStorageProvider identically.
  *   2. Entity layer — this file pins `PendingActionRepository`'s FSM
@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 import { PendingActionRepository } from "../../src/entities/pending-action-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
 

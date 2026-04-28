@@ -45,10 +45,10 @@ import {
   ErrorNormalizer,
   NormalizedError,
   type TelemetryEvent,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../packages/network-adapter/test/helpers/policy-loopback.js";
-import { createSharedDispatcher, pendingKey } from "@ois/network-adapter";
+import { createSharedDispatcher, pendingKey } from "@apnex/network-adapter";
 
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
   const start = Date.now();
@@ -124,7 +124,7 @@ async function createEngineerWithShim(
       role: "engineer",
       handshake: {
         globalInstanceId: `eng-${randomUUID()}`,
-        proxyName: "@ois/opencode-plugin",
+        proxyName: "@apnex/opencode-plugin",
         proxyVersion: "opencode-e2e-1.0.0",
         transport: "bun-serve-proxy",
         sdkVersion: "0.0.0",

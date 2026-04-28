@@ -2,7 +2,7 @@
 
 ## Scope
 
-All tests target the shared network-adapter package (`@ois/network-adapter`) in isolation — no Cloud Run agents, no Gemini, no OpenCode. Tests use **real production code** for both the Hub networking layer (`hub-networking.ts`) and the client (`McpTransport` + `McpAgentClient`), connected via real MCP SDK transports. The only shim is a minimal `register_role` tool — everything else is production code. Mission-19 L7 tests additionally run against `PolicyLoopbackHub`, which plugs the real Hub `PolicyRouter` (all 13 policies) + in-memory stores behind the `ILoopbackHub` contract, so the full policy stack executes without spinning up HTTP/SSE.
+All tests target the shared network-adapter package (`@apnex/network-adapter`) in isolation — no Cloud Run agents, no Gemini, no OpenCode. Tests use **real production code** for both the Hub networking layer (`hub-networking.ts`) and the client (`McpTransport` + `McpAgentClient`), connected via real MCP SDK transports. The only shim is a minimal `register_role` tool — everything else is production code. Mission-19 L7 tests additionally run against `PolicyLoopbackHub`, which plugs the real Hub `PolicyRouter` (all 13 policies) + in-memory stores behind the `ILoopbackHub` contract, so the full policy stack executes without spinning up HTTP/SSE.
 
 **Run tests:** `cd packages/network-adapter && npm test`
 

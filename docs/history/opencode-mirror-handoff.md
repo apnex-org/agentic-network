@@ -25,7 +25,7 @@ The single working tree at `/home/apnex/taceng/agentic-network/` on the Claude m
 
 3. **`.opencode/plugins/hub-notifications.ts`** — rewritten from 803 → 586 lines. Shared adapter now owns: M18 handshake, state sync, notification logging, prompt formatting. Plugin retains: rate limiter, deferred backlog, Bun.serve proxy, tool discovery sync, OpenCode session event hooks. **`onFatalHalt` does NOT call `process.exit`** — exiting would kill the whole OpenCode TUI. Instead it logs + toasts; the plugin goes inert until OpenCode restarts.
 
-4. **`.opencode/package.json`** — **unchanged.** OpenCode uses a directory-path install (`"@ois/hub-connection": "file:../packages/hub-connection"`), so mirroring the directory and re-running `bun install` will automatically pick up 1.4.0.
+4. **`.opencode/package.json`** — **unchanged.** OpenCode uses a directory-path install (`"@apnex/hub-connection": "file:../packages/hub-connection"`), so mirroring the directory and re-running `bun install` will automatically pick up 1.4.0.
 
 ---
 
@@ -91,7 +91,7 @@ tail -f .opencode/hub-plugin.log
 You should see, in order (timing approximate):
 
 ```
-<iso> Phase 15 — Shared-adapter refactor (@ois/hub-connection@1.4.0)
+<iso> Phase 15 — Shared-adapter refactor (@apnex/hub-connection@1.4.0)
 <iso> Auto-prompt: enabled
 <iso> Tracking session: ses_xxxx...
 <iso> [M18] globalInstanceId=<new-uuid>                     ← NEW (never appeared in old logs)
@@ -202,8 +202,8 @@ Per mission brief § 9 Task MIRROR+VERIFY, once OpenCode reports the new identif
 
 ## Version reference
 
-- Shared: `@ois/hub-connection@1.4.0`
-- Claude proxy: `@ois/claude-engineer@1.0.0` (hub-proxy.ts self-reports `PROXY_VERSION = 1.1.0`)
-- OpenCode plugin: `@ois/opencode-plugin` (self-reports `PROXY_VERSION = 4.1.0`)
+- Shared: `@apnex/hub-connection@1.4.0`
+- Claude proxy: `@apnex/claude-engineer@1.0.0` (hub-proxy.ts self-reports `PROXY_VERSION = 1.1.0`)
+- OpenCode plugin: `@apnex/opencode-plugin` (self-reports `PROXY_VERSION = 4.1.0`)
 
 End of handoff.

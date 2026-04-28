@@ -3,10 +3,10 @@
  *
  * TODO(idea-186): Unskip when npm workspaces land.
  *
- * This file's tests import @ois/repo-event-bridge which transitively
- * imports @ois/storage-provider. Without npm workspaces, cross-package
+ * This file's tests import @apnex/repo-event-bridge which transitively
+ * imports @apnex/storage-provider. Without npm workspaces, cross-package
  * symlink resolution from packages/repo-event-bridge/dist/cursor-store.js
- * does not reach hub/node_modules where @ois/storage-provider is
+ * does not reach hub/node_modules where @apnex/storage-provider is
  * installed. The 18 RepoEventBridge integration tests still run on
  * engineer-side local installs (where node_modules co-residency happens
  * to work) but fail in CI's clean-install environment.
@@ -37,7 +37,7 @@
  *
  * NOTE on mechanism: a literal `describe.skip(...)` wrapping the live
  * test bodies does NOT work — vitest fails the file at module-load
- * time when the cursor-store.js → @ois/storage-provider resolution
+ * time when the cursor-store.js → @apnex/storage-provider resolution
  * fails, before the describe call runs. This stub keeps the file
  * import-clean (vitest is the only import) while preserving the
  * placeholder semantic.

@@ -1,8 +1,8 @@
-# @ois/storage-provider
+# @apnex/storage-provider
 
 Sovereign StorageProvider contract — CSI-inspired pluggable storage abstraction for the OIS agentic network.
 
-Third sovereign package in the monorepo, sibling to `@ois/network-adapter` and `@ois/cognitive-layer`. Mission-47 deliverable; see [ADR-024](../../docs/decisions/024-sovereign-storage-provider.md) for the ratification.
+Third sovereign package in the monorepo, sibling to `@apnex/network-adapter` and `@apnex/cognitive-layer`. Mission-47 deliverable; see [ADR-024](../../docs/decisions/024-sovereign-storage-provider.md) for the ratification.
 
 ## Contract v1.0
 
@@ -54,7 +54,7 @@ GCS conformance is validated against a real bucket out-of-band (not in CI).
 ## Usage
 
 ```ts
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 
 const provider = new MemoryStorageProvider();
 await provider.put("bugs/bug-1.json", new TextEncoder().encode('{"id":"bug-1"}'));
@@ -78,5 +78,5 @@ class BugRepository {
 ## Related
 
 - [ADR-024 — Sovereign StorageProvider](../../docs/decisions/024-sovereign-storage-provider.md) — design ratification.
-- [`@ois/network-adapter`](../network-adapter/) — first sovereign-package precedent.
-- [`@ois/cognitive-layer`](../cognitive-layer/) — second sovereign-package precedent.
+- [`@apnex/network-adapter`](../network-adapter/) — first sovereign-package precedent.
+- [`@apnex/cognitive-layer`](../cognitive-layer/) — second sovereign-package precedent.

@@ -3,13 +3,13 @@
 **Status:** Draft v1.0 (engineer-authored 2026-04-26; mission-55 PR 2 — D6 deliverable). Architect-pool review pending.
 **Source:** Design v1.2 §"M-Pre-Push-Adapter-Cleanup" deliverable #6.
 **Co-authored from:** mission-55 PR 1 cleanup (commit `983e926`) which shipped the contract surface (`SharedDispatcher.callbacks` + `notificationHooks` callback bag).
-**Methodology:** First formal spec under Design v1.2's Universal Adapter framing (`@ois/network-adapter` IS the Universal Adapter; per-host shims implement this contract).
+**Methodology:** First formal spec under Design v1.2's Universal Adapter framing (`@apnex/network-adapter` IS the Universal Adapter; per-host shims implement this contract).
 
 ---
 
 ## Purpose
 
-This document specifies the **Universal Adapter notification contract** — the generic, shim-agnostic interface through which the `@ois/network-adapter` Layer-1c MCP-boundary dispatcher emits notification events into per-host (Layer-3) shims. The contract is the single integration surface every current and future host shim implements; it is host-binding-mechanism-free by construction.
+This document specifies the **Universal Adapter notification contract** — the generic, shim-agnostic interface through which the `@apnex/network-adapter` Layer-1c MCP-boundary dispatcher emits notification events into per-host (Layer-3) shims. The contract is the single integration surface every current and future host shim implements; it is host-binding-mechanism-free by construction.
 
 The spec is **descriptive of what landed in mission-55 PR 1** + **prescriptive for what future hosts adopt**. It exists so:
 
@@ -20,7 +20,7 @@ The spec is **descriptive of what landed in mission-55 PR 1** + **prescriptive f
 ## Architectural placement
 
 ```
-[Layer 1 — @ois/network-adapter (Universal Adapter)]
+[Layer 1 — @apnex/network-adapter (Universal Adapter)]
     ▲
     │ EMITS notifications (this contract)
     │
@@ -38,7 +38,7 @@ The spec is **descriptive of what landed in mission-55 PR 1** + **prescriptive f
                   / future: terminal-stdout / ACP-host / ...
 ```
 
-**Layer 2 (Message-router; sovereign-package #6, `@ois/message-router`) lands in M-Push-Foundation W4. This spec covers Layer-1c → Layer-3 emission only. Layer-2 will extend this contract additively (kind/subkind routing) without re-shaping the Layer-3-facing surface.**
+**Layer 2 (Message-router; sovereign-package #6, `@apnex/message-router`) lands in M-Push-Foundation W4. This spec covers Layer-1c → Layer-3 emission only. Layer-2 will extend this contract additively (kind/subkind routing) without re-shaping the Layer-3-facing surface.**
 
 ## Event taxonomy
 
@@ -57,7 +57,7 @@ Notifications partition into **four kinds**, exposed as four hooks on the `notif
 
 ### `AgentEvent` (actionable + informational)
 
-Imported from `@ois/network-adapter` (Layer 1b `agent-client.ts`; re-exported at the package root):
+Imported from `@apnex/network-adapter` (Layer 1b `agent-client.ts`; re-exported at the package root):
 
 ```typescript
 interface AgentEvent {
@@ -99,7 +99,7 @@ The reason is supplied on transitions **into** `reconnecting`; omitted on other 
 
 ### `DrainedPendingAction` (pending-action dispatch)
 
-Imported from `@ois/network-adapter` (Layer 1b `state-sync.ts`):
+Imported from `@apnex/network-adapter` (Layer 1b `state-sync.ts`):
 
 ```typescript
 interface DrainedPendingAction {
@@ -154,7 +154,7 @@ import {
   type DrainedPendingAction,
   type SessionState,
   type SessionReconnectReason,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 
 const dispatcher = createSharedDispatcher({
   getAgent: () => agent,
@@ -283,10 +283,10 @@ The Universal Adapter does not need source modification to onboard a new host.
 ## Anti-goals (BINDING)
 
 - **NOT host-specific mechanism mandate.** This spec does not mandate `<channel>` vs `promptAsync` vs terminal-stdout vs ACP. Per-shim implementation freedom is the load-bearing design intent.
-- **NOT per-host code in `@ois/network-adapter`.** Host-specific transport plumbing (stdio / HTTP / future) lives in the shim, not the Universal Adapter. Recon §1 documents this for the v1.0 cleanup state.
+- **NOT per-host code in `@apnex/network-adapter`.** Host-specific transport plumbing (stdio / HTTP / future) lives in the shim, not the Universal Adapter. Recon §1 documents this for the v1.0 cleanup state.
 - **NOT a Message-router replacement.** This contract is the Layer-1c → Layer-3 emission surface. The Layer-2 Message-router (sovereign-package #6, M-Push-Foundation W4) will extend it with kind/subkind routing as a peer concern; future spec revisions will document the Layer-1c + Layer-2 → Layer-3 composed shape.
 - **NOT host-side ack tracking inside the Universal Adapter.** Layer-1 does not maintain per-shim consumption state. Idempotency + dedup are shim-level concerns. Hub-side completion-ack (via `sourceQueueItemId`) is the only ack mechanism in v1.0.
-- **NOT npm-publish ready.** Distribution-readiness (`@ois/*` → `@apnex/*` migration) is M-Adapter-Distribution Tier 2 future scope. This spec describes the in-repo file:-ref state.
+- **NOT npm-publish ready.** Distribution-readiness (`@apnex/*` → `@apnex/*` migration) is M-Adapter-Distribution Tier 2 future scope. This spec describes the in-repo file:-ref state.
 
 ## Out of scope (for future revisions)
 
@@ -298,7 +298,7 @@ The Universal Adapter does not need source modification to onboard a new host.
 
 ## Cross-references
 
-- `@ois/network-adapter` (Layer 1) — `packages/network-adapter/src/{wire,kernel,tool-manager}/`; `tool-manager/dispatcher.ts` exposes `SharedDispatcherOptions.notificationHooks`
+- `@apnex/network-adapter` (Layer 1) — `packages/network-adapter/src/{wire,kernel,tool-manager}/`; `tool-manager/dispatcher.ts` exposes `SharedDispatcherOptions.notificationHooks`
 - `adapters/claude-plugin/src/shim.ts` — Layer-3 worked example (stdio + `<channel>`)
 - `adapters/opencode-plugin/src/shim.ts` — Layer-3 worked example (Bun-HTTP + promptAsync)
 - `docs/designs/m-push-foundation-design.md` v1.2 §"M-Pre-Push-Adapter-Cleanup" — Universal Adapter framing (Director-confirmed); Layer-1 sub-organization (1a/1b/1c)

@@ -1,5 +1,5 @@
 /**
- * @ois/storage-provider — sovereign StorageProvider contract package.
+ * @apnex/storage-provider — sovereign StorageProvider contract package.
  *
  * Mission-47 T1. CSI-inspired pluggable storage abstraction for the
  * OIS agentic network. See contract.ts for the six-primitive surface

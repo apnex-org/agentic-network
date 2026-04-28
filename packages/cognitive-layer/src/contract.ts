@@ -52,7 +52,7 @@ export interface ToolErrorContext {
 /**
  * Tool descriptor shape used by ListTools flow. Matches the MCP SDK
  * tool shape loosely; described here locally to avoid a compile-time
- * dependency on the SDK (keeps @ois/cognitive-layer transport-agnostic).
+ * dependency on the SDK (keeps @apnex/cognitive-layer transport-agnostic).
  */
 export interface Tool {
   name: string;

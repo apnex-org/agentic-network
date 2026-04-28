@@ -23,7 +23,7 @@
  *
  * Each surfaced Message is routed through the host-supplied callback
  * (the same `onActionableEvent` shape used by the SSE inline path).
- * The W2.1 `@ois/message-router` seen-id LRU catches the push+poll
+ * The W2.1 `@apnex/message-router` seen-id LRU catches the push+poll
  * race overlap so a Message that arrived via SSE in the last 5min
  * window is not double-rendered when the next poll-tick sees it too.
  */

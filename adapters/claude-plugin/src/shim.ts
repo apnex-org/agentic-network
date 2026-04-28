@@ -4,7 +4,7 @@
  * Claude-specific wiring only: stdio transport, config loading, process
  * lifecycle, and `<channel>` render-surface. The MCP-boundary handler
  * factory + pendingActionMap + tool-catalog cache + session-claim
- * helpers all live in `@ois/network-adapter` (Layer 1c per Design v1.2).
+ * helpers all live in `@apnex/network-adapter` (Layer 1c per Design v1.2).
  */
 
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -29,8 +29,8 @@ import {
   type TelemetryEvent,
   type ILogger,
   type LogFields,
-} from "@ois/network-adapter";
-import { CognitivePipeline } from "@ois/cognitive-layer";
+} from "@apnex/network-adapter";
+import { CognitivePipeline } from "@apnex/cognitive-layer";
 import { readFileSync, existsSync, appendFileSync, statSync, renameSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -108,7 +108,7 @@ const WORK_DIR = process.env.WORK_DIR || process.cwd();
 const LOG_FILE = join(WORK_DIR, ".ois", "claude-notifications.log");
 const SHUTDOWN_TIMEOUT_MS = 3000;
 const PROXY_VERSION = "1.2.0";
-const SDK_VERSION = "@ois/network-adapter@2.1.0";
+const SDK_VERSION = "@apnex/network-adapter@2.1.0";
 
 // OIS_COGNITIVE_BYPASS=1 → pass cognitive=undefined to McpAgentClient.
 // Operator-facing kill-switch for the cognitive pipeline; mcp-agent-client
@@ -447,7 +447,7 @@ async function main(): Promise<void> {
       logger: eventsLogger,
       handshake: {
         globalInstanceId,
-        proxyName: "@ois/claude-plugin",
+        proxyName: "@apnex/claude-plugin",
         proxyVersion: PROXY_VERSION,
         transport: "stdio-mcp-proxy",
         sdkVersion: SDK_VERSION,

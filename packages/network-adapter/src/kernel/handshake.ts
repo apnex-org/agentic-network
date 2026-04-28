@@ -189,7 +189,7 @@ export interface HandshakeResult {
  * losing the identity signal entirely.
  *
  * Fallback policy: when either field is missing/empty/sentinel, substitute
- * the proxy identity (`@ois/claude-plugin` / `@ois/vertex-cloudrun` / etc.)
+ * the proxy identity (`@apnex/claude-plugin` / `@apnex/vertex-cloudrun` / etc.)
  * which is authoritative at the adapter layer. The Agent record then
  * surfaces a meaningful identity even when MCP clientInfo is absent.
  *

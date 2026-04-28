@@ -2,7 +2,7 @@
  * Hub Adapter — typed wrapper around McpAgentClient.
  *
  * Provides typed methods for Hub tools. All connection lifecycle is
- * delegated to McpAgentClient from @ois/network-adapter. Uses manualSync
+ * delegated to McpAgentClient from @apnex/network-adapter. Uses manualSync
  * mode: the Architect owns its own state-sync pipeline and drives
  * `completeSync()` externally via `onSync()`.
  *
@@ -17,8 +17,8 @@ import {
   type AgentEvent,
   type SessionState,
   type SessionReconnectReason,
-} from "@ois/network-adapter";
-import { CognitivePipeline } from "@ois/cognitive-layer";
+} from "@apnex/network-adapter";
+import { CognitivePipeline } from "@apnex/cognitive-layer";
 import { architectTelemetrySink } from "./telemetry.js";
 
 export type HubEventHandler = (eventData: Record<string, unknown>) => void;
@@ -70,10 +70,10 @@ export class HubAdapter {
     const handshake = opts.globalInstanceId
       ? {
           globalInstanceId: opts.globalInstanceId,
-          proxyName: "@ois/vertex-cloudrun",
+          proxyName: "@apnex/vertex-cloudrun",
           proxyVersion,
           transport: "http",
-          sdkVersion: "@ois/network-adapter@2.0.0",
+          sdkVersion: "@apnex/network-adapter@2.0.0",
           getClientInfo: () => ({ name: serviceName, version: proxyVersion }),
           wakeEndpoint: opts.wakeEndpoint,
         }

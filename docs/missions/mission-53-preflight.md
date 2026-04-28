@@ -14,7 +14,7 @@
 
 - **A1.** Brief location: PASS — entity description (~5 paragraphs covering scope, architecture, anti-goals, success criteria, sizing). Brief-in-entity pattern.
 - **A2.** N/A — no separate file.
-- **A3.** Cross-referenced artifacts exist: PASS — `@ois/network-adapter` sovereign package present (mission-47 lineage); bug-34 entity intact; mission-49 W9 (NotificationStore durability) closed; mission-50 closed; mission-51 active with W1 stable; idea-197 referenced for downstream consumption; bug-35 era heartbeat mechanism present in Hub.
+- **A3.** Cross-referenced artifacts exist: PASS — `@apnex/network-adapter` sovereign package present (mission-47 lineage); bug-34 entity intact; mission-49 W9 (NotificationStore durability) closed; mission-50 closed; mission-51 active with W1 stable; idea-197 referenced for downstream consumption; bug-35 era heartbeat mechanism present in Hub.
 
 ## Category B — Hub filing integrity
 
@@ -24,7 +24,7 @@
 
 ## Category C — Referenced-artifact currency
 
-- **C1.** File paths cited: PASS — `@ois/network-adapter` package exists; `adapters/claude-plugin/` exists; bug-35 era heartbeat code in Hub still present.
+- **C1.** File paths cited: PASS — `@apnex/network-adapter` package exists; `adapters/claude-plugin/` exists; bug-35 era heartbeat code in Hub still present.
 - **C2.** Numeric claims: PASS — backoff schedule (1s/2s/5s/10s/30s), LRU size (1000), default total-fail (300s) are design choices, not measurements.
 - **C3.** Cited ideas/bugs/threads in assumed state:
   - bug-34: open ✓ (will close on merge)
@@ -46,7 +46,7 @@
 ## Category E — Execution readiness
 
 - **E1.** First task clear: PASS — T1 (connection-loss detection + exp-backoff + reconnect; network-adapter sovereign package; lifecycle hooks for claude-plugin) is well-bounded; engineer can scaffold day-1.
-- **E2.** Deploy-gate dependencies: PASS — no Hub-side deploy needed (pure adapter-side mission). Adapter ships when claude-plugin / `@ois/network-adapter` package version updates land in engineer's Claude Code session at next session start. No Cloud Run redeploy.
+- **E2.** Deploy-gate dependencies: PASS — no Hub-side deploy needed (pure adapter-side mission). Adapter ships when claude-plugin / `@apnex/network-adapter` package version updates land in engineer's Claude Code session at next session start. No Cloud Run redeploy.
 - **E3.** Success-criteria measurable: PASS — Hub-restart end-to-end test (simulate stop+restart; adapter auto-reconnects within reconnect-window; missed events replay; no operator intervention required) is the canonical observable.
 
 ## Category F — Coherence with current priorities

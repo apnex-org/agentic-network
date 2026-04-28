@@ -202,7 +202,7 @@ Director performed the redeploy + health-validation drill 2026-04-25 same-sessio
 
 ### 10.1 Container rebuild
 
-Director ran `OIS_ENV=prod scripts/local/build-hub.sh` from the main tree. **First attempt failed** — `RUN npm run build` (tsc) errored with 30+ `TS2307: Cannot find module '@ois/storage-provider'` errors across every `*Repository.ts` file. Build aa5f702a-f971-47c5-a700-b65d24d7e522.
+Director ran `OIS_ENV=prod scripts/local/build-hub.sh` from the main tree. **First attempt failed** — `RUN npm run build` (tsc) errored with 30+ `TS2307: Cannot find module '@apnex/storage-provider'` errors across every `*Repository.ts` file. Build aa5f702a-f971-47c5-a700-b65d24d7e522.
 
 **Root cause:** `hub/package.json` references the sovereign storage-provider package via `file:../packages/storage-provider`. `scripts/local/build-hub.sh` uploads only `hub/` as Cloud Build context; the parent `packages/` directory is not included. NPM cannot resolve the relative-path dep inside the Cloud Build container; tsc fails on every file that imports the package types.
 
@@ -211,7 +211,7 @@ This is the **never-actually-tested half of mission-47 retrospective §3.3 trap 
 **Workaround applied (architect-side, uncommitted in main tree's working dir):**
 1. `npm pack` of `packages/storage-provider/` → `ois-storage-provider-1.0.0.tgz`
 2. Staged tarball at `hub/ois-storage-provider-1.0.0.tgz`
-3. `hub/package.json`: `"@ois/storage-provider": "file:./ois-storage-provider-1.0.0.tgz"`
+3. `hub/package.json`: `"@apnex/storage-provider": "file:./ois-storage-provider-1.0.0.tgz"`
 4. Regenerated `hub/package-lock.json` via full `npm install`
 5. `hub/Dockerfile`: added `COPY ois-storage-provider-*.tgz ./` before each `RUN npm ci` (both builder + production stages)
 

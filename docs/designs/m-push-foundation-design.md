@@ -20,7 +20,7 @@
 | claim/ack two-step primitive (future-proofs multi-agent same-role) | Architect lean; Director confirmed 2026-04-26 ~10:00Z | Yes |
 | **3-layer adapter decomposition kept** (network-adapter / Message-router / shim) — Q1 outcome | Architect tele-evaluation post-recon; v1.2 | Yes |
 | **Rename: Design's "dispatcher" → "Message-router"** to disambiguate from foreign engineer's MCP-boundary "dispatcher" — Q2 outcome | Architect tele-evaluation post-recon; v1.2 | Yes |
-| **Sovereign-package #6 renamed: `@ois/message-router`** (was `@ois/message-dispatcher`) | Q2 outcome cascade | Yes |
+| **Sovereign-package #6 renamed: `@apnex/message-router`** (was `@apnex/message-dispatcher`) | Q2 outcome cascade | Yes |
 | **Q10(a): separate M-Pre-Push-Adapter-Cleanup mission precedes M-Push-Foundation** — adapter-layer-clean-FIRST = cleanup IS the FIRST step, not folded into push-foundation waves | Architect tele-evaluation post-recon; v1.2 | Yes |
 | Adapter-layer-clean FIRST sequencing | Director directive 2026-04-26 ~10:00Z | Yes |
 | Foreign-engineer recon mission as Design-phase spike (mission-54; engineer-audited) | Architect lean; Director confirmed 2026-04-26 ~10:05Z | Closed; PR #61 merged |
@@ -109,14 +109,14 @@ When adapter connects without prior Last-Event-ID (first-ever connection, post-c
 
 ### 4. Adapter-side: SSE event-handler + 3-layer decomposition + render-surface
 
-**Universal Adapter framing (Director-confirmed 2026-04-26):** `@ois/network-adapter` IS the Universal Adapter. Layer 3 (per-host shim) implements the Universal Adapter's notification contract; Layer 1 emits notifications into it; Layer 2 routes Messages through it. "Universal" describes the contract Layer 3 implements against, not a separate package name.
+**Universal Adapter framing (Director-confirmed 2026-04-26):** `@apnex/network-adapter` IS the Universal Adapter. Layer 3 (per-host shim) implements the Universal Adapter's notification contract; Layer 1 emits notifications into it; Layer 2 routes Messages through it. "Universal" describes the contract Layer 3 implements against, not a separate package name.
 
 **3-layer adapter decomposition (Q1 + Q2 outcomes; v1.2 confirmed):**
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ LAYER 1 — Network Adapter / Universal Adapter                               │
-│ Sovereign-package: @ois/network-adapter                                     │
+│ Sovereign-package: @apnex/network-adapter                                     │
 │                                                                             │
 │ Internal sub-concerns (sub-organized into src/ subdirs during cleanup):     │
 │   1a. src/wire/         — TCP/SSE conn lifecycle; reconnect; backoff;       │
@@ -142,8 +142,8 @@ When adapter connects without prior Last-Event-ID (first-ever connection, post-c
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ LAYER 2 — Message-Router                                          ← NEW     │
-│ Sovereign-package: @ois/message-router (#6 NEW; Q2-renamed from             │
-│                                          @ois/message-dispatcher)           │
+│ Sovereign-package: @apnex/message-router (#6 NEW; Q2-renamed from             │
+│                                          @apnex/message-dispatcher)           │
 │                                                                             │
 │ Concerns:                                                                   │
 │   - Message kind/subkind routing                                            │
@@ -192,15 +192,15 @@ When adapter connects without prior Last-Event-ID (first-ever connection, post-c
 
 **Counts:**
 - **3 layers** (Q1-confirmed)
-- **2 sovereign-packages**: `@ois/network-adapter` (Layer 1; keeps name; IS the Universal Adapter); `@ois/message-router` (Layer 2; sovereign-package #6 NEW; Q2-renamed)
+- **2 sovereign-packages**: `@apnex/network-adapter` (Layer 1; keeps name; IS the Universal Adapter); `@apnex/message-router` (Layer 2; sovereign-package #6 NEW; Q2-renamed)
 - **N per-host shims** (today: 2; designed for arbitrary extension)
 
 Each layer single-concern; tele-3 (sovereign composition) preserved.
 
 **Naming discipline going forward:**
-- "Message-router" / `@ois/message-router` = Layer 2 (Design's commitment #4 layer; kind/subkind routing)
-- "MCP-boundary dispatcher" / "MCP handler factory" = Layer 1c module (Initialize/ListTools/CallTool); lives inside `@ois/network-adapter` per recon's 2-layer hoist pattern (folded into M-Pre-Push-Adapter-Cleanup mission scope as inspiration)
-- "Universal Adapter" = `@ois/network-adapter` itself (Director-confirmed framing); the adapter that's universal across hosts via the Layer-3-shim contract
+- "Message-router" / `@apnex/message-router` = Layer 2 (Design's commitment #4 layer; kind/subkind routing)
+- "MCP-boundary dispatcher" / "MCP handler factory" = Layer 1c module (Initialize/ListTools/CallTool); lives inside `@apnex/network-adapter` per recon's 2-layer hoist pattern (folded into M-Pre-Push-Adapter-Cleanup mission scope as inspiration)
+- "Universal Adapter" = `@apnex/network-adapter` itself (Director-confirmed framing); the adapter that's universal across hosts via the Layer-3-shim contract
 - Avoid bare "dispatcher" in new code — always qualify ("MCP-boundary dispatcher" or "Message-router")
 
 **SSE event-handler behavior:**
@@ -298,15 +298,15 @@ Mission-54 (M-Push-Foundational-Adapter-Recon) produced the Recon Report at `doc
 
 ### Q1 (architect-call): 2-layer vs 3-layer — **3-layer KEPT**
 
-- **Foreign engineer chose 2-layer** (`@ois/network-adapter` shared + per-host shim) — tele-3 simpler decomposition; ~500 net lines deduplicated by hoisting dispatcher / cache / claim concerns into the network-adapter sovereign-package
+- **Foreign engineer chose 2-layer** (`@apnex/network-adapter` shared + per-host shim) — tele-3 simpler decomposition; ~500 net lines deduplicated by hoisting dispatcher / cache / claim concerns into the network-adapter sovereign-package
 - **Design v1.1 commitment #4 chose 3-layer** (network-adapter / Message-router (sovereign-package #6) / shim) — tele-3 stronger boundaries; Message-routing as a separable concern from MCP-transport-handler-factory
 - **Architect tele-evaluation: KEEP 3-layer.** Foreign engineer's "dispatcher" is genuinely a different concern (MCP-boundary handler factory: Initialize/ListTools/CallTool, pendingActionMap) than Design v1.1's "dispatcher" (Message kind/subkind router). They are different layers of abstraction; both can exist. Sovereign-package #6 earns its boundary via Message-routing being separable, not by analogy. tele-3 favors stronger boundaries when the concerns are distinct enough to test independently.
 
 ### Q2 (architect-call): dispatcher naming role-overload — **RENAMED**
 
-- Foreign "dispatcher" = MCP-boundary handler factory (lives in `@ois/network-adapter` per recon's 2-layer hoist)
+- Foreign "dispatcher" = MCP-boundary handler factory (lives in `@apnex/network-adapter` per recon's 2-layer hoist)
 - Design v1.1 "dispatcher" = Message kind/subkind router (sovereign-package #6)
-- **Architect rename: Design's "dispatcher" → "Message-router".** Sovereign-package: `@ois/message-dispatcher` → `@ois/message-router`. Disambiguation cost is small at design-time, large at execution-time. Future engineers won't conflate.
+- **Architect rename: Design's "dispatcher" → "Message-router".** Sovereign-package: `@apnex/message-dispatcher` → `@apnex/message-router`. Disambiguation cost is small at design-time, large at execution-time. Future engineers won't conflate.
 
 ### Q10 (Director-aware; methodology + sequencing): adapter-layer cleanup — **(a) separate mission**
 
@@ -340,7 +340,7 @@ The architect's pre-look (in mission-54 preflight) speculated the foreign engine
 
 **Reusable patterns to adopt as inspiration:**
 
-1. **Code-dedup hoist + module sub-organization** — duplicated dispatcher / claim / cache code per-plugin → consolidated shared modules in `@ois/network-adapter` with hooks-pattern for host-injection. **Sub-organize `src/` into subdirs during the hoist:** `src/wire/` (transport / wire FSM), `src/kernel/` (handshake / session-claim / agent identity / instance lifecycle), `src/tool-manager/` (Initialize/ListTools/CallTool / pendingActionMap / tool-catalog cache). Naming-disciplined: `src/tool-manager/` modules are tool-manager-handler-factory concerns (foreign "dispatcher" semantics); does NOT live in or depend on the future Message-router (sovereign-package #6).
+1. **Code-dedup hoist + module sub-organization** — duplicated dispatcher / claim / cache code per-plugin → consolidated shared modules in `@apnex/network-adapter` with hooks-pattern for host-injection. **Sub-organize `src/` into subdirs during the hoist:** `src/wire/` (transport / wire FSM), `src/kernel/` (handshake / session-claim / agent identity / instance lifecycle), `src/tool-manager/` (Initialize/ListTools/CallTool / pendingActionMap / tool-catalog cache). Naming-disciplined: `src/tool-manager/` modules are tool-manager-handler-factory concerns (foreign "dispatcher" semantics); does NOT live in or depend on the future Message-router (sovereign-package #6).
 2. **`notificationHooks` callback bag pattern** — generic shim-injection contract: `{onActionableEvent, onInformationalEvent, onStateChange, onPendingActionItem}`. **This is the Universal Adapter notification contract** (Director-ratified). Adoptable as the host-injection contract shape for both the cleanup-mission MCP-boundary refactor AND the future Message-router-shim contract (commitment #4 inheriting the same hooks-shape). Spec'd in this mission per deliverable below.
 3. **Lazy `createMcpServer()` factory** (vs eager `dispatcher.server`) — adoptable in HEAD as a clarity/correctness win independent of push-foundation work; supports per-session lifecycle for hosts with HTTP-session models (opencode-style).
 4. **Tool-catalog cache distillation** (157→77 lines per recon §4) — schema-version + atomic write + null-tolerant `isCacheValid`. Reusable as inspiration only; properties don't transfer wholesale to commitment #4's seen-id LRU (different cache semantics: bounded LRU N=1000 in-memory vs schema-versioned-on-disk).
@@ -365,12 +365,12 @@ Spec covers:
 - NOT line-by-line foreign-source adoption — patterns adopted at architectural level, not implementation level
 - NO PRs from foreign engineer (not onboarded)
 - NO Message-router or push-foundation work in this mission — those land in M-Push-Foundation's W3+W4
-- NO new sovereign-packages in this mission — `@ois/message-router` lands in M-Push-Foundation W4
+- NO new sovereign-packages in this mission — `@apnex/message-router` lands in M-Push-Foundation W4
 - NO npm-publish work — distribution-readiness is M-Adapter-Distribution scope (Tier 2; future)
-- **NO new repo-internal couplings** — non-regression criterion: deps stay `@ois/*` resolvable; hooks/contracts authored to be relocatable to `@apnex/*` later (per future distribution mission)
+- **NO new repo-internal couplings** — non-regression criterion: deps stay `@apnex/*` resolvable; hooks/contracts authored to be relocatable to `@apnex/*` later (per future distribution mission)
 
 **Tele alignment:**
-- **Primary tele-3** (Sovereign Composition): consolidates duplicated per-plugin code into the existing `@ois/network-adapter` sovereign-package; clean shim/host boundary preserved; subdir sub-organization makes the layer-1-internal sub-concerns explicit
+- **Primary tele-3** (Sovereign Composition): consolidates duplicated per-plugin code into the existing `@apnex/network-adapter` sovereign-package; clean shim/host boundary preserved; subdir sub-organization makes the layer-1-internal sub-concerns explicit
 - **Secondary tele-9** (Frictionless): smaller PRs in M-Push-Foundation when adapter baseline is clean; reduces architect-review overhead in W3+W4
 - **Secondary tele-2** (Isomorphic Specification): Universal Adapter notification contract spec captures the host-injection interface schema-driven; future hosts (terminal-direct, ACP-host) implement against the same spec
 - **Tertiary tele-7** (Confidence-Coverage): test-rewiring discipline already validated by foreign engineer (recon §4 + §6); adopting the same pattern reduces test-migration risk
@@ -379,7 +379,7 @@ Spec covers:
 M-Pre-Push-Adapter-Cleanup ships → engineer round-2 audit of Design v1.2 (against post-cleanup adapter) → propose_mission cascade for M-Push-Foundation → Director activates M-Push-Foundation → W0-W7 ship.
 
 **Cleanup mission deliverables checklist:**
-1. Hoist dispatcher/claim/cache from per-plugin shims into `@ois/network-adapter` sub-organized into `src/wire/` + `src/kernel/` + `src/tool-manager/` subdirs (engineer-authored from scratch; foreign work as inspiration only)
+1. Hoist dispatcher/claim/cache from per-plugin shims into `@apnex/network-adapter` sub-organized into `src/wire/` + `src/kernel/` + `src/tool-manager/` subdirs (engineer-authored from scratch; foreign work as inspiration only)
 2. `notificationHooks` callback bag pattern adopted as Universal Adapter notification contract
 3. Lazy `createMcpServer()` factory replaces eager `dispatcher.server`
 4. Tool-catalog cache distilled (schema-version + atomic write + null-tolerant `isCacheValid`)
@@ -412,7 +412,7 @@ Each anti-goal mapped to the tele it protects:
 - Subsecond-precision push (current SSE adequate for sub-30s; latency tighter is post-MVP)
 - Multi-org / multi-tenancy push isolation (current single-org architecture; tenant separation is its own future mission)
 - **ACP (Agent Communication Protocol) framing** — separate downstream design conversation; doesn't gate or shape Universal Adapter / push-foundation work; Director-confirmed 2026-04-26 ("ACP is separate to this work")
-- **Distribution-readiness / npm publish** — current `@ois/*` package names use `file:` tarball deps in the host-plugin packages (`@ois/claude-plugin`, `@ois/opencode-plugin`); external `npm install` of host-plugins is not currently supported. **Future M-Adapter-Distribution mission** (Tier 2; separate scope) handles: (i) registry namespace migration to **`@apnex/*`** (Director's npm org per memory `project_npm_namespace_apnex.md`); (ii) sovereign-package npm publish workflow; (iii) host-plugin deps from `file:` to registry semver. **M-Pre-Push-Adapter-Cleanup non-regression criterion: cleanup work must NOT introduce new repo-internal couplings** that worsen distribution shape (deps stay `@ois/*` resolvable; hooks/contracts authored to be relocatable to `@apnex/*` later)
+- **Distribution-readiness / npm publish** — current `@apnex/*` package names use `file:` tarball deps in the host-plugin packages (`@apnex/claude-plugin`, `@apnex/opencode-plugin`); external `npm install` of host-plugins is not currently supported. **Future M-Adapter-Distribution mission** (Tier 2; separate scope) handles: (i) registry namespace migration to **`@apnex/*`** (Director's npm org per memory `project_npm_namespace_apnex.md`); (ii) sovereign-package npm publish workflow; (iii) host-plugin deps from `file:` to registry semver. **M-Pre-Push-Adapter-Cleanup non-regression criterion: cleanup work must NOT introduce new repo-internal couplings** that worsen distribution shape (deps stay `@apnex/*` resolvable; hooks/contracts authored to be relocatable to `@apnex/*` later)
 
 ## Mission-53 absorption (per greg's audit)
 
@@ -456,7 +456,7 @@ bug-34 (parent of mission-53) flips to resolved at M-Push-Foundation merge with 
 - **W1** Hub-side push-on-Message-create + subscriber-match wiring + SSE event-type emission
 - **W2** Hub-side Last-Event-ID protocol + replay-buffer (Message-store-backed) + cold-start stream-all-with-soft-cap + replay-truncated synthetic event
 - **W3** Adapter-side network-layer: SSE event-handler + Last-Event-ID reconnect logic + seen-id cache
-- **W4** Adapter-side dispatcher + host-shim: 3-layer decomposition (`@ois/message-dispatcher` sovereign-package #6) + render-surface (`<channel>` injection per kind/subkind)
+- **W4** Adapter-side dispatcher + host-shim: 3-layer decomposition (`@apnex/message-dispatcher` sovereign-package #6) + render-surface (`<channel>` injection per kind/subkind)
 - **W5** Adapter-side hybrid poll backstop with since-cursor + claim/ack two-step semantics
 - **W6** Legacy entity sunset (DirectorNotification → Notification → PendingActionItem; sequential)
 - **W7** Tests + documentation + ADR-026 + closing audit

@@ -238,7 +238,7 @@ Engineer                    Hub                         Architect
 
 **Notification delivery:** MCP SSE push to connected agents (primary). Architect event loop polls every 300s (backup). Engineer receives via `claude/channel` experimental MCP notification.
 
-**Entire stack is Node.js/TypeScript.** Single connection per agent. Full-duplex autonomous. Shared `@ois/network-adapter` package.
+**Entire stack is Node.js/TypeScript.** Single connection per agent. Full-duplex autonomous. Shared `@apnex/network-adapter` package.
 
 ---
 
@@ -264,7 +264,7 @@ Engineer                    Hub                         Architect
 | Issue | Resolution |
 |---|---|
 | Engineer polling (6.6) | **Resolved** — SSE push notifications via `claude/channel` deliver directives in real-time (Phase 13e + plugin) |
-| Session fragility (6.1) | **Mitigated** — `@ois/network-adapter` with state-based reconnect, session reaper, zero orphan sessions |
+| Session fragility (6.1) | **Mitigated** — `@apnex/network-adapter` with state-based reconnect, session reaper, zero orphan sessions |
 | Architect session isolation (6.2) | **Mitigated** — GCS-backed context store persists Architect context across restarts (Phase 14 Node.js rewrite) |
 | Report-report gap (6.5) | **Resolved** — `get_pending_actions` surfaces all unreviewed tasks; `get_document` reads any report by ref |
 
@@ -306,5 +306,5 @@ Engineer                    Hub                         Architect
 | 14 | Node.js rewrite | Architect rewritten from Python/ADK to Node.js/TypeScript |
 | 15 | Notifications | GCS-backed queue, Last-Event-ID replay, 24h TTL |
 | 16 | Wisdom | ARCHITECTURE.md, ADRs, correlation IDs, context enrichment |
-| Stability | Connection mgr | @ois/network-adapter, IConnectionManager, session reaper |
+| Stability | Connection mgr | @apnex/network-adapter, IConnectionManager, session reaper |
 | IaC | Terraform | Idempotent GCP deployment, GitHub hosting, plugin marketplace |

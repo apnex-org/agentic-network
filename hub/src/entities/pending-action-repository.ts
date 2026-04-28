@@ -14,8 +14,8 @@
  *   meta/counter.json           — shared counter (pendingActionCounter)
  */
 
-import type { StorageProvider } from "@ois/storage-provider";
-import { hasGetWithToken, StoragePathNotFoundError } from "@ois/storage-provider";
+import type { StorageProvider } from "@apnex/storage-provider";
+import { hasGetWithToken, StoragePathNotFoundError } from "@apnex/storage-provider";
 
 import type {
   IPendingActionStore,

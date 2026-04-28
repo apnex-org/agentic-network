@@ -17,8 +17,8 @@
   "dependencies": {
     "@google-cloud/storage": "^7.19.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@ois/repo-event-bridge": "file:../packages/repo-event-bridge",
-    "@ois/storage-provider": "file:../packages/storage-provider",
+    "@apnex/repo-event-bridge": "file:../packages/repo-event-bridge",
+    "@apnex/storage-provider": "file:../packages/storage-provider",
     "express": "^5.2.1",
     "ulidx": "^2.4.1",
     "zod": "^4.3.6"

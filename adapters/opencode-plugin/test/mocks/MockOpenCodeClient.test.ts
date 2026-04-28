@@ -9,7 +9,7 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { createMockOpenCodeClient, type MockOpenCodeHarness } from "./MockOpenCodeClient.js";
-import { pendingKey } from "@ois/network-adapter";
+import { pendingKey } from "@apnex/network-adapter";
 
 describe("MockOpenCodeClient", () => {
   let mock: MockOpenCodeHarness | null = null;

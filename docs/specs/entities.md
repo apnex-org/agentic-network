@@ -107,7 +107,7 @@ fields:
 
 ## 3. Entity Catalog
 
-**Storage backend (post-mission-49 close 2026-04-25):** All 12 first-class entity stores compose any `StorageProvider` (`@ois/storage-provider`) via the `*Repository` pattern — single class per entity, no `Memory*Store` / `Gcs*Store` divergence. Mission-47 W1-W7 migrated tele / bug+idea / director-notification / mission / task+proposal / thread / turn+pending-action+agent (10 stores); mission-49 W8-W9 migrated audit + notification (final 2). The 6-primitive contract (`get` / `getWithToken` / `list` / `delete` / `put` / `createOnly` / `putIfMatch`) held throughout — see ADR-024 §6 Amendments for the local-fs reclassification (mission-48). Legacy `hub/src/entities/gcs/` directory + `Memory*Store` / `Gcs*Store` class pairs deleted across the wave sequence; tombstone comments at the original file locations carry the mission-N-W reference.
+**Storage backend (post-mission-49 close 2026-04-25):** All 12 first-class entity stores compose any `StorageProvider` (`@apnex/storage-provider`) via the `*Repository` pattern — single class per entity, no `Memory*Store` / `Gcs*Store` divergence. Mission-47 W1-W7 migrated tele / bug+idea / director-notification / mission / task+proposal / thread / turn+pending-action+agent (10 stores); mission-49 W8-W9 migrated audit + notification (final 2). The 6-primitive contract (`get` / `getWithToken` / `list` / `delete` / `put` / `createOnly` / `putIfMatch`) held throughout — see ADR-024 §6 Amendments for the local-fs reclassification (mission-48). Legacy `hub/src/entities/gcs/` directory + `Memory*Store` / `Gcs*Store` class pairs deleted across the wave sequence; tombstone comments at the original file locations carry the mission-N-W reference.
 
 
 

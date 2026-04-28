@@ -183,7 +183,7 @@ const DEFAULT_OVERFLOW_LOG_INTERVAL_MS = 60_000;
  * Classify a caller's args into a queryShape category (M-QueryShape
  * Phase 1, idea-119). Mirrors the Hub-side `detectQueryShape` in
  * `list-filters.ts` — kept as a local copy so this package has no
- * dependency on `@ois/relay-hub`. Values: "none" | "filter_only" |
+ * dependency on `@apnex/relay-hub`. Values: "none" | "filter_only" |
  * "sort_only" | "filter_sort".
  */
 function detectQueryShape(args: unknown): "none" | "filter_only" | "sort_only" | "filter_sort" {

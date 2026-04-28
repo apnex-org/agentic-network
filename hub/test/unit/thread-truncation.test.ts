@@ -15,7 +15,7 @@ import {
 } from "../../src/state.js";
 import { ThreadRepository } from "../../src/entities/thread-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 
 function makeStore(): ThreadRepository {
   const provider = new MemoryStorageProvider();

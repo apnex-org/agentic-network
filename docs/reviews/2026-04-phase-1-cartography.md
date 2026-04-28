@@ -252,7 +252,7 @@ Per critique §5 — replaces Pass 1 §4.4 sketch with deeper three-table breakd
 | Threads 2.0 (ADR-013/014) | mission-22, mission-23, mission-24 shipped; Phase 2 cascade runner landed | bug-23 (bilateral-seal race, minor) |
 | ADR-017 comms-reliability (queue + persist-first) | commits `074b6c1`..`316baa8` + follow-ups; mission-30 ran against it | bug-11 (cognitive-layer silence; distinct scope), bug-22 (continuation retry), bug-12 (test-helper drift) |
 | Identity layer (Mission-18 + Mission-19 + bug-16 reaper + mission-40 identity/session split) | mission-40 closed 2026-04-22 (`18cde2d`..`e2ce3f8`); bug-16 resolved (`9385290`, `6eacfca`); bug-26 resolved | Zero open identity-layer bugs at severity≥major |
-| Cognitive Layer Phase 1 (ADR-018 / `@ois/cognitive-layer` package) | Phase 1 ckpt 1–4 landed; `ToolResultCache` + `FlushAllOnWriteStrategy` shipping | mission-31/32/33/34 duplicates as design-entity artifacts only |
+| Cognitive Layer Phase 1 (ADR-018 / `@apnex/cognitive-layer` package) | Phase 1 ckpt 1–4 landed; `ToolResultCache` + `FlushAllOnWriteStrategy` shipping | mission-31/32/33/34 duplicates as design-entity artifacts only |
 | Cognitive Hypervisor adapter mitigations (mission-38) | Completed 2026-04-21, 5-task scope + closing audit | bug-11 verdict pending 24–48h observability window |
 | Mission-19 Granular Routing (label-selector routing) | mission-18 entity = "Mission-19 Granular Routing" (7 tasks shipped) | none known |
 | Tele rewrite (idea-149 ratification) | 11 teles in GCS at tele-0..tele-10; spec at `docs/specs/teles.md` | bug-24 blocks retirement of 5 legacy tele records |

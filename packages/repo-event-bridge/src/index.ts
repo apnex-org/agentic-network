@@ -1,5 +1,5 @@
 /**
- * @ois/repo-event-bridge — sovereign repo-event bridge package.
+ * @apnex/repo-event-bridge — sovereign repo-event bridge package.
  *
  * Mission-52 T1. EventSource pluggable contract + GH-event translator
  * + create_message sink stub for the OIS agentic network. See

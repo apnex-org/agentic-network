@@ -40,7 +40,7 @@ Net: **+375 / −1012 = ~637 net deletions**. Per-plugin duplication of ~835 lin
 The hoist establishes a **2-layer** decomposition:
 
 ```
-[Shared adapter — @ois/network-adapter sovereign-package]
+[Shared adapter — @apnex/network-adapter sovereign-package]
   - Wire/transport (mcp-transport.ts, transport.ts) — UNCHANGED
   - Session/agent client (mcp-agent-client.ts, agent-client.ts) — UNCHANGED
   - Handshake / state-sync / event-router / instance — UNCHANGED
@@ -86,7 +86,7 @@ These are Design v1.1 commitments (#1–#7) for M-Push-Foundation; **no foreign-
 
 ### Mechanism
 
-- `createDispatcher()` (per-plugin; 371 + 228 lines) → `createSharedDispatcher()` (shared; 218 lines) in `@ois/network-adapter/src/dispatcher.ts`
+- `createDispatcher()` (per-plugin; 371 + 228 lines) → `createSharedDispatcher()` (shared; 218 lines) in `@apnex/network-adapter/src/dispatcher.ts`
 - Pure helpers `pendingKey(dispatchType, entityRef)` and `injectQueueItemId(name, args, map)` lifted verbatim into the shared module; previously duplicated across plugins
 - The pre-existing TODO comment at our HEAD `adapters/opencode-plugin/src/dispatcher.ts:47-48` ("Mirrors claude-plugin's injectQueueItemId — same behavior, same signature; eventual candidate for dedup into the shared network-adapter package once opencode + claude converge") was directly executed
 
@@ -145,7 +145,7 @@ Summary: hardening here is **preservation-during-hoist**. The MCP-transport L4 +
 
 ### Structural conventions
 
-- **Single shared module per concern** in `@ois/network-adapter/src/`: `dispatcher.ts`, `session-claim.ts`, `tool-catalog-cache.ts`. No inter-module deep-coupling.
+- **Single shared module per concern** in `@apnex/network-adapter/src/`: `dispatcher.ts`, `session-claim.ts`, `tool-catalog-cache.ts`. No inter-module deep-coupling.
 - **Pure-functional where possible** — `pendingKey`, `injectQueueItemId`, `parseClaimSessionResponse`, `formatSessionClaimedLogLine`, `cachePathFor`, `isCacheValid` are all stateless top-level functions, exported and individually testable.
 - **Closure-factory for stateful pieces** — `createSharedDispatcher` captures `pendingActionMap` + `capturedClientInfo` as private state; exposes `pendingActionMap`, `createMcpServer`, `callbacks`, `getClientInfo`, `makePendingActionItemHandler`.
 - **Hooks-pattern for host-specific behavior** — `SharedDispatcherOptions.notificationHooks: { onActionableEvent, onInformationalEvent, onStateChange, onPendingActionItem }` lets the shim inject host-specific behavior (channel-push, push-to-LLM, notification-log writes) without the dispatcher knowing about hosts.
@@ -153,12 +153,12 @@ Summary: hardening here is **preservation-during-hoist**. The MCP-transport L4 +
   - Transport plumbing: stdio (claude) vs Bun.serve+HTTP (opencode); `makeOpenCodeFetchHandler(dispatcher, servers)` lives in opencode shim, not shared
   - Render-surface: `pushChannelNotification(server, event, level)` for claude (writes `notifications/claude/channel`); `client.session.promptAsync()` for opencode
   - Lifecycle wiring: shim calls `createSharedDispatcher(...)` then `dispatcher.createMcpServer()` to get a Server instance to connect to its host transport
-- **Test parity** — `dispatcher.test.ts` + `fetch-handler.test.ts` imports rewired from `../src/dispatcher.js` → `@ois/network-adapter`. Test surface preserved; mocks (MockClaudeClient, MockOpenCodeClient) updated for new types. Test pass/fail status from foreign machine unknown to us (uncommitted-local).
+- **Test parity** — `dispatcher.test.ts` + `fetch-handler.test.ts` imports rewired from `../src/dispatcher.js` → `@apnex/network-adapter`. Test surface preserved; mocks (MockClaudeClient, MockOpenCodeClient) updated for new types. Test pass/fail status from foreign machine unknown to us (uncommitted-local).
 - **Re-exports** in `packages/network-adapter/src/index.ts`: shared dispatcher, session-claim helpers, and tool-catalog-cache helpers are exported alongside existing wire/transport/handshake exports — single import surface for shim consumers.
 
 ---
 
-## §5 — Differences from our current `@ois/network-adapter` + `adapters/claude-plugin`
+## §5 — Differences from our current `@apnex/network-adapter` + `adapters/claude-plugin`
 
 Our HEAD reference: `agent-greg/m52-bridge-translator-bug-39` = `main` post-mission-50/51/52 + bug-39 hotfix. Concrete deltas:
 
@@ -202,15 +202,15 @@ The foreign engineer worked **without our tele framework**. ARCHITECTURE.md was 
 
 ### Tele-naive pattern interpretations
 
-- The foreign engineer's choice to put the dispatcher into `@ois/network-adapter` (vs a new sovereign-package) reads as **simplicity-over-decomposition**. Single sovereign-package houses transport + dispatcher; dispatcher is just a module inside the same package, not a peer package.
-- This **DIVERGES** from Design v1.1 commitment #4 which calls for `@ois/message-dispatcher` as **sovereign-package #6** (3-layer: network-adapter / dispatcher / shim with explicit package boundaries). Foreign engineer chose 2-package physical decomposition (network-adapter / shim).
+- The foreign engineer's choice to put the dispatcher into `@apnex/network-adapter` (vs a new sovereign-package) reads as **simplicity-over-decomposition**. Single sovereign-package houses transport + dispatcher; dispatcher is just a module inside the same package, not a peer package.
+- This **DIVERGES** from Design v1.1 commitment #4 which calls for `@apnex/message-dispatcher` as **sovereign-package #6** (3-layer: network-adapter / dispatcher / shim with explicit package boundaries). Foreign engineer chose 2-package physical decomposition (network-adapter / shim).
 - **Naming role-overload risk:** the foreign engineer's "dispatcher" is the **MCP-boundary handler factory** (Initialize/ListTools/CallTool, pendingActionMap). Design v1.1's "dispatcher" is the **Message kind/subkind routing layer** ("which host-surface mechanism for this Message?"). Same word; different role; different layer of abstraction. Adopting either pattern as-inspiration risks the name colliding in shared vocabulary.
 
 ### Tele-misalignment flags (engineer-spec-level; architect tele-evaluates)
 
 - **NOT push-foundation work.** Foreign engineer's framing language ("host-independent and testable", "shared host dispatcher") is platform-decomposition, not message-delivery. The work is structurally adjacent to Design v1.1's adapter scope, not central to it.
 - **NOT message-primitive-aware.** Foreign tree predates mission-51 W6; no Message-store interaction patterns exist in the hoist. The Design v1.1 push-foundation patterns (push-on-create, Last-Event-ID replay, claim/ack two-step) need to be authored from scratch regardless of recon adoption decisions.
-- **NOT tele-checked.** Foreign engineer's structural choices (2-layer vs 3-layer, no separate `@ois/message-dispatcher`) were made without our tele-3 / tele-9 / tele-2 framework. Architect tele-evaluation must independently verify alignment of any pattern adopted as-inspiration.
+- **NOT tele-checked.** Foreign engineer's structural choices (2-layer vs 3-layer, no separate `@apnex/message-dispatcher`) were made without our tele-3 / tele-9 / tele-2 framework. Architect tele-evaluation must independently verify alignment of any pattern adopted as-inspiration.
 
 ---
 
@@ -218,7 +218,7 @@ The foreign engineer worked **without our tele framework**. ARCHITECTURE.md was 
 
 ### Patterns that could inform Design v1.1 commitments
 
-1. **Code-dedup pattern (as inspiration).** The hoist demonstrates a clean way to consolidate duplicated dispatcher code while keeping host-binding (channel/HTTP/stdio/render-surface) in the shim. If Design v1.1 ships 3-layer (with `@ois/message-dispatcher` as sovereign-package #6), the per-host shim layer can apply the same hooks-pattern to inject host-specific behavior without the dispatcher knowing about hosts. **Pattern reusable; structural decomposition choice (2- vs 3-package) is a separate decision.**
+1. **Code-dedup pattern (as inspiration).** The hoist demonstrates a clean way to consolidate duplicated dispatcher code while keeping host-binding (channel/HTTP/stdio/render-surface) in the shim. If Design v1.1 ships 3-layer (with `@apnex/message-dispatcher` as sovereign-package #6), the per-host shim layer can apply the same hooks-pattern to inject host-specific behavior without the dispatcher knowing about hosts. **Pattern reusable; structural decomposition choice (2- vs 3-package) is a separate decision.**
 
 2. **`notificationHooks` callback bag.** Clean shim-injection extension point. Could shape how Design v1.1's Dispatcher exposes "which host-surface mechanism for this Message?" — `route(Message) → handler` where the handler is supplied by the shim layer via a similar hooks-bag (per kind/subkind family). **Reusable as host-injection contract shape.**
 
@@ -248,9 +248,9 @@ Per binding mission anti-goals: no direct code adoption; recon-as-inspiration on
 
 The following questions surface architectural choices the foreign work makes (or doesn't make) that the architect should tele-evaluate before Design v1.2.
 
-1. **2-layer vs 3-layer commitment.** Foreign engineer's structural shape is 2-layer (`@ois/network-adapter` shared + per-host shim). Design v1.1 commitment #4 commits to 3-layer (`@ois/network-adapter` / `@ois/message-dispatcher` (NEW sovereign-package #6) / shim). Does the recon prompt a Design v1.2 revision to 2-layer (one fewer sovereign-package; tele-3 simpler), or does the architect tele-evaluate that 3-layer is still warranted (Message-routing deserves its own sovereign-package boundary distinct from MCP-transport)?
+1. **2-layer vs 3-layer commitment.** Foreign engineer's structural shape is 2-layer (`@apnex/network-adapter` shared + per-host shim). Design v1.1 commitment #4 commits to 3-layer (`@apnex/network-adapter` / `@apnex/message-dispatcher` (NEW sovereign-package #6) / shim). Does the recon prompt a Design v1.2 revision to 2-layer (one fewer sovereign-package; tele-3 simpler), or does the architect tele-evaluate that 3-layer is still warranted (Message-routing deserves its own sovereign-package boundary distinct from MCP-transport)?
 
-2. **Naming role-overload risk.** Foreign engineer's "dispatcher" = MCP-boundary handler factory. Design v1.1's "dispatcher" = Message kind/subkind router. Same word, different role. Does the architect want to disambiguate (e.g., "MCP-boundary" vs "Message-router") in Design v1.2 to avoid future engineer confusion? If 3-layer is kept, the package name `@ois/message-dispatcher` already disambiguates — but the in-code "dispatcher" symbol may still collide.
+2. **Naming role-overload risk.** Foreign engineer's "dispatcher" = MCP-boundary handler factory. Design v1.1's "dispatcher" = Message kind/subkind router. Same word, different role. Does the architect want to disambiguate (e.g., "MCP-boundary" vs "Message-router") in Design v1.2 to avoid future engineer confusion? If 3-layer is kept, the package name `@apnex/message-dispatcher` already disambiguates — but the in-code "dispatcher" symbol may still collide.
 
 3. **`notificationHooks` callback bag pattern.** Foreign engineer's hook bag (`onActionableEvent`, `onInformationalEvent`, `onStateChange`, `onPendingActionItem`) is a clean host-injection contract. Does the architect want Design v1.1's Message-router (or its 2-layer equivalent) to expose a similar hooks shape (per Message kind/subkind family), or is a richer route-table contract warranted once kind/subkind routing + render-surface taxonomy are in scope?
 
@@ -267,7 +267,7 @@ The following questions surface architectural choices the foreign work makes (or
 9. **Test rewiring fidelity unknown.** Foreign engineer rewired `dispatcher.test.ts` + `fetch-handler.test.ts` imports + mocks. Tests are uncommitted-local; pass/fail status from the foreign machine unknown. **Anti-goal binding:** if Design v1.2 adopts any pattern, our authored version must have its own tests written from scratch (no copy-paste of foreign tests).
 
 10. **Adapter-layer-clean-FIRST sequencing.** Director's directive 2026-04-26 ~10:00Z committed to "adapter-layer-clean FIRST sequencing" before push-foundation. Foreign engineer's hoist IS adapter-layer-clean work — but executed on pre-Message primitives. Does the architect want:
-    - (a) a **separate "pre-push adapter cleanup" mission** echoing the foreign-engineer-as-inspiration (hoist into `@ois/network-adapter`, naming refinements, lazy server-factory) before M-Push-Foundation's W3+W4 waves, OR
+    - (a) a **separate "pre-push adapter cleanup" mission** echoing the foreign-engineer-as-inspiration (hoist into `@apnex/network-adapter`, naming refinements, lazy server-factory) before M-Push-Foundation's W3+W4 waves, OR
     - (b) **fold the cleanup into M-Push-Foundation's W3+W4 themselves** (cleaner one-pass; bigger PRs), OR
     - (c) **defer cleanup entirely** (M-Push-Foundation lands push-foundation first; cleanup follows in its own mission post-merge)?
 

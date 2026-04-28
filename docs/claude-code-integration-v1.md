@@ -72,9 +72,9 @@ Direct connections to the Hub over the public internet WILL result in zombie ses
 
 ---
 
-## 3. The Required SDK: `@ois/network-adapter`
+## 3. The Required SDK: `@apnex/network-adapter`
 
-You MUST use our `@ois/network-adapter` SDK (formerly `@ois/hub-connection`) to connect to the Hub. This SDK provides the `UniversalClientAdapter` — a battle-tested connection manager that handles:
+You MUST use our `@apnex/network-adapter` SDK (formerly `@apnex/hub-connection`) to connect to the Hub. This SDK provides the `UniversalClientAdapter` — a battle-tested connection manager that handles:
 
 - **State-based reconnect:** On connection, the adapter enters `Synchronizing` state, allowing you to call `get_pending_actions` to discover missed work, then `completeSync()` to transition to `Streaming` and flush buffered events.
 - **Dual-channel heartbeat:** MCP-level heartbeat + SSE keepalive monitoring
@@ -351,8 +351,8 @@ npm install ./packages/network-adapter/ois-network-adapter-2.0.0.tgz
 
 Key exports:
 ```typescript
-import { McpAgentClient, McpTransport } from "@ois/network-adapter";
-import type { AgentClientCallbacks, SessionState, SessionReconnectReason } from "@ois/network-adapter";
+import { McpAgentClient, McpTransport } from "@apnex/network-adapter";
+import type { AgentClientCallbacks, SessionState, SessionReconnectReason } from "@apnex/network-adapter";
 ```
 
 ---

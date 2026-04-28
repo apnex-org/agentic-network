@@ -58,7 +58,7 @@ If you're picking up cold on mission-48:
 - ✅ **Engineer-side container-rebuild verification.** `bash -n scripts/local/build-hub.sh` clean; `deploy/env/prod.tfvars` populated; gcloud SDK 512+ installed; build prerequisites verified locally without invoking real Cloud Build (cost discipline). Documented exact rebuild command for Director: `OIS_ENV=prod scripts/local/build-hub.sh`.
 - ✅ **Deployment-state finding surfaced honestly on thread-307 (round 2):** running `ois-hub-local` container on pre-mission-48 image (SHA `7601261e8…`, 2026-04-24 02:46 UTC), `STORAGE_BACKEND=gcs`, no bind mount, no `-u` uid override, container started PRE-mission-48-activation. Mission-48 work merged to main but not redeployed; the dogfood claim "running this mission against the local-fs default" doesn't hold as stated. Director ratified α-path 2026-04-25 (round 3): operator runs live drill; engineer documents.
 - ✅ **Side observation captured for architect retrospective:** "Hub redeploy is not gated on mission-merge events" — distinct from idea-191/idea-192 (CD-pipeline territory; benefits-from but its own scope). Architect ack'd; will file as discrete idea post-mission-48-close.
-- ✅ **Verification.** `npm test` (hub): 52 files / 755 passed / 5 skipped (unchanged from T2c-merged baseline; T3 is docs-only — no source changes). `npm run build`: clean. `bash -n scripts/local/build-hub.sh`: clean. `bash -n scripts/local/start-hub.sh`: clean. `bash -n scripts/state-sync.sh`: clean. `@ois/storage-provider` conformance suite: unchanged.
+- ✅ **Verification.** `npm test` (hub): 52 files / 755 passed / 5 skipped (unchanged from T2c-merged baseline; T3 is docs-only — no source changes). `npm run build`: clean. `bash -n scripts/local/build-hub.sh`: clean. `bash -n scripts/local/start-hub.sh`: clean. `bash -n scripts/state-sync.sh`: clean. `@apnex/storage-provider` conformance suite: unchanged.
 
 ### T2c (Reverse-direction sync with --yes safety) — shipped + merged 2026-04-25
 
@@ -82,7 +82,7 @@ If you're picking up cold on mission-48:
 - ✅ **`hub/test/unit/cutover-sentinel.test.ts` — 7 tests.** Coverage: constant matches state-sync.sh filename; `cutoverSentinelPath()` joins correctly; `isCutoverComplete()` returns false on fresh empty dir; true when sentinel-as-file exists; false on `.cutover-complete/` directory; false on non-existent path; false on non-existent root. `mkdtemp`/`rm` per-test root.
 - ✅ **`deploy/README.md` — Local-fs Hub state directory section updated.** Notes default flip + rollback path + bootstrap-required dependency + new "Operator first-launch flow" code-block. Full cutover + rollback runbook still defers to T4.
 - ✅ **Manual smoke (best-effort; no live Docker in worktree).** GUARD CASE A: empty dir, no sentinel → FATAL would fire, exit 1. GUARD CASE B: empty dir + `touch .cutover-complete` → would proceed, exit 0. Both verified via `node -e` against compiled `dist/lib/cutover-sentinel.js`. Live Docker `start-hub.sh + state-sync.sh + restart` cycle deferred to T3 dogfood per task-357 scope.
-- ✅ **Verification.** `npm test` (hub): 52 files / 755 passed / 5 skipped (was 51/748/5 — delta +1 file / +7 tests / 0 regressions; architect estimated +1 test). `npm run build`: clean. `npx tsc --noEmit`: clean. `bash -n scripts/local/start-hub.sh`: clean. `@ois/storage-provider`: unchanged.
+- ✅ **Verification.** `npm test` (hub): 52 files / 755 passed / 5 skipped (was 51/748/5 — delta +1 file / +7 tests / 0 regressions; architect estimated +1 test). `npm run build`: clean. `npx tsc --noEmit`: clean. `bash -n scripts/local/start-hub.sh`: clean. `@apnex/storage-provider`: unchanged.
 
 ### T2a (Cutover bootstrap: invariant + sentinel + tmp-file exclusion) — shipped + merged 2026-04-25
 
@@ -105,7 +105,7 @@ If you're picking up cold on mission-48:
 - ✅ **`deploy/README.md` — new §Local-fs Hub state directory section.** Mount-section stub per task-355 deliverable #6 (full cutover + rollback runbook lands under T4). Documents host path default, selection mechanism, bind mount, uid/gid policy, single-writer enforcement, defense-in-depth writability check.
 - ✅ **`.gitignore` — `local-state/` added.** Mission-47 T3 created the default state-dir but never gitignored it; small hygiene catch caught while touching surrounding scripts. Architect-acknowledged as "trivially in-scope" on thread-306.
 - ✅ **uid/gid mitigation choice ratified.** thread-306 round 2: architect green-lit `docker run -u $(id -u):$(id -g)` (vs chown-shim or named-volume alternatives). Rationale: bind-mount transparency + no chown-shim overhead + container only writes to mounted state dir (`/app` read-only at runtime; `/secrets/sa-key.json` `:ro`). Operability win for operator inspection.
-- ✅ **Verification.** `npm test` (hub): 51 files / 748 passed / 5 skipped (unchanged from mission-49 close baseline; T1 is non-regressive). `npm run build`: clean. `npx tsc --noEmit`: clean. `bash -n scripts/local/start-hub.sh`: clean. `@ois/storage-provider` conformance suite: unchanged (no contract delta).
+- ✅ **Verification.** `npm test` (hub): 51 files / 748 passed / 5 skipped (unchanged from mission-49 close baseline; T1 is non-regressive). `npm run build`: clean. `npx tsc --noEmit`: clean. `bash -n scripts/local/start-hub.sh`: clean. `@apnex/storage-provider` conformance suite: unchanged (no contract delta).
 
 ---
 

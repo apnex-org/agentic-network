@@ -58,7 +58,7 @@ A family of npm packages encapsulating SDK source + pre-built dist + plugin shim
 ### 2. Local update script (script-driven §D mechanisation)
 
 `scripts/local/update-adapter.sh` is the ergonomic frontend:
-- Conditional cleanup of legacy `@ois/*` namespace (per migration sequence)
+- Conditional cleanup of legacy `@apnex/*` namespace (per migration sequence)
 - `npm install -g @apnex/claude-plugin@latest` for artifact pull
 - Explicit invocation of `"$(npm prefix -g)/lib/node_modules/@apnex/claude-plugin/install.sh"` for system-side install action
 - Restart-required notice + version self-report
@@ -81,14 +81,14 @@ CLI-contract regression test surface (`scripts/test/update-adapter-cli.test.sh`)
 
 ### Namespace decision: β (`@apnex/*` clean cutover)
 
-Move from current internal `@ois/*` namespace to public `@apnex/*` per Director-prior-preference signal (`project_npm_namespace_apnex.md`).
+Move from current internal `@apnex/*` namespace to public `@apnex/*` per Director-prior-preference signal (`project_npm_namespace_apnex.md`).
 
 **Migration sequence:**
-1. Code-side: TS-LSP bulk-rename `@ois/*` → `@apnex/*` across hub/, packages/, adapters/, scripts/
-2. Update script: conditional cleanup `npm uninstall -g @ois/{claude-plugin,network-adapter,cognitive-layer,message-router}` (skipped on fresh-install consumers)
+1. Code-side: TS-LSP bulk-rename `@apnex/*` → `@apnex/*` across hub/, packages/, adapters/, scripts/
+2. Update script: conditional cleanup `npm uninstall -g @apnex/{claude-plugin,network-adapter,cognitive-layer,message-router}` (skipped on fresh-install consumers)
 3. PR description operator-runbook: first-time vs existing-consumer instructions
 
-**γ hybrid (`@ois/*` deprecated alias) rejected** — co-existence overhead conflicts with mission-63 clean-cutover precedent (anti-goal #8).
+**γ hybrid (`@apnex/*` deprecated alias) rejected** — co-existence overhead conflicts with mission-63 clean-cutover precedent (anti-goal #8).
 
 ### Version visibility (closes calibration #25 root-cause class structurally)
 
@@ -119,7 +119,7 @@ Silent SDK staleness (calibration #25's root cause) becomes detectable end-to-en
 - W0 publish-flow dry-run spike is a hard gate for M-vs-L sizing — if `workspace:^` rewrite fails empirically, fallback to explicit `version-rewrite.sh` script (~2h add)
 - Active-session 6-step coordination protocol during W1+W2 ship adds operational overhead (Q11 mitigation; symmetric with mission-63 §6.3 9-step pattern)
 - Engineer-side adapter (vertex-cloudrun) stub-only this mission per anti-goal §4.2 #5 — full parity in dedicated future mission
-- `@ois/*` → `@apnex/*` namespace migration is one-time but touches ~10 places (package.json files, install.sh refs, file:tgz refs, doc references)
+- `@apnex/*` → `@apnex/*` namespace migration is one-time but touches ~10 places (package.json files, install.sh refs, file:tgz refs, doc references)
 
 ### Forward consequences
 

@@ -175,7 +175,7 @@ res.on("close", () => {
 - **G5: Failures are observable** — consumers know why reconnections happen via `ReconnectReason`
 - **No SDK split-brain** — `maxRetries: 0` + Hub singleton enforcement eliminates the failure class entirely
 - **Backward compatible** — `StateChangeHandler` reason parameter is optional; existing consumers unaffected
-- **Shared across all agents** — Architect and Plugin both run the same `@ois/hub-connection` v1.1.0
+- **Shared across all agents** — Architect and Plugin both run the same `@apnex/hub-connection` v1.1.0
 - **Testable** — `sseWatchdogInterval` configurable for accelerated testing (1s in tests vs 30s in production)
 
 ## Deployment Requirements

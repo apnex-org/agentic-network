@@ -14,7 +14,7 @@
  * This module is the "tool-manager" per Design v1.2 §4 naming discipline
  * (Director-ratified rename from "MCP-boundary dispatcher" 2026-04-26)
  * — distinct from the "Message-router" which is sovereign-package #6
- * (`@ois/message-router`) landing in M-Push-Foundation W4. Always
+ * (`@apnex/message-router`) landing in M-Push-Foundation W4. Always
  * qualify ("tool-manager" or "Message-router") in new code; avoid bare
  * "dispatcher".
  */
@@ -25,7 +25,7 @@ import {
   CallToolRequestSchema,
   InitializeRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { MessageRouter, SeenIdCache } from "@ois/message-router";
+import { MessageRouter, SeenIdCache } from "@apnex/message-router";
 import type {
   AgentClientCallbacks,
   AgentEvent,
@@ -286,7 +286,7 @@ export function createSharedDispatcher(
   };
 
   // Mission-56 W2.2: Layer-2 routing. Every classified event goes
-  // through `@ois/message-router` so Message-ID dedup (push+poll
+  // through `@apnex/message-router` so Message-ID dedup (push+poll
   // race) + kind→hook mapping live in one place. The host's
   // `notificationHooks` bag is the router's hook surface — no
   // shape adapter needed (the router's NotificationHooks interface

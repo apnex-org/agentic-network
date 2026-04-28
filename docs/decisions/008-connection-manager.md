@@ -1,14 +1,14 @@
-# ADR-008: Shared Hub-Connection Package (@ois/hub-connection)
+# ADR-008: Shared Hub-Connection Package (@apnex/hub-connection)
 
-**Date:** 2026-04-12 (original), 2026-04-15 (L4/L7 split amendment), 2026-04-16 (renamed to `@ois/network-adapter@2.0.0`)
+**Date:** 2026-04-12 (original), 2026-04-15 (L4/L7 split amendment), 2026-04-16 (renamed to `@apnex/network-adapter@2.0.0`)
 **Status:** Accepted — amended by the Phase 7 L4/L7 refactor (see § Amendment below)
 
-> **Rename note (2026-04-16):** The package published today is `@ois/network-adapter@2.0.0`, living at `packages/network-adapter/`. This ADR's title and body preserve the historical `@ois/hub-connection` name.
+> **Rename note (2026-04-16):** The package published today is `@apnex/network-adapter@2.0.0`, living at `packages/network-adapter/`. This ADR's title and body preserve the historical `@apnex/hub-connection` name.
 **Threads:** thread-29, thread-31
 
 ## Decision
 
-Extract the Hub connection lifecycle management into a shared npm package (`@ois/hub-connection`). Originally (2026-04-12) this was a single-layer design with a transport-agnostic `IConnectionManager` interface and an `McpConnectionManager` implementation. The Phase 7 refactor (2026-04-15) split this into two layers — see **Amendment** at the bottom. Both the Architect and the Engineer Plugin import and use this package.
+Extract the Hub connection lifecycle management into a shared npm package (`@apnex/hub-connection`). Originally (2026-04-12) this was a single-layer design with a transport-agnostic `IConnectionManager` interface and an `McpConnectionManager` implementation. The Phase 7 refactor (2026-04-15) split this into two layers — see **Amendment** at the bottom. Both the Architect and the Engineer Plugin import and use this package.
 
 ## Rationale
 
@@ -62,7 +62,7 @@ Both had duplicated connection logic with slightly different bugs.
 - **Shared code** — one tested implementation used by both Architect and Plugin
 - **Transport replaceable** — `IConnectionManager` has no MCP types; implementing `WebSocketConnectionManager` or `HttpConnectionManager` requires no changes to adapter code
 - **Package distribution** — `npm pack` + tarball for Cloud Run deployment; `file:` reference for local development
-- **Future agents** — any new agent imports `@ois/hub-connection` and gets bulletproof connection management
+- **Future agents** — any new agent imports `@apnex/hub-connection` and gets bulletproof connection management
 
 ## Backlog
 
@@ -73,7 +73,7 @@ Both had duplicated connection logic with slightly different bugs.
 
 The original single-layer `IConnectionManager` design conflated two distinct concerns: wire lifecycle (socket, SSE, heartbeat, wire-level reconnect) and session lifecycle (handshake, state-sync, `session_invalid` retry, event classification). As the enriched handshake (M18), state-sync RPCs, and multiple shim flavours (Claude stdio, Architect manual-sync, OpenCode plugin) accumulated inside the same class, the boundary became load-bearing and deserved its own surface.
 
-Phase 7 (shipped as `@ois/hub-connection@1.5.0`) split the package into two layers:
+Phase 7 (shipped as `@apnex/hub-connection@1.5.0`) split the package into two layers:
 
 - **L4 — `ITransport` / `McpTransport`** (`src/transport.ts`, `src/mcp-transport.ts`). Owns the wire: `connect()`, `close()`, `request(method, params)`, `listMethods()`, wire-level reconnect, SSE watchdog, heartbeat POST, and a coarse 3-state `WireState` (`disconnected → connecting → connected`). Emits `WireEvent`s with a narrow `WireReconnectCause` vocabulary. Knows nothing about sessions, roles, or handshakes.
 - **L7 — `IAgentClient` / `McpAgentClient`** (`src/agent-client.ts`, `src/mcp-agent-client.ts`). Owns the 5-state session FSM (`disconnected → connecting → synchronizing → streaming → reconnecting`), the enriched `register_role` handshake, state-sync RPCs, `session_invalid` retry-once, and event classification into `AgentClientCallbacks` (`onActionableEvent`, `onInformationalEvent`, `onStateChange`). Shims talk only to this layer; they pass a `transportConfig` and never construct an `McpTransport` directly.

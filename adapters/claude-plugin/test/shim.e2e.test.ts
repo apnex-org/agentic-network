@@ -41,10 +41,10 @@ import {
   NormalizedError,
   ResponseSummarizer,
   type TelemetryEvent,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../packages/network-adapter/test/helpers/policy-loopback.js";
-import { createSharedDispatcher, pendingKey } from "@ois/network-adapter";
+import { createSharedDispatcher, pendingKey } from "@apnex/network-adapter";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 
 async function waitFor(cond: () => boolean, timeoutMs: number): Promise<void> {
@@ -116,7 +116,7 @@ async function createEngineerWithShim(
       role: "engineer",
       handshake: {
         globalInstanceId: `eng-${randomUUID()}`,
-        proxyName: "@ois/claude-plugin",
+        proxyName: "@apnex/claude-plugin",
         proxyVersion: "e2e-1.0.0",
         transport: "stdio-mcp-proxy",
         sdkVersion: "0.0.0",

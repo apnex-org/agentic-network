@@ -1,6 +1,6 @@
 # M-Sovereign-Storage-Interface — Work Trace (live state)
 
-**Mission scope.** Mission-47 — harden hub storage into a sovereign architectural surface. CSI-inspired `StorageProvider` contract packaged as `@ois/storage-provider/`, parallel to `@ois/network-adapter` + `@ois/cognitive-layer`. Entity repositories compose the provider without backend-specific branches.
+**Mission scope.** Mission-47 — harden hub storage into a sovereign architectural surface. CSI-inspired `StorageProvider` contract packaged as `@apnex/storage-provider/`, parallel to `@apnex/network-adapter` + `@apnex/cognitive-layer`. Entity repositories compose the provider without backend-specific branches.
 
 **Mission brief:** `get_mission(mission-47)` (Hub entity; cascade-spawned from thread-290 action-1).
 **Design round:** thread-290 (architect lily + engineer greg, converged 2026-04-24).
@@ -31,7 +31,7 @@ If you're picking up cold on mission-47:
 
 ## Merged (core mission)
 
-- ✅ **T1** — @ois/storage-provider contract + 3 providers + conformance suite + ADR-024 (PR #10 merged pre-session).
+- ✅ **T1** — @apnex/storage-provider contract + 3 providers + conformance suite + ADR-024 (PR #10 merged pre-session).
 - ✅ **T2-W1** — tele repository migration (PR #11 merged pre-session).
 - ✅ **T2-W2** — bug + idea repository migrations (PR #12 merged 2026-04-24 10:51Z).
 - ✅ **T2-W3** — director-notification repository migration (PR #13 merged 11:36Z via cascade).
@@ -66,10 +66,10 @@ Main at `eab4cbc`. Core mission (T1 + T2 all 7 waves + T3) = 100% shipped. All 1
 
 ### T3 (sync script + STORAGE_BACKEND=local-fs wiring) — shipped 2026-04-24
 
-- ✅ **`hub/src/index.ts` — `STORAGE_BACKEND=local-fs` branch added.** Imports `LocalFsStorageProvider` from `@ois/storage-provider`; new `OIS_LOCAL_FS_ROOT` env var (required) points at the root directory; fail-fast if unset (prevents accidental write to CWD). Prod-guard: `NODE_ENV=production` + `local-fs` combo is fatal — `local-fs` provider is `cas:true, durable:true, concurrent:false` (single-writer), so running it in prod would corrupt under multi-writer load. `AuditStore` + `NotificationStore` remain in-memory on local-fs backend (those entities aren't mission-47-migrated); logged explicitly at startup.
+- ✅ **`hub/src/index.ts` — `STORAGE_BACKEND=local-fs` branch added.** Imports `LocalFsStorageProvider` from `@apnex/storage-provider`; new `OIS_LOCAL_FS_ROOT` env var (required) points at the root directory; fail-fast if unset (prevents accidental write to CWD). Prod-guard: `NODE_ENV=production` + `local-fs` combo is fatal — `local-fs` provider is `cas:true, durable:true, concurrent:false` (single-writer), so running it in prod would corrupt under multi-writer load. `AuditStore` + `NotificationStore` remain in-memory on local-fs backend (those entities aren't mission-47-migrated); logged explicitly at startup.
 - ✅ **`scripts/state-sync.sh` — new dev script.** Mirrors `gs://bucket/` → local directory via `gsutil -m rsync -r -d` (parallel, mirror-delete semantics). Default target `./local-state/`; configurable via 1st arg or `GCS_BUCKET` env. Prints usage instructions for the `STORAGE_BACKEND=local-fs` + `OIS_LOCAL_FS_ROOT` workflow after sync completes. Safety notes in header: single-writer caveat, delete-local-only warning, audit/notification reset caveat.
 - ✅ **ADR-024 follow-up interpretation.** ADR said "extend `scripts/state-backup.sh` to emit gsutil rsync output without tar". Chose sibling-script (`state-sync.sh`) over `--no-tar` flag because semantics differ: `state-backup.sh` creates timestamped compressed archives for operator-run backup; `state-sync.sh` creates a live-usable mirror for dev-hub use. Keeping both scripts separate preserves each one's clarity.
-- ✅ **Verification.** tsc strict-mode clean; hub suite 706/711 pass (identical to W7b baseline — zero regressions). `LocalFsStorageProvider` conformance already validated in the `@ois/storage-provider` suite from T1 (20/20 tests); no new tests needed at the hub layer.
+- ✅ **Verification.** tsc strict-mode clean; hub suite 706/711 pass (identical to W7b baseline — zero regressions). `LocalFsStorageProvider` conformance already validated in the `@apnex/storage-provider` suite from T1 (20/20 tests); no new tests needed at the hub layer.
 
 ### T2-W7b (agent repository migration) — shipped 2026-04-24
 
@@ -94,7 +94,7 @@ Main at `eab4cbc`. Core mission (T1 + T2 all 7 waves + T3) = 100% shipped. All 1
 - ✅ **Test scaffolds updated.** `test-utils.ts` + `orchestrator.ts` both build TurnRepository + PendingActionRepository via the shared provider/counter.
 - ✅ **`__debugSetItem` test-only escape hatch on PendingActionRepository.** Symmetric to `__debugSetTask` / `__debugSetThread` from W5/W6.
 - ✅ **Test sweep (delegated to Agent).** 27 direct-mutation test sites rewritten across 2 files: `pending-action-prune.test.ts` (13 sites — 3 MemoryPendingActionStore constructors + 11 internal-Map mutations + 3 describe renames) and `gcs-pending-action.test.ts` (14 tests — full rewrite from `GcsFakeStorage + vi.mock` pattern to `MemoryStorageProvider + PendingActionRepository`; 2 race-backdating sites rewritten to `__debugSetItem`).
-- ✅ **Obsolete gcs-p2-repro.test.ts deleted entirely.** After W6 removed the last remaining describe (GcsThreadStore), W7 removed the final GcsTurnStore describe with the gcs-turn.ts deletion. The file was down to just GcsTurnStore — deleted rather than leaving a 1-test vestigial file. All P2 reproduction coverage now lives in the `@ois/storage-provider` conformance suite + per-Repository casUpdate loops.
+- ✅ **Obsolete gcs-p2-repro.test.ts deleted entirely.** After W6 removed the last remaining describe (GcsThreadStore), W7 removed the final GcsTurnStore describe with the gcs-turn.ts deletion. The file was down to just GcsTurnStore — deleted rather than leaving a 1-test vestigial file. All P2 reproduction coverage now lives in the `@apnex/storage-provider` conformance suite + per-Repository casUpdate loops.
 - ✅ **Verification.** tsc strict-mode clean; hub suite 706/711 pass (5 skipped; 707→706 delta = 1 extra P2 reproduction removed in the final file deletion; zero functional regressions).
 - ⏸ **Agent (W7b) deferred to fresh session.** Pre-W7 gate (thread-296) issued Option 1 go-signal; W7a shipped with zero contract drift, so architect's go-signal stands. But the Agent surface (M18 + displacement + reaper + migrateAgentQueue) is large enough that doing it within the remaining session context would risk honest-flag-worthy shortcuts. Per the architect's standing L-escalation honest-flag, the right call is to pause here rather than half-ship Agent. Will open a continuation thread to lily once W7a PR lands.
 
@@ -167,7 +167,7 @@ Main at `eab4cbc`. Core mission (T1 + T2 all 7 waves + T3) = 100% shipped. All 1
 - ✅ **Legacy classes deleted.** `MemoryTeleStore` removed from `hub/src/entities/tele.ts`. `hub/src/entities/gcs/gcs-tele.ts` deleted entirely. `hub/src/entities/index.ts` barrel replaces `{Memory,Gcs}TeleStore` exports with `{TeleRepository, StorageBackedCounter, normalizeTele, Counters, CounterField, TeleStatus}`.
 - ✅ **`hub/src/index.ts` startup.** Builds `StorageProvider` (MemoryStorageProvider for memory-mode, GcsStorageProvider for gcs-mode); shares it with `StorageBackedCounter`; instantiates `TeleRepository`. `let teleStore: ITeleStore` declaration unchanged — policy layer untouched.
 - ✅ **Test scaffolds updated.** `hub/src/policy/test-utils.ts` + `hub/test/e2e/orchestrator.ts` — both now build MemoryStorageProvider + StorageBackedCounter + TeleRepository instead of MemoryTeleStore. Fresh provider per test-context (no state leakage).
-- ✅ **Hub dependency added.** `hub/package.json` gains `"@ois/storage-provider": "file:../packages/storage-provider"`. `prepare: tsc` script on storage-provider triggers automatic build during `npm install`; no tarball ceremony (distinct class from bug-30 adapter tarball issue).
+- ✅ **Hub dependency added.** `hub/package.json` gains `"@apnex/storage-provider": "file:../packages/storage-provider"`. `prepare: tsc` script on storage-provider triggers automatic build during `npm install`; no tarball ceremony (distinct class from bug-30 adapter tarball issue).
 - ✅ **Verification.** tsc strict-mode clean. Full hub suite 725 passing / 5 skipped / 0 failing — identical to pre-W1 baseline. No regressions; structural refactor only.
 
 ### T1 (contract + 3 providers + conformance suite + ADR-024) — shipped 2026-04-24

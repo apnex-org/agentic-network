@@ -15,7 +15,7 @@
  * straight into a stub for end-to-end fixture replay without
  * standing up Hub transport.
  *
- * The stub deliberately avoids importing `@ois/network-adapter` or
+ * The stub deliberately avoids importing `@apnex/network-adapter` or
  * any MCP-transport surface — keeping the package dep graph minimal
  * (per directive) and letting T3 choose the concrete transport
  * (in-process vs. MCP-stdio vs. MCP-HTTP) without re-shaping the

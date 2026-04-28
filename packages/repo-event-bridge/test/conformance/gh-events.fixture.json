@@ -85,7 +85,7 @@
           "action": "merged",
           "pull_request": {
             "number": 58,
-            "title": "[task-386] Extend Cloud Build tarball-staging to cover @ois/repo-event-bridge",
+            "title": "[task-386] Extend Cloud Build tarball-staging to cover @apnex/repo-event-bridge",
             "html_url": "https://github.com/apnex-org/agentic-network/pull/58",
             "user": { "login": "apnex-greg" }
           }

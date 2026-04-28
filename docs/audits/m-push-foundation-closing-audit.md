@@ -5,7 +5,7 @@
 **Resolves:** Design v1.2 §"Architectural commitments #1–#7" + the Universal Adapter Phase 1 push-pipeline architecture. Direct successor to mission-55 (M-Pre-Push-Adapter-Cleanup); direct dependent of idea-191 / mission-52 (M-Repo-Event-Bridge).
 **Source idea:** mission-51 W6 closing report — "M-Push-Foundation explicitly defers all SSE-push transport work; future mission lands the canonical push primitive on the unified Message store" — promoted via Design v1.2 cascade.
 **Dates:** Scoped via Design v1.2 (commit `cc90174`). W0 spike merged 2026-04-26 (PR #70). Substantive waves W1a–W4.3 merged 2026-04-26 (PRs #71–#81). W5 closing wave (this PR) ships post-merge same date. Mission lifecycle: ~1 day end-to-end across 12 PRs.
-**Scope:** 12-sub-unit decomposition spanning 5 wave-clusters — W0 (spike + grep audit) → W1a (push-on-Message-create) + W1b (Last-Event-ID protocol + cold-start) → W2.1 (`@ois/message-router` sovereign-package #6) + W2.2 (adapter SSE handler integration) + W2.3 (claude-plugin source-attribute taxonomy) → W3.1 (`list_messages.since` cursor) + W3.2 (`claim_message`/`ack_message` MCP verbs + Message status FSM) + W3.3 (adapter hybrid poll backstop + claim/ack wiring) → W4.1 (DirectorNotification sunset) + W4.2 (Notification sunset) + W4.3 (PendingActionItem scope correction; doc-only) → W5 (this PR: closing audit + ADR-026 + entity-store removal cleanup).
+**Scope:** 12-sub-unit decomposition spanning 5 wave-clusters — W0 (spike + grep audit) → W1a (push-on-Message-create) + W1b (Last-Event-ID protocol + cold-start) → W2.1 (`@apnex/message-router` sovereign-package #6) + W2.2 (adapter SSE handler integration) + W2.3 (claude-plugin source-attribute taxonomy) → W3.1 (`list_messages.since` cursor) + W3.2 (`claim_message`/`ack_message` MCP verbs + Message status FSM) + W3.3 (adapter hybrid poll backstop + claim/ack wiring) → W4.1 (DirectorNotification sunset) + W4.2 (Notification sunset) + W4.3 (PendingActionItem scope correction; doc-only) → W5 (this PR: closing audit + ADR-026 + entity-store removal cleanup).
 **Tele alignment:** **Primary tele-3 Sovereign Composition** + **tele-10 Hub-as-Single-Source-of-Truth** — push pipeline + Message-router (sovereign-package #6) + 2/3 legacy notification entities collapsed into Message-store projection. **Secondary tele-7 Confidence-Through-Coverage** + **tele-4 Zero-Loss** + **tele-2 Isomorphic Specification** per Design v1.2 §"Tele alignment".
 
 ---
@@ -17,8 +17,8 @@
 | W0 | Spike report — legacy-entity read-path grep audit + spike-level structural decisions for waves W1-W4 | ✅ Merged | `09452f5` | #70 | 0 (doc-only spike report) |
 | W1a | Push-on-Message-create — Design v1.2 commitment #1; SSE event fired synchronously after `create_message` commit | ✅ Merged | `3f15057` | #71 | + |
 | W1b | Last-Event-ID SSE protocol + cold-start replay — Design v1.2 commitment #2; Hub-internal `replayFromCursor` + soft-cap `replay-truncated` synthetic event | ✅ Merged | `c6bcf56` | #72 | + |
-| W2.1 | `@ois/message-router` sovereign-package #6 — Design v1.2 commitment #3; Layer-2 router skeleton with seen-id LRU N=1000 | ✅ Merged | `f5dacfd` | #73 | + |
-| W2.2 | Adapter SSE event-handler integration — `@ois/network-adapter` consume `@ois/message-router`; dispatcher↔router wiring | ✅ Merged | `15f1405` | #74 | + |
+| W2.1 | `@apnex/message-router` sovereign-package #6 — Design v1.2 commitment #3; Layer-2 router skeleton with seen-id LRU N=1000 | ✅ Merged | `f5dacfd` | #73 | + |
+| W2.2 | Adapter SSE event-handler integration — `@apnex/network-adapter` consume `@apnex/message-router`; dispatcher↔router wiring | ✅ Merged | `15f1405` | #74 | + |
 | W2.3 | Claude-plugin source-attribute taxonomy — Design v1.2 commitment #4; per-subkind `<channel>` source attribution at the Layer-3 render-surface | ✅ Merged | `0a403fc` | #75 | + |
 | W3.1 | `list_messages.since` cursor extension — Design v1.2 commitment #5 foundation; ULID-strict cursor for adapter-side hybrid poll backstop | ✅ Merged | `eb1ee2b` | #76 | + |
 | W3.2 | `claim_message` + `ack_message` MCP verbs + Message status FSM `new → received → acked` — Design v1.2 commitment #6 | ✅ Merged | `c215f6c` | #77 | + |
@@ -31,12 +31,12 @@
 **Aggregate:**
 - 12 of 13 deliverables merged across 12 PRs (#70–#81); W5 (this PR) closes the mission.
 - Hub vitest baseline grew from pre-mission 968/5 → 987/5 across mission-56 lifetime (+19 net new tests; primarily W4.1 helper unit tests +14 + W4.2 helper unit tests +5).
-- Cumulative diff scale: substantial. New sovereign-package (`@ois/message-router`); new MCP verbs (`claim_message` + `ack_message`); new SSE protocol layer; 9 production call-sites migrated off legacy notification entities.
+- Cumulative diff scale: substantial. New sovereign-package (`@apnex/message-router`); new MCP verbs (`claim_message` + `ack_message`); new SSE protocol layer; 9 production call-sites migrated off legacy notification entities.
 
 **Test counts at mission close:**
 - Hub: 64+ files / 987+ passing / 5 skipped (post-W4.2-merge baseline; W4.3 was doc-only; W5 cleanup verified to preserve baseline)
 - Cross-package vitest: pre-existing bug-32 pattern (`MemoryTaskStore is not a constructor` in `policy-loopback.ts` — file last touched in M-Cognitive-Hypervisor task-304, pre-mission-51); admin-merge per PR #60–#81 lineage (16+ consecutive)
-- Build + typecheck: clean across hub + `@ois/message-router` + `@ois/network-adapter` + adapters
+- Build + typecheck: clean across hub + `@apnex/message-router` + `@apnex/network-adapter` + adapters
 
 ---
 
@@ -52,7 +52,7 @@
 |---|---|---|---|
 | 1 | Push-on-Message-create — SSE event fires synchronously after `create_message` commit; non-fatal on dispatch failure | ✅ MET | PR #71 (`3f15057`): `message-policy.ts:188-221` fires `ctx.dispatch("message_arrived", {message}, pushSelector(target))` post-commit; cold reconnect-replay (W1b) + poll backstop (W3.3) recover any pushed-but-undelivered events. |
 | 2 | Last-Event-ID SSE protocol + cold-start replay | ✅ MET | PR #72 (`c6bcf56`): Hub-internal `replayFromCursor` query + SSE GET wrapper emits replayed Messages via `sendLoggingMessage` with Message ULID as `id:`; soft-cap `replay-truncated` synthetic event at `REPLAY_SOFT_CAP=1000`. |
-| 3 | `@ois/message-router` sovereign-package #6 (Layer-2) | ✅ MET | PR #73 (`f5dacfd`): new package `packages/message-router`; seen-id LRU N=1000 dedup; kind/subkind routing skeleton. PR #74 (`15f1405`): adapter Layer-1c `@ois/network-adapter` consumes via dispatcher↔router wiring; host-shim-agnostic by construction. |
+| 3 | `@apnex/message-router` sovereign-package #6 (Layer-2) | ✅ MET | PR #73 (`f5dacfd`): new package `packages/message-router`; seen-id LRU N=1000 dedup; kind/subkind routing skeleton. PR #74 (`15f1405`): adapter Layer-1c `@apnex/network-adapter` consumes via dispatcher↔router wiring; host-shim-agnostic by construction. |
 | 4 | Per-host source-attribute taxonomy at the Layer-3 render-surface | ✅ MET | PR #75 (`0a403fc`): claude-plugin shim adds `<channel>` source-attribute taxonomy for the 4-kind notification taxonomy + per-subkind discrimination. Per Universal Adapter notification contract spec (mission-55 PR #64). |
 | 5 | Hybrid push+poll backstop with `since` cursor | ✅ MET | PR #76 (`eb1ee2b`): `list_messages.since` ULID-strict cursor extension. PR #78 (`f7bd1db`): adapter-side `PollBackstop` opt-in module with 5min default cadence + `OIS_ADAPTER_POLL_BACKSTOP_S` env override + 60s floor anti-pattern guard; 24+21 = 45 new adapter unit tests. |
 | 6 | `claim_message` + `ack_message` two-step semantics + Message status FSM | ✅ MET | PR #77 (`c215f6c`): Message status FSM `new → received → acked` (linear, monotonic, CAS-via-`putIfMatch`); MCP verbs `claim_message(id, agentId)` + `ack_message(id)`. PR #78 (`f7bd1db`): adapter-side `SharedDispatcher.ackMessage` helper for Option (i) explicit-ack-on-action (Director-confirmed at thread-325 round-2). Multi-agent claim race: winner-takes-all via `claimedBy` field. |
@@ -81,9 +81,9 @@ W1b: Hub-internal `replayFromCursor(opts)` query + SSE GET handler wrapper aroun
 
 ### W2.1 sovereign-package #6 (`f5dacfd` / PR #73) + W2.2 dispatcher↔router (`15f1405` / PR #74) + W2.3 source-attribute (`0a403fc` / PR #75)
 
-W2.1: new package `packages/message-router/` published as `@ois/message-router` (file:-ref via dist/ commit per calibration #20); seen-id LRU N=1000 dedup primitive; kind/subkind routing skeleton.
+W2.1: new package `packages/message-router/` published as `@apnex/message-router` (file:-ref via dist/ commit per calibration #20); seen-id LRU N=1000 dedup primitive; kind/subkind routing skeleton.
 
-W2.2: `@ois/network-adapter` Layer-1c dispatcher consumes `@ois/message-router` via the `notificationHooks` callback bag pattern (mission-55 PR #63); host-shim-agnostic by construction; per Universal Adapter notification contract (mission-55 PR #64).
+W2.2: `@apnex/network-adapter` Layer-1c dispatcher consumes `@apnex/message-router` via the `notificationHooks` callback bag pattern (mission-55 PR #63); host-shim-agnostic by construction; per Universal Adapter notification contract (mission-55 PR #64).
 
 W2.3: claude-plugin Layer-3 shim adds `<channel>` source-attribute taxonomy for the 4-kind notification + per-subkind discrimination. Render-surface-rich.
 
@@ -122,7 +122,7 @@ Three deliverables: closing audit (this file) + ADR-026 (`docs/decisions/026-pus
 - Variance: hits **lower edge** per `feedback_pattern_replication_sizing.md` calibration. Patterns mostly replicated from mission-51 (Message primitive) + mission-55 (Adapter cleanup) + ADR-024 (StorageProvider) precedent. W4.3 scope-correction saved 3-5 eng-days of saga-rewrite that would have spiked the variance.
 
 **Code stats (cumulative across W0–W5):**
-- New packages: `@ois/message-router` (Layer-2 sovereign-package #6).
+- New packages: `@apnex/message-router` (Layer-2 sovereign-package #6).
 - New MCP verbs: `create_message` (mission-51), `list_messages.since` (W3.1), `claim_message` (W3.2), `ack_message` (W3.2). All on existing tool-surface — no new verb beyond mission-51's foundation per anti-goal.
 - New helpers: `director-notification-helpers.ts` (W4.1), `notification-helpers.ts` (W4.2).
 - New tests: +19 net hub-side (W4.1 +14 + W4.2 +5 + W4.3 doc-only); +45 adapter-side W3.3 (24 poll-backstop + 21 dispatcher).
@@ -133,7 +133,7 @@ Three deliverables: closing audit (this file) + ADR-026 (`docs/decisions/026-pus
 - Adapter vitest: +45 net W3.3 cases on top of mission-55 baseline.
 - Cross-package vitest: pre-existing bug-32 pattern (admin-merge baseline).
 
-**Build + typecheck:** clean across hub + `@ois/message-router` + `@ois/network-adapter` + claude-plugin + opencode-plugin (modulo pre-existing bug-32 noise in test/helpers/policy-loopback.ts).
+**Build + typecheck:** clean across hub + `@apnex/message-router` + `@apnex/network-adapter` + claude-plugin + opencode-plugin (modulo pre-existing bug-32 noise in test/helpers/policy-loopback.ts).
 
 ---
 
@@ -186,7 +186,7 @@ Per `feedback_proactive_context_budget_surface` (filed post-thread-332): surface
 - **ADR-024** (storage primitive boundary; mission-48 amendment) — mission-56 uses ONLY existing single-entity atomic primitives (`createOnly`, `putIfMatch`, `getWithToken`); no new contract surface
 - **ADR-025** (message primitive; mission-51 W6) — direct predecessor; mission-56 commits the canonical push transport on top of the unified Message primitive ADR-025 ratified
 - **ADR-026** (this mission; `docs/decisions/026-push-pipeline-and-message-router.md`) — Universal Adapter Phase 1 push-pipeline architecture
-- **Methodology calibration #20** (`dist/` committed for file:-ref packages; mission-50 lineage) — relevant for the new `@ois/message-router` package
+- **Methodology calibration #20** (`dist/` committed for file:-ref packages; mission-50 lineage) — relevant for the new `@apnex/message-router` package
 - **Methodology calibration #23** (formal-Design-phase-per-idea + tele-pre-check) — Design v1.2 / mission-54 / mission-55 / mission-56 are the canonical execution examples
 - **Engineer-pool ✓ + architect-pool ✓ cross-approval pattern** — operational pattern from mission-55 PR #62; informally adopted across mission-54 + mission-55 + mission-56 lineage
 - **Mission-55 (M-Pre-Push-Adapter-Cleanup)** — direct predecessor; ships the 5 reusable patterns + Universal Adapter notification contract spec that mission-56 builds on
@@ -223,7 +223,7 @@ Mission-56 (M-Push-Foundation) ships **all 13 deliverables** across 12 PRs in ~1
 - **W0** (`09452f5` / PR #70) — spike report + read-path grep audit; structural decisions for W1-W4
 - **W1a** (`3f15057` / PR #71) — push-on-Message-create
 - **W1b** (`c6bcf56` / PR #72) — Last-Event-ID SSE protocol + cold-start replay
-- **W2.1** (`f5dacfd` / PR #73) — `@ois/message-router` sovereign-package #6
+- **W2.1** (`f5dacfd` / PR #73) — `@apnex/message-router` sovereign-package #6
 - **W2.2** (`15f1405` / PR #74) — adapter dispatcher↔router wiring
 - **W2.3** (`0a403fc` / PR #75) — claude-plugin source-attribute taxonomy
 - **W3.1** (`eb1ee2b` / PR #76) — `list_messages.since` cursor

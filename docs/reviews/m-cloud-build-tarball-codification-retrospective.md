@@ -30,7 +30,7 @@
 **Quantitative outcomes:**
 - Hub vitest 760/5 baseline held throughout (T1-T5 all): no Hub TS source touched.
 - Cross-package adapter failures matched bug-32 pre-existing pattern across all 5 PRs.
-- ADR-024 contract surface unchanged throughout; `@ois/storage-provider` 6-primitive contract held.
+- ADR-024 contract surface unchanged throughout; `@apnex/storage-provider` 6-primitive contract held.
 - Per-task effort: ~3 hours total engineer-side time + ~1 hour architect-side dogfood + investigation (4 dogfood iterations: v1 hit bug-36; v2 hit bug-37 (deeper than v1); v3 hit bug-38 (deeper than v2); v4+v5+v6 passed cleanly).
 
 **Operational state at retrospective-time:**
@@ -89,7 +89,7 @@ This differs from mission-scope-creep (extending into NEW scope). T3-T5 were all
 
 ### 2.4 ADR-024 boundary discipline held under repeated pressure
 
-Across three hotfix iterations, every fix kept the `@ois/storage-provider` 6-primitive contract untouched. The 6 primitives, the `capabilities.concurrent` flag, both `LocalFsStorageProvider` + `GcsStorageProvider` implementations — all unchanged. This is **methodology v1.0 §ADR-amendment-scope-discipline** in execution.
+Across three hotfix iterations, every fix kept the `@apnex/storage-provider` 6-primitive contract untouched. The 6 primitives, the `capabilities.concurrent` flag, both `LocalFsStorageProvider` + `GcsStorageProvider` implementations — all unchanged. This is **methodology v1.0 §ADR-amendment-scope-discipline** in execution.
 
 Tempting alternative paths existed and were explicitly rejected:
 - Pin `@emnapi` versions in `packages/storage-provider/` to eliminate the version conflict that caused bug-37/38 → rejected because it crosses the contract boundary

@@ -33,11 +33,11 @@ import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { McpAgentClient, CognitivePipeline } from "@ois/network-adapter";
+import { McpAgentClient, CognitivePipeline } from "@apnex/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../packages/network-adapter/test/helpers/policy-loopback.js";
 import { createLinkedStdioPair } from "../../../packages/network-adapter/test/helpers/stdio-linked-transport.js";
-import { createSharedDispatcher } from "@ois/network-adapter";
+import { createSharedDispatcher } from "@apnex/network-adapter";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

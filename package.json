@@ -2,9 +2,17 @@
   "name": "agentic-network-monorepo",
   "private": true,
   "version": "0.0.0",
+  "type": "module",
   "description": "OIS agentic-network monorepo root — workspaces wrapper for packages/* + adapters/*. Not published to registry; per-workspace publishing per scripts/publish-packages.sh.",
   "workspaces": [
     "packages/*",
     "adapters/*"
-  ]
+  ],
+  "scripts": {
+    "version-rewrite:check": "node scripts/version-rewrite.js --check",
+    "version-rewrite:apply": "node scripts/version-rewrite.js",
+    "version-rewrite:revert": "node scripts/version-rewrite.js --revert",
+    "prepublishOnly": "node scripts/version-rewrite.js",
+    "postpublish": "node scripts/version-rewrite.js --revert"
+  }
 }

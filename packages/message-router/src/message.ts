@@ -16,7 +16,7 @@ import type {
   DrainedPendingAction,
   SessionState,
   SessionReconnectReason,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 
 export type MessageKind =
   | "notification.actionable"
@@ -48,7 +48,7 @@ export interface PendingActionMessage {
 }
 
 /**
- * Mission-52 `@ois/repo-event-bridge` translator output. Routed onto
+ * Mission-52 `@apnex/repo-event-bridge` translator output. Routed onto
  * the actionable wake-the-LLM path — the bridge already classifies
  * subkinds (`pr-merged`, `pr-review-approved`, etc.); host shims map
  * those onto host-specific source-attribute taxonomies (W2.3 / future).

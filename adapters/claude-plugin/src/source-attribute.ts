@@ -4,7 +4,7 @@
  *
  * Layer-3 host-specific binding (claude-plugin only). The Universal
  * Adapter notification contract (Layer 1) emits classified events; the
- * Layer-2 `@ois/message-router` routes them onto the host's
+ * Layer-2 `@apnex/message-router` routes them onto the host's
  * `notificationHooks`; this module implements the claude-shim's
  * `<channel>` source-attribute taxonomy per Design v1.2 §"Architectural
  * commitments #4" + spec §"Render-surface semantics" worked example.
@@ -40,7 +40,7 @@ const PULSE_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Mirror of `@ois/repo-event-bridge` `REPO_EVENT_SUBKINDS`. Hardcoded to
+ * Mirror of `@apnex/repo-event-bridge` `REPO_EVENT_SUBKINDS`. Hardcoded to
  * avoid a cross-package install dependency just for a constant; verify
  * against `packages/repo-event-bridge/src/translator.ts` when bridge
  * subkind taxonomy evolves.
@@ -58,7 +58,7 @@ const REPO_EVENT_SUBKINDS: ReadonlySet<string> = new Set([
 
 /**
  * Hub event-types that route to the general notification family.
- * Mirror of `HubEventType` in `@ois/network-adapter`'s
+ * Mirror of `HubEventType` in `@apnex/network-adapter`'s
  * `kernel/event-router.ts` minus `director_attention_required` (which
  * has its own family) and minus `cascade_failure` (router-level
  * diagnostic; treated as general). `message_arrived` (mission-56 W1a)

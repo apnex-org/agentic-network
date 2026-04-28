@@ -1,7 +1,7 @@
 /**
  * Cursor + dedupe persistence for PollSource.
  *
- * Mission-52 T2. Wraps `@ois/storage-provider` to hold per-repo
+ * Mission-52 T2. Wraps `@apnex/storage-provider` to hold per-repo
  * pagination cursor + bounded recent-event-id LRU dedupe set.
  * Survives Hub restart — cursor + dedupe state are storage-backed
  * (eats own dogfood per audit-emerged commitment).
@@ -30,7 +30,7 @@
 import {
   hasGetWithToken,
   type StorageProvider,
-} from "@ois/storage-provider";
+} from "@apnex/storage-provider";
 
 // ── Types ─────────────────────────────────────────────────────────────
 

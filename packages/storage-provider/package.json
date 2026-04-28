@@ -1,5 +1,5 @@
 {
-  "name": "@ois/storage-provider",
+  "name": "@apnex/storage-provider",
   "version": "1.0.0",
   "description": "Sovereign StorageProvider contract — CSI-inspired pluggable storage abstraction for the OIS agentic network",
   "type": "module",

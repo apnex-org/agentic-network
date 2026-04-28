@@ -140,7 +140,7 @@ Elide only large results (default > 500 tokens) — small results are cheap to k
 
 ```ts
 // At top of file:
-import { CognitivePipeline } from "@ois/cognitive-layer";
+import { CognitivePipeline } from "@apnex/cognitive-layer";
 import { architectTelemetry } from "./telemetry.js";
 
 // In the McpAgentClient instantiation:

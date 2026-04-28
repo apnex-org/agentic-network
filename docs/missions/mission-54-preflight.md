@@ -16,7 +16,7 @@
 - **A2.** N/A — no separate brief file.
 - **A3.** Cross-referenced artifacts exist: PASS with one minor drift —
   - `docs/designs/m-push-foundation-design.md` v1.1 ✓ (29.5KB; locked-reference snapshot per Design header; "Status: Draft v1.1 ... pre-recon")
-  - `@ois/network-adapter` package ✓ (`packages/network-adapter/`)
+  - `@apnex/network-adapter` package ✓ (`packages/network-adapter/`)
   - `adapters/claude-plugin/` ✓
   - `feedback_architect_abstraction_level.md` ✓ (memory entry; binding feedback)
   - **Filename drift (minor):** brief specifies output at `docs/designs/m-push-foundational-adapter-recon.md` (with "foundational"); Design v1.1 §"Next steps" + §"Status flow" cite `docs/designs/m-push-foundation-adapter-recon.md` (without "al"). Pick one canonical name pre-T1-issuance. **Recommended: brief's `foundational` form** (matches mission name `M-Push-Foundational-Adapter-Recon`). Trivial to update Design v1.1 cross-ref at recon-completion when Design v1.2 is authored anyway.
@@ -32,7 +32,7 @@
 - **C1.** File paths cited in brief:
   - `docs/designs/m-push-foundational-adapter-recon.md` (output target — does NOT exist yet by design; greg authors during T1) ✓
   - `docs/designs/m-push-foundation-design.md` v1.1 ✓ (verified above)
-  - `@ois/network-adapter`, `adapters/claude-plugin` ✓
+  - `@apnex/network-adapter`, `adapters/claude-plugin` ✓
   - PASS (modulo A3 filename drift between brief + Design v1.1 cross-ref).
 - **C2.** Numeric claims: PASS — sizing S (~1 eng-day total; ~half-day greg + ~half-day architect tele-eval); 8 Recon Report sections; 6 binding architectural commitments; 6 anti-goals. All design choices, not measurements.
 - **C3.** Cited ideas/bugs/threads/missions/calibrations in assumed state:
@@ -67,7 +67,7 @@ Brief is execution-ready. All Director-side activation gates discharged.
 - **Symmetric deletion** in `adapters/opencode-plugin/src/`: `dispatcher.ts`
 - Modified `shim.ts` in both plugins; modified `packages/network-adapter/src/index.ts`
 
-**Spec-level interpretation (informational; greg's T1 recon will produce the authoritative reading):** the foreign engineer is hoisting dispatcher / cache / claim concerns out of per-plugin shims into the `@ois/network-adapter` sovereign package. This is structurally aligned with M-Push-Foundational-Design's "3-layer decomposition (network-adapter / dispatcher / shim)" architectural commitment in v1.1's locked decisions log — making this recon mission **high-leverage** as predicted. Confirms the sequencing call ("adapter-layer-clean FIRST" per Director directive 2026-04-26 ~10:00Z) was load-bearing.
+**Spec-level interpretation (informational; greg's T1 recon will produce the authoritative reading):** the foreign engineer is hoisting dispatcher / cache / claim concerns out of per-plugin shims into the `@apnex/network-adapter` sovereign package. This is structurally aligned with M-Push-Foundational-Design's "3-layer decomposition (network-adapter / dispatcher / shim)" architectural commitment in v1.1's locked decisions log — making this recon mission **high-leverage** as predicted. Confirms the sequencing call ("adapter-layer-clean FIRST" per Director directive 2026-04-26 ~10:00Z) was load-bearing.
 
 ## Category E — Execution readiness
 

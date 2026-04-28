@@ -6,7 +6,7 @@
 **Source idea:** mission-54 Recon Report (PR #61, merged 2026-04-26 01:26Z) → architect tele-evaluation Q1/Q2/Q10 → Design v1.2 § propose_mission cascade.
 **Dates:** Scoped + activated 2026-04-26 ~15:00 AEST (post Design v1.2 merge at `cc90174`); T1 (3-PR plan) ratified same thread; PR 1 shipped + merged 2026-04-26 02:33:58Z (`983e926`); PR 2 shipped + merged 2026-04-26 03:01:56Z (`736e13d`); PR 3 (this report) ships post-merge same date. Mission lifecycle: ~3 hours end-to-end across 3 PRs.
 **Scope:** 3-PR decomposition — PR 1 (D1+D2+D3+D4+D5+D7+D9 = source hoist + refinements + test rewiring + Hub vitest baseline preservation), PR 2 (D6 = Universal Adapter notification contract spec), PR 3 (D8+D10 = foreign-tree-deletion verification + this closing audit).
-**Tele alignment:** **Primary tele-3 Sovereign Composition** — code-dedup hoist consolidates duplicated per-plugin dispatcher into the existing `@ois/network-adapter` sovereign-package; clean shim/host boundary preserved; subdir sub-organization makes Layer-1 internal sub-concerns explicit. **Secondary tele-9 Frictionless** + **tele-2 Isomorphic Specification** + **tele-7 Confidence-Through-Coverage** per Design v1.2 §"Tele alignment".
+**Tele alignment:** **Primary tele-3 Sovereign Composition** — code-dedup hoist consolidates duplicated per-plugin dispatcher into the existing `@apnex/network-adapter` sovereign-package; clean shim/host boundary preserved; subdir sub-organization makes Layer-1 internal sub-concerns explicit. **Secondary tele-9 Frictionless** + **tele-2 Isomorphic Specification** + **tele-7 Confidence-Through-Coverage** per Design v1.2 §"Tele alignment".
 
 ---
 
@@ -14,7 +14,7 @@
 
 | Task | Source directive | Status | Branch artifact | PR | Test count delta |
 |---|---|---|---|---|---|
-| D1 | Hoist + sub-organize — dispatcher/claim/cache from per-plugin shims into `@ois/network-adapter`; sub-organize `src/` into `src/wire/` + `src/session/` + `src/mcp-boundary/` subdirs (per Design v1.2 Layer-1 1a/1b/1c) | ✅ Merged | `983e926` | #63 | 0 net (existing tests preserved + rewired; new tests authored against shared dispatcher) |
+| D1 | Hoist + sub-organize — dispatcher/claim/cache from per-plugin shims into `@apnex/network-adapter`; sub-organize `src/` into `src/wire/` + `src/session/` + `src/mcp-boundary/` subdirs (per Design v1.2 Layer-1 1a/1b/1c) | ✅ Merged | `983e926` | #63 | 0 net (existing tests preserved + rewired; new tests authored against shared dispatcher) |
 | D2 | `notificationHooks` callback bag — generic shim-injection contract; will become Universal Adapter notification contract surface | ✅ Merged | `983e926` | #63 | 0 (shape codified in `SharedDispatcherOptions.notificationHooks`; spec doc D6) |
 | D3 | Lazy `createMcpServer()` factory — replaces eager `dispatcher.server` | ✅ Merged | `983e926` | #63 | 0 (per-session lifecycle pattern; existing tests adapted) |
 | D4 | Tool-catalog cache distillation — schema-version + atomic write + null-tolerant `isCacheValid` | ✅ Merged | `983e926` | #63 | 0 (157→141 lines; semantics preserved per dispatcher-list-tools-cache.test.ts) |
@@ -29,14 +29,14 @@
 - 8 of 10 deliverables merged across 2 PRs; D8+D10 land in this PR.
 - Hub vitest baseline preserved exactly: 919 passing / 5 skipped throughout (matches bug-39 hotfix commit `0190913` baseline; D9 ✓).
 - Cumulative diff (PR 1 + PR 2 + PR 3):
-  - **Source delta** (PR 1 only): +5 new files in `@ois/network-adapter` (`mcp-boundary/dispatcher.ts`, `mcp-boundary/tool-catalog-cache.ts`, `session/session-claim.ts`, plus `wire/` + `session/` subdirs created via `git mv`); −4 deleted files (per-plugin duplicates in claude-plugin + opencode-plugin); 2 shims modified to consume new shared modules; 9 source files moved into wire/ + session/ subdirs (history preserved via `git mv`); ~835 duplicate lines collapsed into ~430 shared
+  - **Source delta** (PR 1 only): +5 new files in `@apnex/network-adapter` (`mcp-boundary/dispatcher.ts`, `mcp-boundary/tool-catalog-cache.ts`, `session/session-claim.ts`, plus `wire/` + `session/` subdirs created via `git mv`); −4 deleted files (per-plugin duplicates in claude-plugin + opencode-plugin); 2 shims modified to consume new shared modules; 9 source files moved into wire/ + session/ subdirs (history preserved via `git mv`); ~835 duplicate lines collapsed into ~430 shared
   - **Test delta** (PR 1): 13 test files updated (10 in network-adapter/test/ + 3 in adapters/*/test/) with new import paths; 4 mock files updated; 5 new tests added against the shared dispatcher
   - **Spec delta** (PR 2): 1 new file at `docs/specs/universal-adapter-notification-contract.md` (317 lines)
   - **Audit delta** (PR 3): this file
 
 **Test counts at mission close:**
 - Hub: 62 files / 919 passing / 5 skipped (D9 ✓; unchanged from pre-mission baseline since no hub source touched)
-- `@ois/network-adapter`: structural reorganization preserved; cross-package vitest failures match bug-32 pre-existing pattern (PolicyLoopbackHub depends on un-exported MemoryStores from hub/src; same shape as pre-mission state on main)
+- `@apnex/network-adapter`: structural reorganization preserved; cross-package vitest failures match bug-32 pre-existing pattern (PolicyLoopbackHub depends on un-exported MemoryStores from hub/src; same shape as pre-mission state on main)
 - Adapter unit suites (new authored content): **70/70 passing** (55 claude-plugin + 15 opencode-plugin); zero regressions in adapter dispatcher contract tests
 - Build + typecheck: clean across network-adapter + claude-plugin + opencode-plugin
 
@@ -52,13 +52,13 @@
 
 | # | Criterion | Status | Evidence |
 |---|---|---|---|
-| 1 | Code-dedup hoist into `@ois/network-adapter` with subdir sub-organization (`src/wire/` + `src/session/` + `src/mcp-boundary/`) | ✅ MET | PR 1 (`983e926`): 13 source files in network-adapter src/ now organized into 3 subdirs per Design v1.2 Layer-1 1a/1b/1c spec. Cross-cutting primitives (hub-error, logger, prompt-format, notification-log, index) stay at src/ root per Design v1.2's silent omission of those from sub-concern map. Foreign tree's 2-layer hoist correctly informed scope without dictating implementation; engineer-authored from scratch. |
+| 1 | Code-dedup hoist into `@apnex/network-adapter` with subdir sub-organization (`src/wire/` + `src/session/` + `src/mcp-boundary/`) | ✅ MET | PR 1 (`983e926`): 13 source files in network-adapter src/ now organized into 3 subdirs per Design v1.2 Layer-1 1a/1b/1c spec. Cross-cutting primitives (hub-error, logger, prompt-format, notification-log, index) stay at src/ root per Design v1.2's silent omission of those from sub-concern map. Foreign tree's 2-layer hoist correctly informed scope without dictating implementation; engineer-authored from scratch. |
 | 2 | `notificationHooks` callback bag pattern adopted as Universal Adapter notification contract | ✅ MET | PR 1: `SharedDispatcherOptions.notificationHooks: { onActionableEvent, onInformationalEvent, onStateChange, onPendingActionItem }`. PR 2: spec doc codifies the contract for future hosts. Both shims (claude + opencode) consume via the bag pattern; no host-binding leaks into Layer 1. |
 | 3 | Lazy `createMcpServer()` factory replaces eager `dispatcher.server` | ✅ MET | PR 1: `SharedDispatcher.createMcpServer()` returns a fresh Server instance per call. opencode-shim's `makeOpenCodeFetchHandler` constructs a new Server per HTTP session via the factory; claude-shim constructs once at startup. Pattern preserved; per-session lifecycle support gained. |
 | 4 | Tool-catalog cache distilled with schema-version + atomic write + null-tolerant `isCacheValid` | ✅ MET | PR 1: `mcp-boundary/tool-catalog-cache.ts` (141 lines vs prior 157 in claude-plugin-only). `CATALOG_SCHEMA_VERSION = 1` pinned; tmp+rename atomic write; null/undefined/empty `currentHubVersion` → trust-cache (probe-friendly default per pre-existing semantics). All 5 dispatcher-list-tools-cache.test.ts cache-fallback tests pass. |
 | 5 | Gate naming refined: `handshakeComplete` → `listToolsGate`; `agentReady` → `callToolGate` | ✅ MET | PR 1: `SharedDispatcherOptions.listToolsGate` / `callToolGate`. Old names retired in single PR (architect ratified bundled shape; clean cut, no back-compat aliasing). Naming reflects what's gated, not what's complete — per recon §6 + Design v1.2 Q5. |
 | 6 | Universal Adapter notification contract spec at `docs/specs/universal-adapter-notification-contract.md` | ✅ MET | PR 2 (`736e13d`): 317-line spec. Architectural placement diagram (Layer 1c emits / Layer 3 implements / Layer 2 future-extends). 4-kind event taxonomy mapped to 4 hooks. Payload shapes typed. Fire/deliver/ack lifecycle (at-least-once + shim-side idempotency). Hooks contract with TypeScript signatures + drain-path symmetric helper. Render-surface worked examples (claude `<channel>` + source-attribute taxonomy from Design v1.2 §4; opencode `promptAsync` + rate-limit + backlog). Future-host extension points (terminal-direct, ACP, Slack, web). 5 binding anti-goals + 4 out-of-scope items for v1.1/v1.2/v2.0. |
-| 7 | Test rewiring per recon §4 pattern; mocks updated | ✅ MET | PR 1: 13 test files in network-adapter/test/ (8 integration + 4 unit + 1 helper) updated to import from `@ois/network-adapter/src/{wire,session}/...`. 8 test files in adapters/*/test/ (dispatcher.test.ts × 2, dispatcher-list-tools-cache.test.ts, eager-claim.test.ts, tool-catalog-cache.test.ts, shim.e2e.test.ts × 2, fetch-handler.test.ts) updated to consume `@ois/network-adapter` exports + new constructor signatures. 4 mock files updated. Test parity preserved per recon §4 pattern; new tests authored fresh against the shared dispatcher's contract surface. |
+| 7 | Test rewiring per recon §4 pattern; mocks updated | ✅ MET | PR 1: 13 test files in network-adapter/test/ (8 integration + 4 unit + 1 helper) updated to import from `@apnex/network-adapter/src/{wire,session}/...`. 8 test files in adapters/*/test/ (dispatcher.test.ts × 2, dispatcher-list-tools-cache.test.ts, eager-claim.test.ts, tool-catalog-cache.test.ts, shim.e2e.test.ts × 2, fetch-handler.test.ts) updated to consume `@apnex/network-adapter` exports + new constructor signatures. 4 mock files updated. Test parity preserved per recon §4 pattern; new tests authored fresh against the shared dispatcher's contract surface. |
 | 8 | Foreign-tree-deletion verification | ✅ MET | This PR §5 explicit affirmation: Recon Report (`docs/designs/m-push-foundational-adapter-recon.md`, on main since `f519f74`) + Universal Adapter notification contract spec (`docs/specs/universal-adapter-notification-contract.md`, on main since `736e13d`) + this closing audit collectively capture all architectural-pattern knowledge derivable from the foreign tree at `/home/apnex/taceng/codex/agentic-network`. Director may delete the foreign tree at will post this PR's merge. |
 | 9 | Hub vitest baseline preserved; cross-package failures match bug-32 pre-existing pattern | ✅ MET | Hub: 919 passing / 5 skipped (verified per PR; matches pre-mission baseline + bug-39 hotfix baseline). Cross-package failures (network-adapter integration tests + adapter shim e2e tests + adapter mocks) all caused by `MemoryTaskStore is not a constructor` and `MemoryEngineerRegistry is not a constructor` — pre-existing bug-32 pattern in `policy-loopback.ts` + `test-hub.ts` helpers; same failure shape that PR #60 / #61 / #62 / #63 / #64 all merged with cleanly via admin-merge. |
 | 10 | Closing audit per canonical 8-section shape | ⏳ This PR | This file. Section 1 deliverable scorecard / 2 goal + success framing / 3 per-task architecture recap / 4 aggregate stats + verification / 5 emergent observations + side findings / 6 cross-references / 7 architect-owned remaining / 8 mission close summary — matching mission-43/46/47/49/50/51/52 lineage. |
@@ -71,12 +71,12 @@
 ### PR 1 — Hoist + refinements + test rewiring (`983e926`)
 
 **Architectural shape pre-mission** (from Recon Report §1+§4+§5):
-- `@ois/network-adapter/src/`: 13 files at root (mcp-transport, transport, mcp-agent-client, agent-client, handshake, instance, state-sync, event-router, hub-error, logger, prompt-format, notification-log, index)
+- `@apnex/network-adapter/src/`: 13 files at root (mcp-transport, transport, mcp-agent-client, agent-client, handshake, instance, state-sync, event-router, hub-error, logger, prompt-format, notification-log, index)
 - `adapters/claude-plugin/src/`: 4 files (shim + dispatcher (371 lines) + eager-claim (79) + tool-catalog-cache (157) — all per-plugin duplicates of concerns that should be shared)
 - `adapters/opencode-plugin/src/`: 2 files (shim + dispatcher (228 lines) — duplicate of claude-plugin's dispatcher with HTTP-specific differences)
 
 **Architectural shape post-mission:**
-- `@ois/network-adapter/src/`: subdir sub-organization per Design v1.2 Layer-1 1a/1b/1c spec
+- `@apnex/network-adapter/src/`: subdir sub-organization per Design v1.2 Layer-1 1a/1b/1c spec
   - `src/wire/`: mcp-transport.ts, transport.ts (Layer 1a — wire FSM, reconnect, backoff, heartbeat)
   - `src/session/`: mcp-agent-client.ts, agent-client.ts, handshake.ts, instance.ts, state-sync.ts, event-router.ts, session-claim.ts (NEW; renamed from per-plugin eager-claim.ts) (Layer 1b — session FSM, handshake, agent identity)
   - `src/mcp-boundary/`: dispatcher.ts (NEW; createSharedDispatcher), tool-catalog-cache.ts (NEW; distilled) (Layer 1c — MCP-boundary handler factory; pendingActionMap; tool-catalog cache; cache-fallback)
@@ -84,7 +84,7 @@
 - `adapters/claude-plugin/src/`: shim.ts only (host-specific transport plumbing + `<channel>` render-surface; consumes shared dispatcher)
 - `adapters/opencode-plugin/src/`: shim.ts only (host-specific Bun-HTTP plumbing + `makeOpenCodeFetchHandler` for HTTP routing + push-to-LLM render-surface; consumes shared dispatcher)
 
-**Naming discipline established** (per Design v1.2 §4): the new module is the **"MCP-boundary dispatcher"** (Layer 1c) — distinct from the future **Message-router** (sovereign-package #6, `@ois/message-router`, M-Push-Foundation W4). Always qualify in new code; avoid bare "dispatcher". Codified in module headers.
+**Naming discipline established** (per Design v1.2 §4): the new module is the **"MCP-boundary dispatcher"** (Layer 1c) — distinct from the future **Message-router** (sovereign-package #6, `@apnex/message-router`, M-Push-Foundation W4). Always qualify in new code; avoid bare "dispatcher". Codified in module headers.
 
 **`notificationHooks` callback bag** — generic host-injection contract:
 ```typescript
@@ -103,7 +103,7 @@ Both shims consume; the dispatcher remains host-agnostic; new hosts onboard with
 
 **Gate naming refinement** — `SharedDispatcherOptions.listToolsGate` / `callToolGate` (was `handshakeComplete` / `agentReady`). Names what's gated; clearer at the boundary they protect.
 
-**Test rewiring fidelity** — every test that touched per-plugin dispatcher / eager-claim / tool-catalog-cache imports rewired to `@ois/network-adapter`. Old constructor signature (`createDispatcher({ agent, ... })`) replaced with new (`createSharedDispatcher({ getAgent: () => agent, ... })`). Old `dispatcher.server` direct access replaced with `dispatcher.createMcpServer()` factory call. New tests authored fresh; no copy-paste from foreign tree.
+**Test rewiring fidelity** — every test that touched per-plugin dispatcher / eager-claim / tool-catalog-cache imports rewired to `@apnex/network-adapter`. Old constructor signature (`createDispatcher({ agent, ... })`) replaced with new (`createSharedDispatcher({ getAgent: () => agent, ... })`). Old `dispatcher.server` direct access replaced with `dispatcher.createMcpServer()` factory call. New tests authored fresh; no copy-paste from foreign tree.
 
 ### PR 2 — Universal Adapter notification contract spec (`736e13d`)
 
@@ -115,7 +115,7 @@ Render-surface worked examples codify the in-tree state:
 - **claude shim** — MCP `notifications/claude/channel` injection + source-attribute taxonomy per Design v1.2 §4 (`plugin:agent-adapter:repo-event` / `:directive` / `:notification` / `:proxy` fallback). Per-subkind source attribution is the shim's contract obligation.
 - **opencode shim** — `client.session.promptAsync` push-to-LLM with 30s rate-limit + deferred backlog for actionable events; `injectContext` (system prompt, no-reply) for informational; tool-discovery sync on `streaming` transition.
 
-5 binding anti-goals: NOT host-specific mechanism mandate; NOT per-host code in `@ois/network-adapter`; NOT a Message-router replacement; NOT host-side ack tracking in Layer 1; NOT npm-publish ready.
+5 binding anti-goals: NOT host-specific mechanism mandate; NOT per-host code in `@apnex/network-adapter`; NOT a Message-router replacement; NOT host-side ack tracking in Layer 1; NOT npm-publish ready.
 
 4 out-of-scope items mark forward-compatible extension points: v1.1 claim/ack + seen-id LRU (M-Push-Foundation W6); v1.2 Layer-2 router routing contract; v2.0 `@apnex/*` publishing (M-Adapter-Distribution).
 
@@ -157,7 +157,7 @@ D10 closing audit: this file, 8-section canonical shape per mission-43/46/47/49/
 - New unit tests authored in PR 1: 70/70 passing across both plugins (claude-plugin dispatcher + dispatcher-list-tools-cache + session-claim + tool-catalog-cache; opencode-plugin dispatcher + fetch-handler).
 
 **Build + typecheck:**
-- `npx tsc --noEmit` clean across `@ois/network-adapter` + `adapters/claude-plugin` + `adapters/opencode-plugin` (modulo pre-existing bug-32 noise in test/helpers/policy-loopback.ts which is the cross-package import issue).
+- `npx tsc --noEmit` clean across `@apnex/network-adapter` + `adapters/claude-plugin` + `adapters/opencode-plugin` (modulo pre-existing bug-32 noise in test/helpers/policy-loopback.ts which is the cross-package import issue).
 - `npm run build` produces clean dist/ artifacts.
 
 ---

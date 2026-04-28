@@ -11,11 +11,11 @@
  *   meta/counter.json   — shared counter blob (bugCounter field)
  */
 
-import type { StorageProvider } from "@ois/storage-provider";
+import type { StorageProvider } from "@apnex/storage-provider";
 import {
   hasGetWithToken,
   StoragePathNotFoundError,
-} from "@ois/storage-provider";
+} from "@apnex/storage-provider";
 
 import type { EntityProvenance } from "../state.js";
 import type {

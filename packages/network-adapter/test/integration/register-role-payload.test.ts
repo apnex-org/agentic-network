@@ -41,10 +41,10 @@ describe("Invariant #9 — plain vs enriched register_role", () => {
         logger: log.logger,
         handshake: {
           globalInstanceId: "test-instance-uuid-9",
-          proxyName: "@ois/test",
+          proxyName: "@apnex/test",
           proxyVersion: "1.0.0",
           transport: "test-mcp",
-          sdkVersion: "@ois/network-adapter@test",
+          sdkVersion: "@apnex/network-adapter@test",
           getClientInfo: () => ({ name: "test-client", version: "0.0.1" }),
           llmModel: "test-model",
         },
@@ -78,10 +78,10 @@ describe("Invariant #9 — plain vs enriched register_role", () => {
     const metadata = enriched.clientMetadata as Record<string, unknown>;
     expect(metadata.clientName).toBe("test-client");
     expect(metadata.clientVersion).toBe("0.0.1");
-    expect(metadata.proxyName).toBe("@ois/test");
+    expect(metadata.proxyName).toBe("@apnex/test");
     expect(metadata.proxyVersion).toBe("1.0.0");
     expect(metadata.transport).toBe("test-mcp");
-    expect(metadata.sdkVersion).toBe("@ois/network-adapter@test");
+    expect(metadata.sdkVersion).toBe("@apnex/network-adapter@test");
     expect(metadata.hostname).toBeDefined();
     expect(metadata.platform).toBeDefined();
     expect(metadata.pid).toBeDefined();

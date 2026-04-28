@@ -4,7 +4,7 @@
  *
  * Layer:    L1c (network-adapter/src/tool-manager/dispatcher.ts)
  * Scope:    `createSharedDispatcher` now routes every classified event
- *           through `@ois/message-router` so Layer-2 dedup + kind→hook
+ *           through `@apnex/message-router` so Layer-2 dedup + kind→hook
  *           mapping live in one place. The host's `notificationHooks`
  *           bag is the router's hook surface.
  *

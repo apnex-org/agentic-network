@@ -45,10 +45,10 @@
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpAgentClient, CognitivePipeline } from "@ois/network-adapter";
+import { McpAgentClient, CognitivePipeline } from "@apnex/network-adapter";
 import { LoopbackTransport } from "../../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../../packages/network-adapter/test/helpers/policy-loopback.js";
-import { createSharedDispatcher, pendingKey } from "@ois/network-adapter";
+import { createSharedDispatcher, pendingKey } from "@apnex/network-adapter";
 
 // ── Public types ────────────────────────────────────────────────────
 
@@ -195,7 +195,7 @@ async function buildEngineerWithShim(
       role: "engineer",
       handshake: {
         globalInstanceId: globalInstanceId ?? `eng-${randomUUID()}`,
-        proxyName: "@ois/opencode-plugin",
+        proxyName: "@apnex/opencode-plugin",
         proxyVersion: "mock-opencode-client-1.0.0",
         transport: "bun-serve-proxy",
         sdkVersion: "0.0.0",

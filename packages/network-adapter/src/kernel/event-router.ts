@@ -38,7 +38,7 @@ export type HubEventType =
   // Mission-56 W1a: push-on-Message-create. Hub fires this when a
   // Message with delivery="push-immediate" lands a target the
   // subscriber matches. Payload is an inline Message envelope. Layer
-  // 2 (`@ois/message-router`) routes Message kind/subkind onto host
+  // 2 (`@apnex/message-router`) routes Message kind/subkind onto host
   // hooks; classification at Layer 1 dispositions all engineer +
   // architect deliveries as actionable so the wake-the-LLM path fires.
   | "message_arrived"
@@ -75,7 +75,7 @@ const ENGINEER_ACTIONABLE: ReadonlySet<string> = new Set([
   "thread_convergence_finalized",
   "revision_required",
   // Mission-56 W2.2: Hub-side push-on-Message-create. Layer-2
-  // `@ois/message-router` does kind/subkind-aware Message routing;
+  // `@apnex/message-router` does kind/subkind-aware Message routing;
   // Layer-1 dispositioning treats every push as wake-the-LLM since
   // delivery="push-immediate" is itself the actionable signal.
   "message_arrived",

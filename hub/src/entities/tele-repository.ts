@@ -23,11 +23,11 @@
  * 13 entities, 2 CAS sites, mission-43-fresh code.
  */
 
-import type { StorageProvider } from "@ois/storage-provider";
+import type { StorageProvider } from "@apnex/storage-provider";
 import {
   hasGetWithToken,
   StoragePathNotFoundError,
-} from "@ois/storage-provider";
+} from "@apnex/storage-provider";
 
 import type { EntityProvenance } from "../state.js";
 import type { ITeleStore, Tele } from "./tele.js";

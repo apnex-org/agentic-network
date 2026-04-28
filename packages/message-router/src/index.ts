@@ -1,5 +1,5 @@
 /**
- * @ois/message-router — sovereign Layer-2 Message dispatch + dedup.
+ * @apnex/message-router — sovereign Layer-2 Message dispatch + dedup.
  *
  * Mission-56 W2.1 (Design v1.2 §"Architectural commitments #4"). Routes
  * Layer-2 Messages onto the four-hook Universal Adapter notification

@@ -113,11 +113,11 @@ Per `idea-survey.md` §4: Round 1 cleanly confirmed all 3 dimensions (no ambigui
 
 **Q5 options:** A=§B + §D only; B=§B + §D + cross-§ orchestration; C=§B + §D this mission + file separate idea for §A + §C orchestration; D=defer to Design phase.
 
-**Q6 options:** A=NO `@ois/*` → `@apnex/*` namespace migration; B=NO Universal Adapter / ACP redesign; C=NO idea-102 Universal Port absorption; D=NO Hub-served adapter shape.
+**Q6 options:** A=NO `@apnex/*` → `@apnex/*` namespace migration; B=NO Universal Adapter / ACP redesign; C=NO idea-102 Universal Port absorption; D=NO Hub-served adapter shape.
 
 ### Aggregate response surface (Round 2)
 
-Director ratifies the **minimum-viable bundle** (script + npm-publish; no CLI middleware) under **split-scope discipline** (this mission = §B + §D consumer-side; §A + §C operator-side orchestration filed as separate idea — idea-221 created), with **3 of 4 anti-goals locked**. **Q6 A intentionally NOT picked** = the `@apnex/*` vs `@ois/*` namespace decision stays IN-SCOPE for Design-phase brainstorm rather than locked-out.
+Director ratifies the **minimum-viable bundle** (script + npm-publish; no CLI middleware) under **split-scope discipline** (this mission = §B + §D consumer-side; §A + §C operator-side orchestration filed as separate idea — idea-221 created), with **3 of 4 anti-goals locked**. **Q6 A intentionally NOT picked** = the `@apnex/*` vs `@apnex/*` namespace decision stays IN-SCOPE for Design-phase brainstorm rather than locked-out.
 
 ### Tele mapping refresh (Round 2)
 
@@ -145,9 +145,9 @@ Split-scope discipline matches Round 1 audience signal: this mission is for deve
 3 of 4 anti-goals locked: NO Universal Adapter, NO Universal Port, NO Hub-served. **Q6 A intentionally NOT picked** — per `idea-survey.md` §7 contradictory-multi-pick handling, NOT picking a proposed anti-goal lock IS a signal: Director is communicating *"namespace question stays IN-SCOPE for Design-phase resolution."*
 
 **Reading:** the npm-publish path requires a namespace; Director keeps the choice open for Design v0.1. Possible Design-phase outcomes:
-- Keep `@ois/*` (current internal namespace; published under same)
+- Keep `@apnex/*` (current internal namespace; published under same)
 - Move to `@apnex/*` (per `project_npm_namespace_apnex.md` Director-prior-preference signal)
-- Hybrid (publish `@apnex/*` while keeping `@ois/*` as deprecated alias)
+- Hybrid (publish `@apnex/*` while keeping `@apnex/*` as deprecated alias)
 
 **Design-brainstorm anchor (carried forward per §7):** "what namespace ships?" — Phase 4 Design v0.1 must resolve.
 
@@ -178,7 +178,7 @@ idea-217 ships as a **structural-inflection mission** ("M-Adapter-Streamline"; f
 1. **Local update script** (option 1 from idea-217) — for local-dev consumers (Q2 A); ergonomic single-command frontend
 2. **npm-published adapter packages** (option 3) — for external + future-pool consumers (Q2 B + D) + distribution channel (Q1 C)
 3. **Pass 10 §B + §D mechanisation embedded in the npm package + script** (Q5 C narrow scope; calibration #25 root-cause class closed)
-4. **Namespace decision** (Design-brainstorm anchor; Q6 NOT-A) — `@ois/*` vs `@apnex/*` vs hybrid; resolved at Phase 4 v0.1
+4. **Namespace decision** (Design-brainstorm anchor; Q6 NOT-A) — `@apnex/*` vs `@apnex/*` vs hybrid; resolved at Phase 4 v0.1
 
 ### Anti-goals locked at Manifest
 

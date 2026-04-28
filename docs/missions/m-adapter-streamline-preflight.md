@@ -96,7 +96,7 @@
 5. ✗ NO opencode-plugin full parity (stub-only this mission per Design §4.2 #5)
 6. ✗ NO CLI middleware (Survey Q4 A thin bundle; script + npm install suffices)
 7. ✗ NO npm postinstall hook for install.sh (v0.2 Fold 3 reframe; script-driven §D mechanisation)
-8. ✗ NO `@ois/*` deprecation alias (γ hybrid rejected; clean cutover)
+8. ✗ NO `@apnex/*` deprecation alias (γ hybrid rejected; clean cutover)
 
 **Q6 NOT-A resolved IN-SCOPE:** namespace decision β (`@apnex/*` clean cutover) per Design v0.2 §2.3.
 

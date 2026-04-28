@@ -87,7 +87,7 @@ export interface GhApiClientOptions {
   readonly token: string;
   /** Override for testing or GH Enterprise. Defaults to api.github.com. */
   readonly baseUrl?: string;
-  /** UA per GH API guidelines. Defaults to "@ois/repo-event-bridge/1.0". */
+  /** UA per GH API guidelines. Defaults to "@apnex/repo-event-bridge/1.0". */
   readonly userAgent?: string;
   /** Injectable fetch (for tests). Defaults to globalThis.fetch. */
   readonly fetch?: typeof fetch;
@@ -112,7 +112,7 @@ export class GhApiClient {
     }
     this.token = options.token;
     this.baseUrl = (options.baseUrl ?? "https://api.github.com").replace(/\/+$/, "");
-    this.userAgent = options.userAgent ?? "@ois/repo-event-bridge/1.0";
+    this.userAgent = options.userAgent ?? "@apnex/repo-event-bridge/1.0";
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     if (typeof this.fetchImpl !== "function") {
       throw new Error("GhApiClient: fetch is not available; pass options.fetch");

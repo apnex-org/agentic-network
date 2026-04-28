@@ -1,18 +1,18 @@
-# @ois/message-router
+# @apnex/message-router
 
 Sovereign Layer-2 Message dispatch + dedup for the OIS Universal Adapter.
 
-Sovereign-package #6, sibling to `@ois/network-adapter` (Layer 1), `@ois/cognitive-layer`, `@ois/storage-provider`, and `@ois/repo-event-bridge`. Mission-56 W2.1 deliverable; design ratified at thread-332 (Design v1.2 §"Architectural commitments #4").
+Sovereign-package #6, sibling to `@apnex/network-adapter` (Layer 1), `@apnex/cognitive-layer`, `@apnex/storage-provider`, and `@apnex/repo-event-bridge`. Mission-56 W2.1 deliverable; design ratified at thread-332 (Design v1.2 §"Architectural commitments #4").
 
 ## Architectural placement
 
 ```
-[Layer 1 — @ois/network-adapter (Universal Adapter)]
+[Layer 1 — @apnex/network-adapter (Universal Adapter)]
   src/wire/         — TCP/SSE wire FSM
   src/kernel/       — handshake / session FSM / agent identity
   src/tool-manager/ — Initialize/ListTools/CallTool MCP-boundary handler
                       ↓ emits the v1.0 notification contract
-[Layer 2 — @ois/message-router]    ← this package
+[Layer 2 — @apnex/message-router]    ← this package
   Per-kind dispatch; seen-id LRU dedup; hooks-pattern host-injection
                       ↓ invokes
 [Layer 3 — Per-host shim (adapters/<host>-plugin)]
@@ -40,7 +40,7 @@ Subkind discrimination (e.g., `event.event` for `pr-merged` vs `pr-review-approv
 ### MessageRouter
 
 ```ts
-import { MessageRouter, type NotificationHooks } from "@ois/message-router";
+import { MessageRouter, type NotificationHooks } from "@apnex/message-router";
 
 const hooks: NotificationHooks = {
   onActionableEvent: (event) => { /* wake the LLM */ },
@@ -77,7 +77,7 @@ new MessageRouter({ hooks, cacheOptions: { capacity: 16 } });
 Or share a pre-constructed cache across routers:
 
 ```ts
-import { SeenIdCache } from "@ois/message-router";
+import { SeenIdCache } from "@apnex/message-router";
 
 const cache = new SeenIdCache({ capacity: 1024 });
 const router = new MessageRouter({ hooks, seenIdCache: cache });
@@ -85,11 +85,11 @@ const router = new MessageRouter({ hooks, seenIdCache: cache });
 
 ## Anti-goals (binding)
 
-- **Not a transport.** Layer 1 (`@ois/network-adapter`) owns wire + kernel. Layer 2 receives already-classified messages.
+- **Not a transport.** Layer 1 (`@apnex/network-adapter`) owns wire + kernel. Layer 2 receives already-classified messages.
 - **Not a renderer.** Per-host render mechanisms (`<channel>` / `promptAsync` / future) live in Layer 3 shims. Layer 2 invokes the hook; the hook decides the render.
 - **No claim/ack semantics.** v1.1 (M-Push-Foundation W3) extends ack to two-step `new → received → acked`; v1.0 routing is forward-compatible.
 - **No subkind routing in v1.0.** Subkind dispatch (`<channel>` source-attribute taxonomy etc.) is a forward-compat extension that overlays additively on top of kind dispatch.
-- **No npm-publish prep.** Distribution-readiness (`@ois/*` → `@apnex/*`) is M-Adapter-Distribution Tier 2.
+- **No npm-publish prep.** Distribution-readiness (`@apnex/*` → `@apnex/*`) is M-Adapter-Distribution Tier 2.
 
 ## Cross-references
 

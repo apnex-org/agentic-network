@@ -61,10 +61,10 @@ describe("Invariant #10 — sync phase RPCs", () => {
         logger: log.logger,
         handshake: {
           globalInstanceId: "test-instance-uuid-10",
-          proxyName: "@ois/test",
+          proxyName: "@apnex/test",
           proxyVersion: "1.0.0",
           transport: "test-mcp",
-          sdkVersion: "@ois/network-adapter@test",
+          sdkVersion: "@apnex/network-adapter@test",
           getClientInfo: () => ({ name: "test-client", version: "0.0.1" }),
           llmModel: "test-model",
         },

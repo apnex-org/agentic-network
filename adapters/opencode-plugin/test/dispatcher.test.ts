@@ -2,7 +2,7 @@
  * Shared dispatcher unit tests via opencode-plugin lens.
  *
  * Parallels adapters/claude-plugin/test/dispatcher.test.ts — both
- * exercise the same @ois/network-adapter MCP-boundary dispatcher.
+ * exercise the same @apnex/network-adapter MCP-boundary dispatcher.
  *
  * Key invariants pinned here:
  *   - ADR-017 Phase 1.1: SSE thread_message with inline queueItemId
@@ -19,7 +19,7 @@ import {
   injectQueueItemId,
   pendingKey,
   type McpAgentClient,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 
 function fakeAgent(overrides: Partial<McpAgentClient> = {}): McpAgentClient {
   return {

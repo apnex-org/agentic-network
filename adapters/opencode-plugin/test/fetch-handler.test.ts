@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createSharedDispatcher } from "@ois/network-adapter";
+import { createSharedDispatcher } from "@apnex/network-adapter";
 import { makeOpenCodeFetchHandler } from "../src/shim.js";
 
 function makeHandler() {

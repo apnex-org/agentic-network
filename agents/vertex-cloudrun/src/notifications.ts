@@ -1,7 +1,7 @@
 /**
  * Notification Handler — dispatches Hub SSE events to sandwich handlers.
  *
- * Uses the shared event router from @ois/network-adapter for classification
+ * Uses the shared event router from @apnex/network-adapter for classification
  * and dedup. Each handled event is dispatched to its sandwich handler.
  */
 
@@ -17,7 +17,7 @@ import {
   parseHubEvent,
   createDedupFilter,
   classifyEvent,
-} from "@ois/network-adapter";
+} from "@apnex/network-adapter";
 
 // Shared dedup filter
 const dedupFilter = createDedupFilter(100);

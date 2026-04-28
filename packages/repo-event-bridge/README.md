@@ -1,8 +1,8 @@
-# @ois/repo-event-bridge
+# @apnex/repo-event-bridge
 
 Sovereign repo-event bridge — pluggable `EventSource` contract + GH-event translator + `create_message` sink for the OIS agentic network.
 
-Sovereign-package #5, sibling to `@ois/network-adapter`, `@ois/cognitive-layer`, `@ois/storage-provider` (and the in-Hub sovereign `@ois/message-primitive`). Mission-52 deliverable; design ratified at thread-312 round 2 (2026-04-25).
+Sovereign-package #5, sibling to `@apnex/network-adapter`, `@apnex/cognitive-layer`, `@apnex/storage-provider` (and the in-Hub sovereign `@apnex/message-primitive`). Mission-52 deliverable; design ratified at thread-312 round 2 (2026-04-25).
 
 ## Surface (T1 contract)
 
@@ -95,7 +95,7 @@ T3 wires the concrete `invoke` callable (in-process / MCP-stdio / MCP-HTTP). T1 
 npm run build    # compiles src/ → dist/
 ```
 
-**TODO(idea-186):** This package commits its built `dist/` to git as a workaround for the cross-package `file:` ref limitation in non-workspaces monorepos. Hub depends on `@ois/repo-event-bridge` via `file:../packages/repo-event-bridge`; CI runs `npm install` (not `npm ci`) per the mission-50 T5 + T3-revision-v3 fix, but a `prepare: tsc` hook on this package fails because cross-package file: refs are install-order-dependent (tsc runs before `@ois/storage-provider` is reachable in the package's local `node_modules`). Committed `dist/` is the lesser evil. **Sunset when idea-186 (npm workspaces migration) lands** — workspaces resolve internal package refs natively, dist/ becomes regenerable per environment, and the `dist/` exception in root `.gitignore` + this section can be removed.
+**TODO(idea-186):** This package commits its built `dist/` to git as a workaround for the cross-package `file:` ref limitation in non-workspaces monorepos. Hub depends on `@apnex/repo-event-bridge` via `file:../packages/repo-event-bridge`; CI runs `npm install` (not `npm ci`) per the mission-50 T5 + T3-revision-v3 fix, but a `prepare: tsc` hook on this package fails because cross-package file: refs are install-order-dependent (tsc runs before `@apnex/storage-provider` is reachable in the package's local `node_modules`). Committed `dist/` is the lesser evil. **Sunset when idea-186 (npm workspaces migration) lands** — workspaces resolve internal package refs natively, dist/ becomes regenerable per environment, and the `dist/` exception in root `.gitignore` + this section can be removed.
 
 When making source changes:
 
@@ -103,7 +103,7 @@ When making source changes:
 npm run build && git add dist/    # commit the regenerated dist/ alongside src/
 ```
 
-The same precedent applies to `@ois/storage-provider` — see root `.gitignore` for the parallel exception.
+The same precedent applies to `@apnex/storage-provider` — see root `.gitignore` for the parallel exception.
 
 ## Testing
 

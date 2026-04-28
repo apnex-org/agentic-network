@@ -24,7 +24,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 import { PollSource } from "../../src/poll-source.js";
 import type { RepoEventSubkind } from "../../src/translator.js";
 import type { RepoEvent } from "../../src/event-source.js";

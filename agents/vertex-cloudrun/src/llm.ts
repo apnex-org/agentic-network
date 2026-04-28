@@ -38,7 +38,7 @@ export interface LlmRoundUsage {
  *
  * These are the architect-side Phase 1 additions specified in
  * M-Cognitive-Hypervisor (ADR-018 Non-goals §shim-layer). The shared
- * `@ois/cognitive-layer` package sits at the tool-call boundary; these
+ * `@apnex/cognitive-layer` package sits at the tool-call boundary; these
  * options sit inside the LLM loop where only the agent that OWNS the
  * prompt can reach.
  */

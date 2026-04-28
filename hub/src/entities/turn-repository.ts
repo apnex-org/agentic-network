@@ -13,8 +13,8 @@
  *   meta/counter.json     — shared counter (turnCounter field)
  */
 
-import type { StorageProvider } from "@ois/storage-provider";
-import { hasGetWithToken, StoragePathNotFoundError } from "@ois/storage-provider";
+import type { StorageProvider } from "@apnex/storage-provider";
+import { hasGetWithToken, StoragePathNotFoundError } from "@apnex/storage-provider";
 
 import type { ITaskStore, EntityProvenance } from "../state.js";
 import type { IMissionStore } from "./mission.js";

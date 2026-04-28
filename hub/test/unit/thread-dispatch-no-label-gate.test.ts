@@ -21,7 +21,7 @@ import { createTestContext, type TestPolicyContext } from "../../src/policy/test
 const CLIENT = {
   clientName: "claude-code",
   clientVersion: "0.1.0",
-  proxyName: "@ois/claude-plugin",
+  proxyName: "@apnex/claude-plugin",
   proxyVersion: "1.0.0",
 };
 

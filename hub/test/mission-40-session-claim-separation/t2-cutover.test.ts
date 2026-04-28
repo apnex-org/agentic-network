@@ -36,7 +36,7 @@ const ENGINEER_HANDSHAKE = {
   clientMetadata: {
     clientName: "test-client",
     clientVersion: "0.0.0",
-    proxyName: "@ois/test-plugin",
+    proxyName: "@apnex/test-plugin",
     proxyVersion: "0.0.0",
     transport: "stdio-mcp-proxy",
   },

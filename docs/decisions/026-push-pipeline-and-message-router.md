@@ -51,7 +51,7 @@ mission-56 design (Design v1.2; commit `cc90174`) ratified the 7 architectural c
                              │ SSE (`text/event-stream`)
                              ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ Layer 1 — `@ois/network-adapter`                                        │
+│ Layer 1 — `@apnex/network-adapter`                                        │
 │   src/wire/        — TCP/SSE conn lifecycle; reconnect; backoff [1a]   │
 │   src/session/     — handshake; session FSM; agent identity     [1b]   │
 │   src/mcp-boundary/ — Initialize/ListTools/CallTool factory     [1c]   │
@@ -62,7 +62,7 @@ mission-56 design (Design v1.2; commit `cc90174`) ratified the 7 architectural c
                              │ notificationHooks callbacks
                              ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ Layer 2 — `@ois/message-router` (sovereign-package #6; this mission)   │
+│ Layer 2 — `@apnex/message-router` (sovereign-package #6; this mission)   │
 │   kind/subkind routing skeleton; seen-id LRU N=1000 dedup              │
 │   adapter dispatcher consumes via dispatcher↔router wiring             │
 └────────────────────────────┬────────────────────────────────────────────┘
@@ -76,7 +76,7 @@ mission-56 design (Design v1.2; commit `cc90174`) ratified the 7 architectural c
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-Layer-1c (`@ois/network-adapter`) emits via the `notificationHooks` callback bag (mission-55 PR #63) — generic shim-injection contract. Layer-2 (`@ois/message-router`; this mission) lives between Layer-1c and Layer-3, adding kind/subkind routing + seen-id dedup. Layer-3 implements host-binding render decisions (host-specific render-surface freedom; spec preserves no host-mechanism mandate per Universal Adapter notification contract).
+Layer-1c (`@apnex/network-adapter`) emits via the `notificationHooks` callback bag (mission-55 PR #63) — generic shim-injection contract. Layer-2 (`@apnex/message-router`; this mission) lives between Layer-1c and Layer-3, adding kind/subkind routing + seen-id dedup. Layer-3 implements host-binding render decisions (host-specific render-surface freedom; spec preserves no host-mechanism mandate per Universal Adapter notification contract).
 
 ### 2.2 Push-on-Message-create (commitment #1)
 
@@ -104,13 +104,13 @@ SSE GET handler intercepts `Last-Event-ID` header before delegating to `Streamab
 
 **Coexists with state-based-reconnect:** when the Hub is wired without a Message store (test rigs that don't supply it), the SSE GET handler degrades to existing state-based-reconnect behavior — no replay, clients call `get_pending_actions()` + `completeSync()` per the legacy path.
 
-### 2.4 `@ois/message-router` sovereign-package #6 (commitment #3)
+### 2.4 `@apnex/message-router` sovereign-package #6 (commitment #3)
 
 New package `packages/message-router/` (file:-ref via `dist/`-commit per calibration #20). Layer-2 between Layer-1c MCP-boundary dispatcher and Layer-3 host-shim render-surface.
 
-**Boundary discipline (per recon Q1+Q2 + Design v1.2 §"M-Pre-Push-Adapter-Cleanup"):** `@ois/message-router` is structurally distinct from the foreign engineer's recon-time "dispatcher" naming. Architect's disambiguation at recon Q2:
-- **MCP-boundary dispatcher** (Layer 1c; `@ois/network-adapter/src/mcp-boundary/dispatcher.ts`) — Initialize/ListTools/CallTool handler factory; pendingActionMap; tool-catalog cache
-- **Message-router** (Layer 2; `@ois/message-router`; this ADR) — Message kind/subkind router; seen-id LRU dedup; adapter↔shim contract
+**Boundary discipline (per recon Q1+Q2 + Design v1.2 §"M-Pre-Push-Adapter-Cleanup"):** `@apnex/message-router` is structurally distinct from the foreign engineer's recon-time "dispatcher" naming. Architect's disambiguation at recon Q2:
+- **MCP-boundary dispatcher** (Layer 1c; `@apnex/network-adapter/src/mcp-boundary/dispatcher.ts`) — Initialize/ListTools/CallTool handler factory; pendingActionMap; tool-catalog cache
+- **Message-router** (Layer 2; `@apnex/message-router`; this ADR) — Message kind/subkind router; seen-id LRU dedup; adapter↔shim contract
 
 The two layers have distinct concerns and live in distinct packages. Future foreign-tree ports of "dispatcher" should explicitly qualify which layer they target.
 
@@ -213,7 +213,7 @@ Mission-56 lands +19 net hub-side tests (W4.1 +14 helper unit tests + W4.2 +5 he
 - **W0 spike:** PR #70 / `09452f5` — read-path grep audit + spike-level structural decisions.
 - **W1a push-on-create:** PR #71 / `3f15057` — `message-policy.ts:188-221` dispatch shape.
 - **W1b Last-Event-ID:** PR #72 / `c6bcf56` — `replayFromCursor` + SSE GET wrapper + soft-cap.
-- **W2.1 sovereign-package #6:** PR #73 / `f5dacfd` — `@ois/message-router` Layer-2 router.
+- **W2.1 sovereign-package #6:** PR #73 / `f5dacfd` — `@apnex/message-router` Layer-2 router.
 - **W2.2 dispatcher↔router:** PR #74 / `15f1405` — adapter consumes the router via `notificationHooks`.
 - **W2.3 source-attribute:** PR #75 / `0a403fc` — claude-plugin `<channel>` taxonomy.
 - **W3.1 since cursor:** PR #76 / `eb1ee2b` — `list_messages.since` cursor extension.

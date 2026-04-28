@@ -2,7 +2,7 @@
 
 **Status:** Accepted — 2026-04-24. Ratified via mission-47 T1; landed via [PR TBD]. Authored during design round thread-290 (architect lily + engineer greg); released via thread-291 (Director approval).
 
-**Context window:** mission-47 (M-Sovereign-Storage-Interface) — the first realization of the "sovereign package" pattern beyond `@ois/network-adapter`. Parallels `@ois/cognitive-layer` + `@ois/network-adapter` as the third sovereign surface in the monorepo.
+**Context window:** mission-47 (M-Sovereign-Storage-Interface) — the first realization of the "sovereign package" pattern beyond `@apnex/network-adapter`. Parallels `@apnex/cognitive-layer` + `@apnex/network-adapter` as the third sovereign surface in the monorepo.
 
 ---
 
@@ -25,7 +25,7 @@ This ADR captures the design round between architect (lily) and engineer (greg) 
 
 ### 2.1 Sovereign package
 
-A new package `@ois/storage-provider` at `packages/storage-provider/`, sibling to `@ois/network-adapter` and `@ois/cognitive-layer`. Pattern-consistency with the existing sovereign surfaces.
+A new package `@apnex/storage-provider` at `packages/storage-provider/`, sibling to `@apnex/network-adapter` and `@apnex/cognitive-layer`. Pattern-consistency with the existing sovereign surfaces.
 
 ### 2.2 Contract v1.0 — six primitives
 

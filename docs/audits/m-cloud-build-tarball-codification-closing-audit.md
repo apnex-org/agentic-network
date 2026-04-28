@@ -6,7 +6,7 @@
 **Source idea:** idea-198 — filed post-bug-33 as the codification ideation seed.
 **Dates:** Scoped + activated 2026-04-25 (post-bug-35 fix); T1 + T2 shipped 2026-04-25 same-session; T3 hotfix shipped 2026-04-25 post-dogfood-v1 (~17:05Z → bug-36 → T3); T4 hotfix shipped 2026-04-25 post-dogfood-v2 (~17:28Z → bug-37 → T4); T5 hotfix shipped 2026-04-25 post-dogfood-v3 (~17:52Z → bug-38 → T5). All five tasks land within a single calendar day; three dogfood iterations.
 **Scope:** 5-task decomposition — T1 codification (build-hub.sh transient swap + Dockerfile + .gitignore), T2 closing hygiene (deploy/README documentation + ADR-024 boundary statement + this report + work-trace), T3 hotfix (`hub/.gcloudignore` + addenda; closes bug-36), T4 hotfix (drop `--package-lock-only` flag; closes bug-37), T5 hotfix (drop host-side lockfile regen entirely + Dockerfile `npm ci` → `npm install`; closes bug-38).
-**Tele alignment:** tele-3 Sovereign Composition TERTIARY play — preserves the `@ois/storage-provider` sovereign-package contract while operationalizing it for Cloud Build. Build pipeline adapts around the contract; package contract unchanged.
+**Tele alignment:** tele-3 Sovereign Composition TERTIARY play — preserves the `@apnex/storage-provider` sovereign-package contract while operationalizing it for Cloud Build. Build pipeline adapts around the contract; package contract unchanged.
 
 ---
 
@@ -27,14 +27,14 @@
 
 **Test counts at mission close:**
 - Hub: 52 files / 760 passing / 5 skipped (unchanged from mission-50 T1 ship; was 52/760/5 at bug-35 fix close — no T1 source delta because shell + Dockerfile; no T2 source delta because docs-only; no T3 source delta because config + docs; no T4 source delta because shell + docs; no T5 source delta because shell + Dockerfile + docs).
-- `@ois/storage-provider`: unchanged (no contract delta; the 6-primitive surface held throughout T1+T2+T3+T4+T5).
+- `@apnex/storage-provider`: unchanged (no contract delta; the 6-primitive surface held throughout T1+T2+T3+T4+T5).
 - Build + typecheck: clean throughout.
 
 ---
 
 ## 2. Mission goal + success framing
 
-**Parent bug-33** (severity high, `class: deployment-failure`): the post-mission-49 architect-side redeploy of the Hub via `gcloud builds submit hub/` failed because Hub's `package.json` declares `"@ois/storage-provider": "file:../packages/storage-provider"` and the `..` ref escapes the upload boundary that `gcloud builds submit` enforces around the `hub/` build context. Architect manually staged a tarball locally as an ad-hoc unblock; the codification-need was filed as idea-198 → mission-50.
+**Parent bug-33** (severity high, `class: deployment-failure`): the post-mission-49 architect-side redeploy of the Hub via `gcloud builds submit hub/` failed because Hub's `package.json` declares `"@apnex/storage-provider": "file:../packages/storage-provider"` and the `..` ref escapes the upload boundary that `gcloud builds submit` enforces around the `hub/` build context. Architect manually staged a tarball locally as an ad-hoc unblock; the codification-need was filed as idea-198 → mission-50.
 
 **Mission-50 goal:** ship the smallest-scope codification of the tarball-staging pattern that survives Cloud Build's cross-package context trap, with permanent committed state minimal enough to sunset cleanly when idea-186 (npm workspaces adoption) lands. Local-dev `cd hub && npm install` against the existing `file:../packages/storage-provider` ref MUST keep working unchanged.
 
@@ -48,7 +48,7 @@
 | 4 | `hub/.gitignore` excludes the staged tarball without false-positive matches | ✅ MET | Pattern `ois-storage-provider-*.tgz` added; verified strict match against `ois-storage-provider-1.0.0.tgz` + `ois-storage-provider-2.5.7.tgz` and explicit non-match against `other-package.tgz` (which still matches the repo-root `*.tgz` rule, so this hub-level entry is more specific, not load-bearing on top of it; explicit-intent over relying on the broader rule). |
 | 5 | Sunset trigger documented (idea-186 workspaces adoption) with cleanup steps inline | ✅ MET | `TODO(idea-186)` block in `scripts/local/build-hub.sh` names the trigger + the three cleanup actions (delete the script section, delete the Dockerfile COPY lines, delete the .gitignore entry). T2 `deploy/README` §"Cloud Build tarball staging" §"Sunset condition" repeats the cleanup list with one addition: delete that README section too. |
 | 6 | CI parity preserved — auto-redeploy mechanisms must inherit the script's behavior | ✅ MET (forward-look captured) | T2 `deploy/README` §"CI parity note" makes explicit that `scripts/local/build-hub.sh` is canonical until idea-186 lands; idea-197 / M-Auto-Redeploy-on-Merge (when filed/ratified) MUST invoke this script (or a workspaces-aware successor) rather than calling `gcloud builds submit hub/` directly. Bypassing would silently regress bug-33. |
-| 7 | ADR-024 boundary preserved — this is build-pipeline, not contract | ✅ MET | T2 `deploy/README` §"ADR-024 boundary statement" makes the boundary explicit. The `@ois/storage-provider` 6-primitive contract is unchanged; the `capabilities.concurrent` flag is unchanged; both `LocalFsStorageProvider` + `GcsStorageProvider` implementations untouched. ADR-024 §6.1 (mission-48 amendment) was the last contract-touching event; mission-50 leaves the contract untouched. |
+| 7 | ADR-024 boundary preserved — this is build-pipeline, not contract | ✅ MET | T2 `deploy/README` §"ADR-024 boundary statement" makes the boundary explicit. The `@apnex/storage-provider` 6-primitive contract is unchanged; the `capabilities.concurrent` flag is unchanged; both `LocalFsStorageProvider` + `GcsStorageProvider` implementations untouched. ADR-024 §6.1 (mission-48 amendment) was the last contract-touching event; mission-50 leaves the contract untouched. |
 | 8 | bug-33 flippable to resolved with linkage | ⏳ At T1 PR merge | Will flip `open → resolved` with `fixCommits: ["188719e"]` + `linkedMissionId: "mission-50"` post-merge (architect or engineer; routine). |
 | 9 | `hub/.gcloudignore` re-includes the staged tarball into the gcloud upload context (closes bug-36) | ✅ MET | T3 implementation: self-contained `hub/.gcloudignore` (no `#!include:.gitignore` directive), excludes `node_modules/`, explicitly re-includes `!ois-storage-provider-*.tgz`. With `.gcloudignore` present, `gcloud builds submit` uses it instead of falling back to `.gitignore` — the staged tarball lands in the upload context, the Dockerfile's `COPY ois-storage-provider-*.tgz ./` step finds it, and Cloud Build proceeds. Architect-side dogfood post-T3 merge confirms end-to-end pass. |
 | 10 | Architect-side dogfood gates mission close (real-gcloud-context, not mocked) | ⏳ At T3 PR merge | T1+T2 declared engineer-side complete; architect dogfood post-T2 merge surfaced bug-36; T3 closes that gap. T3 dogfood gate: architect re-runs `OIS_ENV=prod scripts/local/build-hub.sh` end-to-end against post-T3-merge main. Pass criterion: build completes; image pushed to Artifact Registry; `git status` clean (trap restored working tree); no hub/package*.json mods; no staged tarball residue. Mission-50 closes only after this gate passes. |
@@ -206,7 +206,7 @@ This PR. Key surfaces:
   - §"Stays clean in git" tightened — clarifies that `hub/package-lock.json` is no longer touched at all by the script (T5).
   - §"Sunset condition" cleanup list grows from 5 → 6 actions (added: revert Dockerfile `npm install` lines back to `npm ci` / `npm ci --omit=dev` once workspaces lands and the file: ref resolves natively against the committed lockfile).
 
-- **In-script `TODO(idea-186)` rewrite.** The block in `scripts/local/build-hub.sh` was a one-paragraph note in T1+T4; T5 expands it to a multi-line section: header (Hub depends on @ois/storage-provider via file: ref that breaks under Cloud Build), pre-build hook description (pack + swap + gcloud submit; container resolves dep tree at build time), bug-38 explanation (why host-side regen was dropped), and TODO(idea-186) sunset (script section + Dockerfile COPY lines + .gitignore entry + .gcloudignore + Dockerfile `npm install` reversion to `npm ci`).
+- **In-script `TODO(idea-186)` rewrite.** The block in `scripts/local/build-hub.sh` was a one-paragraph note in T1+T4; T5 expands it to a multi-line section: header (Hub depends on @apnex/storage-provider via file: ref that breaks under Cloud Build), pre-build hook description (pack + swap + gcloud submit; container resolves dep tree at build time), bug-38 explanation (why host-side regen was dropped), and TODO(idea-186) sunset (script section + Dockerfile COPY lines + .gitignore entry + .gcloudignore + Dockerfile `npm install` reversion to `npm ci`).
 
 **Verification:**
 - Hub vitest baseline holds at 52 files / 760 passing / 5 skipped (T5 is shell + Dockerfile + docs only).
@@ -247,7 +247,7 @@ Net (across T1+T2+T3+T4+T5): 4 permanent committed files (`scripts/local/build-h
 | Post-T5 (this PR) | 52 | 760 | 5 | 0 (shell + Dockerfile + docs only) |
 
 **Cross-package verification:**
-- `@ois/storage-provider`: contract unchanged throughout — 6-primitive surface held; `capabilities.concurrent` flag held; both `LocalFsStorageProvider` + `GcsStorageProvider` untouched.
+- `@apnex/storage-provider`: contract unchanged throughout — 6-primitive surface held; `capabilities.concurrent` flag held; both `LocalFsStorageProvider` + `GcsStorageProvider` untouched.
 - `npm run build` (hub): clean throughout.
 - `npx tsc --noEmit` (hub): clean throughout.
 - `bash -n scripts/local/build-hub.sh`: clean.
@@ -291,7 +291,7 @@ Mission scope held at S throughout; the design-round didn't bloat to mid-mission
 
 ### 5.3 ADR-024 amendment NOT warranted — build-pipeline vs contract boundary
 
-Mission-50 preserves the `@ois/storage-provider` sovereign-package contract byte-identically. The 6-primitive surface from ADR-024 §2 is unchanged; the `capabilities.concurrent` flag is unchanged; both `LocalFsStorageProvider` and `GcsStorageProvider` implementations are untouched. Hub's dependency on `@ois/storage-provider` continues via the local file: ref for dev; the Cloud Build pipeline adapts around the contract via tarball staging.
+Mission-50 preserves the `@apnex/storage-provider` sovereign-package contract byte-identically. The 6-primitive surface from ADR-024 §2 is unchanged; the `capabilities.concurrent` flag is unchanged; both `LocalFsStorageProvider` and `GcsStorageProvider` implementations are untouched. Hub's dependency on `@apnex/storage-provider` continues via the local file: ref for dev; the Cloud Build pipeline adapts around the contract via tarball staging.
 
 ADR-024 §6.1 (mission-48 amendment) was the last contract-touching event for the StorageProvider sovereign package. Mission-48's amendment reclassified the `local-fs` profile as single-writer-laptop-prod-eligible — a deployment-context reclassification, not a contract surface change. Mission-50 doesn't even touch deployment-context classification; it's purely a build-pipeline pattern.
 
@@ -301,13 +301,13 @@ The boundary statement appears in two places (T2 `deploy/README` §"ADR-024 boun
 
 ### 5.4 Sovereign-package boundary preservation as tele-3 tertiary play
 
-Tele-3 (Sovereign Composition) had three primary plays this period: mission-47 (network-adapter sovereign extraction), mission-49 (audit + notification migration to `*Repository` over `StorageProvider`), and the upcoming mission-51 M-Message-Primitive (in design at thread-311). Mission-50 is a tertiary play — not a new sovereign-package extraction, but a build-pipeline accommodation that preserves the existing `@ois/storage-provider` boundary cleanly under operational stress.
+Tele-3 (Sovereign Composition) had three primary plays this period: mission-47 (network-adapter sovereign extraction), mission-49 (audit + notification migration to `*Repository` over `StorageProvider`), and the upcoming mission-51 M-Message-Primitive (in design at thread-311). Mission-50 is a tertiary play — not a new sovereign-package extraction, but a build-pipeline accommodation that preserves the existing `@apnex/storage-provider` boundary cleanly under operational stress.
 
 **What this captures:** tele-3 progress isn't only about new packages or new contracts. Preservation of an existing contract under operational stress (Cloud Build cross-package context trap) is itself a tele-3 reinforcement — it demonstrates that the sovereign-package contract is robust enough to survive deployment-pipeline adaptation without amendment. That robustness is part of the tele's substantive value.
 
 ### 5.5 Local-dev path validation discipline
 
-T1's smoke-test scope verified happy-path + SIGINT mid-flight. It did NOT re-run `cd hub && npm install` against the post-T1 `hub/package.json` to verify local-dev resolution still works. The reasoning: `hub/package.json`'s `"@ois/storage-provider": "file:../packages/storage-provider"` ref is byte-identical pre-T1 and post-T1 + post-trap-cleanup; `npm install` behavior is determined by package.json + package-lock.json content, both of which are byte-identical. The verification is by audit, not by re-execution.
+T1's smoke-test scope verified happy-path + SIGINT mid-flight. It did NOT re-run `cd hub && npm install` against the post-T1 `hub/package.json` to verify local-dev resolution still works. The reasoning: `hub/package.json`'s `"@apnex/storage-provider": "file:../packages/storage-provider"` ref is byte-identical pre-T1 and post-T1 + post-trap-cleanup; `npm install` behavior is determined by package.json + package-lock.json content, both of which are byte-identical. The verification is by audit, not by re-execution.
 
 **Risk note for future readers:** if a future modification to `build-hub.sh` changes the swap target paths or the trap restoration logic, re-running `cd hub && npm install` to verify local-dev resolution is the right verification step. The byte-identical-ref argument is only valid while the trap restoration is provably complete.
 
@@ -385,13 +385,13 @@ Per task-366 explicit out-of-scope:
 
 ## 8. Mission close summary
 
-mission-50 (M-Cloud-Build-Tarball-Codification) closes the bug-33 codification arc opened by the post-mission-49 redeploy attempt + the bug-36 upload-context-inheritance gap that architect dogfood-v1 surfaced post-T2 merge + the bug-37 lockfile-completeness gap that architect dogfood-v2 surfaced post-T3 merge + the bug-38 host-side-regen-fragility structural gap that architect dogfood-v3 surfaced post-T4 merge. The mission preserves the `@ois/storage-provider` sovereign-package contract byte-identically while operationalizing: (a) a transient-swap pattern in `scripts/local/build-hub.sh` that survives Cloud Build's cross-package context trap, (b) a self-contained `hub/.gcloudignore` that closes the upload-context filter gap, (c) elimination of host-side lockfile regeneration (which proved environmentally fragile by construction), and (d) a Dockerfile that uses `npm install` instead of `npm ci` for the build path so the container resolves its own dep tree against its own toolchain. Permanent committed state stays minimal (4 files: `hub/Dockerfile` + `hub/.gitignore` + `hub/.gcloudignore` + `scripts/local/build-hub.sh`), making the sunset clean when idea-186 (npm workspaces) lands and supersedes the workaround (sunset cleanup list grew from 4 → 5 → 6 actions across T2/T3/T5).
+mission-50 (M-Cloud-Build-Tarball-Codification) closes the bug-33 codification arc opened by the post-mission-49 redeploy attempt + the bug-36 upload-context-inheritance gap that architect dogfood-v1 surfaced post-T2 merge + the bug-37 lockfile-completeness gap that architect dogfood-v2 surfaced post-T3 merge + the bug-38 host-side-regen-fragility structural gap that architect dogfood-v3 surfaced post-T4 merge. The mission preserves the `@apnex/storage-provider` sovereign-package contract byte-identically while operationalizing: (a) a transient-swap pattern in `scripts/local/build-hub.sh` that survives Cloud Build's cross-package context trap, (b) a self-contained `hub/.gcloudignore` that closes the upload-context filter gap, (c) elimination of host-side lockfile regeneration (which proved environmentally fragile by construction), and (d) a Dockerfile that uses `npm install` instead of `npm ci` for the build path so the container resolves its own dep tree against its own toolchain. Permanent committed state stays minimal (4 files: `hub/Dockerfile` + `hub/.gitignore` + `hub/.gcloudignore` + `scripts/local/build-hub.sh`), making the sunset clean when idea-186 (npm workspaces) lands and supersedes the workaround (sunset cleanup list grew from 4 → 5 → 6 actions across T2/T3/T5).
 
 The mission shipped across a single calendar day 2026-04-25 (~3.5 hours total wall-clock engineer-side: T1 ~50min including SIGINT smoke setup + signal-aware mock crafting, T2 ~40min for documentation, T3 ~30min after dogfood-finding-1, T4 ~25min after dogfood-finding-2, T5 ~30min after dogfood-finding-3; plus ~30-60 minute gaps between merges during which the architect ran each of three dogfood iterations + investigated bug-38 root-cause). T1 PR #33 + T2 PR #34 + T3 PR #35 + T4 PR #36 + T5 PR (this) ship-green per the bug-32 CI pattern verified across mission-49 + mission-48 + bug-35 fix + mission-50 T1+T2+T3+T4 PRs.
 
 Engineer-side scope closes when this T5 PR merges + the architect-side dogfood-v4 gate passes. Mission status `completed` flip + retrospective remain on architect side per Director direction 2026-04-25 (architect owns Hub builds + redeploys).
 
-The ADR-024 boundary statement makes explicit that mission-50 is build-pipeline scope, not contract scope — preserving the methodology v1.0 §ADR-amendment-scope-discipline boundary cleanly. The `@ois/storage-provider` 6-primitive contract surface remains unchanged from its mission-47 origin + mission-48 §6.1 deployment-context-only amendment; mission-50 leaves it untouched throughout T1, T2, T3, T4, and T5.
+The ADR-024 boundary statement makes explicit that mission-50 is build-pipeline scope, not contract scope — preserving the methodology v1.0 §ADR-amendment-scope-discipline boundary cleanly. The `@apnex/storage-provider` 6-primitive contract surface remains unchanged from its mission-47 origin + mission-48 §6.1 deployment-context-only amendment; mission-50 leaves it untouched throughout T1, T2, T3, T4, and T5.
 
 The iterative-and-structural dogfood-finding pattern that surfaced bug-36 + bug-37 + bug-38 (§5.6) reinforces methodology v1.0 §dogfood-gate-discipline THREE times in the same mission, in two distinct shapes:
 

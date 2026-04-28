@@ -42,7 +42,7 @@ import { TurnRepository } from "../../src/entities/turn-repository.js";
 import { TeleRepository } from "../../src/entities/tele-repository.js";
 import { AuditRepository } from "../../src/entities/audit-repository.js";
 import { StorageBackedCounter } from "../../src/entities/counter.js";
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 import { BugRepository } from "../../src/entities/bug-repository.js";
 import { PendingActionRepository } from "../../src/entities/pending-action-repository.js";
 import { MessageRepository } from "../../src/entities/message-repository.js";
@@ -226,7 +226,7 @@ export class ActorFacade {
       clientMetadata: {
         clientName: "e2e-orchestrator",
         clientVersion: "0.0.0",
-        proxyName: "@ois/hub-e2e",
+        proxyName: "@apnex/hub-e2e",
         proxyVersion: "0.0.0",
       },
     }, this.ctx());

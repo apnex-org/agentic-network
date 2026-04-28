@@ -227,7 +227,7 @@ All entity state changes emit SSE notifications via the Hub's persist-first noti
 
 ### Event Classification (Shared Event Router)
 
-All new events are classified as **informational** for both roles in the shared `event-router.ts` (`@ois/network-adapter`). This means:
+All new events are classified as **informational** for both roles in the shared `event-router.ts` (`@apnex/network-adapter`). This means:
 - **Engineer Plugin:** Toast notification shown, context injected silently (no LLM prompt)
 - **Architect Agent:** Logged as informational, no sandwich handler triggered
 

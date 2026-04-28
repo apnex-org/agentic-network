@@ -26,7 +26,7 @@
  * every entry's body, preserving the legacy GcsAuditStore early-break.
  */
 
-import type { StorageProvider } from "@ois/storage-provider";
+import type { StorageProvider } from "@apnex/storage-provider";
 
 import type { AuditEntry, IAuditStore } from "../state.js";
 import { StorageBackedCounter } from "./counter.js";

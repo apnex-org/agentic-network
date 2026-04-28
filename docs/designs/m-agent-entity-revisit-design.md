@@ -51,7 +51,7 @@ interface Agent {
   currentThreadId: string | null;      // thread with currentTurnAgentId === this.id && status === "active"
 
   // Adapter / client
-  adapterVersion: string;              // unified e.g. "@ois/network-adapter@2.1.0"
+  adapterVersion: string;              // unified e.g. "@apnex/network-adapter@2.1.0"
   clientMetadata: {                    // raw split (kept for troubleshooting)
     clientName: string;
     clientVersion: string;
@@ -277,7 +277,7 @@ Per-event-class subscription model deferred to idea-121 (would need new `selecto
 
 #### classifyEvent extension
 
-`agent_state_changed` must be added to `ENGINEER_ACTIONABLE` + `ARCHITECT_ACTIONABLE` (or whatever the new symmetric naming is post-rename) in `@ois/network-adapter` (`packages/network-adapter/src/kernel/event-router.ts`). Layer-1 lesson from mission-61: classifyEvent is the gate.
+`agent_state_changed` must be added to `ENGINEER_ACTIONABLE` + `ARCHITECT_ACTIONABLE` (or whatever the new symmetric naming is post-rename) in `@apnex/network-adapter` (`packages/network-adapter/src/kernel/event-router.ts`). Layer-1 lesson from mission-61: classifyEvent is the gate.
 
 ### §4.3 Adapter local cache
 
@@ -349,7 +349,7 @@ The "ghost" envelope observed via thread-382 morning-test was: `<channel event="
 
 ### §6.3 Bundling rationale
 
-Fix lives in `@ois/network-adapter` SDK kernel. W1+W2 atomic PR is the natural place — same SDK rename touches the same files. No coordination overhead.
+Fix lives in `@apnex/network-adapter` SDK kernel. W1+W2 atomic PR is the natural place — same SDK rename touches the same files. No coordination overhead.
 
 ---
 

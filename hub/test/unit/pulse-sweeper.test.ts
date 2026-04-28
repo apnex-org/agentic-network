@@ -14,7 +14,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryStorageProvider } from "@ois/storage-provider";
+import { MemoryStorageProvider } from "@apnex/storage-provider";
 import { MissionRepository } from "../../src/entities/mission-repository.js";
 import { MessageRepository } from "../../src/entities/message-repository.js";
 import { TaskRepository } from "../../src/entities/task-repository.js";
