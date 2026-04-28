@@ -362,11 +362,13 @@ A PR triggers Pass 10 if **any** of the following are true:
 | PR touches | Pass 10 step required | Mission-of-record |
 |---|---|---|
 | `hub/src/**` (Hub source) | **§A — Hub container rebuild** (calibration #17) | mission-62 W4 P0 |
-| `packages/network-adapter/src/**` (SDK source) | **§B — SDK package rebuild + tgz repack + reinstall** (calibration #25) | mission-63 W3 P0 |
+| `packages/*/src/**` (SDK source — `@apnex/network-adapter`, `@apnex/cognitive-layer`, `@apnex/message-router`) | **§B — npm package republish + consumer `./scripts/local/update-adapter.sh`** (mission-64 W4 deprecation: manual recipe removed; npm package + script is canonical; closes calibration #25) | mission-63 W3 P0 (origin); mission-64 W4 (closed) |
 | Persisted Agent / Mission / Thread schema (code-only renames) | **§C — State-migration script run** (calibration #19) | mission-62 W4 P0 |
-| `adapters/*/src/**` (claude-plugin / vertex-cloudrun) | **§D — claude-plugin reinstall** (existing baseline; not a Pass 10 extension) | mission-61 Layer-3 |
+| `adapters/*/src/**` (claude-plugin / vertex-cloudrun) | **§D — bundled in npm package `install.sh` path; consumer runs `./scripts/local/update-adapter.sh`** (mission-64 W4 deprecation: bundled in §B flow) | mission-61 Layer-3 (origin); mission-64 W4 (closed) |
 
 PRs that touch ONLY documentation, methodology, audits, ADRs, or non-code surfaces do NOT need Pass 10.
+
+**Forward-pointer — idea-221 (Pass 10 cross-§ orchestration runner; OPEN):** mission-64 mechanises §B + §D consumer-side. §A + §C remain operator-side (Hub rebuild + state-migration). idea-221 is the companion future mission scope: an operator-side runner that auto-detects affected §s + sequences §A→§B→§C→§D in a single call, consuming mission-64's CLI contract (`./scripts/local/update-adapter.sh` exit codes 0/1/2/3 + structured stdout final-line + `--pin <version>` + `--dry-run` flags). Until idea-221 ships, §A + §C remain manual operator steps.
 
 **Out of scope for Pass 10:** PR-rebase hygiene (stale-branch-against-current-main) is a separate concern not covered by §A–§D. Pass 10 protocol assumes the merging branch is rebased onto current `origin/main` (mergeStateStatus=CLEAN); a DIRTY/CONFLICTING merge state is a per-PR pre-merge concern handled by the standard rebase + force-push-with-lease sequence (Step 4 merge-queue failure recovery above), not by Pass 10's adapter-restart sequencing.
 
@@ -381,27 +383,28 @@ scripts/local/start-hub.sh         # restart container on freshly-built image
 
 **Why required:** Hub container does NOT auto-rebuild on Hub-source PR merge. A restart on the stale image preserves pre-merge Hub code regardless of how many times the container restarts. Mission-62 W4 P0 (smoking gun layer 1) is the canonical incident — image built ~8h before PR #112 merged; restart on stale image surfaced as `engineerId`-not-`agentId` deployment skew.
 
-### §B — SDK package rebuild + tgz repack + reinstall (calibration #25 NEW from mission-63)
+### §B — SDK package update (mission-64 W4: **Removed; npm package + script is canonical**)
 
+**Manual recipe removed.** `mission-64` (M-Adapter-Streamline) ships the canonical mechanism: published `@apnex/claude-plugin` npm package family + `scripts/local/update-adapter.sh` ergonomic frontend. Calibration #25 (mission-63 W4 origin; manual-recipe step-skip-class regression) closed structurally via `workspace:*` placeholder + version-rewrite-at-publish-time + version visibility surfaces (handshake `agent.advisoryTags.adapterVersion`; npm-installed; runtime-stamped; update-script self-report). See ADR-029 (Adapter update is consumer-self-serve via npm-published packages + script-driven local install).
+
+**Canonical consumer-side flow:**
 ```bash
-cd packages/network-adapter
-rm -rf dist
-npm run build
-npm pack
-cp ois-network-adapter-2.0.0.tgz <adapters/claude-plugin>/        # root of claude-plugin, NOT a /lib/ subdirectory
-cd <adapters/claude-plugin>
-rm -rf node_modules package-lock.json                              # lockfile removal forces fresh resolve against new tgz hash
-./install.sh
+./scripts/local/update-adapter.sh
+# OR (manual / external consumers without local checkout):
+npm install -g @apnex/claude-plugin@latest
+"$(npm prefix -g)/lib/node_modules/@apnex/claude-plugin/install.sh"
 # Then full adapter restart
 ```
 
-(Repeat the rebuild + repack for any other SDK package touched by the PR — `@apnex/message-router`, `@apnex/cognitive-layer`, etc.)
+**Verification:** `npm ls -g @apnex/claude-plugin --depth=0` reports installed version; adapter restart shows `agent.advisoryTags.adapterVersion = "<expected>"` in handshake response (no `parse_failed` events in `.ois/shim-events.ndjson`).
 
-**Verification:** new `dist/` mtime is post-rebuild; `npm pack` produces a tgz with the new code; `install.sh` runs clean; adapter restart shows `parseHandshakeResponse` consuming the new envelope shape (no `parse_failed` events in `.ois/shim-events.ndjson`).
+**Calibration #29 NEW (mission-64 W0 spike) — npm 11.6.2 EUNSUPPORTEDPROTOCOL on `workspace:^/*`:** npm does NOT support yarn-invented `workspace:` semver-protocol. Use placeholder `"<sibling-pkg>": "workspace:*"` in source-tree `package.json` files + explicit `version-rewrite.js` script that rewrites `workspace:*` → `^<sibling-published-version>` pre-publish. Do NOT assume `workspace:^` works on npm.
 
-**Why required:** `install.sh` rebuilds claude-plugin/dist but does NOT rebuild the network-adapter SDK or refresh `ois-network-adapter-2.0.0.tgz`. Adapter restart on stale tgz preserves pre-merge SDK code regardless of `install.sh` runs. Mission-63 W3 P0 is the canonical incident — `parseHandshakeResponse` change in PR #119 was silently ignored on adapter restart because the SDK tgz was pre-merge code.
+**Calibration #35 NEW (mission-64 W1+W2-fix-2; PR #124) — version-rewrite hoist into orchestration script:** `npm publish --workspace=X` uses workspace's OWN lifecycle hooks, NOT root's `prepublishOnly`. Hoist the rewrite call into `scripts/publish-packages.sh` orchestration directly with trap-based revert; do NOT rely on root lifecycle to run rewrites. See `feedback_npm_workspace_lifecycle_quirk.md`.
 
-**Adjacency to mission-61 Layer-2/Layer-3 lesson:** SDK-tgz-stale is the Layer-2 root cause class; mission-61's Layer-3 was the same architectural class one tier down (canonical-tree shim binary stale). Pass 10 §B closes the Layer-2 gap symmetrically with how mission-62 closed the Layer-1 (Hub container) gap.
+**Repo-side discipline (workspace authoring):** PRs touching `packages/network-adapter/src/**` (or any other SDK workspace) ship version bumps + republish via `scripts/publish-packages.sh` (topological dep-walk: leaves first; dependents second). `scripts/test/full-end-to-end-install.test.sh` exercises actual `claude plugin install` end-to-end and is required CI for substrate PRs (calibration #37 close). For first-canonical-publish to a fresh registry namespace, expect ~3 publish iterations to resolve packaging defects (file presence, source-format compat, version-pinning mechanism); see `feedback_substrate_introduction_publish_iteration.md`.
+
+**Adjacency to mission-61 Layer-2/Layer-3 lesson + mission-63 calibration #25:** SDK-tgz-stale (mission-63 W3 P0) and `file:` refs not surviving `npm pack` (mission-61 Layer-3) are both closed structurally by the npm-publish channel — `file:` refs eliminated from publish chain; manual SDK rebuild eliminated by registry-pinned semver resolution at install-time.
 
 ### §C — State-migration script run (calibration #19)
 
@@ -420,15 +423,13 @@ When a PR renames or restructures persisted entity fields (Agent, Mission, Threa
 - `scripts/migrate-canonical-envelope-state.ts` (mission-63 W3) — Agent record `name = id` fallback + clientMetadata/advisoryTags default
 - `scripts/migrate-engineerId-to-id.ts` (mission-62 W4 ad-hoc; not committed; superseded by canonical-envelope script) — primary key + by-fingerprint index files migration
 
-### §D — claude-plugin reinstall (existing baseline)
+### §D — claude-plugin reinstall (mission-64 W4: **Removed; bundled in npm package install.sh path**)
 
-```bash
-cd adapters/claude-plugin
-./install.sh
-# Then full adapter restart
-```
+**Manual recipe removed.** `mission-64` ships `install.sh` as a bundled file inside `@apnex/claude-plugin` (path: `$(npm prefix -g)/lib/node_modules/@apnex/claude-plugin/install.sh`); `scripts/local/update-adapter.sh` invokes it after `npm install`. Two-step separation: npm = artifact distribution; script = system-side install action. **NOT** postinstall-driven (security/idempotency/scope-coupling concerns; ADR-029 anti-goal §4.2 #7).
 
-This step is **not new** — it's the existing post-PR adapter-side update path. Mission-61 Layer-3 (canonical-tree shim binary stale) surfaced as a reminder that `install.sh` is the operative reinstall sequence; force-bypass via `git push origin main && remote-pull` does NOT work because canonical-tree shim is rebuilt locally, not pulled.
+**Canonical consumer-side flow:** identical to §B above — `./scripts/local/update-adapter.sh` drives both npm fetch + install.sh invocation in one command.
+
+Mission-61 Layer-3 lesson (canonical-tree shim binary stale; `file:` refs don't survive `npm pack`) is closed structurally — the published tarball ships pre-built `dist/` + bundled `install.sh` + `marketplace.json` (calibration #36 NEW: source format requires `"./"` trailing-slash, NOT `"."` or `".."` — see `feedback_marketplace_source_format.md`).
 
 ### Coordination — who runs Pass 10
 
@@ -680,6 +681,16 @@ Mission-49 fired bug-31 variant-1 twice (cascade-duplicate plannedTask) + varian
 ### Thread maxRounds=20 for ≥4-task PR-coordination missions
 
 Mission-48 needed mid-mission thread rotation (thread-306 → thread-307) because default `maxRounds=10` was hit at PR #5/6 of 6. **v1.0 ratifies:** at coordination-thread open-time, set `maxRounds` proportional to expected exchange volume (~2× task count + 4); default 10 remains fine for design-round threads (3-5 rounds typical) but is too low for per-PR coordination in 4+ task missions. Sunset clause: rotation discipline becomes obsolete when idea-192's inbox primitive removes the round-cap class entirely.
+
+**Mission-64 reinforcement (calibration #31 NEW):** thread-407 (W1+W2 atomic dispatch) hit `maxRounds=10` mid-cycle; superseded by thread-408. Two complementary disciplines surfaced:
+- **Pre-push artifact discipline:** for Design v0.1+ round-1 audit threads, push the design artifact to remote BEFORE opening the audit thread — engineer's round-1 review otherwise reads stale local content. Mission-64 surfaced this when the round-1 audit thread referenced design v0.1 sections that hadn't been pushed yet.
+- **maxRounds budgeting for substrate-introduction missions:** active-session 6-step coordination (mission-64 §3 sub-protocol) compounds round usage when N substrate-defect cycles surface during ship — set `maxRounds` proportional to (~3× expected fix-PR count + 4). Mission-64 thread-409 ran 9/10 rounds across 3 publish iterations (0.1.0 → 0.1.1 → 0.1.2).
+
+### W3 dogfood collapse pattern (substrate-introduction mission-class signature)
+
+**Mission-64 calibration #34 NEW — mission-lifecycle integration note:** for substrate-introduction missions where W3 is observation-only AND the substrate IS the consumer-facing surface itself, W3 collapse-into-W1+W2-fix is the canonical pattern when active-session 6-step protocol surfaces a substrate defect during Step 5 install. The retry IS the dogfood gate; a separate W3 thread would re-run the same active-session 6-step against the same substrate without distinct architectural value.
+
+Distinct from missions where W3 verifies a different surface than W1+W2 ships (e.g., mission-63 substrate-self-dogfood with separate W4 verification thread because the wire-shape contract could be observed post-rebuild without consumer install). Mission-class signature: substrate-introduction whose dogfood IS the install path → W3 collapse default; structural-inflection on internal substrate where dogfood is observational → separate W4 verification thread default.
 
 ### ADR-amendment scope discipline
 
