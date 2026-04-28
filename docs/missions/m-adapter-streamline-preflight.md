@@ -158,7 +158,7 @@ Before mission status flip `proposed → active`, Director must ratify:
 
 ## §8 Mission close criteria (forward-pointer)
 
-Mission-217 closes when:
+Mission-64 closes when:
 1. ✅ All 4 plannedTasks (W0/W1+W2/W3/W4) status=completed
 2. ✅ ADR-029 SCAFFOLD → RATIFIED (W4 closing wave)
 3. ✅ Calibration #28 captured + W4 Pass 10 protocol-extension PR forward-pointer landed
