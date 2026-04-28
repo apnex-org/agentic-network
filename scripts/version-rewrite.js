@@ -28,10 +28,44 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, "..");
+
+// REPO_ROOT resolution — `git rev-parse --show-toplevel` is cwd-independent
+// closure for Calibration #39 (publish bash-session cwd-persistence into
+// version-rewrite.js silent MODULE_NOT_FOUND swallow → un-rewritten "*"
+// deps shipped). The path.resolve(__dirname, "..") fallback assumes the
+// script lives at <repo>/scripts/ which is true today, but using git is
+// more robust if the script is ever moved or invoked via symlink.
+//
+// Mission-64 W1+W2-fix-4 cycle 5 surfaced #39 (PR #126 fix-forward closed
+// for 0.1.4 cycle via repo-root cwd discipline; this is the structural
+// closure deferred to follow-up per ADR-029 W4 Status flow). Mission-64
+// post-cleanup PR delivers it.
+function resolveRepoRoot() {
+  try {
+    const gitTop = execSync("git rev-parse --show-toplevel", {
+      cwd: __dirname,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (gitTop && fs.existsSync(path.join(gitTop, "package.json"))) {
+      return gitTop;
+    }
+  } catch {
+    // Fall through to __dirname-relative fallback below
+  }
+  // Fallback when not in a git checkout (tarball-extract testing, bare
+  // repos, missing .git dir, sparse-checkout edge cases); preserves
+  // pre-mission-64-post-cleanup semantics so this script stays loadable
+  // in non-git contexts. Note: shallow clones are NOT a fallback case —
+  // git rev-parse --show-toplevel is depth-independent and works in them.
+  return path.resolve(__dirname, "..");
+}
+
+const REPO_ROOT = resolveRepoRoot();
 const NAMESPACE = "@apnex";
 const PLACEHOLDER = "*";
 

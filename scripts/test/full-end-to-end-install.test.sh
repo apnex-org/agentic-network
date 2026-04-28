@@ -60,7 +60,36 @@ fi
 
 TEST_DIR="/tmp/m64-e2e-install-$$"
 mkdir -p "$TEST_DIR"
-trap "rm -rf $TEST_DIR" EXIT
+
+# User-settings backup+restore discipline (mission-64 post-cleanup PR addition).
+# Reason: install.sh invokes `claude plugin marketplace add "$MARKETPLACE_PATH"`
+# which clobbers user `~/.claude/settings.json:extraKnownMarketplaces.agentic-network.source.path`
+# to point at the test's $TEST_DIR/install-prefix/... directory. After test
+# cleanup (rm -rf $TEST_DIR), that path is dangling — until the next time
+# the consumer runs `update-adapter.sh` against the global install (which
+# re-adds the marketplace entry to point at /home/.../@apnex/claude-plugin).
+# Self-heals on next adapter update; but during the test run, user state is
+# corrupted. Mission-64 W4-followon calibration class: "test that mutates
+# global state without rollback" — folded into post-cleanup PR scope.
+USER_SETTINGS="${HOME}/.claude/settings.json"
+SETTINGS_BACKUP="$TEST_DIR/settings.json.backup"
+HAD_SETTINGS=0
+if [ -f "$USER_SETTINGS" ]; then
+  cp "$USER_SETTINGS" "$SETTINGS_BACKUP"
+  HAD_SETTINGS=1
+fi
+restore_user_settings() {
+  if [ "$HAD_SETTINGS" = "1" ] && [ -f "$SETTINGS_BACKUP" ]; then
+    # User had settings.json pre-test; restore from backup
+    cp "$SETTINGS_BACKUP" "$USER_SETTINGS"
+  elif [ "$HAD_SETTINGS" = "0" ] && [ -f "$USER_SETTINGS" ]; then
+    # Fresh-install user (no pre-test settings.json); test created garbage
+    # settings.json with marketplace path → $TEST_DIR (now being removed).
+    # Remove the test-created file to restore clean fresh-install state.
+    rm -f "$USER_SETTINGS"
+  fi
+}
+trap 'restore_user_settings; rm -rf "$TEST_DIR"' EXIT
 
 # Step 1 — Apply version-rewrite explicitly (mirrors hoisted publish-packages.sh flow)
 echo ""

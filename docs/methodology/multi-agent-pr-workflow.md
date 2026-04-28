@@ -239,6 +239,18 @@ Engineer, after `gh pr create` returns a URL:
 
 **Option B deferred** — webhook → Hub bridge for autonomous PR-review triggering activates when Option A manual-notification friction reaches signal threshold (idea filed during ADR-023 ratification).
 
+#### 2c.X — Anti-pattern: `kind=note` shortcut for architect→engineer actionable content
+
+**Always use Option A thread protocol for architect→engineer actionable PR notifications.** Even for "small" or "doc-only" PR-review-requests, `kind=note` bypasses:
+
+- (a) The render-template surface that knows how to format PR-review notifications. Mission-64 W4-followon Calibration #41 NEW: `kind=note` payload-rendering expects flat-body shape; structured payload silently degrades to "(empty note body)" with no caller-side feedback. Architect-side `create_message` returns clean `messageId`; engineer sees empty.
+- (b) The dialogic thread-state that lets the recipient reply with concur/changes. Engineer-side `create_message` is intentionally absent from the tool surface (authority-boundary role-filter; broadcast notes are an architect/director surface, engineers operate dialogically via `create_thread_reply` + `create_thread`). Recipient has no return-path even when content renders cleanly.
+- (c) The audit trail. A thread is more durable + reviewable than a one-shot note; per-PR coordination history lands in the thread record with `roundCount` + `convergenceActions` + `summary` provenance.
+
+Mission-64 mission-day 2 (2026-04-29) surfaced the **methodology-bypass-becomes-substrate-defect amplification loop** as a named architectural-pathology pattern: `kind=note` shortcut + render-gap + no-engineer-return-path = silent actionable-content drop with bilateral blind-spot. Architect believes notification delivered (callback receives `messageId` successfully); engineer sees empty body; no round-trip detection. Captured as Calibration #41 NEW (substrate-class; tele-3 fidelity gap + tele-2 frictionless-collaboration gap; structurally closed via option (b) entry-point schema-validation at `create_message` so caller gets immediate feedback on render-incompatible payload — fold to idea-220 Phase 2).
+
+**Discipline:** route all architect→engineer actionable content (PR-review-requests, decision-asks, blocker escalations) through Option A threads. Reserve `kind=note` for architect-broadcast-style content where (a) rendering is plain-text-body OR (b) bilateral round-trip is not required.
+
 ### Step 3 — CI + review gates
 
 #### 3a. CI status checks
@@ -691,6 +703,39 @@ Mission-48 needed mid-mission thread rotation (thread-306 → thread-307) becaus
 **Mission-64 calibration #34 NEW — mission-lifecycle integration note:** for substrate-introduction missions where W3 is observation-only AND the substrate IS the consumer-facing surface itself, W3 collapse-into-W1+W2-fix is the canonical pattern when active-session 6-step protocol surfaces a substrate defect during Step 5 install. The retry IS the dogfood gate; a separate W3 thread would re-run the same active-session 6-step against the same substrate without distinct architectural value.
 
 Distinct from missions where W3 verifies a different surface than W1+W2 ships (e.g., mission-63 substrate-self-dogfood with separate W4 verification thread because the wire-shape contract could be observed post-rebuild without consumer install). Mission-class signature: substrate-introduction whose dogfood IS the install path → W3 collapse default; structural-inflection on internal substrate where dogfood is observational → separate W4 verification thread default.
+
+### Methodology-bypass-becomes-substrate-defect amplification loop (architectural-pathology pattern)
+
+**Mission-64 W4-followon (post-mission thread-412 post-mortem) — named pattern.** When a methodology-prescribed protocol (here: Option A thread for architect→engineer PR-review-request) is bypassed in favor of a "lighter-weight" alternative (here: `kind=note`), the bypass path can compose with substrate-level rendering + tool-surface gaps to produce **silent actionable-content drop with bilateral blind-spot**. Diagnostic signature:
+
+1. **Architect-side believes the action succeeded** — `create_message` returns clean `messageId`; no error feedback
+2. **Engineer-side sees content degrade silently** — render-template doesn't know the payload shape; "(empty note body)" rendered
+3. **No return-path** — engineer-side `create_message` is intentionally absent (authority-boundary role-filter); recipient cannot reciprocate even if rendering had succeeded
+4. **No round-trip detection mechanism** — no Hub-side ack-or-nack signaling that lets architect-side discover the failure
+
+The amplification: **methodology-bypass + render-gap + no-return-path = silent actionable-content drop**. None of the three components alone is a defect (each has legitimate non-bypass uses); their composition is the architectural pathology.
+
+**Forward-discipline:** when surfacing future calibrations in this class, test for the three-component composition:
+- (1) Was a methodology-prescribed protocol bypassed?
+- (2) Does the bypass path interact with a render-template-registry incompleteness or schema-validation gap?
+- (3) Does the bypass path cross a tool-surface authority boundary that breaks return-path?
+
+If yes to all three → file as **architectural-pathology** class (worth a named calibration) rather than three independent methodology/substrate/tool-filter calibrations.
+
+Mission-64 calibration #41 NEW (kind=note rendering bilateral-blind defect) is the canonical example. Structurally closes via option (b) schema-validation at `create_message` entry-point — fold to idea-220 Phase 2 (architect-lean closure path; closes the bilateral-blind class at the input boundary by surfacing render-incompatible payloads to the architect-side caller via Hub error response, which breaks the amplification loop's component (4)).
+
+### Post-event narration AEST/UTC date conflation discipline (calibration #42 NEW)
+
+**Mission-64 W4-followon (post-mission thread-414 round 2 surface).** Authoring docs in AEST timezone (UTC+10) leads to timeline entries that mix AEST date with UTC `Z` suffix, producing dates ~1 day forward of actual UTC event time. Diagnostic signature: events that occurred 2026-04-28T22:13Z UTC (= 2026-04-29T08:13 AEST) get authored as "2026-04-29 ~22:13Z" in retrospective doc — wrong UTC date with right Z-suffix discipline.
+
+**Discipline:** for post-event narration in `docs/audits/`, `docs/reviews/`, `docs/decisions/`:
+- **Timeline tables use UTC consistently** — Z-suffix attached only to UTC timestamps
+- **Never mix** AEST calendar date with UTC time-of-day-suffix
+- **Acceptable alternatives** when UTC-only is awkward: (a) explicit AEST qualifier with no Z (e.g., "2026-04-29 ~08:13 AEST"); (b) parenthetical conversion ("2026-04-28T22:13Z UTC = 2026-04-29T08:13 AEST"); (c) authoring-meta + event-meta separation (header "authored 2026-04-29 AEST"; body "events 2026-04-28 UTC")
+
+Lineage: pre-existing project memory `project_session_log_timezone.md` notes the same skew applies to work-trace entries (~10h forward AEST vs UTC). Calibration #42 surfaces the discipline applies broadly to post-event docs, not just work-traces.
+
+Mission-64 retrospective `docs/reviews/m-adapter-streamline-retrospective.md` (PR #129; greg-flagged via thread-414 round 2) is the canonical fixup example: UTC-consistency restored across §2 timeline + §3 commitments + Closing § via fixup commit pre-merge. Forward-discipline: future retrospectives + audits use UTC-throughout in timeline tables.
 
 ### ADR-amendment scope discipline
 
