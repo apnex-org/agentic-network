@@ -1,10 +1,10 @@
-# M-Wire-Entity-Convergence — Design v0.1 (architect draft; pending engineer round-1 audit)
+# M-Wire-Entity-Convergence — Design v0.2 (architect post-audit ratify; pending engineer round-2 ratify)
 
 **Author:** lily / architect
 **Source:** idea-219 (Wire-Entity Envelope Convergence + Schema-Migration Discipline) + Survey envelope (`docs/designs/m-wire-entity-convergence-survey.md`)
-**Lifecycle phase:** 4 Design v0.1 (architect-authored; awaiting engineer round-1 audit)
-**Status:** v0.1 draft — open for engineer round-1 audit; iterates to v0.2 (architect post-audit ratify) → v1.0 (bilateral ratify)
-**Mission class:** structural-inflection (per Survey envelope; sizing baseline L)
+**Lifecycle phase:** 4 Design v0.2 (architect post-audit ratify; iterates to v1.0 on engineer round-2 ratify)
+**Status:** v0.2 — incorporates engineer round-1 audit (thread-399 round 2); 8 substantive asks + 2 framing tweaks ratified
+**Mission class:** structural-inflection (per Survey envelope; sizing baseline **L on paper / M+ in flight** per round-1 audit recalibration)
 **Tele primaries:** tele-3 Absolute State Fidelity + tele-7 Resilient Operations + tele-6 Deterministic Invincibility (substrate-self-dogfood); tele-1 Sovereign State Transparency tertiary
 
 ---
@@ -39,14 +39,14 @@ interface CanonicalAgentEnvelope {
 }
 
 interface AgentProjection {
-  id: string;                         // Was: agentId — canonical entity ID
-  name: string;                       // Was: implicit / agentId fallback — display name from globalInstanceId
-  role: "engineer" | "architect" | "director";
-  livenessState: "online" | "degraded" | "unresponsive" | "offline";  // ADR-017 INV-AG6 4-state preserved
+  id: string;                                   // Was: agentId — canonical entity ID
+  name: string;                                 // Display name; from globalInstanceId on first-contact-create (PR #114), fallback `name = id` for legacy records (per migration §5.1; verified empirically — see v0.2 round-1 audit notes)
+  role: "engineer" | "architect" | "director";  // Hub-validated via coerceAgentRole; adapter parser assumes Hub-validated
+  livenessState: "online" | "degraded" | "unresponsive" | "offline";       // ADR-017 INV-AG6 4-state preserved
   activityState: "online_idle" | "online_working" | "online_quota_blocked" | "online_paused" | "offline";  // mission-62 5-state
-  labels: Record<string, string>;     // Mission-19 routing labels
-  clientMetadata: AgentClientMetadata;
-  advisoryTags: AgentAdvisoryTags;
+  labels: Record<string, string>;               // Mission-19 routing labels
+  clientMetadata?: AgentClientMetadata;         // OPTIONAL (v0.2): legacy records pre-mission-62 may have missing fields; migration script defaults missing fields to {} OR Design accepts undefined; new handshakes overwrite on register_role
+  advisoryTags?: AgentAdvisoryTags;             // OPTIONAL (v0.2): same legacy-record reasoning as clientMetadata
   // Internal/operational fields stay OFF wire: fingerprint, currentSessionId, lastSeenAt, archived, recentErrors, restartHistoryMs
 }
 
@@ -147,19 +147,29 @@ Implementation: `hub/src/policy/agent-policy.ts getAgents` projects from interna
 
 ### §3.4 `agent_state_changed` SSE event payload
 
-Current shape (per PR #111):
+Current shape (per PR #111 — `session-policy.ts:483 AgentStateChangedPayload`):
 ```typescript
-{ agentId: string, livenessState, activityState, changedFields }
+{ agentId, fromLivenessState, toLivenessState, fromActivityState, toActivityState, changedFields, at }
 ```
 
-New shape:
+**v0.2 update (round-1 audit ask 4):** preserve `from*` state + `at` timestamp in canonical payload. Downstream subscribers want to render diff transitions (e.g. `online_idle → online_working`) without needing local cache of the prior state. Dropping `from*` would be a regression for diff-renderers.
+
+New shape (canonical):
 ```typescript
-{ agent: AgentProjection,                                      // full new state
-  changed: ("livenessState" | "activityState" | ...)[],         // which fields changed
-  cause: "first_tool_call" | "signal_working_started" | ... }   // FSM transition cause
+{
+  agent: AgentProjection,                            // full new state (post-transition)
+  previous: {                                        // ONLY fields that changed — explicit prior values
+    livenessState?: AgentProjection["livenessState"],
+    activityState?: AgentProjection["activityState"],
+    // (other fields can be added as Agent schema extends; only those that change appear)
+  },
+  changed: ("livenessState" | "activityState" | ...)[],         // which fields changed (sorted; for fast diff)
+  cause: "first_tool_call" | "signal_working_started" | ... ,   // FSM transition cause
+  at: string,                                                    // ISO-8601 transition timestamp
+}
 ```
 
-Implementation: `hub/src/networking/sse-dispatch.ts` (or wherever the agent_state_changed dispatcher lives). The full agent-projection in the event payload eliminates the need for downstream consumers to call `get_agents` to learn the new state — push-with-payload model.
+Implementation: `hub/src/networking/sse-dispatch.ts` (or wherever `agent_state_changed` dispatcher lives). The full agent-projection in the event payload eliminates the need for downstream consumers to call `get_agents` to learn the new state — push-with-payload model. The `previous` sub-object preserves diff-render context.
 
 ---
 
@@ -167,22 +177,25 @@ Implementation: `hub/src/networking/sse-dispatch.ts` (or wherever the agent_stat
 
 ### §4.1 Current state (per-event-type if-ladder)
 
-`packages/network-adapter/src/prompt-format.ts buildPromptText`:
-```typescript
-function buildPromptText(event: string, data: any, opts): string {
-  // Per-event-type if-ladder; ~4 branches today (PR #112's Pass 7 fix)
-  if (event === "message_arrived" && data.pulseKind) {
-    return renderPulseInline(data);  // ✓ inline rendering covered
-  }
-  if (event === "message_arrived" && data.kind === "note") {
-    return renderNoteInline(data);   // ✓ inline rendering covered
-  }
-  // event === "thread_message" → falls through to generic envelope (calibration #20)
-  // event === "thread_convergence_finalized" → partial inline with truncation (calibration #20 sub-finding)
-  // event === "agent_state_changed" → currently unhandled (post-PR-#111 surface)
-  return buildGenericEnvelope(event, data);  // generic fallthrough
-}
-```
+**v0.2 correction (round-1 audit):** `buildPromptText` already has **7+ explicit branches** today (not "~4" as v0.1 claimed). Most are already inline-rendered with hardcoded prompt strings. The actual gap is narrower than v0.1 implied — see §4.3 for the corrected mapping.
+
+`packages/network-adapter/src/prompt-format.ts buildPromptText` (current branches):
+- `thread_message` — has inline render; surfaces envelope shell only (no body inline; calibration #20)
+- `thread_convergence_finalized` — has inline render; truncates summary mid-string (calibration #20 sub-finding)
+- `clarification_answered` — has inline render with hardcoded prompt
+- `task_issued` — has inline render with hardcoded prompt
+- `review_completed` — has inline render with hardcoded prompt
+- `revision_required` — has inline render with hardcoded prompt
+- `proposal_decided` — has inline render with hardcoded prompt
+- `message_arrived` (with `pulseKind` OR `kind=note`) — inline render via PR #112 Pass 7 fix
+- `agent_state_changed` — NO branch today (post-PR-#111 surface gap)
+- (default fallthrough) — generic envelope shell
+
+So the gap-set is THREE event-types plus the default-fallthrough pattern itself:
+1. `thread_message` body-inlining gap (calibration #20)
+2. `thread_convergence_finalized` truncation gap (calibration #20 sub-finding)
+3. `agent_state_changed` missing branch (NEW)
+4. The if-ladder structure itself: O(N) per-event-type branch addition cost
 
 ### §4.2 New state (single canonical pipeline)
 
@@ -206,15 +219,25 @@ interface CanonicalEventEnvelope {
 
 The renderer walks `envelope.event` + `envelope.payload` shape via a registered template (one per event-type) but the OUTER pipeline is uniform: extract → template → text. Adding a new event-type = registering a template; no if-ladder branch addition.
 
-### §4.3 Migration of existing event-types
+### §4.3 Migration of existing event-types — TWO-COLUMN VIEW (v0.2 round-1 audit ask 2)
 
-| Event | Today's path | New canonical path |
+Round-1 audit clarified: most existing event-types stay on existing inline strings; W3 deliverable is the **registry pattern + the 4 mandatory templates**, NOT a wholesale rewrite of all 7+ inline branches. The two work-axes are orthogonal:
+
+- **Shape conversion** (Hub-side data): Hub-output payload migrates to canonical envelope shape (`{agent, previous?, changed[], cause, at}` for state events; `{agent, session, ...}` for handshake events; etc.)
+- **Registry refactor** (Adapter-side render structural): per-event-type if-ladder retired; replaced by `buildPromptText(envelope) → registry.get(event)(envelope) → text`
+
+| Event | Shape conversion (Hub-side, W1+W2) | Registry refactor (Adapter-side, W3) |
 |---|---|---|
-| `message_arrived` + `pulseKind` | inline render via Pass 7 fix | inline render via canonical template (preserved behavior) |
-| `message_arrived` + `kind=note` | inline render via Pass 7 fix | inline render via canonical template (preserved behavior) |
-| `thread_message` | generic fallthrough (calibration #20) | inline render via canonical template (CALIBRATION RETIRED) |
-| `thread_convergence_finalized` | partial inline + mid-summary truncation | full inline render via canonical template (CALIBRATION #20 SUB-FINDING RETIRED) |
-| `agent_state_changed` | currently unhandled | inline render via canonical template (NEW) |
+| `message_arrived` (pulseKind / kind=note) | already inline via PR #112; canonical envelope wraps existing rendering | template registered (preserves existing inline behavior) |
+| `thread_message` | already in shape; **needs body inlining** (calibration #20 retire path) | NEW canonical template — surfaces body content (calibration #20 RETIRED) |
+| `thread_convergence_finalized` | already in shape; **needs truncation removed** | NEW canonical template — full summary surfaced (calibration #20 SUB-FINDING RETIRED) |
+| `agent_state_changed` | **NEW** canonical envelope `{agent, previous?, changed[], cause, at}` shape | NEW canonical template — diff-renders state transition (NEW; was missing branch) |
+| `clarification_answered` | n/a (no Agent state in payload) | template registered as canonical-pattern (existing inline preserved) |
+| `task_issued` / `review_completed` / `revision_required` / `proposal_decided` | n/a (no Agent state in payload) | templates registered as canonical-pattern (existing inline preserved) |
+
+**Net W3 deliverable:** 4 NEW templates (the mandatory set per §6.4 verification: `thread_message`, `thread_convergence_finalized`, `agent_state_changed`, `message_arrived`+pulseKind/note) + the **registry pattern** itself + adapt existing inline branches into registered templates (mechanical port of existing strings; no behavior change for non-mandatory events).
+
+Adding new event-types post-W3 is then O(1) — register a template at the registry; no if-ladder branch addition.
 
 ### §4.4 Render-template per event-type
 
@@ -251,10 +274,13 @@ scripts/migrate-canonical-envelope-state.ts
 ```
 
 Concrete operations (mostly already done in mission-62 P0 recovery; this script verifies + completes):
+- **Hub-stopped guard (v0.2 round-1 audit ask 8):** script self-checks `curl -sS http://localhost:8080/mcp` returns connection-refused before mutating state; aborts with clear operator message if Hub still running. Migration runs while Hub is stopped (state files would race live writes otherwise).
 - Verify all `local-state/agents/*.json` have `id` field (not `engineerId` or `agentId` legacy)
 - Verify all `local-state/agents/by-fingerprint/*.json` have `id` field
-- Recompute `name` field if missing (from globalInstanceId via fingerprint reverse-lookup if needed)
+- **`name` field provenance (v0.2 round-1 audit ask 3 — empirically verified):** if `name` missing or null, set `name = id`. **No globalInstanceId reverse-lookup** — verified via local-fs spot-check (4/4 prod records have `globalInstanceId: null`; legacy first-contact-create predates PR #114 which introduced the field). The `name = id` fallback is the ONLY viable recovery path; later first-contact-creates will populate from globalInstanceId per PR #114, but legacy records are not recoverable through that path.
+- **`clientMetadata` + `advisoryTags` defaulting (v0.2 round-1 audit observation):** if missing or malformed, default to `{}` (empty object). New handshakes overwrite via register_role; defaulting prevents migration crash on stale legacy records.
 - No data loss; backup at `/tmp/agents-pre-canonical-envelope-migration-$(date +%Y%m%d-%H%M%S).tar.gz`
+- Idempotent: re-running with already-migrated state is a no-op (each operation checks present-shape before mutating).
 
 ### §5.2 Pass 10 protocol extension
 
@@ -283,7 +309,10 @@ New ADR: `docs/decisions/0??-canonical-agent-envelope.md` (number assigned at Ma
 - Internal fields stay OFF wire (operational/administrative); selective surfacing via separate ideas (idea-220 Phase 2 for engineer-side parity)
 - Schema-rename PRs with migration script discipline retire the recovery-via-P0 pattern
 
-**Sealed companions:** ADR-017 INV-AG6 (4-state liveness FSM preserved; this ADR doesn't change FSM); ADR-018 (cognitive pipeline modular contract; this ADR shows how the modular surface composes).
+**Sealed companions:**
+- **ADR-013 + ADR-014** (Threads 2.0 stagedActions) — architectural-precedent: Threads 2.0 already adopts canonical envelope `{kind, type, payload}` at the thread-action surface; this ADR generalizes the same pattern to Agent-state-bearing wire surfaces. v0.2 round-1 audit framing tweak — round-1 audit confirmed the pattern is already established; this ADR cites it.
+- **ADR-017 INV-AG6** — 4-state liveness FSM preserved; this ADR doesn't change FSM
+- **ADR-018** — cognitive pipeline modular contract; this ADR shows how the modular surface composes (and round-1 audit confirmed: cognitive layer + adapter-render registry operate on orthogonal data flows; no conflict)
 
 ---
 
@@ -304,15 +333,18 @@ The **W3 sub-PR** is the gate: it converts adapter-side parser + render path. On
 
 ### §6.3 Adapter-restart / Hub-redeploy gating (Pass 10 protocol extension under live exercise)
 
-W3 PR merge sequence:
+W3 PR merge sequence (v0.2 round-1 audit ask 8: Hub-stopped guard explicit):
 1. `gh pr merge <W3> --admin --squash --delete-branch`
 2. `cd /home/apnex/taceng/agentic-network && git pull --ff-only`
-3. `cd /home/apnex/taceng/agentic-network && OIS_ENV=prod scripts/local/build-hub.sh` (mandatory per Pass 10 ext)
-4. `cd /home/apnex/taceng/agentic-network && scripts/migrate-canonical-envelope-state.ts`
-5. `cd /home/apnex/taceng/agentic-network && OIS_ENV=prod scripts/local/start-hub.sh`
-6. `cd /home/apnex/taceng/agentic-network/adapters/claude-plugin && ./install.sh`
-7. Director-coordinated lily + greg restart
-8. Architect verifies via shim-events.ndjson handshake events (cleanly; no `parse_failed`)
+3. **`cd /home/apnex/taceng/agentic-network && OIS_ENV=prod scripts/local/stop-hub.sh`** (NEW v0.2 step — explicit Hub-stopped guard before migration; the migration script ALSO self-checks per §5.1 but explicit operator step prevents race confusion)
+4. `cd /home/apnex/taceng/agentic-network && OIS_ENV=prod scripts/local/build-hub.sh` (mandatory per Pass 10 ext; can run while Hub stopped from step 3)
+5. `cd /home/apnex/taceng/agentic-network && scripts/migrate-canonical-envelope-state.ts` (Hub-stopped invariant: migration mutates state files; live Hub writes would race; script self-checks but explicit step 3 makes the invariant operator-visible)
+6. `cd /home/apnex/taceng/agentic-network && OIS_ENV=prod scripts/local/start-hub.sh`
+7. `cd /home/apnex/taceng/agentic-network/adapters/claude-plugin && ./install.sh`
+8. Director-coordinated lily + greg restart (per bug-34 path)
+9. Architect verifies via shim-events.ndjson handshake events (cleanly; no `parse_failed`)
+
+**Migration-script run-point invariant (v0.2 round-1 audit observation):** the script operates on persisted JSON state files independent of running Hub binary code, so strictly it could run any time after step 2. Convention is: migrations run AFTER binary deploy and BEFORE binary start, so the next start sees migrated state. Current step ordering reflects this. The script docstring notes the invariant.
 
 This is the canonical "rebuild protocol Pass 10 ext" execution under live mission conditions. mission-62 P0 retroactively executed steps 2-8 reactively; this mission executes proactively.
 
@@ -420,16 +452,37 @@ Mirrors mission-62's "13 anti-goals locked" pattern but tighter scope (4 anti-go
 
 ## §9 Risks + open questions (engineer round-1 audit input)
 
-### §9.1 Wave-coherence anti-flake (W1+W2 → W3 timing)
+### §9.1 Wave-coherence anti-flake (W1+W2 → W3 timing) — RESOLVED v0.2
 
 **Risk:** W1+W2 merge creates a half-state window where Hub speaks canonical envelope but adapter still parses flat fields. Live-agent handshake will fail in this window.
 
-**Mitigations under consideration:**
-- (a) **Tight-cycle merge** — W1+W2 merge → W3 PR open same day; engineer authors W3 PR before W1+W2 merge (W3 ready-to-merge in parallel); minimize half-state duration
-- (b) **No-live-agent merge window** — Director coordinates lily+greg offline during W1+W2 merge; agents come back online only post-W3 install.sh
-- (c) **Atomic W1+W2+W3 super-PR** — single PR covers all three waves (substantial size; ~15-20 files); engineer-claim-larger-block; preserves wave coherence as single commit
+**Resolution (v0.2 round-1 audit ask 1):** RATIFIED **(a) tight-cycle merge with draft-PR-pre-rebase refinement.** Engineer audit voted strongly against (b) and (c):
+- (c) atomic-super-PR rejected — mission-62 P0 burned us across THREE distinct layers (state-shape, container-rebuild gap, name-field provenance); each surfaced separately because the PRs were separated. A 15-20 file super-PR mixes Hub-internal concerns with adapter parser concerns with render-template structure with migration tooling; review can't catch a layer-2 issue when layer-1 visibly compiles. **Reviewability >> single-commit cleanliness.**
+- (b) no-live-agent merge window rejected — operationally awkward (Director coordination cost; sets a precedent we don't want — substrate work *should* tolerate continuity); worse: bypasses dogfood verification of our wave-coherence discipline. We *want* to feel the half-state, even briefly.
+- (a) tight-cycle ratified with **refinement**: require W3 PR opened in **draft** before W1+W2 merge, branch pre-rebased onto W1+W2 head. Engineer runs local Hub-container build from W1+W2 branch + adapter from W3 branch, exercises handshake end-to-end *before* W1+W2 merges to main. Pre-merge dry-run catches the half-state break-mode. Adds ~1h engineer effort, eliminates live-flake risk almost entirely.
 
-**Engineer round-1 audit candidate:** which mitigation is preferred? My current lean is (a) tight-cycle; (c) atomic-super-PR is structurally cleanest but harder to review.
+**Operational sequence:**
+1. Engineer authors W1+W2 PR + W3 PR (draft) in parallel
+2. W3 PR rebased onto W1+W2 branch head; both branches pushed
+3. Engineer local end-to-end dry-run: build Hub from W1+W2 branch + adapter from W3 branch + run handshake
+4. Dry-run GREEN → mark W3 PR ready-for-review; merge sequence W1+W2 first → immediately W3
+5. Dry-run RED → investigate before W1+W2 merge
+
+### §9.2 Render-template coverage scope — RESOLVED v0.2
+
+**Resolution (v0.2 round-1 audit ask 2):** RATIFIED scope-to-mandatory-only at W3. Round-1 audit clarified the gap is narrower than v0.1 implied (existing `buildPromptText` already has 7+ branches; most need shape-conversion-only, not registry-refactor-from-scratch). §4.3 table now has two-column view distinguishing "shape conversion" (data, Hub-side) vs "registry refactor" (structural, adapter-side). Full taxonomy stays under idea-220 Phase 2.
+
+### §9.3 `name` field provenance for legacy Agent records — RESOLVED v0.2
+
+**Resolution (v0.2 round-1 audit ask 3):** RATIFIED **`name = id` fallback as the only viable recovery path.** Engineer empirically verified prod state: 4/4 records have `globalInstanceId: null`; legacy first-contact-creates predate PR #114. NO globalInstanceId reverse-lookup recovery clause. Migration script §5.1 updated to drop the recovery-from-globalInstanceId clause; `name = id` is the fallback for legacy records. Side observation: `clientMetadata` shape stale-default for legacy records (handled via §5.1 default-to-`{}` operation; non-blocking).
+
+### §9.4 Backward-compat for non-claude clients — RESOLVED v0.2
+
+**Resolution (v0.2 round-1 audit ask 4):** CONFIRMED non-issue. Engineer grep'd parse path: `handshake.ts:91 parseHandshakeResponse` only called from live tool-call dispatch; probes use skip-list discipline.
+
+### §9.5 vertex-cloudrun stub-only scope precision — RESOLVED v0.2
+
+**Resolution (v0.2 round-1 audit ask 5):** RATIFIED type-conformance + interface alignment only; no live exercise during W4. **NEW v0.2 deliverable:** add CI-skip guard so test runs *skip* the vertex-cloudrun parser path during W3+W4 — don't risk a half-converted parser passing typecheck-only-CI but breaking on first live call when someone enables it. Concrete options: `it.skip(W3_INCOMPLETE)` marker pattern, OR feature-flag in vertex-cloudrun adapter that throws "stub: see idea-220 Phase 2" on live invocation. W3 PR includes one of these.
 
 ### §9.2 Render-template coverage scope
 
@@ -461,17 +514,15 @@ My lean: scope to mandatory-only; full taxonomy is idea-220 Phase 2 territory.
 
 **Engineer round-1 audit candidate:** define stub-only scope precisely. My lean: type-conformance + interface alignment so future vertex-cloudrun-parity mission has clean starting point; no live parser changes; no live exercise during W4 dogfood.
 
-### §9.6 Sub-deferral candidates
+### §9.6 Sub-deferral candidates — RESOLVED v0.2
 
-Items that could fold in OR could defer to future ideas:
+**Resolution (v0.2 round-1 audit ask 6 — framing tweak applied):** all three sub-deferrals confirmed; framing refined per audit feedback.
 
-| Item | Fold-in candidate | Defer candidate |
+| Item | Disposition | v0.2 framing |
 |---|---|---|
-| Engineer-side `get_agents` callable (calibration #21) | Maybe — Hub-side surface available post-W2 | Lean defer — engineer-side Phase 2 ships in idea-220 |
-| Pulse-template stale-content fix (calibration #22) | Phase-derivation work — replaces stored pulse text with synthesis-from-mission-state | Lean defer — separate concern from envelope; could be its own micro-PR |
-| Pulse-template role-aware fix (calibration #23) | NOT in scope | Defer to idea-220 (already scoped there) |
-
-**Engineer round-1 audit candidate:** confirm sub-deferral list.
+| Engineer-side `get_agents` callable (calibration #21) | DEFER to idea-220 Phase 2 | **Narrowed:** the architect-side `get_agents` surface lands automatically post-W2 (Hub-output canonical envelope conforms regardless of caller role). The sub-deferral is specifically "engineer-side LLM-callable + role-filter logic" (engineer tool-catalog exposure + per-role field-set policy) — not the surface itself. Gap closes partially post-W2; full closes in idea-220 Phase 2. |
+| Pulse-template stale-content fix (calibration #22) | SEPARATE micro-PR (NOT folded into W3) | Confirmed: pulse-message synthesis is a different concern (template = view of mission-phase state vs envelope shape); folding mixes the W3 review surface unnecessarily. File as standalone micro-PR post-W3 OR scope under idea-220 Phase 2 broader template-discipline work. |
+| Pulse-template role-aware fix (calibration #23) | DEFER to idea-220 | Already idea-220 scope; no debate. |
 
 ---
 
@@ -506,17 +557,39 @@ Items that could fold in OR could defer to future ideas:
 
 ---
 
-## §11 Engineer round-1 audit ask (next bilateral step)
+## §11 Engineer round-2 ratify ask (v0.2)
 
-**To engineer (greg):** request round-1 audit on Design v0.1 covering:
+**Round-1 audit complete (thread-399 round 2):** engineer greg delivered substantive 8-ask audit + 2 framing tweaks + empirical evidence on §9.3 (`name` provenance). All 8 asks incorporated into v0.2. Round-2 ratify is bilateral close on Phase 4 Design.
 
-1. **§9 risks + open questions** — your views on each (5 candidates listed)
-2. **§7 wave decomposition** — wave-shape sanity-check + estimate-vs-actual feedback (mission-62 estimated L; realized M for engineer-side; this mission also L; recalibrate?)
-3. **§2 envelope schema** — any field-shape concerns (e.g., should `agent.role` use `coerceAgentRole` enum; `clientMetadata` shape stability across versions)
-4. **§4 adapter-render unification** — render-template-per-event-type pattern; does this conflict with any cognitive-layer middleware (CognitiveTelemetry / ResponseSummarizer)?
-5. **§5.2 Pass 10 protocol extension** — operator-instruction shape; when does the migration script run during merge sequence (post-pull, pre-build-hub, post-build-hub)?
+### Round-1 audit asks → v0.2 disposition table
 
-Round-1 audit thread shape: architect opens via `create_thread` with title "M-Wire-Entity-Convergence Design v0.1 — round-1 audit"; semanticIntent=`seek_rigorous_critique`; greg responds; iterate to v0.2; v1.0 ratifies bilaterally. Survey artifact + Design v1.0 ship in same PR (Phase 4 deliverable).
+| Ask | Resolution | Section |
+|---|---|---|
+| 1. §9.1 wave-coherence — ratify (a) tight-cycle + draft-PR-pre-rebase refinement | RATIFIED + refinement applied | §9.1 |
+| 2. §9.2 §4.3 table needs sharpening (shape-conversion vs registry-refactor columns) | TWO-COLUMN VIEW APPLIED | §4.3 |
+| 3. §9.3 drop globalInstanceId-recovery; `name = id` fallback only | EMPIRICAL EVIDENCE 4/4 RECORDS NULL; CLAUSE DROPPED | §5.1, §9.3 |
+| 4. §3.4 preserve `from*` state + `at` timestamp in canonical payload | `previous: {...}` + `at` ADDED | §3.4 |
+| 5. §9.5 CI-skip guard for vertex-cloudrun parser | ADDED as W3 deliverable | §9.5 |
+| 6. §11.1 sizing recalibrate L → M+ ("L on paper, M in flight") | HEADER UPDATED | top of doc |
+| 7. §2.1 `clientMetadata` optional OR migration defaults | OPTIONAL + advisoryTags also; MIGRATION DEFAULTS `{}` | §2.1, §5.1 |
+| 8. §6.3 explicit Hub-stopped guard before migration | NEW STEP 3 + script self-check | §6.3, §5.1 |
+
+### Round-1 audit framing tweaks → v0.2 disposition
+
+| Tweak | Resolution | Section |
+|---|---|---|
+| §9.6 get_agents narrows post-W2 (architect-side automatic) | TABLE REWRITTEN with narrowed framing | §9.6 |
+| §5.2 ADR scaffold cite ADR-013/014 (Threads 2.0 stagedActions) | SEALED COMPANIONS extended | §5.3 |
+| §11.4 confirmed no conflict adapter-render × cognitive-layer | NOTED in §5.3 ADR-018 sealed-companion line | §5.3 |
+
+### What I'm asking for from greg (round-2 ratify)
+
+Read v0.2 (this doc) + reply with verdict on the v0.2 dispositions:
+1. **Confirm all 8 asks accurately incorporated** — especially §3.4 (canonical `previous` shape decision), §4.3 two-column view, §6.3 step ordering
+2. **Anything else surfaced post-v0.2 read** that warrants a round-3 iteration vs converging at v1.0
+3. **Bilateral ratify** — if v0.2 is sufficient, set converged=true with stagedActions=[close_no_action] + summary; this thread converges at Design v1.0 ratified bilaterally
+
+Survey artifact + Design v1.0 ship in same PR per `idea-survey.md` §5; PR follows convergence.
 
 ---
 
@@ -525,5 +598,5 @@ Round-1 audit thread shape: architect opens via `create_thread` with title "M-Wi
 | Version | Date | Author | Notes |
 |---|---|---|---|
 | v0.1 | 2026-04-28 ~12:30 AEST | architect lily | Architect draft; pending engineer round-1 audit; Phase 4 entry |
-| v0.2 | (pending) | architect lily | Post round-1 audit ratify |
+| **v0.2** | **2026-04-28 ~13:40 AEST** | **architect lily** | **Post round-1 audit ratify; 8 asks + 2 framing tweaks incorporated; sizing recalibrated L → M+; pending engineer round-2 ratify on thread-399 round 3** |
 | v1.0 | (pending) | bilateral | Bilateral ratify; Phase 4 exit |
