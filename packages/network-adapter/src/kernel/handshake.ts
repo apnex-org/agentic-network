@@ -87,6 +87,11 @@ export function parseHandshakeError(result: unknown): HandshakeFatalError | null
  * Parse a successful handshake response. The adapter's executeTool returns
  * parsed JSON directly, but some code paths deliver the raw `{content:[{text}]}`
  * envelope — handle both.
+ *
+ * mission-63 W3: reads canonical envelope per Design v1.0 §3.1 + ADR-028 —
+ * `body.agent.id` + `body.session.epoch` (not `body.agentId` + `body.sessionEpoch`).
+ * The Hub-side flat-field shape is gone post-mission-63 W1+W2 (anti-goal §8.1
+ * clean cutover). Adapter parses the canonical shape only.
  */
 export function parseHandshakeResponse(result: unknown): HandshakeResponse | null {
   try {
@@ -98,10 +103,17 @@ export function parseHandshakeResponse(result: unknown): HandshakeResponse | nul
     } else {
       body = r as Record<string, unknown>;
     }
-    if (typeof body.agentId === "string" && typeof body.sessionEpoch === "number") {
+    const agent = body.agent as Record<string, unknown> | undefined;
+    const session = body.session as Record<string, unknown> | undefined;
+    if (
+      agent &&
+      typeof agent.id === "string" &&
+      session &&
+      typeof session.epoch === "number"
+    ) {
       return {
-        agentId: body.agentId,
-        sessionEpoch: body.sessionEpoch,
+        agentId: agent.id,
+        sessionEpoch: session.epoch,
         wasCreated: Boolean(body.wasCreated),
       };
     }
@@ -259,15 +271,16 @@ export async function performHandshake(
 
   const response = parseHandshakeResponse(result);
   if (!response) {
-    // P0 triage 2026-04-28 — capture the actual envelope + body shape
-    // we failed to parse. bodyKeys + agentIdType + sessionEpochType pin
-    // Hub-side schema drift; nestedAgentKeys surfaces if wire migrated
-    // to entity-shaped form (`body.agent.id` instead of `body.agentId`).
+    // mission-63 W3 diagnostic — capture envelope + body shape for parse
+    // failures. Post-mission-63 the canonical shape is `body.agent.id` +
+    // `body.session.epoch`; legacy flat fields (body.agentId + body.sessionEpoch)
+    // surfacing here would indicate the Hub is on a pre-mission-63 build.
     let envelope = "unknown";
     let bodyKeys = "none";
-    let agentIdType = "absent";
-    let sessionEpochType = "absent";
     let nestedAgentKeys = "none";
+    let nestedSessionKeys = "none";
+    let legacyAgentIdType = "absent";
+    let legacySessionEpochType = "absent";
     try {
       const r = result as
         | { content?: Array<{ text?: string }> }
@@ -283,29 +296,34 @@ export async function performHandshake(
         body = r as Record<string, unknown>;
       }
       bodyKeys = Object.keys(body).sort().join(",");
-      agentIdType =
-        body.agentId === undefined
-          ? "undefined"
-          : body.agentId === null
-            ? "null"
-            : typeof body.agentId;
-      sessionEpochType =
-        body.sessionEpoch === undefined
-          ? "undefined"
-          : body.sessionEpoch === null
-            ? "null"
-            : typeof body.sessionEpoch;
       if (body.agent && typeof body.agent === "object" && body.agent !== null) {
         nestedAgentKeys = Object.keys(body.agent as Record<string, unknown>)
           .sort()
           .join(",");
       }
+      if (body.session && typeof body.session === "object" && body.session !== null) {
+        nestedSessionKeys = Object.keys(body.session as Record<string, unknown>)
+          .sort()
+          .join(",");
+      }
+      legacyAgentIdType =
+        body.agentId === undefined
+          ? "undefined"
+          : body.agentId === null
+            ? "null"
+            : typeof body.agentId;
+      legacySessionEpochType =
+        body.sessionEpoch === undefined
+          ? "undefined"
+          : body.sessionEpoch === null
+            ? "null"
+            : typeof body.sessionEpoch;
     } catch (err) {
       envelope = `parse-error:${(err as Error)?.message ?? String(err)}`;
     }
     log.log(
       "agent.handshake.parse_failed",
-      { envelope, bodyKeys, agentIdType, sessionEpochType, nestedAgentKeys },
+      { envelope, bodyKeys, nestedAgentKeys, nestedSessionKeys, legacyAgentIdType, legacySessionEpochType },
       "[Handshake] response parse failed (non-fatal)"
     );
     return { response: null, epoch: ctx.previousEpoch };
