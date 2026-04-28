@@ -259,9 +259,53 @@ export async function performHandshake(
 
   const response = parseHandshakeResponse(result);
   if (!response) {
+    // P0 triage 2026-04-28 — capture the actual envelope + body shape
+    // we failed to parse. bodyKeys + agentIdType + sessionEpochType pin
+    // Hub-side schema drift; nestedAgentKeys surfaces if wire migrated
+    // to entity-shaped form (`body.agent.id` instead of `body.agentId`).
+    let envelope = "unknown";
+    let bodyKeys = "none";
+    let agentIdType = "absent";
+    let sessionEpochType = "absent";
+    let nestedAgentKeys = "none";
+    try {
+      const r = result as
+        | { content?: Array<{ text?: string }> }
+        | Record<string, unknown>;
+      let body: Record<string, unknown> = {};
+      if (Array.isArray((r as { content?: unknown[] }).content)) {
+        envelope = "content-array";
+        const text = (r as { content: Array<{ text?: string }> }).content[0]
+          ?.text;
+        body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+      } else {
+        envelope = "raw-object";
+        body = r as Record<string, unknown>;
+      }
+      bodyKeys = Object.keys(body).sort().join(",");
+      agentIdType =
+        body.agentId === undefined
+          ? "undefined"
+          : body.agentId === null
+            ? "null"
+            : typeof body.agentId;
+      sessionEpochType =
+        body.sessionEpoch === undefined
+          ? "undefined"
+          : body.sessionEpoch === null
+            ? "null"
+            : typeof body.sessionEpoch;
+      if (body.agent && typeof body.agent === "object" && body.agent !== null) {
+        nestedAgentKeys = Object.keys(body.agent as Record<string, unknown>)
+          .sort()
+          .join(",");
+      }
+    } catch (err) {
+      envelope = `parse-error:${(err as Error)?.message ?? String(err)}`;
+    }
     log.log(
       "agent.handshake.parse_failed",
-      undefined,
+      { envelope, bodyKeys, agentIdType, sessionEpochType, nestedAgentKeys },
       "[Handshake] response parse failed (non-fatal)"
     );
     return { response: null, epoch: ctx.previousEpoch };

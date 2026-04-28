@@ -494,10 +494,18 @@ export function createSharedDispatcher(
     });
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      const callStartedAt = Date.now();
+      const requestedTool = request.params.name;
+      log(`[CallTool] ${requestedTool} entered`);
       try {
-        if (opts.callToolGate) await opts.callToolGate;
+        if (opts.callToolGate) {
+          log(`[CallTool] ${requestedTool} awaiting callToolGate`);
+          await opts.callToolGate;
+          log(`[CallTool] ${requestedTool} gate passed (+${Date.now() - callStartedAt}ms)`);
+        }
         const agent = opts.getAgent();
         if (!isUsableAgent(agent)) {
+          log(`[CallTool] ${requestedTool} aborted — Hub not connected`);
           return {
             content: [
               {
@@ -544,8 +552,11 @@ export function createSharedDispatcher(
           });
         }
         let result: unknown;
+        const agentCallStart = Date.now();
+        log(`[CallTool] ${name} dispatching to agent.call (wrapWithSignal=${wrapWithSignal})`);
         try {
           result = await agent.call(name, outgoingArgs);
+          log(`[CallTool] ${name} agent.call returned in ${Date.now() - agentCallStart}ms`);
         } finally {
           if (wrapWithSignal) {
             agent.call("signal_working_completed", {}).catch((err: unknown) => {
@@ -553,6 +564,7 @@ export function createSharedDispatcher(
             });
           }
         }
+        log(`[CallTool] ${name} completed in ${Date.now() - callStartedAt}ms total`);
         return {
           content: [
             {
@@ -566,6 +578,7 @@ export function createSharedDispatcher(
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        log(`[CallTool] ${requestedTool} threw after ${Date.now() - callStartedAt}ms: ${message}`);
         return {
           content: [
             { type: "text" as const, text: JSON.stringify({ error: message }) },
