@@ -11,8 +11,8 @@
 # (greg-lean (ii) per thread-422 round-1 audit; anti-goal #2 strengthened —
 # no new HTTP REST endpoint; CLI dogfoods existing /mcp path).
 #
-# Auth: sources ~/.config/apnex-agents/<role>.env for HUB_TOKEN; sets
-# Authorization: Bearer ${HUB_TOKEN} header on curl.
+# Auth: sources ~/.config/apnex-agents/<role>.env for HUB_API_TOKEN; sets
+# Authorization: Bearer ${HUB_API_TOKEN} header on curl.
 #
 # Usage:
 #   get-agents.sh                           # default: --role director, table render
@@ -43,7 +43,7 @@ get-agents.sh — operator-facing CLI for Hub Agent state inspection
 Usage: get-agents.sh [--role architect|engineer|director] [--host <url>] [--json] [--lean]
 
 Flags:
-  --role <r>     Source ~/.config/apnex-agents/<r>.env for HUB_TOKEN (default: director)
+  --role <r>     Source ~/.config/apnex-agents/<r>.env for HUB_API_TOKEN (default: director)
   --host <url>   Hub HTTP base URL (default: http://localhost:8080); /mcp appended automatically
   --json         Bypass table render; print raw JSON-RPC response via jq .
   --lean         Use terse template (id + role + status); default uses verbose template
@@ -52,7 +52,7 @@ Flags:
 Exit codes:
   0  success
   1  Hub API error or curl failure
-  2  auth env file missing or HUB_TOKEN unset
+  2  auth env file missing or HUB_API_TOKEN unset
   3  invalid args
 
 Reference: /home/apnex/taceng/table/prism.sh (table-rendering pattern).
@@ -82,13 +82,13 @@ done
 ENV_FILE="${HOME}/.config/apnex-agents/${ROLE}.env"
 if [[ ! -f "$ENV_FILE" ]]; then
     echo -e "${RED}[ERROR]${NC} Auth env file missing: $ENV_FILE" >&2
-    echo "        Expected format: HUB_TOKEN=<bearer-token>" >&2
+    echo "        Expected format: HUB_API_TOKEN=<bearer-token>" >&2
     exit 2
 fi
 # shellcheck disable=SC1090
 source "$ENV_FILE"
-if [[ -z "${HUB_TOKEN:-}" ]]; then
-    echo -e "${RED}[ERROR]${NC} HUB_TOKEN unset in $ENV_FILE" >&2
+if [[ -z "${HUB_API_TOKEN:-}" ]]; then
+    echo -e "${RED}[ERROR]${NC} HUB_API_TOKEN unset in $ENV_FILE" >&2
     exit 2
 fi
 
@@ -140,7 +140,7 @@ call_get_agents() {
     local BODY='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_agents","arguments":{}}}'
     local RESPONSE
     if ! RESPONSE=$(curl -sS -X POST "$URL" \
-        -H "Authorization: Bearer ${HUB_TOKEN}" \
+        -H "Authorization: Bearer ${HUB_API_TOKEN}" \
         -H "Accept: application/json, text/event-stream" \
         -H "Content-Type: application/json" \
         -d "$BODY" 2>&1); then
