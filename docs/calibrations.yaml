@@ -1129,6 +1129,74 @@ calibrations:
       - tele-7
       - tele-2
 
+  - id: 57
+    class: methodology
+    title: "Mission-lifecycle RACI not codified at engineer-runtime decision-moment surfaces — engineer 'ask Director when ambiguous' defaults to Director-direct routing rather than architect-routed"
+    origin: mission-66-W1W2
+    surfaced_at: Director-engaging-engineer-session-direct-2026-04-29
+    status: open
+    closure_mechanism: |
+      Surfaced 2026-04-29T~08:20Z UTC during mission-66 W1+W2 atomic execution.
+      Pattern observed live:
+
+      1. Director put greg's session in auto-mode-OFF at ~07:48Z; greg switched
+         to "ask Director when ambiguous" harness-directive discipline
+      2. Architect surfaced cadence options to Director in architect-session;
+         Director responded with "approved. proceed" + "for now - proceed with
+         mission. approved" in architect-session
+      3. Greg waited for Director-direct in greg-session (didn't see Director's
+         response in architect-session); treated architect-relayed ratification
+         with extra confirm-loop
+      4. Required Director engaging greg-session directly with explicit durable
+         directive: "work with Lily and surface any requests or concerns through
+         her — they are driving this mission" — both sides saved as memory
+         entries (architect-side: feedback_architect_drives_mission_not_director.md)
+
+      Mission-lifecycle.md RACI exists implicitly but didn't surface at
+      engineer-runtime decision moments. The "ask Director when ambiguous"
+      harness directive's default routing is Director-direct rather than
+      architect-routed; mission-lifecycle RACI must be CODIFIED + MECHANISED
+      to override the harness default at runtime.
+
+      Director-ratified closure path (2026-04-29T~08:25Z UTC): **option (B)**
+      methodology-doc + CLAUDE.md directive (proven pattern from calibration
+      ledger discipline / commit message policy precedent):
+
+      1. **methodology-doc fold** at `docs/methodology/mission-lifecycle.md`:
+         new RACI codification subsection making explicit
+         - Architect drives mission; spec+design authority; ambiguity-routing
+           endpoint
+         - Engineer surfaces ambiguity through architect via Hub thread (NOT
+           Director-direct); execution per RACI; bilateral PR review surface
+         - Director engages at gate-points only (Phase 4 review when applicable;
+           Phase 7 Release-gate; escalation surface) — NOT continuous-availability
+      2. **CLAUDE.md directive** (~5 lines; always-loaded behavioral-discipline):
+         "Mission RACI" subsection codifying the same content concisely
+      3. **Memory entries** (already saved both sides 2026-04-29T~08:20Z):
+         architect-side `feedback_architect_drives_mission_not_director.md`;
+         engineer-side equivalent. These reinforce rather than primary surface
+         post-codification.
+
+      Out-of-scope for this calibration (option-C deferral): adapter prompt-
+      template inclusion of RACI in pulse + handshake template content (high-
+      mechanisation; may revisit in future missions per Director note "we may
+      revisit again in other missions").
+
+      Closure target: mission-66 W4 closing audit fold (composes with #48 + #55
+      methodology-doc folds).
+
+      Composes with: #55 (engineer-stop discipline) + #56 (pulse simplification).
+      Together (#55, #56, #57) define the bilateral coordination discipline
+      stack: when-to-stop (#55) + how-pulse-checks (#56) + who-decides-what
+      (#57).
+    cross_refs:
+      - docs/methodology/mission-lifecycle.md
+      - feedback_architect_drives_mission_not_director.md
+    tele_alignment:
+      - tele-2
+      - tele-3
+      - tele-7
+
   - id: 47
     class: methodology
     title: "Edit-time manual lint catches broken-ref violations but misses empty-list violations; round-1 audit IS the substrate-validation surface"
