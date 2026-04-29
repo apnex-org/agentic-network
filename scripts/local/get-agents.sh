@@ -35,23 +35,6 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# --- ARG PARSE ---
-HOST="$DEFAULT_HOST"
-ROLE="$DEFAULT_ROLE"
-OUTPUT_JSON=""
-OUTPUT_LEAN=""
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --host) HOST="$2"; shift 2 ;;
-        --role) ROLE="$2"; shift 2 ;;
-        --json) OUTPUT_JSON="1"; shift ;;
-        --lean) OUTPUT_LEAN="1"; shift ;;
-        --help|-h) usage; exit 0 ;;
-        *) echo -e "${RED}[ERROR]${NC} Unknown arg: $1" >&2; exit 3 ;;
-    esac
-done
-
 # --- USAGE ---
 usage() {
     cat <<USAGE
@@ -76,6 +59,25 @@ Reference: /home/apnex/taceng/table/prism.sh (table-rendering pattern).
 USAGE
 }
 
+# --- ARG PARSE ---
+# (engineer commit 7b: hoisted usage() above arg-parse block to fix pre-7b
+# forward-reference error — `usage: command not found` on `--help` flag.)
+HOST="$DEFAULT_HOST"
+ROLE="$DEFAULT_ROLE"
+OUTPUT_JSON=""
+OUTPUT_LEAN=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --host) HOST="$2"; shift 2 ;;
+        --role) ROLE="$2"; shift 2 ;;
+        --json) OUTPUT_JSON="1"; shift ;;
+        --lean) OUTPUT_LEAN="1"; shift ;;
+        --help|-h) usage; exit 0 ;;
+        *) echo -e "${RED}[ERROR]${NC} Unknown arg: $1" >&2; exit 3 ;;
+    esac
+done
+
 # --- AUTH ---
 ENV_FILE="${HOME}/.config/apnex-agents/${ROLE}.env"
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -90,49 +92,91 @@ if [[ -z "${HUB_TOKEN:-}" ]]; then
     exit 2
 fi
 
-# --- buildTable() — STUB; engineer commit 7b fills per prism.sh pattern ---
-# Reference: /home/apnex/taceng/table/prism.sh:74-99
-# Expected behavior:
-#   1. Heredoc'd jq filter: array-of-objects → headers (uppercased keys) + rows
-#   2. Pipe through `jq -r '.[] | @tsv' | column -t -s $'\t'`
-#   3. Cyan-color first line (header); plain rest
+# --- buildTable() — engineer commit 7b ---
+#
+# Reference: /home/apnex/taceng/table/prism.sh:74-99 (memory:
+# reference_prism_table_pattern.md). Heredoc'd jq filter projects an
+# array-of-objects to a header row (uppercased keys) + value rows;
+# `column -t` aligns the TSV; cyan-color highlights the header line.
 buildTable() {
     local INPUT="${1:-}"
     if [[ -z "$INPUT" || "$INPUT" == "[]" || "$INPUT" == "null" ]]; then return; fi
-    # ENGINEER-7b: implement per prism.sh:74-99 (heredoc'd JQTABLE filter +
-    # column -t pipe + cyan-header coloring loop). Marked STUB until 7b lands.
-    echo -e "${YELLOW}[STUB]${NC} buildTable() not yet implemented (engineer commit 7b)" >&2
-    echo "$INPUT"
+
+    read -r -d '' JQTABLE <<-'CONFIG' || true
+        if type == "array" and (.[0]?) then
+            [(
+                [.[0] | to_entries[] | .key | ascii_upcase]
+            ),(
+                .[] | [to_entries[] | .value]
+            )]
+        elif type == "object" then
+            [[ "KEY", "VALUE" ], (. | to_entries[] | [ .key, .value ])]
+        else . end
+CONFIG
+
+    local HEADER="1"
+    echo "$INPUT" | jq -r "$JQTABLE | .[] | @tsv" 2>/dev/null | column -t -s $'\t' | while read -r LINE; do
+        if [[ -n $HEADER ]]; then
+            echo -e "${CYAN}${LINE}${NC}"
+            HEADER=""
+        else
+            echo "$LINE"
+        fi
+    done
 }
 
-# --- API call — STUB; engineer commit 7b fills /mcp JSON-RPC envelope binding ---
-# Reference: hub/src/hub-networking.ts:681-905 per greg thread-422 round-1 audit
-# Expected envelope:
-#   POST ${HOST}/mcp
-#   Authorization: Bearer ${HUB_TOKEN}
-#   Content-Type: application/json
-#   Body: {"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_agents","arguments":{}}}
-# Response unwraps via jq: .result.content[0].text → JSON-stringified Agent projection
+# --- call_get_agents() — engineer commit 7b ---
+#
+# POSTs JSON-RPC `tools/call get_agents` to ${HOST}/mcp with Bearer auth.
+# Reference: hub/src/hub-networking.ts:681-905 (Hub MCP-over-HTTP path;
+# requireAuth Bearer-token gate per thread-422 round-1 audit Q5 finding).
+#
+# Returns: full JSON-RPC envelope on stdout. Caller (main flow) checks
+# `.error` then unwraps `.result.content[0].text` for projection extraction.
+# On curl failure: emits a synthetic JSON-RPC error envelope so caller's
+# `.error` check fires uniformly.
 call_get_agents() {
-    # ENGINEER-7b: replace with curl + /mcp JSON-RPC POST + auth header.
-    # Marked STUB until 7b lands.
-    echo -e "${YELLOW}[STUB]${NC} call_get_agents() not yet implemented (engineer commit 7b)" >&2
-    echo "[]"
+    local URL="${HOST}/mcp"
+    local BODY='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_agents","arguments":{}}}'
+    local RESPONSE
+    if ! RESPONSE=$(curl -sS -X POST "$URL" \
+        -H "Authorization: Bearer ${HUB_TOKEN}" \
+        -H "Accept: application/json, text/event-stream" \
+        -H "Content-Type: application/json" \
+        -d "$BODY" 2>&1); then
+        # Curl-level failure (network / auth / refused). Wrap as JSON-RPC
+        # error envelope so main flow's `.error` check fires uniformly.
+        printf '{"jsonrpc":"2.0","error":{"code":-32603,"message":"curl failure: %s"}}\n' "$(echo "$RESPONSE" | head -1 | sed 's/"/\\"/g')"
+        return 0
+    fi
+    echo "$RESPONSE"
 }
 
 # --- MAIN ---
 RAW_RESPONSE=$(call_get_agents)
 
-# Check for API errors
+# Check for JSON-RPC errors (envelope-level)
 ERROR=$(echo "$RAW_RESPONSE" | jq -r '.error // empty' 2>/dev/null || echo "")
 if [[ -n "$ERROR" && "$ERROR" != "null" ]]; then
-    echo -e "${RED}[ERROR]${NC} Hub API: $ERROR" >&2
+    ERR_MSG=$(echo "$RAW_RESPONSE" | jq -r '.error.message // .error' 2>/dev/null || echo "$ERROR")
+    echo -e "${RED}[ERROR]${NC} Hub API: ${ERR_MSG}" >&2
     exit 1
 fi
 
 if [[ -n "$OUTPUT_JSON" ]]; then
+    # Raw JSON-RPC envelope output (operator-debug surface).
     echo "$RAW_RESPONSE" | jq .
     exit 0
+fi
+
+# Unwrap JSON-RPC envelope → Agent projection array.
+# Hub get_agents returns: {result:{content:[{type:"text",text:"<JSON-stringified {agents: [...]}>"}]}}
+# Engineer commit 7b unwrap step: .result.content[0].text | fromjson | .agents
+UNWRAPPED=$(echo "$RAW_RESPONSE" | jq -r '.result.content[0].text // "{}"' | jq '.agents // []' 2>/dev/null)
+if [[ -z "$UNWRAPPED" || "$UNWRAPPED" == "null" ]]; then
+    echo -e "${RED}[ERROR]${NC} Failed to unwrap Agent projection from response" >&2
+    echo "Response was: $RAW_RESPONSE" >&2
+    exit 1
 fi
 
 # Pick template
@@ -148,5 +192,5 @@ if [[ ! -f "$TPL_FILE" ]]; then
 fi
 
 # Apply template + render table
-TABLE_DATA=$(echo "$RAW_RESPONSE" | jq -f "$TPL_FILE")
+TABLE_DATA=$(echo "$UNWRAPPED" | jq -f "$TPL_FILE")
 buildTable "$TABLE_DATA"
