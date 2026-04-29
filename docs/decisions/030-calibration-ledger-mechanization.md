@@ -84,6 +84,8 @@ patterns:
     methodology_doc_subsection: <path#anchor>  # optional
 ```
 
+**Origin field convention (bilaterally ratified mission-65 thread-420 Flag #2 architect-call):** `origin` captures **where surfaced** (temporal-fidelity), NOT where formalized. Calibrations surfaced during W3 dogfood get `origin: mission-X-W3` even if formally numbered at W4 audit; calibrations surfaced post-mission-close get `origin: mission-X-W4-followon`. This convention has higher informational value for ledger queries — reading "this calibration originated in W3" tells future readers what discipline-gap-state existed at that mission-lifecycle phase.
+
 ### 3. Cross-link discipline
 
 - Every calibration's `pattern_membership` references existing pattern id
