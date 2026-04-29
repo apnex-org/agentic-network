@@ -824,6 +824,231 @@ calibrations:
     tele_alignment:
       - tele-3
 
+  - id: 48
+    class: methodology
+    title: "Coordinated upgrade discipline — controlled-substrate substrate-introduction class default; partial-upgrade is anti-goal; backward-compat is W1+W2 upgrade-discipline not Design-time architectural commitment"
+    origin: mission-66-W0
+    surfaced_at: Director-Phase-4-review-2026-04-29
+    status: open
+    closure_mechanism: |
+      Director-ratified 2026-04-29 during Phase 4 review of mission-66 Design v0.1+:
+      *"I'm not particularly concerned with backwards compatibility, as long as the
+      final solution is upgraded for all clients/shims/adapters etc."*
+
+      Translated to anti-goal #8: NO partial-upgrade scope; W1+W2 atomic ships ALL
+      consumer upgrades alongside Hub-side substrate changes. When all consumers are
+      within the controlled deployment substrate (no external/uncontrolled consumers),
+      prefer ship-right-solution + atomic-upgrade-all-consumers over warn-then-reject
+      grace-period patterns. Single-PR W1+W2 atomic structurally enforces this — Hub-
+      side change + ALL adapter-side consumer changes go to main together; no interim
+      state where Hub has new contract but adapters don't.
+
+      Closure path (planned-filing W4 closing audit): methodology-doc fold to
+      `docs/methodology/mission-lifecycle.md` substrate-introduction-class default
+      subsection OR new methodology subsection on coordinated-upgrade-discipline.
+      Future substrate-introduction missions inherit by default; Phase 3 mission
+      (vertex-cloudrun engineer-side observability parity) adopts v1 namespace +
+      marker-protocol contracts unchanged at consumer-binding boundary.
+    cross_refs:
+      - docs/designs/m-shim-observability-phase-2-design.md
+      - docs/decisions/031-shim-observability.md
+    tele_alignment:
+      - tele-3
+      - tele-7
+
+  - id: 49
+    class: methodology
+    title: "Structural-anchor-discipline — schema-validate substrate gates land at canonical write-path, NOT only at public-API entry-point"
+    origin: mission-66-W0
+    surfaced_at: thread-422-round-1
+    status: open
+    closure_mechanism: |
+      Engineer round-1 audit on mission-66 Design v0.1+ (thread-422 round-1; greg
+      grep evidence) surfaced: schema-validate at `create_message` MCP entry-point
+      catches LLM-callers but does NOT catch Hub-internal emit paths that call
+      repository write directly (4 sites enumerated: director-notification-helpers +
+      downstream-actors[3 trigger inboxes] + notification-helpers + message-policy).
+
+      MCP-entry-only validation closes LLM-caller bilateral-blind class but persists
+      Hub-internal-emitter bilateral-blind class — exactly the surface Director sees
+      most (trigger-fired notifications). Repository-write-path anchor catches BOTH
+      classes at single canonical substrate gate. Single gate; no enumeration drift;
+      structural closure of bilateral-blind class for ALL emitters (LLM-callers + Hub-
+      internal emitters).
+
+      Sister discipline to #48 (coordinated-upgrade) — composes cleanly:
+      coordinated-upgrade-discipline = WHEN to ship (atomic across consumers);
+      structural-anchor-discipline = WHERE to ship (canonical substrate gate, not
+      surface entry-point).
+
+      Closure path (planned-filing W4 closing audit): methodology-doc fold to
+      `docs/methodology/mission-lifecycle.md` substrate-introduction-class subsection
+      OR dedicated structural-anchor-discipline doc. Future substrate-introduction
+      missions inherit by default.
+
+      Recursive substrate-self-dogfood proof point: this calibration emerged FROM
+      the round-1 audit reviewing the bilateral-blind-class closure path —
+      review-loop-as-calibration-surface pattern application (continues from M65
+      pattern observation).
+    pattern_membership:
+      - review-loop-as-calibration-surface
+    cross_refs:
+      - docs/designs/m-shim-observability-phase-2-design.md
+      - docs/decisions/031-shim-observability.md
+      - feedback_review_loop_calibration_surface.md
+    tele_alignment:
+      - tele-3
+      - tele-6
+      - tele-7
+
+  - id: 50
+    class: substrate
+    title: "Mission-pulse precondition `mission_idle_for_at_least` masks per-agent-idle in bilateral co-execution missions"
+    origin: mission-66-W1W2
+    surfaced_at: Director-flagged-2026-04-29
+    status: open
+    closure_mechanism: |
+      Spec-level defect surfaced during mission-66 W1+W2 atomic execution
+      (2026-04-29T~06:45Z UTC; Director-flagged engineer-idle observation +
+      architect-evaluation in response).
+
+      The pulse precondition `mission_idle_for_at_least` checks MISSION-WIDE idle:
+      one participant's activity SUPPRESSES pulses for ALL participants. Designed for
+      solo-architect missions (mission-65 precedent) where architect-active = mission-
+      active = pulse-suppress made sense.
+
+      Bilateral mission failure mode: architect activity masks engineer-idle;
+      engineer-pulse never fires while architect is active. Mission-66 case:
+      architect grep-report at 06:40Z reset the mission-idle clock; engineer-pulse
+      won't fire until 15min of total mission silence. Engineer-idle goes undetected
+      by pulse mechanism.
+
+      Closure path (out-of-scope this mission per Anti-goal #1; future mission
+      scope): introduce `agent_idle_for_at_least` predicate in
+      `hub/src/policy/preconditions.ts` registry; migrate per-class default pulse
+      templates to use per-agent precondition for bilateral missions. Mission-class
+      taxonomy may also need per-agent-precondition default vs mission-wide default.
+    cross_refs:
+      - docs/methodology/mission-lifecycle.md
+    tele_alignment:
+      - tele-7
+      - tele-2
+
+  - id: 51
+    class: methodology
+    title: "Pulse interval defaults (15min engineer / 30min architect) miscalibrated for L-class bilateral substrate-introduction missions during W1+W2 atomic phase"
+    origin: mission-66-W1W2
+    surfaced_at: Director-flagged-2026-04-29
+    status: open
+    closure_mechanism: |
+      Mission-66 default pulse intervals inherited from mission-65 precedent
+      (engineer 900s + architect 1800s) but mission-66 is L-class bilateral
+      substrate-introduction (mission-65 was M-class doc-only). 15min engineer pulse
+      is too coarse for substrate-introduction class W1+W2 atomic execution where
+      bilateral dispatch → ack → silence pattern surfaces within 2-5min.
+
+      Closure path (post-mission triage scope): per-mission-class + per-wave default
+      intervals codified in `docs/methodology/mission-lifecycle.md` per-class pulse
+      templates (mission-57 W1 lineage). L-class bilateral starts at 5-10min during
+      W1+W2 atomic phase; lengthens to 30min at W3 dogfood phase + 60min at W4
+      closing.
+    cross_refs:
+      - docs/methodology/mission-lifecycle.md
+    tele_alignment:
+      - tele-7
+
+  - id: 52
+    class: substrate
+    title: "Pulse content not phase-aware — uniform across W0/W1+W2/W3/W4 phases doesn't surface phase-specific expected-action signal"
+    origin: mission-66-W1W2
+    surfaced_at: Director-flagged-2026-04-29
+    status: open
+    closure_mechanism: |
+      Mission pulse text is uniform across all mission-lifecycle phases (W0 / W1+W2 /
+      W3 / W4). Engineer-idle during W1+W2 atomic execution dispatch ≠ engineer-idle
+      during W3 dogfood gate ≠ engineer-idle during W4 closing. Current pulse asks
+      "current wave / sub-PR position / bookkeeping" generically; doesn't surface
+      "expected commit ETA" signal during W1+W2 atomic phase.
+
+      Closure path (post-mission triage scope): phase-aware pulse content
+      (template parameterized by current wave). W1+W2 atomic pulse asks for
+      commit-N ETA explicitly; W3 dogfood pulse asks for verification-gate progress;
+      W4 closing pulse asks for closing-audit / retrospective progress.
+    cross_refs:
+      - docs/methodology/mission-lifecycle.md
+    tele_alignment:
+      - tele-7
+      - tele-2
+
+  - id: 53
+    class: substrate
+    title: "No cross-pulse escalation — architect-pulse cannot check engineer-pulse-miss-count + escalate to Director-notification when engineer N pulses behind"
+    origin: mission-66-W1W2
+    surfaced_at: Director-flagged-2026-04-29
+    status: open
+    closure_mechanism: |
+      Mission pulse mechanism has independent per-agent pulses with independent
+      missedThreshold (default 3). Engineer-pulse-miss-count crosses threshold after
+      ~45min for 15min interval (3 missed pulses); too long for substrate-
+      introduction class missions where engineer-idle should surface within ~10min.
+
+      Architect-pulse fires every 30min; could backstop by checking engineer-pulse-
+      miss-count + escalating to Director-notification when engineer N pulses behind
+      (e.g., N=1 for L-class). No cross-pulse coordination logic exists today.
+
+      Closure path (post-mission triage scope): cross-pulse coordination logic in
+      `hub/src/sweepers/pulse-sweeper.ts` (or equivalent). When architect-pulse
+      precondition evaluates, fire-AND-check engineer-pulse-state; emit Director-
+      notification if engineer N pulses behind threshold.
+    cross_refs:
+      - docs/methodology/mission-lifecycle.md
+    tele_alignment:
+      - tele-7
+
+  - id: 54
+    class: methodology
+    title: "Mid-mission engineer-progress-visibility gap during W1+W2 atomic — periodic-pushes pattern surfaces commits but architect/Director lack Hub-side commit-push event"
+    origin: mission-66-W1W2
+    surfaced_at: Director-flagged-2026-04-29
+    status: open
+    closure_mechanism: |
+      Observed during mission-66 W1+W2 atomic execution 2026-04-29T~06:38-06:45Z
+      UTC: engineer (greg) explicitly stated commit-by-commit pacing plan
+      ("Commit 2 is complete. Continuing to commit 3 now unless you redirect.
+      Periodic pushes give the architect early visibility + let me checkpoint.")
+      and pushed commit 2 to shared remote branch. Then between-commit pause without
+      heartbeat to architect/Director.
+
+      Director observed engineer-idle via lack-of-progression visibility; flagged
+      for triage. Architect-side initially framed as "engineer unresponsive" until
+      Director shared engineer's pre-pause plan-statement, reframing to "between-
+      commit pause without heartbeat surface".
+
+      Visibility gap: architect/Director cannot see engineer commit-pushes without
+      active polling (`git fetch` + `git log`). No Hub-side notification on git-
+      event. Engineer's "periodic pushes give architect early visibility" promise
+      relies on architect actively pulling.
+
+      Closure path (post-mission triage scope; intersects with #50-#53):
+      - Composes with pulse-mechanism improvements (#50-#53)
+      - ALSO requires commit-push visibility surface — options:
+        (a) Hub-side webhook integration consuming GitHub push events + emitting
+            architect/Director-routed notifications
+        (b) Architect-pulse extended to git-state-check (last-commit-on-branch +
+            time-since-last-push)
+        (c) Methodology-doc convention: engineer pings thread on each commit-push
+            (thread heartbeat) + architect-pulse content asks for "commits-since-
+            last-architect-checkpoint"
+      - Architect-lean (post-mission triage): composite (a) + (c) — Hub-side
+        webhook for commit-push visibility + methodology-doc convention for
+        thread-heartbeat-on-push as defensive layer
+    cross_refs:
+      - docs/methodology/mission-lifecycle.md
+      - docs/methodology/multi-agent-pr-workflow.md
+    tele_alignment:
+      - tele-2
+      - tele-7
+
   - id: 47
     class: methodology
     title: "Edit-time manual lint catches broken-ref violations but misses empty-list violations; round-1 audit IS the substrate-validation surface"
