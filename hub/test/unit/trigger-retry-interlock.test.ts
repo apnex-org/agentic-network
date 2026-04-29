@@ -39,7 +39,7 @@ describe("retryFailedTrigger — direct unit", () => {
 
     await retryFailedTrigger(
       trigger,
-      { target: { role: "engineer" }, payload: { missionId: "m-1", transition: "proposed→active" } },
+      { target: { role: "engineer" }, payload: { body: "Mission m-1 retry-test", missionId: "m-1", transition: "proposed→active" } },
       ctx,
       1,
     );
@@ -65,7 +65,7 @@ describe("retryFailedTrigger — direct unit", () => {
 
     await retryFailedTrigger(
       trigger,
-      { target: { role: "engineer" }, payload: { missionId: "m-1", transition: "proposed→active" } },
+      { target: { role: "engineer" }, payload: { body: "Mission m-1 retry-test", missionId: "m-1", transition: "proposed→active" } },
       ctx,
       2,
     );
@@ -87,7 +87,7 @@ describe("retryFailedTrigger — direct unit", () => {
 
     await retryFailedTrigger(
       trigger,
-      { target: { role: "engineer" }, payload: { missionId: "m-1", transition: "proposed→active" } },
+      { target: { role: "engineer" }, payload: { body: "Mission m-1 retry-test", missionId: "m-1", transition: "proposed→active" } },
       ctx,
       4, // > default maxRetries=3
     );
@@ -103,7 +103,7 @@ describe("retryFailedTrigger — direct unit", () => {
 
     await retryFailedTrigger(
       trigger,
-      { target: { role: "engineer" }, payload: { missionId: "m-1", transition: "proposed→active" } },
+      { target: { role: "engineer" }, payload: { body: "Mission m-1 retry-test", missionId: "m-1", transition: "proposed→active" } },
       ctx,
       1,
     );

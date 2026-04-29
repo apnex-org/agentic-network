@@ -55,7 +55,8 @@ describe("MessageRepository.createMessage — CRUD basics", () => {
       kind: "note",
       target: { role: "architect", agentId: "arch-1" },
       delivery: "queued",
-      payload: { foo: "bar", n: 42 },
+      // mission-66 #41: kind=note requires canonical `body: string`.
+      payload: { body: "test note body", foo: "bar", n: 42 },
       intent: "decision_needed",
       semanticIntent: "seek_rigorous_critique",
       converged: false,
@@ -64,7 +65,7 @@ describe("MessageRepository.createMessage — CRUD basics", () => {
     expect(m.kind).toBe("note");
     expect(m.target).toEqual({ role: "architect", agentId: "arch-1" });
     expect(m.delivery).toBe("queued");
-    expect(m.payload).toEqual({ foo: "bar", n: 42 });
+    expect(m.payload).toEqual({ body: "test note body", foo: "bar", n: 42 });
     expect(m.intent).toBe("decision_needed");
     expect(m.semanticIntent).toBe("seek_rigorous_critique");
     expect(m.converged).toBe(false);

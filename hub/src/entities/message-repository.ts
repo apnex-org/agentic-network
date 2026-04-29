@@ -50,6 +50,7 @@ import {
   messagePath,
   threadIndexPath,
 } from "./message.js";
+import { assertValidNotePayload } from "../policy/note-schema.js";
 
 const MAX_SEQ_RETRIES = 100;
 const PRIMARY_NAMESPACE = "messages/";
@@ -174,6 +175,18 @@ export class MessageRepository implements IMessageStore {
   }
 
   async createMessage(input: CreateMessageInput): Promise<Message> {
+    // mission-66 commit 5 (#41 STRUCTURAL ANCHOR): schema-validate dispatched
+    // at the canonical repository write-path. Reject-mode default canonical
+    // per Director ratification 2026-04-29 (no warn-grace; Calibration #48
+    // coordinated-upgrade discipline). Catches BOTH `create_message` MCP-entry
+    // callers AND Hub-internal emitters (director-notification-helpers +
+    // triggers.ts trigger-mediated emissions) at the same substrate gate.
+    // Defective Hub-internal emitter throws synchronously (correct
+    // invincibility-class behavior; no silent degradation per #41 origin).
+    if (input.kind === "note") {
+      assertValidNotePayload(input.payload);
+    }
+
     // Idempotency hook: if migrationSourceId is set and a Message with
     // that source-pointer already exists, return it without writing.
     if (input.migrationSourceId) {

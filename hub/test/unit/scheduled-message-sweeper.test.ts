@@ -62,7 +62,8 @@ const baseScheduledInput = {
   authorAgentId: "hub",
   target: null,
   delivery: "scheduled" as const,
-  payload: { reason: "test" },
+  // mission-66 #41: canonical kind=note requires `body: string`.
+  payload: { body: "scheduled test note", reason: "test" },
 };
 
 describe("ScheduledMessageSweeper.sweep — fire-at-time", () => {

@@ -75,6 +75,11 @@ export async function emitDirectorNotification(
   messageStore: IMessageStore,
   opts: DirectorNotificationEmitOptions,
 ): Promise<Message> {
+  // mission-66 commit 5 (#41 STRUCTURAL ANCHOR): canonical kind=note schema
+  // requires `body: string`. Compose body from existing structured fields
+  // per architect-ratified composition table (thread-428 round 3). Optional
+  // typed metadata (severity/source/sourceRef/title/details) preserved as
+  // ride-along context per ADR-031 §6.1 in-namespace permissive evolution.
   return messageStore.createMessage({
     kind: "note",
     authorRole: "system",
@@ -82,6 +87,7 @@ export async function emitDirectorNotification(
     target: { role: "director" },
     delivery: "push-immediate",
     payload: {
+      body: `[${opts.severity}] ${opts.title}: ${opts.details}`,
       severity: opts.severity,
       source: opts.source,
       sourceRef: opts.sourceRef ?? null,
