@@ -108,6 +108,24 @@ Standard RACI semantics: **R**esponsible (does the work) / **A**ccountable (fina
 - **Bypass cases**: Survey bypass per `idea-survey.md` §8 still preserves RACI; spawned-Idea linkage MANDATORY for traceability.
 - **First-canonical-execution missions** may have higher Director engagement (active-collaborator mode per §5.2); does not violate RACI as long as architect holds the gate on routine mechanics per §5.1 categorised-concerns table.
 
+### §1.5.1 Engineer-runtime decision-moment routing (calibration #57 codification)
+
+**Architect drives mission; engineer surfaces ambiguity through architect, NOT Director-direct.** Director engages at **gate-points only** — Phase 4 review (when applicable; non-standard cadence per mission-class), Phase 7 Release-gate, and explicit escalation surfaces.
+
+**Decision-routing rules at engineer-runtime:**
+- **Engineer encounters ambiguity → surface via Hub thread to architect.** Architect ratifies cadence/scope/decision OR escalates to Director on engineer's behalf.
+- **Engineer-side autonomous-stop** is anti-pattern UNLESS thread-engaged with architect on a surfaced action (per Calibration #55 engineer-stop discipline). Silent between-commit pauses without thread-comms are not allowed.
+- **Director-direct engagement from engineer is anti-pattern.** Engineer's harness-directive default ("ask Director when ambiguous") routes to architect via Hub thread, NOT Director-direct chat-session.
+
+**Memory-persisted feedback enforces this at runtime:**
+- `feedback_architect_drives_mission_not_director.md` — architect-drives discipline; engineer surfaces through architect
+
+**Forward-discipline:** when Director surfaces a directive in architect-session, architect relays to engineer via Hub thread; engineer treats architect-relayed Director directive AS Director directive (no extra confirm-loop required when source is explicitly cited). When Director engages engineer-session directly, engineer saves as durable memory feedback for future runtime decision moments.
+
+**Mission-class signature:** L-class bilateral substrate-introduction missions have higher decision-moment-density during W1+W2 atomic execution; thread-heartbeat-on-push convention (per Calibration #54 closure-path option (c)) keeps architect/engineer/Director observability surfaces aligned without violating routing rules.
+
+**Calibration #57 origin** (mission-66 W1+W2; 2026-04-29): live observation of routing-rule failure mode — engineer in auto-mode-OFF + "ask Director when ambiguous" defaulted to Director-direct routing; architect-relayed Director directive triggered extra confirm-loop; required Director engaging engineer-session directly with explicit durable directive. Codified here per Director-ratified option-(B) closure path (methodology-doc + CLAUDE.md directive).
+
 ---
 
 ## §2 Survey phase (Idea → Design transition)
@@ -151,6 +169,43 @@ Per mission-56 retrospective §5.4.1; mission entity gains optional `missionClas
 3. **Strategic-review prioritization** — Director-paced triage uses class to balance mission portfolio (avoid stacking 3 structural-inflection missions in series)
 
 `(unset)/legacy missionClass` = NO automatic pulses (per §4 backward-compat row).
+
+### §3.1 Substrate-introduction class default disciplines (calibrations #48 + #49 codification)
+
+For substrate-introduction class missions (and substrate-introduction sub-class for structural-inflection missions), two sister disciplines apply by default:
+
+#### §3.1.1 Coordinated upgrade discipline (calibration #48)
+
+**NO partial-upgrade scope across consumers.** When all consumers of a substrate change are within the controlled deployment substrate (no external/uncontrolled consumers), prefer **ship-right-solution + atomic-upgrade-all-consumers** over warn-then-reject grace-period patterns. W1+W2 atomic ships ALL consumer upgrades alongside Hub-side substrate changes.
+
+**Rationale:** backward-compat-as-feature-flag (env-var-gated warn-mode for grace period) is anti-pattern when the consumer pool is fully owned. The coordinated-upgrade discipline preserves architectural coherence while shipping the right contract; a partial-upgrade-with-warn-mode-flag preserves the legacy pattern in production indefinitely.
+
+**Operationalization:** anti-goal #8 in mission Design v1.0 templates locks this discipline. Single-PR W1+W2 atomic structurally enforces this — Hub-side change + ALL adapter-side consumer changes go to main together; no interim state where Hub has new contract but adapters don't.
+
+**Director-ratified** 2026-04-29 mission-66 Phase 4 review: *"I'm not particularly concerned with backwards compatibility, as long as the final solution is upgraded for all clients/shims/adapters etc."* The "as long as upgraded" is the active constraint.
+
+**Out-of-scope (deferred to per-mission Design):** when consumer pool extends beyond controlled-substrate (external/uncontrolled consumers), coordinated upgrade discipline does not apply directly — per-mission Design ratifies partial-upgrade-with-deprecation OR API-versioning approach.
+
+#### §3.1.2 Structural-anchor-discipline (calibration #49; sister to #48)
+
+**Schema-validate substrate gates land at the canonical write-path, NOT only at the public-API entry-point.** Hub-internal emit paths bypass MCP-entry validation; only repository-write-path anchor closes bilateral-blind class for ALL emitters under coordinated-upgrade discipline.
+
+**Compose with #48:**
+- Coordinated-upgrade-discipline = **WHEN** to ship (atomic across consumers)
+- Structural-anchor-discipline = **WHERE** to ship (canonical substrate gate, not surface entry-point)
+
+**Rationale:** MCP-entry-only schema-validate catches LLM-callers but persists Hub-internal-emitter bilateral-blind class — exactly the surface Director sees most (trigger-fired notifications). Repository-write-path anchor catches BOTH classes at single canonical substrate gate; single gate; no enumeration drift; structural closure of bilateral-blind class for ALL emitters.
+
+**Operationalization at engineer-runtime:**
+1. Audit caller-pool for the substrate change (architect-domain SPEC-level enumeration; engineer surfaces grep-evidence)
+2. Identify the canonical write-path (NOT MCP/HTTP entry-point); validate-dispatch lands there
+3. LLM-caller failure mode: error nack via MCP-entry layer (validation error propagates back through stack)
+4. Hub-internal-emitter failure mode: throw / log-and-skip at the canonical write-path (correct invincibility-class behavior — defective emitter loudly fails, not silently degrades)
+5. ALL emit-sites ship canonical-payload corrections in same W1+W2 atomic per #48 coordinated-upgrade-discipline
+
+**Calibration #49 origin** (mission-66 W1+W2; greg thread-422 round-1 audit Q8 STRUCTURAL ANCHOR fold; 2026-04-29): #41 closure path moved from `create_message` MCP entry-point → canonical repository write-path (`messageRepository.createMessage`); 4 Hub-internal emitter sites (director-notification-helpers + 3 trigger-mediated downstream-actors) updated atomically.
+
+**Pattern membership:** `review-loop-as-calibration-surface` — structural-anchor-discipline emerged FROM the round-1 audit reviewing the bilateral-blind-class closure path (recursive substrate-self-dogfood proof point continues from M65).
 
 ---
 

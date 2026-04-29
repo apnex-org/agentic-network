@@ -1,9 +1,10 @@
 # ADR-031 — Shim observability is a formal versioned event taxonomy with canonical naming + stability commitments + deprecation policy
 
-**Status:** SCAFFOLD — drafted at mission-66 candidate (M-Shim-Observability-Phase-2) Phase 5+6 W0 bundle 2026-04-29T06:25Z UTC; bilateral architect+engineer ratification pending at W4 closing wave (mission-63 ADR-028 + mission-64 ADR-029 + mission-65 ADR-030 RATIFIED precedent).
-**Mission:** mission-66 candidate (M-Shim-Observability-Phase-2; idea-220 Phase 2)
-**Date drafted:** 2026-04-29T06:25Z UTC
-**Authors:** lily / architect (scaffold); bilateral ratify pending W4 with greg / engineer
+**Status:** **RATIFIED** — bilateral architect+engineer ratification at mission-66 W4 closing wave 2026-04-29T~09:10Z UTC (post-PR #135 admin-merge; thread-430 round-2 converged; thread-431 round-2 W3 dogfood option-(a) ratified).
+**Mission:** mission-66 (M-Shim-Observability-Phase-2; idea-220 Phase 2)
+**Date drafted:** 2026-04-29T06:25Z UTC (SCAFFOLD)
+**Date ratified:** 2026-04-29T~09:10Z UTC (RATIFIED at W4 closing)
+**Authors:** lily / architect (drafted + ratified); greg / engineer (round-1 audit thread-422; W1+W2 PR audit thread-430; W3 dogfood thread-431; bilateral ratify)
 
 ---
 
@@ -11,10 +12,10 @@
 
 | Phase | State | PR | Notes |
 |---|---|---|---|
-| Scaffold | SCAFFOLD (this commit; W0 bundle PR) | TBD W0 PR | ADR number assignment + initial decision framing + sealed companions list |
-| W1+W2 atomic | (no change; substrate fixes + observability formalization + CLI script ship; ADR text stable) | TBD W1+W2 PR | 7-commit bilateral co-execution per Q5/RACI; coordinated-upgrade anchor per-commit per anti-goal #8 |
-| W3 dogfood gate | (no change; 7 verification gates exercise schema + Skill + observability + consumer-upgrade) | — | observation-only architect-bilateral with engineer |
-| W4 closing | **RATIFIED** + #48 #49 calibrations filed | TBD W4 PR | Final text incorporates W3 evidence + any in-flight refinements |
+| Scaffold | SCAFFOLD | #134 (W0 bundle) | ADR number assignment + initial decision framing |
+| W1+W2 atomic | (no change; ADR text stable) | #135 | 16 commits per R8 mitigation; bilateral co-execution per Q5/RACI; coordinated-upgrade anchor per-commit per anti-goal #8; admin-merged at `2f66da5` |
+| W3 dogfood gate | (no change; verification-only) | — | Option-(a) lightweight verification ratified at thread-431; engineer-W3 fills 7 gate STUBs in `scripts/test/m-shim-observability-phase-2-w3-dogfood-gates.sh`; folds into W4 closing PR |
+| W4 closing | **RATIFIED** | TBD this PR | idea-survey.md fixup-N/A + #48 + #49 + #57 methodology-doc folds + #21/#26/#40/#41 status flips + Phase 10 retrospective + closing audit + W4-origin filings via `docs/calibrations.yaml` |
 
 ---
 

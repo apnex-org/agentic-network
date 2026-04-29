@@ -370,12 +370,22 @@ calibrations:
     title: "Engineer Agent-record read-surface gap"
     origin: mission-62-W4
     surfaced_at: thread-395
-    status: open
+    status: closed-structurally
     closure_mechanism: |
       W4 dogfood: get_agents not surfaced in engineer's MCP catalog — engineer
       read-surface limited to lean projection (list_available_peers) without full Agent
       records. Architect side has it; engineer side does not — asymmetric coverage of
       new substrate. Scoped to idea-220 for symmetric coverage.
+
+      Closed structurally by mission-66 W1+W2 commit 3 (`7180397`; PR #135 admin-merged
+      at `2f66da5` 2026-04-29T~09:04Z UTC). Engineer source-check confirmed Hub
+      `get_agents` already `[Any]`-callable per `hub/src/policy/session-policy.ts:684`
+      + router.ts:120 RBAC bypass — closure was engineer-adapter dispatcher inclusion
+      + cognitive-layer authority-check + e2e integration test (4 unit tests at
+      `hub/test/unit/mission-66-w1w2-get-agents-engineer.test.ts`). No Hub-side change
+      required (per Design v1.0 §2.1.1 conditional clause). Symmetric self-introspection
+      semantics for read-only [Any]-callable shape.
+    closure_pr: 135
     cross_refs:
       - idea-220
       - docs/audits/m-agent-entity-revisit-w4-validation.md
@@ -461,7 +471,7 @@ calibrations:
     title: "Silent thread_message body truncation marker missing"
     origin: mission-63-W4
     surfaced_at: thread-403-round1
-    status: open
+    status: closed-structurally
     closure_mechanism: |
       Surfaced empirically at W4 substrate-self-dogfood test #5 (thread-403 round-1,
       2026-04-28T05:05Z UTC). thread_message body renders inline (improvement from
@@ -474,9 +484,19 @@ calibrations:
       (a) Hub embeds marker token at truncation boundary;
       (b) Hub adds <channel> attribute truncated="true" fullBytes="<n>";
       (c) marker-protocol design at idea-220 Phase 2.
-      Low-pri marker-spec recommendation included as forward-pointer in mission-63 W5
-      PR #120 Pass 10 §"thread_message truncation marker"; design + implementation
-      deferred to idea-220 Phase 2.
+
+      Closed structurally by mission-66 W1+W2 commit 6 (`d321d7e`; PR #135 admin-merged
+      at `2f66da5`) per architect-lean (b) `<channel>` attribute approach. Hub
+      envelope-builder at thread-policy.ts adds `truncated="true"` + `fullBytes="<n>"`
+      attributes when body byte-length exceeds threshold (200 chars constant).
+      Adapter render-template-registry consumes attributes + renders body + marker
+      suffix `[…<N> bytes truncated; query thread for full content]` per Design v1.0
+      §2.1.2. Both architect-side AND engineer-side adapter render-templates upgraded
+      atomically (single `@apnex/network-adapter` SDK package; coordinated upgrade
+      automatic per anti-goal #8). 6 thread_message-marker unit tests pass-clean.
+      Vertex-cloudrun adapter (Phase 3 mission) adopts marker-protocol at Phase 3 with
+      stable v1 contract.
+    closure_pr: 135
     cross_refs:
       - idea-220
       - docs/audits/m-wire-entity-convergence-w4-validation.md
@@ -675,11 +695,10 @@ calibrations:
     title: "Composite shim observability + projection-fidelity gaps (FileBackedLogger fd / advisoryTag projection / version-source-of-truth divergence / stale pid)"
     origin: mission-64-W3
     surfaced_at: thread-410-round-4
-    status: open
+    status: closed-structurally
     closure_mechanism: |
-      OPEN — fold to idea-220 Phase 2. Greg-surfaced incidentally during thread-410
-      Step 6 verification post-Director-coord-restart-2; non-blocking on mission close.
-      Composite of:
+      Greg-surfaced incidentally during thread-410 Step 6 verification post-Director-
+      coord-restart-2; non-blocking on mission-64 close. Composite of:
       (a) FileBackedLogger fds not open on fresh shim post-restart (lazy-fd-open
           dependency on routed events);
       (b) get_engineer_status advisoryTags missing adapterVersion projection (only
@@ -688,8 +707,16 @@ calibrations:
           artifact (package.json:0.1.4 ≠ .claude-plugin/plugin.json:1.0.0 ≠
           clientMetadata.proxyVersion:1.2.0); + stale pid in projection across restarts.
       Defeats version-stamp-as-staleness-detector promise (calibration #25 closure
-      verification surface) in practice; structural closure is shim observability
-      formalization + Hub-side schema audit + version-source-of-truth consolidation.
+      verification surface) in practice.
+
+      Closed structurally by mission-66 W1+W2 commit 2 (`da9be03`; PR #135 admin-merged
+      at `2f66da5`). Hub projection audit ratified at Phase 4 covering 5 surfaces
+      (`get_agents` + `agent_state_changed` SSE + `list_available_peers` + handshake
+      response + `get_engineer_status`); `claim_session` deferred to Phase 3 mission.
+      version-source-of-truth consolidation at advisoryTags.adapterVersion derivation
+      from package.json; FileBackedLogger fd lifecycle eager-open on shim startup;
+      pid projection refresh on register/handshake.
+    closure_pr: 135
     cross_refs:
       - reference_idea_219_220_post_mission_62.md
       - reference_shim_observability.md
@@ -701,16 +728,37 @@ calibrations:
     title: "kind=note payload-rendering expects flat-body shape; structured payload silently degrades to '(empty note body)' (bilateral-blind)"
     origin: mission-64-W4-followon
     surfaced_at: thread-412-post-mortem
-    status: open
+    status: closed-structurally
     closure_mechanism: |
-      OPEN — fold to idea-220 Phase 2; cleanup PR #130 captures formally via §2c.X
-      anti-pattern + named-pattern fold in multi-agent-pr-workflow.md. Architect-lean
-      closure path = option (b) schema-validate at create_message entry-point so caller
-      gets immediate feedback on render-incompatible payload. Closes the bilateral-blind
-      class at the input boundary by surfacing render-incompatible payloads to
-      architect-side caller via Hub error response, breaking the amplification loop's
-      component (4) no-round-trip-detection.
-    closure_pr: 130
+      Architect-lean closure path b = schema-validate at create_message entry-point;
+      cleanup PR #130 captured formally via §2c.X anti-pattern + named-pattern fold
+      in multi-agent-pr-workflow.md.
+
+      Closed structurally (DUAL-SURFACE) by mission-66 W1+W2 per **STRUCTURAL ANCHOR**
+      fold (engineer round-1 audit Q8 thread-422 round-1; greg grep evidence surfaced
+      4 Hub-internal emit paths bypassing MCP entry-point):
+      - Hub-internal pool (engineer commit 5 `8193061`): schema-validate moved from
+        `create_message` MCP entry-point → canonical repository write-path
+        (`messageRepository.createMessage`). 4 Hub-internal emit sites updated with
+        canonical-payload corrections (director-notification-helpers.ts +
+        triggers.ts mission_activated/mission_completed/review_submitted) per
+        architect-ratified canonical shape `{body: string (required), ...optional
+        metadata}` (thread-428 round 3). Reject-mode default canonical (per Director
+        ratification + anti-goal #8 coordinated upgrade); throws
+        NoteSchemaValidationError on invalid. 19 unit tests pass.
+      - LLM-caller pool (architect commit 5b-final `51129da`): prompt-template at
+        `packages/network-adapter/src/prompt-format.ts:201,224` replaced TBD markers
+        with concrete canonical-payload-shape reference (`kind=note with payload
+        {body: "<your status text>"}`); LLM-generated tool calls produce schema-
+        conforming payloads. Combined with Hub-side reject-mode at write-path,
+        closes bilateral-blind class structurally for ALL emitters (LLM-callers +
+        Hub-internal emitters).
+
+      Closure operationalized **structural-anchor-discipline** (calibration #49 sister)
+      — schema-validate substrate gates land at canonical write-path NOT only at
+      public-API entry-point. PR #135 admin-merged at `2f66da5` 2026-04-29T~09:04Z
+      UTC; 1046 hub tests pass-clean.
+    closure_pr: 135
     pattern_membership:
       - methodology-bypass-becomes-substrate-defect-amplification-loop
     cross_refs:
@@ -829,7 +877,8 @@ calibrations:
     title: "Coordinated upgrade discipline — controlled-substrate substrate-introduction class default; partial-upgrade is anti-goal; backward-compat is W1+W2 upgrade-discipline not Design-time architectural commitment"
     origin: mission-66-W0
     surfaced_at: Director-Phase-4-review-2026-04-29
-    status: open
+    status: closed-folded
+    closure_pr: 136
     closure_mechanism: |
       Director-ratified 2026-04-29 during Phase 4 review of mission-66 Design v0.1+:
       *"I'm not particularly concerned with backwards compatibility, as long as the
@@ -843,13 +892,14 @@ calibrations:
       side change + ALL adapter-side consumer changes go to main together; no interim
       state where Hub has new contract but adapters don't.
 
-      Closure path (planned-filing W4 closing audit): methodology-doc fold to
-      `docs/methodology/mission-lifecycle.md` substrate-introduction-class default
-      subsection OR new methodology subsection on coordinated-upgrade-discipline.
-      Future substrate-introduction missions inherit by default; Phase 3 mission
-      (vertex-cloudrun engineer-side observability parity) adopts v1 namespace +
-      marker-protocol contracts unchanged at consumer-binding boundary.
+      Closed-folded by mission-66 W4 closing wave fold to
+      `docs/methodology/mission-lifecycle.md` §3.1.1 (Coordinated upgrade discipline
+      subsection under §3 Mission-class taxonomy substrate-introduction class default
+      disciplines). Future substrate-introduction missions inherit by default;
+      Phase 3 mission (vertex-cloudrun engineer-side observability parity) adopts
+      v1 namespace + marker-protocol contracts unchanged at consumer-binding boundary.
     cross_refs:
+      - docs/methodology/mission-lifecycle.md
       - docs/designs/m-shim-observability-phase-2-design.md
       - docs/decisions/031-shim-observability.md
     tele_alignment:
@@ -861,7 +911,8 @@ calibrations:
     title: "Structural-anchor-discipline — schema-validate substrate gates land at canonical write-path, NOT only at public-API entry-point"
     origin: mission-66-W0
     surfaced_at: thread-422-round-1
-    status: open
+    status: closed-folded
+    closure_pr: 136
     closure_mechanism: |
       Engineer round-1 audit on mission-66 Design v0.1+ (thread-422 round-1; greg
       grep evidence) surfaced: schema-validate at `create_message` MCP entry-point
@@ -881,10 +932,12 @@ calibrations:
       structural-anchor-discipline = WHERE to ship (canonical substrate gate, not
       surface entry-point).
 
-      Closure path (planned-filing W4 closing audit): methodology-doc fold to
-      `docs/methodology/mission-lifecycle.md` substrate-introduction-class subsection
-      OR dedicated structural-anchor-discipline doc. Future substrate-introduction
-      missions inherit by default.
+      Closed-folded by mission-66 W4 closing wave fold to
+      `docs/methodology/mission-lifecycle.md` §3.1.2 (Structural-anchor-discipline
+      subsection; sister to §3.1.1 coordinated-upgrade-discipline). Compose-disciplines
+      framing: when-to-ship (#48 atomic across consumers) + where-to-ship (#49
+      canonical substrate gate) jointly define substrate-introduction class default.
+      Future substrate-introduction missions inherit by default.
 
       Recursive substrate-self-dogfood proof point: this calibration emerged FROM
       the round-1 audit reviewing the bilateral-blind-class closure path —
@@ -893,6 +946,7 @@ calibrations:
     pattern_membership:
       - review-loop-as-calibration-surface
     cross_refs:
+      - docs/methodology/mission-lifecycle.md
       - docs/designs/m-shim-observability-phase-2-design.md
       - docs/decisions/031-shim-observability.md
       - feedback_review_loop_calibration_surface.md
@@ -1134,7 +1188,8 @@ calibrations:
     title: "Mission-lifecycle RACI not codified at engineer-runtime decision-moment surfaces — engineer 'ask Director when ambiguous' defaults to Director-direct routing rather than architect-routed"
     origin: mission-66-W1W2
     surfaced_at: Director-engaging-engineer-session-direct-2026-04-29
-    status: open
+    status: closed-folded
+    closure_pr: 136
     closure_mechanism: |
       Surfaced 2026-04-29T~08:20Z UTC during mission-66 W1+W2 atomic execution.
       Pattern observed live:
@@ -1162,16 +1217,13 @@ calibrations:
       methodology-doc + CLAUDE.md directive (proven pattern from calibration
       ledger discipline / commit message policy precedent):
 
-      1. **methodology-doc fold** at `docs/methodology/mission-lifecycle.md`:
-         new RACI codification subsection making explicit
-         - Architect drives mission; spec+design authority; ambiguity-routing
-           endpoint
-         - Engineer surfaces ambiguity through architect via Hub thread (NOT
-           Director-direct); execution per RACI; bilateral PR review surface
-         - Director engages at gate-points only (Phase 4 review when applicable;
-           Phase 7 Release-gate; escalation surface) — NOT continuous-availability
-      2. **CLAUDE.md directive** (~5 lines; always-loaded behavioral-discipline):
-         "Mission RACI" subsection codifying the same content concisely
+      1. **methodology-doc fold** at `docs/methodology/mission-lifecycle.md` §1.5.1
+         (engineer-runtime decision-moment routing; landed this PR) — codifies
+         architect-drives + engineer-surfaces-through-architect + Director-at-
+         gate-points-only routing rules
+      2. **CLAUDE.md "Mission RACI" directive** (5 lines; landed this PR) — always-
+         loaded behavioral-discipline at every session boot; references
+         mission-lifecycle.md §1.5 + §1.5.1 for full matrix + decision-routing rules
       3. **Memory entries** (already saved both sides 2026-04-29T~08:20Z):
          architect-side `feedback_architect_drives_mission_not_director.md`;
          engineer-side equivalent. These reinforce rather than primary surface

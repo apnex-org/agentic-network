@@ -20,6 +20,10 @@ Calibration metadata (id + status + closure-PR + cross-refs) + named architectur
 
 When authoring audits / retrospectives / methodology references that cite calibrations: **query the ledger via the calibration Skill rather than recalling from narrative-doc memory** (Phase 1 surface: `python3 scripts/calibrations/calibrations.py {list,show,status}`; final `/calibration-*` verb names pending idea-121 ratification). Defeats the LLM-state-fidelity drift class (calibration #42 origin; idea-223 mechanization). Read-only at Phase 1; ledger entries are architect-authored (not LLM-autonomous).
 
+## Mission RACI
+
+**Architect drives mission; engineer surfaces ambiguity through architect (NOT Director-direct); Director engages at gate-points only** — Phase 4 review when applicable, Phase 7 Release-gate, escalation surface. Engineer-side autonomous-stop is anti-pattern unless thread-engaged with architect on a surfaced action; silent between-commit pauses without thread-comms violate this discipline. Memory-persisted feedback `feedback_architect_drives_mission_not_director.md` reinforces at runtime. Full RACI matrix + decision-routing rules at `docs/methodology/mission-lifecycle.md` §1.5 + §1.5.1 (calibrations #55 + #57).
+
 ## Companion policies
 
 Other repo-specific conventions live in the methodology docs:
