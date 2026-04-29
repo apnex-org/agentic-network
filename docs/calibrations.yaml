@@ -804,7 +804,7 @@ calibrations:
     title: "Methodology-vs-practice gap on Survey persist-path (idea-survey.md §5 vs canonical docs/surveys/)"
     origin: mission-65-W0
     surfaced_at: Director-Phase-4-review-2026-04-29
-    status: open
+    status: closed-folded
     closure_mechanism: |
       Surfaced during Director Phase 4 review of Design v0.1 (~02:30Z UTC):
       idea-survey.md §5 specified Survey persist-path differently from established
@@ -812,14 +812,53 @@ calibrations:
       docs/surveys/.
 
       R5 risk in Design v0.1+ marked RESOLVED; closure mechanism = methodology-doc
-      fixup of idea-survey.md §5 to read `docs/surveys/<mission>-survey.md`, scheduled
-      for mission-65 W4 closing wave (bundled into closing audit + ADR-030 RATIFIED
-      commit). Pre-W4 status=open; flips to closed-folded post-W4 fixup commit.
+      fixup of idea-survey.md §5 to read `docs/surveys/<mission>-survey.md`,
+      bundled into mission-65 W4 closing wave PR.
+
+      Closed by W4 fixup of `docs/methodology/idea-survey.md` §5 line 96
+      (`docs/designs/<mission>-survey.md` → `docs/surveys/<mission>-survey.md`).
+    closure_pr: 133
     cross_refs:
       - docs/methodology/idea-survey.md
       - docs/designs/m-calibration-codification-design.md
     tele_alignment:
       - tele-3
+
+  - id: 47
+    class: methodology
+    title: "Edit-time manual lint catches broken-ref violations but misses empty-list violations; round-1 audit IS the substrate-validation surface"
+    origin: mission-65-W2
+    surfaced_at: thread-420-round-1
+    status: open
+    closure_mechanism: |
+      Greg-surfaced thread-420 round-1 (2026-04-29T03:56Z UTC) during PR #132
+      W1+W2 round-1 audit: round-1 audit caught a cross-link discipline violation
+      (empty `surfaced_by_calibrations` on `two-sided-convergence-accounting`
+      pattern) that edit-time manual lint missed. The architect's edit-time Python
+      cross-link audit (forward refs + backward refs) verified zero broken refs but
+      did NOT check for empty `surfaced_by_calibrations` lists, which Design v1.0
+      §2.1 schema explicitly says must be non-empty.
+
+      Validates W3 dogfood-gate-as-substrate-validation framing operationally —
+      even at Phase 1 with Skill-side cross-link checking, edit-time lint missed
+      the empty-list violation. Round-1 audit IS the substrate-validation surface
+      for cross-link discipline catches.
+
+      Closure path: Phase 2+ mechanized validate operation closes this class
+      structurally. Out-of-scope this mission per Anti-goal #1 (NO scope creep
+      into Phase 2+ items). Forward-discipline note: Phase 2+ validate must check
+      `surfaced_by_calibrations` non-emptiness per Design §2.1.
+
+      Recursive substrate-self-dogfood proof point: round-1 audit caught the same
+      LLM-state-fidelity drift class the mission is structurally defeating.
+    pattern_membership:
+      - review-loop-as-calibration-surface
+    cross_refs:
+      - docs/designs/m-calibration-codification-design.md
+      - feedback_review_loop_calibration_surface.md
+    tele_alignment:
+      - tele-6
+      - tele-7
 
   - id: 46
     class: methodology
@@ -972,6 +1011,7 @@ patterns:
       - 42
       - 44
       - 46
+      - 47
 
   - id: post-event-narration-aest-utc-discipline
     title: "Post-event narration AEST/UTC date conflation discipline"

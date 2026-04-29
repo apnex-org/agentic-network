@@ -1,20 +1,21 @@
 # ADR-030 — Calibration ledger is first-class versioned repo data; audits + retrospectives + methodology become views over the canonical ledger
 
-**Status:** SCAFFOLD — drafted at mission-65-candidate (M-Calibration-Codification) Phase 5+6 Manifest+Preflight 2026-04-29; bilateral architect+engineer ratification pending at W4 closing wave (mission-63 ADR-028 + mission-64 ADR-029 RATIFIED precedent).
-**Mission:** mission-65 candidate (M-Calibration-Codification; idea-223)
-**Date drafted:** 2026-04-29 ~02:55Z UTC
-**Authors:** lily / architect (scaffold); bilateral ratify pending W4 with greg / engineer
+**Status:** RATIFIED — bilateral architect+engineer ratification at mission-65 W4 closing wave 2026-04-29T04:00Z UTC (post-PR #132 admin-merge; thread-420 round-4 converged).
+**Mission:** mission-65 (M-Calibration-Codification; idea-223)
+**Date drafted:** 2026-04-29T02:55Z UTC (SCAFFOLD)
+**Date ratified:** 2026-04-29T04:00Z UTC (RATIFIED at W4 closing)
+**Authors:** lily / architect (drafted + ratified); greg / engineer (round-1 audit thread-417 + round-1 audit thread-420; bilateral ratify)
 
 ---
 
 ## Status flow
 
-| Phase | State | Target |
-|---|---|---|
-| Scaffold | SCAFFOLD (this commit; W0 bundle PR) | Provides ADR number assignment + initial decision framing |
-| W1+W2 atomic | (no change; schema authoring + seed migration + Skill scaffolding + CLAUDE.md directive ship; ADR text stable) | — |
-| W3 dogfood gate | (no change; 5 verification gates exercise schema + Skill + cross-link discipline + multi-role accessibility + round-trip validation) | — |
-| W4 closing | RATIFIED (bilateral architect+engineer at W4 closing) | Final text incorporates W3 evidence + any in-flight refinements |
+| Phase | State | PR | Notes |
+|---|---|---|---|
+| Scaffold | SCAFFOLD | #131 (W0 bundle) | ADR number assignment + initial decision framing |
+| W1+W2 atomic | (no change) | #132 | Schema authoring + seed migration (M62/M63/M64/M65 batches) + Skill scaffolding + CLAUDE.md directive shipped; ADR text stable |
+| W3 dogfood gate | (no change; verification only) | — | 5 verification gates pre-empted via thread-417 round-1 audit + thread-420 round-1 audit + post-merge sanity confirmation |
+| W4 closing | **RATIFIED** | #133 (this PR) | idea-survey.md §5 fixup (R5 closure / calibration #45) + #47 NEW (greg-surfaced W3 nugget) + ADR ratification + closing audit + Phase 10 retrospective |
 
 ---
 

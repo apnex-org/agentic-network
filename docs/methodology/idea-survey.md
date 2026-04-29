@@ -93,7 +93,7 @@ Round 2 is **architect's choice on question type** — refine deeper, clarify am
 
 ## §5 Output: pre-Design input artifact
 
-Persist as `docs/designs/<mission>-survey.md` (architect-authored; ships bundled with Design v1.0 PR):
+Persist as `docs/surveys/<mission>-survey.md` (architect-authored; ships bundled with Design v1.0 PR):
 
 - All 6 Director picks (Round 1 + Round 2)
 - All 6 architect interpretations (per-question; with tele-mapping + aggregate-context citations)
