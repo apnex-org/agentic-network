@@ -40,6 +40,8 @@ import { hasGetWithToken, StoragePathNotFoundError } from "@apnex/storage-provid
 import type {
   IEngineerRegistry,
   Agent,
+  AgentAdvisoryTags,
+  AgentClientMetadata,
   AgentLabels,
   AgentLivenessState,
   AgentRole,
@@ -192,6 +194,27 @@ function isPeerPresent(a: Agent, nowMs: number): boolean {
 
 type GetWithToken = (path: string) => Promise<{ data: Uint8Array; token: string } | null>;
 
+/**
+ * mission-66 #40 closure: Hub-side canonical projection for advisoryTags.
+ * Derives `adapterVersion` from `clientMetadata.proxyVersion` so the wire
+ * surface has a single source-of-truth (the npm package.json version
+ * stamped into clientMetadata at the shim handshake). Caller-provided
+ * advisoryTags.adapterVersion is preserved if present (defensive — Hub
+ * does not overwrite an explicit value); otherwise derived from
+ * clientMetadata. Returns a fresh object — caller-provided advisoryTags
+ * are never mutated.
+ */
+function deriveAdvisoryTags(
+  incoming: AgentAdvisoryTags | undefined | null,
+  clientMetadata: AgentClientMetadata | undefined | null,
+): AgentAdvisoryTags {
+  const base: AgentAdvisoryTags = { ...(incoming ?? {}) };
+  if (base.adapterVersion === undefined && clientMetadata?.proxyVersion) {
+    base.adapterVersion = clientMetadata.proxyVersion;
+  }
+  return base;
+}
+
 export class AgentRepository implements IEngineerRegistry {
   private readonly sessionRoles = new Map<string, SessionRole>();
   // M18 displacement rate-limit accounting (in-memory; wipes on Hub restart).
@@ -308,6 +331,13 @@ export class AgentRepository implements IEngineerRegistry {
         // First-contact create: NO session bound (claimSession's job).
         const agentIdPrefix = payload.role === "director" ? "director" : "eng";
         const agentId = `${agentIdPrefix}-${shortHash(fingerprint)}`;
+        // mission-66 #40 closure: Hub-side canonical projection derives
+        // advisoryTags.adapterVersion from clientMetadata.proxyVersion.
+        // Single source-of-truth at the Hub; consumers read advisoryTags.
+        const advisoryTagsWithAdapterVersion = deriveAdvisoryTags(
+          payload.advisoryTags,
+          payload.clientMetadata,
+        );
         const agent: Agent = {
           id: agentId,
           fingerprint,
@@ -317,7 +347,7 @@ export class AgentRepository implements IEngineerRegistry {
           sessionEpoch: 0,
           currentSessionId: null,
           clientMetadata: payload.clientMetadata,
-          advisoryTags: payload.advisoryTags ?? {},
+          advisoryTags: advisoryTagsWithAdapterVersion,
           labels: payload.labels ?? {},
           firstSeenAt: now,
           lastSeenAt: now,
@@ -380,10 +410,17 @@ export class AgentRepository implements IEngineerRegistry {
       const priorLabels = agent.labels ?? {};
       const nextLabels = payload.labels ?? priorLabels;
       const labelsChanged = !shallowEqualLabels(priorLabels, nextLabels);
+      // mission-66 #40 closure: derive advisoryTags.adapterVersion from
+      // canonical clientMetadata.proxyVersion on every re-register so
+      // version-source-of-truth tracks the running shim.
+      const refreshedAdvisoryTags = deriveAdvisoryTags(
+        payload.advisoryTags ?? agent.advisoryTags,
+        payload.clientMetadata,
+      );
       const updated: Agent = {
         ...agent,
         clientMetadata: payload.clientMetadata,
-        advisoryTags: payload.advisoryTags ?? agent.advisoryTags ?? {},
+        advisoryTags: refreshedAdvisoryTags,
         labels: nextLabels,
         lastSeenAt: now,
         receiptSla: payload.receiptSla ?? agent.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS,

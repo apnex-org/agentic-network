@@ -154,7 +154,7 @@ describe("list_messages — query primitives", () => {
       authorAgentId: "eng-1",
       target: null,
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
     await messageStore.createMessage({
       kind: "note",
@@ -162,7 +162,7 @@ describe("list_messages — query primitives", () => {
       authorAgentId: "eng-2",
       target: null,
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
 
     const result = await router.handle("list_messages", { authorAgentId: "eng-1" }, ctx);
@@ -182,7 +182,7 @@ describe("list_messages — query primitives", () => {
       authorAgentId: "eng-1",
       target: { role: "architect" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
     await messageStore.createMessage({
       kind: "note",
@@ -190,7 +190,7 @@ describe("list_messages — query primitives", () => {
       authorAgentId: "eng-1",
       target: { role: "architect" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
     // Mission-56 W3.2: ack now requires prior claim (FSM new→received→acked).
     await messageStore.claimMessage(m1.id, "test-agent");
@@ -216,7 +216,7 @@ describe("list_messages — query primitives", () => {
       authorAgentId: "eng-1",
       target: { role: "architect" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
     const m2 = await messageStore.createMessage({
       kind: "note",
@@ -224,7 +224,7 @@ describe("list_messages — query primitives", () => {
       authorAgentId: "eng-1",
       target: { role: "architect" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
 
     const result = await router.handle(
@@ -252,7 +252,7 @@ describe("create_message — authorization axes", () => {
         kind: "note",
         target: null,
         delivery: "push-immediate",
-        payload: { text: "hello" },
+        payload: { body: "test note", text: "hello" },
       },
       ctx,
     );
@@ -372,7 +372,7 @@ describe("create_message — scheduled-delivery validation", () => {
         kind: "note",
         target: null,
         delivery: "scheduled",
-        payload: {},
+        payload: { body: "test note" },
       },
       ctx,
     );
@@ -394,7 +394,7 @@ describe("create_message — scheduled-delivery validation", () => {
         kind: "note",
         target: null,
         delivery: "scheduled",
-        payload: { reason: "test" },
+        payload: { body: "test note", reason: "test" },
         fireAt,
       },
       ctx,
@@ -451,7 +451,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
         kind: "note",
         target: { role: "architect" },
         delivery: "push-immediate",
-        payload: { hello: "world" },
+        payload: { body: "test note", hello: "world" },
       },
       ctx,
     );
@@ -464,7 +464,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
     const dispatched = dispatchCalls[0].data as { message: { id: string; payload: { hello: string } } };
     expect(dispatched.message).toBeTruthy();
     expect(dispatched.message.id).toBeTruthy();
-    expect(dispatched.message.payload).toEqual({ hello: "world" });
+    expect(dispatched.message.payload).toEqual({ body: "test note", hello: "world" });
   });
 
   it("delivery='push-immediate' + target.id → fires with agentId selector", async () => {
@@ -479,7 +479,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
         kind: "note",
         target: { role: "engineer", agentId: "eng-7" },
         delivery: "push-immediate",
-        payload: {},
+        payload: { body: "test note" },
       },
       ctx,
     );
@@ -500,7 +500,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
         kind: "note",
         target: null,
         delivery: "push-immediate",
-        payload: {},
+        payload: { body: "test note" },
       },
       ctx,
     );
@@ -521,7 +521,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
         kind: "note",
         target: { role: "architect" },
         delivery: "queued",
-        payload: {},
+        payload: { body: "test note" },
       },
       ctx,
     );
@@ -541,7 +541,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
         kind: "note",
         target: null,
         delivery: "scheduled",
-        payload: {},
+        payload: { body: "test note" },
         fireAt: new Date(Date.now() + 60_000).toISOString(),
       },
       ctx,
@@ -564,7 +564,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
         kind: "note",
         target: { role: "architect" },
         delivery: "push-immediate",
-        payload: { resilient: true },
+        payload: { body: "test note", resilient: true },
       },
       ctx,
     );
@@ -574,7 +574,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
     expect(body.messageId).toBeTruthy();
     // Message is persisted.
     const persisted = await messageStore.getMessage(body.messageId);
-    expect(persisted?.payload).toEqual({ resilient: true });
+    expect(persisted?.payload).toEqual({ body: "test note", resilient: true });
   });
 });
 
@@ -590,7 +590,7 @@ describe("create_message — payload + metadata propagation", () => {
         kind: "note",
         target: { role: "engineer" },
         delivery: "push-immediate",
-        payload: { foo: "bar", n: 42 },
+        payload: { body: "test note", foo: "bar", n: 42 },
         intent: "decision_needed",
         semanticIntent: "seek_rigorous_critique",
       },
@@ -599,7 +599,7 @@ describe("create_message — payload + metadata propagation", () => {
     expect(result.isError).not.toBe(true);
     const body = JSON.parse((result.content[0] as { text: string }).text);
     const persisted = await messageStore.getMessage(body.messageId);
-    expect(persisted?.payload).toEqual({ foo: "bar", n: 42 });
+    expect(persisted?.payload).toEqual({ body: "test note", foo: "bar", n: 42 });
     expect(persisted?.intent).toBe("decision_needed");
     expect(persisted?.semanticIntent).toBe("seek_rigorous_critique");
     expect(persisted?.target).toEqual({ role: "engineer" });
@@ -620,7 +620,7 @@ describe("claim_message — MCP verb", () => {
       authorAgentId: "arch-1",
       target: { role: "engineer" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
 
     const result = await router.handle("claim_message", { id: m.id }, ctx);
@@ -652,7 +652,7 @@ describe("claim_message — MCP verb", () => {
       authorAgentId: "arch-1",
       target: { role: "engineer" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
 
     // eng-A wins.
@@ -701,7 +701,7 @@ describe("ack_message — MCP verb", () => {
       authorAgentId: "arch-1",
       target: { role: "engineer" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
     await router.handle("claim_message", { id: m.id }, ctx);
 
@@ -725,7 +725,7 @@ describe("ack_message — MCP verb", () => {
       authorAgentId: "arch-1",
       target: { role: "engineer" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
 
     const result = await router.handle("ack_message", { id: m.id }, ctx);
@@ -746,7 +746,7 @@ describe("ack_message — MCP verb", () => {
       authorAgentId: "arch-1",
       target: { role: "engineer" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
     await router.handle("claim_message", { id: m.id }, ctx);
     await router.handle("ack_message", { id: m.id }, ctx);
@@ -790,7 +790,7 @@ describe("ack_message — MCP verb", () => {
       authorAgentId: "arch-1",
       target: { role: "engineer" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
     const m2 = await messageStore.createMessage({
       kind: "note",
@@ -798,7 +798,7 @@ describe("ack_message — MCP verb", () => {
       authorAgentId: "arch-1",
       target: { role: "engineer" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
     await messageStore.createMessage({
       kind: "note",
@@ -806,7 +806,7 @@ describe("ack_message — MCP verb", () => {
       authorAgentId: "arch-1",
       target: { role: "engineer" },
       delivery: "push-immediate",
-      payload: {},
+      payload: { body: "test note" },
     });
     // m1 received-only; m2 received+acked; m3 stays new.
     await router.handle("claim_message", { id: m1.id }, ctx);

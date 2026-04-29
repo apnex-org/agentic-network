@@ -123,6 +123,9 @@ export interface AgentAdvisoryTags {
   // All fields are best-effort, launch-time-only, subject to drift.
   // DO NOT build routing logic on these.
   llmModel?: string;           // e.g., "claude-opus-4-6"
+  // mission-66 #40 closure: adapter version surfaced via advisoryTags
+  // (canonical projection derived Hub-side from clientMetadata.proxyVersion).
+  adapterVersion?: string;     // e.g., "0.1.4" (claude-plugin package.json version)
   [key: string]: unknown;
 }
 

@@ -72,15 +72,28 @@ type RenderTemplate = (data: Record<string, unknown>, cfg: PromptFormatConfig) =
 function renderThreadMessage(data: Record<string, unknown>, cfg: PromptFormatConfig): string {
   // calibration #20 retire (mission-63 W3): surface the body inline so the
   // LLM has the actual message content, not just the envelope-shell. The
-  // Hub-side dispatch payload pre-truncates to 200 chars (thread-policy.ts);
-  // adapter renders that preview verbatim. Full body still requires get_thread.
+  // Hub-side dispatch payload pre-truncates to THREAD_MESSAGE_PREVIEW_CHARS
+  // chars (thread-policy.ts; mission-66 commit 6 ratified at 200 chars);
+  // adapter renders that preview + truncation marker (mission-66 #26).
+  // Full body still requires get_thread.
+  //
+  // mission-66 commit 6 (#26 marker-protocol; closes calibration #26):
+  // Hub-side envelope-builder surfaces `truncated: true` + `fullBytes: <n>`
+  // on dispatchPayload when body exceeds preview threshold. Adapter
+  // render-template appends marker per Design §2.1.2 architect-lean (b):
+  // `[…<N> bytes truncated; query thread for full content]`.
   const p = cfg.toolPrefix;
   const authorLabel = data.author === "architect" ? "Architect"
     : data.author === "engineer" ? "Engineer peer"
     : "Peer";
   const title = (data.title as string) || (data.threadId as string) || "(unknown)";
   const body = (data.message as string) || "";
-  const bodyLine = body ? `\n\nMessage preview: ${body}` : "";
+  const truncated = data.truncated === true;
+  const fullBytes = typeof data.fullBytes === "number" ? data.fullBytes : undefined;
+  const truncationMarker = truncated && fullBytes !== undefined
+    ? ` […${fullBytes} bytes truncated; query thread for full content]`
+    : "";
+  const bodyLine = body ? `\n\nMessage preview: ${body}${truncationMarker}` : "";
   return (
     `[${authorLabel}] Replied to thread "${title}".${bodyLine} ` +
     `\n\nIt is your turn. Call ${p}get_thread with threadId="${data.threadId}" ` +
@@ -195,10 +208,20 @@ function renderMessageArrived(data: Record<string, unknown>, cfg: PromptFormatCo
     const pMissionId = (payload.missionId as string) || "?";
     const pMessage = (payload.message as string) || "(empty pulse message)";
     const pResponseShape = (payload.responseShape as string) || "short_status";
+    // mission-66 W1+W2 commit 5b-final (architect-portion; canonical shape per
+    // hub/src/policy/note-schema.ts ratified at thread-428 round 3; landed in
+    // commit 5 at 8193061). Canonical kind=note payload shape: { body: string
+    // (REQUIRED, non-empty), ...optional metadata }. Hub-side reject-mode at
+    // canonical repository write-path (messageRepository.createMessage) throws
+    // NoteSchemaValidationError on invalid payload; LLM-callers see error nack
+    // via MCP entry-point — caller-side feedback restores bilateral-blind class
+    // closure (#41 STRUCTURAL ANCHOR). Per anti-goal #8 coordinated-upgrade
+    // discipline + Calibration #48 (Director ratification 2026-04-29).
     return (
       `[Hub] Pulse fired (${payload.pulseKind}) for mission ${pMissionId}. ${pMessage} ` +
       `Respond with shape "${pResponseShape}" via the appropriate channel ` +
-      `(typically ${p}create_message kind=note OR a short status reply on the active coord-thread). ` +
+      `(typically ${p}create_message kind=note with payload {body: "<your status text>"}, ` +
+      `OR a short status reply on the active coord-thread). ` +
       `Message ID: ${msgId}.`
     );
   }
@@ -219,9 +242,12 @@ function renderMessageArrived(data: Record<string, unknown>, cfg: PromptFormatCo
       "(empty note body)";
     const sender = (msg.authorAgentId as string) || "unknown";
     const senderRole = (msg.authorRole as string) || "agent";
+    // mission-66 W1+W2 commit 5b-final (architect-portion; canonical shape per
+    // hub/src/policy/note-schema.ts; see pulse-template comment above for context).
     return (
       `[${senderRole}/${sender}] Note: ${body} ` +
-      `(Message ID: ${msgId}; respond via ${p}create_message kind=note targeting the sender.)`
+      `(Message ID: ${msgId}; respond via ${p}create_message kind=note ` +
+      `with payload {body: "<your reply text>"} targeting the sender.)`
     );
   }
 

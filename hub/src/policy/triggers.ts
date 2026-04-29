@@ -105,9 +105,13 @@ export const TRIGGERS: readonly TransitionTrigger[] = [
     name: "mission_activated",
     emitShape: (entity) => {
       const mission = entity as { id: string; title?: string };
+      // mission-66 commit 5 (#41 STRUCTURAL ANCHOR): canonical kind=note
+      // schema requires `body: string`. Compose body inline per architect-
+      // ratified composition table (thread-428 round 3).
       return {
         target: { role: "engineer" },
         payload: {
+          body: `Mission ${mission.id} activated (proposed → active)`,
           missionId: mission.id,
           title: mission.title,
           transition: "proposed→active",
@@ -129,9 +133,11 @@ export const TRIGGERS: readonly TransitionTrigger[] = [
     name: "mission_completed",
     emitShape: (entity) => {
       const mission = entity as { id: string; title?: string };
+      // mission-66 commit 5 (#41 STRUCTURAL ANCHOR): canonical body composition.
       return {
         target: { role: "director" },
         payload: {
+          body: `Mission ${mission.id} completed`,
           missionId: mission.id,
           title: mission.title,
           transition: "active→completed",
@@ -166,11 +172,15 @@ export const TRIGGERS: readonly TransitionTrigger[] = [
       // to role-only fanout (engineer pool). Director gets a
       // secondary copy via a separate trigger declaration if/when
       // added; W3 keeps it tight to the primary actor.
+      // mission-66 commit 5 (#41 STRUCTURAL ANCHOR): canonical body composition.
       return {
         target: review.reportAuthorAgentId
           ? { role: "engineer", agentId: review.reportAuthorAgentId }
           : { role: "engineer" },
         payload: {
+          body: review.taskId
+            ? `Review ${review.id} submitted for task ${review.taskId}`
+            : `Review ${review.id} submitted`,
           reviewId: review.id,
           taskId: review.taskId,
           decision: review.decision,

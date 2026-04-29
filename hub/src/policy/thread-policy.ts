@@ -38,6 +38,15 @@ import { AUTONOMOUS_STAGED_ACTION_TYPES, checkConvergerAuthority } from "./stage
 import { logShadowInvariantBreach } from "../observability/shadow-invariants.js";
 import { emitDirectorNotification } from "./director-notification-helpers.js";
 
+// mission-66 commit 6 (#26 marker-protocol): canonical preview-truncation
+// threshold for thread_message dispatch payloads. When `message.length`
+// exceeds this constant, dispatch payloads carry `truncated: true` +
+// `fullBytes: <utf8-bytes>` so adapter render-templates append the
+// truncation marker per Design §2.1.2 architect-lean (b) `<channel>`-
+// attribute approach. Phase 2 stable; configurable via env var only if
+// Phase 3 surfaces need (per architect SPEC §2.4 truncation-threshold note).
+const THREAD_MESSAGE_PREVIEW_CHARS = 200;
+
 // ── Routing Mode Validation (ADR-016, INV-TH18 + INV-TH28) ──────────
 /**
  * Enforce routingMode ↔ mode-specific field consistency at thread open.
@@ -221,12 +230,19 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
     openSelector = null;
   }
   if (openSelector) {
+    // mission-66 commit 6 (#26 marker-protocol): when body exceeds preview
+    // threshold, surface `truncated` + `fullBytes` so adapter render-template
+    // appends the truncation marker (`<channel>` attribute on Claude side;
+    // out-of-band metadata per Design §2.1.2 architect-lean (b)).
+    const fullBytes = Buffer.byteLength(message, "utf8");
+    const truncated = message.length > THREAD_MESSAGE_PREVIEW_CHARS;
     const dispatchPayload: Record<string, unknown> = {
       threadId: thread.id,
       title: thread.title,
       author,
-      message: message.substring(0, 200),
+      message: message.substring(0, THREAD_MESSAGE_PREVIEW_CHARS),
       currentTurn: thread.currentTurn,
+      ...(truncated ? { truncated: true, fullBytes } : {}),
     };
     // ADR-017 Phase 1.1: enqueue BEFORE SSE AND carry queueItemId INLINE
     // in the SSE payload. Adapters settle directly from the event without
@@ -559,12 +575,17 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
     // round-trip needed (eliminates the SSE-vs-drain race). For multi-
     // recipient threads (broadcast-coerced-to-unicast, multicast) each
     // recipient gets its own dispatch with its own queueItemId.
+    // mission-66 commit 6 (#26 marker-protocol): truncation marker on reply
+    // dispatch path. Same threshold + attributes as open-time dispatch above.
+    const fullBytesReply = Buffer.byteLength(message, "utf8");
+    const truncatedReply = message.length > THREAD_MESSAGE_PREVIEW_CHARS;
     const basePayload: Record<string, unknown> = {
       threadId: thread.id,
       title: thread.title,
       author,
-      message: message.substring(0, 200),
+      message: message.substring(0, THREAD_MESSAGE_PREVIEW_CHARS),
       currentTurn: thread.currentTurn,
+      ...(truncatedReply ? { truncated: true, fullBytes: fullBytesReply } : {}),
     };
     for (const targetId of otherParticipantIds) {
       const item = await ctx.stores.pendingAction.enqueue({

@@ -47,6 +47,10 @@ describe("emitDirectorNotification", () => {
     expect(m.delivery).toBe("push-immediate");
     expect(m.status).toBe("new");
     expect(m.payload).toEqual({
+      // mission-66 #41 STRUCTURAL ANCHOR: emitDirectorNotification composes
+      // canonical body from severity/title/details per architect-ratified
+      // composition table (thread-428 round 3).
+      body: "[critical] Agent unresponsive: Escalated after 3 deadline misses.",
       severity: "critical",
       source: "queue_item_escalated",
       sourceRef: "pa-123",
@@ -104,7 +108,9 @@ describe("projectMessageToDirectorNotification", () => {
       authorAgentId: "hub",
       target: { role: "director" },
       delivery: "push-immediate",
-      payload: { transition: "active→completed", missionId: "mission-1" },
+      // mission-66 #41: canonical kind=note requires body; non-director-
+      // notification-shape preserved (no severity/source/title/details).
+      payload: { body: "Mission mission-1 completed", transition: "active→completed", missionId: "mission-1" },
     });
     expect(projectMessageToDirectorNotification(other)).toBeNull();
   });
@@ -118,6 +124,7 @@ describe("projectMessageToDirectorNotification", () => {
       target: { role: "engineer" },
       delivery: "push-immediate",
       payload: {
+        body: "[info] t: d",
         severity: "info",
         source: "manual",
         sourceRef: "x",
@@ -221,7 +228,8 @@ describe("listDirectorNotificationViews", () => {
       authorAgentId: "hub",
       target: { role: "director" },
       delivery: "push-immediate",
-      payload: { transition: "active→completed", missionId: "mission-1" },
+      // mission-66 #41: canonical body required for kind=note.
+      payload: { body: "Mission mission-1 completed", transition: "active→completed", missionId: "mission-1" },
     });
     const out = await listDirectorNotificationViews(repo, {});
     expect(out.map((v) => v.id)).toEqual([dn.id]);

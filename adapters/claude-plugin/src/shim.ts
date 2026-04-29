@@ -33,6 +33,8 @@ import {
 import { CognitivePipeline } from "@apnex/cognitive-layer";
 import { readFileSync, existsSync, appendFileSync, statSync, renameSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 import { resolveSourceAttribute, isPulseEvent } from "./source-attribute.js";
 
@@ -107,8 +109,39 @@ const config = loadConfig();
 const WORK_DIR = process.env.WORK_DIR || process.cwd();
 const LOG_FILE = join(WORK_DIR, ".ois", "claude-notifications.log");
 const SHUTDOWN_TIMEOUT_MS = 3000;
-const PROXY_VERSION = "1.2.0";
-const SDK_VERSION = "@apnex/network-adapter@2.1.0";
+
+// mission-66 #40 closure: version-source-of-truth consolidation.
+// PROXY_VERSION reads claude-plugin/package.json; SDK_VERSION reads
+// @apnex/network-adapter/package.json. Pre-mission-66 these were
+// hardcoded ("1.2.0" + "@apnex/network-adapter@2.1.0") and drifted
+// from the npm package.json values (0.1.4 + 0.1.2 respectively).
+// Hub-side canonical projection (agent-repository.ts deriveAdvisoryTags)
+// surfaces these via advisoryTags.adapterVersion to all consumers.
+const __shimDir = dirname(fileURLToPath(import.meta.url));
+const __require = createRequire(import.meta.url);
+
+function readPackageVersion(pkgJsonPath: string, fallback: string): string {
+  try {
+    const raw = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+    return typeof raw.version === "string" ? raw.version : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const CLAUDE_PLUGIN_PKG_VERSION = readPackageVersion(
+  resolve(__shimDir, "..", "package.json"),
+  "unknown",
+);
+const NETWORK_ADAPTER_PKG_VERSION = (() => {
+  try {
+    return readPackageVersion(__require.resolve("@apnex/network-adapter/package.json"), "unknown");
+  } catch {
+    return "unknown";
+  }
+})();
+const PROXY_VERSION = CLAUDE_PLUGIN_PKG_VERSION;
+const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
 
 // OIS_COGNITIVE_BYPASS=1 → pass cognitive=undefined to McpAgentClient.
 // Operator-facing kill-switch for the cognitive pipeline; mcp-agent-client
@@ -162,22 +195,19 @@ function appendText(line: string): void {
   }
 }
 
-// Sensitive field names that MUST be redacted before persisting to the
-// events file. Defensive — current callers don't pass these, but a
-// future field rename could accidentally leak. Redaction is whole-key:
-// any field whose name matches (case-insensitive) is replaced with
-// `<redacted>`. Add new patterns here as the surface evolves.
-const REDACT_KEYS = new Set(["hubtoken", "token", "authorization", "bearer", "apikey", "api_key", "secret", "password"]);
-
-function redactFields(fields: LogFields): LogFields {
-  const out: Record<string, unknown> = {};
-  for (const k of Object.keys(fields)) {
-    out[k] = REDACT_KEYS.has(k.toLowerCase()) ? "<redacted>" : fields[k];
-  }
-  return out as LogFields;
-}
+// mission-66 commit 4: redaction + log-level helpers extracted to
+// `./observability.ts` for unit-test tractability (shim.ts module init
+// has process.exit(1) side effect via loadConfig()).
+import { redactFields, parseLogLevel, shouldEmitLevel, type LogLevel } from "./observability.js";
+const SHIM_LOG_LEVEL: LogLevel = parseLogLevel(process.env.OIS_SHIM_LOG_LEVEL);
 
 function appendEvent(event: string, fields: LogFields, message?: string): void {
+  // mission-66 commit 4: OIS_SHIM_LOG_LEVEL filter (ADR-031 §3). Events
+  // tagged with `fields.level` below the configured threshold are
+  // suppressed (no-op). Events without `level` always emit (default INFO).
+  if (!shouldEmitLevel(fields.level as string | undefined, SHIM_LOG_LEVEL)) {
+    return;
+  }
   const line = JSON.stringify({
     ts: new Date().toISOString(),
     event,
@@ -272,6 +302,16 @@ function pushChannelNotification(
   if (data.taskId) meta.taskId = data.taskId;
   if (data.threadId) meta.threadId = data.threadId;
   if (data.proposalId) meta.proposalId = data.proposalId;
+  // mission-66 commit 6 (#26 marker-protocol; closes calibration #26):
+  // propagate Hub-side truncation flag + full byte-length to `<channel>`
+  // attributes per Design §2.1.2 architect-lean (b) `<channel>`-attribute
+  // approach (out-of-band metadata; render-template-registry in
+  // packages/network-adapter/src/prompt-format.ts consumes). Hub envelope-
+  // builder at thread-policy.ts sets truncated/fullBytes when body exceeds
+  // THREAD_MESSAGE_PREVIEW_CHARS threshold (constant 200 chars; Phase 2
+  // stable per architect SPEC §2.4).
+  if (data.truncated === true) meta.truncated = "true";
+  if (typeof data.fullBytes === "number") meta.fullBytes = String(data.fullBytes);
 
   server
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -306,10 +346,16 @@ function appendPendingActionLog(item: DrainedPendingAction): void {
 let agent: McpAgentClient | null = null;
 let shuttingDown = false;
 
-async function shutdown(): Promise<void> {
+async function shutdown(reason?: "signal_term" | "signal_int" | "internal_error"): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   log("Shutting down...");
+  // mission-66 commit 4: canonical shim.lifecycle.shim_stopping event
+  // per ADR-031 §1 + spec §4.7. Pid + reason (optional enum).
+  appendEvent("shim.lifecycle.shim_stopping", {
+    pid: process.pid,
+    ...(reason ? { reason } : {}),
+  });
   const timeout = setTimeout(() => {
     log("Shutdown timeout — force exit");
     process.exit(1);
@@ -334,14 +380,21 @@ async function main(): Promise<void> {
   log(`Shim text log: ${SHIM_LOG_FILE}`);
   log(`Shim events log: ${SHIM_EVENTS_FILE}`);
   log(`Cognitive: ${COGNITIVE_BYPASS ? "BYPASS (OIS_COGNITIVE_BYPASS=1; legacy passthrough)" : "ON (standard pipeline)"}`);
-  appendEvent("shim.startup", {
+  // mission-66 commit 4: canonical event taxonomy v1 (ADR-031 §1; per
+  // docs/specs/shim-observability-events.md §4.6 shim.lifecycle.shim_started).
+  // Renames Phase 1 ad-hoc `shim.startup` to canonical name; required fields
+  // per §4.6: pid + proxyVersion + nodeVersion. Operational fields
+  // (hubUrl, role, cognitiveBypass, eagerWarmup, sdkVersion) ride along
+  // as optional context — permissive in v1 namespace per §6.1.
+  appendEvent("shim.lifecycle.shim_started", {
     pid: process.pid,
+    proxyVersion: PROXY_VERSION,
+    nodeVersion: process.versions.node,
+    sdkVersion: SDK_VERSION,
     hubUrl: config.hubUrl,
     role: config.role,
     cognitiveBypass: COGNITIVE_BYPASS,
     eagerWarmup: isEagerWarmupEnabled(process.env),
-    proxyVersion: PROXY_VERSION,
-    sdkVersion: SDK_VERSION,
   });
 
   const globalInstanceId = loadOrCreateGlobalInstanceId({ log });
@@ -594,7 +647,7 @@ async function main(): Promise<void> {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       log(`Received ${signal}`);
-      shutdown();
+      shutdown(signal === "SIGINT" ? "signal_int" : "signal_term");
     });
   }
 }
