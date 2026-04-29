@@ -63,6 +63,11 @@
 - Adapter render-template-registry: `thread_message` template extended to read `<channel>` attributes + render `[…<N> bytes truncated; query thread for full content]` suffix when `truncated="true"`
 - Test surface: deliberately-truncated thread_message integration test; verify marker rendered + full byte-count exposed
 
+**Coordinated upgrade scope (per anti-goal #8):**
+- BOTH architect-side AND engineer-side adapter `thread_message` render-templates upgraded in same W1+W2 atomic PR (single `@apnex/network-adapter` SDK package; both adapters consume same render-template-registry; coordinated upgrade automatic via single-package shipment)
+- Vertex-cloudrun adapter (Phase 3 mission) adopts marker-protocol at Phase 3 with stable v1 contract — Hub-side always emits marker; consumers ignore unknown `<channel>` attributes if not yet upgraded (forward-compat preserved at Hub-side)
+- No interim state where Hub emits marker but adapter doesn't render — single-PR W1+W2 atomic ships both
+
 **Risk:** R2 in §5 risk register.
 
 #### §2.1.3 Calibration #40 closure — Hub-side projection audit + version-source-of-truth consolidation (tele-3 sub-scope)
@@ -96,6 +101,12 @@
 - `pid` projection: refresh on Agent register / handshake (per shim-instance lifecycle); never reuse old pid after restart
 - Test surface: schema audit baseline test (run audit pass, assert zero divergences in scoped projections); restart-cycle test (verify pid + advisoryTags + clientMetadata refresh)
 
+**Coordinated upgrade scope (per anti-goal #8):**
+- All Hub projection consumers see new canonical version-source values atomically post-W1+W2 ship: architect adapter + engineer adapter (both consume `get_agents` + `agent_state_changed` SSE + `list_available_peers` from same `@apnex/network-adapter` SDK) + Director CLI script (consumes Hub HTTP read endpoint introduced in §2.3)
+- No version-string-parsing compat layer; consumers receive new values + use directly
+- `clientMetadata.proxyVersion` going from pre-M64 hardcoded `"1.2.0"` to package.json-derived `"0.1.4"` (or whatever current package.json version) is a SEMANTIC change consumers see post-ship; this IS the intended fix
+- No interim state where Hub emits new values but consumers parse old format
+
 **Risk:** R1 in §5 risk register.
 
 #### §2.1.4 Calibration #41 closure — kind=note bilateral-blind defect (tele-2 + tele-6 mechanism; Q6 NOT A)
@@ -108,17 +119,20 @@
 - Hub-side `create_message` MCP tool entry-point applies schema-validation per `kind` value
 - For `kind=note`: validate payload conforms to flat-body schema (whatever the canonical shape is — to be specified by Hub team in `hub/src/policy/note-schema.ts` or similar)
 - On validation failure: return error response to caller (architect-side `create_message` returns nack instead of clean messageId)
-- **Q6 NOT A interpretation:** Director excluded backward-compat as Phase 4 Design risk-register surface — implementation discretion during W1+W2:
-  - Validate-warn-vs-reject mode: engineer's domain (architect-lean default = reject; Hub team picks)
-  - Migration path: any existing kind=note callers using non-flat payload structures break loudly (which IS the point — bilateral-blind class closure requires breaking calls that previously silently degraded). Engineer-side surfaces any callers needing migration during W1+W2 execution
-  - No deprecation grace period (defects don't deserve grace; bilateral-blind class is structural-defect class)
+- **Reject-mode default ratified by Director Phase 4 review 2026-04-29:** no warn-then-reject grace period; bilateral-blind class is structural-defect class; reject-mode is canonical
+- **Coordinated upgrade scope (per anti-goal #8 + Director ratification 2026-04-29):**
+  - ALL `kind=note` callers upgraded to canonical flat-body schema in same W1+W2 atomic PR
+  - Caller pool to enumerate (engineer round-1 audit Q8): primary caller is architect-side LLM via `create_message` (per multi-agent-pr-workflow.md §2c.X anti-pattern fold mission-64 PR #130); engineer-side does not call `create_message` (authority-boundary role-filter); Director-side does not call directly
+  - If any architect-side `kind=note` call sites use non-flat payload, they ship corrected payload alongside Hub-validate commit in W1+W2
+  - No interim state where Hub has reject-mode but architect-side still emits old payload structures
 
 **Scope:**
-- Hub-side: `create_message` entry-point dispatches to per-kind schema-validate function; default reject mode for `kind=note` non-flat payload
+- Hub-side: `create_message` entry-point dispatches to per-kind schema-validate function; reject-mode for `kind=note` non-flat payload
+- Architect-side: any `kind=note` call sites in agentic-network-lily/ + agentic-network-greg/ + canonical-tree adapter shipped in same PR with corrected payload structure (engineer round-1 audit Q8 enumerates caller pool)
 - Test surface: deliberately-malformed kind=note payload integration test; verify caller receives error nack with diagnostic message
-- **Bilateral PR review surface:** engineer audits architect-lean reject-mode default + raises any backward-compat concerns during round-1 audit (if engineer surfaces concern, fold into v0.2)
+- **Bilateral PR review surface:** engineer round-1 audit Q8 confirms ALL `kind=note` callers enumerated + upgraded; coordinated-upgrade discipline structurally enforced via single-PR W1+W2 atomic merge
 
-**Risk:** R3 in §5 risk register (downgraded from Q6 NOT A — implementation discretion during W1+W2).
+**Risk:** R4 in §5 risk register **RESOLVED** by Director ratification 2026-04-29 (coordinated upgrade discipline closes the class).
 
 ### §2.2 Observability formalization
 
@@ -157,6 +171,11 @@
 - Redaction discipline preserved from Phase 1 (token + secret redaction at FileBackedLogger emit boundary)
 - Backward-incompat event-name changes require bumped namespace; in-namespace field additions are permissive (consumers ignore unknown fields)
 - Deprecation policy: `_deprecated: true` field flag for one minor cycle; deprecation announced via event-name suffix
+
+**Forward-consequences:**
+- **Coordinated upgrade pattern is the substrate-introduction class default for controlled-substrate deployments** (per anti-goal #8 + Director ratification 2026-04-29). Future substrate-introduction missions inherit by default — when all consumers are within the controlled deployment substrate (no external/uncontrolled consumers), prefer ship-right-solution + atomic-upgrade-all-consumers over warn-then-reject grace-period patterns
+- Phase 3 mission (vertex-cloudrun engineer-side observability parity) adopts v1 namespace + marker-protocol contracts unchanged at the consumer-binding boundary (forward-compat preserved at Hub-side; consumers bind to stable v1)
+- Future Hub MCP HTTP read endpoints (CLI script consumer + future operator surfaces) bind to the same projection canonical values landed by #40 closure
 
 #### §2.2.4 Tests for redaction + rotation
 
@@ -237,8 +256,9 @@ Per CLAUDE.md `Calibration ledger discipline` (mission-65 ADR-030 substrate): al
 - **#41** kind=note bilateral-blind defect → status: open → closed-structurally; closure_pr (TBD)
 
 **Calibrations LIKELY-NEW at W4 closing audit (anticipated; TBD-W4):**
+- **Methodology-class #48 (planned filing):** "Coordinated upgrade discipline — controlled-substrate substrate-introduction class default; partial-upgrade is anti-goal; backward-compat is W1+W2 upgrade-discipline not Design-time commitment" — surfaced via Director Phase 4 review 2026-04-29; closure_path = methodology-doc fold to `docs/methodology/mission-lifecycle.md` OR new methodology subsection on substrate-introduction-class upgrade discipline (TBD W4 closing fold); tele_alignment [tele-3, tele-7]; this is the load-bearing M6-origin methodology nugget worth durable codification beyond just M6 ADR
 - Methodology-class: Q5-RACI-redundancy nugget (idea-survey.md Q5-class questions defer to mission-lifecycle.md RACI rather than re-asking; surfaced via Director Q5 note)
-- Methodology/substrate-class: any backward-compat regression surfaced during W1+W2 (#41 validate-mode side-effects; #40 audit-scope-bounded missed sister-divergences)
+- Methodology/substrate-class: any partial-upgrade misses surfaced during W1+W2 (#41 caller-pool incompletely enumerated; #40 audit-scope-bounded missed sister-divergences); these would be substrate-class
 - Methodology-class: review-loop-as-calibration-surface pattern application (substantive PR review surfaces typically yield 1-3 review-loop calibrations)
 
 ---
@@ -252,6 +272,7 @@ Per CLAUDE.md `Calibration ledger discipline` (mission-65 ADR-030 substrate): al
 5. **NO fidelity-first framing in Phase 4 Design** (Q1=B,C primaries; tele-7 + tele-2 front-and-center; tele-3 fixes ride-along as substrate-of-the-mission)
 6. **NO Phase 4 Design treatment of #41 schema-validate backward-compat** (Q6 NOT A; runtime/implementation discretion during W1+W2; engineer-domain)
 7. **NO retroactive earlier-mission migration** of unaddressed open calibrations (#10 #15 #23 #30 #32 #44 #47 stay open; M6 closes ONLY #21 #26 #40 #41 plus M6-origin calibrations surfaced)
+8. **NO partial-upgrade scope across consumers** — W1+W2 atomic ships ALL consumer upgrades alongside Hub-side substrate changes. Backward-compat is upgrade-discipline at W1+W2, not Design-time architectural commitment. (Per Director ratification 2026-04-29: controlled-substrate substrate-introduction class default — when all consumers are within the controlled deployment substrate, prefer ship-right-solution + atomic-upgrade-all-consumers over warn-then-reject grace-period patterns. Single-PR W1+W2 atomic structurally enforces this — Hub-side change + ALL adapter-side consumer changes go to main together; no interim state where Hub has new contract but adapters don't.)
 
 ---
 
@@ -264,7 +285,7 @@ Per CLAUDE.md `Calibration ledger discipline` (mission-65 ADR-030 substrate): al
 | **R1 (Q6=B)** | Hub-side projection-fidelity audit-scope decision (narrow vs comprehensive) — narrow path leaves sister-divergences unsurfaced; comprehensive path expands W1+W2 scope mid-mission | Medium | Architect-lean **(β) Comprehensive but bounded by methodology** — audit-scope-boundary list ratified at Phase 4 Design (Hub `get_agents` + `agent_state_changed` SSE + `list_available_peers` + handshake response); audit produces inventory + fix plan + test surface; in-arc-sizing-recalibration discipline (calibration #30) applies if audit surfaces > expected scope |
 | **R2 (Q6=C)** | thread_message marker-protocol design (token-in-body vs channel-attribute vs out-of-band) — choice cascades to render-template-registry update + envelope-builder + consumer compat | Low-Medium | Architect-lean **(b) `<channel>` attribute `truncated="true" fullBytes="<n>"`** — out-of-band metadata consistent with envelope-as-projection-of-state principle; render-template-registry update is well-scoped; preserves body content; Phase 4 Design ratifies (b) pending bilateral concur |
 | **R3 (Q6=D)** | Shim observability event-taxonomy boundary — namespace stability commitments + backward-compat semantics for existing event consumers (vertex-cloudrun deferred but vertex-cloudrun event consumers exist) | Medium | ADR-031 commits to v1 namespace + permissive in-namespace evolution (consumers ignore unknown fields) + namespace bump for backward-incompat; deprecation policy (_deprecated: true field flag for one minor cycle) preserves vertex-cloudrun engineer-side parity Phase 3 mission consumer surface |
-| **R4 (Q6 NOT A — defer to implementation)** | #41 schema-validate at create_message backward-compat — existing `kind=note` callers using non-flat payload break (architect-lean default = reject) | Low | Q6 NOT A signals Director sees this as implementation discretion not Design-time decision; architect-lean default = reject (bilateral-blind class is structural-defect class; no grace period); engineer-side surfaces backward-compat concerns at round-1 audit IF any callers materially affected |
+| **R4** ~~Q6 NOT A — backward-compat~~ | ~~#41 schema-validate at create_message backward-compat~~ | **RESOLVED** | **Resolved 2026-04-29 by Director Phase 4 review:** coordinated upgrade discipline (anti-goal #8) closes the class structurally — ALL `kind=note` callers upgraded to canonical schema in same W1+W2 atomic; no warn-mode grace period; reject-mode default canonical. Engineer round-1 audit Q8 verifies caller-pool enumeration. |
 | **R5** | W1+W2 atomic execution scope blowup — 7-commit substrate-introduction with multiple substrate seams may surface fix-forward chain similar to mission-64 W1+W2-fix-N pattern | Medium | Calibration #34 W3-dogfood-gate-collapse-into-W1+W2-fix retry pattern applies; bilateral PR review surface tighter at substrate-introduction class signature; in-arc-sizing-recalibration discipline (calibration #30) applies if W1+W2 reveals > expected scope mid-execution |
 | **R6** | CLI script Hub MCP HTTP endpoint naming TBD at Phase 4 (engineer-domain) | Low | Engineer round-1 audit ratifies endpoint naming; default placeholder `/api/agents` with `--host` override flag; if Hub MCP doesn't yet have HTTP read surface, W1+W2 includes adding it (Hub team scope) |
 
@@ -287,6 +308,7 @@ Per CLAUDE.md `Calibration ledger discipline` (mission-65 ADR-030 substrate): al
    - (7) CLI script + templates — bilateral co-author
    Sensible? Reorder if dependencies favor different sequence.
 7. **Sizing baseline** — L mid-scope (~3-4 eng-days) holds, or surface tension during round-1 audit?
+8. **Consumer-pool enumeration (per anti-goal #8 coordinated upgrade discipline)** — have we enumerated ALL `kind=note` callers (architect-side LLM call sites in lily/greg/canonical-tree adapter), ALL `thread_message` render-template instances (both adapters via single SDK package), ALL Hub projection consumers (architect adapter + engineer adapter + Director CLI script — via #40 audit-scoped surfaces)? Anything we might miss in the controlled-substrate scope? **Load-bearing audit ask under coordinated-upgrade discipline — partial-upgrade is anti-goal #8.**
 
 ---
 
@@ -320,6 +342,7 @@ W3 dogfood-gate scope: **observation-only** (Survey §14 ratified; substrate-int
 4. **#41 caller-side feedback** — deliberately-malformed kind=note payload surfaces error nack with diagnostic message at architect-side caller
 5. **CLI script render** — `scripts/local/get-agents.sh` runs from Director-side terminal; renders verbose Agent projection table; `--json` flag bypasses cleanly; auth env file source works; `--host` override functional
 6. **Observability formalization** — log-level filter env var honored; redaction/rotation tests pass; event-taxonomy doc accurately reflects emitted events
+7. **Consumer-upgrade verification (per anti-goal #8 coordinated upgrade discipline)** — verify ALL consumers see new contracts post-W1+W2: architect-side adapter renders new `<channel>` marker on truncated thread_message + handles new `clientMetadata.proxyVersion` derived value + emits canonical-schema kind=note payloads; engineer-side adapter mirrors; Director CLI script consumes new Hub HTTP read endpoint values + renders correctly. Spot-check each consumer; confirm no consumer using old contracts.
 
 **Hold-on-failure:** any verification gate failure halts W3; investigate via direct event-log inspection + adapter log; fix-forward; re-run dogfood. **W3 dogfood-gate collapse-into-W1+W2-fix retry pattern** (Calibration #34) applies.
 
@@ -371,8 +394,17 @@ If GREEN-with-folds, engineer ratifies on round-N thread close → Design v1.0 �
 
 ## §8 Status
 
-- **v0.1** architect-draft (this commit; pre-Director-review per mission-65 cadence precedent: Director Phase 4 review pre-engineer-audit)
-- **v0.1+** architect-revision (post-Director Phase 4 review feedback applied; e.g., 4-item-class folds per mission-65 precedent if Director surfaces concerns)
+- **v0.1** architect-draft (pre-Director-review per mission-65 cadence precedent: Director Phase 4 review pre-engineer-audit)
+- **v0.1+** architect-revision (this commit; Director Phase 4 review 2026-04-29 feedback applied — coordinated upgrade discipline ratified):
+  1. §3 Anti-goal #8 NEW (coordinated upgrade discipline; controlled-substrate substrate-introduction class default)
+  2. §2.1.2 #26 marker-protocol — coordinated upgrade scope line added (both adapters upgraded in same atomic; vertex-cloudrun adopts at Phase 3 with stable v1)
+  3. §2.1.3 #40 Hub projection — coordinated upgrade scope line added (all consumers see new canonical version-source values atomically)
+  4. §2.1.4 #41 schema-validate — reject-mode default ratified by Director; coordinated upgrade scope line added (caller-pool enumerated; no warn-mode grace period); R4 RESOLVED
+  5. §2.2.3 ADR-031 forward-consequences extended (coordinated upgrade pattern as substrate-introduction class default; Phase 3 mission inherits)
+  6. §4.1 R4 RESOLVED entry replaces R4 risk register
+  7. §4.2 Engineer audit Q8 added (consumer-pool enumeration ask; load-bearing under coordinated-upgrade discipline)
+  8. §5.3 W3 dogfood Gate-7 added (consumer-upgrade verification)
+  9. §2.5 Calibration ledger discipline — #48 NEW planned filing for coordinated upgrade discipline methodology nugget at W4 closing audit
 - **v0.2** architect-revision (post-engineer round-1 audit folds; structural concerns absorbed)
 - **v1.0** BILATERAL RATIFIED (engineer + architect ratify on round-1 audit thread close; Manifest+Preflight bundle PR follows)
 - **W0 bundle PR** opens (Survey + Design v1.0 + ADR-031 SCAFFOLD + Preflight artifact)
