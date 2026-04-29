@@ -443,6 +443,21 @@ When a PR renames or restructures persisted entity fields (Agent, Mission, Threa
 
 Mission-61 Layer-3 lesson (canonical-tree shim binary stale; `file:` refs don't survive `npm pack`) is closed structurally — the published tarball ships pre-built `dist/` + bundled `install.sh` + `marketplace.json` (calibration #36 NEW: source format requires `"./"` trailing-slash, NOT `"."` or `".."` — see `feedback_marketplace_source_format.md`).
 
+### §F — Shim observability dirty-state regeneration (mission-66 W1+W2; calibration #40 closure surface)
+
+**When applicable:** PRs that touch `packages/network-adapter/src/observability/**` OR `adapters/claude-plugin/src/shim.ts` event-emit paths.
+
+**Recipe:**
+```
+npm test --workspace=packages/network-adapter -- observability/
+```
+
+This regenerates redaction + rotation test fixtures. Commit fixture diffs alongside the source-change PR; failure to regenerate fixtures masks redaction discipline regressions OR rotation-boundary drift.
+
+**Discipline:** when adapter-side observability emit-paths change, fixtures MUST be regenerated in same PR. Not a manual recipe to remember; CI workflow surfaces fixture-drift if regeneration missed.
+
+**Companion:** ADR-031 (shim observability event taxonomy v1) + `docs/specs/shim-observability-events.md` (canonical event taxonomy spec).
+
 ### Coordination — who runs Pass 10
 
 | Pass 10 step | Driven by | When |
@@ -451,6 +466,7 @@ Mission-61 Layer-3 lesson (canonical-tree shim binary stale; `file:` refs don't 
 | §B SDK rebuild + tgz repack | Whoever merged the SDK-source PR | Immediately after merge; before notifying peer agents to restart |
 | §C State-migration | Operator (Director typically) | Hub-stopped between rebuild + adapter restart |
 | §D claude-plugin reinstall | Each agent in their own session, OR operator coordinating restart | After §A/§B/§C complete |
+| §F Shim observability fixture regeneration | Whoever ships the observability-source PR (engineer typically; mission-66 W1+W2 commit 4) | In same PR as source change; CI verifies fixtures-current |
 
 **Bilateral coordination pattern:** for missions where both agents need to restart (substrate-affecting PRs), open a coordination thread with sub-status updates per Pass 10 step (`§A complete; §B complete; §C complete; safe to restart`). Director-coordinated full-restart cycle is the typical recovery posture.
 
