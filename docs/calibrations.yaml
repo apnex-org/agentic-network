@@ -1049,6 +1049,86 @@ calibrations:
       - tele-2
       - tele-7
 
+  - id: 55
+    class: methodology
+    title: "Engineer-side autonomous-stop ONLY-when-thread-engaged-with-architect on a surfaced action; silent cadence-checkpoint is anti-pattern"
+    origin: mission-66-W1W2
+    surfaced_at: Director-directive-2026-04-29
+    status: open
+    closure_mechanism: |
+      Director directive 2026-04-29 ~07:50Z UTC during mission-66 W1+W2 atomic
+      execution: *"I don't want engineer to ever stop unless it has surfaced an
+      action and is in thread communication with the architect"*.
+
+      Context: engineer (greg) executed deliberate-cadence-checkpoint after commit
+      2 push (auto-mode-on at the time; L mid-scope ~3-4 eng-day mission framing
+      warranting per-commit checkpoints) WITHOUT surfacing the checkpoint as a
+      thread event. Architect/Director observed "engineer-idle" pattern for ~70min;
+      Director surfaced + corrected via thread-425.
+
+      Discipline ratified: engineer-side autonomous-stop is valid ONLY when
+      simultaneously: (i) action surfaced (e.g., commit-N-complete + cadence-
+      decision-needed) AND (ii) thread communication with architect open
+      (engineer awaits architect-side response on the surfaced action). Silent
+      between-commit pauses without thread-comms are anti-pattern.
+
+      Thread-heartbeat-on-progression discipline: engineer pings active coord-
+      thread on each commit-push (per #54 closure-path option (c)) AND on each
+      cadence-decision-point.
+
+      Closure path (post-mission triage scope; intersects with #54):
+      methodology-doc fold to `docs/methodology/multi-agent-pr-workflow.md` OR
+      new methodology subsection on engineer-cadence-discipline + thread-
+      heartbeat-discipline. Future bilateral missions inherit by default.
+
+      Composes with: #50 (per-agent-pulse predicate; would catch silent stops);
+      #54 (engineer-progress-visibility gap); coordinated-upgrade-discipline #48
+      (atomic-shipment-as-norm rather than checkpoint-pause-as-norm).
+    cross_refs:
+      - docs/methodology/multi-agent-pr-workflow.md
+      - docs/methodology/mission-lifecycle.md
+    tele_alignment:
+      - tele-2
+      - tele-7
+
+  - id: 56
+    class: methodology
+    title: "Mission pulse defaults too complex; simpler + shorter + unified-across-participants preferred"
+    origin: mission-66-W1W2
+    surfaced_at: Director-directive-2026-04-29
+    status: open
+    closure_mechanism: |
+      Director directive 2026-04-29 ~07:50Z UTC: *"let's adjust mission pulses to
+      be simpler - shorter defaults for all participants"*.
+
+      Current state (mission-66 entity): engineer 900s (15min) / architect 1800s
+      (30min) / missedThreshold=3 / precondition=mission_idle_for_at_least;
+      asymmetric per-role + complex precondition logic.
+
+      Director-preferred shape: simpler + shorter + unified-across-participants
+      (likely converging architect/engineer to same shorter interval; reducing
+      precondition-config complexity).
+
+      Closure path (post-mission triage scope; composes with #50, #51, #52, #53):
+      pulse-config simplification at `docs/methodology/mission-lifecycle.md`
+      per-mission-class default templates. Likely shape:
+      - Unified interval across architect + engineer (e.g., 600s = 10min, OR even
+        shorter for L-class active phases)
+      - Single precondition (per-agent idle, not mission-wide; closes #50)
+      - Mission-class taxonomy reduces to 1-2 templates (active-phase / closing-
+        phase) rather than per-class permutations
+      - missedThreshold reduced (e.g., 1-2 misses = escalation; closes #53)
+
+      Composes with: #50 (mission-wide-vs-per-agent precondition); #51 (interval
+      miscalibration); #52 (phase-awareness gap); #53 (cross-pulse escalation
+      gap). #56 unifies these under "simplification" framing — preserving
+      individual closure paths but with consolidation discipline.
+    cross_refs:
+      - docs/methodology/mission-lifecycle.md
+    tele_alignment:
+      - tele-7
+      - tele-2
+
   - id: 47
     class: methodology
     title: "Edit-time manual lint catches broken-ref violations but misses empty-list violations; round-1 audit IS the substrate-validation surface"
