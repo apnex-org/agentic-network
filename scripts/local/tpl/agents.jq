@@ -29,7 +29,11 @@ if type == "array" then
             role: (.role // "?"),
             livenessState: (.livenessState // .status // "?"),
             activityState: (.activityState // "?"),
-            shimPlugin: (.clientMetadata.proxyVersion // "?"),
+            shimPlugin: (
+                ((.clientMetadata.proxyName // "?") | split("/") | last | sub("-plugin$"; ""))
+                + "-"
+                + (.clientMetadata.proxyVersion // "?")
+            ),
             adapter: ((.clientMetadata.sdkVersion // "?") | split("@") | last),
             llmModel: (.advisoryTags.llmModel // "?"),
             pid: (.clientMetadata.pid // "?"),
