@@ -195,20 +195,20 @@ function renderMessageArrived(data: Record<string, unknown>, cfg: PromptFormatCo
     const pMissionId = (payload.missionId as string) || "?";
     const pMessage = (payload.message as string) || "(empty pulse message)";
     const pResponseShape = (payload.responseShape as string) || "short_status";
-    // mission-66 W1+W2 commit 5b (architect-portion; placeholder pending commit 5
-    // canonical schema landing): when commit 5 lands hub/src/policy/note-schema.ts
-    // (or equivalent) defining canonical kind=note payload shape, update this
-    // template to specify the canonical payload structure so LLM-generated tool
-    // calls produce schema-conforming payloads. Reject-mode at canonical write-path
-    // (commit 5 closure of #41 STRUCTURAL ANCHOR) means non-canonical payloads
-    // get error-nack at MCP entry-point — caller-side feedback restores
-    // bilateral-blind class closure for LLM-callers.
-    // TBD: replace "kind=note" reference with explicit canonical-payload-shape
-    // example once commit 5 schema lands.
+    // mission-66 W1+W2 commit 5b-final (architect-portion; canonical shape per
+    // hub/src/policy/note-schema.ts ratified at thread-428 round 3; landed in
+    // commit 5 at 8193061). Canonical kind=note payload shape: { body: string
+    // (REQUIRED, non-empty), ...optional metadata }. Hub-side reject-mode at
+    // canonical repository write-path (messageRepository.createMessage) throws
+    // NoteSchemaValidationError on invalid payload; LLM-callers see error nack
+    // via MCP entry-point — caller-side feedback restores bilateral-blind class
+    // closure (#41 STRUCTURAL ANCHOR). Per anti-goal #8 coordinated-upgrade
+    // discipline + Calibration #48 (Director ratification 2026-04-29).
     return (
       `[Hub] Pulse fired (${payload.pulseKind}) for mission ${pMissionId}. ${pMessage} ` +
       `Respond with shape "${pResponseShape}" via the appropriate channel ` +
-      `(typically ${p}create_message kind=note OR a short status reply on the active coord-thread). ` +
+      `(typically ${p}create_message kind=note with payload {body: "<your status text>"}, ` +
+      `OR a short status reply on the active coord-thread). ` +
       `Message ID: ${msgId}.`
     );
   }
@@ -229,13 +229,12 @@ function renderMessageArrived(data: Record<string, unknown>, cfg: PromptFormatCo
       "(empty note body)";
     const sender = (msg.authorAgentId as string) || "unknown";
     const senderRole = (msg.authorRole as string) || "agent";
-    // mission-66 W1+W2 commit 5b (architect-portion; placeholder pending commit 5
-    // canonical schema landing): see pulse-template comment above for context.
-    // TBD: replace "kind=note" reference with explicit canonical-payload-shape
-    // example once commit 5 schema lands.
+    // mission-66 W1+W2 commit 5b-final (architect-portion; canonical shape per
+    // hub/src/policy/note-schema.ts; see pulse-template comment above for context).
     return (
       `[${senderRole}/${sender}] Note: ${body} ` +
-      `(Message ID: ${msgId}; respond via ${p}create_message kind=note targeting the sender.)`
+      `(Message ID: ${msgId}; respond via ${p}create_message kind=note ` +
+      `with payload {body: "<your reply text>"} targeting the sender.)`
     );
   }
 
