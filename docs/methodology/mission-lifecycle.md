@@ -68,7 +68,7 @@ Architect surfaces mode-pick options to Director at mission-close moment; Direct
 | Phase | Binding artifact | Stored at |
 |---|---|---|
 | 2 Idea | Idea entity | Hub |
-| 3 Survey | Pre-Design intent envelope (in dispatch thread + Survey artifact doc) | thread + `docs/designs/<mission>-survey.md` |
+| 3 Survey | Pre-Design intent envelope (in dispatch thread + Survey artifact doc) | thread + `docs/surveys/<mission>-survey.md` |
 | 4 Design | Design v1.0 doc (ratified) | `docs/designs/<mission>-design.md` |
 | 5 Manifest | Mission entity + plannedTasks[] | Hub |
 | 6 Preflight | Preflight artifact + verdict | `docs/missions/<mission>-preflight.md` |

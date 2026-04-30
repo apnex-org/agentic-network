@@ -2,7 +2,7 @@
 
 **Status:** Ratified v1.0 (architect-authored 2026-04-26; bilateral Design phase per new Survey-then-Design methodology; v0.1→v1.0 incorporates engineer round-2 audit refinements per thread-349 round 6)
 **Source idea:** idea-206 M-Mission-Pulse-Primitive (Hub-stored)
-**Pre-Design input:** `docs/designs/m-mission-pulse-primitive-survey.md` (6-anchor Director-intent envelope)
+**Pre-Design input:** `docs/surveys/m-mission-pulse-primitive-survey.md` (6-anchor Director-intent envelope)
 **Mission class:** Coordination-primitive shipment (per mission-56 retrospective §5.4.1 taxonomy)
 **Sizing:** L lower edge (~6-8 eng-days; W0-W4 decomposition; sub-2-week)
 
@@ -590,7 +590,7 @@ Per engineer round-1 sizing (bilateral Q7 concur):
 
 ### Cross-references
 
-- **Survey artifact:** `docs/designs/m-mission-pulse-primitive-survey.md` (ships in same PR as this Design doc)
+- **Survey artifact:** `docs/surveys/m-mission-pulse-primitive-survey.md` (ships in same PR as this Design doc)
 - **idea-206 entity:** Hub-stored; concept-level scope this Design realizes
 - **`project_mission_pulse_primitive.md`** (architect concept memo): pre-Survey concept memo; superseded by Survey + this Design (memory should be updated to reference this Design as canonical)
 - **`feedback_director_intent_survey_process.md`**: methodology doctrine; first-class binding; this is the first canonical execution

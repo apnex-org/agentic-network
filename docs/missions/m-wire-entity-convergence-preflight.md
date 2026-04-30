@@ -34,7 +34,7 @@
 |---|---|---|---|
 | A1 | Brief at `mission.documentRef = docs/designs/m-wire-entity-convergence-design.md` exists | ✅ PASS | Committed at `3fe1676` on branch `agent-lily/m-wire-entity-convergence-design`; will land on main in W0 bundle PR |
 | A2 | Local branch in sync with origin (no unpushed commits affecting brief) | ✅ PASS | Branch `agent-lily/m-wire-entity-convergence-design` from origin/main; latest commit `3fe1676` pushed; no unpushed local edits |
-| A3 | Cross-referenced artifacts exist | ✅ PASS | Survey at `docs/designs/m-wire-entity-convergence-survey.md` (this PR; commit `9900640`); ADR-028 scaffold pending in this PR; methodology docs `mission-lifecycle.md` v1.2 + `idea-survey.md` v1.0 + `multi-agent-pr-workflow.md` v1.0 + `mission-preflight.md` v1.0 (extant); mission-62 Survey + Design + W4 audit + W5 closing audit (extant — architectural-precedent references valid) |
+| A3 | Cross-referenced artifacts exist | ✅ PASS | Survey at `docs/surveys/m-wire-entity-convergence-survey.md` (this PR; commit `9900640`); ADR-028 scaffold pending in this PR; methodology docs `mission-lifecycle.md` v1.2 + `idea-survey.md` v1.0 + `multi-agent-pr-workflow.md` v1.0 + `mission-preflight.md` v1.0 (extant); mission-62 Survey + Design + W4 audit + W5 closing audit (extant — architectural-precedent references valid) |
 
 ---
 
@@ -126,7 +126,7 @@ These will be captured in W5 closing audit; surfaced here for Director context:
 
 ## Cross-references
 
-- **Survey artifact:** `docs/designs/m-wire-entity-convergence-survey.md` (W0 bundle PR)
+- **Survey artifact:** `docs/surveys/m-wire-entity-convergence-survey.md` (W0 bundle PR)
 - **Design v1.0:** `docs/designs/m-wire-entity-convergence-design.md` (W0 bundle PR)
 - **ADR-028 scaffold:** `docs/decisions/028-canonical-agent-envelope.md` (W0 bundle PR; final ratify at W5)
 - **Methodology:** `docs/methodology/mission-preflight.md` v1.0; `docs/methodology/idea-survey.md` v1.0; `docs/methodology/multi-agent-pr-workflow.md` v1.0; `docs/methodology/mission-lifecycle.md` v1.2

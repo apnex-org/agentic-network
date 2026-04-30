@@ -1,7 +1,7 @@
 # M-Agent-Entity-Revisit — Design v0.2 (round-2; pending v1.0 ratification)
 
 **Status:** v0.2 (architect+engineer round-1 audit incorporated; round-2 architect ratifications applied; awaiting engineer round-2 ratify for v1.0 promotion)
-**Anchor:** `docs/designs/m-agent-entity-revisit-survey.md` (Director picks Q1: B+C+D, Q2: B+C+D, Q3: A+D, Q4: A+D+naming-refinement, Q5: B, Q6: A+B+C+D)
+**Anchor:** `docs/surveys/m-agent-entity-revisit-survey.md` (Director picks Q1: B+C+D, Q2: B+C+D, Q3: A+D, Q4: A+D+naming-refinement, Q5: B, Q6: A+B+C+D)
 **Idea:** idea-215 (subsumes idea-106; cascade-includes today's note-kind primitive surface gap Idea)
 **Mission class:** structural-inflection with substrate-cleanup-waves nested
 **Sizing:** L baseline (~1.5-2 engineer-weeks); XL escalation realistic if vertex-cloudrun HTTP-transport gets wired this mission
@@ -507,7 +507,7 @@ All ~O(1) projections off existing entity stores; no new state.
 
 ## §13 Cross-references
 
-- **Survey**: `docs/designs/m-agent-entity-revisit-survey.md`
+- **Survey**: `docs/surveys/m-agent-entity-revisit-survey.md`
 - **Idea**: idea-215 (parent); idea-106 (subsumed); idea-216 (or similar; today's note-kind primitive surface gap)
 - **Composes-with**: idea-109 (429 backpressure / `signal_quota_blocked` FSM state); idea-121 (API v2.0 tool-surface; downstream consumer of this entity model)
 - **Closes**: bug-35 (presence projection)
