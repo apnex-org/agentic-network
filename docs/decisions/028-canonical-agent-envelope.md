@@ -123,7 +123,7 @@ Schema-rename PRs that touch persisted entity fields MUST include a migration sc
 - **Mission:** mission-63 M-Wire-Entity-Convergence (this ADR ratifies at W5)
 - **Source idea:** idea-219 (Wire-Entity Envelope Convergence + Schema-Migration Discipline; incorporated → mission-63)
 - **Design v1.0:** `docs/designs/m-wire-entity-convergence-design.md` (canonical envelope + render registry + migration script + Pass 10 ext detail)
-- **Survey envelope:** `docs/designs/m-wire-entity-convergence-survey.md` (Director-ratified composite intent)
+- **Survey envelope:** `docs/surveys/m-wire-entity-convergence-survey.md` (Director-ratified composite intent)
 - **Preflight:** `docs/missions/m-wire-entity-convergence-preflight.md` (verdict GREEN; activation pending Director)
 - **Architectural precedents:** mission-62 (P0 surfaced 5 calibrations covered by this ADR); mission-61 (Layer-3 SDK-tgz-stale lesson + Path A SSE-push); mission-56 (substrate-self-dogfood substrate canonical execution)
 - **Calibrations retired by this ADR:** #17, #18, #19, #20, #22 (per mission-62 W5 closing audit)

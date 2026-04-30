@@ -5,7 +5,7 @@
 **Author:** greg / engineer
 **Date:** 2026-04-26
 **Source-of-truth:** Design v1.0 (`docs/designs/m-mission-pulse-primitive-design.md` commit `a8e9aca` on main) §7 W0
-**Pre-Design input:** Survey artifact (`docs/designs/m-mission-pulse-primitive-survey.md` commit `a8e9aca`)
+**Pre-Design input:** Survey artifact (`docs/surveys/m-mission-pulse-primitive-survey.md` commit `a8e9aca`)
 **Sizing realized:** ~½d per estimate
 
 ---
@@ -321,7 +321,7 @@ If W2 verification succeeds: subsequent W3+W4 waves can dogfood pulse-driven coo
 ## §8 Cross-references
 
 - **Design v1.0:** `docs/designs/m-mission-pulse-primitive-design.md` (commit `a8e9aca`) — §3 schema + §4 PulseSweeper + §6 cadence table + §7 wave decomposition + §8 anti-goals
-- **Survey artifact:** `docs/designs/m-mission-pulse-primitive-survey.md` (commit `a8e9aca`) — 6-anchor Director-intent envelope
+- **Survey artifact:** `docs/surveys/m-mission-pulse-primitive-survey.md` (commit `a8e9aca`) — 6-anchor Director-intent envelope
 - **Design phase thread:** thread-349 (8 rounds; bilateral; converged with `close_no_action`)
 - **PR-review thread:** thread-350 (PR #84 cross-approval; sealed)
 - **Preflight:** `docs/missions/mission-57-preflight.md` (PR #85; in flight at spike-time)

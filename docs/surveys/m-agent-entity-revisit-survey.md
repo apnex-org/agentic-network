@@ -309,4 +309,4 @@ This handling is consistent with the methodology's mediation-invariant (§10 com
 - **Defers-to**: `idea-121` (API v2.0 tool-surface naming)
 - **Closes**: `bug-35` (presence projection)
 - **Architectural-precedent**: `mission-61` (Layer-3 SDK-tgz-stale lesson + Path A SSE-push wiring)
-- **First-canonical-execution**: `docs/designs/m-mission-pulse-primitive-survey.md` (idea-206)
+- **First-canonical-execution**: `docs/surveys/m-mission-pulse-primitive-survey.md` (idea-206)

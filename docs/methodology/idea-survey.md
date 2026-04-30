@@ -239,7 +239,7 @@ The per-question interpretation loop is what differentiates Survey from "pick-li
 - **`feedback_mechanise_declare_all_coordination.md`** (binding tele principle Survey realizes for intent capture)
 - **`reference_idea_to_mission_workflow.md`** (workflow chain extends with Survey step; Concept→Idea→Survey→Design→Manifest→Mission)
 - **idea-206 M-Mission-Pulse-Primitive** — first canonical execution; mission-57 (in flight)
-- **`docs/designs/m-mission-pulse-primitive-survey.md`** — first-canonical-execution Survey artifact (commit `a8e9aca`)
+- **`docs/surveys/m-mission-pulse-primitive-survey.md`** — first-canonical-execution Survey artifact (commit `a8e9aca`)
 
 ---
 
