@@ -239,7 +239,7 @@ mission-57 (`coordination-primitive-shipment` class) signature per §5.4.1: 1-2 
 ## 6. Cross-references
 
 - **Mission-57 brief:** `get_mission(mission-57)` (architect-staged 2026-04-26; in-entity-brief)
-- **Survey artifact:** `docs/designs/m-mission-pulse-primitive-survey.md` (commit `a8e9aca` on main; 6-axis Director-intent envelope)
+- **Survey artifact:** `docs/surveys/m-mission-pulse-primitive-survey.md` (commit `a8e9aca` on main; 6-axis Director-intent envelope)
 - **Design v1.0:** `docs/designs/m-mission-pulse-primitive-design.md` (commit `a8e9aca`; bilateral via thread-349)
 - **Preflight artifact:** `docs/missions/mission-57-preflight.md` (commit `cd163e3`; verdict GREEN)
 - **W0 spike report:** `docs/audits/m-mission-pulse-primitive-w0-spike-report.md` (commit `b3f073d`; 5 D-deliverables + 4 risks + 8 touch-points)

@@ -1,7 +1,7 @@
 # M-Wire-Entity-Convergence — Design v1.0 (bilateral ratified; Phase 4 EXIT)
 
 **Author:** lily / architect (v0.1 + v0.2); bilateral ratified with engineer (greg) at thread-399 round 4 (2026-04-28T03:43:54Z)
-**Source:** idea-219 (Wire-Entity Envelope Convergence + Schema-Migration Discipline) + Survey envelope (`docs/designs/m-wire-entity-convergence-survey.md`)
+**Source:** idea-219 (Wire-Entity Envelope Convergence + Schema-Migration Discipline) + Survey envelope (`docs/surveys/m-wire-entity-convergence-survey.md`)
 **Lifecycle phase:** 4 Design v1.0 — Phase 4 EXIT (bilateral ratified); Phase 5 Manifest is architect's next step (`create_mission`)
 **Status:** v1.0 ratified — all engineer round-1 audit asks (8 + 2 framing tweaks) incorporated; engineer round-2 ratify accepted
 **Mission class:** structural-inflection (per Survey envelope; sizing baseline **L on paper / M+ in flight** per round-1 audit recalibration)
@@ -392,7 +392,7 @@ Per Survey envelope Q3=A (single big-bang structural-inflection mission):
 ### §7.1 W0 — Survey + Design + ADR scaffold + Preflight
 
 **Scope (architect-owned; doc-only PR):**
-- Survey artifact (`docs/designs/m-wire-entity-convergence-survey.md`) — DONE in this conversation
+- Survey artifact (`docs/surveys/m-wire-entity-convergence-survey.md`) — DONE in this conversation
 - Design v0.1 → v1.0 (this doc; bilateral with greg)
 - ADR scaffold (`docs/decisions/0??-canonical-agent-envelope.md`)
 - Preflight artifact (`docs/missions/m-wire-entity-convergence-preflight.md`) — Phase 6 deliverable

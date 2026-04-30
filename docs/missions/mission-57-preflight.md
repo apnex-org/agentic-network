@@ -1,7 +1,7 @@
 # Mission-57 (M-Mission-Pulse-Primitive) Preflight Check
 
 **Mission:** M-Mission-Pulse-Primitive
-**Brief:** mission entity description (no separate documentRef; in-entity-brief pattern matching missions 50-56; Design v1.0 at `docs/designs/m-mission-pulse-primitive-design.md` is the binding scope source-of-truth + Survey artifact at `docs/designs/m-mission-pulse-primitive-survey.md` is the pre-Design intent envelope)
+**Brief:** mission entity description (no separate documentRef; in-entity-brief pattern matching missions 50-56; Design v1.0 at `docs/designs/m-mission-pulse-primitive-design.md` is the binding scope source-of-truth + Survey artifact at `docs/surveys/m-mission-pulse-primitive-survey.md` is the pre-Design intent envelope)
 **Preflight author:** lily / architect
 **Date:** 2026-04-26
 **Verdict:** **GREEN**
@@ -12,11 +12,11 @@
 
 ## Category A — Documentation integrity
 
-- **A1.** Brief location: PASS — entity description compactly summarizes mission scope; references Design v1.0 (`docs/designs/m-mission-pulse-primitive-design.md` commit `a8e9aca` on main) as binding scope source-of-truth + Survey artifact (`docs/designs/m-mission-pulse-primitive-survey.md` commit `a8e9aca`) as pre-Design intent envelope. In-entity-brief pattern matching missions 50-56.
+- **A1.** Brief location: PASS — entity description compactly summarizes mission scope; references Design v1.0 (`docs/designs/m-mission-pulse-primitive-design.md` commit `a8e9aca` on main) as binding scope source-of-truth + Survey artifact (`docs/surveys/m-mission-pulse-primitive-survey.md` commit `a8e9aca`) as pre-Design intent envelope. In-entity-brief pattern matching missions 50-56.
 - **A2.** Branch sync: PASS — main HEAD `a8e9aca` (PR #84 merge); Design v1.0 + Survey artifact + mission-56 retrospective + closing audit + ADR-026 all on main. No documentary PRs in flight blocking activation.
 - **A3.** Cross-referenced artifacts exist: PASS —
   - `docs/designs/m-mission-pulse-primitive-design.md` v1.0 ✓ (commit `a8e9aca`)
-  - `docs/designs/m-mission-pulse-primitive-survey.md` ✓ (commit `a8e9aca`)
+  - `docs/surveys/m-mission-pulse-primitive-survey.md` ✓ (commit `a8e9aca`)
   - `docs/audits/m-push-foundation-closing-audit.md` ✓ (mission-56 closing audit; commit `eb1021b`)
   - `docs/decisions/026-push-pipeline-and-message-router.md` ✓ (ADR-026; commit `eb1021b`)
   - `docs/reviews/m-push-foundation-retrospective.md` ✓ (commit `36c9e1d`)

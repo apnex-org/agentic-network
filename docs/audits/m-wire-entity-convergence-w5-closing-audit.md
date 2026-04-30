@@ -234,7 +234,7 @@ idea-219 closes via mission-63's W4 GREEN-with-AMBER verdict. idea-220 Phase 2 i
 
 - **mission brief:** `docs/designs/m-wire-entity-convergence-design.md` v1.0
 - **W4 audit:** `docs/audits/m-wire-entity-convergence-w4-validation.md`
-- **Survey artifact:** `docs/designs/m-wire-entity-convergence-survey.md`
+- **Survey artifact:** `docs/surveys/m-wire-entity-convergence-survey.md`
 - **Preflight:** `docs/missions/m-wire-entity-convergence-preflight.md`
 - **PRs:** #117 (a8c7afe; Survey + Design + ADR-028 SCAFFOLD + Preflight) + #118 (371fb53; W1+W2 Hub-side) + #119 (a976d84; W3 adapter)
 - **threads:** thread-399 (Design v0.1→v1.0 4-round bilateral audit) + thread-402 (W4-prep coordination; closed) + thread-403 (W4 substrate-self-dogfood verification; converged)

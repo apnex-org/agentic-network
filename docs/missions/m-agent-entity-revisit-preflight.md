@@ -35,7 +35,7 @@ Mission ships:
 |---|---|---|---|
 | A1 | Brief at `mission.documentRef = docs/designs/m-agent-entity-revisit-design.md` exists | ✅ PASS | Committed in this preflight PR (Survey + Design v1.0 + Preflight bundled) |
 | A2 | Local branch in sync with origin (no unpushed commits affecting brief) | ✅ PASS | Branch `agent-lily/mission-62-design-and-preflight` from origin/main; brief committed here for first time |
-| A3 | Cross-referenced artifacts exist | ✅ PASS | Survey at `docs/designs/m-agent-entity-revisit-survey.md` (this PR); ADR-017 at `docs/decisions/017-comms-reliability.md` (extant); methodology at `docs/methodology/{mission-preflight,multi-agent-pr-workflow,idea-survey}.md` (extant) |
+| A3 | Cross-referenced artifacts exist | ✅ PASS | Survey at `docs/surveys/m-agent-entity-revisit-survey.md` (this PR); ADR-017 at `docs/decisions/017-comms-reliability.md` (extant); methodology at `docs/methodology/{mission-preflight,multi-agent-pr-workflow,idea-survey}.md` (extant) |
 
 ---
 
@@ -120,7 +120,7 @@ These will be captured in W5 closing audit; surfaced here for Director context:
 
 ## Cross-references
 
-- **Survey artifact:** `docs/designs/m-agent-entity-revisit-survey.md` (this PR)
+- **Survey artifact:** `docs/surveys/m-agent-entity-revisit-survey.md` (this PR)
 - **Design v1.0:** `docs/designs/m-agent-entity-revisit-design.md` (this PR)
 - **Methodology:** `docs/methodology/mission-preflight.md` v1.0; `docs/methodology/idea-survey.md` v1.0; `docs/methodology/multi-agent-pr-workflow.md` v1.0; `docs/methodology/calibration-23-formal-design-phase.md`
 - **Anchor Idea:** idea-215 (`incorporated` → mission-62)
