@@ -239,7 +239,14 @@ describe("PulseSweeper — idempotency (Item-1 deterministic key)", () => {
 });
 
 describe("PulseSweeper — missed-count + escalation (E1 + E2)", () => {
-  it("E2 3-condition guard: no false-positive when previous tick skipped due to precondition false", async () => {
+  it("E2 3-condition guard PRESERVED INTACT post-mission-68 — pulseFiredAtLeastOnce condition prevents false-positive before first fire (mission-68 C1)", async () => {
+    // Mission-68 W1: precondition layer removed (Q3a Director-pick); the
+    // 3-condition guard (`pulseFiredAtLeastOnce && noAckSinceLastFire &&
+    // graceWindowElapsed`) PRESERVED INTACT per CRITICAL C1 fold —
+    // ORTHOGONAL to precondition layer; load-bearing for missed-count
+    // semantics. Verify the FIRST condition (`pulseFiredAtLeastOnce`)
+    // continues to prevent false-positives before the first fire happens
+    // (e.g., before firstFireDelaySeconds elapsed).
     const rig = buildSweeperRig();
     const mission = await createPulseMission(rig, {
       engineerPulse: {
@@ -247,26 +254,25 @@ describe("PulseSweeper — missed-count + escalation (E1 + E2)", () => {
         message: "status?",
         responseShape: "ack",
         missedThreshold: 3,
-        firstFireDelaySeconds: 60,
-        // Precondition that always returns false (`task-not-completed` w/o
-        // valid taskId; registry returns false on missing-input)
-        precondition: { fn: "task-not-completed", args: { taskId: "no-such-task" } },
+        firstFireDelaySeconds: 600, // 10x intervalSeconds — first fire deferred
       },
     });
 
-    // Advance well past intervalSeconds — but precondition skips fire
+    // Advance past intervalSeconds + grace BUT NOT past firstFireDelaySeconds
+    // → no fire yet → 3-condition guard's pulseFiredAtLeastOnce condition
+    // prevents missedCount increment.
     rig.setNow(new Date(mission.createdAt).getTime() + MS(300));
     let result = await rig.sweeper.tick();
     expect(result.fired).toBe(0);
     expect(result.skipped).toBe(1);
 
-    // missedCount should NOT have incremented (no fire = no missed-response)
+    // missedCount should NOT have incremented (pulseFiredAtLeastOnce=false)
     let m = (await rig.missionStore.getMission(mission.id))!;
     expect(m.pulses!.engineerPulse!.missedCount ?? 0).toBe(0);
     expect(m.pulses!.engineerPulse!.lastFiredAt).toBeUndefined();
 
-    // Advance further; still no missedCount increment
-    rig.setNow(new Date(mission.createdAt).getTime() + MS(600));
+    // Advance further (still pre-firstFire); still no missedCount increment
+    rig.setNow(new Date(mission.createdAt).getTime() + MS(500));
     result = await rig.sweeper.tick();
     expect(result.fired).toBe(0);
     m = (await rig.missionStore.getMission(mission.id))!;
@@ -563,7 +569,7 @@ describe("PulseSweeper — Mission-61 W1 Fix #1 (Path A SSE wiring)", () => {
 });
 
 describe("PulseSweeper — Mission-61 W1 Fix #2 (forceFire admin path)", () => {
-  it("forceFire bypasses cadence + precondition; fires immediately", async () => {
+  it("forceFire bypasses cadence + firstFireDelay; fires immediately (mission-68: precondition gate gone)", async () => {
     const rig = buildSweeperRig();
     const mission = await createPulseMission(rig, {
       engineerPulse: {
@@ -572,21 +578,18 @@ describe("PulseSweeper — Mission-61 W1 Fix #2 (forceFire admin path)", () => {
         responseShape: "ack",
         missedThreshold: 3,
         firstFireDelaySeconds: 600,
-        // Precondition that always fails (impossible-to-meet idle)
-        precondition: {
-          fn: "mission_idle_for_at_least",
-          args: { seconds: 9999 },
-        },
+        // Mission-68 W1: precondition field removed; cadence + firstFireDelay
+        // are the only natural-tick gates remaining.
       },
     });
     // Set now within the firstFireDelay window — natural tick should
-    // skip (cadence + precondition both blocking)
+    // skip (cadence + firstFireDelay block fire)
     rig.setNow(new Date(mission.createdAt).getTime() + MS(60));
     const tickResult = await rig.sweeper.tick();
     expect(tickResult.fired).toBe(0);
     expect(rig.dispatched.length).toBe(0);
 
-    // Now force-fire from "architect" — bypass both gates
+    // Now force-fire from "architect" — bypass cadence/firstFireDelay
     const fireAt = await rig.sweeper.forceFire(mission.id, "engineerPulse");
     expect(fireAt).toBeTruthy();
 

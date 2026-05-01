@@ -30,6 +30,8 @@ export {
   PULSE_RESPONSE_SHAPES,
   PULSE_INTERVAL_FLOOR_SECONDS,
   DEFAULT_MISSED_THRESHOLD,
+  DEFAULT_ENGINEER_PULSE_INTERVAL_SECONDS,
+  DEFAULT_ARCHITECT_PULSE_INTERVAL_SECONDS,
 } from "./mission.js";
 export { MissionRepository } from "./mission-repository.js";
 

@@ -83,7 +83,6 @@ function mergePulsesPreservingBookkeeping(
       message: i.message,
       responseShape: i.responseShape,
       missedThreshold: i.missedThreshold,
-      precondition: i.precondition,
       firstFireDelaySeconds: i.firstFireDelaySeconds,
       lastFiredAt: i.lastFiredAt ?? e.lastFiredAt,
       lastResponseAt: i.lastResponseAt ?? e.lastResponseAt,
