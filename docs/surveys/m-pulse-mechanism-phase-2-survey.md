@@ -178,7 +178,7 @@ Bounds Phase 4 Design scope:
 
 | Axis | Director-ratified bound |
 |---|---|
-| **Mission scope** | (1) Strip class-based defaults from pulse substrate; (2) Strip precondition predicate layer; (3) Mechanize engineer-cadence-discipline via 3-layer stack (methodology + adapter-hook + Hub-side commit-push event); (4) Default 10/20min unified per-role |
+| **Mission scope** | (1) Strip class-based defaults from pulse substrate; (2) Strip precondition predicate layer; (3) Mechanize engineer-cadence-discipline via 3-layer stack (methodology + adapter-hook + Hub-side commit-push event); (4) Default 10/20min unified per-role; (5) **Path C — build repo-event routing substrate (trigger registry entry + author-role-lookup primitive + downstream-actor pattern) + ship commit-push as FIRST handler instance** (Director-ratified 2026-04-30) |
 | **Mission class** | `substrate-introduction` (revised post-Round-2; Q4d 3-layer stack is substrate-grade) |
 | **Primary outcome** | Engineer-cadence-discipline mechanization (#55 closure; Q1d primary) — restore bilateral coordination integrity |
 | **Secondary outcomes** | Simplification (#56 closure via Q1a + Q2a + Q3a); faster missed-detection (#51 + #53 closure via Q1c + Q5a 10/20 cadence) |
@@ -194,7 +194,7 @@ Bounds Phase 4 Design scope:
 | AG-1 | NOT per-agent-idle predicate work | Future-PR adds `agent_idle_for_at_least` predicate or any per-agent-idle gating → flag scope-creep | idea-225 M-TTL-Liveliness-Design (substrate prerequisite for per-agent-idle) |
 | AG-2 | NOT phase-aware pulse content (#52) | Future-PR adds W0/W1+W2/W3/W4 pulse-content variation → flag scope-creep | Phase-N revisit (open future-mission OR retrospective-fold) |
 | AG-3 | NOT cross-pulse coordination mechanization (#53) | Future-PR adds architect-pulse-checks-engineer-pulse-state logic → flag scope-creep | #53 superseded structurally by Q3a + Q1c; reopen if structural-supersession proves insufficient post-ship |
-| AG-4 | NOT idea-191 repo-event-bridge scope inflation | Future-PR absorbs full idea-191 event-bridge primitive into this mission scope → flag scope-creep | Path A sequencing — idea-191 separate prerequisite mission |
+| AG-4 | NOT additional cross-party-routing handlers (pr-opened / pr-closed / pr-merged / review-requested / etc.) | Future-PR adds handler for any non-`commit-pushed` subkind via the routing substrate this mission ships → flag scope-creep | idea-227 M-Hook-Design-End-to-End absorbs additional handlers + meta-mechanization layer using idea-224's routing substrate; OR dedicated cross-party-routing follow-on mission. Path C-ratified 2026-04-30: routing substrate IS in-scope (precondition for commit-push handler); handler proliferation is OUT |
 | AG-5 | NOT tool-surface scope | Future-PR introduces new tool verbs / envelope shapes → flag scope-creep | idea-121 (API v2.0) |
 | AG-6 | NOT pulse-primitive substrate replacement | Future-PR replaces ADR-027 PulseSweeper / Mission entity pulses[] schema → flag scope-creep | This mission EXTENDS / SIMPLIFIES the existing substrate; doesn't replace it |
 
@@ -222,24 +222,31 @@ To resolve at Phase 4 Design (bilateral architect-engineer):
 
 ---
 
-## §10 Mission sequencing decision (REVISED post-Survey-amendment 2026-04-30)
+## §10 Mission sequencing decision (REVISED post-Survey-amendment 2026-04-30; Path C ratified)
 
-**Initial Director directive 2026-04-30 ("Agree that we surface idea 191 as pre-requisite. Can hold on 224 design until ready") superseded by architect-discovered substrate-already-shipped state.**
+**Sequencing evolution captured here for retrospective-trace:**
 
-**Revised sequencing:**
+1. **Initial Director directive** ("Agree that we surface idea 191 as pre-requisite. Can hold on 224 design until ready") — based on idea-191 forward-primitive assumption
+2. **Architect-discovered correction** — idea-191 substrate ALREADY SHIPPED via mission-52 (`packages/repo-event-bridge/` exists with full T1+T2+T3 lineage; `commit-pushed` subkind supported)
+3. **Director-clarified gap** — substrate ships GH events to Hub via `create_message` BUT cross-party-routing layer NOT built (no triggers/downstream-actors consume `payload.kind === "repo-event"`)
+4. **Path C ratification** — idea-224 builds routing substrate (trigger entry + author-role-lookup + downstream-actor pattern) + ships commit-push as FIRST handler instance; additional handlers (pr-opened/closed/merged/review-requested) compose via idea-227 hook design OR dedicated cross-party-routing follow-on mission
 
-- **idea-224 Phase 4 Design proceeds DIRECTLY** — no HOLD; substrate (mission-52 repo-event-bridge) already exists; Q4(c) implementation subscribes to existing `commit-pushed` events
-- **idea-191 status flipped** to `incorporated` + missionId=mission-52 (architect-direct ratification per Idea entity FSM authority; closes ledger-vs-shipped-reality divergence)
-- **Forward composition:** idea-224 Phase 4 Design + Phase 5 Manifest + Phase 6 Preflight + Phase 7 Release-gate + Phase 8 Execution + Phase 9 Close
+**Revised mission scope (Path C — Director-ratified 2026-04-30):**
+
+- idea-224 Phase 4 Design proceeds DIRECTLY (no HOLD)
+- Substrate built ONCE properly; first handler ships within idea-224; future handlers compose
+- AG-4 refined: routing substrate IN-SCOPE; handler proliferation OUT-OF-SCOPE
 
 **Revised mission cluster sequencing:**
 
-1. **idea-224** M-Pulse-Mechanism-Phase-2 (THIS mission; ready for Phase 4 Design when Director go-signals; substrate = mission-52 repo-event-bridge)
+1. **idea-224** M-Pulse-Mechanism-Phase-2 (THIS mission; ready for Phase 4 Design; substrate = mission-52 repo-event-bridge consumption layer; ships routing substrate + commit-push handler)
 2. **idea-225** M-TTL-Liveliness-Design (composes per-agent-idle work post-224)
-3. **idea-227** M-Hook-Design-End-to-End (parked; consumes 224 substrate + complements idea-228)
+3. **idea-227** M-Hook-Design-End-to-End (parked; consumes 224 routing substrate + ships additional cross-party-routing handlers + meta-mechanization layer)
 4. **idea-228** M-Survey-Process-as-Skill (filed; runtime-mechanization sister; independent)
 
-**Methodology lesson captured:** `normative-doc-divergence` second-canonical instance (ledger-vs-shipped-reality variant). Closure-mechanism candidate (b) "cross-reference audit at retrospective gates" applied — architect should verify ledger-vs-shipped state via grep `packages/`/`hub/` BEFORE assuming forward-architecture references in `mission-lifecycle.md` §A reflect current state. Composes with calibration #58 closure-mechanism for forward-mechanization (idea-227 hook scope).
+**Methodology lessons captured:**
+- `normative-doc-divergence` second-canonical instance (ledger-vs-shipped-reality variant). Closure-mechanism candidate (b) "cross-reference audit at retrospective gates" applied — architect should verify ledger-vs-shipped state via grep `packages/`/`hub/` BEFORE assuming forward-architecture references in `mission-lifecycle.md` §A reflect current state. Composes with calibration #58 closure-mechanism for forward-mechanization (idea-227 hook scope)
+- Path C substrate-first-handler-second pattern: matches mission-67 doc-substrate-first-then-mechanism-substrate-via-idea-227 split; canonical pattern for "ship substrate + first instance; defer additional instances"
 
 ---
 
