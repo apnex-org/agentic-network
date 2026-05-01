@@ -46,6 +46,7 @@ import {
   type MessageTarget,
   type CreateMessageInput,
 } from "../entities/index.js";
+import { findRepoEventHandler } from "./repo-event-handlers.js";
 
 // ── list_messages ────────────────────────────────────────────────────
 
@@ -217,6 +218,82 @@ async function createMessage(
         console.error(
           `[message-policy] push-on-create dispatch failed for ${message.id} (non-fatal): ${(err as Error)?.message ?? String(err)}`,
         );
+      }
+    }
+
+    // Mission-68 W1: repo-event dispatch (Design v1.0 §2.4).
+    //
+    // Detect external-injection messages carrying a RepoEventBridge
+    // (mission-52) envelope and route to a registered per-subkind
+    // handler. Handlers synthesize 0+ downstream Messages (kind=note
+    // typically) emitted via createMessage — recursive cascade-bounded
+    // because handler emissions don't match this detection rule
+    // (kind=note ≠ external-injection + payload.kind=repo-event).
+    //
+    // Two-message-intent rationale (Design v1.0 §2.4 M1 fold): the
+    // bridge's broadcast remains substrate-grade event signal; the
+    // synthesized note is engineer-cadence-discipline-shaped derivative.
+    // Architect-role subscribers receive both by-design (different
+    // consumer concerns; not redundant emission).
+    //
+    // Failure isolation: handler errors logged + non-fatal; the
+    // inbound external-injection message is already persisted +
+    // broadcast. Mirrors `pulseSweeper.onPulseAcked` (line 397) hook
+    // pattern.
+    if (
+      message.kind === "external-injection" &&
+      typeof (message.payload as { kind?: unknown })?.kind === "string" &&
+      (message.payload as { kind: string }).kind === "repo-event"
+    ) {
+      const subkind = (message.payload as { subkind?: unknown }).subkind;
+      if (typeof subkind === "string") {
+        const handler = findRepoEventHandler(subkind);
+        if (handler === null) {
+          console.warn(
+            `[message-policy] no repo-event handler registered for subkind=${subkind}; skipping (non-fatal)`,
+          );
+        } else {
+          try {
+            const dispatches = await handler.handle(message, ctx);
+            for (const dispatch of dispatches) {
+              const derivedInput: CreateMessageInput = {
+                kind: dispatch.kind,
+                authorRole: "architect", // system-emitted derivative; default architect fallback (matches RepoEventBridge in-process invoker)
+                authorAgentId: `system-repo-event-handler-${handler.name}`,
+                target: dispatch.target,
+                delivery: dispatch.delivery ?? "push-immediate",
+                payload: dispatch.payload,
+                intent: dispatch.intent,
+                semanticIntent: dispatch.semanticIntent,
+              };
+              try {
+                const derived = await ctx.stores.message.createMessage(derivedInput);
+                if (derived.delivery === "push-immediate") {
+                  try {
+                    const derivedSelector = pushSelector(dispatch.target);
+                    await ctx.dispatch(
+                      "message_arrived",
+                      { message: derived },
+                      derivedSelector,
+                    );
+                  } catch (err) {
+                    console.error(
+                      `[message-policy] derived push dispatch failed for ${derived.id} from handler=${handler.name} (non-fatal): ${(err as Error)?.message ?? String(err)}`,
+                    );
+                  }
+                }
+              } catch (err) {
+                console.error(
+                  `[message-policy] derived createMessage failed for handler=${handler.name} (non-fatal): ${(err as Error)?.message ?? String(err)}`,
+                );
+              }
+            }
+          } catch (err) {
+            console.error(
+              `[message-policy] repo-event handler ${handler.name} threw (non-fatal): ${(err as Error)?.message ?? String(err)}`,
+            );
+          }
+        }
       }
     }
 
