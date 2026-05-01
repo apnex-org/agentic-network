@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepack": "npm run build",
+    "prepare": "npm run build",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest"
