@@ -35,6 +35,19 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# ── Per-role env-file (mission-52 T3 follow-on) ────────────────────────
+# Source ~/.config/apnex-agents/hub.env to pick up Hub-runtime env-vars
+# (OIS_GH_API_TOKEN + OIS_REPO_EVENT_BRIDGE_REPOS + cadence/budget knobs).
+# Mirrors the convention used by sibling scripts (get-agents.sh,
+# publish-packages.sh). Idempotent + optional — absent file is a no-op.
+HUB_ENV_FILE="${HOME}/.config/apnex-agents/hub.env"
+if [[ -f "$HUB_ENV_FILE" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$HUB_ENV_FILE"
+  set +a
+fi
+
 # ── Env selection + validation (mission-46 T1) ─────────────────────────
 
 OIS_ENV="${OIS_ENV:-prod}"
