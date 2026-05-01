@@ -3,8 +3,8 @@ FROM node:22-slim AS builder
 WORKDIR /app
 
 COPY package*.json ./
-COPY ois-storage-provider-*.tgz ./
-COPY ois-repo-event-bridge-*.tgz ./
+COPY apnex-storage-provider-*.tgz ./
+COPY apnex-repo-event-bridge-*.tgz ./
 # `npm install` (NOT `npm ci`) for the build path while the transient
 # tarball-swap codification is in place (mission-50 T5; bug-38; task-386
 # extension). The committed lockfile is resolved against
@@ -28,8 +28,8 @@ FROM node:22-slim
 WORKDIR /app
 
 COPY package*.json ./
-COPY ois-storage-provider-*.tgz ./
-COPY ois-repo-event-bridge-*.tgz ./
+COPY apnex-storage-provider-*.tgz ./
+COPY apnex-repo-event-bridge-*.tgz ./
 # `npm install` per builder-stage rationale above (mission-50 T5; bug-38;
 # task-386 extension).
 RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
