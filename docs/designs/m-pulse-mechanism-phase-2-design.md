@@ -1,6 +1,6 @@
 # M-Pulse-Mechanism-Phase-2 — Design v0.1
 
-**Status:** v0.1 DRAFT (architect-authored 2026-04-30; pending engineer round-1 audit + bilateral converge to v1.0)
+**Status:** v0.2 (architect-authored 2026-04-30; engineer round-1 audit folded — 5 CRITICAL + 8 MEDIUM + 3 MINOR + 4 PROBE; bilateral converge in flight via thread-445)
 **Methodology:** Phase 4 Design per `mission-lifecycle.md` v1.2 §1 (RACI: C=Director / R=Architect+Engineer)
 **Survey envelope:** `docs/surveys/m-pulse-mechanism-phase-2-survey.md` (Director-ratified 6 picks + Path C scope-expansion + 3 architect-flags)
 **Source idea:** idea-224 M-Pulse-Mechanism-Phase-2 (status=triaged via route-(a) skip-direct)
@@ -53,11 +53,11 @@ Existing `triggers.ts` is entity-status-transition-based (e.g., `task: pending �
 **Candidate (a) — Extend triggers.ts:** add a new `TriggerKind` ("message-content") alongside existing entity-status pattern. Single registry; reuses DOWNSTREAM_ACTORS gate.
 **Candidate (b) — New substrate primitive:** dedicated `message-handlers.ts` registry separate from triggers.ts; per-message-kind/subkind handler dispatch.
 
-**Architect-recommendation:** **Candidate (b)** — message-content-dispatch is structurally distinct from entity-status-transitions; conflating risks abstraction-debt. New `hub/src/policy/message-handlers.ts` registry parallels `triggers.ts` but for message-content semantics.
+**Architect-recommendation: Candidate (b) RATIFIED post-engineer-P1.** New `hub/src/policy/repo-event-handlers.ts` registry (per §2.5 reconciled name; ratified by engineer MIN2) for message-content semantics. Structurally distinct from entity-status-transitions; conflating would risk abstraction-debt.
 
-**Architect-flag for round-1 audit:** confirm engineer-side preference.
+**Engineer P1 probe-back ratified:** no `DOWNSTREAM_ACTORS`-equivalent gate needed — the `repo-event-handlers.ts` registry IS the actor list. Semantics: registered handler ⟹ wants to fire; missing handler for received subkind = log-warn at WARN level (non-fatal; substrate-grade isolation per `repo-event-handler.ts` precedent).
 
-### §2.2 Author-role-lookup primitive (NEW)
+### §2.2 Author-role-lookup primitive (NEW; AgentLabels approach ratified)
 
 Translate GH login string → registered Hub agent → role determination.
 
@@ -69,7 +69,17 @@ async function lookupRoleByGhLogin(
 ): Promise<"architect" | "engineer" | "director" | null>
 ```
 
-Implementation depends on Hub agent registration including GH-login mapping. **Architect-flag for round-1 audit:** does Agent entity carry `ghLogin` field today? If not, schema extension needed (small; additive).
+**Engineer P2 ratified (CRITICAL C4 closure):** **AgentLabels reserved-key approach** — `labels: { "ois.io/github/login": "apnex-greg" }`. Rationale:
+- Labels are existing routing infrastructure (`Selector.matchLabels`); zero-cost lookup pattern available
+- Adapter populates at `register_role` handshake (existing path, `session-policy.ts:50`); no schema migration
+- Avoids polluting Agent type with optional identity-display field for one mission's needs
+
+**Namespace ratified:** `ois.io/github/login` (forward-compat for other identity providers like `ois.io/gitlab/login`, `ois.io/bitbucket/login`, etc.).
+
+**Implementation:**
+- claude-plugin shim handshake reads `OIS_GH_LOGIN` env (or resolves via `git config user.email` → reverse-lookup), emits in `labels` at `register_role`
+- `lookupRoleByGhLogin` becomes: query agent registry by label `ois.io/github/login=<login>` → return `agent.role`
+- Verified: NO existing `ghLogin` field on Agent entity (`hub/src/state.ts:235-285`); AgentLabels approach avoids schema extension
 
 ### §2.3 Downstream-actor pattern for repo-events
 
@@ -103,10 +113,10 @@ Hub `message-policy.ts` `createMessage` post-create cascade adds:
 
 | Component | Status | Path |
 |---|---|---|
-| `message-handlers.ts` registry pattern | NEW | `hub/src/policy/message-handlers.ts` (or `repo-event-handlers.ts` if scoped to repo-events) |
+| `repo-event-handlers.ts` registry pattern | NEW | `hub/src/policy/repo-event-handlers.ts` (filename ratified per MIN2) |
 | Author-role-lookup primitive | NEW | `hub/src/policy/repo-event-author-lookup.ts` |
 | Dispatch wiring in `message-policy.ts` | EXTEND existing | `hub/src/policy/message-policy.ts:createMessage` post-create cascade |
-| Agent.ghLogin schema extension | TBD (audit) | `hub/src/entities/agent.ts` (if missing) |
+| Agent label `ois.io/github/login` population | EXTEND existing | claude-plugin shim handshake at `register_role`; reads `OIS_GH_LOGIN` env or resolves via git config (NO Hub schema change; uses existing `AgentLabels` map per C4 closure) |
 | Tests | NEW | `hub/test/unit/repo-event-handlers.test.ts` + author-lookup test |
 
 ---
@@ -117,17 +127,19 @@ Hub `message-policy.ts` `createMessage` post-create cascade adds:
 
 **Logic:**
 
-1. Extract `payload.payload.pusher` (GH login of commit author) + `payload.payload.commits[]` (commit metadata)
+1. Extract `payload.payload.pusher` (GH login of commit author) + `payload.payload.commits[]` (commit metadata) + `payload.payload.ref` (branch)
 2. `lookupRoleByGhLogin(pusher)` → push-author role (architect / engineer / null)
 3. If push-author is engineer:
    - Determine architect cross-role recipient (lookup architect agents via `list_available_peers(role="architect")`)
-   - Emit message: `kind=note`, target={role: "architect"}, body="Engineer pushed N commits to branch X (commits: [...]); thread-heartbeat opportunity"
-4. If push-author is architect: NO cross-role notification (architect pushes don't need engineer-cadence-discipline alert)
+   - Emit message: `kind=note`, target={role: "architect"}, body=**TERSE** + structured payload sub-fields per **M2 fold + P3 ratification**:
+     - `body`: `"Engineer pushed N commits to <branch>"` (terse; matches existing trigger-payload conventions per `triggers.ts:108-119` mission-66 #41 STRUCTURAL ANCHOR ratification)
+     - `payload`: `{ pusher, branch, commitCount, commits: [...] }` (structured; adapter-side `source-attribute.ts` rendering surface)
+4. If push-author is architect: NO cross-role notification (architect pushes don't need engineer-cadence-discipline alert; AG-7 anti-goal)
 5. If push-author role unknown: log + skip (non-fatal)
 
-**Cross-mission #54 closure scope:** this handler closes #54 (commit-push visibility gap) for engineer-pushes-to-architect direction. Architect-pushes-to-engineer direction (calibration #54 implied symmetric coverage) NOT in scope this mission — composes with idea-227 hook design.
+**Message kind ratified (P3):** `kind=note` (lightest option; already used by triggers.ts `mission_activated` for cross-role notifications). Avoids substrate-grade addition.
 
-**Architect-flag for round-1 audit:** message kind for the cross-party notification — `kind=note` is the lightest option (informational; no actionable response required). Alternatives: `kind=external-injection` with subkind, OR new `kind=cross-party-notification` (heavier; substrate-grade addition).
+**Cross-mission #54 closure scope:** this handler closes #54 (commit-push visibility gap) for engineer-pushes-to-architect direction. Architect-pushes-to-engineer direction (calibration #54 implied symmetric coverage) NOT in scope this mission — composes with idea-227 hook design (AG-7).
 
 ---
 
@@ -139,22 +151,24 @@ Hub `message-policy.ts` `createMessage` post-create cascade adds:
 
 **Replace with:** §4.1 v2 — unified per-role defaults (10min engineer / 20min architect; per Q5a). `missionClass` field on mission entity STAYS (used for retrospective + portfolio-balance scoring per `mission-lifecycle.md` §3) but no longer drives pulse cadence.
 
-### §4.2 Strip precondition predicate layer (Q3a)
+### §4.2 Strip precondition predicate layer (Q3a) — engineer C2 fold applied
 
 ADR-027 PulseConfig schema:
 - `precondition` field — REMOVE entirely from schema
-- `mission_idle_for_at_least` predicate in `hub/src/policy/preconditions.ts` registry — REMOVE (and registry itself if no other consumers)
-- Auto-injection of default precondition at `create_mission` validation — REMOVE
+- `mission_idle_for_at_least` entry (lines 89-103 in `preconditions.ts`) — REMOVE
+- **Registry PRESERVED** — engineer C2 verified `thread-still-active` (line 60) + `task-not-completed` (line 73) entries remain active consumers via `scheduled-message-sweeper.ts`. ONLY the `mission_idle_for_at_least` entry is removed
+- Auto-injection branch in `mission-policy.ts:83-90` — REMOVE (per C2 explicit enumeration)
 
 PulseSweeper logic:
-- Remove precondition evaluation from per-pulse fire-decision
+- Remove precondition evaluation (Step 3 at lines 222-236) from per-pulse fire-decision
+- **Step 4 missedCount-increment 3-condition guard PRESERVED INTACT per C1 fold** — see §9 ADR-027 §2.6 amendment row for detail
 - Pulse fires on schedule unconditionally (modulo missedThreshold logic)
 
-### §4.3 Methodology-doc consequences
+### §4.3 Methodology-doc consequences (engineer C5 fold applied)
 
 `mission-lifecycle.md` §4.x updates:
-- §4.1 Per-class default cadence → DELETE entire table; replace with §4.1 unified default (10/20)
-- §4.2 Override semantics → simplify (no per-class taxonomy; just per-mission `pulses.*` declaration)
+- §4.1 Per-class default cadence → DELETE per-class table; replace with §4.1 unified default (10/20) **PLUS distribution-packaging carve-out per C5**: "distribution-packaging missions SHOULD declare `pulses` explicitly to longer cadence (30/60 baseline preserved per v1.2 empirical anchoring); unified 10/20 default targets the synchronous-active-arc class cluster"
+- §4.2 Override semantics → simplify (no per-class taxonomy; just per-mission `pulses.*` declaration; distribution-packaging override note)
 - §4.3 When to disable → remove precondition-based row
 - §4.4 Pulse vs ScheduleWakeup boundary → preserved (no change)
 - §4.5 Active-missions cap → preserved (no change)
@@ -176,30 +190,34 @@ Default-injection at `mission-policy.ts` `create_mission` validation:
 
 ## §6 Engineer-cadence-discipline 3-layer mechanization (Q4d)
 
-### §6.1 Layer (a) — Methodology-doc fold
+### §6.1 Layer (a) — Methodology-doc fold (engineer MIN3 + M4 folds applied)
 
-Add to `engineer-runtime.md` row table (existing INDEX-overlay; mission-67 §4.2):
+Add NEW row to `engineer-runtime.md` (separate from existing #57 routing row per MIN3 — discrete cold-pickup discoverability):
 
 | Concern | Why it matters at runtime | Canonical source | Heading anchor |
 |---|---|---|---|
-| Commit-push thread-heartbeat | Per-commit thread ping for architect visibility (calibrations #54/#55); silent between-commit pauses are anti-pattern | `mission-lifecycle.md` | `#15-1-engineer-runtime-decision-moment-routing-calibration-57-codification` (existing) — extend to reference Q4d adapter-side automation per §6.2 |
+| Commit-push thread-heartbeat (mission-68) | Per-commit thread ping for architect visibility (#55 closure); silent between-commit pauses anti-pattern; **escalation latency 20min engineer / 40min architect (10/20min cadence × missedThreshold=2 per §5 + §8) — set engineer-side expectations for legitimate ~30min deep-thought-phases (rare; substrate-introduction class)** per M4 fold | `mission-lifecycle.md` | `#1-5-1-1-commit-push-thread-heartbeat-mechanization` (NEW; per §6.1.1) |
 
-`mission-lifecycle.md` §1.5.1 expansion: add subsection "§1.5.1.1 Commit-push thread-heartbeat mechanization (mission-68 closure of #55)" — describes 3-layer stack; cross-references §6.2 + §6.3.
+#### §6.1.1 `mission-lifecycle.md` §1.5.1 expansion
 
-### §6.2 Layer (b) — Adapter-side commit-push hook
+Add subsection "§1.5.1.1 Commit-push thread-heartbeat mechanization (mission-68 closure of #55)" — describes 3-layer stack; cross-references §6.2 + §6.3 + escalation horizon (20/40min per §5 + §8 composition).
+
+### §6.2 Layer (b) — Adapter-side commit-push hook (engineer P4 ratified — Bash tool result post-process)
 
 claude-plugin shim modification:
-- Detect `git push` execution (via Bash tool result observation OR explicit hook integration)
+- **Detection ratified:** Bash tool result post-process — matches existing claude-plugin shim cognitive-event hook surface (`shim.ts`); commit-push observability already in flight via shim
+- **Detection pattern:** `^git\s+push\b` (covers `git push origin`, `git push --force`, `git push -u origin`)
+- **Augmentation per P4 probe-back:** detection requires (a) command-pattern match + (b) exit-code success + (c) commit-pushed shape match (output contains `→` or `[new branch]`) — avoids false-positives on push-failures + alias-variant gaps (e.g., `gp`, `gpush`)
 - On detection: auto-emit thread message to active mission-coord thread (if any) with commit-push metadata
-- Implementation: extend `adapters/claude-plugin/src/shim.ts` OR new `adapters/claude-plugin/src/commit-push-hook.ts`
+- Implementation: extend `adapters/claude-plugin/src/shim.ts` cognitive-event hook surface (OR new `adapters/claude-plugin/src/commit-push-hook.ts` if scope warrants module separation; engineer judgment at implementation)
 
-**Architect-flag for round-1 audit:** detection mechanism — hook into Bash tool result post-processing? Listen for stdout patterns? Filesystem watcher on `.git/`? Engineer-side preference?
+**Rationale rejected (per P4):** stdout pattern listening (brittle; varies by remote/branch state) + filesystem watcher on `.git/` (noisy; every git operation touches).
 
 ### §6.3 Layer (c) — Hub-side commit-push event consumption (uses §2 + §3)
 
 USES routing substrate from §2 + commit-pushed handler from §3. No additional Hub work beyond §2 + §3 deliverables.
 
-### §6.4 3-layer composition
+### §6.4 3-layer composition (engineer M8 fold applied)
 
 Belt + suspenders + braces:
 - (a) methodology-doc fold = engineer-runtime documentation (cold-pickup awareness)
@@ -208,20 +226,24 @@ Belt + suspenders + braces:
 
 Together: engineer cannot accidentally silent-stop without (a) cold-pickup awareness, (b) adapter-auto-ping, OR (c) Hub-side cross-party-notification firing.
 
+**Failure-resilience hierarchy (M8 fold):** **Layer (c) is the load-bearing failure-resilient layer** — Hub bridge runs in-Hub-process (RepoEventBridge already integrated; failure-isolated); polls GitHub API directly; works regardless of adapter state. Layers (a) + (b) compose as defense-in-depth — adapter offline + engineer skips docs would still leave (c) intact. Worst-case partial-failure (Hub bridge stopped + adapter offline) leaves only (a); engineer-side discipline becomes load-bearing in that degenerate scenario (small probability; observable via Hub-state inspection).
+
 ---
 
-## §7 Backward-compat handling (Q5a NEW-missions-only)
-
-**Architect-recommendation (Phase 4 Design ratification needed):** NEW missions only get auto-pulse defaults; legacy active/proposed missions PRESERVE current behavior at-flip-time.
+## §7 Backward-compat handling (Q5a NEW-missions-only) — engineer C3 fold applied
 
 | Mission state at v1.0 ship | Pulse behavior |
 |---|---|
 | Currently `active` mission with explicit `pulses` config | UNCHANGED (existing config preserved) |
 | Currently `active` mission without `pulses` config (per ADR-027 §6 legacy backward-compat) | UNCHANGED (still no auto-pulses) |
-| Currently `proposed` mission | UNCHANGED until status flip; if flipped post-v1.0-ship, gets new defaults applied via `create_mission`-equivalent validation |
+| Currently `proposed` mission | UNCHANGED until status flip; if flipped post-v1.0-ship, gets new defaults applied via NEW `update_mission` FSM-handler auto-inject (see §11.1 implementation surface) |
 | NEW missions created post-v1.0 ship | Gets 10/20 defaults unless explicit override |
 
-**Implementation:** version-check at `update_mission` status-flip-to-active OR `create_mission`. Pre-existing `active` missions are not retroactively updated.
+**Implementation (CRITICAL C3 fold — non-trivial implementation surface):** Verified `mission-policy.ts:223-300`: `update_mission` only calls `preparePulsesForStorage` when `pulses` explicitly passed. Status-flip `proposed → active` does NOT re-run auto-injection today.
+
+**Required NEW code:** `update_mission` FSM-handler at proposed→active transition — invoke existing `preparePulsesForStorage` pathway when mission missing `pulses` config. Engineer-recommended approach (P-style scope confirmation): existing `preparePulsesForStorage` reused; new tests for the flip path. **Named in §11.1 implementation scope.**
+
+Pre-existing `active` missions are not retroactively updated (per Q5a NEW-missions-only ratification).
 
 ---
 
@@ -239,17 +261,17 @@ Trade-off: faster detection vs spurious-escalation tolerance. At 10/20min cadenc
 
 ---
 
-## §9 ADR-027 amendments
+## §9 ADR-027 amendments — engineer C1 fold applied (CRITICAL bug-fix)
 
 ADR-027 (Pulse-Primitive + PulseSweeper) is the substrate this mission EXTENDS + SIMPLIFIES. Amendments needed:
 
 | ADR-027 section | Amendment |
 |---|---|
 | §2.1 Single declarative coordination surface | `precondition` field removed from PulseConfig schema (per §4.2) |
-| §2.6 E2 3-condition missed-count guard | Simplified — remove `noAckSinceLastFire` precondition-skip logic (no precondition layer); preserve `pulseFiredAtLeastOnce` + `graceWindowElapsed` |
+| §2.6 E2 3-condition missed-count guard | **PRESERVED INTACT (CRITICAL C1 correction).** Engineer round-1 audit verified: `noAckSinceLastFire = lastResponseMs < lastFiredMs` is the missed-count INCREMENT GUARD (Step 4 in `pulse-sweeper.ts`), ORTHOGONAL to the precondition layer (Step 3). Removing the guard would break pulse responsiveness model — escalation would fire after `missedThreshold` cadences regardless of acks. ONLY §2.8 + §4.x precondition-step references are removed; the 3-condition guard logic is unchanged. |
 | §2.8 mission_idle_for_at_least precondition | DELETE entire section |
-| §6 Backward-compat row | NEW addition: "post-mission-68: legacy missions preserve at-flip-time; new missions get 10/20 defaults; precondition layer entirely removed" |
-| §4.5 mission-lifecycle.md v1.0 — formal lifecycle phase additions | Note co-shipping with this mission's mission-lifecycle.md updates per §4.3 |
+| §6 Backward-compat row | NEW addition: "post-mission-68: legacy missions preserve at-flip-time; new missions get 10/20 defaults via update_mission FSM-handler auto-inject; precondition layer entirely removed; preconditions registry PRESERVED for `thread-still-active` + `task-not-completed` consumers (scheduled-message-sweeper)" |
+| §4.5 mission-lifecycle.md v1.0 — formal lifecycle phase additions | Co-shipping note (MIN1 fold): explicit amendment text — "mission-68 ships co-shipping methodology-doc updates per Design §4.3 + §6.1.1: §4.1 per-class default cadence table replaced by unified 10/20 with distribution-packaging carve-out; §1.5.1 expansion adds §1.5.1.1 commit-push thread-heartbeat mechanization" |
 
 ADR-027 itself stays "Accepted" (foundational substrate intact); amendments document evolution.
 
@@ -267,7 +289,7 @@ ADR-027 itself stays "Accepted" (foundational substrate intact); amendments docu
 | AG-4 | NOT additional cross-party-routing handlers (pr-opened/closed/merged/review-requested) | Future-PR adds handler for non-`commit-pushed` subkind via routing substrate this mission ships → flag scope-creep | idea-227 hook design OR dedicated cross-party-routing follow-on mission |
 | AG-5 | NOT tool-surface scope | Future-PR introduces new tool verbs / envelope shapes → flag scope-creep | idea-121 |
 | AG-6 | NOT pulse-primitive substrate replacement | Future-PR replaces ADR-027 PulseSweeper / Mission entity pulses[] schema → flag scope-creep | This mission EXTENDS + SIMPLIFIES; doesn't replace |
-| AG-7 | NOT architect-push cross-party notification | Future-PR adds architect-push-detection cross-party emission → flag scope-creep | idea-227 (symmetric coverage there) |
+| AG-7 | NOT architect-push cross-party notification | Future-PR adds architect-push-detection cross-party emission → flag scope-creep | idea-227 (symmetric coverage there). **NOTE per M7 fold:** AG-7 is a Design-time refinement (NOT Survey-ratified); composes with idea-227's symmetric-coverage scope; transparency-flag for Phase 4 Design ratification |
 
 ### §10.2 Phase-N revisit-axes
 
@@ -279,43 +301,53 @@ ADR-027 itself stays "Accepted" (foundational substrate intact); amendments docu
 | Additional cross-party-routing handlers | idea-227 hook design |
 | Architect-push cross-party notification | idea-227 hook design |
 | Pulse cadence per-context refinement | Future-mission if 10/20 defaults prove suboptimal |
+| 10/20 cadence — empirical validation watch-axis (M3 fold) | Reopen if first 3 missions post-v1.0-ship surface spurious-escalation; v1.2 empirical baseline anchored at 15/30 — 10/20 is tighter; explicit watch for 2.25× faster escalation horizon (per §6.1 + M4) |
 
 ---
 
 ## §11 PR sequencing + content map
 
-### §11.1 Single PR (binding-artifact)
+### §11.1 PR split — engineer M5 + P6 fold applied (single hub PR + separate adapter PR)
 
-Per Phase 4 binding-artifact protocol — Survey + Design v1.x + implementation ship in single PR.
+**Branch (M6 fold):** rename current `agent-lily/idea-224-phase-3-survey` → `agent-lily/idea-224` (drop phase suffix; mission progresses on same branch through Phase 4 → Phase 8). Architect-recommended at first commit on Design v0.2.
 
-**Branch:** `agent-lily/idea-224-phase-3-survey` (currently carries Survey + Design v0.1; will carry Design v1.x + implementation post-bilateral)
-
-**Scope:**
+**PR 1 (hub binding-artifact):**
 - Survey artifact (already shipped; commit `1d6f2ad` + `e24fdf2` + `53ae277`)
 - Design v1.x (post-bilateral converge)
-- Implementation:
-  - Hub: routing substrate (§2) + commit-push handler (§3) + pulse simplification (§4) + default cadence (§5) + missedThreshold refinement (§8) + ADR-027 amendments (§9)
-  - Adapter: claude-plugin commit-push hook (§6.2)
-  - Methodology: mission-lifecycle.md §4.x updates + engineer-runtime.md row addition + ADR-027 amendments
-- Tests: substrate + handler + pulse simplification regression + commit-push hook
+- Hub implementation:
+  - Routing substrate (§2): `repo-event-handlers.ts` registry + `repo-event-author-lookup.ts` + dispatch wiring in `message-policy.ts`
+  - Commit-push handler (§3)
+  - Pulse simplification (§4): `precondition` schema removal + `mission_idle_for_at_least` entry removal + auto-inject branch removal in `mission-policy.ts:83-90`
+  - Default cadence (§5; 10/20)
+  - missedThreshold refinement (§8; reduce-to-2)
+  - ADR-027 amendments (§9; CRITICAL C1 + C2 corrections applied)
+  - **NEW: `update_mission` FSM-handler auto-inject (§7 C3 implementation surface)** — invoke `preparePulsesForStorage` at proposed→active transition when mission missing `pulses` config
+- Methodology updates: `mission-lifecycle.md` §4.x rewrite + engineer-runtime.md NEW row (per MIN3 + M4) + §1.5.1.1 expansion + ADR-027 amendments
+- Tests: substrate + handler + pulse simplification regression + FSM-handler proposed→active flip path
 
-### §11.2 Architect-judgment on PR-split
+**PR 2 (adapter; ships separately per M5 + P6 fold):**
+- claude-plugin commit-push hook (§6.2): Bash tool result post-process; pattern + exit-code + shape-match
+- Tests: hook detection + emission shape
 
-Single PR aligns with mission-67 binding-artifact pattern. If implementation surfaces scope-creep risk, can spin housekeeping concerns to separate PR per engineer C1 split-PR pattern (mission-67 precedent). Architect-flag for round-1 audit: engineer-side preference on split.
+**Rationale for split (engineer M5):** hub-side substrate doesn't depend on adapter hook landing first (Layer (c) Hub-side notification works standalone via existing bridge `commit-pushed` events). Adapter PR ships when hub PR lands + cross-package surfaces stable.
+
+**Approval gate:** bilateral architect-engineer cross-approval per `multi-agent-pr-workflow.md` v1.0 (architect-content + engineer-content depending on PR file ownership).
 
 ---
 
-## §12 Open questions for round-1 audit (engineer Step 3)
+## §12 Round-1 audit summary (engineer responses folded; probes resolved)
 
-Surfaced for engineer round-1 audit:
+**Historical record** — all 7 probes received engineer responses; folded into v0.2 architect-revision pass.
 
-1. **§2.1 substrate-pattern decision** — Candidate (a) extend triggers.ts vs Candidate (b) new message-handlers.ts. Architect-recommends (b); confirm engineer-side preference?
-2. **§2.2 author-role-lookup** — does Agent entity carry `ghLogin` field today? If not, schema extension acceptable scope?
-3. **§3 commit-pushed handler** — message kind for cross-party notification: `kind=note` (light) vs `kind=external-injection` w/ subkind vs new `kind=cross-party-notification` (substrate-grade). Architect-recommends `kind=note`.
-4. **§6.2 adapter-side commit-push hook detection mechanism** — Bash tool result post-processing vs stdout pattern listening vs filesystem watcher on `.git/`. Engineer-side preference?
-5. **§8 missedThreshold reduce-to-2** — engineer-side acceptance?
-6. **§11.2 PR-split** — single binding-artifact PR vs split (housekeeping concerns to separate PR per C1 mission-67 pattern)?
-7. **Anything else** — content-level surface may reveal gaps invisible at shape-level (cross-section coherence, terminology drift, implicit-vs-explicit specifications, etc.)
+| # | Probe | Engineer response | v0.2 fold |
+|---|---|---|---|
+| P1 | §2.1 substrate-pattern | ✅ Candidate (b) accepted (`repo-event-handlers.ts`); registry IS actor list; missing handler = log-warn at WARN | §2.1 + §2.5 reconciled |
+| P2 | §2.2 author-role-lookup | ✅ AgentLabels `ois.io/github/login` (forward-compat namespace; CRITICAL C4 closure) | §2.2 + §2.5 specified |
+| P3 | §3 commit-pushed handler kind | ✅ `kind=note`; terse body + structured payload sub-fields (M2 fold) | §3 specified |
+| P4 | §6.2 adapter detection | ✅ Bash tool result post-process; pattern `^git\s+push\b` + exit-code success + shape-match (`→` or `[new branch]`) | §6.2 specified |
+| P5 | §8 missedThreshold=2 | ✅ Accepted with caveat — engineer-runtime overlay surfaces 20/40min escalation horizon (M4 fold) | §6.1 row addition + §8 unchanged |
+| P6 | §11.2 PR-split | ✅ Single hub binding-artifact PR + separate adapter PR (M5 fold) | §11.1 restructured |
+| P7 | Anything else | Engineer surfaced: work-trace open-timing — Phase 4 start (NOW) is cleaner open-point per `engineer-runtime.md` discipline | **Engineer-Responsibility (P7 fold acknowledged):** engineer opens `docs/traces/m-pulse-mechanism-phase-2-work-trace.md` per `engineer-runtime.md` work-trace row; architect does NOT patch (engineer-owned) |
 
 ---
 
