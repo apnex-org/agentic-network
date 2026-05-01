@@ -1,6 +1,6 @@
 # M-Pulse-Mechanism-Phase-2 — Design v0.1
 
-**Status:** v0.2 (architect-authored 2026-04-30; engineer round-1 audit folded — 5 CRITICAL + 8 MEDIUM + 3 MINOR + 4 PROBE; bilateral converge in flight via thread-445)
+**Status:** v1.0 (architect-authored 2026-04-30; engineer round-1 audit + round-2 verify folded; ratifiable bilateral converge via thread-445 round 5)
 **Methodology:** Phase 4 Design per `mission-lifecycle.md` v1.2 §1 (RACI: C=Director / R=Architect+Engineer)
 **Survey envelope:** `docs/surveys/m-pulse-mechanism-phase-2-survey.md` (Director-ratified 6 picks + Path C scope-expansion + 3 architect-flags)
 **Source idea:** idea-224 M-Pulse-Mechanism-Phase-2 (status=triaged via route-(a) skip-direct)
@@ -108,6 +108,12 @@ Hub `message-policy.ts` `createMessage` post-create cascade adds:
 1. Detect `message.kind === "external-injection" && message.payload?.kind === "repo-event"`
 2. Look up handler by `message.payload.subkind` in REPO_EVENT_HANDLERS
 3. Invoke handler; emit returned MessageDispatch[] via createMessage (recursive cascade-bounded)
+
+**Two-message-intent rationale (M1 fold):** the bridge's `target: null` broadcast (`kind=external-injection`) and the §3 commit-pushed handler's `target.role=architect` synthesized note (`kind=note`) serve TWO consumer concerns by-design:
+- **Raw broadcast** — substrate-grade event signal available to any future subscriber (including the routing substrate itself); preserves bridge as independent layer per `repo-event-handler.ts` failure-isolation contract
+- **Synthesized note** — engineer-cadence-discipline-shaped derivative for architect-side surfacing; carries terse body + structured payload (per M2)
+
+Architect-role subscribers receive both; this duplication is intentional (different consumer concerns, not redundant emission).
 
 ### §2.5 Substrate scope
 
@@ -244,6 +250,8 @@ Together: engineer cannot accidentally silent-stop without (a) cold-pickup aware
 **Required NEW code:** `update_mission` FSM-handler at proposed→active transition — invoke existing `preparePulsesForStorage` pathway when mission missing `pulses` config. Engineer-recommended approach (P-style scope confirmation): existing `preparePulsesForStorage` reused; new tests for the flip path. **Named in §11.1 implementation scope.**
 
 Pre-existing `active` missions are not retroactively updated (per Q5a NEW-missions-only ratification).
+
+**P8 ratification (engineer round-2 micro-PROBE):** for pre-existing `proposed` missions that lack `missionClass` field (pre-mission-57-W1 era; ADR-027 §2.1 legacy backward-compat = NO auto-pulses), the new FSM-handler at proposed→active flip injects 10/20 defaults regardless. Architect-decision: **(a) accept post-v1.0 unified semantics override** — clean post-v1.0 mental model; legacy missions are an edge case (most pre-mission-57 missions are now `active`/`completed`; few candidates remain in `proposed`); unified default is reasonable for any mission flipped post-v1.0. NOT gating FSM-handler auto-inject behind `missionClass !== undefined`.
 
 ---
 
