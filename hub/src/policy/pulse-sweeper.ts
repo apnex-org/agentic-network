@@ -53,7 +53,12 @@ import type {
 import { PULSE_KEYS } from "../entities/index.js";
 import type { Selector } from "../state.js";
 import type { IPolicyContext } from "./types.js";
-import { evaluatePrecondition } from "./preconditions.js";
+// Mission-68 W1 (Design v1.0 §4.2): precondition layer for pulses removed.
+// `evaluatePrecondition` import dropped — pulses fire unconditionally on
+// schedule (modulo missedThreshold pause + Step 4 missedCount-increment
+// 3-condition guard preserved intact per C1 fold). The W4 registry stays
+// for scheduled-message consumers (`thread-still-active`,
+// `task-not-completed`).
 
 const DEFAULT_TICK_INTERVAL_MS = 60_000;
 const DEFAULT_GRACE_MS = 30_000;
@@ -217,25 +222,14 @@ export class PulseSweeper {
       return escalated ? "escalated" : "skipped";
     }
 
-    // 3. Precondition check (W4 registry; auto-injected default
-    //    `mission_idle_for_at_least` per Design v1.0 §3 default-injection)
-    if (config.precondition) {
-      const ctx = this.contextProvider.forSweeper();
-      // Augment args with missionId so registry predicates can resolve
-      // the parent mission entity (PulseSweeper-specific convention).
-      const augmented = {
-        fn: config.precondition.fn,
-        args: { ...config.precondition.args, missionId: mission.id },
-      };
-      const decision = await evaluatePrecondition(augmented, ctx);
-      if (!decision.ok) {
-        // Skip fire; do NOT increment missedCount (precondition-skipped
-        // pulses are intentional, not missed responses)
-        return "skipped";
-      }
-    }
+    // 3. (Mission-68 W1, Design §4.2) Precondition check REMOVED — pulses
+    //    fire on schedule unconditionally per Q3a Director-pick. The W4
+    //    registry continues to serve scheduled-message consumers via the
+    //    distinct `evaluatePrecondition` invocation in
+    //    scheduled-message-sweeper.ts (NOT pulse fires).
 
-    // 4. Detect missed response from PREVIOUS fire (E2 3-condition guard)
+    // 4. Detect missed response from PREVIOUS fire (E2 3-condition guard
+    //    PRESERVED INTACT per C1 fold — orthogonal to precondition layer)
     //    before firing the next pulse.
     const escalated = await this.maybeIncrementMissedCountAndEscalate(
       mission,
@@ -574,7 +568,6 @@ export class PulseSweeper {
       message: existing.message,
       responseShape: existing.responseShape,
       missedThreshold: existing.missedThreshold,
-      precondition: existing.precondition,
       firstFireDelaySeconds: existing.firstFireDelaySeconds,
       lastFiredAt: delta.lastFiredAt ?? existing.lastFiredAt,
       lastResponseAt:

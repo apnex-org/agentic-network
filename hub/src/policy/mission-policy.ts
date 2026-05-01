@@ -25,6 +25,8 @@ import {
   PULSE_RESPONSE_SHAPES,
   PULSE_INTERVAL_FLOOR_SECONDS,
   DEFAULT_MISSED_THRESHOLD,
+  DEFAULT_ENGINEER_PULSE_INTERVAL_SECONDS,
+  DEFAULT_ARCHITECT_PULSE_INTERVAL_SECONDS,
 } from "../entities/index.js";
 import {
   LIST_PAGINATION_SCHEMA,
@@ -58,13 +60,19 @@ function stripSweeperManagedFields(input: PulseConfig): PulseConfig {
 }
 
 /**
- * Mission-57 W1: auto-inject defaults per Design v1.0 §3 "Default-injection
- * semantics" for engineer-authored fields:
- *   - precondition: auto-injected `mission_idle_for_at_least` w/ args
- *     `{seconds: <intervalSeconds>}` when undefined; explicit `null` disables
+ * Mission-57 W1 + mission-68 W1 (Design v1.0 §4.2 + §8): auto-inject
+ * defaults for engineer-authored fields:
  *   - firstFireDelaySeconds: equals intervalSeconds when undefined
- *   - missedThreshold: `DEFAULT_MISSED_THRESHOLD` (3) when undefined
+ *   - missedThreshold: `DEFAULT_MISSED_THRESHOLD` (2 per §8 reduce-to-2 fold; was 3 pre-mission-68) when undefined
  *   - responseShape: required (no default; validated separately)
+ *
+ * **Mission-68 fold (Design §4.2 C2):** `precondition` auto-injection
+ * REMOVED. The W4 precondition registry continues to serve scheduled-
+ * message consumers (`thread-still-active`, `task-not-completed`); only
+ * the `mission_idle_for_at_least` predicate + auto-inject branch are
+ * gone. Pulse fires on schedule unconditionally (modulo missedThreshold
+ * pause logic + Step 4 missedCount-increment 3-condition guard preserved
+ * intact per C1 fold).
  *
  * Auto-injection happens once at write-time + persisted on the mission
  * entity. Reading the entity returns the injected values explicitly;
@@ -80,18 +88,44 @@ function autoInjectPulseDefaults(input: PulseConfig): PulseConfig {
   if (result.missedThreshold === undefined) {
     result.missedThreshold = DEFAULT_MISSED_THRESHOLD;
   }
-  if (result.precondition === undefined) {
-    // Inject default `mission_idle_for_at_least` precondition; reduces
-    // pulse-noise during high-activity sub-PR cascades.
-    result.precondition = {
-      fn: "mission_idle_for_at_least",
-      args: { seconds: result.intervalSeconds },
-    };
-  }
-  // Note: `precondition: null` (explicit disable) is preserved — null
-  // bypasses the auto-inject branch above (since `null !== undefined`).
 
   return result;
+}
+
+/**
+ * Mission-68 W1 (Design v1.0 §5 + §7 NEW-missions-only fold): build
+ * unified per-role default `pulses` config for missions created without
+ * explicit `pulses`. Synchronous-active-arc class cluster default — the
+ * distribution-packaging carve-out is handled at the methodology layer
+ * (C5 fold; missions in that class SHOULD declare `pulses` explicitly to
+ * 30/60 baseline).
+ *
+ * Default-injection semantics per Design §5:
+ *   - If `pulses` undefined → inject full default pulses (this function)
+ *   - If `pulses` provided but a per-pulse-key is undefined → that key
+ *     stays undefined (caller declared subset intent)
+ *   - If `pulses.<key>` provided → caller-provided fields preserved;
+ *     `autoInjectPulseDefaults` injects optional fields
+ */
+function buildDefaultPulses(): MissionPulses {
+  return {
+    engineerPulse: {
+      intervalSeconds: DEFAULT_ENGINEER_PULSE_INTERVAL_SECONDS,
+      message:
+        "Engineer pulse — status check; surface progress + blockers + commit-push thread-heartbeat per Design v1.0 §6.1 cadence discipline",
+      responseShape: "short_status",
+      missedThreshold: DEFAULT_MISSED_THRESHOLD,
+      firstFireDelaySeconds: DEFAULT_ENGINEER_PULSE_INTERVAL_SECONDS,
+    },
+    architectPulse: {
+      intervalSeconds: DEFAULT_ARCHITECT_PULSE_INTERVAL_SECONDS,
+      message:
+        "Architect pulse — status check; surface coord + decision points + cross-engineer integration",
+      responseShape: "short_status",
+      missedThreshold: DEFAULT_MISSED_THRESHOLD,
+      firstFireDelaySeconds: DEFAULT_ARCHITECT_PULSE_INTERVAL_SECONDS,
+    },
+  };
 }
 
 /**
@@ -170,26 +204,27 @@ async function createMission(args: Record<string, unknown>, ctx: IPolicyContext)
       }))
     : undefined;
 
-  // Mission-57 W1: validate missionClass enum + prepare pulses (strip
-  // sweeper-managed bookkeeping; auto-inject defaults; validate
-  // engineer-authored fields). Per Design v1.0 §3 default-injection
-  // semantics + §6 (unset)/legacy NO-PULSE backward-compat.
+  // Mission-57 W1 + mission-68 W1: validate missionClass enum + prepare
+  // pulses (strip sweeper-managed bookkeeping; auto-inject defaults;
+  // validate engineer-authored fields). Per Design v1.0 §5 unified-default
+  // injection: when `pulses` is omitted entirely, build the unified
+  // engineerPulse + architectPulse 10/20/2 default config. When `pulses`
+  // is provided, per-key auto-injection applies. Per §7 P8 ratification:
+  // NEW missions get unified defaults regardless of `missionClass` value
+  // (option-(a) accept post-v1.0 unified semantics override for legacy).
   if (missionClass !== undefined && !MISSION_CLASSES.includes(missionClass)) {
     return {
       content: [{ type: "text" as const, text: JSON.stringify({ error: `missionClass must be one of: ${MISSION_CLASSES.join(", ")}` }) }],
       isError: true,
     };
   }
-  let preparedPulses: MissionPulses | undefined;
-  if (pulses !== undefined) {
-    const { value, error } = preparePulsesForStorage(pulses);
-    if (error) {
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error }) }],
-        isError: true,
-      };
-    }
-    preparedPulses = value;
+  const effectivePulses = pulses !== undefined ? pulses : buildDefaultPulses();
+  const { value: preparedPulses, error: preparedError } = preparePulsesForStorage(effectivePulses);
+  if (preparedError) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ error: preparedError }) }],
+      isError: true,
+    };
   }
 
   const createdBy = await resolveCreatedBy(ctx);
@@ -508,22 +543,22 @@ const PLANNED_TASK_INPUT_SCHEMA = z.object({
   issuedTaskId: z.string().nullable().optional().describe("ID of the spawned Task once issued (managed by advancement cascade; callers should leave null)"),
 });
 
-// Mission-57 W1: PulseConfig + MissionPulses input schemas. Sweeper-managed
-// bookkeeping fields (lastFiredAt / lastResponseAt / missedCount /
-// lastEscalatedAt) are stripped at MCP-tool boundary in the handler;
-// not part of the input schema. Engineers declare engineer-authored
+// Mission-57 W1 + mission-68 W1: PulseConfig + MissionPulses input schemas.
+// Sweeper-managed bookkeeping fields (lastFiredAt / lastResponseAt /
+// missedCount / lastEscalatedAt) are stripped at MCP-tool boundary in the
+// handler; not part of the input schema. Engineers declare engineer-authored
 // fields only.
-const PRECONDITION_INPUT_SCHEMA = z.object({
-  fn: z.string().describe("Predicate name (must exist in `hub/src/policy/preconditions.ts` registry)"),
-  args: z.record(z.string(), z.unknown()).describe("Arguments passed to the predicate evaluator"),
-});
-
+//
+// **Mission-68 fold (Design v1.0 §4.2):** `precondition` field REMOVED
+// from the input schema. The W4 precondition registry continues to serve
+// scheduled-message consumers (`thread-still-active`, `task-not-completed`)
+// but is no longer addressable via PulseConfig. Pulse fires on schedule
+// unconditionally (modulo missedThreshold pause logic).
 const PULSE_CONFIG_INPUT_SCHEMA = z.object({
   intervalSeconds: z.number().describe("Pulse cadence in seconds; ≥60s enforced (sub-minute is anti-pattern); ≥300s recommended"),
   message: z.string().describe("Payload prompt rendered at adapter when pulse fires"),
   responseShape: z.enum(["ack", "short_status", "full_status"]).describe("Pulse-response-shape hint to the adapter renderer; required (no default per pulse-semantics-domain)"),
-  missedThreshold: z.number().optional().describe("Architect-side escalation threshold; auto-injected default 3 if omitted (matches W3.2 ADR-017 receipt-deadline-missed-3x precedent)"),
-  precondition: PRECONDITION_INPUT_SCHEMA.nullable().optional().describe("Optional W4-precondition-registry fn-by-name + args. Auto-injected default `mission_idle_for_at_least` if omitted; explicit `null` to disable"),
+  missedThreshold: z.number().optional().describe("Architect-side escalation threshold; auto-injected default 2 (mission-68 §8 reduce-to-2 fold; was 3 pre-mission-68) if omitted"),
   firstFireDelaySeconds: z.number().optional().describe("Optional first-fire delay; auto-injected to intervalSeconds if omitted"),
 });
 

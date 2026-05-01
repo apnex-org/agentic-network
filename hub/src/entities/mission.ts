@@ -85,8 +85,16 @@ export const PULSE_RESPONSE_SHAPES = ["ack", "short_status", "full_status"] as c
 export type PulseResponseShape = (typeof PULSE_RESPONSE_SHAPES)[number];
 
 /**
- * Mission-57 W1: per-pulse declarative configuration on a Mission entity.
- * Per Design v1.0 §3 (PulseConfig schema) + §6 (default-injection semantics).
+ * Mission-57 W1 + mission-68 W1: per-pulse declarative configuration on a
+ * Mission entity. Per Design v1.0 §3 (PulseConfig schema) + §5 (unified
+ * 10/20 default cadence) + §8 (missedThreshold reduce-to-2).
+ *
+ * **Mission-68 amendment (Design v1.0 §4.2):** `precondition` field
+ * REMOVED. Pulse fires on schedule unconditionally (modulo missedThreshold
+ * pause logic). The W4 precondition registry continues to serve scheduled-
+ * message consumers (`thread-still-active`, `task-not-completed`) but the
+ * `mission_idle_for_at_least` predicate + auto-injection branch are gone
+ * per engineer-audit C2 + Q3a Director-pick.
  *
  * Fields split into two classes:
  *
@@ -94,8 +102,7 @@ export type PulseResponseShape = (typeof PULSE_RESPONSE_SHAPES)[number];
  *   - intervalSeconds: cadence (≥60s enforced; ≥300s recommended; sub-minute is anti-pattern per Survey Q5)
  *   - message: payload prompt rendered at adapter
  *   - responseShape: pulse-response-shape declaration
- *   - missedThreshold: architect-side escalation threshold (auto-injected default 3 per Design v1.0 §3 + §6)
- *   - precondition: optional W4-precondition-registry fn-by-name + args (auto-injected `mission_idle_for_at_least` default per Design v1.0 §3; explicit `null` to disable)
+ *   - missedThreshold: architect-side escalation threshold (auto-injected default 2 per Design v1.0 §8 mission-68 fold; was 3 pre-mission-68)
  *   - firstFireDelaySeconds: optional first-fire delay (auto-injected to intervalSeconds)
  *
  * **Sweeper-managed bookkeeping** (read-only via MCP tools; only PulseSweeper
@@ -103,7 +110,7 @@ export type PulseResponseShape = (typeof PULSE_RESPONSE_SHAPES)[number];
  * `mission-policy.ts:update_mission`):
  *   - lastFiredAt: ISO-8601 timestamp of most recent pulse fire
  *   - lastResponseAt: ISO-8601 timestamp of most recent ack via webhook
- *   - missedCount: increments on missed-pulse detection (E2 3-condition guard)
+ *   - missedCount: increments on missed-pulse detection (E2 3-condition guard PRESERVED INTACT per mission-68 C1 — orthogonal to precondition layer)
  *   - lastEscalatedAt: suppresses escalation-storm
  */
 export interface PulseConfig {
@@ -112,7 +119,6 @@ export interface PulseConfig {
   message: string;
   responseShape: PulseResponseShape;
   missedThreshold: number;
-  precondition?: { fn: string; args: Record<string, unknown> } | null;
   firstFireDelaySeconds?: number;
 
   // Sweeper-managed bookkeeping
@@ -144,11 +150,29 @@ export type PulseKey = (typeof PULSE_KEYS)[number];
 export const PULSE_INTERVAL_FLOOR_SECONDS = 60;
 
 /**
- * Mission-57 W1: default `missedThreshold` per Design v1.0 §3 + §6
- * (matches W3.2 ADR-017 receipt-deadline-missed-3x precedent for COMMS
- * escalation; reduces false-positive rate vs 2). Per-mission overridable.
+ * Mission-68 W1 (Design v1.0 §8 reduce-to-2 fold): default `missedThreshold`
+ * lowered from 3 → 2. Faster missed-detection per Q1c + Q5a compose. At the
+ * unified 10/20 cadence (per §5), escalation latency is 20min engineer /
+ * 40min architect (was 30/60 at threshold=3, 45/90 at v1.2 baseline 15/30).
+ * Engineer-runtime overlay row surfaces this horizon for cold-pickup
+ * awareness per M4 fold. Per-mission overridable.
  */
-export const DEFAULT_MISSED_THRESHOLD = 3;
+export const DEFAULT_MISSED_THRESHOLD = 2;
+
+/**
+ * Mission-68 W1 (Design v1.0 §5 unified 10/20 cadence default): per-role
+ * default `intervalSeconds` for auto-injection when a mission is created
+ * without explicit `pulses` config. Synchronous-active-arc class cluster
+ * default; distribution-packaging class missions SHOULD declare `pulses`
+ * explicitly to longer cadence (30/60 baseline preserved per C5 fold).
+ *
+ * Per-class taxonomy elimination (Q2a) + precondition layer removal (Q3a)
+ * compose to make these the unified per-role defaults; missionClass field
+ * stays on the Mission entity for retrospective + portfolio-balance scoring
+ * but no longer drives pulse cadence.
+ */
+export const DEFAULT_ENGINEER_PULSE_INTERVAL_SECONDS = 600;
+export const DEFAULT_ARCHITECT_PULSE_INTERVAL_SECONDS = 1200;
 
 /**
  * Phase 2d CP2 C4 (task-307): "committable" convention per architect

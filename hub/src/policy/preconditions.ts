@@ -86,21 +86,12 @@ export const PRECONDITIONS: readonly Precondition[] = [
       return task !== null && task.status !== "completed";
     },
   },
-  {
-    fn: "mission_idle_for_at_least",
-    description:
-      "Mission-57 W2: returns true iff the named mission has been idle (no `updatedAt` bumps) for at least `seconds` seconds. Used as the auto-injected default precondition for pulse Messages (per Design v1.0 §3 + §6 S2 noise-reduction intent). PulseSweeper augments `args.missionId` from the parent mission entity at evaluation time. Returns false on missing mission (conservative). Note: pulse-bookkeeping updates bump `mission.updatedAt`, so post-fire the mission appears 'active' for the next intervalSeconds — pulses fire roughly at cadence regardless of activity, with the 'idle' check filtering high-activity sub-PR-cascade bursts where the mission entity is being touched faster than the cadence.",
-    evaluate: async (args, ctx) => {
-      const missionId = args.missionId;
-      const seconds = args.seconds;
-      if (typeof missionId !== "string" || missionId.length === 0) return false;
-      if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return false;
-      const mission = await ctx.stores.mission.getMission(missionId);
-      if (!mission) return false;
-      const idleMs = Date.now() - new Date(mission.updatedAt).getTime();
-      return idleMs >= seconds * 1000;
-    },
-  },
+  // Mission-68 W1 (Design v1.0 §4.2 C2 fold): `mission_idle_for_at_least`
+  // predicate REMOVED. The pulse-precondition layer is gone (Q3a) — pulses
+  // fire unconditionally on schedule. Other registry consumers
+  // (`thread-still-active`, `task-not-completed` for scheduled-message-
+  // sweeper) are PRESERVED above. The registry stays; only this entry +
+  // the auto-inject branch in mission-policy.ts removed.
 ];
 
 /**
