@@ -128,6 +128,24 @@ Standard RACI semantics: **R**esponsible (does the work) / **A**ccountable (fina
 
 **Calibration #57 origin** (mission-66 W1+W2; 2026-04-29): live observation of routing-rule failure mode — engineer in auto-mode-OFF + "ask Director when ambiguous" defaulted to Director-direct routing; architect-relayed Director directive triggered extra confirm-loop; required Director engaging engineer-session directly with explicit durable directive. Codified here per Director-ratified option-(B) closure path (methodology-doc + CLAUDE.md directive).
 
+#### §1.5.1.1 Commit-push thread-heartbeat mechanization (mission-68 W1 closure of #55)
+
+**3-layer engineer-cadence-discipline mechanization** ratified by mission-68 W1 (Design v1.0 §6 Q4d). Closes calibration #55 (engineer-cadence-discipline anti-pattern; silent between-commit pause). Composes belt + suspenders + braces:
+
+| Layer | Mechanism | Substrate | Path |
+|---|---|---|---|
+| (a) | Methodology-doc fold | This subsection + `engineer-runtime.md` row addition | Cold-pickup awareness |
+| (b) | Adapter-side commit-push hook | `adapters/claude-plugin/src/shim.ts` Bash-tool-result post-process; pattern `^git\s+push\b` + exit-code success + commit-pushed shape match (output contains `→` or `[new branch]`) | Engineer-side automation |
+| (c) | Hub-side commit-pushed handler | `hub/src/policy/repo-event-handlers.ts` registry + `repo-event-commit-pushed-handler.ts`; consumes `packages/repo-event-bridge/` (mission-52) `commit-pushed` subkind events; emits `kind=note + target.role=architect` synthesized notification | Cross-party visibility |
+
+**Failure-resilience hierarchy** (mission-68 §6.4 M8 fold): **Layer (c) is the load-bearing failure-resilient layer** — Hub bridge runs in-Hub-process (RepoEventBridge already integrated; failure-isolated); polls GitHub API directly; works regardless of adapter state. Layers (a) + (b) compose as defense-in-depth — adapter offline + engineer skips docs would still leave (c) intact. Worst-case partial-failure (Hub bridge stopped + adapter offline) leaves only (a); engineer-side discipline becomes load-bearing in that degenerate scenario.
+
+**Two-message-intent rationale** (mission-68 §2.4 M1 fold): bridge's `target: null + kind=external-injection` broadcast (substrate-grade event signal) and synthesized `kind=note + target.role=architect` note (engineer-cadence-discipline derivative) serve TWO consumer concerns by-design. Architect-role subscribers receive both; duplication intentional.
+
+**AG-7 anti-goal** (mission-68 §10.1 M7 transparency-flag): architect-pushes-to-engineer direction NOT in scope this mission — composes with idea-227 hook design symmetric coverage scope. The commit-pushed handler emits ONLY for engineer-pushes; architect-push events are suppressed at the handler level.
+
+**Cross-party authorship resolution** (mission-68 §2.2 + C4 + P2 fold): commit author identity resolves via `lookupRoleByGhLogin` primitive consulting Agent label `ois.io/github/login` (forward-compat namespace; supports `ois.io/gitlab/login` etc. for future identity providers). Adapter populates label at `register_role` handshake (reads `OIS_GH_LOGIN` env or resolves via git config). Missing label or no-match → log + skip (non-fatal; preserves bridge broadcast).
+
 ---
 
 ## §2 Survey phase (Idea → Design transition)
@@ -215,42 +233,42 @@ For substrate-introduction class missions (and substrate-introduction sub-class 
 
 Per ADR-027; mission entity gains `pulses.{engineerPulse, architectPulse}` declarative config at mission-57 W1 (PR #87 merged `72f77ab`); PulseSweeper drives at mission-57 W2 (PR #88 merged `4f4b76f`).
 
-### §4.1 Per-class default cadence template
+### §4.1 Default cadence — unified per-role (mission-68 W1 §5 fold)
 
-**Conventions, NOT Hub primitives** (per Survey Q3+Q4+Q6 anti-goal). Mission entity always-canonical for runtime config; missions opt-in by declaring `pulses.*`.
+**Mission-68 W1 supersedes the per-class default cadence table.** Per Director Survey Q2(a) (eliminate class-based defaults entirely) + Q5(a) (10/20min unified per-role) + Path C ratification, the per-class taxonomy no longer drives pulse cadence. `missionClass` field stays on the Mission entity for retrospective + portfolio-balance scoring, but pulse defaults are now uniform.
 
-**v1.2 recalibration note:** defaults below are anchored in empirical 10-15min active-arc baseline (mission-56/57 PRs shipped ~10-15min apart consistently; `feedback_wakeup_cadence_15min_max.md` 15min cap already primary default). Pulse primitive replaces manual 10-15min loops; cadence reflects the loop-replacement reality, not aspirational watchdog cadences.
+**Unified per-role defaults** (auto-injected by `mission-policy.ts:create_mission` when `pulses` is omitted, AND by `update_mission` at `proposed → active` flip when mission lacks `pulses` config):
 
-| missionClass | engineerPulse default | architectPulse default | Notes |
+| Role | Default `intervalSeconds` | Default `missedThreshold` | Composed escalation latency |
 |---|---|---|---|
-| **(unset / legacy)** | **NO PULSE** | **NO PULSE** | Backward-compat: legacy missions without `missionClass` declaration get no auto-pulses; explicit opt-in via `pulses.*` declaration only |
-| `spike` | 10min | 20min | Short missions; quick check-ins; firstFireDelay still protects against low-utility fires |
-| `substrate-introduction` | 15min | 30min | Standard active-arc cadence; substrate work has natural sub-PR rhythm |
-| `pre-substrate-cleanup` | 15min | 30min | Standard active-arc cadence |
-| `structural-inflection` | 15min | 30min | Standard active-arc cadence (mission-56 evidence: ~10-15min sub-PRs → engineer pulse fires every ~1 PR; high cognitive load handled via responseShape design, not longer cadence) |
-| `coordination-primitive-shipment` | 15min | 30min | Standard active-arc cadence (mission-57's class) |
-| `saga-substrate-completion` | 15min | 30min | Standard active-arc cadence |
-| `substrate-cleanup-wave` | 15min | 30min | Standard active-arc cadence (mission-58's class; smaller missions still benefit from tight cadence) |
-| `distribution-packaging` | 30min | 60min | Async work; longer cadence acceptable (only class with >15min engineer default; reflects async-coord nature) |
+| engineer | **600** (10min) | **2** (mission-68 §8 reduce-to-2 fold; was 3) | 20min (was 30min at threshold=3, 45min at v1.2 baseline 15/30/3) |
+| architect | **1200** (20min) | **2** (mission-68 §8 reduce-to-2 fold; was 3) | 40min (was 60min, 90min) |
 
-**Default `missedThreshold`**: 3 across all classes (matches W3.2 ADR-017 receipt-deadline-missed-3x precedent).
+**Distribution-packaging carve-out** (C5 fold; methodology-layer override): missions in the `distribution-packaging` class SHOULD declare `pulses` explicitly to longer cadence (30/60min baseline preserved per v1.2 empirical anchoring; async-coord nature). The Hub-side unified default targets the synchronous-active-arc class cluster.
 
 **Default `responseShape`**: `short_status` for both engineerPulse + architectPulse (status-elicitor framing per concept memo intent).
 
 **Default `firstFireDelaySeconds`**: equal to `intervalSeconds` (first pulse fires after one cadence; not immediately on activate — S2 noise-reduction).
 
-**Default `precondition`**: `{fn: "mission_idle_for_at_least", args: {seconds: <intervalSeconds>}}` (auto-injected at mission-policy.ts validation; reduces noise during high-activity sub-PR cascades).
+**Precondition layer REMOVED (mission-68 §4.2 Q3a fold):** PulseConfig schema no longer carries a `precondition` field; the W4 precondition registry continues to serve scheduled-message consumers (`thread-still-active`, `task-not-completed`) but the `mission_idle_for_at_least` predicate + auto-injection branch are gone. Pulses fire on schedule unconditionally (modulo missedThreshold pause + Step 4 missedCount-increment 3-condition guard preserved intact per CRITICAL C1 fold).
 
-### §4.2 Override semantics
+**Backward-compat** (mission-68 §7 NEW-missions-only fold):
+- Pre-existing `active` missions with explicit `pulses` config: UNCHANGED (existing config preserved; `precondition` field on disk ignored on read post-schema-removal)
+- Pre-existing `active` missions without `pulses` config: UNCHANGED (still no auto-pulses)
+- Pre-existing `proposed` missions: UNCHANGED until status flip; if flipped post-mission-68-ship, gets unified 10/20/2 defaults via the NEW `update_mission` FSM-handler auto-inject (P8 ratification: NOT gated behind `missionClass !== undefined`)
+- NEW missions created post-mission-68: gets unified 10/20/2 defaults unless explicit override
 
-Mission `pulses.<role>Pulse.*` field declarations OVERRIDE per-class defaults. Architect declares at Design time (or at create_mission Manifest cascade); bilateral with engineer; engineer-final on cadence specifics. Per-pulse override fields:
+### §4.2 Override semantics (mission-68 simplified)
+
+Mission `pulses.<role>Pulse.*` field declarations OVERRIDE the unified defaults. Architect declares at Design time (or at create_mission Manifest cascade); bilateral with engineer; engineer-final on cadence specifics. Per-pulse override fields:
 
 - `intervalSeconds` (≥60s enforced; ≥300s recommended)
 - `message` (non-empty)
 - `responseShape` (required; no default)
-- `missedThreshold` (default 3)
-- `precondition` (default `mission_idle_for_at_least`; explicit `null` to disable)
+- `missedThreshold` (default 2 per mission-68 reduce-to-2; was 3 pre-mission-68)
 - `firstFireDelaySeconds` (default `intervalSeconds`)
+
+(`precondition` field removed per mission-68 §4.2 fold.)
 
 Sweeper-managed bookkeeping fields (`lastFiredAt` / `lastResponseAt` / `missedCount` / `lastEscalatedAt`) are read-only via MCP tools; only PulseSweeper writes via direct repository updates.
 
@@ -258,11 +276,11 @@ Sweeper-managed bookkeeping fields (`lastFiredAt` / `lastResponseAt` / `missedCo
 
 | Situation | Action |
 |---|---|
-| Architect retrospective HOLD post-mission-close | Set `mission.status = "completed"` (pulse auto-suspends) OR set `pulses: {}` |
-| idea-208 CI-dogfood verification windows | Mission can declare `pulses.engineerPulse: null` to suppress |
-| Active sub-PR cascade with high natural coord cadence | `precondition: { fn: "mission_idle_for_at_least", args: { seconds: <intervalSeconds> } }` (default) skips fires when activity recent |
+| Architect retrospective HOLD post-mission-close | Set `mission.status = "completed"` (pulse auto-suspends) |
+| idea-208 CI-dogfood verification windows | Mission can declare `pulses.engineerPulse: null` to suppress (or omit on create_mission and self-suppress via per-role declaration of `null`) |
 | Mission stuck in escalation | Pulse auto-pauses (missedThreshold breached); no manual disable needed |
 | Substrate-self-dogfood-defer (substrate-vs-enrichment per §6) | Don't declare pulses on the mission shipping the pulse substrate |
+| Distribution-packaging async cadence | Declare `pulses` explicitly to 30/60 baseline (don't rely on unified default) |
 
 ### §4.4 Pulse vs ScheduleWakeup boundary (S5)
 

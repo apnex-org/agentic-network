@@ -45,9 +45,12 @@ interface PulseConfig {
   intervalSeconds: number;          // ≥60s enforced; ≥300s recommended
   message: string;                   // payload prompt rendered at adapter
   responseShape: PulseResponseShape; // "ack" | "short_status" | "full_status"
-  missedThreshold: number;           // architect-escalation threshold (auto-injected default 3)
-  precondition?: { fn: string; args: Record<string, unknown> } | null;  // W4 registry; auto-inject default `mission_idle_for_at_least`
+  missedThreshold: number;           // architect-escalation threshold (auto-injected default 2 per mission-68 §8 reduce-to-2 fold; was 3 pre-mission-68)
   firstFireDelaySeconds?: number;    // auto-injected to intervalSeconds when undefined
+  // (mission-68 §4.2 fold) precondition field REMOVED — pulses fire
+  // unconditionally on schedule; W4 registry continues to serve scheduled-
+  // message consumers via distinct entry points (`thread-still-active`,
+  // `task-not-completed`).
 
   // Sweeper-managed bookkeeping (read-only via MCP tools; only PulseSweeper writes via direct repo)
   lastFiredAt?: string;
@@ -57,9 +60,12 @@ interface PulseConfig {
 }
 ```
 
-**Default-injection semantics** (per Design v1.0 §3): missing optional fields auto-injected at `mission-policy.ts:create_mission` / `update_mission` validation; persisted on entity; reading returns injected values explicitly (no implicit defaults at read-time).
+**Default-injection semantics** (per Design v1.0 §3 + mission-68 W1 §5 unified-default fold): missing optional fields auto-injected at `mission-policy.ts:create_mission` / `update_mission` validation; persisted on entity; reading returns injected values explicitly (no implicit defaults at read-time). **Mission-68 unified default**: when `pulses` is omitted entirely on `create_mission` OR at `update_mission` proposed→active flip, the Hub injects unified per-role defaults (engineerPulse 600s/missedThreshold=2 + architectPulse 1200s/missedThreshold=2; sync-active-arc class cluster default).
 
-**(unset)/legacy `missionClass` = NO PULSE** per Design v1.0 §6 backward-compat — missions without explicit `missionClass` declaration get no automatic pulses; explicit opt-in via `pulses.*` declaration only. Preserves backward-compat for missions on disk pre-mission-57 W1.
+**Legacy `missionClass` = NO PULSE backward-compat — superseded by mission-68 W1 §7 NEW-missions-only fold:**
+- Pre-mission-57 missions in `active` status without `pulses` config: UNCHANGED (preserved at-flip-time; no retroactive injection)
+- NEW missions (created or flipped proposed→active post-mission-68): unified 10/20/2 defaults applied (P8 ratification: NOT gated behind `missionClass !== undefined` — accept post-v1.0 unified-semantics override for legacy `proposed` missions)
+- Distribution-packaging class missions (async work; 30/60 baseline): SHOULD declare `pulses` explicitly to longer cadence per `mission-lifecycle.md` §4.x (C5 fold; methodology-layer carve-out)
 
 ### 2.2 PulseSweeper — single-instance recurring sweeper
 
@@ -109,13 +115,15 @@ Faithful to Survey Q5B intent ("Architect-side escalation after 2-3 missed pulse
 
 ### 2.6 E2 3-condition missed-count guard
 
+**PRESERVED INTACT per mission-68 W1 CRITICAL C1 fold** — engineer round-1 audit (thread-445) verified that the 3-condition guard is ORTHOGONAL to the precondition layer (Step 4 in `pulse-sweeper.ts`, distinct from the now-removed Step 3 precondition check). Removing this guard would break the missed-count semantics: escalation would fire after `missedThreshold` cadences regardless of acks. The guard stays even though Q3a removed the precondition layer.
+
 Missed-count increments only when ALL three conditions hold:
 
 1. `pulseFiredAtLeastOnce`: `lastFiredAt > 0`
 2. `noAckSinceLastFire`: `lastResponseMs < lastFiredMs`
 3. `graceWindowElapsed`: `now - lastFiredMs > intervalSeconds*1000 + graceMs` (default `graceMs = 30000`)
 
-Avoids false-positive when prior tick skipped fire due to `precondition === false` (precondition-skipped pulses are intentional; no real missed response).
+Historical rationale: avoided false-positive when prior tick skipped fire due to `precondition === false` (precondition-skipped pulses were intentional; no real missed response). Post-mission-68: pulses fire unconditionally; the `noAckSinceLastFire` condition continues to gate the increment on whether the agent responded since the last fire (the load-bearing semantics).
 
 ### 2.7 Layer-3 adapter render integration
 
@@ -125,11 +133,13 @@ opencode-plugin shim mirrors level-downgrade via inlined `isPulseEvent` helper (
 
 **Detection:** `event.event === "message_arrived"` + `event.data.message.payload.pulseKind ∈ {status_check, missed_threshold_escalation}`. Backward-compat preserved for callers that omit `eventData` (falls through to existing 4-family taxonomy).
 
-### 2.8 mission_idle_for_at_least precondition (W4 registry extension)
+### 2.8 mission_idle_for_at_least precondition (W4 registry extension) — REMOVED per mission-68 W1
 
-Auto-injected default precondition for pulses; checks `now - mission.updatedAt >= seconds*1000`. PulseSweeper augments `args.missionId` from parent mission entity at evaluation time so the registry predicate can resolve mission state. Missing mission → false (conservative).
+**Section retired per mission-68 W1 (Design v1.0 §4.2 + Q3a Director-pick).** The `mission_idle_for_at_least` predicate + auto-injection branch were removed per engineer-audit C2 fold; pulses now fire unconditionally on schedule. The W4 precondition registry itself is PRESERVED for scheduled-message-sweeper consumers (`thread-still-active`, `task-not-completed`); only this entry was deleted from `hub/src/policy/preconditions.ts`.
 
-**Self-referential consideration:** pulse bookkeeping updates bump `mission.updatedAt`, so post-fire the mission appears "active" for the next intervalSeconds. Pulses fire roughly at cadence regardless of activity; precondition filters high-activity bursts where mission entity touches outpace the cadence. Acceptable trade-off; documented for future readers.
+Sequencing rationale (Director Q3a + tele-8 Gated Recursive Integrity): per-agent-idle predicate work composes via idea-225 M-TTL-Liveliness-Design AFTER substrate-grade TTL liveliness signals exist (Layer N substrate before Layer N+1 features). Pre-substrate, removing the precondition layer is cleaner than tweaking it.
+
+Historical content for archive context: the predicate checked `now - mission.updatedAt >= seconds*1000` to filter high-activity sub-PR-cascade bursts. Self-referential consideration: pulse bookkeeping updates bumped `mission.updatedAt`, so the predicate filtered only when mission entity touches outpaced the cadence. Trade-off accepted at mission-57; reframed as unnecessary substrate complexity at mission-68 (10/20 cadence + reduced threshold + per-agent-idle deferred to idea-225 makes precondition layer redundant).
 
 ### 2.9 Observability — pulse rate metrics
 
@@ -197,6 +207,12 @@ Co-shipping at mission-57 W4 D5:
 - **Per-class default pulse cadence** template (NOT Hub primitives — Survey Q3+Q4+Q6 anti-goal preserved)
 - **Override semantics** + when-to-disable-pulses + ScheduleWakeup boundary (S5)
 - **Autonomous-arc-driving pattern** + **substrate-self-dogfood discipline** (with substrate-vs-enrichment refinement)
+
+**Mission-68 W1 co-shipping note (Design v1.0 §9 MIN1 fold):** mission-68 ships co-shipping methodology-doc updates per Design §4.3 + §6.1.1:
+- §4.1 per-class default cadence table replaced by unified 10/20 default with distribution-packaging carve-out (sync-active-arc class cluster gets unified injection; distribution-packaging declares `pulses` explicitly to 30/60 baseline)
+- §4.2 override semantics simplified (no per-class taxonomy; just per-mission `pulses.*` declaration + missionClass-absent-no-blocking-effect)
+- §4.3 when-to-disable row drops precondition reference (precondition layer removed)
+- §1.5.1 expansion: NEW §1.5.1.1 commit-push thread-heartbeat mechanization (3-layer engineer-cadence-discipline stack — methodology-doc fold + adapter Bash-tool-result post-process hook + Hub-side commit-pushed handler routing substrate)
 
 ### 4.6 Test surface
 
