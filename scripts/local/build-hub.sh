@@ -171,6 +171,11 @@ for entry in "${SOVEREIGN_PACKAGES[@]}"; do
   PKG_DIR="$REPO_ROOT/$PKG_SOURCE"
 
   echo "[build-hub] ──────── Pack $PKG_NAME ────────"
+  # Pre-install package devDeps so the `prepare` hook (which runs `tsc`)
+  # can succeed during npm pack. Fresh checkouts lack node_modules; the
+  # prepare hook's `tsc` needs @types/node + typescript + the package's
+  # own deps. Idempotent: subsequent runs no-op if node_modules current.
+  ( cd "$PKG_DIR" && npm install --no-audit --no-fund --silent )
   TARBALL_NAME=$( cd "$PKG_DIR" && npm pack --pack-destination "$HUB_DIR" --silent )
   if [[ -z "$TARBALL_NAME" || ! -f "$HUB_DIR/$TARBALL_NAME" ]]; then
     echo "[build-hub] ERROR: npm pack did not produce a tarball for $PKG_NAME." >&2

@@ -39,18 +39,21 @@ jobs:
           node-version: "22"
           cache: "npm"
           cache-dependency-path: hub/package-lock.json
-      # `npm install` (NOT `npm ci`) — extends mission-50 T5's Dockerfile
-      # fix to the CI path. The committed lockfile resolves
-      # `file:../packages/repo-event-bridge` (and storage-provider) for
-      # local dev; CI install runs `prepare` hooks on those file: deps so
-      # dist/ is built into node_modules at install time. `npm ci` cannot
-      # do that — it treats the lockfile as authoritative + skips prepare
-      # hooks for file: deps that lack lockfile-pinned integrity hashes
-      # (file: refs intrinsically have none). Reverts to `npm ci` when
-      # idea-186 (npm workspaces) lands. See deploy/README.md
-      # §"Cloud Build tarball staging" for the parallel rationale on the
-      # Dockerfile path; bug-37/bug-38 for prior failure modes.
-      - name: Install
+      # Pre-build sovereign packages before hub install. file: deps' `prepare`
+      # hooks fire on hub's npm install but cannot succeed without the package's
+      # OWN devDeps (@types/node, typescript, @google-cloud/storage) being
+      # installed first — and npm install of file: deps does NOT recurse to
+      # install their devDeps. So we install + build each package explicitly
+      # first; hub install then sees usable dist/ in node_modules.
+      # Reverts to single hub install when idea-186 (npm workspaces) lands.
+      - name: Install + build sovereign packages
+        working-directory: ${{ github.workspace }}
+        run: |
+          npm install --no-audit --no-fund --prefix packages/storage-provider
+          npm run build --prefix packages/storage-provider
+          npm install --no-audit --no-fund --prefix packages/repo-event-bridge
+          npm run build --prefix packages/repo-event-bridge
+      - name: Install hub
         run: npm install --no-audit --no-fund
       - name: Test
         run: npm test
@@ -69,8 +72,14 @@ jobs:
           node-version: "22"
           cache: "npm"
           cache-dependency-path: hub/package-lock.json
+      - name: Install + build sovereign packages
+        working-directory: ${{ github.workspace }}
+        run: |
+          npm install --no-audit --no-fund --prefix packages/storage-provider
+          npm run build --prefix packages/storage-provider
+          npm install --no-audit --no-fund --prefix packages/repo-event-bridge
+          npm run build --prefix packages/repo-event-bridge
       - name: Install hub deps
-        # `npm install` (NOT `npm ci`) per vitest-hub job rationale above.
         run: npm install --no-audit --no-fund
       - name: Regenerate coverage report
         run: npm run coverage:invariants
