@@ -138,12 +138,13 @@ Per `idea-survey.md` v1.0: 3+3 Director-pick session across two rounds; architec
 
 **Aggregate-context interpretation:** Director picking (d) over (e/defer) signals high-conviction on full-stack engineer-cadence-discipline mechanization. Maps tightly to Q1(d) primary outcome — mechanizing #55 closure requires substrate at all 3 layers (methodology declaration + adapter-detection + Hub-side event consumption). Defer-to-idea-227 (option e) was rejected — Director wants this mission to ship the mechanization, not just the doc-substrate.
 
-**⚠️ Architect-flag for Phase 4 Design (sequencing surface):** Q4(c) "Hub-side commit-push event consumption" implies dependency on **idea-191 repo-event-bridge** (per `mission-lifecycle.md` §A 5.3 — pluggable event-source contract; PR/review/merge events from GH). Three compositional paths:
-- **Path A (architect-recommended)** — idea-191 lands FIRST as separate prerequisite mission; idea-224 consumes event-bridge as substrate
-- **Path B** — idea-224 ABSORBS idea-191 scope (single larger mission; ~3x scope inflation)
-- **Path C** — idea-224 ships interim Hub-side commit-push hook; idea-191 elaborates full event-source contract later
+**⚠️ Architect-flag for Phase 4 Design (sequencing surface — RESOLVED post-Survey):** Q4(c) "Hub-side commit-push event consumption" was initially flagged as implying dependency on **idea-191 repo-event-bridge** (per `mission-lifecycle.md` §A 5.3 — forward primitive). Three paths considered (Path A: idea-191 first / Path B: absorb / Path C: interim hook).
 
-**Director ratification (post-Survey):** Path A confirmed — "Agree that we surface idea 191 as pre-requisite. Can hold on 224 design until ready." → idea-224 Phase 4 Design HOLDS pending idea-191 readiness.
+**Reality check (architect-discovered post-initial-Survey-publish):** **idea-191 substrate ALREADY SHIPPED via mission-52.** The `@apnex/repo-event-bridge` package exists at `packages/repo-event-bridge/` (1599 LoC across 7 src files; T1 contract + T2 PollSource + T3 Hub integration). Crucially: `REPO_EVENT_SUBKINDS` includes `commit-pushed` (exactly the subkind idea-224 Q4(c) needs); `hub/src/policy/repo-event-handler.ts` wires PollSource → CreateMessageSink → in-process Hub create_message dispatch; activation via env vars (`OIS_GH_API_TOKEN` + `OIS_REPO_EVENT_BRIDGE_REPOS`).
+
+**Sequencing decision REVISED:** Path A dissolves — substrate exists; idea-224 Phase 4 Design proceeds DIRECTLY (no HOLD). Q4(c) implementation = subscribe to existing `commit-pushed` events from `RepoEventBridge` + emit pulse-related notifications/actions.
+
+**Methodology data-point captured (`normative-doc-divergence` second-canonical instance):** Hub Idea entity idea-191 was status=open + missionId=null even though mission-52 shipped the substrate (README explicit: "Mission-52 deliverable; design ratified at thread-312 round 2 2026-04-25"). Three normative sources disagreed: (1) Hub entity = open; (2) `mission-lifecycle.md` §A 5.3 = forward primitive; (3) packages/repo-event-bridge/ + Hub integration = shipped. Ledger-vs-shipped-reality variant of calibration #58. Closure: idea-191 flipped to status=incorporated + missionId=mission-52 (architect-Responsibility per Idea entity FSM authority).
 
 ### §5.2 Q5 (a) — 10min engineer / 20min architect per-role defaults
 
@@ -221,20 +222,24 @@ To resolve at Phase 4 Design (bilateral architect-engineer):
 
 ---
 
-## §10 Mission sequencing decision (Director-ratified)
+## §10 Mission sequencing decision (REVISED post-Survey-amendment 2026-04-30)
 
-**Per Director directive 2026-04-30 ("Agree that we surface idea 191 as pre-requisite. Can hold on 224 design until ready"):**
+**Initial Director directive 2026-04-30 ("Agree that we surface idea 191 as pre-requisite. Can hold on 224 design until ready") superseded by architect-discovered substrate-already-shipped state.**
 
-- **idea-224 Phase 4 Design HOLDS** pending idea-191 readiness
-- **idea-191 elevated** to next-priority for triage + Phase 3 Survey + Phase 4 Design + ship as prerequisite mission
-- **Post-idea-191 ship:** idea-224 Phase 4 Design opens consuming the event-bridge substrate; Phase 4 → Phase 8 → Phase 9 close
+**Revised sequencing:**
 
-Mission cluster sequencing:
-1. **idea-191** M-Repo-Event-Bridge (NEW prerequisite mission; recommended next priority)
-2. **idea-224** M-Pulse-Mechanism-Phase-2 (THIS mission; HOLDS until 1 ships)
-3. **idea-225** M-TTL-Liveliness-Design (composes per-agent-idle work post-224)
-4. **idea-227** M-Hook-Design-End-to-End (parked; consumes 191+224 substrates)
-5. **idea-228** M-Survey-Process-as-Skill (filed; runtime-mechanization sister; independent of 191/224)
+- **idea-224 Phase 4 Design proceeds DIRECTLY** — no HOLD; substrate (mission-52 repo-event-bridge) already exists; Q4(c) implementation subscribes to existing `commit-pushed` events
+- **idea-191 status flipped** to `incorporated` + missionId=mission-52 (architect-direct ratification per Idea entity FSM authority; closes ledger-vs-shipped-reality divergence)
+- **Forward composition:** idea-224 Phase 4 Design + Phase 5 Manifest + Phase 6 Preflight + Phase 7 Release-gate + Phase 8 Execution + Phase 9 Close
+
+**Revised mission cluster sequencing:**
+
+1. **idea-224** M-Pulse-Mechanism-Phase-2 (THIS mission; ready for Phase 4 Design when Director go-signals; substrate = mission-52 repo-event-bridge)
+2. **idea-225** M-TTL-Liveliness-Design (composes per-agent-idle work post-224)
+3. **idea-227** M-Hook-Design-End-to-End (parked; consumes 224 substrate + complements idea-228)
+4. **idea-228** M-Survey-Process-as-Skill (filed; runtime-mechanization sister; independent)
+
+**Methodology lesson captured:** `normative-doc-divergence` second-canonical instance (ledger-vs-shipped-reality variant). Closure-mechanism candidate (b) "cross-reference audit at retrospective gates" applied — architect should verify ledger-vs-shipped state via grep `packages/`/`hub/` BEFORE assuming forward-architecture references in `mission-lifecycle.md` §A reflect current state. Composes with calibration #58 closure-mechanism for forward-mechanization (idea-227 hook scope).
 
 ---
 
