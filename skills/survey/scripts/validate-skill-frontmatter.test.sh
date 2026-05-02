@@ -53,18 +53,31 @@ EOF
 set +e; bash "$SCRIPT" --skill-path="$TMPDIR/missing-key.md" >/dev/null 2>&1; rc=$?; set -e
 assert_exit 1 "$rc" "missing methodology-source FAIL"
 
-echo "[validate-skill-frontmatter.test] disable-model-invocation: false → exit 1"
-cat > "$TMPDIR/wrong-dmi.md" <<'EOF'
+echo "[validate-skill-frontmatter.test] disable-model-invocation: false → exit 0 (v1.1+ accepts both true|false per Director directive 2026-05-02)"
+cat > "$TMPDIR/dmi-false.md" <<'EOF'
 ---
 name: survey
-version: v1.0
+version: v1.1
 methodology-source: docs/methodology/idea-survey.md v1.0
 description: test description
 disable-model-invocation: false
 ---
 EOF
-set +e; bash "$SCRIPT" --skill-path="$TMPDIR/wrong-dmi.md" >/dev/null 2>&1; rc=$?; set -e
-assert_exit 1 "$rc" "disable-model-invocation: false FAIL"
+set +e; bash "$SCRIPT" --skill-path="$TMPDIR/dmi-false.md" >/dev/null 2>&1; rc=$?; set -e
+assert_exit 0 "$rc" "disable-model-invocation: false PASS (auto-invocation enabled)"
+
+echo "[validate-skill-frontmatter.test] disable-model-invocation: bogus → exit 1"
+cat > "$TMPDIR/dmi-bogus.md" <<'EOF'
+---
+name: survey
+version: v1.1
+methodology-source: docs/methodology/idea-survey.md v1.0
+description: test description
+disable-model-invocation: maybe
+---
+EOF
+set +e; bash "$SCRIPT" --skill-path="$TMPDIR/dmi-bogus.md" >/dev/null 2>&1; rc=$?; set -e
+assert_exit 1 "$rc" "disable-model-invocation: bogus FAIL (must be true|false)"
 
 echo "[validate-skill-frontmatter.test] No frontmatter at all → exit 1"
 cat > "$TMPDIR/no-fm.md" <<'EOF'

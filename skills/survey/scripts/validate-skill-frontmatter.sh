@@ -52,10 +52,13 @@ for key in "${REQUIRED_KEYS[@]}"; do
   fi
 done
 
-# disable-model-invocation MUST be true (this Skill is user-triggered per Q3=a + P2 fold)
+# disable-model-invocation MUST be a literal true|false (Director directive 2026-05-02:
+# v1.0 ratified true; v1.1 flipped to false to enable Claude auto-invocation as part of
+# mission lifecycle rather than relying on Director slash-command). Either is valid; just
+# enforce the value is well-formed.
 DMI_VALUE=$(grep -E "^disable-model-invocation:" <<<"$FRONTMATTER" | head -1 | sed 's/^disable-model-invocation: *//;s/ *#.*$//')
-if [[ "$DMI_VALUE" != "true" ]]; then
-  echo "[validate-skill-frontmatter] FAIL: disable-model-invocation must be true (got: '$DMI_VALUE')" >&2
+if [[ "$DMI_VALUE" != "true" && "$DMI_VALUE" != "false" ]]; then
+  echo "[validate-skill-frontmatter] FAIL: disable-model-invocation must be 'true' or 'false' (got: '$DMI_VALUE')" >&2
   exit 1
 fi
 

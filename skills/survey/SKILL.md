@@ -1,10 +1,10 @@
 ---
 name: survey
-version: v1.0
+version: v1.1
 methodology-source: docs/methodology/idea-survey.md v1.0
-description: Mechanizes Phase 3 Survey methodology (3+3 Director-intent pick-list + envelope assembly + per-question architect interpretations + per-round tele-mapping + calibration data point capture) per idea-survey.md v1.0
+description: Use at Phase 3 entry of any mission lifecycle — when an Idea moves from `triaged` to Design and Director-intent capture is needed. Mechanizes the Phase 3 Survey methodology (3+3 Director-intent pick-list + envelope assembly + per-question architect interpretations + per-round tele-mapping + calibration data point capture) per idea-survey.md v1.0. Architect should auto-engage this Skill on Phase 3 entry; Director should not need to manually trigger it.
 sovereign-skill-instance: first-canonical (idea-229 umbrella)
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 # Survey Skill — Phase 3 Idea→Design transition
@@ -30,12 +30,14 @@ This Skill mechanizes the Survey methodology codified at `docs/methodology/idea-
 
 ## Invocation
 
-Architect invokes this Skill at Phase 3 entry (when an Idea moves from `triaged` to Design + Director-intent capture is needed) via either:
+This Skill is **auto-invoked by Claude** when the architect reaches Phase 3 entry of a mission lifecycle (per `disable-model-invocation: false` in frontmatter; v1.1 change per Director directive 2026-05-02). Claude proactively loads this Skill when the architect's context matches the description's trigger ("Phase 3 entry — Idea `triaged → Design`; Director-intent capture needed").
 
-- **Slash-command** (canonical for `disable-model-invocation: true` Skills): `/survey <mission-name> <idea-id>`
+Manual invocation paths (architect-explicit; rarely needed since auto-invocation is default):
+
+- **Slash-command**: `/survey <mission-name> <idea-id>`
 - **Skill tool**: `Skill(skill: "survey", args: "<mission-name> <idea-id>")`
 
-This Skill is NOT auto-invoked by Claude. It is user-triggered (architect explicitly engages at Phase 3 entry per `mission-lifecycle.md` §1 RACI: Phase 3 R=architect).
+The architect should auto-engage this Skill on Phase 3 entry per `mission-lifecycle.md` §1 RACI (Phase 3 R=architect); Director does NOT need to manually trigger it.
 
 ---
 
@@ -99,24 +101,24 @@ Exit 0 → envelope ratifiable. Exit 1 → schema violation; diagnostic names fi
 
 ## Install (interim; pre-idea-230 automation)
 
-Per anti-goal AG-1, this mission does NOT ship `.claude/skills/survey/` directly. To use this Skill in your Claude Code session before idea-230 (claude-plugin install bootstrap) automates this, manually symlink:
+Per anti-goal AG-1, this mission does NOT ship `.claude/skills/survey/` directly. Use the bundled install script:
 
 ```bash
-ln -s "$PWD/skills/survey" .claude/skills/survey
+bash skills/survey/install.sh                # default: per-user (~/.claude/skills/survey)
+bash skills/survey/install.sh --target=repo  # per-repo (.claude/skills/survey; gitignored)
+bash skills/survey/install.sh --dry-run      # preview without changes
+bash skills/survey/install.sh --uninstall    # remove the symlink
 ```
 
-Then add to `.claude/settings.local.json` to eliminate per-script Bash permission prompts at gate invocations:
+The script is idempotent (skip if symlink already in place + correct), validates the sovereign source, and prints the `.claude/settings.local.json` snippet to paste.
+
+Add to `.claude/settings.local.json` under `permissions.allow` (single wildcard covers all scripts in the dir; eliminates Bash permission prompts at gate invocations):
 
 ```json
 {
   "permissions": {
     "allow": [
-      "Bash(skills/survey/scripts/survey-init.sh:*)",
-      "Bash(skills/survey/scripts/validate-envelope.sh:*)",
-      "Bash(skills/survey/scripts/check-skip-criteria.sh:*)",
-      "Bash(skills/survey/scripts/format-pick-presentation.sh:*)",
-      "Bash(skills/survey/scripts/tier-stub.sh:*)",
-      "Bash(skills/survey/scripts/validate-skill-frontmatter.sh:*)"
+      "Bash(skills/survey/scripts/*:*)"
     ]
   }
 }
