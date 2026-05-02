@@ -271,6 +271,32 @@ Branch protection requires CODEOWNERS approval. A PR touching `docs/methodology/
 - **Author addresses every request-change comment** — either by code change or by thread-discussion reaching explicit agreement to defer
 - **No rubber-stamp approvals on shared-surface files** — if a reviewer has no opinion on a shared-surface file, that's signal the PR needs a different reviewer, not a quick LGTM
 
+#### 3d. Audit-rubric checklist (engineer round-1 review)
+
+When auditing PRs that modify specific substrate surfaces, apply the following pattern-class checks **IN ADDITION to** the §3c standard review discipline. Each item promotes memory-tier procedural advice + calibration-ledger pattern-classes onto the canonical review surface so the discipline survives session-handoffs + agent-rotations.
+
+**Pattern-class:** *Hardcoded-test-assertion-lag*
+
+Surface: hardcoded count assertions (e.g., `expect(<registry>.size).toBe(N)`) that lag behind substrate-registry additions/removals. Pattern-class: any test assertion whose value must shift by ±1 when a substrate item is added/removed AND which is checked at PR-author time but not structurally enforced at write-path.
+
+When a PR adds (or modifies) `router.register(...)` calls in `hub/src/policy/`:
+
+- **Orchestrator router** (`hub/test/e2e/e2e-foundation.test.ts`) — lag structurally eliminated by mission-72 PR #163 (calibration #60 mechanism (b); snapshot test via `PolicyRouter.getAllToolNames()`). Verification gate: `git grep -c "router\.size).toBe(" hub/test/e2e/e2e-foundation.test.ts` returns 0. No procedural check needed for this surface.
+- **Sub-router test files** (`hub/test/{policy-router,wave1-policies,wave3b-policies,unit/message-policy}.test.ts`) — procedural grep-and-bump still applies. Run `grep -rn "router\.size).toBe(" hub/test/` and verify any matched assertion has been bumped + a new provenance-comment line added to the chain. **Future-canonical:** when sub-router lag actually surfaces, file follow-on idea applying the mission-72 snapshot pattern for STRUCTURAL elimination of that surface variant.
+
+**Generalized framing:** this discipline-class extends to ANY hardcoded-test-assertion-lag pattern beyond `router.size` (entity-type-handler counts, FSM-row-counts, schema-field counts, etc.). When auditing PRs that add/remove items from substrate registries that have associated count assertions, grep for the assertion + verify same-PR bump.
+
+**Cross-references:**
+- Memory: `feedback_hub_mcp_tool_addition_audit_pattern.md` (per-architect-session procedural codification; this checklist is the methodology-tier promotion)
+- Calibration: `docs/calibrations.yaml` #60 (`hub-mcp-tool-addition-audit-pattern`; status: retired; PARTIAL closure: structural mechanism (b) shipped via mission-72; this audit-rubric promotion satisfies residual (ii) condition)
+- Sister structural fix: mission-72 PR #163 (orchestrator-surface eliminated)
+
+**Future audit-rubric items** (parked methodology-fold candidates; each ships as separate small idea per mission-72/idea-237 precedent — memory-tier-to-methodology-tier graduation):
+- Calibration #59 closure mechanism (a) promotion (overdue from mission-67/68 retrospectives)
+- Engineer round-1 substrate-citation rubric (overdue from mission-67/68/69 retrospectives)
+- In-flight bug-chain absorption pattern (mission-68/69 precedent)
+- Cascade closure mechanisms §4.1 + §4.3 (overdue from mission-68 retrospective)
+
 ### Step 4 — Merge via queue
 
 Once all gates are green:
