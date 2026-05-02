@@ -243,4 +243,60 @@ The per-question interpretation loop is what differentiates Survey from "pick-li
 
 ---
 
-*Methodology v1.0; ratified 2026-04-26 by Director post idea-206 first canonical execution + post-codification refinement. Architect: lily.*
+## §15 Artifact schema (codified `validate-envelope.sh` enforcement contract)
+
+**Provenance:** added 2026-05-02 by mission-69 (M-Survey-Process-as-Skill) per AG-9 carve-out ratified bilaterally via thread-455. Spec-enrichment IS in-scope (codifies the enforcement contract `validate-envelope.sh` implements at `/skills/survey/scripts/`); methodology-semantic-evolution IS NOT in-scope (the §1-§14 methodology is unchanged). Future spec-enrichment changes follow the same carve-out pattern.
+
+Survey envelope artifacts written to `docs/surveys/<mission>-survey.md` SHALL conform to the following schema. The `validate-envelope.sh` Skill helper enforces this schema as the finalize-gate check; exit 0 = valid; exit 1 = schema violation (with diagnostic naming first failure).
+
+### Frontmatter (YAML; required keys)
+
+- `mission-name: M-<name>`
+- `source-idea: idea-<N>`
+- `methodology-source: docs/methodology/idea-survey.md v<X.Y>`
+- `director-picks:`
+  - `round-1: { Q1, Q1-rationale?, Q2, Q2-rationale?, Q3, Q3-rationale? }`
+  - `round-2: { Q4, Q4-rationale?, Q5, Q5-rationale?, Q6, Q6-rationale? }`
+  - All 6 picks required (each value ∈ {a, b, c, d}); rationale optional.
+- `mission-class: <one of the canonical 8 values per docs/methodology/mission-lifecycle.md §3 Mission-class taxonomy>` — `spike` | `substrate-introduction` | `pre-substrate-cleanup` | `structural-inflection` | `coordination-primitive-shipment` | `saga-substrate-completion` | `substrate-cleanup-wave` | `distribution-packaging`
+- `tele-alignment:`
+  - `primary: [tele-N, ...]` (whole-mission rollup; required)
+  - `secondary: [tele-X, ...]` (whole-mission rollup; required)
+  - `round-1: { primary, secondary }` (per-round mapping; required per §3 Step 4 + §9 step 5/6 anti-tele-drift discipline)
+  - `round-2: { primary, secondary }` (per-round mapping; required)
+- `calibration-data:` (required per §5 Survey output element + §13 methodology-evolution loop)
+  - `director-time-cost-minutes: <integer>` (required)
+  - `comparison-baseline: <ref e.g. mission-XX or "prior-methodology-walkthrough">` (required)
+  - `notes: <free text observation>` (required; may be brief)
+- `contradictory-constraints: [...]` (optional at frontmatter level; required when contradictory multi-pick detected per §7 — each entry: `{ round, questions, picks, constraint-envelope }`)
+- `skill-meta: { skill-version, tier-1-status, tier-2-status, tier-3-status }` (required when Skill-mediated)
+- `calibration-cross-refs: { closures-applied: [...], candidates-surfaced: [...] }` (required; arrays may be empty)
+
+### Prose body (required sections)
+
+- `## §0 Context`
+- `## §1 Round 1 picks` — followed by per-question interpretation sub-sections `### §1.Q1 — Per-question interpretation` / `### §1.Q2 — ...` / `### §1.Q3 — ...` (each 1-2 paragraph minimum per §3 Step 4 matrix-solve discipline)
+- `## §2 Round 2 picks` — followed by `### §2.Q4 — Per-question interpretation` / `### §2.Q5 — ...` / `### §2.Q6 — ...` (each 1-2 paragraph minimum per §4 Step 4)
+- `## §3 Composite intent envelope`
+- `## §4 Mission scope summary` (with per-round tele-mapping rows)
+- `## §5 Anti-goals`
+- `## §6 Architect-flags / open questions for Phase 4 audit`
+- `## §7 Sequencing / cross-mission considerations`
+- `## §calibration` — Calibration data point (Director time-cost + comparison-baseline + notes)
+- `## §contradictory` — Contradictory multi-pick carry-forward (REQUIRED when frontmatter declares any contradictory-constraints entries; OMIT entirely otherwise)
+- `## §8 Cross-references`
+
+### Validator enforcement
+
+`validate-envelope.sh` (at `/skills/survey/scripts/validate-envelope.sh`; ships with the Survey Skill at mission-69) enforces this schema:
+- Exit 0 = valid (envelope ratifiable; Phase 4 Design bilateral round-1 audit may open)
+- Exit 1 = schema violation (with diagnostic naming first failure; architect fixes + re-runs the finalize gate)
+- Exit 42 = stub (Tier-2/3 dispatch path; not normally fired by the validator itself)
+
+### Schema version evolution
+
+Schema changes follow the mission-lifecycle pattern: bump methodology version (`idea-survey.md` vX.Y → vX.Z); update §15 schema text; update Skill `methodology-source` frontmatter pin; backward-compat decision per change. Per the AG-9 carve-out provenance: spec-enrichment additions are routine; methodology-semantic-evolution is rare + ratified separately.
+
+---
+
+*Methodology v1.0; ratified 2026-04-26 by Director post idea-206 first canonical execution + post-codification refinement. §15 schema enrichment added 2026-05-02 by mission-69 per AG-9 carve-out (semantic methodology unchanged). Architect: lily.*
