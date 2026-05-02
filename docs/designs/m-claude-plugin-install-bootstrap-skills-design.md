@@ -1,6 +1,6 @@
-# M-Claude-Plugin-Install-Bootstrap-Skills — Design v0.2
+# M-Claude-Plugin-Install-Bootstrap-Skills — Design v1.0
 
-**Status:** v0.2 (architect-revised 2026-05-02; engineer round-1 audit folded — 3 CRITICAL + 7 MEDIUM + 3 of 4 MINOR + 1 PROBE concur, full fold summary §11; pending engineer round-2 verify per `mission-lifecycle.md` Phase 4 audit cycle)
+**Status:** v1.0 RATIFIED (architect-revised 2026-05-02; engineer round-1 + round-2 audits folded — 17 findings total: 15 round-1 + 2 round-2 NEW; full fold summary §11; bilateral seal expected via thread-465 round-3 engineer verify-and-converge per `mission-lifecycle.md` Phase 4 audit cycle)
 **Methodology:** Phase 4 Design per `mission-lifecycle.md` v1.2 §1 (RACI: C=Director / R=Architect+Engineer)
 **Survey envelope:** `docs/surveys/m-claude-plugin-install-bootstrap-skills-survey.md` v1.0 (Director-ratified 6 picks; commit `b6f3c5b`)
 **Source idea:** idea-230 (status `triaged` via route-(a) skip-direct; will flip `incorporated` at mission-create)
@@ -148,8 +148,12 @@ bootstrap_skills() {
       ;;
     npm-installed)
       # m3 fold: array form (zero-cost future-proof per AG-7); single-source for v1
+      # N1 fold (round-2): drop the trailing /.. — install.sh lives AT the package root,
+      # so its dirname IS the pkg_root. v0.2 had `/..` which resolved to the @apnex
+      # namespace dir instead of the claude-plugin package dir; v0.1 was correct;
+      # C1 helper-extraction inadvertently regressed. This v1.0 restores correctness.
       local pkg_root
-      pkg_root="$(realpath "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null || dirname "$(dirname "${BASH_SOURCE[0]}")")"
+      pkg_root="$(realpath "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null || dirname "${BASH_SOURCE[0]}")"
       skills_dir="$pkg_root/skills"
       ;;
   esac
@@ -303,7 +307,7 @@ These are not harmful (allowlist redundancy is benign), but produce noise. Permi
 If target settings.local.json is not writable OR unparseable: `merge_skill_permissions()` does NOT defer back to per-skill install.sh (per M7 fold; per-skill install.sh has had snippet-print logic REMOVED per AG-5 retrofit). Instead, claude-plugin emits a synthesized snippet directly from the in-memory fragment data:
 
 ```bash
-# §3.4.fallback pseudocode
+# §3.4.fallback pseudocode (n1 fold round-2: process substitution preserves outer-scope `first` mutation; pipe-to-while runs in subshell + variable-leak makes comma-separator never trigger → malformed JSON)
 emit_snippet_fallback() {
   local fragment_paths=("$@")
   echo "[merge-skill-permissions] settings.local.json not writable/unparseable; emitting snippet for manual paste:" >&2
@@ -312,13 +316,13 @@ emit_snippet_fallback() {
   echo '  "permissions": {'
   echo '    "allow": ['
   local first=1
-  local fragment
+  local fragment entry
   for fragment in "${fragment_paths[@]}"; do
-    jq -r '.permissions.allow[]?' "$fragment" 2>/dev/null | while IFS= read -r entry; do
+    while IFS= read -r entry; do
       [ $first -eq 0 ] && echo ","
       printf '      "%s"' "$entry"
       first=0
-    done
+    done < <(jq -r '.permissions.allow[]?' "$fragment" 2>/dev/null)
   done
   echo ""
   echo '    ]'
@@ -431,6 +435,7 @@ Out-of-scope per Q2=a (universal audience = Claude-Code-clones-of-THIS-repo only
   - Case 9 (M1 NEW): fragment with `schema-version: "1.5"` → accepted (major-version-compat)
   - Case 10 (M1 NEW): fragment with `schema-version: "2.0"` → rejected with warn
   - Case 11 (M3 NEW): per-skill install.sh refuses on stale symlink → bootstrap reports as failed; other skills continue
+  - Case 12 (n1 NEW round-2): settings.local.json not writable → `emit_snippet_fallback()` emits valid JSON parseable by `jq .` (catches subshell-variable-leak class regression — verifies comma-separator works across multiple fragments)
 - `skills/survey/install.test.sh` (existing): extend to cover `--silent` flag + new exit-without-printing-snippet behavior
 
 ### §6.2 Integration test (smoke-run)
@@ -563,10 +568,21 @@ Engineer round-1 audit (greg; thread-465 round-1; 2026-05-02). **15 findings tot
 | §7 don't split | **CONFIRMED** ✅; +15 lines per C1 fold reflected in revised total |
 | §8 nothing missing | **CONFIRMED** as of v0.1; AG-8 NEW added in v0.2 per M2 fold |
 
-**Verdict:** all 3 CRITICALs resolved; 7/7 MEDIUMs folded; 2/4 MINORs folded (m3 + m4) + 2/4 concur (m1 + m2; documented decisions); 1/1 PROBE concur. Per greg's round-2 expectation: "if all 3 CRITICALs resolved + ≥5 of 7 MEDIUMs folded, ratify-direct" — **this v0.2 satisfies the ratify-direct condition** (3/3 + 7/7 — both thresholds exceeded).
+**Round-1 verdict:** all 3 CRITICALs resolved; 7/7 MEDIUMs folded; 2/4 MINORs folded (m3 + m4) + 2/4 concur (m1 + m2; documented decisions); 1/1 PROBE concur. Per greg's round-2 expectation: "if all 3 CRITICALs resolved + ≥5 of 7 MEDIUMs folded, ratify-direct" — v0.2 satisfied the ratify-direct condition (3/3 + 7/7 — both thresholds exceeded).
 
-Round-2 verify expectation: greg confirms folds correct (especially CRITICAL resolutions C1 + C2 + C3) + no new findings → ratify v0.2 as v1.0 → Phase 6 preflight entry.
+## §11.b Round-2 audit fold summary (NEW v1.0; per mission-67/68/69 round-2 verify discipline)
+
+Engineer round-2 verify (greg; thread-465 round-2; 2026-05-02). **Round-1 fold verification: 15/15 + 5/5 surface checks all confirmed correct ✅.** But **2 NEW findings** caught on v0.2 reading:
+
+| Finding | Class | Architect fold-decision | v1.0 § |
+|---|---|---|---|
+| N1 | MEDIUM (correctness regression introduced by C1 refactor) | **FOLDED** — drop the spurious `/..` in npm-installed `pkg_root` computation; v0.1 was correct; C1 helper-extraction inadvertently regressed; v1.0 restores correctness | §3.1.b npm-installed branch |
+| n1 | MINOR (pseudocode correctness; subshell-variable-leak in `emit_snippet_fallback()`) | **FOLDED** — process substitution `< <(jq ...)` replaces pipe-to-while; preserves outer-scope `first` mutation across iterations so comma-separator triggers correctly; output is valid JSON | §3.4.fallback + §6.1 case 12 NEW (regression-test for the JSON-validity property) |
+
+**Round-2 verdict:** both findings mechanical 1-3 line fixes; folded directly to v1.0 (skipping v0.3 commit per greg's "skip-v0.3-go-to-v1.0 equivalent" offer). Round-3 expectation: greg verifies N1 + n1 folds correct + converges thread-465 + GitHub-side `gh pr review --approve` once PR opens at Phase 8 close.
+
+**v1.0 ratification basis:** 17/17 findings folded across 2 audit rounds (15 round-1 + 2 round-2). Bilateral seal pending greg's round-3 reply.
 
 ---
 
-— Architect: lily / 2026-05-02 (Phase 4 Design v0.2; engineer round-1 audit folded — 15 findings: 3 CRITICAL + 7 MEDIUM + 2/4 MINOR folded + 2/4 concur + 1 PROBE concur; pending engineer round-2 verify per `mission-lifecycle.md` Phase 4 audit cycle)
+— Architect: lily / 2026-05-02 (Phase 4 Design v1.0 RATIFIED; engineer round-1 + round-2 audits folded — 17 findings total; bilateral seal pending greg's round-3 verify-and-converge per `mission-lifecycle.md` Phase 4 audit cycle)
