@@ -1,11 +1,12 @@
-# M-Gitignore-Dist-Reconcile — Design v0.1
+# M-Gitignore-Dist-Reconcile — Design v1.0
 
-**Status:** v0.1 DRAFT (architect-authored 2026-05-02; pending engineer round-1 audit OR Director-direct ratify-direct compression)
+**Status:** v1.0 RATIFIED (architect-authored 2026-05-02; Director-direct ratify-direct compression — no engineer audit cycle per Director directive 2026-05-02 "Approved for b" / option-(b) Ratify-direct)
 **Methodology:** Phase 4 Design per `mission-lifecycle.md` v1.2 §1 (RACI: C=Director / R=Architect+Engineer)
 **Source idea:** idea-232 M-Gitignore-Dist-Reconcile (status `triaged` via route-(a) skip-direct)
 **Survey:** WAIVED per Director-direct 2026-05-02 ("No need for a survey for Investigate+Reconcile, move straight to design") — compressed-lifecycle pattern for mechanical small-scope investigations
+**Engineer audit cycle:** WAIVED per Director-direct 2026-05-02 — investigation procedure (§2) is self-validating (CI/local-dev tests either pass or fail; bad design surfaces as failed test, not latent risk)
 **Composes calibration:** #20 (cross-package `file:` ref install-order-dependence) — Outcome A → closure-folded
-**Branch:** `agent-lily/m-gitignore-dist-reconcile` (Design + this draft + investigation + reconcile PR cumulative)
+**Branch:** `agent-lily/m-gitignore-dist-reconcile` (Design + investigation + reconcile PR cumulative)
 
 ---
 
