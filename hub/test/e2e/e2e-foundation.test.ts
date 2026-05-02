@@ -210,25 +210,82 @@ describe("E2E Foundation", () => {
   // ── Orchestrator Infrastructure ─────────────────────────────────
 
   describe("Orchestrator Infrastructure", () => {
-    it("registers all 61 tools on the PolicyRouter", () => {
-      // 44 pre-M24; M24-T6 added leave_thread → 45; M24-T8 added
-      // list_available_peers → 46; idea-117 Phase 2c ckpt-C added
-      // force_close_thread → 47; Phase 2d CP2 added get_metrics → 48.
-      // (pending-action-policy tools like prune_stuck_queue_items are
-      // NOT registered on the orchestrator router — orchestrator skips
-      // registerPendingActionPolicy.)
-      // M-Session-Claim-Separation (mission-40) T2: claim_session added → 49.
-      // M-Tele-Retirement-Primitive (mission-43) T2: supersede_tele +
-      // retire_tele added → 51.
-      // M-Message-Primitive (mission-51) W6: list_messages +
-      // create_message added → 53.
-      // mission-56 W3.2: claim_message + ack_message added → 55.
-      // mission-61 W1 Fix #2: force_fire_pulse admin tool added → 56.
-      // mission-62 W1+W2 Pass 3: signal_working_started/completed +
-      // signal_quota_blocked/recovered added → 60.
-      // mission-62 W1+W2 Pass 4: get_agents added → 61.
-      // bug-45 (mission-69 W0): get_idea added → 62.
-      expect(orch.router.size).toBe(62);
+    it("registers expected PolicyRouter tools", () => {
+      // Structural snapshot test: tool additions must update the sorted list
+      // below; tool removals fail with a clear array diff naming the missing
+      // tool. Replaces the mission-by-mission count-anchored assertion
+      // previously maintained here — calibration #60
+      // (hub-mcp-tool-addition-audit-pattern) closure mechanism (b)
+      // structural complement; mission-72 / idea-231.
+      //
+      // (pending-action-policy tools like `prune_stuck_queue_items` are NOT
+      // registered on the orchestrator router — orchestrator skips
+      // `registerPendingActionPolicy`.)
+      const tools = orch.router.getAllToolNames().sort();
+      expect(tools).toEqual([
+        "ack_message",
+        "cancel_task",
+        "claim_message",
+        "claim_session",
+        "close_proposal",
+        "close_thread",
+        "create_audit_entry",
+        "create_clarification",
+        "create_document",
+        "create_idea",
+        "create_message",
+        "create_mission",
+        "create_proposal",
+        "create_proposal_review",
+        "create_report",
+        "create_review",
+        "create_task",
+        "create_tele",
+        "create_thread",
+        "create_thread_reply",
+        "create_turn",
+        "force_close_thread",
+        "force_fire_pulse",
+        "get_agents",
+        "get_clarification",
+        "get_document",
+        "get_engineer_status",
+        "get_idea",
+        "get_metrics",
+        "get_mission",
+        "get_pending_actions",
+        "get_proposal",
+        "get_report",
+        "get_review",
+        "get_task",
+        "get_tele",
+        "get_thread",
+        "get_turn",
+        "leave_thread",
+        "list_audit_entries",
+        "list_available_peers",
+        "list_documents",
+        "list_ideas",
+        "list_messages",
+        "list_missions",
+        "list_proposals",
+        "list_tasks",
+        "list_tele",
+        "list_threads",
+        "list_turns",
+        "migrate_agent_queue",
+        "register_role",
+        "resolve_clarification",
+        "retire_tele",
+        "signal_quota_blocked",
+        "signal_quota_recovered",
+        "signal_working_completed",
+        "signal_working_started",
+        "supersede_tele",
+        "update_idea",
+        "update_mission",
+        "update_turn",
+      ]);
     });
 
     it("multi-engineer support with distinct sessions", async () => {
