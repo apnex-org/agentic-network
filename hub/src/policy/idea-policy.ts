@@ -210,6 +210,23 @@ async function updateIdea(args: Record<string, unknown>, ctx: IPolicyContext): P
   };
 }
 
+// ── get_idea (bug-45 / mission-69 W0): mirrors get_bug + get_task + get_mission etc.
+//    surfaces the missing get_X tool for Idea entity (sister to all other entity-fetch tools)
+
+async function getIdea(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const ideaId = args.ideaId as string;
+  const idea = await ctx.stores.idea.getIdea(ideaId);
+  if (!idea) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ error: `Idea not found: ${ideaId}` }) }],
+      isError: true,
+    };
+  }
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(idea, null, 2) }],
+  };
+}
+
 // ── Registration ────────────────────────────────────────────────────
 
 export function registerIdeaPolicy(router: PolicyRouter): void {
@@ -262,5 +279,14 @@ export function registerIdeaPolicy(router: PolicyRouter): void {
       text: z.string().optional().describe("Replace idea text"),
     },
     updateIdea,
+  );
+
+  router.register(
+    "get_idea",
+    "[Any] Read a specific idea by ID. Returns the full Idea entity (text, status, missionId, tags, createdBy, sourceThreadId, sourceActionId, sourceThreadSummary, createdAt, updatedAt). Sister tool to get_bug, get_task, get_mission, etc. — fills the missing get_X surface for Idea entities (bug-45 / mission-69 W0).",
+    {
+      ideaId: z.string().describe("The idea ID to read"),
+    },
+    getIdea,
   );
 }

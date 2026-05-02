@@ -33,6 +33,34 @@ describe("IdeaPolicy", () => {
     expect(router.has("create_idea")).toBe(true);
     expect(router.has("list_ideas")).toBe(true);
     expect(router.has("update_idea")).toBe(true);
+    expect(router.has("get_idea")).toBe(true); // bug-45 / mission-69 W0: sister to get_bug, get_task, get_mission
+  });
+
+  // bug-45 / mission-69 W0: get_idea sister tool to get_bug / get_task / get_mission etc.
+  describe("get_idea — bug-45 fix (sister to other get_X tools)", () => {
+    it("returns idea by id (happy path)", async () => {
+      const create = await router.handle("create_idea", {
+        text: "Test idea for get_idea",
+        tags: ["test"],
+      }, ctx);
+      const { ideaId } = JSON.parse(create.content[0].text);
+
+      const get = await router.handle("get_idea", { ideaId }, ctx);
+      expect(get.isError).toBeUndefined();
+      const idea = JSON.parse(get.content[0].text);
+      expect(idea.id).toBe(ideaId);
+      expect(idea.text).toBe("Test idea for get_idea");
+      expect(idea.status).toBe("open");
+      expect(idea.tags).toEqual(["test"]);
+    });
+
+    it("returns isError for unknown ideaId (not-found path)", async () => {
+      const get = await router.handle("get_idea", { ideaId: "idea-does-not-exist" }, ctx);
+      expect(get.isError).toBe(true);
+      const err = JSON.parse(get.content[0].text);
+      expect(err.error).toContain("not found");
+      expect(err.error).toContain("idea-does-not-exist");
+    });
   });
 
   it("create_idea creates and emits idea_submitted", async () => {
