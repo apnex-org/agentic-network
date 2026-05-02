@@ -1,10 +1,11 @@
 ---
 name: survey
-version: v1.1
+version: v1.2
 methodology-source: docs/methodology/idea-survey.md v1.0
 description: Use at Phase 3 entry of any mission lifecycle — when an Idea moves from `triaged` to Design and Director-intent capture is needed. Mechanizes the Phase 3 Survey methodology (3+3 Director-intent pick-list + envelope assembly + per-question architect interpretations + per-round tele-mapping + calibration data point capture) per idea-survey.md v1.0. Architect should auto-engage this Skill on Phase 3 entry; Director should not need to manually trigger it.
 sovereign-skill-instance: first-canonical (idea-229 umbrella)
 disable-model-invocation: false
+permissions-fragment: .skill-permissions.json
 ---
 
 # Survey Skill — Phase 3 Idea→Design transition
@@ -99,44 +100,42 @@ Exit 0 → envelope ratifiable. Exit 1 → schema violation; diagnostic names fi
 
 ---
 
-## Install (interim; pre-idea-230 automation)
+## Install
 
-Per anti-goal AG-1, this mission does NOT ship `.claude/skills/survey/` directly. Use the bundled install script:
+**Primary path (mission-71; idea-230 shipped):** the claude-plugin adapter's `install.sh` auto-bootstraps all sovereign Skills (including this one) via its `bootstrap_skills()` orchestrator. Run:
+
+```bash
+bash adapters/claude-plugin/install.sh
+```
+
+This:
+1. Walks `/skills/<name>/` + invokes each skill's own `install.sh --target=user --silent` (symlinks `~/.claude/skills/<name>` → sovereign source)
+2. Consolidates each Skill's `.skill-permissions.json` fragment into `~/.claude/settings.local.json` permissions.allow (idempotent, exact-match dedup)
+3. Restart Claude Code to discover the new Skill
+
+**Standalone path (ad-hoc refresh):** for skill-only re-install without re-running the full claude-plugin bootstrap:
 
 ```bash
 bash skills/survey/install.sh                # default: per-user (~/.claude/skills/survey)
 bash skills/survey/install.sh --target=repo  # per-repo (.claude/skills/survey; gitignored)
 bash skills/survey/install.sh --dry-run      # preview without changes
 bash skills/survey/install.sh --uninstall    # remove the symlink
+bash skills/survey/install.sh --silent       # suppress decorative output (bootstrap-orchestration; mission-71)
 ```
 
-The script is idempotent (skip if symlink already in place + correct), validates the sovereign source, and prints the `.claude/settings.local.json` snippet to paste.
+Standalone invocation handles the symlink only. Permissions are NOT updated by standalone install — either re-run `bash adapters/claude-plugin/install.sh` to consolidate fragments, OR read `skills/survey/.skill-permissions.json` + paste manually under `permissions.allow` in your user-global Claude config.
 
-Add to `.claude/settings.local.json` under `permissions.allow` (single wildcard covers all scripts in the dir; eliminates Bash permission prompts at gate invocations):
+**v1.1 → v1.2 migration note:** v1.1 users with manually-pasted permission entries can keep them as-is; the new `.skill-permissions.json` path is additive, not migratory — exact-match dedup in `merge_skill_permissions()` ensures idempotent behavior on re-install.
 
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(skills/survey/scripts/*:*)"
-    ]
-  }
-}
-```
+## Customization
 
-If the project-relative glob doesn't match (e.g., Claude Code resolves the symlink and emits `.claude/skills/survey/scripts/...` instead), use the path-agnostic form:
+Consumer-edits to `~/.claude/skills/survey/` (or `<repo>/.claude/skills/survey/`) are NOT preserved across refresh — sovereign source-of-truth at `/skills/survey/` wins. The consumer location is install plumbing, not a customization surface.
 
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(*skills/survey/scripts/*:*)"
-    ]
-  }
-}
-```
+For customization needs:
+- **Option 1 (preferred):** fork the Skill into a separate `/skills/<custom-name>/` (sovereign source); claude-plugin bootstrap picks it up automatically on next install
+- **Option 2:** maintain a private fork of the repo with desired modifications
 
-idea-230 (claude-plugin install bootstrap) will automate both the symlink + allowlist additions in a future mission.
+Runtime warning when consumer-edits detected is deferred to follow-on idea triggered by ≥1 user complaint (per mission-71 round-1 audit m2 concur).
 
 ---
 
@@ -147,4 +146,5 @@ idea-230 (claude-plugin install bootstrap) will automate both the symlink + allo
 - **`docs/methodology/mission-lifecycle.md`** §3 Mission-class taxonomy — canonical 8-value enum source for the mission-class field in envelope frontmatter.
 - **idea-228** — source idea for this Skill (mission-69 instance).
 - **idea-229** — umbrella architectural anchor (Sovereign-Skill Pattern + Mission-Lifecycle-as-Skills Vision); first-canonical instance.
-- **idea-230** — claude-plugin install bootstrap (consumer-install automation; pending mission depending on this mission shipping).
+- **idea-230** — claude-plugin install bootstrap (consumer-install automation; **shipped via mission-71** — see §Install primary path above).
+- **mission-71** — M-Claude-Plugin-Install-Bootstrap-Skills (idea-230 incorporated; this Skill is 1st-canonical consumer of the bootstrap orchestrator + 1st-canonical .skill-permissions.json fragment provider).

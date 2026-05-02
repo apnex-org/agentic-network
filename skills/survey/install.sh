@@ -4,13 +4,17 @@
 # Symlinks the sovereign /skills/survey/ source into the consumer's
 # Claude Code skills location (.claude/skills/survey). Idempotent.
 #
-# Pre-idea-230 (claude-plugin install bootstrap will automate this for
-# all sovereign Skills via per-skill install.sh discovery + invocation).
+# mission-71 (idea-230) ships claude-plugin install.sh's bootstrap_skills()
+# which auto-invokes this script across all sovereign Skills + consolidates
+# each Skill's .skill-permissions.json fragment automatically. Standalone
+# invocation supported for ad-hoc refresh.
 #
-# Usage: bash skills/survey/install.sh [--target=user|repo] [--dry-run] [--uninstall]
+# Usage: bash skills/survey/install.sh [--target=user|repo] [--dry-run] [--uninstall] [--silent]
 #
 # AG-7 compliance: pure bash + POSIX utilities; no python/yq/jq.
-# settings.local.json snippet is printed for manual paste (jq-free).
+# Permissions: declared in skills/survey/.skill-permissions.json; consolidated
+# by claude-plugin bootstrap. Standalone invocation does not modify Claude
+# config — user pastes manually if needed.
 
 set -euo pipefail
 
@@ -19,6 +23,7 @@ set -euo pipefail
 TARGET="user"
 DRY_RUN=0
 UNINSTALL=0
+SILENT=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -26,16 +31,18 @@ for arg in "$@"; do
     --target=repo) TARGET="repo" ;;
     --dry-run)     DRY_RUN=1 ;;
     --uninstall)   UNINSTALL=1 ;;
+    --silent)      SILENT=1 ;;
     -h|--help)
       cat <<'EOF'
 install.sh — Consumer-install for the Survey Skill
 
-Usage: bash install.sh [--target=user|repo] [--dry-run] [--uninstall]
+Usage: bash install.sh [--target=user|repo] [--dry-run] [--uninstall] [--silent]
 
   --target=user   Symlink at ~/.claude/skills/survey (default; cross-repo portable)
   --target=repo   Symlink at <repo>/.claude/skills/survey (per-repo; gitignored per AG-1)
   --dry-run       Preview actions; no changes made
   --uninstall     Remove the symlink (does not touch sovereign source)
+  --silent        Suppress decorative output (for bootstrap-orchestration; mission-71)
 
 Run from any directory (resolves source via $BASH_SOURCE).
 EOF
@@ -48,6 +55,12 @@ EOF
       ;;
   esac
 done
+
+# Silent-aware echo helper
+say() {
+  [[ $SILENT -eq 1 ]] && return 0
+  echo "$@"
+}
 
 # ── Resolve paths ───────────────────────────────────────────────────
 
@@ -66,20 +79,20 @@ TARGET_PATH="$TARGET_PARENT/$SKILL_NAME"
 
 # ── Header ──────────────────────────────────────────────────────────
 
-echo "[install] Skill:  $SKILL_NAME"
-echo "[install] Source: $SOURCE_DIR"
-echo "[install] Target: $TARGET_PATH"
-echo "[install] Mode:   $(if [[ $DRY_RUN -eq 1 ]]; then echo dry-run; else echo execute; fi)"
-echo ""
+say "[install] Skill:  $SKILL_NAME"
+say "[install] Source: $SOURCE_DIR"
+say "[install] Target: $TARGET_PATH"
+say "[install] Mode:   $(if [[ $DRY_RUN -eq 1 ]]; then echo dry-run; else echo execute; fi)"
+say ""
 
 # ── Uninstall path ──────────────────────────────────────────────────
 
 if [[ $UNINSTALL -eq 1 ]]; then
   if [[ -L "$TARGET_PATH" ]]; then
     [[ $DRY_RUN -eq 1 ]] || rm "$TARGET_PATH"
-    echo "[install] ✅ Removed symlink: $TARGET_PATH"
+    say "[install] ✅ Removed symlink: $TARGET_PATH"
   else
-    echo "[install] (no symlink to remove; target absent or not a symlink)"
+    say "[install] (no symlink to remove; target absent or not a symlink)"
   fi
   exit 0
 fi
@@ -96,8 +109,11 @@ fi
 if [[ -L "$TARGET_PATH" ]]; then
   EXISTING="$(readlink "$TARGET_PATH")"
   if [[ "$EXISTING" == "$SOURCE_DIR" ]]; then
-    echo "[install] ✅ Symlink already in place + correct; skipping"
+    say "[install] ✅ Symlink already in place + correct; skipping"
   else
+    # M3 fold: refuse-and-exit on stale/different-source symlink (preserved
+    # from pre-mission-71 behavior; safer than auto-remove; respects user's
+    # possibly-intentional manual symlinks)
     echo "[install] ❌ Existing symlink points elsewhere:" >&2
     echo "[install]    expected: $SOURCE_DIR" >&2
     echo "[install]    actual:   $EXISTING" >&2
@@ -113,22 +129,25 @@ else
     mkdir -p "$TARGET_PARENT"
     ln -s "$SOURCE_DIR" "$TARGET_PATH"
   fi
-  echo "[install] ✅ Created symlink"
+  say "[install] ✅ Created symlink"
 fi
 
-# ── settings.local.json snippet ─────────────────────────────────────
-
-echo ""
-echo "[install] Bash permission allowlist — add to .claude/settings.local.json"
-echo "[install] under permissions.allow (eliminates per-script prompts at gate invocations):"
-echo ""
-cat <<'EOF'
-  "Bash(skills/survey/scripts/*:*)"
-EOF
-echo ""
-echo "[install] Then restart Claude Code to discover the new Skill (handshake refresh)."
+# ── Permissions handled by claude-plugin bootstrap (mission-71) ─────
+# Pre-mission-71 (v1.1) printed a Bash-allowlist snippet for manual paste
+# here. v1.2 removes that — claude-plugin install.sh's bootstrap_skills()
+# consolidates each Skill's .skill-permissions.json fragment into the
+# user-global Claude config automatically. Standalone invocation (no
+# claude-plugin) leaves permissions unchanged; user can either run
+# `bash adapters/claude-plugin/install.sh` for the full bootstrap, or
+# read skills/survey/.skill-permissions.json + paste manually.
 
 if [[ $DRY_RUN -eq 1 ]]; then
-  echo ""
-  echo "[install] (dry-run complete; no changes made)"
+  say ""
+  say "[install] (dry-run complete; no changes made)"
+else
+  say ""
+  say "[install] survey-skill installed at $TARGET_PATH"
+  say "[install] Permissions: handled by claude-plugin bootstrap (or read"
+  say "[install]   skills/survey/.skill-permissions.json + paste manually)"
+  say "[install] Then restart Claude Code to discover the new Skill (handshake refresh)."
 fi

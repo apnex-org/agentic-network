@@ -21,14 +21,37 @@ PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MARKETPLACE="agentic-network"
 PLUGIN_NAME="agent-adapter"
 
-# Detect context: source-tree (invoked from <repo>/adapters/claude-plugin/)
-# vs npm-installed (invoked from $(npm prefix -g)/lib/node_modules/@apnex/claude-plugin/)
-if [ -d "$PLUGIN_DIR/../../packages/network-adapter" ]; then
-  CONTEXT="source-tree"
-  REPO_ROOT="$(cd "$PLUGIN_DIR/../.." && pwd)"
+# ── Helpers (extracted from inline blocks per mission-71 C1 fold) ────
+#
+# detect_context: echoes "source-tree" or "npm-installed". Source-tree
+# means invoked from <repo>/adapters/claude-plugin/; npm-installed means
+# invoked from $(npm prefix -g)/lib/node_modules/@apnex/claude-plugin/.
+# Detection: presence of sibling packages/network-adapter directory
+# (preserves verbatim the pre-mission-71 inline detection logic).
+detect_context() {
+  if [ -d "$PLUGIN_DIR/../../packages/network-adapter" ]; then
+    echo "source-tree"
+  else
+    echo "npm-installed"
+  fi
+}
+
+# detect_repo_root: echoes the repo root in source-tree mode; returns 1
+# in npm-installed mode (no repo root exists). Caller must handle the
+# return-code branch.
+detect_repo_root() {
+  if [ -d "$PLUGIN_DIR/../../packages/network-adapter" ]; then
+    ( cd "$PLUGIN_DIR/../.." && pwd )
+  else
+    return 1
+  fi
+}
+
+CONTEXT="$(detect_context)"
+if [ "$CONTEXT" = "source-tree" ]; then
+  REPO_ROOT="$(detect_repo_root)"
   MARKETPLACE_PATH="$REPO_ROOT"
 else
-  CONTEXT="npm-installed"
   # When npm-installed, marketplace path is the plugin dir itself
   # (claude plugin marketplace expects a directory containing the plugin manifest)
   MARKETPLACE_PATH="$PLUGIN_DIR"
@@ -68,5 +91,21 @@ claude plugin marketplace add "$MARKETPLACE_PATH"
 echo "[install] Installing $PLUGIN_NAME@$MARKETPLACE ..."
 claude plugin install "$PLUGIN_NAME@$MARKETPLACE"
 
+# ── Sovereign-Skill bootstrap (mission-71; idea-230) ────────────────
+#
+# Walks /skills/<name>/ + invokes each skill's own install.sh + consolidates
+# .skill-permissions.json fragments into ~/.claude/settings.local.json.
+# Per-skill autonomy preserved (Q6=b compose); all-user target (Q4=d hybrid +
+# C2+C3 fold); declarative permissions (Q5=c skill-shipped fragment).
+#
+# Library lives at lib/bootstrap-skills.sh — extracted for unit-testable
+# function-level invocation per mission-71 Phase 8 (Design §6.1 isolation).
+
+source "$PLUGIN_DIR/lib/bootstrap-skills.sh"
+
 echo ""
-echo "[install] Done. Restart Claude Code to activate the plugin."
+echo "[install] Bootstrapping sovereign Skills ..."
+bootstrap_skills
+
+echo ""
+echo "[install] Done. Restart Claude Code to activate the plugin + Skills."
