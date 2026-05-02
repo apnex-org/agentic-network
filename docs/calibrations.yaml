@@ -1367,6 +1367,77 @@ calibrations:
       - tele-6
       - tele-12
 
+  - id: 60
+    class: process
+    title: "Hub MCP tool-addition audit-pattern — hardcoded `router.size` test assertion lags tool-additions; structural elimination via dynamic-count assertion (idea-231 = closure mechanism (b))"
+    origin: mission-69-W0
+    surfaced_at: bug-45-PR-155 + post-mission-69-close-2026-05-02
+    status: open-pending-closure
+    closure_mechanism: |
+      Surfaced post bug-45 PR #155 merge (2026-05-02T02:40Z): bug-45 added
+      `get_idea` MCP tool to PolicyRouter (router.size 61 → 62). The hardcoded
+      assertion at `hub/test/e2e/e2e-foundation.test.ts:230`
+      (`expect(orch.router.size).toBe(61)`) was missed at PR-author time.
+      Surfaced as CI failure on the next PR (mission-69 W1 PR #156)
+      ~30min after bug-45 merge; required follow-on PR #157 (1-line bump
+      61 → 62 + provenance comment).
+
+      Pattern is a CLASS, not a one-off. The assertion has historically
+      lagged additions:
+      - mission-40 → 49
+      - mission-43 → 51
+      - mission-51 → 53
+      - mission-56 → 55
+      - mission-61 → 56
+      - mission-62 → 60 → 61
+      - bug-45 → 62 (most recent; PR #157 was 1-line bump-only follow-on
+        after PR #155 missed it)
+
+      Each addition has historically required a synchronous bump that's
+      easy to forget. The visible inline comment chain at the test site
+      proves recurrence empirically.
+
+      Tele violations:
+      - tele-6 (Deterministic Invincibility) — drift between actual
+        registry contents + asserted contents tolerated by mechanism;
+        catches drift only at next PR's CI cycle (post-merge)
+      - tele-7 (Resilient Operations) — recovery requires architect-
+        attention + small follow-on PR cycle (~5-7min friction class)
+
+      Two parallel closure mechanisms:
+      (a) Procedural (cheapest; already filed) — audit-checklist memory
+        entry `feedback_hub_mcp_tool_addition_audit_pattern.md` flags:
+        "When PR adds to PolicyRouter, also `grep -rn 'router\.size).toBe('
+        hub/test/` to catch lag pre-merge". Filed inline 2026-05-02
+        per auto-MEMORY telemetry.
+      (b) Structural (eliminates the class) — refactor the assertion to
+        dynamically count via `Array.from(router.tools.keys()).sort()`
+        snapshot test OR named-tool-presence assertion. Filed as
+        idea-231 (M-Dynamic-Tool-Count-Assertion); status=open;
+        route-(a) skip-direct candidate; ~5min implementation +
+        cross-approval cycle.
+
+      Director ratified architect-provisional class-level name
+      "hub-mcp-tool-addition-audit-pattern" + ID #60 + delegated
+      ledger-write to architect 2026-05-02 (this entry; per Director
+      directive "Approved, and update calibration also").
+
+      Status will flip to closed-folded when:
+      (i) idea-231 implementation merges (structural mechanism (b)
+          ships) AND
+      (ii) audit-rubric promotion of mechanism (a) lands in
+          `multi-agent-pr-workflow.md` (per mission-69 retrospective
+          §5.3 forward-investment recommendation; overdue from
+          mission-67/68 + reaffirmed by mission-69)
+    cross_refs:
+      - docs/audits/m-survey-process-as-skill-closing-audit.md
+      - docs/reviews/m-survey-process-as-skill-retrospective.md
+      - hub/test/e2e/e2e-foundation.test.ts
+    tele_alignment:
+      - tele-6
+      - tele-7
+      - tele-3
+
   - id: 47
     class: methodology
     title: "Edit-time manual lint catches broken-ref violations but misses empty-list violations; round-1 audit IS the substrate-validation surface"
