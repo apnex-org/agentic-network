@@ -85,6 +85,33 @@ RC=0
 bash "$INSTALL" --bogus >/dev/null 2>&1 || RC=$?
 assert "unknown arg exits non-zero" "[[ \$RC -ne 0 ]]"
 
+# ── Test 8 (mission-71): --silent suppresses decorative output ──────
+
+echo ""
+echo "Test 8: --silent flag (mission-71) suppresses decorative output"
+TMPHOME8="$(mktemp -d)"
+trap 'rm -rf "$TMPHOME8"' EXIT
+OUT_NORMAL="$(HOME="$TMPHOME8" bash "$INSTALL" --target=user 2>&1)"
+HOME="$TMPHOME8" bash "$INSTALL" --target=user --uninstall >/dev/null 2>&1
+OUT_SILENT="$(HOME="$TMPHOME8" bash "$INSTALL" --target=user --silent 2>&1)"
+assert "normal mode prints decorative output" "[[ \${#OUT_NORMAL} -gt 0 ]]"
+assert "--silent suppresses output" "[[ \${#OUT_SILENT} -eq 0 ]]"
+assert "--silent still creates symlink" "[[ -L \"$TMPHOME8/.claude/skills/survey\" ]]"
+
+# ── Test 9 (mission-71): manual-snippet-print logic removed ─────────
+
+echo ""
+echo "Test 9: manual-snippet-print logic removed (M6 retrofit verification)"
+SETTINGS_REF_COUNT="$(git grep -c "settings.local.json" "$INSTALL" 2>/dev/null || echo 0)"
+assert "0 references to settings.local.json in install.sh" "[[ \$SETTINGS_REF_COUNT -eq 0 ]]"
+
+# ── Test 10 (mission-71): --help lists --silent ─────────────────────
+
+echo ""
+echo "Test 10: --help lists --silent flag"
+OUT_HELP="$(bash "$INSTALL" --help 2>&1)"
+assert "lists --silent" "[[ \$OUT_HELP == *--silent* ]]"
+
 # ── Summary ─────────────────────────────────────────────────────────
 
 echo ""

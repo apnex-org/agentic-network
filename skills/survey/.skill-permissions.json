@@ -1,0 +1,9 @@
+{
+  "schema-version": "1.0",
+  "permissions": {
+    "allow": [
+      "Bash(skills/survey/scripts/*:*)",
+      "Bash(*skills/survey/scripts/*:*)"
+    ]
+  }
+}
