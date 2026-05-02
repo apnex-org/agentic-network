@@ -6,32 +6,28 @@ dist/
 *.tsbuildinfo
 *.tgz
 
-# Mission-47 W1 exception: @ois/storage-provider ships its built dist/
-# because hub depends on it via `file:../packages/storage-provider` and
-# CI's `npm ci` doesn't install the package's devDependencies (typescript,
-# @types/node), which the `prepare: tsc` hook would need to build on
-# install. Committing dist/ is the pragmatic workaround until idea-186
-# (npm workspaces migration) lands — once workspaces are in place, the
-# build-on-install cascade works across devDependencies natively and
-# this exception can be removed.
+# Sovereign packages: passive permission to commit dist/ if a future workflow
+# requires it. Origin/main has no committed dist/ for any of these — rules are
+# aspirational only, not enforcement. Current state per mission-70 (2026-05-02)
+# investigation:
+#   - Hub container build: scripts/local/build-hub.sh does per-package install
+#     + npm pack in explicit dep order (storage-provider → repo-event-bridge);
+#     does NOT depend on committed dist/.
+#   - Local dev cold-start: `npm install` at root FAILS — npm workspaces don't
+#     topologically sort prepare-hook execution, so repo-event-bridge's
+#     `prepare: tsc` runs before storage-provider's dist/ is reachable. Manual
+#     workaround: `cd packages/X && npm install --ignore-scripts && npm run
+#     build` per package in dep order, then root `npm install` succeeds.
+# Substrate fix tracked: idea-233 (M-Workspace-Install-Bootstrap) — tsc project
+# references OR topological-bootstrap script OR build-orchestrator migration.
+# Note: prior comments cited "calibration #20" + "until idea-186 lands" — both
+# were stale (#20 is an unrelated retired calibration about thread-message
+# render; idea-186 npm-workspaces migration shipped via mission-64 PR #122 but
+# didn't fix the prepare-hook ordering issue).
 !packages/storage-provider/dist/
 !packages/storage-provider/dist/**
-
-# Mission-52 T3 exception (same workaround as storage-provider): hub
-# depends on @ois/repo-event-bridge via file:../packages/repo-event-bridge.
-# Methodology calibration #20 (2026-04-25): tried prepare-script on
-# revision v2 — failed because cross-package file: refs in a non-
-# workspaces monorepo are install-order-dependent (tsc runs before
-# @ois/storage-provider is reachable in the package's local
-# node_modules). Committed dist/ is the lesser evil until idea-186
-# (npm workspaces migration) lands.
 !packages/repo-event-bridge/dist/
 !packages/repo-event-bridge/dist/**
-
-# Mission-56 W2.1 exception (calibration #20): @ois/message-router is
-# the Layer-2 sovereign package consumed by adapters via file:../packages/
-# message-router. Same install-order-dependence story — commit dist/
-# until idea-186 npm-workspaces migration lands.
 !packages/message-router/dist/
 !packages/message-router/dist/**
 
