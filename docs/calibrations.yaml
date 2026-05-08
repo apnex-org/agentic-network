@@ -1587,9 +1587,9 @@ calibrations:
 
   - id: 62
     class: methodology
-    title: "Deferred-runtime-gate-becomes-silent-defect-surface — Phase 6 verification §6.4 deferral pattern produces post-substrate runtime-gap bugs (16 canonical instances; audit-rubric maturation arc empirically validated 2026-05-08)"
+    title: "Deferred-runtime-gate-becomes-silent-defect-surface — Phase 6 verification §6.4 deferral pattern produces post-substrate runtime-gap bugs (24 canonical instances; audit-rubric maturation arc empirically validated 2026-05-08; comprehensive-sweep methodology empirically locked at n=6 baseline thread-509)"
     origin: post-mission-76-bug-49-cycle
-    surfaced_at: bug-49 (2026-05-05) → bug-50 → bug-51 (mission-76); bug-52 → bug-53 → bug-54 → bug-55 → bug-56 (mission-225 + post-bug-55 cascade); 8 additional instances 2026-05-07 → 2026-05-08 across substrate-feature missions M-SSE-Filter-List-Adapter + M-Deployment-Hygiene + M-Build-Identity + M-GitHub-Releases-Plugin
+    surfaced_at: bug-49 (2026-05-05) → bug-50 → bug-51 (mission-76); bug-52 → bug-53 → bug-54 → bug-55 → bug-56 (mission-225 + post-bug-55 cascade); 8 additional instances 2026-05-07 → 2026-05-08 across substrate-feature missions M-SSE-Filter-List-Adapter + M-Deployment-Hygiene + M-Build-Identity + M-GitHub-Releases-Plugin; +2 evening 2026-05-08 (bug-57 broadcast enqueue gap + bug-58 cross-user broadcast tenant-isolation); +6 evening 2026-05-08 (M-Branchcraft-V1 thread-509 7-round audit cycle; n=6 architect-spec-level-recall-misses-substrate-coupling instances across both library-API + runtime-platform substrate-currency dimensions)
     status: open (methodology-promotion empirically very overdue; architect-Director ratification pending strategic-review gate-point)
     closure_mechanism: |
       Architectural-pathology pattern. When mission Phase 6 preflight verification
@@ -1600,7 +1600,7 @@ calibrations:
       (Director-driven or architect-side dogfood) OR via integration/wire-flow
       runtime gates exercised at engineer-audit OR mission-completion boundaries.
 
-      SIXTEEN canonical instances surfaced 2026-05-05 → 2026-05-08:
+      TWENTY-FOUR canonical instances surfaced 2026-05-05 → 2026-05-08:
 
       Original 8 instances (bug-cascade class; pre-substrate-feature-mission-cycle):
       1. bug-49 — mission-76 W1 PR-event handlers ship dormant on live events
@@ -1659,6 +1659,94 @@ calibrations:
         pre-impl by audit-rubric (substrate-currency check); represents the
         DESIGN-PHASE prevention of what would otherwise have been instance #16
         as a hot-fix.
+
+      Two additional instances 2026-05-08 evening (substrate dispatch path):
+      17. bug-57 — broadcast routing skips pending-action enqueue at thread-open
+        per `hub/src/policy/thread-policy.ts:280-288` deliberate phase-2-deferral
+        ("For broadcast/multicast, no single target owes a response (phase-2
+        scope — no enqueue yet)"). Surfaced via mission-of-missions Phase 4
+        audit thread-502 wedged silently — broadcast → SSE-only-without-queue-
+        persistence → idle engineer's drain returns empty despite engineer-turn
+        thread state. Calibration #62 textbook: deferral-inline-comment with no
+        proto-bug + no integration-test gate; surfaced only via prod-audit
+        (architect-side dispatch hit the gap). RESOLVED via PR #200 squash
+        e0fad4f4 (broadcast routing now enqueues per pool-resolved recipient
+        via existing selectAgents() reuse + coerce-time sweep via
+        `escalationReason: "superseded_by_peer_claim"` + new
+        `bug-57-broadcast-enqueue.test.ts` integration test asserts previously-
+        silent failure mode).
+      18. bug-58 — broadcast/multicast selector auto-copies all creator labels
+        (including identity-class `ois.io/github/login`) at openSelector
+        derivation time (`hub/src/policy/thread-policy.ts:163,182,239`); cross-
+        user pool resolves 0 members silently. Director-flagged gap 2026-05-08:
+        "I'm not sure 'all tags' should be copied and filtered against — this
+        is a gap" + Director-directive "I think only 'env:' labels were
+        supposed to be assumed/copied". RESOLVED via PR #201 squash bde23209
+        (new `scopeLabels()` helper at `hub/src/policy/labels.ts` with
+        hardcoded `SCOPE_LABEL_KEYS = ["env"]`; applied at thread-policy.ts:239
+        openSelector derivation as single change point preserving Mission-19
+        INV-TH9 thread.labels archival inheritance unchanged; mission-19/labels.
+        test.ts updated to assert env-only contract — calibration #62 9th-
+        instance via "tests asserting selector/matchLabels behavior must
+        validate against conceptual delivery contract not current implementation
+        behavior" rubric refinement).
+
+      Six additional instances 2026-05-08 evening (M-Branchcraft-V1 Phase 4
+      Design thread-509 7-round audit cycle; n=6 architect-spec-level-recall-
+      misses-substrate-coupling pattern across both LIBRARY-API + RUNTIME-
+      PLATFORM substrate-currency dimensions; comprehensive-sweep methodology
+      empirically validated as load-bearing audit-discipline):
+      19. v0.1 §2.6.3 IsomorphicGit resumable-push claim — "smart-HTTP supports
+        range requests; native git/SSH supports pack-resumption" — both halves
+        wrong. Smart-HTTP push uses POST with no Range; IsomorphicGit doesn't
+        speak SSH at all. Engineer round-1 catch; corrected at v0.4 to retry-
+        on-failure with exponential backoff. Library-API substrate-currency.
+      20. v0.2 §2.1.4 commitToRef plumbing claim — "writeTree+writeCommit+
+        writeRef plumbing; HEAD doesn't move" — correct AT REF LEVEL but
+        misses INDEX-coupling. git.writeTree reads INDEX (shared with HEAD's
+        staging-state); commitToRef poisons operator's git status despite
+        HEAD-ref unchanged. Engineer round-2 catch; v0.3 design moves to
+        bypass-index via filesystem-walk + per-file writeBlob + explicit-tree-
+        construction (writeTree({tree:[...]}) overload). Library-API substrate-
+        currency.
+      21. v0.3 §2.6.2 IsomorphicGit fetch claim — "IsomorphicGit equivalent
+        git.fetch({ url: bundlePath })" — IsomorphicGit fetch is HTTP(S)-only
+        per issue #462 (open since September 2018); no file:// or local-path
+        support. Engineer round-3 catch; v0.4 architect-call option (a) shell-
+        out-to-native-git for bundle ops (explicit pure-TS breach bounded to
+        disk-failure-recovery codepath; composes with already-existing breach
+        via LocalGitConfigIdentity shelling git config). Library-API substrate-
+        currency.
+      22. v0.4 §2.6.1 GC discipline claim — "periodic gc.auto invocation for
+        object pruning" — IsomorphicGit has NO GC primitives whatsoever
+        (no git.gc, no gc.auto config, no prune/repack). Engineer round-4
+        catch; v0.5 architect-call option (b) DROP GC discipline at v1 (F16
+        wip-cleanup + hash-skip-via-readObject precheck handle dominant
+        cases; mid-mission GC over-engineering at v1; Q5=b bounded scope
+        respected). Library-API substrate-currency.
+      23. v0.5 §2.1.4 MergeStrategy enum — `"squash" | "rebase"` claimed —
+        IsomorphicGit's git.merge() only supports fast-forward + fast-forward-
+        disabled (no-ff) per official docs ("does not support selecting
+        alternative merge strategies"). Engineer round-5 catch (comprehensive-
+        sweep methodology surfaced 6 findings: 1 critical + 5 minor function-
+        name mappings); v0.6 architect-call option (a) DROP squash + rebase
+        from MergeStrategy enum + compositional schema fold. Library-API
+        substrate-currency.
+      24. v0.6 §2.9.1 `engines.node >= 20` + CI matrix `node 20.x + 22.x` —
+        Node 20 EOL'd 2026-04-30 per official Node.js Release Schedule (8 days
+        before today 2026-05-08). Engineer round-6 catch (comprehensive-sweep
+        methodology rate-decay 1/round); v0.7 bump engines.node to >=22 + CI
+        matrix to 22.x + 24.x (Node 22 maintenance until 2027-04-30; Node 24
+        active LTS until 2028-04-30). **RUNTIME-PLATFORM substrate-currency
+        — NEW DIMENSION** in the pattern (instances 19-23 were library-API;
+        instance 24 broadens to runtime-platform release-schedule + EOL
+        calendar).
+
+      Round-7 final comprehensive substrate-currency sweep #3 confirmed n=6 IS
+      the ceiling for v0.7 — no 7th instance surfaced. Pattern STOPPED with
+      rate-decay 1→6→1→0 across rounds 4→5→6→7 under multi-round comprehensive-
+      sweep methodology, empirically validating comprehensive-sweep as load-
+      bearing audit-discipline.
 
       idea-252 §4 (loud-error on zero-match dispatch; SHIPPED PR #186 a1d66ef5)
       structurally prevents bug-56-class silent-dispatch-failures at the API
@@ -1725,6 +1813,30 @@ calibrations:
         promote `feedback_substrate_currency_audit_rubric.md` +
         `feedback_substrate_extension_wire_flow_integration_test.md` from
         engineer-runtime memories to canonical methodology references.
+      (e) NEW (post-2026-05-08-evening thread-509 maturation): audit-rubric
+        extension empirically validated at n=6 baseline. Pattern broader than
+        named-types-AND-events:
+        - LIBRARY-API substrate-currency dimension (instances 19-23 of #62) —
+          architect-spec-level-recall-misses-substrate-coupling: Round-N audits
+          MUST explicitly substrate-verify each library-API claim against the
+          actual library docs + open-issue tracker. Spec-claim-correct-at-
+          abstraction-level-N is INSUFFICIENT under Strict-1.0 commitments.
+        - RUNTIME-PLATFORM substrate-currency dimension (instance 24 of #62) —
+          runtime-platform constraints (engines.node, browser-conditional-
+          exports, OS-version, CLI-tool-min-version) MUST be verified against
+          current release-schedule + EOL calendar. Same diagnostic test:
+          architect-spec-level-recall-misses-substrate-coupling.
+        - COMPREHENSIVE-SWEEP METHODOLOGY (validated empirically thread-509):
+          rate-decay observed under multi-round comprehensive-sweep — rounds
+          1-4 ad-hoc 1/round; round-5 sweep 6/round; round-6 sweep 1/round;
+          round-7 sweep 0/round. Pattern-applied-systematically catches more
+          than ad-hoc-per-round audit. Comprehensive-sweep methodology IS the
+          load-bearing audit-discipline (vs ad-hoc-per-round).
+        Codify as Phase 4 Design audit-rubric extension at
+        `feedback_substrate_currency_audit_rubric.md` covering BOTH library-
+        API + runtime-platform dimensions + comprehensive-sweep methodology.
+        Mandatory-checklist class for substrate-introduction missions enumerating
+        low-level substrate primitives.
 
       Methodology promotion of §6.4 to "required-before-Phase-9-closing-audit"
       is EMPIRICALLY VERY OVERDUE at 16 instances. Audit-rubric maturation arc
@@ -1734,8 +1846,11 @@ calibrations:
       Architect-Director ratification: Director directive 2026-05-06 "File the
       calibrations" + reaffirmation post bug-55 closure + bug-56 reinforcement
       with broader-scope blast-radius datum + Director directive 2026-05-08
-      "Perform the ledger update" (this update) + standing methodology-promotion
-      proposal pending next strategic-review gate-point.
+      "Perform the ledger update" + Director directive 2026-05-08-evening
+      "File updates. Hold on further action" (this update; bug-57 + bug-58
+      + 6 thread-509 instances + audit-rubric extension closure mechanism (e))
+      + standing methodology-promotion proposal pending next strategic-review
+      gate-point.
     pattern_membership:
       - methodology-bypass-becomes-substrate-defect-amplification-loop
       - review-loop-as-calibration-surface
@@ -1754,6 +1869,11 @@ calibrations:
       - PR #195 (M-Build-Identity hot-fix; instance #14 closure — Hub zod schema; canonical end-to-end wire-flow test pattern)
       - PR #197 (M-GitHub-Releases-Plugin hot-fix; instance #15 closure — prepare-on-workspace-target)
       - PR #198 (M-Workflow-Run-Events; cleanest cycle 5r+0hf; empirical validation of audit-rubric maturation arc)
+      - PR #200 (bug-57 broadcast enqueue gap; instance #17 closure — squash e0fad4f4)
+      - PR #201 (bug-58 cross-user broadcast tenant-isolation; instance #18 closure — squash bde23209)
+      - thread-509 (M-Branchcraft-V1 Phase 4 Design 7-round audit cycle; instances #19-#24; n=6 architect-spec-level-recall-misses-substrate-coupling pattern across both library-API + runtime-platform substrate-currency dimensions; comprehensive-sweep methodology empirical validation)
+      - docs/designs/m-branchcraft-v1-design.md (Design v0.1→v1.0 trajectory documenting all 6 thread-509 instances + folds)
+      - mission-of-missions idea-261 thread-507 (parent meta-mission Phase 4 Design v1.0 BILATERAL RATIFIED; substrate-validation post bug-57+58)
     tele_alignment:
       - tele-6
       - tele-7
@@ -1901,17 +2021,29 @@ calibrations:
 
   - id: 65
     class: methodology
-    title: "Gate-narrowness-vs-boundary-breadth — bypass predicates that enumerate instances of a concept fail when new instances are added; gates should match concept boundary not specific instances"
+    title: "Gate-narrowness-vs-boundary-breadth — bypass predicates / filters / matchLabels that enumerate instances of a concept fail when new instances are added; gates should match concept boundary not specific instances (2 canonical instances; sibling-direction enrichment 2026-05-08-evening)"
     origin: post-mission-225-bug-55-cycle
-    surfaced_at: bug-55 substrate-investigation thread-486 (2026-05-06)
+    surfaced_at: bug-55 substrate-investigation thread-486 (2026-05-06; gate-too-narrow direction); bug-58 cross-user broadcast tenant-isolation thread-505 (2026-05-08-evening; gate-too-broad direction; sibling-direction enrichment)
     status: open
     closure_mechanism: |
       Architectural-pathology meta-pattern. When a runtime gate (bypass predicate,
       filter, allowlist) is implemented as an enumerated set of specific instances
       of a broader concept, the gate fails silently when new instances of the
-      concept are added without remembering to update the enumeration.
+      concept are added without remembering to update the enumeration. **Sibling-
+      direction enrichment 2026-05-08-evening**: pattern has TWO failure-mode
+      directions, both empirically observed:
+      - **Gate-too-narrow** (bug-55) — enumeration covers FEWER instances than
+        the conceptual boundary; new instances LEAK PAST the gate (gate too
+        permissive at the boundary)
+      - **Gate-too-broad** (bug-58) — copy-everything covers MORE instances than
+        the conceptual boundary; legitimate cross-instance dispatch FILTERS
+        OUT (gate too restrictive at the boundary)
+      Both failure-modes pass the same diagnostic test: "is this gate matching
+      the conceptual boundary, or enumerating-vs-blanket-copying instances of
+      a broader/narrower concept?" The fix in both directions is concept-
+      boundary-matching (vs instance-enumeration OR blanket-copy).
 
-      Bug-55 = textbook instance:
+      Bug-55 = textbook gate-too-narrow instance:
       - mission-225 §3.3 design correctly identified the broad boundary: cognitive
         presence (LLM-meaningful-work) vs transport presence (adapter-housekeeping)
       - Implementation pinned the runtime gate to a single tool-name allowlist:
@@ -1929,15 +2061,47 @@ calibrations:
       callable" tools. Default-deny semantic matches the concept boundary. New
       additions to either tier auto-classify correctly.
 
-      Diagnostic signature for future bypass/filter design: "is this gate
-      enumerating instances of a concept, or matching the concept itself?"
-      If enumerating: design is fragile to additions; concept-boundary matching
-      is the structural fix.
+      Bug-58 = textbook gate-too-broad instance (sibling-direction enrichment
+      2026-05-08-evening):
+      - Director observation 2026-05-08: "I'm not sure 'all tags' should be
+        copied and filtered against — this is a gap" + Director-directive "I
+        think only 'env:' labels were supposed to be assumed/copied"
+      - Broadcast/multicast openSelector derivation at `hub/src/policy/thread-
+        policy.ts:163,182,239` auto-copies ALL creator labels (including
+        identity-class `ois.io/github/login`) into matchLabels filter
+      - Conceptual boundary: scope-class labels (env, namespace, deployment-
+        tier — appropriate cross-pool isolation) vs identity-class labels
+        (per-user logins, agent-instance-IDs — describe individual agents
+        within a deployment-scope, NOT pool boundaries)
+      - Implementation pinned the runtime gate to copy-everything (treats all
+        labels as scope-class)
+      - Cross-user pool resolves 0 members silently — `apnex-lily` architect's
+        broadcast filtered by `ois.io/github/login: apnex-lily` matchLabel,
+        excluding `apnex-greg` engineer who shares `env: prod` but has
+        different login
+
+      Bug-58 fix (PR #201) corrected by introducing scopeLabels() helper at
+      `hub/src/policy/labels.ts` with hardcoded `SCOPE_LABEL_KEYS = ["env"]`;
+      applied at thread-policy.ts:239 openSelector derivation as single change
+      point preserving Mission-19 INV-TH9 thread.labels archival inheritance
+      unchanged. Mission-19/labels.test.ts updated to assert env-only contract
+      — codifies the bug-58-correct behavior + closes calibration #62 9th-
+      instance via "tests asserting selector/matchLabels behavior must validate
+      against conceptual delivery contract not current implementation behavior"
+      audit-rubric refinement.
+
+      Diagnostic signature for future bypass/filter/match-label design: "is
+      this gate matching the conceptual boundary, OR enumerating-vs-blanket-
+      copying instances of a broader/narrower concept?" If enumerating (gate-
+      too-narrow direction) OR blanket-copying (gate-too-broad direction):
+      design is fragile to boundary-misalignment; concept-boundary matching
+      is the structural fix in both directions.
 
       Generalization: pattern applies to any mechanism that gates behavior based
       on category membership (allowlists, denylists, tier filters, tag-based
-      routing, etc.). Whenever the gate's literal-text doesn't match the
-      conceptual category, future-canonical instances will silently leak.
+      routing, matchLabels, etc.) in EITHER direction. Whenever the gate's
+      literal-text doesn't match the conceptual category — too narrow OR too
+      broad — boundary-misalignment defects surface silently.
 
       Tele alignment:
       - tele-6 (Deterministic Invincibility) — concept-matching gates remain
@@ -1960,12 +2124,21 @@ calibrations:
       don't catch them → operator-discovers-via-prod-audit pattern.
 
       Architect-Director ratification: Director directive 2026-05-06 "Confirmed.
-      Approved" post bug-55 closure.
+      Approved" post bug-55 closure (gate-too-narrow direction); Director
+      directive 2026-05-08-evening "I'm not sure 'all tags' should be copied
+      and filtered against — this is a gap" + "I think only 'env:' labels
+      were supposed to be assumed/copied" (gate-too-broad direction; sibling-
+      direction enrichment); Director directive 2026-05-08-evening "File
+      updates" (this 2-instance ledger update).
     pattern_membership:
       - methodology-bypass-becomes-substrate-defect-amplification-loop
     cross_refs:
-      - bug-55 (canonical instance; resolved via PR #183 commit 1464a11a)
-      - hub/src/hub-networking.ts (shouldTouchAgent positive-list inversion)
+      - bug-55 (1st canonical instance; gate-too-narrow direction; resolved via PR #183 commit 1464a11a)
+      - bug-58 (2nd canonical instance; gate-too-broad direction; resolved via PR #201 commit bde23209)
+      - hub/src/hub-networking.ts (shouldTouchAgent positive-list inversion; bug-55 fix)
+      - hub/src/policy/labels.ts (scopeLabels() helper with SCOPE_LABEL_KEYS=["env"]; bug-58 fix)
+      - hub/src/policy/thread-policy.ts:163,182,239 (openSelector derivation site; bug-58 fix application point)
+      - hub/test/mission-19/labels.test.ts (updated to assert env-only contract; codifies bug-58-correct behavior)
       - feedback_review_loop_calibration_surface.md
     tele_alignment:
       - tele-6
