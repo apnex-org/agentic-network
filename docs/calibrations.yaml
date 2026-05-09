@@ -1587,9 +1587,9 @@ calibrations:
 
   - id: 62
     class: methodology
-    title: "Deferred-runtime-gate-becomes-silent-defect-surface — Phase 6 verification §6.4 deferral pattern produces post-substrate runtime-gap bugs (24 canonical instances; audit-rubric maturation arc empirically validated 2026-05-08; comprehensive-sweep methodology empirically locked at n=6 baseline thread-509)"
+    title: "Deferred-runtime-gate-becomes-silent-defect-surface — Phase 6 verification §6.4 deferral pattern produces post-substrate runtime-gap bugs (24 canonical instances + thread-510 v1.x 8-round cycle empirical scale-validation 2026-05-09 = 93 findings under comprehensive-sweep across substantive-reshape envelope; audit-rubric maturation arc empirically validated 2026-05-08; comprehensive-sweep methodology empirically locked at n=6 baseline thread-509 + scale-validated at n=93 thread-510)"
     origin: post-mission-76-bug-49-cycle
-    surfaced_at: bug-49 (2026-05-05) → bug-50 → bug-51 (mission-76); bug-52 → bug-53 → bug-54 → bug-55 → bug-56 (mission-225 + post-bug-55 cascade); 8 additional instances 2026-05-07 → 2026-05-08 across substrate-feature missions M-SSE-Filter-List-Adapter + M-Deployment-Hygiene + M-Build-Identity + M-GitHub-Releases-Plugin; +2 evening 2026-05-08 (bug-57 broadcast enqueue gap + bug-58 cross-user broadcast tenant-isolation); +6 evening 2026-05-08 (M-Branchcraft-V1 thread-509 7-round audit cycle; n=6 architect-spec-level-recall-misses-substrate-coupling instances across both library-API + runtime-platform substrate-currency dimensions)
+    surfaced_at: bug-49 (2026-05-05) → bug-50 → bug-51 (mission-76); bug-52 → bug-53 → bug-54 → bug-55 → bug-56 (mission-225 + post-bug-55 cascade); 8 additional instances 2026-05-07 → 2026-05-08 across substrate-feature missions M-SSE-Filter-List-Adapter + M-Deployment-Hygiene + M-Build-Identity + M-GitHub-Releases-Plugin; +2 evening 2026-05-08 (bug-57 broadcast enqueue gap + bug-58 cross-user broadcast tenant-isolation); +6 evening 2026-05-08 (M-Branchcraft-V1 thread-509 7-round audit cycle; n=6 architect-spec-level-recall-misses-substrate-coupling instances across both library-API + runtime-platform substrate-currency dimensions); +93 findings 2026-05-09 (M-Missioncraft-V1 thread-510 v1.x 8-round audit cycle; pattern-decay R1=24 → R2=15 → R3=14 → R4=14 → R5=11 → R6=10 → R7=5 → R8=0 ratify-clean tracking thread-509 6-9 round prediction range cleanly; substantive-reshape envelope landed v1.0 RATIFIED → v1.8 BILATERAL RATIFIED at SHA 226aa46 via 6 Director-direct architectural refinements; comprehensive-sweep methodology scale-validated)
     status: open (methodology-promotion empirically very overdue; architect-Director ratification pending strategic-review gate-point)
     closure_mechanism: |
       Architectural-pathology pattern. When mission Phase 6 preflight verification
@@ -1843,14 +1843,87 @@ calibrations:
       shows the substrate of the promotion already works; codification is the
       remaining surface.
 
+      THREAD-510 v1.x SCALE-VALIDATION (2026-05-09 — methodology empirically
+      validated at scale on substantive-reshape envelope):
+
+      M-Missioncraft-V1 v1.0 → v1.8 BILATERAL RATIFIED via 8-round comprehensive-
+      sweep audit cycle on thread-510. Pattern-decay tracked thread-509 6-9
+      round prediction range CLEANLY in convergence-zone tail:
+
+      | Round | Findings | Class breakdown |
+      |---|---|---|
+      | R1 | 24 | 6 HIGH + 14 MEDIUM + 4 MINOR (initial reshape; 6 Director-direct refinements) |
+      | R2 | 15 | 1 HIGH + 11 MEDIUM + 3 MINOR (cross-fold composition) |
+      | R3 | 14 | 1 HIGH + 11 MEDIUM + 2 MINOR (new surfaces from R2 fold) |
+      | R4 | 14 | 1 HIGH + 11 MEDIUM + 2 MINOR (registry concrete-data) |
+      | R5 | 11 | 1 HIGH + 7 MEDIUM + 3 MINOR (carryover-surface mismatch — remoteAdd v1.0 carryover dropped) |
+      | R6 | 10 | 0 HIGH + 4 MEDIUM + 6 MINOR (type-interface composition) |
+      | R7 | 5  | 0 HIGH + 2 MEDIUM + 3 MINOR (operator-config composability) |
+      | R8 | 0  | — ratify-clean — |
+
+      TOTAL: 93 findings folded across 8 rounds. Within thread-509-prediction
+      6-9 round range. Each round's findings dispositioned via fold-cycle +
+      commit-pin + dispatch.
+
+      EMPIRICAL CONFIRMATIONS:
+      - Comprehensive-sweep methodology IS load-bearing under substantive-
+        reshape envelopes (vs ad-hoc-per-round audit). Same pattern as thread-
+        509 (n=6 baseline) at 15× scale.
+      - Pattern-decay tracks thread-509 empirics — round-1 catches dominate
+        (24 = ~26% of total); subsequent rounds decay by ~30% per round in
+        convergence-zone tail.
+      - Concrete-data-introduction is the substrate-currency surface most
+        prone to cross-fold drift — HIGH-R4.1 PROVIDER_REGISTRY substrate-
+        inconsistency cluster (3 sub-issues from registry literal data) +
+        HIGH-R5.1 v1.0-carryover surface mismatch (remoteAdd* methods left
+        in spec post v1.1 reshape) — both round-N folds introducing concrete
+        data that round-N+1 catches via cross-section grep.
+      - Round-budget under-utilized at 8/20 (12-round reserve unused) —
+        substantial-reshape envelopes can be budgeted at 10-12 rounds with
+        confidence; 20-round-budget retained as safety-margin only.
+      - Substrate-currency catches were architecturally-significant (e.g.,
+        cross-mission repo-lock scope HIGH-5; null-object PureGitRemoteProvider
+        for uniform PROVIDER_REGISTRY dispatch HIGH-R4.1(3); operator-config
+        consultation boundary MEDIUM-R7.1 sovereignty discipline) — not just
+        cosmetic. Without comprehensive-sweep, these would have shipped
+        unspec'd or as silent-defect surfaces post-implementation.
+      - Architect-spec-level-recall pattern (thread-509 n=6 baseline) confirms
+        at thread-510 scale — 24 round-1 catches = 24 instances of substrate-
+        currency-not-validated at draft-time; iterative folds-with-grep-cross-
+        check close them comprehensively over 8 rounds.
+
+      THREAD-510 V1.x METHODOLOGY EVOLUTION CANDIDATES:
+      - calibration-aware audit scoping — when Survey envelope ratifies "v1.x
+        preserves these v1.0 surfaces verbatim," round-1 audit can scope-down
+        on preserved sections (sanity-check only) and concentrate on reshape-
+        introduced surfaces. §2.6 + §2.7 + §2.8 in thread-510 v1.x cycle were
+        verbatim-preserved from v1.0; received zero finds across 8 rounds.
+        Suggests cumulative comprehensive-sweep cost amortizes across
+        versions; future Phase 4 audit cycles could pre-scope on changed
+        surfaces only.
+      - substrate-coupling discipline at design-time — when design mandate
+        requires composing across multiple substrate layers (build tools +
+        linters + module resolvers + bundlers), explicitly enumerate which
+        layers compose AT WHICH TIME (lint-time / compile-time / runtime).
+        v1.8 §2.9 sovereign-module discipline does this; v1.0 didn't. Future
+        designs introducing multi-layer discipline mandates should adopt
+        upfront enumeration.
+      - concrete-data-introduction discipline — round-N folds introducing
+        concrete data (PROVIDER_REGISTRY literal; type interfaces; arg-count
+        tables) should grep-cross-check against existing canonical sources
+        BEFORE commit. HIGH-R4.1 + HIGH-R5.1 patterns suggest this is the
+        primary substrate-currency-drift class for substantive reshapes.
+
       Architect-Director ratification: Director directive 2026-05-06 "File the
       calibrations" + reaffirmation post bug-55 closure + bug-56 reinforcement
       with broader-scope blast-radius datum + Director directive 2026-05-08
       "Perform the ledger update" + Director directive 2026-05-08-evening
-      "File updates. Hold on further action" (this update; bug-57 + bug-58
-      + 6 thread-509 instances + audit-rubric extension closure mechanism (e))
-      + standing methodology-promotion proposal pending next strategic-review
-      gate-point.
+      "File updates. Hold on further action" (bug-57 + bug-58 + 6 thread-509
+      instances + audit-rubric extension closure mechanism (e)) + Director
+      directive 2026-05-09 "Approved" (this update; thread-510 v1.x 8-round
+      cycle scale-validation + pattern-decay empirics + 3 methodology-evolution
+      candidates) + standing methodology-promotion proposal pending next
+      strategic-review gate-point.
     pattern_membership:
       - methodology-bypass-becomes-substrate-defect-amplification-loop
       - review-loop-as-calibration-surface
@@ -1874,6 +1947,8 @@ calibrations:
       - thread-509 (M-Branchcraft-V1 Phase 4 Design 7-round audit cycle; instances #19-#24; n=6 architect-spec-level-recall-misses-substrate-coupling pattern across both library-API + runtime-platform substrate-currency dimensions; comprehensive-sweep methodology empirical validation)
       - docs/designs/m-branchcraft-v1-design.md (Design v0.1→v1.0 trajectory documenting all 6 thread-509 instances + folds)
       - mission-of-missions idea-261 thread-507 (parent meta-mission Phase 4 Design v1.0 BILATERAL RATIFIED; substrate-validation post bug-57+58)
+      - thread-510 (M-Missioncraft-V1 v1.x 8-round audit cycle; 93 findings folded R1=24 → R8=0 ratify-clean; pattern-decay tracks thread-509 6-9 round prediction range; comprehensive-sweep methodology scale-validated on substantive-reshape envelope)
+      - docs/designs/m-missioncraft-v1-design.md (Design v1.1→v1.8 BILATERAL RATIFIED at SHA 226aa46 on agent-lily/m-missioncraft-v1-design branch; documents all 93 thread-510 v1.x findings + folds; v2.0+ active on agent-lily/m-missioncraft-v2-design branch)
     tele_alignment:
       - tele-6
       - tele-7
