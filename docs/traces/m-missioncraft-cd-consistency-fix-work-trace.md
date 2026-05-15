@@ -7,14 +7,14 @@ Trace conventions: see `docs/methodology/trace-management.md`.
 ## Resumption pointer (cold-session brief)
 
 1. **Mission:** mission-82 (M-Missioncraft-cd-consistency-fix), Director-ratified 2026-05-15; Survey waived; single-bug hotfix. Kickoff thread: **thread-560**.
-2. **Current in-flight:** slice (i) bug-92 — just claimed; diagnosis starting.
-3. **Repo state:** apnex/missioncraft `main` at `fef74e9` (post-mission-81; v1.2.3 npm-live).
+2. **Current in-flight:** nothing claimed. slice (i) bug-92 SHIPPED at `33afe95`; surfaced thread-560; standby for architect ACK or slice (ii) wire-flow gate.
+3. **Repo state:** apnex/missioncraft `main` at `33afe95` (slice (i) shipped; v1.2.4-prep).
 4. **Next-up:** slice (ii) architect-dogfood wire-flow gate (architect-side; NOT WAIVABLE), slice (iii) ship (1.2.3 → 1.2.4 + release).
 5. **Open engineer-judgment calls:** none yet — Option A is Director-ratified; scope is clear.
 
 ## In-flight
 
-- ▶ **slice (i) bug-92** — bare `msn <id> cd`/`workspace` single/multi-repo inconsistency. `core/missioncraft.ts workspace()` single-repo bare-form branch resolves to the sole repo subdir; change to mission-root (matching the multi-repo bare-form bug-88 introduced). Per calibration #79+#80: enumerate the full input-case-set (bare-single / bare-multi / named-repo / coord-form) — make bare-single + bare-multi consistent WITHOUT regressing named or coord.
+_(nothing claimed — slice (i) shipped; standby for slice (ii) architect-dogfood)_
 
 ## Queued / filed
 
@@ -23,7 +23,7 @@ Trace conventions: see `docs/methodology/trace-management.md`.
 
 ## Done this session
 
-_(nothing shipped yet — mission just kicked off)_
+- ✅ **slice (i) bug-92** — bare cd/workspace always → mission-root. apnex/missioncraft commit `33afe95`. Removed the single-repo auto-pick from `workspace()`'s `targetRepoName` ternary — bare-single AND bare-multi now both fall through to the existing mission-root branch (added in bug-88); named-repo + coord-form unchanged. Per calibration #79+#80 enumerated all 4 cases (bare-single / bare-multi / named / coord) + live-verified each. Test changes: rewrote `workspace-resolution.test.ts:67` (auto-pick → mission-root); NEW named-single regression-net test; idea-268 safety-net assertion updated to match new mission-root-absent message; name-resolution comment updated. 607/607 + tsc-strict clean. No 5th case-shape; fix did NOT touch the shell-init wrapper. Surfaced thread-560.
 
 ## Edges (dependency chains)
 
@@ -35,6 +35,7 @@ slice (i) bug-92 ──> slice (ii) architect-dogfood ──> slice (iii) ship (
 ## Session log (append-only)
 
 - **2026-05-15 mid** — mission-82 kicked off via thread-560 (architect; Director-ratified 2026-05-15, Survey waived). Single-bug v1.2.4 hotfix: bug-92 — bug-88 followon, bare cd/workspace single/multi-repo inconsistency. Director ratified Option A (consistency): bare → mission-root always. 3 slices: bug-92 fix + architect-dogfood + ship. Work-trace created at mission-start per per-mission trace discipline. Slice (i) bug-92 claimed; diagnosis starting.
+- **2026-05-15 mid (continuation)** — slice (i) bug-92 shipped at `33afe95`. Removed the single-repo auto-pick from `workspace()`'s `targetRepoName` ternary; bare-single + bare-multi now both fall through to the bug-88-added mission-root branch. Per calibration #79+#80 enumerated all 4 input cases (bare-single / bare-multi / named-repo / coord-form) + live-verified each — the inverse-shape lesson from mission-81 slice v.a applied prospectively. 607/607 + tsc-strict clean; rewrote 1 test, added 1 regression-net for the named-path, updated 1 safety-net assertion + 1 stale comment. No 5th case-shape; fix contained to `workspace()` (didn't touch the shell-init wrapper as kickoff §5 predicted). Surfaced thread-560.
 
 ## Canonical references
 
