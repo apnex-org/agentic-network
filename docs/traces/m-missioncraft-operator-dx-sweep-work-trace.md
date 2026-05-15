@@ -7,10 +7,10 @@ Trace conventions: see `docs/methodology/trace-management.md`.
 ## Resumption pointer (cold-session brief)
 
 1. **Mission:** mission-81 (M-Missioncraft-Operator-DX-Sweep), Director-ratified 2026-05-14; Survey waived; engineer-judgment cluster-batching. Kickoff thread: **thread-558**.
-2. **Current in-flight:** nothing claimed. slices (i)-(iv) + (iii.a) + (v.a) SHIPPED; surfaced on thread-558; standby for architect-side slice (v) wire-flow gate re-run.
-3. **Repo state:** apnex/missioncraft `main` at `35003db` (slices (i)-(iv) + (iii.a) + (v.a) shipped; v1.2.3-prep; **full CI matrix GREEN** at `35003db` — ubuntu+macos 22/24, CI run `25894920127`).
-4. **Next-up:** slice (v) architect-dogfood wire-flow gate re-run (architect-side; NOT WAIVABLE), slice (vi) ship (1.2.2 → 1.2.3 + release).
-5. **Open engineer-judgment calls:** none active — all surfaced dispositions resolved.
+2. **Current in-flight:** nothing claimed. ALL slices (i)-(vi) engineer-side COMPLETE; slice (v) dogfood 9/9 PASS; slice (vi) ship-prep shipped (`fef74e9`, NO tag). Surfaced thread-558; standby for Director Release-gate verdict.
+3. **Repo state:** apnex/missioncraft `main` at `fef74e9` (v1.2.3 ship-prep — version bumped, CHANGELOG written, NOT tagged). Full CI matrix GREEN at `35003db`; CI for `fef74e9` is doc/version-only (no logic change).
+4. **Next-up:** Director Release-gate verdict → on PROCEED: tag-push `v1.2.3` cascade (release.yml + npm publish + registry verify).
+5. **Open engineer-judgment calls:** none active.
 
 ## In-flight
 
@@ -18,8 +18,7 @@ _(nothing claimed — slice (i) shipped; awaiting architect ACK or autonomous ca
 
 ## Queued / filed
 
-- ○ **slice (v)** — architect-dogfood wire-flow gate (RE-RUN after slice v.a) — architect-side; NOT WAIVABLE. Paused on first check (bug-85 BLOCKER); slice v.a shipped the fix; full dogfood runs against `35003db`.
-- ○ **slice (vi)** — version-bump 1.2.2 → 1.2.3 + release.yml + Director Release-gate.
+- ○ **slice (vi) ship** — version-bump + CHANGELOG SHIPPED at `fef74e9` (NO tag — HOLD per architect §3). Awaiting Director Release-gate → tag-push `v1.2.3` cascade.
 - ⏸ **BRANCH-TRACKER terminal-state semantic asymmetry** — Director-ratified OUT of mission-81 scope; design-refinement, standalone design-question later.
 - ⏸ **Generic verb-tree-wide level-scoped help** — bug-87 scope-narrowed to `msn <id> help`; the generic refactor (`msn scope help`, `msn <id> update help`) is a FEATURE/idea-candidate, surfaced thread-558.
 
@@ -52,6 +51,7 @@ Slices (i)-(iv) are independent — engineer-judgment cluster-batching, any orde
 - **2026-05-14 mid (continuation)** — slice (iv) macos-matrix flake clearance shipped across 3 commits (`c9bbac9`/`c8ad4fa`/`f123dc7`); full CI matrix now GREEN. Took 3 CI cycles — a re-diagnosis arc, NOT blind iteration: cycle 1 (`c9bbac9`: realpath-guard + directional verifyPidStartTime + abandon-line fold) cleared 0/3; CI log re-read showed flakes 1+2's failing assertion was the TEST's OWN `expect(process.cwd().startsWith(resolve(tempRoot,...)))` — a test-fixture symlink-mismatch, not substrate → cycle 2 (`c8ad4fa`: `realpathSync` tempRoot in beforeEach) cleared 1+2 (3→1); flake 3 re-diagnosed as `verifyPidStartTime` returning `false` on macOS `ps -o etimes=` failure → `terminateDaemon` skips SIGTERM on a confirmed-live daemon → cycle 3 (`f123dc7`: "can't-verify-means-proceed" — `ps`-failure/unparseable returns `true`, only positive pid-reuse returns `false`) cleared flake 3. All 3 cleared; ubuntu 22/24 + macos 22/24 green. Also folded architect §2's abandon-line conditional (`created`-state abandon no longer over-claims workspace/daemon teardown). Discipline note: per kickoff §6 I was prepared to surface flake 3 as structural after cycle 3 if it didn't clear — it did; the re-diagnosis was grounded each cycle (CI-log evidence), not guessing.
 - **2026-05-15 early** — slice (iii.a) bug-90 + bug-91 shipped at `b96ff6d` (Director-FOLD verdict 2026-05-15 — the 2 slice-iii-discovered defects folded into mission-81 as an add-on). bug-90: `deriveValidatedRepoName` validates URL-derived repo-names at create-time (createScope + createMission) — fail-loud-at-write replaces silent-vanish-at-read; `listScopes` + `listMissions` `catch{skip}` → stderr warning (calibration #79 — fixed the replicated pair). bug-91: `extractHelpVerbPath` strips global-flag VALUES from help-form verb-paths (both extraction sites). +11 tests (6 bug-90 SDK + 5 bug-91 grammar); 605/605 + tsc-strict clean; live smoke verified. Surfaced thread-558.
 - **2026-05-15 early (continuation)** — slice (v.a) bug-85 completion shipped at `35003db`. Architect slice (v) dogfood hit a BLOCKER on the FIRST check: bug-85 (slice i) added only `created` to the abandon precheck — I pattern-matched the Director's repro string instead of enumerating the FSM's pre-start state-set. `configured` (the common pre-start state) still threw. Engineer-side miss — slice (i) §B claimed calibration-#79 compliance but #79's grep-the-call-sites is a different axis than enumerate-the-valid-input-states (the inverse shape). Fix: abandon precheck + minimal-teardown branch + validate + bin.ts success-line all accept `created` + `configured` + `joined` (full FSM pre-start set). 3 message-migrations + 2 premise-rewrites + new `joined`-abandon test. Folded the `publishMessage` macos-node-24 5s-timeout flake (`vi.setConfig` file-wide 30s — surfaced on the b96ff6d CI run). 606/606 + tsc-strict clean; live-verified created + configured per architect's exact ask. Surfaced thread-558. **CI run `25894920127` on `35003db`: full matrix GREEN** (ubuntu+macos 22/24) — slice (v) dogfood candidate is calibration-#77-clean. (CI-green follow-up to thread-558 couldn't post — architect holds the turn; they check CI themselves per #77.)
+- **2026-05-15 mid** — architect slice (v) wire-flow gate dogfood COMPLETE: **9/9 PASS** against `35003db` (synced/rebuilt/clean-reinstalled) — bug-85/86/87/88/89/90/91 all verified + S1 writer-e2e + S3 watch-reader-abandon regression (the load-bearing check: slice v.a's abandon-flow changes didn't break started/reader abandon). slice (vi) ship AUTHORIZED. slice (vi) ship-prep shipped at `fef74e9`: version bump 1.2.2→1.2.3 (4 sites) + operator-facing CHANGELOG 1.2.3 entry. NO tag — HOLD for Director Release-gate per architect §3 + calibration #77. 606/606 + tsc-strict clean; `msn --version` → 1.2.3. Surfaced thread-558. ALL engineer-side mission-81 slices COMPLETE; standby for Director Release-gate.
 
 ## Canonical references
 
