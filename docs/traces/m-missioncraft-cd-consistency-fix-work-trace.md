@@ -7,9 +7,9 @@ Trace conventions: see `docs/methodology/trace-management.md`.
 ## Resumption pointer (cold-session brief)
 
 1. **Mission:** mission-82 (M-Missioncraft-cd-consistency-fix), Director-ratified 2026-05-15; Survey waived; single-bug hotfix. Kickoff thread: **thread-560**.
-2. **Current in-flight:** nothing claimed. **mission-82 SHIPPED — `@apnex/missioncraft@1.2.4` LIVE on npm.** Director Release-gate PROCEED ("Approved"); tag-push cascade executed. Ship-confirmation surfaced thread-560; standby for architect wave-close.
+2. **Current in-flight:** nothing claimed. **mission-82 SHIPPED — `@apnex/missioncraft@1.2.4` LIVE on npm.** Director Release-gate PROCEED ("Approved"); tag-push cascade executed. Ship-confirmation surfaced thread-560; complete + converged (bilateral close_no_action). Engineer STANDBY released. No engineer-side action pending — await next mission kickoff.
 3. **Repo state:** apnex/missioncraft `main` at `ee5d4c5` + tag `v1.2.4`. `@apnex/missioncraft@1.2.4` published (shasum `b3ec37e47c215de45ec01c57f5dde0b5098a25cd`).
-4. **Next-up:** architect-side wave-close — `update_mission` mission-82 → completed; thread-560 converge; light §12 retrospective fold (bug-88→bug-92 followon meta-pattern).
+4. **Next-up:** await next mission kickoff. (Architect-side parallel-track: light §12 retrospective fold — bug-88→bug-92 followon meta-pattern, calibration-#80 sibling-note. In agentic-network methodology repo.)
 5. **Open engineer-judgment calls:** none.
 
 ## In-flight
