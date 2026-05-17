@@ -1,6 +1,6 @@
-# M-Hub-Storage-Substrate — Design v1.2 (W1.3 ChangeEvent race clarification + W1.5 R9 closure)
+# M-Hub-Storage-Substrate — Design v1.3 (W1 close — WatchOptions.signal: AbortSignal addition)
 
-**Status:** v1.2 architect-direct fold-in 2026-05-17 (v1.0 RATIFIED per thread-563; v1.1 inventory-currency cleanup post W0.2; v1.2 folds W1.3 watch-race-disposition + W1.5 R9 measurement closure — both engineer-judgment-driven; no design-shape revision required, only spec-text clarifications; v1.0 ratify-criterion still met)
+**Status:** v1.3 architect-direct fold-in 2026-05-17 (W1 COMPLETE 6/6 deliverables; substrate functional + 30 tests pass + R9 closed + restart-safety verified); v1.3 folds W1.4 substrate-side AbortSignal addition to WatchOptions contract — engineer-judgment-driven substrate-API addition (W1.3 caveat #4 fixed substrate-side, not test-only); no design-shape revision; v1.0 ratify-criterion still met
 **Source idea:** idea-294
 **Survey envelope:** `docs/surveys/m-hub-storage-substrate-survey.md` (Director-ratified 2026-05-16)
 **Phase 4 coord thread:** thread-562 (converged 2026-05-17; 4 fold-ins from engineer pre-audit + AG-1 Director re-confirm)
@@ -81,6 +81,10 @@ interface WatchOptions {
   // sinceRevision is the snapshotRevision from a prior list() result. Substrate replays
   // change-events strictly newer than that revision; no missed-events window.
   sinceRevision?: string
+  // v1.3 addition (W1.4 substrate-side fix for W1.3 caveat #4): consumer-side cancellation.
+  // When aborted, the substrate ends the underlying LISTEN connection and the AsyncIterable
+  // iterator returns cleanly. Standard Node pattern; pairs with for-await + try/finally + ac.abort().
+  signal?: AbortSignal
 }
 
 // Per SchemaDef.FieldDef.type, Filter is narrowed at validation time. Round-1 audit N1:
@@ -693,7 +697,8 @@ The round-1 audit thread carries:
 
 ## §11 Status
 
-- **v1.2 architect-direct fold-in** — 2026-05-17 (this commit); folds W1.3 watch-race-disposition (§2.1 ChangeEvent clarification) + W1.5 R9 closure (§7.1 R9 row updated; LISTEN/NOTIFY confirmed adequate at current Hub-scale; 541 writes/sec sustained with 0.00% dropped events). Both engineer-judgment-driven; no design-shape revision. v1.0 ratify-criterion still met
+- **v1.3 architect-direct fold-in** — 2026-05-17 (this commit); folds W1.4 substrate-side AbortSignal addition (§2.1 WatchOptions.signal contract addition). No design-shape revision; W1 COMPLETE 6/6 deliverables across 5 engineer commits (e21a9f3 / a11ded5 / bd18e61 / d38547e / f18c8c5); 30 tests pass; R9 closed; restart-safety verified
+- **v1.2 architect-direct fold-in** — 2026-05-17 (commit `3e78787`); folds W1.3 watch-race-disposition (§2.1 ChangeEvent clarification) + W1.5 R9 closure (§7.1 R9 row updated; LISTEN/NOTIFY confirmed adequate at current Hub-scale; 541 writes/sec sustained with 0.00% dropped events). Both engineer-judgment-driven; no design-shape revision. v1.0 ratify-criterion still met
 - **v1.1 architect-direct cleanup** — 2026-05-17 (commit `11ce0ba`); v1.0 RATIFIED on thread-563; v1.1 folds W0.2 substantive findings (5 architect-blind-kind-corrections + 4 W0-architect-validates + 1 NEW ThreadHistoryEntry + wisdom/ disposition)
 - **Branch:** `agent-lily/m-hub-storage-substrate`
 - **Commits:**
