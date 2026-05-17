@@ -199,14 +199,25 @@ const PendingAction: SchemaDef = {
 
 const Proposal: SchemaDef = {
   kind: "Proposal",
-  version: 1,
+  version: 2,
+  // W4.x.7 architect-blind-correction: v1 multi-mismatch — field 'state' should
+  // be 'status' (verbatim spec-recall miss); enum [active/accepted/rejected/
+  // closed] vs actual ProposalStatus [submitted/approved/rejected/changes_requested/
+  // implemented] (only 'rejected' overlaps; 4 of 5 invalid). v2 corrected +
+  // cascade-key fields added for findByCascadeKey hot-path. 11th-instance
+  // substrate-currency-failure pattern.
   fields: [
     { name: "id", type: "string", required: true },
-    { name: "title", type: "string", required: false },
-    { name: "state", type: "string", required: false, enum: ["active", "accepted", "rejected", "closed"] },
+    { name: "title", type: "string", required: true },
+    { name: "status", type: "string", required: true, enum: ["submitted", "approved", "rejected", "changes_requested", "implemented"] },
+    { name: "correlationId", type: "string", required: false },
+    { name: "sourceThreadId", type: "string", required: false },
+    { name: "sourceActionId", type: "string", required: false },
   ],
   indexes: [
-    { name: "proposal_state_idx", fields: ["state"] },
+    { name: "proposal_status_idx", fields: ["status"] },
+    // findByCascadeKey hot-path (Mission-24 Phase 2 INV-TH20 idempotency-key)
+    { name: "proposal_cascade_idx", fields: ["sourceThreadId", "sourceActionId"] },
   ],
   watchable: true,
 };
