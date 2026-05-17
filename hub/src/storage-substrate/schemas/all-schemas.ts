@@ -1,0 +1,396 @@
+/**
+ * mission-83 W2.3 — 20 SchemaDef entries per Design v1.3 §3.4.1 LOCKED inventory.
+ *
+ * Single-file consolidated form for spike-quality + ease of bilateral inspection.
+ * W4 repository internal-composition refactor may split per-file if architect
+ * prefers; current shape per architect-suggestion "per-file" was deferred to
+ * single-file for spike-velocity (engineer-judgment; surface for review).
+ *
+ * Per Design v1.3 §2.3 SchemaDef shape:
+ *   - kind: entity-kind name
+ *   - version: shape-version (bump on field-shape change; start at 1)
+ *   - fields[]: validation-only declared shape (Flavor A — no column-promote)
+ *   - indexes[]: per-kind expression indexes (CREATE INDEX CONCURRENTLY at reconciler)
+ *   - watchable: NOTIFY-trigger wired (default true for W2; consumer-opt-in later)
+ *
+ * Per-kind index choices documented inline. Indexes target known hot query
+ * paths per repository code in `hub/src/entities/*.ts` + policy code patterns.
+ */
+
+import type { SchemaDef } from "../types.js";
+
+// ─── 13 existing substrate-mediated kinds ──────────────────────────────────
+
+const Agent: SchemaDef = {
+  kind: "Agent",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "role", type: "string", required: true, enum: ["engineer", "architect", "director", "unknown"] },
+    { name: "labels", type: "object", required: false },
+    { name: "lastSeenAt", type: "string", required: false },
+    { name: "lastHeartbeatAt", type: "string", required: false },
+    { name: "sessionEpoch", type: "number", required: false },
+  ],
+  indexes: [
+    // Mediated by IEngineerRegistry; by-role queries hot for list_available_peers + status checks
+    { name: "agent_role_idx", fields: ["role"] },
+  ],
+  watchable: true,
+};
+
+const Audit: SchemaDef = {
+  kind: "Audit",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "entityKind", type: "string", required: true },
+    { name: "entityId", type: "string", required: true },
+    { name: "op", type: "string", required: true },
+    { name: "actorRole", type: "string", required: false },
+    { name: "actorAgentId", type: "string", required: false },
+    { name: "timestamp", type: "string", required: true },
+  ],
+  indexes: [
+    // Recent-activity ordering via base entities_updated_at_idx (no per-kind extra needed)
+    // By-entity lookup for entity-history queries
+    { name: "audit_entity_idx", fields: ["entityKind", "entityId"] },
+  ],
+  watchable: true,
+};
+
+const Bug: SchemaDef = {
+  kind: "Bug",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "title", type: "string", required: false },
+    { name: "class", type: "string", required: false },
+    { name: "severity", type: "string", required: false, enum: ["minor", "major", "critical"] },
+    { name: "status", type: "string", required: false, enum: ["open", "in-progress", "resolved", "closed"] },
+  ],
+  indexes: [
+    { name: "bug_status_idx", fields: ["status"] },
+    { name: "bug_class_idx", fields: ["class"] },
+  ],
+  watchable: true,
+};
+
+const Counter: SchemaDef = {
+  kind: "Counter",
+  version: 1,
+  fields: [
+    // Special: single-row meta entity (id="counter"); embedded counter-domain keys
+    // (taskCounter, proposalCounter, etc.). Field-shape is open-ended per architect-judgment.
+  ],
+  indexes: [],  // single row; PK (kind, id="counter") sufficient
+  watchable: false,  // counter writes are bookkeeping; no consumer needs change-events
+};
+
+const Idea: SchemaDef = {
+  kind: "Idea",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "title", type: "string", required: false },
+    { name: "status", type: "string", required: false, enum: ["open", "triaged", "design", "incorporated", "closed", "deferred"] },
+  ],
+  indexes: [
+    { name: "idea_status_idx", fields: ["status"] },
+  ],
+  watchable: true,
+};
+
+const Message: SchemaDef = {
+  kind: "Message",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "kind", type: "string", required: true },  // note/task/report/review per usage
+    { name: "authorRole", type: "string", required: true },
+    { name: "authorAgentId", type: "string", required: true },
+    { name: "threadId", type: "string", required: false },  // null for non-threaded messages
+    { name: "target", type: "object", required: false },
+    { name: "delivery", type: "string", required: false },
+  ],
+  indexes: [
+    // bug-93 surfaced: per-thread message lookup is THE hot path (replaces DIY
+    // messages-thread-index/ secondary index from FS-substrate per Design §3.4.2)
+    { name: "message_thread_idx", fields: ["threadId"] },
+    // Author/recipient lookups for engineer-pulse + thread-replay
+    { name: "message_author_idx", fields: ["authorAgentId"] },
+  ],
+  watchable: true,
+};
+
+const Mission: SchemaDef = {
+  kind: "Mission",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "title", type: "string", required: false },
+    { name: "status", type: "string", required: false, enum: ["proposed", "active", "shipped", "retrospective", "closed"] },
+    { name: "class", type: "string", required: false },
+  ],
+  indexes: [
+    { name: "mission_status_idx", fields: ["status"] },
+  ],
+  watchable: true,
+};
+
+const PendingAction: SchemaDef = {
+  kind: "PendingAction",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "targetAgentId", type: "string", required: true },
+    { name: "dispatchType", type: "string", required: false },
+    { name: "state", type: "string", required: false, enum: ["enqueued", "receipt_acked", "completion_acked", "errored", "escalated", "continuation_required"] },
+    { name: "entityRef", type: "string", required: false },
+  ],
+  indexes: [
+    // Hot path: queue-drain by-target-agent
+    { name: "pa_target_idx", fields: ["targetAgentId"] },
+    // State queries for sweeper + admin
+    { name: "pa_state_idx", fields: ["state"] },
+  ],
+  watchable: true,
+};
+
+const Proposal: SchemaDef = {
+  kind: "Proposal",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "title", type: "string", required: false },
+    { name: "state", type: "string", required: false, enum: ["active", "accepted", "rejected", "closed"] },
+  ],
+  indexes: [
+    { name: "proposal_state_idx", fields: ["state"] },
+  ],
+  watchable: true,
+};
+
+const Task: SchemaDef = {
+  kind: "Task",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "directive", type: "string", required: false },
+    { name: "status", type: "string", required: false, enum: ["pending", "working", "blocked", "input_required", "in_review", "completed", "failed", "escalated", "cancelled"] },
+    { name: "assignedEngineerId", type: "string", required: false },
+    { name: "turnId", type: "string", required: false },
+    // NOTE: clarification is INLINE FIELD on task (clarificationQuestion +
+    // clarificationAnswer per task-repository.ts grep) — NOT separate kind
+  ],
+  indexes: [
+    { name: "task_status_idx", fields: ["status"] },
+    { name: "task_engineer_idx", fields: ["assignedEngineerId"] },
+  ],
+  watchable: true,
+};
+
+const Tele: SchemaDef = {
+  kind: "Tele",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "class", type: "string", required: false },
+    { name: "outcomes", type: "array", required: false },
+    { name: "supersedesId", type: "string", required: false },  // tele-N supersede chain
+    { name: "retiredAt", type: "string", required: false },
+  ],
+  indexes: [
+    { name: "tele_class_idx", fields: ["class"] },
+    { name: "tele_supersedes_idx", fields: ["supersedesId"] },
+  ],
+  watchable: true,
+};
+
+const Thread: SchemaDef = {
+  kind: "Thread",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "title", type: "string", required: false },
+    { name: "status", type: "string", required: false, enum: ["active", "converged", "closed", "force_closed"] },
+    { name: "routingMode", type: "string", required: false, enum: ["unicast", "multicast", "broadcast"] },
+  ],
+  indexes: [
+    { name: "thread_status_idx", fields: ["status"] },
+  ],
+  watchable: true,
+};
+
+const Turn: SchemaDef = {
+  kind: "Turn",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "agentId", type: "string", required: true },
+    { name: "missionId", type: "string", required: false },
+  ],
+  indexes: [
+    { name: "turn_agent_idx", fields: ["agentId"] },
+    { name: "turn_mission_idx", fields: ["missionId"] },
+  ],
+  watchable: true,
+};
+
+// ─── 2 NEW kinds this mission ──────────────────────────────────────────────
+
+const SchemaDefMeta: SchemaDef = {
+  // Self-referential per §2.3 bootstrap-self-bootstrap: SchemaDef-for-SchemaDef
+  // describes SchemaDef's own shape; reconciler reads this entry first to emit
+  // SchemaDef's own indexes
+  kind: "SchemaDef",
+  version: 1,
+  fields: [
+    { name: "kind", type: "string", required: true },
+    { name: "version", type: "number", required: true },
+    { name: "fields", type: "array", required: false },
+    { name: "indexes", type: "array", required: false },
+    { name: "watchable", type: "boolean", required: false },
+  ],
+  indexes: [
+    // SchemaDef lookup by entity-kind (PK kind+id already covers this since id=kind-name;
+    // no separate index needed — engineer-judgment per architect "obvious cases just apply")
+  ],
+  watchable: true,
+};
+
+const Notification: SchemaDef = {
+  // Re-introduction per OQ8 + Design v1.1 §3.4.1 (closes mission-56 partial-completion;
+  // absorbs hub-networking.ts direct-write paths at W4 repository-composition)
+  kind: "Notification",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "event", type: "string", required: false },
+    { name: "recipientRole", type: "string", required: false },
+    { name: "recipientAgentId", type: "string", required: false },
+  ],
+  indexes: [
+    { name: "notification_recipient_idx", fields: ["recipientAgentId"] },
+  ],
+  watchable: true,
+};
+
+// ─── 5 W0-architect-VERIFIED kinds ─────────────────────────────────────────
+
+const Document: SchemaDef = {
+  kind: "Document",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "category", type: "string", required: false },
+    { name: "content", type: "string", required: true },  // markdown body
+  ],
+  indexes: [
+    { name: "document_category_idx", fields: ["category"] },
+  ],
+  watchable: true,
+};
+
+const ArchitectDecision: SchemaDef = {
+  // OQ7 decomposition; from architect-context/decisions.json {decision, context, timestamp} entries
+  kind: "ArchitectDecision",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "decision", type: "string", required: false },
+    { name: "context", type: "string", required: false },
+    { name: "timestamp", type: "string", required: false },
+  ],
+  indexes: [
+    // Chronological — base entities_updated_at_idx covers; no per-kind index needed
+    // unless mission-correlation queries surface (architect-judgment for v2+)
+  ],
+  watchable: true,
+};
+
+const DirectorHistoryEntry: SchemaDef = {
+  // OQ7 decomposition; from architect-context/director-history.json {role, text, ...} entries
+  kind: "DirectorHistoryEntry",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "role", type: "string", required: false },
+    { name: "text", type: "string", required: false },
+  ],
+  indexes: [
+    // Chronological per base index
+  ],
+  watchable: true,
+};
+
+const ReviewHistoryEntry: SchemaDef = {
+  // OQ7 decomposition; from architect-context/review-history.json {taskId, assessment, ...} entries
+  kind: "ReviewHistoryEntry",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "taskId", type: "string", required: false },
+    { name: "assessment", type: "string", required: false },
+  ],
+  indexes: [
+    { name: "review_task_idx", fields: ["taskId"] },
+  ],
+  watchable: true,
+};
+
+const ThreadHistoryEntry: SchemaDef = {
+  // OQ7 decomposition (NEW finding architect W1.1); from architect-context/thread-history.json
+  // {threadId, title, outcome, timestamp} entries (archived thread summaries)
+  kind: "ThreadHistoryEntry",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "threadId", type: "string", required: false },
+    { name: "title", type: "string", required: false },
+    { name: "outcome", type: "string", required: false },
+    { name: "timestamp", type: "string", required: false },
+  ],
+  indexes: [
+    { name: "threadhist_thread_idx", fields: ["threadId"] },
+  ],
+  watchable: true,
+};
+
+// ─── Export all 20 SchemaDef entries ───────────────────────────────────────
+
+/**
+ * All 20 substrate-mediated kinds per Design v1.3 §3.4.1 LOCKED inventory.
+ * Reconciler boot-time iterates this list + applies via substrate.put('SchemaDef', def).
+ *
+ * Order: SchemaDef FIRST (per §2.3 bootstrap-self-referential; reconciler reads
+ * SchemaDef-for-SchemaDef before any other entries to emit SchemaDef's own indexes).
+ */
+export const ALL_SCHEMAS: SchemaDef[] = [
+  SchemaDefMeta,  // self-referential bootstrap — MUST be first
+
+  // 13 existing substrate-mediated
+  Agent,
+  Audit,
+  Bug,
+  Counter,
+  Idea,
+  Message,
+  Mission,
+  PendingAction,
+  Proposal,
+  Task,
+  Tele,
+  Thread,
+  Turn,
+
+  // 1 NEW substrate (re-introduction)
+  Notification,
+
+  // 5 W0-architect-VERIFIED
+  Document,
+  ArchitectDecision,
+  DirectorHistoryEntry,
+  ReviewHistoryEntry,
+  ThreadHistoryEntry,
+];
