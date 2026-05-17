@@ -172,19 +172,27 @@ const Mission: SchemaDef = {
 
 const PendingAction: SchemaDef = {
   kind: "PendingAction",
-  version: 1,
+  version: 2,
+  // W4.x.6 architect-blind-correction (minor gaps per architect proactive audit
+  // thread-569 round 5): v1 missing 'naturalKey' field which is INV-PA2
+  // idempotency-key hot-path (every enqueue call scans for naturalKey collision);
+  // entityRef tightened to required. 10th-instance substrate-currency-failure
+  // (minor variant; not load-breaking).
   fields: [
     { name: "id", type: "string", required: true },
     { name: "targetAgentId", type: "string", required: true },
-    { name: "dispatchType", type: "string", required: false },
-    { name: "state", type: "string", required: false, enum: ["enqueued", "receipt_acked", "completion_acked", "errored", "escalated", "continuation_required"] },
-    { name: "entityRef", type: "string", required: false },
+    { name: "dispatchType", type: "string", required: true },
+    { name: "state", type: "string", required: true, enum: ["enqueued", "receipt_acked", "completion_acked", "errored", "escalated", "continuation_required"] },
+    { name: "entityRef", type: "string", required: true },
+    { name: "naturalKey", type: "string", required: true },
   ],
   indexes: [
     // Hot path: queue-drain by-target-agent
     { name: "pa_target_idx", fields: ["targetAgentId"] },
     // State queries for sweeper + admin
     { name: "pa_state_idx", fields: ["state"] },
+    // INV-PA2 idempotency-key lookup (called on every enqueue)
+    { name: "pa_natural_key_idx", fields: ["naturalKey"] },
   ],
   watchable: true,
 };
