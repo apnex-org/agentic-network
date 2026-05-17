@@ -183,6 +183,24 @@ Both scripts wrap `pg_dump` / `pg_restore` directly (NOT Hub-HTTP-mediated; same
 
 ---
 
+## W0 spike validation evidence (2026-05-17)
+
+Substrate compose-up + smoke tests validated end-to-end on engineer devbox:
+
+- **Container UP + healthy** in ~6 seconds (health-check pg_isready interval 5s + retries 10 + start_period 10s)
+- **Postgres version:** `PostgreSQL 15.18 on x86_64-pc-linux-musl` (postgres:15-alpine current LTS)
+- **R6 settings active** (verified via `SELECT name, setting FROM pg_settings WHERE name IN ...`):
+  - `max_connections = 50`
+  - `shared_buffers = 32768` (kB; = 256MB ✓)
+  - `work_mem = 16384` (kB; = 16MB ✓)
+- **LISTEN/NOTIFY smoke test PASS** — `NOTIFY test_channel, 'hello from W0 spike'` → `Asynchronous notification "test_channel" with payload "hello from W0 spike" received from server process with PID 124`. Substrate-watch primitive functional per Design §2.4 LISTEN/NOTIFY pick.
+- **JSONB 1MB-payload smoke PASS** — `INSERT INTO jsonb_smoke VALUES (jsonb_build_object('big', repeat('x', 1000000)));` produced `pg_column_size = 11469 bytes` (TOAST-compressed); `under_cap = true` against 1572864 (1.5MB) cap per §2.2.
+- **Memory baseline at idle:** 39.71 MiB / 1 GiB (4% of allocated cap)
+
+These validations satisfy W0.1 Acceptance Criteria per Design §4 W0 row (postgres-container local-dev compose-up validates).
+
+---
+
 ## Troubleshooting
 
 ### "Cannot connect to postgres"
