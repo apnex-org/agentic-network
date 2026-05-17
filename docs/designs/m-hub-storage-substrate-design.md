@@ -1,6 +1,6 @@
-# M-Hub-Storage-Substrate — Design v1.3 (W1 close — WatchOptions.signal: AbortSignal addition)
+# M-Hub-Storage-Substrate — Design v1.4 (W4 architect-blind CAS-read API gap fix)
 
-**Status:** v1.3 architect-direct fold-in 2026-05-17 (W1 COMPLETE 6/6 deliverables; substrate functional + 30 tests pass + R9 closed + restart-safety verified); v1.3 folds W1.4 substrate-side AbortSignal addition to WatchOptions contract — engineer-judgment-driven substrate-API addition (W1.3 caveat #4 fixed substrate-side, not test-only); no design-shape revision; v1.0 ratify-criterion still met
+**Status:** v1.4 architect-direct fold-in 2026-05-17 (W4 spike-first-slice surfaced architect-blind CAS-read API asymmetry: `put` returns resourceVersion but `get` doesn't, breaking read-then-CAS pattern at substrate boundary); v1.4 adds `getWithRevision` method to §2.1 interface — engineer-judgment-driven surfacing (BugRepositorySubstrate.casUpdate at W4 hit the gap); minor interface addition; no design-shape revision; v1.0 ratify-criterion still met
 **Source idea:** idea-294
 **Survey envelope:** `docs/surveys/m-hub-storage-substrate-survey.md` (Director-ratified 2026-05-16)
 **Phase 4 coord thread:** thread-562 (converged 2026-05-17; 4 fold-ins from engineer pre-audit + AG-1 Director re-confirm)
@@ -45,6 +45,11 @@ interface HubStorageSubstrate {
 
   // — Entity CRUD (kind-uniform regardless of underlying storage layout) —
   get<T>(kind: string, id: string): Promise<T | null>
+  // v1.4 addition (W4 architect-blind fix): variant returning resourceVersion alongside entity for
+  // read-then-CAS pattern (caller does getWithRevision → mutate → putIfMatch(expectedRevision)).
+  // Without this, putIfMatch is unusable from substrate-direct consumers since substrate.get returns
+  // T without revision; pattern was implicit-only via watch-stream's ChangeEvent.resourceVersion.
+  getWithRevision<T>(kind: string, id: string): Promise<{ entity: T; resourceVersion: string } | null>
   put<T>(kind: string, entity: T): Promise<{ id: string; resourceVersion: string }>
   delete(kind: string, id: string): Promise<void>
   list<T>(kind: string, opts?: ListOptions): Promise<{ items: T[]; snapshotRevision: string }>
@@ -697,7 +702,8 @@ The round-1 audit thread carries:
 
 ## §11 Status
 
-- **v1.3 architect-direct fold-in** — 2026-05-17 (this commit); folds W1.4 substrate-side AbortSignal addition (§2.1 WatchOptions.signal contract addition). No design-shape revision; W1 COMPLETE 6/6 deliverables across 5 engineer commits (e21a9f3 / a11ded5 / bd18e61 / d38547e / f18c8c5); 30 tests pass; R9 closed; restart-safety verified
+- **v1.4 architect-direct fold-in** — 2026-05-17 (this commit); fixes W4 spike-first-slice architect-blind asymmetry: `put` returns resourceVersion but `get` didn't, breaking read-then-CAS pattern at substrate-direct consumer boundary (BugRepositorySubstrate.casUpdate hit it). Adds `getWithRevision<T>(kind, id): Promise<{entity, resourceVersion} | null>` method to §2.1 interface. Engineer-judgment surfacing accepted; W4.x repositories use this for proper CAS pattern. 4th-instance architect-side spec-currency-failure pattern (per `feedback_substrate_currency_audit_rubric.md` cross-session) — interface-design spec-completeness verification under-applied at Design v1.0; engineer-surface caught at W4 first-consumer-use
+- **v1.3 architect-direct fold-in** — 2026-05-17 (commit `d40b90a`); folds W1.4 substrate-side AbortSignal addition (§2.1 WatchOptions.signal contract addition). No design-shape revision; W1 COMPLETE 6/6 deliverables across 5 engineer commits (e21a9f3 / a11ded5 / bd18e61 / d38547e / f18c8c5); 30 tests pass; R9 closed; restart-safety verified
 - **v1.2 architect-direct fold-in** — 2026-05-17 (commit `3e78787`); folds W1.3 watch-race-disposition (§2.1 ChangeEvent clarification) + W1.5 R9 closure (§7.1 R9 row updated; LISTEN/NOTIFY confirmed adequate at current Hub-scale; 541 writes/sec sustained with 0.00% dropped events). Both engineer-judgment-driven; no design-shape revision. v1.0 ratify-criterion still met
 - **v1.1 architect-direct cleanup** — 2026-05-17 (commit `11ce0ba`); v1.0 RATIFIED on thread-563; v1.1 folds W0.2 substantive findings (5 architect-blind-kind-corrections + 4 W0-architect-validates + 1 NEW ThreadHistoryEntry + wisdom/ disposition)
 - **Branch:** `agent-lily/m-hub-storage-substrate`
