@@ -1,0 +1,261 @@
+{
+  "$schema-version": "1.0",
+  "$generated": "2026-05-17",
+  "$generation-source": "W0 spike filesystem-grep at HEAD a940a38 (origin/main) — per Design v1.0 §3.4.5",
+  "$mission": "mission-83",
+  "$design-ref": "docs/designs/m-hub-storage-substrate-design.md (commit b0c6a02; v1.0 RATIFIED)",
+  "$notes": "Authoritative enumeration of substrate-mediated kinds for W0 spike. Source-of-truth lineage: (1) architect Design v1.0 inventory; (2) engineer W0 filesystem-grep regenerates this file from current code; (3) migration script reads this at runtime + refuses-to-start if any kind in local-state has no entry. Drift between this file and filesystem-grep is a substrate-currency defect; CI drift-check at OQ3 disposition.",
+
+  "kinds": [
+    {
+      "name": "Agent",
+      "mediation": "IEngineerRegistry",
+      "interface-file": "hub/src/state.ts:1234",
+      "repository-file": "hub/src/entities/agent-repository.ts:303",
+      "persistence-prefix": "engineers/",
+      "id-pattern": "agent-XXXXXXXX (or eng-N per counter map)",
+      "notes": "Sole IEngineerRegistry-mediated kind; sibling to the 11 I*Store-mediated. Architect's Design v1.0 §3.4.1 anchor lists 11 I*Store interfaces — engineer round-2 audit surfaced this as 12th-mediated-kind. Substrate-migration shape: AgentRepository composes HubStorageSubstrate behind unchanged IEngineerRegistry interface (Option Y discipline)."
+    },
+    {
+      "name": "Audit",
+      "mediation": "IAuditStore",
+      "interface-file": "hub/src/state.ts:1020",
+      "repository-file": "hub/src/entities/audit-repository.ts",
+      "persistence-prefix": "audit/v2/",
+      "id-pattern": "audit-N",
+      "notes": "createOnly-write pattern (idempotency at create-time per audit-repository.ts:77)"
+    },
+    {
+      "name": "Bug",
+      "mediation": "IBugStore",
+      "interface-file": "hub/src/entities/bug.ts:75",
+      "repository-file": "hub/src/entities/bug-repository.ts",
+      "persistence-prefix": "bugs/",
+      "id-pattern": "bug-N"
+    },
+    {
+      "name": "Idea",
+      "mediation": "IIdeaStore",
+      "interface-file": "hub/src/entities/idea.ts:53",
+      "repository-file": "hub/src/entities/idea-repository.ts",
+      "persistence-prefix": "ideas/",
+      "id-pattern": "idea-N"
+    },
+    {
+      "name": "Message",
+      "mediation": "IMessageStore",
+      "interface-file": "hub/src/entities/message.ts:425",
+      "repository-file": "hub/src/entities/message-repository.ts",
+      "persistence-prefix": "messages/",
+      "id-pattern": "ULID",
+      "secondary-indexes": [
+        {
+          "prefix": "messages-thread-index/{threadId}/",
+          "notes": "DIY secondary index for per-thread message lookup; bug-93 surfaced this as poll-pressure source. Per Design §3.4.2: this index goes away STRUCTURALLY in substrate; replaced by postgres expression-index ON entities ((data->>'threadId')) WHERE kind = 'Message' emitted by SchemaDef reconciler."
+        }
+      ],
+      "per-entity-logic": "Per-thread Mutex locks for sequence-allocation (message-repository.ts:108-124); sheds in substrate via createOnly + retry"
+    },
+    {
+      "name": "Mission",
+      "mediation": "IMissionStore",
+      "interface-file": "hub/src/entities/mission.ts:241",
+      "repository-file": "hub/src/entities/mission-repository.ts",
+      "persistence-prefix": "missions/",
+      "id-pattern": "mission-N"
+    },
+    {
+      "name": "PendingAction",
+      "mediation": "IPendingActionStore",
+      "interface-file": "hub/src/entities/pending-action.ts:107",
+      "repository-file": "hub/src/entities/pending-action-repository.ts",
+      "persistence-prefix": "pending-actions/",
+      "id-pattern": "pa-YYYY-MM-DDTHH-MM-SS-msmsZ-NNN",
+      "notes": "Continuation state (architect's prior 49c08df §3.4 inventory listed 'Continuation' as separate aux kind — VERIFIED NOT separate; it is the 'continuation_required' STATE of pending-action queue-items per pending-action-policy.ts:290)"
+    },
+    {
+      "name": "Proposal",
+      "mediation": "IProposalStore",
+      "interface-file": "hub/src/state.ts:1184",
+      "repository-file": "hub/src/entities/proposal-repository.ts",
+      "persistence-prefix": "proposals/",
+      "id-pattern": "prop-N (per counter map) / proposal-N (per design table)"
+    },
+    {
+      "name": "Task",
+      "mediation": "ITaskStore",
+      "interface-file": "hub/src/state.ts:1199",
+      "repository-file": "hub/src/entities/task-repository.ts",
+      "persistence-prefix": "tasks/",
+      "id-pattern": "task-N",
+      "notes": "Clarification is an INLINE FIELD on Task (task.clarificationQuestion + task.clarificationAnswer per task-repository.ts grep); NOT a separate kind. Verified."
+    },
+    {
+      "name": "Tele",
+      "mediation": "ITeleStore",
+      "interface-file": "hub/src/entities/tele.ts:38",
+      "repository-file": "hub/src/entities/tele-repository.ts",
+      "persistence-prefix": "tele/",
+      "id-pattern": "tele-N",
+      "per-entity-logic": "putIfMatch CAS retry loops for supersede/retire (tele-repository.ts:157); preserves directly via substrate.putIfMatch per Design §2.1"
+    },
+    {
+      "name": "Thread",
+      "mediation": "IThreadStore",
+      "interface-file": "hub/src/state.ts:1099",
+      "repository-file": "hub/src/entities/thread-repository.ts",
+      "persistence-prefix": "threads/",
+      "id-pattern": "thread-N",
+      "secondary-indexes": [
+        {
+          "prefix": "threads/{threadId}/messages/",
+          "notes": "Per-thread message-key index (distinct from messages-thread-index/); substrate-side becomes expression-index"
+        }
+      ]
+    },
+    {
+      "name": "Turn",
+      "mediation": "ITurnStore",
+      "interface-file": "hub/src/entities/turn.ts:42",
+      "repository-file": "hub/src/entities/turn-repository.ts",
+      "persistence-prefix": "turns/",
+      "id-pattern": "turn-N"
+    },
+    {
+      "name": "Counter",
+      "mediation": "(special — single-row meta entity; no I*Store)",
+      "interface-file": "hub/src/entities/counter.ts:51",
+      "repository-file": "(direct read/write per gcs-state.ts:362,392)",
+      "persistence-prefix": "meta/counter.json",
+      "id-pattern": "(single row; field-keyed Counters object)",
+      "notes": "Special-case persistence: ONE file at meta/counter.json holding per-counter-domain values (taskCounter, proposalCounter, engineerCounter, threadCounter, notificationCounter, ideaCounter, missionCounter, turnCounter, teleCounter, bugCounter). Substrate-migration shape: TBD architect-judgment — either (a) one substrate entity row per counter-domain (10 rows), OR (b) single substrate entity row with embedded JSON (matches current shape). Flag for architect."
+    },
+    {
+      "name": "SchemaDef",
+      "mediation": "ISchemaDefStore (NEW; introduced by mission-83)",
+      "interface-file": "(NEW — hub/src/storage-substrate/types.ts at W2)",
+      "repository-file": "(NEW — hub/src/storage-substrate/schema-reconciler.ts at W2)",
+      "persistence-prefix": "(substrate-native — entities table with kind='SchemaDef')",
+      "id-pattern": "(kind-name as PK)",
+      "notes": "Substrate-native kind per Design §2.3; bootstrap-self-referential (SchemaDef-for-SchemaDef seeded first; reconciler reads it + emits its own indexes). Restart-safety verified at W2 via kill-9-between-bootstrap-steps test per Design §2.3 M4 fold-in."
+    },
+    {
+      "name": "Notification",
+      "mediation": "INotificationStore (RE-INTRODUCE; mission-83 OQ8 disposition)",
+      "interface-file": "(RE-INTRODUCE — hub/src/entities/notification.ts at W2/W4)",
+      "repository-file": "(RE-INTRODUCE — hub/src/entities/notification-repository.ts at W4)",
+      "persistence-prefix": "notifications/",
+      "id-pattern": "notif-N",
+      "notes": "Mission-56 W5 REMOVED INotificationStore abstraction; but notifications/notif-N.json persistence STILL HAPPENS via direct file-writes from hub/src/hub-networking.ts:431,465,504,735 (NO I*Store mediation today). OQ8 disposition: re-introduce INotificationStore + NotificationRepository as part of this mission; closes mission-56 partial-completion; preserves Option Y discipline. Saga-substrate-completion characteristic strengthened. Verified via state.ts:1015-1018 + 1579-1583 historical comments + hub-networking.ts direct-write sites."
+    }
+  ],
+
+  "kinds-w0-architect-validates": [
+    {
+      "name": "Document",
+      "mediation": "IDocumentStore (W0-validates; if entity-semantic, NEW per mission-83)",
+      "putative-persistence-prefix": "documents/<category>/<name>.md",
+      "engineer-validation-status": "BLOCKED — engineer's local-state/ is empty in this working copy; cannot W0-validate from engineer-side. Architect to validate from their working tree state.",
+      "notes": "Per architect Design §3.4.1: 'markdown body content in data.content; metadata in data.category etc.; well within 1.5MB cap'. If validation confirms entity-semantic-state (vs static-asset), gets new IDocumentStore in v1 substrate (Option Y composition). Otherwise stays out-of-substrate per §3.4.4 static-asset carve-out."
+    },
+    {
+      "name": "ArchitectDecision",
+      "mediation": "IArchitectDecisionStore (W0-validates; OQ7 3-kind decomposition; NEW per mission-83)",
+      "putative-persistence-prefix": "(today: local-state/architect-context/decisions.json — append-only structured log)",
+      "engineer-validation-status": "BLOCKED — engineer's local-state/ is empty; cannot W0-validate from engineer-side. Architect to validate from their working tree state.",
+      "notes": "Per OQ7 disposition (LOCKED at Design v0.2 §3.4.3): each log-entry becomes one entity-row; append-only semantics preserved by handler-side discipline (no entity-mutation, only entity-add); reconciler-emitted index on (kind, created_at) for chronological ordering."
+    },
+    {
+      "name": "DirectorHistoryEntry",
+      "mediation": "IDirectorHistoryEntryStore (W0-validates; OQ7 3-kind decomposition; NEW per mission-83)",
+      "putative-persistence-prefix": "(today: local-state/architect-context/director-history.json — append-only structured log)",
+      "engineer-validation-status": "BLOCKED — engineer's local-state/ is empty; cannot W0-validate from engineer-side. Architect to validate from their working tree state.",
+      "notes": "Per OQ7 disposition (LOCKED at Design v0.2 §3.4.3)"
+    },
+    {
+      "name": "ReviewHistoryEntry",
+      "mediation": "IReviewHistoryEntryStore (W0-validates; OQ7 3-kind decomposition; NEW per mission-83)",
+      "putative-persistence-prefix": "(today: local-state/architect-context/review-history.json — append-only structured log)",
+      "engineer-validation-status": "BLOCKED — engineer's local-state/ is empty; cannot W0-validate from engineer-side. Architect to validate from their working tree state.",
+      "notes": "Per OQ7 disposition (LOCKED at Design v0.2 §3.4.3)"
+    }
+  ],
+
+  "kinds-explicitly-not-included": [
+    {
+      "name": "DirectorNotification",
+      "design-v0.2-listing": "ADDED at architect's 49c08df §3.4 refinement; persistence path director-notifications/dn-YYYY-MM-DD-NNN",
+      "w0-verify-finding": "ARCHITECT-BLIND-KIND-CORRECTION — DirectorNotification is FULLY MIGRATED to Message store (mission-56 W5 cleanup ACTUALLY completed for DirectorNotification, unlike Notification). Verified via:\n  (a) hub/src/policy/director-notification-helpers.ts:5-8 — 'Cut-over (no dual-write): write-paths emit Messages instead of DirectorNotifications'\n  (b) emitDirectorNotification() is a Message-emit wrapper (kind='note'), NOT a separate file-writer\n  (c) hub/src/entities/counter.ts:51 — 'Mission-56 W5: DirectorNotification entity removed'\n  No notifications-style direct-writes remain. DirectorNotification is NOT a separate substrate kind.",
+      "disposition": "REMOVE from Design v0.2 §3.4.1 inventory in Design v1.1 (architect-judgment finalize). Triggers Design v1.1 per Design §3.4 'architect-blind kind discovery' clause."
+    },
+    {
+      "name": "Clarification",
+      "design-v0.2-listing": "Explicitly removed per round-1 audit C3",
+      "w0-verify-finding": "Confirmed: inline field on Task (task.clarificationQuestion + task.clarificationAnswer); NOT separate kind",
+      "disposition": "Already removed; no action"
+    },
+    {
+      "name": "ThreadMessage",
+      "design-v0.2-listing": "Explicitly removed per round-1 audit C3",
+      "w0-verify-finding": "Confirmed: single Message kind with threadId field; no separate ThreadMessage",
+      "disposition": "Already removed; no action"
+    },
+    {
+      "name": "Report",
+      "design-v0.2-listing": "Listed in §3.4.1 table",
+      "w0-verify-finding": "NOT first-class entity; appears as concept within task/bug references (task.reportRef + bug fields); no IReportStore + no report-repository.ts",
+      "disposition": "REMOVE from Design v0.2 §3.4.1 inventory in Design v1.1 — second architect-blind-kind-correction."
+    },
+    {
+      "name": "Review",
+      "design-v0.2-listing": "Listed in §3.4.1 table",
+      "w0-verify-finding": "NOT first-class entity; appears within mission/proposal/message (mission.reviews, proposal.reviewState); no IReviewStore + no review-repository.ts",
+      "disposition": "REMOVE from Design v0.2 §3.4.1 inventory in Design v1.1 — third architect-blind-kind-correction."
+    },
+    {
+      "name": "AgentSession",
+      "design-v0.2-listing": "Removed per round-1 audit C3 (architect spec-level invention)",
+      "w0-verify-finding": "Confirmed: zero references in codebase",
+      "disposition": "Already removed; no action"
+    },
+    {
+      "name": "Continuation",
+      "design-v0.2-listing": "Removed per round-1 audit C3 (state of pending-action, not separate)",
+      "w0-verify-finding": "Confirmed: 'continuation_required' is a STATE on pending-action queue-items per pending-action-policy.ts:290; no IContinuationStore + no continuations/ directory pattern",
+      "disposition": "Already removed; no action"
+    },
+    {
+      "name": "ScheduledMessage",
+      "design-v0.2-listing": "Architect 49c08df §3.4 ADD'd this as aux kind",
+      "w0-verify-finding": "Sweeper-internal type (ScheduledMessageSweeper class + SweeperOptions interface); NO separate persisted store; sweeper reads from IMessageStore.listMessages() per scheduled-message-sweeper.ts:118",
+      "disposition": "REMOVE from any aux-kind-list in Design v1.1 — fourth architect-blind-kind-correction."
+    },
+    {
+      "name": "MessageProjection",
+      "design-v0.2-listing": "Architect 49c08df §3.4 ADD'd this as aux kind",
+      "w0-verify-finding": "Sweeper-internal type (MessageProjectionSweeper class + SweeperOptions interface); NO separate persisted store; sweeper reads from IThreadStore.listThreads() + IMessageStore per message-projection-sweeper.ts",
+      "disposition": "REMOVE from any aux-kind-list in Design v1.1 — fifth architect-blind-kind-correction."
+    },
+    {
+      "name": "AgentProjection",
+      "design-v0.2-listing": "NOT in design",
+      "w0-verify-finding": "Derived view (export interface AgentProjection in hub/src/policy/agent-projection.ts:37); NOT persisted state",
+      "disposition": "No action"
+    }
+  ],
+
+  "summary": {
+    "substrate-mediated-kinds-confirmed": 13,
+    "substrate-mediated-kinds-new-this-mission": 2,
+    "substrate-mediated-kinds-w0-architect-validates": 4,
+    "substrate-mediated-kinds-total-target": 19,
+    "architect-blind-kind-corrections": [
+      "DirectorNotification — REMOVE (fully migrated to Message store; not separate)",
+      "Report — REMOVE (inline field on task/bug)",
+      "Review — REMOVE (inline field on mission/proposal/message)",
+      "ScheduledMessage — REMOVE (sweeper-internal type)",
+      "MessageProjection — REMOVE (sweeper-internal type)"
+    ],
+    "design-v1.1-trigger": "5 architect-blind-kind-corrections discovered per Design §3.4 'architect-blind kind discovery triggers Design v1.1 if any'. Architect-judgment whether to fold these as inventory-cleanup in v1.1 OR roll forward into W2 reconciler-spec where the corrections naturally surface (SchemaDef entries are authored per actual kind; phantoms get no SchemaDef and silently disappear)."
+  }
+}
