@@ -1,9 +1,14 @@
 # Hub-Storage-Substrate — Local-Dev Operator Cookbook
 
 **Audience:** developers running the Hub-storage-substrate locally for dev/test
-**Source:** Design v1.1 §2.4 (LISTEN/NOTIFY) + §2.5 (snapshot/restore) + §2.6 (operator-DX) + §3.5 (cutover) + §7.1 R6 + R10 (resource + state-loss dispositions)
-**W0 spike compose:** `hub/spike/W0/docker-compose.yml` (substrate-side dev environment isolated from Hub-app compose; absorbed into canonical `hub/storage-substrate/` location at W6/W7)
-**Status:** v0.1 cookbook (W0 spike); expanded per W1-W7 wave-completion deliverables
+**Source:** Design v1.4 §2.4 (LISTEN/NOTIFY) + §2.5 (snapshot/restore) + §2.6 (operator-DX) + §3.5 (cutover) + §7.1 R6 + R10 (resource + state-loss dispositions)
+**Compose:** `hub/spike/W0/docker-compose.yml` (substrate-side dev environment)
+**Status:** v1.0 SHIP-QUALITY (mission-83 W7 deliverable)
+**Companion docs:**
+- `docs/operator/hub-storage-cutover-runbook.md` — production cutover orchestration
+- `docs/operator/psql-cookbook.md` — forensic + diagnostic queries
+- `scripts/local/get-entities.sh` — daily-driver CLI (direct-psql per Design §2.6 Surface 1)
+- `scripts/local/hub-snapshot.sh` — backup/restore wrapper (pg_dump -Fc)
 
 ---
 

@@ -1,9 +1,29 @@
 # Hub Storage Cutover Runbook
 
-**Mission:** mission-83 M-Hub-Storage-Substrate Wave W5
-**Status:** WORKING DRAFT (W7 finalizes)
+**Mission:** mission-83 M-Hub-Storage-Substrate Wave W7
+**Status:** v1.0 SHIP-QUALITY (post-W5.4 actual-cutover fold-in)
 **Audience:** operator orchestrating production cutover from FS storage to postgres `HubStorageSubstrate`
 **Owner:** architect engages operator; Director ratifies cutover-trigger
+**First-cutover validation:** 2026-05-17 05:14 UTC — `7870d74` image; 15,691 entities migrated in 3.21s; bug-93 sweeper-poll-pressure ELIMINATED (74% → 0.00% sustained idle CPU)
+
+---
+
+## Lesson learned from first cutover (W5.4 fold-in)
+
+The first cutover took ~10 minutes total downtime (vs <60s budget in Design §3.5).
+**Root cause:** in-cutover-window docker image rebuild (~5-10min) due to docker-seccomp
+restricting in-container `npm install` on Linux kernels < 5.x.
+
+**Mitigation: pre-build the image at W5-prep window.**
+
+Pre-built image + `docker pull` at cutover-window achieves **<30s effective downtime**
+(image already on target host; just `docker run`). This pattern was retrofitted into
+the W5-prep checklist below.
+
+**Docker-seccomp workaround** (if kernel < 5.x + in-container build needed):
+- Use prebuilt-artifact Dockerfile (host npm install + tsc; copy `node_modules/` + `dist/` into image)
+- OR start container with `--security-opt seccomp=unconfined` for build-stage only
+- The W5.4 production cutover used the prebuilt-artifact pattern + `--security-opt seccomp=unconfined` at runtime (for postgres LISTEN/NOTIFY socket compatibility on this kernel)
 
 ---
 
@@ -11,22 +31,25 @@
 
 Before initiating cutover, verify ALL of the following:
 
-- [ ] **W0 spike validated** — synthetic-state migration <60s TOTAL OBSERVED DOWNTIME (1.83s/10k entities measured)
-- [ ] **W1-W4 integration tests green at HEAD** — `cd hub && npm test` reports 1329+ tests passing with zero regressions
-- [ ] **Reconciler cold-boot complete** — applies all 20 SchemaDefs + per-kind expression indexes via `CREATE INDEX CONCURRENTLY IF NOT EXISTS`
+- [ ] **W0 spike validated** — synthetic-state migration <60s TOTAL OBSERVED DOWNTIME (1.83s/10k entities measured; first-cutover validated 3.21s/15,691 entities)
+- [ ] **Hub tests green at HEAD** — `cd hub && npm test` reports 1300+ tests passing with zero regressions
+- [ ] **Reconciler cold-boot tested** — applies all 20 SchemaDefs + per-kind expression indexes via `CREATE INDEX CONCURRENTLY IF NOT EXISTS`
 - [ ] **Pre-cutover snapshot tooling tested** — `tar -czf` against representative state-tree completes within seconds
-- [ ] **11 existing-sibling repository substrate-versions ready** (W4.x.1-11)
-- [ ] **6 new-repository substrate-versions ready** (W4.x.12-17)
+- [ ] **All 11 existing-sibling repository substrate-versions present** (W4.x.1-11)
+- [ ] **All 6 new-repository substrate-versions present** (W4.x.12-17)
+- [ ] **`hub/scripts/migrate-fs-to-substrate.ts` present + dry-run validated** against representative synthetic state
 - [ ] **Operator has direct postgres access** to target substrate database (connection string + admin credentials)
 - [ ] **Operator has Hub-stop / Hub-start orchestration capability** (whatever process supervision the prod Hub uses — pm2, systemd, docker-compose, etc.)
 - [ ] **Disk space** at backup path ≥ 2× source state-tree size (snapshot + headroom)
+- [ ] **Postgres instance pre-provisioned** with config per Design §2.2 (max_connections ≥ 50; shared_buffers=256MB; work_mem=16MB; LISTEN/NOTIFY enabled; JSONB support; postgres 9.5+ — `postgres:15-alpine` validated)
+- [ ] **NEW (W5.4 fold-in): Docker image pre-built** — `ois-hub:local-substrate` (or equivalent prod tag) pre-built + pushed to registry + pulled to target host BEFORE cutover-window starts. This is the load-bearing optimization that closes the <60s downtime gate.
 - [ ] **Director-ratify** cutover-trigger authorization (Phase 7 release-gate pre-approval)
 
 ---
 
 ## Cutover orchestration sequence
 
-**TOTAL OBSERVED DOWNTIME target:** <60s per Design §3.5 (inner-pipeline 1.83s + ~12-22s Hub-lifecycle bookends).
+**TOTAL OBSERVED DOWNTIME target:** <60s per Design §3.5 (inner-pipeline 1.83s + ~12-22s Hub-lifecycle bookends). **REQUIRES image pre-built per W5-prep checklist above** (otherwise add ~5-10min for image rebuild — first-cutover hit this; runbook now mitigates).
 
 ### Step 1 — Operator: Hub-stop
 
