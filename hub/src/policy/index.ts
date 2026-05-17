@@ -5,7 +5,9 @@ export { registerTaskPolicy, TASK_FSM } from "./task-policy.js";
 export { registerSystemPolicy } from "./system-policy.js";
 export { registerTelePolicy } from "./tele-policy.js";
 export { registerAuditPolicy } from "./audit-policy.js";
-export { registerDocumentPolicy } from "./document-policy.js";
+// mission-83 W6-narrowed: registerDocumentPolicy DELETED with document-policy.ts;
+// document MCP tools deferred to idea-300 follow-on (substrate-backed
+// DocumentRepository W4.x.12 stub available for re-introduction).
 export { registerSessionPolicy } from "./session-policy.js";
 export { registerIdeaPolicy } from "./idea-policy.js";
 export { registerMissionPolicy } from "./mission-policy.js";

@@ -12,7 +12,9 @@ import * as path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { cutoverSentinelPath, isCutoverComplete } from "./lib/cutover-sentinel.js";
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore } from "./state.js";
-import { reconcileCounters, cleanupOrphanedFiles } from "./gcs-state.js";
+// mission-83 W6-narrowed: gcs-state.js DELETED (substrate replaces GCS at
+// production-prod); reconcileCounters + cleanupOrphanedFiles startup hooks
+// were GCS-only and have no substrate-mode equivalent.
 import {
   TurnRepository,
   PendingActionRepository,
@@ -25,7 +27,10 @@ import {
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
   type IPendingActionStore, type IMessageStore,
 } from "./entities/index.js";
-import { MemoryStorageProvider, GcsStorageProvider, LocalFsStorageProvider, type StorageProvider } from "@apnex/storage-provider";
+// mission-83 W6-narrowed: GcsStorageProvider DELETED (substrate replaces GCS
+// at production-prod); LocalFsStorageProvider + MemoryStorageProvider preserved
+// as test/dev affordances.
+import { MemoryStorageProvider, LocalFsStorageProvider, type StorageProvider } from "@apnex/storage-provider";
 // mission-83 W5.4-Hub-bootstrap-flip — STORAGE_BACKEND=substrate dispatch path
 import {
   createPostgresStorageSubstrate,
@@ -52,7 +57,9 @@ import { PolicyRouter, registerTaskPolicy } from "./policy/index.js";
 import { registerSystemPolicy } from "./policy/system-policy.js";
 import { registerTelePolicy } from "./policy/tele-policy.js";
 import { registerAuditPolicy } from "./policy/audit-policy.js";
-import { registerDocumentPolicy } from "./policy/document-policy.js";
+// mission-83 W6-narrowed: registerDocumentPolicy DELETED (document-policy.ts
+// + gcs-document.ts deleted; document MCP tools deferred to idea-300 follow-on
+// when substrate-backed DocumentRepository W4.x.12 stub is wired).
 import { registerSessionPolicy } from "./policy/session-policy.js";
 import { registerIdeaPolicy } from "./policy/idea-policy.js";
 import { registerMissionPolicy } from "./policy/mission-policy.js";
@@ -81,17 +88,8 @@ import { createMetricsCounter } from "./observability/metrics.js";
 
 // ── Global State ──────────────────────────────────────────────────────
 const STORAGE_BACKEND = process.env.STORAGE_BACKEND || "memory";
-// Mission-46 T1: GCS_BUCKET hardcoded default stripped. Memory backend
-// (used by tests + PolicyLoopbackHub) ignores this; gcs backend
-// fail-fasts at top-level + inside the init block below if unset —
-// surfaces config drift before silent wrong-bucket writes.
-const GCS_BUCKET = process.env.GCS_BUCKET;
-if (STORAGE_BACKEND === "gcs" && !GCS_BUCKET) {
-  throw new Error(
-    "[hub] GCS_BUCKET env var is required when STORAGE_BACKEND=gcs. " +
-    "Set via deploy/cloudrun/env/<env>.tfvars or local env override.",
-  );
-}
+// mission-83 W6-narrowed: GCS_BUCKET env var + STORAGE_BACKEND=gcs guard
+// DELETED (GCS-mode removed; substrate is sole production cloud-path).
 // Mission-47 T3: local-fs backend writes to OIS_LOCAL_FS_ROOT (a directory
 // path). Intended for dev — run hub against a gsutil-rsynced snapshot of
 // prod state without touching GCS. Fail-fast if unset to avoid
@@ -163,11 +161,8 @@ if (STORAGE_BACKEND === "substrate") {
   // Option Y disposition (B). MemoryStorageProvider is benign placeholder so any
   // accidental access fails-fast at the empty-store level rather than null-deref.
   storageProvider = new MemoryStorageProvider();
-} else if (STORAGE_BACKEND === "gcs") {
-  // Top-level guard above ensures GCS_BUCKET is defined here.
-  const bucket = GCS_BUCKET!;
-  console.log(`[Hub] Using GCS storage backend: gs://${bucket}`);
-  storageProvider = new GcsStorageProvider(bucket);
+// mission-83 W6-narrowed: STORAGE_BACKEND="gcs" branch DELETED (substrate is
+// sole production cloud-path; GCS-mode unreachable).
 } else if (STORAGE_BACKEND === "local-fs") {
   // Mission-48 T1 (ADR-024 amendment 2026-04-25): local-fs is now
   // single-writer-laptop-prod-eligible. The single-writer assumption
@@ -308,7 +303,9 @@ registerTaskPolicy(policyRouter);
 registerSystemPolicy(policyRouter);
 registerTelePolicy(policyRouter);
 registerAuditPolicy(policyRouter);
-registerDocumentPolicy(policyRouter);
+// mission-83 W6-narrowed: registerDocumentPolicy DELETED with document-policy.ts;
+// document MCP tools deferred to idea-300 follow-on (substrate-backed
+// DocumentRepository W4.x.12 stub available for re-introduction).
 registerSessionPolicy(policyRouter);
 registerIdeaPolicy(policyRouter);
 registerMissionPolicy(policyRouter);
@@ -392,7 +389,7 @@ function createMcpServer(
     clientIp: getClientIp(),
     role: "unknown", // resolved at handler level via engineerRegistry
     internalEvents: [],
-    config: { storageBackend: STORAGE_BACKEND, gcsBucket: GCS_BUCKET ?? "" },
+    config: { storageBackend: STORAGE_BACKEND, gcsBucket: "" },  // W6-narrowed: GCS-mode deleted; field kept for IPolicyContext type-compat (idea-300 removes field)
     metrics,
   });
 
@@ -454,13 +451,10 @@ const hub = new HubNetworking(
 // ── Start Server ─────────────────────────────────────────────────────
 
 async function startupSequence(): Promise<void> {
-  if (STORAGE_BACKEND === "gcs") {
-    // Top-level guard ensures GCS_BUCKET defined here.
-    console.log("[Hub] Running GCS startup maintenance...");
-    await cleanupOrphanedFiles(GCS_BUCKET!);
-    await reconcileCounters(GCS_BUCKET!);
-    console.log("[Hub] GCS startup maintenance complete");
-  }
+  // mission-83 W6-narrowed: GCS startup maintenance (cleanupOrphanedFiles +
+  // reconcileCounters) DELETED — GCS-mode removed; substrate-mode is sole
+  // production cloud-path; no FS-orphan class exists in postgres substrate.
+  // Hook kept as no-op placeholder for future substrate-mode startup tasks.
 }
 
 // ── Thread Reaper (M24-T7, INV-TH21) ─────────────────────────────────
@@ -750,7 +744,7 @@ const scheduledMessageSweeper = new ScheduledMessageSweeper(
       internalEvents: [],
       config: {
         storageBackend: STORAGE_BACKEND,
-        gcsBucket: GCS_BUCKET ?? "",
+        // gcsBucket field removed (W6-narrowed: GCS-mode deleted)
       },
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
@@ -778,7 +772,7 @@ const cascadeReplaySweeper = new CascadeReplaySweeper(
       internalEvents: [],
       config: {
         storageBackend: STORAGE_BACKEND,
-        gcsBucket: GCS_BUCKET ?? "",
+        // gcsBucket field removed (W6-narrowed: GCS-mode deleted)
       },
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
@@ -814,7 +808,7 @@ const pulseSweeper = new PulseSweeper(
       internalEvents: [],
       config: {
         storageBackend: STORAGE_BACKEND,
-        gcsBucket: GCS_BUCKET ?? "",
+        // gcsBucket field removed (W6-narrowed: GCS-mode deleted)
       },
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
@@ -859,7 +853,7 @@ if (OIS_GH_API_TOKEN && OIS_REPO_EVENT_BRIDGE_REPOS.length > 0) {
       internalEvents: [],
       config: {
         storageBackend: STORAGE_BACKEND,
-        gcsBucket: GCS_BUCKET ?? "",
+        // gcsBucket field removed (W6-narrowed: GCS-mode deleted)
       },
     } as unknown as import("./policy/types.js").IPolicyContext)),
   });

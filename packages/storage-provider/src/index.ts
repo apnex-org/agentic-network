@@ -22,4 +22,5 @@ export {
 
 export { MemoryStorageProvider } from "./memory.js";
 export { LocalFsStorageProvider } from "./local-fs.js";
-export { GcsStorageProvider } from "./gcs.js";
+// mission-83 W6-narrowed: GcsStorageProvider DELETED (substrate replaces GCS
+// at production-prod; local-fs/memory preserved as test/dev affordances).

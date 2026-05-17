@@ -37,6 +37,10 @@
 
 # Code surface
 /hub/src/                             @apnex-org/engineer
+# mission-83 W6-narrowed: substrate-architect ownership for the storage-substrate
+# module (HubStorageSubstrate + SchemaDef reconciler + LISTEN/NOTIFY watch primitive).
+# More specific pattern wins per GitHub CODEOWNERS semantics.
+/hub/src/storage-substrate/           @apnex-org/architect @apnex-org/engineer
 /adapters/*/src/                      @apnex-org/engineer
 /packages/*/src/                      @apnex-org/engineer
 
