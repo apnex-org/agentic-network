@@ -1,21 +1,22 @@
-# M-Hub-Storage-Substrate — Design v0.1
+# M-Hub-Storage-Substrate — Design v0.2
 
-**Status:** v0.1 architect-draft; awaiting Phase 4 round-1 engineer audit
+**Status:** v0.2 architect-draft (incorporates Phase 4 round-1 engineer audit dispositions); awaiting Phase 4 round-2 engineer audit
 **Source idea:** idea-294
 **Survey envelope:** `docs/surveys/m-hub-storage-substrate-survey.md` (Director-ratified 2026-05-16)
 **Phase 4 coord thread:** thread-562 (converged 2026-05-17; 4 fold-ins from engineer pre-audit + AG-1 Director re-confirm)
+**Phase 4 round-1 audit thread:** thread-563 (12 findings: 3 CRITICAL / 4 MEDIUM / 3 MINOR / OQ + 4 blind-spot; all dispositions in v0.2)
 **Branch:** `agent-lily/m-hub-storage-substrate`
 **Mission-class:** substrate-introduction (with structural-inflection + saga-substrate-completion characteristics)
-**Sizing:** L-XL (Round-1 max-architectural-scope; Round-2 simplest-mechanism)
+**Sizing:** L (revised down from L-XL post Option-Y substrate-replaces-StorageProvider-only scope; repositories preserved per round-1 audit C2)
 **Author:** lily / 2026-05-17
 
 ---
 
 ## §1 Goal + intent (echo Survey envelope §3)
 
-Establish `HubStorageSubstrate` as the sovereign-composition state-backplane for the Hub. Replace `LocalFsStorageProvider` AND `GcsStorageProvider` siblings (consolidated to one substrate per Survey outcome 1). Eliminate the sweeper-poll anti-pattern at root via native watch primitive (outcome 5). Operationalize CRD-equivalent programmability — declare a new entity-kind via SchemaDef entity, reconciler emits idempotent DDL automatically, no human-authored migration step (outcome 7). All companion features (resourceVersion / audit-history / FK-enforcement) explicitly deferred to follow-on missions (per Q5=d Director re-confirm 2026-05-17).
+Establish `HubStorageSubstrate` as the sovereign-composition state-backplane for the Hub. Replace `LocalFsStorageProvider` AND `GcsStorageProvider` siblings (consolidated to one substrate per Survey outcome 1). Eliminate the sweeper-poll anti-pattern at root via native watch primitive (outcome 5). Operationalize CRD-equivalent programmability — declare a new entity-kind via SchemaDef entity, reconciler emits idempotent DDL automatically, no human-authored migration step (outcome 7). Preserve v0 race-protection semantics via CAS primitives (`createOnly` + `putIfMatch`) at substrate-interface level (per round-1 audit C1 Director re-disposition 2026-05-17). Other companion features (k8s-style resourceVersion / audit-history / FK-enforcement) explicitly deferred to follow-on missions (per Q5=d).
 
-**The substrate IS the mission; nothing else gets in.**
+**The substrate IS the mission; nothing else gets in** (with CAS-primitive carve-in to preserve v0 race-protection at cutover, per C1 corrected-premise re-disposition).
 
 Primary outcomes (load-bearing for v1 ship):
 1. `HubStorageSubstrate` module ships with standard CRUD + list-filter + watch + SchemaDef + reconciler + snapshot interface
@@ -44,12 +45,22 @@ interface HubStorageSubstrate {
 
   // — Entity CRUD (kind-uniform regardless of underlying storage layout) —
   get<T>(kind: string, id: string): Promise<T | null>
-  put<T>(kind: string, entity: T): Promise<{ id: string }>
+  put<T>(kind: string, entity: T): Promise<{ id: string; resourceVersion: string }>
   delete(kind: string, id: string): Promise<void>
-  list<T>(kind: string, opts?: ListOptions): Promise<T[]>
+  list<T>(kind: string, opts?: ListOptions): Promise<{ items: T[]; snapshotRevision: string }>
+
+  // — CAS primitives (preserve v0 race-protection; round-1 audit C1) —
+  createOnly<T>(kind: string, entity: T): Promise<
+    | { ok: true;  id: string; resourceVersion: string }
+    | { ok: false; conflict: 'existing' }
+  >
+  putIfMatch<T>(kind: string, entity: T, expectedRevision: string): Promise<
+    | { ok: true;  resourceVersion: string }
+    | { ok: false; conflict: 'revision-mismatch'; actualRevision: string }
+  >
 
   // — Watch / change-notification —
-  watch(kind: string, filter?: Filter): AsyncIterable<ChangeEvent<T>>
+  watch<T>(kind: string, opts?: WatchOptions): AsyncIterable<ChangeEvent<T>>
 
   // — Data-portability (Survey outcome 3) —
   snapshot(targetPath: string): Promise<SnapshotRef>
@@ -57,29 +68,47 @@ interface HubStorageSubstrate {
 }
 
 interface ListOptions {
-  filter?: Filter            // Mongo-ish; same shape as today's list_ideas tool filter
+  filter?: Filter            // Mongo-ish; whitelisted-fields per SchemaDef
   sort?: { field: string; order: 'asc' | 'desc' }[]
   limit?: number             // max 500
   offset?: number
 }
 
-type Filter = {              // whitelisted fields per SchemaDef
-  [field: string]: string | number | boolean | { $in?: any[]; $gt?: any; $lt?: any; $gte?: any; $lte?: any }
+interface WatchOptions {
+  filter?: Filter
+  // OQ5 disposition: list-then-watch backfill is the standard pattern (k8s informer).
+  // Caller does substrate.list() → captures snapshotRevision → substrate.watch({ sinceRevision }).
+  // sinceRevision is the snapshotRevision from a prior list() result. Substrate replays
+  // change-events strictly newer than that revision; no missed-events window.
+  sinceRevision?: string
 }
+
+// Per SchemaDef.FieldDef.type, Filter is narrowed at validation time. Round-1 audit N1:
+// Filter operator-values match QueryableFieldType discipline from M-QueryShape Phase 1
+// (idea-119 / task-302; hub/src/policy/list-filters.ts):
+//   - $gt/$lt/$gte/$lte permitted only on numeric + date fields
+//   - $in permitted on all scalar types
+//   - $regex/$where/$expr/$or/$and/$not forbidden (substrate enforces, errors on use)
+type FilterValue =
+  | string | number | boolean
+  | { $in: (string | number | boolean)[] }
+  | { $gt?: number | string; $lt?: number | string; $gte?: number | string; $lte?: number | string }
+type Filter = Record<string, FilterValue>   // field-name → FilterValue (SchemaDef-validated)
 
 type ChangeEvent<T> = {
   op: 'put' | 'delete'
   kind: string
   id: string
-  entity?: T                 // present on 'put'; absent on 'delete'
-  resourceVersion: string    // monotonic per-row identifier (NOT optimistic-concurrency per AG-1; just opaque ordering token)
+  entity?: T                  // present on 'put'; absent on 'delete'
+  resourceVersion: string     // monotonic per-row identifier — opaque ordering token + CAS token for putIfMatch
 }
 ```
 
 **Design notes:**
-- `Filter` shape mirrors today's `list_ideas` MCP tool filter contract (Mongo-ish whitelisted-fields; `$in`/`$gt`/`$lt`/`$gte`/`$lte` operators) — preserves the API consumers already know.
-- `resourceVersion` on `ChangeEvent` is an opaque monotonic ordering token (postgres `xmin` or sequence-based) for watch-stream replay-from-position semantics. **NOT to be confused with k8s-style `resourceVersion` for compare-and-swap writes — that is AG-1 (deferred per Q5=d).**
-- `watch()` returns an `AsyncIterable` so handlers consume with `for-await-of`; substrate handles connection lifecycle + reconnect + resume-from-revision on transient failures.
+- `Filter` shape mirrors today's `list_ideas` MCP tool filter contract — and adheres to the **M-QueryShape Phase 1 QueryableFieldType discipline** per round-1 audit N1 fold-in. Range operators (`$gt`/`$lt`/`$gte`/`$lte`) permitted only on numeric + date fields; substrate rejects with a typed error otherwise.
+- `resourceVersion` is dual-purpose: (1) opaque monotonic ordering token for watch-stream replay-from-position; (2) **CAS token for `putIfMatch`** (per C1 fold-in). It is NOT k8s-style entity-versioning-as-API-field (that remains AG-1 / M-Hub-Storage-ResourceVersion idea-295 territory) — the CAS use here is the substrate-level race-protection equivalent to mission-47 `StorageProvider` v1.0 contract (`createOnly` + `putIfMatch`).
+- `list()` returns `{ items, snapshotRevision }` — the snapshotRevision is the consistent point-in-time the list-result represents; subsequent `watch({ sinceRevision: snapshotRevision })` is gap-free (no missed events during the list-call window). This is the **list-then-watch primitive** that k8s informers depend on (round-1 audit OQ5 caveat addressed).
+- `watch()` returns `AsyncIterable` so handlers consume with `for-await-of`; substrate handles connection lifecycle + reconnect + resume-from-revision on transient failures.
 - API verb/envelope-design (e.g., MCP tool surface) explicitly out-of-scope per AG-5 (deferred to idea-121 API v2.0).
 
 ### §2.2 Storage layout — single entities table + JSONB + per-kind expression indexes (Flavor A)
@@ -152,6 +181,8 @@ interface IndexDef {
 5. Reconciler reads + emits per-kind indexes
 6. Hub becomes ready-for-writes
 
+**Restart-safety (round-1 audit M4 fold-in):** the reconciler boot path is restart-safe at any step. Crash between steps 2 and 3: on restart, reconciler re-reads SchemaDef-for-SchemaDef (already inserted by INSERT-ON-CONFLICT-DO-NOTHING — idempotent) and re-emits its indexes (CREATE INDEX CONCURRENTLY IF NOT EXISTS — idempotent). Same for steps 4-5: each SchemaDef insert is ON-CONFLICT-DO-NOTHING; each index-emission is CONCURRENTLY-IF-NOT-EXISTS. There is no partial state that breaks reconciler-restart. Tested at W2 wave acceptance via deliberate kill-9 between bootstrap steps + restart-verifies-completes.
+
 ### §2.4 Watch primitive — postgres LISTEN/NOTIFY (architect-decision)
 
 Two candidates were on the table at Survey-time; this Design picks **LISTEN/NOTIFY** for v1.
@@ -218,7 +249,7 @@ The current FS-substrate's `ls .ois/state/ + cat *.json + jq` workflow is the di
 
 **Surface 1 — Wrapper CLI (daily-driver):**
 
-`scripts/local/get-entities.sh` (parallel to `scripts/local/get-agents.sh` per `reference_get_agents_canonical_diagnostic.md`):
+`scripts/local/get-entities.sh` (parallel to `scripts/local/get-agents.sh` per `reference_get_agents_canonical_diagnostic.md`). **Direct-psql** per round-1 audit N2 fold-in (engineer-lean accepted) — CLI talks postgres directly via local connection string from env; no HUB_TOKEN / HUB_URL involvement. This matches today's `ls .ois/state/ + cat + jq` shape: forensic operator surface that bypasses Hub HTTP-layer for direct inspection.
 
 ```bash
 get-entities.sh <kind> [--id=<id>] [--filter='key=value,key2=value2'] [--limit=N] [--format=table|json]
@@ -229,12 +260,13 @@ Examples:
 get-entities.sh Message --filter='threadId=thread-562'                  # all messages on thread-562
 get-entities.sh Thread --filter='status=active' --limit=20              # active threads
 get-entities.sh PendingAction --filter='engineerId=agent-0d2c690e'      # pending actions for greg
-get-entities.sh ScheduledMessage --filter='deliverAt<2026-05-17T12:00Z' # due-soon messages
 ```
 
-CLI auth via `~/.config/apnex-agents/<role>.env` `HUB_TOKEN` + `HUB_URL` (matches existing pattern). Renders postgres `SELECT` against substrate API surface (NOT direct SQL — uses the substrate's standard `list()` to maintain encapsulation).
+CLI reads `HUB_PG_CONNECTION_STRING` (or default `postgres://hub:hub@localhost:5432/hub` for local-dev). Renders postgres `SELECT` directly against `entities` table; translates `--filter='k=v'` to `data->>'k' = 'v'` clauses. NOT a wrapper around Hub HTTP/MCP API — those surfaces (`list_*` MCP tools) already cover HTTP-layer queries via standard adapter per existing pattern.
 
-Companion script `scripts/local/hub-snapshot.sh` wraps `substrate.snapshot()` for operator-facing snapshot/restore.
+**Rationale (round-1 audit N2):** the existing `get-agents.sh` pattern is HTTP-based because agents are session-state querying live Hub. Entity-state inspection during forensic / debugging / outage is fundamentally substrate-level concern — bypassing HTTP keeps the diagnostic dispositive even when Hub is degraded.
+
+Companion script `scripts/local/hub-snapshot.sh` wraps `pg_dump` directly (same direct-psql posture); not Hub-HTTP-mediated.
 
 **Surface 2 — psql cookbook (escape-hatch for power-users / forensic / ad-hoc):**
 
@@ -253,6 +285,18 @@ SELECT kind, id, updated_at FROM entities ORDER BY updated_at DESC LIMIT 100;
 ```
 
 CLI is the daily-driver; psql is for incidents + investigations the CLI doesn't anticipate.
+
+### §2.7 Test-postgres-container harness (round-1 audit M3 fold-in)
+
+Test discipline for substrate code requires postgres available in CI + local-dev. Architect-lean (v0.2; W0 spike validates):
+
+- **Unit tests** — `testcontainers` (npm `testcontainers` package) with **per-test-DB-rollback semantics**. Each test runs in a transaction; ROLLBACK on test-end. Fast (~milliseconds per test). Used for substrate-internal unit-tests (CRUD ops, filter translation, etc.)
+- **Integration tests** — `testcontainers` with **singleton postgres + per-test-suite reset** (TRUNCATE + reset sequences). Slower (~seconds per suite) but allows multi-connection scenarios (watch primitive, reconciler-cycle tests). Used for cross-component integration tests
+- **CI** — same testcontainers harness; CI runner needs Docker; postgres-15-alpine image (matches local-dev compose-file version pin)
+
+**Out-of-scope of v1:** distributed test harness; multi-postgres-version matrix testing (deferred to M-Hub-Storage-Cloud-Deploy follow-on per AG-4).
+
+W0 spike validates: testcontainers boot time on CI runner; transaction-rollback isolation correctness; flakiness baseline. If unacceptable on either dimension, fallback to docker-compose-based singleton with per-test-suite reset (sacrificing isolation for predictability).
 
 ---
 
@@ -330,13 +374,19 @@ Justification (per engineer's lean): cutover happens with Hub stopped (no concur
 
 **Validation:** verification phase (§3.1 step 6) spot-checks N random entities post-load by re-reading the source FS file + comparing content; mismatch indicates a deserialization bug, not an idempotency-key gap.
 
-### §3.4 Entity-coverage matrix via filesystem-grep (per engineer §A.3)
+### §3.4 Entity-coverage matrix — I*Store-anchored authoritative inventory (round-1 audit C3 fold-in)
 
-**Inventory verified at Design v0.1 time** (2026-05-17; via `ls local-state/` + `grep -rln` against `hub/src/entities/`; spec-level memory-recall demoted to filesystem-verified). W0 spike re-verifies + may surface additional auxiliary stores the architect grep missed.
+**Source-of-truth (per round-1 audit C3 correction):** the **11 I*Store interfaces** defined across `hub/src/entities/*.ts` + `hub/src/state.ts` are the authoritative kind enumeration. `local-state/` directory listing is a cross-check; W0 spike's `grep -lE 'interface I.*Store' hub/src/entities/ hub/src/state.ts` is the dispositive truth at mission-execution time. **Phantom entries from Design v0.1 (Clarification, Document-as-separate-kind, Report, Review, ThreadMessage, AgentSession, Continuation) REMOVED** — these are inline fields on existing entities OR queue-item states, not first-class kinds.
 
 #### §3.4.1 Primary entities (migrate as rows in `entities` table)
 
-Each currently persisted as `local-state/<dir>/<id>.json`; ID is the natural primary key. 18 kinds total:
+**Anchor:** the 11 I*Store interfaces in `hub/src/entities/*.ts` + `hub/src/state.ts` are the authoritative kind enumeration source (per round-1 audit C3): `IAgentStore`, `IAuditStore`, `IBugStore`, `IIdeaStore`, `IMessageStore`, `IMissionStore`, `IPendingActionStore`, `IProposalStore`, `ITaskStore`, `ITeleStore`, `IThreadStore`, `ITurnStore` (the live-mediation surface).
+
+**Add for this mission:** `ISchemaDefStore` (NEW) + `IDocumentStore` (NEW; W0-spike-validates if `local-state/documents/*.md` is entity-semantic-state vs static-asset; if entity, gets new I*Store).
+
+**Notification nuance (per round-1 round-2 engineer audit):** the historical `INotificationStore` was REMOVED at mission-56 W5; current `notifications/notif-*.json` persistence happens via direct file-writes from `hub/src/hub-networking.ts` (lines 431, 465, 504, 735) WITHOUT I*Store mediation — verified by greg against `hub/src/state.ts:1015-1018 + 1579-1583` change history. Option Y (substrate replaces StorageProvider only; repositories preserved) doesn't fit Notification cleanly: there's no I*Store to compose. **Disposition (engineer-lean accepted):** re-introduce `INotificationStore` + `NotificationRepository` in THIS mission as part of W2/W4. Saga-substrate-completion characteristic strengthened (closes mission-56 partial-completion as collateral). Surfaces as OQ8 for round-2 audit awareness; not a Director re-disposition required (mechanism-choice per `feedback_architect_call_not_director_decision.md`).
+
+Each currently persisted as `local-state/<dir>/<id>.json`; ID is the natural primary key. **Authoritative count (v0.2):** 11 I*Store-mediated + 1 NEW substrate-mediated (SchemaDef) + 1 W0-spike-validates (Document) + 1 re-introduced-by-this-mission (Notification) = **14 kinds (modulo W0 spike's auxiliary discovery)**. Inventory table below is the source-of-truth cross-check; W0 spike re-greps to confirm:
 
 | Kind | local-state dir | ID-shape | Notes |
 |---|---|---|---|
@@ -372,16 +422,24 @@ Each currently persisted as `local-state/<dir>/<id>.json`; ID is the natural pri
 
 This is the DIY-secondary-index that bug-93 surfaced — it goes away structurally with substrate (the index is replaced by a postgres-native equivalent the query planner uses automatically).
 
-#### §3.4.3 Architect-context (OQ-NEW for round-1 audit)
+#### §3.4.3 Architect-context — OQ7 disposition LOCKED (3-kind decomposition)
 
-`local-state/architect-context/` holds 3 append-only structured-log files:
-- `decisions.json`
-- `director-history.json`
-- `review-history.json`
+`local-state/architect-context/` holds 3 append-only structured-log files: `decisions.json` / `director-history.json` / `review-history.json`.
 
-**Disposition (architect-current-pick; surface as OQ7 for engineer round-1 audit):** migrate as 3 entity-kinds (`ArchitectDecision`, `DirectorHistoryEntry`, `ReviewHistoryEntry`) — each log-entry becomes one entity-row. Aligns with Survey outcome 1 (one substrate, no out-of-substrate state). Append-only semantics preserved by handler-side discipline (no entity-mutation, only entity-add).
+**OQ7 disposition (engineer-lean accepted; v0.2 LOCK):** decompose into 3 entity-kinds with new I*Stores added by this mission:
+- `IArchitectDecisionStore` — `ArchitectDecision` entity per row
+- `IDirectorHistoryEntryStore` — `DirectorHistoryEntry` entity per row
+- `IReviewHistoryEntryStore` — `ReviewHistoryEntry` entity per row
 
-Alternative: keep file-based out-of-substrate. Trade-off — simpler migration (less to convert) but violates outcome 1.
+Each log-entry in the .json files becomes one entity-row. Append-only semantics preserved by handler-side discipline (no entity-mutation, only entity-add); reconciler-emitted index on `(kind, created_at)` for chronological ordering.
+
+**Rationale (per round-1 round-2 engineer-lean):**
+- On-brand with Survey outcome 1 (substrate-consolidation; "substrate IS the mission, nothing else"); file-based escape-hatch violates the discipline
+- Composes naturally with M-Hub-Storage-Audit-History follow-on (idea-296) — if architect-context is substrate-entities, history-queries become trivial postgres queries; if file-based, they need separate file-grep machinery indefinitely
+- Decomposition cost is bounded at design-time (3 new I*Store interfaces + reconciler emits indexes); implementation cost rolls into W2 SchemaDef + W4 repository-composition waves
+- Sub-tele-1 (state-transparency) at architect surface — `get-entities.sh ArchitectDecision --filter='mission=M-Hub-Storage-Substrate'` becomes queryable; today's `find docs/architect-context/ -path '*M-Hub-Storage*'` is fragile
+
+**Authoritative kind-count update (v0.2):** 11 existing I*Store + 1 NEW substrate-mediated (SchemaDef) + 1 W0-spike-validates (Document) + 1 re-introduced (Notification per §3.4.1) + 3 OQ7 decomposition = **17 kinds** total (modulo W0 spike auxiliary discovery).
 
 #### §3.4.4 Out-of-substrate (preserved as-is; NOT migrated)
 
@@ -400,43 +458,55 @@ These remain file-system-backed; substrate doesn't touch them:
 - W0 spike's filesystem-grep regenerates entity-kinds.json from current code; any architect-blind kind triggers Design v0.2 revision
 - Migration script reads entity-kinds.json at runtime; refuses to start if any kind in local-state has no entry (defends against silent-skip migration bug)
 
-### §3.5 Downtime budget + cutover orchestration (per engineer §A.4)
+### §3.5 Downtime budget + cutover orchestration (per engineer §A.4 + round-1 audit N3 reframe)
 
-**Target: <60 seconds cutover** at current scale (~10k entities × ~1-10ms postgres COPY-based insert throughput per entity = ~10-100 seconds for raw insert; +verification +index-population +bootstrap-validation = bounded by ~60s for current scale).
+**Target: <60 seconds TOTAL OBSERVED DOWNTIME** (per round-1 audit N3 fold-in) — measured Hub-stop to Hub-ready-for-first-request, INCLUDING pre-cutover snapshot + migration script + verification + Hub restart + bootstrap-validation. NOT just migration-script duration.
 
-**Phase 6 preflight verification metric:** measured cutover-script wall-clock time on a representative Hub state dump; preflight fails if measured cutover > 60s OR fails verification.
+**Phase 6 preflight verification metric:** measured TOTAL OBSERVED DOWNTIME wall-clock time on a representative Hub state dump; preflight fails if measured downtime > 60s OR fails verification.
 
-**Cutover orchestration sequence:**
+**Cutover orchestration sequence** (architect-illustrative; W0 spike measures + Phase 6 preflight ratifies):
 ```
 T+00:00  Hub stopped (operator: `systemctl stop hub` or equivalent)
 T+00:05  Pre-cutover snapshot tar -czf $backup (background; verify return code)
-T+00:15  Start migration script with verified backup path
-T+00:55  Migration script verification PASS; .MIGRATION_COMPLETE marker emitted
-T+01:00  Operator switches Hub config to substrate-mode (`HUB_STORAGE=substrate`)
-T+01:05  Hub started; substrate-mode bootstrap runs (validates SchemaDef + reconciler-settle)
-T+01:15  Hub ready; first request accepted on substrate
+T+00:15  Start migration script
+T+00:??  Migration script per-kind COPY-based load (variable; bulk-insert dominant cost)
+T+00:??  Verification phase: count parity + sample content-hash check
+T+00:??  .MIGRATION_COMPLETE marker emitted
+T+00:??  Operator switches Hub config to substrate-mode (HUB_STORAGE=substrate)
+T+00:??  Hub started; substrate-mode bootstrap (SchemaDef + reconciler-settle)
+T+00:??  Hub ready; first request accepted on substrate
+T+<60s   TOTAL OBSERVED DOWNTIME budget hit
 ```
 
-Total observed downtime ≈ 60-75 seconds for current scale. Phase 6 preflight measures + reports.
+W0 spike measures actual timings against synthetic state; Design v0.2 timing is INTENTIONALLY unspecified (estimates are unreliable until measured; spike validates). If W0 spike reveals timings exceeding budget at current scale, mitigation: parallel per-kind COPY (postgres-native; 3-5× speedup); if STILL exceeding, surface to Director for budget revision or scope reduction.
 
-**Operator runbook lives at:** `docs/operator/hub-storage-cutover-runbook.md` (W6 ship-criteria).
+**Operator runbook lives at:** `docs/operator/hub-storage-cutover-runbook.md` (W7 ship-criteria).
 
 ---
 
-## §4 Wave decomposition (W0-W7; per F2 + engineer §B (α) reading)
+## §4 Wave decomposition (W0-W7; per F2 + engineer §B (α) reading + round-1 audit C2 Option-Y rewrite + M1/M2/B1 fold-ins)
 
 **Critical principle (per engineer §B):** wave-completion ≠ data-cutover. Waves W1-W4 build substrate code + integration paths against pre-cutover empty substrate (verified via integration tests). Full data appears at W5 cutover. Waves W6-W7 finalize cleanup + ship.
 
+**Architectural shift in v0.2 (per round-1 audit C2 Option Y):** W4 is **repository internal-composition refactor**, NOT "handlers wired to substrate API." Handler surface stays unchanged; repositories internally compose substrate instead of StorageProvider. Materially smaller mission scope (substrate-class change, not substrate + handler-layer change). 4 new I*Stores added in this mission per §3.4 (SchemaDef, Document if W0-validated, Notification re-introduction, OQ7 3-kind decomposition).
+
 | Wave | Scope | Acceptance criteria | Substrate state during |
 |---|---|---|---|
-| **W0** | Spike — postgres-container local-dev compose-up; entity-kinds enumeration via filesystem-grep; SchemaDef-for-SchemaDef bootstrap; downtime-budget measurement against synthetic state | Spike report + entity-kinds.json + downtime-budget measurement; engineer counterpart branch created | Empty (spike-only) |
-| **W1** | Substrate shell — `hub/src/storage-substrate/` module skeleton; `entities` table + sequence + base indexes; CRUD operations (get/put/delete/list) without watch; unit tests against a test-postgres container | All CRUD ops covered by unit tests; substrate boots cleanly; passes typecheck + lint | Empty |
-| **W2** | Reconciler + SchemaDef — `SchemaDef` kind registered; reconciler observes SchemaDef puts via NOTIFY trigger; idempotent `CREATE INDEX CONCURRENTLY` emission; SchemaDef-for-all-Hub-kinds checked in | All Hub kinds have SchemaDef; reconciler-test confirms idempotent re-run; per-kind indexes exist | SchemaDefs populated; entities still empty |
-| **W3** | Sweepers wired to substrate API — ScheduledMessageSweeper + MessageProjectionSweeper + others read from substrate via `list()` + `watch()`; integration tests verify sweepers function against synthetic substrate entities | Sweepers pass integration tests; production wire-up still routes via FS substrate (substrate is dark) | Empty (handlers still write to FS) |
-| **W4** | Handlers wired to substrate API — message-handler / thread-handler / mission-handler / etc. write entities via substrate `put()`; reads via `get()` + `list()` | All handlers pass integration tests against substrate; production still routes FS (substrate dark) | Empty |
-| **W5** | **State-migration cutover** — Hub stopped; pre-cutover snapshot; `npm run migrate-fs-to-substrate`; verification PASS; Hub restart with `HUB_STORAGE=substrate` flag; first request on substrate | <60s measured downtime; verification PASS; Hub healthy on substrate; bug-93 sweeper-poll-pressure observed-eliminated via watch-driven model | **Full data; LIVE** |
-| **W6** | `LocalFsStorageProvider` + `GcsStorageProvider` deletion — remove from `packages/storage-provider/` (keep interface + MemoryStorageProvider for repo-event-bridge); update CODEOWNERS; remove FS-related env vars; `repo-event-bridge` tests still pass | `packages/storage-provider/` shrunk per §5; no broken consumers; tests + CI green | LIVE |
-| **W7** | Ship — operator runbook + psql cookbook + get-entities.sh + hub-snapshot.sh; update CLAUDE.md substrate notes; mission Phase 7 release-gate; file follow-on ideas (M-Hub-Storage-ResourceVersion + Audit-History + FK-Enforcement + Cloud-Deploy per F4) | All v1 acceptance gates pass; release-gate Director-approved; follow-on ideas filed | LIVE |
+| **W0** | Spike — postgres-container local-dev compose-up; entity-kinds enumeration via filesystem-grep (validates §3.4 inventory + Document disposition + auxiliary stores); SchemaDef-for-SchemaDef bootstrap; **measured total observed downtime budget** against synthetic state (per §3.5); testcontainers harness validation (per §2.7) | Spike report + entity-kinds.json + downtime-budget measurement + testcontainers boot-time + flakiness baseline; engineer counterpart branch created at W0 commit-time | Empty (spike-only) |
+| **W1** | Substrate shell — `hub/src/storage-substrate/` module skeleton; `entities` table + sequence + base indexes + NOTIFY trigger; CRUD operations (get/put/delete/list) + **CAS primitives (createOnly + putIfMatch)** per §2.1 + watch primitive; unit tests against testcontainers postgres; **R9 write-amplification measurement** at synthetic 1k+ writes/sec | All CRUD + CAS + watch ops covered by unit tests; substrate boots cleanly; passes typecheck + lint; R9 measurement reported (mitigation triggered if degradation at scale) | Empty |
+| **W2** | Reconciler + SchemaDef + NEW I*Store interfaces — `SchemaDef` kind registered (self-bootstrap); reconciler observes SchemaDef puts via NOTIFY; idempotent CREATE INDEX CONCURRENTLY IF NOT EXISTS emission; **restart-safety verified** via kill-9-between-bootstrap-steps + restart-completes test (per §2.3); SchemaDef entries authored for 11 existing kinds + SchemaDef + Document (if W0-validates) + Notification + 3 architect-context decomposition kinds | All kinds have SchemaDef; reconciler-test confirms idempotent re-run + crash-restart safety; per-kind indexes exist | SchemaDefs populated; entities still empty |
+| **W3** | Sweepers wired to substrate API — ScheduledMessageSweeper + MessageProjectionSweeper + others read via substrate `list()` + `watch()` directly (sweepers ARE NOT behind a repository facade); integration tests verify sweepers function against synthetic substrate entities | Sweepers pass integration tests; production wire-up still routes via FS (substrate is dark per α reading) | Empty (handlers still write to FS) |
+| **W4** | **Repository internal-composition refactor (Option Y)** — `MessageRepository` / `ThreadRepository` / etc. compose `HubStorageSubstrate` instead of `StorageProvider`; existing I*Store interfaces UNCHANGED at boundary; per-entity logic (locks, sequence allocation, CAS retry loops) stays in repositories; CAS retry loops now use substrate `putIfMatch` (semantics-equivalent at substrate boundary); 4 NEW repositories implemented for new kinds (Document if validated, Notification re-introduction, 3 OQ7 decomposition kinds); handler surface UNCHANGED | All repository internal-composition refactors pass; existing I*Store integration tests green; new I*Stores covered by unit tests | Empty (still dark) |
+| **W5** | **State-migration cutover + post-cutover smoke matrix** (per round-1 audit M2 fold-in) — W5-prep gate verified (B1: W0 spike replays in <60s; W1-W4 integration green at HEAD; reconciler cold-boot complete; snapshot mechanism tested); Hub stopped; pre-cutover tar snapshot; `npm run migrate-fs-to-substrate`; verification PASS; Hub restart with `HUB_STORAGE=substrate`; **post-cutover smoke test matrix** runs against migrated state (NOT synthetic): sweeper end-to-end + handler end-to-end + full-API-surface (get/put/delete/list/watch/CAS) for each kind | <60s TOTAL OBSERVED DOWNTIME; verification PASS; smoke matrix PASS for all kinds; bug-93 sweeper-poll-pressure observed-eliminated via watch-driven model | **Full data; LIVE** |
+| **W6** | `LocalFsStorageProvider` + `GcsStorageProvider` retirement — **+ hub/src/gcs-state.ts (535 LoC) + hub/src/gcs-document.ts (102 LoC) deletion** (per round-1 audit M1 fold-in); remove from `packages/storage-provider/` (keep interface + MemoryStorageProvider for repo-event-bridge); update CODEOWNERS; remove FS+GCS-related env vars + `HUB_STORAGE` config branches; **repo-event-bridge regression gate** — `cd packages/repo-event-bridge && npm test` passes | `packages/storage-provider/` shrunk per §5.2; hub/src/gcs-*.ts deleted; no broken consumers; tests + CI green; repo-event-bridge gate passes | LIVE |
+| **W7** | Ship — operator runbook + psql cookbook + get-entities.sh + hub-snapshot.sh; update CLAUDE.md substrate notes; bug-93 closed with reference to cutover commit; mission Phase 7 release-gate; verify follow-on ideas filed at v0.1 (idea-295/296/297/298 per F4 PROBE) | All v1 acceptance gates pass; release-gate Director-approved; all 4 follow-on ideas present in backlog | LIVE |
+
+**W5-prep gate explicit (per round-1 audit B1 fold-in):** before Hub-stop at W5, verify ALL of:
+- W0 spike's measured synthetic-state migration completes in <60s (downtime-budget headroom)
+- W1-W4 substrate-API integration tests all green at HEAD
+- Reconciler emits all required indexes on cold-boot against fresh postgres (no missing indexes after bootstrap)
+- Pre-cutover snapshot mechanism tested + verified (operator can restore snapshot to recover FS state if needed)
+- Operator runbook drafted (W7 finalizes; W5 needs working draft)
 
 **Wave commit cadence:** wave-per-PR cumulative-fold per mission-68 M6 pattern (W1 PR cumulatively folds W0; W2 PR cumulatively folds W0+W1; etc.). Final ship PR (W7) includes all 8 waves.
 
@@ -447,11 +517,21 @@ Total observed downtime ≈ 60-75 seconds for current scale. Phase 6 preflight m
 
 ---
 
-## §5 Substrate location + package shape (per engineer §C fold-in)
+## §5 Substrate location + package shape (per engineer §C fold-in + round-1 audit C2 Option Y)
 
-### §5.1 `hub/src/storage-substrate/` — new module
+### §5.1 `hub/src/storage-substrate/` — new module (composes-into-repositories per Option Y)
 
-Substrate-internal module. Hub-specific (no cross-package consumer). Exposes only the `HubStorageSubstrate` interface (§2.1). Not extending the legacy `StorageProvider` interface — the surface is genuinely new (CRUD + list-filter + watch + schema vs raw get/put/list).
+Substrate-internal module. Hub-specific (no cross-package consumer). Exposes the `HubStorageSubstrate` interface (§2.1) — genuinely new shape (CRUD + list-filter + watch + schema + CAS primitives) that surface-equivalent to mission-47 `StorageProvider` v1.0 contract (preserving CAS family per C1) but ALSO adds higher-level capabilities (filter + watch + schema).
+
+**Option Y composition shape (per round-1 audit C2 — engineer-lean accepted):** existing repositories preserve their I*Store boundaries; internally compose `HubStorageSubstrate` instead of `StorageProvider`. Handler call-sites (`ctx.stores.message.createMessage(...)`) UNCHANGED. Repositories shed FS-substrate-specific code paths:
+
+| What repositories shed (FS-substrate-specific) | What replaces it (substrate-native) |
+|---|---|
+| Manual list+filter loops in `list*()` methods | `substrate.list(kind, { filter })` — postgres-indexed |
+| Per-thread `Mutex` locks for sequence-allocation | `substrate.createOnly()` + retry-on-conflict |
+| On-disk DIY secondary indexes (e.g., `messages-thread-index/`) | substrate per-kind expression-index via SchemaDef |
+| `putIfMatch` CAS retry loops calling `StorageProvider` | `substrate.putIfMatch(kind, entity, expectedRevision)` — semantics-equivalent |
+| Manual poll-based change-detection (sweepers) | `substrate.watch(kind, { filter, sinceRevision })` |
 
 ```
 hub/src/storage-substrate/
@@ -467,18 +547,26 @@ hub/src/storage-substrate/
 └── __tests__/                // unit + integration tests against test-postgres-container
 ```
 
-### §5.2 `packages/storage-provider/` — SHRINK, not delete
+### §5.2 `packages/storage-provider/` — SHRINK, not delete (+ hub/src/gcs-*.ts deletion per round-1 audit M1)
 
-Per engineer §C catch: `packages/repo-event-bridge/` depends on `@apnex/storage-provider` for `MemoryStorageProvider`. The package SHRINKS at W6 — NOT deletes.
+Per engineer §C catch + round-1 audit M1: cleanup is multi-location.
 
-**v1 ship state for `packages/storage-provider/`:**
+**`packages/storage-provider/` v1 ship state:**
 - **Keep:** `StorageProvider` interface (used by `MemoryStorageProvider`'s type contract)
 - **Keep:** `MemoryStorageProvider` (still consumed by `repo-event-bridge` tests + runtime)
 - **Delete:** `LocalFsStorageProvider` + its tests
 - **Delete:** `GcsStorageProvider` + its tests
 - **Delete:** any other `Local*` / `Gcs*` provider variants
 
-**W6 acceptance gate:** `cd packages/repo-event-bridge && npm test` passes. Regression-net guarding against accidental `rm -rf packages/storage-provider/`.
+**`hub/src/` cleanup (round-1 audit M1 — separate from packages/storage-provider/):**
+- **Delete:** `hub/src/gcs-state.ts` (535 LoC) — GCS-specific Hub state-loading code path
+- **Delete:** `hub/src/gcs-document.ts` (102 LoC) — GCS-specific Hub document code path
+- **Delete:** `HUB_STORAGE=fs` and `HUB_STORAGE=gcs` config branches in Hub bootstrap; substrate-mode becomes the only mode
+
+**W6 acceptance gates:**
+- `cd packages/repo-event-bridge && npm test` passes (regression-net against accidental `rm -rf packages/storage-provider/`)
+- `grep -rn "gcs-state\|gcs-document\|HUB_STORAGE" hub/src/` returns empty (or only test-fixture references)
+- CI green at HEAD; no broken imports
 
 ### §5.3 CODEOWNERS update
 
@@ -521,6 +609,8 @@ Explicitly out-of-scope for this mission. Director re-confirmed Q5=d 2026-05-17 
 | R6 | postgres-container resource exhaustion on local-dev (long-running session; many test-runs) | Local-dev compose-file specifies memory + connection limits; documented in operator-DX cookbook |
 | R7 | Migration downtime > 60s target → Phase 6 preflight fails | Bulk insert via `COPY` (postgres-native; 10-100× faster than parallel INSERTs); per-kind atomic load enables `--resume-from=<kind>` recovery; if scale outgrows <60s budget, follow-on optimization (parallel per-kind COPY) |
 | R8 | repo-event-bridge MemoryStorageProvider divergence after W6 shrink | W6 acceptance gate runs `repo-event-bridge` tests; CI workflow includes cross-package test orchestration |
+| R9 (NEW per round-1 audit B2) | LISTEN/NOTIFY per-write tax at scale (write-amplification on every entity-write) | W1 substrate-shell load-test measures write-amplification at 1k+ writes/sec; if measurable degradation at ≥10k writes/sec, switch to logical-replication; current scale (~10k entities, ~10s of writes/sec) is well under threshold |
+| R10 (NEW per round-1 audit B3) | Local-dev state-loss on `docker compose down` (data volume lost without `--volumes` flag context) | EXPLICIT-PICK: local-dev state is ephemeral by design; snapshot-restore (per §2.5 + `hub-snapshot.sh`) is the persistence story for dev. Operator-DX doc warns: "treat local-dev postgres-container as ephemeral; use `hub-snapshot.sh` if you need persistence across container teardown" |
 
 ### §7.2 Open questions for engineer round-1 audit
 
@@ -532,7 +622,8 @@ These come back as Q-N audit items in the round-1 audit thread (separate thread,
 - **OQ4** — Substrate-init migrations runner: bespoke (Hub-side migration-runner reads `migrations/*.sql`) OR off-the-shelf (`node-pg-migrate`, `flyway-style`)? Current Design implies bespoke (simpler; 3 migrations); engineer judgment on whether off-the-shelf saves more than it costs.
 - **OQ5** — Watch-stream backfill semantics: when handler subscribes mid-Hub-runtime, should substrate replay all events from epoch OR only-new? Current Design's NOTIFY-based watch is only-new; handlers needing backfill use `list()` + then `watch()` (standard "list-watch" pattern from k8s informer). Engineer judgment on whether this composes cleanly with sweeper restart-without-state-loss.
 - **OQ6** — Postgres flavor pick (vanilla / AlloyDB / Cockroach / Yugabyte): Design currently assumes vanilla postgres. Q6=a defers cloud-deployment so this is mostly a follow-on concern. Should W0 spike validate against more than one flavor to de-risk the eventual cloud-deploy follow-on?
-- **OQ7** — Architect-context disposition (`local-state/architect-context/` per §3.4.3): migrate as 3 entity-kinds (`ArchitectDecision`, `DirectorHistoryEntry`, `ReviewHistoryEntry` — architect-current-pick) OR keep file-based out-of-substrate (simpler migration; violates Survey outcome 1)? Inventory-verification side-effect of demoting §3.4 from provisional to verified at Design v0.1 time.
+- **OQ7** — Architect-context disposition (`local-state/architect-context/` per §3.4.3): **DISPOSED at v0.2** — 3-kind decomposition (`ArchitectDecision`, `DirectorHistoryEntry`, `ReviewHistoryEntry`) with new I*Stores added by this mission (engineer-lean accepted; see §3.4.3 for rationale). NO further audit needed unless v0.2 disposition is challenged.
+- **OQ8 (NEW per round-1 round-2)** — Notification entity scope: re-introduce `INotificationStore` + `NotificationRepository` as part of THIS mission (engineer-lean; architect-current-pick per §3.4.1 fold-in) — closes mission-56 partial-completion (W5 removed I*Store abstraction but `hub-networking.ts` still direct-writes `notif-*.json`). Saga-substrate-completion characteristic strengthened; mechanism-choice per `feedback_architect_call_not_director_decision.md` (NOT Director-disposition required); engineer round-2 audit confirms or surfaces alternative.
 
 ---
 
@@ -581,14 +672,24 @@ The round-1 audit thread carries:
 
 ## §11 Status
 
-- **v0.1 architect-draft** — 2026-05-17; awaiting Phase 4 round-1 engineer audit
+- **v0.2 architect-draft** — 2026-05-17; incorporates round-1 audit dispositions (3 CRITICAL + 4 MEDIUM + 3 MINOR + OQ7-OQ8 + 4 blind-spots); awaiting Phase 4 round-2 engineer audit
 - **Branch:** `agent-lily/m-hub-storage-substrate`
 - **Commits:**
   - 8eed879 — Survey envelope (Phase 3)
   - d9fadf3 — Design v0.1 initial draft
-  - (pending) — §3.4 inventory-verification + OQ7 addition (post-filesystem-grep architect-side verification; demotes §3.4 from "provisional" to "filesystem-verified at Design v0.1 time")
-- **Round-1 audit thread:** thread-563 (opened 2026-05-17; greg's turn)
+  - 49c08df — §3.4 inventory-verification + OQ7 addition (post-filesystem-grep architect-side verification)
+  - (pending) — Design v0.2 (round-1 audit fold-ins: C1 CAS primitives + C2 Option Y repository-composition + C3 I*Store-anchored inventory + M1-M4 + N1-N3 + B1-B4 + OQ8 Notification re-introduction)
+- **Round-1 audit thread:** thread-563 (3 rounds; v0.2 dispositions accepted-and-aligned per round-2 engineer reply 2026-05-17)
 - **Follow-on ideas filed** (per F4 PROBE; de-risks mission-close-forget): idea-295 M-Hub-Storage-ResourceVersion, idea-296 M-Hub-Storage-Audit-History, idea-297 M-Hub-Storage-FK-Enforcement, idea-298 M-Hub-Storage-Cloud-Deploy
-- **Expected progression:** v0.1 → engineer round-1 audit (CRITICAL/MEDIUM/MINOR/PROBE classifications + OQ1-OQ7 dispositions) → v0.2 architect-revision incorporating audit dispositions → bilateral cycle to v1.0 ratified → Phase 5 mission entity creation → Phase 6 preflight → Phase 7 release-gate
+
+### §11.1 v1.0 ratify-criterion (per round-1 audit B4 fold-in)
+
+Per `docs/methodology/mission-lifecycle.md` Phase 4 convergence-criterion: **Design v1.0 ratifies when all CRITICAL + MEDIUM audit-findings disposed** (accepted-and-folded OR explicitly-deferred-with-Director-acknowledgment). MINOR findings may defer at architect-judgment with documented rationale. Bilateral agreement on the convergence-criterion is itself a thread-563 close-action (architect proposes; engineer confirms or disputes).
+
+### §11.2 Expected progression
+
+- v0.2 → engineer round-2 audit (brief if v0.2 incorporates everything cleanly; substantive re-audit if any disposition shifts material design-shape) → v1.0 ratified → thread-563 converges
+- v1.0 → Phase 5 mission entity creation → Phase 6 preflight (audits AG-1..AG-4 scope-creep + R1-R10 risk-status + downtime-budget measurement) → Phase 7 release-gate (Director-approval)
+- W0 spike begins post-Phase-5 Mission-entity-creation; engineer counterpart branch `agent-greg/m-hub-storage-substrate` created at W0 commit-time
 
 — Architect: lily / 2026-05-17
