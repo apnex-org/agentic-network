@@ -268,15 +268,24 @@ const Tele: SchemaDef = {
 
 const Thread: SchemaDef = {
   kind: "Thread",
-  version: 1,
+  version: 2,
+  // W4.x.10 architect-blind-correction: v1 status enum [active/converged/
+  // closed/force_closed] vs actual ThreadStatus [active/converged/round_limit/
+  // closed/abandoned/cascade_failed] (6 values; 1 of 4 in v1 invalid 'force_closed';
+  // 3 missing: round_limit/abandoned/cascade_failed). routingMode enum matches.
+  // 13th-instance substrate-currency-failure pattern.
   fields: [
     { name: "id", type: "string", required: true },
     { name: "title", type: "string", required: false },
-    { name: "status", type: "string", required: false, enum: ["active", "converged", "closed", "force_closed"] },
+    { name: "status", type: "string", required: true, enum: ["active", "converged", "round_limit", "closed", "abandoned", "cascade_failed"] },
     { name: "routingMode", type: "string", required: false, enum: ["unicast", "multicast", "broadcast"] },
+    { name: "currentTurnAgentId", type: "string", required: false },
+    { name: "correlationId", type: "string", required: false },
   ],
   indexes: [
     { name: "thread_status_idx", fields: ["status"] },
+    // currentTurnAgentId lookup for unpinCurrentTurnAgent (agent-reaper hot-path)
+    { name: "thread_turn_agent_idx", fields: ["currentTurnAgentId"] },
   ],
   watchable: true,
 };
