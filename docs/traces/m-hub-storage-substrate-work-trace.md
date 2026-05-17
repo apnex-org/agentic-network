@@ -3,7 +3,7 @@
 **Mission:** mission-83 (M-Hub-Storage-Substrate; idea-294 lineage)
 **Architect:** lily (agent-40903c59)
 **Engineer:** greg (agent-0d2c690e)
-**Status:** W5.4 cutover COMPLETE; W5.5 smoke matrix + bug-97 fix in progress; W6+W7 pre-staged
+**Status:** All 7 waves shipped (W0→W7); bug-93 STRUCTURAL CLOSURE confirmed; Phase 7 release-gate surfaced to Director; awaiting `update_mission(status="completed")` per RACI
 **Branch:** `agent-greg/m-hub-storage-substrate` (engineer-side); `agent-lily/m-hub-storage-substrate` (architect-side)
 **Mission lineage:** Phase 1 Concept → Phase 2 Idea (idea-294) → Phase 3 Survey (Director-ratified 6 picks) → Phase 4 Design (v0.1 → v1.4 ladder) → Phase 5 Manifest → Phase 6 Preflight (GREEN) → Phase 7 Implementation (W0-W7) → Phase 10 Retrospective (pending)
 **Wave state @ trace-init:** W5.4 cutover-executed; W5.5 smoke matrix dispatched (thread-573)
@@ -86,10 +86,57 @@ Documented at `feedback_substrate_currency_audit_rubric.md` ARCHITECT-SIDE EXTEN
 
 ---
 
+### 2026-05-17 15:48 AEST — W5.5 RATIFIED; W6-narrowed RATIFIED; W7 SHIPPED; bug-93 STRUCTURAL CLOSURE recorded; Phase 7 release-gate surfaced
+
+**W5.5 progression (thread-573 rounds 3-5):**
+- bug-97 fix deployed to running Hub (image rebuilt from greg's `7870d74`; container swap with new image; old image preserved as `ois-hub:local-substrate-pre-bug97`)
+- ZERO `counter issued existing ID` errors post-deploy under repeated cold-pickup contention (was 3 in pre-fix 60s window)
+- CPU profile: sustained 0% idle + value-producing bursts only (30s repo-event-bridge poll cycle processing actual commits)
+- W5.5 RATIFIED with all Design v1.4 §4 acceptance criteria green (except <60s downtime gate — image-rebuild logistics issue, NOT substrate-architecture; mitigation documented for W7 runbook)
+
+**W6 scope-overrun + rescope (thread-573 rounds 6-7):**
+- Engineer-side W6 strict-spec deletion attempted; broke 171 tests via `hub/test/*` → `hub/src/policy/test-utils.ts` → 12 FS-version-repository dependency chain
+- Engineer-side surface-discipline excellent (applied `feedback_verification_defect_surface_dont_dig.md`: reverted clean, presented 4 disposition options + engineer-lean)
+- **Cluster-22 entry filed:** engineer-side cross-directory-grep miss (audit only `hub/src/`; missed `hub/test/`)
+- **Architect-call: option (e) NARROWED W6** = GCS-only deletion + FS-version-repos preserved as test-fixtures + idea-300 follow-on filed
+- Rationale: production substrate-only ALREADY gated by W5.4-Hub-bootstrap-flip (FS-version repos function architecturally as test-fixtures + test/dev affordances; not production code-path)
+
+**W6-narrowed ship (thread-573 round 8; commit `6bcdb5d`):**
+- -1,445 LoC: `gcs-state.ts` (535) + `gcs-document.ts` (102) + `gcs.ts` package + `document-policy.ts` + `STORAGE_BACKEND=gcs` branch + orphan tests
+- 1332 hub tests + 146 repo-event-bridge tests green (no production regression; -3 from deleted gcs-occ-primitives test as expected)
+- tsc clean; CODEOWNERS updated for `hub/src/storage-substrate/`
+- Document MCP tools (`get_document` / `create_document` / `list_documents`) removed from PolicyRouter (71 → 68 tools post-deploy); idea-300 includes substrate-backed re-introduction
+
+**W7 ship (thread-573 round 9; commit `af922e9`):**
+- Engineer-side 5/5: cutover runbook v1.0 + local-dev cookbook v1.0 + psql forensic cookbook (~280 LoC new) + CLI scripts (`get-entities.sh` + `hub-snapshot.sh`) + CLAUDE.md v1.2
+- Architect-side W7.4 bug-93 STRUCTURAL CLOSURE: `update_bug` shipped with structural-closure narrative + fixCommits=[ada6d74, 8018b36, 7870d74] + fixRevision=`substrate-mode (mission-83 W5 cutover)` + linkedMissionId=mission-83
+- Architect-side deploy: `af922e9` image built + container-swap (current container `ois-hub-local-prod` runs `ois-hub:local-substrate` from `af922e9`; pre-W7 container preserved as `ois-hub-local-prod-pre-w7`)
+- Architect-side W7.6 Phase 7 release-gate document: `docs/missions/m-hub-storage-substrate-phase-7-release-gate.md`
+
+**Mission-83 cumulative state:**
+- All 7 waves shipped (W0+W1+W2+W3+W4+W5+W6-narrowed+W7)
+- 1478 tests green at HEAD (no regressions)
+- bug-93 STRUCTURAL CLOSURE confirmed; production-Hub running substrate-mode
+- 4 Hub-side bugs filed during mission (bug-94/95/96/97; bug-97 fixed same-cycle)
+- 6 follow-on ideas filed (idea-295/296/297/298/299/300)
+- 22-instance bilateral substrate-currency-failure cluster (Phase 10 retrospective material)
+- 3 backup containers + 4 backup images preserved (rollback affordances)
+- Pre-cutover snapshot retained at `/home/apnex/taceng/cutover-snapshots/pre-cutover-20260517T043004Z.tar.gz`
+
+---
+
 ## Forward queue (architect-side)
 
-- [ ] Monitor thread-573 for greg's W5.5 pickup + bug-97 fix surface
-- [ ] On W5.5 ratify: fire W6 dispatch (FS+GCS retirement); branch to greg
-- [ ] On W6 ratify: fire W7 dispatch (operator runbook + bug-93 close + Phase 7 release-gate)
-- [ ] On W7 ratify: Phase 7 release-gate surface to Director (mission-83 ready for `update_mission(status="completed")`)
-- [ ] Phase 10 retrospective: file calibration candidates (architect-side substrate-currency-failure 20-instance cluster + counter-collision pattern + docker-seccomp + bug-94/95/96/97 + per-wave-thread coord pattern)
+- [ ] **Phase 7 release-gate Director-engagement** — `update_mission(missionId="mission-83", status="completed")` decision per RACI; Director reads `docs/missions/m-hub-storage-substrate-phase-7-release-gate.md` + Hub state
+- [ ] Converge thread-573 with `stagedActions=[close_no_action]` + summary on Director ratify
+- [ ] Phase 8 (post-ship monitoring): observe substrate stability + bug-93-elimination sustained-window; flag any architect-blind defects surfaced under load
+- [ ] Phase 9 (in-flight refinements): folds emerged during Phase 8 monitoring
+- [ ] Phase 10 retrospective dispatch: file calibration candidates per `docs/calibrations.yaml` ledger (architect-side via Director-bilateral)
+  - architect-side substrate-currency-verification-failure (16 instances)
+  - counter-collision substrate-defect pattern (bug-97)
+  - docker-seccomp-on-old-kernel cutover-operational
+  - per-wave-thread + repaste-on-pagination-block coord pattern
+  - mission-scope-narrowing-with-follow-on-framing (W6 rescope)
+  - bilateral-trust-when-engineer-surfaces-scope-overrun
+- [ ] PR-to-main merge + CI-status verification at merge time (calibration #77)
+- [ ] Follow-on idea-300 Survey + Design + mission cadence (post Phase 10)
