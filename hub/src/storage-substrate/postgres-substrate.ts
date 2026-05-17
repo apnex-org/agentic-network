@@ -189,7 +189,7 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
    * on its own connection; not shared via pool).
    */
   async *watch<T = unknown>(kind: string, opts: WatchOptions = {}): AsyncIterable<ChangeEvent<T>> {
-    const { filter, sinceRevision } = opts;
+    const { filter, sinceRevision, signal } = opts;
 
     // Step 1: replay events from sinceRevision (if provided) via SELECT
     if (sinceRevision) {
@@ -200,6 +200,7 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
         [kind, sinceRevision],
       );
       for (const row of r.rows) {
+        if (signal?.aborted) return;
         if (filter && !matchesFilter(row.data as Record<string, unknown>, filter)) continue;
         yield {
           op: "put",
@@ -214,6 +215,19 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
     // Step 2: LISTEN on entities_change channel; yield notifications matching kind+filter
     const client = new Client({ connectionString: (this.pool as unknown as { options: { connectionString: string } }).options.connectionString });
     await client.connect();
+
+    // AbortSignal hookup — when aborted, end the LISTEN client to break the ready() wait
+    const abortHandler = () => {
+      void client.end().catch(() => { /* swallow on already-ended */ });
+    };
+    if (signal) {
+      if (signal.aborted) {
+        await client.end();
+        return;
+      }
+      signal.addEventListener("abort", abortHandler, { once: true });
+    }
+
     try {
       await client.query(`LISTEN entities_change`);
 
@@ -231,8 +245,20 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
         }
       });
 
+      // 'end' event resolves the ready() wait so the abort path returns cleanly
+      client.on("end", () => {
+        if (resolve) {
+          const r = resolve;
+          resolve = null;
+          r();
+        }
+      });
+
       while (true) {
+        if (signal?.aborted) return;
+
         while (notifications.length > 0) {
+          if (signal?.aborted) return;
           const n = notifications.shift()!;
           if (!n.payload) continue;
           let payload: { op: "put" | "delete"; kind: string; id: string; resource_version: string };
@@ -249,6 +275,8 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
               `SELECT data FROM entities WHERE kind = $1 AND id = $2`,
               [payload.kind, payload.id],
             );
+            // entity MAY be undefined if post-NOTIFY fetch races concurrent delete
+            // (per Design v1.2 §2.1 ChangeEvent race semantics — consumer-side stale-event)
             entity = r.rows[0]?.data;
             if (filter && entity && !matchesFilter(entity as Record<string, unknown>, filter)) continue;
           }
@@ -261,10 +289,13 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
             resourceVersion: String(payload.resource_version),
           };
         }
+        if (signal?.aborted) return;
         await ready();
       }
     } finally {
-      await client.end();
+      signal?.removeEventListener("abort", abortHandler);
+      // Idempotent close — already-ended client throws; swallow
+      await client.end().catch(() => { /* already ended */ });
     }
   }
 

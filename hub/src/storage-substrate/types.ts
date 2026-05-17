@@ -65,6 +65,12 @@ export interface WatchOptions {
   filter?: Filter;
   /** Resume-from-position; opaque revision token from a prior list() result. */
   sinceRevision?: string;
+  /**
+   * Consumer-side cancellation. When aborted, the AsyncIterable's underlying
+   * LISTEN connection is closed and the iterator returns. Standard Node pattern;
+   * pairs with `for await` + `try { ... } finally { ac.abort() }` consumer shape.
+   */
+  signal?: AbortSignal;
 }
 
 // ─── Filter (per Design v1.1 §2.1 N1 narrowing per QueryableFieldType discipline) ─
