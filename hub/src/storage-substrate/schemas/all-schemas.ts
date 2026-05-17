@@ -243,17 +243,25 @@ const Task: SchemaDef = {
 
 const Tele: SchemaDef = {
   kind: "Tele",
-  version: 1,
+  version: 2,
+  // W4.x.9 architect-blind-correction (architect proactive audit thread-569
+  // round 5 confirmed 4 issues): v1 had FOUR fabricated fields — 'class' /
+  // 'outcomes' / 'supersedesId' DON'T EXIST on Tele entity (largest single-
+  // SchemaDef fabrication-density of mission-83); actual fields per
+  // hub/src/entities/tele.ts:18 are name/description/successCriteria/status/
+  // supersededBy/retiredAt/createdBy/createdAt. v2 corrected. 12th-instance
+  // substrate-currency-failure pattern (most-fabricated v1 SchemaDef in mission).
   fields: [
     { name: "id", type: "string", required: true },
-    { name: "class", type: "string", required: false },
-    { name: "outcomes", type: "array", required: false },
-    { name: "supersedesId", type: "string", required: false },  // tele-N supersede chain
+    { name: "name", type: "string", required: true },
+    { name: "status", type: "string", required: true, enum: ["active", "superseded", "retired"] },
+    { name: "supersededBy", type: "string", required: false },
     { name: "retiredAt", type: "string", required: false },
   ],
   indexes: [
-    { name: "tele_class_idx", fields: ["class"] },
-    { name: "tele_supersedes_idx", fields: ["supersedesId"] },
+    { name: "tele_status_idx", fields: ["status"] },
+    // supersede-chain lookup (supersedeTele consumer)
+    { name: "tele_supersededby_idx", fields: ["supersededBy"] },
   ],
   watchable: true,
 };
