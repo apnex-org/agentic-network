@@ -1,6 +1,6 @@
-# M-Hub-Storage-Substrate — Design v1.0 RATIFIED
+# M-Hub-Storage-Substrate — Design v1.1 (inventory-currency cleanup post W0.2 spike findings)
 
-**Status:** v1.0 RATIFIED 2026-05-17 (thread-563 converged; Phase 4 audit cycle closed: 2-round bilateral; all 3 CRITICAL + 4 MEDIUM + 3 MINOR + 2 OQ + 4 blind-spots disposed; 3 round-2 cleanups folded as v1.0-finalize)
+**Status:** v1.1 architect-direct cleanup 2026-05-17 (v1.0 RATIFIED per thread-563; v1.1 incorporates W0.2 substantive findings — 5 architect-blind-kind-corrections + 4 architect-validates + 1 NEW finding ThreadHistoryEntry + wisdom/ disposition; engineer-lean disposition (a) fold-as-v1.1-cleanup accepted; v1.0 ratify-criterion still met — inventory-corrections are MINOR architect-judgment, not CRITICAL changes requiring re-audit)
 **Source idea:** idea-294
 **Survey envelope:** `docs/surveys/m-hub-storage-substrate-survey.md` (Director-ratified 2026-05-16)
 **Phase 4 coord thread:** thread-562 (converged 2026-05-17; 4 fold-ins from engineer pre-audit + AG-1 Director re-confirm)
@@ -376,9 +376,12 @@ Justification (per engineer's lean): cutover happens with Hub stopped (no concur
 
 ### §3.4 Entity-coverage matrix — I*Store-anchored authoritative inventory (round-1 audit C3 fold-in)
 
-**Authoritative count (v1.0):** **≥17 substrate-mediated kinds** (modulo W0 spike's Document validation + auxiliary store discovery). Composition: 11 existing I*Store + 1 IEngineerRegistry (mediates Agent kind via `AgentRepository implements IEngineerRegistry` per `hub/src/entities/agent-repository.ts:303`) + 1 NEW ISchemaDefStore (this mission) + 1 W0-validates IDocumentStore + 1 re-introduced INotificationStore (this mission; closes mission-56 partial-completion per §3.4.1) + 3 OQ7 architect-context decomposition stores (this mission). Table rows in §3.4.1 + §3.4.3 + §3.4.4 are supplementary detail.
+**Authoritative count (v1.1 — W0.2-spike-VERIFIED):** **20 substrate-mediated kinds**. Composition:
+- **13 existing substrate-mediated** (W0.2 commit `7d2f34f` verified): 11 I*Store (Audit / Bug / Idea / Message / Mission / PendingAction / Proposal / Task / Tele / Thread / Turn) + 1 IEngineerRegistry (Agent) + 1 Counter (single-row `meta/counter.json`)
+- **2 NEW kinds this mission**: SchemaDef (substrate-native bootstrap-self-referential per §2.3) + Notification (re-introduction per OQ8; closes mission-56 partial-completion)
+- **5 W0-architect-VERIFIED kinds**: Document (`documents/<category>/*.md` — verified entity-semantic content) + 4 OQ7-decomposition kinds: ArchitectDecision (`architect-context/decisions.json`) + DirectorHistoryEntry (`architect-context/director-history.json`) + ReviewHistoryEntry (`architect-context/review-history.json`) + **ThreadHistoryEntry** (`architect-context/thread-history.json` — NEW FINDING surfaced at W1.1 architect-side verification; not in v1.0 inventory)
 
-**Source-of-truth (per round-1 audit C3 correction):** the **12 substrate-mediated kinds today** (11 I*Store + 1 IEngineerRegistry) across `hub/src/entities/*.ts` + `hub/src/state.ts` are the authoritative existing-kind enumeration. `local-state/` directory listing is a cross-check; W0 spike's `grep -lE 'interface I.*(Store|Registry)' hub/src/entities/ hub/src/state.ts` is the dispositive truth at mission-execution time. **Phantom entries from Design v0.1 (Clarification, Document-as-separate-kind, Report, Review, ThreadMessage, AgentSession, Continuation) REMOVED** — these are inline fields on existing entities OR queue-item states, not first-class kinds.
+**Source-of-truth (W0.2 commit `7d2f34f` regenerated `hub/scripts/entity-kinds.json`):** the **13 existing substrate-mediated kinds** across `hub/src/entities/*.ts` + `hub/src/state.ts` + `hub/src/entities/counter.ts` are the authoritative existing-kind enumeration. **Phantom entries from prior versions (DirectorNotification per mission-56 W5 cut-over; Report; Review; ThreadMessage; Clarification; ScheduledMessage; MessageProjection; AgentSession; Continuation) REMOVED** — these are: (a) migrated to other kinds (DirectorNotification → Message kind=note via `hub/src/policy/director-notification-helpers.ts`); (b) inline fields on existing entities (Report / Review / Clarification / ThreadMessage); (c) sweeper-internal types with NO separate persisted store (ScheduledMessage / MessageProjection); (d) fabricated (AgentSession / Continuation).
 
 #### §3.4.1 Primary entities (migrate as rows in `entities` table)
 
@@ -392,29 +395,33 @@ Each currently persisted as `local-state/<dir>/<id>.json`; ID is the natural pri
 
 | Kind | local-state dir | ID-shape | Notes |
 |---|---|---|---|
-| Agent | `agents/` | agent-XXXXXXXX | |
+| Agent | `agents/` | agent-XXXXXXXX | Mediated by IEngineerRegistry (not I*Store; sibling abstraction) |
 | Audit | `audit/` | audit-NNN | |
 | Bug | `bugs/` | bug-NN | |
-| Counter | `meta/counter.json` | (single-row) | One file per counter-domain; migrate as one row per counter |
-| DirectorNotification | `director-notifications/` | dn-YYYY-MM-DD-NNN | |
-| Document | `documents/<category>/<name>.md` | derived | **Markdown body content** in `data.content`; metadata in `data.category` etc.; well within 1.5MB cap |
+| Counter | `meta/counter.json` | (single-row) | Special: 1 file w/ multiple counter-domain keys; migrate as one row per counter-domain key |
+| Document | `documents/<category>/<name>.md` | derived | **Markdown body content** in `data.content`; metadata in `data.category` etc.; well within 1.5MB cap. W0-VERIFIED: real markdown files (teles.md / policy-network-v1.md / etc.) — entity-semantic state, NOT static asset |
 | Idea | `ideas/` | idea-NNN | |
-| Message | `messages/` | ULID | |
+| Message | `messages/` | ULID | DirectorNotification migrates HERE via `kind=note` per mission-56 W5 cut-over (NOT separate kind; verified `hub/src/policy/director-notification-helpers.ts:5-8`) |
 | Mission | `missions/` | mission-NN | |
-| Notification | `notifications/` | notif-NNNNNNNN | |
+| Notification | `notifications/` | notif-NNNNNNNN | Re-introduction per OQ8; closes mission-56 W5 partial-completion (where `INotificationStore` was removed but `hub-networking.ts:431,465,504,735` still direct-writes `notif-*.json`) |
 | PendingAction | `pending-actions/` | (handler-assigned) | |
 | Proposal | `proposals/` | proposal-NNN | |
-| Report | `reports/` | report-NNN | |
-| Review | `reviews/` | review-NNN | |
-| Task | `tasks/` | task-NNN | Clarification IS NOT a separate kind — verified inline field on Task per `hub/src/entities/task-repository.ts` grep |
+| Task | `tasks/` | task-NNN | Clarification IS NOT a separate kind — inline `task.clarificationQuestion` field |
 | Tele | `tele/` | tele-NN | |
 | Thread | `threads/` | thread-NNN | |
 | Turn | `turns/` | turn-NNN | |
 | **SchemaDef** (NEW) | n/a (substrate-native) | kind name | Introduced by this mission; bootstrap-self-referential per §2.3 |
 
-**Kinds explicitly removed from prior provisional inventory** (Design v0.1 first-draft had these; verified to NOT be separate kinds at filesystem-grep time):
-- `Clarification` — only mentioned in `task-repository.ts`; inline field on Task entity, not separate kind
-- `ThreadMessage` — verified single `Message` kind exists; no separate ThreadMessage entity
+**Kinds explicitly removed from prior versions** (verified at W0.2 commit `7d2f34f` filesystem-grep + architect-side verification):
+- `Clarification` — inline `task.clarificationQuestion` field; no entity file (v0.2 catch)
+- `ThreadMessage` — single `Message` kind exists; no separate entity (v0.2 catch)
+- `DirectorNotification` (W0.2 catch) — fully migrated to Message `kind=note` via `hub/src/policy/director-notification-helpers.ts` per mission-56 W5; verified `hub/src/entities/counter.ts:51` ("Mission-56 W5: DirectorNotification entity removed"). UNLIKE Notification, mission-56 cleanup was actually complete. Architect's 49c08df §3.4 addition was WRONG.
+- `Report` (W0.2 catch) — inline field on task/bug (`task.reportRef` + bug fields); no IReportStore + no `report-repository.ts`
+- `Review` (W0.2 catch) — inline field on mission/proposal/message; no IReviewStore + no `review-repository.ts`
+- `ScheduledMessage` (W0.2 catch) — sweeper-internal type (`ScheduledMessageSweeperOptions` interface); sweeper reads from `IMessageStore.listMessages()` per `scheduled-message-sweeper.ts:118`; NO separate persisted store
+- `MessageProjection` (W0.2 catch) — sweeper-internal type (`MessageProjectionSweeperOptions` interface); sweeper reads from `IThreadStore.listThreads()` + `IMessageStore`; NO separate persisted store
+- `AgentSession` — architect spec-level invention; zero references in codebase
+- `Continuation` — state of pending-action queue-item (`continuation_required` status), not separate store
 
 #### §3.4.2 Substrate-internal indexes (NOT migrated as entities; replaced by per-kind expression indexes per §2.2)
 
@@ -424,24 +431,29 @@ Each currently persisted as `local-state/<dir>/<id>.json`; ID is the natural pri
 
 This is the DIY-secondary-index that bug-93 surfaced — it goes away structurally with substrate (the index is replaced by a postgres-native equivalent the query planner uses automatically).
 
-#### §3.4.3 Architect-context — OQ7 disposition LOCKED (3-kind decomposition)
+#### §3.4.3 Architect-context — OQ7 disposition LOCKED (4-kind decomposition; v1.1 update)
 
-`local-state/architect-context/` holds 3 append-only structured-log files: `decisions.json` / `director-history.json` / `review-history.json`.
+`local-state/architect-context/` holds **4 append-only structured-log files** (v1.0 inventory had 3; W1.1 architect-side verification surfaced ThreadHistoryEntry as 4th):
+- `decisions.json` — architect decisions log
+- `director-history.json` — director chat history
+- `review-history.json` — review assessments
+- **`thread-history.json`** (NEW FINDING per architect-side W1.1 verification) — archived thread summaries
 
-**OQ7 disposition (engineer-lean accepted; v0.2 LOCK):** decompose into 3 entity-kinds with new I*Stores added by this mission:
+Plus `wisdom/` subdirectory of static-asset markdown reference docs (ARCHITECTURE.md / architect-engineer-collaboration.md / workflow-specification.md / decisions/*.md) — see §3.4.4 out-of-substrate carve-out.
+
+**OQ7 disposition (engineer-lean accepted; v1.1 LOCK updated to 4-kind):** decompose into 4 entity-kinds with new I*Stores added by this mission:
 - `IArchitectDecisionStore` — `ArchitectDecision` entity per row
 - `IDirectorHistoryEntryStore` — `DirectorHistoryEntry` entity per row
 - `IReviewHistoryEntryStore` — `ReviewHistoryEntry` entity per row
+- **`IThreadHistoryEntryStore`** — `ThreadHistoryEntry` entity per row (NEW per v1.1)
 
-Each log-entry in the .json files becomes one entity-row. Append-only semantics preserved by handler-side discipline (no entity-mutation, only entity-add); reconciler-emitted index on `(kind, created_at)` for chronological ordering.
+Each log-entry in the .json files becomes one entity-row. Append-only semantics preserved by handler-side discipline (no entity-mutation, only entity-add); reconciler-emitted index on `(kind, created_at)` for chronological ordering; `(kind, threadId)` secondary index for ThreadHistoryEntry to support thread-keyed queries.
 
 **Rationale (per round-1 round-2 engineer-lean):**
 - On-brand with Survey outcome 1 (substrate-consolidation; "substrate IS the mission, nothing else"); file-based escape-hatch violates the discipline
 - Composes naturally with M-Hub-Storage-Audit-History follow-on (idea-296) — if architect-context is substrate-entities, history-queries become trivial postgres queries; if file-based, they need separate file-grep machinery indefinitely
-- Decomposition cost is bounded at design-time (3 new I*Store interfaces + reconciler emits indexes); implementation cost rolls into W2 SchemaDef + W4 repository-composition waves
+- Decomposition cost is bounded at design-time (4 new I*Store interfaces + reconciler emits indexes); implementation cost rolls into W2 SchemaDef + W4 repository-composition waves
 - Sub-tele-1 (state-transparency) at architect surface — `get-entities.sh ArchitectDecision --filter='mission=M-Hub-Storage-Substrate'` becomes queryable; today's `find docs/architect-context/ -path '*M-Hub-Storage*'` is fragile
-
-**Authoritative kind-count update (v0.2):** 11 existing I*Store + 1 NEW substrate-mediated (SchemaDef) + 1 W0-spike-validates (Document) + 1 re-introduced (Notification per §3.4.1) + 3 OQ7 decomposition = **17 kinds** total (modulo W0 spike auxiliary discovery).
 
 #### §3.4.4 Out-of-substrate (preserved as-is; NOT migrated)
 
@@ -452,13 +464,19 @@ These remain file-system-backed; substrate doesn't touch them:
 | `local-state/repo-event-bridge/cursor/ + dedupe/` | `repo-event-bridge` package state; uses `MemoryStorageProvider` per §5.2 keep-list |
 | `local-state/repo-event-bridge-workflow-runs/cursor/ + dedupe/` | Same |
 | `local-state/docs/` | Static markdown assets (NOT Hub-runtime-state; documentation files; git-tracked elsewhere) |
+| `local-state/architect-context/wisdom/` (NEW per v1.1) | Static-asset architect reference docs (ARCHITECTURE.md / architect-engineer-collaboration.md / workflow-specification.md / decisions/*.md). NOT entity-semantic state; pure markdown reference content. Architect-curated; consumed as docs, not as queryable entity-state. Stays file-based |
 
 #### §3.4.5 Migration script ENUM source-of-truth
 
-`hub/scripts/entity-kinds.json` (generated at W0 by filesystem-grep; checked into repo; used by migration script + Hub bootstrap reconciler-primer). Source-of-truth lineage:
-- Architect Design v0.1 declares the 18-kind inventory + 3-disposition-pending architect-context
-- W0 spike's filesystem-grep regenerates entity-kinds.json from current code; any architect-blind kind triggers Design v0.2 revision
+`hub/scripts/entity-kinds.json` (W0.2 commit `7d2f34f` regenerated by filesystem-grep; checked into repo; used by migration script + Hub bootstrap reconciler-primer).
+
+**Source-of-truth lineage:**
+- Design v0.1 declared a 17-kind provisional inventory (architect spec-level memory; multiple phantoms)
+- v0.2 corrected to 14-kind I*Store-anchored authoritative inventory (post round-1 audit C3)
+- v1.0 final-finalize adjusted to 12 substrate-mediated-today + 4-5 NEW (post round-2 cleanups)
+- **v1.1 W0.2 spike commit `7d2f34f` regenerated entity-kinds.json + surfaced 5 architect-blind-kind-corrections + 4 architect-validated kinds + 1 NEW finding (ThreadHistoryEntry); now LOCKED at 20 kinds**
 - Migration script reads entity-kinds.json at runtime; refuses to start if any kind in local-state has no entry (defends against silent-skip migration bug)
+- Future architect-blind kinds (if any surface at W4 repository refactor or W5 cutover) trigger Design v1.2 inventory-currency commit
 
 ### §3.5 Downtime budget + cutover orchestration (per engineer §A.4 + round-1 audit N3 reframe)
 
@@ -674,17 +692,19 @@ The round-1 audit thread carries:
 
 ## §11 Status
 
-- **v1.0 RATIFIED** — 2026-05-17 via thread-563 convergence; Phase 4 Design audit cycle closed
+- **v1.1 architect-direct cleanup** — 2026-05-17 (this commit); v1.0 RATIFIED on thread-563; v1.1 folds W0.2 substantive findings (5 architect-blind-kind-corrections + 4 W0-architect-validates + 1 NEW ThreadHistoryEntry + wisdom/ disposition)
 - **Branch:** `agent-lily/m-hub-storage-substrate`
 - **Commits:**
   - 8eed879 — Survey envelope (Phase 3)
   - d9fadf3 — Design v0.1 initial draft
-  - 49c08df — §3.4 inventory-verification + OQ7 addition (post-filesystem-grep architect-side verification)
-  - 037177a — Design v0.2 (round-1 audit fold-ins: C1 CAS primitives + C2 Option Y repository-composition + C3 I*Store-anchored inventory + M1-M4 + N1-N3 + B1-B4 + OQ8 Notification re-introduction)
-  - (pending this commit) — Design v1.0-finalize (3 round-2 cleanups: §3.4 inventory-count reconciliation + §11.2 engineer work-trace mention + IEngineerRegistry as 12th-mediated-kind)
-- **Audit threads (converged):**
-  - thread-562 — Phase 4 coord (4 fold-ins + AG-1 Director re-confirm)
-  - thread-563 — Phase 4 round-1 + round-2 audit (16 dispositions; ratified at v1.0)
+  - 49c08df — §3.4 inventory-verification + OQ7 addition (architect-side filesystem-grep)
+  - 037177a — Design v0.2 (round-1 audit fold-ins: C1 CAS + C2 Option Y + C3 I*Store anchor + M1-M4 + N1-N3 + B1-B4 + OQ8)
+  - b0c6a02 — Design v1.0-finalize (3 round-2 cleanups: inventory-count + work-trace + IEngineerRegistry)
+  - 69e2561 — Phase 6 preflight artifact (GREEN verdict)
+  - (pending this commit) — Design v1.1 inventory-currency (W0.2 spike substantive findings: 20-kind LOCKED inventory; DirectorNotification/Report/Review/ScheduledMessage/MessageProjection removed; OQ7 expanded to 4-kind; wisdom/ added to §3.4.4)
+- **Threads:** thread-562 (coord; converged) / thread-563 (Phase 4 audit; converged); thread-564 (Phase 5 notification; converged); thread-565 (task-413 notification; converged); thread-566 (ongoing W0-W7 coordination; active)
+- **Mission entity:** mission-83 (active; Phase 6 preflight GREEN; W0 in progress)
+- **Hub-defect bug:** bug-94 (major; dispatch-gap class; tracks the create_task assignedEngineerId-null orphan defect)
 - **Follow-on ideas filed** (per F4 PROBE; de-risks mission-close-forget): idea-295 M-Hub-Storage-ResourceVersion, idea-296 M-Hub-Storage-Audit-History, idea-297 M-Hub-Storage-FK-Enforcement, idea-298 M-Hub-Storage-Cloud-Deploy
 
 ### §11.1 v1.0 ratify-criterion (per round-1 audit B4 fold-in)
