@@ -46,8 +46,9 @@ function generateSyntheticState(root: string): void {
   fs.mkdirSync(root, { recursive: true });
 
   // 12 existing-substrate-mediated kinds — per-kind directory + JSON files
+  // W5.4-fix: Agent dir corrected to "agents" (was "engineers" per stale entity-kinds.json)
   const kindDirs: [string, string, number][] = [
-    ["Agent", "engineers", 3],
+    ["Agent", "agents", 3],
     ["Audit", "audit/v2", 5],
     ["Bug", "bugs", 4],
     ["Idea", "ideas", 6],
@@ -75,6 +76,36 @@ function generateSyntheticState(root: string): void {
         updatedAt: new Date().toISOString(),
       };
       fs.writeFileSync(path.join(kindRoot, `${id}.json`), JSON.stringify(entity, null, 2));
+    }
+  }
+
+  // W5.4-fix regression coverage — Agent by-fingerprint mirror subdir + Thread
+  // per-message subdirs would have caused PK conflicts under recursive walk in
+  // pre-W5.4-fix version. Synthesize these to lock the fix in.
+  const agentFpDir = path.join(root, "agents", "by-fingerprint");
+  fs.mkdirSync(agentFpDir, { recursive: true });
+  for (let i = 1; i <= 3; i++) {
+    // by-fingerprint mirror file (same id as canonical agent-i entry)
+    fs.writeFileSync(path.join(agentFpDir, `fp-${i}.json`), JSON.stringify({
+      id: `agent-${i}`,  // would dup-conflict with top-level agent-i if recursive scan
+      fingerprint: `fp-${i}`,
+    }, null, 2));
+  }
+
+  // Thread per-message subdirs (3 of 5 threads get message-history)
+  for (let i = 1; i <= 3; i++) {
+    const msgDir = path.join(root, "threads", `thread-${i}`, "messages");
+    fs.mkdirSync(msgDir, { recursive: true });
+    for (let seq = 1; seq <= 4; seq++) {
+      fs.writeFileSync(path.join(msgDir, `${seq}.json`), JSON.stringify({
+        author: seq % 2 === 0 ? "architect" : "engineer",
+        authorAgentId: `agent-${seq % 3 + 1}`,
+        text: `Message body ${seq} on thread-${i}`,
+        timestamp: new Date(Date.now() + seq * 1000).toISOString(),
+        converged: false,
+        intent: null,
+        semanticIntent: null,
+      }, null, 2));
     }
   }
 
@@ -121,14 +152,15 @@ function generateSyntheticState(root: string): void {
 
 function countFsEntities(root: string): number {
   let count = 0;
-  // per-kind directory scan
-  const dirs = ["engineers", "audit/v2", "bugs", "ideas", "messages", "missions",
+  // per-kind directory scan (top-level only per W5.4-fix; matches dirScanner behavior)
+  const dirs = ["agents", "audit/v2", "bugs", "ideas", "messages", "missions",
                 "pending-actions", "proposals", "tasks", "tele", "threads", "turns",
                 "notifications"];
   for (const d of dirs) {
     const dir = path.join(root, d);
     if (!fs.existsSync(dir)) continue;
-    count += fs.readdirSync(dir).filter(f => f.endsWith(".json")).length;
+    count += fs.readdirSync(dir, { withFileTypes: true })
+      .filter(e => e.isFile() && e.name.endsWith(".json")).length;
   }
   // Counter + documents + architect-context
   count += 1;  // counter
@@ -223,9 +255,26 @@ describe("W5.4-plumbing — migrate-fs-to-substrate.ts end-to-end", () => {
         `SELECT COUNT(*) AS count FROM entities WHERE kind != 'SchemaDef'`
       )).rows[0].count, 10);
       expect(dbCount).toBe(fsCount);
+
+      // W5.4-fix regression: Agent count = top-level only (by-fingerprint EXCLUDED)
+      const { rows: agentRows } = await pool.query<{ count: string }>(
+        "SELECT COUNT(*) AS count FROM entities WHERE kind = 'Agent'"
+      );
+      expect(parseInt(agentRows[0].count, 10), "Agent count = 3 (top-level only)").toBe(3);
     } finally {
       await pool.end();
     }
+
+    // W5.4-fix regression: Thread inline-messages assembly populates messages[]
+    // from per-message subdirs (W4.x.10 inline-messages disposition).
+    const thread1 = await substrate.get<{ id: string; messages: unknown[] }>("Thread", "thread-1");
+    expect(thread1, "thread-1 migrated").not.toBeNull();
+    expect(thread1!.messages, "thread-1 has inline messages[]").toBeDefined();
+    expect(thread1!.messages.length, "thread-1 messages[] = 4 from per-message subdir").toBe(4);
+
+    const thread4 = await substrate.get<{ id: string; messages: unknown[] }>("Thread", "thread-4");
+    expect(thread4, "thread-4 migrated (no message subdir)").not.toBeNull();
+    expect(thread4!.messages, "thread-4 messages[] = empty (no per-message subdir)").toEqual([]);
   }, 120_000);
 
   it("idempotency — re-running migration leaves DB consistent", async () => {

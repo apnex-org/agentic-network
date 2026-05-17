@@ -130,7 +130,11 @@ type KindScanner = (sourceRoot: string) => Promise<KindEntry[]>;
 
 const KIND_SCANNERS: Record<string, KindScanner> = {
   // ── Per-kind directory scan (12 existing-substrate-mediated) ────────────
-  Agent: dirScanner("Agent", "engineers"),
+  // W5.4-fix: dirScanner is TOP-LEVEL-ONLY (recursive walk-into-subdirs caused
+  // PK conflicts on real state: Agent has agents/by-fingerprint/ mirror subdir;
+  // Thread has threads/<id>/messages/ subdirs. Both produce duplicate entries
+  // under recursive walk.)
+  Agent: dirScanner("Agent", "agents"),  // W5.4-fix: was 'engineers' per stale entity-kinds.json; actual prefix is 'agents/' per agent-repository.ts:79
   Audit: dirScanner("Audit", "audit/v2"),
   Bug: dirScanner("Bug", "bugs"),
   Idea: dirScanner("Idea", "ideas"),
@@ -140,7 +144,10 @@ const KIND_SCANNERS: Record<string, KindScanner> = {
   Proposal: dirScanner("Proposal", "proposals"),
   Task: dirScanner("Task", "tasks"),
   Tele: dirScanner("Tele", "tele"),
-  Thread: dirScanner("Thread", "threads"),
+  // W5.4-fix: custom Thread scanner — reads scalar at threads/<id>.json + assembles
+  // inline messages[] from threads/<id>/messages/*.json per W4.x.10 ThreadRepository-
+  // Substrate inline-messages disposition (replaces FS dual-namespace pattern).
+  Thread: threadScanner,
   Turn: dirScanner("Turn", "turns"),
 
   // ── Counter (special-case single-file) ────────────────────────────────
@@ -227,7 +234,13 @@ function dirScanner(kind: string, dirSuffix: string): KindScanner {
     const kindDir = path.join(sourceRoot, dirSuffix);
     if (!fs.existsSync(kindDir)) return [];
     const out: KindEntry[] = [];
-    walkJsonFiles(kindDir).forEach((fpath) => {
+    // W5.4-fix: TOP-LEVEL ONLY (non-recursive). Recursive walk caused PK conflicts
+    // on real state (Agent by-fingerprint mirror; Thread per-message subdirs).
+    // Sub-directory entities require explicit custom scanner (see threadScanner).
+    const files = fs.readdirSync(kindDir, { withFileTypes: true })
+      .filter(e => e.isFile() && e.name.endsWith(".json"))
+      .map(e => path.join(kindDir, e.name));
+    for (const fpath of files) {
       try {
         const json = fs.readFileSync(fpath, "utf-8");
         const entity = JSON.parse(json);
@@ -242,9 +255,69 @@ function dirScanner(kind: string, dirSuffix: string): KindScanner {
       } catch (err) {
         console.warn(`[scan] ${kind}: skipped malformed ${fpath}: ${(err as Error).message}`);
       }
-    });
+    }
     return out;
   };
+}
+
+/**
+ * W5.4-fix custom Thread scanner: reads scalar at threads/<id>.json + assembles
+ * inline messages[] from threads/<id>/messages/<seq>.json files. Per W4.x.10
+ * ThreadRepositorySubstrate disposition: substrate Thread embeds messages[] inline
+ * (FS dual-namespace pattern DROPPED in substrate-version). Migration must
+ * assemble inline-shape to preserve thread-message history.
+ */
+async function threadScanner(sourceRoot: string): Promise<KindEntry[]> {
+  const threadsDir = path.join(sourceRoot, "threads");
+  if (!fs.existsSync(threadsDir)) return [];
+  const out: KindEntry[] = [];
+
+  // Top-level *.json files = Thread scalars
+  const scalarFiles = fs.readdirSync(threadsDir, { withFileTypes: true })
+    .filter(e => e.isFile() && e.name.endsWith(".json"))
+    .map(e => e.name);
+
+  for (const file of scalarFiles) {
+    const fpath = path.join(threadsDir, file);
+    try {
+      const json = fs.readFileSync(fpath, "utf-8");
+      const scalar = JSON.parse(json);
+      const id = scalar.id || file.replace(/\.json$/, "");
+
+      // Assemble inline messages[] from threads/<id>/messages/<seq>.json
+      const messagesDir = path.join(threadsDir, id, "messages");
+      const messages: unknown[] = [];
+      if (fs.existsSync(messagesDir)) {
+        const seqFiles = fs.readdirSync(messagesDir)
+          .filter(f => f.endsWith(".json"))
+          .map(f => ({ name: f, seq: Number(f.replace(/\.json$/, "")) }))
+          .filter(e => Number.isFinite(e.seq))
+          .sort((a, b) => a.seq - b.seq);  // numeric seq sort
+        for (const { name } of seqFiles) {
+          try {
+            const msgJson = fs.readFileSync(path.join(messagesDir, name), "utf-8");
+            const msg = JSON.parse(msgJson);
+            messages.push(msg);
+          } catch (err) {
+            console.warn(`[scan] Thread: skipped malformed message ${id}/${name}: ${(err as Error).message}`);
+          }
+        }
+      }
+
+      // Substrate Thread shape (per W4.x.10): scalar + messages[] inline
+      const entity = { ...scalar, messages };
+      out.push({
+        kind: "Thread",
+        id,
+        data: entity,
+        createdAt: scalar.createdAt,
+        updatedAt: scalar.updatedAt,
+      });
+    } catch (err) {
+      console.warn(`[scan] Thread: skipped malformed scalar ${file}: ${(err as Error).message}`);
+    }
+  }
+  return out;
 }
 
 function arrayDecompositionScanner(
