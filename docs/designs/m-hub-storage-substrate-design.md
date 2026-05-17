@@ -1,6 +1,6 @@
-# M-Hub-Storage-Substrate — Design v1.1 (inventory-currency cleanup post W0.2 spike findings)
+# M-Hub-Storage-Substrate — Design v1.2 (W1.3 ChangeEvent race clarification + W1.5 R9 closure)
 
-**Status:** v1.1 architect-direct cleanup 2026-05-17 (v1.0 RATIFIED per thread-563; v1.1 incorporates W0.2 substantive findings — 5 architect-blind-kind-corrections + 4 architect-validates + 1 NEW finding ThreadHistoryEntry + wisdom/ disposition; engineer-lean disposition (a) fold-as-v1.1-cleanup accepted; v1.0 ratify-criterion still met — inventory-corrections are MINOR architect-judgment, not CRITICAL changes requiring re-audit)
+**Status:** v1.2 architect-direct fold-in 2026-05-17 (v1.0 RATIFIED per thread-563; v1.1 inventory-currency cleanup post W0.2; v1.2 folds W1.3 watch-race-disposition + W1.5 R9 measurement closure — both engineer-judgment-driven; no design-shape revision required, only spec-text clarifications; v1.0 ratify-criterion still met)
 **Source idea:** idea-294
 **Survey envelope:** `docs/surveys/m-hub-storage-substrate-survey.md` (Director-ratified 2026-05-16)
 **Phase 4 coord thread:** thread-562 (converged 2026-05-17; 4 fold-ins from engineer pre-audit + AG-1 Director re-confirm)
@@ -109,6 +109,7 @@ type ChangeEvent<T> = {
 - `resourceVersion` is dual-purpose: (1) opaque monotonic ordering token for watch-stream replay-from-position; (2) **CAS token for `putIfMatch`** (per C1 fold-in). It is NOT k8s-style entity-versioning-as-API-field (that remains AG-1 / M-Hub-Storage-ResourceVersion idea-295 territory) — the CAS use here is the substrate-level race-protection equivalent to mission-47 `StorageProvider` v1.0 contract (`createOnly` + `putIfMatch`).
 - `list()` returns `{ items, snapshotRevision }` — the snapshotRevision is the consistent point-in-time the list-result represents; subsequent `watch({ sinceRevision: snapshotRevision })` is gap-free (no missed events during the list-call window). This is the **list-then-watch primitive** that k8s informers depend on (round-1 audit OQ5 caveat addressed).
 - `watch()` returns `AsyncIterable` so handlers consume with `for-await-of`; substrate handles connection lifecycle + reconnect + resume-from-revision on transient failures.
+- **`ChangeEvent.entity` race semantics (v1.2 clarification per W1.3 caveat #3 engineer-judgment):** Within a `put` event, `entity` MAY be `undefined` if the post-NOTIFY fetch races a concurrent delete (window between substrate's NOTIFY emit + pool-get implementation). Consumers MUST treat `entity: undefined` on a `put` event as a stale-event signal — the entity may or may not exist at consume-time; the substrate guarantees a subsequent `delete` ChangeEvent for the same `(kind, id)` will arrive via the same iterator. Consumer-side dedup via `(kind, id, resourceVersion)` is straightforward. Defensive-consumer pattern aligns with k8s informer; substrate stays primitive + composable.
 - API verb/envelope-design (e.g., MCP tool surface) explicitly out-of-scope per AG-5 (deferred to idea-121 API v2.0).
 
 ### §2.2 Storage layout — single entities table + JSONB + per-kind expression indexes (Flavor A)
@@ -629,7 +630,7 @@ Explicitly out-of-scope for this mission. Director re-confirmed Q5=d 2026-05-17 
 | R6 | postgres-container resource exhaustion on local-dev (long-running session; many test-runs) | Local-dev compose-file specifies memory + connection limits; documented in operator-DX cookbook |
 | R7 | Migration downtime > 60s target → Phase 6 preflight fails | Bulk insert via `COPY` (postgres-native; 10-100× faster than parallel INSERTs); per-kind atomic load enables `--resume-from=<kind>` recovery; if scale outgrows <60s budget, follow-on optimization (parallel per-kind COPY) |
 | R8 | repo-event-bridge MemoryStorageProvider divergence after W6 shrink | W6 acceptance gate runs `repo-event-bridge` tests; CI workflow includes cross-package test orchestration |
-| R9 (NEW per round-1 audit B2) | LISTEN/NOTIFY per-write tax at scale (write-amplification on every entity-write) | W1 substrate-shell load-test measures write-amplification at 1k+ writes/sec; if measurable degradation at ≥10k writes/sec, switch to logical-replication; current scale (~10k entities, ~10s of writes/sec) is well under threshold |
+| R9 (NEW per round-1 audit B2; **CLOSED v1.2 per W1.5 measurement**) | LISTEN/NOTIFY per-write tax at scale (write-amplification on every entity-write) | W1.5 measurement (commit `bd18e61` 2026-05-17): **541 writes/sec sustained × 60s with 0.00% dropped-event rate; p99 latency 181.59ms; postgres CPU 1.8% avg / 3.78% max.** ~18x headroom against ≥10k mitigation threshold. LISTEN/NOTIFY substrate-watch primitive **confirmed adequate at current Hub-scale**; no design-shape revision required. Tail-latency note: 1668ms p-max observed (bursty pacing + postgres GC); acceptable for current-scale substrate-watch consumers (sweepers + handlers tolerate seconds-class backfill per OQ5); worth flagging for any future hard-RT-class consumer (none in mission-83 scope). |
 | R10 (NEW per round-1 audit B3) | Local-dev state-loss on `docker compose down` (data volume lost without `--volumes` flag context) | EXPLICIT-PICK: local-dev state is ephemeral by design; snapshot-restore (per §2.5 + `hub-snapshot.sh`) is the persistence story for dev. Operator-DX doc warns: "treat local-dev postgres-container as ephemeral; use `hub-snapshot.sh` if you need persistence across container teardown" |
 
 ### §7.2 Open questions for engineer round-1 audit
@@ -692,7 +693,8 @@ The round-1 audit thread carries:
 
 ## §11 Status
 
-- **v1.1 architect-direct cleanup** — 2026-05-17 (this commit); v1.0 RATIFIED on thread-563; v1.1 folds W0.2 substantive findings (5 architect-blind-kind-corrections + 4 W0-architect-validates + 1 NEW ThreadHistoryEntry + wisdom/ disposition)
+- **v1.2 architect-direct fold-in** — 2026-05-17 (this commit); folds W1.3 watch-race-disposition (§2.1 ChangeEvent clarification) + W1.5 R9 closure (§7.1 R9 row updated; LISTEN/NOTIFY confirmed adequate at current Hub-scale; 541 writes/sec sustained with 0.00% dropped events). Both engineer-judgment-driven; no design-shape revision. v1.0 ratify-criterion still met
+- **v1.1 architect-direct cleanup** — 2026-05-17 (commit `11ce0ba`); v1.0 RATIFIED on thread-563; v1.1 folds W0.2 substantive findings (5 architect-blind-kind-corrections + 4 W0-architect-validates + 1 NEW ThreadHistoryEntry + wisdom/ disposition)
 - **Branch:** `agent-lily/m-hub-storage-substrate`
 - **Commits:**
   - 8eed879 — Survey envelope (Phase 3)
