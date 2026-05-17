@@ -1,10 +1,10 @@
 {
-  "$schema-version": "1.0",
+  "$schema-version": "1.1",
   "$generated": "2026-05-17",
-  "$generation-source": "W0 spike filesystem-grep at HEAD a940a38 (origin/main) — per Design v1.0 §3.4.5",
+  "$generation-source": "W0.2 spike filesystem-grep at HEAD a940a38 (origin/main); v1.1 update folds in architect-side W1.1 verification per Design v1.1 commit 11ce0ba (architect-VERIFIED 4 W0-validates kinds + 1 NEW finding ThreadHistoryEntry + wisdom/ static-asset carve-out)",
   "$mission": "mission-83",
-  "$design-ref": "docs/designs/m-hub-storage-substrate-design.md (commit b0c6a02; v1.0 RATIFIED)",
-  "$notes": "Authoritative enumeration of substrate-mediated kinds for W0 spike. Source-of-truth lineage: (1) architect Design v1.0 inventory; (2) engineer W0 filesystem-grep regenerates this file from current code; (3) migration script reads this at runtime + refuses-to-start if any kind in local-state has no entry. Drift between this file and filesystem-grep is a substrate-currency defect; CI drift-check at OQ3 disposition.",
+  "$design-ref": "docs/designs/m-hub-storage-substrate-design.md (commit 11ce0ba; v1.1 inventory-currency cleanup; v1.0 RATIFIED at b0c6a02 per thread-563)",
+  "$notes": "Authoritative enumeration of substrate-mediated kinds for W0 spike. Source-of-truth lineage: (1) architect Design v1.0 inventory; (2) engineer W0 filesystem-grep regenerates this file from current code; (3) architect W1.1 state-tree inspection verifies + augments local-state-only kinds; (4) migration script reads this at runtime + refuses-to-start if any kind in local-state has no entry. Drift between this file and filesystem-grep is a substrate-currency defect; CI drift-check at OQ3 disposition. v1.1 inventory LOCKED at 20 kinds per Design v1.1 §3.4.",
 
   "kinds": [
     {
@@ -147,37 +147,51 @@
       "persistence-prefix": "notifications/",
       "id-pattern": "notif-N",
       "notes": "Mission-56 W5 REMOVED INotificationStore abstraction; but notifications/notif-N.json persistence STILL HAPPENS via direct file-writes from hub/src/hub-networking.ts:431,465,504,735 (NO I*Store mediation today). OQ8 disposition: re-introduce INotificationStore + NotificationRepository as part of this mission; closes mission-56 partial-completion; preserves Option Y discipline. Saga-substrate-completion characteristic strengthened. Verified via state.ts:1015-1018 + 1579-1583 historical comments + hub-networking.ts direct-write sites."
-    }
-  ],
-
-  "kinds-w0-architect-validates": [
+    },
     {
       "name": "Document",
-      "mediation": "IDocumentStore (W0-validates; if entity-semantic, NEW per mission-83)",
-      "putative-persistence-prefix": "documents/<category>/<name>.md",
-      "engineer-validation-status": "BLOCKED — engineer's local-state/ is empty in this working copy; cannot W0-validate from engineer-side. Architect to validate from their working tree state.",
-      "notes": "Per architect Design §3.4.1: 'markdown body content in data.content; metadata in data.category etc.; well within 1.5MB cap'. If validation confirms entity-semantic-state (vs static-asset), gets new IDocumentStore in v1 substrate (Option Y composition). Otherwise stays out-of-substrate per §3.4.4 static-asset carve-out."
+      "mediation": "IDocumentStore (NEW per mission-83; architect-VERIFIED at W1.1)",
+      "interface-file": "(NEW — hub/src/entities/document.ts at W2/W4)",
+      "repository-file": "(NEW — hub/src/entities/document-repository.ts at W4)",
+      "persistence-prefix": "documents/<category>/",
+      "id-pattern": "(name-derived from <name>.md)",
+      "notes": "Architect W1.1 inspection VERIFIED: real markdown files at documents/{architecture,planning,specs}/*.md (teles.md / policy-network-v1.md / amp-redesign-handoff.md / etc.). Entity-semantic content (markdown body in data.content; metadata in data.category etc.); NOT static asset. Well within 1.5MB cap. Per Option Y composition: new IDocumentStore in v1 substrate. Note: distinguish from `local-state/architect-context/wisdom/` markdown reference docs which ARE static-asset carve-out (per §3.4.4 v1.1 4th out-of-substrate location)."
     },
     {
       "name": "ArchitectDecision",
-      "mediation": "IArchitectDecisionStore (W0-validates; OQ7 3-kind decomposition; NEW per mission-83)",
-      "putative-persistence-prefix": "(today: local-state/architect-context/decisions.json — append-only structured log)",
-      "engineer-validation-status": "BLOCKED — engineer's local-state/ is empty; cannot W0-validate from engineer-side. Architect to validate from their working tree state.",
-      "notes": "Per OQ7 disposition (LOCKED at Design v0.2 §3.4.3): each log-entry becomes one entity-row; append-only semantics preserved by handler-side discipline (no entity-mutation, only entity-add); reconciler-emitted index on (kind, created_at) for chronological ordering."
+      "mediation": "IArchitectDecisionStore (NEW per mission-83 OQ7 decomposition; architect-VERIFIED at W1.1)",
+      "interface-file": "(NEW — hub/src/entities/architect-decision.ts at W2/W4)",
+      "repository-file": "(NEW — hub/src/entities/architect-decision-repository.ts at W4)",
+      "persistence-prefix": "(today: local-state/architect-context/decisions.json; substrate: data.decision + data.context + data.timestamp per row)",
+      "id-pattern": "(timestamp-derived OR architect-assigned)",
+      "notes": "Architect W1.1 inspection VERIFIED: decisions.json contains list of {decision, context, timestamp} entries. Per OQ7 disposition (LOCKED at Design v0.2 §3.4.3; ACTIVATED at v1.1 architect-verify): each log-entry becomes one entity-row; append-only semantics preserved by handler-side discipline (no entity-mutation, only entity-add); reconciler-emitted index on (kind, created_at) for chronological ordering."
     },
     {
       "name": "DirectorHistoryEntry",
-      "mediation": "IDirectorHistoryEntryStore (W0-validates; OQ7 3-kind decomposition; NEW per mission-83)",
-      "putative-persistence-prefix": "(today: local-state/architect-context/director-history.json — append-only structured log)",
-      "engineer-validation-status": "BLOCKED — engineer's local-state/ is empty; cannot W0-validate from engineer-side. Architect to validate from their working tree state.",
-      "notes": "Per OQ7 disposition (LOCKED at Design v0.2 §3.4.3)"
+      "mediation": "IDirectorHistoryEntryStore (NEW per mission-83 OQ7 decomposition; architect-VERIFIED at W1.1)",
+      "interface-file": "(NEW — hub/src/entities/director-history-entry.ts at W2/W4)",
+      "repository-file": "(NEW — hub/src/entities/director-history-entry-repository.ts at W4)",
+      "persistence-prefix": "(today: local-state/architect-context/director-history.json; substrate: data.role + data.text + ... per row)",
+      "id-pattern": "(timestamp-derived OR sequence-allocated)",
+      "notes": "Architect W1.1 inspection VERIFIED: director-history.json contains list of {role, text, ...} entries (director chat archive). Per OQ7 disposition LOCKED-ACTIVATED."
     },
     {
       "name": "ReviewHistoryEntry",
-      "mediation": "IReviewHistoryEntryStore (W0-validates; OQ7 3-kind decomposition; NEW per mission-83)",
-      "putative-persistence-prefix": "(today: local-state/architect-context/review-history.json — append-only structured log)",
-      "engineer-validation-status": "BLOCKED — engineer's local-state/ is empty; cannot W0-validate from engineer-side. Architect to validate from their working tree state.",
-      "notes": "Per OQ7 disposition (LOCKED at Design v0.2 §3.4.3)"
+      "mediation": "IReviewHistoryEntryStore (NEW per mission-83 OQ7 decomposition; architect-VERIFIED at W1.1)",
+      "interface-file": "(NEW — hub/src/entities/review-history-entry.ts at W2/W4)",
+      "repository-file": "(NEW — hub/src/entities/review-history-entry-repository.ts at W4)",
+      "persistence-prefix": "(today: local-state/architect-context/review-history.json; substrate: data.taskId + data.assessment + ... per row)",
+      "id-pattern": "(taskId-correlated)",
+      "notes": "Architect W1.1 inspection VERIFIED: review-history.json contains list of {taskId, assessment, ...} entries. Per OQ7 disposition LOCKED-ACTIVATED."
+    },
+    {
+      "name": "ThreadHistoryEntry",
+      "mediation": "IThreadHistoryEntryStore (NEW per mission-83 OQ7 EXPANDED 4-kind decomposition; architect W1.1 NEW FINDING)",
+      "interface-file": "(NEW — hub/src/entities/thread-history-entry.ts at W2/W4)",
+      "repository-file": "(NEW — hub/src/entities/thread-history-entry-repository.ts at W4)",
+      "persistence-prefix": "(today: local-state/architect-context/thread-history.json; substrate: data.threadId + data.title + data.outcome + data.timestamp per row)",
+      "id-pattern": "(threadId-correlated)",
+      "notes": "NEW FINDING surfaced at W1.1 architect-side state-tree inspection — NOT in v1.0 inventory. thread-history.json contains archived thread summaries ({threadId, title, outcome, timestamp} entries). Per OQ7 EXPANDED from 3-kind → 4-kind decomposition in v1.1; gets new IThreadHistoryEntryStore per Option Y composition. Bilateral discovery cycle: engineer W0.2 surfaced architect-blind-kind-corrections (5 phantoms); architect W1.1 surfaced engineer-blind-kind addition (1 NEW). Symmetric substrate-currency-discipline application."
     }
   ],
 
@@ -245,17 +259,31 @@
   ],
 
   "summary": {
-    "substrate-mediated-kinds-confirmed": 13,
+    "substrate-mediated-kinds-confirmed-existing": 13,
     "substrate-mediated-kinds-new-this-mission": 2,
-    "substrate-mediated-kinds-w0-architect-validates": 4,
-    "substrate-mediated-kinds-total-target": 19,
-    "architect-blind-kind-corrections": [
-      "DirectorNotification — REMOVE (fully migrated to Message store; not separate)",
-      "Report — REMOVE (inline field on task/bug)",
-      "Review — REMOVE (inline field on mission/proposal/message)",
-      "ScheduledMessage — REMOVE (sweeper-internal type)",
-      "MessageProjection — REMOVE (sweeper-internal type)"
+    "substrate-mediated-kinds-w0-architect-verified": 5,
+    "substrate-mediated-kinds-total-locked": 20,
+    "architect-blind-kind-corrections-accepted-v1.1": [
+      "DirectorNotification — REMOVED (fully migrated to Message kind=note; mission-56 W5 cleanup actually complete; Message table-row updated to note DN migrates HERE via kind=note)",
+      "Report — REMOVED (inline task.reportRef field)",
+      "Review — REMOVED (inline field on mission/proposal/message)",
+      "ScheduledMessage — REMOVED (sweeper-internal type; sweeper reads from IMessageStore)",
+      "MessageProjection — REMOVED (sweeper-internal type; sweeper reads from IThreadStore + IMessageStore)"
     ],
-    "design-v1.1-trigger": "5 architect-blind-kind-corrections discovered per Design §3.4 'architect-blind kind discovery triggers Design v1.1 if any'. Architect-judgment whether to fold these as inventory-cleanup in v1.1 OR roll forward into W2 reconciler-spec where the corrections naturally surface (SchemaDef entries are authored per actual kind; phantoms get no SchemaDef and silently disappear)."
+    "architect-w1.1-verified-kinds": [
+      "Document — VERIFIED entity-semantic (documents/{architecture,planning,specs}/*.md real markdown content; new IDocumentStore)",
+      "ArchitectDecision — VERIFIED (decisions.json structured log; new IArchitectDecisionStore)",
+      "DirectorHistoryEntry — VERIFIED (director-history.json structured log; new IDirectorHistoryEntryStore)",
+      "ReviewHistoryEntry — VERIFIED (review-history.json structured log; new IReviewHistoryEntryStore)",
+      "ThreadHistoryEntry — VERIFIED + NEW FINDING (thread-history.json NOT in v1.0 inventory; OQ7 expanded 3-kind → 4-kind decomposition; new IThreadHistoryEntryStore)"
+    ],
+    "out-of-substrate-carve-outs-v1.1": [
+      "packages/repo-event-bridge state (uses MemoryStorageProvider per §5.2 keep-list)",
+      "packages/repo-event-bridge-workflow-runs state (same)",
+      "docs/ static markdown assets (NOT Hub-runtime-state)",
+      "local-state/architect-context/wisdom/ static markdown reference docs (4th carve-out — NEW per v1.1 per architect W1.1 inspection; ARCHITECTURE.md + architect-engineer-collaboration.md + workflow-specification.md + decisions/*.md numbered ADRs; pure reference content)"
+    ],
+    "bilateral-substrate-currency-discipline": "Symmetric application — engineer W0.2 surfaced 5 architect-blind-kind-corrections (phantom removal); architect W1.1 surfaced 1 NEW engineer-blind-kind (ThreadHistoryEntry addition) + verified 4 OQ7-decomposition kinds. Substrate-currency-audit-rubric per `feedback_substrate_currency_audit_rubric.md` applies to BOTH spec-authoring AND state-tree-inspection paths.",
+    "design-v1.1-status": "RATIFIED at commit 11ce0ba (architect-direct cleanup post-W0.2 spike findings; v1.0 ratify-criterion still met — inventory-corrections are MINOR architect-judgment per `mission-lifecycle.md` Phase 4 convergence-criterion). 20-kind inventory LOCKED."
   }
 }
