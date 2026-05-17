@@ -332,22 +332,73 @@ Justification (per engineer's lean): cutover happens with Hub stopped (no concur
 
 ### §3.4 Entity-coverage matrix via filesystem-grep (per engineer §A.3)
 
-**At Design v1.0 (post-round-1 audit), W0 spike output includes:** the full enumeration of entity kinds + auxiliary stores via `find hub/src/entities/ -type f -name '*.ts'` + `grep -rn 'StorageProvider' hub/src/handlers/ hub/src/sweepers/` to ensure coverage matrix is grounded in current code, not architect spec-level memory.
+**Inventory verified at Design v0.1 time** (2026-05-17; via `ls local-state/` + `grep -rln` against `hub/src/entities/`; spec-level memory-recall demoted to filesystem-verified). W0 spike re-verifies + may surface additional auxiliary stores the architect grep missed.
 
-**Provisional inventory (pre-W0 spike; architect spec-level read; to be re-confirmed via filesystem-grep at W0):**
+#### §3.4.1 Primary entities (migrate as rows in `entities` table)
 
-Primary entities (in `hub/src/entities/`):
-- Agent, Audit, Bug, Clarification, Counter, Document, Idea, Mission, Proposal, Report, Review, SchemaDef (NEW; introduced by this mission), Task, Tele, Thread, ThreadMessage, Turn
+Each currently persisted as `local-state/<dir>/<id>.json`; ID is the natural primary key. 18 kinds total:
 
-Handler-owned auxiliary stores (NOT in `entities/` but ARE persisted state):
-- ScheduledMessage (sweeper-owned; persisted at `.ois/state/scheduled-messages/`)
-- PendingAction (handler-owned; persisted at `.ois/state/pending-actions/`)
-- Continuation (handler-owned; persisted at `.ois/state/continuations/`)
-- MessageProjection (sweeper-owned; persisted at `.ois/state/message-projections/`)
-- AgentSession (agent-handler-owned; persisted at `.ois/state/agent-sessions/`)
-- (Others — W0 spike's filesystem-grep is authoritative)
+| Kind | local-state dir | ID-shape | Notes |
+|---|---|---|---|
+| Agent | `agents/` | agent-XXXXXXXX | |
+| Audit | `audit/` | audit-NNN | |
+| Bug | `bugs/` | bug-NN | |
+| Counter | `meta/counter.json` | (single-row) | One file per counter-domain; migrate as one row per counter |
+| DirectorNotification | `director-notifications/` | dn-YYYY-MM-DD-NNN | |
+| Document | `documents/<category>/<name>.md` | derived | **Markdown body content** in `data.content`; metadata in `data.category` etc.; well within 1.5MB cap |
+| Idea | `ideas/` | idea-NNN | |
+| Message | `messages/` | ULID | |
+| Mission | `missions/` | mission-NN | |
+| Notification | `notifications/` | notif-NNNNNNNN | |
+| PendingAction | `pending-actions/` | (handler-assigned) | |
+| Proposal | `proposals/` | proposal-NNN | |
+| Report | `reports/` | report-NNN | |
+| Review | `reviews/` | review-NNN | |
+| Task | `tasks/` | task-NNN | Clarification IS NOT a separate kind — verified inline field on Task per `hub/src/entities/task-repository.ts` grep |
+| Tele | `tele/` | tele-NN | |
+| Thread | `threads/` | thread-NNN | |
+| Turn | `turns/` | turn-NNN | |
+| **SchemaDef** (NEW) | n/a (substrate-native) | kind name | Introduced by this mission; bootstrap-self-referential per §2.3 |
 
-**Migration script ENUM source-of-truth:** `hub/scripts/entity-kinds.json` (generated at W0 by grep-from-filesystem; checked into repo; used by migration script + Hub bootstrap reconciler-primer)
+**Kinds explicitly removed from prior provisional inventory** (Design v0.1 first-draft had these; verified to NOT be separate kinds at filesystem-grep time):
+- `Clarification` — only mentioned in `task-repository.ts`; inline field on Task entity, not separate kind
+- `ThreadMessage` — verified single `Message` kind exists; no separate ThreadMessage entity
+
+#### §3.4.2 Substrate-internal indexes (NOT migrated as entities; replaced by per-kind expression indexes per §2.2)
+
+| Index location | Replacement |
+|---|---|
+| `local-state/messages-thread-index/thread-NNN/` | postgres expression index `ON entities ((data->>'threadId')) WHERE kind = 'Message'` (per §2.3 SchemaDef-emitted) |
+
+This is the DIY-secondary-index that bug-93 surfaced — it goes away structurally with substrate (the index is replaced by a postgres-native equivalent the query planner uses automatically).
+
+#### §3.4.3 Architect-context (OQ-NEW for round-1 audit)
+
+`local-state/architect-context/` holds 3 append-only structured-log files:
+- `decisions.json`
+- `director-history.json`
+- `review-history.json`
+
+**Disposition (architect-current-pick; surface as OQ7 for engineer round-1 audit):** migrate as 3 entity-kinds (`ArchitectDecision`, `DirectorHistoryEntry`, `ReviewHistoryEntry`) — each log-entry becomes one entity-row. Aligns with Survey outcome 1 (one substrate, no out-of-substrate state). Append-only semantics preserved by handler-side discipline (no entity-mutation, only entity-add).
+
+Alternative: keep file-based out-of-substrate. Trade-off — simpler migration (less to convert) but violates outcome 1.
+
+#### §3.4.4 Out-of-substrate (preserved as-is; NOT migrated)
+
+These remain file-system-backed; substrate doesn't touch them:
+
+| Location | Why out-of-substrate |
+|---|---|
+| `local-state/repo-event-bridge/cursor/ + dedupe/` | `repo-event-bridge` package state; uses `MemoryStorageProvider` per §5.2 keep-list |
+| `local-state/repo-event-bridge-workflow-runs/cursor/ + dedupe/` | Same |
+| `local-state/docs/` | Static markdown assets (NOT Hub-runtime-state; documentation files; git-tracked elsewhere) |
+
+#### §3.4.5 Migration script ENUM source-of-truth
+
+`hub/scripts/entity-kinds.json` (generated at W0 by filesystem-grep; checked into repo; used by migration script + Hub bootstrap reconciler-primer). Source-of-truth lineage:
+- Architect Design v0.1 declares the 18-kind inventory + 3-disposition-pending architect-context
+- W0 spike's filesystem-grep regenerates entity-kinds.json from current code; any architect-blind kind triggers Design v0.2 revision
+- Migration script reads entity-kinds.json at runtime; refuses to start if any kind in local-state has no entry (defends against silent-skip migration bug)
 
 ### §3.5 Downtime budget + cutover orchestration (per engineer §A.4)
 
@@ -481,6 +532,7 @@ These come back as Q-N audit items in the round-1 audit thread (separate thread,
 - **OQ4** — Substrate-init migrations runner: bespoke (Hub-side migration-runner reads `migrations/*.sql`) OR off-the-shelf (`node-pg-migrate`, `flyway-style`)? Current Design implies bespoke (simpler; 3 migrations); engineer judgment on whether off-the-shelf saves more than it costs.
 - **OQ5** — Watch-stream backfill semantics: when handler subscribes mid-Hub-runtime, should substrate replay all events from epoch OR only-new? Current Design's NOTIFY-based watch is only-new; handlers needing backfill use `list()` + then `watch()` (standard "list-watch" pattern from k8s informer). Engineer judgment on whether this composes cleanly with sweeper restart-without-state-loss.
 - **OQ6** — Postgres flavor pick (vanilla / AlloyDB / Cockroach / Yugabyte): Design currently assumes vanilla postgres. Q6=a defers cloud-deployment so this is mostly a follow-on concern. Should W0 spike validate against more than one flavor to de-risk the eventual cloud-deploy follow-on?
+- **OQ7** — Architect-context disposition (`local-state/architect-context/` per §3.4.3): migrate as 3 entity-kinds (`ArchitectDecision`, `DirectorHistoryEntry`, `ReviewHistoryEntry` — architect-current-pick) OR keep file-based out-of-substrate (simpler migration; violates Survey outcome 1)? Inventory-verification side-effect of demoting §3.4 from provisional to verified at Design v0.1 time.
 
 ---
 
@@ -530,8 +582,13 @@ The round-1 audit thread carries:
 ## §11 Status
 
 - **v0.1 architect-draft** — 2026-05-17; awaiting Phase 4 round-1 engineer audit
-- **Branch:** `agent-lily/m-hub-storage-substrate` (commit pending after this draft)
-- **Round-1 audit thread:** to be opened after commit + push
-- **Expected progression:** v0.1 → engineer round-1 audit (CRITICAL/MEDIUM/MINOR/PROBE classifications) → v0.2 architect-revision incorporating audit dispositions → bilateral cycle to v1.0 ratified → Phase 5 mission entity creation → Phase 6 preflight → Phase 7 release-gate
+- **Branch:** `agent-lily/m-hub-storage-substrate`
+- **Commits:**
+  - 8eed879 — Survey envelope (Phase 3)
+  - d9fadf3 — Design v0.1 initial draft
+  - (pending) — §3.4 inventory-verification + OQ7 addition (post-filesystem-grep architect-side verification; demotes §3.4 from "provisional" to "filesystem-verified at Design v0.1 time")
+- **Round-1 audit thread:** thread-563 (opened 2026-05-17; greg's turn)
+- **Follow-on ideas filed** (per F4 PROBE; de-risks mission-close-forget): idea-295 M-Hub-Storage-ResourceVersion, idea-296 M-Hub-Storage-Audit-History, idea-297 M-Hub-Storage-FK-Enforcement, idea-298 M-Hub-Storage-Cloud-Deploy
+- **Expected progression:** v0.1 → engineer round-1 audit (CRITICAL/MEDIUM/MINOR/PROBE classifications + OQ1-OQ7 dispositions) → v0.2 architect-revision incorporating audit dispositions → bilateral cycle to v1.0 ratified → Phase 5 mission entity creation → Phase 6 preflight → Phase 7 release-gate
 
 — Architect: lily / 2026-05-17
