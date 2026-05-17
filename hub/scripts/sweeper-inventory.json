@@ -1,0 +1,72 @@
+{
+  "$schema-version": "1.0",
+  "$generated": "2026-05-17",
+  "$generation-source": "W3.1 filesystem-grep at HEAD b1ed0af (post-W2) — per Design v1.3 §4 W3 row OQ3 discipline",
+  "$mission": "mission-83",
+  "$design-ref": "docs/designs/m-hub-storage-substrate-design.md (commit d40b90a; v1.3 RATIFIED)",
+  "$notes": "Authoritative enumeration of Hub-side sweepers for W3 substrate-API integration. Source-of-truth via grep -rn 'export class.*Sweeper' hub/src/. Production wire-up at hub/src/index.ts UNCHANGED per α reading (substrate DARK until W5 cutover); W3 substrate-versions are pure-additive code tested against synthetic substrate entities.",
+
+  "sweepers": [
+    {
+      "name": "ScheduledMessageSweeper",
+      "source-file": "hub/src/policy/scheduled-message-sweeper.ts:82",
+      "mission-origin": "mission-51 W4",
+      "consumed-stores": ["IMessageStore (listMessages with filter)", "IAuditStore (logEntry on cancel)"],
+      "consumed-kinds-substrate": ["Message"],
+      "filter-shape": "{ delivery: 'scheduled', scheduledState: 'pending' }",
+      "tick-interval": "1000ms (1s) default; throttled to 30s per bug-93 PR #203 band-aid",
+      "business-logic": "fireAt check; evaluatePrecondition; pending → delivered transition (fire) OR pending → precondition-failed transition (cancel; with audit-entry)",
+      "bug-93-context": "PRIMARY target — O(N) listMessages scan was the CPU-pressure source; watch-driven model structurally eliminates the polling cost",
+      "w3-substrate-version-status": "SHIPPED (this wave)",
+      "w3-substrate-version-file": "hub/src/policy/scheduled-message-sweeper-substrate.ts"
+    },
+    {
+      "name": "MessageProjectionSweeper",
+      "source-file": "hub/src/policy/message-projection-sweeper.ts:75",
+      "mission-origin": "mission-51 W2",
+      "consumed-stores": ["IThreadStore (listThreads)", "IMessageStore (createMessage; findByMigrationSourceId)"],
+      "consumed-kinds-substrate": ["Thread", "Message"],
+      "filter-shape": "ALL threads (client-side filter on lastMessageProjectedAt < updatedAt)",
+      "tick-interval": "5000ms (5s) default; throttled to 30s per bug-93 PR #203 band-aid",
+      "business-logic": "Bounded-shadow polling for W1 in-process thread-message migration shim gap-closure; idempotent via migrationSourceId pattern; markLastMessageProjected CAS for forward-progress",
+      "bug-93-context": "SECONDARY target — O(N) listThreads scan compounded the bug-93 CPU pressure; watch-driven model on Thread.updatedAt + migrationSourceId idempotency cleaner",
+      "w3-substrate-version-status": "DEFERRED to W3.x — substantial business logic with migrationSourceId find-or-create + Thread.messages[] walk + markLastMessageProjected CAS; engineer-judgment to ship Scheduled first as pattern-demonstrator + return for MessageProjection at architect's W3-ratify-time signal",
+      "w3-substrate-version-file": "(pending)"
+    },
+    {
+      "name": "PulseSweeper",
+      "source-file": "hub/src/policy/pulse-sweeper.ts:115",
+      "mission-origin": "mission-57 W2",
+      "consumed-stores": ["IMissionStore (listMissions('active'))", "IEngineerRegistry (listAgents)", "ITaskStore (listTasks)"],
+      "consumed-kinds-substrate": ["Mission", "Agent", "Task"],
+      "filter-shape": "active missions; agent + task cross-references per pulse-config",
+      "tick-interval": "(per mission-pulse-config; varies)",
+      "business-logic": "Drives declarative per-mission pulses; consults pulse-config per mission; cross-references active agents + tasks",
+      "bug-93-context": "Not primary bug-93 target; lower-frequency tick; multi-store cross-reference logic",
+      "w3-substrate-version-status": "DEFERRED to W3.x — multi-store cross-reference logic + per-mission-pulse-config complexity; pattern from ScheduledMessageSweeperSubstrate is the template",
+      "w3-substrate-version-file": "(pending)"
+    },
+    {
+      "name": "CascadeReplaySweeper",
+      "source-file": "hub/src/policy/cascade-replay-sweeper.ts:62",
+      "mission-origin": "mission-24 cascade-replay-sweeper",
+      "consumed-stores": ["IThreadStore (listCascadePending)"],
+      "consumed-kinds-substrate": ["Thread"],
+      "filter-shape": "Threads with pending cascade-action state",
+      "tick-interval": "(periodic; per Hub config)",
+      "business-logic": "Re-runs cascade actions on pending-state threads; per-action idempotency catches duplicates",
+      "bug-93-context": "Not primary bug-93 target; lower-frequency tick",
+      "w3-substrate-version-status": "DEFERRED to W3.x — pattern from ScheduledMessageSweeperSubstrate is the template",
+      "w3-substrate-version-file": "(pending)"
+    }
+  ],
+
+  "summary": {
+    "sweepers-total": 4,
+    "sweepers-substrate-versioned-this-wave": 1,
+    "sweepers-deferred-w3.x": 3,
+    "deferred-rationale": "Engineer-judgment for spike-velocity + pattern-demonstrator-first discipline. ScheduledMessageSweeperSubstrate ships as the worked example + integration-test pattern; MessageProjection/Pulse/CascadeReplay substrate-versions follow same template at W3.x architect-time-signal. All 4 sweepers' substrate-versions are pure-additive code (production wire-up UNCHANGED per α reading); W5 cutover swaps which sweeper-version instantiated in hub/src/index.ts.",
+    "production-wire-up-status": "UNCHANGED per α reading — hub/src/index.ts continues to instantiate FS-version sweepers; substrate-version sweepers exist as pure-additive code tested against synthetic substrate entities; W5 cutover swaps the instantiations",
+    "bug-93-disposition": "W5 cutover structurally closes bug-93 via watch-driven model replacing all 4 sweepers' poll-pressure; intermediate bug-93 PR #203 (30s throttle band-aid) remains in production through W4; W5 ratify is the formal closure point"
+  }
+}
