@@ -1,6 +1,6 @@
-# M-Hub-Storage-Substrate — Design v0.2
+# M-Hub-Storage-Substrate — Design v1.0 RATIFIED
 
-**Status:** v0.2 architect-draft (incorporates Phase 4 round-1 engineer audit dispositions); awaiting Phase 4 round-2 engineer audit
+**Status:** v1.0 RATIFIED 2026-05-17 (thread-563 converged; Phase 4 audit cycle closed: 2-round bilateral; all 3 CRITICAL + 4 MEDIUM + 3 MINOR + 2 OQ + 4 blind-spots disposed; 3 round-2 cleanups folded as v1.0-finalize)
 **Source idea:** idea-294
 **Survey envelope:** `docs/surveys/m-hub-storage-substrate-survey.md` (Director-ratified 2026-05-16)
 **Phase 4 coord thread:** thread-562 (converged 2026-05-17; 4 fold-ins from engineer pre-audit + AG-1 Director re-confirm)
@@ -376,7 +376,9 @@ Justification (per engineer's lean): cutover happens with Hub stopped (no concur
 
 ### §3.4 Entity-coverage matrix — I*Store-anchored authoritative inventory (round-1 audit C3 fold-in)
 
-**Source-of-truth (per round-1 audit C3 correction):** the **11 I*Store interfaces** defined across `hub/src/entities/*.ts` + `hub/src/state.ts` are the authoritative kind enumeration. `local-state/` directory listing is a cross-check; W0 spike's `grep -lE 'interface I.*Store' hub/src/entities/ hub/src/state.ts` is the dispositive truth at mission-execution time. **Phantom entries from Design v0.1 (Clarification, Document-as-separate-kind, Report, Review, ThreadMessage, AgentSession, Continuation) REMOVED** — these are inline fields on existing entities OR queue-item states, not first-class kinds.
+**Authoritative count (v1.0):** **≥17 substrate-mediated kinds** (modulo W0 spike's Document validation + auxiliary store discovery). Composition: 11 existing I*Store + 1 IEngineerRegistry (mediates Agent kind via `AgentRepository implements IEngineerRegistry` per `hub/src/entities/agent-repository.ts:303`) + 1 NEW ISchemaDefStore (this mission) + 1 W0-validates IDocumentStore + 1 re-introduced INotificationStore (this mission; closes mission-56 partial-completion per §3.4.1) + 3 OQ7 architect-context decomposition stores (this mission). Table rows in §3.4.1 + §3.4.3 + §3.4.4 are supplementary detail.
+
+**Source-of-truth (per round-1 audit C3 correction):** the **12 substrate-mediated kinds today** (11 I*Store + 1 IEngineerRegistry) across `hub/src/entities/*.ts` + `hub/src/state.ts` are the authoritative existing-kind enumeration. `local-state/` directory listing is a cross-check; W0 spike's `grep -lE 'interface I.*(Store|Registry)' hub/src/entities/ hub/src/state.ts` is the dispositive truth at mission-execution time. **Phantom entries from Design v0.1 (Clarification, Document-as-separate-kind, Report, Review, ThreadMessage, AgentSession, Continuation) REMOVED** — these are inline fields on existing entities OR queue-item states, not first-class kinds.
 
 #### §3.4.1 Primary entities (migrate as rows in `entities` table)
 
@@ -672,14 +674,17 @@ The round-1 audit thread carries:
 
 ## §11 Status
 
-- **v0.2 architect-draft** — 2026-05-17; incorporates round-1 audit dispositions (3 CRITICAL + 4 MEDIUM + 3 MINOR + OQ7-OQ8 + 4 blind-spots); awaiting Phase 4 round-2 engineer audit
+- **v1.0 RATIFIED** — 2026-05-17 via thread-563 convergence; Phase 4 Design audit cycle closed
 - **Branch:** `agent-lily/m-hub-storage-substrate`
 - **Commits:**
   - 8eed879 — Survey envelope (Phase 3)
   - d9fadf3 — Design v0.1 initial draft
   - 49c08df — §3.4 inventory-verification + OQ7 addition (post-filesystem-grep architect-side verification)
-  - (pending) — Design v0.2 (round-1 audit fold-ins: C1 CAS primitives + C2 Option Y repository-composition + C3 I*Store-anchored inventory + M1-M4 + N1-N3 + B1-B4 + OQ8 Notification re-introduction)
-- **Round-1 audit thread:** thread-563 (3 rounds; v0.2 dispositions accepted-and-aligned per round-2 engineer reply 2026-05-17)
+  - 037177a — Design v0.2 (round-1 audit fold-ins: C1 CAS primitives + C2 Option Y repository-composition + C3 I*Store-anchored inventory + M1-M4 + N1-N3 + B1-B4 + OQ8 Notification re-introduction)
+  - (pending this commit) — Design v1.0-finalize (3 round-2 cleanups: §3.4 inventory-count reconciliation + §11.2 engineer work-trace mention + IEngineerRegistry as 12th-mediated-kind)
+- **Audit threads (converged):**
+  - thread-562 — Phase 4 coord (4 fold-ins + AG-1 Director re-confirm)
+  - thread-563 — Phase 4 round-1 + round-2 audit (16 dispositions; ratified at v1.0)
 - **Follow-on ideas filed** (per F4 PROBE; de-risks mission-close-forget): idea-295 M-Hub-Storage-ResourceVersion, idea-296 M-Hub-Storage-Audit-History, idea-297 M-Hub-Storage-FK-Enforcement, idea-298 M-Hub-Storage-Cloud-Deploy
 
 ### §11.1 v1.0 ratify-criterion (per round-1 audit B4 fold-in)
@@ -688,8 +693,10 @@ Per `docs/methodology/mission-lifecycle.md` Phase 4 convergence-criterion: **Des
 
 ### §11.2 Expected progression
 
-- v0.2 → engineer round-2 audit (brief if v0.2 incorporates everything cleanly; substantive re-audit if any disposition shifts material design-shape) → v1.0 ratified → thread-563 converges
-- v1.0 → Phase 5 mission entity creation → Phase 6 preflight (audits AG-1..AG-4 scope-creep + R1-R10 risk-status + downtime-budget measurement) → Phase 7 release-gate (Director-approval)
-- W0 spike begins post-Phase-5 Mission-entity-creation; engineer counterpart branch `agent-greg/m-hub-storage-substrate` created at W0 commit-time
+- v0.2 → engineer round-2 audit (CONVERGED 2026-05-17 thread-563; all 16 dispositions verified; 3 cleanups folded as v1.0-finalize) → **v1.0 RATIFIED**
+- v1.0 → Phase 5 mission-entity creation (architect-RACI; separate Hub-API dispatch per `feedback_architect_drives_mission_not_director.md`) → Phase 6 preflight (audits AG-1..AG-4 scope-creep + R1-R10 risk-status + downtime-budget measurement) → Phase 7 release-gate (Director-approval)
+- W0 spike begins post-Phase-5 mission-ID assignment:
+  - Engineer counterpart branch `agent-greg/m-hub-storage-substrate` created off `origin/main` at W0 spike commit-time
+  - Engineer mission work-trace created at `docs/traces/mission-<NN>-m-hub-storage-substrate-work-trace.md` at W0 spike commit-time per `feedback_per_mission_work_trace_obligation.md` (standing engineer obligation; per-mission separate trace; no backfill into prior mission's file)
 
 — Architect: lily / 2026-05-17
