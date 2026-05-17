@@ -46,20 +46,27 @@ const Agent: SchemaDef = {
 
 const Audit: SchemaDef = {
   kind: "Audit",
-  version: 1,
+  version: 2,
+  // W4.x.2 architect-blind-correction: v1 fields (entityKind/entityId/op/
+  // actorRole/actorAgentId) didn't match actual AuditEntry shape used by 11
+  // call-sites (hub/src/index.ts + hub-networking.ts + observability/shadow-
+  // invariants.ts + policy/review-policy.ts). Actual shape per state.ts:1004:
+  // { id, timestamp, actor: "architect"|"engineer"|"hub", action, details,
+  //   relatedEntity: string|null }. v2 fields + indexes match actual shape;
+  // surfaces as continuation of substrate-currency-failure pattern (4th-
+  // instance per Design v1.4 §log; sibling to getWithRevision spec/impl gap
+  // caught at W4.x.1).
   fields: [
     { name: "id", type: "string", required: true },
-    { name: "entityKind", type: "string", required: true },
-    { name: "entityId", type: "string", required: true },
-    { name: "op", type: "string", required: true },
-    { name: "actorRole", type: "string", required: false },
-    { name: "actorAgentId", type: "string", required: false },
     { name: "timestamp", type: "string", required: true },
+    { name: "actor", type: "string", required: true, enum: ["architect", "engineer", "hub"] },
+    { name: "action", type: "string", required: true },
+    { name: "details", type: "string", required: true },
+    { name: "relatedEntity", type: "string", required: false },
   ],
   indexes: [
-    // Recent-activity ordering via base entities_updated_at_idx (no per-kind extra needed)
-    // By-entity lookup for entity-history queries
-    { name: "audit_entity_idx", fields: ["entityKind", "entityId"] },
+    // listEntries(actor) is the hot-path query (filter-by-actor at substrate boundary)
+    { name: "audit_actor_idx", fields: ["actor"] },
   ],
   watchable: true,
 };
