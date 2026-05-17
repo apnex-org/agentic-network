@@ -29,11 +29,11 @@ If you're picking up cold:
 
 - ▶ **W0 spike — 6 deliverables (per Design §4 W0 row).** Spike-only wave; substrate state empty throughout. Deliverable sequence:
   1. ○ **W0.1 — Postgres-container local-dev compose-up** — postgres:15-alpine; named volume; ephemeral-by-design (R10 disposition); operator-DX cookbook stub
-  2. ○ **W0.2 — Filesystem-grep enumeration → `hub/scripts/entity-kinds.json`** — 11 I*Store + 1 IEngineerRegistry + Document validation + auxiliary store discovery (scheduled-messages, message-projections, etc.); architect-blind kind discovery triggers Design v1.1
+  2. ✅ **W0.2 — Filesystem-grep enumeration → `hub/scripts/entity-kinds.json`** — SHIPPED at commit 7d2f34f. 13 substrate-mediated kinds confirmed (11 I*Store + 1 IEngineerRegistry + 1 Counter meta-entity); 2 NEW kinds for mission-83 (SchemaDef substrate-native + Notification re-introduction per OQ8 closing mission-56 partial-completion); 4 kinds W0-architect-validates (Document + ArchitectDecision + DirectorHistoryEntry + ReviewHistoryEntry — engineer working tree has empty local-state/; architect-side state-tree inspection needed). **5 architect-blind-kind-corrections discovered (triggers Design v1.1 per §3.4 clause)**: DirectorNotification (REMOVE — mission-56 W5 fully migrated to Message kind="note" via director-notification-helpers.ts; architect 49c08df listing incorrect), Report (REMOVE — inline field on task/bug), Review (REMOVE — inline field on mission/proposal/message), ScheduledMessage (REMOVE — sweeper-internal type), MessageProjection (REMOVE — sweeper-internal type). Total target inventory: 19 kinds (13 confirmed + 2 NEW + 4 architect-validates).
   3. ○ **W0.3 — Synthetic-state migration `<60s TOTAL OBSERVED DOWNTIME` measurement** — prototype migrate-fs-to-substrate against ~10k-entity synthetic dataset; per Design §3.5
   4. ○ **W0.4 — Testcontainers harness baseline** — per-test-DB-rollback for unit + singleton-with-reset for integration (per Design §2.7 architect-lean); boot-time + flakiness baseline; fallback to docker-compose if testcontainers flaky
-  5. ✅ **W0.5 — Engineer counterpart branch `agent-greg/m-hub-storage-substrate`** — created off `origin/main` 2026-05-17 AEST at W0 commit-time
-  6. ▶ **W0.6 — Mission work-trace initialization** — this file; first commit imminent
+  5. ✅ **W0.5 — Engineer counterpart branch `agent-greg/m-hub-storage-substrate`** — created off `origin/main` HEAD a940a38 at 2026-05-17 AEST
+  6. ✅ **W0.6 — Mission work-trace initialization** — SHIPPED at commit 4bb9bbe (this file)
 
 ---
 
@@ -59,7 +59,8 @@ If you're picking up cold:
 - ✅ **Design v1.0 finalized at commit b0c6a02** (architect-side; post-thread-563 round-2). Incorporates the v1.0-finalize cleanups (IEngineerRegistry mention in W0 deliverables; work-trace mention in §11.2 covered via this file's initialization).
 - ✅ **thread-564 Phase 5 transition notification** (closed via engineer-side close_no_action staging; awaiting architect bilateral-converge). mission-83 created with 8 plannedTasks W0-W7 unissued; idea-294 status flipped to incorporated; engineer/architect pulses configured (6h/12h short_status missedThreshold=3).
 - ✅ **thread-565 W0 task-413 notification** — engineer-side close_no_action staged; surfaced task-assignment-gap to architect (Path B reconciliation pending architect-side); substantive Path A W0 execution begins.
-- ✅ **W0.5 + W0.6 — Engineer branch + work-trace initialization** — `agent-greg/m-hub-storage-substrate` off `origin/main` HEAD a940a38; this trace file initialized at W0 commit-time per `feedback_per_mission_work_trace_obligation.md`.
+- ✅ **W0.5 + W0.6 — Engineer branch + work-trace initialization** — `agent-greg/m-hub-storage-substrate` off `origin/main` HEAD a940a38; this trace file initialized at W0 commit-time per `feedback_per_mission_work_trace_obligation.md`. Commit 4bb9bbe.
+- ✅ **W0.2 — Filesystem-grep enumeration → hub/scripts/entity-kinds.json** — commit 7d2f34f. Authoritative inventory at HEAD a940a38: 13 confirmed substrate-mediated kinds (11 I*Store: Audit/Bug/Idea/Message/Mission/PendingAction/Proposal/Task/Tele/Thread/Turn + 1 IEngineerRegistry: Agent + 1 Counter meta-entity) + 2 NEW (SchemaDef substrate-native + Notification re-introduction per OQ8) + 4 W0-architect-validates (Document + ArchitectDecision + DirectorHistoryEntry + ReviewHistoryEntry — engineer local-state/ empty, needs architect-side validation). **5 architect-blind-kind-corrections** discovered: DirectorNotification fully-migrated-to-Message-kind="note" (architect §3.4.1 listing incorrect); Report inline-field; Review inline-field; ScheduledMessage sweeper-internal-type; MessageProjection sweeper-internal-type. Design v1.1 trigger per §3.4 clause (architect-judgment whether to fold as inventory-cleanup OR roll forward into W2 reconciler-spec where SchemaDef-authoring-per-actual-kind naturally surfaces phantoms).
 
 ---
 
@@ -77,7 +78,17 @@ If you're picking up cold:
 - thread-565 W0 task-413 notification: task landed assignedEngineerId=null in unassigned pool; pending-action queue silent on engineer-side; engineer Path A substantive execution begins against directive content reproduced in thread message; Path B architect-RACI reconciliation deferred (calibration-candidate at mission-close)
 - W0.5 + W0.6 deliverables shipped: branch `agent-greg/m-hub-storage-substrate` created off origin/main; this trace file initialized
 
-**Next:** W0.1 (postgres-container compose-up) → W0.2 (filesystem-grep entity-kinds.json) → W0.3 (synthetic-state migration measurement) → W0.4 (testcontainers harness baseline) → W0 spike report commit.
+**Next:** W0.1 (postgres-container compose-up) → W0.3 (synthetic-state migration measurement) → W0.4 (testcontainers harness baseline) → W0 spike report commit. W0.2 + W0.5 + W0.6 shipped this session; remaining 3 substantive deliverables are multi-session work per architect's "no urgency" framing.
+
+### Session-end disposition
+
+Engineer-pulse cadence is 6h short_status. Architect-side will see 3 commits (4bb9bbe + 7d2f34f + (this trace update)) on `agent-greg/m-hub-storage-substrate` branch via remote-fetch; commit messages + entity-kinds.json content surface the 5 architect-blind-kind-corrections + W0-architect-validates list (Document + 3 architect-context kinds blocked on engineer-side empty local-state/). Architect-actionable items for next bilateral cycle:
+1. **W0-validate Document + architect-context kinds** from architect-side state-tree (engineer-side blocked by empty local-state/)
+2. **Disposition on architect-blind-kind-corrections**: fold as Design v1.1 inventory-cleanup OR roll forward into W2 reconciler-spec
+3. **task-413 entity-assignment reconciliation** (thread-565 Path B; calibration-candidate)
+4. **thread-563 round-2 audit non-formal-close** (engineer-side procedural; not blocking)
+
+No architect-direct surface needed; artifact-narrative-convergence per `feedback_narrative_artifact_convergence_discipline.md`.
 
 ---
 
