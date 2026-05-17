@@ -52,6 +52,12 @@ export class SchemaReconciler {
   private readonly pool: pg.Pool;
   private readonly log: (msg: string) => void;
   private readonly warn: (msg: string, err?: unknown) => void;
+  /**
+   * Internal AbortController for runtime-loop cancellation. Chains to opts.signal
+   * if provided (caller-side abort triggers internal abort); close() also triggers
+   * internal abort for clean shutdown of substrate.watch LISTEN client.
+   */
+  private readonly internalAbort: AbortController;
 
   constructor(
     private readonly substrate: HubStorageSubstrate,
@@ -61,6 +67,14 @@ export class SchemaReconciler {
     this.pool = new Pool({ connectionString });
     this.log = opts.log ?? ((m) => console.log(`[SchemaReconciler] ${m}`));
     this.warn = opts.warn ?? ((m, err) => console.warn(`[SchemaReconciler] ${m}`, err ?? ""));
+    this.internalAbort = new AbortController();
+    if (opts.signal) {
+      if (opts.signal.aborted) {
+        this.internalAbort.abort();
+      } else {
+        opts.signal.addEventListener("abort", () => this.internalAbort.abort(), { once: true });
+      }
+    }
   }
 
   /**
@@ -176,7 +190,7 @@ export class SchemaReconciler {
    */
   private async runtimeLoop(): Promise<void> {
     try {
-      for await (const event of this.substrate.watch<SchemaDef>("SchemaDef", { signal: this.opts.signal })) {
+      for await (const event of this.substrate.watch<SchemaDef>("SchemaDef", { signal: this.internalAbort.signal })) {
         if (event.op === "put" && event.entity) {
           this.log(`runtime — re-reconciling kind=${event.entity.kind} (rv=${event.resourceVersion})`);
           try {
@@ -195,7 +209,7 @@ export class SchemaReconciler {
       }
     } catch (err) {
       // Watch terminated unexpectedly (signal aborted OR substrate-side error)
-      if (this.opts.signal?.aborted) {
+      if (this.internalAbort.signal.aborted) {
         this.log(`runtime — watch loop aborted via signal`);
       } else {
         this.warn(`runtime — watch loop terminated unexpectedly`, err);
@@ -203,8 +217,15 @@ export class SchemaReconciler {
     }
   }
 
-  /** Close reconciler's pg pool. Caller's responsibility (substrate's pool is separate). */
+  /**
+   * Close reconciler. Aborts runtime watch loop (cleanly ends substrate.watch
+   * LISTEN client) + closes reconciler's own pg pool. Caller's responsibility;
+   * substrate's pool is separate.
+   */
   async close(): Promise<void> {
+    this.internalAbort.abort();
+    // Give the watch loop a moment to teardown its LISTEN client cleanly
+    await new Promise(r => setTimeout(r, 50));
     await this.pool.end();
   }
 }

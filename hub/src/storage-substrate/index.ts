@@ -27,3 +27,27 @@ export { createPostgresStorageSubstrate } from "./postgres-substrate.js";
 export { createSchemaReconciler, SchemaReconciler } from "./schema-reconciler.js";
 export type { SchemaReconcilerOptions } from "./schema-reconciler.js";
 export { ALL_SCHEMAS } from "./schemas/all-schemas.js";
+
+// W2.4 new repositories (Option Y stubs; W4 full refactor)
+export {
+  DocumentRepository,
+  NotificationRepository,
+  ArchitectDecisionRepository,
+  DirectorHistoryEntryRepository,
+  ReviewHistoryEntryRepository,
+  ThreadHistoryEntryRepository,
+} from "./new-repositories.js";
+export type {
+  Document,
+  IDocumentStore,
+  Notification,
+  INotificationStore,
+  ArchitectDecision,
+  IArchitectDecisionStore,
+  DirectorHistoryEntry,
+  IDirectorHistoryEntryStore,
+  ReviewHistoryEntry,
+  IReviewHistoryEntryStore,
+  ThreadHistoryEntry,
+  IThreadHistoryEntryStore,
+} from "./new-repositories.js";
