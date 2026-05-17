@@ -101,14 +101,24 @@ const Counter: SchemaDef = {
 
 const Idea: SchemaDef = {
   kind: "Idea",
-  version: 1,
+  version: 2,
+  // W4.x.3 architect-blind-correction: v1 'title' field was a spec-recall miss
+  // (actual Idea entity has 'text' field per state.ts/entities/idea.ts:15).
+  // Also missing cascade-key fields (sourceThreadId/sourceActionId) load-bearing
+  // for findByCascadeKey hot-path query. v2 corrects + adds idea_cascade_idx.
+  // 7th-instance substrate-currency-failure pattern.
   fields: [
     { name: "id", type: "string", required: true },
-    { name: "title", type: "string", required: false },
-    { name: "status", type: "string", required: false, enum: ["open", "triaged", "design", "incorporated", "closed", "deferred"] },
+    { name: "text", type: "string", required: true },
+    { name: "status", type: "string", required: true, enum: ["open", "triaged", "dismissed", "incorporated"] },
+    { name: "missionId", type: "string", required: false },
+    { name: "sourceThreadId", type: "string", required: false },
+    { name: "sourceActionId", type: "string", required: false },
   ],
   indexes: [
     { name: "idea_status_idx", fields: ["status"] },
+    // findByCascadeKey is hot-path query (Mission-24 Phase 2 INV-TH20 idempotency key)
+    { name: "idea_cascade_idx", fields: ["sourceThreadId", "sourceActionId"] },
   ],
   watchable: true,
 };
