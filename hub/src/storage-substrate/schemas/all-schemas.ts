@@ -147,15 +147,25 @@ const Message: SchemaDef = {
 
 const Mission: SchemaDef = {
   kind: "Mission",
-  version: 1,
+  version: 2,
+  // W4.x.5 architect-blind-correction: v1 enum {proposed/active/shipped/
+  // retrospective/closed} vs actual MissionStatus {proposed/active/completed/
+  // abandoned}; v1 field 'class' vs actual 'missionClass'. v2 corrected +
+  // cascade-key fields added for findByCascadeKey hot-path (Mission-24 Phase 2
+  // INV-TH20 idempotency-key). 9th-instance substrate-currency-failure pattern.
   fields: [
     { name: "id", type: "string", required: true },
-    { name: "title", type: "string", required: false },
-    { name: "status", type: "string", required: false, enum: ["proposed", "active", "shipped", "retrospective", "closed"] },
-    { name: "class", type: "string", required: false },
+    { name: "title", type: "string", required: true },
+    { name: "status", type: "string", required: true, enum: ["proposed", "active", "completed", "abandoned"] },
+    { name: "missionClass", type: "string", required: false },
+    { name: "correlationId", type: "string", required: false },
+    { name: "sourceThreadId", type: "string", required: false },
+    { name: "sourceActionId", type: "string", required: false },
   ],
   indexes: [
     { name: "mission_status_idx", fields: ["status"] },
+    // findByCascadeKey hot-path (Mission-24 Phase 2 INV-TH20 idempotency-key)
+    { name: "mission_cascade_idx", fields: ["sourceThreadId", "sourceActionId"] },
   ],
   watchable: true,
 };
