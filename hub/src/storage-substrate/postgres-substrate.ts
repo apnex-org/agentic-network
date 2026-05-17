@@ -66,6 +66,22 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
     return r.rows[0]?.data ?? null;
   }
 
+  /**
+   * Design v1.4 fold-in — read-then-CAS read primitive. Single round-trip
+   * SELECT of data + resource_version; pair with putIfMatch(..., resourceVersion)
+   * for proper substrate-boundary CAS (vs spike-quality simple get+put with
+   * race-window).
+   */
+  async getWithRevision<T>(kind: string, id: string): Promise<{ entity: T; resourceVersion: string } | null> {
+    const r = await this.pool.query<{ data: T; resource_version: string }>(
+      `SELECT data, resource_version FROM entities WHERE kind = $1 AND id = $2`,
+      [kind, id],
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    return { entity: row.data, resourceVersion: String(row.resource_version) };
+  }
+
   async put<T>(kind: string, entity: T): Promise<{ id: string; resourceVersion: string }> {
     const id = extractId(entity, kind);
     const r = await this.pool.query<{ resource_version: string }>(

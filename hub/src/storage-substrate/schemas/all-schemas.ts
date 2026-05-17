@@ -23,9 +23,10 @@ import type { SchemaDef } from "../types.js";
 
 const Agent: SchemaDef = {
   kind: "Agent",
-  version: 1,
+  version: 2,
   fields: [
     { name: "id", type: "string", required: true },
+    { name: "fingerprint", type: "string", required: true },
     { name: "role", type: "string", required: true, enum: ["engineer", "architect", "director", "unknown"] },
     { name: "labels", type: "object", required: false },
     { name: "lastSeenAt", type: "string", required: false },
@@ -35,6 +36,10 @@ const Agent: SchemaDef = {
   indexes: [
     // Mediated by IEngineerRegistry; by-role queries hot for list_available_peers + status checks
     { name: "agent_role_idx", fields: ["role"] },
+    // W4.x.1 — fingerprint is identity-lookup hot path (assertIdentity); replaces
+    // FS-version agents/by-fingerprint/<fp>.json mirror (single canonical row per
+    // agentId with fingerprint-indexed query supersedes dual-write mirror pattern).
+    { name: "agent_fingerprint_idx", fields: ["fingerprint"] },
   ],
   watchable: true,
 };

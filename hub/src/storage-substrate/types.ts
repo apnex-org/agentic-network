@@ -155,6 +155,17 @@ export interface HubStorageSubstrate {
 
   // ── Entity CRUD (kind-uniform regardless of underlying storage layout) ────
   get<T>(kind: string, id: string): Promise<T | null>;
+  /**
+   * Design v1.4 fold-in (2026-05-17; architect-direct; engineer-surface caught
+   * at W4 first-consumer-use via BugRepositorySubstrate.casUpdate). Returns the
+   * entity AND its current resourceVersion in a single round-trip — required
+   * for the read-then-CAS pattern at substrate-direct consumer boundary
+   * (caller does getWithRevision → mutate → putIfMatch(expectedRevision)).
+   * Without this, putIfMatch is unusable from substrate-direct consumers since
+   * substrate.get returns T without revision; pattern was implicit-only via
+   * watch-stream's ChangeEvent.resourceVersion.
+   */
+  getWithRevision<T>(kind: string, id: string): Promise<{ entity: T; resourceVersion: string } | null>;
   put<T>(kind: string, entity: T): Promise<{ id: string; resourceVersion: string }>;
   delete(kind: string, id: string): Promise<void>;
   /**
