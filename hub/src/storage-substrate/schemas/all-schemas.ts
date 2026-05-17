@@ -292,15 +292,28 @@ const Thread: SchemaDef = {
 
 const Turn: SchemaDef = {
   kind: "Turn",
-  version: 1,
+  version: 2,
+  // W4.x.11 architect-blind-correction (architect proactive audit thread-569
+  // round 5 flagged 'essentially-fabricated; needs total rewrite'): v1 had
+  // 'agentId' (DOESN'T EXIST on Turn entity — likely confused with Agent
+  // entity), 'missionId' scalar (actual is missionIds[] array), missing 'status'
+  // (TurnStatus enum [planning/active/completed]). Actual fields per
+  // hub/src/entities/turn.ts: id/title/scope/status/missionIds[]/taskIds[]/
+  // tele[]/correlationId/createdBy/createdAt/updatedAt. v2 corrected — full
+  // rewrite. 14th-instance substrate-currency-failure pattern (most-fabricated
+  // SchemaDef tied with Tele v1 at 3+ fabricated fields).
   fields: [
     { name: "id", type: "string", required: true },
-    { name: "agentId", type: "string", required: true },
-    { name: "missionId", type: "string", required: false },
+    { name: "title", type: "string", required: true },
+    { name: "status", type: "string", required: true, enum: ["planning", "active", "completed"] },
+    { name: "correlationId", type: "string", required: false },
   ],
   indexes: [
-    { name: "turn_agent_idx", fields: ["agentId"] },
-    { name: "turn_mission_idx", fields: ["missionId"] },
+    // turn_agent_idx + turn_mission_idx (v1) DROPPED — fields don't exist on Turn.
+    // Virtual-view hydration of missionIds/taskIds happens via
+    // missionStore.listMissions() + taskStore.listTasks() filter by turnId
+    // (Mission/Task entities carry turnId field; lookup uses those indexes).
+    { name: "turn_status_idx", fields: ["status"] },
   ],
   watchable: true,
 };
