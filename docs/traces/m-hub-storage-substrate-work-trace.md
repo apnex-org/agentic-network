@@ -3,7 +3,7 @@
 **Mission:** mission-83 (M-Hub-Storage-Substrate; idea-294 lineage)
 **Architect:** lily (agent-40903c59)
 **Engineer:** greg (agent-0d2c690e)
-**Status:** All 7 waves shipped (W0→W7); bug-93 STRUCTURAL CLOSURE confirmed; Phase 7 release-gate surfaced to Director; awaiting `update_mission(status="completed")` per RACI
+**Status:** mission-83 CLOSED (Director-ratified Phase 7 release-gate 2026-05-18; status=completed). Phase 8 waived per Director-direct. Phase 10 retrospective draft shipped. 3 follow-on Surveys complete (idea-300 + idea-301 + idea-298 scope-pinned). Standing by for Phase 4 Design entry (idea-300 architect-recommended first per Q3a strict-sequencing).
 **Branch:** `agent-greg/m-hub-storage-substrate` (engineer-side); `agent-lily/m-hub-storage-substrate` (architect-side)
 **Mission lineage:** Phase 1 Concept → Phase 2 Idea (idea-294) → Phase 3 Survey (Director-ratified 6 picks) → Phase 4 Design (v0.1 → v1.4 ladder) → Phase 5 Manifest → Phase 6 Preflight (GREEN) → Phase 7 Implementation (W0-W7) → Phase 10 Retrospective (pending)
 **Wave state @ trace-init:** W5.4 cutover-executed; W5.5 smoke matrix dispatched (thread-573)
@@ -125,18 +125,55 @@ Documented at `feedback_substrate_currency_audit_rubric.md` ARCHITECT-SIDE EXTEN
 
 ---
 
-## Forward queue (architect-side)
+### 2026-05-18 — Phase 7 ratify + Phase 8 waiver + Phase 10 retro draft + 3 follow-on Surveys + cross-mission deliverables
 
-- [ ] **Phase 7 release-gate Director-engagement** — `update_mission(missionId="mission-83", status="completed")` decision per RACI; Director reads `docs/missions/m-hub-storage-substrate-phase-7-release-gate.md` + Hub state
-- [ ] Converge thread-573 with `stagedActions=[close_no_action]` + summary on Director ratify
-- [ ] Phase 8 (post-ship monitoring): observe substrate stability + bug-93-elimination sustained-window; flag any architect-blind defects surfaced under load
-- [ ] Phase 9 (in-flight refinements): folds emerged during Phase 8 monitoring
-- [ ] Phase 10 retrospective dispatch: file calibration candidates per `docs/calibrations.yaml` ledger (architect-side via Director-bilateral)
-  - architect-side substrate-currency-verification-failure (16 instances)
-  - counter-collision substrate-defect pattern (bug-97)
-  - docker-seccomp-on-old-kernel cutover-operational
-  - per-wave-thread + repaste-on-pagination-block coord pattern
-  - mission-scope-narrowing-with-follow-on-framing (W6 rescope)
-  - bilateral-trust-when-engineer-surfaces-scope-overrun
-- [ ] PR-to-main merge + CI-status verification at merge time (calibration #77)
-- [ ] Follow-on idea-300 Survey + Design + mission cadence (post Phase 10)
+**Director engagement summary (this session):** Director ratified mission-83 closure + waived Phase 8 monitoring (substrate stability evidence in-hand) + accelerated Phase 10 retrospective dispatch + scope-shaped 2 follow-on ideas via Survey + introduced novel methodology-validation primitive (Mode-A-vs-Mode-B Delta-analysis on idea-301 Q6).
+
+**Lifecycle moves:**
+- **Phase 7 release-gate** ratified by Director (`update_mission(mission-83, status=completed)`); 4 threads tidied (closed thread-569/571/572/561 — superseded by thread-573 convergence + obsolete PR #203 review)
+- **Phase 8 monitoring** waived per Director-direct ("no need for monitoring"); substrate stability validated across ~24h+ uptime window (sustained 0% idle CPU; bug-93 ELIMINATED stable)
+- **Phase 10 retrospective** DRAFT shipped at `docs/reviews/m-hub-storage-substrate-retrospective.md` (commit `091d720`); 9 sections / 254 lines / 7 architectural wins + 6 process gaps + 7 calibration candidates + 6 follow-on ideas + 5 cross-cutting learnings + 3 Director-engagement moments + 5 Director-bilateral discussion items
+
+**Follow-on shaping (3 missions advanced):**
+- **idea-298** (M-Hub-Storage-Cloud-Deploy) — Director multi-turn scope-pin: managed-services-NO → CR+PD-or-GCE+PD container-postgres → portable backup/restore scripts required → "Ship now" pre-ship directive. Iterated through 3 idea-text rewrites; final form lock at v1.2 with sizing descope M-L → M. Awaits Phase 3 Survey
+- **idea-300** (M-Hub-Storage-FS-Retirement) — Phase 3 Survey COMPLETE (commit `e2afc92`); 6 Director picks (Q1ac + Q2c + Q3a + Q4a + Q5b + Q6d); validator PASS per §15 schema. Surfaced **substrate-currency-failure cluster #23** as Survey side-effect (repo-event-bridge ephemeral-persistence in substrate-mode; Q4a migration architecturally closes). Mission-class `pre-substrate-cleanup`; 8-wave decomposition sketched; 4 architect-flags batched for Phase 4 (1 CRITICAL: F1 repo-event-bridge cluster #23 closure)
+- **idea-301** (M-Trait-Substrate) — NEW idea filed + Phase 3 Survey COMPLETE (commit `6d5bc62`); 6 Director picks (Q1cab + Q2b + Q3b + Q4b + Q5c+d contradictory-constraint + Q6d + Director-extension). Mission-class `substrate-introduction`; 5-wave decomposition sketched; 5 architect-flags (2 CRITICAL). **Standout: Director-extension on Q6** — Mode-A-vs-Mode-B interpretation Delta-analysis methodology-validation primitive; generalizes beyond Trait substrate to ANY architectural-extension validation; positive-pattern calibration candidate
+
+**Cross-mission architectural deliverables:**
+- **hub-backup + hub-restore portable scripts** shipped at `scripts/local/hub-backup.sh` + `scripts/local/hub-restore.sh` (commit `45b4967`; symlinked at `~/bin/`). Pre-ships idea-298's portability requirement (~40 LoC of forward-prep) → idea-298 sizing dropped M-L → M; gives local-dev hardening of portable interface before cloud-cutover stress. Dual-mode dispatch via `HUB_PG_CONNECTION_STRING` env (portable, works against local-docker / CR+PD / GCE+PD identically) + `HUB_USE_DOCKER_EXEC` (legacy local-dev fallback). pg client tool resolution: host pg_dump if available → ephemeral docker postgres:15-alpine fallback (no install required). Target shapes supported: local file + `gs://...` (gsutil pipe)
+- **3 Director-trait memories filed** as foundational Trait-substrate bootstrap content: `feedback_director_strategic_maximalism_discipline_defended` + `feedback_director_clarifying_question_as_audit_surface` + `feedback_director_mission_close_as_forward_architecture`. Triangulated from mission-83 observations + idea-300/301 Survey observations; ready to seed as trait-001/002/003 at idea-301 mission-W0
+
+**Operational maintenance:**
+- **Disk cleanup completed** — `/` partition 100% used (564M free) → 39% used (40G free); 9.2GB total reclaim. Tier 1: docker dangling-image prune (3.5GB). Tier 2+3: substrate-rollback chain trim (1.1GB) + other-project images (~3GB). Tier 4: `/var/cache/PackageKit/{31,32,33}` wipe (~32GB stale Fedora cache). Docker substrate stack untouched (production Hub + postgres running)
+
+**Operational state (production):**
+- **Production Hub** running `ois-hub:local-substrate` image (W7 ship; commit `af922e9`); container `ois-hub-local-prod` uptime ~12h+ stable; CPU sustained 0% idle (bug-93 ELIMINATED holds)
+- **Postgres substrate** `hub-substrate-postgres` (postgres:15-alpine; vanilla upstream image; only customization is `command:` flags); `hub-substrate-data` volume preserved (15,931 entities)
+- **Rollback chain** preserved: `ois-hub-local-prod-fs-backup` (FS-mode container; stopped) + `ois-hub:local-substrate` image (current) + `ois-hub:local-backup` (FS-mode image) + pre-cutover snapshot at `/home/apnex/taceng/cutover-snapshots/pre-cutover-20260517T043004Z.tar.gz`
+- **Active threads:** zero mission-83 threads (all tidied); thread-554 (mission-79 slice (i); separate mission; engineer-turn; stale since 2026-05-14)
+- **Greg engineer** online_idle; sessionEpoch=41; standing-by for Director-direct or new mission Phase 6 Preflight
+
+**Memory updates (durable across session-handover):**
+- Index entries added to MEMORY.md for 3 Director-trait memories
+- `project_mission_83_state.md` refreshed to reflect Phase 7 closed + follow-on landscape (this update)
+
+---
+
+## Forward queue (architect-side; current standby state)
+
+**Immediate next-action (awaits Director-direct):**
+
+- [ ] **Phase 4 Design entry for idea-300** OR idea-301 OR Survey for idea-298 first — Director sequences
+  - Architect-recommendation: idea-300 first (Q3a strict-sequencing locked; idea-300 → idea-298 dependency)
+  - Setup before Design v0.1 drafting: create branch `agent-lily/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` + work-trace per per-mission-work-trace-obligation
+  - Engineer-greg notification can be informal at Phase 4; formal at Phase 6 Preflight
+
+**Standing-deferred items:**
+
+- [ ] Phase 10 retrospective Director-bilateral — calibration filings via `docs/calibrations.yaml` per CLAUDE.md ledger discipline (architect-Director-bilateral, never LLM-autonomous); 7 candidates queued in retro §4
+- [ ] PR #203 revert (band-aid obsolete; could fold into idea-300 W7 OR small standalone architect-side mission)
+- [ ] PR-to-main merge for mission-83 + Surveys + scripts → CI-status verification at merge time per calibration #77
+- [ ] Hub-snapshot.sh vs hub-backup.sh operator-DX reconciliation — operator-DX cleanup follow-on
+- [ ] idea-298 Phase 3 Survey when sequenced (post idea-300 ship per locked-sequence)
+- [ ] idea-295/296/297/299 Strategic Review triage when prioritized
+- [ ] mission-79 thread-554 re-engagement OR close-as-stale (separate mission; engineer-turn)
