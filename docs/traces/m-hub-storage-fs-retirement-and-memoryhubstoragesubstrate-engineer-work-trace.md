@@ -344,3 +344,83 @@ Typecheck PASS at every sub-task.
 - Bilateral PR-merge-gate engages architect on F1+F3+F5 disposition verify
 
 — Engineer (greg) 2026-05-19 08:45 AEST (W3 complete; opening PR + surfacing checkpoint on thread-581)
+
+---
+
+### 2026-05-19 08:50 AEST — W4 substrate-deletion-cascade complete (thread-582)
+
+W3 PR #211 merged at `ef36b79` (cluster #23 architecturally closed). Architect dispatched W4 on fresh thread-582 (largest-scope wave: substrate-deletion-cascade).
+
+## §12 W4 deliverables shipped (6 sub-tasks)
+
+### §12.1 W4.1 — Import-graph survey (engineer-decision FORCED)
+
+Critical finding: `@apnex/storage-provider` is a **published workspace runtime dependency** of `@apnex/repo-event-bridge`. cursor-store.ts uses `StorageProvider` + `hasGetWithToken`; poll-source.ts uses `StorageProvider`; tests use `MemoryStorageProvider` + conformance suite. **Forces SHRINK-not-RETIRE** disposition (RETIRE would break published package contract).
+
+### §12.2 W4.2 — Per-repo SubstrateCounter swap (NO-OP)
+
+Production-Hub already uses substrate-version repos + SubstrateCounter per mission-83 W5.4 cutover. Deletion-cascade IS the swap; no per-repo wiring change needed.
+
+### §12.3 W4.3 — DELETE 12 FS-version entity-repository files
+
+Deleted: agent / audit / bug / idea / message / mission / pending-action / proposal / task / tele / thread / turn — all `*-repository.ts` files in `hub/src/entities/`.
+
+### §12.4 W4.4 — hub/src/index.ts simplification + LocalFsStorageProvider deletion
+
+- **Dispatch-branches deleted:** `else if (STORAGE_BACKEND === "local-fs")` (lines 167-225) + `else (STORAGE_BACKEND === "memory")` (lines 226-233); replaced with FATAL guard: substrate is sole production path; non-substrate values exit-1
+- **`storageProvider` variable + substrate-mode sentinel deleted:** line 144 `let storageProvider` + line 164 `storageProvider = new MemoryStorageProvider()` both removed; substrate is unconditional post-dispatch-fatal (non-null assertion + drop if-guard at repository instantiation)
+- **MemoryStorageProvider + LocalFsStorageProvider production imports deleted** (line 33)
+- **STORAGE_BACKEND env-var ceremony PRESERVED** for W5 final-removal per Finding B
+- **`packages/storage-provider/src/local-fs.ts` DELETED** + package `index.ts` export updated
+
+### §12.5 W4.5 — DELETE counter.ts + StorageBackedCounter
+
+Deleted `hub/src/entities/counter.ts` (StorageBackedCounter class + Counters interface + CounterField type). SubstrateCounter at `hub/src/entities/substrate-counter.ts` is sole canonical (mission-83 W4 + bug-97 W5.5 fix; production-ready per architect-decision Design v1.0 §2.6 NO-atomic-issueCounter-refactor).
+
+### §12.6 W4.6 — packages/storage-provider/ SHRINK confirmation
+
+**SHRINK** (forced by W4.1 survey; engineer-decision documented):
+- DELETED: `packages/storage-provider/src/local-fs.ts` (LocalFsStorageProvider)
+- DELETED: LocalFsStorageProvider export from `index.ts`
+- **PRESERVED**: `contract.ts` (StorageProvider interface + hasGetWithToken + StoragePathNotFoundError); `memory.ts` (MemoryStorageProvider); `test/conformance.ts` (used by `@apnex/repo-event-bridge/test/conformance/poll-source-conformance.test.ts`)
+
+### §12.7 hub/src/entities/index.ts re-export update
+
+Dropped FS-version + counter.ts + StorageBackedCounter re-exports (lines 18, 21, 23, 25, 27, 29, 54, 58, 63, 65, 66, 70, 81, 114). Preserved substrate-version re-exports + I*Store interface types + SubstrateCounter.
+
+## §13 Test-result summary
+
+| Stage | Tests | Pass | Skip | Fail |
+|---|---|---|---|---|
+| Pre-W4 (post-W3 merge HEAD `ef36b79`) | 1469 | 1464 | 5 | 0 |
+| **Post-W4 (FINAL)** | **1469** | **1464** | **5** | **0** ✅ |
+
+Same test-count + same green status — W2 already migrated fixtures; W4 deletion-cascade is pure dead-code removal with zero functional change. Typecheck PASS.
+
+## §14 W4 file-impact summary
+
+| Action | Count | Files |
+|---|---|---|
+| DELETED | 13 | 12 FS-version `*-repository.ts` + counter.ts |
+| DELETED | 1 | `packages/storage-provider/src/local-fs.ts` |
+| MODIFIED | 4 | hub/src/index.ts + hub/src/entities/index.ts + packages/storage-provider/src/index.ts + work-trace |
+
+Net deletion: ~1500+ lines removed; ~50 lines added (fatal-guard + comment-updates).
+
+## §15 §3.1.1 coordinated-upgrade-discipline VERIFIED
+
+All consumer-upgrades shipped atomic in single W4 PR per Finding B + §3.1.1 spirit:
+- Hub-side: dispatch-branches deleted + repository instantiation simplified + substrate-mode unconditional
+- Hub-internal: 12 FS-version repos + counter.ts deleted + entities/index.ts cleaned
+- Cross-package: storage-provider/local-fs.ts deleted + index.ts export updated
+- NO partial-upgrade state; no consumer left consuming retired pattern
+
+## §16 W4 PR ship-prep
+
+- Branch: `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (HEAD post-W4 commits)
+- Base: `origin/main @ ef36b79`
+- PR scope: 18 files (13 deleted + 4 modified + 1 work-trace)
+- Per ~6-PR cadence: W4 = PR 4 of 6 (standalone substantive)
+- Bilateral PR-merge-gate engages architect on §2.6 final-disposition + SHRINK + §3.1.1 verify
+
+— Engineer (greg) 2026-05-19 08:50 AEST (W4 complete; opening PR + surfacing checkpoint on thread-582)
