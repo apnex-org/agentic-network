@@ -173,3 +173,40 @@ Definitive grep at HEAD `db5dca3`:
 - Ship: W0+W1 combined PR per Q-A6 cadence
 
 — Engineer (greg) 2026-05-19 08:05 AEST (W0 spike complete; W1 starting; checkpoint surfacing on thread-579)
+
+---
+
+### 2026-05-19 08:20 AEST — W1 PORT-then-EXTEND SubstrateConformanceSuite complete (thread-579)
+
+Architect ratified W0 + both decisions (W0.4 hub-side adapter + W2 own-PR) at round 5; W1 GO-signal granted. ~6-PR cadence ratified (revised from ~5). B7-class calibration candidate filed for Phase 10 retro (architect-spec-vs-cross-package-boundary drift).
+
+## §5 W1 deliverables shipped
+
+### §5.1 SubstrateConformanceSuite — PORT 1:1 + EXTEND substrate-specific
+
+- **Suite runner:** `hub/src/storage-substrate/__tests__/conformance/runSubstrateConformanceSuite.ts` (528 lines)
+- **Test wiring:** `hub/src/storage-substrate/__tests__/conformance/substrate-conformance.test.ts` (130 lines)
+- **describe.each pattern:** `[memoryFactory, postgresFactory]` (per Design v1.0 §2.2 ratify-criterion: both factories must pass)
+- **PORTED 1:1 categories** (from `packages/storage-provider/test/conformance.ts` mission-47 baseline): get+put (7) + delete (2) + list (6; adapted prefix→kind-discrimination) + createOnly (3) + putIfMatch (4) + sequential-consistency (2) = 24 tests
+- **EXTENDED categories** (substrate-specific primitives StorageProvider doesn't have): getWithRevision (3) + watch (6; race-fixed via delay+Promise.race pattern from postgres-substrate.test.ts) + schema-wrappers (4) + snapshot/restore (2) + race-correctness (3 incl. bug-97 reproducer) = 18 tests
+- **Postgres-only category** (runner-level; outside the shared runner): restart-safety (3 tests; substrate teardown+recreate cycle)
+- **Total:** 42 memory + 41 postgres + 3 postgres-restart = **87 PASS / 87 total** (4.02s)
+
+### §5.2 W1 cleanup folded into ship
+
+- Watch tests race-fix: replaced `setImmediate` + strict abort-on-first-event with `delay(200)` subscribe-wait + `Promise.race([consumer, delay(2000)])` bounded-wait + `consumer.catch(()=>{})` abort-swallow — pattern lifted from existing `postgres-substrate.test.ts` watch tests. Memory factory: still fast (delay is no-op overhead; ~3s suite total). Postgres factory: NOTIFY-delivery has true latency (~200ms typical); race-fix preserves test-determinism.
+- putIfMatch absent-entity test type-fix: expectedRevision must be numeric-string for postgres BIGINT comparison (memory accepts any string; postgres requires bigint-parseable). Test now uses `"999999999"` to bypass parse-failure path and reach the genuine absent-entity check.
+
+### §5.3 W1 spike-finding — SubstrateConformanceSuite ratify criterion
+
+PORTed runner mechanically equivalent to mission-47 `runConformanceSuite(factory, options)`. Both factories pass the identical suite via `describe.each`. EXTENDED categories cover all substrate-specific primitives (watch + getWithRevision + applySchema/listSchemas/getSchema + restart-safety + race-correctness with bug-97 reproducer). Per Design v1.0 §2.2 ratify-criterion: GREEN.
+
+## §6 W0+W1 PR ship-prep
+
+- Branch: `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (HEAD `a3accb9` + W1 commit pending)
+- Combined PR scope: W0 (memory-substrate + parity + blast-radius + adapter spike) + W1 (SubstrateConformanceSuite PORT-then-EXTEND)
+- PR target: `main`
+- Per Q-A6 ratify (+ architect round-5 update): ~6 PRs total; W0+W1 = PR 1 of 6
+- Bilateral PR-merge-gate engages architect on §5 F2 disposition (PORT-then-EXTEND verify) + W0.4 architectural-decision-point (hub-side adapter location — ALREADY ratified at thread-579 round 5)
+
+— Engineer (greg) 2026-05-19 08:20 AEST (W0+W1 complete; opening PR + surfacing PR-merge-gate checkpoint)
