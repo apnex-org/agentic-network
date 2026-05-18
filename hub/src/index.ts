@@ -648,7 +648,7 @@ function stopContinuationSweep(): void {
 const messageProjectionSweeper = new MessageProjectionSweeper(
   threadStore,
   messageStore,
-  { intervalMs: 5000 },
+  { intervalMs: parseInt(process.env.OIS_MESSAGE_PROJECTION_SWEEPER_INTERVAL_MS ?? "30000", 10) },
 );
 
 // Mission-51 W4: scheduled-message sweeper. Polls every 1s for
