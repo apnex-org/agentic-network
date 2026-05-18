@@ -375,4 +375,122 @@ describe("COMMIT_PUSHED_HANDLER (mission-68 W1 §3)", () => {
     expect(payload.commitCount).toBe(1);
     expect(payload.body).toBe("Engineer pushed 1 commit to agent-greg/feature");
   });
+
+  // ── bug-98 fix tests (mission-84 post-mortem) ────────────────────────
+
+  describe("bug-98 fix: commit-author fallback + architect-agentId resolution", () => {
+    it("falls back to commits[0].author when pusher lookup fails (org-credential push case)", async () => {
+      // Real-world scenario: GitHub PushEvent actor.login = "apnex" (org-level
+      // credential), but commits authored as "apnex-greg" (individual git config).
+      // Handler should fall back to commit-author identity for role resolution.
+      const ctx = makeCtx([
+        makeAgent("eng-A", "engineer", "apnex-greg"),
+        makeAgent("arch-B", "architect", "apnex-lily"),
+      ]);
+      const msg = makeRepoEventMessage({
+        kind: "repo-event",
+        subkind: "commit-pushed",
+        payload: {
+          repo: "apnex-org/agentic-network",
+          ref: "refs/heads/main",
+          pusher: "apnex", // org-credential pusher; unregistered
+          commitCount: 2,
+          commits: [
+            { sha: "abc", message: "first", author: "apnex-greg" },
+            { sha: "def", message: "second", author: "apnex-greg" },
+          ],
+        },
+      });
+
+      const dispatches = await COMMIT_PUSHED_HANDLER.handle(msg, ctx);
+      expect(dispatches).toHaveLength(1);
+      const d = dispatches[0];
+      expect(d.kind).toBe("note");
+      expect(d.target).toEqual({ role: "architect", agentId: "arch-B" });
+      expect(d.intent).toBe("commit-push-thread-heartbeat");
+      const payload = d.payload as Record<string, unknown>;
+      expect(payload.pusher).toBe("apnex"); // original pusher preserved for forensic trace
+      expect(payload.identityResolvedVia).toBe("commit-author");
+      expect(payload.resolvedIdentity).toBe("apnex-greg");
+    });
+
+    it("skips when BOTH pusher AND commit-author lookups fail (unregistered author class)", async () => {
+      const ctx = makeCtx([makeAgent("eng-A", "engineer", "apnex-greg")]);
+      const msg = makeRepoEventMessage({
+        kind: "repo-event",
+        subkind: "commit-pushed",
+        payload: {
+          repo: "apnex-org/agentic-network",
+          ref: "refs/heads/main",
+          pusher: "apnex", // unregistered
+          commitCount: 1,
+          commits: [{ sha: "x", message: "y", author: "apnex-stranger" }], // also unregistered
+        },
+      });
+      const dispatches = await COMMIT_PUSHED_HANDLER.handle(msg, ctx);
+      expect(dispatches).toHaveLength(0);
+    });
+
+    it("AG-7 still holds: commit-author fallback resolving to architect → skip (no architect→architect notification)", async () => {
+      const ctx = makeCtx([makeAgent("arch-B", "architect", "apnex-lily")]);
+      const msg = makeRepoEventMessage({
+        kind: "repo-event",
+        subkind: "commit-pushed",
+        payload: {
+          repo: "apnex-org/agentic-network",
+          ref: "refs/heads/main",
+          pusher: "apnex", // org-credential; falls back to commit-author
+          commitCount: 1,
+          commits: [{ sha: "x", message: "y", author: "apnex-lily" }],
+        },
+      });
+      const dispatches = await COMMIT_PUSHED_HANDLER.handle(msg, ctx);
+      expect(dispatches).toHaveLength(0);
+    });
+
+    it("resolves target.agentId from architect-role agent when architect registered (inbox-visibility fix)", async () => {
+      // Direct case (no commit-author fallback): pusher matches engineer; ctx
+      // includes architect → target.agentId pinned to architect's id for
+      // strict-filter-query inbox visibility per matchesAdditionalFilters.
+      const ctx = makeCtx([
+        makeAgent("eng-A", "engineer", "apnex-greg"),
+        makeAgent("arch-LILY", "architect", "apnex-lily"),
+      ]);
+      const msg = makeRepoEventMessage({
+        kind: "repo-event",
+        subkind: "commit-pushed",
+        payload: {
+          repo: "apnex-org/agentic-network",
+          ref: "refs/heads/main",
+          pusher: "apnex-greg",
+          commitCount: 1,
+          commits: [{ sha: "x", message: "y", author: "apnex-greg" }],
+        },
+      });
+      const dispatches = await COMMIT_PUSHED_HANDLER.handle(msg, ctx);
+      expect(dispatches).toHaveLength(1);
+      expect(dispatches[0].target).toEqual({ role: "architect", agentId: "arch-LILY" });
+      const payload = dispatches[0].payload as Record<string, unknown>;
+      expect(payload.identityResolvedVia).toBe("pusher"); // direct path; no fallback fired
+      expect(payload.resolvedIdentity).toBe("apnex-greg");
+    });
+
+    it("falls back gracefully when no architect registered (target.agentId undefined; broadcast-to-role semantic preserved)", async () => {
+      const ctx = makeCtx([makeAgent("eng-A", "engineer", "apnex-greg")]);
+      const msg = makeRepoEventMessage({
+        kind: "repo-event",
+        subkind: "commit-pushed",
+        payload: {
+          repo: "apnex-org/agentic-network",
+          ref: "refs/heads/main",
+          pusher: "apnex-greg",
+          commitCount: 1,
+          commits: [],
+        },
+      });
+      const dispatches = await COMMIT_PUSHED_HANDLER.handle(msg, ctx);
+      expect(dispatches).toHaveLength(1);
+      expect(dispatches[0].target).toEqual({ role: "architect" }); // no agentId; role-only
+    });
+  });
 });
