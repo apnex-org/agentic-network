@@ -24,6 +24,7 @@ export type {
 } from "./types.js";
 
 export { createPostgresStorageSubstrate } from "./postgres-substrate.js";
+export { createMemoryStorageSubstrate } from "./memory-substrate.js";
 export { createSchemaReconciler, SchemaReconciler } from "./schema-reconciler.js";
 export type { SchemaReconcilerOptions } from "./schema-reconciler.js";
 export { ALL_SCHEMAS } from "./schemas/all-schemas.js";
