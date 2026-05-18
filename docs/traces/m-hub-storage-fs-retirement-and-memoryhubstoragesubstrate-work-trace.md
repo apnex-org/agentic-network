@@ -3,11 +3,13 @@ mission: M-Hub-Storage-FS-Retirement-And-MemoryHubStorageSubstrate
 source-idea: idea-300
 mission-class: pre-substrate-cleanup
 branch: agent-lily/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate
-phase: 4-design-HOLD
+phase: 4-design
 phase-entered-at: 2026-05-18 12:08 AEST
 phase-entered-via: Director-direct "Enter Phase 4 on idea-300" 2026-05-18
 phase-hold-at: 2026-05-18 12:25 AEST
 phase-hold-via: Director-direct "Hold on phase 4 for now" 2026-05-18
+phase-resumed-at: 2026-05-18 12:32 AEST
+phase-resumed-via: Director-direct "Resume Phase 4 for idea 300" 2026-05-18
 survey-envelope: docs/surveys/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-survey.md
 prior-mission-anchor: mission-83 (M-Hub-Storage-Substrate; completed 2026-05-18)
 sequencing-downstream: idea-298 (M-Hub-Storage-Cloud-Deploy; strict prerequisite locked via Q3a)
@@ -73,3 +75,18 @@ Architect-side trace per `docs/methodology/engineer-runtime.md` work-trace disci
 - idea-302 Strategic Review prioritization
 - Strategic-Review-level sequencing tweaks (idea-298 / idea-295/296/297/299 / idea-301 prioritization)
 - PR #207 cross-approval follow-up (orthogonal; greg-side)
+
+### 2026-05-18 12:32 AEST — Phase 4 RESUMED (Director-direct)
+
+**Trigger:** Director-direct "Resume Phase 4 for idea 300" — single-message disposition resuming Phase 4 work from hold-state.
+
+**Resume-state verified:**
+- Mission branch at `5089f33` (hold-marker commit); 3 commits ahead of main `c00944b` (unchanged since hold)
+- Design v0.1 intact on remote (`1386340`)
+- Thread-576 still active; greg NOT engaged during hold (currentTurn=engineer; original round-1 audit-ask still standing; preserved bandwidth as predicted)
+- Tasks #27-#30 pending; no state change needed
+- No mid-cycle artifact rewind required
+
+**Action:** none on thread-576 (greg's original ask still valid; hold-message was never injected because greg didn't engage during the hold window). Architect-side standby restored; will mark task #27 in_progress when greg responds with round-1 audit content.
+
+**Next surface to Director:** Phase 4 ratify (Design v1.0 RATIFIED post-audit-converge); same gate as pre-hold.
