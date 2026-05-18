@@ -3,7 +3,7 @@
 **Mission:** mission-83 (M-Hub-Storage-Substrate; idea-294 lineage)
 **Architect:** lily (agent-40903c59)
 **Engineer:** greg (agent-0d2c690e)
-**Status:** mission-83 CLOSED (Director-ratified Phase 7 release-gate 2026-05-18; status=completed). Phase 8 waived per Director-direct. Phase 10 retrospective draft shipped. 3 follow-on Surveys complete (idea-300 + idea-301 + idea-298 scope-pinned). Standing by for Phase 4 Design entry (idea-300 architect-recommended first per Q3a strict-sequencing).
+**Status:** mission-83 CLOSED + 4 PRs MERGED to main (PR-cleanup-mission complete 2026-05-18). Phase 10 retrospective draft + 4 new calibration memory entries from PR-cleanup. 5 superseded architect-side branches deleted; v4-design preserved for Director-bilateral (calibrations 71-76 cherry-pick decision). idea-302 (M-Task-Entity-Mission-62-Completion) filed.
 **Branch:** `agent-greg/m-hub-storage-substrate` (engineer-side); `agent-lily/m-hub-storage-substrate` (architect-side)
 **Mission lineage:** Phase 1 Concept → Phase 2 Idea (idea-294) → Phase 3 Survey (Director-ratified 6 picks) → Phase 4 Design (v0.1 → v1.4 ladder) → Phase 5 Manifest → Phase 6 Preflight (GREEN) → Phase 7 Implementation (W0-W7) → Phase 10 Retrospective (pending)
 **Wave state @ trace-init:** W5.4 cutover-executed; W5.5 smoke matrix dispatched (thread-573)
@@ -122,6 +122,51 @@ Documented at `feedback_substrate_currency_audit_rubric.md` ARCHITECT-SIDE EXTEN
 - 22-instance bilateral substrate-currency-failure cluster (Phase 10 retrospective material)
 - 3 backup containers + 4 backup images preserved (rollback affordances)
 - Pre-cutover snapshot retained at `/home/apnex/taceng/cutover-snapshots/pre-cutover-20260517T043004Z.tar.gz`
+
+---
+
+### 2026-05-18 PR-cleanup-mission — foundational mission-lifecycle gap remediation (thread-574)
+
+**Director-direct surface:** "Mission report cannot be submitted by greg without a corresponding PR opened. This is foundational mission-lifecycle. Architect is responsible for driving mission lifecycle with engineer." Surfaced architect-side gap (mission-83 W7 dispatch missed "open PR to main" as acceptance criteria item). Triggered cleanup-mission with 100% commit-and-pushed-to-main + every-dangling-branch-cleaned-up scope.
+
+**4 PRs merged to main (cleanup-mission output):**
+- PR #205 mission-83 engineer-side ship (greg; rebase; preserves W0-W7 wave-decomposition)
+- PR #206 missioncraft work-traces docs-only (greg; squash+admin; per-mission-work-trace-obligation)
+- PR #204 mission-83 architect-side ship (architect; rebase+admin; 19 commits: Designs + Phase 7 release-gate + Phase 10 retro + 2 Surveys + portable backup/restore scripts + work-trace)
+- PR #202 calibration-62-65 update (architect; rebase+admin; 2 rebases needed; 374 lines calibration ledger updates)
+
+**Main HEAD now: `c60efaf`** (calibration #62 thread-510 v1.x; precedes the architect-side mission-83 ship; mission-83 engineer-side wave decomposition; missioncraft work-traces; W6-narrowed GCS deletion; bug-97 race-fix; W7 docs).
+
+**Bilateral coordination highlights (thread-574; 15 rounds bilateral):**
+- Round 6 positive-pattern: engineer corrected architect grep-precision failure on cluster #24 finding (architect proposed Option C workflow carve-out + idea-302 dependency; engineer verified empirically `task_engineer_idx` index-name not `assignedEngineerId` field-name was CI regex trigger; engineer proposed Option D single-line index-rename; architect approved; ~5min round-trip)
+- Round 13 cross-cutting observation: 6 architect-side long-lived branches ALL carried same 4-line dev-state contamination (sweeper interval hardcode + start-hub.sh env-var removal); calibration entry filed (`feedback_long_lived_branch_dev_state_contamination`)
+- Round 14 engineer verdict: 5 of 6 architect-side branches confirmed-superseded (delete); v4-design carve-out for Director-bilateral (2 commits NOT on main: calibrations 71-76 + d2-substrate-design §10.1 amendment; 374 lines Director-bilateral-ratified content)
+
+**Branch deletions executed:**
+- agent-lily/m-hub-storage-substrate (post-merge cleanup)
+- agent-lily/calibration-62-65-update-2026-05-08-evening (post-merge; checked-out in lily worktree as parking state)
+- agent-greg/m-hub-storage-substrate (greg cleanup; upstream-unset; harmless dead-local)
+- agent-lily/m-missioncraft-v1-design + v2-design + v3-design (superseded by missioncraft v5.0)
+- agent-lily/m-branchcraft-v1-survey (folded into missioncraft via cosmetic-rename)
+- agent-lily/m-multi-agent-mission-coord-survey (concept folded into missioncraft v5.0)
+- 4 stale remote-tracking refs pruned
+
+**v4-design PRESERVED pending Director-bilateral:**
+- 3 commits not on main: `0361bc4` (d2-substrate-design §10.1 amendment; file not on main; mission-78 superseded; DROP candidate) + `9f11e8f` + `24fb3b1` (calibrations 71-76; 374 lines Director-bilateral-ratified content; PRESERVE candidate)
+- Director-bilateral disposition: cherry-pick calibrations 71-76 OR re-file via dedicated PR OR confirm-loss-and-delete
+
+**4 new calibration memory entries filed (Phase 10 retro material):**
+- `feedback_architect_side_pr_merge_deferral_dispatch_gap` — substrate-introduction class needs explicit PR-cadence in dispatch acceptance criteria
+- `feedback_engineer_side_PR_discipline_surface_when_dispatch_omits_cadence` — mirror calibration; surface PR-cadence omission as architect-flag
+- `feedback_architect_side_cross_mission_completeness_verification_gap` (with sub-calibrations A-D) — cluster #24 + grep-precision + rebase-archaeology + GraphQL no-op fallback + admin-merge CI race protection + gh-merge false-error pattern
+- `feedback_long_lived_branch_dev_state_contamination` — pre-merge code-paths survey discipline
+
+**Plus engineer-side sub-pattern folded:**
+- `feedback_verification_defect_surface_dont_dig` extended with "verify-architect-diagnosis-before-implementing-broad-scope" (greg's symmetric framing of architect grep-precision pair)
+
+**idea-302 filed** (M-Task-Entity-Mission-62-Completion follow-on for Task.assignedEngineerId rename + state-migration; deferred from PR #205 carve-out scope per Option D minimal-fix).
+
+**Cleanup-mission posture:** Director-mandated 100% cleanup achieved EXCEPT v4-design preservation pending Director-bilateral on 374 lines of calibrations 71-76 disposition. Worktree state: 1 active (root on main); greg-worktree + lily-worktree retain merged-branch checkouts as parking-state (cleanup naturally happens on next branch-checkout per agent convention).
 
 ---
 
