@@ -3,9 +3,11 @@ mission: M-Hub-Storage-FS-Retirement-And-MemoryHubStorageSubstrate
 source-idea: idea-300
 mission-class: pre-substrate-cleanup
 branch: agent-lily/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate
-phase: 4-design
+phase: 4-design-HOLD
 phase-entered-at: 2026-05-18 12:08 AEST
 phase-entered-via: Director-direct "Enter Phase 4 on idea-300" 2026-05-18
+phase-hold-at: 2026-05-18 12:25 AEST
+phase-hold-via: Director-direct "Hold on phase 4 for now" 2026-05-18
 survey-envelope: docs/surveys/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-survey.md
 prior-mission-anchor: mission-83 (M-Hub-Storage-Substrate; completed 2026-05-18)
 sequencing-downstream: idea-298 (M-Hub-Storage-Cloud-Deploy; strict prerequisite locked via Q3a)
@@ -46,3 +48,28 @@ Architect-side trace per `docs/methodology/engineer-runtime.md` work-trace disci
 - Open PRs: #207 (architect-side handover-doc; orthogonal to mission-300)
 - Active threads: zero relevant to mission-300; thread-554 stale (mission-79; pre-mission-83)
 - greg agent: `online_idle` (per memory state); standing by for bilateral audit-thread when Design v0.1 ready
+
+### 2026-05-18 12:18 AEST — Design v0.1 DRAFT pushed; bilateral audit thread opened
+
+- **Design v0.1 commit:** `1386340` (311 lines; pre-bilateral round-1 audit)
+- **Bilateral audit thread:** thread-576 opened to greg (`maxRounds=8`; `semanticIntent=seek_rigorous_critique`; correlationId=`m-hub-storage-fs-retirement`)
+- **Architect-flag dispositions:** F1-F4 architect-disposed at Design §5; engineer-challenge targets marked per flag
+- **Open questions:** Q-A1 through Q-A6 at Design §7.2 for round-1 audit
+
+### 2026-05-18 12:25 AEST — Phase 4 HOLD (Director-direct)
+
+**Trigger:** Director-direct "Hold on phase 4 for now" — single-message disposition pausing Phase 4 work.
+
+**Hold-state preservation:**
+- Mission branch + Design v0.1 + work-trace stay on remote at `1386340`
+- Thread-576 active (currentTurn=engineer); architect cannot inject hold-message mid-cycle per turn-state lockup ([[pattern_a_engineer_turn_discipline]])
+- **Plan when greg engages round-1:** architect immediately replies with hold-signal + thread-converge; greg's round-1 audit content preserved as Phase-4-resume input if Director re-engages Phase 4
+- **No code/test/substrate work in flight** — hold is clean; resumes from current state without rewind
+
+**What hold means architecturally:** Director-direct pivot; reason TBD (Director may have other surface to engage; will surface back to Phase 4 when ready OR re-prioritize). Per [[director_direct_mid_cycle_override]] — Director-direct supersedes architect-spec for this slice.
+
+**Architect standby surfaces** (available if Director re-engages on alternate path):
+- Phase 10 retro Director-bilateral calibration filings (11 candidates accumulated from mission-83 retro + PR-cleanup-mission)
+- idea-302 Strategic Review prioritization
+- Strategic-Review-level sequencing tweaks (idea-298 / idea-295/296/297/299 / idea-301 prioritization)
+- PR #207 cross-approval follow-up (orthogonal; greg-side)
