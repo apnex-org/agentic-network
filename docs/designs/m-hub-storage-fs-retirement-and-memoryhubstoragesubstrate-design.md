@@ -6,8 +6,8 @@ survey-envelope: docs/surveys/m-hub-storage-fs-retirement-and-memoryhubstoragesu
 prior-mission-anchor: mission-83 (M-Hub-Storage-Substrate)
 sequencing-downstream: idea-298 (M-Hub-Storage-Cloud-Deploy; strict prerequisite locked via Q3a)
 design-version: v0.2
-design-status: DRAFT — architect-side self-audit refined v0.1; engineer-audit-deferred-to-PR-merge-gate per Director-direct 2026-05-18 (greg idle; cognitive_ttl=0; thread-576 active but unengaged)
-ratify-criterion: architect-side self-audit converged (Q-A2 + Q-A4 + F3 + F4 architect-resolved via code-read; cluster #23 closure architecture confirmed; F5 NEW surfaced + disposed; reconciler-extension prerequisite W3.5 added) → v1.0 RATIFIED (engineer-audit shifts to W0 PR-merge-gate per Director-direct)
+design-status: DRAFT — PENDING BILATERAL ENGINEER CRITIQUE-REVIEW (per Director-correction 2026-05-18: design phase MUST be bilateral; architect-side self-audit is NOT a substitute). thread-577 dispatched re-opening round-1 audit ask; greg cognitive_ttl=0 (session idle); architect operational-escalation pending
+ratify-criterion: bilateral engineer audit converged (greg round-1 per-flag F1-F5 dispositions + Q-A1-Q-A6 responses on Design v0.2; any engineer-surfaced architectural blocker resolved; round-2+ if needed) → v1.0 RATIFIED
 ---
 
 # M-Hub-Storage-FS-Retirement-And-MemoryHubStorageSubstrate — Design v0.2
@@ -327,26 +327,30 @@ Per `docs/methodology/multi-agent-pr-workflow.md` audit-rubric pattern:
 
 ## §11 Status
 
-**v0.2 — DRAFT architect-side self-audit refined v0.1.** Director-direct 2026-05-18 "resume design" with engineer idle (cognitive_ttl=0; thread-576 active but unengaged). Architect-side resolution of Q-A2 + Q-A4 + F3 + F4 via code-read; surfaced F5 (CRITICAL Variant-ii implementability defect) + disposed; §0 changelog captures the 6 v0.1 → v0.2 refinements.
+**v0.2 — DRAFT PENDING BILATERAL ENGINEER CRITIQUE-REVIEW** (per Director-correction 2026-05-18: design phase MUST be bilateral; architect-side self-audit is NOT a substitute even if it surfaces defects like F5).
 
-**v1.0 ratify-criterion (architect-side; deferred-bilateral-engineer-audit-to-PR-merge-gate per Director-direct):**
-- ✅ Q-A2 (mission-47 conformance suite location) — resolved: NEW WORK, not port (§2.2 + §0.1)
-- ✅ Q-A4 (schema-reconciler primitive coverage) — resolved: index-only; sequence-create requires extension; counters-table mechanism chosen (§2.6 + §0.5)
-- ✅ Q-A3 (Variant ii interface-swap mechanics) — resolved: primitive-mapping is 1:1; minimal-SchemaDef Variant (§2.3 primitive-mapping table + §0.2)
-- ✅ F4 (NOTIFY trigger semantic) — resolved: fires per-kind; default=true (§2.3 final ¶ + §0.3)
-- ✅ F5 (Variant ii implementability) — resolved: minimal-SchemaDef Variant (§2.3 + §5 F5 row + §0.6)
-- ⏳ Q-A1 (integration-test infrastructure shape) — architect-recommendation = real docker-restart for dispositive evidence; engineer-validation at W3 PR-merge-gate
-- ⏳ Q-A5 (substrate-watch performance baseline under restored 1s/5s ticks) — pre-W7 profile gate; engineer-validation at W7 ship
-- ⏳ Q-A6 (PR cadence — single-PR-per-mission vs 8-PR-per-wave) — architect-recommendation = single-PR-per-mission with wave-commit-archaeology per mission-83 precedent; engineer-challenge at W0 PR-open-time
+**v0.2 architect-side work (PENDING engineer validation):**
+- v0.1 → v0.2 refinements applied per §0 changelog (6 items; F5 NEW)
+- Q-A2 + Q-A4 + F3 + F4 architect-resolved via code-read — **engineer-validation still required**
+- Architect-side blind-spots may persist (F5 was self-caught at v0.2; pattern suggests v0.2 may carry undetected blind-spots that engineer-audit catches)
 
-**Engineer-audit shifts to PR-merge-gate** (per Director-direct deferral 2026-05-18; engineer cognitive_ttl=0 + thread-576 unengaged). At each wave PR (W0, W1, ..., W7), greg engages on code-bound delta vs Design v0.2 §X.Y; surface architect-flag-status (CONCUR / REFINE / CHALLENGE) at code-review-time instead of pre-Design-ratify.
+**v1.0 ratify-criterion (per `mission-lifecycle.md` Phase 4 ratify; bilateral-engineer-audit non-substitutable):**
+- ⏳ Bilateral round-1 audit complete (engineer surfaces per-flag F1-F5 dispositions + Q-A1-Q-A6 responses on Design v0.2)
+- ⏳ Any engineer-surfaced architectural blocker resolved
+- ⏳ Round-2+ as needed; architect commits design refinements without separate thread-ping
+- ⏳ Architect-side blind-spot probe (per F5 lesson): engineer reviews v0.2 for architect-spec-vs-substrate-API drift class defects
 
-**Architect-side ratify declaration:** Design v0.2 → v1.0 RATIFIED at next commit (architect-side self-confidence pre-Phase-5-Manifest entry) IF Director engages "ratify v1.0" disposition OR equivalent. Phase 4 → Phase 5 Manifest authoring triggered at v1.0 ratify.
+**Engagement-state at v0.2 ship:**
+- thread-576 (original round-1 audit ask) force-closed 2026-05-18 (0 queued items confirmed — dispatch did not land in greg's queue)
+- thread-577 (re-dispatch with v0.2 fold-context) opened 2026-05-18; greg cognitive_ttl=0 (session idle); inbox empty post-dispatch (verified)
+- Hub-API dispatch mechanisms exhausted — operational escalation pending to activate greg session
+- Architect operational-state: BLOCKED-PENDING-ENGINEER-AUDIT
 
 **Expected progression:**
-- v0.2 → v1.0 RATIFIED (Director-direct disposition; architect-side commits ratify-marker)
-- v1.0 → v1.1+ (live design evolution during mission execution; per mission-83 v1.0 → v1.4 precedent; engineer-side PR-merge-gate refinements fold here)
+- v0.2 → v0.3 (post engineer round-1; per-flag-disposition fold; round-2 if needed)
+- v0.3 → v1.0 RATIFIED (bilateral audit converged; architect commits ratify-marker per [[feedback_narrative_artifact_convergence_discipline]])
+- v1.0 → v1.1+ (live design evolution during mission execution; per mission-83 v1.0 → v1.4 precedent)
 
 ---
 
-— Architect: lily / 2026-05-18 12:40 AEST (Phase 4 entered Director-direct 2026-05-18; Phase 4 hold-then-resume same day; v0.1 DRAFT → v0.2 architect-side self-audit refined; engineer-audit deferred to W0+ PR-merge-gate per Director-direct + engineer-idle-state)
+— Architect: lily / 2026-05-18 12:55 AEST (Phase 4 entered Director-direct 2026-05-18; Phase 4 hold-then-resume same day; v0.1 DRAFT → v0.2 architect-side self-audit refined; v0.2 framing corrected per Director-correction — BILATERAL ENGINEER CRITIQUE-REVIEW required for ratify, not deferrable)
