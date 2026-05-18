@@ -205,3 +205,34 @@ Architect-side trace per `docs/methodology/engineer-runtime.md` work-trace disci
 **Next gate (Phase 6):** preflight audit + ratify-activation (proposed → active flip). Architect authors `docs/missions/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-preflight.md` per mission-83 preflight precedent + mission-preflight.md methodology (6-category audit: docs integrity + Hub filing integrity + referenced-artifact currency + scope-decision gating + execution readiness + verdict). Verdict GREEN → Director-direct flip to active triggers Phase 7 wave execution starting W0.
 
 **Architect operational-state:** PHASE-5-COMPLETE; ready for Phase 6 preflight authoring.
+
+### 2026-05-18 15:35 AEST — Phase 6 preflight artifact committed (Verdict: GREEN)
+
+**Preflight commit:** `1f0bdcd` (`docs/missions/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-preflight.md`); 6-category audit per `docs/methodology/mission-preflight.md` v1.0; all 6 PASS.
+
+Director-engagement at Phase 7 Release-gate per RACI §1.5: ask for ratification of preflight verdict + authorization to flip mission-84 status `proposed → active`.
+
+### 2026-05-18 15:50 AEST — Director-correction: mission-lifecycle full adherence review
+
+**Trigger:** Director "before we flip - I want full adherence to mission lifecycle. Can you please review the document?"
+
+**Architect-side full read of `docs/methodology/mission-lifecycle.md` v1.2 (768 lines).** Identified **2 lifecycle-adherence gaps** in mission-84 state:
+
+**GAP 1 (CRITICAL) — Pulse cadence non-canonical:**
+- mission-84 pulses initially set to 21600/43200/3 (mirrored from mission-83 stale pre-mission-68 per-class defaults)
+- Per §4.1 mission-68 W1 supersession (Director Survey Q2a + Q5a + Path C): unified per-role defaults are now canonical — engineer 600s (10min) + architect 1200s (20min) + missedThreshold 2
+- Per §4.2 override semantics: any override requires bilateral-ratification at Design time + engineer-final-cadence-specifics. Mine had neither.
+
+**GAP 2 (MEDIUM) — Engineer-inform missing:**
+- Per §1.5 RACI Phase 5: Engineer = I (informed); mission-83 precedent used dedicated Inform-class thread-564
+- mission-84 had no formal inform-class thread; convergence summary of thread-577 implicitly mentioned Phase 5/6 transition but not mission-84 ID + plannedTasks specifics + pulse cadence
+
+**Director disposition: 1a + 2 approved** (adopt unified defaults + inform-class thread; ensure greg also reviews mission-lifecycle.md).
+
+**Remediation executed:**
+- `update_mission(mission-84, pulses={engineerPulse: 600s/2, architectPulse: 1200s/2, ...})` — pulses now canonical per §4.1 unified defaults
+- thread-578 opened to greg (`[INFORM] mission-84 created (status: proposed; Phase 6 preflight GREEN); ask: review mission-lifecycle adherence + confirm plannedTasks`); 7 specific check-targets per mission-lifecycle.md §1.x phase-artifact summary + §1.5 RACI rows + §3 missionClass taxonomy + §3.1.1 coordinated-upgrade + §4 pulse coordination + §5 categorised-concerns + §7 sub-execution mechanics + plannedTasks spot-check
+
+**Calibration-implication:** preflight category B (Hub filing integrity) PASS judgment was INSUFFICIENT — pulses-field-value-equivalent-to-mission-83 should have flagged pre-mission-68 vs post-mission-68 default-drift. Architect-side preflight should explicitly cross-check pulse cadence vs current canonical defaults per `mission-lifecycle.md` §4.1. Preflight methodology candidate: add Category B sub-check `B4: pulses config matches current canonical defaults OR override is bilateral-ratified at Design time` (Phase 10 retro candidate).
+
+**Architect operational-state:** PHASE-6-PREFLIGHT-CORRECTED; BLOCKED-PENDING-GREG-LIFECYCLE-REVIEW (thread-578). Once greg CONCUR on adherence + plannedTasks: surface Director for Phase 7 Release-gate ratification → `update_mission(status="active")`.
