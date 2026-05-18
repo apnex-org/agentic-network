@@ -5,25 +5,45 @@ source-idea: idea-300
 survey-envelope: docs/surveys/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-survey.md
 prior-mission-anchor: mission-83 (M-Hub-Storage-Substrate)
 sequencing-downstream: idea-298 (M-Hub-Storage-Cloud-Deploy; strict prerequisite locked via Q3a)
-design-version: v0.2
-design-status: DRAFT — PENDING BILATERAL ENGINEER CRITIQUE-REVIEW (per Director-correction 2026-05-18: design phase MUST be bilateral; architect-side self-audit is NOT a substitute). thread-577 dispatched re-opening round-1 audit ask; greg cognitive_ttl=0 (session idle); architect operational-escalation pending
-ratify-criterion: bilateral engineer audit converged (greg round-1 per-flag F1-F5 dispositions + Q-A1-Q-A6 responses on Design v0.2; any engineer-surfaced architectural blocker resolved; round-2+ if needed) → v1.0 RATIFIED
+design-version: v0.3
+design-status: DRAFT — v0.2 → v0.3 folds greg round-1 audit (thread-577 round 2; 6 architect-side blind-spots B1-B6 + per-flag dispositions + Q-A disposition + wave-decomp refinements); ratify-ready pending greg round-2 confirmation
+ratify-criterion: greg round-2 confirmation on 8 ratify-criteria fold (B1-B6 self-audit corrections; F2 PORT-then-EXTEND reframe; §2.6 Counter mechanism pinned to (b) Counter-stays-as-kind; §2.3 watchable:false; SchemaDef inventory 20→22; W3.5 removed; W2 blast-radius re-estimate scheduled at W0; Q-A6 ~5-PR cadence ratified) → v1.0 RATIFIED
 ---
 
-# M-Hub-Storage-FS-Retirement-And-MemoryHubStorageSubstrate — Design v0.2
+# M-Hub-Storage-FS-Retirement-And-MemoryHubStorageSubstrate — Design v0.3
 
-**Draft 2026-05-18 architect-side; v0.2 architect-side self-audit refinement of v0.1.** Composes Survey envelope §1-7 ratified intent + 5-pillar composite into engineer-actionable architecture + wave-spec.
+**Draft 2026-05-18 architect-side; v0.2 → v0.3 folds greg round-1 bilateral audit (thread-577 round 2).** Composes Survey envelope §1-7 ratified intent + greg round-1 corrections (6 architect-side blind-spots B1-B6 + per-flag dispositions + Q-A resolutions + wave-decomp refinements) into ratify-ready engineer-actionable architecture + wave-spec.
 
-## §0 v0.1 → v0.2 changelog (architect-side self-audit)
+## §0 Changelog
 
-Director-direct 2026-05-18 "resume design" with engineer idle (cognitive_ttl=0; thread-576 unengaged). Architect-side self-audit resolved Q-A2 + Q-A4 + F3 + F4 via code-read; surfaced architectural-defects in v0.1 + folded fixes:
+### v0.2 → v0.3 (greg round-1 audit fold; thread-577 round 2)
 
-1. **§2.2 SubstrateConformanceSuite — NEW WORK, not port from mission-47** — v0.1 claimed "mirrors mission-47 StorageProvider conformance suite scope precedent (~25-30 tests)"; verified there is NO formal abstract conformance suite at `packages/storage-provider/test/` (just per-impl `memory.test.ts` + `local-fs.test.ts`). Refined: design abstract suite from scratch; Survey's "Standard scope" intent still applies (race + CAS + watch-event + restart-safety; ~25-30 tests).
-2. **§2.3 Variant (ii) — minimal-SchemaDef REQUIRED; not pure-KV as v0.1 described** — substrate's `put(kind, entity)` requires kind; kind requires SchemaDef registration via reconciler. Refined Variant (ii) name to "minimal-SchemaDef Variant"; register `RepoEventBridgeCursor` + `RepoEventBridgeDedupe` SchemaDefs with NO hot fields (no per-kind expression indexes); body is opaque blob; reconciler treats them as kind-registered but index-free. SchemaDef inventory: 20 → 22 kinds.
-3. **§2.3 final ¶ F4 disposition — REVERSED** — v0.1 said "NOTIFY does NOT fire for non-entity writes"; verified per substrate types.ts SchemaDef.notify default=true + per-kind NOTIFY semantic. NOTIFY DOES fire for RepoEventBridgeCursor + RepoEventBridgeDedupe kinds (default behavior). Repo-event-bridge could OPT to consume its own kind's watch primitive (future architectural-leverage; not v1 deliverable).
-4. **§2.3 NEW — primitive-mapping table** — substrate primitives (`createOnly` + `putIfMatch` + `getWithRevision`) map 1:1 to StorageProvider primitives (`createOnly` + `putIfMatch` + `getWithToken`). cursor-store.ts interface-swap is nearly 1:1 modulo `(path)` → `(kind, id)` shape transformation.
-5. **§2.6 Counter mechanism — schema-reconciler does NOT support CREATE SEQUENCE** — verified reconciler primitive surface is `CREATE INDEX CONCURRENTLY` only. Postgres-sequence-per-kind needs reconciler extension (NEW slice W3.5 prerequisite to W4) OR alternative: dedicated `counters` table with per-kind row + atomic `UPDATE ... RETURNING value+1` (table-CRUD; reconciler-compatible). Refined: pick **alternative — counters-table mechanism** (no reconciler extension; clean within existing primitive surface).
-6. **NEW F5 (CRITICAL)** — Variant (ii) implementability defect (v0.1 architect-side error); resolved via minimal-SchemaDef Variant per (2); engineer-audit-future-target.
+Greg round-1 code-grounded audit caught 6 architect-side blind-spots in v0.2 (B1-B6) — v0.2's own self-audit substituted-for-engineer-audit missed these. Per [[feedback_architect_drives_engineer_engagement_when_idle]]: this is exactly the engineer-perspective value that architect-side self-audit cannot replicate.
+
+1. **§2.2 SubstrateConformanceSuite — PORT-then-EXTEND, NOT new-work** — v0.2 claimed "NEW WORK not port"; greg B1 surfaced `packages/storage-provider/test/conformance.ts` EXISTS as 257-line abstract `runConformanceSuite(factory, options)` suite (capabilities + get/put + list + delete + createOnly + putIfMatch + path-handling + sequential-consistency). Refined: **PORT 1:1 from existing conformance.ts + EXTEND ~10-15 substrate-specific tests** (watch + getWithRevision + applySchema/listSchemas/getSchema + restart-safety with postgres + race-correctness under postgres concurrent writers).
+2. **§2.3 — SchemaDef field is `watchable: boolean` (REQUIRED), not `notify` (optional default-true)** — greg B2 surfaced field-name + required-ness error in v0.2's spec-recall. Field is `watchable: boolean` at `hub/src/storage-substrate/types.ts:24`; required at type level (every SchemaDef in `all-schemas.ts` sets it explicitly). F4 direction (NOTIFY fires) is CORRECT; spec-recall details wrong. v0.3: RepoEventBridgeCursor + RepoEventBridgeDedupe explicitly set `watchable: false` (cursor/dedupe writes are bookkeeping; no consumer needs change-events; pre-resolves F5 future-target probe).
+3. **§2.6 — Counter SchemaDef ALREADY EXISTS** at `all-schemas.ts:91-100` (kind: "Counter", version: 1, watchable: false); v0.2 claimed "Add Counter SchemaDef" — wrong. Greg B3. SchemaDef inventory delta is **20 → 22** (add RepoEventBridgeCursor + RepoEventBridgeDedupe only), NOT 20 → 23.
+4. **§2.6 — SubstrateCounter ALREADY EXISTS** at `hub/src/entities/substrate-counter.ts` (71 lines; mission-83 W4 + bug-97 W5.5 fix at `e109000`); uses Design v1.4 `getWithRevision` + `putIfMatch` CAS retry-loop (MAX_CAS_RETRIES=50). Greg B4. v0.3 Counter scope = (i) delete legacy `counter.ts` + `StorageBackedCounter` + (ii) per-repo callers swap to SubstrateCounter + (iii) decide at W4 whether to refactor CAS-loop to atomic `issueCounter` primitive (architect-recommendation: NO — keep CAS-loop; bug-97 closed; "atomic primitive" would require substrate-API addition without need).
+5. **§2.6 — Reconciler manages INDEXES only, NOT tables; "counters-table mechanism" was architectural-pathology** — greg B5 surfaced that v0.2's "counters-table via standard table-CRUD which the substrate already supports via SchemaDef registration" was wrong: SchemaDef registration creates indexes on the `entities` table, not separate tables. v0.3: PIN Counter mechanism to **(b) Counter-stays-as-kind** (current SubstrateCounter path; CAS-loop pattern in entities table). NO W3.5 reconciler-extension slice needed; W3.5 REMOVED from ratify-criterion + wave-decomp.
+6. **§3 wave-decomp W2 blast-radius re-estimate** — greg B6 surfaced "~22 files; ~170 tests" was stale mission-83 W6 estimate; actual at HEAD = **82 .test.ts files in `hub/test/`; 49 reference test-utils or MemoryStorageProvider** (verified). v0.3: W0 spike includes W2 blast-radius re-count as deliverable; W2 scope adjusts based on W0 spike findings.
+7. **§3 W4 scope clarification** — explicit `counter.ts` + `StorageBackedCounter` deletion; SubstrateCounter remains canonical; W4 refactor-decision per (4).
+8. **§3 W5 scope addition** — `scripts/local/start-hub.sh:125` also touches STORAGE_BACKEND default (`local-fs` currently); local-dev Hub needs postgres-up-required at boot post-W5.
+9. **§5 F2 disposition reframed** — PORT-then-EXTEND per (1); was "from scratch" in v0.2.
+10. **§5 F1 disposition refined** — greg CONCUR + REFINE: BOTH in-process Hub-restart-simulation (primary; sub-second; CI-deterministic) PLUS docker-restart smoke at PR ship-gate (mission-83 W2 postgres-container harness; ground-truth dispositive).
+11. **§5 F3 disposition refined** — greg CONCUR + minor REFINE: cursor-store.ts internal data is `Uint8Array` via `TextEncoder`; substrate body is JSONB. Adapter must `JSON.parse` ↔ `stringify` — explicit impl note added in §2.3.
+12. **§7 Q-A6 PR cadence ratified** — per-wave PR for substantive (W1 conformance + W3 cluster #23 + W4 deletion-cascade + W5 env-var) + folded mini-PRs for trivial (W0+W2 spike-and-cascade + W6+W7 restoration+revert); ~5 PRs total. Per `multi-agent-pr-workflow.md` (apnex-org/* uses PR-flow).
+13. **§7 Q-A5 architectural-future-leverage note** — substrate-watch enables sweepers to subscribe to ScheduledMessage/unprojected-Thread change-events instead of polling; v1 keeps polling; W7 follow-on architectural note.
+
+### v0.1 → v0.2 (architect-side self-audit; superseded by greg round-1)
+
+Director-direct 2026-05-18 "resume design" with engineer idle (cognitive_ttl=0; thread-576 unengaged); architect-side self-audit resolved Q-A2 + Q-A4 + F3 + F4 via code-read. **6 v0.2 changelog items SUPERSEDED by greg round-1 corrections** (B1 corrects v0.2 item 1; B2 corrects v0.2 item 3; B3+B4+B5 correct v0.2 items 5+6 + framing). Retained in this changelog for traceability:
+
+- v0.2.1 §2.2 SubstrateConformanceSuite — claimed "NEW WORK, not port" → **CORRECTED by v0.3.1 (PORT-then-EXTEND)**
+- v0.2.2 §2.3 Variant (ii) — refined "pure-KV" → "minimal-SchemaDef Variant" → **retained (correct architectural disposition)**
+- v0.2.3 §2.3 F4 — claimed NOTIFY fires per-kind via `notify` default-true → **CORRECTED by v0.3.2 (field is `watchable: boolean` required; direction correct)**
+- v0.2.4 §2.3 NEW primitive-mapping table → **retained (correct architectural disposition; verified 1:1)**
+- v0.2.5 §2.6 Counter — picked "counters-table mechanism" over postgres-sequence → **CORRECTED by v0.3.5 (pin (b) Counter-stays-as-kind via existing SubstrateCounter)**
+- v0.2.6 F5 NEW (CRITICAL) — Variant (ii) implementability defect → **retained (correct surface; resolved via minimal-SchemaDef Variant per v0.2.2)**
 
 ---
 
@@ -67,7 +87,20 @@ idea-300 is the **cloud-deploy clearing-the-path mission with maximum substrate-
 
 **Scope:** Standard per Survey Q5b — race + CAS + watch-event + restart-safety (~25-30 tests).
 
-**NEW WORK — not a port** (v0.2 correction; per §0 changelog item 1). `packages/storage-provider/test/` has per-impl test files (`memory.test.ts` + `local-fs.test.ts`) but NO formal abstract conformance suite to port from. SubstrateConformanceSuite is designed from scratch; Survey's "Standard scope" intent applies via test-category coverage targets below.
+**PORT-then-EXTEND** (v0.3 correction per greg B1; supersedes v0.2's "NEW WORK not port"). Verified: `packages/storage-provider/test/conformance.ts` EXISTS as 257-line abstract `runConformanceSuite(factory, options): void` suite. Test categories covered: capabilities + get/put + list + delete + createOnly + putIfMatch + path-handling + sequential-consistency.
+
+**SubstrateConformanceSuite implementation plan (v0.3):**
+1. **PORT 1:1** the existing `runConformanceSuite` from `packages/storage-provider/test/conformance.ts` to `hub/src/storage-substrate/__tests__/conformance/runSubstrateConformanceSuite.ts`. Wrap StorageProvider-shape primitives with substrate-shape primitives via the §2.3 primitive-mapping table.
+2. **EXTEND** with ~10-15 substrate-specific tests for primitives StorageProvider doesn't have:
+   - `watch(kind, opts)` AsyncIterable change-events (5 tests: fires on put + fires on delete + multiple subscribers + unsubscribe + payload-shape)
+   - `getWithRevision` round-trip (already covered by ported `getWithToken` tests; verify port covers)
+   - `applySchema` + `listSchemas` + `getSchema` (3 tests: apply schema; list returns applied; get by kind)
+   - **Restart-safety** (5 tests; postgres-only via test-postgres-container harness; memory marked `skip`): write + restart + read returns same body; revision counter survives restart; CAS ifRevision against pre-restart revision still works post-restart; concurrent-write-during-restart edge-case; watch-subscribers re-sync semantic
+   - **Race-correctness under postgres concurrent writers** (3 tests): N-writer CAS-loop convergence; per-kind isolation; bug-97 counter-collision regression net (concurrent `SubstrateCounter.next(domain)` under contention)
+
+**Test infrastructure:** abstract `describe.each` over `[memoryFactory, postgresFactory]`; postgres factory uses mission-83 W2 `hub/test/postgres-container.ts` harness; memory factory uses `MemoryHubStorageSubstrate` from §2.1.
+
+**Location:** `hub/src/storage-substrate/__tests__/conformance/` (canonical location; sibling to substrate impl files).
 
 **Test categories:**
 1. **Race-correctness** (~8 tests) — concurrent put under contention; per-kind isolation; cross-kind isolation; watch-during-put atomicity; CAS-loop convergence under N writers; bug-97 counter-collision regression net (per `feedback_counter_collision_substrate_defect_pattern.md`)
@@ -104,13 +137,14 @@ idea-300 is the **cloud-deploy clearing-the-path mission with maximum substrate-
 - `repo-event-bridge/dedupe/<owner>/<repo>` → kind=`RepoEventBridgeDedupe`, id=`<owner>__<repo>`
 
 **Implementation:**
-- Add `RepoEventBridgeCursor` + `RepoEventBridgeDedupe` minimal-SchemaDefs to `hub/src/storage-substrate/schemas/all-schemas.ts` (SchemaDef inventory: 20 → 22 kinds)
+- Add `RepoEventBridgeCursor` + `RepoEventBridgeDedupe` minimal-SchemaDefs to `hub/src/storage-substrate/schemas/all-schemas.ts` with **`watchable: false`** (v0.3 correction per greg B2; cursor/dedupe writes are bookkeeping; no consumer needs change-events; pre-resolves F5 future-target probe). SchemaDef inventory: 20 → 22 kinds.
 - Add `RepoEventBridgeSubstrateAdapter` at `packages/repo-event-bridge/src/substrate-adapter.ts` — wraps HubStorageSubstrate's CAS primitives + maps path-shape to (kind, id) shape; presents StorageProviderWithTokenRead-compatible interface for cursor-store.ts narrow-typed consumption
+- **Uint8Array ↔ JSONB body conversion** (v0.3 per greg F3 REFINE): cursor-store.ts internal data is `Uint8Array` via `TextEncoder`; substrate body is JSONB. Adapter must `JSON.parse(new TextDecoder().decode(uint8))` on read + `new TextEncoder().encode(JSON.stringify(body))` on write. Explicit in adapter impl.
 - cursor-store.ts swaps constructor-arg type `StorageProvider` for the adapter (interface-narrowed via the adapter; cursor-store.ts internal logic unchanged)
 
-**SchemaDef inventory update** (v0.2): 20 → 22 kinds. Update `hub/scripts/entity-kinds.json` v1.1 → v1.2 at W3 ship.
+**SchemaDef inventory update** (v0.3 per greg B3): 20 → **22** kinds (NOT 23; Counter SchemaDef ALREADY EXISTS at `all-schemas.ts:91-100`; only RepoEventBridgeCursor + RepoEventBridgeDedupe are net-new). Update `hub/scripts/entity-kinds.json` v1.1 → v1.2 at W3 ship.
 
-**F4 PROBE outcome — REVERSED from v0.1** (per §0 changelog item 3): NOTIFY DOES fire for RepoEventBridgeCursor + RepoEventBridgeDedupe kinds. Per `hub/src/storage-substrate/types.ts` SchemaDef.notify field comment: "Whether to wire a NOTIFY trigger for this kind (default true; substrate-internal-events excluded)." Default behavior = NOTIFY fires per-kind. Repo-event-bridge could OPT to subscribe to its own kind for watch-driven cursor advance (architectural future-leverage; not v1 deliverable; polling-cycle preserved for v1 simplicity).
+**F4 PROBE outcome — v0.3 final** (per greg B2 + F4 CONCUR direction + CHALLENGE spec-recall): NOTIFY fires per-kind via SchemaDef `watchable: boolean` REQUIRED field (NOT optional `notify` default-true as v0.2 mistakenly recalled). RepoEventBridgeCursor + RepoEventBridgeDedupe explicitly set `watchable: false` (bookkeeping writes; no consumer needs change-events). Repo-event-bridge polling-cycle preserved for v1 simplicity; opt-in watch-subscription via setting `watchable: true` is architectural future-leverage (not v1 deliverable).
 
 ### §2.4 Cluster #23 closure architecture (per F1 CRITICAL disposition)
 
@@ -161,23 +195,25 @@ const substrate = createPostgresStorageSubstrate({
 
 **Per `feedback_counter_collision_substrate_defect_pattern.md`:** Counter's issue-then-createOnly pattern isn't atomic across concurrent callers; 11-kind defect surface. Mission-83 bug-97 fixed via per-repo retry-loop. W4 unification opportunity.
 
-**Decision (v0.2 architect-side refined per §0 changelog item 5):** **counters-table mechanism** — dedicated `counters` table with per-kind row; atomic `UPDATE counters SET value = value + 1 WHERE kind = '<K>' RETURNING value` for issuance. Postgres-sequence-per-kind was the v0.1 architect-recommendation but requires reconciler extension (verified: `hub/src/storage-substrate/schema-reconciler.ts` does `CREATE INDEX CONCURRENTLY` only; no `CREATE SEQUENCE` primitive). Counters-table mechanism uses standard table-CRUD which the substrate already supports via SchemaDef registration.
+**Decision (v0.3 PINNED per greg B3+B4+B5):** **(b) Counter-stays-as-kind in entities table; SubstrateCounter is canonical impl.** v0.2's "counters-table mechanism" framing was architectural-pathology per greg B5 — SchemaDef registration creates indexes on the `entities` table, NOT separate tables. v0.2 also missed that Counter SchemaDef ALREADY EXISTS at `all-schemas.ts:91-100` (greg B3) AND SubstrateCounter ALREADY IMPLEMENTS the CAS-loop pattern at `hub/src/entities/substrate-counter.ts` (greg B4; 71 lines; mission-83 W4 + bug-97 W5.5 fix at `e109000`; uses Design v1.4 `getWithRevision` + `putIfMatch` with MAX_CAS_RETRIES=50).
 
-**Rationale for counters-table over postgres-sequence:**
-- No reconciler extension needed (cleaner within existing primitive surface)
-- Counter state is queryable + auditable via standard substrate `get` primitive (operator-DX win)
-- Atomic via `UPDATE ... RETURNING` (postgres-native row-locking)
-- Single `Counter` kind SchemaDef + per-kind row (vs 11 sequences)
-- MemoryHubStorageSubstrate impl: `Map<kind, number>` with monotonic-increment + synchronous return (matches postgres semantic)
+**Rationale for (b) Counter-stays-as-kind:**
+- Mechanism already implemented + bug-97 closed via existing SubstrateCounter
+- No new SchemaDef needed (Counter SchemaDef already at `all-schemas.ts:91`)
+- No reconciler extension needed (no W3.5 prerequisite slice)
+- No new substrate API primitive needed (`issueCounter` is unnecessary; CAS-loop pattern works)
+- Substrate-native (kind: "Counter" in entities table; single row with domain-keyed body per current SubstrateCounter design)
+- MemoryHubStorageSubstrate impl: SubstrateCounter operates over any HubStorageSubstrate impl (memory or postgres); MAS-loop semantic identical
 
-**Implementation surface (W4):**
-- Add `Counter` SchemaDef to `hub/src/storage-substrate/schemas/all-schemas.ts` (SchemaDef inventory becomes 20 → 23 kinds when combined with §2.3 RepoEventBridgeCursor + RepoEventBridgeDedupe)
-- HubStorageSubstrate `issueCounter(kind: string): Promise<number>` primitive — postgres impl: atomic `UPDATE counters SET value = value + 1 WHERE kind = $1 RETURNING value` (with initial-row-insert on first call); memory impl: `Map<kind, number>` with `++`
-- Per-repo `issueCounter` callers (BugRepository / IdeaRepository / etc. — 11 affected kinds per bug-97) swap from Counter abstraction module to substrate primitive
-- Counter abstraction module (`hub/src/lib/counter.ts` or wherever it lives — engineer locates at W4) deletes; per-repo retry-loop pattern removed
-- bug-97 closure structural at W4 ship; flips status `open → closed-structurally` in calibration ledger
+**W4 implementation surface (v0.3 corrected scope):**
+- **Delete** legacy `counter.ts` + `StorageBackedCounter` modules (engineer locates exact paths at W4)
+- **Swap callers** to SubstrateCounter (per-repo `bugCounter` / `ideaCounter` / `missionCounter` / etc. — 11 domains per bug-97)
+- **Decide at W4** whether to refactor SubstrateCounter's CAS-loop to a new atomic `issueCounter` substrate primitive — architect-recommendation: **NO** (CAS-loop works post bug-97; "atomic primitive" would require substrate-API addition without need; defer to operational-need surface)
+- bug-97 closure status: already closed via mission-83 W5.5 `e109000`; no additional ledger flip needed (SubstrateCounter consolidation completes the W4 architectural-cleanup not the bug-fix)
 
-**Conformance suite addition:** §2.2 race-correctness category includes counter-collision regression net (bug-97 reproducer; concurrent `issueCounter` calls under contention).
+**Conformance suite addition:** §2.2 race-correctness category includes counter-collision regression net via concurrent `SubstrateCounter.next(domain)` under contention.
+
+**W3.5 slice REMOVED** (v0.3 per greg B5; was implicit in v0.2 §0 ratify-criterion but absent from §3 wave-decomp). No reconciler-extension slice needed because (b) Counter-stays-as-kind uses existing primitive surface.
 
 ### §2.7 Document MCP tools restoration (W6)
 
@@ -203,20 +239,22 @@ const substrate = createPostgresStorageSubstrate({
 
 ## §3 Wave decomposition (W0-W7; per Survey §7.1)
 
-| Wave | Scope | Architect-flag tie-in |
-|---|---|---|
-| **W0** | MemoryHubStorageSubstrate spike + per-method parity test baseline | §2.1 |
-| **W1** | SubstrateConformanceSuite extraction + Standard scope (race + CAS + watch-event + restart-safety) | §2.2 + F2 |
-| **W2** | test-utils.ts migration + 22 test-file cascade (substrate-version-repo + MemoryHubStorageSubstrate pattern) | §2.1 + §2.2 |
-| **W3** | repo-event-bridge migration (Variant ii substrate-as-KV-backend; closes cluster #23) | §2.3 + §2.4 + F1 |
-| **W4** | FS-version repo deletion (12 entity-repository.ts files) + counter.ts unification + LocalFsStorageProvider + packages/storage-provider/ retirement | §2.6 |
-| **W5** | STORAGE_BACKEND env var removal + Hub bootstrap simplification | §2.5 |
-| **W6** | Document MCP tool restoration (substrate-backed DocumentRepository; PolicyRouter tool count 68 → 71) | §2.7 |
-| **W7** | PR #203 revert (drop sweeper-interval env vars; restore 1s/5s tick defaults) + ship-criteria operator runbook update + Phase 7 release-gate | §2.8 |
+| Wave | Scope | Architect-flag tie-in | PR cadence |
+|---|---|---|---|
+| **W0** | MemoryHubStorageSubstrate spike + per-method parity test baseline + **W2 blast-radius re-count** (per greg B6: 49 of 82 .test.ts files actual; 22-file figure stale) | §2.1 | folded into W1 PR |
+| **W1** | **PORT** existing `runConformanceSuite` from `packages/storage-provider/test/conformance.ts` + **EXTEND** with ~10-15 substrate-specific tests (watch + getWithRevision + applySchema + restart-safety + race-correctness) | §2.2 + F2 | substantive PR |
+| **W2** | test-utils.ts migration + ~49-file test-cascade (substrate-version-repo + MemoryHubStorageSubstrate pattern) — final count per W0 spike re-estimate | §2.1 + §2.2 | folded into W1 PR (mini-PR if scope grows) |
+| **W3** | repo-event-bridge migration (Variant ii minimal-SchemaDef; RepoEventBridgeCursor + RepoEventBridgeDedupe with `watchable: false`; Uint8Array↔JSONB adapter; closes cluster #23) | §2.3 + §2.4 + F1 + F3 + F5 | substantive PR |
+| **W4** | Delete legacy `counter.ts` + `StorageBackedCounter`; per-repo callers swap to SubstrateCounter (existing impl at `hub/src/entities/substrate-counter.ts`); FS-version repo deletion (12 entity-repository.ts files); LocalFsStorageProvider + packages/storage-provider/ retirement | §2.6 | substantive PR |
+| **W5** | STORAGE_BACKEND env var removal from Hub bootstrap + `scripts/local/start-hub.sh:125` default change (`local-fs` → postgres-required) — per greg wave-decomp refinement | §2.5 | substantive PR |
+| **W6** | Document MCP tool restoration (substrate-backed DocumentRepository; PolicyRouter tool count 68 → 71) | §2.7 | folded mini-PR (or into W7) |
+| **W7** | PR #203 revert (drop sweeper-interval env vars; restore 1s/5s tick defaults) + ship-criteria operator runbook update + Phase 7 release-gate + Q-A5 architectural-future-leverage note (substrate-watch enables sweeper-subscription vs polling; v1 keeps polling) | §2.8 | folded with W6 (final ship PR) |
 
-**Wave-sequencing rationale:** W0+W1 build the substrate-conformance-foundation; W2 migrates tests onto the new foundation; W3 closes cluster #23 dispositively before the deletion-cascade; W4 deletes the FS-version-repo pattern + StorageProvider package; W5+W7 collapse env-var ceremony; W6 restores deferred tool surface. Each wave is independently shippable + test-green.
+**~5 PRs total** (v0.3 per greg Q-A6): W0+W1 (conformance+spike), W3 (cluster #23 + repo-event-bridge), W4 (Counter consolidation + FS-repo deletion + storage-provider retirement), W5 (env-var retirement), W6+W7 (Document MCP + PR #203 revert + ship). Per `multi-agent-pr-workflow.md` (apnex-org/* uses PR-flow).
 
-**Cumulative-fold PR cadence per wave** (per `feedback_per_mission_work_trace_obligation.md` precedent + Survey §7.1).
+**Wave-sequencing rationale:** W0+W1 build the substrate-conformance-foundation (with W2 blast-radius re-estimated as W0 deliverable); W2 migrates tests onto the new foundation; W3 closes cluster #23 dispositively before the deletion-cascade; W4 deletes the FS-version-repo pattern + StorageProvider package + Counter consolidation; W5+W7 collapse env-var ceremony; W6 restores deferred tool surface. Each wave is independently shippable + test-green.
+
+**NO W3.5 slice** (per greg B5 + v0.3 §2.6 (b) Counter-stays-as-kind disposition).
 
 ---
 
@@ -236,11 +274,11 @@ const substrate = createPostgresStorageSubstrate({
 
 | # | Flag | Disposition (architect-side; engineer-audit challenge target) |
 |---|---|---|
-| F1 (CRITICAL) | Cluster #23 closure integration-test gate | **Architect-disposition:** §2.4 spec; W3 integration test `packages/repo-event-bridge/__tests__/cluster-23-cursor-restart-safety.test.ts`; docker-restart pattern; verifies cursor + dedupe restored from PostgresHubStorageSubstrate; binary-certified W3 ratify-criterion. Engineer-challenge: test-infrastructure tradeoffs (real-docker vs lighter wrapper?) |
-| F2 (MEDIUM) | SubstrateConformanceSuite scope mirrors mission-47 precedent | **Architect-disposition:** §2.2 spec; race + CAS + watch-event + restart-safety; ~25-30 tests; abstract `describe.each` over `[memoryFactory, postgresFactory]`; restart-safety category marked `skip` for memory impl. Engineer-challenge: exact mission-47 test-count + which tests port 1:1 vs adapt for HubStorageSubstrate-extra primitives (watch + getWithRevision didn't exist in StorageProvider) |
-| F3 (MEDIUM) | Repo-event-bridge variant (i) vs (ii) decision + rationale | **Architect-disposition:** §2.3 spec; **Variant (ii) substrate-as-KV-backend**; minimal migration surface; preserves cursor-store.ts key-namespaced shape; AG-5 defers Variant (i). Engineer-challenge: any blocker discovered when actually swapping interface in cursor-store.ts? CAS semantic mismatch? |
-| F4 (MINOR/PROBE) | NOTIFY-trigger semantic for non-entity writes | **Architect-disposition v0.2 (REVERSED from v0.1):** §2.3 final ¶ — NOTIFY DOES fire (per-kind-discriminated; SchemaDef.notify default=true verified). Repo-event-bridge polling-cycle preserved for v1 simplicity; opt-in watch-subscription is architectural future-leverage. Engineer-validation deferred to W3 PR-merge-gate code-review |
-| F5 (CRITICAL; NEW v0.2) | Variant (ii) implementability defect (v0.1 architect-side error) | **Architect-resolution:** v0.1 described "pure-KV; no SchemaDef" Variant (ii); verified substrate's `put(kind, entity)` requires kind which requires SchemaDef. Refined to "minimal-SchemaDef Variant" per §2.3 + §0 changelog item 2; register `RepoEventBridgeCursor` + `RepoEventBridgeDedupe` SchemaDefs with no hot fields. Engineer-audit-future-target: confirm minimal-SchemaDef registration doesn't accidentally trigger schema-reconciler behaviors we didn't intend (e.g., NOTIFY-trigger inadvertent fan-out; expression-index inadvertent build) |
+| F1 (CRITICAL) | Cluster #23 closure integration-test gate | **v0.3 disposition (greg CONCUR + REFINE):** §2.4 spec retained; W3 integration test architecture = **BOTH** in-process Hub-restart-simulation (primary; sub-second; CI-deterministic) **PLUS** docker-restart smoke at PR ship-gate (mission-83 W2 postgres-container harness; ground-truth dispositive). Engineer-validation at W3 PR-merge-gate |
+| F2 (MEDIUM) | SubstrateConformanceSuite scope | **v0.3 disposition (greg CHALLENGE → resolved):** PORT-then-EXTEND per §2.2 + §0.1; PORT 1:1 from existing `packages/storage-provider/test/conformance.ts` (capabilities + get/put + list + delete + createOnly + putIfMatch + path-handling + sequential-consistency) + EXTEND ~10-15 substrate-specific tests (watch + getWithRevision + applySchema/listSchemas/getSchema + restart-safety + race-correctness) |
+| F3 (MEDIUM) | Repo-event-bridge variant (i) vs (ii) decision + rationale | **v0.3 disposition (greg CONCUR + minor REFINE):** §2.3 spec; **Variant (ii) minimal-SchemaDef Variant**; minimal migration surface; preserves cursor-store.ts key-namespaced shape; AG-5 defers Variant (i). Refinement: Uint8Array↔JSONB body conversion explicit in adapter impl note (per greg F3 refine) |
+| F4 (MINOR/PROBE) | NOTIFY-trigger semantic for non-entity writes | **v0.3 disposition (greg CONCUR direction + CHALLENGE spec-recall → resolved):** §2.3 final ¶ — NOTIFY fires per-kind via SchemaDef `watchable: boolean` REQUIRED field (NOT optional `notify` default-true as v0.2 spec-recalled). RepoEventBridgeCursor + RepoEventBridgeDedupe explicitly set `watchable: false` (bookkeeping writes; no consumer needs change-events; pre-resolves F5 future-target probe). Engineer-validation at W3 PR-merge-gate |
+| F5 (CRITICAL; NEW v0.2) | Variant (ii) implementability defect (v0.1 architect-side error) | **v0.3 disposition (greg CONCUR + extend):** v0.1 described "pure-KV; no SchemaDef" Variant (ii); resolved via minimal-SchemaDef Variant per §2.3 + §0 changelog v0.2 item 2. v0.3 extends with greg B2 + B4 fold: explicit `watchable: false` + cursor-store.ts internal `Uint8Array` adapter conversion documented. Future-target probe (architecturally accidental NOTIFY fan-out / inadvertent expression-index build) PRE-RESOLVED via explicit `watchable: false` |
 
 ---
 
@@ -327,30 +365,36 @@ Per `docs/methodology/multi-agent-pr-workflow.md` audit-rubric pattern:
 
 ## §11 Status
 
-**v0.2 — DRAFT PENDING BILATERAL ENGINEER CRITIQUE-REVIEW** (per Director-correction 2026-05-18: design phase MUST be bilateral; architect-side self-audit is NOT a substitute even if it surfaces defects like F5).
+**v0.3 — DRAFT folded greg round-1 audit; RATIFY-READY pending greg round-2 confirmation.**
 
-**v0.2 architect-side work (PENDING engineer validation):**
-- v0.1 → v0.2 refinements applied per §0 changelog (6 items; F5 NEW)
-- Q-A2 + Q-A4 + F3 + F4 architect-resolved via code-read — **engineer-validation still required**
-- Architect-side blind-spots may persist (F5 was self-caught at v0.2; pattern suggests v0.2 may carry undetected blind-spots that engineer-audit catches)
+Greg round-1 (thread-577 round 2) caught 6 architect-side blind-spots in v0.2 that v0.2's own self-audit missed (B1-B6); v0.3 folds all 8 ratify-criteria.
 
-**v1.0 ratify-criterion (per `mission-lifecycle.md` Phase 4 ratify; bilateral-engineer-audit non-substitutable):**
-- ⏳ Bilateral round-1 audit complete (engineer surfaces per-flag F1-F5 dispositions + Q-A1-Q-A6 responses on Design v0.2)
-- ⏳ Any engineer-surfaced architectural blocker resolved
-- ⏳ Round-2+ as needed; architect commits design refinements without separate thread-ping
-- ⏳ Architect-side blind-spot probe (per F5 lesson): engineer reviews v0.2 for architect-spec-vs-substrate-API drift class defects
+**v0.3 fold complete (8 ratify-criteria; all addressed):**
+- ✅ #1 B1-B6 self-audit corrections folded into §0 changelog (with cross-refs to v0.2 supersession entries)
+- ✅ #2 F2 reframed to PORT-then-EXTEND (§2.2 spec rewritten)
+- ✅ #3 §2.6 Counter mechanism PINNED to (b) Counter-stays-as-kind; SubstrateCounter is canonical; W3.5 removed
+- ✅ #4 §2.3 RepoEventBridgeCursor + RepoEventBridgeDedupe explicit `watchable: false`
+- ✅ #5 SchemaDef inventory delta corrected 20 → 22 (Counter SchemaDef already exists per B3)
+- ✅ #6 W3.5 removed from wave-decomp + ratify-criterion (per B5 disposition)
+- ✅ #7 W2 blast-radius re-estimate scheduled at W0 spike (per B6 — actual 49 of 82 .test.ts; not 22)
+- ✅ #8 Q-A6 PR cadence ratified: ~5 PRs (W0+W1 / W3 / W4 / W5 / W6+W7)
 
-**Engagement-state at v0.2 ship:**
-- thread-576 (original round-1 audit ask) force-closed 2026-05-18 (0 queued items confirmed — dispatch did not land in greg's queue)
-- thread-577 (re-dispatch with v0.2 fold-context) opened 2026-05-18; greg cognitive_ttl=0 (session idle); inbox empty post-dispatch (verified)
-- Hub-API dispatch mechanisms exhausted — operational escalation pending to activate greg session
-- Architect operational-state: BLOCKED-PENDING-ENGINEER-AUDIT
+**Architect-side blind-spot probe RESOLVED** (per F5 lesson): greg round-1 surfaced 6 v0.2-architect-spec-vs-substrate-API drift instances; all folded into v0.3 with code-grounded corrections. No remaining architect-spec-recall items pending engineer-validation; all spec-claims in v0.3 verified against code.
+
+**Engagement-state at v0.3 ship:**
+- thread-577 active; round 2 (greg round-1 audit) → architect to reply with v0.3 fold-confirmation
+- greg's engineer-side branch: `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (engineer-work-trace at `docs/traces/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-engineer-work-trace.md`)
+- Architect operational-state: BLOCKED-PENDING-GREG-ROUND-2-CONFIRMATION (5-minute architect-fold-time; greg round-2 expected to be confirm-only or minor refine)
+
+**v1.0 ratify-criterion (per `mission-lifecycle.md` Phase 4 ratify):**
+- ⏳ Greg round-2 confirmation on v0.3 fold (8 ratify-criteria all addressed)
+- ⏳ Any engineer-surfaced round-2 architectural blocker resolved (none expected; round-1 was thorough)
+- ⏳ Bilateral converged → architect commits ratify-marker per [[feedback_narrative_artifact_convergence_discipline]]
 
 **Expected progression:**
-- v0.2 → v0.3 (post engineer round-1; per-flag-disposition fold; round-2 if needed)
-- v0.3 → v1.0 RATIFIED (bilateral audit converged; architect commits ratify-marker per [[feedback_narrative_artifact_convergence_discipline]])
+- v0.3 → v1.0 RATIFIED (greg round-2 CONCUR → architect commits `[Design v1.0 RATIFIED]` marker on mission branch)
 - v1.0 → v1.1+ (live design evolution during mission execution; per mission-83 v1.0 → v1.4 precedent)
 
 ---
 
-— Architect: lily / 2026-05-18 12:55 AEST (Phase 4 entered Director-direct 2026-05-18; Phase 4 hold-then-resume same day; v0.1 DRAFT → v0.2 architect-side self-audit refined; v0.2 framing corrected per Director-correction — BILATERAL ENGINEER CRITIQUE-REVIEW required for ratify, not deferrable)
+— Architect: lily / 2026-05-18 14:55 AEST (Phase 4 entered Director-direct 2026-05-18; bilateral audit unblocked post greg session activation; v0.2 → v0.3 folded greg round-1 [thread-577 round 2]; RATIFY-READY pending greg round-2)
