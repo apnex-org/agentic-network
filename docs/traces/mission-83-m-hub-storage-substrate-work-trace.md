@@ -1,0 +1,137 @@
+# mission-83 M-Hub-Storage-Substrate — Work Trace (live state)
+
+**Mission scope.** Tracks all in-flight, queued, and recently-completed work under mission-83 M-Hub-Storage-Substrate. Substrate-introduction mission-class (with structural-inflection + saga-substrate-completion characteristics). Sizing: L (revised down from L-XL post Option-Y substrate-replaces-StorageProvider-only).
+
+**Design ref:** `docs/designs/m-hub-storage-substrate-design.md` (commit b0c6a02; v1.0 RATIFIED 2026-05-17 per thread-563 round-1 + round-2 audit cycle).
+**Survey envelope:** `docs/surveys/m-hub-storage-substrate-survey.md` (Director-ratified 2026-05-16).
+**Source idea:** idea-294 (status: incorporated).
+**Coordination threads:** thread-562 (Phase 4 coord; converged) · thread-563 (round-1+round-2 audit; substantively ratified; procedurally degraded-close per engineer-side antml-prefix trap) · thread-564 (Phase 5 transition notification) · thread-565 (W0 task-413 notification; convergence pending architect bilateral).
+**Mission-cascade entities:** mission-83 status=active; task-413 W0 status=unissued (architect-side reconciliation pending per thread-565 Path B) · plannedTasks W1-W7 status=unissued.
+**Branch (engineer):** `agent-greg/m-hub-storage-substrate` (off `origin/main` HEAD a940a38; created 2026-05-17 AEST at W0 spike-commit-time).
+**Branch (architect):** `agent-lily/m-hub-storage-substrate`.
+
+**Status legend:** ▶ in-flight · ✅ done this session · ○ queued / filed · ⏸ deferred
+
+---
+
+## Resumption pointer (cold-session brief)
+
+If you're picking up cold:
+
+1. **Read this file first, then** `docs/designs/m-hub-storage-substrate-design.md` (v1.0 RATIFIED) for full substrate architecture + wave-decomposition + risk register.
+2. **Mission scope.** mission-83 introduces `HubStorageSubstrate` (postgres + LISTEN/NOTIFY + JSONB + per-kind expression indexes via SchemaDef reconciler) as Hub's sovereign state-backplane. Replaces `LocalFsStorageProvider` + `GcsStorageProvider`. Repositories preserved (Option Y); 4 NEW I*Stores added (SchemaDef + Document if W0-validated + Notification re-introduction + 3 OQ7 architect-context decomposition). CAS primitives baked in to preserve v0 race-protection (Director re-disposed 2026-05-17 post engineer C1 push-back).
+3. **Current in-flight.** W0 spike execution — substantive Path A per thread-565 reply 2026-05-17 (no formal task-claim because task-413 landed unassigned + pending-action queue silent; architect-RACI reconciliation pending Path B; substantive work proceeds against directive content reproduced in thread-565 message).
+4. **Recent commits:** `git log --oneline origin/main..HEAD` for the W0 spike trail; `git log --oneline origin/agent-lily/m-hub-storage-substrate -5` for architect-side Design v0.1→v0.2→v1.0 progression.
+
+---
+
+## In-flight
+
+- ▶ **W4.x — extend Option Y substrate-version repository sweep beyond pattern-demonstrator.** W4 spike-class (commit 234c929) shipped 1 existing-sibling repo (BugRepositorySubstrate) + SubstrateCounter helper + 2 integration tests as Option Y pattern-demonstrator per Design v1.3 §5.1. W4.x remaining: 11 existing-sibling substrate-versions (Agent + Audit + Idea + Message + Mission + PendingAction + Proposal + Task + Tele + Thread + Turn) + 6 new-repo full-impl (SchemaDef + Document + Notification + ArchitectDecision + DirectorHistoryEntry + ReviewHistoryEntry — W2.4+W2.5 stubs in place). Continuous-proceed authorized per architect-driver directive; same W3 → W3.x sweep pattern.
+
+## Recently shipped (W1-W4 sweep)
+
+- ▶ **W0 spike — 6 deliverables (per Design §4 W0 row).** Spike-only wave; substrate state empty throughout. Deliverable sequence:
+  1. ✅ **W0.1 — Postgres-container local-dev compose-up** — SHIPPED at commit 4e2b6dd + boot-validation in this session. Artifacts: `hub/spike/W0/docker-compose.yml` (postgres:15-alpine; named volume `hub-substrate-data`; compose-file v2.4 cross-compat; R6 service-level resource limits mem_limit 1g + cpus 1.0 + max_connections=50 + shared_buffers=256MB + work_mem=16MB + health-check pg_isready) + `hub/spike/W0/README.md` (W0 spike scope + W7 disposition) + `docs/operator/hub-storage-substrate-local-dev.md` (operator-DX cookbook with R10 ephemeral-by-design CRITICAL warning + R6 rationale + psql forensic queries + W6/W7-deliverable placeholders + troubleshooting). **End-to-end boot-validation:** container UP + health=healthy in ~6s; postgres 15.18 confirmed; R6 settings active (max_connections=50, shared_buffers=32768kB=256MB, work_mem=16384kB=16MB verified via pg_settings); LISTEN/NOTIFY smoke test PASS (NOTIFY accepted + async notification received with payload); JSONB 1MB-payload smoke PASS (TOAST-compressed to 11469 bytes; well under 1.5MB cap from §2.2). Memory baseline 39.71MiB/1GiB idle. Postgres container left UP for W0.3 follow-on session.
+  2. ✅ **W0.2 — Filesystem-grep enumeration → `hub/scripts/entity-kinds.json`** — SHIPPED at commit 7d2f34f. 13 substrate-mediated kinds confirmed (11 I*Store + 1 IEngineerRegistry + 1 Counter meta-entity); 2 NEW kinds for mission-83 (SchemaDef substrate-native + Notification re-introduction per OQ8 closing mission-56 partial-completion); 4 kinds W0-architect-validates (Document + ArchitectDecision + DirectorHistoryEntry + ReviewHistoryEntry — engineer working tree has empty local-state/; architect-side state-tree inspection needed). **5 architect-blind-kind-corrections discovered (triggers Design v1.1 per §3.4 clause)**: DirectorNotification (REMOVE — mission-56 W5 fully migrated to Message kind="note" via director-notification-helpers.ts; architect 49c08df listing incorrect), Report (REMOVE — inline field on task/bug), Review (REMOVE — inline field on mission/proposal/message), ScheduledMessage (REMOVE — sweeper-internal type), MessageProjection (REMOVE — sweeper-internal type). Total target inventory: 19 kinds (13 confirmed + 2 NEW + 4 architect-validates).
+  3. ✅ **W0.3 — Synthetic-state migration `<60s TOTAL OBSERVED DOWNTIME` measurement** — SHIPPED at commit 44bb6e7. Artifacts: `hub/spike/W0/synth-state.js` (generates 10,044 entities across 13 kinds; FS-shape JSON files; 0.22s synthesis time) + `hub/spike/W0/migrate-spike.js` (per-kind COPY FROM STDIN via docker exec; schema-bootstrap + scan + bulk-load + verification). **Measurement: 1.83s TOTAL wall-clock** (Phase 3 schema=0.13s + Phase 2+4 scan+COPY=1.57s + Phase 5 verify=0.07s); 58.17s headroom against 60s budget; 5497 entities/sec throughput; verification PASS (FS=10044=DB=10044 count parity). Hot path: 5000 messages → 13,420 msg/sec via COPY. Scaling envelope: 10x scale ~18s (within budget); 50x scale ~90s (approaches budget); 200x scale would need cloud-scale tuning per M-Hub-Storage-Cloud-Deploy follow-on. Caveats: spike skips Hub-stop+snapshot+restart phases (full §3.5 estimated ~12-22s total); spike entities table has NO NOTIFY trigger (W2 reconciler adds; per-row NOTIFY would slow slightly); R9 LISTEN/NOTIFY write-amp measurement remains W1 deliverable. R7 (migration downtime >60s → preflight fail) confirmed sound at current scale + 10x growth horizon.
+  4. ✅ **W0.4 — Testcontainers harness baseline** — SHIPPED at commit 5f199a9. Artifacts: `hub/spike/W0/testcontainers/{package.json + harness-spike.js + .gitignore}` (sandbox isolated from hub/package.json; W1 substrate-shell wave installs as devDep). **Measurement (N=3 iterations):** boot-time avg 3.42s (min 1.36s warm; max 7.49s cold-cache first-iter; stddev 2.88s); connect-time avg 0.013s; **flakiness 0% (3/3 iterations succeeded)**; **tx-rollback isolation PASS** (BEGIN → CREATE → INSERT → in-tx count=3 expected 3 → ROLLBACK → post-rollback query 42P01 undefined_table → table gone). Per Design §2.7 dispositions CONFIRMED: per-test-DB-rollback for unit (validated); singleton-with-reset for integration (W1+ validates); **fallback to docker-compose-singleton NOT required** (testcontainers viable; avg boot < 15s threshold). First-boot cold-cache penalty ~7s is one-time per CI runner (image-pull-and-initialize); steady-state per-test ~1.4s — bounded predictable CI cost.
+  5. ✅ **W0.5 — Engineer counterpart branch `agent-greg/m-hub-storage-substrate`** — created off `origin/main` HEAD a940a38 at 2026-05-17 AEST
+  6. ✅ **W0.6 — Mission work-trace initialization** — SHIPPED at commit 4bb9bbe (this file)
+
+---
+
+## Queued / filed
+
+- ○ **W4.x — remaining 11 existing-sibling substrate-versions + 6 new-repo full-impl** (continuation of W4 sweep; same architect-authorized continuous-proceed pattern)
+- ○ **W5 — State-migration cutover + post-cutover smoke matrix** (task-418 unissued)
+- ○ **W6 — FS+GCS retirement (LocalFsStorageProvider + GcsStorageProvider + hub/src/gcs-*.ts)** (task-419 unissued)
+- ○ **W7 — Ship + bug-93 closure + operator runbook + psql cookbook** (task-420 unissued)
+- ○ **Procedural follow-up — thread-563 round-2 audit non-formal-close** — engineer-side antml-prefix trap on stagedActions (6th cross-session instance per `feedback_create_thread_reply_parameter_ordering.md` memory; calibration updated). Substantive Design v1.0 ratification complete; status=active until architect bilateral-converges OR Hub timeout. NOT blocking Phase 5+ work.
+- ○ **Procedural follow-up — task-413 entity-assignment reconciliation** (architect-RACI per thread-565 Path B) — `create_task` MCP call left `assignedEngineerId: null` + no pending-action dispatched; engineer-side `get_task` confirmed null return. Calibration-candidate at mission-83 close: task-issuance dispatch needs explicit engineer-assignment; `get_task` is dispatch-queue-bound not pool-scanning.
+
+---
+
+## Done this session
+
+- ✅ **thread-562 Phase 4 coord** (converged 2026-05-17 AEST early) — pre-Survey-envelope-audit of Design v0.1 with 4 fold-ins (F1 chaos-path sub-questions / W3-W4 (α) ordering / packages/storage-provider shrunk-not-deleted / operator-DX-replacement) + 1 PROBE-class push-back on AG-1 (CAS regression) → surfaced to Director → re-confirmed Q5=d KEEP DEFERRED at coord-stage.
+- ✅ **thread-563 round-1 audit** — 3 CRITICAL findings (C1 CAS regression / AG-1 premise-correction → Director RE-DISPOSED 2026-05-17 BAKE CAS into v1 substrate; C2 Substrate-vs-Repositories → Option Y locked; C3 phantom entity-kinds inventory → I*Store-anchored) + 4 MEDIUM (M1 hub/src/gcs-*.ts in W6; M2 post-cutover smoke matrix; M3 testcontainers in §2.7; M4 reconciler restart-safety) + 3 MINOR (N1 Filter narrowing; N2 get-entities.sh direct-psql; N3 cutover timing reframe) + 4 blind-spots (B1 W5-prep gate; B2 R9 NOTIFY write-amp; B3 R10 state-loss; B4 v1.0 ratify-criterion) + OQ7 architect-context 3-kind LOCK + OQ8 NEW Notification re-introduction. Architect accepted all dispositions.
+- ✅ **thread-563 round-2 audit** — verified all 16 dispositions land at cited §locations in Design v0.2 (commit 037177a). 3 minor v1.0-finalize cleanups noted (inventory-count reconciliation / §11.2 work-trace mention / IEngineerRegistry as 12th-mediated-kind). Substantively ratified Design v1.0. Procedural close on thread degraded by engineer-side antml-prefix trap.
+- ✅ **Design v1.0 finalized at commit b0c6a02** (architect-side; post-thread-563 round-2). Incorporates the v1.0-finalize cleanups (IEngineerRegistry mention in W0 deliverables; work-trace mention in §11.2 covered via this file's initialization).
+- ✅ **thread-564 Phase 5 transition notification** (closed via engineer-side close_no_action staging; awaiting architect bilateral-converge). mission-83 created with 8 plannedTasks W0-W7 unissued; idea-294 status flipped to incorporated; engineer/architect pulses configured (6h/12h short_status missedThreshold=3).
+- ✅ **thread-565 W0 task-413 notification** — engineer-side close_no_action staged; surfaced task-assignment-gap to architect (Path B reconciliation pending architect-side); substantive Path A W0 execution begins.
+- ✅ **W0.5 + W0.6 — Engineer branch + work-trace initialization** — `agent-greg/m-hub-storage-substrate` off `origin/main` HEAD a940a38; this trace file initialized at W0 commit-time per `feedback_per_mission_work_trace_obligation.md`. Commit 4bb9bbe.
+- ✅ **W0.2 — Filesystem-grep enumeration → hub/scripts/entity-kinds.json** — commit 7d2f34f. Authoritative inventory at HEAD a940a38: 13 confirmed substrate-mediated kinds (11 I*Store: Audit/Bug/Idea/Message/Mission/PendingAction/Proposal/Task/Tele/Thread/Turn + 1 IEngineerRegistry: Agent + 1 Counter meta-entity) + 2 NEW (SchemaDef substrate-native + Notification re-introduction per OQ8) + 4 W0-architect-validates (Document + ArchitectDecision + DirectorHistoryEntry + ReviewHistoryEntry — engineer local-state/ empty, needs architect-side validation). **5 architect-blind-kind-corrections** discovered: DirectorNotification fully-migrated-to-Message-kind="note" (architect §3.4.1 listing incorrect); Report inline-field; Review inline-field; ScheduledMessage sweeper-internal-type; MessageProjection sweeper-internal-type. Design v1.1 trigger per §3.4 clause.
+- ✅ **W0.2-update — entity-kinds.json v1.1 alignment** (commit TBD). Architect v1.1 commit 11ce0ba (architect-side) VERIFIED 4 W0-validates kinds (Document + ArchitectDecision + DirectorHistoryEntry + ReviewHistoryEntry) + surfaced 1 NEW engineer-blind-kind (ThreadHistoryEntry — `local-state/architect-context/thread-history.json`; OQ7 expanded from 3-kind → 4-kind decomposition) + added `wisdom/` as 4th out-of-substrate carve-out. Architect accepted all 5 engineer-side corrections + engineer-side accepts all 5 architect-side W1.1 verifications. **Inventory LOCKED at 20 kinds** (13 existing + 2 NEW + 5 architect-W1.1-VERIFIED). Symmetric bilateral substrate-currency-discipline cycle complete.
+
+---
+
+## Session log
+
+### 2026-05-17 AEST early-to-mid
+
+**Phase 4 → Phase 5 → W0-spike-start in single cognitive session:**
+
+- thread-562 coord converged (mission-78 v1.2.4 → mission-83 transition); 4 fold-ins for Design v0.1 + 1 PROBE-class AG-1 push-back → Director re-confirmed Q5=d at coord-stage
+- thread-563 round-1 audit (6 rounds): 16 substantive dispositions surfaced; all accepted by architect; AG-1 Director re-disposed BAKE CAS into v1 substrate (corrected premise → engineer-lean option (a) accepted)
+- thread-563 round-2 audit: all 16 dispositions verified at v0.2 cited §locations; 3 v1.0-finalize MINOR cleanups noted; substantively ratified Design v1.0; procedural close degraded by engineer-side antml-prefix trap (6th cross-session; memory calibration sharpened to flag stagedActions specifically as THE trap parameter)
+- Design v1.0 finalized at b0c6a02 (architect-side; incorporates IEngineerRegistry + work-trace mention)
+- thread-564 Phase 5 transition: mission-83 created; 8 plannedTasks W0-W7 issued (all unissued); engineer-side close_no_action staged
+- thread-565 W0 task-413 notification: task landed assignedEngineerId=null in unassigned pool; pending-action queue silent on engineer-side; engineer Path A substantive execution begins against directive content reproduced in thread message; Path B architect-RACI reconciliation deferred (calibration-candidate at mission-close)
+- W0.5 + W0.6 deliverables shipped: branch `agent-greg/m-hub-storage-substrate` created off origin/main; this trace file initialized
+
+**Next:** W0.1 (postgres-container compose-up) → W0.3 (synthetic-state migration measurement) → W0.4 (testcontainers harness baseline) → W0 spike report commit. W0.2 + W0.5 + W0.6 shipped this session; remaining 3 substantive deliverables are multi-session work per architect's "no urgency" framing.
+
+### 2026-05-17 AEST mid-to-late (W0 close → W1 → W2 → W3 → W4 spike-class)
+
+Continuous-proceed sweep through W1-W3 + W4-spike-class per architect-driver authorization (RACI per `feedback_architect_drives_mission_not_director.md`). Substrate shape now functional end-to-end on testcontainers; existing-sibling Option Y pattern demonstrated via 1 repo (BugRepositorySubstrate); ready for W4.x sweep + W5 cutover.
+
+**Commits this sweep** (origin/main..HEAD = 21 commits):
+
+- W0 close — 11767c1 W0.7 spike report consolidation (W0 spike CLOSED)
+- W1 — e21a9f3 (W1.1+W1.2 substrate skeleton + SQL migrations) · a11ded5 (W1.3 CRUD+CAS+watch impl; substrate functional) · bd18e61 (W1.5 R9 LISTEN/NOTIFY write-amp measurement) · d38547e (W1.4 testcontainers unit tests 24/24 pass) · f18c8c5 (W1.6 restart-safety verification 6/6 pass)
+- W2 — ed4186e (W2.3 20 SchemaDef entries) · d694ba1 (W2.1+W2.2 schema reconciler + self-bootstrap) · b1ed0af (W2.4+W2.5 6 new repository stubs + reconciler/repository tests)
+- W3 — 28ae8d7 (W3 spike-class sweeper-inventory + ScheduledMessageSweeperSubstrate) · 2d9555d (W3.x 3 remaining sweeper-substrate-versions + 6 tests; W3 RATIFIED-COMPLETE per architect-driver Director-correction)
+- W4 — 234c929 (W4 spike-class BugRepositorySubstrate + SubstrateCounter + 2 integration tests; Option Y pattern-demonstrator per Design v1.3 §5.1)
+
+**Test state at HEAD 234c929:** `npx vitest run` → 90 files passed + 1 skipped (91 total); 1301 tests passed + 5 skipped (1306 total); 20.30s runtime. No regressions across W1-W4 sweep.
+
+**Substrate state (logical):** W1-W4-spike code-complete; substrate-shell + reconciler + 4 sweeper-substrate-versions + 1 existing-repo substrate-version + 6 new-repo stubs landed. Substrate still DARK in production wire-up (handlers route via FS substrate; α reading wave-completion ≠ data-cutover preserved; W5 is the cutover gate).
+
+**Pulse acknowledgment (2026-05-17T03:49 UTC engineerPulse status_check fire):** No active coord-thread for mission-83 (thread-562/563/564/565 all closed or pending-architect-converge); `create_message kind=note` MCP tool referenced in pulse text does not exist in current Hub MCP surface. Per `feedback_engineer_pulse_template_carryover.md` + `feedback_narrative_artifact_convergence_discipline.md`, work-trace commit-push serves as the engineer-pulse heartbeat surface (visible to architect via remote-fetch + commit-msg surfacing). This trace-update commit is the heartbeat response.
+
+**Next-action plan:**
+1. **W4.x sweep** — port remaining 11 existing-sibling repos (Agent + Audit + Idea + Message + Mission + PendingAction + Proposal + Task + Tele + Thread + Turn) to substrate-API behind unchanged I*Store interfaces; same Option Y per-entity-logic-preservation pattern as BugRepositorySubstrate (CAS retry loop via substrate.put; ID allocation via SubstrateCounter; createOnly conflict-on-existing semantics)
+2. **W4.x new-repo full-impl** — 6 new-repo stubs (SchemaDef + Document + Notification + ArchitectDecision + DirectorHistoryEntry + ReviewHistoryEntry) hydrated to full-impl with their respective test coverage
+3. **W4.x integration sweep** — green-CI test run + commit-class boundary (W4 substrate-version sweep RATIFIED-COMPLETE)
+4. **W5 cutover preparation** — W5-prep gate per Design §4 (W0 spike replays + W1-W4 integration green at HEAD + reconciler cold-boot complete + snapshot mechanism tested + operator runbook drafted)
+5. **W5 hard-cut state-migration cutover** + post-cutover smoke matrix (smoke matrix per round-1 audit M2 fold-in)
+6. **W6** FS+GCS retirement
+7. **W7** ship + bug-93 closure + operator runbook + psql cookbook
+
+**Blockers:** none. Branch up-to-date with `origin/agent-greg/m-hub-storage-substrate`; no PR opened yet (mission-bundle PR target is post-W7 ship per substrate-introduction mission-class convention).
+
+### Session-end disposition (W0 close)
+
+Engineer-pulse cadence is 6h short_status. Architect-side will see 3 commits (4bb9bbe + 7d2f34f + (this trace update)) on `agent-greg/m-hub-storage-substrate` branch via remote-fetch; commit messages + entity-kinds.json content surface the 5 architect-blind-kind-corrections + W0-architect-validates list (Document + 3 architect-context kinds blocked on engineer-side empty local-state/). Architect-actionable items for next bilateral cycle:
+1. **W0-validate Document + architect-context kinds** from architect-side state-tree (engineer-side blocked by empty local-state/)
+2. **Disposition on architect-blind-kind-corrections**: fold as Design v1.1 inventory-cleanup OR roll forward into W2 reconciler-spec
+3. **task-413 entity-assignment reconciliation** (thread-565 Path B; calibration-candidate)
+4. **thread-563 round-2 audit non-formal-close** (engineer-side procedural; not blocking)
+
+No architect-direct surface needed; artifact-narrative-convergence per `feedback_narrative_artifact_convergence_discipline.md`.
+
+---
+
+## References
+
+- **Design:** `docs/designs/m-hub-storage-substrate-design.md` (commit b0c6a02 v1.0 RATIFIED)
+- **Survey envelope:** `docs/surveys/m-hub-storage-substrate-survey.md` (Director-ratified 2026-05-16)
+- **Source idea:** idea-294 (status: incorporated)
+- **Mission entity:** mission-83 (Hub-side; class=substrate-introduction; status=active)
+- **Sibling problem (structurally closed by W5):** bug-93 (sweeper poll-throttle band-aid; PR #203)
+- **Follow-on ideas (filed at v0.1-refinement per F4 PROBE):** idea-295 M-Hub-Storage-ResourceVersion (AG-1 follow-on; k8s-style optimistic-concurrency) · idea-296 M-Hub-Storage-Audit-History (AG-2 follow-on) · idea-297 M-Hub-Storage-FK-Enforcement (AG-3 follow-on) · idea-298 M-Hub-Storage-Cloud-Deploy (AG-4 follow-on)
+- **Out-of-scope sibling:** idea-121 API v2.0 (AG-5 deferral target)
+- **Methodology:** `docs/methodology/mission-lifecycle.md` · `docs/methodology/multi-agent-pr-workflow.md` · `docs/methodology/entity-mechanics.md` · `docs/methodology/engineer-runtime.md`
+- **CODEOWNERS:** `.github/CODEOWNERS` (W1 update for `hub/src/storage-substrate/`)
+- **Calibrations rolling forward into this mission:** `feedback_per_mission_work_trace_obligation.md` (work-trace discipline applied at this file's creation) · `feedback_substrate_currency_audit_rubric.md` (code-verify discipline applied throughout audit) · `feedback_methodology_bypass_amplification_loop.md` (premise-correction caught pre-ratify on C1) · `feedback_architect_drives_mission_not_director.md` (engineer surfacing via architect honored throughout) · `feedback_create_thread_reply_parameter_ordering.md` (calibration sharpened post-thread-563 trap)

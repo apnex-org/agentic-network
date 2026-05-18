@@ -1,6 +1,6 @@
 # CLAUDE.md — agentic-network repo guidance
 
-**Version:** v1.1
+**Version:** v1.2 (mission-83 W7 substrate-notes fold-in)
 
 Project-level context binding all Claude Code instances on this repository.
 
@@ -37,6 +37,28 @@ Project-level context binding all Claude Code instances on this repository.
 - Engineer-runtime overlay: `docs/methodology/engineer-runtime.md` — INDEX of engineer-runtime concerns (Pass 10 rebuild, schema-rename migration, thread-vs-GitHub approval, commit-push heartbeat, work-trace discipline, etc.)
 - Architect-runtime overlay: `docs/methodology/architect-runtime.md` — INDEX of architect-runtime concerns (mission-driving authority, categorised-concerns surface, Idea Triage Protocol, pulse coordination, substrate-self-dogfood, etc.)
 - Tele glossary: `docs/methodology/tele-glossary.md` — tele-N → short-name → mandate lookup (load-bearing decoder for inline tele references)
+
+## Hub storage substrate (post-mission-83 W5 cutover)
+
+**Production Hub uses `HubStorageSubstrate` (postgres + LISTEN/NOTIFY + JSONB + SchemaDef-reconciler) as the sovereign state-backplane.** FS-mode (gcs/local-fs) + memory-mode retired from production-prod path; substrate is the only production cloud-path.
+
+**Why:** bug-93 sweeper-poll-pressure (74% sustained Hub CPU) STRUCTURALLY ELIMINATED at W5 cutover (substrate-watch primitive replaces FS-walk poll-loop per Design v1.4 §2.4); idea-294 Director-direct surface closed.
+
+**How to apply:**
+- **Production:** `STORAGE_BACKEND=substrate` + `POSTGRES_CONNECTION_STRING=postgres://hub:hub@host:5432/hub` (env-driven at Hub bootstrap)
+- **Local dev:** `STORAGE_BACKEND=local-fs` or `memory` modes preserved as test/dev affordances (FS-version repositories preserved as test-only fixtures per W6-narrowed); see `docs/operator/hub-storage-substrate-local-dev.md`
+- **Operator-DX surfaces:** `scripts/local/get-entities.sh` (daily-driver direct-psql CLI) + `docs/operator/psql-cookbook.md` (escape-hatch forensic queries) + `scripts/local/hub-snapshot.sh` (pg_dump-Fc wrapper for backup/restore)
+- **Cutover runbook:** `docs/operator/hub-storage-cutover-runbook.md` (production cutover orchestration; image-pre-build at W5-prep window achieves <30s effective downtime)
+- **Substrate Design:** `docs/designs/m-hub-storage-substrate-design.md` (architect-side; v1.4 RATIFIED)
+- **SchemaDef inventory:** `hub/scripts/entity-kinds.json` (v1.1; 20 kinds LOCKED)
+
+**Follow-on missions filed at mission-83:**
+- idea-295 M-Hub-Storage-ResourceVersion (k8s-style optimistic-concurrency)
+- idea-296 M-Hub-Storage-Audit-History
+- idea-297 M-Hub-Storage-FK-Enforcement
+- idea-298 M-Hub-Storage-Cloud-Deploy
+- idea-299 M-Hub-Storage-BlobBody-Substrate (Proposal/Task body-storage + Document MCP tools re-introduction)
+- idea-300 M-Hub-Storage-FS-Retirement-And-MemoryHubStorageSubstrate (full FS-version-repo retirement + test-architecture migration)
 
 ## Companion policies
 

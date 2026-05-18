@@ -20,7 +20,7 @@ import {
   registerSystemPolicy,
   registerTelePolicy,
   registerAuditPolicy,
-  registerDocumentPolicy,
+  // mission-83 W6-narrowed: registerDocumentPolicy DELETED with document-policy.ts
   registerSessionPolicy,
   registerIdeaPolicy,
   registerMissionPolicy,
@@ -521,7 +521,7 @@ export class TestOrchestrator {
     registerSystemPolicy(router);
     registerTelePolicy(router);
     registerAuditPolicy(router);
-    registerDocumentPolicy(router);
+    // mission-83 W6-narrowed: registerDocumentPolicy DELETED with document-policy.ts
     registerSessionPolicy(router);
     registerIdeaPolicy(router);
     registerMissionPolicy(router);

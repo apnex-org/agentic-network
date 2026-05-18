@@ -1,0 +1,12 @@
+{
+  "name": "mission-83-w0-testcontainers-spike",
+  "version": "0.0.1",
+  "private": true,
+  "description": "W0 spike — testcontainers harness baseline measurement (NOT for production; hub/package.json devDep install happens at W1 per Design §2.7)",
+  "type": "module",
+  "dependencies": {
+    "@testcontainers/postgresql": "^11.14.0",
+    "pg": "^8.20.0",
+    "testcontainers": "^11.14.0"
+  }
+}

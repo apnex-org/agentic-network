@@ -1,0 +1,80 @@
+# mission-83 W0 spike — postgres-substrate local-dev compose
+#
+# Per Design v1.1 §2.4 (LISTEN/NOTIFY) + §3.5 (cutover) + §7.1 R6 (resource limits)
+# + §7.1 R10 (ephemeral-by-design state-loss disposition).
+#
+# Usage (docker compose v2 / modern):
+#   docker compose -f hub/spike/W0/docker-compose.yml up -d        # start
+#   docker compose -f hub/spike/W0/docker-compose.yml ps           # status
+#   docker compose -f hub/spike/W0/docker-compose.yml logs -f      # tail logs
+#   docker compose -f hub/spike/W0/docker-compose.yml down         # stop (DATA PRESERVED)
+#   docker compose -f hub/spike/W0/docker-compose.yml down -v      # stop + DELETE VOLUME
+#
+# Usage (docker-compose v1 / legacy):
+#   docker-compose -f hub/spike/W0/docker-compose.yml up -d        # same shape
+#
+# Connection string for local dev (env file consumers):
+#   HUB_PG_CONNECTION_STRING=postgres://hub:hub@localhost:5432/hub
+#
+# R10 disposition (per Design v1.1 §7.1): local-dev state is ephemeral by design.
+# Named volume `hub-substrate-data` is provided for cross-restart persistence within
+# a session, BUT operator-DX cookbook explicitly warns: treat as ephemeral.
+# Snapshot-restore (per §2.5 + scripts/local/hub-snapshot.sh) is the persistence story.
+
+version: '2.4'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: hub-substrate-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: hub
+      POSTGRES_PASSWORD: hub
+      POSTGRES_DB: hub
+      # Tune for dev workload; production sizing per cloud-deploy follow-on (idea-298)
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - hub-substrate-data:/var/lib/postgresql/data
+      # Substrate-init migrations (W1+) will mount here at next iteration:
+      # - ../../src/storage-substrate/migrations:/docker-entrypoint-initdb.d:ro
+
+    # R6 mitigation — local-dev resource bounds (prevents postgres-container
+    # resource exhaustion on long-running dev session per Design v1.1 §7.1 R6).
+    # Service-level limits (mem_limit / cpus) for cross-version compose-v1/v2
+    # compatibility; modern Swarm-style `deploy.resources.limits` is v2/Swarm only.
+    mem_limit: 1g
+    cpus: 1.0
+
+    # Postgres tuning for dev workload + LISTEN/NOTIFY workload
+    # max_connections: 50 = bounded for dev (production tuning is cloud-deploy concern)
+    # shared_buffers: 256MB = 25% of 1G memory cap (postgres convention)
+    # work_mem: 16MB = per-operation memory; conservative for dev
+    command:
+      - postgres
+      - -c
+      - max_connections=50
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+      # LISTEN/NOTIFY is built-in to postgres; no separate config needed
+      # JSONB 1.5MB cap is enforced at substrate write-boundary per §2.2 CHECK
+      # constraint, NOT at postgres-config level
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hub -d hub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  hub-substrate-data:
+    name: hub-substrate-data
+    # Driver: local (default); production volumes are cloud-deploy concern

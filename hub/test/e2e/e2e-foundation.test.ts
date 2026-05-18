@@ -231,7 +231,7 @@ describe("E2E Foundation", () => {
         "close_thread",
         "create_audit_entry",
         "create_clarification",
-        "create_document",
+        // "create_document" REMOVED at mission-83 W6-narrowed (document-policy deleted; deferred to idea-300)
         "create_idea",
         "create_message",
         "create_mission",
@@ -248,7 +248,7 @@ describe("E2E Foundation", () => {
         "force_fire_pulse",
         "get_agents",
         "get_clarification",
-        "get_document",
+        // "get_document" REMOVED at mission-83 W6-narrowed (deferred to idea-300)
         "get_engineer_status",
         "get_idea",
         "get_metrics",
@@ -263,7 +263,7 @@ describe("E2E Foundation", () => {
         "get_turn",
         "leave_thread",
         "list_audit_entries",
-        "list_documents",
+        // "list_documents" REMOVED at mission-83 W6-narrowed (deferred to idea-300)
         "list_ideas",
         "list_messages",
         "list_missions",

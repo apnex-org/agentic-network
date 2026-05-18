@@ -9,23 +9,28 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "coverage:invariants": "tsx scripts/invariant-coverage.ts"
+    "coverage:invariants": "tsx scripts/invariant-coverage.ts",
+    "migrate-fs-to-substrate": "tsx scripts/migrate-fs-to-substrate.ts"
   },
   "keywords": [],
   "author": "",
   "type": "module",
   "dependencies": {
-    "@google-cloud/storage": "^7.19.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@apnex/repo-event-bridge": "file:../packages/repo-event-bridge",
     "@apnex/storage-provider": "file:../packages/storage-provider",
+    "@google-cloud/storage": "^7.19.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@types/pg": "^8.20.0",
     "express": "^5.2.1",
+    "pg": "^8.20.0",
     "ulidx": "^2.4.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^11.14.0",
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.2",
+    "testcontainers": "^11.14.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.4"
