@@ -247,8 +247,11 @@ DOCKER_ARGS=(
   -e "POSTGRES_CONNECTION_STRING=$POSTGRES_CONNECTION_STRING"
   -e "HUB_API_TOKEN=$HUB_API_TOKEN"
   -e "WATCHDOG_ENABLED=$WATCHDOG_ENABLED"
-  -e "OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS=${OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS:-30000}"
-  -e "OIS_MESSAGE_PROJECTION_SWEEPER_INTERVAL_MS=${OIS_MESSAGE_PROJECTION_SWEEPER_INTERVAL_MS:-30000}"
+  # mission-84 W7: PR #203 revert — OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS +
+  # OIS_MESSAGE_PROJECTION_SWEEPER_INTERVAL_MS env-vars dropped; Hub-side defaults
+  # restored to pre-PR-#203 baseline (scheduled=1s, projection=5s per a940a38).
+  # bug-93 sweeper-poll-pressure (74% sustained CPU) structurally eliminated at
+  # mission-83 W5.4 substrate cutover (postgres queries are O(N_due) via indexes).
   -v "$GOOGLE_APPLICATION_CREDENTIALS:/secrets/sa-key.json:ro"
   --security-opt seccomp=unconfined
 )

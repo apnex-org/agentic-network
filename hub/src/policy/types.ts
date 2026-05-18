@@ -39,6 +39,12 @@ export interface AllStores {
   /** Mission-51 W1: universal Message primitive store. */
   message: IMessageStore;
   /**
+   * mission-84 W6 — substrate-backed Document store (re-introduction; mission-83
+   * W6 retired the GCS-backed implementation). Optional in test rigs that don't
+   * exercise Document MCP tools.
+   */
+  document?: import("../storage-substrate/index.js").IDocumentStore;
+  /**
    * Mission-57 W2: PulseSweeper instance (optional; not all test rigs
    * wire it). When present, `message-policy.ts:ackMessage` invokes
    * `onPulseAcked` post-status-flip when payload.pulseKind === "status_check"

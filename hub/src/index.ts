@@ -51,14 +51,16 @@ import { TaskRepositorySubstrate } from "./entities/task-repository-substrate.js
 import { TeleRepositorySubstrate } from "./entities/tele-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "./entities/thread-repository-substrate.js";
 import { TurnRepositorySubstrate } from "./entities/turn-repository-substrate.js";
+import { DocumentRepository } from "./storage-substrate/new-repositories.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy } from "./policy/index.js";
 import { registerSystemPolicy } from "./policy/system-policy.js";
 import { registerTelePolicy } from "./policy/tele-policy.js";
 import { registerAuditPolicy } from "./policy/audit-policy.js";
-// mission-83 W6-narrowed: registerDocumentPolicy DELETED (document-policy.ts
-// + gcs-document.ts deleted; document MCP tools deferred to idea-300 follow-on
-// when substrate-backed DocumentRepository W4.x.12 stub is wired).
+// mission-84 W6: registerDocumentPolicy RE-INTRODUCED with substrate-backed
+// DocumentRepository per Design v1.0 §2.7 (mission-83 W6-narrowed retired the
+// GCS-backed version; mission-84 W6 restores via substrate).
+import { registerDocumentPolicy } from "./policy/document-policy.js";
 import { registerSessionPolicy } from "./policy/session-policy.js";
 import { registerIdeaPolicy } from "./policy/idea-policy.js";
 import { registerMissionPolicy } from "./policy/mission-policy.js";
@@ -173,7 +175,9 @@ engineerRegistry = new AgentRepositorySubstrate(substrate!);
 missionStore = new MissionRepositorySubstrate(substrate!, substrateCounter, taskStore, ideaStore);
 // TurnRepositorySubstrate takes counter + missionStore + taskStore for hydration.
 turnStore = new TurnRepositorySubstrate(substrate!, substrateCounter, missionStore, taskStore);
-console.log("[Hub] substrate-mode repositories instantiated (12 substrate-versions)");
+// mission-84 W6: DocumentRepository (substrate-backed; W2.4 stub now production)
+const documentStore = new DocumentRepository(substrate!);
+console.log("[Hub] substrate-mode repositories instantiated (12 substrate-versions + Document store)");
 
 // ── Aggregate Store Object ────────────────────────────────────────────
 const allStores: AllStores = {
@@ -189,6 +193,7 @@ const allStores: AllStores = {
   bug: bugStore,
   pendingAction: pendingActionStore,
   message: messageStore,
+  document: documentStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────
@@ -199,7 +204,10 @@ registerTaskPolicy(policyRouter);
 registerSystemPolicy(policyRouter);
 registerTelePolicy(policyRouter);
 registerAuditPolicy(policyRouter);
-// mission-83 W6-narrowed: registerDocumentPolicy DELETED with document-policy.ts;
+// mission-84 W6: registerDocumentPolicy RE-INTRODUCED (substrate-backed); 3 tools
+// (create_document / get_document / list_documents); PolicyRouter tool count 68 → 71.
+registerDocumentPolicy(policyRouter);
+// mission-83 W6-narrowed historical note: registerDocumentPolicy was DELETED with document-policy.ts;
 // document MCP tools deferred to idea-300 follow-on (substrate-backed
 // DocumentRepository W4.x.12 stub available for re-introduction).
 registerSessionPolicy(policyRouter);
@@ -616,7 +624,13 @@ function stopContinuationSweep(): void {
 const messageProjectionSweeper = new MessageProjectionSweeper(
   threadStore,
   messageStore,
-  { intervalMs: parseInt(process.env.OIS_MESSAGE_PROJECTION_SWEEPER_INTERVAL_MS ?? "30000", 10) },
+  // mission-84 W7: PR #203 revert — OIS_MESSAGE_PROJECTION_SWEEPER_INTERVAL_MS
+  // env-var dropped; restored to pre-PR-#203 default (5s per git commit a940a38).
+  // Substrate-backed list-queries are O(N_due) via indexes (bug-93 closure at
+  // mission-83 W5.4 cutover); the 74% CPU pressure that motivated PR #203 was
+  // structurally eliminated. Sweeper continues to poll (substrate-watch
+  // subscription is W8/W9 architectural-future-leverage; v1 keeps polling).
+  { intervalMs: 5000 },
 );
 
 // Mission-51 W4: scheduled-message sweeper. Polls every 1s for
@@ -639,7 +653,11 @@ const scheduledMessageSweeper = new ScheduledMessageSweeper(
       internalEvents: [],
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
-  { intervalMs: parseInt(process.env.OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS ?? "1000", 10) },
+  // mission-84 W7: PR #203 revert — OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS
+  // env-var dropped; restored to pre-PR-#203 default (1s; same as the env-var-
+  // pre-default since the env-var-default itself was already 1s; the override
+  // at start-hub.sh:274 = 30000 is what PR #203 actually changed).
+  { intervalMs: 1000 },
 );
 
 // Mission-51 W5: cascade-replay sweeper (closes bug-31). Runs once
