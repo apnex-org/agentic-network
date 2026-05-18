@@ -2661,6 +2661,64 @@ calibrations:
     tele_alignment:
       - tele-2
 
+  - id: 77
+    class: substrate
+    title: "Cluster #23 substrate-currency-failure (repo-event-bridge ephemeral-persistence in substrate-mode-production); architecturally closed at mission-84 W3"
+    origin: mission-84-W3
+    surfaced_at: mission-84 Phase 3 Survey §calibration via Director-Round-2-clarifying-question grep-walk 2026-05-17 (Q4 "help me understand repo-event-bridge dependency on storage"); architect-side grep-verify revealed cluster #23 defect at hub/src/index.ts:163 MemoryStorageProvider sentinel passed to RepoEventBridge at line ~840
+    status: closed-structurally
+    closure_mechanism: |
+      23rd cluster-member of substrate-currency-failure pattern (lineage from
+      mission-83 retro: 16 architect-side + 6 engineer-side + cluster #24
+      cross-mission-completeness-verification at PR #205). Defect: in substrate-
+      mode-production (post mission-83 W5.4-Hub-bootstrap-flip), hub/src/index.ts
+      instantiated MemoryStorageProvider as "sentinel for type-safety", then
+      passed it to RepoEventBridge — the sentinel wasn't benign; repo-event-
+      bridge USED it for cursor + dedupe persistence → ephemeral persistence
+      lost on Hub restart → cursor-store.ts "Survives Hub restart" commitment
+      violated.
+
+      Diagnostic signature: type-system happy-path (TypeScript-satisfied
+      sentinel) but runtime-semantic-broken (Hub restart loses cursor state).
+      Surfaced via Director-Round-2-clarifying-question grep-walk during
+      Phase 3 Survey ("help me understand repo-event-bridge dependency on
+      storage; do we still need an abstraction interface?") triggering
+      architect-side grep-verify discipline per substrate-currency-audit-rubric
+      ARCHITECT-SIDE EXTENSION. Latent ~10 days post mission-83 W5.4 cutover.
+
+      Closure: mission-84 W3 (PR #211 merged at ef36b79c 2026-05-18) —
+      RepoEventBridgeSubstrateAdapter wraps PostgresHubStorageSubstrate; 2 new
+      minimal-SchemaDefs (RepoEventBridgeCursor + RepoEventBridgeDedupe;
+      watchable: false; SchemaDef inventory 20→22); hub/src/index.ts:840 wire-
+      up swaps from MemoryStorageProvider sentinel to PostgresHubStorageSubstrate
+      via adapter; cursor + dedupe now persist across Hub restart in substrate-
+      mode-production.
+
+      Dispositive evidence: hub/test/integration/cluster-23-cursor-restart-
+      safety.test.ts (191 lines; 4/4 PASS in 5.26s) — in-process Hub-restart-
+      simulation primary path; docker-restart smoke deferred to operator-
+      runbook per W1 testcontainers-amplification discipline.
+
+      Director-direct "Update ledger" disposition 2026-05-18 ratified ledger-
+      filing at PR-merge-gate per architect-Director-bilateral path.
+
+      Positive-pattern side-effect: Director-Round-2-clarifying-question pattern
+      itself codified as substrate-currency-audit-surface (separate Phase 10
+      retro candidate; not yet filed as numbered calibration; methodology-
+      evolution candidate).
+    closure_pr: 211
+    cross_refs:
+      - feedback_substrate_currency_audit_rubric.md ARCHITECT-SIDE EXTENSION (parent discipline; this calibration is 23rd cluster-member)
+      - mission-83 retrospective (22-instance bilateral substrate-currency-failure cluster lineage; PR #205 cluster #24 cross-mission-completeness-verification)
+      - mission-84 Phase 3 Survey envelope §calibration (surfacing-via-Director-Round-2-clarifying-question pattern)
+      - docs/designs/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-design.md §2.3 + §2.4 (closure architecture)
+      - PR #211 (ef36b79c; closure ship-commit)
+      - hub/test/integration/cluster-23-cursor-restart-safety.test.ts (dispositive evidence)
+      - mission-83 W5.4 Hub-bootstrap-flip (defect introduction window; substrate-mode-production cutover)
+    tele_alignment:
+      - tele-3
+      - tele-8
+
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
 #   title                       string; human-readable pattern name
