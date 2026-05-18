@@ -21,6 +21,9 @@ export {
 } from "./contract.js";
 
 export { MemoryStorageProvider } from "./memory.js";
-export { LocalFsStorageProvider } from "./local-fs.js";
 // mission-83 W6-narrowed: GcsStorageProvider DELETED (substrate replaces GCS
-// at production-prod; local-fs/memory preserved as test/dev affordances).
+// at production-prod).
+// mission-84 W4: LocalFsStorageProvider DELETED — production-Hub locked to
+// substrate per mission-83 W5.4 cutover; this package SHRUNK to test-only
+// affordances (MemoryStorageProvider + contract.ts + conformance.ts) used by
+// the published @apnex/repo-event-bridge package (cursor-store.ts + tests).

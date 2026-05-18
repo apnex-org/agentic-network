@@ -15,22 +15,20 @@ import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAudi
 // mission-83 W6-narrowed: gcs-state.js DELETED (substrate replaces GCS at
 // production-prod); reconcileCounters + cleanupOrphanedFiles startup hooks
 // were GCS-only and have no substrate-mode equivalent.
+// mission-84 W4: FS-version repository imports DELETED (12 *-repository.ts + counter.ts
+// removed from the codebase; substrate-version repos are sole production path).
 import {
-  TurnRepository,
-  PendingActionRepository,
-  TeleRepository, IdeaRepository, BugRepository,
-  MissionRepository, TaskRepository, ProposalRepository, ThreadRepository,
-  AgentRepository,
-  AuditRepository,
-  MessageRepository,
-  StorageBackedCounter,
   type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
   type IPendingActionStore, type IMessageStore,
 } from "./entities/index.js";
 // mission-83 W6-narrowed: GcsStorageProvider DELETED (substrate replaces GCS
 // at production-prod); LocalFsStorageProvider + MemoryStorageProvider preserved
 // as test/dev affordances.
-import { MemoryStorageProvider, LocalFsStorageProvider, type StorageProvider } from "@apnex/storage-provider";
+// mission-84 W4: MemoryStorageProvider + LocalFsStorageProvider + StorageProvider
+// production-Hub imports DELETED — substrate is sole production storage path per
+// mission-83 W5.4 cutover + Design v1.0 §2.5 (W5 retires STORAGE_BACKEND env var
+// entirely). Remaining @apnex/storage-provider consumer is the published
+// repo-event-bridge package (test fixtures + cursor-store interface).
 // mission-83 W5.4-Hub-bootstrap-flip — STORAGE_BACKEND=substrate dispatch path
 import {
   createPostgresStorageSubstrate,
@@ -137,11 +135,11 @@ let messageStore: IMessageStore;
 // period, legacy `*Store` classes continue to coexist with
 // TeleRepository (both read/write the same GCS keyspace safely via
 // CAS on shared meta/counter.json).
-// mission-83 W5.4-Hub-bootstrap-flip: substrate-mode uses HubStorageSubstrate
-// instead of StorageProvider. storageProvider stays defined for FS-modes; for
-// substrate-mode it's left as a sentinel that handlers must NOT use (substrate
-// repositories take HubStorageSubstrate directly per Option Y disposition (B)).
-let storageProvider: StorageProvider;
+// mission-84 W4: storageProvider variable + FS-mode dispatch branches DELETED
+// per Finding B (thread-578 round 2 + Design v1.0 §2.6 fold + §3.1.1 coordinated-
+// upgrade-discipline). STORAGE_BACKEND env-var ceremony PRESERVED here for W5
+// final-removal; non-substrate values now fatal-exit (production-Hub locked to
+// substrate per mission-83 W5.4 cutover; FS-fallback modes had no production use).
 let substrate: HubStorageSubstrate | null = null;
 let reconciler: SchemaReconciler | null = null;
 
@@ -157,79 +155,14 @@ if (STORAGE_BACKEND === "substrate") {
   });
   await reconciler.start();
   console.log(`[Hub] substrate reconciler settled (${ALL_SCHEMAS.length} SchemaDefs applied)`);
-  // storageProvider unused in substrate-mode; sentinel for type-safety only.
-  // Substrate-versioned repositories compose HubStorageSubstrate directly per
-  // Option Y disposition (B). MemoryStorageProvider is benign placeholder so any
-  // accidental access fails-fast at the empty-store level rather than null-deref.
-  storageProvider = new MemoryStorageProvider();
-// mission-83 W6-narrowed: STORAGE_BACKEND="gcs" branch DELETED (substrate is
-// sole production cloud-path; GCS-mode unreachable).
-} else if (STORAGE_BACKEND === "local-fs") {
-  // Mission-48 T1 (ADR-024 amendment 2026-04-25): local-fs is now
-  // single-writer-laptop-prod-eligible. The single-writer assumption
-  // (capabilities.concurrent=false) is enforced operationally by the
-  // one-hub-at-a-time check in `scripts/local/start-hub.sh:148-161`.
-  // Previously this branch fatal-exited under NODE_ENV=production; the
-  // gate is now warn-and-allow so the laptop-Hub deploy pattern works
-  // out of the box.
-  if (process.env.NODE_ENV === "production") {
-    console.warn(
-      "[Hub] STORAGE_BACKEND='local-fs' under NODE_ENV='production' — laptop-Hub single-writer-prod profile. " +
-      "Single-writer enforcement: scripts/local/start-hub.sh enforces one ois-hub-local-* container at a time. " +
-      "DO NOT run multiple hubs against the same OIS_LOCAL_FS_ROOT — the local-fs provider is concurrent:false."
-    );
-  }
-  const root = OIS_LOCAL_FS_ROOT!;
-
-  // Mission-48 T1: writability assertion. Catches the bind-mount uid/gid
-  // trap loudly rather than letting it surface as a generic putIfMatch
-  // permission error mid-mission. Defense-in-depth alongside the shell-
-  // layer pre-flight in scripts/local/start-hub.sh.
-  try {
-    fs.mkdirSync(root, { recursive: true });
-    const probe = path.join(root, `.hub-writability-${process.pid}`);
-    fs.writeFileSync(probe, "");
-    fs.unlinkSync(probe);
-  } catch (err: unknown) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "EACCES" || code === "EPERM") {
-      console.error(
-        `[Hub] FATAL: STORAGE_BACKEND='local-fs' but ${root} is not writable by container user uid=${process.getuid?.() ?? "?"}. ` +
-        `Most likely cause: bind-mount uid/gid mismatch between host and container. ` +
-        `Fix: 'docker run -u $(id -u):$(id -g) ...' (scripts/local/start-hub.sh handles this).`
-      );
-      process.exit(1);
-    }
-    throw err;
-  }
-
-  // Mission-48 T2b: bootstrap-required guard. The .cutover-complete
-  // sentinel is written by scripts/state-sync.sh ONLY after the GCS→
-  // local-fs post-copy set-equality invariant passes. Refuse to start
-  // on a half-bootstrapped (or never-bootstrapped) state directory —
-  // fail-fast keeps an unprepared cutover from silently running with
-  // no entity state.
-  if (!isCutoverComplete(root)) {
-    console.error(
-      `[Hub] FATAL: STORAGE_BACKEND='local-fs' but cutover sentinel missing at ${cutoverSentinelPath(root)}. ` +
-      `The local-fs state directory has not been bootstrapped from GCS — Hub refuses to ` +
-      `start without a validated cutover.\n` +
-      `Fix: run scripts/state-sync.sh first (it writes the sentinel after the post-copy ` +
-      `invariant passes). For an explicit fresh-start with no GCS data, run state-sync.sh ` +
-      `against an empty bucket — the invariant trivially passes and the sentinel is written.`
-    );
-    process.exit(1);
-  }
-
-  console.log(`[Hub] Using local-fs storage backend at: ${root}`);
-  storageProvider = new LocalFsStorageProvider(root);
 } else {
-  if (process.env.NODE_ENV === "production") {
-    console.error("[Hub] FATAL: STORAGE_BACKEND is 'memory' in production. Set STORAGE_BACKEND=gcs to prevent silent state loss.");
-    process.exit(1);
-  }
-  console.log("[Hub] Using in-memory storage backend");
-  storageProvider = new MemoryStorageProvider();
+  console.error(
+    `[Hub] FATAL: STORAGE_BACKEND='${STORAGE_BACKEND}' is not supported. ` +
+    `Substrate is the sole production path post-mission-83 W5.4 cutover. ` +
+    `Set STORAGE_BACKEND=substrate + POSTGRES_CONNECTION_STRING. ` +
+    `(W5 retires the STORAGE_BACKEND env-var ceremony entirely.)`
+  );
+  process.exit(1);
 }
 
 // Mission-47 W1-W7 + Mission-49 W8-W9: instantiate StorageProvider-backed
@@ -241,44 +174,27 @@ if (STORAGE_BACKEND === "substrate") {
 // substrate-versioned siblings (W4.x.1-11 existing + W4.x.12-17 new-repo)
 // composing HubStorageSubstrate per Option Y disposition (B). I*Store interfaces
 // unchanged; handler call-sites work transparently.
-if (substrate !== null) {
-  const substrateCounter = new SubstrateCounter(substrate);
-  auditStore = new AuditRepositorySubstrate(substrate, substrateCounter);
-  taskStore = new TaskRepositorySubstrate(substrate, substrateCounter);
-  proposalStore = new ProposalRepositorySubstrate(substrate, substrateCounter);
-  ideaStore = new IdeaRepositorySubstrate(substrate, substrateCounter);
-  bugStore = new BugRepositorySubstrate(substrate, substrateCounter);
-  teleStore = new TeleRepositorySubstrate(substrate, substrateCounter);
-  threadStore = new ThreadRepositorySubstrate(substrate, substrateCounter);
-  pendingActionStore = new PendingActionRepositorySubstrate(substrate, substrateCounter);
-  // MessageRepositorySubstrate uses ULID + substrate-native sequence (no counter).
-  messageStore = new MessageRepositorySubstrate(substrate);
-  // AgentRepositorySubstrate has no counter (fingerprint-derived ids).
-  engineerRegistry = new AgentRepositorySubstrate(substrate);
-  // MissionRepositorySubstrate takes counter + taskStore + ideaStore for hydration.
-  missionStore = new MissionRepositorySubstrate(substrate, substrateCounter, taskStore, ideaStore);
-  // TurnRepositorySubstrate takes counter + missionStore + taskStore for hydration.
-  turnStore = new TurnRepositorySubstrate(substrate, substrateCounter, missionStore, taskStore);
-  console.log("[Hub] substrate-mode repositories instantiated (12 existing-sibling substrate-versions)");
-} else {
-  const storageCounter = new StorageBackedCounter(storageProvider);
-  auditStore = new AuditRepository(storageProvider, storageCounter);
-  taskStore = new TaskRepository(storageProvider, storageCounter);
-  proposalStore = new ProposalRepository(storageProvider, storageCounter);
-  ideaStore = new IdeaRepository(storageProvider, storageCounter);
-  bugStore = new BugRepository(storageProvider, storageCounter);
-  teleStore = new TeleRepository(storageProvider, storageCounter);
-  threadStore = new ThreadRepository(storageProvider, storageCounter);
-  pendingActionStore = new PendingActionRepository(storageProvider, storageCounter);
-  // Mission-51 W1: MessageRepository — sovereign Message primitive over StorageProvider.
-  messageStore = new MessageRepository(storageProvider);
-  // AgentRepository does not use counter — agentIds are fingerprint-derived.
-  engineerRegistry = new AgentRepository(storageProvider);
-  // MissionRepository takes taskStore + ideaStore for virtual-view hydration.
-  missionStore = new MissionRepository(storageProvider, storageCounter, taskStore, ideaStore);
-  // TurnRepository takes missionStore + taskStore for virtual-view hydration.
-  turnStore = new TurnRepository(storageProvider, storageCounter, missionStore, taskStore);
-}
+// mission-84 W4: substrate is unconditional post-dispatch fatal-exit (non-substrate
+// values exit before reaching here); non-null assertion + drop if-guard. FS-version-
+// repository instantiation else-branch DELETED (FS-version repos retired entirely).
+const substrateCounter = new SubstrateCounter(substrate!);
+auditStore = new AuditRepositorySubstrate(substrate!, substrateCounter);
+taskStore = new TaskRepositorySubstrate(substrate!, substrateCounter);
+proposalStore = new ProposalRepositorySubstrate(substrate!, substrateCounter);
+ideaStore = new IdeaRepositorySubstrate(substrate!, substrateCounter);
+bugStore = new BugRepositorySubstrate(substrate!, substrateCounter);
+teleStore = new TeleRepositorySubstrate(substrate!, substrateCounter);
+threadStore = new ThreadRepositorySubstrate(substrate!, substrateCounter);
+pendingActionStore = new PendingActionRepositorySubstrate(substrate!, substrateCounter);
+// MessageRepositorySubstrate uses ULID + substrate-native sequence (no counter).
+messageStore = new MessageRepositorySubstrate(substrate!);
+// AgentRepositorySubstrate has no counter (fingerprint-derived ids).
+engineerRegistry = new AgentRepositorySubstrate(substrate!);
+// MissionRepositorySubstrate takes counter + taskStore + ideaStore for hydration.
+missionStore = new MissionRepositorySubstrate(substrate!, substrateCounter, taskStore, ideaStore);
+// TurnRepositorySubstrate takes counter + missionStore + taskStore for hydration.
+turnStore = new TurnRepositorySubstrate(substrate!, substrateCounter, missionStore, taskStore);
+console.log("[Hub] substrate-mode repositories instantiated (12 substrate-versions)");
 
 // ── Aggregate Store Object ────────────────────────────────────────────
 const allStores: AllStores = {
@@ -840,16 +756,11 @@ if (OIS_GH_API_TOKEN && OIS_REPO_EVENT_BRIDGE_REPOS.length > 0) {
   // mission-84 W3 cluster #23 closure: in substrate-mode, wire repo-event-bridge
   // cursor + dedupe persistence through HubStorageSubstrate via the adapter (kinds
   // RepoEventBridgeCursor + RepoEventBridgeDedupe; both watchable: false per
-  // Design v1.1 §2.3 Variant ii minimal-SchemaDef). FS-fallback modes still use
-  // the original storageProvider (W4 will retire them entirely). Pre-W3, the
-  // substrate-mode `storageProvider = new MemoryStorageProvider()` sentinel
-  // caused ephemeral repo-event-bridge state (lost on Hub restart; cluster #23
-  // defect surface).
-  const repoEventBridgeStorage = substrate
-    ? new RepoEventBridgeSubstrateAdapter({ substrate })
-    : storageProvider;
+  // Design v1.1 §2.3 Variant ii minimal-SchemaDef). mission-84 W4 retired FS-mode
+  // fallback (FS-version-repos + storageProvider deleted); substrate is
+  // unconditional post-W4 (production-Hub locked to substrate per mission-83 W5.4).
   repoEventBridge = new RepoEventBridge({
-    storage: repoEventBridgeStorage,
+    storage: new RepoEventBridgeSubstrateAdapter({ substrate: substrate! }),
     token: OIS_GH_API_TOKEN,
     repos: OIS_REPO_EVENT_BRIDGE_REPOS,
     cadenceSeconds: OIS_REPO_EVENT_BRIDGE_CADENCE_S,
