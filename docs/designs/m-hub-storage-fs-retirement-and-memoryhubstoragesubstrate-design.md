@@ -5,14 +5,14 @@ source-idea: idea-300
 survey-envelope: docs/surveys/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-survey.md
 prior-mission-anchor: mission-83 (M-Hub-Storage-Substrate)
 sequencing-downstream: idea-298 (M-Hub-Storage-Cloud-Deploy; strict prerequisite locked via Q3a)
-design-version: v0.3
-design-status: DRAFT — v0.2 → v0.3 folds greg round-1 audit (thread-577 round 2; 6 architect-side blind-spots B1-B6 + per-flag dispositions + Q-A disposition + wave-decomp refinements); ratify-ready pending greg round-2 confirmation
-ratify-criterion: greg round-2 confirmation on 8 ratify-criteria fold (B1-B6 self-audit corrections; F2 PORT-then-EXTEND reframe; §2.6 Counter mechanism pinned to (b) Counter-stays-as-kind; §2.3 watchable:false; SchemaDef inventory 20→22; W3.5 removed; W2 blast-radius re-estimate scheduled at W0; Q-A6 ~5-PR cadence ratified) → v1.0 RATIFIED
+design-version: v1.0
+design-status: RATIFIED — bilateral audit converged thread-577 round 4/8 (2026-05-18); greg round-2 CONCUR on 8 ratify-criteria fold + W4 SubstrateCounter NO-atomic-primitive-refactor decision; 2 non-load-bearing stale-text artifacts (§6 + §7.2) folded as v1.0 one-pass cleanup pre-RATIFIED commit
+ratify-criterion: ✅ MET — Phase 4 → Phase 5 Manifest authoring triggers next; engineer W0 spike execution starts on agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate post v1.0 ship
 ---
 
-# M-Hub-Storage-FS-Retirement-And-MemoryHubStorageSubstrate — Design v0.3
+# M-Hub-Storage-FS-Retirement-And-MemoryHubStorageSubstrate — Design v1.0 RATIFIED
 
-**Draft 2026-05-18 architect-side; v0.2 → v0.3 folds greg round-1 bilateral audit (thread-577 round 2).** Composes Survey envelope §1-7 ratified intent + greg round-1 corrections (6 architect-side blind-spots B1-B6 + per-flag dispositions + Q-A resolutions + wave-decomp refinements) into ratify-ready engineer-actionable architecture + wave-spec.
+**2026-05-18 architect-side; bilateral audit converged thread-577 round 4/8.** Composes Survey envelope §1-7 ratified intent + greg round-1 corrections (6 architect-side blind-spots B1-B6) + greg round-2 CONCUR on 8 ratify-criteria fold + W4 SubstrateCounter NO-atomic-primitive-refactor decision + v1.0 one-pass cleanup (§6 PR cadence + §7.2 Q-A resolutions stale-text folded). **Phase 4 RATIFIED; Phase 5 Manifest authoring triggers next.**
 
 ## §0 Changelog
 
@@ -284,13 +284,13 @@ const substrate = createPostgresStorageSubstrate({
 
 ## §6 Sequencing / cross-mission considerations (carry from Survey §7)
 
-**Branch + PR strategy:** `agent-lily/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (architect-side); `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (engineer-side; same handle slug). Cumulative-fold per wave (8 PRs OR mission-83-precedent single-PR-per-mission with wave-commit-archaeology — architect-recommendation = wave-commit-archaeology + single final PR, per mission-83 actual cadence; engineer-audit challenge target).
+**Branch + PR strategy:** `agent-lily/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (architect-side); `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (engineer-side; same handle slug). **~5 PRs total per §3 PR cadence column** (W0+W1 conformance+spike; W3 cluster #23 + repo-event-bridge; W4 Counter + FS-repo deletion + storage-provider retirement; W5 env-var retirement; W6+W7 Document MCP + PR #203 revert + ship). Per `multi-agent-pr-workflow.md` (apnex-org/* uses PR-flow).
 
 **Downstream sequencing:**
 - **idea-298** (M-Hub-Storage-Cloud-Deploy) — strict-after this mission's Phase 7 ratify; inherits clean substrate baseline + conformance-suite-certified MemoryHubStorageSubstrate + PostgresHubStorageSubstrate
 - **idea-295/296/297/299** — sequence-independent; Strategic Review prioritization post this mission close
 
-**Compressed-lifecycle: NOT recommended.** 8 waves; ~170 test-file blast-radius (W2); cluster #23 integration test gate (W3); conformance suite extraction (W1) is substantive new test infrastructure. Bilateral architect+engineer cycle of ~1-2 weeks appropriate.
+**Compressed-lifecycle: NOT recommended.** 8 waves; ~49-file test-cascade blast-radius at W2 (per W0 spike re-estimate of mission-83 W6 stale "22 files / 170 tests" figure); cluster #23 integration test gate (W3); conformance suite PORT-then-EXTEND (W1) is substantive test infrastructure. Bilateral architect+engineer cycle of ~1-2 weeks appropriate.
 
 ---
 
@@ -307,12 +307,14 @@ const substrate = createPostgresStorageSubstrate({
 
 ### §7.2 Open questions for engineer round-1 audit
 
-1. **Q-A1 (F1):** integration-test infrastructure shape — real docker-restart vs in-process Hub-restart-simulation? Architect-recommendation = real docker-restart for dispositive evidence; engineer challenge if simulation suffices for cluster #23 closure semantic.
-2. **Q-A2 (F2):** mission-47 conformance suite location + exact test inventory — engineer locates source (likely `packages/storage-provider/__tests__/conformance/` per Survey §6 architect-recommendation; verify) + reports test count + which tests port 1:1.
-3. **Q-A3 (F3 + F4):** spike Variant (ii) at W0 to validate interface-swap mechanics + NOTIFY-trigger probe before W3 commitment; report any architectural blocker.
-4. **Q-A4 (R3):** schema-reconciler.ts primitive coverage — does it handle postgres-sequence-create OR only table-create? If only table-create, W4 needs reconciler-extension first.
-5. **Q-A5 (R4):** substrate-watch primitive performance baseline under restored 1s/5s tick defaults — pre-W7 profile + decision on whether to ship W7 OR carry sweeper-interval-env-vars as architectural-debt with file-bug.
-6. **Q-A6 (process):** PR cadence — single-PR-per-mission (mission-83 precedent) OR 8-PR-per-wave? Architect-recommendation = single-PR-per-mission with wave-commit-archaeology; engineer challenge if per-wave-PR yields better review-load per wave.
+All Q-A questions RESOLVED via v0.2 architect-side self-audit + v0.3 greg round-1 bilateral audit. Status snapshot (final dispositions):
+
+1. **Q-A1 (F1):** integration-test infrastructure shape → **RESOLVED v0.3:** BOTH in-process Hub-restart-simulation (primary; sub-second; CI-deterministic) + docker-restart smoke at PR ship-gate per greg F1 CONCUR+REFINE
+2. **Q-A2 (F2):** mission-47 conformance suite location → **RESOLVED v0.3 via greg B1:** `packages/storage-provider/test/conformance.ts` (257 lines; abstract `runConformanceSuite(factory, options)`); PORT-then-EXTEND per §2.2
+3. **Q-A3 (F3 + F4):** Variant (ii) interface-swap mechanics + NOTIFY-trigger probe → **RESOLVED v0.3:** 1:1 primitive mapping verified; minimal-SchemaDef Variant with `watchable: false` (greg B2 + F4 CHALLENGE spec-recall); spike at W0 confirms zero-blocker
+4. **Q-A4 (R3):** schema-reconciler.ts primitive coverage → **RESOLVED v0.3 via greg B5:** INDEX-only; W3.5 reconciler-extension slice NOT needed because §2.6 PINNED (b) Counter-stays-as-kind via existing SubstrateCounter
+5. **Q-A5 (R4):** substrate-watch performance baseline under restored 1s/5s ticks → **RESOLVED v0.3 via greg Q-A5 CONCUR:** pre-PR-#203 defaults verified in git log (`a940a38`); scheduled=1s + projection=5s match §2.8; architectural-future-leverage note added (substrate-watch enables sweeper-subscription vs polling; v1 keeps polling; W7 follow-on architectural note)
+6. **Q-A6 (process):** PR cadence → **RESOLVED v0.3 via greg Q-A6 REFINE:** ~5 PRs total per `multi-agent-pr-workflow.md` apnex-org/* flow (W0+W1 conformance+spike; W3 cluster #23 + repo-event-bridge; W4 Counter + FS-repo deletion + storage-provider retirement; W5 env-var retirement; W6+W7 Document MCP + PR #203 revert + ship). See §3 PR cadence column for per-wave assignment
 
 ---
 
@@ -365,36 +367,28 @@ Per `docs/methodology/multi-agent-pr-workflow.md` audit-rubric pattern:
 
 ## §11 Status
 
-**v0.3 — DRAFT folded greg round-1 audit; RATIFY-READY pending greg round-2 confirmation.**
+**v1.0 RATIFIED 2026-05-18 — bilateral audit converged thread-577 round 4/8.**
 
-Greg round-1 (thread-577 round 2) caught 6 architect-side blind-spots in v0.2 that v0.2's own self-audit missed (B1-B6); v0.3 folds all 8 ratify-criteria.
+Greg round-1 (thread-577 round 2) caught 6 architect-side blind-spots in v0.2 (B1-B6); v0.3 folded all 8 ratify-criteria + W4 SubstrateCounter architect-decision; greg round-2 (thread-577 round 4) CONCUR + spot-check verified all 8 fold-locations + 2 non-load-bearing stale-text artifacts surfaced for v1.0 one-pass cleanup (§6 line 287 + §7.2 Q-A6 line 315 — folded pre-RATIFIED commit).
 
-**v0.3 fold complete (8 ratify-criteria; all addressed):**
-- ✅ #1 B1-B6 self-audit corrections folded into §0 changelog (with cross-refs to v0.2 supersession entries)
-- ✅ #2 F2 reframed to PORT-then-EXTEND (§2.2 spec rewritten)
-- ✅ #3 §2.6 Counter mechanism PINNED to (b) Counter-stays-as-kind; SubstrateCounter is canonical; W3.5 removed
-- ✅ #4 §2.3 RepoEventBridgeCursor + RepoEventBridgeDedupe explicit `watchable: false`
-- ✅ #5 SchemaDef inventory delta corrected 20 → 22 (Counter SchemaDef already exists per B3)
-- ✅ #6 W3.5 removed from wave-decomp + ratify-criterion (per B5 disposition)
-- ✅ #7 W2 blast-radius re-estimate scheduled at W0 spike (per B6 — actual 49 of 82 .test.ts; not 22)
-- ✅ #8 Q-A6 PR cadence ratified: ~5 PRs (W0+W1 / W3 / W4 / W5 / W6+W7)
+**v1.0 ratify-criterion MET (per `mission-lifecycle.md` Phase 4 ratify):**
+- ✅ Bilateral round-2 CONCUR; engineer-side ratify-status GREEN on 8 ratify-criteria + W4 architect-decision
+- ✅ No engineer-surfaced architectural blockers
+- ✅ Bilateral converged; thread-577 stagedActions `close_no_action` committed
+- ✅ v1.0 one-pass cleanup folded (§6 ~5-PR cadence text replacing stale "single-PR-per-mission" prescription; §7.2 Q-A1-Q-A6 final dispositions replacing original open-questions text)
+- ✅ Architect-side blind-spot probe RESOLVED — all v0.2 architect-spec-vs-substrate-API drift instances code-corrected in v0.3+v1.0
 
-**Architect-side blind-spot probe RESOLVED** (per F5 lesson): greg round-1 surfaced 6 v0.2-architect-spec-vs-substrate-API drift instances; all folded into v0.3 with code-grounded corrections. No remaining architect-spec-recall items pending engineer-validation; all spec-claims in v0.3 verified against code.
+**Bilateral round-budget efficiency:** 2 rounds used of 8 budget (per [[feedback_bilateral_audit_round_budget_discipline]]). 6 budget rounds remain for unanticipated audit-extensions; not expected pre-Phase-5.
 
-**Engagement-state at v0.3 ship:**
-- thread-577 active; round 2 (greg round-1 audit) → architect to reply with v0.3 fold-confirmation
-- greg's engineer-side branch: `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (engineer-work-trace at `docs/traces/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-engineer-work-trace.md`)
-- Architect operational-state: BLOCKED-PENDING-GREG-ROUND-2-CONFIRMATION (5-minute architect-fold-time; greg round-2 expected to be confirm-only or minor refine)
-
-**v1.0 ratify-criterion (per `mission-lifecycle.md` Phase 4 ratify):**
-- ⏳ Greg round-2 confirmation on v0.3 fold (8 ratify-criteria all addressed)
-- ⏳ Any engineer-surfaced round-2 architectural blocker resolved (none expected; round-1 was thorough)
-- ⏳ Bilateral converged → architect commits ratify-marker per [[feedback_narrative_artifact_convergence_discipline]]
+**Engineer execution readiness:** greg's branch `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (engineer-work-trace at `docs/traces/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-engineer-work-trace.md`) ready for W0 spike (MemoryHubStorageSubstrate per-method parity + W2 blast-radius re-count) post Phase 5 Manifest authoring.
 
 **Expected progression:**
-- v0.3 → v1.0 RATIFIED (greg round-2 CONCUR → architect commits `[Design v1.0 RATIFIED]` marker on mission branch)
-- v1.0 → v1.1+ (live design evolution during mission execution; per mission-83 v1.0 → v1.4 precedent)
+- ✅ v1.0 RATIFIED (architect commits this marker per [[feedback_narrative_artifact_convergence_discipline]])
+- ⏳ Phase 5 Manifest authoring (architect-side; converts Design v1.0 §3 wave-decomp + §5 dispositions into Hub mission entity + plannedTasks)
+- ⏳ Phase 6 preflight + activation
+- ⏳ Phase 7 wave execution (W0 → W7 per §3 wave-decomp; ~5 PRs)
+- ⏳ v1.0 → v1.1+ live design evolution during mission execution (per mission-83 v1.0 → v1.4 precedent)
 
 ---
 
-— Architect: lily / 2026-05-18 14:55 AEST (Phase 4 entered Director-direct 2026-05-18; bilateral audit unblocked post greg session activation; v0.2 → v0.3 folded greg round-1 [thread-577 round 2]; RATIFY-READY pending greg round-2)
+— Architect: lily / 2026-05-18 15:05 AEST (Phase 4 entered Director-direct 2026-05-18; bilateral audit thread-577 converged 4/8 rounds; v0.1 → v0.2 architect-side self-audit → v0.3 greg round-1 fold → v1.0 RATIFIED with v1.0 one-pass cleanup. Methodology calibration confirmed: [[feedback_architect_drives_engineer_engagement_when_idle]] validated by this cycle — architect-side self-audit MISSED 6 drift instances that engineer code-grep caught instantly; bilateral critique-review IS non-substitutable for Phase 4 ratify.)
