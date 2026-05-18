@@ -6,9 +6,9 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
-import { PendingActionRepository } from "../../src/entities/pending-action-repository.js";
-import { StorageBackedCounter } from "../../src/entities/counter.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
+import { PendingActionRepositorySubstrate as PendingActionRepository } from "../../src/entities/pending-action-repository-substrate.js";
+import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import { PolicyRouter } from "../../src/policy/router.js";
 import { registerPendingActionPolicy } from "../../src/policy/pending-action-policy.js";
 import { createTestContext } from "../../src/policy/test-utils.js";
@@ -18,8 +18,8 @@ import { createTestContext } from "../../src/policy/test-utils.js";
 // legacy direct-Map-mutation pattern is replaced by the repository's
 // test-only escape hatch `__debugSetItem(id, patch)`.
 function freshStore(): PendingActionRepository {
-  const provider = new MemoryStorageProvider();
-  const counter = new StorageBackedCounter(provider);
+  const provider = createMemoryStorageSubstrate();
+  const counter = new SubstrateCounter(provider);
   return new PendingActionRepository(provider, counter);
 }
 

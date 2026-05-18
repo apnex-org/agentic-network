@@ -4,16 +4,16 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { ThreadRepository } from "../../src/entities/thread-repository.js";
-import { StorageBackedCounter } from "../../src/entities/counter.js";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { ThreadRepositorySubstrate as ThreadRepository } from "../../src/entities/thread-repository-substrate.js";
+import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 describe("ThreadRepository.unpinCurrentTurnAgent (CP3 C4)", () => {
   let store: ThreadRepository;
 
   beforeEach(() => {
-    const provider = new MemoryStorageProvider();
-    const counter = new StorageBackedCounter(provider);
+    const provider = createMemoryStorageSubstrate();
+    const counter = new SubstrateCounter(provider);
     store = new ThreadRepository(provider, counter);
   });
 

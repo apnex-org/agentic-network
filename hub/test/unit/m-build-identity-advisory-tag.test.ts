@@ -18,8 +18,8 @@ import {
   type AgentClientMetadata,
   type RegisterAgentPayload,
 } from "../../src/state.js";
-import { AgentRepository } from "../../src/entities/agent-repository.js";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { AgentRepositorySubstrate as AgentRepository } from "../../src/entities/agent-repository-substrate.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 const COMMIT_SHA_REGEX_INTERNAL = /^[a-f0-9]{7}$|^unknown$/;
 
@@ -45,7 +45,7 @@ describe("M-Build-Identity-AdvisoryTag — deriveAdvisoryTags projection", () =>
   let reg: AgentRepository;
 
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
   });
 
   it("projects clientMetadata.{proxy,sdk}{CommitSha,Dirty} into advisoryTags", async () => {

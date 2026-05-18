@@ -15,8 +15,8 @@ import {
   type AgentLabels,
   type AgentRole,
 } from "../../src/state.js";
-import { AgentRepository } from "../../src/entities/agent-repository.js";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { AgentRepositorySubstrate as AgentRepository } from "../../src/entities/agent-repository-substrate.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 const CLIENT: AgentClientMetadata = {
   clientName: "claude-code",
@@ -38,7 +38,7 @@ describe("Mission-19 Registry — label persistence", () => {
   let reg: AgentRepository;
 
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
   });
 
   it("first registration persists the declared labels (INV-AG5)", async () => {
@@ -115,7 +115,7 @@ describe("Mission-19 Registry — session resolution for P2P routing", () => {
   let reg: AgentRepository;
 
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
   });
 
   it("getAgentForSession returns the Agent bound to the current session", async () => {

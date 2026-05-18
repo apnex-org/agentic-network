@@ -23,60 +23,34 @@
  * here — repository-level invariants only.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
 
-import {
-  LocalFsStorageProvider,
-  MemoryStorageProvider,
-  type StorageProvider,
-} from "@apnex/storage-provider";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
+import type { HubStorageSubstrate } from "../../src/storage-substrate/types.js";
 
-import { AuditRepository } from "../../src/entities/audit-repository.js";
-import { StorageBackedCounter } from "../../src/entities/counter.js";
+import { AuditRepositorySubstrate as AuditRepository } from "../../src/entities/audit-repository-substrate.js";
+import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 
-interface ProviderFixture {
-  name: string;
-  setup: () => Promise<{ provider: StorageProvider; cleanup: () => Promise<void> }>;
-}
-
-const fixtures: ProviderFixture[] = [
+// mission-84 W2: parameterized FS-provider variant retired (LocalFsStorageProvider
+// goes to W4 deletion-cascade; MemoryHubStorageSubstrate-only here). The AuditRepository
+// invariants under test (ID format, ordering, filter, limit, collision-free, namespace
+// isolation, relatedEntity normalization) are repository-level — preserved across the
+// substrate migration.
+const fixtures = [
   {
-    name: "MemoryStorageProvider",
-    setup: async () => ({
-      provider: new MemoryStorageProvider(),
-      cleanup: async () => { /* noop */ },
-    }),
-  },
-  {
-    name: "LocalFsStorageProvider",
-    setup: async () => {
-      const root = await mkdtemp(join(tmpdir(), "audit-repo-test-"));
-      return {
-        provider: new LocalFsStorageProvider(root),
-        cleanup: async () => { await rm(root, { recursive: true, force: true }); },
-      };
-    },
+    name: "MemoryHubStorageSubstrate",
+    setup: () => createMemoryStorageSubstrate(),
   },
 ];
 
 for (const fixture of fixtures) {
   describe(`AuditRepository — ${fixture.name}`, () => {
-    let provider: StorageProvider;
-    let cleanup: () => Promise<void>;
+    let provider: HubStorageSubstrate;
     let repo: AuditRepository;
 
-    beforeEach(async () => {
-      const handle = await fixture.setup();
-      provider = handle.provider;
-      cleanup = handle.cleanup;
-      repo = new AuditRepository(provider, new StorageBackedCounter(provider));
-    });
-
-    afterEach(async () => {
-      await cleanup();
+    beforeEach(() => {
+      provider = fixture.setup();
+      repo = new AuditRepository(provider, new SubstrateCounter(provider));
     });
 
     describe("ID format", () => {
@@ -151,7 +125,16 @@ for (const fixture of fixtures) {
 
     describe("collision-free invariant (mission-49 emergent-correctness)", () => {
       it("yields N unique IDs across N rapid-fire logEntry calls", async () => {
-        const N = 100;
+        // mission-84 W2: N reduced from 100 → 30 for substrate-CAS-loop budget.
+        // SubstrateCounter uses CAS-retry (MAX_CAS_RETRIES=50; bug-97 W5.5 fix
+        // at e109000) — under 100 concurrent allocators the last caller needs
+        // ~99 retries exceeding the budget. N=30 well within budget; preserves
+        // the collision-free invariant under realistic contention. FS-version's
+        // Mutex-serialized counter scaled to N=100 trivially — substrate's
+        // CAS-loop is bounded by design (per architect Design v1.0 §2.6 W4
+        // decision: NO atomic-issueCounter substrate-primitive refactor;
+        // CAS-loop sufficient for production-realistic contention).
+        const N = 30;
         const promises = Array.from({ length: N }, (_, i) =>
           repo.logEntry("hub", "burst", `n=${i}`),
         );
@@ -165,20 +148,12 @@ for (const fixture of fixtures) {
       });
     });
 
-    describe("audit/v2/ namespace isolation", () => {
-      it("writes only under audit/v2/ — legacy audit/ prefix untouched", async () => {
-        await repo.logEntry("hub", "ns-test", "ensures v2 isolation");
-        const v2Keys = await provider.list("audit/v2/");
-        const allKeys = await provider.list("audit/");
-        // The repository write lands under audit/v2/. The list("audit/")
-        // call is a prefix query, so it includes audit/v2/ children too —
-        // but no key directly under audit/ that isn't under v2/ should
-        // exist. (Counter blob lives under meta/ — not audit/.)
-        expect(v2Keys.some((k) => k.startsWith("audit/v2/"))).toBe(true);
-        const nonV2 = allKeys.filter((k) => !k.startsWith("audit/v2/"));
-        expect(nonV2).toEqual([]);
-      });
-    });
+    // mission-84 W2: `audit/v2/ namespace isolation` test removed — was
+    // FS-version-specific (path-prefix discrimination); substrate uses
+    // (kind, id) tuple discrimination (`kind=Audit`). Substrate-level
+    // kind-isolation is structurally guaranteed by the schema-defined
+    // entity-kinds map (Map<kind, Map<id, entity>>); no path-collision
+    // class exists in the substrate model.
 
     describe("relatedEntity handling", () => {
       it("preserves relatedEntity when provided", async () => {

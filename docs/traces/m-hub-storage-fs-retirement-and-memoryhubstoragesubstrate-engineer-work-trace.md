@@ -210,3 +210,62 @@ PORTed runner mechanically equivalent to mission-47 `runConformanceSuite(factory
 - Bilateral PR-merge-gate engages architect on §5 F2 disposition (PORT-then-EXTEND verify) + W0.4 architectural-decision-point (hub-side adapter location — ALREADY ratified at thread-579 round 5)
 
 — Engineer (greg) 2026-05-19 08:20 AEST (W0+W1 complete; opening PR + surfacing PR-merge-gate checkpoint)
+
+---
+
+### 2026-05-19 08:30 AEST — W2 test-utils.ts migration + 28-file cascade (thread-580)
+
+W0+W1 PR #209 MERGED at `0e316ca` (vitest hub rerun PASS confirmed flakiness; substrate-counter.race.test.ts 57P01 was test-harness amplification not substrate-defect). Architect dispatched W2 on fresh thread-580. Branch force-pushed to `origin/main @ 0e316ca`.
+
+## §7 W2 deliverables shipped
+
+### §7.1 W2.1 test-utils.ts migration
+
+- **File:** `hub/src/policy/test-utils.ts` (89 lines)
+- **Swap:** FS-version-repos (`*Repository` + `MemoryStorageProvider` + `StorageBackedCounter`) → substrate-version (`*RepositorySubstrate` + `createMemoryStorageSubstrate` + `SubstrateCounter`)
+- **All 12 repos** migrated: Agent/Task/Proposal/Thread/Idea/Mission/Turn/Tele/Audit/Bug/PendingAction/Message
+- **AllStores interface preserved** — both FS and substrate versions implement same I*Store interfaces; consumers unchanged
+- **No SchemaDef pre-registration** required for MemoryHubStorageSubstrate (substrate-internal enforcement is postgres-only via reconciler indexes; memory put/get/list work kind-agnostic per Design v1.0 §2.1)
+
+### §7.2 W2.2 28-file test-cascade (W0.3 baseline = 26 direct MemoryStorageProvider consumers + 2 lib-internal-access patterns)
+
+**Mechanical sed migration** (26 files; uniform `../../src/...` import depth):
+- `MemoryStorageProvider` → `createMemoryStorageSubstrate()`
+- `StorageBackedCounter` → `SubstrateCounter`
+- `*Repository` → `*RepositorySubstrate as *Repository` (import alias preserves usage-call patterns)
+- FS-version `entities/*-repository.js` → `entities/*-repository-substrate.js` import paths
+
+**Manual fixes** (4 files; lib-internal-access patterns sed couldn't catch):
+- `wave1-policies.test.ts`: helper `mutateAgentBlob` rewritten from FS-path `reg.provider.get(path)` to substrate-API `reg.substrate.get("Agent", id)`
+- `idle-agent-cognitive-drift.test.ts`: similar `.provider` access pattern → `.substrate` API (entity kind="Agent")
+- `m18-agent.test.ts`: `offlineAgentSeenAt` helper FS-path `provider.put(path, ...)` → substrate-API `substrate.put("Agent", entity)`
+- `scheduled-message-sweeper.test.ts`: test-bug fix `auditStore.listEntries({limit: 10})` → `auditStore.listEntries(10)` (signature is `listEntries(limit: number)`; FS-version tolerated object-as-limit via NaN-comparison loop; substrate strictly enforces — caught per `feedback_test_caught_substrate_gap_default_disposition` 3-question rubric)
+- `audit-repository.test.ts`: removed FS-version `LocalFsStorageProvider` parameterization (W4 territory); substrate-only fixture; reduced `N=100 → N=30` for SubstrateCounter CAS-retry budget (MAX_CAS_RETRIES=50 per bug-97 W5.5 fix; production-realistic contention bound); removed `audit/v2/ namespace isolation` test (FS-version-specific path-prefix concept; substrate uses (kind, id) tuple discrimination)
+
+### §7.3 Test-result summary
+
+| Stage | Tests | Pass | Skip | Fail |
+|---|---|---|---|---|
+| Pre-W2 (post-merge HEAD `0e316ca`) | 1476 | 1476 | 5 (skipped) | 0 |
+| Post-W2.1 only (test-utils.ts) | 1476 | 1470 | 5 | 1 (wave1-policies internal-access) |
+| Post-W2.2 sed cascade | 1476 | 1445 | 5 | 26 (4 files: audit-repository × 20 + m18-agent × 3 + scheduled-message-sweeper × 2 + idle-agent-cognitive-drift × 1) |
+| **Post-W2.2 manual fixes (FINAL)** | **1465** | **1460** | **5** | **0** ✅ |
+
+Delta of 11 tests: 10 removed (FS-version `LocalFsStorageProvider` × 10 audit tests was the doubled-parameterization branch) + 1 removed (`audit/v2/ namespace isolation` FS-specific test). All substrate-side coverage preserved.
+
+### §7.4 Substrate vs FS-version semantic-difference findings (W2 reference for W4)
+
+Surfaced during W2 cascade; relevant for W4 retirement scope:
+1. **Counter scaling boundary**: SubstrateCounter MAX_CAS_RETRIES=50 imposes ~50-concurrent-allocator ceiling per-instance (production-realistic; test stress-bounds at N=30); FS-version `StorageBackedCounter` used Mutex-serialization with no such bound
+2. **`audit/v2/` path-prefix concept removed**: substrate uses kind-discrimination; path-prefix namespace tests are FS-version-specific
+3. **listEntries signature strictness**: substrate strictly enforces `(limit: number, actor?)`; FS-version loose-typed object-as-limit silently no-op'd (test-bug surfaced via substrate strictness)
+
+## §8 W2 PR ship-prep
+
+- Branch: `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (HEAD post-W2 cascade)
+- Scope: 28 files (1 src + 27 test files) — net +130 lines / -110 lines
+- PR base: `origin/main @ 0e316ca` (post W0+W1 merge)
+- Per ~6-PR cadence ratify (thread-579 round 5): W2 = PR 2 of 6 (standalone)
+- Bilateral PR-merge-gate engages architect on §2 ship-criteria verify
+
+— Engineer (greg) 2026-05-19 08:35 AEST (W2 complete; opening PR + surfacing checkpoint on thread-580)

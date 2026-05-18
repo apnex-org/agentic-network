@@ -23,7 +23,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { z } from "zod";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 import {
   resolveLivenessConfig,
@@ -38,7 +38,7 @@ import {
   type RegisterAgentPayload,
 } from "../../src/state.js";
 import { projectAgent } from "../../src/policy/agent-projection.js";
-import { AgentRepository } from "../../src/entities/agent-repository.js";
+import { AgentRepositorySubstrate as AgentRepository } from "../../src/entities/agent-repository-substrate.js";
 import { PolicyRouter } from "../../src/policy/router.js";
 import {
   registerTransportHeartbeatPolicy,
@@ -248,7 +248,7 @@ describe("mission-75 §3.2 — computeComponentStates (bug-52 countdown semantic
 describe("mission-75 §3.2 — AgentRepository touchAgent post-bump hook", () => {
   let reg: AgentRepository;
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
     delete process.env.AGENT_TOUCH_MIN_INTERVAL_MS;
     delete process.env.PEER_PRESENCE_WINDOW_MS;
   });
@@ -286,7 +286,7 @@ describe("mission-75 §3.2 — AgentRepository touchAgent post-bump hook", () =>
 describe("mission-75 §3.5 — isPeerPresent per-agent override", () => {
   let reg: AgentRepository;
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
     delete process.env.PEER_PRESENCE_WINDOW_MS;
   });
 
@@ -308,7 +308,7 @@ describe("mission-75 §3.3 — transport_heartbeat handler", () => {
   let agentId: string;
 
   beforeEach(async () => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
     const result = await reg.registerAgent("sess-1", "engineer", payload("uuid-heartbeat"));
     if (!result.ok) throw new Error("setup: registerAgent failed");
     agentId = result.agentId;
@@ -465,7 +465,7 @@ describe("mission-75 §3.4 — AGENT_PULSE_KIND constant", () => {
 
 describe("mission-75 §3.1 — truth-table registration-instant edge", () => {
   it("just-registered agent has cognitiveState=unknown + transportState=unknown (per current init)", async () => {
-    const reg = new AgentRepository(new MemoryStorageProvider());
+    const reg = new AgentRepository(createMemoryStorageSubstrate());
     const result = await reg.registerAgent("sess-1", "engineer", payload("uuid-init"));
     expect(result.ok).toBe(true);
     if (!result.ok) return;

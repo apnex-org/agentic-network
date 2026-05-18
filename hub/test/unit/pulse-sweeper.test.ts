@@ -14,12 +14,12 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
-import { MissionRepository } from "../../src/entities/mission-repository.js";
-import { MessageRepository } from "../../src/entities/message-repository.js";
-import { TaskRepository } from "../../src/entities/task-repository.js";
-import { IdeaRepository } from "../../src/entities/idea-repository.js";
-import { StorageBackedCounter } from "../../src/entities/counter.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
+import { MissionRepositorySubstrate as MissionRepository } from "../../src/entities/mission-repository-substrate.js";
+import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
+import { TaskRepositorySubstrate as TaskRepository } from "../../src/entities/task-repository-substrate.js";
+import { IdeaRepositorySubstrate as IdeaRepository } from "../../src/entities/idea-repository-substrate.js";
+import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import { PulseSweeper, pulseSelector } from "../../src/policy/pulse-sweeper.js";
 import { createMetricsCounter } from "../../src/observability/metrics.js";
 import type { IPolicyContext } from "../../src/policy/types.js";
@@ -28,8 +28,8 @@ import type { Mission, Message, MissionPulses } from "../../src/entities/index.j
 const MS = (s: number) => s * 1000;
 
 function buildSweeperRig() {
-  const storage = new MemoryStorageProvider();
-  const counter = new StorageBackedCounter(storage);
+  const storage = createMemoryStorageSubstrate();
+  const counter = new SubstrateCounter(storage);
   const taskStore = new TaskRepository(storage, counter);
   const ideaStore = new IdeaRepository(storage, counter);
   const missionStore = new MissionRepository(storage, counter, taskStore, ideaStore);

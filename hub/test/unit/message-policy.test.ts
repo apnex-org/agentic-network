@@ -13,9 +13,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
-import { MessageRepository } from "../../src/entities/message-repository.js";
+import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
 import { PolicyRouter } from "../../src/policy/router.js";
 import { registerMessagePolicy, pushSelector } from "../../src/policy/message-policy.js";
 import type { IPolicyContext } from "../../src/policy/types.js";
@@ -101,7 +101,7 @@ describe("registerMessagePolicy — registration", () => {
 describe("list_messages — query primitives", () => {
   it("returns empty array when no messages match", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     const result = await router.handle("list_messages", { threadId: "no-such-thread" }, ctx);
@@ -113,7 +113,7 @@ describe("list_messages — query primitives", () => {
 
   it("filters by threadId and returns messages ordered by sequenceInThread", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     await messageStore.createMessage({
@@ -152,7 +152,7 @@ describe("list_messages — query primitives", () => {
 
   it("filters by authorAgentId (outbox view)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     await messageStore.createMessage({
@@ -180,7 +180,7 @@ describe("list_messages — query primitives", () => {
 
   it("combines target + status filters", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     const m1 = await messageStore.createMessage({
@@ -214,7 +214,7 @@ describe("list_messages — query primitives", () => {
 
   it("since cursor (mission-56 W3.1) flows through args → returns only delta", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     const m1 = await messageStore.createMessage({
@@ -250,7 +250,7 @@ describe("list_messages — query primitives", () => {
 describe("create_message — authorization axes", () => {
   it("allows engineer to create kind=note (any-author)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     const result = await router.handle(
@@ -272,7 +272,7 @@ describe("create_message — authorization axes", () => {
 
   it("rejects non-director caller for kind=urgency-flag (director-only)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     const result = await router.handle(
@@ -292,7 +292,7 @@ describe("create_message — authorization axes", () => {
 
   it("allows director caller for kind=urgency-flag", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("director", "dir-1"));
 
     const result = await router.handle(
@@ -311,7 +311,7 @@ describe("create_message — authorization axes", () => {
 
   it("rejects amendment without priorAuthorAgentId (self-only auth gate)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     const result = await router.handle(
@@ -330,7 +330,7 @@ describe("create_message — authorization axes", () => {
 
   it("accepts amendment when caller agentId matches priorAuthorAgentId", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     const result = await router.handle(
@@ -348,7 +348,7 @@ describe("create_message — authorization axes", () => {
 
   it("rejects amendment when caller agentId mismatches priorAuthorAgentId", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     const result = await router.handle(
@@ -370,7 +370,7 @@ describe("create_message — authorization axes", () => {
 describe("create_message — scheduled-delivery validation", () => {
   it("rejects delivery='scheduled' without fireAt", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     const result = await router.handle(
@@ -391,7 +391,7 @@ describe("create_message — scheduled-delivery validation", () => {
 
   it("accepts delivery='scheduled' with fireAt; auto-sets scheduledState='pending'", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"));
 
     const fireAt = new Date(Date.now() + 60_000).toISOString();
@@ -448,7 +448,7 @@ describe("pushSelector — MessageTarget → Selector mapping", () => {
 describe("create_message — push-on-create (Mission-56 W1a)", () => {
   it("delivery='push-immediate' + target.role → fires message_arrived with role selector", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const dispatchCalls: DispatchCall[] = [];
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"), "test-session", dispatchCalls);
 
@@ -476,7 +476,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
 
   it("delivery='push-immediate' + target.id → fires with agentId selector", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const dispatchCalls: DispatchCall[] = [];
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"), "test-session", dispatchCalls);
 
@@ -497,7 +497,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
 
   it("delivery='push-immediate' + target=null → fires with empty selector (broadcast)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const dispatchCalls: DispatchCall[] = [];
     const ctx = makeCtx(messageStore, makeRegistry("architect", "arch-1"), "test-session", dispatchCalls);
 
@@ -518,7 +518,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
 
   it("delivery='queued' → does NOT fire (poll-backstop / sweeper recovery)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const dispatchCalls: DispatchCall[] = [];
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"), "test-session", dispatchCalls);
 
@@ -538,7 +538,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
 
   it("delivery='scheduled' → does NOT fire (sweeper handles fire-time)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const dispatchCalls: DispatchCall[] = [];
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-1"), "test-session", dispatchCalls);
 
@@ -559,7 +559,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
 
   it("dispatch throwing is non-fatal — Message commits regardless", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const dispatchImpl = async () => {
       throw new Error("simulated SSE delivery failure");
     };
@@ -588,7 +588,7 @@ describe("create_message — push-on-create (Mission-56 W1a)", () => {
 describe("create_message — payload + metadata propagation", () => {
   it("propagates intent / semanticIntent / payload verbatim", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("architect", "arch-1"));
 
     const result = await router.handle(
@@ -618,7 +618,7 @@ describe("create_message — payload + metadata propagation", () => {
 describe("claim_message — MCP verb", () => {
   it("flips status new → received and reports wonClaim=true for the winner", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
 
     const m = await messageStore.createMessage({
@@ -641,7 +641,7 @@ describe("claim_message — MCP verb", () => {
 
   it("multi-agent same-role: loser observes wonClaim=false (sees winner's claimedBy)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctxA = makeCtx(
       messageStore,
       makeRegistry("engineer", "eng-A", "session-A"),
@@ -675,7 +675,7 @@ describe("claim_message — MCP verb", () => {
 
   it("missing id arg returns validation error", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
 
     const result = await router.handle("claim_message", {}, ctx);
@@ -686,7 +686,7 @@ describe("claim_message — MCP verb", () => {
 
   it("non-existent Message returns not_found error", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
 
     const result = await router.handle("claim_message", { id: "missing-ulid" }, ctx);
@@ -699,7 +699,7 @@ describe("claim_message — MCP verb", () => {
 describe("ack_message — MCP verb", () => {
   it("flips status received → acked when called after claim", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
 
     const m = await messageStore.createMessage({
@@ -723,7 +723,7 @@ describe("ack_message — MCP verb", () => {
 
   it("ack on `new` (skip-claim) is a no-op (acked=false; status stays new)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
 
     const m = await messageStore.createMessage({
@@ -744,7 +744,7 @@ describe("ack_message — MCP verb", () => {
 
   it("idempotent on already-acked (acked=true; second call returns same state)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
 
     const m = await messageStore.createMessage({
@@ -766,7 +766,7 @@ describe("ack_message — MCP verb", () => {
 
   it("missing id arg returns validation error", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
 
     const result = await router.handle("ack_message", {}, ctx);
@@ -777,7 +777,7 @@ describe("ack_message — MCP verb", () => {
 
   it("non-existent Message returns not_found error", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
 
     const result = await router.handle("ack_message", { id: "missing-ulid" }, ctx);
@@ -788,7 +788,7 @@ describe("ack_message — MCP verb", () => {
 
   it("status filter on list_messages excludes received + acked (W3.3 poll-backstop pattern)", async () => {
     const router = setupRouter();
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore, makeRegistry("engineer", "eng-A"));
 
     const m1 = await messageStore.createMessage({
