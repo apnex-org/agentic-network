@@ -26,7 +26,6 @@ function makeCtx(messageStore: MessageRepository): IPolicyContext {
     clientIp: "127.0.0.1",
     role: "system",
     internalEvents: [],
-    config: { storageBackend: "memory", gcsBucket: "" },
   } as unknown as IPolicyContext;
 }
 

@@ -79,7 +79,6 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     clientIp: "127.0.0.1",
     role: "architect",
     internalEvents: [],
-    config: { storageBackend: "memory", gcsBucket: "" },
     metrics: createMetricsCounter(),
     emittedEvents,
     dispatchedEvents,

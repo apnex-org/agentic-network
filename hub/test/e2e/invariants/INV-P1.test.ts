@@ -85,7 +85,6 @@ describe("INV-P1 — architect-only proposal review (RBAC)", () => {
         clientIp: "127.0.0.1",
         role: "unknown",
         internalEvents: [],
-        config: { storageBackend: "memory", gcsBucket: "" },
         metrics: orch.metrics,
       },
     );

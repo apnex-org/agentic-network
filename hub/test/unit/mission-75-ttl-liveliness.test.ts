@@ -324,7 +324,6 @@ describe("mission-75 §3.3 — transport_heartbeat handler", () => {
       emit: async () => {},
       dispatch: async () => {},
       metrics: { increment: () => {} } as IPolicyContext["metrics"],
-      config: { storageBackend: "memory", gcsBucket: "" },
     } as unknown as IPolicyContext;
   }
 

@@ -265,7 +265,6 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
         emit: async () => {},
         dispatch: async () => {},
         sessionId: "test", clientIp: "127.0.0.1", role: "architect",
-        internalEvents: [], config: { storageBackend: "memory", gcsBucket: "" },
         metrics: createMetricsCounter(),
       },
       threadRec!,

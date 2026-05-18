@@ -68,7 +68,6 @@ function buildSweeperRig() {
         clientIp: "127.0.0.1",
         role: "system",
         internalEvents: [],
-        config: { storageBackend: "memory", gcsBucket: "" },
       } as unknown as IPolicyContext),
     },
     { graceMs: 30_000, now: () => nowMs, intervalMs: 60_000 },

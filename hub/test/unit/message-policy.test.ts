@@ -72,7 +72,6 @@ function makeCtx(
     clientIp: "127.0.0.1",
     role: "engineer",
     internalEvents: [],
-    config: { storageBackend: "memory", gcsBucket: "" },
   } as unknown as IPolicyContext;
 }
 

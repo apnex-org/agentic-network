@@ -112,7 +112,6 @@ describe("Registry Remediation", () => {
         clientIp: "127.0.0.1",
         role: "engineer",
         internalEvents: [],
-        config: { storageBackend: "memory", gcsBucket: "" },
         metrics: createMetricsCounter(),
       };
 
@@ -216,7 +215,6 @@ describe("Registry Remediation", () => {
         clientIp: "127.0.0.1",
         role: "unknown",
         internalEvents: [],
-        config: { storageBackend: "memory", gcsBucket: "" },
         metrics: createMetricsCounter(),
       } as any);
       expect(unknownResult.isError).toBeUndefined();

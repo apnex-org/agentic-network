@@ -45,7 +45,6 @@ async function makeFixture(now: () => number = () => Date.now()) {
     clientIp: "127.0.0.1",
     role: "system",
     internalEvents: [],
-    config: { storageBackend: "memory", gcsBucket: "" },
   } as unknown as IPolicyContext;
   const sweeper = new ScheduledMessageSweeper(
     messageStore,

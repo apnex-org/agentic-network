@@ -170,7 +170,6 @@ export class ActorFacade {
     private readonly eventCapture: EventCapture,
     private readonly role: "architect" | "engineer",
     private readonly sessionId: string,
-    private readonly config: { storageBackend: string; gcsBucket: string },
     private readonly metrics: MetricsCounter,
   ) {}
 
@@ -437,7 +436,6 @@ export class TestOrchestrator {
   readonly events: EventCapture;
   readonly metrics: MetricsCounter;
 
-  private readonly config = { storageBackend: "memory", gcsBucket: "" };
   private actorCache = new Map<string, ActorFacade>();
 
   private constructor() {
@@ -459,7 +457,7 @@ export class TestOrchestrator {
       this.actorCache.set(key, new ActorFacade(
         this.router, this.stores, this.events,
         "architect", "session-architect",
-        this.config, this.metrics,
+        this.metrics,
       ));
     }
     return this.actorCache.get(key)!;
@@ -472,7 +470,7 @@ export class TestOrchestrator {
       this.actorCache.set(key, new ActorFacade(
         this.router, this.stores, this.events,
         "engineer", `session-engineer-${agentId}`,
-        this.config, this.metrics,
+        this.metrics,
       ));
     }
     return this.actorCache.get(key)!;
