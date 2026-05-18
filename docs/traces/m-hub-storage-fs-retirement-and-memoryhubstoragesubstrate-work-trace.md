@@ -162,3 +162,25 @@ Architect-side trace per `docs/methodology/engineer-runtime.md` work-trace disci
 **Architect operational-state:** BLOCKED-PENDING-GREG-ROUND-2-CONFIRMATION. Greg round-2 expected to be confirm-only or minor refine; thread will converge; architect commits `[Design v1.0 RATIFIED]` marker.
 
 **Calibration-confirmation:** [[feedback_architect_drives_engineer_engagement_when_idle]] memory exactly validated by this cycle. Architect-side self-audit (v0.2) MISSED 6 architect-spec-vs-substrate-API drift instances that engineer code-grep caught in round-1. Director-correction was load-bearing; deferring engineer-audit would have shipped v0.2 errors into v1.0 + W0+ implementation.
+
+### 2026-05-18 15:05 AEST — Greg round-2 CONCUR + Design v1.0 RATIFIED + thread-577 CONVERGED
+
+**Greg round-2 (thread-577 round 4):** CONCUR on all 8 ratify-criteria fold (spot-check verified each v0.3 fold-location) + W4 SubstrateCounter NO-atomic-primitive-refactor architect-decision CONCUR + 2 non-load-bearing stale-text artifacts surfaced for v1.0 one-pass cleanup (§6 line 287 "single-PR-per-mission" + §7.2 Q-A6 line 315 unresolved-question-text; both superseded by v0.3 §3 + §5 + §11).
+
+**v1.0 RATIFIED (commit `f6486cf`):**
+- Stale-text cleanup folded pre-RATIFIED commit (§6 + §7.2 + §6 W2 blast-radius)
+- Frontmatter design-version v0.3 → v1.0; design-status RATIFIED; ratify-criterion ✅ MET
+- §1 title + intro updated to v1.0 RATIFIED framing
+- §11 Status: v1.0 ratified; expected progression Phase 5 Manifest authoring → Phase 6 preflight → Phase 7 wave execution
+
+**Thread-577 CONVERGED at round 4/8 budget:**
+- Architect reply round 5 with `converged=true` + `stagedActions: close_no_action` + summary
+- Both engineer + architect convergenceActions COMMITTED (status: executed=2/2; failed=0/2)
+- Bilateral round-budget efficiency: 2 rounds used; 6 budget rounds remain (not expected pre-Phase-5)
+
+**Phase 4 Design lifecycle complete:**
+- v0.1 DRAFT (architect-side from Survey) → v0.2 architect-side self-audit (6 refinements; F5 NEW) → v0.3 greg round-1 fold (B1-B6 corrections; 8 ratify-criteria) → v1.0 RATIFIED (greg round-2 CONCUR + v1.0 cleanup)
+- Total cycle: ~6h elapsed (Phase 4 entry 12:08 → v1.0 RATIFIED 15:05 AEST; hold-then-resume excluded ~7-min hold-window)
+- Architect operational-state: PHASE-4-RATIFIED; ready for Phase 5 Manifest authoring
+
+**Next surface to Director:** Phase 4 RATIFIED; Phase 5 Manifest authoring next (architect-side); await Director disposition on (a) proceed with Phase 5 Manifest authoring autonomously, (b) Director-engagement at Phase 5 entry, (c) standby for other priority.
