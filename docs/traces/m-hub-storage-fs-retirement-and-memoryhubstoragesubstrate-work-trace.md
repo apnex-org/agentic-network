@@ -184,3 +184,24 @@ Architect-side trace per `docs/methodology/engineer-runtime.md` work-trace disci
 - Architect operational-state: PHASE-4-RATIFIED; ready for Phase 5 Manifest authoring
 
 **Next surface to Director:** Phase 4 RATIFIED; Phase 5 Manifest authoring next (architect-side); await Director disposition on (a) proceed with Phase 5 Manifest authoring autonomously, (b) Director-engagement at Phase 5 entry, (c) standby for other priority.
+
+### 2026-05-18 15:20 AEST — Phase 5 Manifest entity created (Director-direct approved)
+
+**Trigger:** Director-direct "Approved" on Phase 5 entry surface.
+
+**Mission entity created via `create_mission`:**
+- **missionId: `mission-84`** (status: proposed)
+- title: M-Hub-Storage-FS-Retirement-And-MemoryHubStorageSubstrate
+- missionClass: `pre-substrate-cleanup` (per Design v1.0 frontmatter + mission-lifecycle.md §3 taxonomy)
+- documentRef: `docs/designs/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-design.md`
+- description: substantive (5-pillar composite + 8-wave decomp + SchemaDef inventory delta + anti-goals + mission-83 lineage + cluster #23 closure)
+- plannedTasks: 8 wave items W0-W7 (all status=unissued)
+- pulses: engineerPulse 21600s (6h) + architectPulse 43200s (12h); both `short_status` response shape (mirrors mission-83 cadence)
+
+**Idea-300 linked to mission-84** (status auto-flipped open→triaged→incorporated per architect-only update_idea path).
+
+**Phase 5 deliverable complete:** mission-entity exists at Hub level; plannedTasks queued for advancement-cascade post Phase 6 preflight + activation.
+
+**Next gate (Phase 6):** preflight audit + ratify-activation (proposed → active flip). Architect authors `docs/missions/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-preflight.md` per mission-83 preflight precedent + mission-preflight.md methodology (6-category audit: docs integrity + Hub filing integrity + referenced-artifact currency + scope-decision gating + execution readiness + verdict). Verdict GREEN → Director-direct flip to active triggers Phase 7 wave execution starting W0.
+
+**Architect operational-state:** PHASE-5-COMPLETE; ready for Phase 6 preflight authoring.
