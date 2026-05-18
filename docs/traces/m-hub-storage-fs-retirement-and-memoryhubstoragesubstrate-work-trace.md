@@ -90,3 +90,27 @@ Architect-side trace per `docs/methodology/engineer-runtime.md` work-trace disci
 **Action:** none on thread-576 (greg's original ask still valid; hold-message was never injected because greg didn't engage during the hold window). Architect-side standby restored; will mark task #27 in_progress when greg responds with round-1 audit content.
 
 **Next surface to Director:** Phase 4 ratify (Design v1.0 RATIFIED post-audit-converge); same gate as pre-hold.
+
+### 2026-05-18 12:40 AEST — Design v0.2 (architect-side self-audit refinement; Director-direct deferred-engineer-audit)
+
+**Trigger:** Director-direct "Greg is idle. Re-initiate or resume design" → architect chose resume; verified greg cognitive_ttl=0 (`scripts/local/get-agents.sh`); architect-side unilateral resolution of Q-A2 + Q-A4 + F3 + F4 via code-read.
+
+**Design v0.2 commit:** `c5a16f9` (78 insertions / 37 deletions vs v0.1).
+
+**6 v0.1 → v0.2 refinements (per new §0 changelog):**
+1. §2.2 SubstrateConformanceSuite is NEW WORK not port (verified packages/storage-provider/test/ has per-impl tests only)
+2. §2.3 Variant (ii) refined "pure-KV" → "minimal-SchemaDef" (substrate `put(kind,entity)` requires kind; pure-KV non-implementable; register RepoEventBridgeCursor + RepoEventBridgeDedupe SchemaDefs)
+3. §2.3 final ¶ F4 REVERSED — NOTIFY fires per-kind (SchemaDef.notify default=true verified; v0.1 architect-wrong-claim)
+4. §2.3 NEW primitive-mapping table StorageProvider → HubStorageSubstrate (createOnly+putIfMatch+getWithRevision map 1:1)
+5. §2.6 Counter — postgres-sequence requires reconciler extension; refined to counters-table mechanism (atomic UPDATE...RETURNING; reconciler-compatible)
+6. NEW F5 (CRITICAL) — Variant (ii) implementability defect (v0.1 architect-side error); resolved via minimal-SchemaDef Variant
+
+**SchemaDef inventory update:** 20 → 23 kinds at W4 (RepoEventBridgeCursor + RepoEventBridgeDedupe + Counter); `hub/scripts/entity-kinds.json` v1.1 → v1.2.
+
+**Engineer-audit deferral:** per Director-direct + engineer-idle-state; bilateral round-1 audit deferred from pre-Design-ratify to W0+ PR-merge-gate (greg engages on code-bound delta vs Design §X.Y at code-review-time instead of spec-level pre-implementation).
+
+**Calibration candidate (Phase 10 retro):** **architect-side-self-audit-as-engineer-audit-substitute-when-engineer-idle** — when engineer cognitive_ttl=0 OR thread unengaged for N hours, architect can autonomously self-audit Design via code-read for the architect-decidable subset of audit-questions; engineer-audit shifts to PR-merge-gate for code-bound dispositions. Pattern surfaced 2026-05-18 mission-300 Phase 4 v0.1→v0.2 cycle.
+
+**Architect-side defect note (F5):** v0.1 § 2.3 "pure-KV" Variant (ii) was non-implementable; verified via substrate types.ts grep that surfaced 1:1 primitive mapping (favorable) + kind-requirement (constraint missed). This is a candidate for [[architect_bug_filing_needs_root_cause_verification]] sibling — architect-spec authorship should verify substrate API contract via code-read BEFORE asserting in Design doc. Self-audit caught it within 1 cycle; engineer-audit would have caught it round-1.
+
+**Next surface to Director:** Design v0.2 architect-side-ratified; awaiting Director disposition on (a) ratify v1.0 + enter Phase 5 Manifest, (b) additional Design-phase architect-Director engagement, (c) restore bilateral engineer-audit (e.g., re-attempt greg activation), (d) hold + re-engage on alternate path.
