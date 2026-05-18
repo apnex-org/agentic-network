@@ -236,3 +236,26 @@ Director-engagement at Phase 7 Release-gate per RACI §1.5: ask for ratification
 **Calibration-implication:** preflight category B (Hub filing integrity) PASS judgment was INSUFFICIENT — pulses-field-value-equivalent-to-mission-83 should have flagged pre-mission-68 vs post-mission-68 default-drift. Architect-side preflight should explicitly cross-check pulse cadence vs current canonical defaults per `mission-lifecycle.md` §4.1. Preflight methodology candidate: add Category B sub-check `B4: pulses config matches current canonical defaults OR override is bilateral-ratified at Design time` (Phase 10 retro candidate).
 
 **Architect operational-state:** PHASE-6-PREFLIGHT-CORRECTED; BLOCKED-PENDING-GREG-LIFECYCLE-REVIEW (thread-578). Once greg CONCUR on adherence + plannedTasks: surface Director for Phase 7 Release-gate ratification → `update_mission(status="active")`.
+
+### 2026-05-18 17:00 AEST — Greg lifecycle-adherence review CONCUR + Finding B folded; thread-578 CONVERGED
+
+**Greg round-1 (thread-578 round 2):** CONCUR on full lifecycle-adherence + plannedTasks + pulses. Applied 2 audit sweeps per fresh-saved `[[feedback_design_audit_survey_anchor]]`:
+- **Sweep A — mission-lifecycle.md adherence (7 check-targets):** ALL PASS — §1.x phase artifacts at correct paths; §1.5 RACI rows 4-7 honored; §3 missionClass pre-substrate-cleanup fits (retire-count at upper boundary 3-4 vs 0-2 ceiling — descriptive not prescriptive; spirit fits); §3.1.1 coordinated-upgrade-discipline spirit applies (Finding B); §4 pulses 10/20/2 unified-defaults CONCUR no-override; §5 categorised-concerns 3 Director-surface candidates pre-flagged for Phase 8 (W3 cluster #23 ledger update / W5 dispatch-surface collapse / W7 CPU-profile-regression); §7 sub-execution mechanics clear
+- **Sweep B — Survey-vs-mission-84 fidelity (4 checks):** ALL PASS — 5 pillars + AG-1..AG-5 + Q1-Q6 picks + F1-F5 architect-flags all honored
+- **plannedTasks spot-check:** all 8 W0-W7 match Design v1.0 §3 EXACTLY
+
+**Finding B (engineer-surfaced; pre-activation fold recommended):** W4 plannedTask description deletes LocalFsStorageProvider + packages/storage-provider but doesn't explicitly enumerate `hub/src/index.ts` dispatch-branch removal for `local-fs` + `memory` branches. Implicit (compile-failure forces it) but coordinated-upgrade-discipline spirit says make explicit. Production-risk: zero (mission-83 W5.4 substrate-cutover already locked production-Hub to substrate).
+
+**Architect round-2 (thread-578 round 3):** Finding B folded via `update_mission(mission-84, plannedTasks=...)`:
+- W4 description extended with (5a) dispatch-branch removal language + reference to §3.1.1 coordinated-upgrade-discipline spirit
+- W5 description extended with greg's pre-flag §5 Out-of-scope-risks Director-surface candidate (deployment-affecting; no rollback path post-W5)
+- W7 description extended with greg's pre-flag §5 Out-of-scope-risks Director-surface candidate (IF Q-A5 pre-W7 CPU-profile gate shows regression)
+- W3 cluster #23 ledger-update Director-surface is calibration-class (architect-Director-bilateral filing per `feedback_calibration_ledger_discipline`; not embedded in plannedTask)
+
+**Thread-578 CONVERGED at round 3/5:**
+- Both convergenceActions COMMITTED (engineer-staged + architect-staged); intent: implementation_ready
+- Bilateral round-budget efficiency: 2 rounds used of 5; 3 remain (not expected pre-activation)
+
+**Phase 4+5+6 lifecycle traversal complete; Phase 7 Release-gate is next.**
+
+**Architect operational-state:** PHASE-6-COMPLETE; READY-FOR-DIRECTOR-PHASE-7-RELEASE-GATE. Surfacing Director for `update_mission(missionId="mission-84", status="active")` per RACI §1.5 Phase 7 (Director-A / Architect-R).
