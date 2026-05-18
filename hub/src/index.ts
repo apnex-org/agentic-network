@@ -83,6 +83,7 @@ import {
   parseReposEnvVar,
 } from "./policy/repo-event-handler.js";
 import { bindRouterToMcp } from "./policy/mcp-binding.js";
+import { RepoEventBridgeSubstrateAdapter } from "./storage-substrate/repo-event-bridge-adapter.js";
 import type { AllStores } from "./policy/index.js";
 import { createMetricsCounter } from "./observability/metrics.js";
 
@@ -836,8 +837,19 @@ const OIS_REPO_EVENT_BRIDGE_RATE_BUDGET_PCT = parseFloat(
 
 let repoEventBridge: RepoEventBridge | undefined;
 if (OIS_GH_API_TOKEN && OIS_REPO_EVENT_BRIDGE_REPOS.length > 0) {
+  // mission-84 W3 cluster #23 closure: in substrate-mode, wire repo-event-bridge
+  // cursor + dedupe persistence through HubStorageSubstrate via the adapter (kinds
+  // RepoEventBridgeCursor + RepoEventBridgeDedupe; both watchable: false per
+  // Design v1.1 §2.3 Variant ii minimal-SchemaDef). FS-fallback modes still use
+  // the original storageProvider (W4 will retire them entirely). Pre-W3, the
+  // substrate-mode `storageProvider = new MemoryStorageProvider()` sentinel
+  // caused ephemeral repo-event-bridge state (lost on Hub restart; cluster #23
+  // defect surface).
+  const repoEventBridgeStorage = substrate
+    ? new RepoEventBridgeSubstrateAdapter({ substrate })
+    : storageProvider;
   repoEventBridge = new RepoEventBridge({
-    storage: storageProvider,
+    storage: repoEventBridgeStorage,
     token: OIS_GH_API_TOKEN,
     repos: OIS_REPO_EVENT_BRIDGE_REPOS,
     cadenceSeconds: OIS_REPO_EVENT_BRIDGE_CADENCE_S,

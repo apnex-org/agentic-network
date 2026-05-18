@@ -269,3 +269,78 @@ Surfaced during W2 cascade; relevant for W4 retirement scope:
 - Bilateral PR-merge-gate engages architect on §2 ship-criteria verify
 
 — Engineer (greg) 2026-05-19 08:35 AEST (W2 complete; opening PR + surfacing checkpoint on thread-580)
+
+---
+
+### 2026-05-19 08:40 AEST — W3 repo-event-bridge migration + cluster #23 closure (thread-581)
+
+W2 PR #210 MERGED at `e9fbbab` (vitest hub SUCCESS first try; W1 testcontainers-amplification hypothesis NOT validated at W2 scale). Architect dispatched W3 on fresh thread-581; engineer-branch reset to `origin/main @ e9fbbab`.
+
+## §9 W3 deliverables shipped (5 sub-tasks)
+
+### §9.1 W3.1 — 2 new SchemaDefs (20 → 22 kinds)
+
+- `hub/src/storage-substrate/schemas/all-schemas.ts`: added `RepoEventBridgeCursor` + `RepoEventBridgeDedupe` (both `watchable: false`; no hot fields; no indexes — bookkeeping kinds per Counter precedent; minimum-`id`-field shape)
+- `hub/scripts/entity-kinds.json` v1.1 → v1.2: 2 new kind entries with mediation/persistence-prefix/id-pattern documentation; `substrate-mediated-kinds-total-locked: 20 → 22`
+- SchemaDef inventory: 20 → 22 per Design v1.0 §0.3 + v1.1
+
+### §9.2 W3.2 — Adapter production-promotion (no-op; spike was production-shape)
+
+- `hub/src/storage-substrate/repo-event-bridge-adapter.ts` already shipped at W0+W1 PR (commit `2b664d2`); 170 lines + 170-line test
+- 17/17 tests PASS at `e9fbbab` baseline — production-ready as-shipped
+- Architectural-decision (hub-side location) ratified at thread-579 round 5; Design v1.1 §2.3 location-pointer folded at architect commit `a15f7ac`
+
+### §9.3 W3.3 — cursor-store.ts swap (no-op; type-compatible)
+
+- `packages/repo-event-bridge/src/cursor-store.ts:78` accepts `StorageProvider` interface
+- `RepoEventBridgeSubstrateAdapter implements StorageProviderWithTokenRead extends StorageProvider` — type-compatible without cursor-store.ts edits
+- Architectural swap happens at the wire-up site (W3.4); cursor-store.ts internal logic unchanged per Design intent
+
+### §9.4 W3.4 — hub/src/index.ts:840 RepoEventBridge wire-up
+
+- Added `RepoEventBridgeSubstrateAdapter` import at line 86
+- Conditional storage assignment at the RepoEventBridge construction site:
+  ```typescript
+  const repoEventBridgeStorage = substrate
+    ? new RepoEventBridgeSubstrateAdapter({ substrate })
+    : storageProvider;
+  ```
+- **Cluster #23 closure architecturally enacted**: in substrate-mode (production-prod path per mission-83 W5.4 cutover), repo-event-bridge cursor + dedupe now persist to postgres via the adapter; pre-W3 the `storageProvider = new MemoryStorageProvider()` sentinel at line 163 caused ephemeral persistence (lost on Hub restart; cursor-store.ts "Survives Hub restart" commitment violated)
+- FS-fallback modes (local-fs / memory) preserved per W4 (which will retire them entirely)
+- Typecheck PASS
+
+### §9.5 W3.5 — Cluster #23 closure integration test (dispositive evidence)
+
+- **Location:** `hub/test/integration/cluster-23-cursor-restart-safety.test.ts` (hub-side per same architectural-rationale as adapter location; B7-class sibling per W0.4 fold pattern)
+- **4 tests / 4 PASS** (5.26s total):
+  1. `cursor persists across substrate teardown + recreate` — write cursor via instance A → close substrate → fresh instance B against same postgres → cursor restored
+  2. `cursor update via putIfMatch survives restart with current token` — CAS update path across restart with token portability
+  3. `dedupe LRU survives substrate teardown + recreate` — filterUnseen + markSeen seed in A; filterUnseen in B returns empty (all deduped)
+  4. `dedupe + cursor jointly persist for the same repoId` — joint round-trip
+- **Test architecture (per Design v1.0 §2.4 + F1 disposition greg round-1 CONCUR+REFINE):**
+  - (a) PRIMARY in-process Hub-restart-simulation (sub-second; CI-deterministic; substrate-close → recreate against same postgres)
+  - (b) SMOKE docker-restart at PR ship-gate — deliberately NOT embedded in suite per W1 testcontainers-amplification concern; preserved as operator-side runbook step
+- **Cluster #23 ratify-criterion GREEN** → architect-Director-bilateral filing at PR #211 ship for `open → closed-structurally` ledger transition (NOT LLM-autonomous per `feedback_calibration_ledger_discipline`)
+
+## §10 Test-result summary
+
+| Stage | Tests | Pass | Skip | Fail | Notes |
+|---|---|---|---|---|---|
+| Pre-W3 (post-W2 merge HEAD `e9fbbab`) | 1465 | 1460 | 5 | 0 | W2 baseline |
+| Post-W3 (FINAL) | 1469 | 1464 | 5 | 0 ✅ | +4 cluster #23 tests; all green |
+
+Typecheck PASS at every sub-task.
+
+## §11 W3 PR ship-prep
+
+- Branch: `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (HEAD post-W3 commits)
+- Base: `origin/main @ e9fbbab`
+- PR scope: 5 files + 1 new file
+  - `hub/src/storage-substrate/schemas/all-schemas.ts` (+19 lines / -3)
+  - `hub/scripts/entity-kinds.json` (+21 lines / -3)
+  - `hub/src/index.ts` (+13 lines / -1)
+  - `hub/test/integration/cluster-23-cursor-restart-safety.test.ts` (NEW; 168 lines; 4 tests)
+- Per ~6-PR cadence ratify: W3 = PR 3 of 6 (standalone)
+- Bilateral PR-merge-gate engages architect on F1+F3+F5 disposition verify
+
+— Engineer (greg) 2026-05-19 08:45 AEST (W3 complete; opening PR + surfacing checkpoint on thread-581)

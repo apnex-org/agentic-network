@@ -1,5 +1,5 @@
 {
-  "$schema-version": "1.1",
+  "$schema-version": "1.2",
   "$generated": "2026-05-17",
   "$generation-source": "W0.2 spike filesystem-grep at HEAD a940a38 (origin/main); v1.1 update folds in architect-side W1.1 verification per Design v1.1 commit 11ce0ba (architect-VERIFIED 4 W0-validates kinds + 1 NEW finding ThreadHistoryEntry + wisdom/ static-asset carve-out)",
   "$mission": "mission-83",
@@ -192,6 +192,24 @@
       "persistence-prefix": "(today: local-state/architect-context/thread-history.json; substrate: data.threadId + data.title + data.outcome + data.timestamp per row)",
       "id-pattern": "(threadId-correlated)",
       "notes": "NEW FINDING surfaced at W1.1 architect-side state-tree inspection — NOT in v1.0 inventory. thread-history.json contains archived thread summaries ({threadId, title, outcome, timestamp} entries). Per OQ7 EXPANDED from 3-kind → 4-kind decomposition in v1.1; gets new IThreadHistoryEntryStore per Option Y composition. Bilateral discovery cycle: engineer W0.2 surfaced architect-blind-kind-corrections (5 phantoms); architect W1.1 surfaced engineer-blind-kind addition (1 NEW). Symmetric substrate-currency-discipline application."
+    },
+    {
+      "name": "RepoEventBridgeCursor",
+      "mediation": "RepoEventBridgeSubstrateAdapter (StorageProviderWithTokenRead-narrowed; bookkeeping-only)",
+      "interface-file": "hub/src/storage-substrate/repo-event-bridge-adapter.ts",
+      "repository-file": "n/a (bookkeeping kind; no per-entity-repository)",
+      "persistence-prefix": "(substrate: kind=RepoEventBridgeCursor; id=<owner>__<repo>; body={id, body: <cursor-store-encoded-JSON>})",
+      "id-pattern": "<owner>__<repo>",
+      "notes": "mission-84 W3 NEW kind per Design v1.1 §2.3 Variant (ii) minimal-SchemaDef — cluster #23 closure (repo-event-bridge cursor substrate-persistence). watchable: false (bookkeeping writes; no consumer needs change-events; pre-resolves F5 future-target probe). No hot fields; opaque JSON body wraps cursor-store.ts's existing data-shape unchanged."
+    },
+    {
+      "name": "RepoEventBridgeDedupe",
+      "mediation": "RepoEventBridgeSubstrateAdapter (StorageProviderWithTokenRead-narrowed; bookkeeping-only)",
+      "interface-file": "hub/src/storage-substrate/repo-event-bridge-adapter.ts",
+      "repository-file": "n/a (bookkeeping kind; no per-entity-repository)",
+      "persistence-prefix": "(substrate: kind=RepoEventBridgeDedupe; id=<owner>__<repo>; body={id, body: <cursor-store-encoded-JSON>})",
+      "id-pattern": "<owner>__<repo>",
+      "notes": "mission-84 W3 NEW kind per Design v1.1 §2.3 Variant (ii) minimal-SchemaDef — cluster #23 closure (repo-event-bridge dedupe LRU substrate-persistence). watchable: false (same rationale as RepoEventBridgeCursor sibling)."
     }
   ],
 
@@ -262,7 +280,11 @@
     "substrate-mediated-kinds-confirmed-existing": 13,
     "substrate-mediated-kinds-new-this-mission": 2,
     "substrate-mediated-kinds-w0-architect-verified": 5,
-    "substrate-mediated-kinds-total-locked": 20,
+    "substrate-mediated-kinds-total-locked": 22,
+    "v1.2-mission-84-w3-additions": [
+      "RepoEventBridgeCursor — NEW per Design v1.1 §2.3 Variant (ii) minimal-SchemaDef; cluster #23 closure (repo-event-bridge cursor substrate-persistence); watchable: false (bookkeeping)",
+      "RepoEventBridgeDedupe — NEW per same Design §2.3; same rationale (dedupe LRU sibling)"
+    ],
     "architect-blind-kind-corrections-accepted-v1.1": [
       "DirectorNotification — REMOVED (fully migrated to Message kind=note; mission-56 W5 cleanup actually complete; Message table-row updated to note DN migrates HERE via kind=note)",
       "Report — REMOVED (inline task.reportRef field)",

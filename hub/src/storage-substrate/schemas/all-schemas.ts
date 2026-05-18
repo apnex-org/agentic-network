@@ -438,10 +438,41 @@ const ThreadHistoryEntry: SchemaDef = {
   watchable: true,
 };
 
-// ─── Export all 20 SchemaDef entries ───────────────────────────────────────
+// mission-84 W3: 2 new bookkeeping-only kinds for repo-event-bridge cursor +
+// dedupe substrate-persistence (cluster #23 closure). Per Design v1.1 §2.3
+// Variant (ii) minimal-SchemaDef: no hot fields (no per-kind expression
+// indexes), opaque JSON body, watchable: false (bookkeeping writes; no
+// consumer needs change-events; pre-resolves F5 future-target probe).
+// Substrate body shape: { id: "<owner>__<repo>", body: <cursor-store-encoded-JSON> }
+// (cursor-store.ts internal opaque blob preserved unchanged via the
+// RepoEventBridgeSubstrateAdapter Uint8Array↔JSONB conversion seam).
+const RepoEventBridgeCursor: SchemaDef = {
+  kind: "RepoEventBridgeCursor",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+  ],
+  indexes: [],
+  watchable: false,
+};
+
+const RepoEventBridgeDedupe: SchemaDef = {
+  kind: "RepoEventBridgeDedupe",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+  ],
+  indexes: [],
+  watchable: false,
+};
+
+// ─── Export all 22 SchemaDef entries ───────────────────────────────────────
 
 /**
- * All 20 substrate-mediated kinds per Design v1.3 §3.4.1 LOCKED inventory.
+ * All 22 substrate-mediated kinds — mission-84 W3 extends mission-83's 20-kind
+ * locked inventory with RepoEventBridgeCursor + RepoEventBridgeDedupe (cluster
+ * #23 closure per Design v1.1 §2.3 Variant ii minimal-SchemaDef).
+ *
  * Reconciler boot-time iterates this list + applies via substrate.put('SchemaDef', def).
  *
  * Order: SchemaDef FIRST (per §2.3 bootstrap-self-referential; reconciler reads
@@ -474,4 +505,8 @@ export const ALL_SCHEMAS: SchemaDef[] = [
   DirectorHistoryEntry,
   ReviewHistoryEntry,
   ThreadHistoryEntry,
+
+  // 2 NEW mission-84 W3 (repo-event-bridge cursor + dedupe; cluster #23 closure)
+  RepoEventBridgeCursor,
+  RepoEventBridgeDedupe,
 ];
