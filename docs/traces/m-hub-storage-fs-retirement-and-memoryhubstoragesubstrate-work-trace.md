@@ -285,3 +285,28 @@ Director-engagement at Phase 7 Release-gate per RACI §1.5: ask for ratification
 - Final-wave completion surface: Phase 9 Close + Phase 10 Retrospective mode-pick
 
 **Architect operational-state:** PHASE-8-ACTIVE; W0 DISPATCHED; AUTONOMOUS-DRIVING ACTIVE. Standing by for greg W0 acknowledge OR W0 PR-merge-gate engagement OR architectPulse fire.
+
+### 2026-05-18 18:00 AEST — W0 DISPATCH ACK + engineer pulse-missed escalation + force-fire-pulse resumption-driving
+
+**Greg W0 ACK (thread-579 round 2):** comprehensive — 4 deliverables CONFIRMED with elaboration; ship-criteria CONFIRMED; cadence + heartbeat commitment (commit-push per CLAUDE.md §1.5.1.1 Layer (c); checkpoint at W0.4 Variant ii spike OR W0 complete; no ack-only courtesy rounds); Finding B status reminder (already-folded clarified by architect round 3 reply); standing engineer state at W0 entry (branch + work-trace + code-context). Greg started W0.1 MemoryHubStorageSubstrate impl.
+
+**Architect round-3 reply:** brief substantive — clarified Finding B already-folded; released turn to greg; standby state.
+
+**ArchitectPulse #1+#2 fires + ack:** mission-84 first architectPulse fired immediately on activation (Hub interpreted firstFireDelay differently than expected; possibly backlog-replay from earlier scheduled-fires); ack'd via ack_message. ArchitectPulse #2 fired ~1min later (also from backlog); ack'd.
+
+**Engineer pulse-missed escalation arrived (2026-05-18T22:00:39 UTC):** `Mission mission-84 engineer pulse missed 2 times` — engineerPulse missedThreshold=2 breached; pulse auto-paused per design. Per architect-mandate, evaluate + resolve OR escalate to Director. Under full-autonomous mandate: NO Director-escalation; architect resolves.
+
+**Engineer-health diagnostic** via `scripts/local/get-agents.sh`:
+- greg: `cognitive_ttl=0` (LLM-idle); `transport_ttl=32`; `online_idle`; PID 4554 alive
+- lily (architect): `cognitive_ttl=50`; `transport_ttl=45`; `online_idle`; PID 4729 alive
+
+Engineer's LLM session went idle post thread-579 round-2 reply (consistent with Pattern-A-prior-cycle observation: greg's session is task-bound; auto-idles when no task in-flight from harness perspective).
+
+**Resumption-driving action:** `force_fire_pulse(missionId=mission-84, pulseKey=engineerPulse)` — Hub returns `firedAt: 2026-05-18T22:01:01.371Z`; cadence + precondition bypassed (operator-intent). Adds fresh engineerPulse to greg's queue; will trigger pickup at next greg session activation.
+
+**Next-architect-action plan:**
+- If greg picks up + engages within next architectPulse interval (~20min): standby continues; W0 execution resumes
+- If greg remains idle through next architectPulse: escalate via fresh-thread dispatch OR create_message direct ping (per [[architect_drives_engineer_engagement_when_idle]] playbook)
+- If exhausted all Hub-API mechanisms: surface operational-escalation to Director per last-resort clause
+
+**Mandate-compliance note:** force_fire_pulse usage validates the "Architect must use all mechanisms and tools available" provision; engineer-health-monitoring + resumption-driving is architect-responsibility under full-autonomous mandate (NOT escalated to Director).
