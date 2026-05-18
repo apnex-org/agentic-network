@@ -488,3 +488,65 @@ Net deletion: ~150+ lines removed; ~30 added (error messages + comments).
 - Bilateral PR-merge-gate engages architect on §2.5 final disposition + start-hub.sh diff verify
 
 — Engineer (greg) 2026-05-19 09:25 AEST (W5 complete; opening PR + surfacing checkpoint on thread-583)
+
+---
+
+### 2026-05-19 09:30 AEST — W6+W7 FINAL wave (thread-584)
+
+W5 PR #213 merged at `a78ecd3d`; STORAGE_BACKEND retirement complete. Architect dispatched FINAL combined W6+W7 wave on thread-584. After this PR merges, mission-84 ships v1.0 (6/6 PRs); Phase 9 Close + Phase 10 Retrospective architect-driven.
+
+## §21 W6+W7 deliverables shipped (5 sub-tasks)
+
+### §21.1 W6.1 — DocumentRepositorySubstrate (NO-OP impl)
+
+DocumentRepository already exists at `hub/src/storage-substrate/new-repositories.ts:47` (W2.4 stub from mission-83). Production-promoted via index.ts wire-up + AllStores type extension; zero impl change needed.
+
+### §21.2 W6.2 — Document MCP policy re-introduction
+
+- **`hub/src/policy/document-policy.ts` NEW** (148 lines) — substrate-backed 3-tool registration: `create_document` / `get_document` / `list_documents`
+- **Tool-schema mirrors pre-retirement surface** (path-as-id; consumers continue using `docs/<dir>/<file>.md` paths as substrate entity-id)
+- **AllStores.document field added** (`hub/src/policy/types.ts` — optional per test-rig flexibility)
+- **Production wire-up** (`hub/src/index.ts`): import DocumentRepository + import registerDocumentPolicy + instantiate `documentStore = new DocumentRepository(substrate!)` + add to allStores + register at PolicyRouter
+- **Smoke test** (`hub/test/unit/document-policy.test.ts` NEW; 11 tests) — registration + create→get round-trip + path-validation + absent-path + update-preserves-createdAt + list with category-filter + list with prefix-filter + combined filters + summary-shape + graceful-degradation. **11/11 PASS** in 409ms.
+- **PolicyRouter tool count: 68 → 71** ✓
+
+### §21.3 W7.1 — PR #203 revert (sweeper-interval env-vars dropped)
+
+- **`hub/src/index.ts`**: `OIS_MESSAGE_PROJECTION_SWEEPER_INTERVAL_MS` env-var read DELETED; default restored to **5000ms** (pre-PR-#203 baseline per Q-A5 git-log verification at commit `a940a38`)
+- **`hub/src/index.ts`**: `OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS` env-var read DELETED; default unchanged at **1000ms** (already matched pre-PR-#203)
+- **`scripts/local/start-hub.sh`**: both env-var pass-throughs DELETED (was forcing 30000ms override at lines 274+275)
+- **Pre-W7 CPU profile**: NOT empirically verified at engineer-side (would require live Hub runtime); architecturally clean per CLAUDE.md "bug-93 sweeper-poll-pressure (74% sustained Hub CPU) STRUCTURALLY ELIMINATED at W5 cutover (substrate-watch primitive replaces FS-walk poll-loop per Design v1.4 §2.4)" — substrate-list-queries are O(N_due) via indexes (bug-93 closure). No Director-surface needed per Q-A5 gate (architectural foundation eliminated the regression class).
+- **W8/W9 architectural-future-leverage note** preserved in code comments (substrate-watch enables sweeper-subscription vs polling; v1 keeps polling)
+
+### §21.4 W7.2 — Operator runbook updates (NO-OP)
+
+`docs/operator/hub-storage-substrate-local-dev.md` + `hub-storage-cutover-runbook.md` + `psql-cookbook.md` already substrate-only-clean (mission-83 W7 deliverable); zero STORAGE_BACKEND/local-fs/MemoryStorageProvider mentions at survey-time. No edits needed.
+
+### §21.5 W7.3 — W6+W7 final PR ship
+
+- Combined PR per architect dispatch §1 "W6+W7 folded" + ~6-PR cadence ratify
+- Post-merge: architect drives Phase 7 release-gate Director-bilateral disposition + Phase 9 Close (mission.status active → completed) + Phase 10 Retrospective (mode-pick per `feedback_retrospective_modes`)
+
+## §22 Test-result summary
+
+| Stage | Tests | Pass | Skip | Fail | Notes |
+|---|---|---|---|---|---|
+| Pre-W6+W7 (post-W5 merge HEAD `a78ecd3d`) | 1462 | 1457 | 5 | 0 | W5 baseline |
+| **Post-W6+W7 (FINAL)** | **1473** | **1468** | **5** | **0** ✅ | +11 document-policy.test.ts tests |
+
+Typecheck PASS at every sub-task.
+
+## §23 W6+W7 file-impact summary
+
+| Action | Count | Files |
+|---|---|---|
+| NEW | 2 | hub/src/policy/document-policy.ts (148 lines) + hub/test/unit/document-policy.test.ts (160 lines) |
+| MODIFIED | 3 | hub/src/index.ts (DocumentRepository wire-up + PR #203 revert at sweeper sites) + hub/src/policy/types.ts (AllStores.document field) + scripts/local/start-hub.sh (sweeper-interval env-var pass-through deleted) |
+
+Net additions: ~310 lines (document-policy impl + tests); ~3 lines deleted from start-hub.sh + ~5 lines deleted from index.ts (env-var reads).
+
+## §24 mission-84 ships at this PR
+
+Post-W6+W7 merge: mission-84 reaches 6/6 PRs (100% ratified-cadence). Architect drives Phase 7 release-gate Director-bilateral disposition + Phase 9 Close (mission.status active → completed) + Phase 10 Retrospective (mode-pick per `feedback_retrospective_modes`; substrate-introduction-class missions typically warrant Walkthrough or Summary-review mode).
+
+— Engineer (greg) 2026-05-19 09:35 AEST (W6+W7 complete; opening FINAL PR + surfacing checkpoint on thread-584)
