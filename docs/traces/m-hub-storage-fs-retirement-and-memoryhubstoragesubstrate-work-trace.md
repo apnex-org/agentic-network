@@ -259,3 +259,29 @@ Director-engagement at Phase 7 Release-gate per RACI §1.5: ask for ratification
 **Phase 4+5+6 lifecycle traversal complete; Phase 7 Release-gate is next.**
 
 **Architect operational-state:** PHASE-6-COMPLETE; READY-FOR-DIRECTOR-PHASE-7-RELEASE-GATE. Surfacing Director for `update_mission(missionId="mission-84", status="active")` per RACI §1.5 Phase 7 (Director-A / Architect-R).
+
+### 2026-05-18 17:30 AEST — Director Phase 7 Release-gate ratified + FULL-AUTONOMOUS-DRIVING MANDATE
+
+**Trigger:** Director-direct: *"Ok, full autonomous driving by the Architect for this mission, until final wave completion. If at any point, Engineer goes idle or fails to check in, it is on the Architect to validate health and resumption of mission. Architect must use all mechanisms and tools available at your disposal to execute this mandate. Approved for activation"*
+
+**Activation:** `update_mission(missionId="mission-84", status="active")` — Hub returns mission-84 status: `active`. Pulses begin first-fire countdown (engineerPulse @ activation+600s; architectPulse @ activation+1200s).
+
+**Director-direct mandate codified as feedback memory:** `feedback_architect_full_autonomous_until_final_wave.md` (new memory + MEMORY.md index entry). Composes with [[architect_drives_mission_not_director]] + [[architect_drives_engineer_engagement_when_idle]] + [[director_direct_mid_cycle_override]]; mission-specific scope per Director-disposition at Phase 7. Calibration candidate for Phase 10 retro: **full-autonomous-mandate as substrate-mission-execution-pattern** (mission-84 first canonical execution).
+
+**W0 dispatch:** thread-579 opened to greg (`[mission-84 W0] DISPATCH — MemoryHubStorageSubstrate spike + per-method parity baseline + W2 blast-radius re-count + Variant ii adapter spike`). 4 explicit deliverables per plannedTask sequence-1 description; W0+W1 ship as single PR per Q-A6. maxRounds=10 (W0+W1 spike scope; bounded).
+
+**Phase 8 wave execution under full-autonomous mandate:**
+- W0 + W1 single PR (conformance + spike)
+- W3 cluster #23 closure single PR
+- W4 Counter consolidation + FS-repo deletion + storage-provider retirement single PR
+- W5 env-var retirement single PR (Director-surface pre-flag: §5.1 Out-of-scope-risks deployment-affecting; pre-W5-ship surface warranted)
+- W6 + W7 single PR (Document MCP + PR #203 revert + ship; W7 Director-surface pre-flag IF Q-A5 CPU-profile regression)
+
+**Architect-side autonomous-driving disciplines** (per feedback memory):
+- Respond to architectPulse on schedule (20min cadence; cross-wave coherence + scope-creep + engineer-health-check)
+- On engineer-pulse-missed escalation (greg missedCount=2 → architect-routed escalation): check greg state + drive resumption via Hub mechanisms playbook
+- Per-wave dispatch + cross-approval + admin-merge cycle per §7.1
+- Calibration-class Director-surfaces at architect-Director-bilateral filing per `feedback_calibration_ledger_discipline` (W3 cluster #23 ledger-update; W5 pre-ship; W7 if-regression)
+- Final-wave completion surface: Phase 9 Close + Phase 10 Retrospective mode-pick
+
+**Architect operational-state:** PHASE-8-ACTIVE; W0 DISPATCHED; AUTONOMOUS-DRIVING ACTIVE. Standing by for greg W0 acknowledge OR W0 PR-merge-gate engagement OR architectPulse fire.
