@@ -236,7 +236,7 @@ const Task: SchemaDef = {
   ],
   indexes: [
     { name: "task_status_idx", fields: ["status"] },
-    { name: "task_engineer_idx", fields: ["assignedEngineerId"] },
+    { name: "task_assigned_agent_idx", fields: ["assignedEngineerId"] },
   ],
   watchable: true,
 };
