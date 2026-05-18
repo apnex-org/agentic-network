@@ -424,3 +424,67 @@ All consumer-upgrades shipped atomic in single W4 PR per Finding B + §3.1.1 spi
 - Bilateral PR-merge-gate engages architect on §2.6 final-disposition + SHRINK + §3.1.1 verify
 
 — Engineer (greg) 2026-05-19 08:50 AEST (W4 complete; opening PR + surfacing checkpoint on thread-582)
+
+---
+
+### 2026-05-19 09:25 AEST — W5 STORAGE_BACKEND env-var retirement (thread-583)
+
+W4 PR #212 merged at `649938fb` (substrate-deletion-cascade; -5219 lines). Director-direct "Approved" 2026-05-18 ratified W5 pre-ship per Design v1.0 §5.1 Out-of-scope-risks Director-surface. Architect dispatched W5 on fresh thread-583.
+
+## §17 W5 deliverables shipped (4 sub-tasks)
+
+### §17.1 W5.1 — hub/src/index.ts substrate-unconditional simplification
+
+- **STORAGE_BACKEND env-var parse + dispatch FATAL guard DELETED.** Hub bootstrap reduces to: `createPostgresStorageSubstrate(POSTGRES_CONNECTION_STRING)` + reconciler-start (unconditional).
+- **POSTGRES_CONNECTION_STRING required-validation** at module-load (throw with operator-friendly error if missing).
+- **`OIS_LOCAL_FS_ROOT` + GCS_BUCKET guards + STORAGE_BACKEND-conditional branching ALL deleted.**
+- **`IPolicyContext.config` field DELETED** entirely (was `{storageBackend: string; gcsBucket: string}` — both dead-passthrough per zero-handler-read survey). Sites updated:
+  - 4 production-Hub sites (createPolicyRouterInvoker context-builders) — `config:` lines dropped
+  - 9 test-fixture sites — `config: { storageBackend: "memory", gcsBucket: "" }` lines dropped
+  - 1 orchestrator.ts constructor signature — `config` parameter dropped
+- **`cutover-sentinel.ts` + `cutover-sentinel.test.ts` DELETED** — sole consumer was the local-fs dispatch-branch deleted at W4; module became dead.
+- **`fs` + `path` Node imports DELETED** — sole consumers were the local-fs writability-assertion (also W4-deleted).
+
+### §17.2 W5.2 — scripts/local/start-hub.sh operator-DX update
+
+- **STORAGE_BACKEND env-var default DELETED** (was `STORAGE_BACKEND="${STORAGE_BACKEND:-local-fs}"`); operator-friendly error if `POSTGRES_CONNECTION_STRING` unset
+- **Container env-var pass-through:** STORAGE_BACKEND removed; POSTGRES_CONNECTION_STRING added
+- **local-fs state-dir pre-flight DELETED** (uid/gid-trap class structurally eliminated; postgres handles persistence via container-volume)
+- **local-fs bind-mount + OIS_LOCAL_FS_ROOT propagation DELETED**
+- **Operator console output:** `Backend: substrate (postgres)` + `Postgres: <redacted-connection-string>` (clear single-mode signal)
+
+### §17.3 W5.3 — docker artifacts sweep (NO-OP)
+
+`hub/Dockerfile` + `hub/spike/W0/docker-compose.yml` already had ZERO STORAGE_BACKEND references at survey-time; no changes needed.
+
+### §17.4 W5.4 — Documentation refs
+
+Engineer-scope deferred per architect dispatch §1 footnote: operator runbooks update at W7. STORAGE_BACKEND historical mentions in code comments (hub/src/index.ts + hub/src/policy/types.ts) preserved as cleanup-context; non-load-bearing.
+
+## §18 Test-result summary
+
+| Stage | Tests | Pass | Skip | Fail | Notes |
+|---|---|---|---|---|---|
+| Pre-W5 (post-W4 merge HEAD `649938fb`) | 1469 | 1464 | 5 | 0 | W4 baseline |
+| **Post-W5 (FINAL)** | **1462** | **1457** | **5** | **0** ✅ | -7 tests = 6 cutover-sentinel.test.ts + 1 in-Hub-bootstrap STORAGE_BACKEND test |
+
+Typecheck PASS at every sub-task.
+
+## §19 W5 file-impact summary
+
+| Action | Count | Files |
+|---|---|---|
+| DELETED | 2 | hub/src/lib/cutover-sentinel.ts + hub/test/unit/cutover-sentinel.test.ts |
+| MODIFIED | 12 | hub/src/index.ts (substantial; ~80 lines deleted) + hub/src/policy/types.ts + hub/src/policy/test-utils.ts + scripts/local/start-hub.sh + hub/test/e2e/orchestrator.ts + 6 hub/test/unit/*.test.ts + 2 hub/test/e2e/*.test.ts (config: line removals) |
+
+Net deletion: ~150+ lines removed; ~30 added (error messages + comments).
+
+## §20 W5 PR ship-prep
+
+- Branch: `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate` (HEAD post-W5 commits)
+- Base: `origin/main @ 649938fb`
+- PR scope: 14 files (2 deleted + 12 modified)
+- Per ~6-PR cadence: W5 = PR 5 of 6 (Director-ratified pre-ship per §5.1)
+- Bilateral PR-merge-gate engages architect on §2.5 final disposition + start-hub.sh diff verify
+
+— Engineer (greg) 2026-05-19 09:25 AEST (W5 complete; opening PR + surfacing checkpoint on thread-583)

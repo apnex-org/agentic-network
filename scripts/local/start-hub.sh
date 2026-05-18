@@ -112,20 +112,19 @@ HOST_PORT="${HUB_HOST_PORT:-8080}"
 CONTAINER_PORT="8080"
 
 # Hub-side env defaults (non-secret)
+# mission-84 W5: STORAGE_BACKEND env-var retired (substrate-only-everywhere per
+# Design v1.0 §2.5). POSTGRES_CONNECTION_STRING is the sole required env var;
+# operator must run postgres-up (docker-compose or local install) before start-hub.sh.
+# GCS_BUCKET preserved for legacy operator-DX context display only.
 GCS_BUCKET="$(read_tfvar state_bucket_name)"
 GCS_BUCKET="${GCS_BUCKET:-ois-relay-hub-state}"
-# Mission-48 T2b: laptop-Hub default flipped from `gcs` to `local-fs`.
-# Operator runs state-sync.sh once to bootstrap GCS→local-fs (writes
-# the .cutover-complete sentinel), then start-hub.sh boots into the
-# local-fs profile by default — laptop-Hub deployment is the prod
-# pattern (per ADR-024 amendment §6.1, mission-48).
-# Set `STORAGE_BACKEND=gcs` explicitly to roll back to the GCS profile
-# (e.g., for operator-driven comparison testing or explicit cutover
-# rollback per the T4 runbook).
-STORAGE_BACKEND="${STORAGE_BACKEND:-local-fs}"
-# Mission-48 T1: default state-dir host path matches mission-47 T3's
-# state-sync.sh layout. `${REPO_ROOT}/local-state/` is gitignored.
-OIS_LOCAL_FS_ROOT="${OIS_LOCAL_FS_ROOT:-${REPO_ROOT}/local-state}"
+POSTGRES_CONNECTION_STRING="${POSTGRES_CONNECTION_STRING:-}"
+if [[ -z "$POSTGRES_CONNECTION_STRING" ]]; then
+  echo "[start-hub] ERROR: POSTGRES_CONNECTION_STRING env var is required." >&2
+  echo "              Example: POSTGRES_CONNECTION_STRING=postgres://hub:hub@localhost:5432/hub" >&2
+  echo "              Local-dev: see docs/operator/hub-storage-substrate-local-dev.md for postgres-up steps." >&2
+  exit 1
+fi
 WATCHDOG_ENABLED="false"   # ADR-017 watchdog paused locally; queue still operational
 NODE_ENV="production"
 PROJECT_ID="$(read_tfvar project_id)"
@@ -216,30 +215,11 @@ if ss -ltn "( sport = :$HOST_PORT )" 2>/dev/null | tail -n +2 | grep -q .; then
   exit 1
 fi
 
-# ── Mission-48 T1: state-dir pre-flight (local-fs only) ────────────────
-#
-# When `STORAGE_BACKEND=local-fs`, the container bind-mounts the host
-# state directory and writes through it. Catch the bind-mount uid/gid
-# trap loudly at the shell layer (before docker run) by ensuring the
-# directory exists + is writable by the host user. The Hub-side
-# writability assertion in `hub/src/index.ts` provides defense-in-depth
-# inside the container.
 
-if [[ "$STORAGE_BACKEND" == "local-fs" ]]; then
-  if ! mkdir -p "$OIS_LOCAL_FS_ROOT" 2>/dev/null; then
-    echo "[start-hub] ERROR: cannot create state directory $OIS_LOCAL_FS_ROOT." >&2
-    echo "              Check parent-directory permissions; ensure host path is writable." >&2
-    exit 1
-  fi
-  WRITABILITY_PROBE="${OIS_LOCAL_FS_ROOT}/.start-hub-writability-$$"
-  if ! ( : > "$WRITABILITY_PROBE" ) 2>/dev/null; then
-    echo "[start-hub] ERROR: $OIS_LOCAL_FS_ROOT not writable by host user $(id -u):$(id -g)." >&2
-    echo "              Most likely cause: state-dir was previously written by a different uid (e.g., container running as appuser without -u override)." >&2
-    echo "              Fix: either chown the dir to $(id -u):$(id -g), or remove + recreate it before re-running." >&2
-    exit 1
-  fi
-  rm -f "$WRITABILITY_PROBE"
-fi
+
+# mission-84 W5: local-fs state-dir pre-flight DELETED — substrate is sole
+# storage path; postgres handles persistence via volume-managed by postgres
+# container (NOT bind-mount; uid/gid-trap class structurally eliminated).
 
 # ── Launch ─────────────────────────────────────────────────────────────
 
@@ -247,12 +227,8 @@ echo "[start-hub] OIS_ENV:      $OIS_ENV"
 echo "[start-hub] Image:        $IMAGE"
 echo "[start-hub] Container:    $CONTAINER_NAME"
 echo "[start-hub] Port:         ${HOST_PORT}:${CONTAINER_PORT}"
-echo "[start-hub] Backend:      $STORAGE_BACKEND"
-if [[ "$STORAGE_BACKEND" == "local-fs" ]]; then
-  echo "[start-hub] State dir:    $OIS_LOCAL_FS_ROOT (bind-mounted; uid/gid $(id -u):$(id -g))"
-else
-  echo "[start-hub] GCS bucket:   $GCS_BUCKET"
-fi
+echo "[start-hub] Backend:      substrate (postgres)"
+echo "[start-hub] Postgres:     $(echo "$POSTGRES_CONNECTION_STRING" | sed 's|:[^:@]*@|:***@|')"
 echo "[start-hub] SA key:       $GOOGLE_APPLICATION_CREDENTIALS"
 echo "[start-hub] Watchdog:     $WATCHDOG_ENABLED"
 
@@ -268,7 +244,7 @@ DOCKER_ARGS=(
   -e "PORT=$CONTAINER_PORT"
   -e "GOOGLE_APPLICATION_CREDENTIALS=/secrets/sa-key.json"
   -e "GCS_BUCKET=$GCS_BUCKET"
-  -e "STORAGE_BACKEND=$STORAGE_BACKEND"
+  -e "POSTGRES_CONNECTION_STRING=$POSTGRES_CONNECTION_STRING"
   -e "HUB_API_TOKEN=$HUB_API_TOKEN"
   -e "WATCHDOG_ENABLED=$WATCHDOG_ENABLED"
   -e "OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS=${OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS:-30000}"
@@ -277,12 +253,8 @@ DOCKER_ARGS=(
   --security-opt seccomp=unconfined
 )
 
-# Mission-48 T1: bind-mount the state directory + propagate the path
-# into the container so `OIS_LOCAL_FS_ROOT` resolves identically inside.
-if [[ "$STORAGE_BACKEND" == "local-fs" ]]; then
-  DOCKER_ARGS+=( -v "$OIS_LOCAL_FS_ROOT:$OIS_LOCAL_FS_ROOT" )
-  DOCKER_ARGS+=( -e "OIS_LOCAL_FS_ROOT=$OIS_LOCAL_FS_ROOT" )
-fi
+# mission-84 W5: local-fs bind-mount + OIS_LOCAL_FS_ROOT propagation DELETED
+# (substrate sole storage path; postgres persistence handled by postgres-up).
 
 # Mission-52 T3: repo-event-bridge env-var pass-through. Token-absent
 # → no env-vars passed (Hub-side conditional skips bridge); token-set

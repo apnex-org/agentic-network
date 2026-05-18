@@ -7,10 +7,11 @@
  * Deployed to Cloud Run as a containerized Express application.
  */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { cutoverSentinelPath, isCutoverComplete } from "./lib/cutover-sentinel.js";
+// mission-84 W5: fs + path + cutover-sentinel imports DELETED — sole consumers
+// were the local-fs dispatch-branch (writability assertion + cutover-sentinel
+// guard) which W4 deleted along with the dispatch. cutover-sentinel.{ts,test.ts}
+// retired in this same PR (W5) per coordinated-upgrade-discipline.
 import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore } from "./state.js";
 // mission-83 W6-narrowed: gcs-state.js DELETED (substrate replaces GCS at
 // production-prod); reconcileCounters + cleanupOrphanedFiles startup hooks
@@ -86,26 +87,20 @@ import type { AllStores } from "./policy/index.js";
 import { createMetricsCounter } from "./observability/metrics.js";
 
 // ── Global State ──────────────────────────────────────────────────────
-const STORAGE_BACKEND = process.env.STORAGE_BACKEND || "memory";
+// mission-84 W5: STORAGE_BACKEND env var RETIRED entirely per Design v1.0 §2.5
+// (substrate-only-everywhere; Survey Q2c uncompromising; Director-direct
+// "Approved" 2026-05-18 ratified pre-ship per §5.1 Out-of-scope-risks).
+// Production-Hub locked to substrate via mission-83 W5.4 cutover; W5 collapses
+// the ceremony. POSTGRES_CONNECTION_STRING is now the sole required env var.
 // mission-83 W6-narrowed: GCS_BUCKET env var + STORAGE_BACKEND=gcs guard
 // DELETED (GCS-mode removed; substrate is sole production cloud-path).
-// Mission-47 T3: local-fs backend writes to OIS_LOCAL_FS_ROOT (a directory
-// path). Intended for dev — run hub against a gsutil-rsynced snapshot of
-// prod state without touching GCS. Fail-fast if unset to avoid
-// accidentally writing to CWD.
-const OIS_LOCAL_FS_ROOT = process.env.OIS_LOCAL_FS_ROOT;
-if (STORAGE_BACKEND === "local-fs" && !OIS_LOCAL_FS_ROOT) {
-  throw new Error(
-    "[hub] OIS_LOCAL_FS_ROOT env var is required when STORAGE_BACKEND=local-fs. " +
-    "Point it at a directory (e.g., ./local-state/). Populate with scripts/state-sync.sh.",
-  );
-}
-// mission-83 W5.4-Hub-bootstrap-flip — POSTGRES_CONNECTION_STRING required for substrate-mode
+// mission-84 W4: OIS_LOCAL_FS_ROOT + local-fs/memory dispatch DELETED.
 const POSTGRES_CONNECTION_STRING = process.env.POSTGRES_CONNECTION_STRING;
-if (STORAGE_BACKEND === "substrate" && !POSTGRES_CONNECTION_STRING) {
+if (!POSTGRES_CONNECTION_STRING) {
   throw new Error(
-    "[hub] POSTGRES_CONNECTION_STRING env var is required when STORAGE_BACKEND=substrate. " +
+    "[hub] POSTGRES_CONNECTION_STRING env var is required. " +
     "Example: postgres://hub:hub@localhost:5432/hub. " +
+    "Local-dev: docker-compose up postgres (per scripts/local/start-hub.sh). " +
     "Migration script: npm run migrate-fs-to-substrate -- --source=<fs> --target=<conn> --backup=<tar>.",
   );
 }
@@ -135,35 +130,19 @@ let messageStore: IMessageStore;
 // period, legacy `*Store` classes continue to coexist with
 // TeleRepository (both read/write the same GCS keyspace safely via
 // CAS on shared meta/counter.json).
-// mission-84 W4: storageProvider variable + FS-mode dispatch branches DELETED
-// per Finding B (thread-578 round 2 + Design v1.0 §2.6 fold + §3.1.1 coordinated-
-// upgrade-discipline). STORAGE_BACKEND env-var ceremony PRESERVED here for W5
-// final-removal; non-substrate values now fatal-exit (production-Hub locked to
-// substrate per mission-83 W5.4 cutover; FS-fallback modes had no production use).
-let substrate: HubStorageSubstrate | null = null;
-let reconciler: SchemaReconciler | null = null;
-
-if (STORAGE_BACKEND === "substrate") {
-  // mission-83 W5 LIVE — substrate is the sovereign-composition state-backplane
-  const connRedacted = POSTGRES_CONNECTION_STRING!.replace(/:[^:@]+@/, ":***@");
-  console.log(`[Hub] substrate-mode active; postgres=${connRedacted}`);
-  substrate = createPostgresStorageSubstrate(POSTGRES_CONNECTION_STRING!);
-  reconciler = createSchemaReconciler(substrate, POSTGRES_CONNECTION_STRING!, {
-    initialSchemas: ALL_SCHEMAS,
-    log: (msg) => console.log(`[Hub:reconciler] ${msg}`),
-    warn: (msg) => console.warn(`[Hub:reconciler] ${msg}`),
-  });
-  await reconciler.start();
-  console.log(`[Hub] substrate reconciler settled (${ALL_SCHEMAS.length} SchemaDefs applied)`);
-} else {
-  console.error(
-    `[Hub] FATAL: STORAGE_BACKEND='${STORAGE_BACKEND}' is not supported. ` +
-    `Substrate is the sole production path post-mission-83 W5.4 cutover. ` +
-    `Set STORAGE_BACKEND=substrate + POSTGRES_CONNECTION_STRING. ` +
-    `(W5 retires the STORAGE_BACKEND env-var ceremony entirely.)`
-  );
-  process.exit(1);
-}
+// mission-84 W5: substrate-only-unconditional per Design v1.0 §2.5; STORAGE_BACKEND
+// env-var ceremony fully retired. Hub bootstrap reduces to: createPostgresStorage
+// Substrate + reconciler-start. No dispatch logic; no env-var-fallback fatal.
+const connRedacted = POSTGRES_CONNECTION_STRING.replace(/:[^:@]+@/, ":***@");
+console.log(`[Hub] substrate-mode active; postgres=${connRedacted}`);
+const substrate: HubStorageSubstrate = createPostgresStorageSubstrate(POSTGRES_CONNECTION_STRING);
+const reconciler: SchemaReconciler = createSchemaReconciler(substrate, POSTGRES_CONNECTION_STRING, {
+  initialSchemas: ALL_SCHEMAS,
+  log: (msg) => console.log(`[Hub:reconciler] ${msg}`),
+  warn: (msg) => console.warn(`[Hub:reconciler] ${msg}`),
+});
+await reconciler.start();
+console.log(`[Hub] substrate reconciler settled (${ALL_SCHEMAS.length} SchemaDefs applied)`);
 
 // Mission-47 W1-W7 + Mission-49 W8-W9: instantiate StorageProvider-backed
 // repositories. Counter is shared-by-design across all repositories —
@@ -306,7 +285,6 @@ function createMcpServer(
     clientIp: getClientIp(),
     role: "unknown", // resolved at handler level via engineerRegistry
     internalEvents: [],
-    config: { storageBackend: STORAGE_BACKEND, gcsBucket: "" },  // W6-narrowed: GCS-mode deleted; field kept for IPolicyContext type-compat (idea-300 removes field)
     metrics,
   });
 
@@ -659,10 +637,6 @@ const scheduledMessageSweeper = new ScheduledMessageSweeper(
       clientIp: "127.0.0.1",
       role: "system",
       internalEvents: [],
-      config: {
-        storageBackend: STORAGE_BACKEND,
-        // gcsBucket field removed (W6-narrowed: GCS-mode deleted)
-      },
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
   { intervalMs: parseInt(process.env.OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS ?? "1000", 10) },
@@ -687,10 +661,6 @@ const cascadeReplaySweeper = new CascadeReplaySweeper(
       clientIp: "127.0.0.1",
       role: "system",
       internalEvents: [],
-      config: {
-        storageBackend: STORAGE_BACKEND,
-        // gcsBucket field removed (W6-narrowed: GCS-mode deleted)
-      },
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
 );
@@ -723,10 +693,6 @@ const pulseSweeper = new PulseSweeper(
       clientIp: "127.0.0.1",
       role: "system",
       internalEvents: [],
-      config: {
-        storageBackend: STORAGE_BACKEND,
-        // gcsBucket field removed (W6-narrowed: GCS-mode deleted)
-      },
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
   {
@@ -774,10 +740,6 @@ if (OIS_GH_API_TOKEN && OIS_REPO_EVENT_BRIDGE_REPOS.length > 0) {
       clientIp: "127.0.0.1",
       role: "system",
       internalEvents: [],
-      config: {
-        storageBackend: STORAGE_BACKEND,
-        // gcsBucket field removed (W6-narrowed: GCS-mode deleted)
-      },
     } as unknown as import("./policy/types.js").IPolicyContext)),
   });
 } else if (OIS_GH_API_TOKEN && OIS_REPO_EVENT_BRIDGE_REPOS.length === 0) {

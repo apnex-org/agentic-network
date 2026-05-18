@@ -61,11 +61,10 @@ export interface IPolicyContext {
   role: string;
   /** Internal domain events accumulated during handler execution */
   internalEvents: DomainEvent[];
-  /** Hub configuration */
-  config: {
-    storageBackend: string;
-    gcsBucket: string;
-  };
+  // mission-84 W5: config.{storageBackend, gcsBucket} fields DELETED — both were
+  // dead-passthrough (zero handler reads at typecheck-survey); STORAGE_BACKEND
+  // env-var ceremony retired per Design v1.0 §2.5; GCS-mode deleted per
+  // mission-83 W6-narrowed. If future Hub-config emerges, restore as needed.
   /** Phase 2d CP1: in-process counter for invariant + cascade telemetry. */
   metrics: MetricsCounter;
 }
