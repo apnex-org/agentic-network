@@ -2287,6 +2287,380 @@ calibrations:
       - tele-7
       - tele-2
 
+  - id: 71
+    class: methodology
+    title: "Substrate-redesign collapses symptoms but doesn't auto-fix root-cause defects exposed by the collapse"
+    origin: mission-78-W3-new + W3-new-extension
+    surfaced_at: thread-545 architect-side scenario-02 re-dogfood post W3-new ship (8cab0aa) → GAP-3 squashCommit target-ref defect surfaced (Fix #8 v1.2.0 BLOCKER)
+    status: closed-folded
+    closure_mechanism: |
+      Composes with calibration #70 (substrate-redesign-collapses-accidental-
+      complexity). Calibration #70 captures the architectural-pathology recognition
+      pattern — Director-progressive-question collapses accidental complexity.
+      Calibration #71 captures the COROLLARY: the redesign collapses SYMPTOMS but
+      may LEAVE UNDERLYING root-cause defects exposed for the first time when the
+      collapse changes the system's invariants.
+
+      Diagnostic signature: a substrate-redesign that dissolves a debate (e.g.
+      "Fix #5 headRef → wip-branch vs defensive-fallback" debate dissolved by
+      W3-new single-branch architecture per calibration #70 application) may
+      leave latent root-cause defects that were MASKED by the prior symptom.
+      The redesign expose these defects WITHOUT auto-fixing them; substrate-fix
+      is still required.
+
+      Application instance: mission-78 W3-new (8cab0aa) shipped single-branch
+      architecture; Fix #5 debate dissolved (mission-branch now has content;
+      runPublishLoop unchanged). BUT squashCommit step-(4) update-ref targeting
+      baseRef (NOT headRef) — pre-existing bug at native-git-engine.ts:343 + iso-
+      morphic-git-engine.ts equivalent — was MASKED pre-W3-new because:
+        Pre-W3-new: mission-branch tree was empty (daemon committed to wip/<id>);
+        squashCommit read empty tree from mission-branch; update-main to no-op-
+        tree commit was harmless. "Fix #5 empty-squash failure-mode" was the
+        observable symptom; root-cause (wrong-target-update) lurked.
+
+      W3-new made mission-branch non-empty (daemon commits there directly).
+      squashCommit now reads operator's edits → non-empty squashed commit →
+      update-main lands real content on main locally (orphan-advance) + mission-
+      branch UNCHANGED → pushWithRetry pushes daemon-commit (not squash) → silent
+      ship of pre-squash content. The wrong-target-update BLOCKER surfaced at
+      first architect-side dogfood post-W3-new ship.
+
+      Resolution: Fix #8 (squashCommit step-(4) update-ref targets headRef not
+      baseRef in BOTH engines) shipped in W3-new extension at 32ca5a3. The
+      transparency-gate test that should have caught it was too permissive
+      (separate calibration #72).
+
+      Architect-discipline takeaway: when a substrate-redesign dissolves a debate
+      or symptom, the redesign-ship is NOT sufficient — architect-side dogfood
+      MUST validate the redesigned substrate against real upstream before
+      declaring the wave converged. The dogfood IS the transparency gate per
+      calibration #67 + #68 + feedback_substrate_extension_wire_flow_integration_
+      test.md.
+    cross_refs:
+      - calibration #70 (substrate-redesign-collapses-accidental-complexity; this composes)
+      - calibration #67 (synthetic engine-isolation tests mask SDK-internal-call-pattern defects)
+      - calibration #68 (synthetic tests also mask DEFECTS-IN-THE-CALLER)
+      - feedback_substrate_extension_wire_flow_integration_test.md
+      - thread-545 (W3-new + extension coord; Fix #8 surface via architect dogfood)
+      - apnex/missioncraft@8cab0aa (W3-new core; failure-mode surfaced)
+      - apnex/missioncraft@32ca5a3 (W3-new extension Fix #6/#7/#8/#9)
+      - docs/designs/m-missioncraft-d2-substrate-design.md §10.1
+    tele_alignment:
+      - tele-2
+
+  - id: 72
+    class: methodology
+    title: "Transparency-gate test SHAPE assertions necessary alongside content-presence assertions"
+    origin: mission-78-W3-new + W3-new-extension
+    surfaced_at: thread-545 architect-side dogfood revealed pre-Fix-#8 transparency-gate test passed despite v1.2.0 BLOCKER substrate-defect
+    status: closed-folded
+    closure_mechanism: |
+      Composes with feedback_test_assertion_too_permissive_regex.md (same defect
+      class at a different layer). Calibration #72 captures the discipline that
+      transparency-gate tests for substrate-extension waves must assert publish
+      SHAPE (commit identity, parent chain, branch-tip relationship, adjacent-
+      ref-state), not just content-presence.
+
+      Diagnostic signature: a transparency-gate e2e test passes because it
+      asserts that operator's edits CONTENT reaches the upstream destination,
+      but doesn't assert that the SHAPE of the publish matches the canonical
+      semantic (squashed commit with operator-message + correct parent + correct
+      branch identity + adjacent refs untouched). Content-presence is necessary
+      BUT NOT SUFFICIENT.
+
+      Application instance: mission-78 W3-new slice (iv) introduced transparency-
+      gate test v1.2.0-w3-new-single-branch-e2e.test.ts asserting:
+        - mission-branch advanced past base SHA ✓
+        - mission-branch HEAD-tree contains operator's edit ✓
+        - upstream mission-branch's README contains operator's edit ✓
+        - git diff main..mission/<id> includes README + "1 file changed" ✓
+      Test passed at 8cab0aa. But Fix #8 (squashCommit wrong-target-update) was
+      ALSO live: upstream mission-branch tip was daemon-commit (not squashed
+      commit); content reached upstream but SHAPE was wrong.
+
+      Missing SHAPE assertions (added in Fix #9 at 32ca5a3):
+        - upstream mission-branch tip commit-message === publishMessage
+        - upstream mission-branch tip parent === upstream main tip
+        - upstream mission-branch ahead-count == 1 (single squashed commit)
+        - local main unchanged post-complete
+        - upstream main unchanged post-complete
+        - no wip/<id> refs anywhere (local OR remote)
+
+      6 SHAPE assertions strengthened the gate post-Fix-#8. Pre-existing slice-iii
+      + W2-ext §3 squashCommit tests also retargeted to corrected semantic
+      (regression net hardening).
+
+      Architect-discipline takeaway: for substrate-extension transparency-gate
+      tests, assert (a) content reaches destination AND (b) shape matches
+      canonical semantic. Pair the content-assertion with shape-assertions on
+      commit-msg + parent + ahead-count + adjacent-ref-state. Apply at every
+      wave-close transparency-gate; pre-existing tests touching same surface
+      should be audited + retargeted when shape-semantic changes.
+    cross_refs:
+      - feedback_test_assertion_too_permissive_regex.md (sibling discipline at same defect class)
+      - calibration #71 (substrate-redesign collapses symptoms; this calibration is the test-quality companion)
+      - calibration #67 + #68 (synthetic-test masking patterns; this is the gate-test side)
+      - thread-545 (W3-new + extension coord; Fix #9 SHAPE-assertion strengthening at 32ca5a3)
+      - apnex/missioncraft@32ca5a3 (Fix #9 transparency-gate strengthening)
+      - test/missioncraft-sdk/v1.2.0-w3-new-single-branch-e2e.test.ts (canonical SHAPE-assertion example)
+    tele_alignment:
+      - tele-2
+
+  - id: 73
+    class: methodology
+    title: "Apply directional-vs-mechanism diagnostic to own wave-spec authorship (inward sibling of calibration #69 v2)"
+    origin: mission-78-W4-new
+    surfaced_at: thread-546 slice (iv) engineer-side directional ambiguity surface → architect-Director engagement → Director-direct deferral 2026-05-13
+    status: closed-folded
+    closure_mechanism: |
+      Refinement composing with calibration #69 v2. Calibration #69 v2 captured
+      the architect-receives-engineer-surface direction (when engineer surfaces
+      "this might be Director-scope" on substrate-design ambiguity, architect
+      must verify substrate-target-state-vs-mechanism distinction BEFORE
+      autonomously routing around). Calibration #73 captures the COMPLEMENT:
+      architect must apply the same diagnostic to OWN wave-spec authorship,
+      not just to engineer-side surfaces.
+
+      Diagnostic signature: architect translates a ratified design-doc section
+      into engineer-actionable wave-spec (task description, mission plannedTasks,
+      coordination-thread opening). The translation contains implicit directional
+      choices not fully specified in the design-doc. If architect doesn't apply
+      the directional-vs-mechanism diagnostic INWARD at spec-authorship time,
+      those directional choices ship to engineer as "the plan" without Director-
+      consult — silent failure-mode where engineer-side becomes responsible for
+      catching the directional ambiguity (calibration #69 v2 outward path).
+
+      Application instance: mission-78 W4-new task-408 §6 component-change 4
+      authored by architect from Design v5.0 §10.1 ("Hub-policy single-writer-
+      per-scope enforcement at Hub mission-entity layer"). Translating §10.1's
+      "Hub-API call with scope and readOnly" into engineer-actionable scope
+      (slice iv) implicitly committed v1.2.0 missioncraft to Hub-coupling — a
+      substantial directional choice (changes operator-DX, affects published
+      artifact, defines what missioncraft "is" vs standalone). Engineer-side
+      surfaced the ambiguity at slice (iv) start ("which codebase? what API
+      shape?"); architect applied diagnostic to engineer-surface; routed to
+      Director; Director-direct deferral ("we don't need integration with the
+      Hub just yet... will require careful end-to-end design once primitives
+      tested").
+
+      Counterfactual: if architect had applied the diagnostic INWARD to own
+      task-408 authorship pre-wave-issuance, Director-engagement would have
+      happened at task drafting time. Engineer-side wouldn't have needed to
+      surface the directional concern post slice-(iii) ship; thread-546 round-
+      budget wouldn't have been consumed by mid-wave scope-clarification.
+
+      Architect-discipline takeaway: when authoring wave-spec (task descriptions,
+      mission plannedTasks, coordination-thread openings), apply the 4-sub-test
+      directional-vs-mechanism rubric BEFORE wave-issuance:
+        - Does choice change documented operator-DX in scenarios?
+        - Does choice require engineer-runtime memory updates?
+        - Does choice affect published artifact?
+        - Does choice define what the system "is" vs internal mechanism?
+      If ANY sub-test signals directional → Director-consult BEFORE wave-spec
+      lands. Don't translate design-doc ambiguity into engineer-actionable scope
+      without explicit Director-disposition on the directional choices.
+
+      Resolution: Director-direct deferral 2026-05-13 dropped slice (iv) from
+      W4-new entirely. Design v5.0 §10.1 amended (commit 0361bc4 on agent-lily/
+      m-missioncraft-v4-design); v1.2.0 ships standalone-capable with operator-
+      discipline. Hub-missioncraft integration filed as forward-pointer (idea-291
+      post-v1.2.0 mission). Architect-side feedback memory filed (feedback_apply_
+      directional_diagnostic_to_own_spec_authorship.md).
+    cross_refs:
+      - calibration #69 v2 (outward-facing rubric; this is inward sibling)
+      - feedback_verify_directional_vs_mechanism_before_routing_around.md (#69 v2 memory)
+      - feedback_apply_directional_diagnostic_to_own_spec_authorship.md (this calibration's memory)
+      - feedback_architect_call_not_director_decision.md (original calibration #6; still load-bearing for mechanism)
+      - thread-546 (W4-new coord; slice (iv) engineer surface + architect-Director engagement)
+      - idea-291 (post-v1.2.0 Hub-missioncraft integration mission candidate)
+      - docs/designs/m-missioncraft-d2-substrate-design.md §10.1 (2026-05-13 amendment)
+    tele_alignment:
+      - tele-2
+
+  - id: 74
+    class: methodology
+    title: "Daemon-dispatch path requires its own transparency-gate test layer (necessary-but-insufficient SDK-direct coverage)"
+    origin: mission-78-W4-new + W4-new-extension
+    surfaced_at: thread-547 architect-side scenario-XX dogfood post W4-new ship (0db1601) → GAP-1 daemon canonical-path BLOCKER surfaced (Fix #10)
+    status: closed-folded
+    closure_mechanism: |
+      Composes with calibration #67/#68 (synthetic engine-isolation tests mask SDK-
+      internal-call-pattern defects + DEFECTS-IN-THE-CALLER) at a different layer:
+      SDK-direct tests cover the SDK methods in isolation but DON'T exercise the
+      daemon-watcher dispatch path that routes Loop-B-tick-firing through helpers
+      like `detectDaemonMode`. The dispatch-layer is the integration-test gap.
+
+      Diagnostic signature: a wave's SDK-level transparency-gate test (per calibration
+      #72 SHAPE-assertion discipline) passes despite the daemon-dispatch path having
+      a substrate-defect that breaks production-side end-to-end. The defect lurks
+      because tests drive the SDK methods directly (e.g. `Missioncraft.readerLoopBV5
+      Tick(missionId)`) without going FROM the daemon-watcher entry-point.
+
+      Application instance: mission-78 W4-new slice (vii) transparency-gate test
+      (v1.2.0-w4-new-writer-reader-bilateral-e2e.test.ts) passed at 0db1601. But
+      Fix #10 BLOCKER (daemon's reader-mode-detection path used wrong config-path,
+      missing `missions/` subdir per v1.0.5 idea-271 layout) was LATENT: daemon's
+      `existsSync(configPath)` returned false → silent catch → defaulted to writer-
+      mode → entire reader-mode substrate functionally DEAD via daemon path. Slice
+      (vii) tests didn't exercise the dispatch path so the defect didn't surface.
+      Architect-side dogfood at thread-547 round 7 caught it via real-daemon spawn
+      against apnex/missioncraft-sandbox real upstream.
+
+      Resolution: Fix #10 (daemon canonical missionConfigPath layout via daemon-
+      mode-detect.ts module extraction) + Fix #11 (8 SHAPE-assertion tests at the
+      dispatch-layer including pre-Fix-#10 regression net: synthetic config at
+      broken path INVISIBLE). Discipline-fold: substrate-extension waves that
+      touch daemon-dispatch require BOTH (A) SDK-direct SHAPE tests AND (B) daemon-
+      dispatch-layer integration tests asserting helper-flag activation + canonical-
+      path return. Pattern carried forward through W5-new slice (iii) `detectWriter
+      PushCadence` + slice (iv) `detectReaderPullCadence` extractions.
+
+      Architect-discipline takeaway: when a wave introduces daemon-watcher dispatch
+      changes, the transparency-gate test layer MUST cover the dispatch helpers
+      themselves (not just the downstream SDK calls they fan out to). Composes with
+      `feedback_substrate_extension_wire_flow_integration_test.md` discipline at the
+      daemon-watcher entry-point.
+    cross_refs:
+      - calibration #67 (synthetic engine-isolation tests mask SDK-internal-call-pattern defects)
+      - calibration #68 (synthetic tests also mask DEFECTS-IN-THE-CALLER)
+      - calibration #72 (transparency-gate-test SHAPE assertions; this calibration is the daemon-dispatch sibling at integration layer)
+      - feedback_substrate_extension_wire_flow_integration_test.md
+      - thread-547 (W4-new continuation coord; Fix #10 surfaced via architect dogfood round 7)
+      - apnex/missioncraft@0db1601 (W4-new slice vii ship; BLOCKER latent)
+      - apnex/missioncraft@32ca5a3 (W4-new Fix #10 + #11 resolution)
+      - docs/designs/m-missioncraft-d2-substrate-design.md (Design v5.0 + 2026-05-13 amendment)
+    tele_alignment:
+      - tele-2
+
+  - id: 75
+    class: methodology
+    title: "Orphan-daemon-accumulation from vitest test-aborts → test-infrastructure flakiness that looks like substrate regression"
+    origin: mission-78-W5-new
+    surfaced_at: thread-548 round 6 mid-implementation finding during Fix #12 verification — 101 orphan watcher-entry daemon processes accumulated from prior vitest test-runs
+    status: open
+    closure_mechanism: |
+      Pattern-recognition; no closure-PR yet (test-infrastructure-pathology meta-
+      pattern). Mitigation options surfaced; specific fix-disposition deferred to
+      Director-bilateral surface OR W8-new closing-audit batch.
+
+      Diagnostic signature: vitest test-aborts (e.g., when one test fails mid-suite)
+      leave daemon processes orphaned because `mc.complete`/`mc.abandon` SIGTERM
+      isn't called when the test exits abnormally. Long-lived dev-box test runs
+      accumulate orphans → CPU/IO contention → chokidar polling slows past test's
+      threshold (typically 8s) → cascade of false-positive flakiness that LOOKS
+      like substrate regression but is actually test-infrastructure contention.
+
+      Diagnostic test for bisection (load-bearing for ENGINEERS during slice-ship
+      verification):
+      1. Test failures persist after `git stash` (clean baseline before slice
+         substrate)? → NOT slice-substrate; check (2)
+      2. `ps aux | grep watcher-entry` → orphan-process count > 0? → test-
+         infrastructure issue (not substrate regression)
+      3. `pkill -f "watcher-entry.js msn-"` → re-run tests; should pass
+
+      Application instance: mission-78 W5-new slice (iii) verification. Engineer
+      initially suspected slice-(iii) regression on bug-73 lifecycle + W3-new e2e
+      tests. Bisected via git stash → failures persisted in slice (ii) baseline →
+      `ps aux | grep watcher-entry` showed 101 orphan watcher-entry processes →
+      pkill cleaned up → tests passed.
+
+      Mitigation options (architect-Director-bilateral disposition pending):
+      - (a) per-test afterEach SIGTERM-by-PID via daemon-state.yaml lookup (substrate-
+        tightness; test-fixture invariant)
+      - (b) periodic cleanup hook in test-runner (vitest global teardown)
+      - (c) operator-discipline doc: dev-box `pkill -f "watcher-entry.js msn-"`
+        periodically (operator-DX-cheap; doesn't tighten substrate)
+      Lean: (a) is the substrate-tight disposition; (c) is cheap short-term.
+
+      Composes with calibration #62 (wire-flow integration tests catch SDK-internal-
+      call-pattern issues) — same defect class at the TEST-INFRASTRUCTURE layer
+      rather than the substrate layer. Sibling at process-cleanup-boundary.
+
+      Architect-discipline takeaway: when slice-ship test-failures look like
+      regression, FIRST check git-stash-baseline; SECOND check orphan-daemon-count;
+      THIRD investigate substrate. Saves bisection cycles + prevents false-positive-
+      panic.
+    cross_refs:
+      - calibration #62 (wire-flow integration tests catch SDK-internal-call-pattern issues; sibling at test-infrastructure layer)
+      - calibration #67 + #68 (synthetic test masking patterns; flip-side at test-process-cleanup boundary)
+      - thread-548 (W5-new coord; greg's mid-impl finding round 6)
+      - apnex/missioncraft daemon-process lifecycle (watcher-entry.js spawned by mc.start; SIGTERM'd by mc.complete/mc.abandon)
+    tele_alignment:
+      - tele-2
+
+  - id: 76
+    class: methodology
+    title: "Compositional-gaps at multiple layers caught by architect-side real-upstream + real-build dogfood (substrate + test-stack + engineer-side ship-verify discipline)"
+    origin: mission-78-W5-new + W5-new-extension
+    surfaced_at: thread-548 round 12 + thread-549 round 2 — architect-side dogfood post W5-new ship at eb13ab1 → GAP-1 force-push BLOCKER (Fix #12) + tsc-strict-build TS2353 (Fix #12.b) + engineer-side ship-verify-language drift
+    status: closed-folded
+    closure_mechanism: |
+      Composes with calibration #71 (substrate-redesign-collapses-symptoms-not-root-
+      cause-defects) + #74 (daemon-dispatch transparency-gate test layer) at the
+      MULTI-LAYER compositional level. Calibration #76 captures the discipline that
+      composition-gaps span THREE distinct layers — all caught by architect-side
+      real-upstream + real-build dogfood that engineer-side test suite cannot
+      exercise without daemon-spawn + tsc-strict-build pipeline.
+
+      THREE composition layers surfaced in W5-new arc:
+
+      **Layer 1 — Substrate composition**: feature-A (slice iii push-cadence
+      independent setInterval timer) composes with feature-B (Missioncraft.complete
+      squashCommit-publish) to expose previously-masked design-intent (Design v5.0
+      §10.3 explicit force-push for "squash replaces wip-history"). Pre-W5-new the
+      writer's local mission-branch was always at the SAME state as upstream (no
+      auto-push between mission-creation + complete) → fast-forward worked. Post-
+      W5-new push-cadence pre-pushes daemon-chain → squash-rewrite needs force-push.
+      Fix #12 plumbed `force: true` through pushWithRetry call site.
+
+      **Layer 2 — Test-stack composition**: feature-A (vitest+esbuild test runner;
+      strips TypeScript types at execution) composes with feature-B (tsc-strict-
+      build for dist generation; FULL type-checking) to MASK type errors at the
+      test layer. Fix #12 commit at 166bad3 passed vitest 502/502 but tsc-strict-
+      build failed with TS2353 (pushWithRetry options-type didn't include
+      `force?: boolean`). Fix #12.b added the missing type-narrowing barrier.
+      Discipline-fold: ship-verify gate MUST include `npm run build` clean (tsc-
+      strict; non-waivable) alongside `npm test` green.
+
+      **Layer 3 — Engineer-side discipline**: ship-verify-language-vs-actual-
+      command-execution drift. Engineer's Fix #12 commit-message claimed "npm run
+      build: clean" but the verification was actually NOT re-run after the
+      substrate edit. Architect-side dogfood caught this via `npm install -g .`
+      silently reusing stale dist (build had failed; install reported "up to date").
+      Discipline-fold: commit-message verification claims must reflect ACTUAL
+      command output, not extrapolation/aspiration.
+
+      Architect-discipline takeaway: substrate-extension transparency-gates require
+      architect-side dogfood with real-upstream pipeline + real-build pipeline to
+      catch compositional gaps that no single test-suite layer can cover. Composes
+      with #71 (substrate-redesign-collapses-symptoms) at the feature-composition
+      level + #74 (daemon-dispatch transparency-gate) at the integration-test layer
+      + #62/#67/#68 (synthetic test masking) at the SDK-call-pattern level.
+
+      Application instance: mission-78 W5-new arc. Fix #12 (force-push substrate
+      composition) + Fix #12.b (tsc-strict type-extension test-stack composition)
+      + ship-verify-language refinement (engineer-side discipline) all from a
+      single architect-dogfood cycle. Three BLOCKERS effectively rolled into one
+      wave-close-extension cycle.
+
+      Discipline-fold deferred to W8-new closing-audit doc reconciliation batch
+      alongside Flow A retraction + snapshotWipBranches → snapshotMissionBranches
+      rename + bug-77 publishStatus + ship-verify checklist documentation (tsc-
+      strict build-gate + commit-message-verification-discipline).
+    cross_refs:
+      - calibration #71 (substrate-redesign-collapses-symptoms-not-root-cause-defects; this calibration is the multi-layer sibling)
+      - calibration #74 (daemon-dispatch transparency-gate test layer; integration-test sibling)
+      - calibration #72 (transparency-gate-test SHAPE assertions; canonical-asserttion sibling)
+      - calibration #62 + #67 + #68 (synthetic test masking patterns; SDK-call-pattern siblings)
+      - feedback_substrate_extension_wire_flow_integration_test.md (architect-side dogfood discipline)
+      - thread-548 (W5-new coord; Fix #12 BLOCKER surfaced at round 12)
+      - thread-549 (W5-new wave-close coord; Fix #12.b TS2353 surfaced at round 2)
+      - apnex/missioncraft@166bad3 (Fix #12 ship; substrate-correct but tsc-strict-build broken)
+      - apnex/missioncraft@36b6f62 (Fix #12.b ship; tsc-strict-build clean; architect dogfood verified end-to-end)
+      - docs/designs/m-missioncraft-d2-substrate-design.md §10.2 + §10.3 (push-cadence + force-push design-intent)
+    tele_alignment:
+      - tele-2
+
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
 #   title                       string; human-readable pattern name
