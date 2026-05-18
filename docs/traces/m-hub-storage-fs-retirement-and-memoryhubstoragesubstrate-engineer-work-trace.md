@@ -5,7 +5,7 @@ companion-trace: docs/traces/m-hub-storage-fs-retirement-and-memoryhubstoragesub
 upstream-mission: mission-83 (M-Hub-Storage-Substrate)
 engineer-branch: agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate (off origin/main @ c00944b)
 architect-branch: agent-lily/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate (6 commits ahead; HEAD eb2236d)
-phase: Phase 4 Design (round-1 bilateral critique-review)
+phase: Phase 8 Execution — W0 spike complete; W1 PORT-then-EXTEND pending
 ---
 
 # mission-300 — engineer-side work-trace
@@ -107,3 +107,69 @@ Engineer-disposition for v1.0 ratify: GREEN once B1-B6 folded + §2.6 mechanism 
 ---
 
 — Engineer (greg) 2026-05-18 15:30 AEST (round-1 bilateral audit; thread-577 reply pending)
+
+---
+
+### 2026-05-19 08:00 AEST — W0 spike execution (thread-579)
+
+Phase 8 entered post Director Phase 7 Release-gate ratification (full-autonomous-driving mandate). W0 dispatched via thread-579 (round 1) with 4 deliverables; engineer ack + execution plan + checkpoint commitment at round 2 (per `feedback_pattern_a_engineer_turn_discipline` — load-bearing ack, not pure-ack). Architect confirmed plan + standby at round 3. 3 engineerPulse fires during execution window (10min cadence) — non-blocking; commit-push heartbeat via CLAUDE.md §1.5.1.1 Layer (c) is architect's primary visibility surface.
+
+## §3 W0 deliverables shipped
+
+### §3.1 W0.1 — MemoryHubStorageSubstrate impl
+
+- **Location:** `hub/src/storage-substrate/memory-substrate.ts` (404 lines)
+- **Factory:** `createMemoryStorageSubstrate(): HubStorageSubstrate`
+- **Exports:** Added to `hub/src/storage-substrate/index.ts`
+- **Design:** `Map<kind, Map<id, {data, resourceVersion}>>` entity storage; substrate-wide monotonic `revisionCounter` (mirrors postgres `entities_rv_seq` semantic — NOT per-kind-isolated); per-kind `Set<callback>` watchers with EventEmitter-style dispatch
+- **Defensive copy:** `structuredClone()` on every get/put boundary (caller mutations isolated)
+- **Restart-safety:** N/A by design per Design v1.0 §2.1 (in-process; data lost on process exit)
+- **Schema convenience-wrappers** (applySchema/listSchemas/getSchema): throw per parity with PostgresStorageSubstrate W1 substrate-shell behavior. Production reconciler uses substrate.put("SchemaDef", ...) directly (verified compatible).
+- **snapshot/restore:** throw per memory-impl design
+
+### §3.2 W0.2 — Per-method parity baseline
+
+- **Location:** `hub/src/storage-substrate/__tests__/memory-substrate.test.ts` (323 lines; 35 tests)
+- **Coverage:** get/put (7), getWithRevision (3), delete (2), list (5), createOnly (3), putIfMatch (4), watch (4), schema-wrappers (4), snapshot/restore (2), Counter-special-case + defensive-copy + revision-monotonicity
+- **Result:** 35/35 PASS in 201ms; typecheck PASS
+
+### §3.3 W0.3 — W2 blast-radius re-count (deliverable per round-1 B6)
+
+Definitive grep at HEAD `db5dca3`:
+
+| Surface | Count |
+|---|---|
+| Total `.test.ts` files in `hub/test/` | 82 |
+| Files referencing `test-utils` OR `MemoryStorageProvider` OR `LocalFsStorageProvider` | **50** |
+| Of which import `test-utils` | 25 |
+| Of which import `MemoryStorageProvider` directly | 26 |
+| Of which import `LocalFsStorageProvider` directly | 2 |
+| Of which import FS-version entity-repository directly | 33 |
+| Cascade in `hub/src/**/__tests__/` (23 total .test.ts) | 0 (clean — already substrate-shaped) |
+
+**W2 scope refined:** 50 hub/test files (NOT ~22 as v0.2 estimate stated; NOT 49 as my round-1 baseline approximated). Architect can refine W2 ship-criteria pre-W2 dispatch.
+
+### §3.4 W0.4 — RepoEventBridgeSubstrateAdapter spike
+
+- **Location:** `hub/src/storage-substrate/repo-event-bridge-adapter.ts` (170 lines) + `__tests__/repo-event-bridge-adapter.test.ts` (170 lines; 17 tests)
+- **Result:** 17/17 PASS in 211ms; typecheck PASS
+- **Coverage:** capabilities + path-mapping (5) + cursor-store integration cycle (4 incl. createOnly→getWithToken→putIfMatch + stale-token + StoragePathNotFoundError) + absent-path semantics (2) + Uint8Array↔JSONB round-trip (2) + Variant-ii-scope-boundary stub-throws (3)
+- **Spike-finding:** **Primitive-mapping IS 1:1 + zero-blocker for W3 commitment.** All 4 primitives cursor-store.ts uses (`createOnly` / `getWithToken` / `putIfMatch` / `get`) map cleanly to substrate primitives via the Design §2.3 primitive-mapping table; Uint8Array↔JSONB conversion via TextEncoder/Decoder + JSON.parse/stringify works through the `{id, body}` entity-wrap shape.
+
+### §3.5 Architectural-decision-point surface for W3 — adapter LOCATION
+
+- **Design v1.0 §2.3 prescribed:** `packages/repo-event-bridge/src/substrate-adapter.ts`
+- **W0.4 spike placed at:** `hub/src/storage-substrate/repo-event-bridge-adapter.ts`
+- **REASON:** hub-substrate types live in hub package (NOT a published workspace); repo-event-bridge package can't cleanly import `HubStorageSubstrate` without (a) publishing hub-substrate-types as separate workspace package, (b) duplicating types in repo-event-bridge, or (c) cross-package relative imports (violates tsconfig `rootDir`)
+- **Engineer-recommendation for W3:** keep adapter at hub-side location — cleaner typing; matches hub→repo-event-bridge dependency already in `hub/src/index.ts`; adapter is hub-internal-glue not a repo-event-bridge concern
+- **Surface to architect at W3 dispatch for ratify-or-refine** (this is decision-point checkpoint per round-2 cadence commitment)
+
+## §4 W1 next-up
+
+- PORT runConformanceSuite from `packages/storage-provider/test/conformance.ts` (257 lines) to `hub/src/storage-substrate/__tests__/conformance/runSubstrateConformanceSuite.ts`
+- EXTEND with ~10-15 substrate-specific tests (watch + getWithRevision + applySchema + restart-safety with postgres + race-correctness under postgres concurrent writers)
+- Abstract `describe.each` over `[memoryFactory, postgresFactory]`
+- Postgres factory uses mission-83 W2 testcontainers harness (`hub/test/postgres-container.ts` or equivalent — verify location at W1 entry)
+- Ship: W0+W1 combined PR per Q-A6 cadence
+
+— Engineer (greg) 2026-05-19 08:05 AEST (W0 spike complete; W1 starting; checkpoint surfacing on thread-579)
