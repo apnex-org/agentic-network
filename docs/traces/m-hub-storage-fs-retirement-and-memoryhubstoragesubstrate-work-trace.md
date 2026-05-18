@@ -140,3 +140,25 @@ Architect-side trace per `docs/methodology/engineer-runtime.md` work-trace disci
 **Operational escalation to Director:** Hub-API exhausted; greg session activation requires operator-action. Architect surfacing diagnostic + activation ask.
 
 **Architect operational-state:** BLOCKED-PENDING-ENGINEER-AUDIT (canonical Phase 4 ratify-criterion); awaiting greg session activation.
+
+### 2026-05-18 14:55 AEST — Greg engaged thread-577 round-1; Design v0.3 folded
+
+**Trigger:** Greg cognitive_ttl activation; greg round-1 bilateral audit on thread-577 round 2.
+
+**Greg round-1 surface (engineer-work-trace at `db5dca3` on `agent-greg/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate`):** 6 architect-side blind-spots in v0.2 (B1-B6) — exactly the engineer-perspective value Director-correction was protecting:
+- **B1** `packages/storage-provider/test/conformance.ts` EXISTS (257-line abstract suite); v0.2 §2.2 "NEW WORK not port" WRONG
+- **B2** SchemaDef field is `watchable: boolean` REQUIRED (not optional `notify` default-true); v0.2 §2.3 spec-recall WRONG
+- **B3** Counter SchemaDef ALREADY EXISTS at `all-schemas.ts:91-100`; v0.2 "add Counter SchemaDef" WRONG; inventory 20→22 not 20→23
+- **B4** SubstrateCounter ALREADY EXISTS at `hub/src/entities/substrate-counter.ts` (CAS-loop; MAX_CAS_RETRIES=50; mission-83 bug-97 fix at `e109000`); v0.2 framing implied scratch
+- **B5** Reconciler manages INDEXES only NOT tables; v0.2 §2.6 "counters-table mechanism via SchemaDef registration" architectural-pathology
+- **B6** W2 blast-radius "~22 files; ~170 tests" stale (mission-83 W6 estimate); actual 82 .test.ts files; 49 reference test-utils or MemoryStorageProvider
+
+**Per-flag dispositions + Q-A resolutions + wave-decomp refinements + 8 ratify-criteria** per greg's thread-577 round-2 message.
+
+**v0.3 fold (commit `8f0a436`):** all 8 ratify-criteria addressed; B1-B6 corrections folded into §0 changelog with v0.2 supersession cross-refs; F2 reframed PORT-then-EXTEND; §2.6 PINNED to (b) Counter-stays-as-kind; W3.5 REMOVED; SchemaDef inventory 20→22; W2 blast-radius re-estimate scheduled at W0; Q-A6 ~5 PRs ratified.
+
+**Architect reply to thread-577 round 3:** fold-confirmation + W4 SubstrateCounter refactor architect-decision request + convergence ask (per greg's skip-ack-only-courtesy round commitment).
+
+**Architect operational-state:** BLOCKED-PENDING-GREG-ROUND-2-CONFIRMATION. Greg round-2 expected to be confirm-only or minor refine; thread will converge; architect commits `[Design v1.0 RATIFIED]` marker.
+
+**Calibration-confirmation:** [[feedback_architect_drives_engineer_engagement_when_idle]] memory exactly validated by this cycle. Architect-side self-audit (v0.2) MISSED 6 architect-spec-vs-substrate-API drift instances that engineer code-grep caught in round-1. Director-correction was load-bearing; deferring engineer-audit would have shipped v0.2 errors into v1.0 + W0+ implementation.
