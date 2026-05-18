@@ -12,21 +12,21 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
-import { MessageRepository } from "../../src/entities/message-repository.js";
+import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
 import { ScheduledMessageSweeper } from "../../src/policy/scheduled-message-sweeper.js";
-import { ThreadRepository } from "../../src/entities/thread-repository.js";
-import { TaskRepository } from "../../src/entities/task-repository.js";
-import { AuditRepository } from "../../src/entities/audit-repository.js";
-import { StorageBackedCounter } from "../../src/entities/counter.js";
+import { ThreadRepositorySubstrate as ThreadRepository } from "../../src/entities/thread-repository-substrate.js";
+import { TaskRepositorySubstrate as TaskRepository } from "../../src/entities/task-repository-substrate.js";
+import { AuditRepositorySubstrate as AuditRepository } from "../../src/entities/audit-repository-substrate.js";
+import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import type { IPolicyContext } from "../../src/policy/types.js";
 
 const silentLogger = { log: () => {}, warn: () => {} };
 
 async function makeFixture(now: () => number = () => Date.now()) {
-  const provider = new MemoryStorageProvider();
-  const counter = new StorageBackedCounter(provider);
+  const provider = createMemoryStorageSubstrate();
+  const counter = new SubstrateCounter(provider);
   const messageStore = new MessageRepository(provider);
   const threadStore = new ThreadRepository(provider, counter);
   const taskStore = new TaskRepository(provider, counter);
@@ -115,7 +115,7 @@ describe("ScheduledMessageSweeper.sweep — fire-at-time", () => {
     const post = await messageStore.getMessage(m.id);
     expect(post?.scheduledState).toBe("precondition-failed");
 
-    const auditEntries = await auditStore.listEntries({ limit: 10 });
+    const auditEntries = await auditStore.listEntries(10);
     const cancelEntry = auditEntries.find(
       (e) => e.action === "scheduled_message_cancelled" && e.relatedEntity === m.id,
     );
@@ -211,7 +211,7 @@ describe("ScheduledMessageSweeper — precondition evaluation", () => {
     const result = await sweeper.sweep();
     expect(result.cancelled).toBe(1);
 
-    const auditEntries = await auditStore.listEntries({ limit: 10 });
+    const auditEntries = await auditStore.listEntries(10);
     const cancelEntry = auditEntries.find(
       (e) => e.relatedEntity === m.id,
     );

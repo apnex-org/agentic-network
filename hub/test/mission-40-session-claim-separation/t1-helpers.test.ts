@@ -26,8 +26,8 @@ import {
   type AssertIdentityPayload,
   type ClaimSessionTrigger,
 } from "../../src/state.js";
-import { AgentRepository } from "../../src/entities/agent-repository.js";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { AgentRepositorySubstrate as AgentRepository } from "../../src/entities/agent-repository-substrate.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 const CLIENT: AgentClientMetadata = {
   clientName: "claude-code",
@@ -52,7 +52,7 @@ function identityPayload(
 describe("M-Session-Claim-Separation T1 — assertIdentity (Memory)", () => {
   let reg: AgentRepository;
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
   });
 
   it("first-contact creates an Agent with sessionEpoch=0 and status=offline (no session bound)", async () => {
@@ -129,7 +129,7 @@ describe("M-Session-Claim-Separation T1 — claimSession (Memory)", () => {
   let reg: AgentRepository;
   let agentId: string;
   beforeEach(async () => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
     const id = await reg.assertIdentity(identityPayload("inst-A", "engineer"));
     if (!id.ok) throw new Error("setup failed");
     agentId = id.agentId;
@@ -171,7 +171,7 @@ describe("M-Session-Claim-Separation T1 — claimSession (Memory)", () => {
   it("trigger value preserved across all three legal values", async () => {
     const triggers: ClaimSessionTrigger[] = ["explicit", "sse_subscribe", "first_tool_call"];
     for (const trigger of triggers) {
-      const reg2 = new AgentRepository(new MemoryStorageProvider());
+      const reg2 = new AgentRepository(createMemoryStorageSubstrate());
       const id = await reg2.assertIdentity(identityPayload("inst-A", "engineer"));
       if (!id.ok) throw new Error("setup");
       const claim = await reg2.claimSession(id.agentId, `sess-${trigger}`, trigger);
@@ -195,7 +195,7 @@ describe("M-Session-Claim-Separation T1 — registerAgent external behavior pres
   // identical responses to the pre-T1 implementation.
   let reg: AgentRepository;
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
   });
 
   it("first-contact registerAgent returns sessionEpoch=1, wasCreated=true, status online", async () => {

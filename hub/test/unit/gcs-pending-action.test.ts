@@ -17,9 +17,9 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
-import { PendingActionRepository } from "../../src/entities/pending-action-repository.js";
-import { StorageBackedCounter } from "../../src/entities/counter.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
+import { PendingActionRepositorySubstrate as PendingActionRepository } from "../../src/entities/pending-action-repository-substrate.js";
+import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 
 describe("PendingActionRepository", () => {
   let provider: MemoryStorageProvider;
@@ -27,12 +27,12 @@ describe("PendingActionRepository", () => {
   function newStore(): PendingActionRepository {
     // Shared provider + counter so sibling store instances see the same
     // persisted state (the "Hub restart" equivalent).
-    const counter = new StorageBackedCounter(provider);
+    const counter = new SubstrateCounter(provider);
     return new PendingActionRepository(provider, counter);
   }
 
   beforeEach(() => {
-    provider = new MemoryStorageProvider();
+    provider = createMemoryStorageSubstrate();
   });
 
   it("enqueue persists item + counter; getById round-trips across a fresh store instance", async () => {

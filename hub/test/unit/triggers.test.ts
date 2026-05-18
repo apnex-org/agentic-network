@@ -15,9 +15,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
-import { MessageRepository } from "../../src/entities/message-repository.js";
+import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
 import { TRIGGERS, runTriggers } from "../../src/policy/triggers.js";
 import {
   DOWNSTREAM_ACTORS,
@@ -149,7 +149,7 @@ describe("shouldFireTrigger — gate evaluation per W3 trigger", () => {
 
 describe("runTriggers — emission semantics", () => {
   it("fires no triggers when (entity, from, to) doesn't match", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeStubCtx(messageStore);
     const result = await runTriggers(
       "task",
@@ -163,7 +163,7 @@ describe("runTriggers — emission semantics", () => {
   });
 
   it("fires the matching trigger and creates a Message", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeStubCtx(messageStore);
     const result = await runTriggers(
       "mission",
@@ -193,7 +193,7 @@ describe("runTriggers — emission semantics", () => {
   });
 
   it("mission active→completed fires director-targeted note", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeStubCtx(messageStore);
     const result = await runTriggers(
       "mission",
@@ -210,7 +210,7 @@ describe("runTriggers — emission semantics", () => {
   });
 
   it("review submitted fires engineer-targeted note", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeStubCtx(messageStore);
     const result = await runTriggers(
       "review",
@@ -236,7 +236,7 @@ describe("runTriggers — emission semantics", () => {
   });
 
   it("review without reportAuthorAgentId falls back to engineer-role-only target", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeStubCtx(messageStore);
     await runTriggers(
       "review",
@@ -257,7 +257,7 @@ describe("runTriggers — emission semantics", () => {
 
 describe("runTriggers — failure isolation (W3 best-effort emission)", () => {
   it("createMessage failure does NOT abort runTriggers (counts error + continues)", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     // Inject a transient failure on createMessage.
     const realCreate = messageStore.createMessage.bind(messageStore);
     let firstCalled = false;
@@ -291,7 +291,7 @@ describe("runTriggers — failure isolation (W3 best-effort emission)", () => {
     // verification, the registry's emitShape implementations all
     // return non-null for matching inputs; the path is exercised via
     // the multi-trigger composition test below.
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeStubCtx(messageStore);
     const result = await runTriggers(
       "mission",
@@ -307,7 +307,7 @@ describe("runTriggers — failure isolation (W3 best-effort emission)", () => {
 
 describe("runTriggers — multi-trigger composition (forward-compat)", () => {
   it("only the matching trigger fires; other triggers are not evaluated for unrelated transitions", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeStubCtx(messageStore);
     // mission proposed→active matches mission_activated only
     const result = await runTriggers(
@@ -329,7 +329,7 @@ describe("runTriggers — multi-trigger composition (forward-compat)", () => {
 
 describe("Skip-list invariant — idea/audit-entry/tele transitions", () => {
   it("idea entity type has no matching triggers (would fire 0)", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeStubCtx(messageStore);
     // entityType "idea" is not in the TRIGGERS entityType union;
     // runTriggers with that as a hypothetical would simply not match.

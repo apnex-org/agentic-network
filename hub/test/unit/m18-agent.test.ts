@@ -16,8 +16,8 @@ import {
   type RegisterAgentPayload,
   type AgentClientMetadata,
 } from "../../src/state.js";
-import { AgentRepository } from "../../src/entities/agent-repository.js";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { AgentRepositorySubstrate as AgentRepository } from "../../src/entities/agent-repository-substrate.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 const CLIENT: AgentClientMetadata = {
   clientName: "claude-code",
@@ -82,7 +82,7 @@ describe("M18 thrashing detector", () => {
 describe("AgentRepository.registerAgent", () => {
   let reg: AgentRepository;
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
   });
 
   it("first-contact creates a new Agent with epoch=1 and wasCreated=true", async () => {
@@ -206,7 +206,7 @@ describe("AgentRepository agent reaper (CP3 C4)", () => {
   let reg: AgentRepository;
   let provider: MemoryStorageProvider;
   beforeEach(() => {
-    provider = new MemoryStorageProvider();
+    provider = createMemoryStorageSubstrate();
     reg = new AgentRepository(provider);
   });
 
@@ -217,18 +217,17 @@ describe("AgentRepository agent reaper (CP3 C4)", () => {
     // Flip to offline and (optionally) rewind lastSeenAt to force a stale window.
     await reg.markAgentOffline(`sess-${instanceId}`);
     if (lastSeenIsoOverride) {
-      // Direct write into the storage provider for test fixtures — the
-      // public API has no "set lastSeenAt to an arbitrary past time"
-      // tool, which is fine: only the reaper cares about this, and the
-      // test is what proves the reaper's threshold math.
+      // Direct write into the substrate for test fixtures — the public
+      // API has no "set lastSeenAt to an arbitrary past time" tool, which
+      // is fine: only the reaper cares about this, and the test is what
+      // proves the reaper's threshold math. mission-84 W2: substrate-API
+      // replaces FS-provider path-based mutation (entity kind="Agent").
       const agent = await reg.getAgent(first.agentId);
       expect(agent).not.toBeNull();
-      const path = `agents/${first.agentId}.json`;
-      const raw = await provider.get(path);
-      if (!raw) throw new Error("agent blob not found in provider");
-      const blob = JSON.parse(new TextDecoder().decode(raw));
-      blob.lastSeenAt = lastSeenIsoOverride;
-      await provider.put(path, new TextEncoder().encode(JSON.stringify(blob, null, 2)));
+      const substrate = provider as unknown as { get: (kind: string, id: string) => Promise<unknown>; put: (kind: string, entity: unknown) => Promise<unknown> };
+      const entity = await substrate.get("Agent", first.agentId);
+      if (!entity) throw new Error("agent entity not found in substrate");
+      await substrate.put("Agent", { ...(entity as object), lastSeenAt: lastSeenIsoOverride });
     }
     return first.agentId;
   }

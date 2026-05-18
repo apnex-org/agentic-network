@@ -22,10 +22,10 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 import { shouldTouchAgent } from "../../src/hub-networking.js";
-import { AgentRepository } from "../../src/entities/agent-repository.js";
+import { AgentRepositorySubstrate as AgentRepository } from "../../src/entities/agent-repository-substrate.js";
 import { PolicyRouter } from "../../src/policy/router.js";
 import {
   computeComponentStates,
@@ -148,7 +148,7 @@ describe("bug-55 §2 — assertIdentity reconnect-refresh does NOT bump cognitiv
   let reg: AgentRepository;
 
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
     delete process.env.AGENT_TOUCH_MIN_INTERVAL_MS;
     delete process.env.PEER_PRESENCE_WINDOW_MS;
   });
@@ -184,7 +184,7 @@ describe("bug-55 §2 — claimSession does NOT bump cognitive-tier", () => {
   let reg: AgentRepository;
 
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
     delete process.env.AGENT_TOUCH_MIN_INTERVAL_MS;
     delete process.env.PEER_PRESENCE_WINDOW_MS;
   });
@@ -240,7 +240,7 @@ describe("bug-55 §3 — idle agent receiving only transport-tier traffic drifts
   let reg: AgentRepository;
 
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
     delete process.env.AGENT_TOUCH_MIN_INTERVAL_MS;
     delete process.env.PEER_PRESENCE_WINDOW_MS;
   });
@@ -263,13 +263,13 @@ describe("bug-55 §3 — idle agent receiving only transport-tier traffic drifts
     const back = await reg.getAgent(result.agentId);
     expect(back).not.toBeNull();
     const backdated = new Date(Date.now() - 90_000).toISOString();
-    // Direct provider write to backdate lastSeenAt — repository layer
+    // Direct substrate write to backdate lastSeenAt — repository layer
     // doesn't expose a backdating API (correct: backdating shouldn't be
-    // a normal mutation).
-    const provider = (reg as unknown as { provider: MemoryStorageProvider }).provider;
-    const path = `agents/${back!.id}.json`;
+    // a normal mutation). mission-84 W2: substrate-API replaces FS-provider
+    // path-based mutation; entity kind="Agent" id=<agentId>.
+    const substrate = (reg as unknown as { substrate: { put: (kind: string, entity: unknown) => Promise<unknown> } }).substrate;
     const stored = { ...back!, lastSeenAt: backdated };
-    await provider.put(path, new TextEncoder().encode(JSON.stringify(stored)));
+    await substrate.put("Agent", stored);
 
     // 3. fire transport-tier traffic during the drift window:
     //    refreshHeartbeat (the transport_heartbeat handler's effect) +
@@ -299,7 +299,7 @@ describe("bug-55 §4 — tools/call to llm-callable tier DOES bump cognitive-tie
   let reg: AgentRepository;
 
   beforeEach(() => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
     delete process.env.AGENT_TOUCH_MIN_INTERVAL_MS;
     delete process.env.PEER_PRESENCE_WINDOW_MS;
   });

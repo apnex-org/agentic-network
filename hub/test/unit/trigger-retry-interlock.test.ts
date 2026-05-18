@@ -10,9 +10,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
-import { MessageRepository } from "../../src/entities/message-repository.js";
+import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
 import { runTriggers, retryFailedTrigger, TRIGGERS } from "../../src/policy/triggers.js";
 import type { IPolicyContext } from "../../src/policy/types.js";
 
@@ -32,7 +32,7 @@ function makeCtx(messageStore: MessageRepository): IPolicyContext {
 
 describe("retryFailedTrigger — direct unit", () => {
   it("attempt 1: enqueues a scheduled-message with fireAt ~30s in the future", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore);
     const trigger = TRIGGERS.find((t) => t.name === "mission_activated")!;
     const before = Date.now();
@@ -58,7 +58,7 @@ describe("retryFailedTrigger — direct unit", () => {
   });
 
   it("attempt 2: enqueues with fireAt ~5min in the future", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore);
     const trigger = TRIGGERS.find((t) => t.name === "mission_activated")!;
     const before = Date.now();
@@ -81,7 +81,7 @@ describe("retryFailedTrigger — direct unit", () => {
   });
 
   it("attempt > maxRetries: gives up; no message enqueued", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore);
     const trigger = TRIGGERS.find((t) => t.name === "mission_activated")!;
 
@@ -97,7 +97,7 @@ describe("retryFailedTrigger — direct unit", () => {
   });
 
   it("retry-enqueue includes _retryContext metadata in payload", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     const ctx = makeCtx(messageStore);
     const trigger = TRIGGERS.find((t) => t.name === "mission_activated")!;
 
@@ -119,7 +119,7 @@ describe("retryFailedTrigger — direct unit", () => {
 
 describe("runTriggers integration — first-emission failure triggers retry", () => {
   it("createMessage failure on first emission → retry-enqueue (attempt 1)", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     // Inject failure on the FIRST createMessage call (the original
     // emission). The SECOND call (the retry-enqueue) succeeds.
     const realCreate = messageStore.createMessage.bind(messageStore);
@@ -153,7 +153,7 @@ describe("runTriggers integration — first-emission failure triggers retry", ()
   });
 
   it("createMessage failure on BOTH original emission AND retry-enqueue → log + give up (no infinite recursion)", async () => {
-    const messageStore = new MessageRepository(new MemoryStorageProvider());
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
     // Inject failure on EVERY createMessage call.
     (messageStore as unknown as { createMessage: () => Promise<never> }).createMessage = async () => {
       throw new Error("storage permanently down");

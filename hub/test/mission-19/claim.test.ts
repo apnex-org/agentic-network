@@ -10,9 +10,9 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { taskClaimableBy } from "../../src/state.js";
-import { TaskRepository } from "../../src/entities/task-repository.js";
-import { StorageBackedCounter } from "../../src/entities/counter.js";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { TaskRepositorySubstrate as TaskRepository } from "../../src/entities/task-repository-substrate.js";
+import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 describe("Mission-19 Claim — taskClaimableBy helper", () => {
   it("unlabeled task is claimable by anyone (even unlabeled claimant)", () => {
@@ -43,8 +43,8 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
   let store: TaskRepository;
 
   beforeEach(() => {
-    const provider = new MemoryStorageProvider();
-    const counter = new StorageBackedCounter(provider);
+    const provider = createMemoryStorageSubstrate();
+    const counter = new SubstrateCounter(provider);
     store = new TaskRepository(provider, counter);
   });
 

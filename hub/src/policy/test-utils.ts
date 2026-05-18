@@ -1,20 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type { IPolicyContext, AllStores, DomainEvent } from "./types.js";
-import { AgentRepository } from "../entities/agent-repository.js";
+import { AgentRepositorySubstrate } from "../entities/agent-repository-substrate.js";
 import type { Selector } from "../state.js";
-import { TaskRepository } from "../entities/task-repository.js";
-import { ProposalRepository } from "../entities/proposal-repository.js";
-import { ThreadRepository } from "../entities/thread-repository.js";
-import { IdeaRepository } from "../entities/idea-repository.js";
-import { MissionRepository } from "../entities/mission-repository.js";
-import { TurnRepository } from "../entities/turn-repository.js";
-import { TeleRepository } from "../entities/tele-repository.js";
-import { AuditRepository } from "../entities/audit-repository.js";
-import { StorageBackedCounter } from "../entities/counter.js";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
-import { BugRepository } from "../entities/bug-repository.js";
-import { MessageRepository } from "../entities/message-repository.js";
-import { PendingActionRepository } from "../entities/pending-action-repository.js";
+import { TaskRepositorySubstrate } from "../entities/task-repository-substrate.js";
+import { ProposalRepositorySubstrate } from "../entities/proposal-repository-substrate.js";
+import { ThreadRepositorySubstrate } from "../entities/thread-repository-substrate.js";
+import { IdeaRepositorySubstrate } from "../entities/idea-repository-substrate.js";
+import { MissionRepositorySubstrate } from "../entities/mission-repository-substrate.js";
+import { TurnRepositorySubstrate } from "../entities/turn-repository-substrate.js";
+import { TeleRepositorySubstrate } from "../entities/tele-repository-substrate.js";
+import { AuditRepositorySubstrate } from "../entities/audit-repository-substrate.js";
+import { SubstrateCounter } from "../entities/substrate-counter.js";
+import { createMemoryStorageSubstrate } from "../storage-substrate/index.js";
+import { BugRepositorySubstrate } from "../entities/bug-repository-substrate.js";
+import { MessageRepositorySubstrate } from "../entities/message-repository-substrate.js";
+import { PendingActionRepositorySubstrate } from "../entities/pending-action-repository-substrate.js";
 import { createMetricsCounter } from "../observability/metrics.js";
 
 interface EmittedEvent {
@@ -38,30 +38,29 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
   const emittedEvents: EmittedEvent[] = [];
   const dispatchedEvents: DispatchedEvent[] = [];
 
-  // Mission-47 W1-W5 + mission-56 W5: task/proposal/idea/mission/tele/bug
-  // are all *Repository classes over a fresh MemoryStorageProvider +
-  // StorageBackedCounter per test context — no state leakage between
-  // test cases. (DirectorNotification + Notification stores removed in
-  // mission-56 W5 cleanup; Director-targeted alerts now flow through
-  // the Message store via director-notification-helpers.ts.)
-  const storageProvider = new MemoryStorageProvider();
-  const storageCounter = new StorageBackedCounter(storageProvider);
-  const task = new TaskRepository(storageProvider, storageCounter);
-  const idea = new IdeaRepository(storageProvider, storageCounter);
-  const mission = new MissionRepository(storageProvider, storageCounter, task, idea);
+  // mission-84 W2: substrate-version repositories over fresh MemoryHubStorageSubstrate +
+  // SubstrateCounter per test context — no state leakage between test cases. Migrated from
+  // FS-version-repo + MemoryStorageProvider pattern (mission-47/mission-56 era) per Design
+  // v1.0 §2.1. SchemaDef pre-registration not required for memory-substrate (substrate-internal
+  // enforcement is postgres-only via reconciler indexes; memory put/get/list work kind-agnostic).
+  const substrate = createMemoryStorageSubstrate();
+  const counter = new SubstrateCounter(substrate);
+  const task = new TaskRepositorySubstrate(substrate, counter);
+  const idea = new IdeaRepositorySubstrate(substrate, counter);
+  const mission = new MissionRepositorySubstrate(substrate, counter, task, idea);
   const stores: AllStores = {
     task,
-    engineerRegistry: new AgentRepository(storageProvider),
-    proposal: new ProposalRepository(storageProvider, storageCounter),
-    thread: new ThreadRepository(storageProvider, storageCounter),
-    audit: new AuditRepository(storageProvider, storageCounter),
+    engineerRegistry: new AgentRepositorySubstrate(substrate),
+    proposal: new ProposalRepositorySubstrate(substrate, counter),
+    thread: new ThreadRepositorySubstrate(substrate, counter),
+    audit: new AuditRepositorySubstrate(substrate, counter),
     idea,
     mission,
-    turn: new TurnRepository(storageProvider, storageCounter, mission, task),
-    tele: new TeleRepository(storageProvider, storageCounter),
-    bug: new BugRepository(storageProvider, storageCounter),
-    pendingAction: new PendingActionRepository(storageProvider, storageCounter),
-    message: new MessageRepository(storageProvider),
+    turn: new TurnRepositorySubstrate(substrate, counter, mission, task),
+    tele: new TeleRepositorySubstrate(substrate, counter),
+    bug: new BugRepositorySubstrate(substrate, counter),
+    pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
+    message: new MessageRepositorySubstrate(substrate),
   };
 
   return {

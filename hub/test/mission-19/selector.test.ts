@@ -15,8 +15,8 @@ import {
   type AgentLabels,
   type AgentRole,
 } from "../../src/state.js";
-import { AgentRepository } from "../../src/entities/agent-repository.js";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { AgentRepositorySubstrate as AgentRepository } from "../../src/entities/agent-repository-substrate.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 const CLIENT: AgentClientMetadata = {
   clientName: "claude-code",
@@ -63,7 +63,7 @@ describe("Mission-19 Selector — selectAgents", () => {
   let reg: AgentRepository;
 
   beforeEach(async () => {
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
     // Three agents with varied roles and labels.
     await reg.registerAgent("sess-eng-a", "engineer",
       makePayload("inst-eng-a", "engineer", { team: "platform", env: "prod" }));
@@ -224,7 +224,7 @@ describe("Mission-19 Selector — bug-56 transport-tier presence projection (pos
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-25T00:00:00.000Z"));
-    reg = new AgentRepository(new MemoryStorageProvider());
+    reg = new AgentRepository(createMemoryStorageSubstrate());
     await reg.registerAgent("sess-eng", "engineer",
       makePayload("inst-eng", "engineer", { env: "prod" }));
   });

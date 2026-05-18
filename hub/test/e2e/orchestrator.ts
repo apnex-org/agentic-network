@@ -32,20 +32,20 @@ import {
   registerMessagePolicy,
 } from "../../src/policy/index.js";
 import type { AllStores, IPolicyContext, PolicyResult } from "../../src/policy/types.js";
-import { AgentRepository } from "../../src/entities/agent-repository.js";
-import { TaskRepository } from "../../src/entities/task-repository.js";
-import { ProposalRepository } from "../../src/entities/proposal-repository.js";
-import { ThreadRepository } from "../../src/entities/thread-repository.js";
-import { IdeaRepository } from "../../src/entities/idea-repository.js";
-import { MissionRepository } from "../../src/entities/mission-repository.js";
-import { TurnRepository } from "../../src/entities/turn-repository.js";
-import { TeleRepository } from "../../src/entities/tele-repository.js";
-import { AuditRepository } from "../../src/entities/audit-repository.js";
-import { StorageBackedCounter } from "../../src/entities/counter.js";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
-import { BugRepository } from "../../src/entities/bug-repository.js";
-import { PendingActionRepository } from "../../src/entities/pending-action-repository.js";
-import { MessageRepository } from "../../src/entities/message-repository.js";
+import { AgentRepositorySubstrate as AgentRepository } from "../../src/entities/agent-repository-substrate.js";
+import { TaskRepositorySubstrate as TaskRepository } from "../../src/entities/task-repository-substrate.js";
+import { ProposalRepositorySubstrate as ProposalRepository } from "../../src/entities/proposal-repository-substrate.js";
+import { ThreadRepositorySubstrate as ThreadRepository } from "../../src/entities/thread-repository-substrate.js";
+import { IdeaRepositorySubstrate as IdeaRepository } from "../../src/entities/idea-repository-substrate.js";
+import { MissionRepositorySubstrate as MissionRepository } from "../../src/entities/mission-repository-substrate.js";
+import { TurnRepositorySubstrate as TurnRepository } from "../../src/entities/turn-repository-substrate.js";
+import { TeleRepositorySubstrate as TeleRepository } from "../../src/entities/tele-repository-substrate.js";
+import { AuditRepositorySubstrate as AuditRepository } from "../../src/entities/audit-repository-substrate.js";
+import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
+import { BugRepositorySubstrate as BugRepository } from "../../src/entities/bug-repository-substrate.js";
+import { PendingActionRepositorySubstrate as PendingActionRepository } from "../../src/entities/pending-action-repository-substrate.js";
+import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
 import { createMetricsCounter, type MetricsCounter } from "../../src/observability/metrics.js";
 
 // ── Captured Event ──────────────────────────────────────────────────
@@ -494,8 +494,8 @@ export class TestOrchestrator {
     // a fresh MemoryStorageProvider. (DirectorNotification + Notification
     // stores removed in mission-56 W5 cleanup; alerts now flow through
     // the Message store.)
-    const storageProvider = new MemoryStorageProvider();
-    const storageCounter = new StorageBackedCounter(storageProvider);
+    const storageProvider = createMemoryStorageSubstrate();
+    const storageCounter = new SubstrateCounter(storageProvider);
     const task = new TaskRepository(storageProvider, storageCounter);
     const idea = new IdeaRepository(storageProvider, storageCounter);
     const mission = new MissionRepository(storageProvider, storageCounter, task, idea);

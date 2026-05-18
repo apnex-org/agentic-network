@@ -8,11 +8,11 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
-import { ThreadRepository } from "../../src/entities/thread-repository.js";
-import { TaskRepository } from "../../src/entities/task-repository.js";
-import { StorageBackedCounter } from "../../src/entities/counter.js";
+import { ThreadRepositorySubstrate as ThreadRepository } from "../../src/entities/thread-repository-substrate.js";
+import { TaskRepositorySubstrate as TaskRepository } from "../../src/entities/task-repository-substrate.js";
+import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import {
   PRECONDITIONS,
   evaluatePrecondition,
@@ -24,8 +24,8 @@ async function makeCtx(): Promise<{
   threadStore: ThreadRepository;
   taskStore: TaskRepository;
 }> {
-  const provider = new MemoryStorageProvider();
-  const counter = new StorageBackedCounter(provider);
+  const provider = createMemoryStorageSubstrate();
+  const counter = new SubstrateCounter(provider);
   const threadStore = new ThreadRepository(provider, counter);
   const taskStore = new TaskRepository(provider, counter);
   const ctx: IPolicyContext = {

@@ -8,13 +8,13 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MemoryStorageProvider } from "@apnex/storage-provider";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
-import { MessageRepository } from "../../src/entities/message-repository.js";
+import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
 import type { CreateMessageInput } from "../../src/entities/message.js";
 
 function newRepo(): MessageRepository {
-  return new MessageRepository(new MemoryStorageProvider());
+  return new MessageRepository(createMemoryStorageSubstrate());
 }
 
 const baseInput: CreateMessageInput = {

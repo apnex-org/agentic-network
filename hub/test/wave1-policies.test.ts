@@ -15,22 +15,18 @@ import type { IPolicyContext } from "../src/policy/types.js";
 
 const noop = () => {};
 
-// Mission-47 W7b: the legacy `MemoryEngineerRegistry.agents` Map was
-// replaced by a StorageProvider-backed AgentRepository. Test fixtures
-// that previously mutated `reg.agents.get(eid).<field>` now read-modify-
-// write the `agents/<eid>.json` blob through the internal provider.
+// Mission-47 W7b → mission-84 W2: test fixture mutates Agent entity directly
+// via substrate primitives (was StorageProvider-backed `agents/<eid>.json` blob;
+// now HubStorageSubstrate entity at kind="Agent" id=<agentId>).
 async function mutateAgentBlob(
   reg: any,
   agentId: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
-  const provider = reg.provider;
-  const path = `agents/${agentId}.json`;
-  const raw = await provider.get(path);
-  if (!raw) throw new Error(`agent blob not found for ${agentId}`);
-  const blob = JSON.parse(new TextDecoder().decode(raw));
-  Object.assign(blob, patch);
-  await provider.put(path, new TextEncoder().encode(JSON.stringify(blob, null, 2)));
+  const substrate = reg.substrate;
+  const entity = await substrate.get("Agent", agentId);
+  if (!entity) throw new Error(`agent entity not found for ${agentId}`);
+  await substrate.put("Agent", { ...entity, ...patch });
 }
 
 // ── Tele Policy ─────────────────────────────────────────────────────
