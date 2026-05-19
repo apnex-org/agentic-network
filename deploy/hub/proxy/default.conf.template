@@ -1,0 +1,36 @@
+# nginx ingress proxy for the OIS Hub — Cloud Run service hub-api
+# mission-86 M-Hub-Storage-Cloud-Deploy, Design §4.15
+#
+# TLS terminates upstream at Cloud Run (*.run.app, auto-managed). This is a
+# plain-HTTP reverse proxy that forwards to the internal-only Hub VM over
+# Direct VPC Egress. ${HUB_VM_INTERNAL_IP} is substituted at container start
+# by the stock nginx template mechanism (/etc/nginx/templates → envsubst),
+# from the env var set on the Cloud Run service by Terraform.
+
+upstream hub_backend {
+    server ${HUB_VM_INTERNAL_IP}:8080;
+}
+
+server {
+    listen 8080;
+
+    # Cloud Run health probe — no auth, no access log.
+    location = /health {
+        proxy_pass http://hub_backend/health;
+        access_log off;
+    }
+
+    # All other paths → Hub. The Authorization: Bearer header passes
+    # through transparently; bearer-token auth is enforced at the Hub (W3).
+    location / {
+        proxy_pass http://hub_backend;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+
+        # MCP keepalive — long-lived streaming calls.
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}

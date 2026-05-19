@@ -49,3 +49,36 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   - **F3** (reconcile): architect-thread "W0 = validate + plan only" vs Design AG-W0.4/.5/.7
     requiring real non-VM GCP creation (tfstate bucket + 2 SAs + nginx image build/push).
 - W0 skeleton authoring HELD pending F1 layout disposition (determines every file path).
+
+### 2026-05-20 — architect dispositioned F1/F2/F3; W0 authoring decisions
+
+- Architect CONCUR all 3 findings; Design v1.1 RATIFIED at `0715410` (§4.1 rewrite + §5 W0 refresh).
+  - F1(a): integrate as new plan within `deploy/` (reuse `deploy/base/`); parallel `infra/terraform/` REJECTED.
+  - F1(b): retire dead Hub-on-Cloud-Run block in `deploy/cloudrun/` → new **AG-W0.8**.
+  - F2: Hub image → existing `cloud-run-source-deploy` repo; nginx-proxy image repo engineer-decidable.
+  - F3: "no production touch" = "no VM + nothing serving prod traffic"; W0 includes non-VM GCP mutations.
+- W0 net scope (v1.1): 8 AG-W0 verifiers; new `deploy/hub/` plan + nginx-proxy image + `cloudbuild.yaml`
+  + GCS backup-bucket + Cloud Build trigger (manual-only) + dead-block retirement.
+- **Engineer W0-authoring decisions (engineer-decidable per §4.1 v1.1 latitude; documented for PR review):**
+  - D1 plan dir = `deploy/hub/`
+  - D2 file split = main/variables/outputs + network/compute/cloudrun/iam/storage/cloudbuild `.tf`
+  - D3 state backend = `backend "gcs"` (bucket `labops-389703-tfstate`, prefix `hub`); per AG-W0.4.
+    Diverges from base/cloudrun local-state (F5) — production IaC should not keep state on the operator
+    laptop; recommend base/cloudrun GCS-migration as a follow-on idea.
+  - D4 foundation reuse = `deploy/hub/` is self-contained (own dedicated SAs per OQ-14; own VPC). The
+    only base-shared resource is the Artifact Registry repo, referenced by name as a variable — NO
+    `terraform_remote_state` coupling (F6: base local-state is not present in every checkout). Deviates
+    from AG-W0.2 "consumed via remote-state" wording.
+  - D5 nginx-proxy image = `cloud-run-source-deploy/hub-proxy:latest` (no new AR repo).
+  - D6 nginx-proxy image source = `deploy/hub/proxy/` (colocated with the plan).
+  - D7 AG-W0.8 = remove Hub service block + IAM + outputs + hub-* vars from `deploy/cloudrun/`; rewire
+    Architect block `MCP_HUB_URL` to a var + drop `depends_on` Hub (minimal-scope; the also-dead
+    Architect-on-Cloud-Run block left in place — recommend whole-app-tier retirement as a follow-on).
+- F4/F5/F6 = same architect-spec-drift calibration pattern (3rd/4th instances); all engineer-decidable
+  per §4.1 latitude — proceeding + documenting for W0-PR review (no pre-author round-2 halt per
+  `feedback_bilateral_audit_round_budget_discipline`).
+
+### 2026-05-20 — W0 authoring in flight
+
+- `deploy/hub/main.tf` + `variables.tf` authored (plan core: GCS backend, provider, API-enablement, image-ref locals).
+- `deploy/hub/proxy/default.conf.template` + `Dockerfile` authored (nginx ingress-proxy image source per §4.15).
