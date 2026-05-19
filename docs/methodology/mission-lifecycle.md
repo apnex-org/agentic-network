@@ -128,23 +128,20 @@ Standard RACI semantics: **R**esponsible (does the work) / **A**ccountable (fina
 
 **Calibration #57 origin** (mission-66 W1+W2; 2026-04-29): live observation of routing-rule failure mode — engineer in auto-mode-OFF + "ask Director when ambiguous" defaulted to Director-direct routing; architect-relayed Director directive triggered extra confirm-loop; required Director engaging engineer-session directly with explicit durable directive. Codified here per Director-ratified option-(B) closure path (methodology-doc + CLAUDE.md directive).
 
-#### §1.5.1.1 Commit-push thread-heartbeat mechanization (mission-68 W1 closure of #55)
+#### §1.5.1.1 Commit-push thread-heartbeat mechanization (mission-68 W1 closure of #55; mission-85 retirement of Layer (c))
 
-**3-layer engineer-cadence-discipline mechanization** ratified by mission-68 W1 (Design v1.0 §6 Q4d). Closes calibration #55 (engineer-cadence-discipline anti-pattern; silent between-commit pause). Composes belt + suspenders + braces:
+**2-layer engineer-cadence-discipline mechanization** (post mission-85 retirement of Layer (c)). Closes calibration #55 (engineer-cadence-discipline anti-pattern; silent between-commit pause). Composes methodology-discipline + adapter-side automation:
 
 | Layer | Mechanism | Substrate | Path |
 |---|---|---|---|
-| (a) | Methodology-doc fold | This subsection + `engineer-runtime.md` row addition | Cold-pickup awareness |
-| (b) | Adapter-side commit-push hook | `adapters/claude-plugin/src/shim.ts` Bash-tool-result post-process; pattern `^git\s+push\b` + exit-code success + commit-pushed shape match (output contains `→` or `[new branch]`) | Engineer-side automation |
-| (c) | Hub-side commit-pushed handler | `hub/src/policy/repo-event-handlers.ts` registry + `repo-event-commit-pushed-handler.ts`; consumes `packages/repo-event-bridge/` (mission-52) `commit-pushed` subkind events; emits `kind=note + target.role=architect` synthesized notification | Cross-party visibility |
+| (a) | Methodology-doc fold | This subsection + `engineer-runtime.md` row | Cold-pickup awareness |
+| (b) | Adapter-side commit-push hook | `adapters/claude-plugin/src/commit-push-hook.ts` Bash-tool-result post-process; pattern `^git\s+push\b` + exit-code success + commit-pushed shape match (output contains `→` or `[new branch]`); emits NDJSON observability event | Engineer-side automation |
 
-**Failure-resilience hierarchy** (mission-68 §6.4 M8 fold): **Layer (c) is the load-bearing failure-resilient layer** — Hub bridge runs in-Hub-process (RepoEventBridge already integrated; failure-isolated); polls GitHub API directly; works regardless of adapter state. Layers (a) + (b) compose as defense-in-depth — adapter offline + engineer skips docs would still leave (c) intact. Worst-case partial-failure (Hub bridge stopped + adapter offline) leaves only (a); engineer-side discipline becomes load-bearing in that degenerate scenario.
+**Layer (c) RETIRED post-mission-85** (CROSS-LAYER IDENTITY EXTRACTION calibration; bug-98 wontfix). Original 3-layer design's Hub-side `commit-pushed-handler` attempted to map `PushEvent.actor.login` (GitHub credential-identity at operator-machine layer) → individual agent role (Hub-context layer) — layer-inverted attribution; structurally unresolvable at handler layer (GitHub /events API PushEvent has empty `commits[]`; per-identity credentials would force System 3 multi-shape violating missioncraft-credential-inheritance intent). See `docs/designs/m-commit-pushed-handler-retirement-design.md` for full architectural rationale.
 
-**Two-message-intent rationale** (mission-68 §2.4 M1 fold): bridge's `target: null + kind=external-injection` broadcast (substrate-grade event signal) and synthesized `kind=note + target.role=architect` note (engineer-cadence-discipline derivative) serve TWO consumer concerns by-design. Architect-role subscribers receive both; duplication intentional.
+**Failure-resilience hierarchy** (post mission-85): Layer (b) adapter hook is engineer-side observability + Layer (a) methodology discipline ensures cognitive-cycle awareness. Architect-side PR-review-readiness signal is achieved via **engineer-thread-explicit-surface on coord-thread** (operational discipline; empirically proven across mission-84 6-PR cycle + bug-99/100/101 cycle). Engineer surfaces PR-URL + commit-SHA + AG-verifier outcomes on the active coord-thread when ready for architect cross-approval; no Hub-side handler needed.
 
-**AG-7 anti-goal** (mission-68 §10.1 M7 transparency-flag): architect-pushes-to-engineer direction NOT in scope this mission — composes with idea-227 hook design symmetric coverage scope. The commit-pushed handler emits ONLY for engineer-pushes; architect-push events are suppressed at the handler level.
-
-**Cross-party authorship resolution** (mission-68 §2.2 + C4 + P2 fold): commit author identity resolves via `lookupRoleByGhLogin` primitive consulting Agent label `ois.io/github/login` (forward-compat namespace; supports `ois.io/gitlab/login` etc. for future identity providers). Adapter populates label at `register_role` handshake (reads `OIS_GH_LOGIN` env or resolves via git config). Missing label or no-match → log + skip (non-fatal; preserves bridge broadcast).
+**Cross-party authorship resolution** (post-retirement): role-identity belongs at Hub-context layer where it already lives (Agent `ois.io/github/login` label populated at register_role handshake from `OIS_GH_LOGIN` env or git config). Engineer's identity in any architect-relevant signal is engineer-asserted on coord-thread, not extracted from credential-layer artifacts.
 
 ---
 

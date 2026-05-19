@@ -8,10 +8,10 @@
  *   - workflow-run-dispatched  (event=workflow_dispatch; manual trigger)
  *   - workflow-run-in-progress (status=queued|in_progress; default-filtered)
  *
- * Per F2 fold: mirrors `commit-pushed-handler` shape (build MessageDispatch
- * directly), NOT `pr-*-handler` shape — workflow_run is a SYSTEM notification
- * (sourceClass="System-Workflow"); `actor.login` is typically the GitHub
- * Actions service account, not bilateral-routable to engineer/architect role.
+ * Per F2 fold: handler builds MessageDispatch directly (NOT pr-*-handler
+ * shape) — workflow_run is a SYSTEM notification (sourceClass="System-
+ * Workflow"); `actor.login` is typically the GitHub Actions service
+ * account, not bilateral-routable to engineer/architect role.
  *
  * Per F3 fold: per-conclusion event-name split lets the filter-list predicate
  * key cleanly on (event-name, data.workflow_name, data.conclusion).
@@ -20,9 +20,9 @@
  * the dispatched payload — composes-with idea-256 build-info for "what code
  * is currently deployed" diagnostics.
  *
- * Notification target is `null` (broadcast) per the same external-injection
- * convention used by commit-pushed-handler — adapter-layer routing decides
- * which agents see this; no per-handler role-targeting.
+ * Notification target is `null` (broadcast) per external-injection convention;
+ * adapter-layer routing decides which agents see this; no per-handler
+ * role-targeting.
  */
 
 import type { Message } from "../entities/index.js";

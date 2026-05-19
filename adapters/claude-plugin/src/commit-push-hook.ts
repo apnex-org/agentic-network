@@ -1,7 +1,7 @@
 /**
  * commit-push-hook.ts — adapter-side commit-push detection (Layer (b) of
- * the mission-68 W1 + W2 3-layer engineer-cadence-discipline mechanization
- * stack; closes calibration #55 Layer (b) belt).
+ * the mission-68 W1 + W2 engineer-cadence-discipline mechanization stack;
+ * closes calibration #55 Layer (b) belt).
  *
  * Per Design v1.0 §6.2 + engineer P4 ratification: Bash tool result
  * post-process detection — pattern `^git\s+push\b` + exit-code success +
@@ -20,15 +20,19 @@
  * isolation; emission stays loose-coupled to the shim runtime via the
  * shared events-file NDJSON contract.
  *
- * Two-layer relationship to mission-68 W1 hub-side handler:
+ * Layer-stack post-mission-85 retirement:
+ * - Layer (a) [methodology doc]: `docs/methodology/mission-lifecycle.md
+ *   §1.5.1.1` codifies the commit-push thread-heartbeat engineer-cadence
+ *   discipline.
  * - Layer (b) [this module]: engineer-side automation; emits observability
- *   event the engineer can observe locally. Defense-in-depth alongside
- *   Layer (c) Hub-side commit-pushed handler (which routes architect-side
- *   notification independently via the RepoEventBridge → repo-event-handlers
- *   substrate).
- * - Layer (c) [Hub-side; W1]: load-bearing failure-resilient layer per
- *   Design §6.4 M8 fold. Runs in-Hub-process; works regardless of adapter
- *   state. This adapter hook is BELT, not BRACES.
+ *   event the engineer can observe locally. Operational discipline; engineer
+ *   reads NDJSON output during cognitive cycle.
+ *
+ * Architect-side PR-review-readiness signal is via engineer-thread-explicit-
+ * surface on coord-thread (operational per mission-84 6-PR cycle); Layer (c)
+ * Hub-side commit-pushed handler RETIRED per mission-85 (CROSS-LAYER IDENTITY
+ * EXTRACTION calibration; bug-98 wontfix; see
+ * `docs/designs/m-commit-pushed-handler-retirement-design.md`).
  */
 
 // ── Pure detection ────────────────────────────────────────────────────

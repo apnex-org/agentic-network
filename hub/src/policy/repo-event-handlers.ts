@@ -45,7 +45,6 @@
 import type { Message } from "../entities/index.js";
 import type { IPolicyContext } from "./types.js";
 import type { RepoEventSubkind } from "@apnex/repo-event-bridge";
-import { COMMIT_PUSHED_HANDLER } from "./repo-event-commit-pushed-handler.js";
 import { PR_OPENED_HANDLER } from "./repo-event-pr-opened-handler.js";
 import { PR_MERGED_HANDLER } from "./repo-event-pr-merged-handler.js";
 import { PR_REVIEW_SUBMITTED_HANDLER } from "./repo-event-pr-review-submitted-handler.js";
@@ -97,23 +96,28 @@ export interface RepoEventHandler {
 }
 
 /**
- * Registered repo-event handlers. mission-68 W1 shipped commit-pushed;
- * mission-76 W1 adds 3 PR-event handlers per bug-46 closure (pr-opened,
- * pr-merged, pr-review-submitted); bug-51 adds pr-review-approved (closes
- * mission-76 §3.1.1 + §8 AG-2 carve-out — original "redundant with
- * pr-review-submitted" rationale was factually incorrect; translator
- * routes approved reviews to a separate subkind that pr-review-submitted
- * never sees, so approval was being silently dropped).
+ * Registered repo-event handlers. mission-76 W1 adds 3 PR-event handlers
+ * per bug-46 closure (pr-opened, pr-merged, pr-review-submitted); bug-51
+ * adds pr-review-approved (closes mission-76 §3.1.1 + §8 AG-2 carve-out —
+ * original "redundant with pr-review-submitted" rationale was factually
+ * incorrect; translator routes approved reviews to a separate subkind
+ * that pr-review-submitted never sees, so approval was being silently
+ * dropped).
  *
- * Net coverage: 5 of 8 RepoEventSubkind values per Design v1.0 §3.1.1
- * (4 of 8 post mission-76; +1 post bug-51 closing the design-rationale-
- * incorrect carve-out for pr-review-approved). 2 carved-out per idea-250
- * (pr-closed + pr-review-comment) with documented promotion triggers;
- * pr-review-approved removed from carve-out list per bug-51 closure. 1
- * unknown intentional fallback.
+ * mission-85 retires COMMIT_PUSHED_HANDLER (mission-68 W1 origin) per
+ * CROSS-LAYER IDENTITY EXTRACTION calibration; bug-98 wontfix. Replacement
+ * for architect-side PR-review-readiness signal is engineer-thread-
+ * explicit-surface on coord-thread (operational per mission-84 6-PR
+ * cycle). See `docs/designs/m-commit-pushed-handler-retirement-design.md`.
+ *
+ * Net coverage: 4 of 8 RepoEventSubkind values post mission-85 retirement
+ * (4 PR-event handlers + 3 workflow-run handlers). commit-pushed events
+ * still flow through bridge but dispatch to no registered handler (silent
+ * skip is intentional per retirement). 2 carved-out per idea-250 (pr-closed
+ * + pr-review-comment) with documented promotion triggers. 1 unknown
+ * intentional fallback.
  */
 export const REPO_EVENT_HANDLERS: readonly RepoEventHandler[] = [
-  COMMIT_PUSHED_HANDLER,
   PR_OPENED_HANDLER,
   PR_MERGED_HANDLER,
   PR_REVIEW_SUBMITTED_HANDLER,
