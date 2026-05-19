@@ -122,3 +122,20 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   - W0.7 `hub-vm-sa` + `cloudrun-proxy-sa` created; `hub-vm-sa` carries all 4 declared roles
   - W0.8 `deploy/cloudrun/` validates clean; 0 Hub Cloud Run blocks remain
 - W0 authoring complete (8 commits); opening W0 PR + surfacing on thread-592.
+
+### 2026-05-20 — W0 MERGED; W1 issued
+
+- W0 PR #219 cross-approved + admin-squash-merged → `main @ 8454352`. F4/F5/F6 all architect-signed-off.
+  W1 branch `agent-greg/mission-86-w1` cut off `origin/main @ 8454352`.
+- 2 `deploy/`-IaC-hygiene follow-on candidates noted by architect for mission-86 Phase 10 filing
+  (whole dead Cloud-Run app-tier retirement; base/cloudrun GCS-state migration).
+- **W1 ISSUED** — VM + docker-compose + Cloud Run nginx + cold-boot (AG-W1.1–W1.11). W1 = full
+  `terraform apply` of the W0-authored `deploy/hub/` plan. Dry-run `terraform plan`: **21 to add**
+  — VPC + subnet + 2 firewalls + internal-only VM + static IP + PD-20GB + Cloud Run `hub-api` +
+  Cloud Build trigger + 11 API enablements; 0 errors. Dispositive verifier AG-W1.4: end-to-end
+  `curl https://hub-api-<hash>.a.run.app/health` → 200.
+- **W1 operator-prerequisite:** the Cloud Build GitHub App must be connected to
+  `apnex-org/agentic-network` (Cloud Console, one-time) before the `hub-image-cd` trigger can
+  apply. Architect contingency: apply everything-except-trigger; sequence the trigger W1-tail.
+- W1 `terraform apply` provisions real standing production infra (~$20/mo) — checkpointing with
+  the operator before apply (prior-turn commitment + the operator-only GitHub-App prerequisite).
