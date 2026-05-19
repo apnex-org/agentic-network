@@ -2661,6 +2661,164 @@ calibrations:
     tele_alignment:
       - tele-2
 
+  - id: 77
+    class: substrate
+    title: "Cluster #23 substrate-currency-failure (repo-event-bridge ephemeral-persistence in substrate-mode-production); architecturally closed at mission-84 W3"
+    origin: mission-84-W3
+    surfaced_at: mission-84 Phase 3 Survey §calibration via Director-Round-2-clarifying-question grep-walk 2026-05-17 (Q4 "help me understand repo-event-bridge dependency on storage"); architect-side grep-verify revealed cluster #23 defect at hub/src/index.ts:163 MemoryStorageProvider sentinel passed to RepoEventBridge at line ~840
+    status: closed-structurally
+    closure_mechanism: |
+      23rd cluster-member of substrate-currency-failure pattern (lineage from
+      mission-83 retro: 16 architect-side + 6 engineer-side + cluster #24
+      cross-mission-completeness-verification at PR #205). Defect: in substrate-
+      mode-production (post mission-83 W5.4-Hub-bootstrap-flip), hub/src/index.ts
+      instantiated MemoryStorageProvider as "sentinel for type-safety", then
+      passed it to RepoEventBridge — the sentinel wasn't benign; repo-event-
+      bridge USED it for cursor + dedupe persistence → ephemeral persistence
+      lost on Hub restart → cursor-store.ts "Survives Hub restart" commitment
+      violated.
+
+      Diagnostic signature: type-system happy-path (TypeScript-satisfied
+      sentinel) but runtime-semantic-broken (Hub restart loses cursor state).
+      Surfaced via Director-Round-2-clarifying-question grep-walk during
+      Phase 3 Survey ("help me understand repo-event-bridge dependency on
+      storage; do we still need an abstraction interface?") triggering
+      architect-side grep-verify discipline per substrate-currency-audit-rubric
+      ARCHITECT-SIDE EXTENSION. Latent ~10 days post mission-83 W5.4 cutover.
+
+      Closure: mission-84 W3 (PR #211 merged at ef36b79c 2026-05-18) —
+      RepoEventBridgeSubstrateAdapter wraps PostgresHubStorageSubstrate; 2 new
+      minimal-SchemaDefs (RepoEventBridgeCursor + RepoEventBridgeDedupe;
+      watchable: false; SchemaDef inventory 20→22); hub/src/index.ts:840 wire-
+      up swaps from MemoryStorageProvider sentinel to PostgresHubStorageSubstrate
+      via adapter; cursor + dedupe now persist across Hub restart in substrate-
+      mode-production.
+
+      Dispositive evidence: hub/test/integration/cluster-23-cursor-restart-
+      safety.test.ts (191 lines; 4/4 PASS in 5.26s) — in-process Hub-restart-
+      simulation primary path; docker-restart smoke deferred to operator-
+      runbook per W1 testcontainers-amplification discipline.
+
+      Director-direct "Update ledger" disposition 2026-05-18 ratified ledger-
+      filing at PR-merge-gate per architect-Director-bilateral path.
+
+      Positive-pattern side-effect: Director-Round-2-clarifying-question pattern
+      itself codified as substrate-currency-audit-surface (separate Phase 10
+      retro candidate; not yet filed as numbered calibration; methodology-
+      evolution candidate).
+    closure_pr: 211
+    cross_refs:
+      - feedback_substrate_currency_audit_rubric.md ARCHITECT-SIDE EXTENSION (parent discipline; this calibration is 23rd cluster-member)
+      - mission-83 retrospective (22-instance bilateral substrate-currency-failure cluster lineage; PR #205 cluster #24 cross-mission-completeness-verification)
+      - mission-84 Phase 3 Survey envelope §calibration (surfacing-via-Director-Round-2-clarifying-question pattern)
+      - docs/designs/m-hub-storage-fs-retirement-and-memoryhubstoragesubstrate-design.md §2.3 + §2.4 (closure architecture)
+      - PR #211 (ef36b79c; closure ship-commit)
+      - hub/test/integration/cluster-23-cursor-restart-safety.test.ts (dispositive evidence)
+      - mission-83 W5.4 Hub-bootstrap-flip (defect introduction window; substrate-mode-production cutover)
+    tele_alignment:
+      - tele-3
+      - tele-8
+
+  - id: 78
+    class: methodology
+    title: "CROSS-LAYER IDENTITY EXTRACTION — architectural-overreach pattern: mechanism design conflates credential-identity with role-identity; retirement-disposition rubric"
+    origin: mission-85
+    surfaced_at: bug-98 architect-Director-engineer triage thread-587 (10 rounds) 2026-05-19 — Option W "retire subsystem" disposition ratified after fix-attempt iterations (X commit-author parse / Y per-identity credentials / Z architect target.agentId resolution) all failed to preserve original intent; missioncraft v5 architectural-intent reference (sibling-repo `/home/apnex/taceng/missioncraft/src/missioncraft-sdk/core/principal-resolution.ts` 4-step precedence chain) confirmed single-credential at operator-machine layer is correct architectural shape
+    status: closed-structurally
+    closure_mechanism: |
+      Pattern signature: a mechanism is designed to map data at one
+      attribution-layer (e.g., credential-identity at operator-machine layer)
+      into a different attribution-layer (e.g., role-identity at Hub-context
+      layer). The mechanism appears to work in the trivial case but breaks
+      structurally when the source-layer's multiplicity doesn't match the
+      target-layer's multiplicity. Fix-iterations cannot resolve via mechanism
+      tuning; only via mechanism retirement.
+
+      Instance (mission-85 / bug-98): commit-pushed-handler subsystem
+      (mission-68 W1; docs/methodology/mission-lifecycle.md §1.5.1.1
+      pre-retirement Layer (c)) attempted to map `PushEvent.actor.login`
+      (GitHub credential-identity; singular at operator-machine layer per
+      shared `apnex` org-credential) → individual agent role (Hub-context
+      role-identity; multi). 4-identity-system analysis showed 3 of 4 systems
+      (Hub agent label `ois.io/github/login` + git config user.email +
+      missioncraft principal-id) already correctly individually-attributed;
+      only GitHub credential (System 3) is necessarily singular at machine
+      layer. The architectural error was attempting to extract
+      role-identity FROM credential-identity — layer-inverted attribution.
+
+      Diagnostic test (3-question rubric for disposing layer-extraction
+      mechanisms):
+        Q1 — Does the data-shape required by the fix exist in the upstream
+             API response?
+             (mission-85: Option X commit-author parse — NO; GitHub /events
+             API PushEvent returns commits[]=0 items; data not available)
+        Q2 — Does the alternative require duplicating already-aligned
+             identity systems?
+             (mission-85: Option Y per-identity-credentials — YES; would
+             force per-agent SSH-key + per-agent gh-auth-status management;
+             violates missioncraft v5 inheritance intent)
+        Q3 — Is there an existing operational pattern that bypasses the
+             broken mechanism?
+             (mission-85: engineer-thread-explicit-surface on coord-thread
+             — YES; empirically operational across mission-84's 6-PR cycle +
+             bug-99/100/101 cycles; manually-attributed at human boundary)
+
+      Disposition rubric: if Q1+Q2 fail AND Q3 succeeds → RETIRE the
+      mechanism; codify the operational alternative as the canonical path.
+      Preserve adjacent layers that are correctly architectural (mission-85:
+      Layer (a) methodology + Layer (b) adapter-side hook preserved as
+      engineer-side discipline; only Hub-side Layer (c) Layer-inverted-
+      attribution mechanism retired).
+
+      Closure: mission-85 (M-Commit-Pushed-Handler-Retirement; PR #217
+      squash-merged at 72b36c5 2026-05-19; ~15 min wall-time bounded
+      subsystem-retirement). 11/13 AG-N verified pre-Phase-9; AG-12
+      (mission-status=completed) + AG-13 (this calibration entry) close
+      ledger gates. Hub-rebuilt clean post-merge (22/22 SchemaDefs;
+      PolicyRouter 71 tools; bridge running; no commit-pushed-handler
+      registration).
+
+      Companion methodology-fold: docs/methodology/mission-lifecycle.md
+      §1.5.1.1 revised 3-layer → 2-layer; Failure-resilience hierarchy
+      revised (Layer (b) now load-bearing for adapter-side; engineer-
+      thread-explicit-surface composes architect-visibility); docs/methodology/
+      engineer-runtime.md commit-push thread-heartbeat row revised to
+      preserve (a)+(b) 2-layer description.
+
+      Director-Direct "Yes file" disposition 2026-05-19 ratified ledger-
+      filing at Phase 10 retro per architect-Director-bilateral path
+      (feedback_calibration_ledger_discipline).
+
+      Mission-85 architect-side meta-observation (Design v0.1 §8 inward-
+      calibration note): bilateral audit-round structurally essential for
+      architect-authored Design docs — engineer round-1 audit caught 2
+      B-class architect-spec-vs-code drift instances in v0.1 (missioncraft
+      sibling-repo anchor not annotated + CLAUDE.md vs mission-lifecycle.md
+      §1.5.1.1 file-path mislocated). Composes with substrate-currency-audit-
+      rubric + architect-review-doc-behavioral-claims-code-verify prior
+      calibrations.
+    closure_pr: 217
+    cross_refs:
+      - bug-98 (wontfix-architectural-overreach 2026-05-19; carries full architectural reasoning chain)
+      - thread-587 (architect-Director-engineer 10-round triage 2026-05-19; X/Y/Z fix-option rejection → Option W ratify)
+      - thread-588 (Phase 4 Design v0.1 → v1.0 bilateral audit; converged 2026-05-19; greg round-1 caught 2 B-class architect-spec drift instances)
+      - thread-589 (Phase 8 ship coord; ~5 min engineer ship; converged 2026-05-19)
+      - mission-85 (M-Commit-Pushed-Handler-Retirement; status=completed 2026-05-19; substrate-cleanup-wave class)
+      - idea-303 (source idea; triaged 2026-05-19 Survey-skip per `feedback_idea_triage_protocol_skip_criteria` 5-criteria)
+      - docs/designs/m-commit-pushed-handler-retirement-design.md (v1.0 RATIFIED 83cd7dd; §2 4-identity-system analysis + §3.4 calibration-entry signature + §8 inward-calibration note)
+      - docs/missions/m-commit-pushed-handler-retirement-preflight.md (962b971; verdict GREEN; §8 surface-notes for retro batch)
+      - PR #217 (squash-merged at 72b36c5; closure ship-commit; +280/-703 across 8 files; 1470/1470 hub tests pass)
+      - mission-68 (subsystem origin; W1 introduced 3-layer mechanization stack; mission-85 retires Layer (c) only)
+      - mission-lifecycle.md §1.5.1.1 (post-retirement 2-layer codification; Failure-resilience hierarchy revised)
+      - missioncraft v5 sibling-repo `/home/apnex/taceng/missioncraft/src/missioncraft-sdk/core/principal-resolution.ts` (4-step precedence chain; architectural-intent reference)
+      - mission-84 6-PR cycle + bug-99/100/101 cycles (empirical proof-of-operational-replacement via engineer-thread-explicit-surface)
+      - feedback_calibration_ledger_discipline (Director-bilateral filing path applied here)
+      - feedback_bilateral_audit_round_budget_discipline (v1.0 ratified without round-2; ~15 min mission wall-time)
+      - feedback_idea_triage_protocol_skip_criteria (5-criteria Survey-skip applied at idea-303 triage)
+    tele_alignment:
+      - tele-1
+      - tele-3
+
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
 #   title                       string; human-readable pattern name
