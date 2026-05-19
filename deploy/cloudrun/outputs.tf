@@ -1,13 +1,3 @@
-output "hub_url" {
-  description = "Hub Cloud Run service URL"
-  value       = google_cloud_run_v2_service.hub.uri
-}
-
-output "hub_mcp_url" {
-  description = "Hub MCP endpoint (for plugin config)"
-  value       = local.hub_mcp_url
-}
-
 output "architect_url" {
   description = "Architect Cloud Run service URL"
   value       = google_cloud_run_v2_service.architect.uri
@@ -23,11 +13,6 @@ output "architect_url" {
 output "region" {
   description = "GCP region for all Cloud Run services"
   value       = var.region
-}
-
-output "hub_service_name" {
-  description = "Cloud Run service name for the Hub"
-  value       = var.hub_service_name
 }
 
 output "architect_service_name" {

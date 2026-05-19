@@ -93,3 +93,10 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   + root `cloudbuild.yaml` (hub + hub-proxy image build) authored — `deploy/hub/` plan COMPLETE.
 - **`terraform validate` GREEN** (`terraform -chdir=deploy/hub validate` after `init -backend=false`)
   — AG-W0.1 preview PASS; `terraform fmt` clean.
+- **AG-W0.8 — dead Hub-on-Cloud-Run block retired** from `deploy/cloudrun/`: removed the Hub
+  `google_cloud_run_v2_service` + `hub_public` IAM + `hub_url`/`hub_mcp_url`/`hub_service_name`
+  outputs + 6 hub-* vars; Architect block rewired (`MCP_HUB_URL` ← new `var.hub_mcp_url`;
+  `depends_on` Hub dropped); `env/prod.tfvars.example` refreshed. `deploy/cloudrun/` `terraform
+  validate` GREEN post-removal (AG-W0.8 preview PASS). Architect-on-Cloud-Run block left in place
+  (also legacy, but beyond AG-W0.8 literal scope — recommend whole-dead-app-tier retirement +
+  orphaned `deploy/build-hub.sh`/`deploy-hub.sh` cleanup as a follow-on hygiene idea).
