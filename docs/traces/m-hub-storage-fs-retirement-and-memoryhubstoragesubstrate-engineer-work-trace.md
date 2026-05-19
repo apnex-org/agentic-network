@@ -550,3 +550,9 @@ Net additions: ~310 lines (document-policy impl + tests); ~3 lines deleted from 
 Post-W6+W7 merge: mission-84 reaches 6/6 PRs (100% ratified-cadence). Architect drives Phase 7 release-gate Director-bilateral disposition + Phase 9 Close (mission.status active → completed) + Phase 10 Retrospective (mode-pick per `feedback_retrospective_modes`; substrate-introduction-class missions typically warrant Walkthrough or Summary-review mode).
 
 — Engineer (greg) 2026-05-19 09:35 AEST (W6+W7 complete; opening FINAL PR + surfacing checkpoint on thread-584)
+
+---
+
+### 2026-05-19 10:10 AEST — bug-98 fix shipped + Hub rebuild + validation-push (thread-585 + thread-586)
+
+Post-mission-84-ship, bug-98 (P0; commit-push thread-heartbeat silent) triaged + fixed in single PR #215 merged at `65124632`. 5 rounds bilateral; 2 root-causes addressed (commit-author fallback + architect target.agentId resolution). Architect rebuilt + deployed Hub container with current main (mission-84 W3+W4+W5+W6+W7 + bug-98 fix all now live; image digest `9c96c5d5...`). This commit IS the deliberate-push validation per thread-586 §2 — should trigger Hub-side handler exercise of both bug-98 fixes (Fix 1 commit-author fallback if pusher=apnex; Fix 2 target.agentId resolution to architect-40903c59).
