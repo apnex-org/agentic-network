@@ -550,3 +550,26 @@ Net additions: ~310 lines (document-policy impl + tests); ~3 lines deleted from 
 Post-W6+W7 merge: mission-84 reaches 6/6 PRs (100% ratified-cadence). Architect drives Phase 7 release-gate Director-bilateral disposition + Phase 9 Close (mission.status active → completed) + Phase 10 Retrospective (mode-pick per `feedback_retrospective_modes`; substrate-introduction-class missions typically warrant Walkthrough or Summary-review mode).
 
 — Engineer (greg) 2026-05-19 09:35 AEST (W6+W7 complete; opening FINAL PR + surfacing checkpoint on thread-584)
+
+## §25 Post-mission tail — bug-99 + bug-100 PERFECTION FIX (PR #216 MERGED 2026-05-19)
+
+mission-84 post-mortem surfaced two architectural-defense defects requiring single-PR perfection-fix per Director-direct + architect §5 STRICT-ALL-OR-NOTHING disposition (thread-587 4-round bilateral):
+
+- **bug-99**: `RepoEventBridgeSubstrateAdapter` single-prefix accept → workflow-run-poll-source (idea-255 distinct `repo-event-bridge-workflow-runs` prefix) halted bridge at startup. Fix: multi-prefix accept-list (`pathPrefixes: readonly string[]`).
+- **bug-100**: SchemaReconciler silently logged warnings on per-kind apply failure + false-positive `complete (N kinds)` log. Fix: STRICT-ALL-OR-NOTHING throw on ANY failure with aggregated kind-level summary + truth-log `complete (M of N kinds applied; K failures)`.
+
+**4 deliverables shipped (D1-D4):**
+- D1 — adapter multi-prefix (`hub/src/storage-substrate/repo-event-bridge-adapter.ts` + 5 new tests)
+- D2 — reconciler STRICT (`hub/src/storage-substrate/schema-reconciler.ts` + truth-log refactor)
+- D3 — dual-prefix integration test (`hub/test/integration/repo-event-bridge-dual-prefix.test.ts` NEW)
+- D4 — reconciler completion-truth tests (4 new tests in `reconciler-and-repositories.test.ts`)
+
+**Verification:** 1483/1483 hub tests pass; `tsc --noEmit` clean; CI green at HEAD; PR #216 MERGED at `0ce7cf0` (vitest first-try success); Hub-rebuilt + deployed; production logs confirm bug-100 STRICT-throw active + bug-99 both poll-sources running.
+
+**Architect-surfaced (not autonomously fixed):** secondary substrate-id collision when both poll-sources share overlapping repoIds (adapter strips prefix → same `(kind=RepoEventBridgeCursor, id=<repoId>)` substrate key). Documented in 2 `describe.skip` tests at `hub/test/integration/repo-event-bridge-dual-prefix.test.ts:147`; ready to flip to `.it` after architect ratifies substrate-namespacing scheme (composite-id vs separate-kinds-per-prefix). NOT blocking current PR; surfaced for separate architect-cycle disposition.
+
+**Companion bugs filed by architect during thread-587 §3 disposition (NOT in current PR):**
+- bug-101 (P1) — SchemaDef reconciler watch-loop unexpected-termination has NO reconnect logic
+- bug-102 (P0) — Production-Hub bootstrap MISSING migration-apply mechanism (architect Director-bilateral pending)
+
+— Engineer (greg) 2026-05-19 10:35 AEST (bug-99 + bug-100 PERFECTION FIX SHIPPED + VALIDATED; this commit also serves as deliberate-push for bug-98 commit-pushed handler validation per thread-587 §4 architect-ask)
