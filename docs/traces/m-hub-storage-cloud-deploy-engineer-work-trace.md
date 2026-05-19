@@ -88,3 +88,8 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - `deploy/hub/compute.tf` (static internal IP + PD-Standard data disk + internal-only e2-small
   VM, no access_config) + `scripts/startup.sh` (first-boot bootstrap: Docker + Ops Agent + data
   disk + .env-based 3-container compose stack + systemd hourly backup timer) authored.
+- `deploy/hub/cloudrun.tf` (Cloud Run nginx proxy + Direct VPC Egress + public invoker IAM),
+  `cloudbuild.tf` (Cloud Build trigger; disabled at W0), `outputs.tf`, `env/prod.tfvars.example`
+  + root `cloudbuild.yaml` (hub + hub-proxy image build) authored — `deploy/hub/` plan COMPLETE.
+- **`terraform validate` GREEN** (`terraform -chdir=deploy/hub validate` after `init -backend=false`)
+  — AG-W0.1 preview PASS; `terraform fmt` clean.
