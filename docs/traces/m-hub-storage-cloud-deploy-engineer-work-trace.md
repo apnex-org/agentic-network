@@ -85,3 +85,6 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - `deploy/hub/network.tf` (VPC + subnet w/ private-google-access + 2 firewall rules), `iam.tf`
   (hub-vm-sa w/ 4 least-privilege roles + cloudrun-proxy-sa w/ none), `storage.tf` (GCS backup
   bucket + 30d lifecycle) authored.
+- `deploy/hub/compute.tf` (static internal IP + PD-Standard data disk + internal-only e2-small
+  VM, no access_config) + `scripts/startup.sh` (first-boot bootstrap: Docker + Ops Agent + data
+  disk + .env-based 3-container compose stack + systemd hourly backup timer) authored.
