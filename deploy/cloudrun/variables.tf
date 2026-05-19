@@ -19,12 +19,6 @@ variable "environment" {
 
 # ── Service Naming ────────────────────────────────────────────────────
 
-variable "hub_service_name" {
-  description = "Cloud Run service name for the Hub"
-  type        = string
-  default     = "hub"
-}
-
 variable "architect_service_name" {
   description = "Cloud Run service name for the Architect agent"
   type        = string
@@ -39,30 +33,14 @@ variable "hub_api_token" {
   sensitive   = true
 }
 
-# ── Hub Config ────────────────────────────────────────────────────────
+# ── Hub endpoint ──────────────────────────────────────────────────────
+# mission-86: Hub-on-Cloud-Run retired from this plan; the Architect's Hub
+# endpoint is supplied by the operator (the deploy/hub/ Cloud Run proxy URL).
 
-variable "hub_min_instances" {
-  description = "Minimum Cloud Run instances for Hub (0 = scale to zero)"
-  type        = number
-  default     = 1
-}
-
-variable "hub_max_instances" {
-  description = "Maximum Cloud Run instances for Hub"
-  type        = number
-  default     = 1
-}
-
-variable "hub_image" {
-  description = "Docker image for Hub (full registry path). Leave empty to use Artifact Registry default."
+variable "hub_mcp_url" {
+  description = "Hub MCP endpoint URL for the Architect service (the deploy/hub/ Cloud Run proxy URL + /mcp). Empty until the deploy/hub/ plan is applied."
   type        = string
   default     = ""
-}
-
-variable "watchdog_enabled" {
-  description = "ADR-017 comms-reliability watchdog. Set to \"false\" during adapter-rollout migration windows to pause the escalation ladder (queue + completion-acks stay operational). Default \"true\" for normal operation."
-  type        = string
-  default     = "true"
 }
 
 # ── Architect Config ──────────────────────────────────────────────────
@@ -123,12 +101,6 @@ variable "vertex_ai_location" {
 }
 
 # ── IAM ───────────────────────────────────────────────────────────────
-
-variable "hub_allow_unauthenticated" {
-  description = "Allow unauthenticated access to Hub (app-level token handles auth)"
-  type        = bool
-  default     = true
-}
 
 variable "architect_allow_unauthenticated" {
   description = "Allow unauthenticated access to Architect (for chat interface)"

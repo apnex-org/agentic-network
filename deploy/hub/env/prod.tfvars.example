@@ -1,0 +1,27 @@
+# deploy/hub/ plan variables — Hub VM deployment (mission-86 M-Hub-Storage-Cloud-Deploy).
+#
+# Copy to env/<env>.tfvars and fill in values. Do NOT commit env/<env>.tfvars
+# (excluded by deploy/.gitignore: env/*.tfvars).
+#
+# Per-env tfvars convention (mission-46 T1): select with OIS_ENV=<env-name>.
+#
+# Most knobs use variables.tf defaults (e2-small, australia-southeast1 / -a,
+# Debian 12, 20GB PD-Standard, Cloud Run min-instances=1, 30d backup retention).
+# Only project_id is strictly required.
+
+# ── Required ──────────────────────────────────────────────────────────
+
+project_id = "labops-389703"
+
+# ── Optional overrides (defaults shown) ───────────────────────────────
+#
+# region                = "australia-southeast1"
+# zone                  = "australia-southeast1-a"
+# environment           = "prod"
+# machine_type          = "e2-small"
+# backup_bucket_name    = "labops-389703-hub-backups"   # GLOBALLY UNIQUE across GCP
+# backup_retention_days = 30
+# proxy_min_instances   = 1
+#
+# W1 flips this to false so the Cloud Build trigger fires on main-merge:
+# cloudbuild_trigger_disabled = true

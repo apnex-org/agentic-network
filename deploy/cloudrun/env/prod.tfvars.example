@@ -1,4 +1,7 @@
-# CloudRun plan variables — Hub + Architect services + IAM.
+# CloudRun plan variables — Architect service + IAM.
+#
+# mission-86 retired the Hub-on-Cloud-Run service from this plan; the Hub
+# now runs on the deploy/hub/ VM. This plan deploys the Architect service.
 #
 # Requires the base plan in deploy/base/ to be applied first.
 # Reads service_account_email, state_bucket_name, registry_prefix
@@ -10,9 +13,7 @@
 # Per-env tfvars convention (mission-46 T1):
 #   deploy/cloudrun/env/prod.tfvars        (the original env)
 #   deploy/cloudrun/env/<other-env>.tfvars (new isolated tenants)
-# Select which one `deploy/build-hub.sh` / `deploy/deploy-hub.sh` /
-# `deploy/build-architect.sh` / `deploy/deploy-architect.sh` use via:
-#   OIS_ENV=<env-name>   (default: prod if unset)
+# Select with OIS_ENV=<env-name> (default: prod if unset).
 
 # ── Required per-env ─────────────────────────────────────────────────
 
@@ -21,6 +22,7 @@ region                       = "<your-gcp-region>"
 
 # ── Secrets (DO NOT commit real values) ──────────────────────────────
 
+# Bearer token the Architect uses to authenticate to the Hub.
 hub_api_token                = "<generate-with-openssl-rand-base64-32>"
 
 # Stable agent identity (Mission-18).
@@ -28,18 +30,22 @@ hub_api_token                = "<generate-with-openssl-rand-base64-32>"
 # Changing this creates a new Agent entity and orphans the old queue.
 architect_global_instance_id = "<uuidgen-output>"
 
-# ── Per-env service names (mission-46 T1 convention) ─────────────────
+# ── Hub endpoint ─────────────────────────────────────────────────────
 #
-# Cloud Run service names carry the env suffix so multiple envs can
-# coexist in the same GCP project (uncommon; most envs are isolated by
-# project, but the naming convention holds either way). Defaults are
-# "hub" / "architect" which collides across envs in a shared project.
+# The Architect's Hub MCP endpoint — the deploy/hub/ Cloud Run proxy URL
+# + /mcp. Leave empty until the deploy/hub/ plan is applied.
 #
-# hub_service_name       = "hub-<env-name>"         # e.g. hub-prod, hub-tenant-b
-# architect_service_name = "architect-<env-name>"   # e.g. architect-prod, architect-tenant-b
+# hub_mcp_url = "https://hub-api-<hash>.a.run.app/mcp"
+
+# ── Per-env service name (mission-46 T1 convention) ──────────────────
+#
+# The Cloud Run service name can carry an env suffix so multiple envs
+# coexist in one GCP project. Default is "architect-agent".
+#
+# architect_service_name = "architect-<env-name>"
 
 # ── Other knobs ──────────────────────────────────────────────────────
 #
-# Most other vars use variables.tf defaults (min_instances=1 for both
-# services, event_loop_enabled=true, event_loop_interval=300,
-# watchdog_enabled="true", etc.) — override here if env-specific.
+# Most other vars use variables.tf defaults (architect_min_instances=1,
+# event_loop_enabled=true, event_loop_interval=300, ...) — override here
+# if env-specific.
