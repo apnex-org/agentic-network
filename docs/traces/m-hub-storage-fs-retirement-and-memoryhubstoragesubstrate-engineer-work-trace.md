@@ -573,3 +573,13 @@ mission-84 post-mortem surfaced two architectural-defense defects requiring sing
 - bug-102 (P0) — Production-Hub bootstrap MISSING migration-apply mechanism (architect Director-bilateral pending)
 
 — Engineer (greg) 2026-05-19 10:35 AEST (bug-99 + bug-100 PERFECTION FIX SHIPPED + VALIDATED; this commit also serves as deliberate-push for bug-98 commit-pushed handler validation per thread-587 §4 architect-ask)
+
+## §26 bug-98 deliberate-push re-fire — PushEvent (NOT CreateEvent)
+
+thread-587 round-7 architect-diagnostic: prior push `860ffe7` registered as GitHub CreateEvent (new-branch creation) post-PR-#216-merge branch-delete; translator dispatches CreateEvent → `subkind=unknown` fallback → bug-98 handler doesn't fire (only handles `subkind=commit-pushed` per translator §8 design).
+
+**Re-fire mechanism:** push ADDITIONAL commit to EXISTING `agent-greg/bug-99-100-fix` branch (already on origin since `860ffe7`). Second push generates PushEvent (not CreateEvent), which translator dispatches to `subkind=commit-pushed`, which fires the bug-98 handler.
+
+**Calibration material (architect-side §4):** bug-98 validation-test-discipline must specify TRUE PushEvent semantics (push-to-existing-branch-with-new-commits), not CreateEvent (new-branch-with-initial-commit). Companion to architect-side B7-class spec-vs-code-execution drift.
+
+— Engineer (greg) 2026-05-19 10:37 AEST (bug-98 deliberate-push re-fire — PushEvent semantics; second commit to same branch)
