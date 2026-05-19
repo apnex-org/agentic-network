@@ -146,37 +146,132 @@ describe("Reconciler", () => {
     ]));
   });
 
-  it("failure-isolation: bad SchemaDef doesn't block other kinds", async () => {
-    const warnings: string[] = [];
-    const reconciler = createSchemaReconciler(substrate, connStr, {
-      initialSchemas: [
-        // Bad SchemaDef with invalid SQL-injection-attempt index field (contains apostrophe)
-        // We escape it in buildCreateIndexSQL but postgres may still error on weird names
-        { kind: "BadKind", version: 1, fields: [], indexes: [{ name: "INVALID FIELD;DROP TABLE entities;", fields: ["x"] }], watchable: true },
-        // Good SchemaDef that should still apply
-        { kind: "Idea", version: 1, fields: [], indexes: [{ name: "idea_status_idx_v2", fields: ["status"] }], watchable: true },
-      ],
-      log: () => { /* silent */ },
-      warn: (m) => warnings.push(m),
-    });
-    await reconciler.start();
+  // bug-100 fix (mission-84 post-mortem): STRICT-ALL-OR-NOTHING completion-truth.
+  // Prior semantic was "failure-isolated: bad SchemaDef doesn't block other kinds"
+  // (silent-fail-and-keep-running with false-positive completion log). Per architect
+  // §5 disposition: reconciler is architectural-defense vector (Design v1.4 §2.3);
+  // silent-degradation is NOT acceptable. ANY per-kind apply-failure → start() throws.
+  describe("bug-100 fix: STRICT-ALL-OR-NOTHING completion-truth (D2 + D4)", () => {
+    // Use Hub-internal applySchemaIndexes failure path: pass a bad-index-name that
+    // postgres rejects at CREATE INDEX. But because applySchemaIndexes catches
+    // per-index errors internally (its own loop), to trigger reconciler-level
+    // failure we need substrate.put to throw OR introduce a top-level error.
+    //
+    // For a deterministic, low-side-effect failure, we mock substrate.put to throw
+    // for a specific kind, then verify start() throws with the failure-summary.
+    it("per-kind failure causes start() to THROW with kind-level failure summary", async () => {
+      const failingSubstrate = new Proxy(substrate, {
+        get(target, prop, receiver) {
+          if (prop === "put") {
+            return async (kind: string, _entity: unknown) => {
+              if (kind === "SchemaDef" && _entity && (_entity as { id?: string }).id === "FailKind") {
+                throw new Error("synthetic substrate.put failure for FailKind");
+              }
+              return (target as unknown as Record<string, (...args: unknown[]) => unknown>).put.call(target, kind, _entity);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as HubStorageSubstrate;
 
-    // Good index should still be created despite bad sibling
-    const pool = new Pool({ connectionString: connStr });
-    try {
-      const r = await pool.query<{ indexname: string }>(
-        `SELECT indexname FROM pg_indexes WHERE tablename = 'entities' AND indexname = 'idea_status_idx_v2'`,
-      );
-      expect(r.rowCount).toBe(1);
-    } finally {
-      await pool.end();
-    }
+      const reconciler = createSchemaReconciler(failingSubstrate, connStr, {
+        initialSchemas: [
+          { kind: "FailKind", version: 1, fields: [], indexes: [], watchable: false },
+          { kind: "Bug", version: 1, fields: [], indexes: [{ name: "bug_status_idx_v3_strict", fields: ["status"] }], watchable: true },
+        ],
+        log: () => { /* silent */ },
+        warn: () => { /* silent */ },
+      });
 
-    // Warning should have been logged for the bad index
-    expect(warnings.some(w => w.includes("BadKind") || w.includes("INVALID FIELD"))).toBe(true);
+      await expect(reconciler.start()).rejects.toThrow(/boot failed: 1 of 2 SchemaDef apply failures/);
+      await expect(reconciler.start()).rejects.toThrow(/FailKind: synthetic substrate.put failure/);
+      await reconciler.close();
+    }, 30_000);
 
-    await reconciler.close();
-  }, 30_000);
+    it("multi-failure: all per-kind failures aggregated into error message", async () => {
+      const failingSubstrate = new Proxy(substrate, {
+        get(target, prop, receiver) {
+          if (prop === "put") {
+            return async (kind: string, entity: unknown) => {
+              const eid = (entity as { id?: string })?.id;
+              if (kind === "SchemaDef" && (eid === "FailA" || eid === "FailB")) {
+                throw new Error(`synthetic-fail-${eid}`);
+              }
+              return (target as unknown as Record<string, (...args: unknown[]) => unknown>).put.call(target, kind, entity);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as HubStorageSubstrate;
+
+      const reconciler = createSchemaReconciler(failingSubstrate, connStr, {
+        initialSchemas: [
+          { kind: "FailA", version: 1, fields: [], indexes: [], watchable: false },
+          { kind: "FailB", version: 1, fields: [], indexes: [], watchable: false },
+          { kind: "Bug", version: 1, fields: [], indexes: [], watchable: true },
+        ],
+        log: () => { /* silent */ },
+        warn: () => { /* silent */ },
+      });
+
+      await expect(reconciler.start()).rejects.toThrow(/boot failed: 2 of 3 SchemaDef apply failures/);
+      // Aggregated message contains BOTH failure summaries
+      try {
+        await reconciler.start();
+      } catch (err) {
+        expect((err as Error).message).toContain("FailA: synthetic-fail-FailA");
+        expect((err as Error).message).toContain("FailB: synthetic-fail-FailB");
+      }
+      await reconciler.close();
+    }, 30_000);
+
+    it("success-only: truth-log emits 'M of N kinds applied; 0 failures' (no throw)", async () => {
+      const logs: string[] = [];
+      const reconciler = createSchemaReconciler(substrate, connStr, {
+        initialSchemas: [
+          { kind: "Bug", version: 1, fields: [], indexes: [{ name: "bug_status_idx_truth_log", fields: ["status"] }], watchable: true },
+          { kind: "Idea", version: 1, fields: [], indexes: [], watchable: true },
+        ],
+        log: (m) => logs.push(m),
+        warn: () => { /* silent */ },
+      });
+      await expect(reconciler.start()).resolves.toBeUndefined();
+      // Truth-log includes accurate completion count (per D4 spec)
+      expect(logs.some(l => l.includes("complete (2 of 2 kinds applied; 0 failures)"))).toBe(true);
+      await reconciler.close();
+    }, 30_000);
+
+    it("failure WARN-line includes failed kind names + failure count BEFORE throw", async () => {
+      const warnings: string[] = [];
+      const failingSubstrate = new Proxy(substrate, {
+        get(target, prop, receiver) {
+          if (prop === "put") {
+            return async (kind: string, entity: unknown) => {
+              if (kind === "SchemaDef" && (entity as { id?: string })?.id === "FailWarn") {
+                throw new Error("warn-line-test-fail");
+              }
+              return (target as unknown as Record<string, (...args: unknown[]) => unknown>).put.call(target, kind, entity);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as HubStorageSubstrate;
+
+      const reconciler = createSchemaReconciler(failingSubstrate, connStr, {
+        initialSchemas: [
+          { kind: "FailWarn", version: 1, fields: [], indexes: [], watchable: false },
+          { kind: "Bug", version: 1, fields: [], indexes: [], watchable: true },
+        ],
+        log: () => { /* silent */ },
+        warn: (m) => warnings.push(m),
+      });
+      await expect(reconciler.start()).rejects.toThrow();
+      // Per-kind warning during loop + summary warning before throw
+      expect(warnings.some(w => w.includes("FailWarn"))).toBe(true);
+      expect(warnings.some(w => w.includes("FAILED: 1/2 applied; 1 failure on kinds=[FailWarn]"))).toBe(true);
+      await reconciler.close();
+    }, 30_000);
+  });
 });
 
 // ─── 6 new repository stubs CRUD round-trip ────────────────────────────────

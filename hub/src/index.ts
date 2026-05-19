@@ -744,7 +744,13 @@ if (OIS_GH_API_TOKEN && OIS_REPO_EVENT_BRIDGE_REPOS.length > 0) {
   // fallback (FS-version-repos + storageProvider deleted); substrate is
   // unconditional post-W4 (production-Hub locked to substrate per mission-83 W5.4).
   repoEventBridge = new RepoEventBridge({
-    storage: new RepoEventBridgeSubstrateAdapter({ substrate: substrate! }),
+    // bug-99 fix: dual-prefix accept-list per idea-255 (workflow-run-poll-source
+    // uses distinct pathPrefix from main events-poll-source). Pre-fix single-
+    // prefix adapter halted bridge at workflow-run-poll-source startup.
+    storage: new RepoEventBridgeSubstrateAdapter({
+      substrate: substrate!,
+      pathPrefixes: ["repo-event-bridge", "repo-event-bridge-workflow-runs"],
+    }),
     token: OIS_GH_API_TOKEN,
     repos: OIS_REPO_EVENT_BRIDGE_REPOS,
     cadenceSeconds: OIS_REPO_EVENT_BRIDGE_CADENCE_S,

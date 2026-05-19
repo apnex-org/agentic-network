@@ -63,13 +63,28 @@ const dec = new TextDecoder();
 
 export interface RepoEventBridgeSubstrateAdapterOptions {
   readonly substrate: HubStorageSubstrate;
-  /** Path-prefix that cursor-store.ts uses; default "repo-event-bridge" matches cursor-store default. */
+  /**
+   * Path-prefixes that cursor-store.ts uses. The `repo-event-bridge` package has
+   * TWO known prefixes by design per idea-255 (M-Workflow-Run-Events-Hub-Integration):
+   *   - `repo-event-bridge` — main GitHub-events-poll-source (default CursorStore pathPrefix)
+   *   - `repo-event-bridge-workflow-runs` — workflow-run-poll-source (explicit override)
+   *
+   * bug-99 fix (mission-84 post-mortem): W3 ship initially only accepted single
+   * `repo-event-bridge` prefix; workflow-run-poll-source halted bridge at startup.
+   * Multi-prefix accept-list closes the scope-gap.
+   *
+   * Backward-compat: `pathPrefix: string` single-form still accepted (auto-wrapped
+   * to [pathPrefix]). Default if neither set: ["repo-event-bridge"].
+   */
+  readonly pathPrefixes?: readonly string[];
+  /** @deprecated Use pathPrefixes (array). Single-string form preserved for compat. */
   readonly pathPrefix?: string;
 }
 
 /**
- * Adapter shape per W0.4 spike. Implements StorageProviderWithTokenRead so
- * cursor-store.ts consumes unchanged (narrow-typed via hasGetWithToken probe).
+ * Adapter shape per W0.4 spike + bug-99 multi-prefix extension. Implements
+ * StorageProviderWithTokenRead so cursor-store.ts consumes unchanged
+ * (narrow-typed via hasGetWithToken probe).
  *
  * Operations outside cursor-store's used primitive set (list / put-unconditional /
  * delete) are stub-throw — Variant ii scope doesn't need them. Production adapter
@@ -83,21 +98,37 @@ export class RepoEventBridgeSubstrateAdapter implements StorageProviderWithToken
   };
 
   private readonly substrate: HubStorageSubstrate;
-  private readonly pathPrefix: string;
+  private readonly pathPrefixes: readonly string[];
 
   constructor(opts: RepoEventBridgeSubstrateAdapterOptions) {
     this.substrate = opts.substrate;
-    this.pathPrefix = opts.pathPrefix ?? "repo-event-bridge";
+    // Resolution order: pathPrefixes (array) > pathPrefix (single string compat) > default.
+    if (opts.pathPrefixes && opts.pathPrefixes.length > 0) {
+      this.pathPrefixes = opts.pathPrefixes;
+    } else if (opts.pathPrefix) {
+      this.pathPrefixes = [opts.pathPrefix];
+    } else {
+      this.pathPrefixes = ["repo-event-bridge"];
+    }
   }
 
   // ── Path → (kind, id) mapping ────────────────────────────────────────────
 
   private parsePath(path: string): { kind: string; id: string } {
-    const prefix = `${this.pathPrefix}/`;
-    if (!path.startsWith(prefix)) {
-      throw new Error(`RepoEventBridgeSubstrateAdapter: path '${path}' outside pathPrefix '${this.pathPrefix}'`);
+    // Find FIRST matching prefix from accept-list (path.startsWith); reject if none.
+    let matchedPrefix: string | undefined;
+    for (const candidate of this.pathPrefixes) {
+      if (path.startsWith(`${candidate}/`)) {
+        matchedPrefix = candidate;
+        break;
+      }
     }
-    const remainder = path.slice(prefix.length);
+    if (matchedPrefix === undefined) {
+      throw new Error(
+        `RepoEventBridgeSubstrateAdapter: path '${path}' outside accept-list ${JSON.stringify(this.pathPrefixes)}`,
+      );
+    }
+    const remainder = path.slice(matchedPrefix.length + 1);
     const slash = remainder.indexOf("/");
     if (slash < 0) {
       throw new Error(`RepoEventBridgeSubstrateAdapter: path '${path}' has no namespace segment`);

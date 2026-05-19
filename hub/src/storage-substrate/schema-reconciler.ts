@@ -81,12 +81,24 @@ export class SchemaReconciler {
    * Boot path: apply initialSchemas (if any), then begin runtime watch loop.
    * Returns a Promise that resolves when boot-time reconciliation is complete;
    * runtime watch loop runs in background and is cancelled via opts.signal.
+   *
+   * bug-100 fix (mission-84 post-mortem): STRICT-ALL-OR-NOTHING semantic per
+   * architect §5 disposition — reconciler is architectural-defense vector
+   * (Design v1.4 §2.3); silent-degradation on per-kind apply-failure is NOT
+   * acceptable. If ANY SchemaDef apply fails, start() throws after collecting
+   * per-kind failure context (operator sees fail-to-start + log-context-for-
+   * debug; vs prior silent-fail-and-keep-running false-positive completion).
+   *
+   * Truth-log replaces false-positive `complete (N kinds)` with accurate
+   * `complete (M of N kinds applied; K failures)`. On failure, throw includes
+   * the per-kind failure summary.
    */
   async start(): Promise<void> {
     const initial = this.opts.initialSchemas ?? [];
 
     // ── Boot-time: apply initial SchemaDefs + emit indexes ────────────────
     this.log(`boot — applying ${initial.length} initial SchemaDefs`);
+    const failures: Array<{ kind: string; error: unknown }> = [];
     for (const def of initial) {
       try {
         // Store SchemaDef in entities table (so runtime watch will see future changes
@@ -95,11 +107,26 @@ export class SchemaReconciler {
         await this.substrate.put("SchemaDef", { id: def.kind, ...def });
         await this.applySchemaIndexes(def);
       } catch (err) {
-        // Failure-isolated: per-kind failure doesn't block others
-        this.warn(`failed to apply SchemaDef for kind=${def.kind}; skipping`, err);
+        // Per-kind failure: capture context for STRICT throw post-loop.
+        this.warn(`failed to apply SchemaDef for kind=${def.kind}`, err);
+        failures.push({ kind: def.kind, error: err });
       }
     }
-    this.log(`boot — initial SchemaDef application complete (${initial.length} kinds)`);
+
+    const successCount = initial.length - failures.length;
+    if (failures.length > 0) {
+      // STRICT-ALL-OR-NOTHING per bug-100 fix + architect §5 disposition.
+      // Accurate truth-log + throw (caller's Hub-bootstrap fatal-exits → operator
+      // sees Hub-fail-to-start AND log-context-for-debug).
+      this.warn(
+        `boot — SchemaDef application FAILED: ${successCount}/${initial.length} applied; ${failures.length} failure${failures.length === 1 ? "" : "s"} on kinds=[${failures.map(f => f.kind).join(", ")}]`,
+      );
+      const summary = failures.map(f => `${f.kind}: ${(f.error as Error)?.message ?? String(f.error)}`).join("; ");
+      throw new Error(
+        `[SchemaReconciler] boot failed: ${failures.length} of ${initial.length} SchemaDef apply failures: ${summary}`,
+      );
+    }
+    this.log(`boot — initial SchemaDef application complete (${successCount} of ${initial.length} kinds applied; 0 failures)`);
 
     // ── Runtime: subscribe to substrate.watch('SchemaDef') for ongoing changes ──
     // Fire-and-forget; runs until opts.signal is aborted OR substrate.watch terminates
