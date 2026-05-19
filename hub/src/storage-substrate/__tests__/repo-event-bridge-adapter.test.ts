@@ -52,8 +52,8 @@ describe("RepoEventBridgeSubstrateAdapter — W0.4 spike", () => {
       expect(stored).toEqual({ id: "owner__repo", body: { seen: ["x", "y"] } });
     });
 
-    it("rejects path outside pathPrefix", async () => {
-      await expect(adapter.get("other-prefix/cursor/x")).rejects.toThrow(/outside pathPrefix/);
+    it("rejects path outside accept-list (single-prefix default)", async () => {
+      await expect(adapter.get("other-prefix/cursor/x")).rejects.toThrow(/outside accept-list/);
     });
 
     it("rejects unknown namespace", async () => {
@@ -160,6 +160,82 @@ describe("RepoEventBridgeSubstrateAdapter — W0.4 spike", () => {
       await expect(
         adapter.createOnly("repo-event-bridge/cursor/x", enc.encode("not-json{{")),
       ).rejects.toThrow(/JSON/);
+    });
+  });
+
+  // ── bug-99 fix: dual-prefix multi-accept-list ────────────────────────────
+
+  describe("bug-99 fix: multi-prefix accept-list (idea-255 workflow-run-poll-source)", () => {
+    it("accepts BOTH repo-event-bridge AND repo-event-bridge-workflow-runs prefixes", async () => {
+      const dualAdapter = new RepoEventBridgeSubstrateAdapter({
+        substrate,
+        pathPrefixes: ["repo-event-bridge", "repo-event-bridge-workflow-runs"],
+      });
+      const data1 = enc.encode(JSON.stringify({ cursor: "main" }));
+      const data2 = enc.encode(JSON.stringify({ cursor: "workflow" }));
+
+      // Main events-poll-source prefix
+      const r1 = await dualAdapter.createOnly("repo-event-bridge/cursor/owner__repo", data1);
+      expect(r1.ok).toBe(true);
+      const stored1 = await substrate.get<{ id: string; body: { cursor: string } }>("RepoEventBridgeCursor", "owner__repo");
+      expect(stored1?.body.cursor).toBe("main");
+
+      // Workflow-runs-poll-source prefix
+      const r2 = await dualAdapter.createOnly("repo-event-bridge-workflow-runs/cursor/owner__repo-wf", data2);
+      expect(r2.ok).toBe(true);
+      // Both prefixes map to same substrate kind (RepoEventBridgeCursor); different id (prefix-disambig is at parsePath layer, not kind)
+      const stored2 = await substrate.get<{ id: string; body: { cursor: string } }>("RepoEventBridgeCursor", "owner__repo-wf");
+      expect(stored2?.body.cursor).toBe("workflow");
+    });
+
+    it("rejects path outside accept-list (dual-prefix)", async () => {
+      const dualAdapter = new RepoEventBridgeSubstrateAdapter({
+        substrate,
+        pathPrefixes: ["repo-event-bridge", "repo-event-bridge-workflow-runs"],
+      });
+      await expect(dualAdapter.get("some-other-prefix/cursor/x")).rejects.toThrow(/outside accept-list/);
+      // Verify the error message contains both prefixes
+      try {
+        await dualAdapter.get("foo/cursor/x");
+      } catch (err) {
+        expect((err as Error).message).toContain("repo-event-bridge");
+        expect((err as Error).message).toContain("repo-event-bridge-workflow-runs");
+      }
+    });
+
+    it("backward-compat: single pathPrefix string still works (auto-wrapped to [pathPrefix])", async () => {
+      const compatAdapter = new RepoEventBridgeSubstrateAdapter({
+        substrate,
+        pathPrefix: "custom-single-prefix",
+      });
+      const data = enc.encode(JSON.stringify({ x: 1 }));
+      await compatAdapter.createOnly("custom-single-prefix/cursor/x", data);
+      const stored = await substrate.get("RepoEventBridgeCursor", "x");
+      expect(stored).toBeDefined();
+      // Path outside custom prefix is rejected
+      await expect(compatAdapter.get("repo-event-bridge/cursor/y")).rejects.toThrow(/outside accept-list/);
+    });
+
+    it("default empty options falls back to [repo-event-bridge]", async () => {
+      const defaultAdapter = new RepoEventBridgeSubstrateAdapter({ substrate });
+      const data = enc.encode(JSON.stringify({ x: 1 }));
+      await defaultAdapter.createOnly("repo-event-bridge/cursor/x", data);
+      await expect(defaultAdapter.get("repo-event-bridge-workflow-runs/cursor/y"))
+        .rejects.toThrow(/outside accept-list/);
+    });
+
+    it("pathPrefixes takes precedence over pathPrefix when both provided", async () => {
+      const adapter = new RepoEventBridgeSubstrateAdapter({
+        substrate,
+        pathPrefixes: ["prefix-A", "prefix-B"],
+        pathPrefix: "ignored-single-prefix",
+      });
+      const data = enc.encode(JSON.stringify({}));
+      // Both array prefixes accept
+      await expect(adapter.createOnly("prefix-A/cursor/x", data)).resolves.toBeDefined();
+      await expect(adapter.createOnly("prefix-B/cursor/y", data)).resolves.toBeDefined();
+      // Single-string prefix is IGNORED when array provided
+      await expect(adapter.get("ignored-single-prefix/cursor/z")).rejects.toThrow(/outside accept-list/);
     });
   });
 
