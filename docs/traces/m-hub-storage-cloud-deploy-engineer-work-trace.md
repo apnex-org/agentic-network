@@ -100,3 +100,25 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   validate` GREEN post-removal (AG-W0.8 preview PASS). Architect-on-Cloud-Run block left in place
   (also legacy, but beyond AG-W0.8 literal scope — recommend whole-dead-app-tier retirement +
   orphaned `deploy/build-hub.sh`/`deploy-hub.sh` cleanup as a follow-on hygiene idea).
+
+### 2026-05-20 — W0 GCP mutations + AG-W0 verification
+
+- main.tf API list hardened (+iam, +cloudresourcemanager, +vpcaccess) for the SA / IAM / Direct-VPC-Egress resources.
+- **GCP mutations** (per architect F3 — non-VM setup-infra; nothing serving production traffic):
+  - GCS tfstate-backend bucket `labops-389703-tfstate` created (versioned; public-access enforced).
+  - `terraform init` against the GCS backend — auth via the `terraform@labops-389703` SA key
+    (`GOOGLE_APPLICATION_CREDENTIALS`); ADC defaulted to the human account which lacked bucket
+    access — local env-fix, not a finding.
+  - `terraform apply -target` created the 7 W0 setup resources: GCS backup-bucket
+    `labops-389703-hub-backups` + `hub-vm-sa` (4 roles) + `cloudrun-proxy-sa`.
+  - `gcloud builds submit` built + pushed the nginx-proxy image → `cloud-run-source-deploy/hub-proxy:latest`.
+- **AG-W0.1–W0.8 — ALL GREEN:**
+  - W0.1 `terraform validate` Success (deploy/hub/)
+  - W0.2 `terraform plan` clean — 28 resources incl. Cloud Run + Direct VPC Egress + VM; no errors
+  - W0.3 `cloudbuild.yaml` valid YAML (3 build steps / 3 images)
+  - W0.4 tfstate bucket exists + versioned + GCS-backend-locked; backup bucket created
+  - W0.5 nginx-proxy image present in Artifact Registry
+  - W0.6 no VM provisioned; only the pre-existing unrelated `litellm-proxy` serving
+  - W0.7 `hub-vm-sa` + `cloudrun-proxy-sa` created; `hub-vm-sa` carries all 4 declared roles
+  - W0.8 `deploy/cloudrun/` validates clean; 0 Hub Cloud Run blocks remain
+- W0 authoring complete (8 commits); opening W0 PR + surfacing on thread-592.
