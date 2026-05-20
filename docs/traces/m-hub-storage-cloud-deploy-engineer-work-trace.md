@@ -282,3 +282,162 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   logging/monitoring enabled) · W1.9 ✅ (Cloud Run min-instances=1) · W1.10 ✅ (no public IP) ·
   W1.11 ✅ (unreachable — no public IP) · W1.12 ✅ (no hardcoded literals; validate clean).
 - W1 → PR for architect cross-approval.
+
+### 2026-05-20 — W1 MERGED (335cf73); W2 issued + planned
+
+- W1 PR #220 cross-approved + admin-squash-merged → `main @ 335cf73` (all 4 W1 conscious
+  sign-offs ratified). W2 branch `agent-greg/mission-86-w2` off `origin/main @ 335cf73`.
+- **W2 issued** (thread-595; Design v1.6 §5 W2): state migration + bug-101 real-fix + SIGTERM handler.
+- W2 plan:
+  - **SIGTERM handler** — extract the index.ts SIGINT-handler body → `shutdown()` → register
+    SIGINT + SIGTERM (clean `docker stop` at W4).
+  - **bug-101 real-fix** — `migration-runner.ts`: read + apply `migrations/001+002+003.sql` in
+    filename order at Hub bootstrap, BEFORE `reconciler.start()` (`index.ts:146`). The 3 SQLs are
+    already fully idempotent (`IF NOT EXISTS` / `CREATE OR REPLACE` / `DROP ... IF EXISTS`) → no
+    migration-tracking table needed; AG-W2.2.b idempotency is satisfied by the SQL. Build-step:
+    copy `*.sql` into `dist/` (tsc doesn't copy non-TS) — `hub/package.json` + `hub/Dockerfile`.
+  - **Hub image rebuild** → push to AR → cloud-VM Hub-container restart (Cloud Build trigger is
+    F9-deferred → manual build).
+  - **AG-W2.2.a** — tear down the W1 scaffold-migrated postgres volume → boot cloud-Hub against a
+    genuinely FRESH empty postgres → confirm self-migration (pinned M=N=3).
+  - **State-migration test** — `hub-snapshot.sh` local→cloud restore; AG-W2.3/.4/.5.
+
+### 2026-05-20 — W2 source changes authored + verified
+
+- **SIGTERM handler** (`hub/src/index.ts`): extracted the SIGINT-handler body → `shutdown(signal)`;
+  registered both `SIGINT` + `SIGTERM`. Clean `docker stop` drain for the W4 cutover.
+- **bug-101 real-fix**: `hub/src/storage-substrate/migration-runner.ts` — `applyMigrations()` reads
+  + applies `migrations/*.sql` in filename order; wired into `index.ts` before `reconciler.start()`.
+  The 3 SQLs are idempotent → no migration-tracking table. `hub/package.json` `build` script copies
+  `*.sql` into `dist/` (tsc doesn't); Dockerfile needs no change (it `COPY`s all of `dist/`).
+- **Verified:** `npm run build` GREEN (tsc-clean; 3 `.sql` confirmed in `dist/storage-substrate/
+  migrations/`). New `migration-runner.test.ts` GREEN — fresh-empty-postgres bootstrap (entities +
+  indexes created) + 2nd-run idempotency; restart-safety + related suites green (18 tests).
+- Next: rebuild Hub image → AR → cloud-VM restart; AG-W2.2.a fresh-postgres verification;
+  state-migration test; W2 PR.
+
+### 2026-05-20 — W2 cloud-ops: bug-101 + SIGTERM verified GREEN; state-migration test → 2 findings
+
+- Architect (thread-595) disposed: proceed (1)+(2)+(3) autonomously; state-migration test signed off.
+- Hub image rebuilt (W2: bug-101 + SIGTERM; digest `d8e22f32`) → Artifact Registry; cloud-VM
+  redeployed against a FRESH wiped postgres volume.
+- **AG-W2.2.a GREEN** — the Hub self-applied all 3 migrations (`[Hub:migrations] applied 001/002/003;
+  bootstrap migrations complete (3 applied)` — M=N=3) → reconciler settled 22/22 SchemaDefs →
+  `/health` 200. **bug-101 FIXED** — clean boot on empty postgres, no manual scaffold.
+- **AG-W2.2.b GREEN** — 2nd boot (`docker restart`): migrations re-applied idempotently, no errors.
+- **AG-W2.7 GREEN** — `docker stop --time=30 ois-hub-prod` → `[Hub] Shutting down (SIGTERM)...` →
+  clean exit (no SIGKILL fall-through).
+- **State-migration test (3) — STOPPED + surfaced 2 findings to architect (thread-595):**
+  - **F10**: `scripts/local/hub-snapshot.sh` calls host `pg_dump`; the operator host has no postgres
+    client (`pg_dump: command not found`). hub-snapshot.sh is also the W4 cutover dump-tool — needs
+    amending to `docker exec` the pg_dump (or pg-client install) before W4.
+  - **F11**: the cloud-Hub container is not passed `OIS_GH_API_TOKEN` → its repo-event-bridge no-ops.
+    AG-W2.4 (bridge-resume) unverifiable; post-W4 the cloud-Hub IS production + the bridge is
+    load-bearing — cloud-Hub bridge config is an unprovisioned Design/deployment gap.
+
+### 2026-05-20 — F10/F11 disposed (Design v1.7); W2(3) state-migration test GREEN; F12 surfaced
+
+- Architect disposed (thread-595; Design v1.7 RATIFIED `e45a4b1`): **F10** CONCUR — amend
+  `hub-snapshot.sh` to `docker exec`, fold into W2 (W4-blocking; it is the `cutover-to-cloud.sh`
+  §4.14 dump-tool). **F11** → W3 deliverable (cloud-Hub bridge config: `OIS_GH_API_TOKEN` Secret
+  Manager secret + repos-config + startup.sh wiring; new AG-W3.9). **AG-W2.4** (bridge-resume)
+  re-sequenced → W3/AG-W3.10. **W2(3)** proceeds now for AG-W2.3 + AG-W2.5.
+- **F10 fix** — `scripts/local/hub-snapshot.sh` amended: `pg_dump` / `pg_restore` / `psql` now run
+  inside the postgres container via `docker exec` (`HUB_PG_CONTAINER`, default
+  `hub-substrate-postgres`; `HUB_PG_USER`/`HUB_PG_DATABASE`; `HUB_DOCKER` for `sudo docker` on
+  COS). pg_dump streams to host stdout, pg_restore reads host stdin — no shared volume needed.
+  Host-binary mode preserved (`HUB_PG_CONTAINER=` empty).
+- **W2(3) state-migration test — GREEN.** `hub-snapshot.sh save` (local, docker-exec mode) →
+  8.1M `-Fc` dump (17766 entities; no drift across the dump window) → `gcloud compute scp` to
+  `hub-vm` over IAP → `hub-snapshot.sh restore` ON the VM (docker-exec mode, `HUB_DOCKER="sudo
+  docker"`, target `ois-postgres-prod`):
+  - **AG-W2.1 GREEN** — restore completed clean (`✓ restore complete`; exit 0).
+  - **AG-W2.3 GREEN** — cloud latest mission `mission-86` == local `mission-86`.
+  - **AG-W2.5 GREEN** — post-restore 17766 entities == pre-snapshot 17766; all 21 per-kind
+    counts identical (Agent 2 / Audit 1837 / Message 11891 / Mission 86 / Task 413 / …).
+  - Bonus: the cloud Hub re-booted clean on the RESTORED 17766-entity DB — migrations idempotent
+    against a now-populated DB (composes AG-W2.2.b); reconciler 22/22; `/health` 200.
+  - The F10-amended `hub-snapshot.sh` is dogfooded end-to-end — `save` + `restore` both GREEN.
+- **AG-W2.6 — RED; finding F12 surfaced.** `hub-backup.timer` is active+enabled + firing hourly,
+  but `hub-backup.service` fails EVERY run — `203/EXEC … Permission denied`. **ROOT CAUSE
+  (verified, not hypothesis):** COS mounts `/var` `noexec` (`findmnt`: `rw,nosuid,nodev,noexec`).
+  `startup.sh` writes the cloud backup script to `/var/lib/hub/hub-snapshot.sh` and the unit
+  `ExecStart=`s it directly → `execve()` blocked by `noexec` despite `-rwxr-xr-x`. The GCS backup
+  bucket has ZERO snapshot objects — the backup-runner has never once run. Fix: `ExecStart=
+  /bin/bash /var/lib/hub/hub-snapshot.sh` (`/bin/bash` is on exec-OK `/`; bash reads the script
+  as data, not an exec). Same COS-hardening-filesystem-ism genus as the F8/B3 read-only-`/root`
+  finding. Surfaced to architect thread-595 — recommend fold into W2 (AG-W2.6 is a W2 gate).
+  W1's AG-W1.5 verified timer-state only; AG-W2.6 (end-to-end "GCS shows snapshots") caught it.
+- W2 PR HELD pending F12 disposition (F12 changes whether the W2 PR carries the startup.sh fix).
+
+### 2026-05-20 — F12 disposed (fold into W2); applied via VM-replace → exposed F13
+
+- Architect disposed F12 → Option (a) fold into W2 (Design v1.8 RATIFIED `256cf2b`); apply
+  autonomously, no further sign-off.
+- **F12 fix authored** — `modules/hub/scripts/startup.sh`: `hub-backup.service` unit
+  `ExecStart=/bin/bash /var/lib/hub/hub-snapshot.sh` (COS `noexec`-`/var` workaround; bash on
+  exec-OK `/` reads the script as data).
+- `terraform apply`: `metadata_startup_script` is a ForceNew attribute
+  (`replace_because_cannot_update`) → terraform **REPLACED** `hub_vm` (destroy+create), not an
+  in-place metadata update. The data disk `hub-vm-data` + the static internal IP are separate
+  resources (plan `no-op`) → they persist; VM-replace is the terraform-native mechanism for a
+  startup-script change. Apply: 1 added / 1 changed (`hub_api` in-place) / 1 destroyed.
+- **F13 exposed — cloud Hub crash-loops `28P01 auth_failed`.** ROOT CAUSE (verified):
+  `startup.sh` generates `.env` (`POSTGRES_PASSWORD` + `HUB_API_TOKEN`) on the EPHEMERAL COS
+  boot disk — `/var/lib/hub` → `findmnt` `/dev/sdb1[/var]` (the `auto_delete` boot disk). The
+  VM replacement recreated the boot disk → `.env` mtime `03:24` (regenerated this boot; the
+  generate-once guard saw no `.env`) → fresh `POSTGRES_PASSWORD`. The postgres data is on the
+  PERSISTENT data disk — `/mnt/disks/hub-data` → `/dev/sda`; postgres logged "Database
+  directory appears to contain a database; Skipping initialization" → the `hub` role keeps the
+  OLD password (`PG_VERSION` mtime `02:55`, a prior VM). New password ≠ persisted role → Hub
+  `28P01` crash-loop.
+- Impact: the COS VM cannot survive a replacement — the normal COS update mechanism, and every
+  startup.sh change incl. W3's F11 bridge-config wiring — without manual password resync.
+  W2-blocking (a VM that bricks on replace is not a green wave — same logic the architect used
+  to fold F12); W3/W4-critical. Engineer-side `new-code-path-exposes-dormant-defect`: the
+  first-ever VM replacement exposed dormant F13.
+- STOPPED + surfaced F13 to architect thread-595 (verification-defect-surface-dont-dig) — did
+  NOT autonomously recover or proceed. W2 PR + AG-W2.6 verification HELD pending F13 disposition
+  (F13's fix is another startup.sh change → another VM-replace; AG-W2.6 verifies on the FINAL VM).
+
+### 2026-05-20 — F13 disposed (Design v1.9); F13(a) applied + survival-proven; all AG-W2 GREEN
+
+- Architect disposed F13 (thread-595; Design v1.9 RATIFIED `38826c4`): fold into W2 as **F13(a)**
+  — `.env` on the persistent data disk (minimal v1 fix; survives VM-replace; GCP-encrypted-at-rest
+  + internal-only VM = acceptable v1 plaintext). **F13(b)** secrets → GCP Secret Manager → W3
+  (converges with F11). Recovery: wipe the postgres data dir + re-init (17766 test-state throwaway).
+- **F13(a) fix** — `modules/hub/scripts/startup.sh`: the generate-once `.env` (POSTGRES_PASSWORD +
+  HUB_API_TOKEN) moves `/var/lib/hub/.env` → `/mnt/disks/hub-data/.env` (the persistent data disk).
+  Committed with the F12 fix at `0ac9daa`.
+- Recovery: wiped `/mnt/disks/hub-data/postgres` (112M throwaway 17766-state) on the bricked VM.
+- **VM-replace #3 (F13(a) apply)** — `terraform apply`: VM replaced; new VM bootstrapped clean —
+  `.env` generated at `/mnt/disks/hub-data/.env` (NO boot-disk `.env`); postgres init fresh; Hub
+  `/health` 200. **AG-W2.2.a re-verified** on the F13(a) startup.sh — `[Hub:migrations] applied
+  001/002/003` (M=N=3), reconciler 22/22, 0 failures, no `28P01`.
+- **VM-replace #4 (F13 survival test)** — `terraform apply -replace=…hub_vm` (a from-steady-state
+  replace; `.env` + postgres-data both persist on the data disk):
+  - `.env` mtime UNCHANGED (`03:38:49` = replace-#3's generation) → the generate-once skip-guard
+    fired → `POSTGRES_PASSWORD` stable across the VM-replace.
+  - postgres "Skipping initialization" → data persisted; the `hub` role keeps the stable password.
+  - Hub `/health` 200; **0** `28P01`/`auth_failed` in the Hub log → **F13 FIXED — the COS VM now
+    survives a replacement** (empirically proven, not argued).
+  - Migrations idempotent on the persisted/populated DB (AG-W2.2.b re-confirmed).
+- **AG-W2.6 GREEN** — `hub-backup.service` ExecStart is the F12 `/bin/bash` fix; manual trigger →
+  exit 0 → `hub-snapshot: uploaded gs://labops-389703-hub-backups/snapshots/hub-20260520-034134
+  .pgdump`; `gcloud storage ls` confirms the object (14939 bytes). The backup-runner runs — F12 GREEN.
+- **All AG-W2 GREEN**: W2.1 (restore clean) · W2.2.a (bug-101 self-migrate, M=N=3) · W2.2.b
+  (idempotent) · W2.3 (latest mission match, mission-86) · W2.5 (entity counts match, 17766; 21
+  per-kind identical) · W2.6 (backup→GCS) · W2.7 (SIGTERM clean). AG-W2.4 RE-SEQUENCED → W3/AG-W3.10.
+- **W2 PR #221 OPEN** — `agent-greg/mission-86-w2` → main; 5 commits / 7 files off `335cf73`.
+  bug-101 + SIGTERM + F10 + F12 + F13(a); full AG-W2 evidence + findings + COS-fs note in the
+  PR body. Surfaced on thread-595 (intent `agreement_pending`).
+- **CI — required gates GREEN:** `test` aggregator · `vitest (hub)` (1m42s) · `workflow-test-
+  coverage in-sync` · `no-engineer-id` · `secret-scan`. The 4 non-hub `vitest` cells (adapters/*,
+  packages/cognitive-layer, packages/network-adapter) are RED = the documented non-blocking
+  pre-existing tarball-dep infra debt (test.yml header) — W2 diff touches zero non-hub files.
+  `mergeStateStatus: BLOCKED` is purely the pending review-approval.
+- Ship-verify 3-layer: tsc-strict ✅ (`npm run build` exit 0) · npm-test ✅ (src-only: 1472
+  passed / 0 failed / 7 skipped) · commit-claims ✅. Note: a local `npm run build` before
+  `npm test` pollutes `dist/__tests__/` → vitest runs the path-broken dist copies; `rm -rf
+  hub/dist` clears it; CI unaffected (no hub build before test). Minor follow-on flagged.
+- Standing by for architect cross-approval of PR #221.

@@ -55,17 +55,25 @@ mkdir -p "$DATA_MNT"
 mountpoint -q "$DATA_MNT" || mount "$DATA_DEV" "$DATA_MNT"
 mkdir -p "$DATA_MNT/postgres"
 
-# ── Hub config + secrets (generate-once) ──────────────────────────────
+# ── Hub config + secrets (generate-once, on the PERSISTENT data disk) ──
+# F13: .env MUST live on the persistent data disk, NOT the ephemeral COS
+# boot disk. `metadata_startup_script` is a ForceNew attribute, so every
+# startup.sh change REPLACES the VM (fresh boot disk) — a boot-disk .env is
+# then regenerated with a fresh POSTGRES_PASSWORD that diverges from the
+# `hub` role persisted in the postgres data dir → 28P01 auth crash-loop.
+# On the data disk (which survives VM replacement) the secret is stable.
+# (F13(b)/W3 moves these into Secret Manager; this is the minimal v1 fix.)
+ENV_FILE="$DATA_MNT/.env"
 mkdir -p "$HUB_DIR"
-if [ ! -f "$HUB_DIR/.env" ]; then
-  echo "[hub-startup] generating $HUB_DIR/.env"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "[hub-startup] generating $ENV_FILE"
   {
     echo "POSTGRES_PASSWORD=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)"
     echo "HUB_API_TOKEN=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)"
-  } > "$HUB_DIR/.env"
-  chmod 600 "$HUB_DIR/.env"
+  } > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
 fi
-. "$HUB_DIR/.env"
+. "$ENV_FILE"
 
 # ── 3-container stack — docker run (COS has no docker-compose) ─────────
 docker network inspect hub-net >/dev/null 2>&1 || docker network create hub-net
@@ -133,7 +141,10 @@ After=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/var/lib/hub/hub-snapshot.sh
+# COS mounts the /var stateful partition `noexec` — systemd cannot execve()
+# the script directly (203/EXEC) despite +x. Invoke it via /bin/bash (on the
+# exec-OK / mount); bash *reads* the script as data, which noexec permits.
+ExecStart=/bin/bash /var/lib/hub/hub-snapshot.sh
 UNIT
 
 cat > /etc/systemd/system/hub-backup.timer <<'UNIT'
