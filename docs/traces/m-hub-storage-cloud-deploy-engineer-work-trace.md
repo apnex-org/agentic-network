@@ -589,3 +589,49 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   observably progresses past `status:new`.
 - STATE: `agent-greg/mission-86-w3b` @ `f20413d` (bug-102 + trace). bearer-auth gate +
   bug-103 fix = the remaining Sub-PR B build; all scoped + surveyed above for a clean pickup.
+
+### 2026-05-20 — W3b: bearer-auth gate BUILT; bug-103 traced + W4-disposed; resumable state
+
+- **Bearer-auth gate — BUILT + committed** (`agent-greg/mission-86-w3b`):
+  - `2903f00` — Hub-side: `migrations/004-tokens-table.sql` (`bearer_tokens` table; sha-256
+    hash, raw token never stored), `storage-substrate/token-store.ts` (`TokenStore` — issue/
+    revoke/list/validate + cache), `middleware/bearer-auth.ts` (validates `/mcp`; HUB_API_TOKEN
+    grandfathered — CONSCIOUS SIGN-OFF for the PR body), `admin/tokens.ts` (`/admin/tokens`
+    POST/DELETE/GET + `requireAdminAuth` constant-time compare), `scripts/cloud/hub-token` CLI,
+    + index.ts/hub-networking.ts wiring (optional 7th HubNetworking param). Tests:
+    `bearer-auth.test.ts` + `token-store.test.ts` (11 tests).
+  - `0735173` — infra: `secret-manager.tf` 4th secret `hub-admin-token` + VM-SA grant;
+    `compute.tf` metadata; `startup.sh` fetches it → `HUB_ADMIN_TOKEN`. `terraform validate`
+    clean.
+  - `tsc` clean; full hub suite **1490 passed / 0 failed**. OQ-16 → (b) bootstrap-token in
+    Secret Manager (architect-confirmed).
+- **bug-103 — fully traced; W4-disposed.**
+  - Split OUT of Sub-PR B (architect CONCUR — cross-codebase). Sub-PR B = bearer-auth + bug-102.
+  - **Blast-radius:** `kind:note`→role is load-bearing — **Director notifications ARE `kind:note`**
+    (`emitDirectorNotification`; 70 director-targeted notes `status:new`). architect 86, engineer
+    102+12.
+  - **W4-sequencing — Director-approved Option A** (Design v2.5 RATIFIED `0f115f2`): W4 proceeds
+    on schedule; bug-103 does NOT gate the cutover (pre-existing bug, no new regression);
+    bug-103 is a **post-W4 fast-follow slice**; AG-W5.9 is its mission-close gate.
+  - **Systematic-miss trace:** no role-filter in the SSE path (architect's steer refuted). The
+    `new→received` transition = `claimMessage()` CAS, fired by the adapter's `fireClaimMessage()`
+    — GATED on `agent.state === "streaming"`. REFRAME: `status:new` conflates "never delivered"
+    with "delivered+rendered-but-unclaimed" → the 86/70/156 are upper-bounds. Unexplained
+    residual: even the always-streaming engineer is 102/114 `new`.
+  - **Instrumented check — architect-APPROVED** (run at engineer discretion; live local Hub;
+    low-risk): (1) nail `agent.state==="streaming"` semantics (SSE-connected vs mid-cognitive-
+    turn); (2) emit test architect-`kind:note`s labelled with the architect's state-at-emit
+    (`get-agents.sh` `cognitive_ttl`/activity_state) across streaming + idle; report (a) streaming
+    semantics, (b) does-a-streaming-architect-get-it, (c) the residual explanation → architect
+    then decides mechanism A/B/C. bug-103 strand-2 (claim-side) NOT a filed bug yet — file after
+    the check, root-cause in hand. NOTE: emitting `create_message kind=note` via the MCP proxy
+    hits bug-102 on the bug-102-unfixed live local Hub — the test-note emit needs a bug-102-free
+    path (e.g. piggyback a real PR-open's synthesized pr-opened-notification).
+- **Sub-PR B — NEXT ACTION: cloud verification.** Adapter-Restart verification on the CLOUD Hub
+  (NOT the live local Hub — the bearer-auth gate would lock out the live local adapters; AG-W3.x
+  are cloud-`hub-api`-URL-defined): `build-hub.sh` (Cloud Build → AR `hub:latest`) → `terraform
+  apply` (VM-replace: hub-admin-token secret + new startup.sh + new image) → verify AG-W3.1-8
+  (`hub-token` issue/revoke/list, bearer 401/200, `/health` no-auth, `/admin` admin-auth) +
+  AG-W3.11 (bug-102 stringified-payload round-trip) → open the Sub-PR B PR → ping thread-597.
+  bug-102 flips `investigating → resolved` only after AG-W3.11 (proxy round-trip) holds.
+- Coordination: thread-597 is the W3-tail channel; architect drives; ping PR-open there.
