@@ -1380,3 +1380,33 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - Ships in the W4-closeout PR with items 1 (ADAPTER-notice token+`/mcp` fix) + 3 (stale
   launcher comments); architect cross-approval per apnex-org flow; the `terraform apply`
   is operator/architect-coordinated.
+
+### 2026-05-20 — W4 COMPLETE — AG-W4.1–W4.7 all verified; cloud Hub is production
+
+- Operator restarted both adapter sessions; both reconnected to the cloud Hub.
+- **AG-W4 — all 7 gates verified ✅:**
+  - AG-W4.1 cutover script ran end-to-end (attempt #3) ✅
+  - AG-W4.2 cloud state == local at cutover-time — parity 18541 == 18541 ✅
+  - AG-W4.3 both agents reconnect via Cloud Run URL — cloud `/health` `activeSessions:2`,
+    `sseStreams:2` ✅
+  - AG-W4.4 first post-cutover MCP call succeeds — `list_missions` via greg's adapter
+    landed clean through Cloud Run nginx → VM Hub (6 active missions, mission-86 included)
+    ✅
+  - AG-W4.5 local Hub stopped (`Exited 0`) + dump archived to GCS `cutover/` ✅
+  - AG-W4.6 both adapter-config.json show `https://hub-api-5muxctm3ta-ts.a.run.app/mcp` ✅
+  - AG-W4.7 no data-loss vs pre-cutover snapshot ✅
+- **W4 — the production cutover — COMPLETE.** The cloud Hub is production.
+- **W4-closeout PR — assembling:**
+  - Item 1 — `cutover-to-cloud.sh` `adapter_flip_notice()` rewritten: instructs BOTH the
+    `hubUrl` (`/mcp` path) AND `hubToken` flip (the cloud `HUB_API_TOKEN` from Secret
+    Manager / the new TF output) — closes the W4 step-3 gap that caused the 401 blocker.
+  - Item 2 — TF token outputs (`e571806`, already on branch).
+  - Item 3 — stale `start-{greg,lily}.sh` header comments: those scripts are UNTRACKED
+    (operator-owned, per-worktree) — NOT a repo deliverable; recommend the operator
+    update them. Surfaced to architect, not in the PR.
+- lily finding (noted): `list_available_peers` → `-32602 Tool not found` on the cloud Hub;
+  core tools work. Likely the cloud Hub image (`f35b08a`) predates that tool — a
+  W4-closeout/W5 check on cloud-Hub image currency (entangled with bug-107 — Watchtower
+  can't pull).
+- NEXT: push the closeout commit → open the W4-closeout PR → architect cross-approve →
+  W5 (trimmed).
