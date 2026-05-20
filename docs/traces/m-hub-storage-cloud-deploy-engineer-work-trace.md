@@ -965,3 +965,31 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   summarizer; parser-fix committed `62de435` + pushed.
 - NEXT: architect (D)-viability re-weigh — (a) poll-backstop internal calls bypass the
   cognitive ResponseSummarizer; (b) re-weigh (D) vs (A)/(C). Architect dispositions.
+
+### 2026-05-20 — bug-103 slice: (D) holds; bug-106 filed; fix-size traced
+
+- Architect re-weigh (thread-598 r19): **(D) HOLDS.** (A) hits the SAME summarizer-conflation
+  (`drain_pending_actions` is also an internal `agent.call`) + carries its own costs; (C) keeps
+  the bounded-replay-window flaw; (D)'s machinery is proven. The summarizer-conflation is a
+  genuine architectural defect (machinery `agent.call`s LLM-response-summarized) — **filed
+  `bug-106`** (major; cognitive-layer; surfaced by (D)). Fix it, don't dodge.
+- **bug-106 fix-size — TRACED (thread-598 r20):** clean call-context exists; small + bounded.
+  `ToolCallContext` (`cognitive-layer/src/contract.ts`) already has a free-form `tags` bag, and
+  `ctx` is the shared object every middleware receives — no threading through layers. Fix =
+  ~4 files / 2 packages:
+  1. `agent-client.ts` — `IAgentClient.call` gets optional 3rd param `opts?:{internal?:boolean}`
+     (backward-compatible).
+  2. `mcp-agent-client.ts` — `call()` threads `opts.internal` → `ctx.tags.internal`.
+  3. `response-summarizer.ts` — `onToolCall` skips the summarize step when `ctx.tags.internal` set.
+  4. `poll-backstop.ts` — `tick()`'s `list_messages` (+ `transport_heartbeat`) pass `{internal:true}`.
+  Mechanism (1) `ctx.tags` flag (recommended, zero contract-change) vs (2) typed `ctx.internal`
+  field (+contract.ts). Rejected: per-tool-disable (`perToolMaxItems[list_messages]=null` —
+  tool-wide, kills LLM summarization too). The fix is GENERAL (any internal `agent.call` opts out).
+  NOT committed — traced only, per architect instruction.
+- Calibrations logged for Phase 10 (architect): (1) deferred-disabled-path-ships-untested
+  (`firstTimerEnabled:false` since bug-53); (2) cascading-adjacent-defects (bug-103 → bug-104 →
+  (D) → bug-106).
+- #224: bug-104 sound+verified; bug-103-(D) machinery proven (`62de435` parser-fix); blocked on
+  bug-106. AG-W3.12 (full recovery pipeline-ON) does not pass until bug-106 fixed.
+- NEXT: architect disposes PR-shape (bug-106 into #224 vs own slice) → implement the bug-106 fix
+  → rebuild → harness re-verify pipeline-ON (full backlog drain) → merge.
