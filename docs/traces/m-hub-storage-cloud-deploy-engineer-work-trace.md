@@ -1075,3 +1075,45 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   pre-resolve the basename operator-side + interpolate it correctly into the remote command.
 - NEXT: author `cutover-to-cloud.sh` (`--dry-run` mode = real reads, destructive ops print +
   skip) + rollback runbook → dry-run-test → ship as PR (apnex-org flow).
+
+### 2026-05-20 PM AEST — W4: cutover script + rollback runbook authored + dry-run-tested
+
+- **`scripts/cloud/cutover-to-cloud.sh` authored + committed `29d9b42`** (309 lines). Phases:
+  PREFLIGHT (read-only — runs live even in `--dry-run`) → DRAIN (`docker stop --time=30`) →
+  SNAPSHOT (`hub-snapshot.sh save`) → UPLOAD (`gsutil cp`) → RESTORE (IAP-SSH: download +
+  stop cloud Hub + `pg_restore --clean --if-exists` + start cloud Hub) → VERIFY (`/health`
+  poll + entity-count parity) → ADAPTER (prints the `OIS_HUB_URL` flip instructions).
+- **Dry-run-tested — PASSES.** PREFLIGHT ran live: tooling OK, local Hub + pg up, cloud Hub
+  `/health`→200, VM reachable via IAP, **baseline local entities 18323 / cloud 91 (throwaway
+  W2(3) state)**, cutover bucket writable. Every mutating step printed its fully-resolved
+  command — pre-audit evidence.
+- **`docs/operator/cloud-deploy-rollback-runbook.md` authored + committed** (v1.0; OQ-11).
+  Scenario A — cutover rollback (re-start the stopped-not-removed local Hub; primary,
+  ~30s, lossless to drain-time state; + A.4 deep recovery from the GCS snapshot). Scenario
+  B — cloud-Hub image rollback (digest-based; re-point `hub:latest` + Watchtower restart).
+- **§4.14 reconciliations folded into the real script (architect: §4.14 is a forward sketch,
+  the script is canonical):** (1) single-quoted-`$LATEST_DUMP` SSH bug → basename
+  pre-resolved operator-side. (2) §4.14 step 7 `docker rm` of local containers DROPPED from
+  W4 — AG-W4.5 says "stopped"; `docker rm` decommission is W5; keeping the local Hub
+  stopped-not-removed is what makes the Scenario-A rollback trivial. (3) §4.14's
+  `ois-postgres-local` is wrong — the local pg container is `hub-substrate-postgres`.
+- **Cloud-VM container model verified:** COS VM, NO docker-compose — `ois-hub-prod` /
+  `ois-postgres-prod` / `watchtower-prod` run as direct `docker run` from
+  `modules/hub/scripts/startup.sh` (idempotent; secrets fetched from Secret Manager each
+  boot). Rollback runbook Scenario B corrected accordingly (Watchtower-tag-repoint, not
+  `docker compose`).
+- **Cloud-Hub image-currency — UNRESOLVABLE from metadata; SHA-tag gap surfaced to architect:**
+  VM `ois-hub-prod` runs `cloud-run-source-deploy/hub:latest` digest `c346a1e7…` (Up ~3h);
+  AR `hub:latest` has since moved to `ea22c993…` (build `b6081e5e` @ 09:27Z). Cloud Build
+  records carry NO commit SHA (AG-W1.6 trigger deferred — all builds are manual
+  `build-hub.sh` submits, no git provenance); Hub `/health` reports a static
+  `version:"1.0.0"`, no `/version` endpoint. → cannot prove the VM image is `main @ f35b08a`.
+  Companion finding: §4.14 rollback step 2 (`re-tag previous-sha as latest`) presumes
+  per-SHA image tags, but `build-hub.sh` only pushes the mutable `:latest` — no SHA tags
+  exist (runbook Scenario B authored digest-based to be correct regardless). Proposed
+  W4-prep: deterministic rebuild from the W4 checkout (= `main @ f35b08a`; `hub/` untouched)
+  + push a commit-SHA-pinned tag for provable provenance → redeploy + verify. Surfaced to
+  architect on thread-600 for concur before executing (touches the build process + the
+  rollback runbook).
+- NEXT: architect concur on the image-currency disposition → execute W4-prep rebuild → open
+  the W4 PR → bilateral pre-cutover audit.
