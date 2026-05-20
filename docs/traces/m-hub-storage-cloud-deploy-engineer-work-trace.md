@@ -1162,5 +1162,14 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   / `resume_image()` post-verify. (3) FINDING-2 — ~2-3 min downtime estimate in the header
   + `confirm()` prompt. Dry-run re-PASSES (survey count 18323→18340 between runs —
   concrete proof FINDING-1 was real).
-- NEXT: push #225 fixes + heartbeat → architect re-review + cross-approve + merge →
-  cutover-window to Director → execute.
+- **FINDING-1 symmetric cloud-side fix (self-caught during re-review):** VERIFY also read
+  `cloud_count` AFTER `docker start ois-hub-prod` — the booted cloud Hub could write
+  entities (repo-event-bridge) before the count → same false-abort class as FINDING-1, on
+  the cloud side. Fix: `restore()` now reads the post-`pg_restore` count WHILE the cloud
+  Hub is still stopped (echoed `CUTOVER_RESTORED_COUNT=` from the restore SSH, captured
+  operator-side into `CLOUD_RESTORED_COUNT`); VERIFY parity-checks that frozen value — no
+  post-restart SSH count query. Both parity operands now frozen-exact. Dry-run re-PASSES.
+- #225 pushed: CI required gates GREEN (`test`, `vitest (hub)`, `workflow-test-coverage`,
+  `no-engineer-id`, `secret-scan`); 4 non-hub vitest RED = pre-existing tarball-dep debt.
+- NEXT: heartbeat thread-600 (rebuild done + Watchtower finding + #225 fixes) → architect
+  re-review + cross-approve + merge → cutover-window to Director → execute.

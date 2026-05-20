@@ -94,11 +94,14 @@ DUMP_BASENAME="hub-cutover-${TS}.dump"
 LOCAL_DUMP="${SNAPSHOT_DIR}/${DUMP_BASENAME}"
 GCS_URI="${CUTOVER_BUCKET}/${CUTOVER_PREFIX}/${DUMP_BASENAME}"
 
-# The authoritative AG-W4.2 / AG-W4.7 parity baseline. Captured POST-drain by
-# freeze_baseline() — NOT in PREFLIGHT: the local Hub keeps writing entities
-# (repo-event-bridge GitHub polls, heartbeats) right up until DRAIN stops it,
-# so only a post-drain count matches the post-drain snapshot.
+# The AG-W4.2 / AG-W4.7 parity pair — both captured while their Hub is STOPPED
+# so neither can drift before its count is read:
+#  · LOCAL_ENTITY_COUNT   — post-drain (freeze_baseline()); local Hub stopped.
+#  · CLOUD_RESTORED_COUNT — post-pg_restore (restore()); cloud Hub still stopped.
+# A count taken with the Hub running drifts (repo-event-bridge GitHub polls,
+# heartbeats) → a strict-equality parity check would falsely fail.
 LOCAL_ENTITY_COUNT=""
+CLOUD_RESTORED_COUNT=""
 
 # ── Output helpers ─────────────────────────────────────────────────────
 phase() { echo; echo "════════ $* ════════"; }
@@ -258,8 +261,10 @@ restore() {
   phase "RESTORE — pg_restore into cloud VM"
   # The basename is resolved operator-side and interpolated into the remote
   # command (NOT a remote $(...) — $LATEST_DUMP would be undefined on the VM).
-  # The cloud Hub is stopped for a clean restore, then restarted; it re-runs
-  # the idempotent SchemaReconciler against the restored state on boot.
+  # The cloud Hub is stopped for a clean restore; the post-restore entity
+  # count is read here, WHILE it is still stopped (exact + frozen — verify()
+  # parity-checks it); then the Hub is restarted and re-runs the idempotent
+  # SchemaReconciler against the restored state on boot.
   local remote_cmd
   remote_cmd="set -euo pipefail
 echo '[vm] downloading dump from GCS...'
@@ -268,6 +273,7 @@ echo '[vm] stopping cloud Hub container for clean restore...'
 sudo docker stop '${CLOUD_HUB_CONTAINER}'
 echo '[vm] pg_restore --clean --if-exists...'
 sudo docker exec -i '${CLOUD_PG_CONTAINER}' pg_restore --clean --if-exists -U hub -d hub < '/tmp/${DUMP_BASENAME}'
+echo \"CUTOVER_RESTORED_COUNT=\$(sudo docker exec '${CLOUD_PG_CONTAINER}' psql -U hub -d hub -tA -c 'SELECT COUNT(*) FROM entities' | tr -d '[:space:]')\"
 echo '[vm] starting cloud Hub container...'
 sudo docker start '${CLOUD_HUB_CONTAINER}'
 echo '[vm] restore complete'"
@@ -277,7 +283,11 @@ echo '[vm] restore complete'"
     printf '%s\n' "$remote_cmd" | sed 's/^/             | /'
   else
     log "restoring on VM '${CLOUD_VM}' via IAP tunnel..."
-    ssh_vm "$remote_cmd"
+    local out
+    out="$(ssh_vm "$remote_cmd")"
+    echo "$out"
+    CLOUD_RESTORED_COUNT="$(printf '%s\n' "$out" | sed -n 's/^CUTOVER_RESTORED_COUNT=//p' | tr -d '[:space:]')"
+    [ -n "$CLOUD_RESTORED_COUNT" ] || die "restore did not report a post-restore entity count"
   fi
 }
 
@@ -286,10 +296,20 @@ verify() {
   phase "VERIFY — cloud Hub health + state parity"
   if $DRY_RUN; then
     echo "[cutover][DRY-RUN] would verify:"
+    printf '             entity parity: CLOUD_RESTORED_COUNT == LOCAL_ENTITY_COUNT  [AG-W4.2 / AG-W4.7]\n'
     printf '             curl %s/health → expect 200\n' "$CLOUD_RUN_URL"
-    printf '             cloud entity count == local baseline (%s)  [AG-W4.2 / AG-W4.7]\n' "${LOCAL_ENTITY_COUNT:-<baseline>}"
     return 0
   fi
+
+  # Entity-count parity (AG-W4.2 / AG-W4.7). Both counts are frozen-exact —
+  # LOCAL_ENTITY_COUNT taken post-drain, CLOUD_RESTORED_COUNT taken post-restore
+  # with the cloud Hub still stopped — so strict equality is correct and a
+  # successful restore cannot false-fail. Checked first: fail fast on data-loss
+  # before the ~60s health wait.
+  log "entity count — local baseline (post-drain): ${LOCAL_ENTITY_COUNT}  |  cloud (post-restore): ${CLOUD_RESTORED_COUNT}"
+  [ -n "$CLOUD_RESTORED_COUNT" ] && [ "$CLOUD_RESTORED_COUNT" = "$LOCAL_ENTITY_COUNT" ] \
+    || die "entity-count parity FAILED (AG-W4.2/W4.7): local=${LOCAL_ENTITY_COUNT} cloud=${CLOUD_RESTORED_COUNT}"
+  log "state parity OK — cloud matches local baseline (AG-W4.2 / AG-W4.7)"
 
   # Poll /health — the cloud Hub re-boots + runs SchemaReconciler post-restore.
   local code="" i
@@ -300,13 +320,6 @@ verify() {
   done
   [ "$code" = "200" ] || die "cloud Hub /health did not return 200 within ~60s (last: '$code')"
   log "cloud Hub healthy: ${CLOUD_RUN_URL}/health → 200"
-
-  local cloud_count
-  cloud_count="$(ssh_vm "sudo docker exec $CLOUD_PG_CONTAINER psql -U hub -d hub -tA -c 'SELECT COUNT(*) FROM entities'" 2>/dev/null | tr -d '[:space:]')"
-  log "entity count — local baseline: ${LOCAL_ENTITY_COUNT}  |  cloud post-restore: ${cloud_count}"
-  [ -n "$cloud_count" ] && [ "$cloud_count" = "$LOCAL_ENTITY_COUNT" ] \
-    || die "entity-count parity FAILED (AG-W4.2/W4.7): local=${LOCAL_ENTITY_COUNT} cloud=${cloud_count}"
-  log "state parity OK — cloud matches local baseline (AG-W4.2 / AG-W4.7)"
 }
 
 # ── RESUME-IMG — resume Watchtower (the ongoing image-CD model) ────────
