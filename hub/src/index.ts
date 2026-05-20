@@ -38,6 +38,7 @@ import {
   type HubStorageSubstrate,
   type SchemaReconciler,
 } from "./storage-substrate/index.js";
+import { applyMigrations } from "./storage-substrate/migration-runner.js";
 import { SubstrateCounter } from "./entities/substrate-counter.js";
 import { AgentRepositorySubstrate } from "./entities/agent-repository-substrate.js";
 import { AuditRepositorySubstrate } from "./entities/audit-repository-substrate.js";
@@ -138,6 +139,9 @@ let messageStore: IMessageStore;
 const connRedacted = POSTGRES_CONNECTION_STRING.replace(/:[^:@]+@/, ":***@");
 console.log(`[Hub] substrate-mode active; postgres=${connRedacted}`);
 const substrate: HubStorageSubstrate = createPostgresStorageSubstrate(POSTGRES_CONNECTION_STRING);
+// mission-86 W2 (bug-101): apply substrate migrations before the reconciler —
+// the Hub bootstraps a fresh empty postgres with no manual SQL.
+await applyMigrations(POSTGRES_CONNECTION_STRING, (msg) => console.log(`[Hub:migrations] ${msg}`));
 const reconciler: SchemaReconciler = createSchemaReconciler(substrate, POSTGRES_CONNECTION_STRING, {
   initialSchemas: ALL_SCHEMAS,
   log: (msg) => console.log(`[Hub:reconciler] ${msg}`),
@@ -849,8 +853,11 @@ startupSequence().then(async () => {
 });
 
 // ── Graceful Shutdown ────────────────────────────────────────────────
-process.on("SIGINT", async () => {
-  console.log("[Hub] Shutting down...");
+// mission-86 W2: SIGTERM handler mirrors SIGINT so `docker stop` (the W4
+// production cutover) drains in-flight ops cleanly instead of falling
+// through to SIGKILL. Both signals route to the same shutdown path.
+async function shutdown(signal: string): Promise<void> {
+  console.log(`[Hub] Shutting down (${signal})...`);
   stopThreadReaper();
   stopAgentReaper();
   stopContinuationSweep();
@@ -864,4 +871,7 @@ process.on("SIGINT", async () => {
   }
   await hub.stop();
   process.exit(0);
-});
+}
+
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));

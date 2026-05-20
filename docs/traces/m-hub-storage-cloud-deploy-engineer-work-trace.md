@@ -282,3 +282,36 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   logging/monitoring enabled) · W1.9 ✅ (Cloud Run min-instances=1) · W1.10 ✅ (no public IP) ·
   W1.11 ✅ (unreachable — no public IP) · W1.12 ✅ (no hardcoded literals; validate clean).
 - W1 → PR for architect cross-approval.
+
+### 2026-05-20 — W1 MERGED (335cf73); W2 issued + planned
+
+- W1 PR #220 cross-approved + admin-squash-merged → `main @ 335cf73` (all 4 W1 conscious
+  sign-offs ratified). W2 branch `agent-greg/mission-86-w2` off `origin/main @ 335cf73`.
+- **W2 issued** (thread-595; Design v1.6 §5 W2): state migration + bug-101 real-fix + SIGTERM handler.
+- W2 plan:
+  - **SIGTERM handler** — extract the index.ts SIGINT-handler body → `shutdown()` → register
+    SIGINT + SIGTERM (clean `docker stop` at W4).
+  - **bug-101 real-fix** — `migration-runner.ts`: read + apply `migrations/001+002+003.sql` in
+    filename order at Hub bootstrap, BEFORE `reconciler.start()` (`index.ts:146`). The 3 SQLs are
+    already fully idempotent (`IF NOT EXISTS` / `CREATE OR REPLACE` / `DROP ... IF EXISTS`) → no
+    migration-tracking table needed; AG-W2.2.b idempotency is satisfied by the SQL. Build-step:
+    copy `*.sql` into `dist/` (tsc doesn't copy non-TS) — `hub/package.json` + `hub/Dockerfile`.
+  - **Hub image rebuild** → push to AR → cloud-VM Hub-container restart (Cloud Build trigger is
+    F9-deferred → manual build).
+  - **AG-W2.2.a** — tear down the W1 scaffold-migrated postgres volume → boot cloud-Hub against a
+    genuinely FRESH empty postgres → confirm self-migration (pinned M=N=3).
+  - **State-migration test** — `hub-snapshot.sh` local→cloud restore; AG-W2.3/.4/.5.
+
+### 2026-05-20 — W2 source changes authored + verified
+
+- **SIGTERM handler** (`hub/src/index.ts`): extracted the SIGINT-handler body → `shutdown(signal)`;
+  registered both `SIGINT` + `SIGTERM`. Clean `docker stop` drain for the W4 cutover.
+- **bug-101 real-fix**: `hub/src/storage-substrate/migration-runner.ts` — `applyMigrations()` reads
+  + applies `migrations/*.sql` in filename order; wired into `index.ts` before `reconciler.start()`.
+  The 3 SQLs are idempotent → no migration-tracking table. `hub/package.json` `build` script copies
+  `*.sql` into `dist/` (tsc doesn't); Dockerfile needs no change (it `COPY`s all of `dist/`).
+- **Verified:** `npm run build` GREEN (tsc-clean; 3 `.sql` confirmed in `dist/storage-substrate/
+  migrations/`). New `migration-runner.test.ts` GREEN — fresh-empty-postgres bootstrap (entities +
+  indexes created) + 2nd-run idempotency; restart-safety + related suites green (18 tests).
+- Next: rebuild Hub image → AR → cloud-VM restart; AG-W2.2.a fresh-postgres verification;
+  state-migration test; W2 PR.
