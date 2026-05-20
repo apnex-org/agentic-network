@@ -22,7 +22,7 @@
 #   RESTORE     IAP-tunnel SSH → download + pg_restore into the cloud VM
 #   VERIFY      cloud-Hub /health 200 + entity-count parity vs the baseline
 #   RESUME-IMG  resume cloud Watchtower (the ongoing image-CD model)
-#   ADAPTER     print the OIS_HUB_URL flip instructions (operator-driven)
+#   ADAPTER     print the adapter-config flip instructions (operator-driven)
 #
 # Downtime (DRAIN → VERIFY): realistically ~2-3 min — drain (≤30s) + snapshot
 # + upload + IAP-SSH restore (download + cloud-Hub stop/restore/start). The
@@ -395,29 +395,41 @@ resume_image() {
   fi
 }
 
-# ── ADAPTER — print the OIS_HUB_URL flip instructions ──────────────────
+# ── ADAPTER — print the adapter-config flip instructions ──────────────
 adapter_flip_notice() {
-  phase "ADAPTER — OIS_HUB_URL flip (operator-driven)"
+  phase "ADAPTER — adapter-config flip (operator-driven)"
   cat <<NOTICE
-The cloud Hub is now live with production state. Final step is OPERATOR-DRIVEN
-— it restarts the adapter sessions, so the script cannot do it for itself.
+The cloud Hub is now live with production state. The final step is
+OPERATOR-DRIVEN — it restarts the adapter sessions, so the script cannot do
+it for itself.
 
-For each adapter shim (lily + greg), flip the Hub URL then restart the session:
+For EACH adapter shim (lily + greg), edit <workdir>/.ois/adapter-config.json
+— BOTH fields below — then restart the session:
 
-  • Edit  <workdir>/.ois/adapter-config.json  →  set  "hubUrl": "${CLOUD_RUN_URL}"
-    (or export OIS_HUB_URL="${CLOUD_RUN_URL}" — the env var overrides the file)
+  • "hubUrl"   →  "${CLOUD_RUN_URL}/mcp"
+       Keep the /mcp path — the shim connects to the /mcp endpoint, not the
+       bare host.
+
+  • "hubToken" →  the CLOUD Hub's HUB_API_TOKEN.
+       The cloud Hub is a separate Hub with its OWN bearer token — the
+       local-Hub token will be rejected (401 Invalid token). Read it with:
+         gcloud secrets versions access latest --secret=hub-hub-api-token
+       (or, once the W4-closeout TF outputs are applied:
+         terraform -chdir=deploy/hub output -raw hub_api_token)
+
   • Restart the adapter session.
 
-This is a config change only — NOT a plugin reinstall (the shim reads the URL
-at startup: process.env.OIS_HUB_URL || fileConfig.hubUrl).
+A config change only — NOT a plugin reinstall (the shim reads hubUrl +
+hubToken at startup). Before restarting, sanity-check each config: a POST to
+hubUrl with the bearer token should return HTTP 200, not 401.
 
 Post-flip acceptance checks:
   • AG-W4.3  both agents reconnect within 60s via the Cloud Run URL
   • AG-W4.4  a first post-cutover MCP call succeeds (e.g. list_missions)
-  • AG-W4.6  every adapter shim config shows ${CLOUD_RUN_URL}
+  • AG-W4.6  every adapter shim config shows ${CLOUD_RUN_URL}/mcp
 
-The local Hub is STOPPED but NOT removed — rollback = re-start it + revert the
-URL. Full decommission (docker rm) is W5, after the cutover is validated.
+The local Hub is STOPPED but NOT removed — rollback = re-start it + revert
+BOTH hubUrl and hubToken. Full decommission (docker rm) is W5, post-validation.
 Cutover dump archived at: ${GCS_URI}  (AG-W4.5; lifecycle-exempt prefix)
 NOTICE
 }

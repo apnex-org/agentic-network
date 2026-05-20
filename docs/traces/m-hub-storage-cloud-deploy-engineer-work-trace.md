@@ -1273,3 +1273,140 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   real rehearsal run. Fixed both occurrences → `$($DRY_RUN && echo 'DRY-RUN ')`.
 - NEXT: PR the fix + `--rehearse-restore` (with rehearsal evidence) → architect
   cross-approve + merge → attempt #3 on a fresh Director window-confirm.
+
+### 2026-05-20 PM AEST — W4 cutover ATTEMPT 3: SUCCEEDED — cloud Hub is production
+
+- #227 merged `main @ 34446c4`. Architect handed off to a fresh lily session, which
+  relayed the **Director Option-1 #3-GO**. Branch `agent-greg/mission-86-w4-attempt3` off
+  `34446c4`; script byte-identical to canonical.
+- **`cutover-to-cloud.sh --yes` — attempt #3 — CUTOVER COMPLETE.** Full flow clean:
+  PREFLIGHT OK → FREEZE-IMG (watchtower paused) → DRAIN (local Hub stopped 22:42:32Z) →
+  FREEZE-BASE (authoritative baseline **18541**) → SNAPSHOT (8.4M) → UPLOAD (dump+meta →
+  GCS) → **RESTORE: JSON-API download (NO gsutil error — the fix holds) → `docker stop
+  ois-hub-prod` → `pg_restore --clean` → `CUTOVER_RESTORED_COUNT=18541` → `docker start`**
+  → VERIFY (parity **18541 == 18541**, cloud `/health` 200) → RESUME-IMG (watchtower
+  resumed) → ADAPTER notice. Banner correctly read "CUTOVER COMPLETE" (the `${DRY_RUN:+}`
+  fix holds).
+- **AG-W4 — independently verified:**
+  - **AG-W4.1** cutover script executed end-to-end ✅
+  - **AG-W4.2** cloud state == local state at cutover-time — parity 18541 == 18541
+    (both frozen-exact: local post-drain, cloud post-restore Hub-stopped) ✅
+  - **AG-W4.5** local Hub stopped (`ois-hub-local-prod` `Exited (0)` — graceful drain;
+    NOT removed — W5 decommission) + dump archived `gs://labops-389703-hub-backups/
+    cutover/hub-cutover-20260520-224232.dump` (8.37 MiB; lifecycle-exempt prefix) ✅
+  - **AG-W4.7** no data-loss vs pre-cutover snapshot — parity confirmed ✅
+  - **AG-W4.3 / AG-W4.4 / AG-W4.6** — PENDING the operator's `OIS_HUB_URL` flip +
+    session restarts (agents reconnect / first post-cutover MCP call / shim configs).
+- **Cloud Hub is now production** — `https://hub-api-5muxctm3ta-ts.a.run.app`, live +
+  healthy, 18561 entities (growing — the cloud Hub is serving + writing post-restore;
+  expected). local Hub `hub-substrate-postgres` left intact (rollback-ready).
+- thread-601 went dark at DRAIN (local-Hub-hosted). Operator does the `OIS_HUB_URL` flip
+  → `https://hub-api-5muxctm3ta-ts.a.run.app` + restarts both adapter sessions; post-flip
+  the fresh greg verifies AG-W4.3/4.4/4.6 + surfaces W4-complete on thread-601 (cloud Hub).
+- **FINDING (minor; fix at W4-closeout/W5)** — the `adapter_flip_notice()` in
+  `cutover-to-cloud.sh` prints the bare `${CLOUD_RUN_URL}` (`https://hub-api-…a.run.app`)
+  as the new `hubUrl`, but the real adapter config carries the **`/mcp` path**
+  (greg's `.ois/adapter-config.json` `hubUrl` = `http://localhost:8080/mcp`). The
+  correct flip value is `https://hub-api-5muxctm3ta-ts.a.run.app/mcp`. Verified: cloud
+  `/mcp` → HTTP 401 (path served + W3 bearer-auth gate active — correct). The operator
+  was given the correct `/mcp` value directly; the notice should be patched to append
+  the path from the existing config.
+- NEXT: operator flip (`hubUrl` → `https://hub-api-5muxctm3ta-ts.a.run.app/mcp`) +
+  restart both sessions → fresh greg reconnects on the cloud Hub → verifies
+  AG-W4.3/4.4/4.6 → W4 closeout (+ the ADAPTER-notice `/mcp` patch) → W5.
+
+### 2026-05-20 PM AEST — W4 cutover: adapter `hubUrl` flipped (both worktrees)
+
+- **`hubUrl` flip done (both adapter-config.json):** greg
+  `/home/apnex/taceng/agentic-network-greg/.ois/adapter-config.json` + lily
+  `/home/apnex/taceng/agentic-network-lily/.ois/adapter-config.json` — both
+  `http://localhost:8080/mcp` → `https://hub-api-5muxctm3ta-ts.a.run.app/mcp` (only
+  `hubUrl`; `hubToken`/`role`/`labels` untouched). `.ois/` is gitignored — not committed.
+- Config-location confirmed: `start-greg.sh`/`start-lily.sh` source `~/.config/apnex-agents/
+  <agent>.env` for *secrets only* (`GH_TOKEN`/`NPM_TOKEN`); they do NOT set `OIS_HUB_URL`.
+  The Hub URL's canonical home is `.ois/adapter-config.json` `hubUrl` (per the launchers'
+  own header comments) — flipped there, not in the env files (avoids a secrets-file
+  misuse + a two-sources-of-truth `env`-overrides-`file` hazard).
+- Editing the config files does NOT disturb the running shims (they read `hubUrl` at
+  startup) — the flip takes effect on each session's restart.
+- Cloud Hub re-confirmed healthy pre-restart: `/health` → 200.
+- NEXT: operator restarts both sessions (`start-greg.sh` / `start-lily.sh`) → fresh greg +
+  lily reconnect to the cloud Hub → AG-W4.3/4.4/4.6 verify → W4 closeout. Stale launcher
+  header comments ("must point at http://localhost:8080/mcp") + the ADAPTER-notice
+  `/mcp`-path bug are W4-closeout doc fixes.
+
+### 2026-05-20 PM AEST — W4 step-3 BLOCKED on bearer-auth; diagnosed + token fixed
+
+- **Blocker:** adapters (URL flipped to cloud) → HTTP 401 `Unauthorized: Invalid token`
+  from cloud `/mcp` (W3 bearer-auth gate). Surfaced by lily; both agents disconnected.
+- **Root cause — evidence-confirmed (no spec-recall):**
+  - `hub/src/middleware/bearer-auth.ts`: `/mcp` token accepted iff in the `bearer_tokens`
+    TokenStore (sha-256 *hash* lookup) OR `=== HUB_API_TOKEN` env (grandfather path).
+  - The adapter-config `hubToken` (`9dtfAY…0DEE`, 43 ch) = the LOCAL Hub's `HUB_API_TOKEN`
+    — confirmed exact match to `docker inspect ois-hub-local-prod` env. NOT a token-store
+    token (issued ones are `hubt_`-prefixed). → lily's "tokens table didn't migrate"
+    candidate is ruled out — it's a grandfather env token, not a `bearer_tokens` row.
+  - Cloud Hub's `HUB_API_TOKEN` is a SEPARATE TF `random_password` (`modules/hub/
+    secret-manager.tf`, length 32) in Secret Manager `hub-hub-api-token`. It is an env
+    var, not DB state — the cutover `pg_restore` neither carried nor could carry it.
+- **W4 step-3 GAP:** step 3 = flip URL **and** token. `cutover-to-cloud.sh`
+  `adapter_flip_notice()` instructs only the URL flip — the token side was unspecified.
+- **Fix applied + verified:** cloud `HUB_API_TOKEN` (Secret Manager `hub-hub-api-token`)
+  written as `hubToken` into BOTH `adapter-config.json` (greg + lily). Each config's
+  `hubUrl`+`hubToken` → cloud `/mcp` initialize → **HTTP 200** ✅.
+- **W4-closeout items (reviewed PR; not blocking the restart):**
+  1. `cutover-to-cloud.sh` ADAPTER notice — add the token-flip step (set `hubToken` to the
+     cloud `HUB_API_TOKEN`) + the `/mcp`-path correction.
+  2. TF DX (operator-directed) — expose `hub_api_token` (+ likely `admin_token`) as
+     `sensitive` outputs in `modules/hub/outputs.tf` + the `deploy/hub/` root caller, so
+     the token is `terraform output -raw hub_api_token` instead of needing the Secret
+     Manager secret-id. Non-destructive apply (0 resource changes — reads existing
+     `random_password.result`).
+  3. Stale `start-{greg,lily}.sh` header comments.
+- NEXT: operator restarts both sessions → adapters reconnect to the cloud Hub →
+  AG-W4.3/4.4/4.6 verify → W4-closeout PR (the 3 items above).
+
+### 2026-05-20 PM AEST — W4-closeout: TF token outputs authored (operator-directed)
+
+- W4-closeout item 2 done: `hub_api_token` + `admin_token` exposed as `sensitive` TF
+  outputs. `modules/hub/outputs.tf` — both `value = random_password.<x>.result, sensitive
+  = true`. NEW `deploy/hub/outputs.tf` — re-exports both from `module.hub` (the root
+  caller previously had NO outputs.tf at all). `terraform fmt` clean; `terraform -chdir=
+  deploy/hub validate` → "Success! The configuration is valid."
+- Operator reads the token post-apply via `terraform output -raw hub_api_token` — no
+  Secret Manager secret-id needed. Materialising the outputs needs one `terraform apply`
+  (NON-destructive — 0 add/change/destroy; outputs just read the existing
+  `random_password.result` already in state).
+- Ships in the W4-closeout PR with items 1 (ADAPTER-notice token+`/mcp` fix) + 3 (stale
+  launcher comments); architect cross-approval per apnex-org flow; the `terraform apply`
+  is operator/architect-coordinated.
+
+### 2026-05-20 — W4 COMPLETE — AG-W4.1–W4.7 all verified; cloud Hub is production
+
+- Operator restarted both adapter sessions; both reconnected to the cloud Hub.
+- **AG-W4 — all 7 gates verified ✅:**
+  - AG-W4.1 cutover script ran end-to-end (attempt #3) ✅
+  - AG-W4.2 cloud state == local at cutover-time — parity 18541 == 18541 ✅
+  - AG-W4.3 both agents reconnect via Cloud Run URL — cloud `/health` `activeSessions:2`,
+    `sseStreams:2` ✅
+  - AG-W4.4 first post-cutover MCP call succeeds — `list_missions` via greg's adapter
+    landed clean through Cloud Run nginx → VM Hub (6 active missions, mission-86 included)
+    ✅
+  - AG-W4.5 local Hub stopped (`Exited 0`) + dump archived to GCS `cutover/` ✅
+  - AG-W4.6 both adapter-config.json show `https://hub-api-5muxctm3ta-ts.a.run.app/mcp` ✅
+  - AG-W4.7 no data-loss vs pre-cutover snapshot ✅
+- **W4 — the production cutover — COMPLETE.** The cloud Hub is production.
+- **W4-closeout PR — assembling:**
+  - Item 1 — `cutover-to-cloud.sh` `adapter_flip_notice()` rewritten: instructs BOTH the
+    `hubUrl` (`/mcp` path) AND `hubToken` flip (the cloud `HUB_API_TOKEN` from Secret
+    Manager / the new TF output) — closes the W4 step-3 gap that caused the 401 blocker.
+  - Item 2 — TF token outputs (`e571806`, already on branch).
+  - Item 3 — stale `start-{greg,lily}.sh` header comments: those scripts are UNTRACKED
+    (operator-owned, per-worktree) — NOT a repo deliverable; recommend the operator
+    update them. Surfaced to architect, not in the PR.
+- lily finding (noted): `list_available_peers` → `-32602 Tool not found` on the cloud Hub;
+  core tools work. Likely the cloud Hub image (`f35b08a`) predates that tool — a
+  W4-closeout/W5 check on cloud-Hub image currency (entangled with bug-107 — Watchtower
+  can't pull).
+- NEXT: push the closeout commit → open the W4-closeout PR → architect cross-approve →
+  W5 (trimmed).

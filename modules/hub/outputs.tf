@@ -30,3 +30,23 @@ output "hub_vm_sa_email" {
   description = "Hub VM service account email"
   value       = google_service_account.hub_vm.email
 }
+
+# ── Operator-facing generated secrets (mission-86 W4-closeout) ─────────
+# The TF-generated random_password secrets, surfaced as sensitive outputs
+# so operators read them via `terraform output -raw <name>` rather than
+# having to know the Secret Manager secret-id. `terraform output` alone
+# prints <sensitive>; use `-raw`. The values also live in GCP Secret
+# Manager (the runtime source the VM reads) + this plan's locked tfstate —
+# these outputs are a convenience accessor, not a new exposure surface.
+
+output "hub_api_token" {
+  description = "Hub bearer token (HUB_API_TOKEN) — the /mcp grandfather token, used as adapter-config.json hubToken. Read with `terraform output -raw hub_api_token`."
+  value       = random_password.hub_api_token.result
+  sensitive   = true
+}
+
+output "admin_token" {
+  description = "Hub admin token guarding /admin/tokens — drives the hub-token CLI. Read with `terraform output -raw admin_token`."
+  value       = random_password.admin_token.result
+  sensitive   = true
+}
