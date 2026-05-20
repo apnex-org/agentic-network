@@ -23,6 +23,9 @@ import {
   shouldFilterPeekLine,
 } from "./policy/sse-peek-line-render.js";
 import type { Server } from "http";
+import { createBearerAuth } from "./middleware/bearer-auth.js";
+import { registerAdminRoutes } from "./admin/tokens.js";
+import type { TokenStore } from "./storage-substrate/token-store.js";
 
 /**
  * mission-75 v1.0 §3.3 / bug-55 — positive-list predicate for the
@@ -125,6 +128,8 @@ export interface HubNetworkingConfig {
   port?: number;
   /** Bearer token for auth. Empty string disables auth. */
   apiToken?: string;
+  /** mission-86 W3 — admin token guarding /admin/tokens (HUB_ADMIN_TOKEN). */
+  adminToken?: string;
   /** SSE keepalive interval in ms (default: 30000) */
   keepaliveInterval?: number;
   /** Session TTL in ms before reaper prunes (default: 180000) */
@@ -197,6 +202,9 @@ export class HubNetworking {
 
   private log: (msg: string) => void;
 
+  /** mission-86 W3 — lazily-built /mcp bearer-auth middleware (token-store mode). */
+  private bearerAuthMw: ((req: Request, res: Response, next: () => void) => void) | null = null;
+
   constructor(
     private engineerRegistry: IEngineerRegistry,
     private createMcpServerFn: CreateMcpServerFn,
@@ -232,10 +240,18 @@ export class HubNetworking {
      * that don't exercise the cognitive-bump path.
      */
     private tierLookup: (toolName: string) => ToolTier | undefined = () => undefined,
+    /**
+     * mission-86 W3 — postgres-backed bearer-token store. When wired
+     * (production), `/mcp` validates via token-store bearer-auth + the
+     * `/admin/tokens` endpoints are mounted. Absent (tests / no-token-store
+     * deploys) → the static-apiToken `requireAuth` fallback.
+     */
+    private tokenStore?: TokenStore,
   ) {
     this.config = {
       port: config.port ?? 0,
       apiToken: config.apiToken ?? "",
+      adminToken: config.adminToken ?? "",
       keepaliveInterval: config.keepaliveInterval ?? 30_000,
       sessionTtl: config.sessionTtl ?? 180_000,
       reaperInterval: config.reaperInterval ?? 60_000,
@@ -773,6 +789,19 @@ export class HubNetworking {
   // ── Auth Middleware ─────────────────────────────────────────────────
 
   private requireAuth = (req: Request, res: Response, next: () => void): void => {
+    // mission-86 W3 bearer-auth gate: when a TokenStore is wired (production),
+    // validate every /mcp call against the postgres-backed token store (plus
+    // the grandfathered HUB_API_TOKEN). No token store (tests / legacy deploy)
+    // → the original static-apiToken check below.
+    if (this.tokenStore) {
+      this.bearerAuthMw ??= createBearerAuth({
+        tokenStore: this.tokenStore,
+        legacyToken: this.config.apiToken,
+        log: this.log,
+      });
+      this.bearerAuthMw(req, res, next);
+      return;
+    }
     if (!this.config.apiToken) {
       next();
       return;
@@ -804,6 +833,17 @@ export class HubNetworking {
   // ── Routes ─────────────────────────────────────────────────────────
 
   private setupRoutes(): void {
+    // mission-86 W3 — /admin/tokens token-management endpoints. Own admin-auth
+    // guard (HUB_ADMIN_TOKEN); NOT behind the /mcp bearer-auth. Mounted only
+    // when a TokenStore is wired.
+    if (this.tokenStore) {
+      registerAdminRoutes(this.app, {
+        tokenStore: this.tokenStore,
+        adminToken: this.config.adminToken,
+        log: this.log,
+      });
+    }
+
     // Health check
     this.app.get("/health", (_req, res) => {
       res.json({

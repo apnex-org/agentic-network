@@ -105,6 +105,31 @@ async function listMessages(
 
 // ── create_message ───────────────────────────────────────────────────
 
+/**
+ * bug-102: normalize a `create_message` `payload` argument that arrived as a
+ * JSON-string instead of an object.
+ *
+ * The `payload` MCP-tool param is declared `z.unknown()` (typeless — payloads
+ * are per-kind, so the param can't carry one schema). Some MCP-client / proxy
+ * forward paths serialize a typeless param to a JSON string before it reaches
+ * the Hub; the per-kind validators (`note-schema` et al.) then see a string
+ * and reject ("payload must be a plain object … got string"), which broke the
+ * documented `create_message kind=note payload:{body:"…"}` invocation
+ * substrate-wide (the pulse-response channel).
+ *
+ * Pure. A JSON-string-encoded object/array is parsed back to its value;
+ * anything else (a real object, a non-JSON string, a number) passes through
+ * unchanged so the per-kind validator still produces its own diagnostic.
+ */
+export function coerceToolPayload(payload: unknown): unknown {
+  if (typeof payload !== "string") return payload;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return payload; // not JSON — per-kind validation produces the real error
+  }
+}
+
 async function createMessage(
   args: Record<string, unknown>,
   ctx: IPolicyContext,
@@ -114,7 +139,12 @@ async function createMessage(
   // the stored Message.target keeps only {role?, agentId?}. Resolve below.
   const targetArg = args.target as (MessageTarget & { name?: string }) | null;
   const delivery = (args.delivery as MessageDelivery | undefined) ?? "push-immediate";
-  const payload = args.payload;
+  // bug-102: normalize a JSON-string-encoded payload back to an object — see
+  // `coerceToolPayload`. The `create_message` `payload` param is typeless
+  // (`z.unknown()`), and some MCP-client / proxy forward paths JSON-stringify
+  // a typeless param; without this the per-kind validators reject ("payload
+  // must be a plain object … got string").
+  const payload = coerceToolPayload(args.payload);
   const intent = args.intent as string | undefined;
   const semanticIntent = args.semanticIntent as string | undefined;
   const fireAt = args.fireAt as string | undefined;
@@ -656,7 +686,10 @@ export function registerMessagePolicy(router: PolicyRouter): void {
         ),
       payload: z
         .unknown()
-        .describe("Opaque per-kind payload"),
+        .describe(
+          "Per-kind payload — pass a JSON object (e.g. {body: \"...\"} for kind=note). " +
+            "A JSON-string-encoded object is also accepted + parsed (bug-102 tolerance).",
+        ),
       intent: z
         .string()
         .optional()

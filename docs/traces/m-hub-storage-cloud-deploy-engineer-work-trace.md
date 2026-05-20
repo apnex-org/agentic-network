@@ -524,3 +524,139 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - **W3 Sub-PR A complete** — F13(b) + Cloud NAT + F11 all GREEN. Commits on
   `agent-greg/mission-86-w3a`: `d6cf09d` (F11+F13(b)) + `a06be8b` (trace) + `fd299ee` (NAT).
   Opening the Sub-PR A PR.
+
+### 2026-05-20 — W3 Sub-PR A MERGED; Sub-PR B started (bug-102 fix)
+
+- W3 Sub-PR A PR #222 cross-approved + admin-squash-merged → `main @ ba0beed`.
+- W3 **Sub-PR B** issued (bearer-auth + bug-102 + bug-103); branch `agent-greg/mission-86-w3b`
+  off `ba0beed`. bug-103 disposition: architect CONCUR root-cause + fix **inline in Sub-PR B**.
+- **bug-103 — root-cause CONFIRMED** (delivery-pipeline trace): the self-message-skip
+  hypothesis is REFUTED. ALL architect-targeted `kind:note` messages are stuck at
+  `status:new` (substrate: pr-opened-notification 34 + pr-merged 34 + pr-review-approved 13
+  + heartbeat 5 = 86, zero `received`/`acked`, zero PendingActions). `kind:note`→role
+  messages have NO durable delivery path — `message-policy` creates the note + fires an
+  ephemeral SSE push but never `pendingAction.enqueue()`; no sweeper transitions a `new`
+  note. (`kind:reply`/thread-messages DO enqueue via `thread-policy` — that's why those
+  progress.) Fix = add the `kind:note`→PendingAction enqueue path. Not bug-98-deep.
+- **bug-102 — code-verified + FIXED.** Code-verify: fix-location is Hub-side — the
+  `create_message` tool `payload` param is `z.unknown()` (typeless); a JSON-stringified
+  payload slips through to `note-schema`'s validator → "got string". Fix (`message-policy.ts`):
+  new exported pure `coerceToolPayload()` — JSON-string-encoded payload → object at the MCP
+  entry-point; non-JSON / non-string pass through. `createMessage` handler uses it; param
+  description improved. Regression test `message-policy-payload.test.ts` (7 tests) — incl.
+  AG-W3.11 (stringified `kind=note` payload round-trips clean through
+  `coerceToolPayload`→`validateNotePayload`). `tsc` clean. bug-102 stays `investigating`
+  until the full proxy round-trip is verified in Sub-PR B's Adapter-Restart verification.
+- Next: bearer-auth gate (will surface OQ-16) → bug-103 delivery fix → Sub-PR B verification.
+
+### 2026-05-20 — OQ-16 confirmed; bearer-auth gate scoped + surveyed (resumable state)
+
+- **OQ-16 — CONFIRMED (architect, thread-596): (b) bootstrap-token, provisioned as a 4th GCP
+  Secret Manager secret** (`hub-admin-token`). The `/admin/*` guard is a constant-time string
+  compare against `HUB_ADMIN_TOKEN`. GCP IAM-SA identity-token validation = the v1.1 fold.
+- **Hub HTTP-server survey done** (`hub/src/hub-networking.ts`): the Hub ALREADY has a
+  single-token `requireAuth` middleware (`hub-networking.ts:775-802`) — `Authorization: Bearer`
+  vs `config.apiToken` (`HUB_API_TOKEN`), attached to POST/GET/DELETE `/mcp`; `/health` skips it
+  (no middleware attached). The W3 gate UPGRADES this single-static-token check to a
+  postgres-backed multi-token store.
+- **bearer-auth gate build plan (Sub-PR B; AG-W3.1-W3.8):**
+  1. `hub/src/storage-substrate/migrations/004-tokens-table.sql` — a `bearer_tokens` table
+     (`token_id` PK, `token_hash` UNIQUE [store the sha-256, never the raw token], `name`,
+     `note`, `created_at`). Auto-applied by the bug-101 migration-runner.
+  2. `hub/src/storage-substrate/token-store.ts` (NEW) — own `pg.Pool` (the substrate pool is
+     private); CRUD: issue / revoke / list / validate-by-hash; in-memory cache for the hot
+     validate path.
+  3. `hub/src/middleware/bearer-auth.ts` (NEW) — `Authorization: Bearer` → sha-256 → token-store
+     lookup; 401 on miss; skip `/health` + `/admin/*`; audit-log `[Auth] {token-id, caller-ip,
+     tool, ts}` to stdout (Cloud Logging captures it). Replaces the static `requireAuth` on `/mcp`.
+  4. `hub/src/admin/tokens.ts` (NEW) — Express routes: `POST /admin/tokens` {name,note} → issue
+     (returns the raw token ONCE); `DELETE /admin/tokens/:id` → revoke; `GET /admin/tokens` →
+     list (token-id+name+note, NOT raw values). Guarded by `requireAdminAuth` (compares
+     `HUB_ADMIN_TOKEN`).
+  5. `scripts/cloud/hub-token` (NEW) — operator CLI: issue/revoke/list; admin-token sourced via
+     `gcloud secrets versions access hub-admin-token`.
+  6. Wiring: `index.ts` reads `HUB_ADMIN_TOKEN`; `hub-networking.ts` `HubNetworkingConfig` +
+     constructor + mounts `/admin/*` routes + swaps `requireAuth`→bearer-auth middleware.
+  7. terraform: `secret-manager.tf` 4th secret `hub-admin-token` (`random_password`) + VM-SA
+     grant; `startup.sh` fetches it → `HUB_ADMIN_TOKEN` env on the Hub container; `compute.tf`
+     metadata `secret-hub-admin-token`.
+  8. Tests + Adapter-Restart verification (build-hub.sh + start-hub.sh) for AG-W3.1-W3.8 +
+     AG-W3.11 (bug-102 full proxy round-trip).
+- **bug-103 fix** (also Sub-PR B, inline): add the `kind:note`→`PendingAction` enqueue path —
+  synchronous-enqueue in `message-policy.ts` mirroring `thread-policy.ts` (architect note: a
+  sweeper is a poll-loop — runs against the mission-83 W5 bug-93 poll-pressure elimination;
+  synchronous-enqueue is the architecture-aligned mechanism). AG-W3.12 = a pr-opened-notification
+  observably progresses past `status:new`.
+- STATE: `agent-greg/mission-86-w3b` @ `f20413d` (bug-102 + trace). bearer-auth gate +
+  bug-103 fix = the remaining Sub-PR B build; all scoped + surveyed above for a clean pickup.
+
+### 2026-05-20 — W3b: bearer-auth gate BUILT; bug-103 traced + W4-disposed; resumable state
+
+- **Bearer-auth gate — BUILT + committed** (`agent-greg/mission-86-w3b`):
+  - `2903f00` — Hub-side: `migrations/004-tokens-table.sql` (`bearer_tokens` table; sha-256
+    hash, raw token never stored), `storage-substrate/token-store.ts` (`TokenStore` — issue/
+    revoke/list/validate + cache), `middleware/bearer-auth.ts` (validates `/mcp`; HUB_API_TOKEN
+    grandfathered — CONSCIOUS SIGN-OFF for the PR body), `admin/tokens.ts` (`/admin/tokens`
+    POST/DELETE/GET + `requireAdminAuth` constant-time compare), `scripts/cloud/hub-token` CLI,
+    + index.ts/hub-networking.ts wiring (optional 7th HubNetworking param). Tests:
+    `bearer-auth.test.ts` + `token-store.test.ts` (11 tests).
+  - `0735173` — infra: `secret-manager.tf` 4th secret `hub-admin-token` + VM-SA grant;
+    `compute.tf` metadata; `startup.sh` fetches it → `HUB_ADMIN_TOKEN`. `terraform validate`
+    clean.
+  - `tsc` clean; full hub suite **1490 passed / 0 failed**. OQ-16 → (b) bootstrap-token in
+    Secret Manager (architect-confirmed).
+- **bug-103 — fully traced; W4-disposed.**
+  - Split OUT of Sub-PR B (architect CONCUR — cross-codebase). Sub-PR B = bearer-auth + bug-102.
+  - **Blast-radius:** `kind:note`→role is load-bearing — **Director notifications ARE `kind:note`**
+    (`emitDirectorNotification`; 70 director-targeted notes `status:new`). architect 86, engineer
+    102+12.
+  - **W4-sequencing — Director-approved Option A** (Design v2.5 RATIFIED `0f115f2`): W4 proceeds
+    on schedule; bug-103 does NOT gate the cutover (pre-existing bug, no new regression);
+    bug-103 is a **post-W4 fast-follow slice**; AG-W5.9 is its mission-close gate.
+  - **Systematic-miss trace:** no role-filter in the SSE path (architect's steer refuted). The
+    `new→received` transition = `claimMessage()` CAS, fired by the adapter's `fireClaimMessage()`
+    — GATED on `agent.state === "streaming"`. REFRAME: `status:new` conflates "never delivered"
+    with "delivered+rendered-but-unclaimed" → the 86/70/156 are upper-bounds. Unexplained
+    residual: even the always-streaming engineer is 102/114 `new`.
+  - **Instrumented check — architect-APPROVED** (run at engineer discretion; live local Hub;
+    low-risk): (1) nail `agent.state==="streaming"` semantics (SSE-connected vs mid-cognitive-
+    turn); (2) emit test architect-`kind:note`s labelled with the architect's state-at-emit
+    (`get-agents.sh` `cognitive_ttl`/activity_state) across streaming + idle; report (a) streaming
+    semantics, (b) does-a-streaming-architect-get-it, (c) the residual explanation → architect
+    then decides mechanism A/B/C. bug-103 strand-2 (claim-side) NOT a filed bug yet — file after
+    the check, root-cause in hand. NOTE: emitting `create_message kind=note` via the MCP proxy
+    hits bug-102 on the bug-102-unfixed live local Hub — the test-note emit needs a bug-102-free
+    path (e.g. piggyback a real PR-open's synthesized pr-opened-notification).
+- **Sub-PR B — NEXT ACTION: cloud verification.** Adapter-Restart verification on the CLOUD Hub
+  (NOT the live local Hub — the bearer-auth gate would lock out the live local adapters; AG-W3.x
+  are cloud-`hub-api`-URL-defined): `build-hub.sh` (Cloud Build → AR `hub:latest`) → `terraform
+  apply` (VM-replace: hub-admin-token secret + new startup.sh + new image) → verify AG-W3.1-8
+  (`hub-token` issue/revoke/list, bearer 401/200, `/health` no-auth, `/admin` admin-auth) +
+  AG-W3.11 (bug-102 stringified-payload round-trip) → open the Sub-PR B PR → ping thread-597.
+  bug-102 flips `investigating → resolved` only after AG-W3.11 (proxy round-trip) holds.
+- Coordination: thread-597 is the W3-tail channel; architect drives; ping PR-open there.
+
+### 2026-05-20 — W3 Sub-PR B VERIFIED + PR #223 open
+
+- Hub image rebuilt (w3b code) via Cloud Build → AR `hub:latest`; `terraform apply` → cloud-Hub
+  VM-replace (`hub-admin-token` secret + new startup.sh + new image). Cloud Hub:
+  `hub-api-5muxctm3ta-ts.a.run.app`.
+- **ALL AG-W3 verifiers GREEN — verified on the cloud Hub:**
+  - AG-W3.1 `hub-token issue` → token · W3.2 invalid/missing bearer → 401 · W3.3 valid bearer →
+    200 · W3.4 `/health` no-auth → 200 · W3.5 `hub-token revoke` → subsequent 401 · W3.6
+    `[Auth]`/`[Admin]` audit-log on stdout · W3.7 `/admin/tokens` admin-auth (no-auth → 401) ·
+    W3.8 `bearer_tokens` postgres table confirmed.
+  - **AG-W3.11** — bug-102 round-trip: `create_message kind=note` with a JSON-string payload via
+    `/mcp` (a real MCP `tools/call`) → note created clean, no "got string". Dispositive.
+- **W3 Sub-PR B PR #223 OPEN** — bearer-auth gate + bug-102; 5 commits off `ba0beed`; 15 files.
+  CI required gates GREEN (`test`, `vitest (hub)`, coverage, no-engineer-id, secret-scan). 3
+  conscious sign-offs in the PR body (HUB_API_TOKEN grandfather; hub-admin-token terraform tail;
+  bug-102→resolved-on-merge). Surfaced thread-597; awaiting architect cross-approval + merge.
+- **On #223 merge:** flip bug-102 `investigating → resolved` (referencing #223; AG-W3.11 green).
+- **Remaining W3-tail work:** (1) the bug-103 systematic-miss instrumented check (architect-
+  approved, non-W4-blocking, unrushed) — nail `agent.state==="streaming"` semantics + emit
+  state-labelled test architect-notes + report (streaming-semantics / streaming-architect-gets-it
+  / the residual); NOTE the emit needs a bug-102-free path on the live local Hub (piggyback a
+  real PR-open's synthesized pr-opened-notification, OR wait for the local Hub to carry the
+  bug-102 fix post-merge). (2) bug-103 fix itself = post-W4 fast-follow slice (Director Option A;
+  Design v2.5; AG-W5.9 its mission-close gate). (3) W4 production cutover — Director-gated.

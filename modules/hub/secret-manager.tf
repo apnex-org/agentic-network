@@ -72,15 +72,40 @@ resource "google_secret_manager_secret_version" "gh_api_token" {
   secret_data = var.gh_api_token
 }
 
+# ── HUB_ADMIN_TOKEN — terraform-generated (W3 bearer-auth gate) ────────
+# Bootstrap admin token guarding the Hub's /admin/tokens endpoints
+# (mission-86 W3 §4.13; OQ-16 → (b)). Operator reads it via
+# `gcloud secrets versions access hub-admin-token` to drive the hub-token CLI.
+resource "random_password" "admin_token" {
+  length  = 32
+  special = false
+}
+
+resource "google_secret_manager_secret" "admin_token" {
+  secret_id = "${var.name_prefix}-admin-token"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.apis["secretmanager.googleapis.com"]]
+}
+
+resource "google_secret_manager_secret_version" "admin_token" {
+  secret      = google_secret_manager_secret.admin_token.id
+  secret_data = random_password.admin_token.result
+}
+
 # ── VM SA read-access — per-secret (least-privilege per OQ-14) ─────────
 # Per-secret grants, NOT a project-level role: the VM SA can read exactly
-# these three secrets and no other project secret (e.g. not the Cloud Build
+# these four secrets and no other project secret (e.g. not the Cloud Build
 # webhook secret).
 resource "google_secret_manager_secret_iam_member" "hub_vm_secrets" {
   for_each = {
     postgres-password = google_secret_manager_secret.postgres_password.id
     hub-api-token     = google_secret_manager_secret.hub_api_token.id
     gh-api-token      = google_secret_manager_secret.gh_api_token.id
+    admin-token       = google_secret_manager_secret.admin_token.id
   }
 
   secret_id = each.value

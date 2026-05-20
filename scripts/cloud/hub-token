@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+#
+# hub-token — operator CLI for Hub bearer-token management.
+# mission-86 W3 deliverable per Design v2.2 §4.13.
+#
+# Issues / revokes / lists Hub bearer tokens by calling the Hub's
+# /admin/tokens endpoints. Admin-auth: the bootstrap admin token is read
+# from GCP Secret Manager (`gcloud secrets versions access`) — no SSH to
+# the VM, no local secret file (OQ-16 → (b), architect-confirmed).
+#
+# Usage:
+#   hub-token issue --name <client-name> [--note <description>]
+#   hub-token revoke <token-id>
+#   hub-token list
+#
+# Examples:
+#   HUB_URL=https://hub-api-xxxx.a.run.app hub-token issue --name greg-adapter
+#   hub-token revoke tok-1a2b3c4d5e6f
+#   hub-token list
+#
+# Env:
+#   HUB_URL           Hub base URL (the Cloud Run hub-api URL). REQUIRED.
+#   HUB_ADMIN_SECRET  Secret Manager secret id for the admin token
+#                     (default: hub-admin-token)
+#   HUB_GCP_PROJECT   GCP project holding the secret
+#                     (default: gcloud's active project)
+
+set -euo pipefail
+
+HUB_URL="${HUB_URL:-}"
+SECRET_ID="${HUB_ADMIN_SECRET:-hub-admin-token}"
+PROJECT="${HUB_GCP_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
+
+usage() {
+  cat >&2 <<'USAGE'
+hub-token — Hub bearer-token management
+
+Usage:
+  hub-token issue --name <client-name> [--note <description>]
+  hub-token revoke <token-id>
+  hub-token list
+
+Env:
+  HUB_URL           Hub base URL (Cloud Run hub-api URL) — REQUIRED
+  HUB_ADMIN_SECRET  Secret Manager secret id (default: hub-admin-token)
+  HUB_GCP_PROJECT   GCP project (default: gcloud active project)
+USAGE
+  exit 2
+}
+
+for bin in curl jq gcloud; do
+  command -v "$bin" >/dev/null 2>&1 || { echo "hub-token: '$bin' not found on PATH" >&2; exit 1; }
+done
+
+[ -n "$HUB_URL" ] || { echo "hub-token: HUB_URL is required (the Cloud Run hub-api URL)" >&2; exit 1; }
+[ -n "$PROJECT" ] || { echo "hub-token: no GCP project — set HUB_GCP_PROJECT or 'gcloud config set project'" >&2; exit 1; }
+
+# Fetch the admin token from Secret Manager. Captured per-invocation; never
+# written to disk.
+admin_token() {
+  gcloud secrets versions access latest --secret="$SECRET_ID" --project="$PROJECT" 2>/dev/null \
+    || { echo "hub-token: failed to read Secret Manager secret '$SECRET_ID' (project $PROJECT)" >&2; exit 1; }
+}
+
+ACTION="${1:-}"
+[ -n "$ACTION" ] && shift || true
+
+case "$ACTION" in
+  issue)
+    NAME=""
+    NOTE=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --name) NAME="${2:-}"; shift 2 ;;
+        --note) NOTE="${2:-}"; shift 2 ;;
+        *) echo "hub-token issue: unknown argument '$1'" >&2; usage ;;
+      esac
+    done
+    [ -n "$NAME" ] || { echo "hub-token issue: --name <client-name> is required" >&2; exit 2; }
+    body="$(jq -n --arg n "$NAME" --arg t "$NOTE" '{name: $n, note: $t}')"
+    echo "[hub-token] issuing token name=$NAME ..." >&2
+    curl -fsS -X POST "${HUB_URL%/}/admin/tokens" \
+      -H "Authorization: Bearer $(admin_token)" \
+      -H 'Content-Type: application/json' \
+      -d "$body" | jq .
+    echo "[hub-token] ✓ token issued — the 'token' field above is shown ONCE; save it now." >&2
+    ;;
+
+  revoke)
+    TOKEN_ID="${1:-}"
+    [ -n "$TOKEN_ID" ] || { echo "hub-token revoke: <token-id> is required" >&2; exit 2; }
+    echo "[hub-token] revoking $TOKEN_ID ..." >&2
+    curl -fsS -X DELETE "${HUB_URL%/}/admin/tokens/${TOKEN_ID}" \
+      -H "Authorization: Bearer $(admin_token)" | jq .
+    ;;
+
+  list)
+    curl -fsS "${HUB_URL%/}/admin/tokens" \
+      -H "Authorization: Bearer $(admin_token)" | jq .
+    ;;
+
+  *)
+    usage
+    ;;
+esac
