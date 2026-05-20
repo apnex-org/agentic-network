@@ -66,6 +66,14 @@ resource "google_compute_instance" "hub_vm" {
     # COS-native logging + monitoring (replaces the Cloud Ops Agent install).
     google-logging-enabled    = "true"
     google-monitoring-enabled = "true"
+    # F13(b)/F11 — startup.sh fetches these Secret Manager secrets at boot
+    # (Secret Manager REST API + the VM SA metadata token).
+    gcp-project              = var.project_id
+    secret-postgres-password = google_secret_manager_secret.postgres_password.secret_id
+    secret-hub-api-token     = google_secret_manager_secret.hub_api_token.secret_id
+    secret-gh-api-token      = google_secret_manager_secret.gh_api_token.secret_id
+    # F11 — repos the cloud-Hub repo-event-bridge polls (OIS_REPO_EVENT_BRIDGE_REPOS).
+    repo-event-bridge-repos = var.repo_event_bridge_repos
   }
 
   metadata_startup_script = file("${path.module}/scripts/startup.sh")
@@ -75,6 +83,12 @@ resource "google_compute_instance" "hub_vm" {
   depends_on = [
     google_project_service.apis["compute.googleapis.com"],
     google_compute_firewall.allow_iap_ssh,
+    # startup.sh fetches the three secrets at boot — they (+ their versions
+    # + the VM SA read-grants) must exist first.
+    google_secret_manager_secret_version.postgres_password,
+    google_secret_manager_secret_version.hub_api_token,
+    google_secret_manager_secret_version.gh_api_token,
+    google_secret_manager_secret_iam_member.hub_vm_secrets,
   ]
 
   allow_stopping_for_update = true

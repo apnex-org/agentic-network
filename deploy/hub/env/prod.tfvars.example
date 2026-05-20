@@ -29,3 +29,10 @@ backup_bucket_name     = "labops-389703-hub-backups"
 
 # Cloud Build webhook trigger — false until finding F9 (opaque 400) is diagnosed.
 enable_cloudbuild_trigger = false
+
+# W3 F11 — cloud-Hub repo-event-bridge.
+# gh_api_token: a GitHub PAT with repo / read:org / read:user scopes —
+# provisioned into Secret Manager + surfaced to the Hub container. SENSITIVE;
+# set in env/<env>.tfvars (gitignored), never here.
+gh_api_token            = "ghp_REPLACE_WITH_A_REAL_PAT"
+repo_event_bridge_repos = "apnex-org/agentic-network"
