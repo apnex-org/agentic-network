@@ -1126,3 +1126,41 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - HOLD: thread-engaged with architect on the image-currency disposition. NEXT (on concur):
   W4-prep rebuild → bilateral pre-cutover audit on the PR → architect takes cutover-window
   to Director → execute.
+
+### 2026-05-20 PM AEST — W4: architect concur + bilateral audit; W4-prep rebuild DONE
+
+- Architect (thread-600 r5): **image-currency — concur both** (deterministic rebuild +
+  `hub:f35b08a` SHA-tag). Guardrails: keep the VM on `:latest`+Watchtower as the CD model
+  (SHA tag is provenance/rollback-pin, not a VM pin); Watchtower-pause for the cutover
+  window — concur. **Bilateral audit on #225 — one MUST-FIX:**
+  - **FINDING 1 (must-fix):** entity-count parity used a *pre-drain* baseline — the local
+    Hub keeps writing (repo-event-bridge GitHub polls + heartbeats) between PREFLIGHT and
+    drain, so the post-drain snapshot count > the baseline → VERIFY strict-equality
+    falsely fails → a good cutover aborts. Fix: re-capture the count POST-drain.
+  - FINDING 2 (flag): real downtime ~2-3 min not "~30s" — give the Director a realistic
+    window. MINOR (W5): cutover migrates `bearer_tokens` wholesale — W3 test-tokens land
+    on prod; W5 `hub-token` audit.
+- **W4-prep rebuild — DONE + verified:**
+  - `build-hub.sh` from the W4 checkout (`hub/` == `f35b08a`, diff-confirmed empty) →
+    image digest **`sha256:1f8655a5…`**.
+  - Tagged in AR: `hub:f35b08a` + `hub:latest` both → `1f8655a5…` (provenance + the CD tag).
+  - Redeployed VM `ois-hub-prod` onto it → digest verified `1f8655a5…`, `/health` → 200.
+- **FINDING (W5/AG-W5.1 blocker) — Watchtower image-CD is NON-FUNCTIONAL.** `watchtower-prod`
+  logs: every poll for 45+ min fails `denied: Unauthenticated request` on the AR manifest
+  HEAD — Watchtower has no AR credentials (the daemon's `docker-credential-gcr` config
+  lives at the non-default `DOCKER_CONFIG=/var/lib/hub/docker-config`, which Watchtower's
+  pull path doesn't read). Consequences: (1) the redeploy could NOT use Watchtower-restart
+  — used the verified explicit-`docker pull` + `google_metadata_script_runner startup`
+  re-run instead (startup.sh exports `DOCKER_CONFIG` + has the cred helper; idempotent
+  recreate); (2) rollback runbook Scenario B reworked off Watchtower onto that same
+  manual path; (3) image-CD has TWO broken links now — AG-W1.6 (Cloud Build trigger,
+  deferred) AND Watchtower AR-auth. Both are W5/AG-W5.1 — surfaced to architect, NOT
+  fixed in W4.
+- **#225 audit fixes — committed:** (1) FINDING-1 — `freeze_baseline()` re-captures the
+  authoritative `LOCAL_ENTITY_COUNT` post-drain (guarded out of `--dry-run`); PREFLIGHT
+  count demoted to informational. (2) Watchtower-pause folded — `freeze_image()` pre-drain
+  / `resume_image()` post-verify. (3) FINDING-2 — ~2-3 min downtime estimate in the header
+  + `confirm()` prompt. Dry-run re-PASSES (survey count 18323→18340 between runs —
+  concrete proof FINDING-1 was real).
+- NEXT: push #225 fixes + heartbeat → architect re-review + cross-approve + merge →
+  cutover-window to Director → execute.
