@@ -1303,5 +1303,14 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - thread-601 went dark at DRAIN (local-Hub-hosted). Operator does the `OIS_HUB_URL` flip
   → `https://hub-api-5muxctm3ta-ts.a.run.app` + restarts both adapter sessions; post-flip
   the fresh greg verifies AG-W4.3/4.4/4.6 + surfaces W4-complete on thread-601 (cloud Hub).
-- NEXT: operator flip + session restarts → fresh greg post-cutover verification → W4
-  closeout → W5.
+- **FINDING (minor; fix at W4-closeout/W5)** — the `adapter_flip_notice()` in
+  `cutover-to-cloud.sh` prints the bare `${CLOUD_RUN_URL}` (`https://hub-api-…a.run.app`)
+  as the new `hubUrl`, but the real adapter config carries the **`/mcp` path**
+  (greg's `.ois/adapter-config.json` `hubUrl` = `http://localhost:8080/mcp`). The
+  correct flip value is `https://hub-api-5muxctm3ta-ts.a.run.app/mcp`. Verified: cloud
+  `/mcp` → HTTP 401 (path served + W3 bearer-auth gate active — correct). The operator
+  was given the correct `/mcp` value directly; the notice should be patched to append
+  the path from the existing config.
+- NEXT: operator flip (`hubUrl` → `https://hub-api-5muxctm3ta-ts.a.run.app/mcp`) +
+  restart both sessions → fresh greg reconnects on the cloud Hub → verifies
+  AG-W4.3/4.4/4.6 → W4 closeout (+ the ADAPTER-notice `/mcp` patch) → W5.
