@@ -228,3 +228,38 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   B3 still needs it (COS pulls postgres/watchtower via the AR Docker proxy; internal-only VM).
 - B3 fix-pass next: compute.tf → COS boot image; startup.sh COS-rewrite (no Docker/Ops-Agent
   install; `/opt/hub/`→`/var/lib/hub/`; compose mechanism on COS); + F7 inline-build; re-apply.
+
+### 2026-05-20 — B3 (COS) fix-pass authored; docker-auth bug fixed; trigger 400 persists
+
+- B3 authored: compute.tf → COS boot image; startup.sh full COS rewrite (Docker pre-installed;
+  `docker run`-direct 3-container stack — COS has no docker-compose; `/var/lib/hub/`; GCS-JSON-API
+  backup, no gcloud); `artifactregistry.tf` → AR Docker pull-through remote (terraform-folded +
+  `terraform import`ed); cloudbuild.tf → F7 inline-build trigger; root caller + tfvars + postgres/
+  watchtower image vars; `cloudbuild.yaml` retired. `terraform validate` GREEN.
+- `terraform apply`: VM replaced Debian→COS. COS startup progressed (Docker ✓, .env ✓, postgres
+  `docker run` reached) but `docker pull` from the AR Docker remote → "Unauthenticated request" —
+  `docker-credential-gcr configure-docker` didn't wire the credential. **FIXED**: startup.sh now
+  does explicit `docker login -u oauth2accesstoken` with the metadata token (pending re-apply).
+- **Cloud Build trigger STILL 400s** with the F7 inline `build` (so the 400 was NOT git_file_source —
+  the common factor is `webhook_config`). TF_LOG=DEBUG: the Cloud Build API returns only "Request
+  contains an invalid argument" with no field detail. 2 configs tried + debug-logged — undiagnosable
+  from the error. Surfacing to architect: recommend defer AG-W1.6 (image-CD is W5-validated; the
+  dispositive W1 cold-boot does not depend on the trigger).
+
+### 2026-05-20 — COS auth root-caused + fixed; W1 cold-boot blocked by bug-101
+
+- COS docker→AR auth: ROOT CAUSE = COS's `/root` is a read-only filesystem, so `docker login`
+  / `docker-credential-gcr` could not write `~/.docker/`. Both prior auth attempts failed for
+  that one reason. **FIXED:** `export DOCKER_CONFIG=<writable>` + `docker-credential-gcr
+  configure-docker` — confirmed on the live VM (`docker pull` from the AR remote succeeds).
+- Re-applied. COS VM bootstraps cleanly: all 3 images pull from Artifact Registry; **postgres +
+  watchtower containers Up + healthy.** The B3/COS + internal-only-egress + AR-pull-through
+  design is VALIDATED.
+- **W1 cold-boot BLOCKER — bug-101:** the Hub container crash-loops —
+  `[SchemaReconciler] boot failed: 22/22 SchemaDef apply failures: relation "entities" does not
+  exist`. The Hub does not apply its substrate migrations on boot; it expects the `entities`
+  table to pre-exist. Against W1's fresh empty postgres → crash. **This is bug-101**, whose fix
+  the Design scheduled for **W2** (§5 W2 "bug-101 fold"). AG-W1.4 (end-to-end cold-boot) depends
+  on it — a W1/W2 sequencing gap.
+- Surfaced both blockers to architect (thread-594): bug-101 sequencing (options: manual-migrate
+  W1 / pull fix forward / re-sequence AG-W1.4) + recommend defer AG-W1.6 (count-gate the trigger).

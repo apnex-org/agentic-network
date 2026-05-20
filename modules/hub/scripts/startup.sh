@@ -1,22 +1,26 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # ══════════════════════════════════════════════════════════════════════
-# deploy/hub/scripts/startup.sh — Hub VM first-boot bootstrap
-# mission-86 M-Hub-Storage-Cloud-Deploy, Design §4.2 / §4.3 / §4.8
+# modules/hub/scripts/startup.sh — Hub VM first-boot bootstrap (COS)
+# mission-86 M-Hub-Storage-Cloud-Deploy, Design v1.5 §4.2 / §4.3 / §4.8
 #
-# Wired into the GCE instance as metadata_startup_script (compute.tf).
-# Runs on every boot; idempotent via the /opt/hub/.bootstrapped sentinel.
+# Container-Optimized OS (Design v1.5 §4.2 — F8/B3, OQ-1 Debian→COS
+# reversal): Docker is pre-installed; there is NO Docker / Ops-Agent
+# install. The internal-only VM has Google-services-only egress — every
+# image pulls from Artifact Registry (the Hub image, plus the Docker-Hub
+# images via the AR pull-through remote).
 #
-# First boot:  install Docker + Cloud Ops Agent, format/mount the data
-#              disk, write the docker-compose stack + backup timer, and
-#              bring the 3-container stack up.
-# Later boots: just `docker compose up -d` the existing stack.
+# Wired in as metadata_startup_script (compute.tf); runs on every boot;
+# idempotent via per-resource guards (`docker inspect`, `blkid`, ...).
 #
-# Dynamic config is read from instance metadata (set by compute.tf):
-#   hub-image      — full Artifact Registry ref for the Hub container
-#   backup-bucket  — GCS bucket for hourly postgres snapshots
+# COS adaptation of the §4.3 docker-compose stack: COS ships no
+# docker-compose, so the 3 containers run as direct `docker run`s on a
+# user-defined bridge network; depends_on:service_healthy is reproduced
+# by a pg_isready wait-loop before the Hub container starts.
+#
+# Metadata inputs (compute.tf): hub-image, postgres-image,
+# watchtower-image, backup-bucket, watchtower-poll-interval.
 # ══════════════════════════════════════════════════════════════════════
-set -euo pipefail
-
+set -u
 exec > >(tee -a /var/log/hub-startup.log) 2>&1
 echo "[hub-startup] $(date -u +%FT%TZ) begin"
 
@@ -25,138 +29,102 @@ md() {
     "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1"
 }
 HUB_IMAGE="$(md hub-image)"
-BACKUP_BUCKET="$(md backup-bucket)"
+POSTGRES_IMAGE="$(md postgres-image)"
+WATCHTOWER_IMAGE="$(md watchtower-image)"
+WATCHTOWER_INTERVAL="$(md watchtower-poll-interval)"
 
-# ── Idempotency — startup-script re-runs on every boot ────────────────
-if [ -f /opt/hub/.bootstrapped ]; then
-  echo "[hub-startup] already bootstrapped — (re)starting stack"
-  cd /opt/hub && docker compose up -d
-  echo "[hub-startup] $(date -u +%FT%TZ) done (restart path)"
-  exit 0
-fi
+HUB_DIR=/var/lib/hub
+DATA_MNT=/mnt/disks/hub-data
 
-export DEBIAN_FRONTEND=noninteractive
+# ── Artifact Registry auth ────────────────────────────────────────────
+# COS's /root filesystem is read-only, so the default ~/.docker/ config is
+# unwritable — point DOCKER_CONFIG at a writable path, then the
+# docker-credential-gcr helper authenticates every pull from pkg.dev
+# (auto-refreshing; the VM SA carries roles/artifactregistry.reader).
+export DOCKER_CONFIG="$HUB_DIR/docker-config"
+mkdir -p "$DOCKER_CONFIG"
+docker-credential-gcr configure-docker --registries=australia-southeast1-docker.pkg.dev
 
-# ── Docker ────────────────────────────────────────────────────────────
-curl -fsSL https://get.docker.com | sh
-systemctl enable --now docker
-
-# ── Cloud Ops Agent (logs + metrics → Cloud Logging/Monitoring) ───────
-curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
-bash add-google-cloud-ops-agent-repo.sh --also-install
-
-# ── Attached data disk → /mnt/hub-data (backs the postgres volume) ────
+# ── Attached data disk → /mnt/disks/hub-data (backs the postgres volume)
 DATA_DEV=/dev/disk/by-id/google-hub-data
-DATA_MNT=/mnt/hub-data
 if ! blkid "$DATA_DEV" >/dev/null 2>&1; then
   echo "[hub-startup] formatting data disk $DATA_DEV"
   mkfs.ext4 -F "$DATA_DEV"
 fi
 mkdir -p "$DATA_MNT"
-grep -q "$DATA_MNT" /etc/fstab || \
-  echo "$DATA_DEV $DATA_MNT ext4 defaults,nofail 0 2" >> /etc/fstab
-mount -a
+mountpoint -q "$DATA_MNT" || mount "$DATA_DEV" "$DATA_MNT"
 mkdir -p "$DATA_MNT/postgres"
 
 # ── Hub config + secrets (generate-once) ──────────────────────────────
-mkdir -p /opt/hub /etc/hub
-if [ ! -f /opt/hub/.env ]; then
-  echo "[hub-startup] generating /opt/hub/.env"
+mkdir -p "$HUB_DIR"
+if [ ! -f "$HUB_DIR/.env" ]; then
+  echo "[hub-startup] generating $HUB_DIR/.env"
   {
-    echo "HUB_IMAGE=${HUB_IMAGE}"
-    echo "POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)"
-    echo "HUB_API_TOKEN=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)"
-  } > /opt/hub/.env
-  chmod 600 /opt/hub/.env
+    echo "POSTGRES_PASSWORD=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)"
+    echo "HUB_API_TOKEN=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)"
+  } > "$HUB_DIR/.env"
+  chmod 600 "$HUB_DIR/.env"
+fi
+. "$HUB_DIR/.env"
+
+# ── 3-container stack — docker run (COS has no docker-compose) ─────────
+docker network inspect hub-net >/dev/null 2>&1 || docker network create hub-net
+
+if ! docker inspect ois-postgres-prod >/dev/null 2>&1; then
+  echo "[hub-startup] starting postgres"
+  docker run -d --name ois-postgres-prod --restart unless-stopped --network hub-net \
+    -e POSTGRES_DB=hub -e POSTGRES_USER=hub -e "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" \
+    -v "$DATA_MNT/postgres:/var/lib/postgresql/data" \
+    --health-cmd 'pg_isready -U hub -d hub' --health-interval 5s --health-retries 5 \
+    "$POSTGRES_IMAGE"
 fi
 
-# ── docker-compose stack (Design §4.3 — 3 containers post-pivot) ──────
-# Authored .env-based (engineer disposition of Design §4.3's structural
-# YAML): compose resolves ${...} from /opt/hub/.env — simpler than the
-# illustrative Docker-secrets block, and the password never leaves the VM.
-cat > /opt/hub/docker-compose.yml <<'COMPOSE'
-services:
-  hub:
-    image: ${HUB_IMAGE}
-    container_name: ois-hub-prod
-    restart: unless-stopped
-    environment:
-      - NODE_ENV=production
-      - PORT=8080
-      - POSTGRES_CONNECTION_STRING=postgres://hub:${POSTGRES_PASSWORD}@postgres:5432/hub
-      - HUB_API_TOKEN=${HUB_API_TOKEN}
-      - WATCHDOG_ENABLED=true
-    ports:
-      - "8080:8080"
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks: [internal]
+# Reproduce depends_on:service_healthy — wait for postgres before the Hub.
+echo "[hub-startup] waiting for postgres health ..."
+for _ in $(seq 1 60); do
+  docker exec ois-postgres-prod pg_isready -U hub -d hub >/dev/null 2>&1 && break
+  sleep 2
+done
 
-  postgres:
-    image: postgres:15-alpine
-    container_name: ois-postgres-prod
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=hub
-      - POSTGRES_USER=hub
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hub -d hub"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    networks: [internal]
+if ! docker inspect ois-hub-prod >/dev/null 2>&1; then
+  echo "[hub-startup] starting hub"
+  docker run -d --name ois-hub-prod --restart unless-stopped --network hub-net \
+    -p 8080:8080 \
+    -e NODE_ENV=production -e PORT=8080 \
+    -e "POSTGRES_CONNECTION_STRING=postgres://hub:${POSTGRES_PASSWORD}@ois-postgres-prod:5432/hub" \
+    -e "HUB_API_TOKEN=${HUB_API_TOKEN}" -e WATCHDOG_ENABLED=true \
+    -l com.centurylinklabs.watchtower.enable=true \
+    "$HUB_IMAGE"
+fi
 
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: watchtower-prod
-    restart: unless-stopped
-    command: --interval 300 --label-enable
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    networks: [internal]
+if ! docker inspect watchtower-prod >/dev/null 2>&1; then
+  echo "[hub-startup] starting watchtower"
+  docker run -d --name watchtower-prod --restart unless-stopped --network hub-net \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    "$WATCHTOWER_IMAGE" --interval "${WATCHTOWER_INTERVAL}" --label-enable
+fi
 
-volumes:
-  postgres-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /mnt/hub-data/postgres
-
-networks:
-  internal:
-    driver: bridge
-COMPOSE
-
-# ── Cloud backup script (Design §4.8; cloud-adapted hub-snapshot.sh) ──
-cat > /opt/hub/hub-snapshot.sh <<'SNAP'
-#!/usr/bin/env bash
-# /opt/hub/hub-snapshot.sh — hourly postgres snapshot → GCS (mission-86 §4.8)
-set -euo pipefail
-BUCKET="$(curl -s -H 'Metadata-Flavor: Google' \
-  http://metadata.google.internal/computeMetadata/v1/instance/attributes/backup-bucket)"
+# ── Cloud backup script + hourly systemd timer (Design §4.8) ──────────
+# COS has no gcloud — the upload uses the GCS JSON API + the VM SA token.
+cat > "$HUB_DIR/hub-snapshot.sh" <<'SNAP'
+#!/bin/bash
+# hub-snapshot.sh — hourly postgres snapshot → GCS (mission-86 §4.8)
+set -eu
+META='http://metadata.google.internal/computeMetadata/v1/instance'
+BUCKET="$(curl -s -H 'Metadata-Flavor: Google' "$META/attributes/backup-bucket")"
+TOKEN="$(curl -s -H 'Metadata-Flavor: Google' "$META/service-accounts/default/token" \
+  | tr ',' '\n' | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')"
 TS="$(date -u +%Y%m%d-%H%M%S)"
 DUMP="/tmp/hub-${TS}.pgdump"
 docker exec ois-postgres-prod pg_dump -Fc -U hub hub > "$DUMP"
-gcloud storage cp "$DUMP" "gs://${BUCKET}/snapshots/hub-${TS}.pgdump"
+curl -sf -X POST -H "Authorization: Bearer ${TOKEN}" \
+  -H 'Content-Type: application/octet-stream' --data-binary "@${DUMP}" \
+  "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=snapshots/hub-${TS}.pgdump"
 rm -f "$DUMP"
 echo "hub-snapshot: uploaded gs://${BUCKET}/snapshots/hub-${TS}.pgdump"
 SNAP
-chmod +x /opt/hub/hub-snapshot.sh
+chmod +x "$HUB_DIR/hub-snapshot.sh"
 
-# Dedicated least-privilege backup user (Design §4.8); needs docker-socket
-# access to exec pg_dump in the postgres container.
-id hub-backup >/dev/null 2>&1 || useradd -r -s /usr/sbin/nologin hub-backup
-usermod -aG docker hub-backup
-
-# ── systemd backup timer (Layer B; outside compose — Design §4.8) ─────
 cat > /etc/systemd/system/hub-backup.service <<'UNIT'
 [Unit]
 Description=Hub postgres snapshot to GCS
@@ -165,8 +133,7 @@ After=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/opt/hub/hub-snapshot.sh
-User=hub-backup
+ExecStart=/var/lib/hub/hub-snapshot.sh
 UNIT
 
 cat > /etc/systemd/system/hub-backup.timer <<'UNIT'
@@ -184,10 +151,5 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now hub-backup.timer
 
-# ── Bring the stack up ────────────────────────────────────────────────
-cd /opt/hub
-docker compose pull
-docker compose up -d
-
-touch /opt/hub/.bootstrapped
+touch "$HUB_DIR/.bootstrapped"
 echo "[hub-startup] $(date -u +%FT%TZ) complete"
