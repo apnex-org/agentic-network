@@ -1365,3 +1365,18 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   3. Stale `start-{greg,lily}.sh` header comments.
 - NEXT: operator restarts both sessions → adapters reconnect to the cloud Hub →
   AG-W4.3/4.4/4.6 verify → W4-closeout PR (the 3 items above).
+
+### 2026-05-20 PM AEST — W4-closeout: TF token outputs authored (operator-directed)
+
+- W4-closeout item 2 done: `hub_api_token` + `admin_token` exposed as `sensitive` TF
+  outputs. `modules/hub/outputs.tf` — both `value = random_password.<x>.result, sensitive
+  = true`. NEW `deploy/hub/outputs.tf` — re-exports both from `module.hub` (the root
+  caller previously had NO outputs.tf at all). `terraform fmt` clean; `terraform -chdir=
+  deploy/hub validate` → "Success! The configuration is valid."
+- Operator reads the token post-apply via `terraform output -raw hub_api_token` — no
+  Secret Manager secret-id needed. Materialising the outputs needs one `terraform apply`
+  (NON-destructive — 0 add/change/destroy; outputs just read the existing
+  `random_password.result` already in state).
+- Ships in the W4-closeout PR with items 1 (ADAPTER-notice token+`/mcp` fix) + 3 (stale
+  launcher comments); architect cross-approval per apnex-org flow; the `terraform apply`
+  is operator/architect-coordinated.
