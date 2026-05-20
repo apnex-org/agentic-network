@@ -369,3 +369,63 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   finding. Surfaced to architect thread-595 — recommend fold into W2 (AG-W2.6 is a W2 gate).
   W1's AG-W1.5 verified timer-state only; AG-W2.6 (end-to-end "GCS shows snapshots") caught it.
 - W2 PR HELD pending F12 disposition (F12 changes whether the W2 PR carries the startup.sh fix).
+
+### 2026-05-20 — F12 disposed (fold into W2); applied via VM-replace → exposed F13
+
+- Architect disposed F12 → Option (a) fold into W2 (Design v1.8 RATIFIED `256cf2b`); apply
+  autonomously, no further sign-off.
+- **F12 fix authored** — `modules/hub/scripts/startup.sh`: `hub-backup.service` unit
+  `ExecStart=/bin/bash /var/lib/hub/hub-snapshot.sh` (COS `noexec`-`/var` workaround; bash on
+  exec-OK `/` reads the script as data).
+- `terraform apply`: `metadata_startup_script` is a ForceNew attribute
+  (`replace_because_cannot_update`) → terraform **REPLACED** `hub_vm` (destroy+create), not an
+  in-place metadata update. The data disk `hub-vm-data` + the static internal IP are separate
+  resources (plan `no-op`) → they persist; VM-replace is the terraform-native mechanism for a
+  startup-script change. Apply: 1 added / 1 changed (`hub_api` in-place) / 1 destroyed.
+- **F13 exposed — cloud Hub crash-loops `28P01 auth_failed`.** ROOT CAUSE (verified):
+  `startup.sh` generates `.env` (`POSTGRES_PASSWORD` + `HUB_API_TOKEN`) on the EPHEMERAL COS
+  boot disk — `/var/lib/hub` → `findmnt` `/dev/sdb1[/var]` (the `auto_delete` boot disk). The
+  VM replacement recreated the boot disk → `.env` mtime `03:24` (regenerated this boot; the
+  generate-once guard saw no `.env`) → fresh `POSTGRES_PASSWORD`. The postgres data is on the
+  PERSISTENT data disk — `/mnt/disks/hub-data` → `/dev/sda`; postgres logged "Database
+  directory appears to contain a database; Skipping initialization" → the `hub` role keeps the
+  OLD password (`PG_VERSION` mtime `02:55`, a prior VM). New password ≠ persisted role → Hub
+  `28P01` crash-loop.
+- Impact: the COS VM cannot survive a replacement — the normal COS update mechanism, and every
+  startup.sh change incl. W3's F11 bridge-config wiring — without manual password resync.
+  W2-blocking (a VM that bricks on replace is not a green wave — same logic the architect used
+  to fold F12); W3/W4-critical. Engineer-side `new-code-path-exposes-dormant-defect`: the
+  first-ever VM replacement exposed dormant F13.
+- STOPPED + surfaced F13 to architect thread-595 (verification-defect-surface-dont-dig) — did
+  NOT autonomously recover or proceed. W2 PR + AG-W2.6 verification HELD pending F13 disposition
+  (F13's fix is another startup.sh change → another VM-replace; AG-W2.6 verifies on the FINAL VM).
+
+### 2026-05-20 — F13 disposed (Design v1.9); F13(a) applied + survival-proven; all AG-W2 GREEN
+
+- Architect disposed F13 (thread-595; Design v1.9 RATIFIED `38826c4`): fold into W2 as **F13(a)**
+  — `.env` on the persistent data disk (minimal v1 fix; survives VM-replace; GCP-encrypted-at-rest
+  + internal-only VM = acceptable v1 plaintext). **F13(b)** secrets → GCP Secret Manager → W3
+  (converges with F11). Recovery: wipe the postgres data dir + re-init (17766 test-state throwaway).
+- **F13(a) fix** — `modules/hub/scripts/startup.sh`: the generate-once `.env` (POSTGRES_PASSWORD +
+  HUB_API_TOKEN) moves `/var/lib/hub/.env` → `/mnt/disks/hub-data/.env` (the persistent data disk).
+  Committed with the F12 fix at `0ac9daa`.
+- Recovery: wiped `/mnt/disks/hub-data/postgres` (112M throwaway 17766-state) on the bricked VM.
+- **VM-replace #3 (F13(a) apply)** — `terraform apply`: VM replaced; new VM bootstrapped clean —
+  `.env` generated at `/mnt/disks/hub-data/.env` (NO boot-disk `.env`); postgres init fresh; Hub
+  `/health` 200. **AG-W2.2.a re-verified** on the F13(a) startup.sh — `[Hub:migrations] applied
+  001/002/003` (M=N=3), reconciler 22/22, 0 failures, no `28P01`.
+- **VM-replace #4 (F13 survival test)** — `terraform apply -replace=…hub_vm` (a from-steady-state
+  replace; `.env` + postgres-data both persist on the data disk):
+  - `.env` mtime UNCHANGED (`03:38:49` = replace-#3's generation) → the generate-once skip-guard
+    fired → `POSTGRES_PASSWORD` stable across the VM-replace.
+  - postgres "Skipping initialization" → data persisted; the `hub` role keeps the stable password.
+  - Hub `/health` 200; **0** `28P01`/`auth_failed` in the Hub log → **F13 FIXED — the COS VM now
+    survives a replacement** (empirically proven, not argued).
+  - Migrations idempotent on the persisted/populated DB (AG-W2.2.b re-confirmed).
+- **AG-W2.6 GREEN** — `hub-backup.service` ExecStart is the F12 `/bin/bash` fix; manual trigger →
+  exit 0 → `hub-snapshot: uploaded gs://labops-389703-hub-backups/snapshots/hub-20260520-034134
+  .pgdump`; `gcloud storage ls` confirms the object (14939 bytes). The backup-runner runs — F12 GREEN.
+- **All AG-W2 GREEN**: W2.1 (restore clean) · W2.2.a (bug-101 self-migrate, M=N=3) · W2.2.b
+  (idempotent) · W2.3 (latest mission match, mission-86) · W2.5 (entity counts match, 17766; 21
+  per-kind identical) · W2.6 (backup→GCS) · W2.7 (SIGTERM clean). AG-W2.4 RE-SEQUENCED → W3/AG-W3.10.
+- Next: W2 single PR → thread-595 ping.
