@@ -428,4 +428,16 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - **All AG-W2 GREEN**: W2.1 (restore clean) · W2.2.a (bug-101 self-migrate, M=N=3) · W2.2.b
   (idempotent) · W2.3 (latest mission match, mission-86) · W2.5 (entity counts match, 17766; 21
   per-kind identical) · W2.6 (backup→GCS) · W2.7 (SIGTERM clean). AG-W2.4 RE-SEQUENCED → W3/AG-W3.10.
-- Next: W2 single PR → thread-595 ping.
+- **W2 PR #221 OPEN** — `agent-greg/mission-86-w2` → main; 5 commits / 7 files off `335cf73`.
+  bug-101 + SIGTERM + F10 + F12 + F13(a); full AG-W2 evidence + findings + COS-fs note in the
+  PR body. Surfaced on thread-595 (intent `agreement_pending`).
+- **CI — required gates GREEN:** `test` aggregator · `vitest (hub)` (1m42s) · `workflow-test-
+  coverage in-sync` · `no-engineer-id` · `secret-scan`. The 4 non-hub `vitest` cells (adapters/*,
+  packages/cognitive-layer, packages/network-adapter) are RED = the documented non-blocking
+  pre-existing tarball-dep infra debt (test.yml header) — W2 diff touches zero non-hub files.
+  `mergeStateStatus: BLOCKED` is purely the pending review-approval.
+- Ship-verify 3-layer: tsc-strict ✅ (`npm run build` exit 0) · npm-test ✅ (src-only: 1472
+  passed / 0 failed / 7 skipped) · commit-claims ✅. Note: a local `npm run build` before
+  `npm test` pollutes `dist/__tests__/` → vitest runs the path-broken dist copies; `rm -rf
+  hub/dist` clears it; CI unaffected (no hub build before test). Minor follow-on flagged.
+- Standing by for architect cross-approval of PR #221.
