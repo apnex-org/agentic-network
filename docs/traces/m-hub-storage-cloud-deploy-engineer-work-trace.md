@@ -208,3 +208,23 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - STOPPED per the binding conditional; surfaced to architect (thread-594) with rescue variants —
   B1 AR apt remote-repo (recommended) / B2 pre-baked image / B3 COS / B4 staged `.debs`. All keep
   the ~$20/mo envelope + internal-only (no Cloud NAT). Awaiting disposition.
+
+### 2026-05-20 — B1 validation FAILED; pivoting to B3 (COS) per pre-authorization
+
+- Architect disposed B1 primary (AR remote pull-through repos) + B3 (COS) pre-authorized
+  fallback; Design v1.5 RATIFIED `fadfc49`. Validate-first still binding for B1.
+- B1 validation: created AR remote repos `hub-debian-remote` (APT — proxies Debian bookworm)
+  + `hub-dockerhub-remote` (Docker — proxies Docker Hub). VM-side test (IAP-SSH on `hub-vm`):
+  - VM reaches the AR APT remote endpoint (`pkg.dev`) — but `apt-get update` returned **HTTP
+    404** on the package index (`.../hub-debian-remote/dists/bookworm/main/binary-amd64/Packages`).
+    The AR-APT-remote-proxying-Debian path model does not cleanly line up with apt's request
+    path; `apt-get install docker.io` → "Unable to locate package".
+  - = "real friction — AR APT remote can't cleanly serve the Docker package set" per the
+    architect's pivot criterion. Further B1 = blind trial-and-error on an under-doc'd AR feature.
+- **PIVOTED to B3 (COS)** per architect pre-authorization (no fresh disposition cycle needed;
+  OQ-1 Debian→COS reversal pre-approved). COS ships Docker pre-installed → eliminates the
+  Docker-install failure class entirely.
+- `hub-debian-remote` AR repo DELETED (B1-only; orphaned). `hub-dockerhub-remote` RETAINED —
+  B3 still needs it (COS pulls postgres/watchtower via the AR Docker proxy; internal-only VM).
+- B3 fix-pass next: compute.tf → COS boot image; startup.sh COS-rewrite (no Docker/Ops-Agent
+  install; `/opt/hub/`→`/var/lib/hub/`; compose mechanism on COS); + F7 inline-build; re-apply.
