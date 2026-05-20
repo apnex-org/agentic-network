@@ -503,3 +503,24 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   breaches the ~$20/mo envelope), (B) webhook-ingestion (Cloud Run proxy is already
   public), (C) off-VM bridge. Architecture + cost decision → architect, likely Director.
 - W3 Sub-PR A PR HELD pending F15 disposition. F13(b) is done; F11 awaits F15.
+
+### 2026-05-20 — F15 → Cloud NAT (Director-direct); Sub-PR A complete
+
+- **F15 disposed — Cloud NAT (Director-direct; Design v2.2 RATIFIED `487a844`).** Director
+  engaged: "We need a Cloud NAT for outbound internet access" — Option (A). The bridge keeps
+  the mission-52 poll model (no webhook re-architecture); the VM stays internal-only for
+  inbound. Cost envelope ~$20 → ~$50-55/mo (Cloud NAT ~$32-35/mo) — Director-accepted.
+- **Cloud NAT** — `modules/hub/network.tf`: `google_compute_router` + `google_compute_router_nat`
+  on `hub-vpc` → the VM gains OUTBOUND general-internet egress (inbound unchanged: no public
+  IP; Cloud Run Direct VPC Egress + IAP-SSH only). `terraform apply` — 2 add, no VM-replace.
+  Committed `fd299ee`.
+- **AG-W3.9 GREEN** — after NAT + Hub-restart: `curl api.github.com` → HTTP 200; bridge
+  `[repo-event-bridge] Bridge running; draining events`; 0 fetch-failed; ingested 20
+  commit-pushed + 2 pr-opened + 2 pr-merged + 2 pr-review-approved + 4 unknown repo-event
+  Messages from the live poll.
+- **AG-W3.10 GREEN** — the bridge persisted a `RepoEventBridgeCursor`
+  (`apnex-org/agentic-network.json`); Hub-restart → bridge resumes (`Bridge running`,
+  0 fetch-failed, /health 200) — resume-from-persisted-cursor mechanism verified.
+- **W3 Sub-PR A complete** — F13(b) + Cloud NAT + F11 all GREEN. Commits on
+  `agent-greg/mission-86-w3a`: `d6cf09d` (F11+F13(b)) + `a06be8b` (trace) + `fd299ee` (NAT).
+  Opening the Sub-PR A PR.
