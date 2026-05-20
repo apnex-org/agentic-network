@@ -260,4 +260,44 @@ describe("MessageRepositorySubstrate (W4.x.4 Option Y sibling-pattern)", () => {
     // markScheduledState on absent returns null
     expect(await repo.markScheduledState("01HXXXXXXXXXXXXXXXXXXXXXXXXX", "delivered")).toBeNull();
   }, 60_000);
+
+  it("bug-104: listMessages + replayFromCursor filter substrate-side — matches beyond the LIST_PREFETCH_CAP window are found", async () => {
+    const repo = new MessageRepositorySubstrate(substrate);
+
+    // Seed >LIST_PREFETCH_CAP (500) filler messages targeted at engineer, then
+    // a small architect-targeted "needle" batch with the newest ULIDs. The
+    // pre-bug-104 listFiltered prefetched an unordered LIMIT-500 window then
+    // filtered client-side — a needle beyond that window was invisible
+    // (production repro: list_messages{targetRole:architect} → 1 of 88).
+    const FILLER = 500;
+    for (let i = 0; i < FILLER; i++) {
+      await repo.createMessage({
+        kind: "note", authorRole: "engineer", authorAgentId: "agent-greg",
+        target: { role: "engineer" }, delivery: "push-immediate",
+        payload: { body: `filler-${i}` },
+      });
+    }
+    const needles: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const m = await repo.createMessage({
+        kind: "note", authorRole: "engineer", authorAgentId: "agent-greg",
+        target: { role: "architect" }, delivery: "push-immediate",
+        payload: { body: `needle-${i}` },
+      });
+      needles.push(m.id);
+    }
+
+    // targetRole filter — all 5 architect-targeted found despite sitting beyond
+    // the 500-row prefetch window; returned ascending by ULID.
+    const architect = await repo.listMessages({ targetRole: "architect" });
+    expect(architect.map(m => m.id)).toEqual(needles);
+
+    // replayFromCursor — ULID `since` cursor pushed substrate-side (`id > since`,
+    // text comparison; ULID lex-order = time-order) combined with targetRole +
+    // status. Strict cursor: needles[0] excluded.
+    const afterFirstNeedle = await repo.replayFromCursor({
+      since: needles[0], targetRole: "architect", status: "new", limit: 100,
+    });
+    expect(afterFirstNeedle.map(m => m.id)).toEqual(needles.slice(1));
+  }, 60_000);
 });

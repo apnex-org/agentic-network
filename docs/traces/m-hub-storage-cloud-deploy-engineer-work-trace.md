@@ -660,3 +660,378 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   real PR-open's synthesized pr-opened-notification, OR wait for the local Hub to carry the
   bug-102 fix post-merge). (2) bug-103 fix itself = post-W4 fast-follow slice (Director Option A;
   Design v2.5; AG-W5.9 its mission-close gate). (3) W4 production cutover — Director-gated.
+
+### 2026-05-20 — bug-103 slice: fresh-greg pickup; streaming-semantics code-trace (step 1)
+
+- **Fresh greg session** — prior session cleared at the W3-handover point (context full).
+  Cold-pickup: this work-trace + thread-596/597 + thread-598 (new bug-103-slice channel) +
+  `get_bug bug-103` + Design v2.5 §5 + the bug-103 slice section. W3 DONE (#222 + #223 merged,
+  `main @ 86738c7`); bug-102 RESOLVED. Remaining: bug-103 slice (post-W4 fast-follow) → W4 → W5.
+- **Branch** `agent-greg/mission-86-bug-103` cut off `origin/main @ 86738c7` — `git checkout main`
+  not possible (main pinned in the sibling canonical worktree); the slice needs its own PR-branch
+  anyway (architect-confirmed thread-598).
+- **bug-103 instrumented check — STEP 1 (streaming-semantics code-trace) — DONE:**
+  - `agent.state === "streaming"` is a **CONNECTION-lifecycle state**, NOT a cognitive-turn state.
+    `IAgentClient` FSM (`packages/network-adapter/src/kernel/agent-client.ts:63-68`):
+    `disconnected → connecting → synchronizing → streaming → reconnecting`. `streaming` is entered
+    on sync-complete (`state-sync.ts:135`), left ONLY on wire-death (→ `reconnecting`). No
+    "busy"/"mid-turn" transition. `isConnected` ≡ `state === "streaming"` (`agent-client.ts:188`).
+  - **Architect's "mid-turn → residual self-explains" hypothesis (thread-597 R5) — REFUTED.** A
+    connected agent is `streaming` whether idle or mid-turn.
+  - **Residual cracked on paper — `firstTimerEnabled: false`.** `claude-plugin/src/shim.ts:704-708`
+    builds the PollBackstop with `firstTimerEnabled: false` — "Heartbeat-only mode; first-timer
+    (`list_messages` Pull-mode) deferred per round-2 design decision; SSE inline path delivers
+    messages today." → the Claude-Code adapter (lily + greg both) has **NO
+    `list_messages({status:"new"})` catch-up poll**; the SSE inline `message_arrived` event is the
+    SOLE delivery path. `fireClaimMessage` (`dispatcher.ts:321-338`) only fires from
+    `onActionableEvent` → only for SSE-received events. A `kind:note` is claimed iff the recipient
+    holds a live SSE stream at the push-instant.
+  - **Strand-2 likely DISSOLVES** — no separate claim-side defect needed. The engineer 102/114-`new`
+    residual = the 114 accumulated across the engineer's whole multi-session history; the 12
+    claimed landed during a live SSE window, the 102 landed while the adapter was disconnected
+    (between sessions / not running) → ephemeral SSE dropped them, no catch-up poll. Architect
+    0/156 = same (bursty sessions). bug-103 = strand-1 (no durable delivery path) ONLY. The
+    `streaming`-gate in `fireClaimMessage` is near-redundant (receiving the SSE event already
+    implies a live stream) — not the bug. Live check (step 2) confirms the prediction dispositively.
+- **NEXT: step 2 — rebuild local Hub (build-hub.sh from this worktree + start-hub.sh from the
+  canonical worktree — start-hub.sh refuses non-canonical CWD) → emit-ready surface on thread-598.**
+
+### 2026-05-20 — bug-103 slice: local Hub rebuilt; findings #1 + #2 (listFiltered volume defect)
+
+- **Local Hub rebuilt → merged-main `86738c7`** (bug-102 fixed). `build-hub.sh` (Cloud Build →
+  `ois-hub:local`, digest `ebbd0fd0`). Clean boot: 4 migrations applied (incl. `004-tokens-table`),
+  reconciler 22/22 SchemaDefs 0 failures, bearer-auth gate active (`HUB_API_TOKEN` grandfathered;
+  `HUB_ADMIN_TOKEN` unset → `/admin` disabled, Hub boots fine), repo-event-bridge running, `/health` 200.
+- **start-hub.sh gap (operational finding):** `scripts/local/start-hub.sh` `docker run` argv has NO
+  `--network` — can't attach the Hub to `w0_default`, the user-defined network the local-substrate
+  postgres (`hub-substrate-postgres`; compose project `w0`, `hub/spike/W0/docker-compose.yml`) lives
+  on. Plain start-hub.sh → Hub on default `bridge` → can't resolve `postgres` hostname → crash-loop.
+  Did a controlled manual container-swap instead (replicated the running container's exact env +
+  SA-key `-v` mount + `--security-opt seccomp=unconfined` + `--network w0_default`). Flag for a
+  start-hub.sh follow-on.
+- **Finding #1 — firstTimerEnabled deferral rationale:** the PollBackstop first-timer (`list_messages`
+  Pull-mode poll) was set `firstTimerEnabled:false` in claude-plugin/opencode-plugin shims at
+  bug-53 / PR #180 (`22824be`). Rationale (code comments, verbatim): "SSE inline path delivers
+  messages today, no second polling source" + "out of scope until a separate first-timer wiring
+  audit per round-2 design decision." → SCOPE deferral, NOT a substantive defect-block.
+- **Finding #2 — does Pull-mode `list_messages` cover role-targeted notes: NO — substrate-query
+  defect, not "needs widening":**
+  - `message-repository-substrate.ts` `listFiltered` (non-thread `list_messages` path):
+    `substrate.list("Message", {limit: LIST_PREFETCH_CAP=500})` — NO sort, NO substrate-side filter
+    → SQL `SELECT data FROM entities WHERE kind='Message' LIMIT 500` (postgres-substrate `list()`:
+    `limitClamped=min(limit,500)`; `orderSql` empty without `sort`). Then JS sorts by id +
+    client-side filters targetRole/status/since.
+  - Substrate has **12,156 Message entities** → `list_messages` (non-thread) computes over an
+    arbitrary 500-row (~4%), no-ORDER-BY window. Empirical (rebuilt Hub, `/mcp`):
+    `targetRole:architect` → **1** (psql truth: 88); `targetRole:engineer,status:new` → **1**
+    (truth 103); `status:new` → 499.
+  - Consequence: the poll-backstop's `list_messages({targetRole,status:"new",since})` — even with
+    `firstTimerEnabled` flipped on — scans a ~4% window; a recent `since` cursor client-filters out
+    everything in that oldest-ish window → backstop sees ~nothing. **Structurally non-functional at
+    this volume.**
+  - `replayFromCursor` (W1b SSE Last-Event-ID replay — mechanism C) has the **IDENTICAL pattern**
+    (`substrate.list("Message",{limit:500})` → client-filter incl. `since`). SSE cold-reconnect
+    replay is also blind beyond the 500-window.
+  - → mechanisms (C) durable-SSE-replay AND (D) re-enable-poll both depend on a query path broken
+    at volume; neither works without first fixing `listFiltered`/`replayFromCursor` (push
+    targetRole/status/since substrate-side + ORDER BY id). (A) PendingAction-enqueue + per-agent
+    queue-drain side-steps it. Architect-decides; reported as input. The `listFiltered` defect is
+    plausibly its own bug (impacts `list_messages` MCP tool + poll-backstop + SSE-replay).
+- substrate truth (psql): kind:note by target — architect 88 `new` / director 70 `new` / engineer
+  103 `new` + 12 `received`. bug-103 numbers HOLD (100%-`new` architect+director).
+- Observation tooling note: `list_messages` is volume-broken → the instrumented check observes
+  note status via direct psql, not `list_messages`.
+- NEXT: emit-ready surface on thread-598 (handshake + #1 + #2) → coordinated instrumented check.
+
+### 2026-05-20 — bug-103 slice: instrumented check — note-C DISPOSITIVE (strand-2 dissolves)
+
+- **note-C emitted** — architect-targeted `kind:note` via `/mcp create_message`, id
+  `01KS23Y4Z0P3MR9NVBTMGJPVZ1`, created `07:17:25.089Z`, `status:new`.
+- **Architect state at emit** (`get-agents.sh`): `TRANSPORT_TTL=34` (SSE-connected ≈ streaming) +
+  **`COGNITIVE_TTL=0`** (cognitively idle) + `ACTIVITY_STATE=online_idle` — connected-but-idle.
+- **RESULT — DISPOSITIVE:** note-C flipped `new → received`, `claimedBy=agent-40903c59` (lily),
+  `updated_at 07:17:25.107` — **≈18ms after creation.** A streaming-connected architect's adapter
+  took the SSE `message_arrived` push, rendered, and claimed it near-instantly — even while
+  cognitively idle (COGNITIVE_TTL=0). Claimed via SSE-inline (≈18ms ≫ faster than any poll cadence).
+- **The 3 check findings:**
+  - (a) `streaming` semantics — connection-state, not mid-turn. Confirmed by code-trace AND
+    empirically: claim happened at COGNITIVE_TTL=0 (no active cognitive turn needed; only a live
+    SSE connection).
+  - (b) does a streaming architect render + claim a freshly-pushed note — **YES** (note-C,
+    `new→received`, claimedBy=architect, ≈18ms; claim is post-render → render happened).
+  - (c) the residual — **cracked.** Reading (i) [bursty — never coincided with a connected window]
+    CONFIRMED; reading (ii) [architect/director connected-delivery defect] REFUTED. **Strand-2
+    fully dissolves** — no separate claim-side defect. The 0/156 + 102/114 counts are
+    cumulative-historical (notes landed while the adapter was disconnected; ephemeral SSE dropped
+    them; no catch-up).
+- **bug-103 = strand-1 only** — the no-durable-delivery-path gap. SSE-inline delivery to a
+  connected recipient is healthy; the bug is purely delivery-RECOVERY for a recipient not
+  connected at push-instant.
+- note-D (disconnected case) SKIPPED — architect call (confirmatory only; code-trace-certain).
+- Architect filed **bug-104** (major — `listFiltered`/`replayFromCursor` volume defect, finding #2)
+  + **bug-105** (minor — start-hub.sh `--network` gap).
+- NEXT: report the 3 findings on thread-598 → architect decides the mechanism (A/B/C/D).
+
+### 2026-05-20 — bug-103 slice: architect mechanism decision — (D); slice scope locked
+
+- **Mechanism: (D)** — re-enable the adapter catch-up poll, on the bug-104 fix (architect
+  decision thread-598 r9; Design v2.6 fold pending). Not (A) (overloads the PendingAction
+  abstraction — notes aren't pending-actions), not (C) (SSE-replay window is bounded — misses
+  the hours-long architect/director between-burst disconnect gaps). (D) = the architecture's own
+  designed hybrid SSE+poll-backstop (Design v1.2 #5); `firstTimerEnabled:false` is a switched-off
+  built mechanism. Minimal AND target-state-aligned.
+- **Slice scope — one PR (hub + both adapters; apnex-org cross-approval flow):**
+  1. **bug-104 fix** — `message-repository-substrate.ts` `listFiltered` + `replayFromCursor`:
+     push `targetRole`/`status`/`since` into the SQL `WHERE` + `ORDER BY id` so `LIMIT` applies
+     to the *filtered* set, not an arbitrary 500-row prefetch.
+  2. **Re-enable `firstTimerEnabled`** — `claude-plugin` + `opencode-plugin` shims. Verify:
+     (i) catch-up fires on EACH (re)connect (not just first-ever connect);
+     (ii) queries `list_messages({targetRole,status:"new"})` correctly post-bug-104;
+     (iii) polled notes render as `<channel>` + claim (`new→received`) — same delivery path as
+     SSE-inline; surface to the agent; no re-fetch-forever. Cursor/`since` wiring = engineer's
+     call; requirement = recover ALL role-targeted `status:new` notes missed during disconnect.
+- **Acceptance:** bug-104 resolves on merge (verify `list_messages{targetRole:architect}`→88,
+  not 1). bug-103 resolves on AG-W3.12 (re-homed) + AG-W5.9. AG-W3.12 (explicit): emit
+  `kind:note`→role (architect- AND director-targeted) while the recipient is DISCONNECTED →
+  recipient reconnects → catch-up delivers it (renders + `new→received`). Still post-W4
+  fast-follow (Director Option A) — unrushed.
+- NEXT: implement (1) bug-104 fix → (2) re-enable + reconnect-hook → tests → Adapter-Restart
+  verification → PR.
+
+### 2026-05-20 — bug-103 slice: implementation — bug-104 fix + first-timer re-enable
+
+- **Part 1 — bug-104 fix (commit `334cbbd`):**
+  - `message-repository-substrate.ts` — `listFiltered` + `replayFromCursor` push
+    targetRole/targetAgentId/authorAgentId/status/delivery/scheduledState/since into the
+    substrate filter (SQL `WHERE`) + `ORDER BY id ASC`, so `LIMIT` bounds the *filtered* set.
+    New `messageQueryToFilter` helper; `since` → `{id:{$gt}}`. `matchesAdditionalFilters`
+    retained for the thread-scoped path (`listByThread` — bounded set, no fix needed).
+  - `memory-substrate.ts` — `matchesFilter` range ops ($gt/$lt/$gte/$lte): numeric compare
+    when both operands coerce finite, else **lexical string compare** (matches postgres
+    `data->>'field' > $param` text semantics). Required for the ULID `since` cursor — the
+    prior numeric-only `numericCmp` yielded NaN for ULIDs → rejected every row. memory↔
+    postgres substrate divergence — surfaced to architect as a bug-104 facet.
+  - Tests: postgres-testcontainer volume test (>LIST_PREFETCH_CAP filler + needle batch beyond
+    the window — fails against the pre-fix client-filter impl); memory-substrate `$gt` numeric
+    + ULID-lexical cases. Full hub suite GREEN (1493 passed / 7 skipped).
+- **Part 2 — re-enable the first-timer + reconnect-hook (commit `c91a97a`):**
+  - `claude-plugin/src/shim.ts` + `opencode-plugin/src/shim.ts` — `firstTimerEnabled: false →
+    true`. The `list_messages` Pull-mode catch-up poll is now live (mechanism D).
+  - `dispatcher.ts` `onStateChange` — on every transition into `streaming` (first connect +
+    every reconnect), trigger an immediate `pollBackstop.tick()` → prompt catch-up, not
+    ≤cadence-delayed. Satisfies architect verification-(i) "fires on each (re)connect."
+  - tsc: network-adapter + claude-plugin CLEAN. opencode-plugin tsc has PRE-EXISTING stale-dep
+    errors (`@apnex/network-adapter` — the `firstTimerEnabled` key + `assertHostWiringComplete`
+    predate this edit; the TS2353 fires on the key's existence, not its value) — documented
+    non-hub tarball-dep debt, NOT introduced here. network-adapter unit tests GREEN (51).
+  - **Cursor decision (architect-delegated):** `since`-cursor KEPT — it is the "don't re-fetch
+    forever" guarantee (verification iii). First poll (no cursor file — first-timer was never
+    enabled) drains the historical backlog; subsequent ticks fetch deltas; notes missed during
+    a disconnect are always `id > cursor` → recovered.
+- NEXT: Adapter-Restart verification (rebuild Hub bug-104 → verify `list_messages` live;
+  rebuild claude-plugin) → AG-W3.12 coordinated disconnect→reconnect→recover → PR.
+
+### 2026-05-20 — bug-103 slice: PR #224 open; bug-104 live-verified
+
+- **bug-104 verified live** — rebuilt the Hub (`build-hub.sh` → `69a99c0b`, bug-104 fix);
+  controlled container-swap. `list_messages{targetRole:architect}` → **223** (= psql ground
+  truth; pre-fix 1); `{architect,status:new}` → 101; `{director,status:new}` → 70. bug-104
+  acceptance met.
+- **PR #224 OPEN** — `agent-greg/mission-86-bug-103` → main; 7 commits off `86738c7`;
+  https://github.com/apnex-org/agentic-network/pull/224. CI required gates GREEN (`test`,
+  `vitest (hub)` 1m52s, `workflow-test-coverage`, `no-engineer-id`, `secret-scan`). 4 non-hub
+  vitest cells RED = pre-existing tarball-dep debt (confirmed: `packages/cognitive-layer` —
+  untouched by this PR — is among the failures → pre-existing CI-infra, not this PR). 3
+  conscious sign-offs in the PR body (opencode stale-dep tsc; memory-substrate `$gt` fold;
+  `since`-cursor decision).
+- Surfaced PR-open on thread-598 (round 10).
+- **NEXT (architect-coordinated):** AG-W3.12 — needs the claude-plugin adapter rebuilt (bounces
+  both adapter sessions); emit `kind:note`→role (architect- AND director-targeted) while the
+  recipient is disconnected → reconnect → catch-up delivers. Architect picks the sequencing
+  (review-then-verify, or verify-pre-merge) + the director-targeted test harness. Then
+  cross-approval + admin-merge. bug-103 resolves on AG-W3.12 + AG-W5.9.
+
+### 2026-05-20 — bug-103 slice: #224 review-accepted; director-path traced; AG-W3.12 handshake
+
+- **#224 code-review — SOUND** (architect, thread-598 r11). All 3 conscious sign-offs accepted
+  (opencode stale-dep tsc; memory-substrate `rangeCmp` fold; `since`-cursor keep). Non-blocking
+  observation acknowledged: `listFiltered` still caps at `LIST_PREFETCH_CAP` (now the oldest-500
+  *of the filtered+ordered* set — a gain; >500-match truncation is a pre-existing API-shape
+  limit, outside bug-104 scope). **AG-W3.12 is PRE-MERGE** — formal cross-approval + admin-merge
+  gate on AG-W3.12 (architect-case) passing.
+- **Director-recipient path — TRACED:** the Director runs `agents/vertex-cloudrun` (own
+  codebase — own `hub-adapter.ts`, connects Hub `/mcp` via `MCP_HUB_URL`, own SSE handler
+  `notifications.ts` + own SSE-backup `event-loop.ts`). It does NOT import `@apnex/network-adapter`
+  → **(D) [firstTimerEnabled + reconnect-hook] structurally does not reach the Director.**
+  Per architect disposition: director-half = redesign-bounded (universal-adapter/ACP rework),
+  NOT slice-blocking; AG-W3.12 director-targeted case NOT harnessed in this slice.
+  **BUT bug-104 DOES cover the Director's pull surface** — `list_director_notifications` →
+  `listDirectorNotificationViews` → `listMessages({targetRole:"director"})` → the fixed
+  `listFiltered`. Pre-bug-104 volume-broken (70 director notes outside the 4% window);
+  post-bug-104 returns the full set. Only vertex's *automatic SSE-backup* delivery is
+  redesign-bounded.
+- **AG-W3.12 architect-case handshake — proposed** (thread-598 r12): step 2 = rebuild+deploy the
+  claude-plugin adapter from this branch (bounces the architect's session — the new-adapter
+  pickup + the AG-W3.12 down-window are the same restart); then architect-down → I emit a
+  uniquely-marked `kind:note`→architect (`status:new` confirmed) → architect-up on the new
+  adapter → reconnect-hook `tick()` → catch-up renders + claims it. PASS = psql `new→received`
+  + architect confirms `<channel>` render. Flagged: the first cursorless tick also drains the
+  ~101-note historical architect backlog (correct; bonus demonstration).
+- NEXT: on the architect's handshake-nod → rebuild+deploy the claude-plugin adapter (work out
+  the plugin-install mechanics; may need operator) → run AG-W3.12 → architect cross-approves +
+  admin-merges #224.
+
+### 2026-05-20 — bug-103 slice: AG-W3.12 — adapter marketplace-distribution finding
+
+- Architect (thread-598 r13) **moved the AG-W3.12 recipient to greg/engineer** (role-agnostic
+  mechanism; self-contained; avoids an architect session-cycle). Director-half disposition
+  accepted (redesign-bounded; bug-104 fixes the Director's pull surface).
+- **Adapter-deployment finding (traced before rebuilding):** the claude-plugin adapter is a
+  **marketplace-distributed published plugin** (`claude-0.1.4`) — installed via
+  `~/.claude/plugins/marketplaces/` → cached at `~/.claude/plugins/cache/agentic-network/
+  agent-adapter`; NOT a repo symlink. "Rebuild the adapter into a running session" = the
+  plugin-release pipeline (build → publish/GitHub-release → marketplace → reinstall → session
+  restart), NOT a routine self-contained Adapter-Restart. Plus the local `@apnex/network-adapter`/
+  `claude-plugin` build-chain is the documented tarball-dep debt. → the architect's "self-contained,
+  routine" framing doesn't hold for the real-adapter AG-W3.12 path.
+- **Proposed (thread-598 r14):** prove (D)'s mechanism LIVE via a **standalone rebuilt-shim
+  harness** — engineer-role, distinct identity, run against the local Hub: handshake →
+  `→streaming` → reconnect-hook → `tick()` → `list_messages` (bug-104-fixed) → render-path +
+  claim → recovers the ~103 stranded engineer `status:new` backlog (psql-observable). Caveats:
+  claimedBy=harness-id; `<channel>` render → shim log (note-C already proved the render-path;
+  poll feeds the identical `router.route`). Mutates live state (claims the backlog) — architect
+  OK requested. Real-adapter AG-W3.12 = release-pipeline-bounded → candidate fold into W5/AG-W5.9
+  + next plugin release.
+- NEXT: architect dispositions — (1) run the harness-verify now? (2) does harness-verify satisfy
+  AG-W3.12 as #224's pre-merge gate, real-adapter form → W5? Then proceed accordingly.
+
+### 2026-05-20 — bug-103 slice: harness-verify CAUGHT A DEFECT — (D) non-functional
+
+- Architect (thread-598 r15) approved BOTH asks YES: run the harness-verify; harness-verify
+  satisfies AG-W3.12 as #224's pre-merge gate (real-adapter form → AG-W5.9). Backlog-claim
+  approved. W5-flag: the adapter-half reaches running adapters only via a plugin re-release.
+- **Harness-verify RAN** — rebuilt `@apnex/network-adapter` (clean — `rm -rf dist` first; TS5055
+  dist-pollution otherwise) + ran `tsx adapters/claude-plugin/src/shim.ts` standalone, engineer-
+  role, `OIS_AGENT_NAME=bug103-agw312-harness`, against the local Hub.
+- **VERIFIED WORKING:** `firstTimerEnabled:true` took effect (poll-backstop `starting ...
+  cadenceS=300`); the dispatcher **reconnect-hook fired** (`tick()` ran ~60ms after `→streaming`).
+- **DEFECT CAUGHT — (D) non-functional:** the catch-up `tick()` → `[poll-backstop] unexpected
+  list_messages result shape; skipping tick`. EVERY tick skips → no catch-up → the ~103-note
+  engineer `status:new` backlog did NOT drain (psql before==after). Reproduced in BOTH
+  cognitive-ON and cognitive-BYPASS (`OIS_COGNITIVE_BYPASS=1`) runs → NOT the summarizer; a
+  genuine result-shape mismatch.
+- **Root cause (class):** `poll-backstop.ts` `parseListMessagesResult` / the `tick()`→
+  `list_messages`→parse path was **never exercised** — `firstTimerEnabled` has been `false`
+  since bug-53/#180. (D) runs it for the first time; its result-shape contract ≠ the real
+  `agent.call("list_messages")` return. The 51 network-adapter unit tests passed on a MOCK
+  `agent.call` — mock shape ≠ real transport. (`parseListMessagesResult` is pre-existing
+  `poll-backstop.ts` code, NOT in #224's diff — (D) exposed it.)
+- **2nd concern (not independently confirmed):** run-1 (cognitive ON) showed `list_messages`
+  returned `summarized:true` (cognitive `ResponseSummarizer`). Even post-shape-fix, the
+  poll-backstop's internal call may need to bypass the summarizer on a pipeline-ON adapter —
+  re-verify after the shape-fix.
+- Impact: #224 bug-104 half sound + live-verified; bug-103 half (D) non-functional → #224 NOT
+  merge-ready; AG-W3.12 (correctly) does not pass. Harness mutated ZERO live state (ticks
+  skipped → zero claims); torn down.
+- Surfaced to architect (thread-598 r16; verification-defect-surface-dont-dig) with disposition
+  options: (1) fix the poll-backstop `list_messages` result-handling + real-shape test → re-verify;
+  (2) re-scope. NEXT: architect disposition.
+
+### 2026-05-20 — bug-103 slice: parser-fix done; pipeline-ON re-verify — SUMMARIZER BITES
+
+- Architect disposition-1 (thread-598 r17): fix the parser-bug (#224 stays whole — don't split
+  bug-104 out); re-verify pipeline-ON; STOP+surface if the summarizer bites; test with a
+  real-captured shape, not a mock. Calibration logged for Phase 10 retro.
+- **Parser-fix — DONE, committed `62de435`.** Root cause: `McpTransport.request`
+  (`mcp-transport.ts`) ALREADY unwraps the MCP tool-result envelope (`JSON.parse(content[0]
+  .text)`) → `agent.call("list_messages")` returns `{messages,count}` directly, NOT
+  `{content:[{text}]}`. `parseListMessagesResult` re-expected the envelope → always null →
+  every tick skipped. First-timer disabled from bug-53 → that path never ran the real
+  transport → drift invisible. Fixed: parser expects the unwrapped `{messages,count}` body;
+  `poll-backstop.test.ts` mock corrected to the real shape (`listMessagesResult` helper).
+  tsc clean; 51 network-adapter tests green.
+- **Harness re-verify PIPELINE-ON (cognitive default): catch-up RUNS, summarizer BITES.**
+  reconnect-hook → `tick()` → `list_messages` → parser accepts → 10 `claim_message` → 7
+  engineer notes recovered (`new→received`; psql 103→96 new). (D)'s machinery sound. BUT
+  `list_messages` telemetry: `summarized:true`, `virtualTokensSaved:23537`, outputBytes 4855
+  (raw ≈28K) — the cognitive `ResponseSummarizer` summarized the poll-backstop's INTERNAL
+  `list_messages` → poll saw only ~10 of 116 → **partial recovery (~7 of 103), not full.**
+- **STOPPED + surfaced** (thread-598 r18) per architect instruction — summarizer bites = the
+  (D)-viability re-weigh point; not iterate-fixing solo. Root issue: the cognitive pipeline
+  doesn't distinguish internal-machinery `agent.call`s from LLM tool-calls; the poll-backstop's
+  internal `list_messages` gets LLM-context-summarized. With cognitive-BYPASS the fixed parser
+  gets the raw full result → full recovery — so the summarizer is the SOLE remaining blocker.
+- #224: bug-104 half sound+live-verified; bug-103 half machinery-proven, blocked on the
+  summarizer; parser-fix committed `62de435` + pushed.
+- NEXT: architect (D)-viability re-weigh — (a) poll-backstop internal calls bypass the
+  cognitive ResponseSummarizer; (b) re-weigh (D) vs (A)/(C). Architect dispositions.
+
+### 2026-05-20 — bug-103 slice: (D) holds; bug-106 filed; fix-size traced
+
+- Architect re-weigh (thread-598 r19): **(D) HOLDS.** (A) hits the SAME summarizer-conflation
+  (`drain_pending_actions` is also an internal `agent.call`) + carries its own costs; (C) keeps
+  the bounded-replay-window flaw; (D)'s machinery is proven. The summarizer-conflation is a
+  genuine architectural defect (machinery `agent.call`s LLM-response-summarized) — **filed
+  `bug-106`** (major; cognitive-layer; surfaced by (D)). Fix it, don't dodge.
+- **bug-106 fix-size — TRACED (thread-598 r20):** clean call-context exists; small + bounded.
+  `ToolCallContext` (`cognitive-layer/src/contract.ts`) already has a free-form `tags` bag, and
+  `ctx` is the shared object every middleware receives — no threading through layers. Fix =
+  ~4 files / 2 packages:
+  1. `agent-client.ts` — `IAgentClient.call` gets optional 3rd param `opts?:{internal?:boolean}`
+     (backward-compatible).
+  2. `mcp-agent-client.ts` — `call()` threads `opts.internal` → `ctx.tags.internal`.
+  3. `response-summarizer.ts` — `onToolCall` skips the summarize step when `ctx.tags.internal` set.
+  4. `poll-backstop.ts` — `tick()`'s `list_messages` (+ `transport_heartbeat`) pass `{internal:true}`.
+  Mechanism (1) `ctx.tags` flag (recommended, zero contract-change) vs (2) typed `ctx.internal`
+  field (+contract.ts). Rejected: per-tool-disable (`perToolMaxItems[list_messages]=null` —
+  tool-wide, kills LLM summarization too). The fix is GENERAL (any internal `agent.call` opts out).
+  NOT committed — traced only, per architect instruction.
+- Calibrations logged for Phase 10 (architect): (1) deferred-disabled-path-ships-untested
+  (`firstTimerEnabled:false` since bug-53); (2) cascading-adjacent-defects (bug-103 → bug-104 →
+  (D) → bug-106).
+- #224: bug-104 sound+verified; bug-103-(D) machinery proven (`62de435` parser-fix); blocked on
+  bug-106. AG-W3.12 (full recovery pipeline-ON) does not pass until bug-106 fixed.
+- NEXT: architect disposes PR-shape (bug-106 into #224 vs own slice) → implement the bug-106 fix
+  → rebuild → harness re-verify pipeline-ON (full backlog drain) → merge.
+
+### 2026-05-20 — bug-103 slice: bug-106 fixed; AG-W3.12 PASSES
+
+- Architect (thread-598 r21): mechanism (1) `ctx.tags.internal` flag — CONCUR (shared named
+  constant). PR-shape: bug-106 bundles into #224; bug-104 stays (no split) — one coherent slice.
+  CI: cognitive-layer cell may be debt-RED → ship correct-by-inspection + conscious sign-off;
+  harness-verify is dispositive.
+- **bug-106 fix — implemented + committed `d054d03`** (mechanism 1):
+  - `cognitive-layer/src/contract.ts` — `INTERNAL_CALL_TAG = "internal"` + `isInternalCall(tags)`;
+    re-exported from `cognitive-layer/src/index.ts`.
+  - `response-summarizer.ts` — `onToolCall` skips the summarize step (returns raw result) when
+    `isInternalCall(ctx.tags)`.
+  - `agent-client.ts` — `IAgentClient.call` gets optional 3rd param `opts?: AgentCallOptions`
+    (`{internal?:boolean}`); backward-compatible.
+  - `mcp-agent-client.ts` — `call()` accepts `opts`, sets `ctx.tags[INTERNAL_CALL_TAG]="true"`.
+  - `poll-backstop.ts` — `tick()` `list_messages` + `tickHeartbeat()` `transport_heartbeat` pass
+    `{internal:true}`.
+  - Test: `response-summarizer.test.ts` — internal-tagged call → not summarized. tsc clean
+    (cognitive-layer + network-adapter); 22 cognitive-layer + 51 network-adapter tests green.
+- **Harness re-verify PIPELINE-ON — AG-W3.12 PASSES.** `list_messages` telemetry: `internal:"true"`,
+  NO `summarized:true`, outputBytes 94282 (full raw; prior summarized run was 4855). 106
+  `claim_message` calls → **engineer kind:note backlog FULLY DRAINED: 96 `new` → 0; all 116
+  `received`.** The catch-up recovers ALL stranded role-targeted `status:new` notes — (D) works
+  end-to-end pipeline-ON. Harness torn down (claimed the full stale engineer backlog —
+  architect-approved).
+- #224: bug-104 + bug-103-(D) + bug-106 all done + verified. parser-fix `62de435`; bug-106
+  `d054d03`. AG-W3.12 (re-homed) PASSES. AG-W5.9 remains the W5 production gate.
+- NEXT: update PR #224 body (bug-106 + cognitive-layer conscious sign-off) → push → CI → surface
+  AG-W3.12-PASSES → architect cross-approves + admin-merges #224.
+
+### 2026-05-20 — bug-103 slice: #224 CI green; surfaced merge-ready
+
+- PR #224 title+body updated (via `gh api -X PATCH` — `gh pr edit` GraphQL hit an org-scope
+  wall; the REST PATCH works with the `repo` scope): all 3 fixes (bug-104 + bug-103-(D) +
+  bug-106) + verification + 3 conscious sign-offs.
+- **CI — required gates GREEN:** `test` · `vitest (hub)` 1m49s · `workflow-test-coverage` ·
+  `no-engineer-id` · `secret-scan`. 4 non-hub vitest cells RED = pre-existing tarball-dep debt
+  (`cognitive-layer` + `network-adapter` among them — bug-106-touched, but they fail-fast at
+  build ~7s = the tarball-dep, not test-logic; locally those suites are green 22 + 51).
+- Surfaced AG-W3.12-PASSES + #224 merge-ready on thread-598 (r22). NEXT: architect cross-approval
+  (thread-ack + `gh pr review --approve`) + admin-merge → bug-104 resolves on merge; bug-103 +
+  bug-106 resolve on AG-W3.12 (passed) + AG-W5.9 (W5).

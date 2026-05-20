@@ -45,6 +45,7 @@ import type {
   CognitiveMiddleware,
   ToolCallContext,
 } from "../contract.js";
+import { isInternalCall } from "../contract.js";
 
 export interface ResponseSummarizerConfig {
   /**
@@ -196,6 +197,11 @@ export class ResponseSummarizer implements CognitiveMiddleware {
     next: (ctx: ToolCallContext) => Promise<unknown>,
   ): Promise<unknown> {
     const result = await next(ctx);
+
+    // bug-106: internal-machinery calls (poll-backstop catch-up, heartbeat)
+    // need the raw, full result — the summarizer exists for the LLM's
+    // context budget, not for machinery. Skip the summarize step entirely.
+    if (isInternalCall(ctx.tags)) return result;
 
     // Per-tool override: explicit null disables summarization; explicit
     // number overrides maxItems.

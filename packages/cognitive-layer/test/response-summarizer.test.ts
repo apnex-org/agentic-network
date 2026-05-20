@@ -13,6 +13,7 @@ import {
   buildPaginationHint,
 } from "../src/middlewares/response-summarizer.js";
 import type { ToolCallContext } from "../src/contract.js";
+import { INTERNAL_CALL_TAG } from "../src/contract.js";
 
 function ctx(overrides: Partial<ToolCallContext> = {}): ToolCallContext {
   return {
@@ -147,6 +148,19 @@ describe("ResponseSummarizer — default shouldSummarize heuristic", () => {
     // no eligible array to truncate → falls through to pass-through
     // inside summarizeResult (object had no oversized array prop).
     expect(result).toBe(heavy);
+  });
+
+  it("does NOT summarize internal-machinery calls (bug-106)", async () => {
+    const summarizer = new ResponseSummarizer({ maxItems: 5 });
+    // A read-verb result that WOULD be summarized for an LLM tool-call...
+    const largeResult = Array.from({ length: 50 }, (_, i) => ({ id: i }));
+    const next = vi.fn().mockResolvedValue(largeResult);
+    // ...but the call is tagged internal-machinery (poll-backstop / heartbeat) —
+    // machinery needs the full raw result; the summarizer must skip it.
+    const context = ctx({ tool: "list_messages", tags: { [INTERNAL_CALL_TAG]: "true" } });
+    const result = await summarizer.onToolCall(context, next);
+    expect(result).toBe(largeResult); // reference-equal — full raw result, untouched
+    expect(context.tags.summarized).toBeUndefined();
   });
 });
 

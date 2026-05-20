@@ -434,10 +434,23 @@ function matchesFilter(entity: Record<string, unknown>, filter: Filter): boolean
     if (typeof value === "object" && value !== null) {
       const op = value as Record<string, unknown>;
       if ("$in" in op && Array.isArray(op.$in) && !op.$in.map(String).includes(String(v))) return false;
-      if ("$gt" in op && op.$gt !== undefined && !(numericCmp(v) > numericCmp(op.$gt))) return false;
-      if ("$lt" in op && op.$lt !== undefined && !(numericCmp(v) < numericCmp(op.$lt))) return false;
-      if ("$gte" in op && op.$gte !== undefined && !(numericCmp(v) >= numericCmp(op.$gte))) return false;
-      if ("$lte" in op && op.$lte !== undefined && !(numericCmp(v) <= numericCmp(op.$lte))) return false;
+      // bug-104: range comparison — numeric when both sides coerce to a finite
+      // number (numbers + ISO-dates), else lexical string comparison. This
+      // mirrors postgres `data->>'field' > $param` text semantics, and is
+      // required for the ULID `since` cursor (`{id: {$gt: <ulid>}}`): ULIDs
+      // lex-sort = time-sort but are not numeric, so the prior numeric-only
+      // `numericCmp` compare yielded NaN → rejected every row. Absent field
+      // (v null/undefined) never matches a range filter.
+      const rangeCmp = (operand: unknown): number => {
+        const vn = numericCmp(v), on = numericCmp(operand);
+        if (Number.isFinite(vn) && Number.isFinite(on)) return vn < on ? -1 : vn > on ? 1 : 0;
+        const vs = String(v), os = String(operand);
+        return vs < os ? -1 : vs > os ? 1 : 0;
+      };
+      if ("$gt" in op && op.$gt !== undefined && (v == null || rangeCmp(op.$gt) <= 0)) return false;
+      if ("$lt" in op && op.$lt !== undefined && (v == null || rangeCmp(op.$lt) >= 0)) return false;
+      if ("$gte" in op && op.$gte !== undefined && (v == null || rangeCmp(op.$gte) < 0)) return false;
+      if ("$lte" in op && op.$lte !== undefined && (v == null || rangeCmp(op.$lte) > 0)) return false;
     }
   }
   return true;

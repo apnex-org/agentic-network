@@ -202,29 +202,30 @@ export function writeCursor(
   }
 }
 
-/**
- * The shape of a `list_messages` MCP tool result envelope, as seen
- * by the adapter via `IAgentClient.call`. Only the fields the
- * backstop reads are typed; the rest is passed through opaquely.
- */
-interface ListMessagesEnvelope {
-  content: Array<{ type: string; text: string }>;
-  isError?: boolean;
-}
-
 interface ListMessagesBody {
   messages: Array<{ id: string; [k: string]: unknown }>;
   count: number;
 }
 
+/**
+ * Coerce an `agent.call("list_messages")` return into a ListMessagesBody.
+ *
+ * bug-103: `IAgentClient.call` → `McpTransport.request` ALREADY unwraps the
+ * MCP tool-result envelope — it reads `result.content[0].text` and
+ * `JSON.parse`s it (see `mcp-transport.ts` request()). So `raw` here is the
+ * `list_messages` body — `{ messages, count }` — directly, NOT the
+ * `{ content: [{ text }] }` envelope. The prior implementation re-expected
+ * the envelope; since the first-timer was disabled from bug-53 until the
+ * bug-103 slice, this path never ran against the real transport, so the
+ * contract drift went uncaught (the harness-verify is the dispositive
+ * real-transport guard). Returns null on any other shape — defensive
+ * against a non-JSON error string, null, or a cognitive-layer summarized
+ * result that drops the `messages[]` array.
+ */
 function parseListMessagesResult(raw: unknown): ListMessagesBody | null {
-  const env = raw as ListMessagesEnvelope | null;
-  if (!env || !env.content || !env.content[0] || env.isError) return null;
-  try {
-    return JSON.parse(env.content[0].text) as ListMessagesBody;
-  } catch {
-    return null;
-  }
+  if (!raw || typeof raw !== "object") return null;
+  if (!Array.isArray((raw as { messages?: unknown }).messages)) return null;
+  return raw as ListMessagesBody;
 }
 
 /**
@@ -371,7 +372,10 @@ export class PollBackstop {
 
       let raw: unknown;
       try {
-        raw = await agent.call("list_messages", args);
+        // bug-106: `internal` — this catch-up poll is machinery, not an LLM
+        // tool-call; the result must NOT be cognitive-layer-summarized
+        // (a summarized/truncated messages[] silently drops recovery).
+        raw = await agent.call("list_messages", args, { internal: true });
       } catch (err) {
         this.opts.log(
           `[poll-backstop] list_messages failed (non-fatal): ${(err as Error)?.message ?? String(err)}`,
@@ -446,7 +450,7 @@ export class PollBackstop {
       const agent = getAgent();
       if (!agent || agent.state !== "streaming") return;
       try {
-        await agent.call("transport_heartbeat", {});
+        await agent.call("transport_heartbeat", {}, { internal: true });
         return;
       } catch (firstErr) {
         this.opts.log(
@@ -460,7 +464,7 @@ export class PollBackstop {
         // Re-check agent state after the backoff (could have torn down).
         const agent2 = getAgent();
         if (!agent2 || agent2.state !== "streaming") return;
-        await agent2.call("transport_heartbeat", {});
+        await agent2.call("transport_heartbeat", {}, { internal: true });
       } catch (secondErr) {
         this.opts.log(
           `[poll-backstop] transport_heartbeat failed (2nd; skipping cycle): ${(secondErr as Error)?.message ?? String(secondErr)}`,

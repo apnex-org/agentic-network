@@ -22,6 +22,8 @@ export type {
   ListToolsTerminal,
   ToolErrorTerminal,
 } from "./contract.js";
+// bug-106: internal-machinery call marker (value exports).
+export { INTERNAL_CALL_TAG, isInternalCall } from "./contract.js";
 
 export { CognitivePipeline } from "./pipeline.js";
 export type { StandardPipelineConfig } from "./pipeline.js";

@@ -80,16 +80,17 @@ function fakeDisconnectedAgent(): IAgentClient {
   } as unknown as IAgentClient;
 }
 
-/** Build a list_messages MCP envelope with the given delta messages. */
-function listMessagesEnvelope(messages: Array<{ id: string; [k: string]: unknown }>) {
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({ messages, count: messages.length }),
-      },
-    ],
-  };
+/**
+ * Build a `list_messages` result as `agent.call` actually returns it.
+ *
+ * bug-103: `IAgentClient.call` → `McpTransport.request` unwraps the MCP
+ * tool-result envelope (reads `content[0].text`, JSON-parses it), so the
+ * poll-backstop receives the `{ messages, count }` body directly — not the
+ * `{ content: [{ text }] }` envelope. The harness-verify is the dispositive
+ * real-transport check; this fixture mirrors that verified contract.
+ */
+function listMessagesResult(messages: Array<{ id: string; [k: string]: unknown }>) {
+  return { messages, count: messages.length };
 }
 
 // ── Cursor persistence ───────────────────────────────────────────────
@@ -154,7 +155,7 @@ describe("PollBackstop.tick() — single iteration", () => {
   it("cold-start: calls list_messages without `since`, surfaces deltas, persists cursor", async () => {
     const onPolled = vi.fn();
     const callImpl = vi.fn().mockReturnValue(
-      listMessagesEnvelope([
+      listMessagesResult([
         { id: "01HX_AAAA", payload: { text: "first" } },
         { id: "01HX_BBBB", payload: { text: "second" } },
       ]),
@@ -187,7 +188,7 @@ describe("PollBackstop.tick() — single iteration", () => {
   it("warm-start: passes persisted cursor as `since`, advances on new delta", async () => {
     writeCursor(cursorFile, "01HX_AAAA");
     const callImpl = vi.fn().mockReturnValue(
-      listMessagesEnvelope([{ id: "01HX_CCCC" }]),
+      listMessagesResult([{ id: "01HX_CCCC" }]),
     );
     const agent = fakeStreamingAgent(callImpl);
     const onPolled = vi.fn();
@@ -210,7 +211,7 @@ describe("PollBackstop.tick() — single iteration", () => {
 
   it("empty delta: cursor file unchanged (no-op tick)", async () => {
     writeCursor(cursorFile, "01HX_PRIOR");
-    const callImpl = vi.fn().mockReturnValue(listMessagesEnvelope([]));
+    const callImpl = vi.fn().mockReturnValue(listMessagesResult([]));
     const agent = fakeStreamingAgent(callImpl);
     const onPolled = vi.fn();
     const bs = new PollBackstop({
@@ -271,10 +272,12 @@ describe("PollBackstop.tick() — single iteration", () => {
     expect(readCursor(cursorFile)).toBe("01HX_PRIOR"); // preserved.
   });
 
-  it("malformed list_messages envelope: logs warning, no crash, cursor preserved", async () => {
+  it("non-list-shaped list_messages result: logs warning, no crash, cursor preserved", async () => {
     writeCursor(cursorFile, "01HX_PRIOR");
     const logs: string[] = [];
-    const callImpl = vi.fn().mockReturnValue({ content: [{ type: "text", text: "{not-json" }] });
+    // agent.call → McpTransport.request returns null when there is no
+    // content; the poll-backstop must skip safely on any non-{messages} shape.
+    const callImpl = vi.fn().mockReturnValue(null);
     const agent = fakeStreamingAgent(callImpl);
     const bs = new PollBackstop({
       role: "engineer",
@@ -289,12 +292,11 @@ describe("PollBackstop.tick() — single iteration", () => {
     expect(readCursor(cursorFile)).toBe("01HX_PRIOR");
   });
 
-  it("isError envelope: skipped, cursor preserved", async () => {
+  it("error-shaped list_messages result: skipped, cursor preserved", async () => {
     writeCursor(cursorFile, "01HX_PRIOR");
-    const callImpl = vi.fn().mockReturnValue({
-      content: [{ type: "text", text: '{"error":"forbidden"}' }],
-      isError: true,
-    });
+    // An errored list_messages tool-call: McpTransport.request unwraps
+    // content[0].text → the poll-backstop sees an error body, no messages[].
+    const callImpl = vi.fn().mockReturnValue({ error: "forbidden" });
     const agent = fakeStreamingAgent(callImpl);
     const bs = new PollBackstop({
       role: "engineer",
@@ -309,7 +311,7 @@ describe("PollBackstop.tick() — single iteration", () => {
 
   it("onPolledMessage handler throw: caught, logged, other messages still processed", async () => {
     const callImpl = vi.fn().mockReturnValue(
-      listMessagesEnvelope([
+      listMessagesResult([
         { id: "01HX_A" },
         { id: "01HX_B" },
         { id: "01HX_C" },
@@ -339,7 +341,7 @@ describe("PollBackstop.tick() — single iteration", () => {
     writeCursor(cursorFile, "01HX_LATER");
     // Hub returns a stale message somehow (clock skew / race) — id <= since.
     const callImpl = vi.fn().mockReturnValue(
-      listMessagesEnvelope([{ id: "01HX_EARLIER" }]),
+      listMessagesResult([{ id: "01HX_EARLIER" }]),
     );
     const agent = fakeStreamingAgent(callImpl);
     const bs = new PollBackstop({
@@ -423,7 +425,7 @@ describe("PollBackstop — cadence + lifecycle", () => {
       callCount++;
       // Slow call — simulates network latency.
       await new Promise((r) => setTimeout(r, 30));
-      return listMessagesEnvelope([{ id: "01HX_X" }]);
+      return listMessagesResult([{ id: "01HX_X" }]);
     });
     const agent = fakeStreamingAgent(callImpl);
     const bs = new PollBackstop({

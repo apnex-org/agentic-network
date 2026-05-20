@@ -40,6 +40,7 @@
  */
 
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
+import type { Filter } from "../storage-substrate/types.js";
 import type {
   IMessageStore,
   Message,
@@ -242,15 +243,17 @@ export class MessageRepositorySubstrate implements IMessageStore {
    * by id (ULID id = time-monotonic).
    */
   private async listFiltered(query: MessageQuery): Promise<Message[]> {
-    // No substrate-side filter — additional filters applied client-side per
-    // matchesAdditionalFilters semantics (target/status/delivery/scheduledState/
-    // authorAgentId/since cursor). Limit cap bounds memory.
+    // bug-104: push the query filters into the substrate SQL WHERE + ORDER BY id
+    // so the LIMIT bounds the *filtered* set. The prior implementation prefetched
+    // an unordered LIST_PREFETCH_CAP window then filtered client-side — once a
+    // kind exceeds the cap that answered over an arbitrary ~cap-row slice (a
+    // role-targeted `status:new` query could miss the bulk of its matches).
     const { items } = await this.substrate.list<Message>(KIND, {
+      filter: messageQueryToFilter(query),
+      sort: [{ field: "id", order: "asc" }],
       limit: LIST_PREFETCH_CAP,
     });
-    return items
-      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-      .filter(m => matchesAdditionalFilters(m, query));
+    return items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   /**
@@ -268,25 +271,22 @@ export class MessageRepositorySubstrate implements IMessageStore {
     status?: MessageStatus;
     limit: number;
   }): Promise<Message[]> {
+    // bug-104: substrate-side filter + ORDER BY id, so `limit` bounds the
+    // *filtered* set. Prior impl prefetched an unordered LIST_PREFETCH_CAP
+    // window then filtered client-side — blind beyond the cap at scale.
+    const filter: Filter = {};
+    if (opts.targetRole !== undefined) filter["target.role"] = opts.targetRole;
+    if (opts.targetAgentId !== undefined) filter["target.agentId"] = opts.targetAgentId;
+    if (opts.status !== undefined) filter.status = opts.status;
+    if (opts.since !== undefined) filter.id = { $gt: opts.since };
     const { items } = await this.substrate.list<Message>(KIND, {
-      limit: LIST_PREFETCH_CAP,
+      filter,
+      sort: [{ field: "id", order: "asc" }],
+      limit: opts.limit,
     });
-    const ordered = items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-
-    const out: Message[] = [];
-    for (const m of ordered) {
-      if (out.length >= opts.limit) break;
-      if (opts.since !== undefined && m.id <= opts.since) continue;
-      if (opts.targetRole !== undefined) {
-        if (!m.target || m.target.role !== opts.targetRole) continue;
-      }
-      if (opts.targetAgentId !== undefined) {
-        if (!m.target || m.target.agentId !== opts.targetAgentId) continue;
-      }
-      if (opts.status !== undefined && m.status !== opts.status) continue;
-      out.push(m);
-    }
-    return out;
+    return items
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .slice(0, opts.limit);
   }
 
   /**
@@ -357,8 +357,30 @@ export class MessageRepositorySubstrate implements IMessageStore {
   }
 }
 
-// ── Filter helpers (byte-for-byte from legacy MessageRepository) ─────────────
+// ── Filter helpers ──────────────────────────────────────────────────────────
 
+/**
+ * bug-104: translate a MessageQuery into a substrate Filter (→ SQL WHERE).
+ * Dotted keys (`target.role`) map to JSONB path extraction substrate-side.
+ * `since` is the strict ULID-cursor — `id > since` (ULID lex-order = time-order).
+ * `threadId` is intentionally omitted: the thread-scoped path (`listByThread`)
+ * already filters on threadId substrate-side.
+ */
+function messageQueryToFilter(q: MessageQuery): Filter {
+  const filter: Filter = {};
+  if (q.targetRole !== undefined) filter["target.role"] = q.targetRole;
+  if (q.targetAgentId !== undefined) filter["target.agentId"] = q.targetAgentId;
+  if (q.authorAgentId !== undefined) filter.authorAgentId = q.authorAgentId;
+  if (q.status !== undefined) filter.status = q.status;
+  if (q.delivery !== undefined) filter.delivery = q.delivery;
+  if (q.scheduledState !== undefined) filter.scheduledState = q.scheduledState;
+  if (q.since !== undefined) filter.id = { $gt: q.since };
+  return filter;
+}
+
+// matchesAdditionalFilters — client-side filter, retained for the thread-scoped
+// path (listByThread): a thread's message set is bounded well under the prefetch
+// cap, so client-side filtering there is correct + simpler than per-field SQL.
 function matchesAdditionalFilters(m: Message, q: MessageQuery): boolean {
   if (q.targetRole !== undefined) {
     if (!m.target || m.target.role !== q.targetRole) return false;
