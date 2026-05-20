@@ -55,10 +55,10 @@ resource "google_compute_instance" "hub_vm" {
 
   metadata = {
     # Read by scripts/startup.sh from the metadata server at first boot.
-    hub-image               = var.hub_image
-    backup-bucket           = var.backup_bucket_name
+    hub-image                = var.hub_image
+    backup-bucket            = var.backup_bucket_name
     watchtower-poll-interval = tostring(var.watchtower_poll_interval)
-    enable-oslogin          = "TRUE"
+    enable-oslogin           = "TRUE"
   }
 
   metadata_startup_script = file("${path.module}/scripts/startup.sh")

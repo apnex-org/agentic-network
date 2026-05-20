@@ -33,6 +33,7 @@ resource "google_project_service" "apis" {
     "artifactregistry.googleapis.com",
     "storage.googleapis.com",
     "secretmanager.googleapis.com",
+    "apikeys.googleapis.com",
     "iam.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "iap.googleapis.com",

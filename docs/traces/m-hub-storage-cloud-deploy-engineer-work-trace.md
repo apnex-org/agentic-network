@@ -154,3 +154,19 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - State note: W0 applied 7 resources (backup bucket + 2 SAs + 4 IAM) at flat addresses —
   W1 restructure `terraform state mv`s them into `module.hub.*` (re-home, not recreate).
 - W1 branch `agent-greg/mission-86-w1` off `origin/main @ 8454352`.
+
+### 2026-05-20 — W1 restructure complete; plan clean
+
+- `modules/hub/` fully parametrized + authored: versions/main/variables/outputs +
+  network/compute/cloudrun/iam/storage/cloudbuild `.tf` + proxy/ + scripts/.
+  cloudbuild.tf rewritten — webhook trigger + `random_password`→Secret Manager +
+  `google_apikeys_key` + `github_repository_webhook` (full-IaC closure per §4.12).
+- `deploy/hub/` thin root caller authored (provider google+github + backend gcs +
+  `module "hub"` block); `env/prod.tfvars(.example)`.
+- `terraform state mv` re-homed the 7 W0 resources into `module.hub.*` (4 commands).
+- `terraform validate` GREEN (AG-W1.12 preview). `terraform plan`: **30 add / 2
+  in-place change / 1 replace** — clean, no errors.
+  - replace: `module.hub.google_service_account.proxy` (`account_id` cloudrun-proxy-sa
+    → hub-proxy-sa, name_prefix-driven; ForceNew). No live dependents — architect
+    pre-acked; documented in the W1 PR body per the guard-rail.
+  - in-place: hub_vm SA (display_name) + backup bucket (labels) — cosmetic.
