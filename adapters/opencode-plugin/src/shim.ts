@@ -60,11 +60,13 @@ const activeProxyServers: Server[] = [];
 // Shared MCP-boundary dispatcher. Layer-1c factory; see Design v1.2.
 //
 // bug-53: opt into pollBackstop heartbeat-second-timer so transport_heartbeat
-// fires periodically (mission-75 §3.3 substrate). Heartbeat-only mode —
-// first-timer (list_messages Pull-mode) deferred per round-2 design decision;
-// SSE inline path delivers messages today, no second polling source. Role
-// resolved from env at module-init time (config object is loaded later inside
-// HubPlugin); role only surfaces in log lines under firstTimerEnabled=false.
+// fires periodically (mission-75 §3.3 substrate).
+// bug-103: firstTimerEnabled re-enabled — the list_messages Pull-mode first-timer
+// is the catch-up path that recovers role-targeted kind:note notifications
+// missed while the adapter was disconnected. `role` (the poll's targetRole
+// filter) is resolved from OIS_HUB_ROLE at module-init — the config object
+// loads later inside HubPlugin — so the env var is now load-bearing for the
+// catch-up query, not just log lines.
 const dispatcher = createSharedDispatcher({
   getAgent: () => hubAdapter,
   proxyVersion: PROXY_VERSION,
@@ -73,7 +75,7 @@ const dispatcher = createSharedDispatcher({
   log: (m) => log(m),
   pollBackstop: {
     role: process.env.OIS_HUB_ROLE ?? "engineer",
-    firstTimerEnabled: false,
+    firstTimerEnabled: true,
     log: (m) => log(m),
   },
 });

@@ -372,6 +372,13 @@ export function createSharedDispatcher(
     onStateChange: (state, previous, reason) => {
       log(`Connection: ${previous} → ${state}${reason ? ` (${reason})` : ""}`);
       router.route({ kind: "state.change", state, previous, reason });
+      // bug-103: on every transition into `streaming` (first connect AND every
+      // reconnect), trigger an immediate poll-backstop catch-up tick — so
+      // role-targeted kind:note notifications missed while the adapter was
+      // disconnected are recovered promptly, not only on the next ≤cadence
+      // interval tick. No-op when the first-timer is disabled or already
+      // in-flight (tick() guards both).
+      if (state === "streaming") void pollBackstop?.tick(opts.getAgent);
     },
   };
 

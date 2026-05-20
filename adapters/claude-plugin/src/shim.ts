@@ -696,14 +696,17 @@ async function main(): Promise<void> {
       },
     },
     // bug-53: opt into pollBackstop heartbeat-second-timer so transport_heartbeat
-    // fires periodically (mission-75 §3.3 substrate). Heartbeat-only mode —
-    // first-timer (list_messages Pull-mode) deferred per round-2 design
-    // decision; SSE inline path delivers messages today, no second polling
-    // source. Env vars (TRANSPORT_HEARTBEAT_INTERVAL_MS / _ENABLED) plumbed
-    // through PollBackstop's constructor.
+    // fires periodically (mission-75 §3.3 substrate). Env vars
+    // (TRANSPORT_HEARTBEAT_INTERVAL_MS / _ENABLED) plumbed through PollBackstop's
+    // constructor.
+    // bug-103: firstTimerEnabled re-enabled — the list_messages Pull-mode
+    // first-timer is the catch-up path that recovers role-targeted kind:note
+    // notifications missed while the adapter was disconnected. SSE inline
+    // delivers only to a connected recipient; offline → the note is lost
+    // without this poll. `role` (config.role) is the poll's targetRole filter.
     pollBackstop: {
       role: config.role,
-      firstTimerEnabled: false,
+      firstTimerEnabled: true,
       log,
     },
   });
