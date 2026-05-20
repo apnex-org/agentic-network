@@ -1,7 +1,9 @@
 # ── modules/hub/ — Layer A/C: internal-only Hub VM ────────────────────
-# Design §4.2. e2-small, Debian 12, NO public IP. The metadata startup
-# script (scripts/startup.sh) installs Docker + the Cloud Ops Agent and
-# bootstraps the 3-container docker-compose stack at first boot.
+# Design v1.5 §4.2. e2-small, Container-Optimized OS, NO public IP. COS
+# ships Docker pre-installed (F8/B3 — OQ-1 Debian→COS reversal); the
+# metadata startup script (scripts/startup.sh) bootstraps the 3-container
+# stack at first boot. All images pull from Artifact Registry (the VM has
+# Google-services-only egress); no Docker / Ops-Agent install needed.
 
 # Static internal IP — the Cloud Run proxy's upstream config points here
 # (cloudrun.tf injects it as the HUB_VM_INTERNAL_IP env var).
@@ -56,9 +58,14 @@ resource "google_compute_instance" "hub_vm" {
   metadata = {
     # Read by scripts/startup.sh from the metadata server at first boot.
     hub-image                = var.hub_image
+    postgres-image           = var.postgres_image
+    watchtower-image         = var.watchtower_image
     backup-bucket            = var.backup_bucket_name
     watchtower-poll-interval = tostring(var.watchtower_poll_interval)
     enable-oslogin           = "TRUE"
+    # COS-native logging + monitoring (replaces the Cloud Ops Agent install).
+    google-logging-enabled    = "true"
+    google-monitoring-enabled = "true"
   }
 
   metadata_startup_script = file("${path.module}/scripts/startup.sh")

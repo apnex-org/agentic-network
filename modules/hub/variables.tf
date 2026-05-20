@@ -52,6 +52,16 @@ variable "proxy_image" {
   type        = string
 }
 
+variable "postgres_image" {
+  description = "Full Artifact Registry path for the Postgres image (Docker Hub mirror via the AR pull-through remote — internal-only VM, Design v1.5 §4.3)"
+  type        = string
+}
+
+variable "watchtower_image" {
+  description = "Full Artifact Registry path for the Watchtower image (Docker Hub mirror via the AR pull-through remote)"
+  type        = string
+}
+
 variable "artifact_registry_repo" {
   description = "Artifact Registry repository name — Cloud Build image push-target"
   type        = string
@@ -79,9 +89,9 @@ variable "machine_type" {
 }
 
 variable "boot_disk_image" {
-  description = "Boot disk image (Debian 12 per Design §4.2 / OQ-1)"
+  description = "Boot disk image — Container-Optimized OS (Design v1.5 §4.2; Docker pre-installed — F8/B3 OQ-1 Debian→COS reversal)"
   type        = string
-  default     = "debian-cloud/debian-12"
+  default     = "cos-cloud/cos-stable"
 }
 
 variable "data_disk_size_gb" {
@@ -143,4 +153,12 @@ variable "backup_retention_days" {
   description = "Age-based lifecycle delete for snapshots/ objects (Design §4.8)"
   type        = number
   default     = 30
+}
+
+# ── Cloud Build trigger gate (F9) ─────────────────────────────────────
+
+variable "enable_cloudbuild_trigger" {
+  description = "Create the Cloud Build webhook trigger + GitHub webhook. W1: false — finding F9 (opaque Cloud Build 400 on webhook_config; deferred per Design v1.6). The trigger is authored + IaC-ready; flip true once F9 is diagnosed (a hard W5/AG-W5.1 prerequisite)."
+  type        = bool
+  default     = false
 }

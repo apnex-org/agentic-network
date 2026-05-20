@@ -42,6 +42,16 @@ variable "proxy_image" {
   type        = string
 }
 
+variable "postgres_image" {
+  description = "Full Artifact Registry path for the Postgres image (Docker Hub via the AR pull-through remote)"
+  type        = string
+}
+
+variable "watchtower_image" {
+  description = "Full Artifact Registry path for the Watchtower image (Docker Hub via the AR pull-through remote)"
+  type        = string
+}
+
 variable "artifact_registry_repo" {
   description = "Artifact Registry repository name (Cloud Build push-target)"
   type        = string
@@ -61,4 +71,10 @@ variable "source_repo_branch" {
 variable "backup_bucket_name" {
   description = "GCS bucket for hourly postgres snapshots (globally unique)"
   type        = string
+}
+
+variable "enable_cloudbuild_trigger" {
+  description = "Create the Cloud Build webhook trigger (F9 deferred — false at W1)"
+  type        = bool
+  default     = false
 }

@@ -71,8 +71,12 @@ module "hub" {
   environment            = var.environment
   hub_image              = var.hub_image
   proxy_image            = var.proxy_image
+  postgres_image         = var.postgres_image
+  watchtower_image       = var.watchtower_image
   artifact_registry_repo = var.artifact_registry_repo
   source_repo_url        = var.source_repo_url
   source_repo_branch     = var.source_repo_branch
   backup_bucket_name     = var.backup_bucket_name
+
+  enable_cloudbuild_trigger = var.enable_cloudbuild_trigger
 }

@@ -14,9 +14,18 @@ environment            = "prod"
 
 hub_image              = "australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/hub:latest"
 proxy_image            = "australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/hub-proxy:latest"
+
+# postgres + watchtower: Docker Hub images pulled via the AR pull-through
+# remote (the internal-only VM cannot reach Docker Hub directly).
+postgres_image         = "australia-southeast1-docker.pkg.dev/labops-389703/hub-dockerhub-remote/library/postgres:15-alpine"
+watchtower_image       = "australia-southeast1-docker.pkg.dev/labops-389703/hub-dockerhub-remote/containrrr/watchtower:latest"
+
 artifact_registry_repo = "cloud-run-source-deploy"
 
 source_repo_url        = "https://github.com/apnex-org/agentic-network"
 source_repo_branch     = "main"
 
 backup_bucket_name     = "labops-389703-hub-backups"
+
+# Cloud Build webhook trigger — false until finding F9 (opaque 400) is diagnosed.
+enable_cloudbuild_trigger = false

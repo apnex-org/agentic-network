@@ -263,3 +263,22 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   on it — a W1/W2 sequencing gap.
 - Surfaced both blockers to architect (thread-594): bug-101 sequencing (options: manual-migrate
   W1 / pull fix forward / re-sequence AG-W1.4) + recommend defer AG-W1.6 (count-gate the trigger).
+
+### 2026-05-20 — W1 dispositions applied; cold-boot GREEN; W1 → PR
+
+- Architect dispositioned (Design v1.6 RATIFIED `6a254ed`): bug-101 → Option (a) declared
+  migration-scaffold; trigger 400 → DEFER as finding F9 (count-gate).
+- Trigger count-gated off (`var.enable_cloudbuild_trigger`, default false); `terraform apply`
+  clean ("0 added, 1 changed, 0 destroyed").
+- **Migration-scaffold (W1-declared):** the 3 substrate migrations (`001-entities-table` +
+  `002-notify-trigger` + `003-jsonb-size-check`) `docker exec`'d into the W1 postgres → `entities`
+  table created → the Hub container boots (SchemaReconciler applies the SchemaDefs). The real
+  in-Hub bug-101 fix + the AG-W2.2.a FRESH-empty-postgres dispositive test stay W2.
+- **AG-W1.4 COLD-BOOT GREEN** — `curl https://hub-api-…run.app/health` → HTTP 200, end-to-end
+  internet → Cloud Run → Direct VPC Egress → COS VM → Hub.
+- AG-W1 verifier results: W1.1 ✅ (`terraform apply` clean) · W1.2 ✅ (3 containers running) ·
+  W1.3 ✅ (VM-local /health 200) · W1.4 ✅ (cold-boot, via the declared scaffold) · W1.5 ✅ (backup
+  timer active+enabled) · W1.6 ⏸ DEFERRED (F9) · W1.7 ◐ (watchtower up+healthy) · W1.8 ◐ (COS-native
+  logging/monitoring enabled) · W1.9 ✅ (Cloud Run min-instances=1) · W1.10 ✅ (no public IP) ·
+  W1.11 ✅ (unreachable — no public IP) · W1.12 ✅ (no hardcoded literals; validate clean).
+- W1 → PR for architect cross-approval.

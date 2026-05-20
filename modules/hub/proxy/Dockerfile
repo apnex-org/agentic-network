@@ -1,8 +1,8 @@
 # nginx ingress proxy for the OIS Hub — Cloud Run service hub-api
 # mission-86 M-Hub-Storage-Cloud-Deploy, Design §4.15
 #
-# Built via cloudbuild.yaml → Artifact Registry (cloud-run-source-deploy/
-# hub-proxy:latest). The Cloud Run service is Terraform-managed (no
+# Built into Artifact Registry as the hub-proxy image (by the Cloud Build
+# inline-build trigger). The Cloud Run service is Terraform-managed (no
 # Watchtower); rebuilt only when this image source changes.
 #
 # The Hub VM internal IP is injected at container start via the
