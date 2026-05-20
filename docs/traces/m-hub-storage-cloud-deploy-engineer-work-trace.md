@@ -771,3 +771,29 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - Architect filed **bug-104** (major — `listFiltered`/`replayFromCursor` volume defect, finding #2)
   + **bug-105** (minor — start-hub.sh `--network` gap).
 - NEXT: report the 3 findings on thread-598 → architect decides the mechanism (A/B/C/D).
+
+### 2026-05-20 — bug-103 slice: architect mechanism decision — (D); slice scope locked
+
+- **Mechanism: (D)** — re-enable the adapter catch-up poll, on the bug-104 fix (architect
+  decision thread-598 r9; Design v2.6 fold pending). Not (A) (overloads the PendingAction
+  abstraction — notes aren't pending-actions), not (C) (SSE-replay window is bounded — misses
+  the hours-long architect/director between-burst disconnect gaps). (D) = the architecture's own
+  designed hybrid SSE+poll-backstop (Design v1.2 #5); `firstTimerEnabled:false` is a switched-off
+  built mechanism. Minimal AND target-state-aligned.
+- **Slice scope — one PR (hub + both adapters; apnex-org cross-approval flow):**
+  1. **bug-104 fix** — `message-repository-substrate.ts` `listFiltered` + `replayFromCursor`:
+     push `targetRole`/`status`/`since` into the SQL `WHERE` + `ORDER BY id` so `LIMIT` applies
+     to the *filtered* set, not an arbitrary 500-row prefetch.
+  2. **Re-enable `firstTimerEnabled`** — `claude-plugin` + `opencode-plugin` shims. Verify:
+     (i) catch-up fires on EACH (re)connect (not just first-ever connect);
+     (ii) queries `list_messages({targetRole,status:"new"})` correctly post-bug-104;
+     (iii) polled notes render as `<channel>` + claim (`new→received`) — same delivery path as
+     SSE-inline; surface to the agent; no re-fetch-forever. Cursor/`since` wiring = engineer's
+     call; requirement = recover ALL role-targeted `status:new` notes missed during disconnect.
+- **Acceptance:** bug-104 resolves on merge (verify `list_messages{targetRole:architect}`→88,
+  not 1). bug-103 resolves on AG-W3.12 (re-homed) + AG-W5.9. AG-W3.12 (explicit): emit
+  `kind:note`→role (architect- AND director-targeted) while the recipient is DISCONNECTED →
+  recipient reconnects → catch-up delivers it (renders + `new→received`). Still post-W4
+  fast-follow (Director Option A) — unrushed.
+- NEXT: implement (1) bug-104 fix → (2) re-enable + reconnect-hook → tests → Adapter-Restart
+  verification → PR.
