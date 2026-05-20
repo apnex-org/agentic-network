@@ -524,3 +524,27 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - **W3 Sub-PR A complete** — F13(b) + Cloud NAT + F11 all GREEN. Commits on
   `agent-greg/mission-86-w3a`: `d6cf09d` (F11+F13(b)) + `a06be8b` (trace) + `fd299ee` (NAT).
   Opening the Sub-PR A PR.
+
+### 2026-05-20 — W3 Sub-PR A MERGED; Sub-PR B started (bug-102 fix)
+
+- W3 Sub-PR A PR #222 cross-approved + admin-squash-merged → `main @ ba0beed`.
+- W3 **Sub-PR B** issued (bearer-auth + bug-102 + bug-103); branch `agent-greg/mission-86-w3b`
+  off `ba0beed`. bug-103 disposition: architect CONCUR root-cause + fix **inline in Sub-PR B**.
+- **bug-103 — root-cause CONFIRMED** (delivery-pipeline trace): the self-message-skip
+  hypothesis is REFUTED. ALL architect-targeted `kind:note` messages are stuck at
+  `status:new` (substrate: pr-opened-notification 34 + pr-merged 34 + pr-review-approved 13
+  + heartbeat 5 = 86, zero `received`/`acked`, zero PendingActions). `kind:note`→role
+  messages have NO durable delivery path — `message-policy` creates the note + fires an
+  ephemeral SSE push but never `pendingAction.enqueue()`; no sweeper transitions a `new`
+  note. (`kind:reply`/thread-messages DO enqueue via `thread-policy` — that's why those
+  progress.) Fix = add the `kind:note`→PendingAction enqueue path. Not bug-98-deep.
+- **bug-102 — code-verified + FIXED.** Code-verify: fix-location is Hub-side — the
+  `create_message` tool `payload` param is `z.unknown()` (typeless); a JSON-stringified
+  payload slips through to `note-schema`'s validator → "got string". Fix (`message-policy.ts`):
+  new exported pure `coerceToolPayload()` — JSON-string-encoded payload → object at the MCP
+  entry-point; non-JSON / non-string pass through. `createMessage` handler uses it; param
+  description improved. Regression test `message-policy-payload.test.ts` (7 tests) — incl.
+  AG-W3.11 (stringified `kind=note` payload round-trips clean through
+  `coerceToolPayload`→`validateNotePayload`). `tsc` clean. bug-102 stays `investigating`
+  until the full proxy round-trip is verified in Sub-PR B's Adapter-Restart verification.
+- Next: bearer-auth gate (will surface OQ-16) → bug-103 delivery fix → Sub-PR B verification.
