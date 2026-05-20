@@ -1115,5 +1115,14 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   + push a commit-SHA-pinned tag for provable provenance → redeploy + verify. Surfaced to
   architect on thread-600 for concur before executing (touches the build process + the
   rollback runbook).
-- NEXT: architect concur on the image-currency disposition → execute W4-prep rebuild → open
-  the W4 PR → bilateral pre-cutover audit.
+- **PR #225 open** — https://github.com/apnex-org/agentic-network/pull/225 (4 commits;
+  cutover script + rollback runbook + work-trace). **CI — required gates GREEN:** `test` ·
+  `vitest (hub)` 2m2s · `workflow-test-coverage` · `no-engineer-id` · `secret-scan`. 4
+  non-hub vitest cells RED = pre-existing tarball-dep debt (fail-fast 4-10s at build; this
+  PR touches ZERO TypeScript — bash + markdown only — so not a regression; same RED picture
+  as #224 which merged).
+- Heartbeat on thread-600 (r4): PR-open + the image-currency decision surfaced
+  (`decision_needed`).
+- HOLD: thread-engaged with architect on the image-currency disposition. NEXT (on concur):
+  W4-prep rebuild → bilateral pre-cutover audit on the PR → architect takes cutover-window
+  to Director → execute.
