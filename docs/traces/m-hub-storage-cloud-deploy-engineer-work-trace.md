@@ -1035,3 +1035,43 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - Surfaced AG-W3.12-PASSES + #224 merge-ready on thread-598 (r22). NEXT: architect cross-approval
   (thread-ack + `gh pr review --approve`) + admin-merge → bug-104 resolves on merge; bug-103 +
   bug-106 resolve on AG-W3.12 (passed) + AG-W5.9 (W5).
+
+### 2026-05-20 — bug-103 slice COMPLETE (#224 merged @ main f35b08a)
+
+- **#224 merged** — `main @ f35b08a` (`[mission-86 bug-103] kind:note delivery-recovery
+  (mechanism D) + bug-104 + bug-106`). bug-104 resolved on merge; bug-103 + bug-106 stay
+  `investigating` → resolve at AG-W5.9 (their adapter-half rides a later plugin re-release —
+  NOT a W4 concern).
+- thread-598 converged (bug-103 slice record + carry-forwards). thread-599 converged (W4
+  kickoff → fresh-session handover at the slice cut-point; same shape as W3→bug-103).
+- Capstone: bug-103 slice = 3 defects fixed across hub + network-adapter + cognitive-layer;
+  harness-verify caught (D) non-functional TWICE pre-merge (parser shape-bug, then summarizer
+  conflation) — each stopped + surfaced, not iterate-fixed solo. Clean slice.
+
+### 2026-05-20 PM AEST — W4 pickup (fresh greg session)
+
+- Fresh greg session; W4 re-onboarded on thread-600 (architect lily). Cold-pickup: work-trace +
+  Design v2.9 §5 W4 / §4.14 / §4.5.1 / §4.10 (design doc is architect-side on the
+  `m-hub-storage-cloud-deploy` branch @ `d37bbe7` — not on `main`) + thread-598/599 + CLAUDE.md +
+  engineer-runtime + mission-lifecycle.
+- `git fetch` done. `origin/main @ f35b08a` = #224 merge commit. Cut fresh W4 branch
+  `agent-greg/mission-86-w4` off `origin/main @ f35b08a`.
+- **W4 scope (Design §5 W4; AG-W4.1–W4.7):** migrate production Hub local-container → cloud
+  (VM + Cloud Run nginx + Secret Manager + Cloud NAT + bearer-auth — all live W0–W3).
+  Deliverables: `scripts/cloud/cutover-to-cloud.sh` (authored + dry-run-tested) ·
+  `docs/operator/cloud-deploy-rollback-runbook.md` (3-step manual; OQ-11) · cloud-Hub image
+  currency check · `OIS_HUB_URL` flip mechanics · bilateral pre-cutover audit · Director-gated
+  cutover-window · execute.
+- **Cloud-Hub URL confirmed live:** `hub-api` → `https://hub-api-5muxctm3ta-ts.a.run.app`.
+- **`OIS_HUB_URL` flip mechanics — RESOLVED:** shim reads `process.env.OIS_HUB_URL ||
+  fileConfig.hubUrl` (`adapters/claude-plugin/src/shim.ts:92`); env-var overrides the
+  `.ois/adapter-config.json` `hubUrl` field. Hub URL = runtime config read at shim startup, NOT
+  plugin code → the flip is a config change (env-var or config-file) + adapter session restart;
+  NO plugin reinstall. The bug-103-slice marketplace-distribution finding bites plugin-code
+  changes, not this.
+- **§4.14-spec finding (B-class; will carry into the real script):** the inline SSH restore
+  command embeds `$(basename "$LATEST_DUMP")` inside a *single-quoted* remote command —
+  `$LATEST_DUMP` is an operator-side var, undefined on the VM, won't expand remotely. Fix:
+  pre-resolve the basename operator-side + interpolate it correctly into the remote command.
+- NEXT: author `cutover-to-cloud.sh` (`--dry-run` mode = real reads, destructive ops print +
+  skip) + rollback runbook → dry-run-test → ship as PR (apnex-org flow).
