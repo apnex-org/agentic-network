@@ -30,6 +30,20 @@ export interface ToolCallContext {
   readonly tags: Record<string, string>;
 }
 
+/**
+ * Tag key on `ToolCallContext.tags` marking an internal-machinery tool call
+ * (poll-backstop catch-up, transport heartbeat) — as distinct from an
+ * LLM-originated tool call. bug-106: middlewares that exist for the LLM's
+ * context budget — notably `ResponseSummarizer` — MUST NOT transform an
+ * internal call's result; machinery needs the raw, full payload.
+ */
+export const INTERNAL_CALL_TAG = "internal";
+
+/** True when `tags` marks the call as internal-machinery (bug-106). */
+export function isInternalCall(tags: Readonly<Record<string, string>>): boolean {
+  return tags[INTERNAL_CALL_TAG] === "true";
+}
+
 export interface ListToolsContext {
   readonly sessionId: string;
   readonly agentId?: string;

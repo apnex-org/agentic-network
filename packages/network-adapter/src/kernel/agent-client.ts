@@ -180,6 +180,17 @@ export interface AgentClientMetrics {
   readonly dedupDropCount: number;
 }
 
+/**
+ * Per-call options for `IAgentClient.call`. bug-106: `internal: true` marks
+ * a machinery-originated call (poll-backstop catch-up, transport heartbeat)
+ * so the cognitive pipeline's LLM-facing result transforms (notably
+ * `ResponseSummarizer`) skip it — machinery needs the raw, full result.
+ */
+export interface AgentCallOptions {
+  /** Mark this call internal-machinery — skip LLM-facing result transforms. */
+  internal?: boolean;
+}
+
 export interface IAgentClient {
   /** Current session FSM state. */
   readonly state: SessionState;
@@ -205,7 +216,11 @@ export interface IAgentClient {
    * and retries exactly once on the fresh session before surfacing
    * the error.
    */
-  call(method: string, params: Record<string, unknown>): Promise<unknown>;
+  call(
+    method: string,
+    params: Record<string, unknown>,
+    opts?: AgentCallOptions,
+  ): Promise<unknown>;
 
   /**
    * List the method surface currently advertised by the peer. The

@@ -35,6 +35,7 @@
 
 import type {
   IAgentClient,
+  AgentCallOptions,
   AgentClientConfig,
   AgentClientCallbacks,
   AgentClientMetrics,
@@ -66,6 +67,7 @@ import type {
   ListToolsContext,
   Tool as CognitiveTool,
 } from "@apnex/cognitive-layer";
+import { INTERNAL_CALL_TAG } from "@apnex/cognitive-layer";
 import { performStateSync } from "./state-sync.js";
 
 // Same list as McpConnectionManager. Matched case-insensitively.
@@ -266,7 +268,8 @@ export class McpAgentClient implements IAgentClient {
 
   async call(
     method: string,
-    params: Record<string, unknown>
+    params: Record<string, unknown>,
+    opts?: AgentCallOptions,
   ): Promise<unknown> {
     if (this._state !== "streaming" && this._state !== "synchronizing") {
       throw new Error(`McpAgentClient.call: session state=${this._state}`);
@@ -290,6 +293,10 @@ export class McpAgentClient implements IAgentClient {
       startedAt,
       tags: {},
     };
+    // bug-106: propagate the internal-machinery marker into the cognitive
+    // context so LLM-facing result-transform middlewares (ResponseSummarizer)
+    // skip it — machinery (poll-backstop, heartbeat) needs the raw result.
+    if (opts?.internal) ctx.tags[INTERNAL_CALL_TAG] = "true";
     try {
       return await this.cognitive.runToolCall(ctx, async (c) => {
         const result = await this.rawCall(c.tool, c.args);

@@ -372,7 +372,10 @@ export class PollBackstop {
 
       let raw: unknown;
       try {
-        raw = await agent.call("list_messages", args);
+        // bug-106: `internal` — this catch-up poll is machinery, not an LLM
+        // tool-call; the result must NOT be cognitive-layer-summarized
+        // (a summarized/truncated messages[] silently drops recovery).
+        raw = await agent.call("list_messages", args, { internal: true });
       } catch (err) {
         this.opts.log(
           `[poll-backstop] list_messages failed (non-fatal): ${(err as Error)?.message ?? String(err)}`,
@@ -447,7 +450,7 @@ export class PollBackstop {
       const agent = getAgent();
       if (!agent || agent.state !== "streaming") return;
       try {
-        await agent.call("transport_heartbeat", {});
+        await agent.call("transport_heartbeat", {}, { internal: true });
         return;
       } catch (firstErr) {
         this.opts.log(
@@ -461,7 +464,7 @@ export class PollBackstop {
         // Re-check agent state after the backoff (could have torn down).
         const agent2 = getAgent();
         if (!agent2 || agent2.state !== "streaming") return;
-        await agent2.call("transport_heartbeat", {});
+        await agent2.call("transport_heartbeat", {}, { internal: true });
       } catch (secondErr) {
         this.opts.log(
           `[poll-backstop] transport_heartbeat failed (2nd; skipping cycle): ${(secondErr as Error)?.message ?? String(secondErr)}`,
