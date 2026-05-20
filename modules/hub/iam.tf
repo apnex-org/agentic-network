@@ -1,12 +1,11 @@
-# ── deploy/hub/ — dedicated least-privilege service accounts ──────────
-# Design §4.2 + OQ-14. Separate SAs for the VM and the Cloud Run proxy;
-# deploy/base/'s shared ois-runtime SA is intentionally NOT reused.
+# ── modules/hub/ — dedicated least-privilege service accounts ─────────
+# Design §4.2 + OQ-14. Separate SAs for the VM and the Cloud Run proxy.
 
 # VM service account — GCS backup uploads, Cloud Ops Agent logging/metrics,
 # Artifact Registry image pulls.
 resource "google_service_account" "hub_vm" {
-  account_id   = var.hub_vm_sa_id
-  display_name = "OIS Hub VM (mission-86)"
+  account_id   = "${var.name_prefix}-vm-sa"
+  display_name = "OIS Hub VM (${var.name_prefix})"
   description  = "Runtime SA for the internal-only Hub VM"
 }
 
@@ -27,7 +26,7 @@ resource "google_project_iam_member" "hub_vm_roles" {
 # the VM over the VPC — it accesses no GCP resource, so it carries no
 # project IAM roles (least-privilege per OQ-14).
 resource "google_service_account" "proxy" {
-  account_id   = var.proxy_sa_id
-  display_name = "OIS Hub Cloud Run nginx-proxy (mission-86)"
-  description  = "Runtime SA for the hub-api Cloud Run ingress proxy"
+  account_id   = "${var.name_prefix}-proxy-sa"
+  display_name = "OIS Hub Cloud Run nginx-proxy (${var.name_prefix})"
+  description  = "Runtime SA for the Cloud Run ingress proxy"
 }

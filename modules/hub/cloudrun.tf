@@ -1,9 +1,9 @@
-# ── deploy/hub/ — Layer C: Cloud Run nginx ingress proxy ──────────────
+# ── modules/hub/ — Layer C: Cloud Run nginx ingress proxy ─────────────
 # Design §4.15. Public HTTPS endpoint (auto-managed *.run.app TLS) that
 # reverse-proxies to the internal-only Hub VM over Direct VPC Egress.
 
 resource "google_cloud_run_v2_service" "hub_api" {
-  name     = var.proxy_service_name
+  name     = "${var.name_prefix}-api"
   location = var.region
   ingress  = "INGRESS_TRAFFIC_ALL"
 
@@ -31,7 +31,7 @@ resource "google_cloud_run_v2_service" "hub_api" {
     }
 
     containers {
-      image = local.proxy_image
+      image = var.proxy_image
 
       ports {
         container_port = 8080
@@ -56,14 +56,14 @@ resource "google_cloud_run_v2_service" "hub_api" {
     }
   }
 
-  labels = local.common_labels
+  labels = local.labels
 
   depends_on = [google_project_service.apis["run.googleapis.com"]]
 }
 
 # Public invoker — the proxy is reachable from the internet; request auth
 # is enforced at the Hub via bearer token (W3). IAP stays DISABLED for
-# hub-api (Design §4.15; future hub-ui services get IAP per AG-11).
+# this service (Design §4.15; future hub-ui services get IAP per AG-11).
 resource "google_cloud_run_v2_service_iam_member" "hub_api_public" {
   project  = var.project_id
   location = var.region

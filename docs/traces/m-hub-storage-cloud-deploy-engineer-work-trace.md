@@ -139,3 +139,18 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   apply. Architect contingency: apply everything-except-trigger; sequence the trigger W1-tail.
 - W1 `terraform apply` provisions real standing production infra (~$20/mo) — checkpointing with
   the operator before apply (prior-turn commitment + the operator-only GitHub-App prerequisite).
+
+### 2026-05-20 — operator authorized autonomous execution; Design v1.3 absorbed
+
+- Operator: "no need to clarify; ensure up to date with architect revisions; continue mission" —
+  declined the per-wave checkpoint; W1 (incl. `terraform apply`) proceeds autonomously.
+- **Design v1.3 RATIFIED `d6cceea`** — consolidated W1 amendment (thread-594; supersedes thread-593):
+  - A1: Cloud Build trigger → **webhook trigger** (`apnex-org/agentic-network` is public; no GitHub App).
+  - A2: **`modules/hub/` reusable-module restructure** — flat `deploy/hub/` plan → `modules/hub/`
+    module + thin `deploy/hub/` root caller; parametrized for multi-project deployability.
+  - A3: **full-IaC webhook closure** — `github_repository_webhook` (Terraform `github` provider);
+    ZERO manual webhook steps. The W1 GitHub-App operator-prerequisite is RETIRED.
+- W1 = restructure (before first apply) → `terraform apply` → cold-boot. AG-W1.1–W1.12.
+- State note: W0 applied 7 resources (backup bucket + 2 SAs + 4 IAM) at flat addresses —
+  W1 restructure `terraform state mv`s them into `module.hub.*` (re-home, not recreate).
+- W1 branch `agent-greg/mission-86-w1` off `origin/main @ 8454352`.
