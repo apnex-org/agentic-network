@@ -1173,3 +1173,30 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   `no-engineer-id`, `secret-scan`); 4 non-hub vitest RED = pre-existing tarball-dep debt.
 - NEXT: heartbeat thread-600 (rebuild done + Watchtower finding + #225 fixes) → architect
   re-review + cross-approve + merge → cutover-window to Director → execute.
+
+### 2026-05-20 PM AEST — W4 cutover: Director APPROVED; attempt aborted SAFELY; --yes fix
+
+- #225 merged `main @ 223b7b9`; bug-107 filed; Director `cutover-window-confirm` APPROVED
+  ("Proceed now"). Branch `agent-greg/mission-86-w4-cutover` off `223b7b9`.
+- **Cutover attempt #1 — aborted SAFELY at the `confirm()` gate; ZERO destructive ops.**
+  Posted `CUTOVER STARTING` (thread-600 r12); ran `printf 'yes\n' | cutover-to-cloud.sh`.
+  Script exited 1 right after PREFLIGHT, at `confirm()` — BEFORE FREEZE-IMG/DRAIN.
+  Verified post-abort: local Hub `Up 3h` + `/health` 200; VM `ois-hub-prod` +
+  `watchtower-prod` untouched. Nothing drained, snapshotted, or restored.
+- **Root cause — `cutover-to-cloud.sh` not agent-pipe-drivable.** PREFLIGHT's
+  `gcloud compute ssh` (in `ssh_vm()`) reads + drains the piped stdin (ssh forwards stdin
+  to the remote), so by the time `confirm()` runs `read`, stdin is EOF → `read` returns
+  non-zero → `set -e` exits the script. Invisible interactively (a TTY isn't drained) +
+  invisible in `--dry-run` (`confirm()` is skipped). The bilateral audit verified the
+  script's LOGIC but not its INVOCATION model under non-interactive engineer-drive.
+- **Operator directive:** the cutover is engineer + architect-driven (NOT operator-run,
+  NOT Director-touched); Director re-engages only post client-restart. → fix the script so
+  the ENGINEER can drive it; don't route execution to the operator.
+- **Fix — `--yes` flag.** `cutover-to-cloud.sh --yes` skips the interactive `confirm()`
+  for non-interactive engineer/automation drive (the Director `cutover-window-confirm` is
+  the human gate; `--yes` asserts it). ~6 lines: arg-parse `--yes|-y` → `ASSUME_YES`;
+  `confirm()` early-returns on `$ASSUME_YES`; usage doc. ZERO change to cutover logic.
+  `bash -n` clean; `--dry-run --yes` PASSES (arg accepted, dry-run unaffected).
+- NEXT: PR the `--yes` fix → architect (lily) cross-approves → engineer-drive
+  `cutover-to-cloud.sh --yes`. thread-600 turn-locked to architect after the r12 marker —
+  needs the lily session to post to free greg's turn.

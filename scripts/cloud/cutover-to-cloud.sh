@@ -36,7 +36,14 @@
 #
 # Usage:
 #   scripts/cloud/cutover-to-cloud.sh --dry-run     # pre-audit rehearsal
-#   scripts/cloud/cutover-to-cloud.sh               # the real cutover
+#   scripts/cloud/cutover-to-cloud.sh               # the real cutover (interactive confirm)
+#   scripts/cloud/cutover-to-cloud.sh --yes         # the real cutover, non-interactive
+#
+# --yes skips the interactive confirm() prompt — required for non-interactive
+# (engineer-agent / automation) drive, where there is no TTY to type "yes" at
+# and a piped stdin is consumed by PREFLIGHT's gcloud-ssh before confirm()
+# reads it. The Director cutover-window-confirm is the human gate; --yes
+# asserts it has been given. No effect under --dry-run (confirm is skipped).
 #
 # Env (all optional — defaults target the mission-86 prod deployment):
 #   GCP_PROJECT          GCP project        (default: gcloud active project)
@@ -57,11 +64,13 @@ set -euo pipefail
 
 # ── Argument parsing ───────────────────────────────────────────────────
 DRY_RUN=false
+ASSUME_YES=false
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=true ;;
+    --yes|-y) ASSUME_YES=true ;;
     -h|--help)
-      sed -n '2,54p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,61p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "cutover-to-cloud: unknown argument '$arg' (use --dry-run or --help)" >&2; exit 2 ;;
@@ -129,6 +138,11 @@ ssh_vm() {
 
 confirm() {
   $DRY_RUN && return 0
+  if $ASSUME_YES; then
+    log "confirm: --yes given — proceeding non-interactively"
+    log "         (asserts the Director cutover-window-confirm has been given)"
+    return 0
+  fi
   echo
   echo "  ⚠  This is the REAL production cutover — it will STOP the local Hub,"
   echo "     migrate state to the cloud Hub, and incur ~2-3 min of downtime."
