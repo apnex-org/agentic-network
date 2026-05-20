@@ -142,6 +142,31 @@ describe("MemoryHubStorageSubstrate — per-method parity baseline", () => {
       expect(r.items.map(i => i.id).sort()).toEqual(["bug-12", "bug-13"]);
     });
 
+    it("filter $gt/$lte range — numeric operands compare numerically", async () => {
+      for (let i = 1; i <= 5; i++) {
+        await substrate.put("Bug", { id: `bug-n${i}`, priority: i });
+      }
+      const r = await substrate.list<{ id: string }>("Bug", {
+        filter: { priority: { $gt: 2, $lte: 4 } },
+      });
+      expect(r.items.map(i => i.id).sort()).toEqual(["bug-n3", "bug-n4"]);
+    });
+
+    it("filter $gt — non-numeric (ULID) operands compare lexically (bug-104)", async () => {
+      // bug-104: the `since` ULID-cursor pushes `{id: {$gt: <ulid>}}` into the
+      // substrate filter. ULIDs lex-sort = time-sort but are not numeric — the
+      // prior numeric-only compare yielded NaN → rejected every row. Range
+      // comparison must fall back to lexical string comparison (matching
+      // postgres `data->>'field' > $param` text semantics).
+      for (const id of ["01AAA", "01BBB", "01CCC", "01DDD"]) {
+        await substrate.put("Bug", { id });
+      }
+      const r = await substrate.list<{ id: string }>("Bug", {
+        filter: { id: { $gt: "01BBB" } },
+      });
+      expect(r.items.map(i => i.id).sort()).toEqual(["01CCC", "01DDD"]);
+    });
+
     it("sort + limit + offset", async () => {
       for (let i = 1; i <= 5; i++) {
         await substrate.put("Bug", { id: `bug-${i}`, priority: i });
