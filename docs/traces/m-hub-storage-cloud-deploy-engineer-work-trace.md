@@ -315,3 +315,22 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   indexes created) + 2nd-run idempotency; restart-safety + related suites green (18 tests).
 - Next: rebuild Hub image → AR → cloud-VM restart; AG-W2.2.a fresh-postgres verification;
   state-migration test; W2 PR.
+
+### 2026-05-20 — W2 cloud-ops: bug-101 + SIGTERM verified GREEN; state-migration test → 2 findings
+
+- Architect (thread-595) disposed: proceed (1)+(2)+(3) autonomously; state-migration test signed off.
+- Hub image rebuilt (W2: bug-101 + SIGTERM; digest `d8e22f32`) → Artifact Registry; cloud-VM
+  redeployed against a FRESH wiped postgres volume.
+- **AG-W2.2.a GREEN** — the Hub self-applied all 3 migrations (`[Hub:migrations] applied 001/002/003;
+  bootstrap migrations complete (3 applied)` — M=N=3) → reconciler settled 22/22 SchemaDefs →
+  `/health` 200. **bug-101 FIXED** — clean boot on empty postgres, no manual scaffold.
+- **AG-W2.2.b GREEN** — 2nd boot (`docker restart`): migrations re-applied idempotently, no errors.
+- **AG-W2.7 GREEN** — `docker stop --time=30 ois-hub-prod` → `[Hub] Shutting down (SIGTERM)...` →
+  clean exit (no SIGKILL fall-through).
+- **State-migration test (3) — STOPPED + surfaced 2 findings to architect (thread-595):**
+  - **F10**: `scripts/local/hub-snapshot.sh` calls host `pg_dump`; the operator host has no postgres
+    client (`pg_dump: command not found`). hub-snapshot.sh is also the W4 cutover dump-tool — needs
+    amending to `docker exec` the pg_dump (or pg-client install) before W4.
+  - **F11**: the cloud-Hub container is not passed `OIS_GH_API_TOKEN` → its repo-event-bridge no-ops.
+    AG-W2.4 (bridge-resume) unverifiable; post-W4 the cloud-Hub IS production + the bridge is
+    load-bearing — cloud-Hub bridge config is an unprovisioned Design/deployment gap.
