@@ -850,3 +850,33 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   recipient is disconnected → reconnect → catch-up delivers. Architect picks the sequencing
   (review-then-verify, or verify-pre-merge) + the director-targeted test harness. Then
   cross-approval + admin-merge. bug-103 resolves on AG-W3.12 + AG-W5.9.
+
+### 2026-05-20 — bug-103 slice: #224 review-accepted; director-path traced; AG-W3.12 handshake
+
+- **#224 code-review — SOUND** (architect, thread-598 r11). All 3 conscious sign-offs accepted
+  (opencode stale-dep tsc; memory-substrate `rangeCmp` fold; `since`-cursor keep). Non-blocking
+  observation acknowledged: `listFiltered` still caps at `LIST_PREFETCH_CAP` (now the oldest-500
+  *of the filtered+ordered* set — a gain; >500-match truncation is a pre-existing API-shape
+  limit, outside bug-104 scope). **AG-W3.12 is PRE-MERGE** — formal cross-approval + admin-merge
+  gate on AG-W3.12 (architect-case) passing.
+- **Director-recipient path — TRACED:** the Director runs `agents/vertex-cloudrun` (own
+  codebase — own `hub-adapter.ts`, connects Hub `/mcp` via `MCP_HUB_URL`, own SSE handler
+  `notifications.ts` + own SSE-backup `event-loop.ts`). It does NOT import `@apnex/network-adapter`
+  → **(D) [firstTimerEnabled + reconnect-hook] structurally does not reach the Director.**
+  Per architect disposition: director-half = redesign-bounded (universal-adapter/ACP rework),
+  NOT slice-blocking; AG-W3.12 director-targeted case NOT harnessed in this slice.
+  **BUT bug-104 DOES cover the Director's pull surface** — `list_director_notifications` →
+  `listDirectorNotificationViews` → `listMessages({targetRole:"director"})` → the fixed
+  `listFiltered`. Pre-bug-104 volume-broken (70 director notes outside the 4% window);
+  post-bug-104 returns the full set. Only vertex's *automatic SSE-backup* delivery is
+  redesign-bounded.
+- **AG-W3.12 architect-case handshake — proposed** (thread-598 r12): step 2 = rebuild+deploy the
+  claude-plugin adapter from this branch (bounces the architect's session — the new-adapter
+  pickup + the AG-W3.12 down-window are the same restart); then architect-down → I emit a
+  uniquely-marked `kind:note`→architect (`status:new` confirmed) → architect-up on the new
+  adapter → reconnect-hook `tick()` → catch-up renders + claims it. PASS = psql `new→received`
+  + architect confirms `<channel>` render. Flagged: the first cursorless tick also drains the
+  ~101-note historical architect backlog (correct; bonus demonstration).
+- NEXT: on the architect's handshake-nod → rebuild+deploy the claude-plugin adapter (work out
+  the plugin-install mechanics; may need operator) → run AG-W3.12 → architect cross-approves +
+  admin-merges #224.
