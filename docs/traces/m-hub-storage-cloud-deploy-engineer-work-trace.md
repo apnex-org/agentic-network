@@ -1273,3 +1273,35 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   real rehearsal run. Fixed both occurrences → `$($DRY_RUN && echo 'DRY-RUN ')`.
 - NEXT: PR the fix + `--rehearse-restore` (with rehearsal evidence) → architect
   cross-approve + merge → attempt #3 on a fresh Director window-confirm.
+
+### 2026-05-20 PM AEST — W4 cutover ATTEMPT 3: SUCCEEDED — cloud Hub is production
+
+- #227 merged `main @ 34446c4`. Architect handed off to a fresh lily session, which
+  relayed the **Director Option-1 #3-GO**. Branch `agent-greg/mission-86-w4-attempt3` off
+  `34446c4`; script byte-identical to canonical.
+- **`cutover-to-cloud.sh --yes` — attempt #3 — CUTOVER COMPLETE.** Full flow clean:
+  PREFLIGHT OK → FREEZE-IMG (watchtower paused) → DRAIN (local Hub stopped 22:42:32Z) →
+  FREEZE-BASE (authoritative baseline **18541**) → SNAPSHOT (8.4M) → UPLOAD (dump+meta →
+  GCS) → **RESTORE: JSON-API download (NO gsutil error — the fix holds) → `docker stop
+  ois-hub-prod` → `pg_restore --clean` → `CUTOVER_RESTORED_COUNT=18541` → `docker start`**
+  → VERIFY (parity **18541 == 18541**, cloud `/health` 200) → RESUME-IMG (watchtower
+  resumed) → ADAPTER notice. Banner correctly read "CUTOVER COMPLETE" (the `${DRY_RUN:+}`
+  fix holds).
+- **AG-W4 — independently verified:**
+  - **AG-W4.1** cutover script executed end-to-end ✅
+  - **AG-W4.2** cloud state == local state at cutover-time — parity 18541 == 18541
+    (both frozen-exact: local post-drain, cloud post-restore Hub-stopped) ✅
+  - **AG-W4.5** local Hub stopped (`ois-hub-local-prod` `Exited (0)` — graceful drain;
+    NOT removed — W5 decommission) + dump archived `gs://labops-389703-hub-backups/
+    cutover/hub-cutover-20260520-224232.dump` (8.37 MiB; lifecycle-exempt prefix) ✅
+  - **AG-W4.7** no data-loss vs pre-cutover snapshot — parity confirmed ✅
+  - **AG-W4.3 / AG-W4.4 / AG-W4.6** — PENDING the operator's `OIS_HUB_URL` flip +
+    session restarts (agents reconnect / first post-cutover MCP call / shim configs).
+- **Cloud Hub is now production** — `https://hub-api-5muxctm3ta-ts.a.run.app`, live +
+  healthy, 18561 entities (growing — the cloud Hub is serving + writing post-restore;
+  expected). local Hub `hub-substrate-postgres` left intact (rollback-ready).
+- thread-601 went dark at DRAIN (local-Hub-hosted). Operator does the `OIS_HUB_URL` flip
+  → `https://hub-api-5muxctm3ta-ts.a.run.app` + restarts both adapter sessions; post-flip
+  the fresh greg verifies AG-W4.3/4.4/4.6 + surfaces W4-complete on thread-601 (cloud Hub).
+- NEXT: operator flip + session restarts → fresh greg post-cutover verification → W4
+  closeout → W5.
