@@ -635,3 +635,28 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   AG-W3.11 (bug-102 stringified-payload round-trip) → open the Sub-PR B PR → ping thread-597.
   bug-102 flips `investigating → resolved` only after AG-W3.11 (proxy round-trip) holds.
 - Coordination: thread-597 is the W3-tail channel; architect drives; ping PR-open there.
+
+### 2026-05-20 — W3 Sub-PR B VERIFIED + PR #223 open
+
+- Hub image rebuilt (w3b code) via Cloud Build → AR `hub:latest`; `terraform apply` → cloud-Hub
+  VM-replace (`hub-admin-token` secret + new startup.sh + new image). Cloud Hub:
+  `hub-api-5muxctm3ta-ts.a.run.app`.
+- **ALL AG-W3 verifiers GREEN — verified on the cloud Hub:**
+  - AG-W3.1 `hub-token issue` → token · W3.2 invalid/missing bearer → 401 · W3.3 valid bearer →
+    200 · W3.4 `/health` no-auth → 200 · W3.5 `hub-token revoke` → subsequent 401 · W3.6
+    `[Auth]`/`[Admin]` audit-log on stdout · W3.7 `/admin/tokens` admin-auth (no-auth → 401) ·
+    W3.8 `bearer_tokens` postgres table confirmed.
+  - **AG-W3.11** — bug-102 round-trip: `create_message kind=note` with a JSON-string payload via
+    `/mcp` (a real MCP `tools/call`) → note created clean, no "got string". Dispositive.
+- **W3 Sub-PR B PR #223 OPEN** — bearer-auth gate + bug-102; 5 commits off `ba0beed`; 15 files.
+  CI required gates GREEN (`test`, `vitest (hub)`, coverage, no-engineer-id, secret-scan). 3
+  conscious sign-offs in the PR body (HUB_API_TOKEN grandfather; hub-admin-token terraform tail;
+  bug-102→resolved-on-merge). Surfaced thread-597; awaiting architect cross-approval + merge.
+- **On #223 merge:** flip bug-102 `investigating → resolved` (referencing #223; AG-W3.11 green).
+- **Remaining W3-tail work:** (1) the bug-103 systematic-miss instrumented check (architect-
+  approved, non-W4-blocking, unrushed) — nail `agent.state==="streaming"` semantics + emit
+  state-labelled test architect-notes + report (streaming-semantics / streaming-architect-gets-it
+  / the residual); NOTE the emit needs a bug-102-free path on the live local Hub (piggyback a
+  real PR-open's synthesized pr-opened-notification, OR wait for the local Hub to carry the
+  bug-102 fix post-merge). (2) bug-103 fix itself = post-W4 fast-follow slice (Director Option A;
+  Design v2.5; AG-W5.9 its mission-close gate). (3) W4 production cutover — Director-gated.
