@@ -904,3 +904,35 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   + next plugin release.
 - NEXT: architect dispositions — (1) run the harness-verify now? (2) does harness-verify satisfy
   AG-W3.12 as #224's pre-merge gate, real-adapter form → W5? Then proceed accordingly.
+
+### 2026-05-20 — bug-103 slice: harness-verify CAUGHT A DEFECT — (D) non-functional
+
+- Architect (thread-598 r15) approved BOTH asks YES: run the harness-verify; harness-verify
+  satisfies AG-W3.12 as #224's pre-merge gate (real-adapter form → AG-W5.9). Backlog-claim
+  approved. W5-flag: the adapter-half reaches running adapters only via a plugin re-release.
+- **Harness-verify RAN** — rebuilt `@apnex/network-adapter` (clean — `rm -rf dist` first; TS5055
+  dist-pollution otherwise) + ran `tsx adapters/claude-plugin/src/shim.ts` standalone, engineer-
+  role, `OIS_AGENT_NAME=bug103-agw312-harness`, against the local Hub.
+- **VERIFIED WORKING:** `firstTimerEnabled:true` took effect (poll-backstop `starting ...
+  cadenceS=300`); the dispatcher **reconnect-hook fired** (`tick()` ran ~60ms after `→streaming`).
+- **DEFECT CAUGHT — (D) non-functional:** the catch-up `tick()` → `[poll-backstop] unexpected
+  list_messages result shape; skipping tick`. EVERY tick skips → no catch-up → the ~103-note
+  engineer `status:new` backlog did NOT drain (psql before==after). Reproduced in BOTH
+  cognitive-ON and cognitive-BYPASS (`OIS_COGNITIVE_BYPASS=1`) runs → NOT the summarizer; a
+  genuine result-shape mismatch.
+- **Root cause (class):** `poll-backstop.ts` `parseListMessagesResult` / the `tick()`→
+  `list_messages`→parse path was **never exercised** — `firstTimerEnabled` has been `false`
+  since bug-53/#180. (D) runs it for the first time; its result-shape contract ≠ the real
+  `agent.call("list_messages")` return. The 51 network-adapter unit tests passed on a MOCK
+  `agent.call` — mock shape ≠ real transport. (`parseListMessagesResult` is pre-existing
+  `poll-backstop.ts` code, NOT in #224's diff — (D) exposed it.)
+- **2nd concern (not independently confirmed):** run-1 (cognitive ON) showed `list_messages`
+  returned `summarized:true` (cognitive `ResponseSummarizer`). Even post-shape-fix, the
+  poll-backstop's internal call may need to bypass the summarizer on a pipeline-ON adapter —
+  re-verify after the shape-fix.
+- Impact: #224 bug-104 half sound + live-verified; bug-103 half (D) non-functional → #224 NOT
+  merge-ready; AG-W3.12 (correctly) does not pass. Harness mutated ZERO live state (ticks
+  skipped → zero claims); torn down.
+- Surfaced to architect (thread-598 r16; verification-defect-surface-dont-dig) with disposition
+  options: (1) fix the poll-backstop `list_messages` result-handling + real-shape test → re-verify;
+  (2) re-scope. NEXT: architect disposition.
