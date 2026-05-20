@@ -936,3 +936,32 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - Surfaced to architect (thread-598 r16; verification-defect-surface-dont-dig) with disposition
   options: (1) fix the poll-backstop `list_messages` result-handling + real-shape test → re-verify;
   (2) re-scope. NEXT: architect disposition.
+
+### 2026-05-20 — bug-103 slice: parser-fix done; pipeline-ON re-verify — SUMMARIZER BITES
+
+- Architect disposition-1 (thread-598 r17): fix the parser-bug (#224 stays whole — don't split
+  bug-104 out); re-verify pipeline-ON; STOP+surface if the summarizer bites; test with a
+  real-captured shape, not a mock. Calibration logged for Phase 10 retro.
+- **Parser-fix — DONE, committed `62de435`.** Root cause: `McpTransport.request`
+  (`mcp-transport.ts`) ALREADY unwraps the MCP tool-result envelope (`JSON.parse(content[0]
+  .text)`) → `agent.call("list_messages")` returns `{messages,count}` directly, NOT
+  `{content:[{text}]}`. `parseListMessagesResult` re-expected the envelope → always null →
+  every tick skipped. First-timer disabled from bug-53 → that path never ran the real
+  transport → drift invisible. Fixed: parser expects the unwrapped `{messages,count}` body;
+  `poll-backstop.test.ts` mock corrected to the real shape (`listMessagesResult` helper).
+  tsc clean; 51 network-adapter tests green.
+- **Harness re-verify PIPELINE-ON (cognitive default): catch-up RUNS, summarizer BITES.**
+  reconnect-hook → `tick()` → `list_messages` → parser accepts → 10 `claim_message` → 7
+  engineer notes recovered (`new→received`; psql 103→96 new). (D)'s machinery sound. BUT
+  `list_messages` telemetry: `summarized:true`, `virtualTokensSaved:23537`, outputBytes 4855
+  (raw ≈28K) — the cognitive `ResponseSummarizer` summarized the poll-backstop's INTERNAL
+  `list_messages` → poll saw only ~10 of 116 → **partial recovery (~7 of 103), not full.**
+- **STOPPED + surfaced** (thread-598 r18) per architect instruction — summarizer bites = the
+  (D)-viability re-weigh point; not iterate-fixing solo. Root issue: the cognitive pipeline
+  doesn't distinguish internal-machinery `agent.call`s from LLM tool-calls; the poll-backstop's
+  internal `list_messages` gets LLM-context-summarized. With cognitive-BYPASS the fixed parser
+  gets the raw full result → full recovery — so the summarizer is the SOLE remaining blocker.
+- #224: bug-104 half sound+live-verified; bug-103 half machinery-proven, blocked on the
+  summarizer; parser-fix committed `62de435` + pushed.
+- NEXT: architect (D)-viability re-weigh — (a) poll-backstop internal calls bypass the
+  cognitive ResponseSummarizer; (b) re-weigh (D) vs (A)/(C). Architect dispositions.
