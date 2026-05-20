@@ -78,5 +78,8 @@ module "hub" {
   source_repo_branch     = var.source_repo_branch
   backup_bucket_name     = var.backup_bucket_name
 
+  gh_api_token            = var.gh_api_token
+  repo_event_bridge_repos = var.repo_event_bridge_repos
+
   enable_cloudbuild_trigger = var.enable_cloudbuild_trigger
 }

@@ -56,3 +56,31 @@ resource "google_compute_firewall" "allow_iap_ssh" {
 
 # Google VPC default-denies all other ingress — no explicit deny-all
 # rule is needed (Design §4.10).
+
+# ── Cloud NAT — outbound internet egress (F15; Director-direct v2.2) ──
+# The internal-only VM has no public IP, and Private Google Access only
+# covers Google APIs. The repo-event-bridge polls api.github.com — not a
+# Google endpoint — so the VM needs general-internet egress (F15: without
+# it the bridge halts on `fetch failed`). Cloud NAT provides OUTBOUND
+# egress only; inbound stays closed — no public IP, the VM is still
+# reachable only via Cloud Run Direct VPC Egress (tcp:8080) + IAP-SSH
+# (tcp:22). Director-directed 2026-05-20 (cost envelope ~$20 → ~$50-55/mo;
+# Cloud NAT ~$32-35/mo — a conscious Director decision per Preflight E5).
+resource "google_compute_router" "hub" {
+  name    = "${var.name_prefix}-router"
+  region  = var.region
+  network = google_compute_network.hub_vpc.id
+}
+
+resource "google_compute_router_nat" "hub" {
+  name                               = "${var.name_prefix}-nat"
+  router                             = google_compute_router.hub.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
+}

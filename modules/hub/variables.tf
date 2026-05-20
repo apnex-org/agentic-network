@@ -155,6 +155,20 @@ variable "backup_retention_days" {
   default     = 30
 }
 
+# ── Hub runtime secrets / repo-event-bridge (W3 F11 + F13(b)) ─────────
+
+variable "gh_api_token" {
+  description = "GitHub PAT (repo / read:org / read:user scopes) for the cloud-Hub repo-event-bridge — provisioned into Secret Manager (F11). Operator-supplied; sensitive; no default."
+  type        = string
+  sensitive   = true
+}
+
+variable "repo_event_bridge_repos" {
+  description = "Comma-separated owner/name repos the cloud-Hub repo-event-bridge polls — OIS_REPO_EVENT_BRIDGE_REPOS (F11)"
+  type        = string
+  default     = "apnex-org/agentic-network"
+}
+
 # ── Cloud Build trigger gate (F9) ─────────────────────────────────────
 
 variable "enable_cloudbuild_trigger" {

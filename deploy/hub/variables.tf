@@ -78,3 +78,17 @@ variable "enable_cloudbuild_trigger" {
   type        = bool
   default     = false
 }
+
+# ── W3 F11 — cloud-Hub repo-event-bridge ──────────────────────────────
+
+variable "gh_api_token" {
+  description = "GitHub PAT (repo / read:org / read:user) for the cloud-Hub repo-event-bridge — provisioned into Secret Manager (F11). Set in env/<env>.tfvars (gitignored); sensitive."
+  type        = string
+  sensitive   = true
+}
+
+variable "repo_event_bridge_repos" {
+  description = "Comma-separated owner/name repos the cloud-Hub repo-event-bridge polls (F11)"
+  type        = string
+  default     = "apnex-org/agentic-network"
+}

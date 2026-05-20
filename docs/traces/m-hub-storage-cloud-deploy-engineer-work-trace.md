@@ -441,3 +441,86 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   `npm test` pollutes `dist/__tests__/` → vitest runs the path-broken dist copies; `rm -rf
   hub/dist` clears it; CI unaffected (no hub build before test). Minor follow-on flagged.
 - Standing by for architect cross-approval of PR #221.
+
+### 2026-05-20 — W2 MERGED; W3 issued; bug-103 diagnosed (reframed)
+
+- **W2 PR #221 cross-approved + admin-squash-merged → `main @ b728b2f`.** All 3 cross-approval
+  asks signed off. thread-595 closed. W2 absorbed 11 sub-issues (F7/F8/v1.4/B1/B3/COS-auth/
+  bug-101/F10/F11/F12/F13) — cloud-Hub full lifecycle (boot/migrate/restore/backup/replace)
+  proven on live infra.
+- **W3 issued** (thread-596; Design v1.9 §5 W3) — heaviest wave, 5 work-streams: bearer-token
+  auth gate + bug-102 (`create_message kind=note`) + F11 (cloud-Hub bridge config) + F13(b)
+  (secrets→Secret Manager) + bug-103 diagnosis. Engineer split-PR latitude.
+- **bug-103 — DIAGNOSED at W3-start; the filed frame is WRONG.** Traced end-to-end:
+  - GitHub `/events` API DOES surface `PullRequestEvent action=opened` (verified, 4 in the
+    current page incl. #220/#221) → bug-103 hypothesis (b) "/events-API-not-surfacing" refuted.
+  - Translator maps `PullRequestEvent`→`dispatchPullRequest`→`action=opened`→`pr-opened`
+    correctly (code-read; `subkind=pr-closed` observed in Hub logs proves the PR path executes)
+    → hypothesis (a) "translator-misclassification" refuted.
+  - Substrate ground truth: **96 `pr-opened` repo-event Messages** (incl. #219/#220/#221) +
+    **51 `pr-opened-notification` Messages** → bug-103's premise "bridge never produces
+    pr-opened / handler never fires" is factually wrong. The misread: `[message-policy] no
+    handler registered for subkind=X` only logs for handler-LESS subkinds; `pr-opened` HAS a
+    handler so it never appears there.
+  - ACTUAL bug: all 51 `pr-opened-notification` Messages are stuck at `status:new`; 0 reach
+    `received`/`acked`; 0 PendingActions. Notifications correctly synthesized
+    (`target:architect`, `delivery:push-immediate`) but never projected/delivered. Fix-location
+    = Hub-side note delivery/projection pipeline, NOT the bridge. Leading (unverified)
+    hypothesis: bridge injects repo-events `authorRole:architect` → synthesized note
+    `target:architect` → author==target self-message skipped by projection (bug-98-adjacent).
+  - Surfaced the reframe to architect (thread-596) + recommended a cleaner PR-split:
+    Sub-PR A = F11+F13(b) (pure terraform/infra); Sub-PR B = bearer-auth + bug-102 + bug-103
+    (pure Hub-source; bug-103 regroups with bug-102 — both `kind:note` Hub-side).
+- W3 branch(es) not yet cut — awaiting architect PR-shape confirm + bug-103 reframe disposition.
+
+### 2026-05-20 — W3 Sub-PR A: F13(b) GREEN; F11 blocked by F15
+
+- Architect CONCUR'd the bug-103 reframe + PR-shape + sequencing (Design v2.0 `0a60c87`).
+  Branch `agent-greg/mission-86-w3a` cut off `origin/main @ b728b2f`.
+- **F13(b) — GREEN.** `modules/hub/secret-manager.tf` (NEW) — 3 GCP Secret Manager secrets
+  (POSTGRES_PASSWORD + HUB_API_TOKEN terraform-`random_password`; OIS_GH_API_TOKEN operator-
+  supplied via sensitive `var.gh_api_token`) + per-secret VM-SA `secretAccessor` grants.
+  `startup.sh` fetches all 3 at boot via the Secret Manager REST API + the VM-SA metadata
+  token; the W2 persistent-disk `.env` (F13(a)) is retired. `compute.tf` VM metadata carries
+  `gcp-project` + the 3 secret-ids + the repos-config. Committed `d6cf09d` (file is
+  `secret-manager.tf` — `secrets.tf` trips the secret-scan `secrets.*` filename gate).
+  `terraform apply`: 12 add / 1 change / 1 replace; data disk + static IP `no-op`.
+  Verified on the replaced VM: secrets fetched, postgres re-inited (data-dir wiped per
+  §4.5.1), Hub `/health` 200, **0× 28P01**, bug-101 self-migrate clean. F13 closed
+  structurally — secrets survive VM-replace with zero disk dependency.
+- **F15 — F11 BLOCKED: the cloud-Hub repo-event-bridge cannot reach `api.github.com`.**
+  F11 wired `OIS_GH_API_TOKEN` + repos-config correctly → the bridge now ATTEMPTS to start
+  (no more "skipped") → halts: `[repo-event-bridge] source start failed: fetch failed;
+  bridge halted, Hub continues`. ROOT CAUSE (confirmed on the live VM): `curl
+  https://api.github.com/` → UNREACHABLE (timeout exit 124); `curl
+  https://secretmanager.googleapis.com/` → HTTP 404 (reachable — PGA). The internal-only
+  VM (§4.10 — no public IP, no Cloud NAT; the F8 topology) has zero general-internet
+  egress; the bridge polls `api.github.com`. Architecture-level gap — F11 ("provision the
+  token") never reconciled the bridge's continuous `api.github.com` dependency with §4.10.
+  Same class as F8 but the AR-pull-through *mirror* solution doesn't transfer (no
+  Google-hosted GitHub-API mirror). W4-blocking (the cloud-Hub bridge is "load-bearing
+  post-cutover"). Surfaced to architect thread-596 — options: (A) Cloud NAT (~$30-45/mo;
+  breaches the ~$20/mo envelope), (B) webhook-ingestion (Cloud Run proxy is already
+  public), (C) off-VM bridge. Architecture + cost decision → architect, likely Director.
+- W3 Sub-PR A PR HELD pending F15 disposition. F13(b) is done; F11 awaits F15.
+
+### 2026-05-20 — F15 → Cloud NAT (Director-direct); Sub-PR A complete
+
+- **F15 disposed — Cloud NAT (Director-direct; Design v2.2 RATIFIED `487a844`).** Director
+  engaged: "We need a Cloud NAT for outbound internet access" — Option (A). The bridge keeps
+  the mission-52 poll model (no webhook re-architecture); the VM stays internal-only for
+  inbound. Cost envelope ~$20 → ~$50-55/mo (Cloud NAT ~$32-35/mo) — Director-accepted.
+- **Cloud NAT** — `modules/hub/network.tf`: `google_compute_router` + `google_compute_router_nat`
+  on `hub-vpc` → the VM gains OUTBOUND general-internet egress (inbound unchanged: no public
+  IP; Cloud Run Direct VPC Egress + IAP-SSH only). `terraform apply` — 2 add, no VM-replace.
+  Committed `fd299ee`.
+- **AG-W3.9 GREEN** — after NAT + Hub-restart: `curl api.github.com` → HTTP 200; bridge
+  `[repo-event-bridge] Bridge running; draining events`; 0 fetch-failed; ingested 20
+  commit-pushed + 2 pr-opened + 2 pr-merged + 2 pr-review-approved + 4 unknown repo-event
+  Messages from the live poll.
+- **AG-W3.10 GREEN** — the bridge persisted a `RepoEventBridgeCursor`
+  (`apnex-org/agentic-network.json`); Hub-restart → bridge resumes (`Bridge running`,
+  0 fetch-failed, /health 200) — resume-from-persisted-cursor mechanism verified.
+- **W3 Sub-PR A complete** — F13(b) + Cloud NAT + F11 all GREEN. Commits on
+  `agent-greg/mission-86-w3a`: `d6cf09d` (F11+F13(b)) + `a06be8b` (trace) + `fd299ee` (NAT).
+  Opening the Sub-PR A PR.

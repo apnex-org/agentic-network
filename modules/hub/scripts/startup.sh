@@ -18,7 +18,8 @@
 # by a pg_isready wait-loop before the Hub container starts.
 #
 # Metadata inputs (compute.tf): hub-image, postgres-image,
-# watchtower-image, backup-bucket, watchtower-poll-interval.
+# watchtower-image, backup-bucket, watchtower-poll-interval, gcp-project,
+# secret-{postgres-password,hub-api-token,gh-api-token}, repo-event-bridge-repos.
 # ══════════════════════════════════════════════════════════════════════
 set -u
 exec > >(tee -a /var/log/hub-startup.log) 2>&1
@@ -55,25 +56,33 @@ mkdir -p "$DATA_MNT"
 mountpoint -q "$DATA_MNT" || mount "$DATA_DEV" "$DATA_MNT"
 mkdir -p "$DATA_MNT/postgres"
 
-# ── Hub config + secrets (generate-once, on the PERSISTENT data disk) ──
-# F13: .env MUST live on the persistent data disk, NOT the ephemeral COS
-# boot disk. `metadata_startup_script` is a ForceNew attribute, so every
-# startup.sh change REPLACES the VM (fresh boot disk) — a boot-disk .env is
-# then regenerated with a fresh POSTGRES_PASSWORD that diverges from the
-# `hub` role persisted in the postgres data dir → 28P01 auth crash-loop.
-# On the data disk (which survives VM replacement) the secret is stable.
-# (F13(b)/W3 moves these into Secret Manager; this is the minimal v1 fix.)
-ENV_FILE="$DATA_MNT/.env"
+# ── Hub config + secrets — fetched from GCP Secret Manager (F13(b)) ────
+# mission-86 W3 Design v2.0 §4.5.1 + §4.4: POSTGRES_PASSWORD, HUB_API_TOKEN
+# and OIS_GH_API_TOKEN live in GCP Secret Manager — terraform-managed,
+# off-disk, centrally rotatable. This SUPERSEDES the W2 persistent-disk
+# .env (F13(a)): the secrets are fetched fresh every boot, so they survive
+# any VM replacement with zero disk dependency (closes F13 structurally).
+# COS has no gcloud — fetch via the Secret Manager REST API + the VM SA
+# metadata token (the VM SA carries roles/secretmanager.secretAccessor on
+# each of the three hub secrets).
 mkdir -p "$HUB_DIR"
-if [ ! -f "$ENV_FILE" ]; then
-  echo "[hub-startup] generating $ENV_FILE"
-  {
-    echo "POSTGRES_PASSWORD=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)"
-    echo "HUB_API_TOKEN=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)"
-  } > "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
+GCP_PROJECT="$(md gcp-project)"
+SM_TOKEN="$(curl -s -H 'Metadata-Flavor: Google' \
+  'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' \
+  | tr ',' '\n' | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')"
+sm_fetch() { # $1 = secret-id → plaintext secret value on stdout
+  curl -s -H "Authorization: Bearer ${SM_TOKEN}" \
+    "https://secretmanager.googleapis.com/v1/projects/${GCP_PROJECT}/secrets/$1/versions/latest:access" \
+    | tr ',' '\n' | sed -n 's/.*"data": *"\([^"]*\)".*/\1/p' | base64 -d
+}
+POSTGRES_PASSWORD="$(sm_fetch "$(md secret-postgres-password)")"
+HUB_API_TOKEN="$(sm_fetch "$(md secret-hub-api-token)")"
+OIS_GH_API_TOKEN="$(sm_fetch "$(md secret-gh-api-token)")"
+OIS_REPO_EVENT_BRIDGE_REPOS="$(md repo-event-bridge-repos)"
+if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$HUB_API_TOKEN" ] || [ -z "$OIS_GH_API_TOKEN" ]; then
+  echo "[hub-startup] FATAL: Secret Manager fetch returned an empty secret" >&2
+  exit 1
 fi
-. "$ENV_FILE"
 
 # ── 3-container stack — docker run (COS has no docker-compose) ─────────
 docker network inspect hub-net >/dev/null 2>&1 || docker network create hub-net
@@ -101,6 +110,8 @@ if ! docker inspect ois-hub-prod >/dev/null 2>&1; then
     -e NODE_ENV=production -e PORT=8080 \
     -e "POSTGRES_CONNECTION_STRING=postgres://hub:${POSTGRES_PASSWORD}@ois-postgres-prod:5432/hub" \
     -e "HUB_API_TOKEN=${HUB_API_TOKEN}" -e WATCHDOG_ENABLED=true \
+    -e "OIS_GH_API_TOKEN=${OIS_GH_API_TOKEN}" \
+    -e "OIS_REPO_EVENT_BRIDGE_REPOS=${OIS_REPO_EVENT_BRIDGE_REPOS}" \
     -l com.centurylinklabs.watchtower.enable=true \
     "$HUB_IMAGE"
 fi
