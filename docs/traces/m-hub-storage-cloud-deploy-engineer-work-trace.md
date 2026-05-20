@@ -660,3 +660,38 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   real PR-open's synthesized pr-opened-notification, OR wait for the local Hub to carry the
   bug-102 fix post-merge). (2) bug-103 fix itself = post-W4 fast-follow slice (Director Option A;
   Design v2.5; AG-W5.9 its mission-close gate). (3) W4 production cutover — Director-gated.
+
+### 2026-05-20 — bug-103 slice: fresh-greg pickup; streaming-semantics code-trace (step 1)
+
+- **Fresh greg session** — prior session cleared at the W3-handover point (context full).
+  Cold-pickup: this work-trace + thread-596/597 + thread-598 (new bug-103-slice channel) +
+  `get_bug bug-103` + Design v2.5 §5 + the bug-103 slice section. W3 DONE (#222 + #223 merged,
+  `main @ 86738c7`); bug-102 RESOLVED. Remaining: bug-103 slice (post-W4 fast-follow) → W4 → W5.
+- **Branch** `agent-greg/mission-86-bug-103` cut off `origin/main @ 86738c7` — `git checkout main`
+  not possible (main pinned in the sibling canonical worktree); the slice needs its own PR-branch
+  anyway (architect-confirmed thread-598).
+- **bug-103 instrumented check — STEP 1 (streaming-semantics code-trace) — DONE:**
+  - `agent.state === "streaming"` is a **CONNECTION-lifecycle state**, NOT a cognitive-turn state.
+    `IAgentClient` FSM (`packages/network-adapter/src/kernel/agent-client.ts:63-68`):
+    `disconnected → connecting → synchronizing → streaming → reconnecting`. `streaming` is entered
+    on sync-complete (`state-sync.ts:135`), left ONLY on wire-death (→ `reconnecting`). No
+    "busy"/"mid-turn" transition. `isConnected` ≡ `state === "streaming"` (`agent-client.ts:188`).
+  - **Architect's "mid-turn → residual self-explains" hypothesis (thread-597 R5) — REFUTED.** A
+    connected agent is `streaming` whether idle or mid-turn.
+  - **Residual cracked on paper — `firstTimerEnabled: false`.** `claude-plugin/src/shim.ts:704-708`
+    builds the PollBackstop with `firstTimerEnabled: false` — "Heartbeat-only mode; first-timer
+    (`list_messages` Pull-mode) deferred per round-2 design decision; SSE inline path delivers
+    messages today." → the Claude-Code adapter (lily + greg both) has **NO
+    `list_messages({status:"new"})` catch-up poll**; the SSE inline `message_arrived` event is the
+    SOLE delivery path. `fireClaimMessage` (`dispatcher.ts:321-338`) only fires from
+    `onActionableEvent` → only for SSE-received events. A `kind:note` is claimed iff the recipient
+    holds a live SSE stream at the push-instant.
+  - **Strand-2 likely DISSOLVES** — no separate claim-side defect needed. The engineer 102/114-`new`
+    residual = the 114 accumulated across the engineer's whole multi-session history; the 12
+    claimed landed during a live SSE window, the 102 landed while the adapter was disconnected
+    (between sessions / not running) → ephemeral SSE dropped them, no catch-up poll. Architect
+    0/156 = same (bursty sessions). bug-103 = strand-1 (no durable delivery path) ONLY. The
+    `streaming`-gate in `fireClaimMessage` is near-redundant (receiving the SSE event already
+    implies a live stream) — not the bug. Live check (step 2) confirms the prediction dispositively.
+- **NEXT: step 2 — rebuild local Hub (build-hub.sh from this worktree + start-hub.sh from the
+  canonical worktree — start-hub.sh refuses non-canonical CWD) → emit-ready surface on thread-598.**
