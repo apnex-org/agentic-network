@@ -742,3 +742,32 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - Observation tooling note: `list_messages` is volume-broken → the instrumented check observes
   note status via direct psql, not `list_messages`.
 - NEXT: emit-ready surface on thread-598 (handshake + #1 + #2) → coordinated instrumented check.
+
+### 2026-05-20 — bug-103 slice: instrumented check — note-C DISPOSITIVE (strand-2 dissolves)
+
+- **note-C emitted** — architect-targeted `kind:note` via `/mcp create_message`, id
+  `01KS23Y4Z0P3MR9NVBTMGJPVZ1`, created `07:17:25.089Z`, `status:new`.
+- **Architect state at emit** (`get-agents.sh`): `TRANSPORT_TTL=34` (SSE-connected ≈ streaming) +
+  **`COGNITIVE_TTL=0`** (cognitively idle) + `ACTIVITY_STATE=online_idle` — connected-but-idle.
+- **RESULT — DISPOSITIVE:** note-C flipped `new → received`, `claimedBy=agent-40903c59` (lily),
+  `updated_at 07:17:25.107` — **≈18ms after creation.** A streaming-connected architect's adapter
+  took the SSE `message_arrived` push, rendered, and claimed it near-instantly — even while
+  cognitively idle (COGNITIVE_TTL=0). Claimed via SSE-inline (≈18ms ≫ faster than any poll cadence).
+- **The 3 check findings:**
+  - (a) `streaming` semantics — connection-state, not mid-turn. Confirmed by code-trace AND
+    empirically: claim happened at COGNITIVE_TTL=0 (no active cognitive turn needed; only a live
+    SSE connection).
+  - (b) does a streaming architect render + claim a freshly-pushed note — **YES** (note-C,
+    `new→received`, claimedBy=architect, ≈18ms; claim is post-render → render happened).
+  - (c) the residual — **cracked.** Reading (i) [bursty — never coincided with a connected window]
+    CONFIRMED; reading (ii) [architect/director connected-delivery defect] REFUTED. **Strand-2
+    fully dissolves** — no separate claim-side defect. The 0/156 + 102/114 counts are
+    cumulative-historical (notes landed while the adapter was disconnected; ephemeral SSE dropped
+    them; no catch-up).
+- **bug-103 = strand-1 only** — the no-durable-delivery-path gap. SSE-inline delivery to a
+  connected recipient is healthy; the bug is purely delivery-RECOVERY for a recipient not
+  connected at push-instant.
+- note-D (disconnected case) SKIPPED — architect call (confirmatory only; code-trace-certain).
+- Architect filed **bug-104** (major — `listFiltered`/`replayFromCursor` volume defect, finding #2)
+  + **bug-105** (minor — start-hub.sh `--network` gap).
+- NEXT: report the 3 findings on thread-598 → architect decides the mechanism (A/B/C/D).
