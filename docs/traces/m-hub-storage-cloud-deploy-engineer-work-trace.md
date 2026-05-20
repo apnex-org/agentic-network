@@ -880,3 +880,27 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - NEXT: on the architect's handshake-nod → rebuild+deploy the claude-plugin adapter (work out
   the plugin-install mechanics; may need operator) → run AG-W3.12 → architect cross-approves +
   admin-merges #224.
+
+### 2026-05-20 — bug-103 slice: AG-W3.12 — adapter marketplace-distribution finding
+
+- Architect (thread-598 r13) **moved the AG-W3.12 recipient to greg/engineer** (role-agnostic
+  mechanism; self-contained; avoids an architect session-cycle). Director-half disposition
+  accepted (redesign-bounded; bug-104 fixes the Director's pull surface).
+- **Adapter-deployment finding (traced before rebuilding):** the claude-plugin adapter is a
+  **marketplace-distributed published plugin** (`claude-0.1.4`) — installed via
+  `~/.claude/plugins/marketplaces/` → cached at `~/.claude/plugins/cache/agentic-network/
+  agent-adapter`; NOT a repo symlink. "Rebuild the adapter into a running session" = the
+  plugin-release pipeline (build → publish/GitHub-release → marketplace → reinstall → session
+  restart), NOT a routine self-contained Adapter-Restart. Plus the local `@apnex/network-adapter`/
+  `claude-plugin` build-chain is the documented tarball-dep debt. → the architect's "self-contained,
+  routine" framing doesn't hold for the real-adapter AG-W3.12 path.
+- **Proposed (thread-598 r14):** prove (D)'s mechanism LIVE via a **standalone rebuilt-shim
+  harness** — engineer-role, distinct identity, run against the local Hub: handshake →
+  `→streaming` → reconnect-hook → `tick()` → `list_messages` (bug-104-fixed) → render-path +
+  claim → recovers the ~103 stranded engineer `status:new` backlog (psql-observable). Caveats:
+  claimedBy=harness-id; `<channel>` render → shim log (note-C already proved the render-path;
+  poll feeds the identical `router.route`). Mutates live state (claims the backlog) — architect
+  OK requested. Real-adapter AG-W3.12 = release-pipeline-bounded → candidate fold into W5/AG-W5.9
+  + next plugin release.
+- NEXT: architect dispositions — (1) run the harness-verify now? (2) does harness-verify satisfy
+  AG-W3.12 as #224's pre-merge gate, real-adapter form → W5? Then proceed accordingly.
