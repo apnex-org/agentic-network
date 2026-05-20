@@ -13,16 +13,24 @@
 # is a trivial re-start; full decommission (`docker rm`) is W5.
 #
 # Sequence:
-#   PREFLIGHT  reachability + state-baseline (read-only; runs in --dry-run)
-#   DRAIN      graceful SIGTERM stop of the local Hub (W2-prep handler)
-#   SNAPSHOT   pg_dump the local postgres via hub-snapshot.sh
-#   UPLOAD     gsutil cp the dump to the GCS cutover staging path
-#   RESTORE    IAP-tunnel SSH → download + pg_restore into the cloud VM
-#   VERIFY     cloud-Hub /health 200 + entity-count parity vs the baseline
-#   ADAPTER    print the OIS_HUB_URL flip instructions (operator-driven)
+#   PREFLIGHT   reachability + state survey (read-only; runs in --dry-run)
+#   FREEZE-IMG  pause cloud Watchtower so hub:latest cannot drift mid-cutover
+#   DRAIN       graceful SIGTERM stop of the local Hub (W2-prep handler)
+#   FREEZE-BASE re-capture the authoritative local entity count (Hub stopped)
+#   SNAPSHOT    pg_dump the local postgres via hub-snapshot.sh
+#   UPLOAD      gsutil cp the dump to the GCS cutover staging path
+#   RESTORE     IAP-tunnel SSH → download + pg_restore into the cloud VM
+#   VERIFY      cloud-Hub /health 200 + entity-count parity vs the baseline
+#   RESUME-IMG  resume cloud Watchtower (the ongoing image-CD model)
+#   ADAPTER     print the OIS_HUB_URL flip instructions (operator-driven)
+#
+# Downtime (DRAIN → VERIFY): realistically ~2-3 min — drain (≤30s) + snapshot
+# + upload + IAP-SSH restore (download + cloud-Hub stop/restore/start). The
+# Design's "~30s" is the inner-pipeline figure; the orchestration bookends
+# dominate. There is no hard downtime AG.
 #
 # --dry-run exercises the real path with NO mutating ops: PREFLIGHT runs in
-# full (live reachability + baseline reads); every mutating step prints its
+# full (live reachability + survey reads); every mutating step prints its
 # fully-resolved command line and skips. That printout is the pre-audit
 # evidence for the bilateral pre-cutover audit.
 #
@@ -38,6 +46,7 @@
 #   CLOUD_VM_ZONE        cloud VM zone              (default: australia-southeast1-a)
 #   CLOUD_HUB_CONTAINER  cloud Hub container        (default: ois-hub-prod)
 #   CLOUD_PG_CONTAINER   cloud postgres container   (default: ois-postgres-prod)
+#   WATCHTOWER_CONTAINER cloud Watchtower container (default: watchtower-prod)
 #   CLOUD_RUN_URL        Cloud Run hub-api URL      (default: the prod URL)
 #   CUTOVER_BUCKET       GCS bucket for the dump    (default: gs://labops-389703-hub-backups)
 #   CUTOVER_PREFIX       object prefix within it    (default: cutover — lifecycle-exempt)
@@ -52,7 +61,7 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=true ;;
     -h|--help)
-      sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,54p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *) echo "cutover-to-cloud: unknown argument '$arg' (use --dry-run or --help)" >&2; exit 2 ;;
@@ -69,6 +78,7 @@ CLOUD_VM="${CLOUD_VM:-hub-vm}"
 CLOUD_VM_ZONE="${CLOUD_VM_ZONE:-australia-southeast1-a}"
 CLOUD_HUB_CONTAINER="${CLOUD_HUB_CONTAINER:-ois-hub-prod}"
 CLOUD_PG_CONTAINER="${CLOUD_PG_CONTAINER:-ois-postgres-prod}"
+WATCHTOWER_CONTAINER="${WATCHTOWER_CONTAINER:-watchtower-prod}"
 CLOUD_RUN_URL="${CLOUD_RUN_URL:-https://hub-api-5muxctm3ta-ts.a.run.app}"
 CUTOVER_BUCKET="${CUTOVER_BUCKET:-gs://labops-389703-hub-backups}"
 CUTOVER_PREFIX="${CUTOVER_PREFIX:-cutover}"
@@ -84,7 +94,10 @@ DUMP_BASENAME="hub-cutover-${TS}.dump"
 LOCAL_DUMP="${SNAPSHOT_DIR}/${DUMP_BASENAME}"
 GCS_URI="${CUTOVER_BUCKET}/${CUTOVER_PREFIX}/${DUMP_BASENAME}"
 
-# Captured by PREFLIGHT / SNAPSHOT for the AG-W4.2 / AG-W4.7 parity check.
+# The authoritative AG-W4.2 / AG-W4.7 parity baseline. Captured POST-drain by
+# freeze_baseline() — NOT in PREFLIGHT: the local Hub keeps writing entities
+# (repo-event-bridge GitHub polls, heartbeats) right up until DRAIN stops it,
+# so only a post-drain count matches the post-drain snapshot.
 LOCAL_ENTITY_COUNT=""
 
 # ── Output helpers ─────────────────────────────────────────────────────
@@ -115,14 +128,14 @@ confirm() {
   $DRY_RUN && return 0
   echo
   echo "  ⚠  This is the REAL production cutover — it will STOP the local Hub,"
-  echo "     migrate state to the cloud Hub, and incur ~30s of downtime."
+  echo "     migrate state to the cloud Hub, and incur ~2-3 min of downtime."
   read -rp "  Proceed with the PRODUCTION cutover? (yes/no): " reply
   [ "$reply" = "yes" ] || die "cutover aborted by operator"
 }
 
 # ── PREFLIGHT — read-only; always runs (including under --dry-run) ──────
 preflight() {
-  phase "PREFLIGHT — reachability + state baseline"
+  phase "PREFLIGHT — reachability + state survey"
 
   for bin in gcloud gsutil docker curl; do
     command -v "$bin" >/dev/null 2>&1 || die "'$bin' not found on PATH"
@@ -144,18 +157,26 @@ preflight() {
   [ "$code" = "200" ] || die "cloud Hub /health returned '$code' (expected 200) — destination not ready"
   log "cloud Hub reachable: ${CLOUD_RUN_URL}/health → 200"
 
-  # VM + cloud postgres reachable via IAP tunnel.
+  # VM + cloud containers reachable via IAP tunnel (one SSH; check all three).
   log "checking cloud VM via IAP tunnel (this can take ~10s)..."
-  ssh_vm "sudo docker ps --format '{{.Names}}'" 2>/dev/null | grep -qx "$CLOUD_PG_CONTAINER" \
-    || die "cloud postgres container '$CLOUD_PG_CONTAINER' not visible on VM '$CLOUD_VM'"
-  log "cloud VM reachable; '$CLOUD_PG_CONTAINER' running"
+  local vm_containers
+  vm_containers="$(ssh_vm "sudo docker ps --format '{{.Names}}'" 2>/dev/null)"
+  local c
+  for c in "$CLOUD_PG_CONTAINER" "$CLOUD_HUB_CONTAINER" "$WATCHTOWER_CONTAINER"; do
+    echo "$vm_containers" | grep -qx "$c" \
+      || die "cloud container '$c' not running on VM '$CLOUD_VM'"
+  done
+  log "cloud VM reachable; ${CLOUD_PG_CONTAINER} / ${CLOUD_HUB_CONTAINER} / ${WATCHTOWER_CONTAINER} running"
 
-  # State baseline — entity count on both sides (AG-W4.2 / AG-W4.7).
-  LOCAL_ENTITY_COUNT="$(docker exec "$LOCAL_PG_CONTAINER" \
+  # State survey — INFORMATIONAL ONLY. The local count here is pre-drain and
+  # will keep moving until DRAIN; the authoritative AG-W4.2/W4.7 parity
+  # baseline is captured post-drain by freeze_baseline().
+  local pre_local pre_cloud
+  pre_local="$(docker exec "$LOCAL_PG_CONTAINER" \
     psql -U hub -d hub -tA -c 'SELECT COUNT(*) FROM entities' | tr -d '[:space:]')"
-  local cloud_count
-  cloud_count="$(ssh_vm "sudo docker exec $CLOUD_PG_CONTAINER psql -U hub -d hub -tA -c 'SELECT COUNT(*) FROM entities'" 2>/dev/null | tr -d '[:space:]')"
-  log "baseline — local entities: ${LOCAL_ENTITY_COUNT}  |  cloud entities (pre-restore, throwaway W2(3) state): ${cloud_count:-?}"
+  pre_cloud="$(ssh_vm "sudo docker exec $CLOUD_PG_CONTAINER psql -U hub -d hub -tA -c 'SELECT COUNT(*) FROM entities'" 2>/dev/null | tr -d '[:space:]')"
+  log "survey (informational) — local entities: ${pre_local} (pre-drain; still moving)"
+  log "survey (informational) — cloud entities: ${pre_cloud:-?} (throwaway W2(3) state; replaced on restore)"
 
   # Cutover bucket must exist + be writable.
   gsutil ls "${CUTOVER_BUCKET}/" >/dev/null 2>&1 \
@@ -165,11 +186,44 @@ preflight() {
   log "PREFLIGHT OK"
 }
 
+# ── FREEZE-IMG — pause Watchtower so hub:latest cannot drift mid-cutover ─
+freeze_image() {
+  phase "FREEZE-IMG — pause cloud Watchtower"
+  log "hub:latest is a live-moving tag; pausing Watchtower freezes the cloud"
+  log "Hub image for a deterministic cutover (resumed at RESUME-IMG)."
+  log "NOTE: an aborted cutover leaves Watchtower paused — resume it with"
+  log "      'sudo docker start ${WATCHTOWER_CONTAINER}' on the VM if needed."
+  if $DRY_RUN; then
+    echo "[cutover][DRY-RUN] would run on VM '${CLOUD_VM}':"
+    printf '             sudo docker stop %s\n' "$WATCHTOWER_CONTAINER"
+  else
+    ssh_vm "sudo docker stop $WATCHTOWER_CONTAINER"
+    log "Watchtower paused"
+  fi
+}
+
 # ── DRAIN — graceful SIGTERM stop of the local Hub ─────────────────────
 drain() {
   phase "DRAIN — graceful stop of local Hub (downtime begins)"
   log "docker stop --time=${DRAIN_TIMEOUT} sends SIGTERM; the W2-prep handler drains cleanly"
   would docker stop --time="$DRAIN_TIMEOUT" "$LOCAL_HUB_CONTAINER"
+}
+
+# ── FREEZE-BASE — re-capture the authoritative parity baseline ─────────
+# Runs AFTER drain: the local Hub is stopped, so the entity count is frozen
+# and matches what the SNAPSHOT pg_dump will capture. The local postgres
+# container is still up, so the count is still queryable.
+freeze_baseline() {
+  phase "FREEZE-BASE — authoritative entity-count baseline"
+  if $DRY_RUN; then
+    echo "[cutover][DRY-RUN] would re-capture the post-drain local entity count"
+    echo "             (skipped — the Hub is not actually stopped in --dry-run)"
+    return 0
+  fi
+  LOCAL_ENTITY_COUNT="$(docker exec "$LOCAL_PG_CONTAINER" \
+    psql -U hub -d hub -tA -c 'SELECT COUNT(*) FROM entities' | tr -d '[:space:]')"
+  [ -n "$LOCAL_ENTITY_COUNT" ] || die "could not read post-drain local entity count"
+  log "authoritative baseline (post-drain, frozen): ${LOCAL_ENTITY_COUNT} entities"
 }
 
 # ── SNAPSHOT — pg_dump the local postgres ──────────────────────────────
@@ -255,6 +309,18 @@ verify() {
   log "state parity OK — cloud matches local baseline (AG-W4.2 / AG-W4.7)"
 }
 
+# ── RESUME-IMG — resume Watchtower (the ongoing image-CD model) ────────
+resume_image() {
+  phase "RESUME-IMG — resume cloud Watchtower"
+  if $DRY_RUN; then
+    echo "[cutover][DRY-RUN] would run on VM '${CLOUD_VM}':"
+    printf '             sudo docker start %s\n' "$WATCHTOWER_CONTAINER"
+  else
+    ssh_vm "sudo docker start $WATCHTOWER_CONTAINER"
+    log "Watchtower resumed — the cloud Hub is back on the hub:latest CD model"
+  fi
+}
+
 # ── ADAPTER — print the OIS_HUB_URL flip instructions ──────────────────
 adapter_flip_notice() {
   phase "ADAPTER — OIS_HUB_URL flip (operator-driven)"
@@ -290,11 +356,14 @@ main() {
 
   preflight
   confirm
+  freeze_image
   drain
+  freeze_baseline
   snapshot
   upload
   restore
   verify
+  resume_image
   adapter_flip_notice
 
   phase "CUTOVER ${DRY_RUN:+DRY-RUN }COMPLETE"

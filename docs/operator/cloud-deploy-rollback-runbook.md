@@ -105,10 +105,9 @@ e.g. `hub:<commit>` — that tag is the legible alternative to the raw digest; e
 
 ### B.2 — Re-point `hub:latest` at the known-good image
 
-The cloud VM runs `ois-hub-prod` as a direct `docker run` — COS ships no docker-compose, so
-`modules/hub/scripts/startup.sh` starts the 3 containers directly — and Watchtower
-auto-updates the Hub by watching the `hub:latest` tag. Roll back by moving that tag,
-operator-side; no VM access is needed for this step:
+The cloud VM runs `ois-hub-prod` as a direct `docker run` from `modules/hub/scripts/startup.sh`
+(COS — no docker-compose), pulling the `hub-image` metadata value (`hub:latest`). Roll back by
+moving that tag to the known-good image, operator-side:
 
 ```bash
 gcloud artifacts docker tags add \
@@ -116,33 +115,37 @@ gcloud artifacts docker tags add \
   australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/hub:latest
 ```
 
-### B.3 — Trigger Watchtower to redeploy
+If rolling back to a SHA-tagged image — e.g. the W4 cutover image `hub:f35b08a` — pass that
+tag as the source instead of the raw digest.
 
-Watchtower polls `hub:latest` on its interval; restart it to force an immediate poll. It
-detects the tag's digest changed and recreates `ois-hub-prod` from the rolled-back image,
-**preserving the container's full run-config** (env vars, secrets, ports, network, labels):
+### B.3 — Redeploy the cloud Hub onto the rolled-back image
+
+> **Watchtower note:** Watchtower auto-update is **currently non-functional** — it cannot
+> authenticate to Artifact Registry (`denied: Unauthenticated request`; a known W5/AG-W5.1
+> item). Restarting Watchtower will NOT pull the image. The redeploy is therefore manual —
+> the steps below are the verified path (the same one the W4-prep image refresh used).
+
+SSH to the VM and pull-then-recreate. `startup.sh` is idempotent — it recreates `ois-hub-prod`
+from the `hub-image` metadata with secrets re-fetched from Secret Manager; the explicit
+`docker pull` first is required because `docker run` alone reuses a cached `:latest`:
 
 ```bash
-gcloud compute ssh hub-vm --zone=australia-southeast1-a --tunnel-through-iap \
-  --command="sudo docker restart watchtower-prod"
+gcloud compute ssh hub-vm --zone=australia-southeast1-a --tunnel-through-iap --command='sudo bash -c "
+  set -e
+  export DOCKER_CONFIG=/var/lib/hub/docker-config
+  HUB_IMAGE=\$(curl -s -H \"Metadata-Flavor: Google\" http://metadata.google.internal/computeMetadata/v1/instance/attributes/hub-image)
+  docker pull \"\$HUB_IMAGE\"
+  docker stop ois-hub-prod
+  docker rm ois-hub-prod
+  google_metadata_script_runner startup
+"'
 ```
 
-`ois-hub-prod` is recreated on the known-good image within a poll cycle — verify via the
-checklist below.
-
-**Alternative (no Watchtower):** on the VM, `sudo docker stop ois-hub-prod && sudo docker rm
-ois-hub-prod`, then re-run the idempotent bootstrap with `sudo google_metadata_script_runner
-startup` — it recreates `ois-hub-prod` from the `hub-image` metadata (now the rolled-back
-tag) with secrets re-fetched fresh from Secret Manager.
+`ois-hub-prod` is recreated on the rolled-back image — verify via the checklist below.
 
 **Important:** leave the good image as the current `hub:latest`. If a later `build-hub.sh`
-re-pushes the bad code to `hub:latest`, Watchtower will redeploy it. Confirm the real fix is
-built + pushed before relying on Watchtower again, or stop `watchtower-prod` until then:
-
-```bash
-gcloud compute ssh hub-vm --zone=australia-southeast1-a --tunnel-through-iap \
-  --command="sudo docker stop watchtower-prod"   # re-start it once the fix is pushed
-```
+re-pushes the bad code to `hub:latest`, the next manual redeploy would pick it up — confirm
+the real fix is built + pushed before any further redeploy.
 
 ---
 
