@@ -78,8 +78,9 @@ sm_fetch() { # $1 = secret-id → plaintext secret value on stdout
 POSTGRES_PASSWORD="$(sm_fetch "$(md secret-postgres-password)")"
 HUB_API_TOKEN="$(sm_fetch "$(md secret-hub-api-token)")"
 OIS_GH_API_TOKEN="$(sm_fetch "$(md secret-gh-api-token)")"
+HUB_ADMIN_TOKEN="$(sm_fetch "$(md secret-hub-admin-token)")"
 OIS_REPO_EVENT_BRIDGE_REPOS="$(md repo-event-bridge-repos)"
-if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$HUB_API_TOKEN" ] || [ -z "$OIS_GH_API_TOKEN" ]; then
+if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$HUB_API_TOKEN" ] || [ -z "$OIS_GH_API_TOKEN" ] || [ -z "$HUB_ADMIN_TOKEN" ]; then
   echo "[hub-startup] FATAL: Secret Manager fetch returned an empty secret" >&2
   exit 1
 fi
@@ -110,6 +111,7 @@ if ! docker inspect ois-hub-prod >/dev/null 2>&1; then
     -e NODE_ENV=production -e PORT=8080 \
     -e "POSTGRES_CONNECTION_STRING=postgres://hub:${POSTGRES_PASSWORD}@ois-postgres-prod:5432/hub" \
     -e "HUB_API_TOKEN=${HUB_API_TOKEN}" -e WATCHDOG_ENABLED=true \
+    -e "HUB_ADMIN_TOKEN=${HUB_ADMIN_TOKEN}" \
     -e "OIS_GH_API_TOKEN=${OIS_GH_API_TOKEN}" \
     -e "OIS_REPO_EVENT_BRIDGE_REPOS=${OIS_REPO_EVENT_BRIDGE_REPOS}" \
     -l com.centurylinklabs.watchtower.enable=true \

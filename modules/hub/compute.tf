@@ -72,6 +72,8 @@ resource "google_compute_instance" "hub_vm" {
     secret-postgres-password = google_secret_manager_secret.postgres_password.secret_id
     secret-hub-api-token     = google_secret_manager_secret.hub_api_token.secret_id
     secret-gh-api-token      = google_secret_manager_secret.gh_api_token.secret_id
+    # W3 bearer-auth gate — admin token for /admin/tokens (§4.13; OQ-16 (b)).
+    secret-hub-admin-token = google_secret_manager_secret.admin_token.secret_id
     # F11 — repos the cloud-Hub repo-event-bridge polls (OIS_REPO_EVENT_BRIDGE_REPOS).
     repo-event-bridge-repos = var.repo_event_bridge_repos
   }
@@ -83,11 +85,12 @@ resource "google_compute_instance" "hub_vm" {
   depends_on = [
     google_project_service.apis["compute.googleapis.com"],
     google_compute_firewall.allow_iap_ssh,
-    # startup.sh fetches the three secrets at boot — they (+ their versions
+    # startup.sh fetches the four secrets at boot — they (+ their versions
     # + the VM SA read-grants) must exist first.
     google_secret_manager_secret_version.postgres_password,
     google_secret_manager_secret_version.hub_api_token,
     google_secret_manager_secret_version.gh_api_token,
+    google_secret_manager_secret_version.admin_token,
     google_secret_manager_secret_iam_member.hub_vm_secrets,
   ]
 
