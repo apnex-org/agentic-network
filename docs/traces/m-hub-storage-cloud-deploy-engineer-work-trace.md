@@ -334,3 +334,38 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   - **F11**: the cloud-Hub container is not passed `OIS_GH_API_TOKEN` → its repo-event-bridge no-ops.
     AG-W2.4 (bridge-resume) unverifiable; post-W4 the cloud-Hub IS production + the bridge is
     load-bearing — cloud-Hub bridge config is an unprovisioned Design/deployment gap.
+
+### 2026-05-20 — F10/F11 disposed (Design v1.7); W2(3) state-migration test GREEN; F12 surfaced
+
+- Architect disposed (thread-595; Design v1.7 RATIFIED `e45a4b1`): **F10** CONCUR — amend
+  `hub-snapshot.sh` to `docker exec`, fold into W2 (W4-blocking; it is the `cutover-to-cloud.sh`
+  §4.14 dump-tool). **F11** → W3 deliverable (cloud-Hub bridge config: `OIS_GH_API_TOKEN` Secret
+  Manager secret + repos-config + startup.sh wiring; new AG-W3.9). **AG-W2.4** (bridge-resume)
+  re-sequenced → W3/AG-W3.10. **W2(3)** proceeds now for AG-W2.3 + AG-W2.5.
+- **F10 fix** — `scripts/local/hub-snapshot.sh` amended: `pg_dump` / `pg_restore` / `psql` now run
+  inside the postgres container via `docker exec` (`HUB_PG_CONTAINER`, default
+  `hub-substrate-postgres`; `HUB_PG_USER`/`HUB_PG_DATABASE`; `HUB_DOCKER` for `sudo docker` on
+  COS). pg_dump streams to host stdout, pg_restore reads host stdin — no shared volume needed.
+  Host-binary mode preserved (`HUB_PG_CONTAINER=` empty).
+- **W2(3) state-migration test — GREEN.** `hub-snapshot.sh save` (local, docker-exec mode) →
+  8.1M `-Fc` dump (17766 entities; no drift across the dump window) → `gcloud compute scp` to
+  `hub-vm` over IAP → `hub-snapshot.sh restore` ON the VM (docker-exec mode, `HUB_DOCKER="sudo
+  docker"`, target `ois-postgres-prod`):
+  - **AG-W2.1 GREEN** — restore completed clean (`✓ restore complete`; exit 0).
+  - **AG-W2.3 GREEN** — cloud latest mission `mission-86` == local `mission-86`.
+  - **AG-W2.5 GREEN** — post-restore 17766 entities == pre-snapshot 17766; all 21 per-kind
+    counts identical (Agent 2 / Audit 1837 / Message 11891 / Mission 86 / Task 413 / …).
+  - Bonus: the cloud Hub re-booted clean on the RESTORED 17766-entity DB — migrations idempotent
+    against a now-populated DB (composes AG-W2.2.b); reconciler 22/22; `/health` 200.
+  - The F10-amended `hub-snapshot.sh` is dogfooded end-to-end — `save` + `restore` both GREEN.
+- **AG-W2.6 — RED; finding F12 surfaced.** `hub-backup.timer` is active+enabled + firing hourly,
+  but `hub-backup.service` fails EVERY run — `203/EXEC … Permission denied`. **ROOT CAUSE
+  (verified, not hypothesis):** COS mounts `/var` `noexec` (`findmnt`: `rw,nosuid,nodev,noexec`).
+  `startup.sh` writes the cloud backup script to `/var/lib/hub/hub-snapshot.sh` and the unit
+  `ExecStart=`s it directly → `execve()` blocked by `noexec` despite `-rwxr-xr-x`. The GCS backup
+  bucket has ZERO snapshot objects — the backup-runner has never once run. Fix: `ExecStart=
+  /bin/bash /var/lib/hub/hub-snapshot.sh` (`/bin/bash` is on exec-OK `/`; bash reads the script
+  as data, not an exec). Same COS-hardening-filesystem-ism genus as the F8/B3 read-only-`/root`
+  finding. Surfaced to architect thread-595 — recommend fold into W2 (AG-W2.6 is a W2 gate).
+  W1's AG-W1.5 verified timer-state only; AG-W2.6 (end-to-end "GCS shows snapshots") caught it.
+- W2 PR HELD pending F12 disposition (F12 changes whether the W2 PR carries the startup.sh fix).
