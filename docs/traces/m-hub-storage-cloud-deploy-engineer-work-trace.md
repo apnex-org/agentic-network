@@ -1035,3 +1035,141 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - Surfaced AG-W3.12-PASSES + #224 merge-ready on thread-598 (r22). NEXT: architect cross-approval
   (thread-ack + `gh pr review --approve`) + admin-merge → bug-104 resolves on merge; bug-103 +
   bug-106 resolve on AG-W3.12 (passed) + AG-W5.9 (W5).
+
+### 2026-05-20 — bug-103 slice COMPLETE (#224 merged @ main f35b08a)
+
+- **#224 merged** — `main @ f35b08a` (`[mission-86 bug-103] kind:note delivery-recovery
+  (mechanism D) + bug-104 + bug-106`). bug-104 resolved on merge; bug-103 + bug-106 stay
+  `investigating` → resolve at AG-W5.9 (their adapter-half rides a later plugin re-release —
+  NOT a W4 concern).
+- thread-598 converged (bug-103 slice record + carry-forwards). thread-599 converged (W4
+  kickoff → fresh-session handover at the slice cut-point; same shape as W3→bug-103).
+- Capstone: bug-103 slice = 3 defects fixed across hub + network-adapter + cognitive-layer;
+  harness-verify caught (D) non-functional TWICE pre-merge (parser shape-bug, then summarizer
+  conflation) — each stopped + surfaced, not iterate-fixed solo. Clean slice.
+
+### 2026-05-20 PM AEST — W4 pickup (fresh greg session)
+
+- Fresh greg session; W4 re-onboarded on thread-600 (architect lily). Cold-pickup: work-trace +
+  Design v2.9 §5 W4 / §4.14 / §4.5.1 / §4.10 (design doc is architect-side on the
+  `m-hub-storage-cloud-deploy` branch @ `d37bbe7` — not on `main`) + thread-598/599 + CLAUDE.md +
+  engineer-runtime + mission-lifecycle.
+- `git fetch` done. `origin/main @ f35b08a` = #224 merge commit. Cut fresh W4 branch
+  `agent-greg/mission-86-w4` off `origin/main @ f35b08a`.
+- **W4 scope (Design §5 W4; AG-W4.1–W4.7):** migrate production Hub local-container → cloud
+  (VM + Cloud Run nginx + Secret Manager + Cloud NAT + bearer-auth — all live W0–W3).
+  Deliverables: `scripts/cloud/cutover-to-cloud.sh` (authored + dry-run-tested) ·
+  `docs/operator/cloud-deploy-rollback-runbook.md` (3-step manual; OQ-11) · cloud-Hub image
+  currency check · `OIS_HUB_URL` flip mechanics · bilateral pre-cutover audit · Director-gated
+  cutover-window · execute.
+- **Cloud-Hub URL confirmed live:** `hub-api` → `https://hub-api-5muxctm3ta-ts.a.run.app`.
+- **`OIS_HUB_URL` flip mechanics — RESOLVED:** shim reads `process.env.OIS_HUB_URL ||
+  fileConfig.hubUrl` (`adapters/claude-plugin/src/shim.ts:92`); env-var overrides the
+  `.ois/adapter-config.json` `hubUrl` field. Hub URL = runtime config read at shim startup, NOT
+  plugin code → the flip is a config change (env-var or config-file) + adapter session restart;
+  NO plugin reinstall. The bug-103-slice marketplace-distribution finding bites plugin-code
+  changes, not this.
+- **§4.14-spec finding (B-class; will carry into the real script):** the inline SSH restore
+  command embeds `$(basename "$LATEST_DUMP")` inside a *single-quoted* remote command —
+  `$LATEST_DUMP` is an operator-side var, undefined on the VM, won't expand remotely. Fix:
+  pre-resolve the basename operator-side + interpolate it correctly into the remote command.
+- NEXT: author `cutover-to-cloud.sh` (`--dry-run` mode = real reads, destructive ops print +
+  skip) + rollback runbook → dry-run-test → ship as PR (apnex-org flow).
+
+### 2026-05-20 PM AEST — W4: cutover script + rollback runbook authored + dry-run-tested
+
+- **`scripts/cloud/cutover-to-cloud.sh` authored + committed `29d9b42`** (309 lines). Phases:
+  PREFLIGHT (read-only — runs live even in `--dry-run`) → DRAIN (`docker stop --time=30`) →
+  SNAPSHOT (`hub-snapshot.sh save`) → UPLOAD (`gsutil cp`) → RESTORE (IAP-SSH: download +
+  stop cloud Hub + `pg_restore --clean --if-exists` + start cloud Hub) → VERIFY (`/health`
+  poll + entity-count parity) → ADAPTER (prints the `OIS_HUB_URL` flip instructions).
+- **Dry-run-tested — PASSES.** PREFLIGHT ran live: tooling OK, local Hub + pg up, cloud Hub
+  `/health`→200, VM reachable via IAP, **baseline local entities 18323 / cloud 91 (throwaway
+  W2(3) state)**, cutover bucket writable. Every mutating step printed its fully-resolved
+  command — pre-audit evidence.
+- **`docs/operator/cloud-deploy-rollback-runbook.md` authored + committed** (v1.0; OQ-11).
+  Scenario A — cutover rollback (re-start the stopped-not-removed local Hub; primary,
+  ~30s, lossless to drain-time state; + A.4 deep recovery from the GCS snapshot). Scenario
+  B — cloud-Hub image rollback (digest-based; re-point `hub:latest` + Watchtower restart).
+- **§4.14 reconciliations folded into the real script (architect: §4.14 is a forward sketch,
+  the script is canonical):** (1) single-quoted-`$LATEST_DUMP` SSH bug → basename
+  pre-resolved operator-side. (2) §4.14 step 7 `docker rm` of local containers DROPPED from
+  W4 — AG-W4.5 says "stopped"; `docker rm` decommission is W5; keeping the local Hub
+  stopped-not-removed is what makes the Scenario-A rollback trivial. (3) §4.14's
+  `ois-postgres-local` is wrong — the local pg container is `hub-substrate-postgres`.
+- **Cloud-VM container model verified:** COS VM, NO docker-compose — `ois-hub-prod` /
+  `ois-postgres-prod` / `watchtower-prod` run as direct `docker run` from
+  `modules/hub/scripts/startup.sh` (idempotent; secrets fetched from Secret Manager each
+  boot). Rollback runbook Scenario B corrected accordingly (Watchtower-tag-repoint, not
+  `docker compose`).
+- **Cloud-Hub image-currency — UNRESOLVABLE from metadata; SHA-tag gap surfaced to architect:**
+  VM `ois-hub-prod` runs `cloud-run-source-deploy/hub:latest` digest `c346a1e7…` (Up ~3h);
+  AR `hub:latest` has since moved to `ea22c993…` (build `b6081e5e` @ 09:27Z). Cloud Build
+  records carry NO commit SHA (AG-W1.6 trigger deferred — all builds are manual
+  `build-hub.sh` submits, no git provenance); Hub `/health` reports a static
+  `version:"1.0.0"`, no `/version` endpoint. → cannot prove the VM image is `main @ f35b08a`.
+  Companion finding: §4.14 rollback step 2 (`re-tag previous-sha as latest`) presumes
+  per-SHA image tags, but `build-hub.sh` only pushes the mutable `:latest` — no SHA tags
+  exist (runbook Scenario B authored digest-based to be correct regardless). Proposed
+  W4-prep: deterministic rebuild from the W4 checkout (= `main @ f35b08a`; `hub/` untouched)
+  + push a commit-SHA-pinned tag for provable provenance → redeploy + verify. Surfaced to
+  architect on thread-600 for concur before executing (touches the build process + the
+  rollback runbook).
+- **PR #225 open** — https://github.com/apnex-org/agentic-network/pull/225 (4 commits;
+  cutover script + rollback runbook + work-trace). **CI — required gates GREEN:** `test` ·
+  `vitest (hub)` 2m2s · `workflow-test-coverage` · `no-engineer-id` · `secret-scan`. 4
+  non-hub vitest cells RED = pre-existing tarball-dep debt (fail-fast 4-10s at build; this
+  PR touches ZERO TypeScript — bash + markdown only — so not a regression; same RED picture
+  as #224 which merged).
+- Heartbeat on thread-600 (r4): PR-open + the image-currency decision surfaced
+  (`decision_needed`).
+- HOLD: thread-engaged with architect on the image-currency disposition. NEXT (on concur):
+  W4-prep rebuild → bilateral pre-cutover audit on the PR → architect takes cutover-window
+  to Director → execute.
+
+### 2026-05-20 PM AEST — W4: architect concur + bilateral audit; W4-prep rebuild DONE
+
+- Architect (thread-600 r5): **image-currency — concur both** (deterministic rebuild +
+  `hub:f35b08a` SHA-tag). Guardrails: keep the VM on `:latest`+Watchtower as the CD model
+  (SHA tag is provenance/rollback-pin, not a VM pin); Watchtower-pause for the cutover
+  window — concur. **Bilateral audit on #225 — one MUST-FIX:**
+  - **FINDING 1 (must-fix):** entity-count parity used a *pre-drain* baseline — the local
+    Hub keeps writing (repo-event-bridge GitHub polls + heartbeats) between PREFLIGHT and
+    drain, so the post-drain snapshot count > the baseline → VERIFY strict-equality
+    falsely fails → a good cutover aborts. Fix: re-capture the count POST-drain.
+  - FINDING 2 (flag): real downtime ~2-3 min not "~30s" — give the Director a realistic
+    window. MINOR (W5): cutover migrates `bearer_tokens` wholesale — W3 test-tokens land
+    on prod; W5 `hub-token` audit.
+- **W4-prep rebuild — DONE + verified:**
+  - `build-hub.sh` from the W4 checkout (`hub/` == `f35b08a`, diff-confirmed empty) →
+    image digest **`sha256:1f8655a5…`**.
+  - Tagged in AR: `hub:f35b08a` + `hub:latest` both → `1f8655a5…` (provenance + the CD tag).
+  - Redeployed VM `ois-hub-prod` onto it → digest verified `1f8655a5…`, `/health` → 200.
+- **FINDING (W5/AG-W5.1 blocker) — Watchtower image-CD is NON-FUNCTIONAL.** `watchtower-prod`
+  logs: every poll for 45+ min fails `denied: Unauthenticated request` on the AR manifest
+  HEAD — Watchtower has no AR credentials (the daemon's `docker-credential-gcr` config
+  lives at the non-default `DOCKER_CONFIG=/var/lib/hub/docker-config`, which Watchtower's
+  pull path doesn't read). Consequences: (1) the redeploy could NOT use Watchtower-restart
+  — used the verified explicit-`docker pull` + `google_metadata_script_runner startup`
+  re-run instead (startup.sh exports `DOCKER_CONFIG` + has the cred helper; idempotent
+  recreate); (2) rollback runbook Scenario B reworked off Watchtower onto that same
+  manual path; (3) image-CD has TWO broken links now — AG-W1.6 (Cloud Build trigger,
+  deferred) AND Watchtower AR-auth. Both are W5/AG-W5.1 — surfaced to architect, NOT
+  fixed in W4.
+- **#225 audit fixes — committed:** (1) FINDING-1 — `freeze_baseline()` re-captures the
+  authoritative `LOCAL_ENTITY_COUNT` post-drain (guarded out of `--dry-run`); PREFLIGHT
+  count demoted to informational. (2) Watchtower-pause folded — `freeze_image()` pre-drain
+  / `resume_image()` post-verify. (3) FINDING-2 — ~2-3 min downtime estimate in the header
+  + `confirm()` prompt. Dry-run re-PASSES (survey count 18323→18340 between runs —
+  concrete proof FINDING-1 was real).
+- **FINDING-1 symmetric cloud-side fix (self-caught during re-review):** VERIFY also read
+  `cloud_count` AFTER `docker start ois-hub-prod` — the booted cloud Hub could write
+  entities (repo-event-bridge) before the count → same false-abort class as FINDING-1, on
+  the cloud side. Fix: `restore()` now reads the post-`pg_restore` count WHILE the cloud
+  Hub is still stopped (echoed `CUTOVER_RESTORED_COUNT=` from the restore SSH, captured
+  operator-side into `CLOUD_RESTORED_COUNT`); VERIFY parity-checks that frozen value — no
+  post-restart SSH count query. Both parity operands now frozen-exact. Dry-run re-PASSES.
+- #225 pushed: CI required gates GREEN (`test`, `vitest (hub)`, `workflow-test-coverage`,
+  `no-engineer-id`, `secret-scan`); 4 non-hub vitest RED = pre-existing tarball-dep debt.
+- NEXT: heartbeat thread-600 (rebuild done + Watchtower finding + #225 fixes) → architect
+  re-review + cross-approve + merge → cutover-window to Director → execute.
