@@ -695,3 +695,50 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
     implies a live stream) — not the bug. Live check (step 2) confirms the prediction dispositively.
 - **NEXT: step 2 — rebuild local Hub (build-hub.sh from this worktree + start-hub.sh from the
   canonical worktree — start-hub.sh refuses non-canonical CWD) → emit-ready surface on thread-598.**
+
+### 2026-05-20 — bug-103 slice: local Hub rebuilt; findings #1 + #2 (listFiltered volume defect)
+
+- **Local Hub rebuilt → merged-main `86738c7`** (bug-102 fixed). `build-hub.sh` (Cloud Build →
+  `ois-hub:local`, digest `ebbd0fd0`). Clean boot: 4 migrations applied (incl. `004-tokens-table`),
+  reconciler 22/22 SchemaDefs 0 failures, bearer-auth gate active (`HUB_API_TOKEN` grandfathered;
+  `HUB_ADMIN_TOKEN` unset → `/admin` disabled, Hub boots fine), repo-event-bridge running, `/health` 200.
+- **start-hub.sh gap (operational finding):** `scripts/local/start-hub.sh` `docker run` argv has NO
+  `--network` — can't attach the Hub to `w0_default`, the user-defined network the local-substrate
+  postgres (`hub-substrate-postgres`; compose project `w0`, `hub/spike/W0/docker-compose.yml`) lives
+  on. Plain start-hub.sh → Hub on default `bridge` → can't resolve `postgres` hostname → crash-loop.
+  Did a controlled manual container-swap instead (replicated the running container's exact env +
+  SA-key `-v` mount + `--security-opt seccomp=unconfined` + `--network w0_default`). Flag for a
+  start-hub.sh follow-on.
+- **Finding #1 — firstTimerEnabled deferral rationale:** the PollBackstop first-timer (`list_messages`
+  Pull-mode poll) was set `firstTimerEnabled:false` in claude-plugin/opencode-plugin shims at
+  bug-53 / PR #180 (`22824be`). Rationale (code comments, verbatim): "SSE inline path delivers
+  messages today, no second polling source" + "out of scope until a separate first-timer wiring
+  audit per round-2 design decision." → SCOPE deferral, NOT a substantive defect-block.
+- **Finding #2 — does Pull-mode `list_messages` cover role-targeted notes: NO — substrate-query
+  defect, not "needs widening":**
+  - `message-repository-substrate.ts` `listFiltered` (non-thread `list_messages` path):
+    `substrate.list("Message", {limit: LIST_PREFETCH_CAP=500})` — NO sort, NO substrate-side filter
+    → SQL `SELECT data FROM entities WHERE kind='Message' LIMIT 500` (postgres-substrate `list()`:
+    `limitClamped=min(limit,500)`; `orderSql` empty without `sort`). Then JS sorts by id +
+    client-side filters targetRole/status/since.
+  - Substrate has **12,156 Message entities** → `list_messages` (non-thread) computes over an
+    arbitrary 500-row (~4%), no-ORDER-BY window. Empirical (rebuilt Hub, `/mcp`):
+    `targetRole:architect` → **1** (psql truth: 88); `targetRole:engineer,status:new` → **1**
+    (truth 103); `status:new` → 499.
+  - Consequence: the poll-backstop's `list_messages({targetRole,status:"new",since})` — even with
+    `firstTimerEnabled` flipped on — scans a ~4% window; a recent `since` cursor client-filters out
+    everything in that oldest-ish window → backstop sees ~nothing. **Structurally non-functional at
+    this volume.**
+  - `replayFromCursor` (W1b SSE Last-Event-ID replay — mechanism C) has the **IDENTICAL pattern**
+    (`substrate.list("Message",{limit:500})` → client-filter incl. `since`). SSE cold-reconnect
+    replay is also blind beyond the 500-window.
+  - → mechanisms (C) durable-SSE-replay AND (D) re-enable-poll both depend on a query path broken
+    at volume; neither works without first fixing `listFiltered`/`replayFromCursor` (push
+    targetRole/status/since substrate-side + ORDER BY id). (A) PendingAction-enqueue + per-agent
+    queue-drain side-steps it. Architect-decides; reported as input. The `listFiltered` defect is
+    plausibly its own bug (impacts `list_messages` MCP tool + poll-backstop + SSE-replay).
+- substrate truth (psql): kind:note by target — architect 88 `new` / director 70 `new` / engineer
+  103 `new` + 12 `received`. bug-103 numbers HOLD (100%-`new` architect+director).
+- Observation tooling note: `list_messages` is volume-broken → the instrumented check observes
+  note status via direct psql, not `list_messages`.
+- NEXT: emit-ready surface on thread-598 (handshake + #1 + #2) → coordinated instrumented check.
