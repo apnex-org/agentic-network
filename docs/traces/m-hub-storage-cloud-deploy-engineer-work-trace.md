@@ -170,3 +170,26 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
     → hub-proxy-sa, name_prefix-driven; ForceNew). No live dependents — architect
     pre-acked; documented in the W1 PR body per the guard-rail.
   - in-place: hub_vm SA (display_name) + backup bucket (labels) — cosmetic.
+
+### 2026-05-20 — W1 apply partial; cold-boot BLOCKED (F8); trigger 400 (F7)
+
+- `terraform apply`: 28/30 created — network + VM + Cloud Run + Secret Manager +
+  API key + SAs up; proxy SA replaced (`hub-proxy-sa`) per plan. FAILED: Cloud
+  Build trigger + `github_repository_webhook`.
+- **F8 (HIGH — design gap; cold-boot BLOCKER):** VM `metadata_startup_script`
+  failed first boot — `curl https://get.docker.com` timed out (exit 28). The
+  internal-only VM (no public IP, no Cloud NAT) has Google-API egress ONLY via
+  Private Google Access — it cannot reach `get.docker.com` or Docker Hub
+  (`postgres:15-alpine` / `containrrr/watchtower` per §4.3). §4.2/§4.3/§4.10 do
+  not reconcile the internal-only topology with an internet-dependent bootstrap.
+  **AG-W1.4 end-to-end cold-boot cannot pass until resolved.** Surfaced to
+  architect (thread-594) — options: (A) Cloud NAT (~$30/mo — breaches the
+  ~$20/mo envelope); (B) Google-mirror Docker apt-install + Artifact-Registry
+  mirror of postgres/watchtower ($0). Recommended (B). Awaiting disposition.
+- **F7 (mechanism):** webhook trigger `git_file_source repo_type=GITHUB` → Cloud
+  Build `400 invalid argument` — `git_file_source` needs a host connection that
+  v1.3 A1 rejected. Fix: inline `build {}` block (credential-free public clone
+  in step 1, honoring §4.12 intent). Engineer-fix; documented for the W1 PR.
+- Cold-boot probe: HTTP 502 — Cloud Run → Direct VPC Egress → VM path works; the
+  VM Hub stack is simply absent (startup failed). Networking layer is sound.
+- W1 holds at the cold-boot gate pending F8 disposition.
