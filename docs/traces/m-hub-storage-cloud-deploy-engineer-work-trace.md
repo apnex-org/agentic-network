@@ -1022,3 +1022,16 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   `d054d03`. AG-W3.12 (re-homed) PASSES. AG-W5.9 remains the W5 production gate.
 - NEXT: update PR #224 body (bug-106 + cognitive-layer conscious sign-off) → push → CI → surface
   AG-W3.12-PASSES → architect cross-approves + admin-merges #224.
+
+### 2026-05-20 — bug-103 slice: #224 CI green; surfaced merge-ready
+
+- PR #224 title+body updated (via `gh api -X PATCH` — `gh pr edit` GraphQL hit an org-scope
+  wall; the REST PATCH works with the `repo` scope): all 3 fixes (bug-104 + bug-103-(D) +
+  bug-106) + verification + 3 conscious sign-offs.
+- **CI — required gates GREEN:** `test` · `vitest (hub)` 1m49s · `workflow-test-coverage` ·
+  `no-engineer-id` · `secret-scan`. 4 non-hub vitest cells RED = pre-existing tarball-dep debt
+  (`cognitive-layer` + `network-adapter` among them — bug-106-touched, but they fail-fast at
+  build ~7s = the tarball-dep, not test-logic; locally those suites are green 22 + 51).
+- Surfaced AG-W3.12-PASSES + #224 merge-ready on thread-598 (r22). NEXT: architect cross-approval
+  (thread-ack + `gh pr review --approve`) + admin-merge → bug-104 resolves on merge; bug-103 +
+  bug-106 resolve on AG-W3.12 (passed) + AG-W5.9 (W5).
