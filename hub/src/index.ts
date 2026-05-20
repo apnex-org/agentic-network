@@ -39,6 +39,7 @@ import {
   type SchemaReconciler,
 } from "./storage-substrate/index.js";
 import { applyMigrations } from "./storage-substrate/migration-runner.js";
+import { TokenStore } from "./storage-substrate/token-store.js";
 import { SubstrateCounter } from "./entities/substrate-counter.js";
 import { AgentRepositorySubstrate } from "./entities/agent-repository-substrate.js";
 import { AuditRepositorySubstrate } from "./entities/audit-repository-substrate.js";
@@ -317,6 +318,9 @@ import { HubNetworking } from "./hub-networking.js";
 import type { CreateMcpServerFn } from "./hub-networking.js";
 
 const HUB_API_TOKEN = process.env.HUB_API_TOKEN || "";
+// mission-86 W3 — admin token guarding /admin/tokens (OQ-16 → (b);
+// provisioned as the `hub-admin-token` Secret Manager secret).
+const HUB_ADMIN_TOKEN = process.env.HUB_ADMIN_TOKEN || "";
 const ARCHITECT_WEBHOOK_URL = process.env.ARCHITECT_WEBHOOK_URL || "";
 const PORT = parseInt(process.env.PORT || "8080", 10);
 
@@ -326,12 +330,19 @@ const createMcpServerFactory: CreateMcpServerFn = (getSessionId, getClientIp, no
   return createMcpServer(getSessionId, getClientIp, notifyEvent, dispatchEvent);
 };
 
+// mission-86 W3 — bearer-token store (Design v2.2 §4.13). The `bearer_tokens`
+// table is created by migration 004 (already applied above); refresh() loads
+// the hot-path validate cache.
+const tokenStore = new TokenStore(POSTGRES_CONNECTION_STRING);
+await tokenStore.refresh();
+
 const hub = new HubNetworking(
   engineerRegistry,
   createMcpServerFactory,
   {
     port: PORT,
     apiToken: HUB_API_TOKEN,
+    adminToken: HUB_ADMIN_TOKEN,
     webhookUrl: ARCHITECT_WEBHOOK_URL,
     keepaliveInterval: 30_000,
     sessionTtl: 180_000,
@@ -353,6 +364,9 @@ const hub = new HubNetworking(
   // gate to canonical PolicyRouter tier annotations (positive-list:
   // bump iff tools/call to llm-callable tier).
   (toolName: string) => policyRouter.getToolTier(toolName),
+  // mission-86 W3 — bearer-token store: /mcp uses token-store bearer-auth +
+  // /admin/tokens is mounted.
+  tokenStore,
 );
 
 // ── Start Server ─────────────────────────────────────────────────────
