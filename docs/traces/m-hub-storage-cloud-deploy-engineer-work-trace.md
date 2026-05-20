@@ -1200,3 +1200,39 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - NEXT: PR the `--yes` fix → architect (lily) cross-approves → engineer-drive
   `cutover-to-cloud.sh --yes`. thread-600 turn-locked to architect after the r12 marker —
   needs the lily session to post to free greg's turn.
+
+### 2026-05-20 PM AEST — W4 cutover ATTEMPT 2: FAILED at RESTORE; rolled back; recovered
+
+- #226 (`--yes` fix) merged `main @ e3b74392`. Branch `agent-greg/mission-86-w4-exec` off
+  `e3b74392`; script verified canonical. Posted `CUTOVER STARTING` (attempt 2, thread-600
+  r14); ran `cutover-to-cloud.sh --yes`.
+- **Attempt 2 progressed through PREFLIGHT → confirm(--yes) → FREEZE-IMG (watchtower
+  paused) → DRAIN (local Hub STOPPED — downtime began ~11:41:44Z) → FREEZE-BASE (baseline
+  18424) → SNAPSHOT (8.4M dump) → UPLOAD (dump+meta → GCS) → RESTORE — FAILED.**
+- **FAILURE — `bash: line 3: gsutil: command not found` (exit 127).** `restore()`'s remote
+  command runs `gsutil cp gs://… /tmp/…` ON the VM — but the VM is COS and **COS has no
+  gcloud/gsutil**. The remote `set -euo pipefail` exited at the `gsutil` line (line 3) —
+  BEFORE `sudo docker stop ois-hub-prod` (line 5). So the cloud Hub + cloud postgres were
+  NOT touched (no `pg_restore`); cloud-side untouched.
+- **State at failure:** local Hub DOWN (drained); local postgres intact (snapshot was a
+  read); cloud Hub UP on `f35b08a` with its pre-cutover throwaway state; watchtower paused;
+  the 8.3M drain-time dump safely in GCS. **Production was DOWN.**
+- **ROLLBACK — runbook Scenario A executed immediately.** `docker start ois-hub-local-prod`
+  → local Hub back; `/health` → 200; entity count **18431** (≥ the 18424 drain baseline —
+  grown since restart; **nothing lost** — `hub-substrate-postgres` was never written).
+  Resumed `watchtower-prod` on the VM. **Production restored; ~3-4 min downtime.** Adapter
+  URL never flipped → no revert needed (runbook A.3 N/A).
+- **ROOT CAUSE — `restore()` assumes `gsutil` on the VM; COS has none.** The cloud VM's own
+  backup script (`startup.sh` embedded `hub-snapshot.sh`) deliberately uses the **GCS JSON
+  API via curl + the VM SA metadata token** precisely because "COS has no gcloud" — the
+  cutover `restore()` must do the same for the DOWNLOAD (curl `…?alt=media` with the SA
+  bearer token; URL-encode the `cutover/` prefix `/` → `%2F`). Known-but-missed: the
+  startup.sh "COS has no gcloud" note was even quoted in this trace at W4 pickup.
+- **Why audit + dry-run missed it:** `--dry-run` only PRINTS the RESTORE remote command —
+  it never executes it on the VM. The bilateral audit verified the remote command's shape,
+  not its runnability on COS. Second execution-time defect in the cutover script (after the
+  confirm/stdin one) — both in the never-actually-run remote/invocation surface.
+- NEXT: SURFACE to architect (thread-600) — production-outage incident + 2 failed attempts
+  + the `restore()` gsutil→JSON-API fix + how to actually exercise the remote restore path
+  before a 3rd attempt. Do NOT re-attempt solo. Director re-engages only post-restart (not
+  yet — no restart happened).
