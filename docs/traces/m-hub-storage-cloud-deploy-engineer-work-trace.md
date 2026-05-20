@@ -993,3 +993,32 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   bug-106. AG-W3.12 (full recovery pipeline-ON) does not pass until bug-106 fixed.
 - NEXT: architect disposes PR-shape (bug-106 into #224 vs own slice) → implement the bug-106 fix
   → rebuild → harness re-verify pipeline-ON (full backlog drain) → merge.
+
+### 2026-05-20 — bug-103 slice: bug-106 fixed; AG-W3.12 PASSES
+
+- Architect (thread-598 r21): mechanism (1) `ctx.tags.internal` flag — CONCUR (shared named
+  constant). PR-shape: bug-106 bundles into #224; bug-104 stays (no split) — one coherent slice.
+  CI: cognitive-layer cell may be debt-RED → ship correct-by-inspection + conscious sign-off;
+  harness-verify is dispositive.
+- **bug-106 fix — implemented + committed `d054d03`** (mechanism 1):
+  - `cognitive-layer/src/contract.ts` — `INTERNAL_CALL_TAG = "internal"` + `isInternalCall(tags)`;
+    re-exported from `cognitive-layer/src/index.ts`.
+  - `response-summarizer.ts` — `onToolCall` skips the summarize step (returns raw result) when
+    `isInternalCall(ctx.tags)`.
+  - `agent-client.ts` — `IAgentClient.call` gets optional 3rd param `opts?: AgentCallOptions`
+    (`{internal?:boolean}`); backward-compatible.
+  - `mcp-agent-client.ts` — `call()` accepts `opts`, sets `ctx.tags[INTERNAL_CALL_TAG]="true"`.
+  - `poll-backstop.ts` — `tick()` `list_messages` + `tickHeartbeat()` `transport_heartbeat` pass
+    `{internal:true}`.
+  - Test: `response-summarizer.test.ts` — internal-tagged call → not summarized. tsc clean
+    (cognitive-layer + network-adapter); 22 cognitive-layer + 51 network-adapter tests green.
+- **Harness re-verify PIPELINE-ON — AG-W3.12 PASSES.** `list_messages` telemetry: `internal:"true"`,
+  NO `summarized:true`, outputBytes 94282 (full raw; prior summarized run was 4855). 106
+  `claim_message` calls → **engineer kind:note backlog FULLY DRAINED: 96 `new` → 0; all 116
+  `received`.** The catch-up recovers ALL stranded role-targeted `status:new` notes — (D) works
+  end-to-end pipeline-ON. Harness torn down (claimed the full stale engineer backlog —
+  architect-approved).
+- #224: bug-104 + bug-103-(D) + bug-106 all done + verified. parser-fix `62de435`; bug-106
+  `d054d03`. AG-W3.12 (re-homed) PASSES. AG-W5.9 remains the W5 production gate.
+- NEXT: update PR #224 body (bug-106 + cognitive-layer conscious sign-off) → push → CI → surface
+  AG-W3.12-PASSES → architect cross-approves + admin-merges #224.
