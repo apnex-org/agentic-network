@@ -1314,3 +1314,23 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - NEXT: operator flip (`hubUrl` → `https://hub-api-5muxctm3ta-ts.a.run.app/mcp`) +
   restart both sessions → fresh greg reconnects on the cloud Hub → verifies
   AG-W4.3/4.4/4.6 → W4 closeout (+ the ADAPTER-notice `/mcp` patch) → W5.
+
+### 2026-05-20 PM AEST — W4 cutover: adapter `hubUrl` flipped (both worktrees)
+
+- **`hubUrl` flip done (both adapter-config.json):** greg
+  `/home/apnex/taceng/agentic-network-greg/.ois/adapter-config.json` + lily
+  `/home/apnex/taceng/agentic-network-lily/.ois/adapter-config.json` — both
+  `http://localhost:8080/mcp` → `https://hub-api-5muxctm3ta-ts.a.run.app/mcp` (only
+  `hubUrl`; `hubToken`/`role`/`labels` untouched). `.ois/` is gitignored — not committed.
+- Config-location confirmed: `start-greg.sh`/`start-lily.sh` source `~/.config/apnex-agents/
+  <agent>.env` for *secrets only* (`GH_TOKEN`/`NPM_TOKEN`); they do NOT set `OIS_HUB_URL`.
+  The Hub URL's canonical home is `.ois/adapter-config.json` `hubUrl` (per the launchers'
+  own header comments) — flipped there, not in the env files (avoids a secrets-file
+  misuse + a two-sources-of-truth `env`-overrides-`file` hazard).
+- Editing the config files does NOT disturb the running shims (they read `hubUrl` at
+  startup) — the flip takes effect on each session's restart.
+- Cloud Hub re-confirmed healthy pre-restart: `/health` → 200.
+- NEXT: operator restarts both sessions (`start-greg.sh` / `start-lily.sh`) → fresh greg +
+  lily reconnect to the cloud Hub → AG-W4.3/4.4/4.6 verify → W4 closeout. Stale launcher
+  header comments ("must point at http://localhost:8080/mcp") + the ADAPTER-notice
+  `/mcp`-path bug are W4-closeout doc fixes.
