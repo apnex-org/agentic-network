@@ -1334,3 +1334,34 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   lily reconnect to the cloud Hub → AG-W4.3/4.4/4.6 verify → W4 closeout. Stale launcher
   header comments ("must point at http://localhost:8080/mcp") + the ADAPTER-notice
   `/mcp`-path bug are W4-closeout doc fixes.
+
+### 2026-05-20 PM AEST — W4 step-3 BLOCKED on bearer-auth; diagnosed + token fixed
+
+- **Blocker:** adapters (URL flipped to cloud) → HTTP 401 `Unauthorized: Invalid token`
+  from cloud `/mcp` (W3 bearer-auth gate). Surfaced by lily; both agents disconnected.
+- **Root cause — evidence-confirmed (no spec-recall):**
+  - `hub/src/middleware/bearer-auth.ts`: `/mcp` token accepted iff in the `bearer_tokens`
+    TokenStore (sha-256 *hash* lookup) OR `=== HUB_API_TOKEN` env (grandfather path).
+  - The adapter-config `hubToken` (`9dtfAY…0DEE`, 43 ch) = the LOCAL Hub's `HUB_API_TOKEN`
+    — confirmed exact match to `docker inspect ois-hub-local-prod` env. NOT a token-store
+    token (issued ones are `hubt_`-prefixed). → lily's "tokens table didn't migrate"
+    candidate is ruled out — it's a grandfather env token, not a `bearer_tokens` row.
+  - Cloud Hub's `HUB_API_TOKEN` is a SEPARATE TF `random_password` (`modules/hub/
+    secret-manager.tf`, length 32) in Secret Manager `hub-hub-api-token`. It is an env
+    var, not DB state — the cutover `pg_restore` neither carried nor could carry it.
+- **W4 step-3 GAP:** step 3 = flip URL **and** token. `cutover-to-cloud.sh`
+  `adapter_flip_notice()` instructs only the URL flip — the token side was unspecified.
+- **Fix applied + verified:** cloud `HUB_API_TOKEN` (Secret Manager `hub-hub-api-token`)
+  written as `hubToken` into BOTH `adapter-config.json` (greg + lily). Each config's
+  `hubUrl`+`hubToken` → cloud `/mcp` initialize → **HTTP 200** ✅.
+- **W4-closeout items (reviewed PR; not blocking the restart):**
+  1. `cutover-to-cloud.sh` ADAPTER notice — add the token-flip step (set `hubToken` to the
+     cloud `HUB_API_TOKEN`) + the `/mcp`-path correction.
+  2. TF DX (operator-directed) — expose `hub_api_token` (+ likely `admin_token`) as
+     `sensitive` outputs in `modules/hub/outputs.tf` + the `deploy/hub/` root caller, so
+     the token is `terraform output -raw hub_api_token` instead of needing the Secret
+     Manager secret-id. Non-destructive apply (0 resource changes — reads existing
+     `random_password.result`).
+  3. Stale `start-{greg,lily}.sh` header comments.
+- NEXT: operator restarts both sessions → adapters reconnect to the cloud Hub →
+  AG-W4.3/4.4/4.6 verify → W4-closeout PR (the 3 items above).
