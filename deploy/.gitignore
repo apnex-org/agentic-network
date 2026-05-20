@@ -4,9 +4,9 @@
 .terraform/
 .terraform.lock.hcl
 
-# Environment files with secrets
-env/*.tfvars
-!env/*.tfvars.example
+# Environment files with secrets — any depth (deploy/env/, deploy/hub/env/, ...)
+**/env/*.tfvars
+!**/env/*.tfvars.example
 
 # Archive directory (pre-split monolith snapshot — reference only, not reinstalled)
 archive-pre-split-*/

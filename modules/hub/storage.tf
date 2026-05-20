@@ -1,4 +1,4 @@
-# ── deploy/hub/ — Layer B: GCS backup bucket ──────────────────────────
+# ── modules/hub/ — Layer B: GCS backup bucket ─────────────────────────
 # Design §4.8. The VM-native systemd backup-runner uploads hourly postgres
 # snapshots to gs://<bucket>/snapshots/.
 
@@ -24,5 +24,5 @@ resource "google_storage_bucket" "backup" {
     }
   }
 
-  labels = local.common_labels
+  labels = local.labels
 }
