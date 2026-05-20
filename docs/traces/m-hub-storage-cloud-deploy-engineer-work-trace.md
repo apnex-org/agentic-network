@@ -797,3 +797,36 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   fast-follow (Director Option A) — unrushed.
 - NEXT: implement (1) bug-104 fix → (2) re-enable + reconnect-hook → tests → Adapter-Restart
   verification → PR.
+
+### 2026-05-20 — bug-103 slice: implementation — bug-104 fix + first-timer re-enable
+
+- **Part 1 — bug-104 fix (commit `334cbbd`):**
+  - `message-repository-substrate.ts` — `listFiltered` + `replayFromCursor` push
+    targetRole/targetAgentId/authorAgentId/status/delivery/scheduledState/since into the
+    substrate filter (SQL `WHERE`) + `ORDER BY id ASC`, so `LIMIT` bounds the *filtered* set.
+    New `messageQueryToFilter` helper; `since` → `{id:{$gt}}`. `matchesAdditionalFilters`
+    retained for the thread-scoped path (`listByThread` — bounded set, no fix needed).
+  - `memory-substrate.ts` — `matchesFilter` range ops ($gt/$lt/$gte/$lte): numeric compare
+    when both operands coerce finite, else **lexical string compare** (matches postgres
+    `data->>'field' > $param` text semantics). Required for the ULID `since` cursor — the
+    prior numeric-only `numericCmp` yielded NaN for ULIDs → rejected every row. memory↔
+    postgres substrate divergence — surfaced to architect as a bug-104 facet.
+  - Tests: postgres-testcontainer volume test (>LIST_PREFETCH_CAP filler + needle batch beyond
+    the window — fails against the pre-fix client-filter impl); memory-substrate `$gt` numeric
+    + ULID-lexical cases. Full hub suite GREEN (1493 passed / 7 skipped).
+- **Part 2 — re-enable the first-timer + reconnect-hook (commit `c91a97a`):**
+  - `claude-plugin/src/shim.ts` + `opencode-plugin/src/shim.ts` — `firstTimerEnabled: false →
+    true`. The `list_messages` Pull-mode catch-up poll is now live (mechanism D).
+  - `dispatcher.ts` `onStateChange` — on every transition into `streaming` (first connect +
+    every reconnect), trigger an immediate `pollBackstop.tick()` → prompt catch-up, not
+    ≤cadence-delayed. Satisfies architect verification-(i) "fires on each (re)connect."
+  - tsc: network-adapter + claude-plugin CLEAN. opencode-plugin tsc has PRE-EXISTING stale-dep
+    errors (`@apnex/network-adapter` — the `firstTimerEnabled` key + `assertHostWiringComplete`
+    predate this edit; the TS2353 fires on the key's existence, not its value) — documented
+    non-hub tarball-dep debt, NOT introduced here. network-adapter unit tests GREEN (51).
+  - **Cursor decision (architect-delegated):** `since`-cursor KEPT — it is the "don't re-fetch
+    forever" guarantee (verification iii). First poll (no cursor file — first-timer was never
+    enabled) drains the historical backlog; subsequent ticks fetch deltas; notes missed during
+    a disconnect are always `id > cursor` → recovered.
+- NEXT: Adapter-Restart verification (rebuild Hub bug-104 → verify `list_messages` live;
+  rebuild claude-plugin) → AG-W3.12 coordinated disconnect→reconnect→recover → PR.
