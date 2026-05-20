@@ -35,15 +35,23 @@
 # evidence for the bilateral pre-cutover audit.
 #
 # Usage:
-#   scripts/cloud/cutover-to-cloud.sh --dry-run     # pre-audit rehearsal
-#   scripts/cloud/cutover-to-cloud.sh               # the real cutover (interactive confirm)
-#   scripts/cloud/cutover-to-cloud.sh --yes         # the real cutover, non-interactive
+#   scripts/cloud/cutover-to-cloud.sh --dry-run          # pre-audit rehearsal
+#   scripts/cloud/cutover-to-cloud.sh                    # real cutover (interactive confirm)
+#   scripts/cloud/cutover-to-cloud.sh --yes              # real cutover, non-interactive
+#   scripts/cloud/cutover-to-cloud.sh --rehearse-restore # exercise restore() only, no DRAIN
 #
 # --yes skips the interactive confirm() prompt — required for non-interactive
 # (engineer-agent / automation) drive, where there is no TTY to type "yes" at
 # and a piped stdin is consumed by PREFLIGHT's gcloud-ssh before confirm()
 # reads it. The Director cutover-window-confirm is the human gate; --yes
 # asserts it has been given. No effect under --dry-run (confirm is skipped).
+#
+# --rehearse-restore runs PREFLIGHT → SNAPSHOT → UPLOAD → RESTORE → VERIFY and
+# SKIPS confirm / FREEZE-IMG / DRAIN / FREEZE-BASE / RESUME-IMG. It exercises
+# restore()'s real remote path against the cloud VM WITHOUT draining the local
+# Hub (SNAPSHOT is a read; the local Hub keeps serving). The cloud pg holds
+# throwaway pre-cutover state, so the test pg_restore is non-destructive — use
+# it to prove the remote restore path runs clean before a real cutover.
 #
 # Env (all optional — defaults target the mission-86 prod deployment):
 #   GCP_PROJECT          GCP project        (default: gcloud active project)
@@ -65,15 +73,17 @@ set -euo pipefail
 # ── Argument parsing ───────────────────────────────────────────────────
 DRY_RUN=false
 ASSUME_YES=false
+REHEARSE_RESTORE=false
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=true ;;
     --yes|-y) ASSUME_YES=true ;;
+    --rehearse-restore) REHEARSE_RESTORE=true ;;
     -h|--help)
-      sed -n '2,61p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,69p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
-    *) echo "cutover-to-cloud: unknown argument '$arg' (use --dry-run or --help)" >&2; exit 2 ;;
+    *) echo "cutover-to-cloud: unknown argument '$arg' (use --dry-run / --yes / --rehearse-restore / --help)" >&2; exit 2 ;;
   esac
 done
 
@@ -98,6 +108,10 @@ CLOUD_RUN_URL="${CLOUD_RUN_URL%/}"
 CUTOVER_BUCKET="${CUTOVER_BUCKET%/}"
 SNAPSHOT_TOOL="${REPO_ROOT}/scripts/local/hub-snapshot.sh"
 
+# Bare bucket name (no gs://) — for the GCS JSON API URL the VM-side restore
+# uses (COS has no gsutil; see restore()).
+GCS_BUCKET_NAME="${CUTOVER_BUCKET#gs://}"
+
 TS="$(date -u +%Y%m%d-%H%M%S)"
 DUMP_BASENAME="hub-cutover-${TS}.dump"
 LOCAL_DUMP="${SNAPSHOT_DIR}/${DUMP_BASENAME}"
@@ -111,6 +125,10 @@ GCS_URI="${CUTOVER_BUCKET}/${CUTOVER_PREFIX}/${DUMP_BASENAME}"
 # heartbeats) → a strict-equality parity check would falsely fail.
 LOCAL_ENTITY_COUNT=""
 CLOUD_RESTORED_COUNT=""
+# --rehearse-restore only: local entity count read just before SNAPSHOT, used
+# as the floor for the rehearsal restore-count sanity check (no frozen baseline
+# without DRAIN).
+REHEARSE_REF_COUNT=""
 
 # ── Output helpers ─────────────────────────────────────────────────────
 phase() { echo; echo "════════ $* ════════"; }
@@ -273,16 +291,21 @@ upload() {
 # ── RESTORE — IAP-tunnel SSH → download + pg_restore on the cloud VM ───
 restore() {
   phase "RESTORE — pg_restore into cloud VM"
-  # The basename is resolved operator-side and interpolated into the remote
-  # command (NOT a remote $(...) — $LATEST_DUMP would be undefined on the VM).
-  # The cloud Hub is stopped for a clean restore; the post-restore entity
-  # count is read here, WHILE it is still stopped (exact + frozen — verify()
-  # parity-checks it); then the Hub is restarted and re-runs the idempotent
-  # SchemaReconciler against the restored state on boot.
+  # The basename + bucket are resolved operator-side and interpolated into the
+  # remote command (NOT a remote $(...) — operator-side vars are undefined on
+  # the VM). Download uses the GCS JSON API + the VM SA metadata token, NOT
+  # gsutil — the COS VM has no gcloud/gsutil; this mirrors startup.sh's
+  # hub-snapshot.sh, which uploads the same way. The cloud Hub is stopped for
+  # a clean restore; the post-restore entity count is read WHILE it is still
+  # stopped (exact + frozen — verify() parity-checks it); then the Hub is
+  # restarted and re-runs the idempotent SchemaReconciler on boot.
   local remote_cmd
   remote_cmd="set -euo pipefail
-echo '[vm] downloading dump from GCS...'
-gsutil cp '${GCS_URI}' '/tmp/${DUMP_BASENAME}'
+echo '[vm] downloading dump from GCS (JSON API + VM SA token — COS has no gsutil)...'
+SM_META='http://metadata.google.internal/computeMetadata/v1/instance'
+SM_TOKEN=\$(curl -s -H 'Metadata-Flavor: Google' \"\$SM_META/service-accounts/default/token\" | tr ',' '\\n' | sed -n 's/.*\"access_token\":\"\\([^\"]*\\)\".*/\\1/p')
+[ -n \"\$SM_TOKEN\" ] || { echo 'FATAL: empty SA token from metadata server' >&2; exit 1; }
+curl -sf -H \"Authorization: Bearer \$SM_TOKEN\" -o '/tmp/${DUMP_BASENAME}' 'https://storage.googleapis.com/storage/v1/b/${GCS_BUCKET_NAME}/o/${CUTOVER_PREFIX}%2F${DUMP_BASENAME}?alt=media'
 echo '[vm] stopping cloud Hub container for clean restore...'
 sudo docker stop '${CLOUD_HUB_CONTAINER}'
 echo '[vm] pg_restore --clean --if-exists...'
@@ -310,8 +333,38 @@ verify() {
   phase "VERIFY — cloud Hub health + state parity"
   if $DRY_RUN; then
     echo "[cutover][DRY-RUN] would verify:"
-    printf '             entity parity: CLOUD_RESTORED_COUNT == LOCAL_ENTITY_COUNT  [AG-W4.2 / AG-W4.7]\n'
+    if $REHEARSE_RESTORE; then
+      printf '             rehearsal: CLOUD_RESTORED_COUNT >= pre-snapshot local count\n'
+    else
+      printf '             entity parity: CLOUD_RESTORED_COUNT == LOCAL_ENTITY_COUNT  [AG-W4.2 / AG-W4.7]\n'
+    fi
     printf '             curl %s/health → expect 200\n' "$CLOUD_RUN_URL"
+    return 0
+  fi
+
+  # Poll /health — the cloud Hub re-boots + runs SchemaReconciler post-restore.
+  local code="" i
+  health_poll() {
+    for i in $(seq 1 30); do
+      code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "${CLOUD_RUN_URL}/health" || true)"
+      [ "$code" = "200" ] && return 0
+      sleep 2
+    done
+    return 1
+  }
+
+  if $REHEARSE_RESTORE; then
+    # Rehearsal: no DRAIN → no frozen LOCAL_ENTITY_COUNT, so no strict parity.
+    # Dispositive: the remote restore path ran clean (restore() would have
+    # die'd otherwise) + the cloud Hub boots healthy on the restored data +
+    # the restored count is at least the pre-snapshot local count (the dump,
+    # taken after that read, can only have more) — proves a non-empty restore.
+    health_poll || die "cloud Hub /health did not return 200 within ~60s (last: '$code')"
+    log "cloud Hub healthy post-restore: ${CLOUD_RUN_URL}/health → 200"
+    { [ -n "$CLOUD_RESTORED_COUNT" ] && [ -n "$REHEARSE_REF_COUNT" ] \
+      && [ "$CLOUD_RESTORED_COUNT" -ge "$REHEARSE_REF_COUNT" ]; } 2>/dev/null \
+      || die "rehearsal restore-count sanity FAILED: restored='${CLOUD_RESTORED_COUNT}' ref='${REHEARSE_REF_COUNT}'"
+    log "rehearsal restore OK — cloud entities post-restore: ${CLOUD_RESTORED_COUNT} (≥ pre-snapshot ref ${REHEARSE_REF_COUNT})"
     return 0
   fi
 
@@ -325,14 +378,8 @@ verify() {
     || die "entity-count parity FAILED (AG-W4.2/W4.7): local=${LOCAL_ENTITY_COUNT} cloud=${CLOUD_RESTORED_COUNT}"
   log "state parity OK — cloud matches local baseline (AG-W4.2 / AG-W4.7)"
 
-  # Poll /health — the cloud Hub re-boots + runs SchemaReconciler post-restore.
-  local code="" i
-  for i in $(seq 1 30); do
-    code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "${CLOUD_RUN_URL}/health" || true)"
-    [ "$code" = "200" ] && break
-    sleep 2
-  done
-  [ "$code" = "200" ] || die "cloud Hub /health did not return 200 within ~60s (last: '$code')"
+  # Then /health — the cloud Hub re-boots + runs SchemaReconciler post-restore.
+  health_poll || die "cloud Hub /health did not return 200 within ~60s (last: '$code')"
   log "cloud Hub healthy: ${CLOUD_RUN_URL}/health → 200"
 }
 
@@ -375,8 +422,48 @@ Cutover dump archived at: ${GCS_URI}  (AG-W4.5; lifecycle-exempt prefix)
 NOTICE
 }
 
+# ── REHEARSE-RESTORE — exercise restore()'s remote path, no DRAIN ──────
+# Runs PREFLIGHT → SNAPSHOT → UPLOAD → RESTORE → VERIFY against the real
+# cloud VM, skipping FREEZE-IMG / DRAIN / FREEZE-BASE / RESUME-IMG. The local
+# Hub is NEVER drained (SNAPSHOT is a pg_dump read), so it stays serving;
+# the cloud pg holds throwaway pre-cutover state, so the test pg_restore into
+# it is non-destructive. Proves the remote restore path runs clean on COS
+# before a real cutover attempt commits to it.
+rehearse_restore() {
+  phase "mission-86 W4 — RESTORE-phase rehearsal$([ "$DRY_RUN" = true ] && echo '  [DRY-RUN]')"
+  log "local:  ${LOCAL_HUB_CONTAINER} (pg: ${LOCAL_PG_CONTAINER}) — NOT drained"
+  log "cloud:  ${CLOUD_VM}/${CLOUD_HUB_CONTAINER} (pg: ${CLOUD_PG_CONTAINER}) — ${CLOUD_RUN_URL}"
+  log "REHEARSAL — exercises restore()'s real remote path; skips confirm /"
+  log "freeze-img / drain / freeze-base / resume-img."
+
+  preflight
+  if ! $DRY_RUN; then
+    REHEARSE_REF_COUNT="$(docker exec "$LOCAL_PG_CONTAINER" \
+      psql -U hub -d hub -tA -c 'SELECT COUNT(*) FROM entities' | tr -d '[:space:]')"
+    log "rehearsal reference — local entities pre-snapshot: ${REHEARSE_REF_COUNT}"
+  fi
+  snapshot
+  upload
+  restore
+  verify
+
+  phase "REHEARSAL $($DRY_RUN && echo 'DRY-RUN ')COMPLETE"
+  if $DRY_RUN; then
+    log "dry-run — preflight ran live; mutating steps printed their resolved commands."
+  else
+    log "restore()'s remote path exercised end-to-end against ${CLOUD_VM} — clean."
+    log "NOTE: the cloud pg now holds the rehearsal snapshot; the real cutover's"
+    log "      pg_restore --clean overwrites it. Watchtower was not paused."
+  fi
+}
+
 # ── Main ───────────────────────────────────────────────────────────────
 main() {
+  if $REHEARSE_RESTORE; then
+    rehearse_restore
+    return 0
+  fi
+
   phase "mission-86 W4 — production cutover$([ "$DRY_RUN" = true ] && echo '  [DRY-RUN]')"
   log "local:  ${LOCAL_HUB_CONTAINER} (pg: ${LOCAL_PG_CONTAINER})"
   log "cloud:  ${CLOUD_VM}/${CLOUD_HUB_CONTAINER} (pg: ${CLOUD_PG_CONTAINER}) — ${CLOUD_RUN_URL}"
@@ -393,7 +480,7 @@ main() {
   resume_image
   adapter_flip_notice
 
-  phase "CUTOVER ${DRY_RUN:+DRY-RUN }COMPLETE"
+  phase "CUTOVER $($DRY_RUN && echo 'DRY-RUN ')COMPLETE"
   if $DRY_RUN; then
     log "dry-run finished — preflight ran live; every mutating step printed its"
     log "resolved command above. This is the pre-audit evidence."

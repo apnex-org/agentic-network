@@ -1236,3 +1236,40 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   + the `restore()` gsutil→JSON-API fix + how to actually exercise the remote restore path
   before a 3rd attempt. Do NOT re-attempt solo. Director re-engages only post-restart (not
   yet — no restart happened).
+
+### 2026-05-20 PM AEST — W4 attempt-#3 regroup: gsutil fix + --rehearse-restore; rehearsal PASSED
+
+- Regroup on **thread-601** (architect opened it — thread-600 past the get_thread 10-cap;
+  no offset param). Architect: correction accepted; incident handled well; **(a) + (b)
+  CONCUR**. **Director decision** (restated): ship mission-86 on COS; re-platform the VM to
+  Rocky as a follow-on (idea-306) — NOT a mid-W4 reset. W4 unchanged (lands on COS). **W5
+  trimmed (Design v2.10):** AG-W5.1 (image-CD) descopes → idea-306; bug-107 stays
+  `investigating` (idea-306 resolves it on Rocky). gsutil-not-on-COS = 3rd COS-ism.
+- **Operator directive flagged to architect** (thread-601 r2): operator told greg the
+  cutover is engineer+architect-driven, no Director until client restart — flagged so the
+  architect reconciles it with their fresh-Director-window-confirm plan for #3.
+- **Fix (a) — `restore()` gsutil → GCS JSON API.** The remote download line is now: fetch
+  the VM SA token from the metadata server (`tr/sed` idiom, verbatim from `startup.sh`
+  `hub-snapshot.sh`) → `curl -sf -H "Authorization: Bearer …" …storage.googleapis.com/
+  storage/v1/b/<bucket>/o/<prefix>%2F<dump>?alt=media`. Bucket via `${CUTOVER_BUCKET#gs://}`;
+  the `cutover/` `/` percent-encoded `%2F`.
+- **(b) — `--rehearse-restore` mode added.** Runs PREFLIGHT → SNAPSHOT → UPLOAD → RESTORE →
+  VERIFY, skipping confirm / FREEZE-IMG / DRAIN / FREEZE-BASE / RESUME-IMG. Exercises the
+  *exact* `restore()` the real cutover runs, against the real cloud VM, WITHOUT draining
+  the local Hub (SNAPSHOT is a read). VERIFY rehearse-branch: `/health` 200 +
+  `CLOUD_RESTORED_COUNT >= REHEARSE_REF_COUNT` (pre-snapshot local count — no frozen
+  baseline without DRAIN). `health_poll()` extracted + shared.
+- **Isolated VM check** (pre-rehearsal): the JSON-API download command run standalone on
+  the VM — token fetch OK, `curl -sf` pulled a valid `PGDMP`-magic dump (8.7M). Fix sound.
+- **RESTORE-phase rehearsal — PASSED end-to-end** (`cutover-to-cloud.sh --rehearse-restore`,
+  real run). PREFLIGHT live → SNAPSHOT 8.4M → UPLOAD → RESTORE: JSON-API download (NO
+  `gsutil` error) → `docker stop ois-hub-prod` → `pg_restore` → `CUTOVER_RESTORED_COUNT=18487`
+  → `docker start` → VERIFY: cloud `/health` 200, 18487 ≥ ref 18487. **restore()'s remote
+  path proven on COS.** (Cloud pg now holds the rehearsal snapshot; the real cutover's
+  `pg_restore --clean` overwrites it.)
+- **Banner bug self-caught + fixed.** `phase "CUTOVER ${DRY_RUN:+DRY-RUN }COMPLETE"` —
+  `${DRY_RUN:+…}` triggers on the *string* "false" (non-empty) → the COMPLETE banner always
+  said "DRY-RUN" even on a real run. Pre-existing in the merged script; surfaced by the
+  real rehearsal run. Fixed both occurrences → `$($DRY_RUN && echo 'DRY-RUN ')`.
+- NEXT: PR the fix + `--rehearse-restore` (with rehearsal evidence) → architect
+  cross-approve + merge → attempt #3 on a fresh Director window-confirm.
