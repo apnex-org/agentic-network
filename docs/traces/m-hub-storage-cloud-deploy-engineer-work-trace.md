@@ -830,3 +830,23 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
     a disconnect are always `id > cursor` → recovered.
 - NEXT: Adapter-Restart verification (rebuild Hub bug-104 → verify `list_messages` live;
   rebuild claude-plugin) → AG-W3.12 coordinated disconnect→reconnect→recover → PR.
+
+### 2026-05-20 — bug-103 slice: PR #224 open; bug-104 live-verified
+
+- **bug-104 verified live** — rebuilt the Hub (`build-hub.sh` → `69a99c0b`, bug-104 fix);
+  controlled container-swap. `list_messages{targetRole:architect}` → **223** (= psql ground
+  truth; pre-fix 1); `{architect,status:new}` → 101; `{director,status:new}` → 70. bug-104
+  acceptance met.
+- **PR #224 OPEN** — `agent-greg/mission-86-bug-103` → main; 7 commits off `86738c7`;
+  https://github.com/apnex-org/agentic-network/pull/224. CI required gates GREEN (`test`,
+  `vitest (hub)` 1m52s, `workflow-test-coverage`, `no-engineer-id`, `secret-scan`). 4 non-hub
+  vitest cells RED = pre-existing tarball-dep debt (confirmed: `packages/cognitive-layer` —
+  untouched by this PR — is among the failures → pre-existing CI-infra, not this PR). 3
+  conscious sign-offs in the PR body (opencode stale-dep tsc; memory-substrate `$gt` fold;
+  `since`-cursor decision).
+- Surfaced PR-open on thread-598 (round 10).
+- **NEXT (architect-coordinated):** AG-W3.12 — needs the claude-plugin adapter rebuilt (bounces
+  both adapter sessions); emit `kind:note`→role (architect- AND director-targeted) while the
+  recipient is disconnected → reconnect → catch-up delivers. Architect picks the sequencing
+  (review-then-verify, or verify-pre-merge) + the director-targeted test harness. Then
+  cross-approval + admin-merge. bug-103 resolves on AG-W3.12 + AG-W5.9.
