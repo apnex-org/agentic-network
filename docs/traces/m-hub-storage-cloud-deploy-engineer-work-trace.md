@@ -548,3 +548,44 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   `coerceToolPayload`→`validateNotePayload`). `tsc` clean. bug-102 stays `investigating`
   until the full proxy round-trip is verified in Sub-PR B's Adapter-Restart verification.
 - Next: bearer-auth gate (will surface OQ-16) → bug-103 delivery fix → Sub-PR B verification.
+
+### 2026-05-20 — OQ-16 confirmed; bearer-auth gate scoped + surveyed (resumable state)
+
+- **OQ-16 — CONFIRMED (architect, thread-596): (b) bootstrap-token, provisioned as a 4th GCP
+  Secret Manager secret** (`hub-admin-token`). The `/admin/*` guard is a constant-time string
+  compare against `HUB_ADMIN_TOKEN`. GCP IAM-SA identity-token validation = the v1.1 fold.
+- **Hub HTTP-server survey done** (`hub/src/hub-networking.ts`): the Hub ALREADY has a
+  single-token `requireAuth` middleware (`hub-networking.ts:775-802`) — `Authorization: Bearer`
+  vs `config.apiToken` (`HUB_API_TOKEN`), attached to POST/GET/DELETE `/mcp`; `/health` skips it
+  (no middleware attached). The W3 gate UPGRADES this single-static-token check to a
+  postgres-backed multi-token store.
+- **bearer-auth gate build plan (Sub-PR B; AG-W3.1-W3.8):**
+  1. `hub/src/storage-substrate/migrations/004-tokens-table.sql` — a `bearer_tokens` table
+     (`token_id` PK, `token_hash` UNIQUE [store the sha-256, never the raw token], `name`,
+     `note`, `created_at`). Auto-applied by the bug-101 migration-runner.
+  2. `hub/src/storage-substrate/token-store.ts` (NEW) — own `pg.Pool` (the substrate pool is
+     private); CRUD: issue / revoke / list / validate-by-hash; in-memory cache for the hot
+     validate path.
+  3. `hub/src/middleware/bearer-auth.ts` (NEW) — `Authorization: Bearer` → sha-256 → token-store
+     lookup; 401 on miss; skip `/health` + `/admin/*`; audit-log `[Auth] {token-id, caller-ip,
+     tool, ts}` to stdout (Cloud Logging captures it). Replaces the static `requireAuth` on `/mcp`.
+  4. `hub/src/admin/tokens.ts` (NEW) — Express routes: `POST /admin/tokens` {name,note} → issue
+     (returns the raw token ONCE); `DELETE /admin/tokens/:id` → revoke; `GET /admin/tokens` →
+     list (token-id+name+note, NOT raw values). Guarded by `requireAdminAuth` (compares
+     `HUB_ADMIN_TOKEN`).
+  5. `scripts/cloud/hub-token` (NEW) — operator CLI: issue/revoke/list; admin-token sourced via
+     `gcloud secrets versions access hub-admin-token`.
+  6. Wiring: `index.ts` reads `HUB_ADMIN_TOKEN`; `hub-networking.ts` `HubNetworkingConfig` +
+     constructor + mounts `/admin/*` routes + swaps `requireAuth`→bearer-auth middleware.
+  7. terraform: `secret-manager.tf` 4th secret `hub-admin-token` (`random_password`) + VM-SA
+     grant; `startup.sh` fetches it → `HUB_ADMIN_TOKEN` env on the Hub container; `compute.tf`
+     metadata `secret-hub-admin-token`.
+  8. Tests + Adapter-Restart verification (build-hub.sh + start-hub.sh) for AG-W3.1-W3.8 +
+     AG-W3.11 (bug-102 full proxy round-trip).
+- **bug-103 fix** (also Sub-PR B, inline): add the `kind:note`→`PendingAction` enqueue path —
+  synchronous-enqueue in `message-policy.ts` mirroring `thread-policy.ts` (architect note: a
+  sweeper is a poll-loop — runs against the mission-83 W5 bug-93 poll-pressure elimination;
+  synchronous-enqueue is the architecture-aligned mechanism). AG-W3.12 = a pr-opened-notification
+  observably progresses past `status:new`.
+- STATE: `agent-greg/mission-86-w3b` @ `f20413d` (bug-102 + trace). bearer-auth gate +
+  bug-103 fix = the remaining Sub-PR B build; all scoped + surveyed above for a clean pickup.
