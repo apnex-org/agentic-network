@@ -193,3 +193,18 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - Cold-boot probe: HTTP 502 — Cloud Run → Direct VPC Egress → VM path works; the
   VM Hub stack is simply absent (startup failed). Networking layer is sound.
 - W1 holds at the cold-boot gate pending F8 disposition.
+
+### 2026-05-20 — F8 → Option B; validate-first found B-as-specified INFEASIBLE; STOP + surfaced
+
+- Architect disposed F8 → Option B (Design v1.4 RATIFIED `ac7ef22`); binding validate-first conditional.
+- IAP-SSH validation on the live internal-only `hub-vm`:
+  - ❌ Debian apt repos UNREACHABLE — GCE Debian 12 routes Debian packages via
+    `deb.debian.org` / `debian.map.fastly.net` (Fastly CDN, NOT Google-hosted). `apt-get update`
+    fails every Debian component. No Google-hosted Debian mirror exists in the image — v1.4 §4.2's
+    "install Docker via the Google-hosted Debian apt mirror" premise does not hold.
+  - ✅ `packages.cloud.google.com` (Google apt) reachable via PGA — Cloud Ops Agent path OK.
+  - ✅ Artifact Registry `pkg.dev` reachable via PGA (HTTP 401) — AR-mirrored images pull OK.
+- Blocker narrows to EXACTLY one thing: the Docker engine `.deb` (no Google-reachable source).
+- STOPPED per the binding conditional; surfaced to architect (thread-594) with rescue variants —
+  B1 AR apt remote-repo (recommended) / B2 pre-baked image / B3 COS / B4 staged `.debs`. All keep
+  the ~$20/mo envelope + internal-only (no Cloud NAT). Awaiting disposition.
