@@ -1440,3 +1440,100 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - NEXT: W5 PR (runbook v1.1 + work-trace) → architect cross-approve; W5.2/W5.3 verify at
   ~24h; W5.4/W5.5 decommission held until the soak proves stable; AG-W5.9 on the plugin
   re-release; AG-W5.8 mission close-ready last.
+
+### 2026-05-21 — W5: Director GO; plugin release v0.1.4 cut + published + verified
+
+- #229 merged `main @ 359738f`. **Director GO** (architect-relayed, thread-602 r7): cut the
+  first real `m-github-releases-plugin-distribution` release; **soak DESCOPED** (AG-W5.2
+  removed; AG-W5.3 satisfied-by-evidence — the 22 full-size post-cutover snapshots prove
+  the backup-runner; Design → v2.11); **W5.4/W5.5 decommission UNBLOCKED** (architect lean:
+  after AG-W5.9). Critical path: release-cut → operator reinstall → AG-W5.9 → decommission
+  → AG-W5.8 close.
+- **Release v0.1.4 CUT + PUBLISHED.** Confirmed `origin/main @ 359738f` carries the
+  bug-103/106 adapter-half in source (`firstTimerEnabled` in claude-plugin/network-adapter;
+  `INTERNAL_CALL_TAG`/`isInternalCall` in cognitive-layer). Cut annotated tag `v0.1.4` on
+  `359738f` (matches the `claude-plugin` package.json `0.1.4`; first real release — prior
+  runs were `v0.0.0-test` only). `release-plugin.yml` run `26197827376` — **success**
+  (install → prepack → structural-verify → `gh release create`). Release published:
+  github.com/apnex-org/agentic-network/releases/tag/v0.1.4.
+- **Post-publish verification (dogfood the published `.tgz`, not the local build):**
+  downloaded `apnex-claude-plugin-0.1.4.tgz` (220K). `dist/build-info.json` → `commitSha
+  359738f` (`dirty:true` = the prepack transient dep-swap, expected). claude-plugin `dist/`
+  complete (shim/observability/commit-push-hook/source-attribute `.js`+`.d.ts`). All 3
+  sovereign tarballs bundled + complete (network-adapter 19 / cognitive-layer 11 /
+  message-router 13 dist files). **bug-103 adapter-half present:** `firstTimerEnabled` in
+  `dist/shim.js` + network-adapter `dist/kernel/poll-backstop.js`. **bug-106 fix present:**
+  `isInternalCall`/`INTERNAL_CALL_TAG` in cognitive-layer `dist/index.js` + `contract.js`.
+- **Workflow annotation triaged — benign:** "Cannot find module '@apnex/message-router'"
+  — message-router's dist IS bundled (13 files) + claude-plugin `dist/source-attribute`
+  resolves the reference; a transient multi-pass-build type-resolution note (the
+  network-adapter↔message-router cycle), tsc emitted `.js` regardless, final dist complete.
+  Not a packaging defect.
+- NEXT: surface "v0.1.4 published + verified — ready for operator reinstall" → operator
+  (Director) reinstalls the plugin in both sessions + restarts → run **AG-W5.9** (no-op
+  docs PR → architect receives the PR-event notification) → W5.4/W5.5 decommission →
+  AG-W5.8 close.
+
+### 2026-05-21 PM AEST — AG-W5.9 PASS — bug-103 end-to-end production proof
+
+- **Fresh greg pickup post-reinstall.** Operator reinstalled v0.1.4 in greg's session +
+  restarted. Confirmed on the v0.1.4 adapter: installed `@apnex/claude-plugin @ 0.1.4`,
+  `dist/build-info.json` → `commitSha 359738f` (the v0.1.4 release commit).
+- **Backfill evidence — greg-side pr-event delivery works post-v0.1.4.** On reconnect, **6
+  `pr_review_approved` notifications (#224–#229)** landed at greg's adapter — the bug-103
+  mechanism-D kind:note delivery-recovery flushing the backlog on adapter reconnect,
+  exactly as designed. Stale (all 6 PRs long-merged — nothing to action), but live proof
+  the greg-side pr-event → notification path works on the v0.1.4 adapter-half.
+- **AG-W5.9 probe PR #230 — cut + merged.** No-op docs PR: one new file
+  `docs/operator/cloud-deploy-release-notes.md` (records the v0.1.4 release). Branch
+  `agent-greg/mission-86-w5-9-probe` off `main @ 359738f`. CI — **all 5 required gates
+  green** (`no-engineer-id`, `secret-scan`, `workflow-test-coverage in-sync`,
+  `vitest (hub)`, `test`); the 4 non-hub vitest fails are the known tarball-dep debt
+  (pre-existing on `main`, unrelated — single docs file).
+- **Architect-receipt half PROVEN.** lily confirmed both: (1) lily's session is on the
+  v0.1.4 adapter (`get-agents.sh` — working again); (2) she **received the `pr_opened`
+  notification** for #230 — delivered, not stranded `status:new`. She cross-approved #230
+  (GitHub `APPROVED` 2026-05-21T04:04:03Z).
+- **#230 MERGED → `main @ bd95872`** (squash, 2026-05-21T04:06:29Z) — the `pr_merged`
+  event fires through the production cloud-Hub repo-event-bridge as additional proof.
+- **AG-W5.9 PASS.** The production cloud-Hub repo-event-bridge emits PR-events and the
+  architect actually receives the notification (not stranded `status:new`) — bug-103
+  end-to-end production proof on the v0.1.4 bug-103 adapter-half. AG-W3.12 (harness form)
+  was closed at #224; AG-W5.9 is the real-adapter production form.
+- NEXT: W5.4/W5.5 decommission (local-Hub container + postgres removal + final state
+  archive — unblocked, soak-hold gone per Director-GO) → AG-W5.8 close-ready → W5-close PR.
+
+### 2026-05-21 PM AEST — W5.4 + W5.5 — local-Hub decommission COMPLETE; AG-W5.8 close-ready
+
+- **W5.5 — final-state archive (executed first; architect-approved path (a)).** Fresh
+  `pg_dump -Fc` of the frozen local Hub postgres via `hub-snapshot.sh save` →
+  `mission-86-final-local-hub-state-20260521-042041.dump` (+ `.dump.meta`).
+  - **Gate 1 — local integrity ✅:** entity-count `SELECT count(*) FROM entities` = **18541**
+    (exact cutover-parity match); dump size **8,772,560 bytes** — byte-exact to the cutover
+    baseline `cutover/hub-cutover-20260520-224232.dump` (local pg genuinely frozen since
+    W4.5); `pg_restore --list` — valid CUSTOM-format archive, 46 TOC entries, both tables
+    (`entities` + `bearer_tokens`) present.
+  - **Gate 2 — post-upload verification ✅:** uploaded to the permanent retention path
+    `gs://labops-389703-hub-backups/archive/mission-86-final-local-hub-state-20260521-042041.dump`
+    (+ `.dump.meta`); GCS object verified landed + byte-intact — size `8772560`, crc32c
+    `FsyVvQ==`, md5 `7rKxucpWlV4NBu6CSp1tZg==`, all matching the local dump.
+  - Backup posture (architect-confirmed): local Hub final state preserved in TWO
+    independent GCS objects (`archive/` + the byte-identical `cutover/` copy) + 26 hourly
+    `snapshots/`. Bucket no-expiry lifecycle rule on `archive/` = operator/Director
+    close-time follow-up (architect-carried, alongside the TF token-output `terraform apply`).
+- **W5.4 — local-Hub decommission COMPLETE (Director-approved GO; both gates green).**
+  Executed in one block: `docker rm ois-hub-local-prod` (was `Exited`) → `docker stop` +
+  `docker rm hub-substrate-postgres` → `docker volume rm hub-substrate-data` (the
+  irreversible step). Post-state verified: no `ois-hub-local-prod` / `hub-substrate-postgres`
+  containers, no `hub-substrate-data` volume. Images retained per plan (`ois-hub:local`,
+  `ois-hub:local-substrate`, `ois-hub:local-backup`, `postgres:15-alpine` — cosmetic, no prune).
+- **Scenario-A rollback target retired.** Rollback runbook v1.1 already records Scenario A
+  as valid only until the W5.4 decommission — runbook stays correct; Scenario B
+  (cloud-Hub image rollback) remains the standing operational path.
+- **AG-W5.8 — mission close-ready.** All mission-86 waves complete: W0–W3b (substrate +
+  bearer-token auth + bug-101/102), W4 (production cutover — 7 AG gates), W5 (validation:
+  AG-W5.6 runbook v1.1, AG-W5.7 bug-101 resolved, AG-W5.9 bug-103 production proof, soak
+  descoped Director-direct, W5.4/W5.5 decommission). Cloud Hub is sole production; local
+  Hub fully decommissioned + archived. mission-86 is close-ready.
+- NEXT: W5-close PR (this branch) → architect cross-approve + merge → Phase 9 close +
+  Phase 10 retrospective.
