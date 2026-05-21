@@ -7,9 +7,8 @@
 #   ./scripts/deploy-local.sh <service-dir> [service-name]
 #
 # Examples:
-#   ./scripts/deploy-local.sh agents/vertex-cloudrun
 #   ./scripts/deploy-local.sh hub
-#   ./scripts/deploy-local.sh agents/vertex-cloudrun my-custom-name
+#   ./scripts/deploy-local.sh hub my-custom-name
 #
 set -euo pipefail
 
