@@ -66,3 +66,28 @@ works. The defect is purely where the shims route that hook:
   architect for a mechanism call before writing the integration test.
 - NEXT: architect input on the test-architecture fork → integration test →
   build+verify → PR A.
+
+### 2026-05-21 PM AEST — extraction done; e2e-harness finding
+
+- Architect concurred (thread-605 r5): proceed with the `notification-surface.ts`
+  extraction; do NOT push it to message-router (host-wake injection is adapter-layer);
+  opencode-plugin baseline is separate debt she'll track + surface to Director.
+- **`notification-surface.ts` created** — `pushChannelNotification` (moved out of
+  `shim.ts`, `log` parametrized) + new `surfacePendingActionItem` (the importable
+  bug-108 surfacing: diagnostic log + the actionable `<channel>` wake). `shim.ts`
+  imports both; the inline claude-plugin fix is replaced by the module call. The
+  live `onActionableEvent` path now calls the imported `pushChannelNotification`.
+  `tsc --noEmit` clean.
+- **Finding — the claude-plugin e2e harness is dead on `main`.** `shim.e2e.test.ts`
+  depends on `PolicyLoopbackHub` (`packages/network-adapter/test/helpers/policy-loopback.ts`),
+  which imports ~12 `Memory*Store` classes + `registerDocumentPolicy` from `hub/src`
+  that the mission-83 substrate migration removed — the suite cannot even load. This
+  is why `vitest (adapters/claude-plugin)` is a known-failing CI cell: the harness is
+  dead, not flaky. Repairing `policy-loopback.ts` is sizeable + out of bug-108 scope.
+- **Resolution:** the bug-108 e2e test will use the lightweight, self-contained
+  `LoopbackHub` (`loopback-transport.ts` — no `hub/src` imports, not broken) — real
+  `McpAgentClient` + real reconnect (`_simulateWireReconnect("sse_watchdog")`) + real
+  `performStateSync` + real `drain_pending_actions` RPC + real `surfacePendingActionItem`
+  → assert the `notifications/claude/channel` wake at the mock MCP client. Surfaced the
+  harness-dead finding to architect on thread-605.
+- NEXT: write the `LoopbackHub`-based e2e test → build+verify → PR A.

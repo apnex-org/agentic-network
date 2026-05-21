@@ -36,7 +36,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
-import { resolveSourceAttribute, isPulseEvent } from "./source-attribute.js";
+import { isPulseEvent } from "./source-attribute.js";
+import {
+  pushChannelNotification,
+  surfacePendingActionItem,
+} from "./notification-surface.js";
 
 // ── Configuration ───────────────────────────────────────────────────
 
@@ -313,75 +317,14 @@ const eventsLogger: ILogger = new FileBackedLogger({ pid: process.pid, role: con
 
 // ── Render-surface: Claude `<channel>` notification injection ───────
 //
-// Layer-3 host-specific binding (claude-plugin only). Implements one
-// arm of the Universal Adapter notification contract — the actionable
-// path renders through the MCP `notifications/claude/channel` method
-// with the claude-specific source-attribute taxonomy.
-
-function pushChannelNotification(
-  server: Server | null,
-  event: AgentEvent,
-  level: "actionable" | "informational",
-): void {
-  if (!server) return;
-  const content = buildPromptText(event.event, event.data, {
-    toolPrefix: "mcp__plugin_agent-adapter_proxy__",
-  });
-  const meta: Record<string, unknown> = {
-    event: event.event,
-    // Mission-56 W2.3: kind-family-aware source attribution per Design
-    // v1.2 §"Architectural commitments #4" + Universal Adapter
-    // notification contract spec §"Render-surface semantics" worked
-    // example. Replaces the flat "hub" fallback so consumers (LLM
-    // prompts, dashboards) can disambiguate repo-events / directives /
-    // general notifications without parsing the inner subkind.
-    // Mission-57 W3: pulse detection takes precedence over the
-    // mission-56 W2.3 4-kind taxonomy. Pulse Messages arrive via
-    // `message_arrived` but render with pulse source-attribute family
-    // (avoids cognitive noise during high-activity sub-PR cascades —
-    // S3 mitigation per Design v1.0 §4).
-    source: resolveSourceAttribute(event.event, event.data),
-    level,
-  };
-  const data = event.data as Record<string, unknown>;
-  if (data.taskId) meta.taskId = data.taskId;
-  if (data.threadId) meta.threadId = data.threadId;
-  if (data.proposalId) meta.proposalId = data.proposalId;
-  // mission-66 commit 6 (#26 marker-protocol; closes calibration #26):
-  // propagate Hub-side truncation flag + full byte-length to `<channel>`
-  // attributes per Design §2.1.2 architect-lean (b) `<channel>`-attribute
-  // approach (out-of-band metadata; render-template-registry in
-  // packages/network-adapter/src/prompt-format.ts consumes). Hub envelope-
-  // builder at thread-policy.ts sets truncated/fullBytes when body exceeds
-  // THREAD_MESSAGE_PREVIEW_CHARS threshold (constant 200 chars; Phase 2
-  // stable per architect SPEC §2.4).
-  if (data.truncated === true) meta.truncated = "true";
-  if (typeof data.fullBytes === "number") meta.fullBytes = String(data.fullBytes);
-
-  server
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .notification({
-      method: "notifications/claude/channel",
-      params: { content, meta },
-    } as any)
-    .then(() => log(`[Channel] Pushed ${event.event} (${level})`))
-    .catch((err: unknown) => log(`[Channel] Push failed for ${event.event}: ${err}`));
-}
+// `pushChannelNotification` + `surfacePendingActionItem` moved to
+// `./notification-surface.ts` (bug-108) so the surfacing is importable +
+// test-drivable. `appendActionableLog` is the live-path diagnostic log
+// mirror — kept here alongside its `onActionableEvent` call sites.
 
 function appendActionableLog(event: AgentEvent, action: string): void {
   appendNotification(
     { event: event.event, data: event.data, action },
-    { logPath: LOG_FILE, mirror: (block) => process.stderr.write(block) },
-  );
-}
-
-function appendPendingActionLog(item: DrainedPendingAction): void {
-  const actionHint =
-    item.dispatchType === "thread_message"
-      ? `Reply with create_thread_reply to thread ${item.entityRef}`
-      : `Owed: ${item.dispatchType} on ${item.entityRef}`;
-  appendNotification(
-    { event: item.dispatchType, data: item.payload, action: actionHint },
     { logPath: LOG_FILE, mirror: (block) => process.stderr.write(block) },
   );
 }
@@ -622,26 +565,21 @@ async function main(): Promise<void> {
         onPendingActionItem: (item) => {
           if (dispatcherRef) {
             dispatcherRef.makePendingActionItemHandler({
-              // bug-108: a reconnect-drained pending action is a
-              // notification that arrived while the wire was down — it
-              // MUST wake the session, not just hit the diagnostic log.
-              // Mirror the live onActionableEvent path: appendPendingActionLog
-              // (diagnostic mirror) + pushChannelNotification (the actionable
-              // `<channel>` wake). The drained item's payload IS the original
-              // dispatchPayload — hub thread-policy.ts enqueues
-              // `payload: dispatchPayload` — so {event,data} reconstructs the
-              // same AgentEvent the live SSE path delivers.
-              onPendingActionItem: (drained) => {
-                appendPendingActionLog(drained);
-                const agentEvent = {
-                  event: drained.dispatchType,
-                  data: drained.payload,
-                };
-                const level = isPulseEvent(agentEvent.event, agentEvent.data)
-                  ? "informational"
-                  : "actionable";
-                pushChannelNotification(mcpServer, agentEvent, level);
-              },
+              // bug-108: a reconnect-drained pending action arrived while
+              // the wire was down — it MUST wake the session, not just hit
+              // the diagnostic log. surfacePendingActionItem mirrors the
+              // live onActionableEvent path: diagnostic log + the
+              // notifications/claude/channel actionable wake.
+              onPendingActionItem: (drained) =>
+                surfacePendingActionItem(
+                  {
+                    server: mcpServer,
+                    logPath: LOG_FILE,
+                    log,
+                    mirror: (block) => process.stderr.write(block),
+                  },
+                  drained,
+                ),
             })(item);
           }
         },
@@ -706,7 +644,7 @@ async function main(): Promise<void> {
         // Detection: eventType `message_arrived` + payload.pulseKind ∈
         // {status_check, missed_threshold_escalation}.
         const level = isPulseEvent(event.event, event.data) ? "informational" : "actionable";
-        pushChannelNotification(mcpServer, event, level);
+        pushChannelNotification(mcpServer, event, level, log);
       },
       onInformationalEvent: (event) => {
         // Informational events log only — `<channel>` push would otherwise
