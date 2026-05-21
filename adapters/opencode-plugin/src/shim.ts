@@ -494,6 +494,26 @@ async function connectToHub(agentName: string): Promise<void> {
             { event: item.dispatchType, data: item.payload, action: actionHint },
             { logPath: notificationLogPath },
           );
+          // bug-108: a reconnect-drained pending action arrived while the
+          // wire was down — it must WAKE the session, not only log. Mirror
+          // onActionableEvent's surface path: build a QueuedNotification and
+          // route it through the same notificationQueue / processNotification
+          // wake. The drained payload IS the original dispatchPayload (hub
+          // thread-policy.ts enqueues `payload: dispatchPayload`), so
+          // {event,data} reconstructs the live SSE AgentEvent.
+          const isPulse = isPulseEvent(item.dispatchType, item.payload);
+          const notification: QueuedNotification = {
+            level: isPulse ? "informational" : "actionable",
+            message: buildToastMessage(item.dispatchType, item.payload),
+            promptText: buildPromptText(item.dispatchType, item.payload, {
+              toolPrefix: "architect-hub_",
+            }),
+          };
+          if (sessionActive) {
+            notificationQueue.push(notification);
+          } else {
+            processNotification(notification);
+          }
         },
       },
     },
