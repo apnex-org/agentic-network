@@ -1473,3 +1473,32 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   (Director) reinstalls the plugin in both sessions + restarts → run **AG-W5.9** (no-op
   docs PR → architect receives the PR-event notification) → W5.4/W5.5 decommission →
   AG-W5.8 close.
+
+### 2026-05-21 PM AEST — AG-W5.9 PASS — bug-103 end-to-end production proof
+
+- **Fresh greg pickup post-reinstall.** Operator reinstalled v0.1.4 in greg's session +
+  restarted. Confirmed on the v0.1.4 adapter: installed `@apnex/claude-plugin @ 0.1.4`,
+  `dist/build-info.json` → `commitSha 359738f` (the v0.1.4 release commit).
+- **Backfill evidence — greg-side pr-event delivery works post-v0.1.4.** On reconnect, **6
+  `pr_review_approved` notifications (#224–#229)** landed at greg's adapter — the bug-103
+  mechanism-D kind:note delivery-recovery flushing the backlog on adapter reconnect,
+  exactly as designed. Stale (all 6 PRs long-merged — nothing to action), but live proof
+  the greg-side pr-event → notification path works on the v0.1.4 adapter-half.
+- **AG-W5.9 probe PR #230 — cut + merged.** No-op docs PR: one new file
+  `docs/operator/cloud-deploy-release-notes.md` (records the v0.1.4 release). Branch
+  `agent-greg/mission-86-w5-9-probe` off `main @ 359738f`. CI — **all 5 required gates
+  green** (`no-engineer-id`, `secret-scan`, `workflow-test-coverage in-sync`,
+  `vitest (hub)`, `test`); the 4 non-hub vitest fails are the known tarball-dep debt
+  (pre-existing on `main`, unrelated — single docs file).
+- **Architect-receipt half PROVEN.** lily confirmed both: (1) lily's session is on the
+  v0.1.4 adapter (`get-agents.sh` — working again); (2) she **received the `pr_opened`
+  notification** for #230 — delivered, not stranded `status:new`. She cross-approved #230
+  (GitHub `APPROVED` 2026-05-21T04:04:03Z).
+- **#230 MERGED → `main @ bd95872`** (squash, 2026-05-21T04:06:29Z) — the `pr_merged`
+  event fires through the production cloud-Hub repo-event-bridge as additional proof.
+- **AG-W5.9 PASS.** The production cloud-Hub repo-event-bridge emits PR-events and the
+  architect actually receives the notification (not stranded `status:new`) — bug-103
+  end-to-end production proof on the v0.1.4 bug-103 adapter-half. AG-W3.12 (harness form)
+  was closed at #224; AG-W5.9 is the real-adapter production form.
+- NEXT: W5.4/W5.5 decommission (local-Hub container + postgres removal + final state
+  archive — unblocked, soak-hold gone per Director-GO) → AG-W5.8 close-ready → W5-close PR.
