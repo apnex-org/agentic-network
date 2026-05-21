@@ -1,10 +1,30 @@
 # Cloud-Deploy Rollback Runbook
 
-**Mission:** mission-86 M-Hub-Storage-Cloud-Deploy Wave W4
-**Status:** v1.0 — authored pre-cutover (Design v2.9 §4.14; OQ-11)
-**Audience:** operator orchestrating — or backing out of — the W4 production cutover
-**Owner:** architect engages operator; Director gates the cutover-window
+**Mission:** mission-86 M-Hub-Storage-Cloud-Deploy (W4 cutover · W5 validation)
+**Status:** v1.1 — W5.6-validated (cutover complete; recipe dry-run-validated 2026-05-20)
+**Audience:** operator rolling back the production cloud Hub
+**Owner:** architect engages operator; Director gates a rollback decision
 **Scope:** manual rollback only. Scripted rollback is deferred to v1.1 (retro idea-fold candidate).
+
+---
+
+## Post-cutover status (W5 — 2026-05-20)
+
+The W4 cutover is **complete** — the cloud Hub is production (`main @ c346d5d`). This runbook
+is the standing rollback reference:
+
+- **Scenario B (cloud-Hub image rollback) is the live operational path** — use it if the
+  production cloud Hub ends up on a bad image.
+- **Scenario A (revert to the local Hub) is valid only until the W5.4 decommission.** It is
+  the cutover-window safety net and depends on `ois-hub-local-prod` + `hub-substrate-postgres`
+  still existing on the operator machine. Once W5.4 removes them, Scenario A no longer
+  applies — the GCS cutover dump (A.4) becomes the only revert source, and re-creating a
+  local Hub from it is a rebuild, not a fast rollback.
+- **Recipe validation (W5.6):** Scenario A was *exercised for real* in the W4 cutover
+  attempt-#2 incident (drained → RESTORE-failed → `docker start ois-hub-local-prod` →
+  recovered lossless) — stronger than any dry-run. Scenario B was dry-run-validated
+  2026-05-20: B.1 (image list) + B.2 (`tags add`, against a throwaway test tag) ran clean;
+  B.3 is the exact path the W4-prep `f35b08a` redeploy executed + verified.
 
 ---
 
@@ -54,14 +74,16 @@ If the container itself is unrecoverable, see **A.4 — deep recovery** below.
 
 ### A.3 — Revert the adapter URL + restart sessions
 
-For each adapter shim (lily + greg), point the Hub URL back at the local Hub:
+For each adapter shim (lily + greg), point the config back at the local Hub —
+`<workdir>/.ois/adapter-config.json`, **both fields**:
 
-- Edit `<workdir>/.ois/adapter-config.json` → set `"hubUrl": "http://localhost:8080"`
-- **or** unset / revert the `OIS_HUB_URL` env var (it overrides the config file)
+- `"hubUrl"`  → `"http://localhost:8080/mcp"`  (keep the `/mcp` path)
+- `"hubToken"` → the local Hub's `HUB_API_TOKEN` (the local + cloud Hubs have *different*
+  tokens — reverting the URL without the token 401s; this is the W4 step-3 lesson in reverse)
 - Restart the adapter session.
 
-This is a config change only — not a plugin reinstall. Once both sessions reconnect to
-`localhost:8080` and a first MCP call succeeds (e.g. `list_missions`), the rollback is done.
+This is a config change only — not a plugin reinstall. Once both sessions reconnect to the
+local Hub and a first MCP call succeeds (e.g. `list_missions`), the rollback is done.
 
 ### A.4 — Deep recovery (only if the local container is unrecoverable)
 
@@ -164,8 +186,10 @@ the real fix is built + pushed before any further redeploy.
 
 ## Notes
 
-- **Scenario A is the primary, load-bearing path** — it is fast (~30s), needs no GCP
-  mutations, and is lossless up to the drain-time state. Reach for it first.
+- **Scenario A** — fast (~30s), no GCP mutations, lossless to the drain-time state — was the
+  cutover-window primary net, and proved itself in the W4 attempt-#2 incident. Post-cutover
+  it is time-bounded: valid only until the W5.4 decommission (see Post-cutover status above).
+  After decommission, **Scenario B is the operational rollback path.**
 - The cutover dump lives under the `cutover/` GCS prefix, which is **exempt** from the
   backup bucket's 30-day lifecycle rule (that rule matches `snapshots/` only) — so the
   drain-time snapshot persists as a permanent recovery point.
