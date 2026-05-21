@@ -71,10 +71,10 @@ export interface SessionBindingState {
  * fields are dropped per Design §2.3 internal-fields-OFF-wire allowlist.
  *
  * `clientMetadata` and `advisoryTags` are emitted as absent (omitted from
- * JSON) when the underlying record has them missing or null. The W3
- * migration script (`scripts/migrate-canonical-envelope-state.ts`) defaults
- * missing fields to `{}` for legacy records; until that runs, projection
- * is defensive.
+ * JSON) when the underlying record has them missing or null — projection is
+ * defensive for legacy records that predate those fields. (The one-off W3
+ * backfill migration has run; its script was removed in the 2026-05
+ * folder-review cleanup. The defensive projection is the durable guard.)
  *
  * bug-54: cognitiveTTL/transportTTL/cognitiveState/transportState are
  * live-computed from `nowMs` rather than read from the stored snapshot

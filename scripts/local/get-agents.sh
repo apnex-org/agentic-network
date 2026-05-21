@@ -19,15 +19,21 @@
 #   get-agents.sh --role architect          # use architect creds
 #   get-agents.sh --json                    # raw JSON-RPC response (jq .)
 #   get-agents.sh --lean                    # terse table (id + role + status only)
-#   get-agents.sh --host https://prod-hub   # override default localhost:8080
+#   get-agents.sh --host https://my-hub     # override the resolved Hub URL
+#
+# bug-111 — the local Hub (localhost:8080) was decommissioned at mission-86
+# W5.4. The Hub URL is now resolved at runtime: --host flag > HUB_URL env >
+# .ois/adapter-config.json `hubUrl`. There is no hardcoded localhost default.
 
 set -euo pipefail
 
 # --- DEFAULTS ---
-DEFAULT_HOST="http://localhost:8080"
 DEFAULT_ROLE="director"
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 TPL_DIR="${SCRIPT_DIR}/tpl"
+# bug-111 — operator config for runtime Hub-URL resolution. `.ois/` lives at the
+# repo root (the adapter's WORK_DIR); the script is at scripts/local/.
+ADAPTER_CONFIG="$(readlink -f "${SCRIPT_DIR}/../../.ois/adapter-config.json")"
 
 # --- COLORS (per prism.sh pattern) ---
 CYAN='\033[0;36m'
@@ -45,7 +51,8 @@ Usage: get-agents.sh [--role architect|engineer|director] [--host <url>] [--json
 
 Flags:
   --role <r>     Source ~/.config/apnex-agents/<r>.env for HUB_API_TOKEN (default: director)
-  --host <url>   Hub HTTP base URL (default: http://localhost:8080); /mcp appended automatically
+  --host <url>   Hub base URL override; /mcp appended automatically. Default:
+                 resolved from HUB_URL env or .ois/adapter-config.json 'hubUrl'.
   --json         Bypass table render; print raw JSON-RPC response via jq .
   --lean         Use terse template (id + role + status); default uses verbose template
   --help / -h    Show this help
@@ -53,7 +60,7 @@ Flags:
 Exit codes:
   0  success
   1  Hub API error or curl failure
-  2  auth env file missing or HUB_API_TOKEN unset
+  2  setup error — auth env file/token missing, or Hub URL unresolved
   3  invalid args
 
 Reference: /home/apnex/taceng/table/prism.sh (table-rendering pattern).
@@ -63,7 +70,7 @@ USAGE
 # --- ARG PARSE ---
 # (engineer commit 7b: hoisted usage() above arg-parse block to fix pre-7b
 # forward-reference error — `usage: command not found` on `--help` flag.)
-HOST="$DEFAULT_HOST"
+HOST=""               # empty until --host flag or runtime resolution sets it
 ROLE="$DEFAULT_ROLE"
 OUTPUT_JSON=""
 OUTPUT_LEAN=""
@@ -90,6 +97,29 @@ fi
 source "$ENV_FILE"
 if [[ -z "${HUB_API_TOKEN:-}" ]]; then
     echo -e "${RED}[ERROR]${NC} HUB_API_TOKEN unset in $ENV_FILE" >&2
+    exit 2
+fi
+
+# --- HUB URL RESOLUTION (bug-111) ---
+# Precedence: --host flag > HUB_URL env (set in the environment or the sourced
+# env file) > .ois/adapter-config.json `hubUrl`. The decommissioned
+# localhost:8080 default is gone — an unresolved Hub URL is a hard error.
+if [[ -z "$HOST" ]]; then
+    if [[ -n "${HUB_URL:-}" ]]; then
+        HOST="$HUB_URL"
+    elif [[ -f "$ADAPTER_CONFIG" ]]; then
+        HOST="$(jq -r '.hubUrl // empty' "$ADAPTER_CONFIG" 2>/dev/null || echo "")"
+    fi
+fi
+# adapter-config.json's `hubUrl` carries the /mcp suffix; call_get_agents
+# appends /mcp itself, so normalise HOST to a bare base URL.
+HOST="${HOST%/}"
+HOST="${HOST%/mcp}"
+HOST="${HOST%/}"
+if [[ -z "$HOST" ]]; then
+    echo -e "${RED}[ERROR]${NC} Could not resolve a Hub URL." >&2
+    echo "        Tried: --host flag, \$HUB_URL, ${ADAPTER_CONFIG} ('hubUrl')." >&2
+    echo "        Pass --host <url>, export HUB_URL, or populate .ois/adapter-config.json." >&2
     exit 2
 fi
 

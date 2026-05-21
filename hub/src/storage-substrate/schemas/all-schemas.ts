@@ -34,7 +34,7 @@ const Agent: SchemaDef = {
     { name: "sessionEpoch", type: "number", required: false },
   ],
   indexes: [
-    // Mediated by IEngineerRegistry; by-role queries hot for list_available_peers + status checks
+    // Mediated by IEngineerRegistry; by-role queries hot for get_agents + status checks
     { name: "agent_role_idx", fields: ["role"] },
     // W4.x.1 — fingerprint is identity-lookup hot path (assertIdentity); replaces
     // FS-version agents/by-fingerprint/<fp>.json mirror (single canonical row per
