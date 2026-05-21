@@ -1410,3 +1410,33 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   can't pull).
 - NEXT: push the closeout commit → open the W4-closeout PR → architect cross-approve →
   W5 (trimmed).
+
+### 2026-05-20 — W5 START — soak clock running; AG-W5.7 + AG-W5.6 done
+
+- W4-closeout #228 merged `c346d5d`; thread-601 converged. W5 on thread-602 — architect
+  CONCURRED the W5 plan + answers; GO on W5.6 + W5.7. Branch `agent-greg/mission-86-w5`
+  off `c346d5d`. AG-W5.9 plugin-re-release gate — architect-owned (she's pinning it with
+  the Director); my W5.6/W5.7 track is independent.
+- **Soak clock (AG-W5.2 + AG-W5.3) running** from cutover-complete (~2026-05-20 22:43Z) —
+  passive; verify ~24h stability + ≥24 hourly GCS snapshots at the ~24h mark.
+- **AG-W5.7 — bug-101 → `resolved`.** Verified the fix is shipped + deployed: bug-101's
+  real-fix (Hub bootstrap migration-apply, option A) shipped W2 (#221, `b728b2f`), verified
+  GREEN (`e615865`), and is in the production cloud Hub (`f35b08a` is post-#221).
+  `update_bug bug-101` → status `resolved`, fixCommits `[b728b2f]`, fixRevision `f35b08a`,
+  linkedMissionId `mission-86`.
+- **AG-W5.6 — rollback runbook validated.** The runbook exists (`docs/operator/
+  cloud-deploy-rollback-runbook.md`, authored W4 #225). W5.6 = dry-run + currency pass:
+  - **Scenario-B dry-run:** B.1 (`gcloud artifacts docker images list`) — ran clean; shows
+    the digest history + the `hub:f35b08a` SHA-pin tag (a real rollback target exists).
+    B.2 (`gcloud artifacts docker tags add`) — exercised against a throwaway
+    `hub:w5-rollback-recipe-test` tag → confirmed resolution → deleted (non-destructive;
+    `:latest` untouched). B.3 (`docker pull` + `google_metadata_script_runner startup`) —
+    the exact path W4-prep executed verbatim for the `f35b08a` redeploy + verified.
+  - **Scenario A** — exercised for real in the W4 attempt-#2 incident (drained →
+    RESTORE-failed → `docker start ois-hub-local-prod` → recovered lossless).
+  - **Currency pass:** runbook → v1.1 — added a Post-cutover-status section (Scenario B is
+    the standing operational path; Scenario A is valid only until the W5.4 decommission);
+    fixed A.3 (revert `hubUrl` with the `/mcp` path AND `hubToken` — the W4 step-3 lesson).
+- NEXT: W5 PR (runbook v1.1 + work-trace) → architect cross-approve; W5.2/W5.3 verify at
+  ~24h; W5.4/W5.5 decommission held until the soak proves stable; AG-W5.9 on the plugin
+  re-release; AG-W5.8 mission close-ready last.
