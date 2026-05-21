@@ -188,4 +188,15 @@ export interface HubStorageSubstrate {
   // ── Data-portability (per Survey outcome 3 + Design §2.5) ─────────────────
   snapshot(targetPath: string): Promise<SnapshotRef>;
   restore(source: SnapshotRef): Promise<void>;
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
+  /**
+   * Release the substrate's connection resources (the postgres connection
+   * pool). Call at Hub shutdown / test teardown. Callers must have completed
+   * or aborted any active `watch()` iterators first — `close()` does not
+   * force-terminate in-flight watch streams. In-memory substrate: no-op (no
+   * connections to release). Promoted to the interface at bug-110 so teardown
+   * is a typed call rather than an `as unknown`-cast optional-chain.
+   */
+  close(): Promise<void>;
 }

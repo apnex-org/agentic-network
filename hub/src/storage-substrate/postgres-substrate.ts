@@ -13,6 +13,7 @@
  */
 
 import pg from "pg";
+import { attachPgErrorHandler } from "./pg-error-handler.js";
 import type {
   HubStorageSubstrate,
   SchemaDef,
@@ -40,6 +41,9 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
 
   constructor(connectionString: string) {
     this.pool = new Pool({ connectionString });
+    // bug-110 — without an 'error' listener an idle-connection backend error
+    // is an uncaught exception that crashes the process (pg contract).
+    attachPgErrorHandler(this.pool, "PostgresStorageSubstrate pool");
   }
 
   // ── Schema management (W2 reconciler integration; stubbed at W1) ──────────
@@ -230,6 +234,9 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
 
     // Step 2: LISTEN on entities_change channel; yield notifications matching kind+filter
     const client = new Client({ connectionString: (this.pool as unknown as { options: { connectionString: string } }).options.connectionString });
+    // bug-110 — the dedicated LISTEN connection needs its own 'error' handler;
+    // a backend error mid-watch would otherwise crash the process uncaught.
+    attachPgErrorHandler(client, "watch LISTEN client");
     await client.connect();
 
     // AbortSignal hookup — when aborted, end the LISTEN client to break the ready() wait

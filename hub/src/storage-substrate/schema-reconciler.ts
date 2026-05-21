@@ -20,6 +20,7 @@
  */
 
 import pg from "pg";
+import { attachPgErrorHandler } from "./pg-error-handler.js";
 import type { HubStorageSubstrate, SchemaDef, IndexDef } from "./types.js";
 
 const { Pool } = pg;
@@ -65,6 +66,9 @@ export class SchemaReconciler {
     private readonly opts: SchemaReconcilerOptions = {},
   ) {
     this.pool = new Pool({ connectionString });
+    // bug-110 — pg Pool without an 'error' listener crashes the process on an
+    // idle-connection backend error.
+    attachPgErrorHandler(this.pool, "SchemaReconciler pool");
     this.log = opts.log ?? ((m) => console.log(`[SchemaReconciler] ${m}`));
     this.warn = opts.warn ?? ((m, err) => console.warn(`[SchemaReconciler] ${m}`, err ?? ""));
     this.internalAbort = new AbortController();
