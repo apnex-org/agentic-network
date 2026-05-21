@@ -1440,3 +1440,36 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
 - NEXT: W5 PR (runbook v1.1 + work-trace) → architect cross-approve; W5.2/W5.3 verify at
   ~24h; W5.4/W5.5 decommission held until the soak proves stable; AG-W5.9 on the plugin
   re-release; AG-W5.8 mission close-ready last.
+
+### 2026-05-21 — W5: Director GO; plugin release v0.1.4 cut + published + verified
+
+- #229 merged `main @ 359738f`. **Director GO** (architect-relayed, thread-602 r7): cut the
+  first real `m-github-releases-plugin-distribution` release; **soak DESCOPED** (AG-W5.2
+  removed; AG-W5.3 satisfied-by-evidence — the 22 full-size post-cutover snapshots prove
+  the backup-runner; Design → v2.11); **W5.4/W5.5 decommission UNBLOCKED** (architect lean:
+  after AG-W5.9). Critical path: release-cut → operator reinstall → AG-W5.9 → decommission
+  → AG-W5.8 close.
+- **Release v0.1.4 CUT + PUBLISHED.** Confirmed `origin/main @ 359738f` carries the
+  bug-103/106 adapter-half in source (`firstTimerEnabled` in claude-plugin/network-adapter;
+  `INTERNAL_CALL_TAG`/`isInternalCall` in cognitive-layer). Cut annotated tag `v0.1.4` on
+  `359738f` (matches the `claude-plugin` package.json `0.1.4`; first real release — prior
+  runs were `v0.0.0-test` only). `release-plugin.yml` run `26197827376` — **success**
+  (install → prepack → structural-verify → `gh release create`). Release published:
+  github.com/apnex-org/agentic-network/releases/tag/v0.1.4.
+- **Post-publish verification (dogfood the published `.tgz`, not the local build):**
+  downloaded `apnex-claude-plugin-0.1.4.tgz` (220K). `dist/build-info.json` → `commitSha
+  359738f` (`dirty:true` = the prepack transient dep-swap, expected). claude-plugin `dist/`
+  complete (shim/observability/commit-push-hook/source-attribute `.js`+`.d.ts`). All 3
+  sovereign tarballs bundled + complete (network-adapter 19 / cognitive-layer 11 /
+  message-router 13 dist files). **bug-103 adapter-half present:** `firstTimerEnabled` in
+  `dist/shim.js` + network-adapter `dist/kernel/poll-backstop.js`. **bug-106 fix present:**
+  `isInternalCall`/`INTERNAL_CALL_TAG` in cognitive-layer `dist/index.js` + `contract.js`.
+- **Workflow annotation triaged — benign:** "Cannot find module '@apnex/message-router'"
+  — message-router's dist IS bundled (13 files) + claude-plugin `dist/source-attribute`
+  resolves the reference; a transient multi-pass-build type-resolution note (the
+  network-adapter↔message-router cycle), tsc emitted `.js` regardless, final dist complete.
+  Not a packaging defect.
+- NEXT: surface "v0.1.4 published + verified — ready for operator reinstall" → operator
+  (Director) reinstalls the plugin in both sessions + restarts → run **AG-W5.9** (no-op
+  docs PR → architect receives the PR-event notification) → W5.4/W5.5 decommission →
+  AG-W5.8 close.
