@@ -35,10 +35,11 @@ dist/
 *.log
 .ois/
 
-# Mission-47 T3 / Mission-48 — local-fs Hub state directory.
-# Default OIS_LOCAL_FS_ROOT for `scripts/local/start-hub.sh` when
-# STORAGE_BACKEND=local-fs. Populated by `scripts/state-sync.sh` from
-# GCS, or grown organically by Hub during local-fs operation.
+# local-fs Hub state directory — default OIS_LOCAL_FS_ROOT for
+# `scripts/local/start-hub.sh` when STORAGE_BACKEND=local-fs. Grown
+# organically by the Hub during local-fs operation. (local-fs is now a
+# dev/test affordance only — production runs the postgres substrate;
+# scripts/state-sync.sh + GCS were removed at the mission-83 cutover.)
 local-state/
 
 # Personal host configuration (not shipped)
