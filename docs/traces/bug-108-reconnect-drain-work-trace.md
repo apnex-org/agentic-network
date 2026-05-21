@@ -151,3 +151,35 @@ works. The defect is purely where the shims route that hook:
   confirm a drained notification wakes the session; confirm `Pending actions` clears)
   is coordinated on thread-606 — needs a notification dispatched during a disconnect
   window, so it is architect-coordinated.
+
+### 2026-05-21 PM/EVE AEST — bug-108 RESOLVED — primary verified live; PR B applied; storm calmed
+
+- **Primary fix verified on the live cloud Hub.** thread-607 verification run: architect
+  fired `bug-108-verify` pings across the storm; pings 1–3 all landed `streaming` (live
+  `onActionableEvent` — the ~1s disconnect window is hard to hand-time). The dispositive
+  hit was organic — at `11:40:01` a real `sse_watchdog` reconnect drained a pending action
+  and surfaced it: `[StateSync] Drained 1 pending action item(s)` → `[Channel] Pushed
+  thread_message (actionable)`. That is the v0.1.5 `surfacePendingActionItem` →
+  `pushChannelNotification` path executing on the live cloud Hub (pre-v0.1.5: log-only,
+  no `[Channel] Pushed`). Architect concurred — the drain→surface path is provenance-
+  agnostic, so it proves the path for any drained item; the controlled longer-disconnect
+  test was skipped as belt-and-suspenders (no new code path).
+- **`Pending actions: 2`** — architect traced it to stale `task-144` (M17, retro-closed
+  bypassing the FSM). NOT bug-108 loss, NOT a v0.1.5 failure — old queue cruft; closed the
+  bug filing's "two items not draining" open question.
+- **PR B (#236) merged → `main @ aea11f1`.** The redeploy is 2-step (the nginx
+  `proxy_*_timeout` is image-baked — `proxy/Dockerfile` `COPY default.conf.template`):
+  (1) rebuilt + pushed `hub-proxy:latest` via `gcloud builds submit` (Cloud Build SUCCESS;
+  `sha256:580a2d3c…`, 3600s nginx config baked in); (2) `terraform apply bug108-tfplan`
+  on `deploy/hub/` (terraform GCS-backend auth via the `terraform@labops-389703` SA key).
+  Plan reviewed at the gate — `0 add, 1 change, 0 destroy`: `timeout 300s→3600s` +
+  benign stale-state `scaling`-block drop + W4-closeout token-output materialisation.
+- **Apply succeeded** — Cloud Run revision `hub-api-00002-k5t`; live `timeoutSeconds: 3600`;
+  `/health` 200; new revision serves the rebuilt proxy.
+- **Storm calmed — dispositive.** shim.log: pre-apply 125 `sse_watchdog` reconnects at a
+  clockwork ~5-min cadence (08:50 → 12:05); post-apply a 6-reconnect transition cluster
+  (12:07–12:12, the Cloud Run revision roll), then **zero reconnects for 10h+** (12:12 →
+  22:12). The 300s→3600s SSE-timeout fix works in production.
+- **bug-108 → `resolved`** (architect-flipped; fixCommits `1232920` PR A + `aea11f1` PR B).
+- Separate test-infra debt (dead `PolicyLoopbackHub` e2e harness + opencode-plugin
+  baseline) tracked as bug-109; stale `task-144` queue cleanup deferred — both architect-owned.
