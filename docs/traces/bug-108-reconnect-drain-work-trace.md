@@ -91,3 +91,25 @@ works. The defect is purely where the shims route that hook:
   → assert the `notifications/claude/channel` wake at the mock MCP client. Surfaced the
   harness-dead finding to architect on thread-605.
 - NEXT: write the `LoopbackHub`-based e2e test → build+verify → PR A.
+
+### 2026-05-21 PM AEST — e2e test GREEN; no regressions; PR A
+
+- Architect concurred (thread-605 r7): LoopbackHub call is right, meets the bar;
+  keep driving.
+- **`bug-108-reconnect-drain.test.ts` written + passing.** Real `McpAgentClient` +
+  `LoopbackHub` + `LoopbackTransport`; real reconnect (`_simulateWireReconnect(
+  "sse_watchdog")`) → real `performStateSync` → real `drain_pending_actions` RPC →
+  real `surfacePendingActionItem` → asserts the `notifications/claude/channel` wake
+  lands at the mock MCP client (`meta.event=thread_message`, `meta.threadId`,
+  `meta.level=actionable`, non-empty content). Only the Hub's drain *response* is
+  stubbed. Discriminating: the pre-fix log-only wiring produces no channel push →
+  the `waitFor` would time out.
+- **No regressions — baseline-verified.** claude-plugin suite, my changes stashed
+  vs applied: baseline `5 failed | 131 passed`; with PR A `5 failed | 132 passed`
+  (the +1 is the new bug-108 test). The 4 failed files / 5 failed tests are
+  byte-identical pre-existing debt — `shim.e2e.test.ts` + `bug-25-truncation.e2e.test.ts`
+  (dead `PolicyLoopbackHub`), `eager-claim.test.ts` (`parseClaimSessionResponse`
+  drift), `MockClaudeClient.test.ts`. claude-plugin `tsc --noEmit` clean.
+- CI expectation for PR A: the 5 required gates green; `vitest (adapters/claude-plugin)`
+  fails with the SAME pre-existing 5 — the known non-hub debt, not a PR-A regression.
+- NEXT: commit the e2e test → open PR A.
