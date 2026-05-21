@@ -49,7 +49,10 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await (substrate as unknown as { close: () => Promise<void> }).close?.();
+  // bug-110 — substrate.close() is a typed interface member; close the pool
+  // deterministically before the testcontainer is torn down (no `as unknown`
+  // cast, no optional-chain that would silently no-op a missing teardown).
+  await substrate.close();
   await container.stop();
 }, 30_000);
 

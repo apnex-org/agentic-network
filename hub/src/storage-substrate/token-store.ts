@@ -21,6 +21,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import pg from "pg";
+import { attachPgErrorHandler } from "./pg-error-handler.js";
 
 const { Pool } = pg;
 
@@ -54,6 +55,9 @@ export class TokenStore {
 
   constructor(connectionString: string) {
     this.pool = new Pool({ connectionString });
+    // bug-110 — pg Pool without an 'error' listener crashes the process on an
+    // idle-connection backend error.
+    attachPgErrorHandler(this.pool, "TokenStore pool");
   }
 
   /** Load all live token hashes into the cache. Call once at Hub bootstrap. */

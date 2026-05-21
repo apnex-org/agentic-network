@@ -311,6 +311,13 @@ class MemoryStorageSubstrate implements HubStorageSubstrate {
     throw new Error("MemoryHubStorageSubstrate — restore N/A by design (in-process; data lost on process exit)");
   }
 
+  // ─── Lifecycle ────────────────────────────────────────────────────────────
+
+  /** No-op — the in-memory substrate holds no connection resources to release. */
+  async close(): Promise<void> {
+    /* in-memory — nothing to release */
+  }
+
   // ─── Internal helpers ─────────────────────────────────────────────────────
 
   private getKindStore(kind: string): Map<string, EntityRow> {
