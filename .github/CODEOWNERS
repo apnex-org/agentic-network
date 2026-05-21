@@ -78,8 +78,8 @@
 # ------------------------------------------------------------------
 # Explicitly NOT covered here (by design):
 #
-# - start-*.sh, architect-chat.sh, scripts/local/ and other
-#   session-local files must not land on main at all. CODEOWNERS
+# - start-*.sh, scripts/local/ and other session-local files
+#   must not land on main at all. CODEOWNERS
 #   is review-routing; it does not prevent files from landing.
 #   That enforcement lives in secret-scan CI (T4) + pre-commit
 #   hook (T5), not here.
