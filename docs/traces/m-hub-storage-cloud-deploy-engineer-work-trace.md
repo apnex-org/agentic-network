@@ -1502,3 +1502,38 @@ W4 production cutover (~30s) · W5 validation + decommission + rollback runbook.
   was closed at #224; AG-W5.9 is the real-adapter production form.
 - NEXT: W5.4/W5.5 decommission (local-Hub container + postgres removal + final state
   archive — unblocked, soak-hold gone per Director-GO) → AG-W5.8 close-ready → W5-close PR.
+
+### 2026-05-21 PM AEST — W5.4 + W5.5 — local-Hub decommission COMPLETE; AG-W5.8 close-ready
+
+- **W5.5 — final-state archive (executed first; architect-approved path (a)).** Fresh
+  `pg_dump -Fc` of the frozen local Hub postgres via `hub-snapshot.sh save` →
+  `mission-86-final-local-hub-state-20260521-042041.dump` (+ `.dump.meta`).
+  - **Gate 1 — local integrity ✅:** entity-count `SELECT count(*) FROM entities` = **18541**
+    (exact cutover-parity match); dump size **8,772,560 bytes** — byte-exact to the cutover
+    baseline `cutover/hub-cutover-20260520-224232.dump` (local pg genuinely frozen since
+    W4.5); `pg_restore --list` — valid CUSTOM-format archive, 46 TOC entries, both tables
+    (`entities` + `bearer_tokens`) present.
+  - **Gate 2 — post-upload verification ✅:** uploaded to the permanent retention path
+    `gs://labops-389703-hub-backups/archive/mission-86-final-local-hub-state-20260521-042041.dump`
+    (+ `.dump.meta`); GCS object verified landed + byte-intact — size `8772560`, crc32c
+    `FsyVvQ==`, md5 `7rKxucpWlV4NBu6CSp1tZg==`, all matching the local dump.
+  - Backup posture (architect-confirmed): local Hub final state preserved in TWO
+    independent GCS objects (`archive/` + the byte-identical `cutover/` copy) + 26 hourly
+    `snapshots/`. Bucket no-expiry lifecycle rule on `archive/` = operator/Director
+    close-time follow-up (architect-carried, alongside the TF token-output `terraform apply`).
+- **W5.4 — local-Hub decommission COMPLETE (Director-approved GO; both gates green).**
+  Executed in one block: `docker rm ois-hub-local-prod` (was `Exited`) → `docker stop` +
+  `docker rm hub-substrate-postgres` → `docker volume rm hub-substrate-data` (the
+  irreversible step). Post-state verified: no `ois-hub-local-prod` / `hub-substrate-postgres`
+  containers, no `hub-substrate-data` volume. Images retained per plan (`ois-hub:local`,
+  `ois-hub:local-substrate`, `ois-hub:local-backup`, `postgres:15-alpine` — cosmetic, no prune).
+- **Scenario-A rollback target retired.** Rollback runbook v1.1 already records Scenario A
+  as valid only until the W5.4 decommission — runbook stays correct; Scenario B
+  (cloud-Hub image rollback) remains the standing operational path.
+- **AG-W5.8 — mission close-ready.** All mission-86 waves complete: W0–W3b (substrate +
+  bearer-token auth + bug-101/102), W4 (production cutover — 7 AG gates), W5 (validation:
+  AG-W5.6 runbook v1.1, AG-W5.7 bug-101 resolved, AG-W5.9 bug-103 production proof, soak
+  descoped Director-direct, W5.4/W5.5 decommission). Cloud Hub is sole production; local
+  Hub fully decommissioned + archived. mission-86 is close-ready.
+- NEXT: W5-close PR (this branch) → architect cross-approve + merge → Phase 9 close +
+  Phase 10 retrospective.
