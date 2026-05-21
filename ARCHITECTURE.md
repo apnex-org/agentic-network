@@ -111,20 +111,18 @@ Tools are organized into domain modules in `src/tools/` with strict dependency i
 
 **Session management:** 3min TTL reaper prunes inactive sessions every 60s. Orphan sessions (`role: unknown`) pruned after 60s. 30s keepalive heartbeat resets TTL. Atomic cleanup: transport + server + sseActive + lastActivity. Zombie session pruning: when a new session registers a role, dead sessions (SSE inactive) of the same role are aggressively pruned to prevent accumulation from Cloud Run connection draining. Hub `stop()` uses per-transport 2s timeout to prevent shutdown hangs.
 
-### Architect (`agents/vertex-cloudrun/`, launched with `role=architect`)
+### Architect (agent-adapter plugin, `role=architect`)
 
-The governance and planning agent. Reviews work, issues directives, manages threads.
+The governance and planning agent — reviews work, issues directives, manages threads.
 
-- **Runtime:** Node.js 22 on Cloud Run
-- **LLM:** `gemini-3-flash-preview` via `@google/genai` (Vertex AI). The model ID is hardcoded at `agents/vertex-cloudrun/src/llm.ts:19`; see ADR-012 for the error-surfacing and context-economy contracts around Gemini calls.
-- **Hub connection:** `hub-adapter.ts` → `@apnex/network-adapter` `McpAgentClient` with `manualSync: true` (shared with Plugin)
-- **Director interface:** `POST /chat/session`, `POST /chat/message` (multi-turn with function calling)
+The architect runs as a host-LLM session (e.g. Claude Code) with the `@apnex/claude-plugin`
+agent-adapter configured `role=architect` — the same adapter the engineer uses,
+differentiated only by role. It connects to the Hub's `/mcp` endpoint via the bundled
+network-adapter.
 
-**Key patterns:**
-- **Sandwich pattern:** deterministic FETCH (hub-adapter) → LLM REASON → deterministic EXECUTE (hub-adapter). LLM only handles non-deterministic reasoning.
-- **SSE listener:** receives Hub notifications, dispatches to sandwich handlers
-- **Event loop:** 300s catch-up polling via `get_pending_actions`
-- **Context store:** unified GCS-backed memory (`context.ts`) with `buildDirectorContext()` (full history) and `buildAutonomousContext()` (compressed summary)
+The former standalone Cloud Run architect service (`agents/vertex-cloudrun/` — a Node.js
+Vertex AI app exposing a `POST /chat` Director interface) was deprecated and removed; the
+architect is no longer a separately-deployed service.
 
 ### Engineer Plugin (`adapters/opencode-plugin/src/shim.ts` + `dispatcher.ts`)
 
@@ -167,7 +165,6 @@ Either agent calls open_thread → Hub stores, SSE notifies other party
 | Service        | Platform  | Region                 | Min Instances | URL                                                  |
 |----------------|-----------|------------------------|---------------|------------------------------------------------------|
 | Hub            | Cloud Run | australia-southeast1   | 1             | mcp-relay-hub-5muxctm3ta-ts.a.run.app                |
-| Architect      | Cloud Run | australia-southeast1   | 1             | architect-agent-614327680171.australia-southeast1.run.app |
 | Engineer Plugin| Local     | Developer machine      | N/A           | 127.0.0.1:{random port}                              |
 
 ## Key Design Decisions

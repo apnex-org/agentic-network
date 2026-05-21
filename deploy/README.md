@@ -1,23 +1,46 @@
 # OIS Agentic Network — Terraform Deploy
 
-Two-plan structure as of 2026-04-22. Pre-split monolith archived under `archive-pre-split-2026-04-22/` for reference.
+## Current — production Hub (`deploy/hub/` + `modules/hub/`)
 
-Mission-46 T1 (2026-04-24) added multi-environment support — see §Multi-environment layout below. Mission-46 T2 added the `deploy/new-environment-bootstrap.sh` wrapper that stands up a new env end-to-end; see the step-by-step runbook at [`docs/onboarding/multi-env-operator-setup.md`](../docs/onboarding/multi-env-operator-setup.md) for cold-operator instructions.
-
-## Structure
+The production Hub runs on a single internal-only GCE VM (`australia-southeast1`) as a
+3-container docker-compose stack — Hub + Postgres + Watchtower — fronted by a Cloud Run
+nginx proxy for TLS + ingress. Provisioned by mission-86 (M-Hub-Storage-Cloud-Deploy);
+see `docs/designs/m-hub-storage-cloud-deploy-design.md` and the operator runbooks under
+`docs/operator/`.
 
 ```
-deploy/
-  base/                — Foundation tier: APIs, SA + IAM, GCS bucket, Artifact Registry
-                         (long-lived; rarely destroyed; must apply first)
-  cloudrun/            — Application tier: Hub + Architect services + public IAM
-                         (frequently redeployed; sometimes destroyed; reads base outputs)
-  build-hub.sh         — Cloud Build → Artifact Registry wrapper for the Hub container.
-  deploy-hub.sh        — Cloud Run roll wrapper for hub-<env>.
-  build-architect.sh   — Cloud Build → Artifact Registry wrapper for the Architect container.
-  deploy-architect.sh  — Cloud Run roll wrapper for architect-<env>.
-  archive-pre-split-2026-04-22/ — Pre-split monolith (not active)
+modules/hub/   — reusable Hub Terraform module (compute, network, Cloud Run proxy, IAM,
+                 Secret Manager, Artifact Registry, Cloud Build). Environment-agnostic.
+deploy/hub/    — thin root caller: invokes modules/hub/ with per-env tfvars. A second
+                 deployment is just another thin root caller pointing at ../../modules/hub.
 ```
+
+### Apply
+
+```bash
+cd deploy/hub
+terraform init
+terraform plan  -var-file=env/prod.tfvars
+terraform apply -var-file=env/prod.tfvars
+```
+
+`deploy/hub/env/prod.tfvars` is operator-populated and gitignored — copy it from
+`deploy/hub/env/prod.tfvars.example`.
+
+## Legacy — pending removal (`deploy/base/` + `deploy/cloudrun/`)
+
+`deploy/base/` (foundation tier) and `deploy/cloudrun/` (the old Architect Cloud Run
+service) are the pre-mission-86 "two-plan" Cloud Run deployment. The Hub-on-Cloud-Run
+service was retired by mission-86; the Architect / `vertex-cloudrun` stack is deprecated,
+and its source (`agents/vertex-cloudrun/`) plus the `deploy/build-*.sh` / `deploy/deploy-*.sh`
+wrapper scripts have been removed. `deploy/base/` + `deploy/cloudrun/` themselves are
+slated for a follow-on cleanup, once the `scripts/local/{start,build}-hub.sh` config
+dependency on `deploy/cloudrun/env/` is migrated. Do not extend them.
+
+> The sections below predate mission-86 and are pending a currency pass. They document
+> local-dev Hub workflows (local-fs profile, GCS↔local-fs cutover/rollback runbooks, the
+> build-hub tarball-staging mechanism, repo-event-bridge config) — accurate in spirit but
+> not yet reconciled against the mission-86 cloud Hub. Treat with care.
 
 ## Multi-environment layout
 
@@ -62,21 +85,6 @@ terraform apply -var-file=env/${ENV}.tfvars
 cd deploy/cloudrun
 terraform destroy -var-file=env/${ENV}.tfvars
 ```
-
-## Build + deploy scripts (OIS_ENV-aware)
-
-```bash
-# Typical mission-ship flow for the Hub container:
-OIS_ENV=<env> deploy/build-hub.sh --tag "mission-XX-$(date -u +%Y%m%d-%H%M%S)"
-# ... note the printed timestamped URI ...
-OIS_ENV=<env> deploy/deploy-hub.sh --image "<printed-uri>"
-
-# Same flow for the Architect container:
-OIS_ENV=<env> deploy/build-architect.sh --tag "mission-XX-$(date -u +%Y%m%d-%H%M%S)"
-OIS_ENV=<env> deploy/deploy-architect.sh --image "<printed-uri>"
-```
-
-All four scripts read only `project_id`, `region`, and service-name keys from the env's tfvars. They never read, print, or log secret material (hub_api_token / architect_global_instance_id).
 
 ## Local Docker Hub (scripts/local/)
 
