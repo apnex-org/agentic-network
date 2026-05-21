@@ -47,5 +47,22 @@ works. The defect is purely where the shims route that hook:
 - thread-605: architect surfaced bug-108 (Director-critical). Code-traced the root
   cause, posted the read, architect concurred the fix shape (split, PR A first).
 - Branch `agent-greg/bug-108-reconnect-drain` cut off `origin/main @ 851dfb9`.
-- NEXT: claude-plugin shim fix → opencode-plugin shim fix → integration test →
+- **claude-plugin shim fixed** — `onPendingActionItem` now mirrors the live
+  `onActionableEvent` path: `appendPendingActionLog` (diagnostic mirror, kept) +
+  `pushChannelNotification` (the `notifications/claude/channel` actionable wake),
+  pulse-level discriminated via `isPulseEvent`. `tsc --noEmit` clean.
+- **opencode-plugin shim fixed** — `onPendingActionItem` now also builds a
+  `QueuedNotification` and routes it through the same `notificationQueue` /
+  `processNotification` wake the live `onActionableEvent` uses.
+- **Finding — opencode-plugin baseline does not typecheck on `main`**: pre-existing
+  errors (`assertHostWiringComplete` import, `firstTimerEnabled`, handshake `name`)
+  unrelated to this change — opencode-plugin is one of the known-failing non-hub
+  CI cells. My edit adds no errors at its lines but rides a broken baseline.
+  Surfaced to architect on thread-605.
+- **Finding — test-architecture**: the real shim `onPendingActionItem` handler is
+  inline in `shim.ts`'s `main()` (not importable; no `isMainModule` guard). A true
+  end-to-end test of the real handler needs either a surfacing-extraction to an
+  importable module or an `isMainModule` guard on the plugin entry. Surfaced to
+  architect for a mechanism call before writing the integration test.
+- NEXT: architect input on the test-architecture fork → integration test →
   build+verify → PR A.

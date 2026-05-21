@@ -622,7 +622,26 @@ async function main(): Promise<void> {
         onPendingActionItem: (item) => {
           if (dispatcherRef) {
             dispatcherRef.makePendingActionItemHandler({
-              onPendingActionItem: appendPendingActionLog,
+              // bug-108: a reconnect-drained pending action is a
+              // notification that arrived while the wire was down — it
+              // MUST wake the session, not just hit the diagnostic log.
+              // Mirror the live onActionableEvent path: appendPendingActionLog
+              // (diagnostic mirror) + pushChannelNotification (the actionable
+              // `<channel>` wake). The drained item's payload IS the original
+              // dispatchPayload — hub thread-policy.ts enqueues
+              // `payload: dispatchPayload` — so {event,data} reconstructs the
+              // same AgentEvent the live SSE path delivers.
+              onPendingActionItem: (drained) => {
+                appendPendingActionLog(drained);
+                const agentEvent = {
+                  event: drained.dispatchType,
+                  data: drained.payload,
+                };
+                const level = isPulseEvent(agentEvent.event, agentEvent.data)
+                  ? "informational"
+                  : "actionable";
+                pushChannelNotification(mcpServer, agentEvent, level);
+              },
             })(item);
           }
         },
