@@ -113,3 +113,19 @@ works. The defect is purely where the shims route that hook:
 - CI expectation for PR A: the 5 required gates green; `vitest (adapters/claude-plugin)`
   fails with the SAME pre-existing 5 — the known non-hub debt, not a PR-A regression.
 - NEXT: commit the e2e test → open PR A.
+
+### 2026-05-21 PM AEST — PR A MERGED; v0.1.5 release-prep
+
+- **PR #234 (PR A) cross-approved + MERGED → `main @ 1232920f`.** Architect reviewed
+  the full diff — fix correct, e2e test real + discriminating, CI 5/5 required green,
+  no regressions. thread-605 converged.
+- Architect filed **bug-109** for the separate test-infra debt (dead `PolicyLoopbackHub`
+  e2e harness + opencode-plugin baseline) — out of bug-108 scope.
+- **v0.1.5 release-prep:** PR A did not bump the plugin version, so `release-plugin.yml`
+  (tag-triggered) would publish a `0.1.4`-named tarball under a `v0.1.5` release. Bumped
+  `adapters/claude-plugin/package.json` `0.1.4 → 0.1.5` + the matching `package-lock.json`
+  entry (surgical edit — no `npm install` re-resolve, avoids the optional-peer-dep
+  lockfile-strip trap). Version-bump PR → merge → tag `v0.1.5` → `release-plugin.yml`.
+- NEXT: open the v0.1.5 version-bump PR → architect cross-approve + merge → tag `v0.1.5`
+  → verify the published artifact → operator reinstall → live reconnect verification →
+  PR B (infra timeout). Live-verification + PR B coordinated on a fresh thread.
