@@ -29,8 +29,11 @@ server {
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
 
-        # MCP keepalive — long-lived streaming calls.
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
+        # MCP keepalive — long-lived SSE streaming calls. bug-108: raised
+        # 300s → 3600s. The 300s cap force-closed the SSE notification
+        # stream every ~5 min, driving a reconnect storm; 3600s cuts that
+        # churn ~12x. Matched by the Cloud Run service timeout (cloudrun.tf).
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
     }
 }

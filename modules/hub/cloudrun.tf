@@ -14,6 +14,12 @@ resource "google_cloud_run_v2_service" "hub_api" {
   template {
     service_account = google_service_account.proxy.email
 
+    # bug-108: SSE notification streams are long-lived. The Cloud Run
+    # default request timeout (300s) force-closed them every ~5 min,
+    # driving a reconnect storm. 3600s (the Cloud Run max) cuts that
+    # churn ~12x. Matched by the nginx proxy_*_timeout (proxy/default.conf.template).
+    timeout = "3600s"
+
     scaling {
       min_instance_count = var.proxy_min_instances # 1 = no cold-start (OQ-18)
       max_instance_count = var.proxy_max_instances

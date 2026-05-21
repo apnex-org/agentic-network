@@ -129,3 +129,25 @@ works. The defect is purely where the shims route that hook:
 - NEXT: open the v0.1.5 version-bump PR → architect cross-approve + merge → tag `v0.1.5`
   → verify the published artifact → operator reinstall → live reconnect verification →
   PR B (infra timeout). Live-verification + PR B coordinated on a fresh thread.
+
+### 2026-05-21 PM AEST — v0.1.5 published; fresh greg on v0.1.5; PR B
+
+- **#235 merged → `main @ 18c8e34`**; annotated tag `v0.1.5` cut on it →
+  `release-plugin.yml` run `26222446827` success. **v0.1.5 published + verified** —
+  `apnex-claude-plugin-0.1.5.tgz`, `build-info.json commitSha 18c8e34`, the bug-108 fix
+  present in the published `dist/` (`notification-surface.js` + `shim.js` calling
+  `surfacePendingActionItem`), 3 sovereign tarballs bundled. Surfaced on thread-606.
+- **Operator reinstalled both sessions; fresh greg picked up on the v0.1.5 adapter**
+  (`@apnex/claude-plugin @ 0.1.5`, build `18c8e34` — confirmed carries the fix).
+  shim.log: v0.1.5 session reconnecting on the ~5-min `sse_watchdog` cadence,
+  StateSync runs each reconnect, `Pending actions: 0` (greg's queue empty).
+- **PR B — infra 300s-timeout mitigation** (branch `agent-greg/bug-108-pr-b-timeout`):
+  `modules/hub/proxy/default.conf.template` `proxy_read/send_timeout` 300s → 3600s;
+  `modules/hub/cloudrun.tf` add `timeout = "3600s"` to the Cloud Run service template.
+  `terraform fmt` clean, `terraform validate` → Success. ~12x less reconnect churn —
+  mitigation, not the correctness fix (PR A is). Ships via Hub redeploy (operator/
+  Director-coordinated, like the W4 TF apply).
+- NEXT: open PR B → architect cross-approve. Live verification (force a reconnect,
+  confirm a drained notification wakes the session; confirm `Pending actions` clears)
+  is coordinated on thread-606 — needs a notification dispatched during a disconnect
+  window, so it is architect-coordinated.
