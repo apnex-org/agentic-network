@@ -409,5 +409,9 @@ clear it.
   +22/−0 delta. A plain `npm install --package-lock-only` additionally stripped
   two `@emnapi/*` optional-peer entries (a known `npm ci` hazard) — avoided via
   the surgical edit.
-- NEXT: commit + push #244 → watch CI → re-surface on thread-609 when the
-  network-adapter cell is genuinely 17/17 green. NEXT (post-merge): PR-4c.
+- `ulidx` devDep pushed (`cec373c`). **CI re-verified — `vitest (packages/network-adapter)`
+  cell PASS: `Test Files 17 passed (17)`.** The cell is genuinely green end-to-end;
+  `vitest (hub)` + the `test` aggregator + `coverage-report-sync` + cognitive-layer
+  also green. claude-plugin + opencode stay red on their PR-4c residuals
+  (globalInstanceId / eager-claim / opencode stale-dist) — expected.
+- #244 re-surfaced on thread-609 for cross-approval. NEXT (post-merge): PR-4c.
