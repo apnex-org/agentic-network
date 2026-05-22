@@ -97,4 +97,5 @@ idea-308 NOTE + architect: *are `scripts/local/{start,build}-hub.sh` still the r
 
 - Architect ratified (b) — lean module-concern map; drop the export tables + dated naming-verdict content.
 - `docs/sdk-guide.md` rewritten as a module-concern map (497 → ~150 lines): per-module *concern* + source pointer, no export tables, no naming-verdicts. Current package/module layout surveyed for accuracy.
-- W2 PR opened. Net ≈ −1374 lines across the slice.
+- W2 PR opened (#252). CI 9/9 green.
+- Architect review (thread-614 r7): one fix — `hub/scripts/entity-kinds.json:306` carve-out annotation listed the now-deleted `architect-engineer-collaboration.md`. I'd consciously left it (judged a SchemaDef-inventory edit out-of-scope); architect corrected — it's a live file, not archival, and a one-token drop. Same class as the W1 `cloudrun.tf` catch. Fixed + JSON-validated; pushed to #252.
