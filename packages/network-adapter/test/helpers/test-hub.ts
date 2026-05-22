@@ -15,12 +15,26 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { HubNetworking } from "../../../../hub/src/hub-networking.js";
-import type { CreateMcpServerFn, NotifyEventFn, HubNetworkingConfig } from "../../../../hub/src/hub-networking.js";
-import { MemoryEngineerRegistry, MemoryNotificationStore, MemoryTaskStore, MemoryProposalStore, MemoryThreadStore, MemoryAuditStore } from "../../../../hub/src/state.js";
-import { MemoryIdeaStore } from "../../../../hub/src/entities/idea.js";
-import { MemoryMissionStore } from "../../../../hub/src/entities/mission.js";
-import { MemoryTurnStore } from "../../../../hub/src/entities/turn.js";
-import { MemoryTeleStore } from "../../../../hub/src/entities/tele.js";
+import type { CreateMcpServerFn, NotifyEventFn, DispatchEventFn, HubNetworkingConfig } from "../../../../hub/src/hub-networking.js";
+// bug-109 — TestHub repaired against the post-mission-83 substrate. The
+// Memory*Store classes this harness used were removed by the substrate
+// migration; it is rebuilt on createMemoryStorageSubstrate + the
+// *RepositorySubstrate repositories — the same AllStores construction
+// hub/src/policy/test-utils.ts and the PR-4b PolicyLoopbackHub repair use.
+import { createMemoryStorageSubstrate } from "../../../../hub/src/storage-substrate/index.js";
+import { SubstrateCounter } from "../../../../hub/src/entities/substrate-counter.js";
+import { AgentRepositorySubstrate } from "../../../../hub/src/entities/agent-repository-substrate.js";
+import { TaskRepositorySubstrate } from "../../../../hub/src/entities/task-repository-substrate.js";
+import { ProposalRepositorySubstrate } from "../../../../hub/src/entities/proposal-repository-substrate.js";
+import { ThreadRepositorySubstrate } from "../../../../hub/src/entities/thread-repository-substrate.js";
+import { IdeaRepositorySubstrate } from "../../../../hub/src/entities/idea-repository-substrate.js";
+import { MissionRepositorySubstrate } from "../../../../hub/src/entities/mission-repository-substrate.js";
+import { TurnRepositorySubstrate } from "../../../../hub/src/entities/turn-repository-substrate.js";
+import { TeleRepositorySubstrate } from "../../../../hub/src/entities/tele-repository-substrate.js";
+import { AuditRepositorySubstrate } from "../../../../hub/src/entities/audit-repository-substrate.js";
+import { BugRepositorySubstrate } from "../../../../hub/src/entities/bug-repository-substrate.js";
+import { MessageRepositorySubstrate } from "../../../../hub/src/entities/message-repository-substrate.js";
+import { PendingActionRepositorySubstrate } from "../../../../hub/src/entities/pending-action-repository-substrate.js";
 import { PolicyRouter } from "../../../../hub/src/policy/router.js";
 import { registerSessionPolicy } from "../../../../hub/src/policy/session-policy.js";
 import type { IPolicyContext, AllStores } from "../../../../hub/src/policy/types.js";
@@ -105,6 +119,7 @@ function createMcpServer(
   getSessionId: () => string,
   getClientIp: () => string,
   notifyEvent: NotifyEventFn,
+  dispatchEvent: DispatchEventFn,
   stores: AllStores,
   policyRouter: PolicyRouter,
   documentStore: MemoryDocumentStore,
@@ -127,13 +142,17 @@ function createMcpServer(
       emit: async (event, data, targetRoles) => {
         await notifyEvent(event, data, targetRoles);
       },
+      // Mission-19 selector-dispatch — HubNetworking threads a dispatchEvent
+      // fn into the server factory (CreateMcpServerFn 4th arg).
+      dispatch: async (event, data, selector) => {
+        await dispatchEvent(event, data, selector);
+      },
       sessionId,
       clientIp: getClientIp(),
       role: stores.engineerRegistry.getRole(sessionId),
       internalEvents: [],
-      config: { storageBackend: "memory", gcsBucket: "" },
       metrics: createMetricsCounter(),
-    } as IPolicyContext;
+    };
   }
 
   const server = new McpServer(
@@ -271,30 +290,37 @@ function createMcpServer(
 
 export class TestHub {
   private hub: HubNetworking;
-  private engineerRegistry: MemoryEngineerRegistry;
-  private notificationStore: MemoryNotificationStore;
   private stores: AllStores;
   public documentStore: MemoryDocumentStore;
   private toolCallLog: ToolCall[] = [];
   private errorQueue: ToolErrorInjection[] = [];
 
   constructor(options: TestHubOptions = {}) {
-    this.engineerRegistry = new MemoryEngineerRegistry();
-    this.notificationStore = new MemoryNotificationStore();
     this.documentStore = new MemoryDocumentStore();
 
-    const task = new MemoryTaskStore();
-    const idea = new MemoryIdeaStore();
+    // Substrate-version repositories over a fresh MemoryHubStorageSubstrate +
+    // SubstrateCounter — mirrors hub/src/policy/test-utils.ts createTestContext.
+    const substrate = createMemoryStorageSubstrate();
+    const counter = new SubstrateCounter(substrate);
+    const task = new TaskRepositorySubstrate(substrate, counter);
+    const idea = new IdeaRepositorySubstrate(substrate, counter);
+    const mission = new MissionRepositorySubstrate(substrate, counter, task, idea);
+    const engineerRegistry = new AgentRepositorySubstrate(substrate);
+    const audit = new AuditRepositorySubstrate(substrate, counter);
+    const message = new MessageRepositorySubstrate(substrate);
     this.stores = {
       task,
-      engineerRegistry: this.engineerRegistry,
-      proposal: new MemoryProposalStore(),
-      thread: new MemoryThreadStore(),
-      audit: new MemoryAuditStore(),
+      engineerRegistry,
+      proposal: new ProposalRepositorySubstrate(substrate, counter),
+      thread: new ThreadRepositorySubstrate(substrate, counter),
+      audit,
       idea,
-      mission: new MemoryMissionStore(task, idea),
-      turn: new MemoryTurnStore(),
-      tele: new MemoryTeleStore(),
+      mission,
+      turn: new TurnRepositorySubstrate(substrate, counter, mission, task),
+      tele: new TeleRepositorySubstrate(substrate, counter),
+      bug: new BugRepositorySubstrate(substrate, counter),
+      pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
+      message,
     };
 
     // Build policy router with attached production policies
@@ -308,11 +334,12 @@ export class TestHub {
     const docStore = this.documentStore;
     const toolCallLog = this.toolCallLog;
     const errorQueue = this.errorQueue;
-    const createServer: CreateMcpServerFn = (getSessionId, getClientIp, notifyEvent) => {
+    const createServer: CreateMcpServerFn = (getSessionId, getClientIp, notifyEvent, dispatchEvent) => {
       return createMcpServer(
         getSessionId,
         getClientIp,
         notifyEvent,
+        dispatchEvent,
         stores,
         policyRouter,
         docStore,
@@ -333,11 +360,15 @@ export class TestHub {
       bindAddress: "127.0.0.1",
     };
 
+    // HubNetworking signature (mission-56 W5): the legacy notificationStore
+    // 2nd arg was removed (the push pipeline flows through the Message
+    // store); auditStore + messageStore are now required tail args.
     this.hub = new HubNetworking(
-      this.engineerRegistry,
-      this.notificationStore,
+      engineerRegistry,
       createServer,
-      config
+      config,
+      audit,
+      message,
     );
   }
 

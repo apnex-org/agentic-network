@@ -323,4 +323,35 @@ clear it.
   181 passed. `tsc --noEmit` clean.
 - Branch `agent-greg/bug-109-session-fsm-fixture-names` off `origin/main @ 3dd33cb`;
   commit `7b7d687`. **PR #243 opened**, surfaced on thread-609 for cross-approval.
-  NEXT (post-merge): the test-hub.ts slice.
+- PR #243 cross-approved + merged to `origin/main @ f837c32`. Architect concurred
+  the sweep + the `globalInstanceId→name` fold into PR-4c.
+
+### 2026-05-22 ~13:05 AEST — bug-109 test-hub.ts slice (substrate store-rewire + HubNetworking reconciliation)
+
+- The 2nd dead harness — `test/helpers/test-hub.ts`, consumed by
+  `mcp-transport.test.ts` (7 reds, `MemoryEngineerRegistry is not a
+  constructor`). Two drift axes, exactly as architect-characterised:
+  - **Store-rewire:** the harness built `AllStores` from the mission-83-removed
+    `Memory*Store` classes. Rebuilt on `createMemoryStorageSubstrate` +
+    `SubstrateCounter` + the `*RepositorySubstrate` repositories — the
+    `test-utils.ts` / PR-4b `policy-loopback.ts` pattern. `AllStores` had also
+    gained `bug` / `pendingAction` / `message` since the harness was last
+    current; all three added.
+  - **HubNetworking-constructor reconciliation:** `test-hub.ts:336` called the
+    pre-mission-56 4-arg shape `(engineerRegistry, notificationStore,
+    createMcpServerFn, config)`. Current signature (`hub-networking.ts:208`):
+    `(engineerRegistry, createMcpServerFn, config, auditStore, messageStore,
+    tierLookup?, tokenStore?)` — the legacy `notificationStore` 2nd arg was
+    removed at mission-56 W5 (push pipeline flows through the Message store);
+    `auditStore` + `messageStore` are now required tail args. Rewired.
+  - **Companion drift:** `CreateMcpServerFn` gained a 4th `dispatchEvent` arg;
+    `IPolicyContext` gained required `dispatch` + dropped `config` (mission-84
+    W5). `createMcpServer` now threads `dispatchEvent` into `ctx.dispatch`; the
+    stale `config` field is dropped.
+- No additional crossing — every `HubNetworking` public method `TestHub`
+  delegates to still exists; `TestHub`'s public API is unchanged.
+- **Verification:** `mcp-transport.test.ts` 7-failed → 7/7 passed. Full
+  network-adapter suite **17 files / 188 tests, all green** (was 16/17 files,
+  181/188 tests). `tsc --noEmit` clean.
+- Branch `agent-greg/bug-109-test-hub-substrate-rewire` off `origin/main @ f837c32`.
+  NEXT: commit + push + open PR + surface on thread-609.
