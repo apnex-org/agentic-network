@@ -1326,8 +1326,9 @@ export function registerThreadPolicy(router: PolicyRouter): void {
     "toward older messages. The `_ois_pagination` envelope reports total / count / next_offset.",
     {
       threadId: z.string().describe("The thread ID to read"),
-      limit: z.number().int().positive().max(50).optional()
-        .describe("Messages to return, counting back from the newest (default 5, max 50)."),
+      limit: z.number().int().positive().max(10).optional()
+        .describe("Messages to return, counting back from the newest (default 5, max 10 — " +
+          "above 10 the cognitive-layer ResponseSummarizer re-truncates the window client-side)."),
       offset: z.number().int().nonnegative().optional()
         .describe("Newest messages to skip — pages back toward older messages (default 0)."),
     },

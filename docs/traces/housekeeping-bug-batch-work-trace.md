@@ -551,8 +551,9 @@ get_thread via `perToolMaxItems` — rejected: 2nd gate, not needed.)
 ### Fix
 
 `hub/src/policy/thread-policy.ts`:
-- `get_thread` MCP schema — added `limit` (int, default 5, max 50) + `offset`
-  (int, default 0); description updated.
+- `get_thread` MCP schema — added `limit` (int, default 5, **max 10** — the
+  Director-approved cap; above 10 the client ResponseSummarizer re-truncates)
+  + `offset` (int, default 0); description updated.
 - `getThread` handler — windows `thread.messages` from the **newest** end:
   `offset` skips newest messages (pages back toward older), `limit` sizes the
   page. Builds the `_ois_pagination` envelope (`{total, count, next_offset,
