@@ -24,9 +24,11 @@ describe("MockOpenCodeClient", () => {
   it("factory wires architect + engineer-with-dispatcher + MCP client correctly", async () => {
     mock = await createMockOpenCodeClient();
     expect(mock.architect.role).toBe("architect");
-    expect(mock.architect.agentId).toMatch(/^eng-/);
+    // agentId is the Hub-derived `agent-{8-hex-of-sha256(name)}` (idea-251) —
+    // not the eng-/arch- prefixed name.
+    expect(mock.architect.agentId).toMatch(/^agent-/);
     expect(mock.engineer.role).toBe("engineer");
-    expect(mock.engineer.agentId).toMatch(/^eng-/);
+    expect(mock.engineer.agentId).toMatch(/^agent-/);
     expect(mock.engineer.dispatcher).toBeDefined();
     expect(mock.engineer.mcpClient).toBeDefined();
     expect(mock.hub).toBeDefined();

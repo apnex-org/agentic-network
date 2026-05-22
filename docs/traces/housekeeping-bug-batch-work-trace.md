@@ -414,4 +414,45 @@ clear it.
   `vitest (hub)` + the `test` aggregator + `coverage-report-sync` + cognitive-layer
   also green. claude-plugin + opencode stay red on their PR-4c residuals
   (globalInstanceId / eager-claim / opencode stale-dist) — expected.
-- #244 re-surfaced on thread-609 for cross-approval. NEXT (post-merge): PR-4c.
+- #244 re-surfaced on thread-609 for cross-approval; cross-approved + merged to
+  `main @ e545806`.
+
+### 2026-05-22 ~14:25 AEST — bug-109 PR-4c-1 (non-hub cell fixes)
+
+- thread-609 force-closed (past the `get_thread` 10-msg cap + near round_limit,
+  Director-directed reset); **thread-610** is the new coordination spine.
+- PR-4c split **4c-1 / 4c-2** — architect-disposed (#244 issue-comment 4514906117).
+  4c-1 = the cell fixes (green all 4 non-hub cells); 4c-2 = the aggregator re-add.
+- **eager-claim — (b) test-expectation drift, Hub-verified** (not a source
+  regression). `parseClaimSessionResponse` (`network-adapter/src/kernel/
+  session-claim.ts`) reads the canonical *nested* envelope (`agent.id` +
+  `session.{epoch,claimed,displacedPriorSession}`) per mission-63 W3; the Hub's
+  `claim_session` handler emits exactly that. `eager-claim.test.ts`'s 5 failing
+  fixtures used the pre-mission-63 *flat* shape. Fix: rewrote the 5
+  `parseClaimSessionResponse` fixtures flat → canonical-nested; the
+  `already-parsed object as-is` test renamed to `flattens an already-parsed
+  canonical envelope`.
+- **globalInstanceId→name sweep** — 10 handshake-field sites + 4 mock opt-field /
+  param renames across 6 files (claude-plugin + opencode mocks + e2e). Rename
+  `globalInstanceId`→`name` AND shorten the value to `randomUUID().slice(0, 8)`
+  (the `eng-`/`arch-` + full-UUID values were 40/41 chars — over idea-251's
+  `[1,32]`; rename-without-shorten would trade `parse_failed` for
+  `invalid_name`). Tidied 3 stale `globalInstanceId` doc-comments in
+  network-adapter + renamed the `firstGii` local → `firstName`.
+- **Un-masked finding (surfaced):** the globalInstanceId fix activated the
+  agent-creation path → exposed a stale `agentId` assertion in
+  `MockClaudeClient.test.ts` + `MockOpenCodeClient.test.ts` — `toMatch(/^eng-/)`
+  (pre-idea-251; `agentId` is the derived `agent-{8-hex-of-sha256(name)}`).
+  Fixed → `/^agent-/`. Same staleness class as eager-claim.
+- **opencode** — vitest cell greens on the globalInstanceId rewrite (no source
+  fix). `tsc --noEmit` on the opencode package has **1 pre-existing unrelated
+  error** — `hub/src/policy/repo-event-handlers.ts` `import type
+  @apnex/repo-event-bridge`, unresolvable from the opencode workspace; NOT in
+  the `vitest-non-hub` cell path (vitest is runtime-only — `import type` erased);
+  NOT a 4c-1 regression (4c-1 net-reduced opencode tsc errors). Surfaced to the
+  architect, out of 4c-1 scope.
+- **Verification (local):** claude-plugin 11 files / 171 tests, opencode 4 / 32,
+  network-adapter 17 / 188 — all green. tsc clean on claude-plugin +
+  network-adapter. CI re-verification (head commit, not local) pending the push.
+- Branch `agent-greg/bug-109-pr4c1-cell-fixes` off `origin/main @ e545806`.
+  NEXT: commit + push + open PR-4c-1 + watch CI → surface on thread-610. Then 4c-2.

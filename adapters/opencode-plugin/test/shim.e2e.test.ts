@@ -82,7 +82,8 @@ async function createArchitect(hub: PolicyLoopbackHub): Promise<{
     {
       role: "architect",
       handshake: {
-        globalInstanceId: `arch-${randomUUID()}`,
+        // idea-251 name-identity: slice the UUID to the [1,32] register_role limit.
+        name: `arch-${randomUUID().slice(0, 8)}`,
         proxyName: "opencode-shim-e2e-architect",
         proxyVersion: "0.0.0",
         transport: "loopback",
@@ -123,7 +124,8 @@ async function createEngineerWithShim(
     {
       role: "engineer",
       handshake: {
-        globalInstanceId: `eng-${randomUUID()}`,
+        // idea-251 name-identity: slice the UUID to the [1,32] register_role limit.
+        name: `eng-${randomUUID().slice(0, 8)}`,
         proxyName: "@apnex/opencode-plugin",
         proxyVersion: "opencode-e2e-1.0.0",
         transport: "bun-serve-proxy",

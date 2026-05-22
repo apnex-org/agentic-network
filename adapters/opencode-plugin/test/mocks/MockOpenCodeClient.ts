@@ -82,10 +82,10 @@ export interface MockOpenCodeHarness {
 export interface MockOpenCodeClientOpts {
   /** Optional cognitive pipeline override for the engineer's McpAgentClient. */
   cognitive?: CognitivePipeline;
-  /** Override the engineer's global instance id. Default = random. */
-  engineerGlobalInstanceId?: string;
-  /** Override the architect's global instance id. Default = random. */
-  architectGlobalInstanceId?: string;
+  /** Override the engineer's agent name. Default = random. */
+  engineerName?: string;
+  /** Override the architect's agent name. Default = random. */
+  architectName?: string;
 }
 
 export type TapeStep =
@@ -108,11 +108,11 @@ export async function createMockOpenCodeClient(
   opts: MockOpenCodeClientOpts = {},
 ): Promise<MockOpenCodeHarness> {
   const hub = new PolicyLoopbackHub();
-  const architect = await buildArchitect(hub, opts.architectGlobalInstanceId);
+  const architect = await buildArchitect(hub, opts.architectName);
   const engineer = await buildEngineerWithShim(
     hub,
     opts.cognitive,
-    opts.engineerGlobalInstanceId,
+    opts.engineerName,
   );
 
   const harness: MockOpenCodeHarness = {
@@ -137,14 +137,16 @@ export async function createMockOpenCodeClient(
 
 async function buildArchitect(
   hub: PolicyLoopbackHub,
-  globalInstanceId?: string,
+  name?: string,
 ): Promise<ActorHandle> {
   const transport = new LoopbackTransport(hub);
   const agent = new McpAgentClient(
     {
       role: "architect",
       handshake: {
-        globalInstanceId: globalInstanceId ?? `arch-${randomUUID()}`,
+        // idea-251: name IS identity (globalInstanceId retired); slice the
+        // UUID to clear the Hub's register_role [1,32] name-length limit.
+        name: name ?? `arch-${randomUUID().slice(0, 8)}`,
         proxyName: "mock-opencode-client-architect",
         proxyVersion: "0.0.0",
         transport: "loopback",
@@ -173,7 +175,7 @@ async function buildArchitect(
 async function buildEngineerWithShim(
   hub: PolicyLoopbackHub,
   cognitive: CognitivePipeline | undefined,
-  globalInstanceId: string | undefined,
+  name: string | undefined,
 ): Promise<EngineerActorHandle> {
   const transport = new LoopbackTransport(hub);
 
@@ -194,7 +196,9 @@ async function buildEngineerWithShim(
     {
       role: "engineer",
       handshake: {
-        globalInstanceId: globalInstanceId ?? `eng-${randomUUID()}`,
+        // idea-251: name IS identity (globalInstanceId retired); slice the
+        // UUID to clear the Hub's register_role [1,32] name-length limit.
+        name: name ?? `eng-${randomUUID().slice(0, 8)}`,
         proxyName: "@apnex/opencode-plugin",
         proxyVersion: "mock-opencode-client-1.0.0",
         transport: "bun-serve-proxy",

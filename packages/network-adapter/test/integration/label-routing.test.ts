@@ -185,17 +185,17 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
       const agentId = first.agentId;
       await first.client.stop();
 
-      // Same globalInstanceId → same fingerprint → same Agent.
+      // Same name → same derived agentId → same Agent.
       // Simulating the second handshake by driving register_role through a
       // fresh transport with a hand-crafted payload that claims smoke.
       const transport2 = new LoopbackTransport(hub);
       await transport2.connect();
       const sid = transport2.getSessionId()!;
-      // Reuse the first client's globalInstanceId so the fingerprint matches.
-      const firstGii = (hub.getToolCalls("register_role")[0].args.name as string);
+      // Reuse the first client's name so the derived agentId matches.
+      const firstName = (hub.getToolCalls("register_role")[0].args.name as string);
       await hub.dispatch(sid, "register_role", {
         role: "engineer",
-        name: firstGii,
+        name: firstName,
         clientMetadata: {
           clientName: "relabel-attempt",
           clientVersion: "0.0.0",

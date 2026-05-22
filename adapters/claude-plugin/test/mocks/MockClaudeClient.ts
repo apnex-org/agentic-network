@@ -85,10 +85,10 @@ export interface MockClaudeHarness {
 export interface MockClaudeClientOpts {
   /** Optional cognitive pipeline override for the engineer's McpAgentClient. */
   cognitive?: CognitivePipeline;
-  /** Override the engineer's global instance id. Default = random. */
-  engineerGlobalInstanceId?: string;
-  /** Override the architect's global instance id. Default = random. */
-  architectGlobalInstanceId?: string;
+  /** Override the engineer's agent name. Default = random. */
+  engineerName?: string;
+  /** Override the architect's agent name. Default = random. */
+  architectName?: string;
 }
 
 export type TapeStep =
@@ -111,11 +111,11 @@ export async function createMockClaudeClient(
   opts: MockClaudeClientOpts = {},
 ): Promise<MockClaudeHarness> {
   const hub = new PolicyLoopbackHub();
-  const architect = await buildArchitect(hub, opts.architectGlobalInstanceId);
+  const architect = await buildArchitect(hub, opts.architectName);
   const engineer = await buildEngineerWithShim(
     hub,
     opts.cognitive,
-    opts.engineerGlobalInstanceId,
+    opts.engineerName,
   );
 
   const harness: MockClaudeHarness = {
@@ -140,14 +140,16 @@ export async function createMockClaudeClient(
 
 async function buildArchitect(
   hub: PolicyLoopbackHub,
-  globalInstanceId?: string,
+  name?: string,
 ): Promise<ActorHandle> {
   const transport = new LoopbackTransport(hub);
   const agent = new McpAgentClient(
     {
       role: "architect",
       handshake: {
-        globalInstanceId: globalInstanceId ?? `arch-${randomUUID()}`,
+        // idea-251: name IS identity (globalInstanceId retired); slice the
+        // UUID to clear the Hub's register_role [1,32] name-length limit.
+        name: name ?? `arch-${randomUUID().slice(0, 8)}`,
         proxyName: "mock-claude-client-architect",
         proxyVersion: "0.0.0",
         transport: "loopback",
@@ -176,7 +178,7 @@ async function buildArchitect(
 async function buildEngineerWithShim(
   hub: PolicyLoopbackHub,
   cognitive: CognitivePipeline | undefined,
-  globalInstanceId: string | undefined,
+  name: string | undefined,
 ): Promise<EngineerActorHandle> {
   const transport = new LoopbackTransport(hub);
 
@@ -189,7 +191,9 @@ async function buildEngineerWithShim(
     {
       role: "engineer",
       handshake: {
-        globalInstanceId: globalInstanceId ?? `eng-${randomUUID()}`,
+        // idea-251: name IS identity (globalInstanceId retired); slice the
+        // UUID to clear the Hub's register_role [1,32] name-length limit.
+        name: name ?? `eng-${randomUUID().slice(0, 8)}`,
         proxyName: "@apnex/claude-plugin",
         proxyVersion: "mock-claude-client-1.0.0",
         transport: "stdio-mcp-proxy",
