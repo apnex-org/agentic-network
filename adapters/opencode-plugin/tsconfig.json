@@ -10,5 +10,10 @@
     "noEmit": true,
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  // bug-116: src-only — NOT test/**. The test harness imports hub/src, which
+  // type-imports the `@apnex/repo-event-bridge` workspace package; that type is
+  // unresolvable from the opencode workspace's scope, so a test-inclusive tsc
+  // errors TS2307. Test files are exercised by vitest (the `test` script).
+  // Mirrors adapters/claude-plugin/tsconfig.json (src-only).
+  "include": ["src/**/*.ts"]
 }
