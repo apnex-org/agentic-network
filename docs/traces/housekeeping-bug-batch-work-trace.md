@@ -454,5 +454,28 @@ clear it.
 - **Verification (local):** claude-plugin 11 files / 171 tests, opencode 4 / 32,
   network-adapter 17 / 188 — all green. tsc clean on claude-plugin +
   network-adapter. CI re-verification (head commit, not local) pending the push.
-- Branch `agent-greg/bug-109-pr4c1-cell-fixes` off `origin/main @ e545806`.
-  NEXT: commit + push + open PR-4c-1 + watch CI → surface on thread-610. Then 4c-2.
+- Branch `agent-greg/bug-109-pr4c1-cell-fixes` off `origin/main @ e545806`;
+  commit `deb74ce`. **PR #245 — CI-verified all 4 non-hub cells green
+  (claude-plugin 171/171, opencode 32/32, network-adapter 188/188,
+  cognitive-layer) — cross-approved + merged to `main @ 63818ae`.** The
+  opencode-`tsc` `@apnex/repo-event-bridge` residual was disposed as **bug-116**
+  (follow-on, minor, out of batch — hub-dep-reach class on the type-check
+  surface; not in the vitest cell path).
+
+### 2026-05-22 ~14:40 AEST — bug-109 PR-4c-2 (aggregator re-add)
+
+- The bug-109 closing slice — pure `test.yml`. All 4 non-hub vitest cells are
+  genuinely CI-green on `main` (4c-1 merged), so the `vitest-non-hub` matrix is
+  promoted to a blocking gate:
+  - `vitest-non-hub` job — `continue-on-error: true` dropped.
+  - `test` aggregator — `needs:` `[vitest-hub, coverage-report-sync]` →
+    `[vitest-hub, coverage-report-sync, vitest-non-hub]`. A matrix job in
+    `needs:` means all 4 cells must pass; `fail-fast: false` retained so a
+    multi-cell break surfaces in one run.
+  - 3 stale comment blocks (top-of-file, the `vitest-non-hub` header, the
+    aggregator header) updated to the post-4c-2 blocking state.
+- Self-verifying: the PR's own CI runs with the matrix already blocking — a
+  regressed cell reds the PR's `test` check. YAML validated locally.
+- Branch `agent-greg/bug-109-pr4c2-aggregator-readd` off `origin/main @ 63818ae`.
+  NEXT: commit + push + open PR-4c-2 + watch CI → surface on thread-610. Then
+  PR-5 (bug-115) closes the batch.
