@@ -583,6 +583,35 @@ describe("ThreadPolicy — Threads 2.0 (Mission-21 Phase 1)", () => {
     }, engCtx);
   }
 
+  it("get_thread paginates messages — newest-5 default + offset paging (bug-115)", async () => {
+    // 7-message thread: open (m0) + 6 alternating replies (m1..m6).
+    const threadId = await openThread("Pager", "m0");
+    const replyCtxs = [engCtx, archCtx, engCtx, archCtx, engCtx, archCtx];
+    for (let i = 0; i < replyCtxs.length; i++) {
+      await router.handle("create_thread_reply", { threadId, message: `m${i + 1}` }, replyCtxs[i]);
+    }
+    const texts = (r: { content: { text: string }[] }) =>
+      (JSON.parse(r.content[0].text).messages as { text: string }[]).map((m) => m.text);
+
+    // Default — the NEWEST 5 messages (m2..m6) + the pagination envelope.
+    const def = await router.handle("get_thread", { threadId }, archCtx);
+    expect(texts(def)).toEqual(["m2", "m3", "m4", "m5", "m6"]);
+    const defPage = JSON.parse(def.content[0].text)._ois_pagination;
+    expect(defPage).toMatchObject({ total: 7, count: 5, next_offset: 5 });
+    expect(defPage.hint).toMatch(/offset=5/);
+
+    // offset pages back toward the OLDER messages (m0..m1).
+    const older = await router.handle("get_thread", { threadId, offset: 5 }, archCtx);
+    expect(texts(older)).toEqual(["m0", "m1"]);
+    expect(JSON.parse(older.content[0].text)._ois_pagination).toMatchObject({ count: 2, next_offset: 7 });
+    expect(JSON.parse(older.content[0].text)._ois_pagination.hint).toMatch(/start of the thread/i);
+
+    // explicit limit — newest 2.
+    const lim = await router.handle("get_thread", { threadId, limit: 2 }, archCtx);
+    expect(texts(lim)).toEqual(["m5", "m6"]);
+    expect(JSON.parse(lim.content[0].text)._ois_pagination.count).toBe(2);
+  });
+
   it("rejects converged=true when convergenceActions empty (gate)", async () => {
     const threadId = await openThread();
     // Engineer converges with summary but no actions → gate rejection
