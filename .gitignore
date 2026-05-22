@@ -6,31 +6,6 @@ dist/
 *.tsbuildinfo
 *.tgz
 
-# Sovereign packages: passive permission to commit dist/ if a future workflow
-# requires it. Origin/main has no committed dist/ for any of these — rules are
-# aspirational only, not enforcement. Current state per mission-70 (2026-05-02)
-# investigation:
-#   - Hub container build: scripts/local/build-hub.sh does per-package install
-#     + npm pack in explicit dep order (storage-provider → repo-event-bridge);
-#     does NOT depend on committed dist/.
-#   - Local dev cold-start: `npm install` at root FAILS — npm workspaces don't
-#     topologically sort prepare-hook execution, so repo-event-bridge's
-#     `prepare: tsc` runs before storage-provider's dist/ is reachable. Manual
-#     workaround: `cd packages/X && npm install --ignore-scripts && npm run
-#     build` per package in dep order, then root `npm install` succeeds.
-# Substrate fix tracked: idea-233 (M-Workspace-Install-Bootstrap) — tsc project
-# references OR topological-bootstrap script OR build-orchestrator migration.
-# Note: prior comments cited "calibration #20" + "until idea-186 lands" — both
-# were stale (#20 is an unrelated retired calibration about thread-message
-# render; idea-186 npm-workspaces migration shipped via mission-64 PR #122 but
-# didn't fix the prepare-hook ordering issue).
-!packages/storage-provider/dist/
-!packages/storage-provider/dist/**
-!packages/repo-event-bridge/dist/
-!packages/repo-event-bridge/dist/**
-!packages/message-router/dist/
-!packages/message-router/dist/**
-
 # Logs
 *.log
 .ois/
