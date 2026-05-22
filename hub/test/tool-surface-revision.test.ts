@@ -6,22 +6,29 @@
  *   - deterministic    — same surface → same revision (repeatable)
  *   - order-stable     — registration order doesn't move the revision
  *   - drift-sensitive  — tool add/remove, description change, schema
- *                        change all move the revision
+ *                        change, tier change all move the revision
  */
 
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { PolicyRouter } from "../src/policy/router.js";
+import { PolicyRouter, type ToolTier } from "../src/policy/router.js";
 import { computeToolSurfaceRevision } from "../src/policy/tool-surface-revision.js";
 
 const noop = () => {};
 const handler = async () => ({ content: [{ type: "text" as const, text: "ok" }] });
 
 function routerWith(
-  tools: Array<{ name: string; description: string; schema: Record<string, z.ZodType> }>,
+  tools: Array<{
+    name: string;
+    description: string;
+    schema: Record<string, z.ZodType>;
+    tier?: ToolTier;
+  }>,
 ): PolicyRouter {
   const router = new PolicyRouter(noop);
-  for (const t of tools) router.register(t.name, t.description, t.schema, handler);
+  // tier passed through register()'s 6th param; undefined → defaults to
+  // "llm-callable" (PolicyRouter.register default).
+  for (const t of tools) router.register(t.name, t.description, t.schema, handler, undefined, t.tier);
   return router;
 }
 
@@ -98,6 +105,17 @@ describe("computeToolSurfaceRevision", () => {
     const before = computeToolSurfaceRevision(routerWith(BASE));
     const after = computeToolSurfaceRevision(
       routerWith([{ ...BASE[0], schema: { title: z.string().optional() } }, BASE[1]]),
+    );
+    expect(after).not.toBe(before);
+  });
+
+  it("moves when a tool's tier changes (llm-callable ↔ adapter-internal)", () => {
+    // A tier flip shifts the adapter-advertised surface — bindRouterToMcp
+    // marks adapter-internal tools, the shim filters on it — while
+    // leaving name/description/schema untouched. The revision must move.
+    const before = computeToolSurfaceRevision(routerWith(BASE)); // both default llm-callable
+    const after = computeToolSurfaceRevision(
+      routerWith([{ ...BASE[0], tier: "adapter-internal" }, BASE[1]]),
     );
     expect(after).not.toBe(before);
   });

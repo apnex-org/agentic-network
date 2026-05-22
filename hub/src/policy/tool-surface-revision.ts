@@ -14,10 +14,14 @@
  * → re-bootstrap. The Hub never interprets it; only equality matters.
  *
  * Determinism: tools are sorted by name; each contributes
- * `{ name, description, schema }` where `schema` is the recursively
- * key-sorted JSON Schema of the registered zod shape. The digest is
- * sha256-hex truncated — collision-irrelevant for an equality check over
- * a tool set of this size.
+ * `{ name, description, schema, tier }` — the complete advertised-surface
+ * tuple (`bindRouterToMcp` advertises nothing else). `schema` is the
+ * recursively key-sorted JSON Schema of the registered zod shape; `tier`
+ * is the `adapter-internal`/`llm-callable` classification — a tier flip
+ * shifts the adapter-advertised surface (`bindRouterToMcp` prepends a
+ * marker for adapter-internal tools; the shim filters on it) without
+ * touching name/description/schema. The digest is sha256-hex truncated —
+ * collision-irrelevant for an equality check over a tool set of this size.
  *
  * The router is a stateless singleton fixed at boot, so callers compute
  * this once at startup and serve it as a constant.
@@ -49,7 +53,7 @@ function canonicalize(value: unknown): unknown {
  *
  * Iterates every registered tool name (including deprecated aliases —
  * `getAllToolNames()` is exactly what `bindRouterToMcp` advertises), in
- * sorted order, and hashes `{ name, description, schema }` per tool.
+ * sorted order, and hashes `{ name, description, schema, tier }` per tool.
  *
  * A zod shape that won't convert to JSON Schema falls back to its sorted
  * parameter-name set for that tool — still deterministic, still moves the
@@ -69,7 +73,7 @@ export function computeToolSurfaceRevision(router: PolicyRouter): string {
       } catch {
         schema = { __unconvertible: Object.keys(reg.schema).sort() };
       }
-      return { name, description: reg.description, schema };
+      return { name, description: reg.description, schema, tier: reg.tier };
     });
 
   return createHash("sha256")
