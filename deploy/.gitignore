@@ -4,7 +4,7 @@
 .terraform/
 .terraform.lock.hcl
 
-# Environment files with secrets — any depth (deploy/env/, deploy/hub/env/, ...)
+# Environment files with secrets — any depth (deploy/hub/env/)
 **/env/*.tfvars
 !**/env/*.tfvars.example
 

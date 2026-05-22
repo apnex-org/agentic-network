@@ -9,27 +9,26 @@
 # decision); env switching is stop-prior-start-new.
 #
 # Container config (env, ports, mount, seccomp) is the single source of
-# truth here — constants at the top. Token + bucket come from the env's
-# tfvars (gitignored). SA key path is auto-discovered.
+# truth here — constants at the top. Token + bucket + project come from
+# ~/.config/apnex-agents/hub.env (see scripts/local/hub.env.example). SA
+# key path is auto-discovered.
 #
 # Usage:
 #   OIS_ENV=<env> scripts/local/start-hub.sh
 #   scripts/local/start-hub.sh                 # OIS_ENV defaults to prod
 #
 # Env selection (mission-46 T1):
-#   OIS_ENV    — selects which tfvars file to read + container name
-#                suffix. Default: prod.
+#   OIS_ENV    — container name suffix (ois-hub-local-<env>). Default: prod.
 #                Must match ^[a-z][a-z0-9-]*$, max 20 chars.
 #   HUB_HOST_PORT — default: 8080
 #   GOOGLE_APPLICATION_CREDENTIALS — path to SA JSON; auto-discovered if unset
 #
-# tfvars discovery order (first existing wins for OIS_ENV=<env>):
-#   1. deploy/cloudrun/env/<env>.tfvars   (split-structure target)
-#   2. deploy/env/<env>.tfvars            (local-bootstrap; transitional)
-#
-# Reads from tfvars: hub_api_token (required), state_bucket_name
-# (optional; falls back to ois-relay-hub-state for backward-compat with
-# single-env operators), project_id (for SA key auto-discovery hint).
+# Config (mission-87 W1 / idea-308): ~/.config/apnex-agents/hub.env —
+# HUB_API_TOKEN (required), POSTGRES_CONNECTION_STRING (required),
+# STATE_BUCKET_NAME (optional; falls back to ois-relay-hub-state),
+# PROJECT_ID (SA-key auto-discovery hint). Replaced the former
+# deploy/{cloudrun,base}/env/*.tfvars HCL config when those Cloud Run
+# terraform roots were removed.
 #
 set -euo pipefail
 
@@ -50,11 +49,14 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# ── Per-role env-file (mission-52 T3 follow-on) ────────────────────────
-# Source ~/.config/apnex-agents/hub.env to pick up Hub-runtime env-vars
-# (OIS_GH_API_TOKEN + OIS_REPO_EVENT_BRIDGE_REPOS + cadence/budget knobs).
-# Mirrors the convention used by sibling scripts (get-agents.sh,
-# publish-packages.sh). Idempotent + optional — absent file is a no-op.
+# ── Config: ~/.config/apnex-agents/hub.env ─────────────────────────────
+# The single config source for the local-Hub tooling (mission-87 W1 /
+# idea-308): HUB_API_TOKEN, STATE_BUCKET_NAME, PROJECT_ID,
+# POSTGRES_CONNECTION_STRING + the repo-event-bridge knobs. key=value,
+# shell-sourced; mirrors the convention sibling scripts (get-agents.sh,
+# publish-packages.sh) use. See scripts/local/hub.env.example. Optional
+# here — absent file is a no-op; the required-key checks below catch a
+# missing/unpopulated config with an actionable error.
 HUB_ENV_FILE="${HOME}/.config/apnex-agents/hub.env"
 if [[ -f "$HUB_ENV_FILE" ]]; then
   set -a
@@ -71,39 +73,6 @@ if [[ ! "$OIS_ENV" =~ ^[a-z][a-z0-9-]*$ ]] || [[ ${#OIS_ENV} -gt 20 ]]; then
   exit 1
 fi
 
-# ── tfvars discovery ───────────────────────────────────────────────────
-
-TFVARS=""
-for candidate in \
-  "$REPO_ROOT/deploy/cloudrun/env/${OIS_ENV}.tfvars" \
-  "$REPO_ROOT/deploy/env/${OIS_ENV}.tfvars"; do
-  if [[ -f "$candidate" ]]; then
-    TFVARS="$candidate"
-    break
-  fi
-done
-
-if [[ -z "$TFVARS" ]]; then
-  echo "[start-hub] ERROR: no tfvars found for OIS_ENV='$OIS_ENV'." >&2
-  echo "              Expected one of:" >&2
-  echo "                deploy/cloudrun/env/${OIS_ENV}.tfvars" >&2
-  echo "                deploy/env/${OIS_ENV}.tfvars" >&2
-  echo "              Copy from deploy/cloudrun/env/prod.tfvars.example and populate." >&2
-  exit 1
-fi
-
-read_tfvar() {
-  awk -v key="$1" '
-    $1 == key && $2 == "=" {
-      val = $0
-      sub(/^[^=]*=[ \t]*"/, "", val)
-      sub(/"[ \t]*$/, "", val)
-      print val
-      exit
-    }
-  ' "$TFVARS"
-}
-
 # ── Container constants (env-tagged for side-by-side clarity) ──────────
 
 CONTAINER_NAME="ois-hub-local-${OIS_ENV}"
@@ -116,8 +85,7 @@ CONTAINER_PORT="8080"
 # Design v1.0 §2.5). POSTGRES_CONNECTION_STRING is the sole required env var;
 # operator must run postgres-up (docker-compose or local install) before start-hub.sh.
 # GCS_BUCKET preserved for legacy operator-DX context display only.
-GCS_BUCKET="$(read_tfvar state_bucket_name)"
-GCS_BUCKET="${GCS_BUCKET:-ois-relay-hub-state}"
+GCS_BUCKET="${STATE_BUCKET_NAME:-ois-relay-hub-state}"
 POSTGRES_CONNECTION_STRING="${POSTGRES_CONNECTION_STRING:-}"
 if [[ -z "$POSTGRES_CONNECTION_STRING" ]]; then
   echo "[start-hub] ERROR: POSTGRES_CONNECTION_STRING env var is required." >&2
@@ -127,7 +95,7 @@ if [[ -z "$POSTGRES_CONNECTION_STRING" ]]; then
 fi
 WATCHDOG_ENABLED="false"   # ADR-017 watchdog paused locally; queue still operational
 NODE_ENV="production"
-PROJECT_ID="$(read_tfvar project_id)"
+PROJECT_ID="${PROJECT_ID:-}"
 
 # Mission-52 T3: repo-event-bridge env-var defaults. Token absent →
 # bridge no-ops at Hub startup (no-op + log line). Repos are comma-
@@ -138,11 +106,13 @@ OIS_REPO_EVENT_BRIDGE_REPOS="${OIS_REPO_EVENT_BRIDGE_REPOS:-}"
 OIS_REPO_EVENT_BRIDGE_CADENCE_S="${OIS_REPO_EVENT_BRIDGE_CADENCE_S:-30}"
 OIS_REPO_EVENT_BRIDGE_RATE_BUDGET_PCT="${OIS_REPO_EVENT_BRIDGE_RATE_BUDGET_PCT:-0.8}"
 
-# ── Read tfvars for the secret ─────────────────────────────────────────
+# ── Hub API token (secret) ─────────────────────────────────────────────
 
-HUB_API_TOKEN="$(read_tfvar hub_api_token)"
+HUB_API_TOKEN="${HUB_API_TOKEN:-}"
 if [[ -z "$HUB_API_TOKEN" || "$HUB_API_TOKEN" == "your-secret-token-here" ]]; then
-  echo "[start-hub] ERROR: hub_api_token not populated in $TFVARS." >&2
+  echo "[start-hub] ERROR: HUB_API_TOKEN not populated." >&2
+  echo "              Set it in ~/.config/apnex-agents/hub.env" >&2
+  echo "              (copy scripts/local/hub.env.example to start)." >&2
   exit 1
 fi
 

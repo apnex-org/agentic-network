@@ -1,6 +1,6 @@
 # OIS Agentic Network — Terraform Deploy
 
-## Current — production Hub (`deploy/hub/` + `modules/hub/`)
+## Production Hub (`deploy/hub/` + `modules/hub/`)
 
 The production Hub runs on a single internal-only GCE VM (`australia-southeast1`) as a
 3-container docker-compose stack — Hub + Postgres + Watchtower — fronted by a Cloud Run
@@ -27,76 +27,43 @@ terraform apply -var-file=env/prod.tfvars
 `deploy/hub/env/prod.tfvars` is operator-populated and gitignored — copy it from
 `deploy/hub/env/prod.tfvars.example`.
 
-## Legacy — pending removal (`deploy/base/` + `deploy/cloudrun/`)
+The committed `modules/hub/.terraform.lock.hcl` pins provider versions; `terraform init`
+in `deploy/hub/` resolves providers against it.
 
-`deploy/base/` (foundation tier) and `deploy/cloudrun/` (the old Architect Cloud Run
-service) are the pre-mission-86 "two-plan" Cloud Run deployment. The Hub-on-Cloud-Run
-service was retired by mission-86; the Architect / `vertex-cloudrun` stack is deprecated,
-and its source (`agents/vertex-cloudrun/`) plus the `deploy/build-*.sh` / `deploy/deploy-*.sh`
-wrapper scripts have been removed. `deploy/base/` + `deploy/cloudrun/` themselves are
-slated for a follow-on cleanup, once the `scripts/local/{start,build}-hub.sh` config
-dependency on `deploy/cloudrun/env/` is migrated. Do not extend them.
+## Local Docker Hub (`scripts/local/`)
 
-> The sections below predate mission-86 and are pending a currency pass. They document
-> local-dev Hub workflows (local-fs profile, GCS↔local-fs cutover/rollback runbooks, the
-> build-hub tarball-staging mechanism, repo-event-bridge config) — accurate in spirit but
-> not yet reconciled against the mission-86 cloud Hub. Treat with care.
-
-## Multi-environment layout
-
-Mission-46 T1 established per-env tfvars files under a single canonical tree + `OIS_ENV` selection convention. Scripts (build/deploy + scripts/local/*) default to `prod` when `OIS_ENV` is unset — existing single-env callers are byte-identical. A new isolated tenant drops a new `<env>.tfvars` next to `prod.tfvars` and uses `OIS_ENV=<env-name>` in every command.
-
-```
-deploy/base/env/
-  prod.tfvars          — current env (gitignored; operator-populated)
-  <env-name>.tfvars    — new isolated tenant; same shape as prod.tfvars
-  prod.tfvars.example  — committed template
-deploy/cloudrun/env/
-  prod.tfvars          — current env (gitignored)
-  <env-name>.tfvars    — new tenant
-  prod.tfvars.example  — committed template
-```
-
-`OIS_ENV` name constraints: `^[a-z][a-z0-9-]*$`, max 20 chars — enforced by every script that reads it. Lowercase-DNS-safe to avoid mid-apply terraform failures on GCP resource-name validation.
-
-Per-env Cloud Run service naming: `hub-<env>` and `architect-<env>`. `deploy-hub.sh` reads `hub_service_name` from tfvars if set; falls back to `hub-${OIS_ENV}`. Symmetric for architect.
-
-## Apply order
-
-**Base must be applied before cloudrun.** The cloudrun plan reads base outputs (service_account_email, state_bucket_name, registry_prefix) via `terraform_remote_state` pointing at `../base/terraform.tfstate`.
+`scripts/local/{build,start,stop}-hub.sh` are the local-dev Hub tooling — `build-hub.sh`
+builds the image via Cloud Build + pulls + tags `ois-hub:local`; `start-hub.sh` launches a
+container `ois-hub-local-<env>` on port 8080 against a Postgres substrate; `stop-hub.sh`
+stops/removes it. One container at a time is enforced.
 
 ```bash
-# First-time setup (fresh project) — use OIS_ENV to select the tfvars file:
-ENV=prod   # or <your-env-name>
-
-cd deploy/base
-terraform init
-terraform apply -var-file=env/${ENV}.tfvars
-
-cd ../cloudrun
-terraform init
-terraform apply -var-file=env/${ENV}.tfvars
-
-# Routine: update services without touching foundation:
-cd deploy/cloudrun
-terraform apply -var-file=env/${ENV}.tfvars
-
-# Teardown services only (leaves foundation intact):
-cd deploy/cloudrun
-terraform destroy -var-file=env/${ENV}.tfvars
+scripts/local/build-hub.sh
+scripts/local/start-hub.sh     # one container at a time enforced
+scripts/local/stop-hub.sh
 ```
 
-## Local Docker Hub (scripts/local/)
+`OIS_ENV` (default `prod`) tags the container name and is validated `^[a-z][a-z0-9-]*$`,
+max 20 chars. `start-hub.sh` requires a running Postgres — see
+`docs/operator/hub-storage-substrate-local-dev.md`.
 
-`scripts/local/{build,start,stop}-hub.sh` are the local-dev equivalents — they build via Cloud Build + pull + tag `ois-hub:local`, launch a container named `ois-hub-local-<env>` on port 8080, and stop/remove on teardown.
+## Configuration
 
-```bash
-OIS_ENV=<env> scripts/local/build-hub.sh
-OIS_ENV=<env> scripts/local/start-hub.sh     # one container at a time enforced
-scripts/local/stop-hub.sh                    # auto-detects the running env
-```
+Two distinct config surfaces:
 
-Default `OIS_ENV` is `prod` — existing single-env operators see unchanged behavior.
+- **`deploy/hub/env/<env>.tfvars`** — Terraform variables for the `deploy/hub/` root.
+  Gitignored (secrets); copy from `deploy/hub/env/prod.tfvars.example`.
+- **`~/.config/apnex-agents/hub.env`** — config for the `scripts/local/` Hub tooling
+  (mission-87 W1 / idea-308). `key=value`, shell-sourced; lives outside the repo so
+  secrets never sit in the working tree. Copy from `scripts/local/hub.env.example`.
+  `start-hub.sh` reads `HUB_API_TOKEN`, `STATE_BUCKET_NAME`, `PROJECT_ID`,
+  `POSTGRES_CONNECTION_STRING` + the repo-event-bridge knobs; `build-hub.sh` reads
+  `PROJECT_ID` + `REGION`.
+
+> mission-87 W1 removed the pre-mission-86 `deploy/base/` + `deploy/cloudrun/` Cloud Run
+> terraform (the old two-plan deployment of the retired `vertex-cloudrun` Architect
+> service). Their per-env `*.tfvars` had become the local scripts' config source despite
+> no longer feeding any terraform; that config moved to `hub.env`.
 
 ## Cloud Build tarball staging (mission-50 + task-386 extension)
 
@@ -137,50 +104,28 @@ The only durable fix is to NOT regenerate the lockfile on the host. T5 (closed b
 
 `hub/package.json` keeps `"file:../packages/<pkg>"` refs as the dev-mode source-of-truth for both sovereign packages; `hub/package-lock.json` stays at the file: resolutions and is no longer touched by `build-hub.sh` at all (T5 dropped the host-side lockfile-regen step). Local dev (`cd hub && npm install`) is unchanged. The transient swap is invisible to anything outside the `build-hub.sh` process lifetime; the swap now affects only `hub/package.json` (restored by trap on every exit path) and the staged tarballs (removed by trap).
 
-### CI parity note (forward-look)
-
-`scripts/local/build-hub.sh` is the canonical Hub-build entry-point until idea-186 (npm workspaces adoption) lands and supersedes it. Future auto-redeploy mechanisms — including idea-197 / M-Auto-Redeploy-on-Merge when that ships — MUST invoke this script (or a workspaces-aware successor that inherits equivalent behavior) rather than calling `gcloud builds submit hub/` directly. Bypassing the script would re-introduce bug-33 (cross-package context trap on Cloud Build) and silently regress.
-
 ### Sunset condition
 
 The tarball staging is a workaround. The sunset trigger: idea-186 (npm workspaces adoption) ratified + Hub migrated to workspace resolution. At that point, npm workspaces resolve the cross-package dependencies natively; the tarball staging becomes dead weight. Cleanup at sunset:
 
-- Delete the §"Sovereign-package tarball staging (mission-50 T1+T5; task-386 ext.)" section from `scripts/local/build-hub.sh` (the entire `SOVEREIGN_PACKAGES` loop + trap + cleanup).
+- Delete the §"Sovereign-package tarball staging" section from `scripts/local/build-hub.sh` (the entire `SOVEREIGN_PACKAGES` loop + trap + cleanup).
 - Delete BOTH `COPY ois-storage-provider-*.tgz ./` AND `COPY ois-repo-event-bridge-*.tgz ./` lines from `hub/Dockerfile` (both stages — four lines total).
-- Revert `hub/Dockerfile`'s `RUN npm install ...` lines back to `RUN npm ci` (builder stage) and `RUN npm ci --omit=dev` (production stage). With workspaces resolution, the committed lockfile matches the workspace-resolved package tree and `npm ci` strict-validation passes natively. (The bug-38 motivation for `npm install` is gone: there's no swap-modified `package.json` to mismatch the lockfile.)
+- Revert `hub/Dockerfile`'s `RUN npm install ...` lines back to `RUN npm ci` (builder stage) and `RUN npm ci --omit=dev` (production stage).
 - Delete BOTH `ois-storage-provider-*.tgz` AND `ois-repo-event-bridge-*.tgz` lines from `hub/.gitignore`.
-- Delete `hub/.gcloudignore` entirely (the file becomes obsolete once the underlying tarball-staging mechanic is gone — there is nothing to re-include).
+- Delete `hub/.gcloudignore` entirely.
 - Delete this `Cloud Build tarball staging` section from `deploy/README.md`.
-
-If additional sovereign packages get added between now and idea-186 sunset, repeat the same four-file extension pattern (one entry in `SOVEREIGN_PACKAGES` + Dockerfile COPYs + .gitignore exclusion + .gcloudignore re-include); each addition extends the per-package count in the sunset cleanup proportionally.
 
 `scripts/local/build-hub.sh` carries an inline `TODO(idea-186)` comment naming the sunset condition + cleanup steps so the trigger is discoverable from the workaround itself.
 
 ### ADR-024 boundary statement
 
-Mission-50 does NOT amend [`ADR-024`](../docs/decisions/024-sovereign-storage-provider.md) (StorageProvider sovereign-package contract). The `@apnex/storage-provider` 6-primitive contract surface is unchanged; the `capabilities.concurrent` flag is unchanged; both `LocalFsStorageProvider` and `GcsStorageProvider` implementations are untouched. The tarball staging is a build-pipeline pattern adapting AROUND the contract, not a contract change. Per methodology v1.0 §ADR-amendment-scope-discipline, ADR amendments are reserved for contract changes; deployment-pattern adaptations live in build-pipeline + runbook docs — i.e., here.
-
-The same boundary holds for the task-386 extension: `@apnex/repo-event-bridge`'s sovereign-package contract (the `EventSource` interface, `CursorStore`, GH event translator surface introduced by mission-52 T1) is unchanged; the extension only adds the second package to the build-pipeline tarball-staging loop and matching ignore/Dockerfile lines.
+Mission-50 does NOT amend [`ADR-024`](../docs/decisions/024-sovereign-storage-provider.md) (StorageProvider sovereign-package contract). The tarball staging is a build-pipeline pattern adapting AROUND the contract, not a contract change. The same boundary holds for the task-386 extension: `@apnex/repo-event-bridge`'s sovereign-package contract is unchanged; the extension only adds the second package to the build-pipeline tarball-staging loop and matching ignore/Dockerfile lines.
 
 ## Backends
 
-Both plans use the **local backend** as of the split (state files kept in-dir). Migration to GCS remote backend is a planned future improvement — bucket exists (per-env `gs://<env>-state` or `gs://ois-relay-hub-state` for prod), so bootstrap will be straightforward once we cut over. Until then: do not operate simultaneously from multiple machines.
-
-## Environment files
-
-- `{base,cloudrun}/env/*.tfvars` — live values (gitignored via `env/*.tfvars`)
-- `{base,cloudrun}/env/prod.tfvars.example` — committed templates; copy to `<env>.tfvars` per env
-
-**Required secrets in `cloudrun/env/<env>.tfvars`:**
-- `hub_api_token` — bearer token for Hub `/mcp` endpoint
-- `architect_global_instance_id` — UUID identifying the Architect agent
-
-**Per-env fields recommended in `cloudrun/env/<env>.tfvars`:**
-- `hub_service_name = "hub-<env>"` (mission-46 T1 convention)
-- `architect_service_name = "architect-<env>"` (mission-46 T1 convention)
-
-**Per-env fields recommended in `base/env/<env>.tfvars`:**
-- `state_bucket_name = "<project-id>-hub-state"` or similar uniqueness-guaranteed name (GCS bucket names are global-namespaced — don't reuse `ois-relay-hub-state` across envs)
+`deploy/hub/` uses the Terraform **local backend** (state file kept in-dir, gitignored).
+Migration to a GCS remote backend is a planned future improvement; until then, do not run
+`terraform apply` simultaneously from multiple machines.
 
 ## Repo-event-bridge env-vars (mission-52 T3)
 
@@ -195,22 +140,15 @@ The Hub's optional repo-event-bridge component (M-Repo-Event-Bridge) ingests Git
 | `OIS_REPO_EVENT_BRIDGE_CADENCE_S` | no | `30` | Seconds between polls per repo. |
 | `OIS_REPO_EVENT_BRIDGE_RATE_BUDGET_PCT` | no | `0.8` | Fraction of GH PAT 5000-req/hr limit to budget. Soft-limit (warns on overrun; not enforcing). |
 
-**Operator setup (laptop Hub):**
+**Operator setup (local Docker Hub):** set these keys in `~/.config/apnex-agents/hub.env`
+(see `scripts/local/hub.env.example`) — `start-hub.sh` sources that file and forwards the
+vars into the container:
 
-```bash
-# 1. Provision a PAT at https://github.com/settings/tokens with scopes:
-#    repo, read:org, read:user
-export OIS_GH_API_TOKEN="ghp_…"
-
-# 2. List repos to poll
-export OIS_REPO_EVENT_BRIDGE_REPOS="apnex-org/agentic-network,apnex-org/other-repo"
-
-# 3. (Optional) override cadence + budget
-export OIS_REPO_EVENT_BRIDGE_CADENCE_S=60
-export OIS_REPO_EVENT_BRIDGE_RATE_BUDGET_PCT=0.5
-
-# 4. Boot the Hub — start-hub.sh forwards these env-vars into the container.
-OIS_ENV=prod scripts/local/start-hub.sh
+```
+OIS_GH_API_TOKEN="ghp_…"                                  # PAT: repo, read:org, read:user
+OIS_REPO_EVENT_BRIDGE_REPOS="apnex-org/agentic-network"   # comma-separated owner/name
+OIS_REPO_EVENT_BRIDGE_CADENCE_S="60"                       # optional override
+OIS_REPO_EVENT_BRIDGE_RATE_BUDGET_PCT="0.5"                # optional override
 ```
 
 The container Hub logs `[repo-event-bridge] Polling N repos × Ks cadence = M req/hr (budget cap: K req/hr; X% headroom)` at startup when active, or `[Hub] OIS_GH_API_TOKEN not set — repo-event-bridge skipped` when the token is absent.
@@ -221,174 +159,11 @@ The container Hub logs `[repo-event-bridge] Polling N repos × Ks cadence = M re
 - 429 / rate-limit → bridge auto-pauses for `Retry-After` or `X-RateLimit-Reset` window; resumes automatically. `health()` reports `paused: true, pausedReason: 'rate-limit'`.
 - Network transient → bridge exp-backoffs (1 → 2 → 5 → 10 → 30s cap); `pausedReason: 'network'` set when backoff > 30s.
 
-**State persistence:** per-repo cursor + bounded LRU dedupe set persist via the Hub's StorageProvider (same backend as other entities — GCS / local-fs / memory). Hub restart resumes polling from the persisted cursor; events seen pre-restart don't re-emit.
-
-## Local-fs Hub profile
-
-Mission-48 (closed 2026-04-25) made `local-fs` the laptop-Hub prod default — bind-mounted host directory, single-writer, durable across container restart. ADR-024 §6.1 captures the profile reclassification (dev-only → also single-writer-laptop-prod-eligible).
-
-**Properties:**
-
-- **Default backend:** `local-fs` (mission-48 T2b). Override to `gcs` via `STORAGE_BACKEND=gcs`.
-- **Default host path:** `${REPO_ROOT}/local-state/` (gitignored). Override via `OIS_LOCAL_FS_ROOT=<path>`.
-- **Bind mount + uid/gid:** start-hub.sh bind-mounts the host path into the container at the same path and runs the container as host uid/gid (`docker run -u $(id -u):$(id -g)`). Bind-mount writes are host-owned and operator-inspectable; uid mismatch can't surface as a generic `EACCES` mid-mission.
-- **Single-writer enforcement:** start-hub.sh permits only one `ois-hub-local-*` container at a time per host. Concurrent hubs against the same state dir will corrupt state — the enforcement script makes this hard to do accidentally. Cloud Run / multi-instance deployments must continue to use `STORAGE_BACKEND=gcs` (`concurrent:false` capability flag still rules out multi-writer profiles by contract).
-- **Defense-in-depth writability check:** start-hub.sh shell-layer probes writability before `docker run`; Hub container also asserts writability internally and fail-fasts on `EACCES`/`EPERM` with a uid/gid-diagnostic message.
-- **Bootstrap-required guard:** Hub startup under `STORAGE_BACKEND=local-fs` checks for `${OIS_LOCAL_FS_ROOT}/.cutover-complete`; refuses to start without it. The sentinel is written by `scripts/state-sync.sh` only after the post-copy set-equality invariant passes — Hub never operates on a half-bootstrapped state.
-- **Reverse-sync:** `scripts/state-sync.sh --reverse --yes` pushes local-fs state UP to GCS — the rollback feeder. `--yes` required (canonical GCS state can be overwritten). Tmp-file artifacts (`.tmp.*`) and the local-fs-only sentinel are excluded from the upload by construction. Reverse direction does NOT touch the local sentinel.
-
-## Cutover runbook (operator-facing)
-
-Move a Hub from GCS-backed operation to local-fs-backed operation. Idempotent at every step. Required before first launch on the local-fs default.
-
-### Pre-flight
-
-| Check | Command | Expected |
-|---|---|---|
-| `gcloud` SDK installed + authenticated | `gcloud auth list` | active account listed |
-| GCP project + region resolved | `cat deploy/env/prod.tfvars` | `project_id` + `region` populated |
-| Docker daemon running | `docker ps` | exits 0 |
-| `gsutil` accessible | `gsutil version -l` | gsutil + python paths printed |
-| GCS bucket reachable | `gsutil ls gs://ois-relay-hub-state/` | object listing |
-| Repo at current main HEAD | `git fetch && git status` | "up to date with origin/main" |
-
-### Step 1 — Build the Hub image from current main
-
-```bash
-OIS_ENV=prod scripts/local/build-hub.sh
-```
-
-Cloud Build runs the build over the local `hub/` directory; pushes `:latest` to the env's Artifact Registry; pulls back to the host; tags locally as `ois-hub:local`. Re-runnable; idempotent.
-
-Verify post-build:
-```bash
-docker image inspect ois-hub:local --format '{{.Created}} {{.Id}}'
-# Expect: timestamp == current build minute; new SHA
-```
-
-### Step 2 — Bootstrap local-fs from GCS
-
-```bash
-scripts/state-sync.sh
-```
-
-Forward direction (GCS → local-fs); idempotent (re-run is a no-op). Output trail:
-- gsutil rsync mirrors `gs://${BUCKET}/` → `${REPO_ROOT}/local-state/` (parallel; tmp-file exclusion via regex)
-- Post-copy set-equality invariant verifies keyspace match between GCS + local
-- `.cutover-complete` sentinel written ONLY after invariant green (timestamp + bucket + script commit + invocation epoch)
-
-If the invariant fails, the script exits 1 with explicit `< / >` path-diff output; sentinel NOT written. Re-run after resolving (interrupted rsync, mid-flight GCS modification, or local writes during sync).
-
-### Step 3 — Stop the prior container (if present)
-
-```bash
-docker ps --filter 'name=^/ois-hub-local' -q | xargs -r docker stop
-docker ps -a --filter 'name=^/ois-hub-local' -q | xargs -r docker rm
-```
-
-(start-hub.sh's one-hub-at-a-time enforcement also handles this on launch — Step 3 is for explicit-cleanup operators who want a known-clean slate.)
-
-### Step 4 — Start Hub against local-fs default
-
-```bash
-OIS_ENV=prod scripts/local/start-hub.sh
-```
-
-start-hub.sh's defaults pick up local-fs automatically (T2b flip). Output trail:
-- Pre-flight: `mkdir -p` + writability probe on `${REPO_ROOT}/local-state/`
-- `docker run -u $(id -u):$(id -g)` with bind mount of state dir
-- Hub-side writability assertion + bootstrap-required guard pass
-- `/health` returns 200 within ~5s
-
-### Step 5 — Verify
-
-```bash
-curl -sf http://localhost:8080/health   # → {"status":"ok",...}
-docker logs --tail 30 ois-hub-local-prod   # no FATAL/ERROR; "Using local-fs storage backend at: ..." line present
-```
-
-Optional Hub-restart verification (the load-bearing readback assertion captured in `docs/runbooks/m-local-fs-cutover-drills.md` §2): stop + start the container; re-enumerate entities; assert ID-set equality pre/post.
-
-## Rollback runbook (operator-facing)
-
-Roll back from local-fs to GCS-backed operation. Two scenarios; pick the one that matches.
-
-### Scenario A — pure time-travel (no post-cutover writes to preserve)
-
-If no entity creation / state mutation happened on local-fs since the cutover, the GCS-as-of-cutover snapshot is still authoritative. Just flip and restart:
-
-```bash
-docker stop ois-hub-local-prod && docker rm ois-hub-local-prod
-STORAGE_BACKEND=gcs OIS_ENV=prod scripts/local/start-hub.sh
-```
-
-### Scenario B — preserve post-cutover writes (most common case)
-
-If Hub has written entities to local-fs since cutover, those writes are NOT in GCS. Rolling back without first pushing them to GCS = silent data loss. Always do this:
-
-```bash
-# 1. Stop the local-fs Hub (stable local-state for reverse-sync).
-docker stop ois-hub-local-prod
-
-# 2. Push local-fs state UP to GCS — REQUIRES --yes (canonical GCS will be overwritten).
-scripts/state-sync.sh --reverse --yes
-
-# 3. Verify the post-cutover write landed in GCS.
-gsutil ls gs://${BUCKET}/<entity-path>/
-# (Spot-check whichever entity type you wrote during the local-fs window.)
-
-# 4. Restart Hub on GCS backend.
-docker rm ois-hub-local-prod
-STORAGE_BACKEND=gcs OIS_ENV=prod scripts/local/start-hub.sh
-
-# 5. Verify Hub returns the post-cutover entities via Hub-API.
-curl -sf http://localhost:8080/health   # /health: ok
-# (Use list_* / get_* MCP tools to spot-check the post-cutover writes.)
-```
-
-### Why `--yes` on reverse-sync
-
-The reverse direction can clobber the canonical GCS state. Forgetting `--yes` was deliberately blocked: accidental invocation is the most expensive mistake (overwriting GCS with a partial / broken local-state). The flag forces explicit operator intent.
-
-### Sentinel handling on rollback
-
-The local `.cutover-complete` sentinel is NOT touched by reverse-sync — it reflects the LAST FORWARD bootstrap, not the last reverse upload. After a rollback:
-- The local-state directory still has a sentinel from the original forward bootstrap.
-- If an operator later forwards-bootstraps again (e.g., after upstream GCS state moved on), the new sentinel overwrites the old.
-- Fresh-start scenarios: delete `local-state/` entirely, then run `scripts/state-sync.sh` to rebuild from GCS.
-
-## Hub GCS state layout (post-mission-49)
-
-Hub state is keyed under the env's state bucket (e.g. `gs://<env>-state` or `gs://ois-relay-hub-state` for prod). Mission-49 (2026-04-25) introduced a v2 audit namespace; pre-migration audit blobs are frozen-but-grep-accessible.
-
-**Audit entries:**
-
-- **Pre-2026-04-25 (legacy timestamp-ID format):** `gs://$bucket/audit/audit-${ISO-timestamp}.json`. Frozen — Hub no longer reads or writes here. Grep-accessible for forensic / archaeology purposes only.
-- **Post-2026-04-25 (counter-ID format):** `gs://$bucket/audit/v2/audit-${N}.json` where `N` is the unpadded monotonic counter from `meta/counter.json`'s `auditCounter` field. Hub `list_audit_entries` API returns only this v2 namespace.
-
-**Internal notifications (SSE fan-out + reconnect-backfill):**
-
-- **Pre-AMP-cutover (legacy integer-id format):** any objects directly under `gs://$bucket/notifications/` that pre-date the v2 cutover. Frozen.
-- **Post-AMP-cutover (ULID format):** `gs://$bucket/notifications/v2/${ulid}.json`. Hub reads/writes here exclusively. Mission-49 W9 preserved this namespace byte-identically (no second cutover; no migration script).
-
-If you find blobs at any other path under `audit/` or `notifications/` outside these conventions, treat them as historical artifacts — they're not Hub-API-visible and won't affect the running system.
+**State persistence:** per-repo cursor + bounded LRU dedupe set persist via the Hub storage substrate (Postgres). Hub restart resumes polling from the persisted cursor; events seen pre-restart don't re-emit.
 
 ## Outstanding
 
-- **Hub deploy pipeline (build + roll)** — COMPLETE as of mission-43 + mission-46 T1:
-  - `deploy/build-hub.sh` — Cloud Build → Artifact Registry + `:latest` re-tag (OIS_ENV-aware as of mission-46 T1).
-  - `deploy/deploy-hub.sh` — Cloud Run roll to a specified image (default `:latest`; OIS_ENV-aware service name as of mission-46 T1).
-
-- **Architect deploy pipeline (build + roll)** — COMPLETE as of mission-46 T1:
-  - `deploy/build-architect.sh` — mirror of build-hub for agents/vertex-cloudrun.
-  - `deploy/deploy-architect.sh` — mirror of deploy-hub for architect-<env>.
-
-- **New-environment bootstrap wrapper** — COMPLETE as of mission-46 T2: `deploy/new-environment-bootstrap.sh`. Single-command scaffold: takes `--project-id` + `--region` + `--env`, scaffolds per-env tfvars from templates (idempotent), auto-generates `hub_api_token` (openssl rand) + `architect_global_instance_id` (uuidgen), enables bootstrap GCP APIs, applies base terraform, builds + deploys Hub + Architect via the T1 wrappers, reports service URLs. Optional `--provision-local-key` flag generates an SA key JSON at repo root for local-dev (opt-in; default off). Secrets written to `.bootstrap-secrets-<env>.txt` (gitignored, chmod 600). Idempotent end-to-end; safe to re-run.
-
-- **End-to-end `build.sh`** — historical successor (previously `archive-pre-split-2026-04-22/build.sh`, assumed monolithic apply in `deploy/` root) still needs a tracked wrapper that applies base + cloudrun in correct order and handles `deploy-ts` label bumps per service. Candidate script-rationalisation mission.
-
-- **Remote state migration to GCS.** Move both plans' state files from local to `backend "gcs"` pointing at the env's state bucket. Separate future mission (explicitly pulled out of mission-46 scope to preserve M effort class).
-
-- **Generic CloudRun lifecycle scripts.** Replace ad-hoc `start-architect.sh` / `stop-architect.sh` / `start-hub.sh` (historical names under `scripts/`) with a generic `cloudrun/{start,stop,delete}.sh <service-name>` pattern, OR delete them entirely now that the `deploy/deploy-*` wrappers cover the same ground.
-
-- **bug-30 / idea-186 narrow-gate re-require.** PR #4 (2026-04-24) installed `continue-on-error: true` on 4 non-hub matrix cells in `.github/workflows/test.yml` as an interim CI unblock. Once bug-30 (adapter tarball deps + cross-package imports) lands via idea-186 (npm workspaces migration), re-add those cells to the `test` aggregator's `needs: [...]` list + delete `continue-on-error`. Time-box: 4 weeks from 2026-04-24.
+- **Remote state migration to GCS.** Move `deploy/hub/`'s Terraform state from the local
+  backend to `backend "gcs"` pointing at the state bucket. Separate future mission.
+- **bug-30 / idea-186 narrow-gate re-require.** Once idea-186 (npm workspaces migration)
+  lands, the Cloud Build tarball staging sunsets — see the sunset condition above.
