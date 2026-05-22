@@ -87,9 +87,11 @@ export class StorageProviderError extends Error {
 // ── Contract ─────────────────────────────────────────────────────────
 
 /**
- * The sovereign six-primitive contract. Every provider (memory,
- * local-fs, gcs, ...) implements this identically — repositories
- * compose over the contract without backend-specific branches.
+ * The sovereign six-primitive contract. Every provider implements this
+ * identically — repositories compose over the contract without
+ * backend-specific branches. (`MemoryStorageProvider` ships today; the
+ * local-fs + gcs providers were retired at the mission-83/84 substrate
+ * cutover — this package shrank to a test-only affordance.)
  *
  * See the success anti-criterion from mission-47: if a repository
  * ever has `if (provider instanceof GcsStorageProvider)`, the

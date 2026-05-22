@@ -404,4 +404,4 @@ For readers needing to trace from spec to implementation:
 - `docs/specs/workflow-registry.md` — full invariant registry (INV-TH* and siblings).
 - `docs/specs/entities.md` — Thread entity in the canonical entity catalog.
 - `docs/architecture/policy-network-v1.md` — surrounding policy-network context.
-- `docs/architect-engineer-collaboration.md` — cross-role workflow catalog.
+- `docs/methodology/entity-mechanics.md` — per-entity FSM + status transitions + cascade behaviors.

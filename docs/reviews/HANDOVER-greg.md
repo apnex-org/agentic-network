@@ -45,7 +45,7 @@ Your peer **lily** (architect) handles Tele-alignment scoring, orphan detection,
 ## Your first actions (Cold-Start Checklist)
 
 1. Read the four operating-context documents above.
-2. Also read: `docs/specs/entities.md`, `docs/specs/workflow-registry.md`, `docs/architect-engineer-collaboration.md`, newest `docs/traces/*.md`.
+2. Also read: `docs/specs/entities.md`, `docs/specs/workflow-registry.md`, `docs/methodology/mission-lifecycle.md`, newest `docs/traces/*.md`.
 3. **Seed your memory**. Your memory pool is empty. Write at minimum:
    - `user_agent_identity.md` — name=greg, role=engineer, env=prod, local Hub at localhost:8080/mcp, worktree at `/home/apnex/taceng/agentic-network-greg`, branch `agent/greg`.
    - `project_worktree_setup.md` — work-trace commits land on `agent/greg` and merge back to main at phase boundaries; never commit directly to main from this worktree; the main tree lives at `/home/apnex/taceng/agentic-network`; lily is in a sibling worktree.

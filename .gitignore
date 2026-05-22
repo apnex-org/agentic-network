@@ -10,11 +10,11 @@ dist/
 *.log
 .ois/
 
-# local-fs Hub state directory — default OIS_LOCAL_FS_ROOT for
-# `scripts/local/start-hub.sh` when STORAGE_BACKEND=local-fs. Grown
-# organically by the Hub during local-fs operation. (local-fs is now a
-# dev/test affordance only — production runs the postgres substrate;
-# scripts/state-sync.sh + GCS were removed at the mission-83 cutover.)
+# Gitignored local state directory — local-fs storage-mode artifacts
+# (a dev/test affordance per CLAUDE.md) + adapter-side local state. The
+# production Hub + scripts/local/start-hub.sh run the postgres substrate;
+# the GCS↔local-fs cutover + scripts/state-sync.sh were removed at the
+# mission-83/84 substrate cutover.
 local-state/
 
 # Personal host configuration (not shipped)
