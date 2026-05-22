@@ -353,5 +353,6 @@ clear it.
 - **Verification:** `mcp-transport.test.ts` 7-failed → 7/7 passed. Full
   network-adapter suite **17 files / 188 tests, all green** (was 16/17 files,
   181/188 tests). `tsc --noEmit` clean.
-- Branch `agent-greg/bug-109-test-hub-substrate-rewire` off `origin/main @ f837c32`.
-  NEXT: commit + push + open PR + surface on thread-609.
+- Branch `agent-greg/bug-109-test-hub-substrate-rewire` off `origin/main @ f837c32`;
+  commit `4f6845e`. **PR #244 opened**, surfaced on thread-609 for cross-approval.
+  NEXT (post-merge): PR-4c residuals.
