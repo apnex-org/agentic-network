@@ -1,7 +1,7 @@
 /**
  * PolicyLoopbackHub — full-stack L7 test harness.
  *
- * Plugs the real Hub `PolicyRouter` (all 13 production policies) and
+ * Plugs the real Hub `PolicyRouter` (the production policies) and
  * in-memory stores behind the `ILoopbackHub` contract, so
  * `McpAgentClient` can run against it through `LoopbackTransport`
  * without spinning up HTTP/SSE.
@@ -17,17 +17,28 @@
  * `PolicyRouter`.
  */
 
-import { PolicyRouter, registerTaskPolicy, registerSystemPolicy, registerTelePolicy, registerAuditPolicy, registerDocumentPolicy, registerSessionPolicy, registerIdeaPolicy, registerMissionPolicy, registerTurnPolicy, registerClarificationPolicy, registerReviewPolicy, registerProposalPolicy, registerThreadPolicy } from "../../../../hub/src/policy/index.js";
+import { PolicyRouter, registerTaskPolicy, registerSystemPolicy, registerTelePolicy, registerAuditPolicy, registerSessionPolicy, registerIdeaPolicy, registerMissionPolicy, registerTurnPolicy, registerClarificationPolicy, registerReviewPolicy, registerProposalPolicy, registerThreadPolicy } from "../../../../hub/src/policy/index.js";
 import type { AllStores, IPolicyContext } from "../../../../hub/src/policy/types.js";
-import { MemoryTaskStore, MemoryEngineerRegistry, MemoryProposalStore, MemoryThreadStore, MemoryAuditStore } from "../../../../hub/src/state.js";
 import type { Selector } from "../../../../hub/src/state.js";
-import { MemoryIdeaStore } from "../../../../hub/src/entities/idea.js";
-import { MemoryMissionStore } from "../../../../hub/src/entities/mission.js";
-import { MemoryTurnStore } from "../../../../hub/src/entities/turn.js";
-import { MemoryTeleStore } from "../../../../hub/src/entities/tele.js";
-import { MemoryPendingActionStore } from "../../../../hub/src/entities/pending-action.js";
-import { MemoryDirectorNotificationStore } from "../../../../hub/src/entities/director-notification.js";
-import { MemoryBugStore } from "../../../../hub/src/entities/bug.js";
+// bug-109 PR-4b — PolicyLoopbackHub repaired against the post-mission-83
+// substrate. The Memory*Store classes this harness used were removed by the
+// substrate migration; it is rebuilt on createMemoryStorageSubstrate + the
+// *RepositorySubstrate repositories — the same AllStores construction
+// hub/src/policy/test-utils.ts uses.
+import { createMemoryStorageSubstrate } from "../../../../hub/src/storage-substrate/index.js";
+import { SubstrateCounter } from "../../../../hub/src/entities/substrate-counter.js";
+import { AgentRepositorySubstrate } from "../../../../hub/src/entities/agent-repository-substrate.js";
+import { TaskRepositorySubstrate } from "../../../../hub/src/entities/task-repository-substrate.js";
+import { ProposalRepositorySubstrate } from "../../../../hub/src/entities/proposal-repository-substrate.js";
+import { ThreadRepositorySubstrate } from "../../../../hub/src/entities/thread-repository-substrate.js";
+import { IdeaRepositorySubstrate } from "../../../../hub/src/entities/idea-repository-substrate.js";
+import { MissionRepositorySubstrate } from "../../../../hub/src/entities/mission-repository-substrate.js";
+import { TurnRepositorySubstrate } from "../../../../hub/src/entities/turn-repository-substrate.js";
+import { TeleRepositorySubstrate } from "../../../../hub/src/entities/tele-repository-substrate.js";
+import { AuditRepositorySubstrate } from "../../../../hub/src/entities/audit-repository-substrate.js";
+import { BugRepositorySubstrate } from "../../../../hub/src/entities/bug-repository-substrate.js";
+import { MessageRepositorySubstrate } from "../../../../hub/src/entities/message-repository-substrate.js";
+import { PendingActionRepositorySubstrate } from "../../../../hub/src/entities/pending-action-repository-substrate.js";
 import { createMetricsCounter, type MetricsCounter } from "../../../../hub/src/observability/metrics.js";
 import type { ILoopbackHub, LoopbackTransport, ToolCall } from "./loopback-transport.js";
 
@@ -121,7 +132,7 @@ export class PolicyLoopbackHub implements ILoopbackHub {
   /** Engineer ID currently bound to a loopback session, if any. */
   async agentIdForSession(sessionId: string): Promise<string | null> {
     const agent = await this.stores.engineerRegistry.getAgentForSession(sessionId);
-    return agent?.agentId ?? null;
+    return agent?.id ?? null;
   }
 
   // ── Internal ────────────────────────────────────────────────────────
@@ -147,7 +158,7 @@ export class PolicyLoopbackHub implements ILoopbackHub {
           if (!targetSid) continue;
           if (!this.sessions.has(targetSid)) continue;
           this.pushToSession(targetSid, event, data);
-          delivered.push(agent.agentId);
+          delivered.push(agent.id);
         }
         this.dispatched.push({
           event,
@@ -161,7 +172,6 @@ export class PolicyLoopbackHub implements ILoopbackHub {
       clientIp: "127.0.0.1",
       role: this.stores.engineerRegistry.getRole(sessionId),
       internalEvents: [],
-      config: { storageBackend: "memory", gcsBucket: "" },
       metrics: this.metrics,
     };
   }
@@ -178,22 +188,26 @@ export class PolicyLoopbackHub implements ILoopbackHub {
   }
 
   private createStores(): AllStores {
-    const task = new MemoryTaskStore();
-    const idea = new MemoryIdeaStore();
-    const mission = new MemoryMissionStore(task, idea);
+    // Substrate-version repositories over a fresh MemoryHubStorageSubstrate +
+    // SubstrateCounter — mirrors hub/src/policy/test-utils.ts createTestContext.
+    const substrate = createMemoryStorageSubstrate();
+    const counter = new SubstrateCounter(substrate);
+    const task = new TaskRepositorySubstrate(substrate, counter);
+    const idea = new IdeaRepositorySubstrate(substrate, counter);
+    const mission = new MissionRepositorySubstrate(substrate, counter, task, idea);
     return {
       task,
-      engineerRegistry: new MemoryEngineerRegistry(),
-      proposal: new MemoryProposalStore(),
-      thread: new MemoryThreadStore(),
-      audit: new MemoryAuditStore(),
+      engineerRegistry: new AgentRepositorySubstrate(substrate),
+      proposal: new ProposalRepositorySubstrate(substrate, counter),
+      thread: new ThreadRepositorySubstrate(substrate, counter),
+      audit: new AuditRepositorySubstrate(substrate, counter),
       idea,
       mission,
-      turn: new MemoryTurnStore(mission, task),
-      tele: new MemoryTeleStore(),
-      pendingAction: new MemoryPendingActionStore(),
-      directorNotification: new MemoryDirectorNotificationStore(),
-      bug: new MemoryBugStore(),
+      turn: new TurnRepositorySubstrate(substrate, counter, mission, task),
+      tele: new TeleRepositorySubstrate(substrate, counter),
+      bug: new BugRepositorySubstrate(substrate, counter),
+      pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
+      message: new MessageRepositorySubstrate(substrate),
     };
   }
 
@@ -204,7 +218,6 @@ export class PolicyLoopbackHub implements ILoopbackHub {
     registerSystemPolicy(router);
     registerTelePolicy(router);
     registerAuditPolicy(router);
-    registerDocumentPolicy(router);
     registerIdeaPolicy(router);
     registerMissionPolicy(router);
     registerTurnPolicy(router);
