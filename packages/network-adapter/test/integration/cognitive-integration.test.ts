@@ -53,7 +53,8 @@ async function createAgent(
     {
       role: "engineer",
       handshake: {
-        name: `cog-int-${randomUUID()}`,
+        // idea-251 name-length limit [1,32]: slice the UUID (full → 44 chars).
+        name: `cog-int-${randomUUID().slice(0, 8)}`,
         proxyName: "cognitive-integration-test",
         proxyVersion: "0.0.0",
         transport: "loopback",
@@ -144,7 +145,7 @@ describe("McpAgentClient cognitive integration", () => {
       {
         role: "engineer",
         handshake: {
-          name: `cb-${randomUUID()}`,
+          name: `cb-${randomUUID().slice(0, 8)}`,
           proxyName: "cb-test",
           proxyVersion: "0.0.0",
           transport: "loopback",
@@ -198,7 +199,7 @@ describe("McpAgentClient cognitive integration", () => {
       {
         role: "engineer",
         handshake: {
-          name: `std-${randomUUID()}`,
+          name: `std-${randomUUID().slice(0, 8)}`,
           proxyName: "std-pipeline-test",
           proxyVersion: "0.0.0",
           transport: "loopback",
@@ -263,7 +264,7 @@ describe("McpAgentClient cognitive integration", () => {
       {
         role: "engineer",
         handshake: {
-          name: `err-${randomUUID()}`,
+          name: `err-${randomUUID().slice(0, 8)}`,
           proxyName: "err-test",
           proxyVersion: "0.0.0",
           transport: "loopback",

@@ -42,7 +42,9 @@ async function createActor(
       role,
       labels,
       handshake: {
-        name: `loopback-${role}-${randomUUID()}`,
+        // idea-251 name-length limit [1,32]: slice the UUID so the
+        // generated name stays in range (full UUID → 54 chars → invalid_name).
+        name: `loopback-${role}-${randomUUID().slice(0, 8)}`,
         proxyName: "policy-loopback",
         proxyVersion: "0.0.0",
         transport: "loopback",

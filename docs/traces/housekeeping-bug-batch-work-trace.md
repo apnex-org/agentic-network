@@ -293,3 +293,33 @@ clear it.
   claude-plugin e2e + 3 network-adapter integration files now load. The 27
   session-FSM reds it exposes are continue-on-error / non-blocking + now
   specific (the un-masking working as intended).
+
+### 2026-05-22 ~12:50 AEST — session cleared mid-batch; bug-109 session-FSM fixture-fix slice
+
+- Session cleared (Director-initiated) mid-batch. Cold-pickup: re-read this
+  trace + thread-609 (the tail spine). Current task per architect: the
+  session-FSM fixture-fix slice.
+- **Diagnosis (already concurred, thread-609) — (b), test-fixture gap.**
+  `createActor` + inline handshakes generate agent names from a full
+  `randomUUID()` (54 / 44 chars); the Hub's `register_role` enforces an
+  idea-251 name-length limit `[1,32]` (`session-policy.ts:73`, `invalid_name`).
+  Over-length name → register_role rejected → no Agent → `agentIdForSession
+  → null` → "Agent entity was not created". No FSM-semantics gap.
+- **Sweep (architect discipline ask — grep EVERY name-gen site):**
+  - network-adapter: 6 over-length `handshake.name` sites — `label-routing.ts:45`
+    + `threads-2-smoke.ts:49` (`loopback-${role}-${randomUUID()}`, 54 chars);
+    `cognitive-integration.ts:56/147/201/266` (`cog-int-/cb-/std-/err-` + full
+    UUID, 39-44). All 6 fixed → `randomUUID().slice(0, 8)` (16-27 chars; the
+    first 8 UUID chars are hex, no dash — clears NAME_REGEX too).
+  - claude-plugin + opencode e2e: NO over-length `name`. They pass the RETIRED
+    `globalInstanceId` field (idea-251 D-prime renamed it → `name`) and omit
+    the now-required `name`. Failure mode there is `handshake.parse_failed`,
+    NOT `invalid_name` — a distinct fixture-staleness defect. Surfaced to the
+    architect for PR-4c folding (same harness-staleness class as eager-claim).
+- **Verification:** baseline 3 integration files = 20 failed / 3 passed →
+  post-fix 23 / 23 passed. Full network-adapter suite: 1 file failed (the 7
+  `mcp-transport.test.ts` reds = the separate `test-hub.ts` slice,
+  `MemoryEngineerRegistry is not a constructor`) / 16 passed; 188 tests,
+  181 passed. `tsc --noEmit` clean.
+- Branch `agent-greg/bug-109-session-fsm-fixture-names` off `origin/main @ 3dd33cb`.
+  NEXT: commit + push + open PR + surface on thread-609.
