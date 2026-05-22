@@ -8,7 +8,7 @@ resource "google_cloud_run_v2_service" "hub_api" {
   ingress  = "INGRESS_TRAFFIC_ALL"
 
   # v6 provider default is true; false so `terraform destroy` works
-  # without a pre-step apply (matches deploy/cloudrun/ convention).
+  # without a pre-step apply.
   deletion_protection = false
 
   template {
