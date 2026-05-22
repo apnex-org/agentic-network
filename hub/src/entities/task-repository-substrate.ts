@@ -100,7 +100,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
       verification: null,
       reviewAssessment: null,
       reviewRef: null,
-      assignedEngineerId: null,
+      assignedAgentId: null,
       clarificationQuestion: null,
       clarificationAnswer: null,
       correlationId: correlationId || null,
@@ -237,7 +237,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
             throw new TransitionRejected("labels diverged");
           }
           current.status = "working";
-          current.assignedEngineerId = claimant?.agentId ?? null;
+          current.assignedAgentId = claimant?.agentId ?? null;
           current.updatedAt = new Date().toISOString();
           claimed = { ...current };
           return current;
@@ -245,7 +245,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
         if (ok && claimed) {
           console.log(
             `[TaskRepositorySubstrate] Directive assigned: ${(claimed as Task).id}` +
-              ((claimed as Task).assignedEngineerId ? ` → ${(claimed as Task).assignedEngineerId}` : ""),
+              ((claimed as Task).assignedAgentId ? ` → ${(claimed as Task).assignedAgentId}` : ""),
           );
           return claimed;
         }

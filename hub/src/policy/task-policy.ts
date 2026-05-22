@@ -151,7 +151,7 @@ async function getTask(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   }
 
   // Mission-19 t4/t5: label-aware claim. Only pull tasks whose labels are
-  // a subset of the caller's Agent.labels; persist assignedEngineerId for
+  // a subset of the caller's Agent.labels; persist assignedAgentId for
   // P2P routing of subsequent events (review, clarification, revision).
   const claimant = await ctx.stores.engineerRegistry.getAgentForSession(sid);
   const task = await ctx.stores.task.getNextDirective(
@@ -171,7 +171,7 @@ async function getTask(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   // Fire notification to notify Architect that work has started (routed by task labels)
   await ctx.dispatch("directive_acknowledged", {
     taskId: task.id,
-    agentId: task.assignedEngineerId || claimant?.id || "unknown",
+    agentId: task.assignedAgentId || claimant?.id || "unknown",
     directive: task.description?.substring(0, 100) || task.title || "",
   }, { roles: ["architect"], matchLabels: task.labels });
 
@@ -283,7 +283,7 @@ async function getReport(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 // ── M-QueryShape Phase 1 (idea-119, task-302) ─────────────────────────
 // Task-entity field descriptors + value accessors for the shared
 // filter/sort primitives in list-filters.ts. Phase 1 scope:
-// status + correlationId + assignedEngineerId + createdAt + updatedAt.
+// status + correlationId + assignedAgentId + createdAt + updatedAt.
 // Phase C (task-306): createdBy.role + createdBy.agentId + createdBy.id
 // nested-path support. `createdBy.id` is computed in the accessor as
 // `${role}:${agentId}` — virtual field, not persisted on write
@@ -296,7 +296,7 @@ async function getReport(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 const TASK_FILTERABLE_FIELDS: QueryableFieldSpec = {
   status: { type: "enum", values: ["pending", "working", "blocked", "input_required", "in_review", "completed", "failed", "cancelled", "escalated", "read_completed", "reported_completed"] },
   correlationId: { type: "string" },
-  assignedEngineerId: { type: "string" },
+  assignedAgentId: { type: "string" },
   createdAt: { type: "date" },
   updatedAt: { type: "date" },
   "createdBy.role": { type: "string" },
@@ -310,7 +310,7 @@ const TASK_SORTABLE_FIELDS = [
   "createdAt",
   "updatedAt",
   "correlationId",
-  "assignedEngineerId",
+  "assignedAgentId",
   "createdBy.role",
   "createdBy.agentId",
   "createdBy.id",
@@ -320,7 +320,7 @@ const TASK_ACCESSORS: FieldAccessors<Task> = {
   id: (t) => t.id,
   status: (t) => t.status,
   correlationId: (t) => t.correlationId,
-  assignedEngineerId: (t) => t.assignedEngineerId,
+  assignedAgentId: (t) => t.assignedAgentId,
   createdAt: (t) => t.createdAt,
   updatedAt: (t) => t.updatedAt,
   "createdBy.role": (t) => t.createdBy?.role ?? null,
@@ -599,11 +599,11 @@ export function registerTaskPolicy(router: PolicyRouter): void {
     "`filter` accepts a Mongo-ish object with implicit AND across fields: " +
     "`{status: 'pending'}` for eq, `{status: {$in: ['pending','working']}}` for set membership, " +
     "`{createdAt: {$lt: '2026-04-01T00:00:00Z'}}` for range. " +
-    "Filterable fields: status, correlationId, assignedEngineerId, createdAt, updatedAt, " +
+    "Filterable fields: status, correlationId, assignedAgentId, createdAt, updatedAt, " +
     "'createdBy.role', 'createdBy.agentId', 'createdBy.id' (computed `${role}:${agentId}`). " +
     "Range operators ($gt/$lt/$gte/$lte) apply only to dates + numbers. " +
     "Forbidden operators ($regex, $where, $expr, $or, $and, $not) are rejected with an error naming the permitted set. " +
-    "`sort` accepts an ordered tuple `[{field, order}]` on: id, status, createdAt, updatedAt, correlationId, assignedEngineerId, 'createdBy.role', 'createdBy.agentId', 'createdBy.id'. " +
+    "`sort` accepts an ordered tuple `[{field, order}]` on: id, status, createdAt, updatedAt, correlationId, assignedAgentId, 'createdBy.role', 'createdBy.agentId', 'createdBy.id'. " +
     "Implicit id:asc tie-breaker is appended for deterministic pagination. " +
     "Returns `_ois_query_unmatched: true` when the filter yields zero matches but the collection is non-empty (distinct from tool error). " +
     "Legacy scalar `status:` arg preserved for backwards compat; deprecated in favour of `filter.status`; removal in a future phase.",

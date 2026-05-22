@@ -145,7 +145,7 @@ fields:
     mutability: transition-only
     description: See workflow-registry.md §1.1 for allowed transitions.
     enum: [pending, working, blocked, input_required, in_review, completed, failed, escalated, cancelled]
-  assignedEngineerId:
+  assignedAgentId:
     type: string | null
     mutability: transition-only
     description: Claimed by an Engineer via get_task; null until claimed. Mission-19 routes subsequent events P2P via this field.
@@ -332,7 +332,7 @@ emit_events:
 
 correlation_roles:
   - as_subject:
-      Task:          "assignedEngineerId references Agent.engineerId after claim"
+      Task:          "assignedAgentId references Agent.engineerId after claim"
       EngineerStatus: "projected view returned by get_engineer_status tool"
   - as_reference:
       labels:        "matchLabels selectors in workflow-registry.md §6 filter to agents whose labels contain every (k, v) pair"
@@ -355,7 +355,7 @@ This layering lets a client rotate its token (authentication) or bounce its sess
 | Entity | Fields | Mutability | Ownership | Storage Key | FSM Link | Correlation Role |
 |---|---|---|---|---|---|---|
 | **Task** | see §3.1 | mixed (see §3.1) | `hub/src/policy/task-policy.ts` | `tasks/{taskId}.json` | workflow-registry §1.1 | Mission, Proposal, Thread, Turn, Audit |
-| **Agent** | see §3.2 | append-only (epoch++) | `hub/src/hub-networking.ts` + `GcsEngineerRegistry` | `agents/{engineerId}.json` + `agents/by-fingerprint/{fp}.json` | — (no FSM) | Task (via assignedEngineerId) |
+| **Agent** | see §3.2 | append-only (epoch++) | `hub/src/hub-networking.ts` + `GcsEngineerRegistry` | `agents/{engineerId}.json` + `agents/by-fingerprint/{fp}.json` | — (no FSM) | Task (via assignedAgentId) |
 | **Mission** | _TBD_ | _TBD_ | `hub/src/policy/mission-policy.ts` | `missions/{missionId}.json` | workflow-registry §1.X | Task (virtual view), Idea, Turn |
 | **Idea** | _TBD_ | free-form (text + tags + status) | `hub/src/policy/idea-policy.ts` | `ideas/{ideaId}.json` | workflow-registry §1.X | Mission (via missionId link) |
 | **Thread** | Threads 2.0 — see ADR-013. Scalar: `{id, title, status, initiatedBy, currentTurn, roundCount, maxRounds, outstandingIntent, currentSemanticIntent, correlationId, convergenceActions[], summary, participants[], labels, lastMessageConverged, createdAt, updatedAt}`. Per-message: `{author, authorAgentId, text, timestamp, converged, intent, semanticIntent}`. | scalar create-only for identity, transition-only for status / currentTurn / roundCount / convergenceActions lifecycle / summary, free-form for updatedAt / lastMessageConverged; messages append-only | `hub/src/policy/thread-policy.ts` | `threads/{threadId}.json` + `threads/{threadId}/messages/{seq}.json` | `workflow-registry.md §1.3` (now with INV-TH11..TH15 from ADR-013) | Task / Proposal (auto-spawn via Phase 2 cascade actions); Audit (relatedEntity); Agent (via authorAgentId on messages and participants[] entries) |
@@ -398,9 +398,9 @@ The list below enumerates inconsistencies discovered during the v1.0 draft. Each
 - **Why it matters:** Promoting `turnId` to BaseEntity would make every first-class entity ownable by a Turn — which the Turn virtual-view would then compose from automatically. Currently Thread / Proposal / Idea cannot be "owned by" a Turn.
 - **Resolution direction:** Promote to BaseEntity; add the field to every entity's store + type; update Turn virtual-view to aggregate across more entity types. Mission-20 Phase 3 closeout (`docs/history/mission-20-phase3-closeout.md §4.1`) already flags this as the `BaseEntityFields` refactor. Idea filing: consolidate with that deferred work.
 
-### 5.4 `assignedEngineerId` on Task only
+### 5.4 `assignedAgentId` on Task only
 
-- **Where:** Task carries `assignedEngineerId: string | null`. No other entity does.
+- **Where:** Task carries `assignedAgentId: string | null`. No other entity does.
 - **Why it matters:** idea-73 ("Generalised Task Routing — Origin + Target") proposes promoting this to a first-class `target: {role, agentId, labelSelector}` structure. Once generalised, similar concepts could apply to Proposal (which engineer owns the implementation), Thread (which engineers participate), etc.
 - **Resolution direction:** Wait for idea-73 to converge; this section will update when it does. Idea filing: already covered by idea-73.
 

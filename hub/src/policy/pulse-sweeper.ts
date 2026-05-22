@@ -524,7 +524,7 @@ export class PulseSweeper {
    *   - agent.pulseConfig?.enabled === true
    *   - AND no active mission has agent X in its pulse-binding (i.e.,
    *     agent X is NOT createdBy on any active mission AND NOT
-   *     assignedEngineerId on any task whose correlationId is in the
+   *     assignedAgentId on any task whose correlationId is in the
    *     active-mission set).
    *
    * Per Design §3.4 rationale: "agent on active mission is busy by
@@ -545,7 +545,7 @@ export class PulseSweeper {
     if (eligible.length === 0) return;
 
     // STRICT suppression — build engaged-agent set from active missions.
-    // Architect-side: createdBy.agentId. Engineer-side: assignedEngineerId
+    // Architect-side: createdBy.agentId. Engineer-side: assignedAgentId
     // on any task whose correlationId is in the active-mission set.
     const engaged = new Set<string>();
     for (const m of activeMissions) {
@@ -559,11 +559,11 @@ export class PulseSweeper {
       const allTasks = await ctx.stores.task.listTasks();
       for (const t of allTasks) {
         if (
-          t.assignedEngineerId &&
+          t.assignedAgentId &&
           t.correlationId &&
           activeMissionIds.has(t.correlationId)
         ) {
-          engaged.add(t.assignedEngineerId);
+          engaged.add(t.assignedAgentId);
         }
       }
     }

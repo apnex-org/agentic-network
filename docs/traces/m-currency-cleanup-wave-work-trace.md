@@ -99,3 +99,32 @@ idea-308 NOTE + architect: *are `scripts/local/{start,build}-hub.sh` still the r
 - `docs/sdk-guide.md` rewritten as a module-concern map (497 → ~150 lines): per-module *concern* + source pointer, no export tables, no naming-verdicts. Current package/module layout surveyed for accuracy.
 - W2 PR opened (#252). CI 9/9 green.
 - Architect review (thread-614 r7): one fix — `hub/scripts/entity-kinds.json:306` carve-out annotation listed the now-deleted `architect-engineer-collaboration.md`. I'd consciously left it (judged a SchemaDef-inventory edit out-of-scope); architect corrected — it's a live file, not archival, and a one-token drop. Same class as the W1 `cloudrun.tf` catch. Fixed + JSON-validated; pushed to #252.
+- **W2 merged** — PR #252 squash-merged to `main` as `d0db7ce`; thread-614 converged.
+
+## W3 · idea-302 — complete the mission-62 engineerId→agentId rename for the Task entity
+
+**Branch:** `agent-greg/mission-87-w3-task-agentid` (off `origin/main @ d0db7ce`)
+**Coordination:** thread-615. Heaviest slice — hub-code rename + state-migration script + SchemaDef v1→v2 bump.
+
+### Scope (idea-302)
+Rename `Task.assignedEngineerId` → `assignedAgentId` across hub code + SchemaDef; idempotent state-migration script (`hub/scripts/migrate-task-engineerid-to-agentid.ts`); SchemaDef Task v1→v2; tests (Task suite green + migration test + SchemaDef-v2-compat + FSM end-to-end); CI `no-engineer-id` all-paths green.
+
+**Deploy-time follow-on (for the deploy runbook / Director, per architect):** the migration's *production run* is a deploy-step — once the renamed code reaches the prod Hub it reads `assignedAgentId`, so the migration must run at that deploy or the Hub reads null from un-migrated Task rows. W3's deliverable is the merged PR; the architect tracks the prod-migration-run for the Director alongside the W1 `hub.env` operator step.
+
+### Investigation finding (surfaced thread-615 r2)
+idea-302's CI premise is stale: (1) the `:!…all-schemas.ts` carve-out it names doesn't exist in `no-engineer-id.yml`; (2) the workflow grep is case-sensitive `engineerId` → never matched `assignedEngineerId` (camelCase capital E) — the gate is green today with the field across ~8 active files. `task-repository.ts` (FS-version) was retired by mission-83 W6. Surfaced (a) rename-only vs (b) rename + harden the gate to catch `*EngineerId`; recommended (b). Also surfaced the sovereign-spec docs (`entities.md`/`workflow-registry.md`) scope question. Holding execution pending the ruling.
+
+### Session log
+
+### 2026-05-22 PM AEST — W3 picked up; CI-premise finding surfaced
+
+- thread-615: architect dispatched W3 (idea-302). Worktree synced to `d0db7ce`; W3 branch cut.
+- Repo-wide grep + workflow read surfaced idea-302's stale CI premise + the FS-version `task-repository.ts` removal. Surfaced to architect as `decision_needed`; holding implementation.
+
+### 2026-05-22 PM AEST — W3 executed; PR opened
+
+- Architect ratings: (1) the index must be renamed `task_assigned_agent_idx → task_agent_idx` (the reconciler's `CREATE INDEX IF NOT EXISTS` keys on name — a fields-only change no-ops); (2) the hardened-grep verification came back NON-zero — ~5 pre-existing non-Task `*EngineerId` surfaces (cognitive-layer bench, `migrate_agent_queue` tool params, `sessionToEngineerId`) collide with the "Task entity only" anti-goal → the `no-engineer-id` gate-harden defers to **idea-311** (gate-harden + broader Agent/session rename, one unit); (3) W3 = Task rename only.
+- Executed: `assignedEngineerId → assignedAgentId` token-rename across 10 hub code/test files + the sovereign specs (`entities.md`, `workflow-registry.md`, `triggers.md`); Task SchemaDef v1→v2 + index `task_agent_idx`; new idempotent migration script `hub/scripts/migrate-task-engineerid-to-agentid.ts` (renames the JSONB key + drops the orphaned `task_assigned_agent_idx`) + npm script; migration test 10/10; `no-engineer-id` gate left unchanged except the migration-script + test carve-outs (the one legitimate token-holder).
+- Verified: hub `tsc` clean; migration test 10/10; Task tests (mission-19 claim/p2p FSM + task-repository-substrate) 57 passed; policy sweep 289 passed; the exact `no-engineer-id` workflow grep returns empty.
+- **Deploy-time follow-on (Director-relayed by architect):** the migration's production run — `npm run migrate-task-engineerid-to-agentid` — must run at the deploy that ships the W3-renamed Hub, alongside the W1 `hub.env` operator step. Un-migrated Task rows would strand assignments.
+- W3 PR opened — final mission-87 slice.

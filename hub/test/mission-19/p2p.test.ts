@@ -1,11 +1,11 @@
 /**
- * Mission-19 — P2P routing via assignedEngineerId for reviews & clarifications.
+ * Mission-19 — P2P routing via assignedAgentId for reviews & clarifications.
  *
  * Covers: reviews dispatch with {agentId} pin to the original claimant,
- * fallback to label-scoped pool when assignedEngineerId is null,
+ * fallback to label-scoped pool when assignedAgentId is null,
  * clarification_answered routes P2P, revision_required routes P2P.
  *
- * Registry invariants: INV-T15 (assignedEngineerId persisted), INV-AG2
+ * Registry invariants: INV-T15 (assignedAgentId persisted), INV-AG2
  * (P2P via agentId, not sessionId), INV-SYS-L05 (stale pin falls through).
  */
 
@@ -42,7 +42,7 @@ async function register(ctx: TestPolicyContext, role: AgentRole, labels: AgentLa
   return result.agentId;
 }
 
-describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
+describe("Mission-19 P2P — Review routes to assignedAgentId", () => {
   let router: PolicyRouter;
   let archCtx: TestPolicyContext;
   let engCtx: TestPolicyContext;
@@ -71,7 +71,7 @@ describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
 
     await router.handle("get_task", {}, engCtx);
     const task = await archCtx.stores.task.getTask(taskId);
-    expect(task?.assignedEngineerId).toBe(agentId);
+    expect(task?.assignedAgentId).toBe(agentId);
 
     // Engineer reports.
     await router.handle("create_report", {
@@ -137,7 +137,7 @@ describe("Mission-19 P2P — Review routes to assignedEngineerId", () => {
   });
 });
 
-describe("Mission-19 P2P — Clarification routes to assignedEngineerId", () => {
+describe("Mission-19 P2P — Clarification routes to assignedAgentId", () => {
   let router: PolicyRouter;
   let archCtx: TestPolicyContext;
   let engCtx: TestPolicyContext;
@@ -195,7 +195,7 @@ describe("Mission-19 P2P — Clarification routes to assignedEngineerId", () => 
   });
 });
 
-describe("Mission-19 P2P — Fallback when task has no assignedEngineerId", () => {
+describe("Mission-19 P2P — Fallback when task has no assignedAgentId", () => {
   let router: PolicyRouter;
   let archCtx: TestPolicyContext;
 
@@ -210,7 +210,7 @@ describe("Mission-19 P2P — Fallback when task has no assignedEngineerId", () =
   });
 
   it("review on a task that was never claimed through get_task falls back to label-scoped pool", async () => {
-    // Direct store submission — no get_task, so assignedEngineerId stays null.
+    // Direct store submission — no get_task, so assignedAgentId stays null.
     const taskId = await archCtx.stores.task.submitDirective(
       "Done by hand",
       undefined, undefined, "T", "D", undefined,
@@ -218,7 +218,7 @@ describe("Mission-19 P2P — Fallback when task has no assignedEngineerId", () =
     );
     // Move through the FSM manually: pending → working → in_review.
     await (archCtx.stores.task as TaskRepository).__debugSetTask(taskId, { status: "in_review" });
-    // assignedEngineerId remains null.
+    // assignedAgentId remains null.
 
     const reviewCtx = createTestContext({ stores: archCtx.stores, sessionId: "sess-arch-2", role: "architect" });
     await register(reviewCtx, "architect", { team: "platform" });

@@ -91,7 +91,7 @@ Plus a **skip-list invariant** (see `triggers.test.ts`): no `idea`, `audit_entry
      emitKind: "note",
      name: "task_needs_review",
      emitShape: (entity, ctx) => {
-       const task = entity as { id: string; assignedEngineerId?: string; missionId?: string };
+       const task = entity as { id: string; assignedAgentId?: string; missionId?: string };
        return {
          target: { role: "architect" },
          payload: {

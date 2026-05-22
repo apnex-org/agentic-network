@@ -95,7 +95,9 @@ fi
 # .github/workflows/no-engineer-id.yml. Blocks staged diffs that ADD
 # engineerId / engineer_id tokens to active code surfaces.
 #
-# Carve-outs (same as CI workflow): ADRs, audits, traces, CHANGELOG.
+# Carve-outs (same as CI workflow): docs/, CHANGELOG, test READMEs, the
+# workflow/husky self-refs, lockfiles, + the mission-87 W3 migration
+# script & test (the one legitimate place the old token appears).
 
 ENGINEER_ID_VIOLATIONS=$(git diff --cached \
   -- \
@@ -107,6 +109,8 @@ ENGINEER_ID_VIOLATIONS=$(git diff --cached \
   ':(exclude).husky/pre-commit' \
   ':(exclude)package-lock.json' \
   ':(exclude)**/package-lock.json' \
+  ':(exclude)hub/scripts/migrate-task-engineerid-to-agentid.ts' \
+  ':(exclude)hub/scripts/__tests__/migrate-task-engineerid-to-agentid.test.ts' \
   | grep -E '^\+[^+].*\b(engineerId|engineer_id)\b' || true)
 
 if [ -n "$ENGINEER_ID_VIOLATIONS" ]; then
