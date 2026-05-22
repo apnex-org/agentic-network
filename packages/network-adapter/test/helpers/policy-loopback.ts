@@ -25,7 +25,11 @@ import type { Selector } from "../../../../hub/src/state.js";
 // substrate migration; it is rebuilt on createMemoryStorageSubstrate + the
 // *RepositorySubstrate repositories — the same AllStores construction
 // hub/src/policy/test-utils.ts uses.
-import { createMemoryStorageSubstrate } from "../../../../hub/src/storage-substrate/index.js";
+// Imported from the memory-substrate leaf, NOT the storage-substrate barrel:
+// the barrel statically re-exports the postgres path (→ `pg`, a hub-only dep
+// absent from the non-hub CI cells' scoped install). A memory-only consumer
+// importing the leaf is the correct import.
+import { createMemoryStorageSubstrate } from "../../../../hub/src/storage-substrate/memory-substrate.js";
 import { SubstrateCounter } from "../../../../hub/src/entities/substrate-counter.js";
 import { AgentRepositorySubstrate } from "../../../../hub/src/entities/agent-repository-substrate.js";
 import { TaskRepositorySubstrate } from "../../../../hub/src/entities/task-repository-substrate.js";

@@ -323,4 +323,95 @@ clear it.
   181 passed. `tsc --noEmit` clean.
 - Branch `agent-greg/bug-109-session-fsm-fixture-names` off `origin/main @ 3dd33cb`;
   commit `7b7d687`. **PR #243 opened**, surfaced on thread-609 for cross-approval.
-  NEXT (post-merge): the test-hub.ts slice.
+- PR #243 cross-approved + merged to `origin/main @ f837c32`. Architect concurred
+  the sweep + the `globalInstanceId→name` fold into PR-4c.
+
+### 2026-05-22 ~13:05 AEST — bug-109 test-hub.ts slice (substrate store-rewire + HubNetworking reconciliation)
+
+- The 2nd dead harness — `test/helpers/test-hub.ts`, consumed by
+  `mcp-transport.test.ts` (7 reds, `MemoryEngineerRegistry is not a
+  constructor`). Two drift axes, exactly as architect-characterised:
+  - **Store-rewire:** the harness built `AllStores` from the mission-83-removed
+    `Memory*Store` classes. Rebuilt on `createMemoryStorageSubstrate` +
+    `SubstrateCounter` + the `*RepositorySubstrate` repositories — the
+    `test-utils.ts` / PR-4b `policy-loopback.ts` pattern. `AllStores` had also
+    gained `bug` / `pendingAction` / `message` since the harness was last
+    current; all three added.
+  - **HubNetworking-constructor reconciliation:** `test-hub.ts:336` called the
+    pre-mission-56 4-arg shape `(engineerRegistry, notificationStore,
+    createMcpServerFn, config)`. Current signature (`hub-networking.ts:208`):
+    `(engineerRegistry, createMcpServerFn, config, auditStore, messageStore,
+    tierLookup?, tokenStore?)` — the legacy `notificationStore` 2nd arg was
+    removed at mission-56 W5 (push pipeline flows through the Message store);
+    `auditStore` + `messageStore` are now required tail args. Rewired.
+  - **Companion drift:** `CreateMcpServerFn` gained a 4th `dispatchEvent` arg;
+    `IPolicyContext` gained required `dispatch` + dropped `config` (mission-84
+    W5). `createMcpServer` now threads `dispatchEvent` into `ctx.dispatch`; the
+    stale `config` field is dropped.
+- No additional crossing — every `HubNetworking` public method `TestHub`
+  delegates to still exists; `TestHub`'s public API is unchanged.
+- **Verification:** `mcp-transport.test.ts` 7-failed → 7/7 passed. Full
+  network-adapter suite **17 files / 188 tests, all green** (was 16/17 files,
+  181/188 tests). `tsc --noEmit` clean.
+- Branch `agent-greg/bug-109-test-hub-substrate-rewire` off `origin/main @ f837c32`;
+  commit `4f6845e`. **PR #244 opened**, surfaced on thread-609 for cross-approval.
+
+### 2026-05-22 ~13:30 AEST — #244 held: CI-vs-local masking → γ fix folded in
+
+- Architect held #244 (PR review): CI's `vitest (packages/network-adapter)` cell
+  is RED while my local run was 188/188. **Local-test-masking** — "cell genuinely
+  green" was a *local* result; local `node_modules` is root-hoisted, CI's non-hub
+  cell does a *scoped* install. Owned it; corrected method = re-verify against CI.
+- **Diagnosis (architect-concurred):**
+  - The `@apnex/message-router` TS2307 the review flagged is a **non-issue** —
+    the CI Build step's per-step conclusion is `success`; the TS2307 is the
+    swallowed first pass of test.yml's network-adapter↔message-router cycle-break
+    multi-pass build (`( cd … && npm run build ) || true`). Verified via the
+    job-step API.
+  - The one real failure is **`pg`**: the harnesses import
+    `createMemoryStorageSubstrate` from the `storage-substrate/index.js`
+    **barrel**, which statically re-exports `postgres-substrate.js` → `import
+    'pg'`. `pg` is a `hub`-package dep; the non-hub cells' scoped install
+    excludes the `hub` workspace → `ERR_MODULE_NOT_FOUND`. Single reach point —
+    entity repos + `policy/index.ts` import the substrate `import type` only
+    (erased). claude-plugin/opencode hit it transitively via `policy-loopback.ts`.
+- **Fix — (γ), architect-disposed, folded into #244:** repoint the 2 harness
+  value-imports — `policy-loopback.ts` + `test-hub.ts` — from the barrel
+  `storage-substrate/index.js` → the leaf `storage-substrate/memory-substrate.js`
+  (pg-clean — only `import type` from `types.js`). Two one-line changes,
+  test-side, no redeploy; clears the `pg` reach across all 3 non-hub cells.
+- **α — follow-on note (architect-concurred, OUT of bug-109 scope):** the
+  `storage-substrate/index.ts` barrel eagerly static-re-exporting the postgres
+  path drags `pg` onto *every* barrel-importer. A lazy/dynamic import of the
+  postgres path would let `createMemoryStorageSubstrate` consumers avoid `pg`
+  entirely. Hub/src → redeploy gate; low-priority — capture only, do not fix in
+  this batch. (β — broaden the CI scoped install — rejected: fights test.yml's
+  prepare-hook warning.)
+- **Re-verify against CI, not local.** Local tsc + suite green (188/188) is
+  sanity only — local resolves `pg`. Dispositive check: the CI
+  `vitest (packages/network-adapter)` cell on the #244 push.
+- γ pushed (`f8f694d`); CI re-verified — `pg` reach **cleared**, network-adapter
+  cell `4 failed → 1 failed / 16 passed`. The remaining 1 (`threads-2-smoke.test.ts`)
+  hit a **2nd hub-only dep** — `ulidx`, via `message-repository-substrate.ts:93`'s
+  `await import("ulidx")` (ULID message-id gen). Same class as `pg`; the `pg`
+  failure had masked it. My prior "single reach point" diagnosis under-scoped (a
+  dynamic `import()` a static grep missed).
+- Completed the full hub-dep enumeration: of hub's 6 deps absent from the
+  non-hub cells, `ulidx` is the only live runtime reach (the other 5 ruled out —
+  type-only ×2 / not-imported-in-hub-src / type-only-erased / not in the harness
+  graph). So `ulidx` is the last one — fixing it → 17/17.
+- **`ulidx` fix — architect-disposed option (1), folded into #244:** `ulidx`
+  added as a `network-adapter` devDependency (`^2.4.1`, matches hub). Unlike
+  `pg`, `ulidx` can't be dodged by a leaf-import — ULID generation is needed by
+  the memory path; the cell genuinely needs the dep. Scoped install + root hoist
+  makes it resolvable across all 3 non-hub cells.
+- Lockfile: hand-added the `ulidx` + `layerr` (its dep) entries for a minimal
+  +22/−0 delta. A plain `npm install --package-lock-only` additionally stripped
+  two `@emnapi/*` optional-peer entries (a known `npm ci` hazard) — avoided via
+  the surgical edit.
+- `ulidx` devDep pushed (`cec373c`). **CI re-verified — `vitest (packages/network-adapter)`
+  cell PASS: `Test Files 17 passed (17)`.** The cell is genuinely green end-to-end;
+  `vitest (hub)` + the `test` aggregator + `coverage-report-sync` + cognitive-layer
+  also green. claude-plugin + opencode stay red on their PR-4c residuals
+  (globalInstanceId / eager-claim / opencode stale-dist) — expected.
+- #244 re-surfaced on thread-609 for cross-approval. NEXT (post-merge): PR-4c.
