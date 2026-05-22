@@ -269,3 +269,11 @@ clear it.
   sovereign build + per-cell test (replaces the dead per-package `npm ci`).
   Branch off `origin/main @ 0b4d3db`. NEXT: push + open PR-4a (full triage in
   the PR body) + short thread ping.
+- PR-4a #241 opened; first CI run un-masked a second layer — root
+  `package-lock.json` stale (nested `file:ois-*.tgz` refs for opencode-plugin;
+  the AG-5-deferred hazard). Architect concurred the triage + 4a/4b/4c split +
+  PolicyLoopbackHub repair; disposed the lockfile regen into PR-4a. Regenerated
+  the root lockfile (`rm package-lock.json && npm install` — 3 stale `file:`
+  refs → 0; 7 workspace links). Verified the full CI sequence locally: clean
+  `npm ci` OK, 4-pass topological build OK, all 4 cells reach their tests
+  (cognitive-layer 173/173 green; the other 3 reach real per-cell failures).

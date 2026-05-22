@@ -133,6 +133,7 @@ jobs:
       # Step 0.5.
       - name: Build sovereign packages (topological)
         run: |
+          rm -rf packages/cognitive-layer/dist packages/network-adapter/dist packages/message-router/dist
           ( cd packages/cognitive-layer && npm run build )
           ( cd packages/network-adapter && npm run build ) || true
           ( cd packages/message-router && npm run build )
