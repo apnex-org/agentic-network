@@ -60,4 +60,5 @@ idea-308 NOTE + architect: *are `scripts/local/{start,build}-hub.sh` still the r
 - Architect ratified: W1 owns `deploy/README.md` in full (current, not just de-referenced); W2/idea-309 excludes it. Lock-file commit-as-is accepted.
 - `deploy/README.md` rewritten current (394 → ~140 lines): removed dead base/cloudrun + multi-env-layout + apply-order + local-fs-profile + GCS↔local-fs cutover/rollback runbooks + GCS-state-layout + stale Outstanding; preserved the still-accurate Cloud-Build-tarball-staging + repo-event-bridge sections (operator-setup updated to `hub.env`); added a §Configuration section.
 - Repo-wide grep: no live scripts/CI reference the deleted dirs. Residual stale refs are in `docs/onboarding/multi-env-operator-setup.md` (W2/idea-309's explicit scope) + archival mission/design docs (anti-goal: untouched). Out-of-scope observation flagged to architect: `docs/runbooks/m-local-fs-cutover-drills.md` is a stale local-fs runbook not covered by idea-308/309.
-- W1 PR opened. One cross-approved PR.
+- W1 PR opened (#251). CI 9/9 green.
+- Architect review (thread-613 r7): one fix — `modules/hub/cloudrun.tf:11` carried a comment ref to the deleted `deploy/cloudrun/`. My grep was scoped to `.sh/.yml/.ts/.json/.md` and missed `.tf`. Dropped the stale parenthetical; repo-wide `.tf` grep confirms no other refs. Pushed to #251.
