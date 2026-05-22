@@ -146,6 +146,24 @@ export interface HubNetworkingConfig {
   quiet?: boolean;
   /** Bind address (default: "0.0.0.0" for production, "127.0.0.1" for tests) */
   bindAddress?: string;
+  /**
+   * Hub version reported by `/health` (default: "1.0.0"). Production
+   * wires this to `hub/package.json`; bug-114 stopped the field being a
+   * hardcoded literal that lied. No longer load-bearing for cache
+   * correctness under the ETag fix — kept honest for operators.
+   */
+  version?: string;
+  /**
+   * bug-114 — tool-surface revision token reported by `/health`. A
+   * Hub-owned ETag over the router's tool registrations
+   * (`computeToolSurfaceRevision`); the network-adapter keys its
+   * tool-catalog cache off this instead of `version`. Default: empty
+   * string — `/health` then reports `toolSurfaceRevision: ""`, which the
+   * adapter reads as "unknown" and falls back to its probe-friendly
+   * trust-cache default (e.g. tests that construct HubNetworking with no
+   * router-derived revision).
+   */
+  toolSurfaceRevision?: string;
 }
 
 /** Factory function type for creating MCP servers with tools registered */
@@ -260,6 +278,8 @@ export class HubNetworking {
       autoStartTimers: config.autoStartTimers ?? true,
       quiet: config.quiet ?? false,
       bindAddress: config.bindAddress ?? "0.0.0.0",
+      version: config.version ?? "1.0.0",
+      toolSurfaceRevision: config.toolSurfaceRevision ?? "",
     };
 
     this.log = this.config.quiet
@@ -849,7 +869,11 @@ export class HubNetworking {
       res.json({
         status: "ok",
         service: "mcp-relay-hub",
-        version: "1.0.0",
+        version: this.config.version,
+        // bug-114 — tool-surface ETag; the network-adapter keys its
+        // tool-catalog cache off this (the `version` field is no longer
+        // load-bearing for cache correctness).
+        toolSurfaceRevision: this.config.toolSurfaceRevision,
         activeSessions: this.transports.size,
         sseStreams: this.sseActiveCount,
       });

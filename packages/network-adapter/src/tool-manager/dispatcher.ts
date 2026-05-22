@@ -122,18 +122,23 @@ export interface SharedDispatcherOptions {
 
   getCachedCatalog?: () => CachedCatalog | null;
   getIsIdentityReady?: () => boolean;
-  getCurrentHubVersion?: () => string | null;
+  /**
+   * bug-114 — current Hub tool-surface revision (`/health`
+   * `toolSurfaceRevision`). The cache-validity key; `null` when the
+   * /health fetch hasn't resolved yet (probe-friendly trust-cache).
+   */
+  getCurrentToolSurfaceRevision?: () => string | null;
   persistCatalog?: (catalog: unknown[]) => void;
 
   /**
    * Optional cache-validity check. When omitted, cache-fallback
    * conservatively treats every cached entry as invalid (live-fetch
    * dominates). Wire `isCacheValid` from `./tool-catalog-cache.js`
-   * to enable Hub-version-keyed validity.
+   * to enable tool-surface-revision-keyed validity.
    */
   isCacheValid?: (
     cached: CachedCatalog,
-    currentHubVersion: string | null | undefined,
+    currentRevision: string | null | undefined,
   ) => boolean;
 
   /**
@@ -478,10 +483,10 @@ export function createSharedDispatcher(
       ) {
         const cached = opts.getCachedCatalog();
         if (cached) {
-          const currentVersion = opts.getCurrentHubVersion?.() ?? null;
+          const currentRevision = opts.getCurrentToolSurfaceRevision?.() ?? null;
           const valid = (opts.isCacheValid ?? (() => false))(
             cached,
-            currentVersion,
+            currentRevision,
           );
           if (valid) {
             log("[ListTools] served from cache");
@@ -489,7 +494,7 @@ export function createSharedDispatcher(
             return { tools: cached.catalog as any[] };
           }
           log(
-            `[ListTools] cache stale (cached.hubVersion=${cached.hubVersion}, current=${currentVersion ?? "unknown"}) — bootstrapping`,
+            `[ListTools] cache stale (cached.toolSurfaceRevision=${cached.toolSurfaceRevision}, current=${currentRevision ?? "unknown"}) — bootstrapping`,
           );
         } else {
           log("[ListTools] no cache (bootstrapping cache from Hub)");

@@ -7,6 +7,9 @@
  * Deployed to Cloud Run as a containerized Express application.
  */
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // mission-84 W5: fs + path + cutover-sentinel imports DELETED — sole consumers
 // were the local-fs dispatch-branch (writability assertion + cutover-sentinel
@@ -55,7 +58,7 @@ import { ThreadRepositorySubstrate } from "./entities/thread-repository-substrat
 import { TurnRepositorySubstrate } from "./entities/turn-repository-substrate.js";
 import { DocumentRepository } from "./storage-substrate/new-repositories.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
-import { PolicyRouter, registerTaskPolicy } from "./policy/index.js";
+import { PolicyRouter, registerTaskPolicy, computeToolSurfaceRevision } from "./policy/index.js";
 import { registerSystemPolicy } from "./policy/system-policy.js";
 import { registerTelePolicy } from "./policy/tele-policy.js";
 import { registerAuditPolicy } from "./policy/audit-policy.js";
@@ -232,6 +235,28 @@ registerTransportHeartbeatPolicy(policyRouter);
 registerMessagePolicy(policyRouter);
 console.log(`[Hub] PolicyRouter initialized with ${policyRouter.size} tool(s): ${policyRouter.getRegisteredTools().join(", ")}`);
 
+// bug-114 — tool-surface ETag. The router is a stateless singleton fixed
+// at boot (all register*Policy calls above are complete), so compute the
+// revision once here and serve it as a constant via `/health`. The
+// network-adapter keys its tool-catalog cache off this token so the cache
+// invalidates on intra-version tool-surface drift.
+const toolSurfaceRevision = computeToolSurfaceRevision(policyRouter);
+console.log(`[Hub] Tool-surface revision: ${toolSurfaceRevision}`);
+
+// bug-114 — `/health` `version`, formerly a hardcoded "1.0.0" literal that
+// never tracked anything. Wired to hub/package.json so it stops lying.
+// dist/index.js → ../package.json (and tsx src/index.ts → ../package.json)
+// both resolve to hub/package.json.
+const HUB_VERSION: string = (() => {
+  try {
+    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: unknown };
+    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+
 // ADR-017: start the comms-reliability watchdog. Stateless scanner over
 // the pending-actions queue; enforces deadlines + escalation ladder. The
 // injectable wake-client uses fetch (best-effort); failures are logged but
@@ -350,6 +375,8 @@ const hub = new HubNetworking(
     orphanTtl: 60_000,
     autoStartTimers: true,
     quiet: false,
+    version: HUB_VERSION,
+    toolSurfaceRevision,
   },
   // M-Session-Claim-Separation (mission-40) T2: thread audit store through
   // for SSE-subscribe auto-claim hook to emit agent_session_implicit_claim

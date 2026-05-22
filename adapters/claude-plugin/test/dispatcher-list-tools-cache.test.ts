@@ -5,7 +5,7 @@
  * dispatcher layer:
  *   - cached-catalog served when identityReady unresolved + cache valid
  *   - bootstrap-on-cache-miss falls through to live agent.listTools
- *   - cache stale (Hub version mismatch) → re-bootstrap
+ *   - cache stale (tool-surface-revision mismatch) → re-bootstrap
  *   - identityReady resolved → live path (cache fallback skipped)
  *   - persistCatalog hook called on live fetch
  *   - persistCatalog hook NEVER throws even when caller's persist throws
@@ -47,9 +47,13 @@ function makeListToolsHandler(opts: SharedDispatcherOptions) {
 
 const LIVE_CATALOG = [{ name: "live_tool", description: "[Any] live" }];
 const CACHED_CATALOG = [{ name: "cached_tool", description: "[Any] from cache" }];
+// bug-114 — the cache is keyed off the Hub's tool-surface revision (an
+// opaque ETag), not `hubVersion`.
+const REV_CACHED = "aaaa1111bbbb2222";
+const REV_CURRENT = "cccc3333dddd4444";
 const CACHED: CachedCatalog = {
   schemaVersion: CATALOG_SCHEMA_VERSION,
-  hubVersion: "1.0.0",
+  toolSurfaceRevision: REV_CACHED,
   fetchedAt: "2026-04-22T05:00:00.000Z",
   catalog: CACHED_CATALOG,
 };
@@ -66,7 +70,7 @@ describe("dispatcher cache fallback — ListTools", () => {
       log: (m) => log.push(m),
       getCachedCatalog: () => CACHED,
       getIsIdentityReady: () => false,    // probe scenario
-      getCurrentHubVersion: () => "1.0.0", // matches cache
+      getCurrentToolSurfaceRevision: () => REV_CACHED, // matches cache
       isCacheValid,
       persistCatalog: vi.fn(),
     });
@@ -96,7 +100,7 @@ describe("dispatcher cache fallback — ListTools", () => {
       listToolsGate,
       getCachedCatalog: () => null,                       // fresh install
       getIsIdentityReady: () => identityReadyResolved,
-      getCurrentHubVersion: () => "1.0.0",
+      getCurrentToolSurfaceRevision: () => REV_CACHED,
       isCacheValid,
       persistCatalog: persist,
     });
@@ -110,7 +114,7 @@ describe("dispatcher cache fallback — ListTools", () => {
     expect(log.some((l) => l.includes("no cache"))).toBe(true);
   });
 
-  it("re-bootstraps when cache is stale (Hub version mismatch)", async () => {
+  it("re-bootstraps when cache is stale (tool-surface-revision mismatch)", async () => {
     const agent = fakeAgent();
     (agent.listTools as ReturnType<typeof vi.fn>).mockResolvedValue(LIVE_CATALOG);
     const persist = vi.fn();
@@ -124,9 +128,9 @@ describe("dispatcher cache fallback — ListTools", () => {
       proxyVersion: "test-1.0.0",
       log: (m) => log.push(m),
       listToolsGate,
-      getCachedCatalog: () => CACHED,             // hubVersion=1.0.0
+      getCachedCatalog: () => CACHED,                       // toolSurfaceRevision=REV_CACHED
       getIsIdentityReady: () => false,
-      getCurrentHubVersion: () => "2.0.0",        // current is newer → stale
+      getCurrentToolSurfaceRevision: () => REV_CURRENT,     // surface changed → stale
       isCacheValid,
       persistCatalog: persist,
     });
@@ -137,7 +141,7 @@ describe("dispatcher cache fallback — ListTools", () => {
     expect(result).toEqual({ tools: LIVE_CATALOG });
     expect(agent.listTools).toHaveBeenCalledOnce();
     expect(persist).toHaveBeenCalledWith(LIVE_CATALOG);
-    expect(log.some((l) => l.includes("cache stale") && l.includes("1.0.0") && l.includes("2.0.0"))).toBe(true);
+    expect(log.some((l) => l.includes("cache stale") && l.includes(REV_CACHED) && l.includes(REV_CURRENT))).toBe(true);
   });
 
   it("cached path skipped when identityReady is resolved (live session — always live fetch)", async () => {
@@ -151,7 +155,7 @@ describe("dispatcher cache fallback — ListTools", () => {
       listToolsGate: Promise.resolve(),       // already resolved
       getCachedCatalog: () => CACHED,         // cache exists
       getIsIdentityReady: () => true,         // identity ready → skip cache fallback
-      getCurrentHubVersion: () => "1.0.0",
+      getCurrentToolSurfaceRevision: () => REV_CACHED,
       isCacheValid,
       persistCatalog: persist,
     });
@@ -174,7 +178,7 @@ describe("dispatcher cache fallback — ListTools", () => {
       listToolsGate: Promise.resolve(),
       getCachedCatalog: () => null,
       getIsIdentityReady: () => true,
-      getCurrentHubVersion: () => "1.0.0",
+      getCurrentToolSurfaceRevision: () => REV_CACHED,
       isCacheValid,
       persistCatalog: () => { throw new Error("disk full"); },
     });
@@ -184,7 +188,7 @@ describe("dispatcher cache fallback — ListTools", () => {
     expect(log.some((l) => l.includes("persistCatalog hook threw"))).toBe(true);
   });
 
-  it("trusts cache (probe-friendly) when currentHubVersion is null — fast probe path preserved", async () => {
+  it("trusts cache (probe-friendly) when current revision is null — fast probe path preserved", async () => {
     const agent = fakeAgent();
     const log: string[] = [];
 
@@ -194,7 +198,7 @@ describe("dispatcher cache fallback — ListTools", () => {
       log: (m) => log.push(m),
       getCachedCatalog: () => CACHED,
       getIsIdentityReady: () => false,
-      getCurrentHubVersion: () => null,    // /health fetch in flight
+      getCurrentToolSurfaceRevision: () => null,    // /health fetch in flight
       isCacheValid,
       persistCatalog: vi.fn(),
     });

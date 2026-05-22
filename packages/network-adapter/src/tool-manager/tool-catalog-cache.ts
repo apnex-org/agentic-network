@@ -10,16 +10,20 @@
  *
  * Storage: $WORK_DIR/.ois/tool-catalog.json
  *   {
- *     schemaVersion: 1,
- *     hubVersion: "1.0.0",
+ *     schemaVersion: 2,
+ *     toolSurfaceRevision: "a1b2c3d4e5f6a7b8",
  *     fetchedAt: "2026-04-22T...Z",
  *     catalog: [...]
  *   }
  *
- * Invalidation: Hub-version mismatch only. No TTL — the catalog is
- * static between Hub deploys; TTL would add noise without correctness
- * value. Schema-version mismatch on read returns null (cache treated
- * as invalid; future schema evolution bumps CATALOG_SCHEMA_VERSION).
+ * Invalidation: tool-surface-revision mismatch (bug-114). The cache is
+ * keyed off a Hub-owned ETag (`/health` `toolSurfaceRevision`) that
+ * tracks the actual tool surface — added/removed tools, description or
+ * schema changes — rather than `hubVersion`, which was a hardcoded
+ * `"1.0.0"` literal that never changed (so the cache never invalidated).
+ * No TTL — the revision detects drift directly. Schema-version mismatch
+ * on read returns null (cache treated as invalid; schema evolution bumps
+ * CATALOG_SCHEMA_VERSION).
  *
  * Atomicity: writeCache uses tmp-file + rename so partial writes on
  * crash don't corrupt the cache. Parse errors on read also return
@@ -48,8 +52,14 @@ import { join, dirname } from "node:path";
  * Bumping CATALOG_SCHEMA_VERSION forces all existing cache files to
  * be treated as invalid + re-bootstrapped. Use when changing the
  * cache file shape.
+ *
+ * 1 → 2 (bug-114): `hubVersion` field replaced by `toolSurfaceRevision`.
+ * The bump is the state-migration step — every on-disk cache written in
+ * the v1 (`hubVersion`) shape fails the read-time schema check, returns
+ * null, and re-bootstraps. Free retroactive cleanup of the whole fleet's
+ * stale caches.
  */
-export const CATALOG_SCHEMA_VERSION = 1;
+export const CATALOG_SCHEMA_VERSION = 2;
 
 /**
  * MCP tool catalog entry shape. Kept loose (`unknown[]`) since the
@@ -60,7 +70,12 @@ export type ToolCatalog = unknown[];
 
 export interface CachedCatalog {
   schemaVersion: number;
-  hubVersion: string;
+  /**
+   * bug-114 — the Hub-owned tool-surface ETag seen at fetch-time
+   * (`/health` `toolSurfaceRevision`). The cache is valid while this
+   * matches the live revision; treated as opaque (record-then-compare).
+   */
+  toolSurfaceRevision: string;
   fetchedAt: string;
   catalog: ToolCatalog;
 }
@@ -88,7 +103,7 @@ export function readCache(
     if (
       typeof parsed.schemaVersion !== "number" ||
       parsed.schemaVersion !== CATALOG_SCHEMA_VERSION ||
-      typeof parsed.hubVersion !== "string" ||
+      typeof parsed.toolSurfaceRevision !== "string" ||
       typeof parsed.fetchedAt !== "string" ||
       !Array.isArray(parsed.catalog)
     ) {
@@ -99,7 +114,7 @@ export function readCache(
     }
     return {
       schemaVersion: parsed.schemaVersion,
-      hubVersion: parsed.hubVersion,
+      toolSurfaceRevision: parsed.toolSurfaceRevision,
       fetchedAt: parsed.fetchedAt,
       catalog: parsed.catalog,
     };
@@ -120,14 +135,14 @@ export function readCache(
 export function writeCache(
   workDir: string,
   catalog: ToolCatalog,
-  hubVersion: string,
+  toolSurfaceRevision: string,
   log?: (msg: string) => void,
 ): void {
   const path = cachePathFor(workDir);
   const tmpPath = `${path}.tmp.${process.pid}`;
   const body: CachedCatalog = {
     schemaVersion: CATALOG_SCHEMA_VERSION,
-    hubVersion,
+    toolSurfaceRevision,
     fetchedAt: new Date().toISOString(),
     catalog,
   };
@@ -149,30 +164,32 @@ export function writeCache(
 }
 
 /**
- * Check cache validity against the current Hub version.
+ * Check cache validity against the current Hub tool-surface revision.
  *
  * Two semantics:
- *   - currentHubVersion is a non-empty string: strict equality vs
- *     cached.hubVersion. Mismatch → invalid → caller re-bootstraps.
- *   - currentHubVersion is null/undefined/empty: caller doesn't know
- *     the current Hub version yet (e.g. /health fetch in flight at
- *     startup). Trust the cache (probe-friendly default) — worst
- *     case is serving a stale catalog ONCE until the next /health
- *     fetch completes and a real session refreshes the cache.
+ *   - currentRevision is a non-empty string: strict equality vs
+ *     cached.toolSurfaceRevision. Mismatch → invalid → caller
+ *     re-bootstraps.
+ *   - currentRevision is null/undefined/empty: caller doesn't know the
+ *     current revision yet (e.g. /health fetch in flight at startup, or
+ *     an old Hub that doesn't return the field). Trust the cache
+ *     (probe-friendly default) — worst case is serving a stale catalog
+ *     ONCE until the next /health fetch completes and a real session
+ *     refreshes the cache.
  *
  * Schema-version check is enforced inside readCache, so isCacheValid
  * never sees a wrong-schema cached object.
  */
 export function isCacheValid(
   cached: CachedCatalog,
-  currentHubVersion: string | null | undefined,
+  currentRevision: string | null | undefined,
 ): boolean {
   if (
-    currentHubVersion === null ||
-    currentHubVersion === undefined ||
-    currentHubVersion === ""
+    currentRevision === null ||
+    currentRevision === undefined ||
+    currentRevision === ""
   ) {
     return true;
   }
-  return cached.hubVersion === currentHubVersion;
+  return cached.toolSurfaceRevision === currentRevision;
 }
