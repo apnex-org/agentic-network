@@ -480,22 +480,33 @@ async function main(): Promise<void> {
   let identityReadyResolved = false;
   identityReady.then(() => { identityReadyResolved = true; }).catch(() => { /* observed by gate */ });
 
-  // Hub version source for cache invalidation. Fetch /health once at
-  // startup in the background; cache the version in-memory. Probes that
-  // fire before the fetch completes get `null` and trust the cache
-  // (probe-friendly default per tool-catalog-cache.isCacheValid).
-  let cachedHubVersion: string | null = null;
+  // bug-114 — tool-catalog cache invalidation source. Fetch /health once
+  // at startup in the background; cache the Hub's tool-surface revision
+  // (an opaque ETag) in-memory. Probes that fire before the fetch
+  // completes get `null` and trust the cache (probe-friendly default per
+  // tool-catalog-cache.isCacheValid). The `version` field is logged as a
+  // diagnostic only — no longer load-bearing for cache correctness.
+  let cachedToolSurfaceRevision: string | null = null;
   const healthUrl = config.hubUrl.replace(/\/mcp(\/.*)?$/, "/health");
   (async () => {
     try {
       const res = await fetch(healthUrl);
       if (res.ok) {
-        const json = (await res.json()) as { version?: unknown };
+        const json = (await res.json()) as {
+          version?: unknown;
+          toolSurfaceRevision?: unknown;
+        };
         if (typeof json.version === "string") {
-          cachedHubVersion = json.version;
-          log(`[Cache] Hub version resolved: ${cachedHubVersion}`);
+          log(`[Cache] Hub version: ${json.version}`);
+        }
+        if (
+          typeof json.toolSurfaceRevision === "string" &&
+          json.toolSurfaceRevision !== ""
+        ) {
+          cachedToolSurfaceRevision = json.toolSurfaceRevision;
+          log(`[Cache] Tool-surface revision resolved: ${cachedToolSurfaceRevision}`);
         } else {
-          log(`[Cache] /health returned no version field — cache invalidation will trust existing cache`);
+          log(`[Cache] /health returned no toolSurfaceRevision field — cache invalidation will trust existing cache`);
         }
       } else {
         log(`[Cache] /health fetch returned status ${res.status} — cache invalidation will trust existing cache`);
@@ -623,17 +634,18 @@ async function main(): Promise<void> {
     callToolGate: sessionReady,
     getCachedCatalog: () => readCache(WORK_DIR, log),
     getIsIdentityReady: () => identityReadyResolved,
-    getCurrentHubVersion: () => cachedHubVersion,
+    getCurrentToolSurfaceRevision: () => cachedToolSurfaceRevision,
     isCacheValid,
     persistCatalog: (catalog) => {
-      // Best-effort persist. Skip if we don't yet have a Hub version to
-      // tag — better to let the next live-fetch (with version known)
-      // populate the cache than write a hubVersion-less entry.
-      if (cachedHubVersion === null) {
-        log("[Cache] Skipping persistCatalog — Hub version not yet resolved");
+      // Best-effort persist. Skip if we don't yet have a tool-surface
+      // revision to tag — better to let the next live-fetch (with the
+      // revision known) populate the cache than write a revision-less
+      // entry.
+      if (cachedToolSurfaceRevision === null) {
+        log("[Cache] Skipping persistCatalog — tool-surface revision not yet resolved");
         return;
       }
-      writeCache(WORK_DIR, catalog, cachedHubVersion, log);
+      writeCache(WORK_DIR, catalog, cachedToolSurfaceRevision, log);
     },
     notificationHooks: {
       onActionableEvent: (event) => {

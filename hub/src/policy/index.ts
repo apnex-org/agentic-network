@@ -19,3 +19,4 @@ export { registerThreadPolicy } from "./thread-policy.js";
 export { registerMessagePolicy } from "./message-policy.js";
 export { bindRouterToMcp } from "./mcp-binding.js";
 export type { PolicyContextFactory } from "./mcp-binding.js";
+export { computeToolSurfaceRevision } from "./tool-surface-revision.js";
