@@ -62,3 +62,40 @@ idea-308 NOTE + architect: *are `scripts/local/{start,build}-hub.sh` still the r
 - Repo-wide grep: no live scripts/CI reference the deleted dirs. Residual stale refs are in `docs/onboarding/multi-env-operator-setup.md` (W2/idea-309's explicit scope) + archival mission/design docs (anti-goal: untouched). Out-of-scope observation flagged to architect: `docs/runbooks/m-local-fs-cutover-drills.md` is a stale local-fs runbook not covered by idea-308/309.
 - W1 PR opened (#251). CI 9/9 green.
 - Architect review (thread-613 r7): one fix — `modules/hub/cloudrun.tf:11` carried a comment ref to the deleted `deploy/cloudrun/`. My grep was scoped to `.sh/.yml/.ts/.json/.md` and missed `.tf`. Dropped the stale parenthetical; repo-wide `.tf` grep confirms no other refs. Pushed to #251.
+- **W1 merged** — PR #251 squash-merged to `main` as `11c767d`; CI 9/9 green; thread-613 converged.
+
+## W2 · idea-309 — docs-currency pass over LIVE reference docs
+
+**Branch:** `agent-greg/mission-87-w2-docs-currency` (off `origin/main @ 11c767d`)
+**Coordination:** thread-614. W2 excludes `deploy/README.md` (W1 owned it). Anti-goal: archival record (audits/decisions/designs/history/traces/surveys/existing reviews) untouched — sole `docs/reviews/` addition is the architect-authored Phase-4 record.
+
+### Targets + dispositions (surveyed; surfaced to architect thread-614 r2)
+- `ARCHITECTURE.md` — rewrite-to-current (clear-cut; proceeding).
+- 3 comment-refs (`hub/src/policy/agent-projection.ts`, `packages/storage-provider`, `.gitignore`) — clear fixes.
+- `docs/architect-engineer-collaboration.md` — recommend **delete** (mostly-dead; conflicts with the methodology canon).
+- `docs/runbooks/m-local-fs-cutover-drills.md` — recommend **delete** (drills the retired GCS↔local-fs cutover; `state-sync.sh` gone).
+- `docs/onboarding/multi-env-operator-setup.md` — recommend **delete** (its `deploy/base`/`deploy/cloudrun`/`new-environment-bootstrap.sh` spine is all gone).
+- `docs/sdk-guide.md` — **rewrite** (salvageable core: network-adapter + entities/policy; storage→substrate; drop §5 vertex-cloudrun + §6 architect-chat).
+- `packages/repo-event-bridge/docs/webhook-source-design.md` — leave (point-in-time design doc).
+- `docs/reviews/2026-05-22-phase-4-scoped.md` — architect-authored artefact; engineer `git add`s the provided content.
+
+### Session log
+
+### 2026-05-22 PM AEST — W2 picked up; dispositions surfaced
+
+- thread-614: architect dispatched W2 (idea-309). Worktree synced to `11c767d`; W2 branch cut.
+- Delegated a staleness assessment of the 4 judgment-call docs; surveyed `ARCHITECTURE.md` directly.
+- Surfaced the disposition set on thread-614 (delete×3 + rewrite sdk-guide) as `decision_needed` — holding execution pending architect ratification.
+
+### 2026-05-22 PM AEST — W2 executed (most); sdk-guide form-fork surfaced
+
+- Architect ratified all dispositions (thread-614 r3); filed idea-310 for the fresh-environment runbook gap; provided the Phase-4 review artefact content.
+- Executed: 3 deletes; `ARCHITECTURE.md` full currency rewrite; `.gitignore` + `contract.ts` comment-refs (the other 2 idea-309-flagged refs needed no change on inspection); inbound links repointed (HANDOVER ×2 + threads-2.md → methodology docs); Phase-4 artefact placed at `docs/reviews/2026-05-22-phase-4-scoped.md`.
+- `sdk-guide.md`: read all 497 lines — the "rewrite" is a form-fork (exhaustive export tables + dated naming-verdicts are why it rots). Surfaced (a) faithful-table-rewrite vs (b) leaner module-concern map; recommended (b). Holding sdk-guide + the W2 PR pending the ruling.
+
+### 2026-05-22 PM AEST — W2 (b) ratified; sdk-guide done; PR opened
+
+- Architect ratified (b) — lean module-concern map; drop the export tables + dated naming-verdict content.
+- `docs/sdk-guide.md` rewritten as a module-concern map (497 → ~150 lines): per-module *concern* + source pointer, no export tables, no naming-verdicts. Current package/module layout surveyed for accuracy.
+- W2 PR opened (#252). CI 9/9 green.
+- Architect review (thread-614 r7): one fix — `hub/scripts/entity-kinds.json:306` carve-out annotation listed the now-deleted `architect-engineer-collaboration.md`. I'd consciously left it (judged a SchemaDef-inventory edit out-of-scope); architect corrected — it's a live file, not archival, and a one-token drop. Same class as the W1 `cloudrun.tf` catch. Fixed + JSON-validated; pushed to #252.

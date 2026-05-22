@@ -303,7 +303,7 @@
       "packages/repo-event-bridge state (uses MemoryStorageProvider per §5.2 keep-list)",
       "packages/repo-event-bridge-workflow-runs state (same)",
       "docs/ static markdown assets (NOT Hub-runtime-state)",
-      "local-state/architect-context/wisdom/ static markdown reference docs (4th carve-out — NEW per v1.1 per architect W1.1 inspection; ARCHITECTURE.md + architect-engineer-collaboration.md + workflow-specification.md + decisions/*.md numbered ADRs; pure reference content)"
+      "local-state/architect-context/wisdom/ static markdown reference docs (4th carve-out — NEW per v1.1 per architect W1.1 inspection; ARCHITECTURE.md + workflow-specification.md + decisions/*.md numbered ADRs; pure reference content)"
     ],
     "bilateral-substrate-currency-discipline": "Symmetric application — engineer W0.2 surfaced 5 architect-blind-kind-corrections (phantom removal); architect W1.1 surfaced 1 NEW engineer-blind-kind (ThreadHistoryEntry addition) + verified 4 OQ7-decomposition kinds. Substrate-currency-audit-rubric per `feedback_substrate_currency_audit_rubric.md` applies to BOTH spec-authoring AND state-tree-inspection paths.",
     "design-v1.1-status": "RATIFIED at commit 11ce0ba (architect-direct cleanup post-W0.2 spike findings; v1.0 ratify-criterion still met — inventory-corrections are MINOR architect-judgment per `mission-lifecycle.md` Phase 4 convergence-criterion). 20-kind inventory LOCKED."
