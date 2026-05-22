@@ -4,19 +4,21 @@ name: test
 # Mission-45 Fix B: `test` aggregator as the single branch-protection target.
 #
 # 2026-04-24 narrowed (PR #4): the `hub` vitest job is split out of the
-# matrix and made the sole code-correctness gate. The remaining matrix cells
-# (packages/cognitive-layer, packages/network-adapter, adapters/claude-plugin,
-# adapters/opencode-plugin) continue to run for visibility but are
-# non-blocking — they carry pre-existing infrastructure debt (workspace-
-# package tarball deps gitignored as *.tgz and not regenerated in CI;
-# cross-package imports without cross-package dep declaration). Failures in
-# those cells do NOT block `test`, so they do not block PR merge. The
-# `coverage-report-sync` job remains required.
+# matrix and made the sole code-correctness gate. The remaining matrix
+# cells (packages/cognitive-layer, packages/network-adapter,
+# adapters/claude-plugin, adapters/opencode-plugin) run for visibility but
+# are non-blocking (`continue-on-error`). The `coverage-report-sync` job
+# remains required.
 #
-# Path forward: file a follow-on mission to fix the adapter-tarball
-# architecture (either commit tarballs, add a CI `npm pack` step, or
-# migrate to npm workspaces). Once green, move the non-hub matrix cells
-# back into the `needs` list on `test` to re-require them.
+# bug-109 / PR-4a (2026-05-22): the 4 packages are npm workspaces of the
+# repo root (idea-186 landed). The `vitest-non-hub` job's pre-workspaces
+# per-package `npm ci` + per-package `cache-dependency-path` was dead —
+# no per-package lockfiles exist, so `actions/setup-node` failed at the
+# cache step ("Some specified paths were not resolved") and the cells
+# never ran their tests. Now: root `npm ci` + topological sovereign build
+# + per-cell test. As each cell genuinely passes, move it into the `needs`
+# list on `test` + drop `continue-on-error` (bug-109 per-cell remediation;
+# PR-4b/4c).
 
 on:
   pull_request:
@@ -110,19 +112,34 @@ jobs:
           - adapters/claude-plugin
           - adapters/opencode-plugin
     name: vitest (${{ matrix.package }})
-    defaults:
-      run:
-        working-directory: ${{ matrix.package }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: ${{ matrix.package }}/package-lock.json
-      - name: Install
-        run: npm ci
+          # Root lockfile — the 4 packages are npm workspaces of the repo
+          # root; there are no per-package lockfiles (bug-109 / PR-4a).
+          cache-dependency-path: package-lock.json
+      # Root install — installs every workspace + symlinks the @apnex/*
+      # cross-deps. --ignore-scripts avoids any workspace prepare hook
+      # firing tsc before the topological build below.
+      - name: Install workspaces (root)
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      # The sovereign packages must be built (dist/) before a cell's
+      # vitest can resolve `@apnex/*` (main → dist/index.js).
+      # network-adapter ↔ message-router form an import cycle, broken via
+      # the multi-pass build per scripts/build/lib/prepack-claude-plugin.sh
+      # Step 0.5.
+      - name: Build sovereign packages (topological)
+        run: |
+          ( cd packages/cognitive-layer && npm run build )
+          ( cd packages/network-adapter && npm run build ) || true
+          ( cd packages/message-router && npm run build )
+          rm -rf packages/network-adapter/dist
+          ( cd packages/network-adapter && npm run build )
       - name: Test
+        working-directory: ${{ matrix.package }}
         run: npm test
 
   # ── Aggregator: single status-check name for branch-protection rules ─
