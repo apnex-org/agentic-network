@@ -8,6 +8,8 @@ Convergence Bounds (80-90% healthy ceiling) · Phase 2 Filing-Point ≠ Fault-Do
 
 **Companion methodology:** `docs/methodology/mission-preflight.md` — activation gate between review Phase 4 filing (`proposed`) and Director release-gate signal (`active`). Every Phase-4-filed mission requires a preflight artifact at `docs/missions/<mission-id>-preflight.md` before Director issues `update_mission(status="active")`.
 
+**Peer methodology:** `docs/methodology/ledger-reconciliation.md` — the factual counterpart to this evaluative review. Reconcile the ledger (true-up entity status) *before* a strategic review — a review run over a rotted backlog evaluates noise.
+
 ## Purpose
 
 A strategic architectural review is a **deliberate, time-boxed pass over the system's current state to re-align trajectory with Tele**. It produces a prioritized investment plan, a ratified set of anti-goals, and a cleaned-up backlog — not code changes. It is the "run slow to run fast" counterweight to mission execution.

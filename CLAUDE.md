@@ -67,6 +67,7 @@ Methodology + role-runtime + glossary docs (load when phase-engaged or role-enga
 - `docs/methodology/mission-lifecycle.md` — formal lifecycle phases (Concept → Retrospective) + RACI matrix + decision-routing rules
 - `docs/methodology/idea-survey.md` — Director-intent Survey methodology (3+3 pick-list); canonical for Idea→Design transition
 - `docs/methodology/strategic-review.md` — backlog triage + mission prioritization; Idea Triage Protocol (per-idea routing)
+- `docs/methodology/ledger-reconciliation.md` — entity-ledger status-reconciliation; the factual peer to strategic-review.md (5-step process + disposition buckets)
 - `docs/methodology/multi-agent-pr-workflow.md` — per-PR integration gate; cross-approval pattern; Pass 10 rebuild + schema-rename state-migration disciplines
 - `docs/methodology/mission-preflight.md` — activation gate (proposed → active); 6-category audit + verdict
 - `docs/methodology/entity-mechanics.md` — per-entity FSM + status transitions + cascade behaviors
