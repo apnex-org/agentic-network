@@ -50,8 +50,8 @@ async function resolveClarification(args: Record<string, unknown>, ctx: IPolicyC
   // P2P back to the assigned engineer when known, else label-scoped pool fallback.
   const task = await ctx.stores.task.getTask(taskId);
   await ctx.dispatch("clarification_answered", { taskId, answer: answer.substring(0, 200) },
-    task?.assignedEngineerId
-      ? { agentId: task.assignedEngineerId }
+    task?.assignedAgentId
+      ? { agentId: task.assignedAgentId }
       : { roles: ["engineer"], matchLabels: task?.labels });
 
   return {

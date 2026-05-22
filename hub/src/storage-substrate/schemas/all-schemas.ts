@@ -224,19 +224,28 @@ const Proposal: SchemaDef = {
 
 const Task: SchemaDef = {
   kind: "Task",
-  version: 1,
+  // v1→v2 (mission-87 W3 / idea-302): completes the mission-62
+  // agent-identifier rename for the Task entity — the legacy
+  // claimant field is now `assignedAgentId`. The index is RENAMED
+  // task_assigned_agent_idx → task_agent_idx (not fields-only-changed):
+  // the reconciler's `CREATE INDEX … IF NOT EXISTS <name>` keys on the
+  // name, so a fields-only change under an unchanged name silently
+  // no-ops, leaving the index bound to the dead old expression. The
+  // data-key rename for existing substrate rows + the orphaned-index
+  // drop are hub/scripts/migrate-task-engineerid-to-agentid.ts.
+  version: 2,
   fields: [
     { name: "id", type: "string", required: true },
     { name: "directive", type: "string", required: false },
     { name: "status", type: "string", required: false, enum: ["pending", "working", "blocked", "input_required", "in_review", "completed", "failed", "escalated", "cancelled"] },
-    { name: "assignedEngineerId", type: "string", required: false },
+    { name: "assignedAgentId", type: "string", required: false },
     { name: "turnId", type: "string", required: false },
     // NOTE: clarification is INLINE FIELD on task (clarificationQuestion +
     // clarificationAnswer per task-repository.ts grep) — NOT separate kind
   ],
   indexes: [
     { name: "task_status_idx", fields: ["status"] },
-    { name: "task_assigned_agent_idx", fields: ["assignedEngineerId"] },
+    { name: "task_agent_idx", fields: ["assignedAgentId"] },
   ],
   watchable: true,
 };

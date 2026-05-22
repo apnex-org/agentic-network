@@ -98,7 +98,7 @@ describe("TaskRepositorySubstrate (W4.x.8 Option Y sibling-pattern)", () => {
     const claimed = await repo.getNextDirective({ agentId: "agent-greg" });
     expect(claimed?.id).toBe(taskId1);
     expect(claimed?.status).toBe("working");
-    expect(claimed?.assignedEngineerId).toBe("agent-greg");
+    expect(claimed?.assignedAgentId).toBe("agent-greg");
 
     // Re-claim returns null (no more pending)
     const reClaim = await repo.getNextDirective({ agentId: "agent-greg" });

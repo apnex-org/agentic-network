@@ -34,7 +34,7 @@ Initial: pending (no dependencies) | blocked (with dependsOn)
 Terminal: completed, failed, escalated, cancelled
 Additional fields:
   revisionCount      — integer, default 0
-  assignedEngineerId — engineerId of the Agent that claimed the Task via get_task; null until claimed
+  assignedAgentId — engineerId of the Agent that claimed the Task via get_task; null until claimed
   labels             — Record<string, string>; Mission-19 routing metadata inherited from the creator's Agent at submit-time
 ```
 
@@ -82,7 +82,7 @@ Reports and reviews use versioned naming based on `revisionCount`:
 | INV-T12 | `escalated` is locked — `create_report` is rejected from this state              | NONE |
 | INV-T13 | A Task's `labels` are set at `create_task` from the caller Agent's labels and are immutable for the life of the Task | `test/mission-19/labels.test.ts` "task inherits creator labels" |
 | INV-T14 | `get_task` only returns a Task when `taskClaimableBy(task.labels, claimant.labels)` holds — the claimant's labels must cover every key/value in the Task's labels | `test/mission-19/claim.test.ts` "claim rejected when labels missing" |
-| INV-T15 | On successful claim, `get_task` records `task.assignedEngineerId = claimant.engineerId`                     | `test/mission-19/claim.test.ts` "claim persists assignedEngineerId" |
+| INV-T15 | On successful claim, `get_task` records `task.assignedAgentId = claimant.engineerId`                     | `test/mission-19/claim.test.ts` "claim persists assignedAgentId" |
 | INV-T16 | Tasks scaffolded from a Proposal inherit the parent Proposal's labels (not the approver's labels)           | `test/mission-19/labels.test.ts` "scaffold inherits proposal labels" |
 | INV-T17 | Tasks spawned from a converged Thread's `convergenceAction` inherit the Thread's labels                     | `test/mission-19/labels.test.ts` "thread-spawn inherits thread labels" |
 
@@ -465,12 +465,12 @@ Precondition: None
 | 1    | Architect | `create_task(title, description)`               | pending      | `task_issued` → { roles: [engineer], matchLabels: task.labels } |
 | 2    | Engineer  | `get_task()`                                    | working      | `directive_acknowledged` → { roles: [architect], matchLabels: task.labels } |
 | 3    | Engineer  | `create_report(taskId, ...)`                    | in_review    | `report_submitted` → { roles: [architect], matchLabels: task.labels } |
-| 4    | Architect | `create_review(taskId, ..., decision: "approved")` | completed  | `review_completed` → { engineerId: task.assignedEngineerId } (P2P; label-scoped pool fallback if null) |
+| 4    | Architect | `create_review(taskId, ..., decision: "approved")` | completed  | `review_completed` → { engineerId: task.assignedAgentId } (P2P; label-scoped pool fallback if null) |
 
 Step 1: `task.labels` are inherited from the caller Architect's Agent at submit-time (INV-T13). All downstream dispatches filter to Agents whose `labels` cover those keys (INV-AG3).
-Step 2: `get_task` applies claim enforcement — only Agents whose `labels` are a superset of `task.labels` see the Task (INV-T14). `task.assignedEngineerId` is recorded (INV-T15).
+Step 2: `get_task` applies claim enforcement — only Agents whose `labels` are a superset of `task.labels` see the Task (INV-T14). `task.assignedAgentId` is recorded (INV-T15).
 Step 3 transitions to `in_review` (not `completed`). No DAG cascade fires at this point.
-Step 4 transitions to `completed` and triggers DAG cascade (`unblockDependents`) if dependents exist. `review_completed` routes P2P to the original claimant via `assignedEngineerId` so the same Engineer instance that did the work sees the approval — even if other Agents share the label scope.
+Step 4 transitions to `completed` and triggers DAG cascade (`unblockDependents`) if dependents exist. `review_completed` routes P2P to the original claimant via `assignedAgentId` so the same Engineer instance that did the work sees the approval — even if other Agents share the label scope.
 
 **Agent behavior:** Step 4 is automated — the Architect's `sandwichReviewReport` handler fires on `report_submitted`, reads the report from GCS, uses LLM to evaluate, and calls `create_review` with `decision: "approved"`.
 
@@ -488,10 +488,10 @@ Precondition: Task in working state
 | Step | Actor     | Action                                           | State After  | Dispatch Selector                                          |
 | ---- | --------- | ------------------------------------------------ | ------------ | ---------------------------------------------------------- |
 | 1    | Engineer  | `create_report(taskId, ...)`                     | in_review    | `report_submitted` → { roles: [architect], matchLabels: task.labels } |
-| 2    | Architect | `create_review(taskId, ..., decision: "rejected")` | working    | `revision_required` → { engineerId: task.assignedEngineerId } (P2P; label-scoped pool fallback) |
+| 2    | Architect | `create_review(taskId, ..., decision: "rejected")` | working    | `revision_required` → { engineerId: task.assignedAgentId } (P2P; label-scoped pool fallback) |
 | 3    | Engineer  | Reads feedback, revises work                     | working      | (none)                                                    |
 | 4    | Engineer  | `create_report(taskId, ...)`                     | in_review    | `report_submitted` → { roles: [architect], matchLabels: task.labels } |
-| 5    | Architect | `create_review(taskId, ..., decision: "approved")` | completed  | `review_completed` → { engineerId: task.assignedEngineerId } (P2P; label-scoped pool fallback) |
+| 5    | Architect | `create_review(taskId, ..., decision: "approved")` | completed  | `review_completed` → { engineerId: task.assignedAgentId } (P2P; label-scoped pool fallback) |
 
 Step 2 increments `revisionCount` and emits `revision_required` with `previousReportRef` and `reviewRef`.
 Step 4 generates a versioned report name: `reports/{taskId}-v{revisionCount+1}-report.md`.
@@ -530,7 +530,7 @@ Precondition: Task exists in working state
 | Step | Actor     | Action                              | State After     | Dispatch Selector                                                                            |
 | ---- | --------- | ----------------------------------- | --------------- | -------------------------------------------------------------------------------------------- |
 | 1    | Engineer  | `create_clarification(taskId, q)`   | input_required  | `clarification_requested` → { roles: [architect], matchLabels: task.labels }                 |
-| 2    | Architect | `resolve_clarification(taskId, a)`  | working         | `clarification_answered` → { engineerId: task.assignedEngineerId } (P2P; label-scoped pool fallback) |
+| 2    | Architect | `resolve_clarification(taskId, a)`  | working         | `clarification_answered` → { engineerId: task.assignedAgentId } (P2P; label-scoped pool fallback) |
 | 3    | Engineer  | `get_clarification(taskId)`         | working         | (none)                                                                                       |
 
 **Agent behavior:** Step 2 is automated — the Architect's `sandwichClarification` handler fires on `clarification_requested`, uses LLM to answer, and calls `resolve_clarification`.
@@ -552,7 +552,7 @@ Precondition: Two or more tasks with dependency relationships
 | 2    | Architect | `create_task("B", ..., dependsOn: ["A"])`           | B: blocked   | `task_blocked` → { roles: [architect], matchLabels: B.labels } |
 | 3    | Engineer  | `get_task()` → picks up A                           | A: working   | `directive_acknowledged` → { roles: [architect], matchLabels: A.labels } |
 | 4    | Engineer  | `create_report("A", ...)`                           | A: in_review | `report_submitted` → { roles: [architect], matchLabels: A.labels } |
-| 5    | Architect | `create_review("A", ..., decision: "approved")`     | A: completed | `review_completed` → { engineerId: A.assignedEngineerId } (P2P) |
+| 5    | Architect | `create_review("A", ..., decision: "approved")`     | A: completed | `review_completed` → { engineerId: A.assignedAgentId } (P2P) |
 | 6    | System    | Cascade: unblockDependents(A)                       | B: pending   | `task_issued` → { roles: [engineer], matchLabels: B.labels } |
 | 7    | Engineer  | `get_task()` → picks up B                           | B: working   | `directive_acknowledged` → { roles: [architect], matchLabels: B.labels } |
 
@@ -862,14 +862,14 @@ Since Mission-19 (v2.1.0), all events in this catalogue are delivered via `ctx.d
 | Event                      | Emitter                                   | Target                                  | Payload            | Purpose                           |
 | -------------------------- | ----------------------------------------- | --------------------------------------- | ------------------ | --------------------------------- |
 | `clarification_requested`  | ClarificationPolicy.createClarification   | [architect] ∧ task.labels               | taskId, question   | Engineer needs guidance           |
-| `clarification_answered`   | ClarificationPolicy.resolveClarification  | **P2P** task.assignedEngineerId (fallback: [engineer] ∧ task.labels) | taskId, answer     | Architect responded — routes back to the exact Agent instance that asked |
+| `clarification_answered`   | ClarificationPolicy.resolveClarification  | **P2P** task.assignedAgentId (fallback: [engineer] ∧ task.labels) | taskId, answer     | Architect responded — routes back to the exact Agent instance that asked |
 
 ### 4.3 Review Events
 
 | Event                        | Emitter                   | Target                                                 | Payload                                              | Purpose                              |
 | ---------------------------- | ------------------------- | ------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------- |
-| `review_completed`           | ReviewPolicy.createReview | **P2P** task.assignedEngineerId (fallback: [engineer] ∧ task.labels) | taskId, reviewRef, assessment, decision               | Architect approved report — routes to the original claimant |
-| `revision_required`          | ReviewPolicy.createReview | **P2P** task.assignedEngineerId (fallback: [engineer] ∧ task.labels) | taskId, assessment, previousReportRef, reviewRef, revisionCount | Report rejected — revision needed by the original claimant |
+| `review_completed`           | ReviewPolicy.createReview | **P2P** task.assignedAgentId (fallback: [engineer] ∧ task.labels) | taskId, reviewRef, assessment, decision               | Architect approved report — routes to the original claimant |
+| `revision_required`          | ReviewPolicy.createReview | **P2P** task.assignedAgentId (fallback: [engineer] ∧ task.labels) | taskId, assessment, previousReportRef, reviewRef, revisionCount | Report rejected — revision needed by the original claimant |
 | `director_attention_required`| ReviewPolicy.createReview | [architect] ∧ task.labels                              | taskId, revisionCount, assessment                     | Circuit breaker: task escalated after 3+ rejections |
 
 ### 4.4 Proposal Events
@@ -1044,7 +1044,7 @@ for each (k, v) in taskLabels:
 return true
 ```
 
-`get_task` walks the pending queue and returns the first Task for which `taskClaimableBy(task.labels, claimant.labels)` holds. On a successful claim, `task.assignedEngineerId = claimant.engineerId` is persisted (INV-T15) — this enables P2P routing for subsequent events.
+`get_task` walks the pending queue and returns the first Task for which `taskClaimableBy(task.labels, claimant.labels)` holds. On a successful claim, `task.assignedAgentId = claimant.engineerId` is persisted (INV-T15) — this enables P2P routing for subsequent events.
 
 ### 6.5 P2P Routing Pattern
 
@@ -1052,13 +1052,13 @@ Events tied to a specific Agent's work (review outcomes, clarification answers) 
 
 ```ts
 await ctx.dispatch(event, data,
-  task.assignedEngineerId
-    ? { engineerId: task.assignedEngineerId }
+  task.assignedAgentId
+    ? { engineerId: task.assignedAgentId }
     : { roles: [...], matchLabels: task.labels }
 );
 ```
 
-When `assignedEngineerId` is set, the Hub pins to that Agent. If the pin is stale (offline, session expired, agent archived), the selector matches zero Agents and delivery falls through to the webhook (INV-SYS-L05, INV-SYS-L09). Callers requiring at-least-once-to-some-Agent must omit the pin and use `matchLabels` on its own.
+When `assignedAgentId` is set, the Hub pins to that Agent. If the pin is stale (offline, session expired, agent archived), the selector matches zero Agents and delivery falls through to the webhook (INV-SYS-L05, INV-SYS-L09). Callers requiring at-least-once-to-some-Agent must omit the pin and use `matchLabels` on its own.
 
 ### 6.6 Defensive Migration
 
@@ -1101,8 +1101,8 @@ Caller-supplied labels under `ois.io/` are accepted but callers are warned (via 
 | GAP-13 | No revision loop (`in_review → working`) or `revisionCount` tracking                   | Medium   | Open — **Mission-6 T3** will implement |
 | GAP-14 | No circuit breaker for infinite revision loops                                          | Medium   | Open — **Mission-6 T4** will implement `escalated` state |
 | GAP-15 | Thread convergence dual-execution: Hub cascade and Architect LLM both fire for same thread | High     | **RESOLVED** (idea-57) — `hasAction` flag gates SSE path, status guard gates polling path |
-| GAP-16 | No routing model beyond `role` — all `architect` or all `engineer` agents receive every broadcast | High | **RESOLVED** (Mission-19, task-195/196/197) — Kubernetes-style label selectors on every dispatch; claim enforcement on `get_task`; P2P routing via `assignedEngineerId` |
-| GAP-17 | No way to pin a reply to the specific Agent instance that produced the work — stale reviews could reach any engineer in the pool | High | **RESOLVED** (Mission-19, t5) — review/clarification events pin to `task.assignedEngineerId` with label-scoped fallback |
+| GAP-16 | No routing model beyond `role` — all `architect` or all `engineer` agents receive every broadcast | High | **RESOLVED** (Mission-19, task-195/196/197) — Kubernetes-style label selectors on every dispatch; claim enforcement on `get_task`; P2P routing via `assignedAgentId` |
+| GAP-17 | No way to pin a reply to the specific Agent instance that produced the work — stale reviews could reach any engineer in the pool | High | **RESOLVED** (Mission-19, t5) — review/clarification events pin to `task.assignedAgentId` with label-scoped fallback |
 | GAP-18 | Entities created at thread convergence or proposal scaffold ignored the parent's routing intent — child was dispatched to the approver/converger's scope | Medium | **RESOLVED** (Mission-19, t3) — authoritative label inheritance reads from parent entity record |
 
 ### 6.2 Test Coverage Gaps

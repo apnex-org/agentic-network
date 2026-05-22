@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "coverage:invariants": "tsx scripts/invariant-coverage.ts",
-    "migrate-fs-to-substrate": "tsx scripts/migrate-fs-to-substrate.ts"
+    "migrate-fs-to-substrate": "tsx scripts/migrate-fs-to-substrate.ts",
+    "migrate-task-engineerid-to-agentid": "tsx scripts/migrate-task-engineerid-to-agentid.ts"
   },
   "keywords": [],
   "author": "",

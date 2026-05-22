@@ -18,7 +18,7 @@ export interface Task {
   verification: string | null;
   reviewAssessment: string | null;
   reviewRef: string | null;
-  assignedEngineerId: string | null;
+  assignedAgentId: string | null;
   clarificationQuestion: string | null;
   clarificationAnswer: string | null;
   correlationId: string | null;
@@ -68,7 +68,7 @@ export interface CascadeBacklink {
  * WHO created a given entity via a direct tool call.
  *
  * Orthogonal to `CascadeBacklink` (cascade-provenance) and to mutable
- * current-owner fields like `Task.assignedEngineerId`. `createdBy` is
+ * current-owner fields like `Task.assignedAgentId`. `createdBy` is
  * set at creation time and never mutates after.
  *
  * - `role`: the caller's role at the moment of creation ("architect" |
@@ -1217,7 +1217,7 @@ export interface ITaskStore {
    * When `claimant` is omitted, behaves like the pre-Mission-19 FIFO pull
    * (used by legacy paths that have not yet completed M18 handshake).
    * `claimant.agentId`, when set, is persisted on the task as
-   * `assignedEngineerId` for P2P routing of subsequent events.
+   * `assignedAgentId` for P2P routing of subsequent events.
    */
   getNextDirective(claimant?: { agentId?: string; labels?: Record<string, string> }): Promise<Task | null>;
   submitReport(taskId: string, report: string, summary: string, success: boolean, verification?: string): Promise<boolean>;

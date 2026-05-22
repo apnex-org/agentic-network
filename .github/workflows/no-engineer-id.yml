@@ -44,6 +44,8 @@ jobs:
           # - test README.md files (test-mock API docs; lower priority than active code)
           # - this workflow file itself + the husky hook (self-reference)
           # - package-lock.json (mechanically generated)
+          # - the mission-87 W3 migration script + its test — the one
+          #   legitimate place the old token must appear (it renames it)
           MATCHES=$(git grep -nE 'engineerId|engineer_id' \
             -- \
             ':!docs/' \
@@ -54,6 +56,8 @@ jobs:
             ':!.husky/pre-commit' \
             ':!package-lock.json' \
             ':!**/package-lock.json' \
+            ':!hub/scripts/migrate-task-engineerid-to-agentid.ts' \
+            ':!hub/scripts/__tests__/migrate-task-engineerid-to-agentid.test.ts' \
             || true)
           if [ -n "$MATCHES" ]; then
             echo "::error::engineerId/engineer_id token found in active code surface."

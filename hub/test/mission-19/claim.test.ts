@@ -3,7 +3,7 @@
  *
  * Covers: taskClaimableBy truth table, get_task rejects mismatched claimants,
  * unlabeled Task is open to anyone, unlabeled Agent blocked from labeled Tasks,
- * assignedEngineerId persisted on claim.
+ * assignedAgentId persisted on claim.
  *
  * Registry invariants: INV-T14, INV-T15, INV-SYS-L07.
  */
@@ -48,7 +48,7 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
     store = new TaskRepository(provider, counter);
   });
 
-  it("claim records assignedEngineerId (INV-T15)", async () => {
+  it("claim records assignedAgentId (INV-T15)", async () => {
     const taskId = await store.submitDirective(
       "Do thing",
       undefined, undefined, "T", "D", undefined,
@@ -61,10 +61,10 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
     });
 
     expect(claimed?.id).toBe(taskId);
-    expect(claimed?.assignedEngineerId).toBe("eng-abc");
+    expect(claimed?.assignedAgentId).toBe("eng-abc");
 
     const persisted = await store.getTask(taskId);
-    expect(persisted?.assignedEngineerId).toBe("eng-abc");
+    expect(persisted?.assignedAgentId).toBe("eng-abc");
     expect(persisted?.status).toBe("working");
   });
 
@@ -142,7 +142,7 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
 
     const first = await store.getNextDirective({ agentId: "eng-a" });
     expect(first?.id).toBe(taskId);
-    expect(first?.assignedEngineerId).toBe("eng-a");
+    expect(first?.assignedAgentId).toBe("eng-a");
 
     const second = await store.getNextDirective({ agentId: "eng-b" });
     expect(second).toBeNull();
@@ -157,6 +157,6 @@ describe("Mission-19 Claim — getNextDirective enforces labels", () => {
     });
 
     expect(claimed?.id).toBe(taskId);
-    expect(claimed?.assignedEngineerId).toBe("eng-abc");
+    expect(claimed?.assignedAgentId).toBe("eng-abc");
   });
 });

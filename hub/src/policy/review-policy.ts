@@ -135,8 +135,8 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
       assessment: assessment.substring(0, 200),
       decision: "approved",
       intent: "review_available",
-    }, task.assignedEngineerId
-      ? { agentId: task.assignedEngineerId }
+    }, task.assignedAgentId
+      ? { agentId: task.assignedAgentId }
       : { roles: ["engineer"], matchLabels: task.labels });
 
     // Push task_completed internal event for DAG cascade
@@ -157,7 +157,7 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
           taskId,
           decision: "approved",
           reviewerAgentId: ctx.sessionId,
-          reportAuthorAgentId: task.assignedEngineerId ?? undefined,
+          reportAuthorAgentId: task.assignedAgentId ?? undefined,
         },
         ctx,
       );
@@ -254,8 +254,8 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
         revisionCount: newRevisionCount,
         decision: "revision_required",
         intent: "address_feedback",
-      }, task.assignedEngineerId
-        ? { agentId: task.assignedEngineerId }
+      }, task.assignedAgentId
+        ? { agentId: task.assignedAgentId }
         : { roles: ["engineer"], matchLabels: task.labels });
 
       // Mission-51 W3: state-transition trigger (same shape as the
@@ -270,7 +270,7 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
             taskId,
             decision: "revision_required",
             reviewerAgentId: ctx.sessionId,
-            reportAuthorAgentId: task.assignedEngineerId ?? undefined,
+            reportAuthorAgentId: task.assignedAgentId ?? undefined,
           },
           ctx,
         );
