@@ -390,5 +390,24 @@ clear it.
 - **Re-verify against CI, not local.** Local tsc + suite green (188/188) is
   sanity only — local resolves `pg`. Dispositive check: the CI
   `vitest (packages/network-adapter)` cell on the #244 push.
+- γ pushed (`f8f694d`); CI re-verified — `pg` reach **cleared**, network-adapter
+  cell `4 failed → 1 failed / 16 passed`. The remaining 1 (`threads-2-smoke.test.ts`)
+  hit a **2nd hub-only dep** — `ulidx`, via `message-repository-substrate.ts:93`'s
+  `await import("ulidx")` (ULID message-id gen). Same class as `pg`; the `pg`
+  failure had masked it. My prior "single reach point" diagnosis under-scoped (a
+  dynamic `import()` a static grep missed).
+- Completed the full hub-dep enumeration: of hub's 6 deps absent from the
+  non-hub cells, `ulidx` is the only live runtime reach (the other 5 ruled out —
+  type-only ×2 / not-imported-in-hub-src / type-only-erased / not in the harness
+  graph). So `ulidx` is the last one — fixing it → 17/17.
+- **`ulidx` fix — architect-disposed option (1), folded into #244:** `ulidx`
+  added as a `network-adapter` devDependency (`^2.4.1`, matches hub). Unlike
+  `pg`, `ulidx` can't be dodged by a leaf-import — ULID generation is needed by
+  the memory path; the cell genuinely needs the dep. Scoped install + root hoist
+  makes it resolvable across all 3 non-hub cells.
+- Lockfile: hand-added the `ulidx` + `layerr` (its dep) entries for a minimal
+  +22/−0 delta. A plain `npm install --package-lock-only` additionally stripped
+  two `@emnapi/*` optional-peer entries (a known `npm ci` hazard) — avoided via
+  the surgical edit.
 - NEXT: commit + push #244 → watch CI → re-surface on thread-609 when the
-  network-adapter cell is actually green. NEXT (post-merge): PR-4c residuals.
+  network-adapter cell is genuinely 17/17 green. NEXT (post-merge): PR-4c.
