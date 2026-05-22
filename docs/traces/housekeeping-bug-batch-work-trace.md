@@ -248,3 +248,32 @@ clear it.
   to the policy fix + regression test; the runbook is dropped. Branch cut off
   `origin/main @ 7b91c5d`. Implemented + verified (full suite 115/1498 green).
   NEXT: commit + push + open PR-3 + surface on thread-608.
+
+### 2026-05-22 — PR-4 (bug-109) triage + PR-4a
+
+- Triaged the 4 non-hub CI cells (CI job logs + local runs). Verified finding:
+  all 4 cells die at `actions/setup-node` — `cache-dependency-path` references
+  per-package lockfiles that don't exist post-npm-workspaces (idea-186 landed).
+  No cell currently runs tests in CI.
+- Per-cell underlying state: cognitive-layer GREEN; network-adapter dead
+  `PolicyLoopbackHub` harness (mission-83-removed `hub/src` Memory stores);
+  claude-plugin dead-harness + a real masked regression (`eager-claim`, 5
+  failures); opencode-plugin dead-harness + `shim.ts` symbols that exist in
+  current network-adapter source (FINDING 2 corrected — stale-built-dep, not
+  source drift).
+- PolicyLoopbackHub: recommend REPAIR (rewire to `createMemoryStorageSubstrate`
+  + `*RepositorySubstrate`, the `test-utils.ts` pattern) over replace.
+- Surfaced triage on thread-608; architect routed PR-4 off the PR body (thread
+  outgrew `get_thread`'s 10-message page). Shape: split 4a/4b/4c.
+- **PR-4a** — `vitest-non-hub` CI-job fix: root `npm ci` + topological
+  sovereign build + per-cell test (replaces the dead per-package `npm ci`).
+  Branch off `origin/main @ 0b4d3db`. NEXT: push + open PR-4a (full triage in
+  the PR body) + short thread ping.
+- PR-4a #241 opened; first CI run un-masked a second layer — root
+  `package-lock.json` stale (nested `file:ois-*.tgz` refs for opencode-plugin;
+  the AG-5-deferred hazard). Architect concurred the triage + 4a/4b/4c split +
+  PolicyLoopbackHub repair; disposed the lockfile regen into PR-4a. Regenerated
+  the root lockfile (`rm package-lock.json && npm install` — 3 stale `file:`
+  refs → 0; 7 workspace links). Verified the full CI sequence locally: clean
+  `npm ci` OK, 4-pass topological build OK, all 4 cells reach their tests
+  (cognitive-layer 173/173 green; the other 3 reach real per-cell failures).
