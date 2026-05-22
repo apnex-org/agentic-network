@@ -138,6 +138,84 @@ invalidated.
 - `tsc --noEmit` clean (agent-projection.ts + all-schemas.ts are comment-only).
 - get-agents.sh verified live against the cloud Hub.
 
+---
+
+## PR-3 — bug-112 (create_review backfill on an unreviewed completed task)
+
+**Branch:** `agent-greg/bug-112-create-review-completed-fix` (off `origin/main @ 7b91c5d`)
+
+### Scoping saga — the (a)/(b) fork was on the wrong axis
+
+bug-112's filing framed the task-144 phantom as "stuck `enqueued` items in the
+pending-actions queue", and the architect's directional fork — (a) new
+force-close tool vs (b) document the `drain → prune` route — inherited that
+premise. Scoping verified drain→prune *as a queue operation* was clean (no
+re-dispatch, dispatchType+entityRef-scopable, idempotent) → recommended (b),
+architect confirmed (b) as a pure-doc runbook.
+
+**STOP at PR-3 build time:** reading `get_pending_actions`'s implementation to
+write the runbook revealed the whole axis was wrong. `get_pending_actions.
+totalPending` is computed from **task / proposal / thread entity scans, not the
+pending-action queue** (`system-policy.ts` — `unreadReports` + `unreviewedTasks`
+filters over `task.listTasks()`). drain→prune mutates the queue — a different
+store — so it cannot move `totalPending`. The (b) runbook would not have closed
+bug-112; its acceptance test would have failed. Surfaced to the architect before
+any artifact shipped; architect cross-checked task-144 live (`status: completed`,
+`report` non-null, `reviewAssessment: null`, `reviewRef: null`) and re-disposed.
+
+### Root cause (verified)
+
+task-144 was force-`completed` via a gsutil edit (2026-04-18, FSM-bypassed) — it
+never travelled `in_review → completed` through `submitReview`, so
+`reviewAssessment` was never written. `get_pending_actions` counts a task with a
+terminal status + `report != null` + `!reviewAssessment` under BOTH
+`unreadReports` and `unreviewedTasks` → `totalPending += 2` (the phantom
+"Pending actions: 2"). `create_review(approved)` on a `completed` task hit a
+pure no-op idempotency branch (`review-policy.ts:42-58`) — it never called
+`submitReview` (the only `reviewAssessment` writer) — so there was no path to
+clear it.
+
+### Fix (Option 1 — architect re-disposed)
+
+- `review-policy.ts` — `create_review`'s `completed`-task branch now
+  distinguishes "genuinely already reviewed" (`reviewAssessment` present →
+  preserve the idempotent no-op) from "completed but never reviewed"
+  (`!reviewAssessment` → retroactive backfill via `submitReview`). The backfill
+  records `reviewAssessment` + `reviewRef`; `"approved"` re-asserts
+  `status: completed` (identity write — no transition); deliberately NO dispatch
+  / no `task_completed` cascade / no triggers (bookkeeping backfill on an
+  already-terminal task).
+- **Class scope — `completed`-only, justified** (architect review point 1): the
+  silent-no-op blind spot is structurally `completed`-only — `create_review`'s
+  no-op branch is `if (task.status === "completed")`. `failed` / `reported_*` /
+  `escalated` tasks don't reach a no-op branch; they hit the `isValidTransition`
+  FSM-guard and hard-error (a structurally different defect, not a silent
+  no-op). The architect's observed `totalPending: 2` (both task-144) confirms
+  `completed` is the only live phantom class — no `failed`/`reported_*`
+  instances. A `failed`/`reported_*` analog, if it ever arises, is a separate
+  fix (idea-78 territory).
+- `test-utils.ts` — `createTestContext` now exposes the backing `substrate` so
+  tests can seed entity state the public store API cannot construct (the
+  `completed` + no-`reviewAssessment` shape).
+- Regression test `test/bug-112-create-review-completed-backfill.test.ts` —
+  exercises the fix THROUGH the real `get_pending_actions` (architect review
+  point 2): asserts the seeded task drops from `unreadReports` +
+  `unreviewedTasks` and `totalPending` goes 2 → 0; plus an idempotency case
+  (second `create_review` is a no-op, does not overwrite the first assessment).
+
+### Verification
+- `tsc --noEmit` clean.
+- Full hub suite green: 115 files / 1498 tests (was 114 / 1496; +1 file +2 tests
+  = the new bug-112 regression test).
+
+### Closure
+- Option 1 is hub/src → folds into bug-110's Hub-redeploy gate. bug-112's
+  acceptance test (`create_review(task-144, approved)` → task-144 drops from
+  `get_pending_actions`) runs **post-redeploy**; bug-112 closes at the redeploy
+  gate alongside bug-110. PR-merged ≠ bug-closed.
+- idea-78 (broad Task-FSM governance) stays a separate audited triage item;
+  bug-112's filing cross-links it.
+
 ## Session log
 
 ### 2026-05-22 AM AEST — batch picked up; PR-1 implemented + merged
@@ -156,6 +234,17 @@ invalidated.
   back as PR-4 (no separate mission).
 - PR-2 implemented (above): get-agents.sh Hub-URL resolution (verified live);
   bug-113 located (stale adapter cache, not a repo defect — surfaced); 2 of 3
-  bug-109 companion comment-refs reworded (3rd already gone). Branch cut off
-  `origin/main @ 5b48893`. NEXT: commit + push + open PR-2 + surface on
-  thread-608.
+  bug-109 companion comment-refs reworded (3rd already gone). Surfaced as #239;
+  architect cross-approved + merged to main @ `7b91c5d`. bug-114 filed for the
+  cache-invalidation design gap.
+
+### 2026-05-22 — PR-3 scoping STOP + re-disposition
+
+- PR-3 scoped: located idea-78 (broad stale-task-admin idea); verified
+  drain→prune; recommended (b); architect confirmed (b) as a pure-doc runbook.
+- STOP at build time — reading `get_pending_actions` showed the (a)/(b) fork's
+  shared premise ("queue problem") was wrong; surfaced with code evidence.
+- Architect re-disposed to Option 1 (`create_review` backfill). PR-3 re-shaped
+  to the policy fix + regression test; the runbook is dropped. Branch cut off
+  `origin/main @ 7b91c5d`. Implemented + verified (full suite 115/1498 green).
+  NEXT: commit + push + open PR-3 + surface on thread-608.

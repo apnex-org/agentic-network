@@ -12,6 +12,7 @@ import { TeleRepositorySubstrate } from "../entities/tele-repository-substrate.j
 import { AuditRepositorySubstrate } from "../entities/audit-repository-substrate.js";
 import { SubstrateCounter } from "../entities/substrate-counter.js";
 import { createMemoryStorageSubstrate } from "../storage-substrate/index.js";
+import type { HubStorageSubstrate } from "../storage-substrate/index.js";
 import { BugRepositorySubstrate } from "../entities/bug-repository-substrate.js";
 import { MessageRepositorySubstrate } from "../entities/message-repository-substrate.js";
 import { PendingActionRepositorySubstrate } from "../entities/pending-action-repository-substrate.js";
@@ -32,6 +33,13 @@ interface DispatchedEvent {
 export interface TestPolicyContext extends IPolicyContext {
   emittedEvents: EmittedEvent[];
   dispatchedEvents: DispatchedEvent[];
+  /**
+   * The backing memory substrate, exposed so tests can seed entity state that
+   * the public store API cannot construct — e.g. a `completed` task with no
+   * `reviewAssessment` (the FSM-bypassed shape; see bug-112). Wired to the
+   * default `stores`; ignore it when overriding `stores`.
+   */
+  substrate: HubStorageSubstrate;
 }
 
 export function createTestContext(overrides?: Partial<TestPolicyContext>): TestPolicyContext {
@@ -65,6 +73,7 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
 
   return {
     stores,
+    substrate,
     emit: async (event, data, targetRoles) => {
       emittedEvents.push({ event, data, targetRoles });
     },
