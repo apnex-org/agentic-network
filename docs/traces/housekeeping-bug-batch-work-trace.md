@@ -355,4 +355,40 @@ clear it.
   181/188 tests). `tsc --noEmit` clean.
 - Branch `agent-greg/bug-109-test-hub-substrate-rewire` off `origin/main @ f837c32`;
   commit `4f6845e`. **PR #244 opened**, surfaced on thread-609 for cross-approval.
-  NEXT (post-merge): PR-4c residuals.
+
+### 2026-05-22 ~13:30 AEST — #244 held: CI-vs-local masking → γ fix folded in
+
+- Architect held #244 (PR review): CI's `vitest (packages/network-adapter)` cell
+  is RED while my local run was 188/188. **Local-test-masking** — "cell genuinely
+  green" was a *local* result; local `node_modules` is root-hoisted, CI's non-hub
+  cell does a *scoped* install. Owned it; corrected method = re-verify against CI.
+- **Diagnosis (architect-concurred):**
+  - The `@apnex/message-router` TS2307 the review flagged is a **non-issue** —
+    the CI Build step's per-step conclusion is `success`; the TS2307 is the
+    swallowed first pass of test.yml's network-adapter↔message-router cycle-break
+    multi-pass build (`( cd … && npm run build ) || true`). Verified via the
+    job-step API.
+  - The one real failure is **`pg`**: the harnesses import
+    `createMemoryStorageSubstrate` from the `storage-substrate/index.js`
+    **barrel**, which statically re-exports `postgres-substrate.js` → `import
+    'pg'`. `pg` is a `hub`-package dep; the non-hub cells' scoped install
+    excludes the `hub` workspace → `ERR_MODULE_NOT_FOUND`. Single reach point —
+    entity repos + `policy/index.ts` import the substrate `import type` only
+    (erased). claude-plugin/opencode hit it transitively via `policy-loopback.ts`.
+- **Fix — (γ), architect-disposed, folded into #244:** repoint the 2 harness
+  value-imports — `policy-loopback.ts` + `test-hub.ts` — from the barrel
+  `storage-substrate/index.js` → the leaf `storage-substrate/memory-substrate.js`
+  (pg-clean — only `import type` from `types.js`). Two one-line changes,
+  test-side, no redeploy; clears the `pg` reach across all 3 non-hub cells.
+- **α — follow-on note (architect-concurred, OUT of bug-109 scope):** the
+  `storage-substrate/index.ts` barrel eagerly static-re-exporting the postgres
+  path drags `pg` onto *every* barrel-importer. A lazy/dynamic import of the
+  postgres path would let `createMemoryStorageSubstrate` consumers avoid `pg`
+  entirely. Hub/src → redeploy gate; low-priority — capture only, do not fix in
+  this batch. (β — broaden the CI scoped install — rejected: fights test.yml's
+  prepare-hook warning.)
+- **Re-verify against CI, not local.** Local tsc + suite green (188/188) is
+  sanity only — local resolves `pg`. Dispositive check: the CI
+  `vitest (packages/network-adapter)` cell on the #244 push.
+- NEXT: commit + push #244 → watch CI → re-surface on thread-609 when the
+  network-adapter cell is actually green. NEXT (post-merge): PR-4c residuals.
