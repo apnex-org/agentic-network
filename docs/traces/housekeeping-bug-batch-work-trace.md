@@ -277,3 +277,19 @@ clear it.
   refs → 0; 7 workspace links). Verified the full CI sequence locally: clean
   `npm ci` OK, 4-pass topological build OK, all 4 cells reach their tests
   (cognitive-layer 173/173 green; the other 3 reach real per-cell failures).
+
+### 2026-05-22 — PR-4b split + bug-109 tail sequence
+
+- PR-4b draft #242 surfaced a scoping finding: the "2nd stale-import site" is
+  not a one-line import — it is `test-hub.ts`, a second 404-line dead harness
+  whose `HubNetworking` constructor call is API-stale (drifted mission-56/83).
+- Architect disposed (thread-609): land #242 as the `policy-loopback.ts` repair
+  ONLY (re-title, un-draft); `test-hub.ts` is its own slice. bug-109 tail
+  sequence: **#242 (policy-loopback)** → **test-hub.ts slice** (store-rewire +
+  HubNetworking reconciliation) → **session-FSM slice** (`getAgentForSession
+  →null`, 27 e2e tests) → **PR-4c residuals** (eager-claim regression, opencode
+  stale-dist, aggregator re-adds + `continue-on-error` drops).
+- #242 finalized as the bounded `policy-loopback.ts` import-rewire: the
+  claude-plugin e2e + 3 network-adapter integration files now load. The 27
+  session-FSM reds it exposes are continue-on-error / non-blocking + now
+  specific (the un-masking working as intended).
