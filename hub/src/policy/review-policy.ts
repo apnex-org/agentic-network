@@ -40,8 +40,49 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
   const reviewRef = `reviews/${taskId}-v${version}-review.md`;
 
   if (decision === "approved") {
-    // Idempotency: if already completed, no-op safely
     if (task.status === "completed") {
+      // bug-112: distinguish "genuinely already reviewed" from "completed but
+      // never reviewed". A `completed` task with no `reviewAssessment` reached
+      // `completed` via an FSM-bypassing admin edit (e.g. task-144, gsutil-
+      // closed 2026-04-18) — it never travelled `in_review → completed` through
+      // submitReview, so the assessment was never recorded. get_pending_actions
+      // then counts it forever under unreadReports + unreviewedTasks (both
+      // filter on `!reviewAssessment`). The old pure no-op could not clear it.
+      if (!task.reviewAssessment) {
+        // Retroactive backfill: record the assessment. submitReview writes
+        // reviewAssessment + reviewRef; `"approved"` re-asserts
+        // status="completed" — an identity write since the task is already
+        // completed, so there is NO status transition. Deliberately no
+        // dispatch / no task_completed cascade / no triggers — this is a
+        // bookkeeping backfill on an already-terminal task; re-firing the
+        // completion cascade on a long-closed task would be wrong.
+        const backfilled = await ctx.stores.task.submitReview(taskId, assessment, "approved");
+        if (!backfilled) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Task ${taskId} review backfill failed` }) }],
+            isError: true,
+          };
+        }
+        await ctx.stores.audit.logEntry("hub", "review_decision",
+          `Task ${taskId} review: approved (retroactive backfill — task was 'completed' with no prior reviewAssessment; bug-112)`,
+          taskId,
+        );
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: true,
+              taskId,
+              decision: "approved",
+              status: "completed",
+              reviewRef,
+              retroactive: true,
+              message: "Retroactive review recorded — task was 'completed' but never reviewed; reviewAssessment backfilled.",
+            }),
+          }],
+        };
+      }
+      // Genuinely already reviewed — preserve the idempotent no-op.
       return {
         content: [{
           type: "text" as const,
