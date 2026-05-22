@@ -476,6 +476,53 @@ clear it.
     aggregator header) updated to the post-4c-2 blocking state.
 - Self-verifying: the PR's own CI runs with the matrix already blocking — a
   regressed cell reds the PR's `test` check. YAML validated locally.
-- Branch `agent-greg/bug-109-pr4c2-aggregator-readd` off `origin/main @ 63818ae`.
-  NEXT: commit + push + open PR-4c-2 + watch CI → surface on thread-610. Then
-  PR-5 (bug-115) closes the batch.
+- Branch `agent-greg/bug-109-pr4c2-aggregator-readd` off `origin/main @ 63818ae`;
+  commit `d4da412`. **PR #246 — CI green (the `test` aggregator passed *with*
+  `vitest-non-hub` in `needs:` — self-verified the blocking gate) — cross-approved
+  + merged to `main @ 4aebe02`.**
+- **bug-109 → RESOLVED** (architect close-out). PR-4 remediation complete across
+  #241–#246; no production regression in any of the 4 packages — the masked debt
+  was dead-harness + dead-CI-config + stale test fixtures.
+
+## bug-116 — opencode standalone-`tsc` cleanliness
+
+**Branch:** `agent-greg/bug-116-opencode-tsconfig` (off `origin/main @ 4aebe02`)
+
+Director-pulled in-scope from a 4c-1 finding. opencode `tsc --noEmit` errored
+TS2307 on `hub/src/policy/repo-event-handlers.ts`'s `import type
+@apnex/repo-event-bridge`.
+
+### Diagnosis (architect-concurred)
+
+opencode's `tsconfig.json` `include` was `["src/**/*.ts", "test/**/*.ts"]` —
+claude-plugin's is `src`-only. So opencode's `tsc` compiled the test harness,
+which imports `policy-loopback.ts` → `hub/src/policy/repo-event-handlers.ts` →
+`import type { RepoEventSubkind } from "@apnex/repo-event-bridge"`. That `@apnex/*`
+**workspace** package is not in the opencode workspace's resolution scope (the
+non-hub scoped install excludes it; only `hub` declares it) and its `dist/` (the
+`types` target) is unbuilt → TS2307. Asymmetry dispositive: claude-plugin's
+`src`-only tsconfig never reaches the harness → claude `tsc` clean. Not in the
+`vitest` cell path (`import type` runtime-erased; the cell is green).
+
+### Fix (option B — architect-disposed)
+
+Dropped `test/**/*.ts` from opencode's `tsconfig.json` `include` → `src`-only,
+matching claude-plugin. opencode's `tsc` no longer reaches the harness → clean.
+The fix is environment-independent (src-only typecheck never touches hub/src,
+regardless of node_modules state). Added a `// bug-116` comment defending the
+change against a re-add. (Option A — declare `@apnex/repo-event-bridge` as a
+devDep — rejected: workspace package, unbuilt `dist`, `prepare`-hook hazard.)
+
+Trade-off (architect-acknowledged, traceable in thread-610, not separately
+filed): opencode test files lose standalone-`tsc` coverage — but claude-plugin
+already operates that way, and vitest covers them.
+
+### Verification
+
+- opencode `tsc --noEmit` — exit 0 (was: 1× TS2307). Environment-independent.
+- opencode `vitest run` — 4 files / 32 tests, unchanged green (tsconfig `include`
+  doesn't affect the vitest run).
+- `test.yml` CI does not run opencode standalone-`tsc`, so the PR's CI confirms
+  no-regression (cells stay green); the tsc-clean itself is the local check.
+- NEXT: commit + push + open the bug-116 PR + watch CI → surface on thread-610.
+  Then PR-5 (bug-115) closes the batch.
