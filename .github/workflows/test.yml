@@ -121,11 +121,22 @@ jobs:
           # Root lockfile — the 4 packages are npm workspaces of the repo
           # root; there are no per-package lockfiles (bug-109 / PR-4a).
           cache-dependency-path: package-lock.json
-      # Root install — installs every workspace + symlinks the @apnex/*
-      # cross-deps. --ignore-scripts avoids any workspace prepare hook
-      # firing tsc before the topological build below.
-      - name: Install workspaces (root)
-        run: npm ci --no-audit --no-fund --ignore-scripts
+      # Scoped install — only the 5 workspaces the non-hub cells need
+      # (the set is closed under @apnex/* cross-deps). Deliberately NOT a
+      # root --workspaces install: repo-event-bridge + storage-provider
+      # carry `prepare: npm run build` hooks that fire `tsc` at install
+      # time — and `--ignore-scripts` does NOT suppress a workspace
+      # target's own prepare (calibration #62). A root install would run
+      # those builds before their deps exist and fail. Mirrors the scoped
+      # install in scripts/build/lib/prepack-claude-plugin.sh.
+      - name: Install workspaces (scoped)
+        run: |
+          npm install --no-audit --no-fund --ignore-scripts \
+            --workspace=@apnex/cognitive-layer \
+            --workspace=@apnex/message-router \
+            --workspace=@apnex/network-adapter \
+            --workspace=@apnex/claude-plugin \
+            --workspace=@apnex/opencode-plugin
       # The sovereign packages must be built (dist/) before a cell's
       # vitest can resolve `@apnex/*` (main → dist/index.js).
       # network-adapter ↔ message-router form an import cycle, broken via
