@@ -524,5 +524,54 @@ already operates that way, and vitest covers them.
   doesn't affect the vitest run).
 - `test.yml` CI does not run opencode standalone-`tsc`, so the PR's CI confirms
   no-regression (cells stay green); the tsc-clean itself is the local check.
-- NEXT: commit + push + open the bug-116 PR + watch CI → surface on thread-610.
-  Then PR-5 (bug-115) closes the batch.
+- Commit `34adec2`; **PR #247 — CI green (all checks) — cross-approved + merged
+  to `main @ 69cc2d0`. bug-116 → resolved.**
+
+## PR-5 — bug-115 (`get_thread` pagination)
+
+**Branch:** `agent-greg/bug-115-get-thread-pagination` (off `origin/main @ 69cc2d0`)
+
+Director-specced: `get_thread` honors `offset`/`limit` + defaults to the newest-5
+messages. hub/src change → rides the Hub-redeploy gate (with bug-110/112).
+
+### Diagnosis (architect-concurred — option α, Hub-only)
+
+The oldest-10 cap was **not the Hub** — Hub `getThread` returned the full thread.
+The truncation + `_ois_pagination` envelope come from the cognitive-layer
+`ResponseSummarizer` middleware (client-side, generic oversized-response
+truncator — `slice(0, maxItems=10)` on the largest array). offset/limit weren't
+honored because `get_thread`'s MCP schema had no such params.
+
+**Option α (Hub-only) — architect-concurred:** `get_thread` becomes
+self-paginating in the Hub. Composes with the client summarizer for free —
+the newest-5 default (and any `limit ≤ 10`) sails under the summarizer's
+no-op/bypass thresholds. (Option β — also disabling the summarizer for
+get_thread via `perToolMaxItems` — rejected: 2nd gate, not needed.)
+
+### Fix
+
+`hub/src/policy/thread-policy.ts`:
+- `get_thread` MCP schema — added `limit` (int, default 5, **max 10** — the
+  Director-approved cap; above 10 the client ResponseSummarizer re-truncates)
+  + `offset` (int, default 0); description updated.
+- `getThread` handler — windows `thread.messages` from the **newest** end:
+  `offset` skips newest messages (pages back toward older), `limit` sizes the
+  page. Builds the `_ois_pagination` envelope (`{total, count, next_offset,
+  hint}`) itself — the ratified shape.
+- Hub-internal callers use `ctx.stores.thread.getThread()` (the store) directly,
+  unaffected — only the agent-facing `get_thread` tool changes.
+
+### Verification
+
+- New regression test in `wave3b-policies.test.ts` — `get_thread paginates …
+  (bug-115)`: 7-message thread → default newest-5, `offset` pages older,
+  `limit` honored, `_ois_pagination` asserted. wave3b 152/152 green.
+- Full hub vitest suite: 1415 / 1422 passed. The 6 failed files are
+  **pre-existing environmental** — `@apnex/repo-event-bridge` /
+  `@apnex/storage-provider` local-workspace-resolution + the substrate-bootstrap
+  spawn test — confirmed identical on clean `main` (stash + re-run). Not a
+  bug-115 regression; resolve in the CI hub cell (sovereign packages built).
+- `tsc`: my change adds 0 errors — the 7 hub tsc errors are the same
+  pre-existing `@apnex/*`-resolution gap, none in `thread-policy.ts`.
+- NEXT: commit + push + open PR-5 + watch CI → surface on thread-610. Batch
+  code-complete after PR-5 merges (then the Hub redeploy carries 110/112/115 live).

@@ -770,8 +770,32 @@ async function getThread(args: Record<string, unknown>, ctx: IPolicyContext): Pr
       isError: true,
     };
   }
+  // bug-115: paginate messages — default to the NEWEST `limit` (5), with
+  // `offset` paging back toward older messages. The canonical thread read
+  // must surface RECENT messages: the prior full-thread return was truncated
+  // oldest-first by the client-side cognitive-layer ResponseSummarizer, which
+  // hid every message past the 10th on long threads.
+  const limit = typeof args.limit === "number" ? args.limit : 5;
+  const offset = typeof args.offset === "number" ? args.offset : 0;
+  const total = thread.messages.length;
+  const end = Math.max(0, total - offset);
+  const start = Math.max(0, end - limit);
+  const windowed = thread.messages.slice(start, end);
+  const nextOffset = offset + windowed.length;
+  const pagination = {
+    total,
+    count: windowed.length,
+    next_offset: nextOffset,
+    hint:
+      nextOffset < total
+        ? `${total - nextOffset} older message(s) not shown — call get_thread with offset=${nextOffset} to read them.`
+        : `Reached the start of the thread (${total} message(s) total).`,
+  };
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(thread, null, 2) }],
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ _ois_pagination: pagination, ...thread, messages: windowed }, null, 2),
+    }],
   };
 }
 
@@ -1297,8 +1321,17 @@ export function registerThreadPolicy(router: PolicyRouter): void {
 
   router.register(
     "get_thread",
-    "[Any] Read an ideation thread with all messages, status, and outstanding intent.",
-    { threadId: z.string().describe("The thread ID to read") },
+    "[Any] Read an ideation thread — status, outstanding intent, participants, and a " +
+    "window of messages. Defaults to the newest 5 messages; pass `offset` to page back " +
+    "toward older messages. The `_ois_pagination` envelope reports total / count / next_offset.",
+    {
+      threadId: z.string().describe("The thread ID to read"),
+      limit: z.number().int().positive().max(10).optional()
+        .describe("Messages to return, counting back from the newest (default 5, max 10 — " +
+          "above 10 the cognitive-layer ResponseSummarizer re-truncates the window client-side)."),
+      offset: z.number().int().nonnegative().optional()
+        .describe("Newest messages to skip — pages back toward older messages (default 0)."),
+    },
     getThread,
   );
 
