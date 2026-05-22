@@ -321,5 +321,6 @@ clear it.
   `mcp-transport.test.ts` reds = the separate `test-hub.ts` slice,
   `MemoryEngineerRegistry is not a constructor`) / 16 passed; 188 tests,
   181 passed. `tsc --noEmit` clean.
-- Branch `agent-greg/bug-109-session-fsm-fixture-names` off `origin/main @ 3dd33cb`.
-  NEXT: commit + push + open PR + surface on thread-609.
+- Branch `agent-greg/bug-109-session-fsm-fixture-names` off `origin/main @ 3dd33cb`;
+  commit `7b7d687`. **PR #243 opened**, surfaced on thread-609 for cross-approval.
+  NEXT (post-merge): the test-hub.ts slice.
