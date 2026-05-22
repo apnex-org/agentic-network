@@ -70,7 +70,8 @@ describe("bug-108 — reconnect-drained pending action surfaces as a wake", () =
       {
         role: "engineer",
         handshake: {
-          globalInstanceId: `eng-${randomUUID()}`,
+          // idea-251 name-identity: slice the UUID to the [1,32] register_role limit.
+          name: `eng-${randomUUID().slice(0, 8)}`,
           proxyName: "@apnex/claude-plugin",
           proxyVersion: "bug108-test",
           transport: "stdio-mcp-proxy",

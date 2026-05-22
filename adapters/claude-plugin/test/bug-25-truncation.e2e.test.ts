@@ -138,7 +138,8 @@ async function createAgentWithMcpShim(
     {
       role,
       handshake: {
-        globalInstanceId: `${role === "engineer" ? "eng" : "arch"}-${randomUUID()}`,
+        // idea-251 name-identity: slice the UUID to the [1,32] register_role limit.
+        name: `${role === "engineer" ? "eng" : "arch"}-${randomUUID().slice(0, 8)}`,
         proxyName: "bug-25-test",
         proxyVersion: "e2e-1.0.0",
         transport: "stdio-mcp-proxy",

@@ -36,30 +36,46 @@ describe("M-Session-Claim-Separation T3 — isEagerWarmupEnabled", () => {
 });
 
 describe("M-Session-Claim-Separation T3 — parseClaimSessionResponse", () => {
-  const FULL_PAYLOAD = {
+  // INPUT fixture: the canonical nested wire envelope the Hub's
+  // `claim_session` handler emits — `{ ok, agent, session, message }`
+  // (mission-63 W3 / ADR-028 / Design §3.2). parseClaimSessionResponse
+  // reads `agent.id` + `session.{epoch,claimed,displacedPriorSession}`.
+  const CANONICAL_WIRE = {
+    ok: true,
+    agent: { id: "eng-abc123" },
+    session: {
+      epoch: 7,
+      claimed: true,
+      trigger: "explicit",
+      displacedPriorSession: { sessionId: "sess-old", epoch: 6 },
+    },
+    message: "Session claimed for agent eng-abc123",
+  };
+  // EXPECTED output: the flattened ClaimSessionParsed shape.
+  const FLAT_PARSED = {
     agentId: "eng-abc123",
     sessionEpoch: 7,
     sessionClaimed: true,
     displacedPriorSession: { sessionId: "sess-old", epoch: 6 },
   };
 
-  it("unwraps the canonical MCP tool-call shape { content: [{ text }] }", () => {
+  it("unwraps + flattens the canonical MCP tool-call shape { content: [{ text }] }", () => {
     const wrapper = {
-      content: [{ type: "text" as const, text: JSON.stringify(FULL_PAYLOAD) }],
+      content: [{ type: "text" as const, text: JSON.stringify(CANONICAL_WIRE) }],
     };
     const parsed = parseClaimSessionResponse(wrapper);
-    expect(parsed).toEqual(FULL_PAYLOAD);
+    expect(parsed).toEqual(FLAT_PARSED);
   });
 
-  it("unwraps a JSON-encoded string wrapper", () => {
-    const wrapper = JSON.stringify(FULL_PAYLOAD);
+  it("unwraps + flattens a JSON-encoded string wrapper", () => {
+    const wrapper = JSON.stringify(CANONICAL_WIRE);
     const parsed = parseClaimSessionResponse(wrapper);
-    expect(parsed).toEqual(FULL_PAYLOAD);
+    expect(parsed).toEqual(FLAT_PARSED);
   });
 
-  it("returns an already-parsed object as-is", () => {
-    const parsed = parseClaimSessionResponse(FULL_PAYLOAD);
-    expect(parsed).toEqual(FULL_PAYLOAD);
+  it("flattens an already-parsed canonical envelope object", () => {
+    const parsed = parseClaimSessionResponse(CANONICAL_WIRE);
+    expect(parsed).toEqual(FLAT_PARSED);
   });
 
   it("returns empty object on null / undefined / malformed input", () => {
@@ -75,10 +91,14 @@ describe("M-Session-Claim-Separation T3 — parseClaimSessionResponse", () => {
       content: [{
         type: "text" as const,
         text: JSON.stringify({
-          agentId: "eng-x",
-          sessionEpoch: 9,
-          sessionClaimed: true,
-          displacedPriorSession: { sessionId: "sess-prior", epoch: 8 },
+          ok: true,
+          agent: { id: "eng-x" },
+          session: {
+            epoch: 9,
+            claimed: true,
+            trigger: "explicit",
+            displacedPriorSession: { sessionId: "sess-prior", epoch: 8 },
+          },
         }),
       }],
     };
@@ -95,10 +115,14 @@ describe("M-Session-Claim-Separation T3 — parseClaimSessionResponse", () => {
       content: [{
         type: "text" as const,
         text: JSON.stringify({
-          agentId: "eng-fresh",
-          sessionEpoch: 1,
-          sessionClaimed: true,
-          // displacedPriorSession omitted on first-claim
+          ok: true,
+          agent: { id: "eng-fresh" },
+          session: {
+            epoch: 1,
+            claimed: true,
+            trigger: "explicit",
+            // displacedPriorSession omitted on first-claim
+          },
         }),
       }],
     };

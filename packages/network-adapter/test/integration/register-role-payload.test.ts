@@ -3,8 +3,8 @@
  *   1. Plain — just `{ role }`. Proves the wire is alive and the
  *      session is bound before the M18 handshake spends round-trips
  *      on the enriched payload.
- *   2. Enriched — full M18 shape: `{ role, globalInstanceId,
- *      clientMetadata, advisoryTags }`. This call is the M18 handshake
+ *   2. Enriched — full M18 shape: `{ role, name, clientMetadata,
+ *      advisoryTags }`. This call is the M18 handshake
  *      itself and produces `agentId` + `sessionEpoch`.
  *
  * Post-Phase-6: both calls live in `McpAgentClient.runHandshake()`.
