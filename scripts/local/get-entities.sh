@@ -5,6 +5,14 @@
 # mission-83 W7 deliverable per Design v1.4 §2.6 Surface 1 + N2 disposition:
 # direct-psql access (no HUB_TOKEN/HUB_URL); HUB_PG_CONNECTION_STRING env-driven.
 #
+# Two execution modes:
+#   1. Local mode (default) — `psql $HUB_PG_CONNECTION_STRING` against local
+#      Hub substrate (e.g., docker-compose dev-stack at localhost:5432).
+#   2. Remote mode — activates when `HUB_PG_REMOTE_VM` is set. Proxies psql
+#      via `gcloud compute ssh` + `docker exec` against the production
+#      substrate, authenticating as the read-only `hub_reader` role.
+#      Resolves substrate-DX asymmetry per Threads v3 cartography §6.1 F-3.
+#
 # Usage:
 #   get-entities.sh <kind> [--id=<id>] [--filter='k=v,k2=v2'] [--limit=N] [--format=table|json]
 #
@@ -15,8 +23,23 @@
 #   get-entities.sh Counter  # special-case single-row
 #   get-entities.sh Audit --filter='actor=architect' --limit=20
 #
-# Env:
-#   HUB_PG_CONNECTION_STRING — defaults to postgres://hub:hub@localhost:5432/hub
+# Env (local mode):
+#   HUB_PG_CONNECTION_STRING — postgres connection string
+#                              (default: postgres://hub:hub@localhost:5432/hub)
+#
+# Env (remote mode — all three required when HUB_PG_REMOTE_VM is set):
+#   HUB_PG_REMOTE_VM           GCE VM name running the production substrate
+#   HUB_PG_REMOTE_ZONE         GCE zone of the VM (e.g., australia-southeast1-a)
+#   HUB_PG_READER_PASSWORD     password for the read-only `hub_reader` postgres role
+#
+# Notes:
+#   - Remote mode requires `gcloud` CLI on PATH + active auth (`gcloud auth list`).
+#   - Remote mode is read-only by substrate design (`hub_reader` role lacks
+#     INSERT/UPDATE/DELETE grants).
+#   - Latency: ~500-800ms per query (ssh round-trip) vs ~5ms direct. Fine for
+#     interactive forensics; batch via single multi-statement `--filter` for loops.
+#   - Quote-safety: the query is piped via stdin (not embedded in `--command`),
+#     avoiding ssh→bash→docker-exec quote-layering hazards.
 
 set -euo pipefail
 
@@ -40,9 +63,14 @@ Options:
   --limit=N              Cap result set (default: 20)
   --format=table|json    Output format (default: table)
 
-Env:
+Env (local mode — default):
   HUB_PG_CONNECTION_STRING  postgres connection string
                             (default: postgres://hub:hub@localhost:5432/hub)
+
+Env (remote mode — activates when HUB_PG_REMOTE_VM is set):
+  HUB_PG_REMOTE_VM          GCE VM name running production substrate
+  HUB_PG_REMOTE_ZONE        GCE zone (e.g., australia-southeast1-a)
+  HUB_PG_READER_PASSWORD    password for read-only `hub_reader` role
 
 Examples:
   get-entities.sh Bug --filter='status=open' --limit=10
@@ -94,5 +122,17 @@ else
   exit 2
 fi
 
-# Execute
-psql "$CONN" -P pager=off -c "$QUERY"
+# Execute — remote mode (via gcloud-ssh + docker exec) if HUB_PG_REMOTE_VM is set;
+# otherwise local mode (direct psql against HUB_PG_CONNECTION_STRING).
+if [[ -n "${HUB_PG_REMOTE_VM:-}" ]]; then
+  : "${HUB_PG_REMOTE_ZONE:?HUB_PG_REMOTE_ZONE required when HUB_PG_REMOTE_VM is set}"
+  : "${HUB_PG_READER_PASSWORD:?HUB_PG_READER_PASSWORD required when HUB_PG_REMOTE_VM is set}"
+  # Pipe query via stdin to avoid quote-layering through ssh → bash → docker exec.
+  # `docker exec -i` connects container stdin to the ssh pipe; psql reads SQL
+  # commands from stdin when no `-c` / `-f` is given.
+  printf '%s\n' "$QUERY" | gcloud compute ssh "$HUB_PG_REMOTE_VM" \
+    --zone="$HUB_PG_REMOTE_ZONE" \
+    --command="sudo docker exec -i -e PGPASSWORD='$HUB_PG_READER_PASSWORD' ois-postgres-prod psql -U hub_reader -d hub -P pager=off"
+else
+  psql "$CONN" -P pager=off -c "$QUERY"
+fi
