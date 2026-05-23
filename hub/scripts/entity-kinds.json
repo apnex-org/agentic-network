@@ -1,7 +1,7 @@
 {
-  "$schema-version": "1.2",
-  "$generated": "2026-05-17",
-  "$generation-source": "W0.2 spike filesystem-grep at HEAD a940a38 (origin/main); v1.1 update folds in architect-side W1.1 verification per Design v1.1 commit 11ce0ba (architect-VERIFIED 4 W0-validates kinds + 1 NEW finding ThreadHistoryEntry + wisdom/ static-asset carve-out)",
+  "$schema-version": "1.3",
+  "$generated": "2026-05-23",
+  "$generation-source": "v1.3 update: idea-126 cluster-4 v0.2 substrate-currency correction (engineer code-trace contradicted v1.1 Notification re-introduction premise; mission-56 W5 IS fully complete — notifications ARE first-class Message entities with kind=external-injection; no direct file-writes; entity-kinds.json:149 was STALE). Notification moved from kinds[] to kinds-explicitly-not-included. Total locked count: 22 → 21. Substrate-currency catch per cluster-1 Round 7 precedent (engineer code-trace > architect spec-recall). | v1.2 prior: W0.2 spike filesystem-grep at HEAD a940a38 (origin/main); v1.1 update folds in architect-side W1.1 verification per Design v1.1 commit 11ce0ba (architect-VERIFIED 4 W0-validates kinds + 1 NEW finding ThreadHistoryEntry + wisdom/ static-asset carve-out)",
   "$mission": "mission-83",
   "$design-ref": "docs/designs/m-hub-storage-substrate-design.md (commit 11ce0ba; v1.1 inventory-currency cleanup; v1.0 RATIFIED at b0c6a02 per thread-563)",
   "$notes": "Authoritative enumeration of substrate-mediated kinds for W0 spike. Source-of-truth lineage: (1) architect Design v1.0 inventory; (2) engineer W0 filesystem-grep regenerates this file from current code; (3) architect W1.1 state-tree inspection verifies + augments local-state-only kinds; (4) migration script reads this at runtime + refuses-to-start if any kind in local-state has no entry. Drift between this file and filesystem-grep is a substrate-currency defect; CI drift-check at OQ3 disposition. v1.1 inventory LOCKED at 20 kinds per Design v1.1 §3.4.",
@@ -140,15 +140,6 @@
       "notes": "Substrate-native kind per Design §2.3; bootstrap-self-referential (SchemaDef-for-SchemaDef seeded first; reconciler reads it + emits its own indexes). Restart-safety verified at W2 via kill-9-between-bootstrap-steps test per Design §2.3 M4 fold-in."
     },
     {
-      "name": "Notification",
-      "mediation": "INotificationStore (RE-INTRODUCE; mission-83 OQ8 disposition)",
-      "interface-file": "(RE-INTRODUCE — hub/src/entities/notification.ts at W2/W4)",
-      "repository-file": "(RE-INTRODUCE — hub/src/entities/notification-repository.ts at W4)",
-      "persistence-prefix": "notifications/",
-      "id-pattern": "notif-N",
-      "notes": "Mission-56 W5 REMOVED INotificationStore abstraction; but notifications/notif-N.json persistence STILL HAPPENS via direct file-writes from hub/src/hub-networking.ts:431,465,504,735 (NO I*Store mediation today). OQ8 disposition: re-introduce INotificationStore + NotificationRepository as part of this mission; closes mission-56 partial-completion; preserves Option Y discipline. Saga-substrate-completion characteristic strengthened. Verified via state.ts:1015-1018 + 1579-1583 historical comments + hub-networking.ts direct-write sites."
-    },
-    {
       "name": "Document",
       "mediation": "IDocumentStore (NEW per mission-83; architect-VERIFIED at W1.1)",
       "interface-file": "(NEW — hub/src/entities/document.ts at W2/W4)",
@@ -215,6 +206,12 @@
 
   "kinds-explicitly-not-included": [
     {
+      "name": "Notification",
+      "design-v1.1-listing": "Listed at kinds[] entry (line 142-150 pre-v1.3); marked for mission-83 OQ8 re-introduction",
+      "v1.3-cluster-4-correction": "ENGINEER-CODE-TRACE CONTRADICTED v1.1 PREMISE — mission-56 W5 IS fully complete; notifications ARE first-class Message entities. Evidence:\n  (a) hub/src/policy/notification-helpers.ts:112 — emitLegacyNotification() body literally calls messageStore.createMessage({kind: \"external-injection\", authorRole: \"system\", authorAgentId: \"hub\", target: null, delivery: \"push-immediate\", payload})\n  (b) hub/src/hub-networking.ts:466 — await emitLegacyNotification(this.messageStore, event, augmentedData, targetRoles) invokes the messageStore-write path; line 467 log [Notify] Persisted notif-${notification.id} carries a Message id (notif- prefix is legacy log-grep compat)\n  (c) grep -nE 'writeFile|writeFileSync|notifications/' hub/src/hub-networking.ts returns zero matches\n  (d) grep -rnE 'notifications/notif' hub/src returns zero matches in production code\n  No INotificationStore-gap to close; no direct-write path to re-mediate.",
+      "disposition": "REMOVE from Design v1.1 §3.4.1 inventory in cluster-4 v0.2 (architect-judgment + Director-ratified disposition (i)). Substrate-currency catch via engineer code-trace per cluster-1 Round 7 precedent. mission-83 OQ8 framing re-files as separate Idea post-cluster-4 with corrected scope (semantic-separation question: are system-emit notifications semantically distinct from external-injection Messages? — NOT mediation-gap closure)."
+    },
+    {
       "name": "DirectorNotification",
       "design-v0.2-listing": "ADDED at architect's 49c08df §3.4 refinement; persistence path director-notifications/dn-YYYY-MM-DD-NNN",
       "w0-verify-finding": "ARCHITECT-BLIND-KIND-CORRECTION — DirectorNotification is FULLY MIGRATED to Message store (mission-56 W5 cleanup ACTUALLY completed for DirectorNotification, unlike Notification). Verified via:\n  (a) hub/src/policy/director-notification-helpers.ts:5-8 — 'Cut-over (no dual-write): write-paths emit Messages instead of DirectorNotifications'\n  (b) emitDirectorNotification() is a Message-emit wrapper (kind='note'), NOT a separate file-writer\n  (c) hub/src/entities/counter.ts:51 — 'Mission-56 W5: DirectorNotification entity removed'\n  No notifications-style direct-writes remain. DirectorNotification is NOT a separate substrate kind.",
@@ -280,7 +277,8 @@
     "substrate-mediated-kinds-confirmed-existing": 13,
     "substrate-mediated-kinds-new-this-mission": 2,
     "substrate-mediated-kinds-w0-architect-verified": 5,
-    "substrate-mediated-kinds-total-locked": 22,
+    "substrate-mediated-kinds-total-locked": 21,
+    "v1.3-cluster-4-correction": "Total locked count reduced from 22 → 21 in cluster-4 v0.2. Notification removed from kinds[] per engineer code-trace evidence; moved to kinds-explicitly-not-included with full disposition rationale. Director-ratified disposition (i) at cluster-4 v0.2 review (PR #271).",
     "v1.2-mission-84-w3-additions": [
       "RepoEventBridgeCursor — NEW per Design v1.1 §2.3 Variant (ii) minimal-SchemaDef; cluster #23 closure (repo-event-bridge cursor substrate-persistence); watchable: false (bookkeeping)",
       "RepoEventBridgeDedupe — NEW per same Design §2.3; same rationale (dedupe LRU sibling)"
