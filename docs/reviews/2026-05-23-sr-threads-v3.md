@@ -1,5 +1,6 @@
 # Strategic Review — 2026-05-23 — Threads v3
 
+**Status:** v1.1 (2026-05-23) — engineer critique integration. v1.0 → v1.1 changelog in Provenance.
 **Mode:** Standard
 **Scope:** `{ kind: [Idea, Bug], theme: idea-312 (M-Threads-v3 umbrella), status: open }`
 **Methodology:** `docs/methodology/strategic-review.md` v2.0 (first Standard-mode run of v2.0)
@@ -46,14 +47,17 @@ The W1–W5 wave decomposition (cartography v1.1 §6) is the load-bearing cluste
 
 | Entity | Composes under (Initiatives) | Cross-leverage signal |
 |---|---|---|
-| **idea-121** (API v2.0) | M-Threads-v3 W1 · M-Class-Tier-Promotion · M-API-v2.0 (itself) | **triple-Initiative** — verb-tool consolidation precondition for both wire-contract + Class-Tier promotion |
-| **idea-126** (k8s envelope) | M-Threads-v3 W1 · M-Class-Tier-Promotion · any future entity-extension | **triple-Initiative** — wire-substrate precondition |
-| **idea-151** (graph relationships) | M-Threads-v3 W4 · SR-autonomy target · M-Class-Tier-Promotion (relationship surface) | **triple-Initiative** — sub-steps 3/4/7/9 autonomy depend on this |
-| **bug-118** (bug-lineage substrate-wide) | M-Threads-v3 W4 · SR-autonomy sub-step 3 | **dual-Initiative** — substrate gap blocking both v3 cascade FSM + SR lineage-walk autonomy |
-| **idea-152** (Smart NIC) | M-Threads-v3 W5 · M-Agnostic-Transport (idea-240) | **dual-Initiative** — target-state composes across wire + transport substrate |
-| **idea-292** (thread-design review) | M-Threads-v3 W2 · M-Threads-v3 W5 | **dual-wave (intra-umbrella)** — 4 residual dimensions split W2/W5 |
+| **idea-121** (API v2.0) | M-Threads-v3 W1 · M-Class-Tier-Promotion | **dual-Initiative** — verb-tool consolidation; precondition for wire-contract + Class-Tier-Promotion verb-uniformity. (NB: idea-121 IS the M-API-v2.0 Initiative-shape — not a child of itself.) |
+| **idea-126** (k8s envelope) | M-Threads-v3 W1 · M-Class-Tier-Promotion | **dual-Initiative** + general-purpose substrate. Wire-substrate for verb-tool; entity-envelope for Class-Tier kinds. The "general-purpose substrate" property is honest but not itself a cross-leverage signal — substrate-generality is a Concept-level attribute, not Initiative parentage. |
+| **idea-151** (graph relationships) | M-Threads-v3 W4 · M-Class-Tier-Promotion | **dual-Initiative** + methodology-side benefit (SR sub-steps 3/4/7/9 autonomy). SR-autonomy is not itself a filed Initiative — it's a downstream methodology beneficiary; surfaced as future Initiative candidate `M-SR-Autonomy` in §8. |
+| **bug-118** (bug-lineage substrate-wide) | M-Threads-v3 W1 | **single-Initiative (W1) + methodology-side benefit.** Lineage capture lands at the wire/envelope boundary (cartography v1.1 §6 W1 source-of-record: "closes the 'gate-permissiveness' and 'lineage-capture' DSV classes structurally"). SR sub-step 3 substrate-walkability for bugs is the downstream beneficiary, not a separate Initiative parent. |
+| **idea-69** (MCP proxy list/get standardisation) | M-Threads-v3 W1 · M-API-v2.0 (idea-121) | **dual-Initiative** — list/get-surface standardisation is verb-uniformity at the tool layer + envelope-discipline at the wire layer. |
+| **idea-240** (M-Agnostic-Transport-Adapter-Hub umbrella) | M-Threads-v3 W1 · M-Agnostic-Transport (itself's umbrella) | **dual-Initiative** — transport substrate is wire-substrate for v3 W1 + the umbrella's own program. |
+| **idea-241** (M-Transport-WebSocket-Adapter-Hub) | M-Threads-v3 W1 · M-Agnostic-Transport (idea-240) | **dual-Initiative** — concrete-impl candidate for transport substrate; rides under both its umbrella and v3 W1. |
+| **idea-152** (Smart NIC) | M-Threads-v3 W5 · M-Agnostic-Transport (idea-240) | **dual-Initiative** — target-state composes across wire + transport substrate. |
+| **idea-292** (thread-design review) | M-Threads-v3 W2 · M-Threads-v3 W5 | **dual-wave (intra-umbrella)** — 4 residual dimensions split W2/W5. |
 
-The multi-Initiative parentage is the SR's primary prioritisation signal — entities serving three Initiatives shift to critical-path.
+The multi-Initiative parentage is the SR's primary prioritisation signal. Self-referential entities (an Idea that IS an Initiative shape, e.g., idea-121 IS M-API-v2.0) don't compose under themselves — they're the same entity at different tiers. Substrate-generality (idea-126's "wire substrate for any entity kind") is a Concept-level attribute, not an Initiative cross-leverage signal.
 
 ---
 
@@ -139,18 +143,20 @@ Surfacing only; formal extraction is a separate (rarer) activity.
 | Candidate | Instances |
 |---|---|
 | **Sovereign Composition substrate-class promotion** | mission-83 (Hub substrate); idea-152 (Smart NIC); idea-240/241 (transport adapter); idea-126 (envelope); W1 wire-contract |
-| **Machinery-vs-LLM split** | bug-115 → bug-106 → bug-117 progression; `isInternalCall` pattern at one site; W5 generalises across `list_*` surface |
-| **Architect-autonomy substrate dependencies** | idea-121 + idea-126 + idea-151 + bug-118 form a cluster of preconditions for SR-autonomy; named in v2.0 methodology §Substrate-dependencies |
+| **Cognitive-substrate-boundary-respect** (umbrella) | Two named sub-Concepts cluster instances of the ResponseSummarizer-class Defect — see pair-detection below. |
+|     ↳ Sub-Concept A: **Caller-intent-honored** (newest-N pagination; caller `limit` respected) | bug-115 fix (`get_thread` honours offset/limit; default newest-5); bug-117 fix-shape candidate |
+|     ↳ Sub-Concept B: **Machinery-vs-LLM split** (internal-machinery bypass via `isInternalCall(ctx.tags)`) | bug-106 fix (one shipped site); bug-117 fix-shape candidate |
+| **Architect-autonomy substrate dependencies** | idea-121 + idea-126 + idea-151 + bug-118 form a cluster of preconditions for downstream SR-autonomy; named in v2.0 methodology §Substrate-dependencies |
 
 ### Defect candidates (emergent across Bugs)
 
 | Candidate | Instances |
 |---|---|
 | **DSV-class methodology-bypass** (named in v2.0) | DSV-1 antml-prefix; DSV-2 list_* cap; DSV-3 bug-lineage substrate-wide; DSV-4 thread-vs-GitHub-approval; DSV-5 schema-rename-without-migration; DSV-6 adapter-restart-doesn't-rebuild-Hub-container |
-| **ResponseSummarizer-class instance progression** | bug-115 → bug-106 → bug-117 (one shipped fix-anchor; class still has residue) |
+| **ResponseSummarizer-class instance progression** | bug-115 → bug-106 → bug-117 — three instances retired by **two distinct Concepts**: bug-115 cluster under sub-Concept A (caller-intent-honored); bug-106 clusters under sub-Concept B (machinery-vs-LLM split); bug-117's fix-shape (Design-phase pick: caller-intent extension OR machinery-vs-LLM extension OR new substrate primitive) determines which sub-Concept catches it. |
 | **Lineage-substrate gap (bug-form)** | bug-118 (substrate-wide); bug-27 (cascade-handler-specific narrow instance); idea-side analog: 80% of ideas missing sourceThreadId |
 
-**Cross-tier observation:** the Concept "Machinery-vs-LLM split" and the Defect "ResponseSummarizer-class instance progression" are the same class viewed from two angles (pattern-applied vs failure-mode-instances). This is exactly the Concept/Defect orthogonal-peers shape from v2.0 §Tier-2.
+**Cross-tier pair-detection** (Concept ↔ Defect symmetric view): the Defect class "ResponseSummarizer-class instance progression" requires **two distinct Concepts applied** (sub-Concept A *or* sub-Concept B, per instance) to retire — not a single Concept. The umbrella Concept "Cognitive-substrate-boundary-respect" captures the shared higher-order intent (the cognitive substrate must respect both caller-intent AND internal-machinery boundaries); the two sub-Concepts are the discrete shipped/shippable patterns. This pair-detection refines v2.0 §Tier-2's orthogonal-peers framing: Defect classes can require N-Concepts-applied to fully retire.
 
 **No formal extraction this run.** Class-Tier promotion (idea M-Class-Tier-Promotion) ships entity kinds; doc-form proxies remain transitional today.
 
@@ -158,42 +164,39 @@ Surfacing only; formal extraction is a separate (rarer) activity.
 
 ## §7 · Critical-path mapping (sub-step 9)
 
-Initiative-to-Initiative dependency graph:
+Initiative-to-Initiative dependency graph (precondition-or-composition; not all hard sequencing):
 
 ```
-                            ┌─── M-K8s-Envelope (idea-126) ─────┐
-                            │                                    │
-                            │                                    ▼
-                            └──────────► M-API-v2.0 (idea-121) ──► M-Class-Tier-Promotion (NEW)
+                            ┌─── M-K8s-Envelope (idea-126) ◄════╗
+                            │                                    ║  composes-at-Design
+                            │                                    ║  (parallel-trackable)
+                            └──────────► M-API-v2.0 (idea-121) ──╣
+                                                │                ║
+                                                ▼                ▼
+                                          M-Threads-v3 W1     M-Class-Tier-Promotion (NEW)
                                                 │                          │
                                                 ▼                          ▼
-                                          M-Threads-v3 W1            (Initiative + Concept + Defect entities)
-                                                │                          │
-                                                ▼                          ▼
-                                          M-Threads-v3 W2..W5        SR-autonomy lift
-                                                ▲
-                            ┌───────────────────┘
-                            │
+                                          M-Threads-v3 W2..W5     (Initiative + Concept + Defect entities)
+                                                ▲                          │
+                                                │                          ▼
+                                                │                    SR-autonomy lift (downstream beneficiary)
 M-Graph-Relationships (idea-151) ──► M-Threads-v3 W4
-                            │       (cascade FSM)
-                            └──► SR-autonomy (sub-steps 3, 4, 7, 9)
+                                  (cascade FSM)
 
-bug-118 fix (substrate-wide bug-lineage) ──► M-Threads-v3 W4
-                                          ──► SR-autonomy (sub-step 3 substrate-walkability for bugs)
+bug-118 fix (substrate-wide bug-lineage) — IN W1 (wire/envelope layer captures lineage uniformly)
 ```
 
-**Critical-path sequencing recommendation (for downstream Survey ordering):**
+**Sequencing recommendation (for downstream Survey ordering):**
 
-1. **idea-126 (k8s-envelope)** — wire substrate precondition; unblocks everything downstream
-2. **idea-121 (M-API-v2.0)** — verb-tool consolidation; unblocks Class-Tier + W1
-3. **idea-151 (M-Graph-Relationships)** — parallel-trackable; unblocks W4 + SR-autonomy
-4. **bug-118 fix** — parallel-trackable; unblocks W4 + SR-autonomy
-5. **M-Threads-v3 W1** — wire contract; depends on (1) + (2)
-6. **M-Class-Tier-Promotion** — depends on (1) + (2); enables native Initiative output
-7. **M-Threads-v3 W2..W5** — sequenced per cartography v1.1 §6
-8. **idea-152 (Smart NIC)** — longer-horizon; ride alongside W5
+1. **idea-126 (k8s-envelope) ‖ idea-121 (M-API-v2.0)** — parallel-trackable; the relationship is composes-at-Design-checkpoint, not hard sequencing. Envelope-first vs verb-first is a Design-phase choice; the two can Survey concurrently with explicit composition checkpoints.
+2. **idea-151 (M-Graph-Relationships)** — parallel-trackable with (1); unblocks W4.
+3. **M-Threads-v3 W1** — wire contract + envelope + transport. Composes (1) + bug-118 lineage capture at wire boundary. Survey-schedulable once (1) Design checkpoint clears.
+4. **M-Class-Tier-Promotion** — composes (1); enables native Initiative output. Survey-schedulable post-(1) Design.
+5. **M-Threads-v3 W4** — cascade FSM. Depends on (2) idea-151 + W1 substrate.
+6. **M-Threads-v3 W2 / W3 / W5** — sequenced per cartography v1.1 §6.
+7. **idea-152 (Smart NIC)** — longer-horizon; rides alongside W5.
 
-Items 1–4 are all "ready to Survey now" (§4); 5–7 sequence behind them.
+Items 1–2 are the "ready to schedule" set; 3–6 sequence behind them per Design-phase composition checkpoints; 7 is intentionally longer-horizon.
 
 ---
 
@@ -227,24 +230,24 @@ W1–W5 do not need separate Hub-entity filings at this stage — they're decomp
 
 ## §9 · Triage routing (sub-step 11)
 
-Per v2.0 §Triage routing + Skip-criteria.
+Per v2.0 §Triage routing + Skip-criteria. Strict application of all-5-criteria for (a).
 
-### (a) Skip-direct-to-Survey — 5 entities
+### (a) Skip-direct-to-Survey — 1 entity
 
 | Entity | Skip-criteria check | Survey scope |
 |---|---|---|
-| **idea-121 (M-API-v2.0)** | (1) Director-originated ✓ (2) scope concrete ✓ (3) no contest ✓ (4) tele-aligned (tele-3, tele-6) ✓ (5) single-mission-shape ✓ — passes all 5 | API v2.0 first phase |
-| **idea-126 (M-K8s-Envelope)** | passes all 5 (substrate-substrate; well-scoped; Tele-aligned tele-3, tele-6) | envelope substrate first phase |
-| **idea-151 (M-Graph-Relationships)** | passes all 5 (substrate-extension; well-named; Tele-aligned tele-3) | graph relationships substrate first phase |
-| **M-Class-Tier-Promotion** (NEW) | (1) Director-ratified post-this-SR (2) scope concrete (entities named; ship-all-together) (3) no contest expected (4) tele-aligned (tele-3, tele-6) (5) ships-together-as-one-shape — passes all 5 post-ratify | Class-Tier promotion (post idea-121 + idea-126 Design landings) |
-| **bug-117** | (1) Director-ratifiable via this SR (2) scope concrete (`list_*` cap; three fix-shape options named) (3) engineer dogfooded the friction (no contest) (4) tele-aligned (tele-4) (5) single-fix-shape (one of three options) — passes all 5 | bug-117 focused fix (could pre-empt W5 OR fold into it; Design-phase pick) |
+| **M-Class-Tier-Promotion** (NEW) | (1) Director-ratified VIA this SR (source-ratification IS the SR ratify action) ✓ (2) scope concrete (Initiative + Concept + Defect entities; ship-all-together; anti-goals per §10) ✓ (3) no contest expected (substrate-extension; surfaced naturally by v2.0 methodology) ✓ (4) tele-aligned (tele-3 + tele-6) ✓ (5) ships-together-as-one-shape ✓ — passes all 5 post-ratify | Class-Tier promotion (post idea-121 + idea-126 Design composition checkpoint) |
 
-### (b) Triage thread — 2 entities
+### (b) Triage thread — 6 entities
 
 | Entity | Reason for triage |
 |---|---|
-| **idea-292** | 4 of 5 dimensions still live; W2 vs W5 split needs bilateral architect+engineer scope-flex |
-| **bug-118 fix-shape** | Multi-path fix (MCP-tool surface extension + Hub-system-emit audit + defensive contract test) needs bilateral Design pre-Survey |
+| **idea-121 (M-API-v2.0)** | Source-ratification trail not strictly clean — "Director-flagged this session" ≠ "Director-ratified-scope-as-Survey-ready." Triage thread to confirm scope-pin + Survey readiness, then promote. Methodology integrity > round-trip cost. |
+| **idea-126 (M-K8s-Envelope)** | Same source-ratification concern; older idea referenced this session without dedicated ratify thread. Triage to confirm scope + Tele alignment + composition with idea-121. |
+| **idea-151 (M-Graph-Relationships)** | Same source-ratification concern. Triage to confirm scope + Tele alignment + W4 precondition framing. |
+| **idea-292** | 4 of 5 dimensions still live; W2 vs W5 split needs bilateral architect+engineer scope-flex. |
+| **bug-117** | Fails criterion (5) single-mission-shape — three fix-shape options named (caller-`limit` upward respect / per-call `unsummarized` opt-out / Hub-side substrate primitive). Triage to converge on one fix-shape before Survey. |
+| **bug-118 fix-shape** | Multi-path fix (MCP-tool surface extension + Hub-system-emit audit + defensive contract test) needs bilateral Design pre-Survey; landed-wave = W1 per cartography v1.1. |
 
 ### (c) Queue for next SR — 43+ entities
 
@@ -267,14 +270,18 @@ No dismissals this run. The cartography's DEFER/EXCLUDE buckets are tracking dis
 - v3 does NOT subsume task/DAG/missioncraft surfaces (cross-project; tracked DEFER)
 - v3 does NOT include presence/identity surfaces (bug-40/41/42 COMPOSES, not FOLD)
 - v3 does NOT do its own concurrency model — composes with mission-83 substrate backplane
-- v3 W5 does NOT replace ResponseSummarizer wholesale — extends machinery-vs-LLM split pattern
+- v3 W5 does NOT replace ResponseSummarizer wholesale — extends `Cognitive-substrate-boundary-respect` sub-Concept pattern (per §6)
 - v3 W1 does NOT require Class-Tier promotion as a precondition — designs around umbrella-Idea-proxy initially; ships Initiative-as-entity in parallel via M-Class-Tier-Promotion
+- v3 does NOT do its own observability layer — composes with idea-114 (architect local-state vs Hub-state reconciliation); does not replace
+- v3 does NOT migrate existing thread/message data — mission-83 substrate cutover already completed the migration; v3 builds on the substrate as-is
 
 ### Per-Initiative anti-goals (M-Class-Tier-Promotion)
 
 - does NOT subsume Idea/Bug instance entities (Tier-3 stays as-is)
 - does NOT include scheduled-SR-runner machinery (separate skill-mechanisation Initiative, future)
 - does NOT auto-extract Concepts/Defects (extraction is emergent + occasional + Director-gated)
+- does NOT auto-promote existing umbrella-tagged Ideas to Initiative entities — promotion is explicit + Director-gated, not automatic; backfill is a separate mission-shaped activity
+- does NOT rename or remove any current first-class entity kinds — additive only (existing Idea/Bug/Mission/Tele/Design entities remain as-is)
 
 ### Per-run accumulated anti-goals
 
@@ -283,6 +290,8 @@ No dismissals this run. The cartography's DEFER/EXCLUDE buckets are tracking dis
 - This SR does NOT formalise Class-Tier extractions — surfaces candidates only; extraction is a separate (rarer) activity
 - This SR does NOT execute cross-Tele reverse-gap — theme-scoped (Threads v3); full-scope reverse-gap deferred to a non-themed SR run
 - This SR does NOT autonomously file calibrations — calibration ledger is architect-Director-bilateral (per CLAUDE.md §Calibration ledger discipline)
+- This SR does NOT modify v2.0 methodology mid-execution — methodology-side observations surfaced during execution park to §12 as v2.1 candidates for a separate retrospective
+- This SR does NOT close DEFER-bucket entities — cartography DEFER/EXCLUDE buckets stay valid as their own programs (missioncraft; task/DAG/FSM; substrate-concurrency)
 
 ---
 
@@ -292,17 +301,36 @@ Awaiting Director ratification.
 
 **Ratification asks (single-gate per Standard-mode):**
 
-1. **Initiative set** — accept the umbrella + 5 waves + 4 pre-existing Initiative-shaped Ideas + 1 new (M-Class-Tier-Promotion)?
-2. **Critical-path sequencing** (§7) — accept the precondition ordering (idea-126 → idea-121 → W1 + M-Class-Tier-Promotion; parallel: idea-151 + bug-118 → W4)?
-3. **Triage routing** (§9) — accept the 5 skip-to-Survey + 2 triage-thread + 43+ queue + 0 dismiss split?
-4. **Anti-goals** (§10) — accept the per-Initiative + per-run set?
+1. **Initiative set** — accept the umbrella (M-Threads-v3) + 5 wave-Initiatives + 4 pre-existing Initiative-shaped Ideas (idea-121, idea-126, idea-151, idea-152) + 1 new (M-Class-Tier-Promotion)?
+2. **Critical-path sequencing** (§7) — accept the parallel-trackable precondition shape (idea-126 ‖ idea-121 at Design-checkpoint; idea-151 parallel; bug-118 IN W1; W4 depends on idea-151 + W1; rest sequences per cartography v1.1 §6)?
+3. **Triage routing** (§9) — accept the stricter 1 skip-to-Survey (M-Class-Tier-Promotion only) + 6 triage-thread (idea-121, idea-126, idea-151, idea-292, bug-117, bug-118-fix-shape) + 43+ queue + 0 dismiss split?
+4. **Anti-goals** (§10) — accept the expanded per-Initiative (M-Threads-v3 7 items + M-Class-Tier-Promotion 5 items) + per-run (7 items) set?
 
 Post-ratification execution actions (architect to execute):
 
 - `create_idea` for M-Class-Tier-Promotion with `umbrella` tag + body per §8
-- `update_idea` (status=triaged) for idea-121, idea-126, idea-151 + new M-Class-Tier-Promotion + bug-117
-- Open triage threads for idea-292 W2/W5 split + bug-118 fix-shape
-- File this artifact as `docs/reviews/2026-05-23-sr-threads-v3.md` (this file) via PR
+- `update_idea` (status=triaged) for M-Class-Tier-Promotion (the single (a) entity)
+- Open triage threads (6) for idea-121, idea-126, idea-151, idea-292 W2/W5 split, bug-117 fix-shape, bug-118 fix-shape
+- File this artifact as `docs/reviews/2026-05-23-sr-threads-v3.md` (this file) via PR #262
+
+---
+
+## §12 · Methodology observations for v2.1 (parked; per per-run anti-goal "does NOT modify v2.0 mid-execution")
+
+Surfaced during this run's draft + engineer critique pass; captured here for a separate v2.1 retrospective, not modified into v2.0 mid-execution.
+
+| # | Candidate refinement | Source |
+|---|---|---|
+| **A** | **Multi-Initiative parentage scoring rubric** — §2 cross-leverage is hand-rolled; formal scoring (M-N count + Concept-coverage + Defect-coverage signal) would remove author-judgment dependency. | engineer critique |
+| **B** | **Self-referential Initiative claims convention** — when an Idea promotes to an Initiative, the cross-leverage table needs an explicit convention for "this entity IS the Initiative, not under it." | engineer critique; this run's §2 idea-121/126 self-reference catch |
+| **C** | **Transitional-Initiative metadata shape** — §4's per-Initiative analysis for umbrella-tagged Ideas lacks the formal `(Tele alignment, scope, anti-goals)` declared fields that first-class Initiatives would carry. Specify the transitional-vehicle metadata shape. | engineer critique |
+| **D** | **Elevate bidirectional-cluster-check to its own sub-step or named sub-step under sub-step 4** — companion v1.1 §2.X "current FOLDs that lineage suggests reclassifying" is in v2.0 sub-step 4 implicitly but not explicit. | engineer critique |
+| **E** | **Theme-scoped vs full-scope reverse-gap composition + rotation cadence** — this run defers full-scope reverse-gap (§5). v2.1 could specify rotation (themed runs rotate through Teles; non-themed full-scope reverse-gap at lower cadence). | this run's §5 |
+| **F** | **Concept ↔ Defect pair-detection sub-step output** — the symmetric-view shape isn't an explicit output. v2.1 could add "pair-detection" with N-Concepts-to-retire-a-Defect framing (per §6 refinement). | engineer critique; this run's §6 refinement |
+| **G** | **Idea Triage Protocol peer-doc promotion threshold** — v2.0 flagged this as future. After this run, 2 data points (methodology doc + this SR); three runs likely earns the promotion. | this run's first-execution counter |
+| **H** | **Inline consistency validation (draft self-validation sub-step)** — this run's draft had an internal inconsistency at §2 + §7 bug-118 wave placement (W1 in §4; W4 in §2 + §7). Critique caught it as expected, but a methodology-side preflight check would catch it earlier. | engineer critique; load-bearing — most actionable v2.1 refinement |
+
+**Disposition:** all eight park for a v2.1 retrospective; none modify v2.0 mid-execution. The retrospective should fire after this SR's downstream first-mission ships, per v2.0 §Provenance §Next.
 
 ---
 
@@ -314,4 +342,13 @@ Post-ratification execution actions (architect to execute):
 - **Inputs:** cartography v1.1 (`29f1316`) + companion v1.1 (`ae44ba3`).
 - **Methodology spec:** `docs/methodology/strategic-review.md` v2.0 (commit `368d2de`, PR #261).
 - **Anchor:** idea-312 (M-Threads-v3).
-- **Next:** engineer cross-approval thread; then Director ratification; then post-ratification execution (entity filings + triage thread opens).
+- **v1.0 / 2026-05-23**: Initial draft (PR #262; commit `c1d4890`).
+- **v1.1 / 2026-05-23**: Engineer critique integration (thread-626). Substantive integrations:
+  - §2 cross-leverage table — self-reference dropped (idea-121, idea-126); SR-autonomy demoted to methodology-side benefit (idea-151, bug-118); idea-69, idea-240, idea-241 added.
+  - §4 + §7: bug-118 wave placement reconciled to W1 (cartography v1.1 source-of-record); §2 + §7 internal inconsistency fixed.
+  - §6: umbrella Concept "Cognitive-substrate-boundary-respect" with two sub-Concepts (caller-intent-honored / machinery-vs-LLM-split); pair-detection framing refined.
+  - §7: idea-126 → idea-121 softened to parallel Design-phase composition checkpoint.
+  - §9: stricter (a) skip set — only M-Class-Tier-Promotion; (b) triage-thread expanded to 6 (idea-121, idea-126, idea-151, idea-292, bug-117, bug-118 fix-shape).
+  - §10: 4 anti-goal additions (observability + migration anti-goals on M-Threads-v3; auto-promote + rename anti-goals on M-Class-Tier-Promotion; v2.0-modification + DEFER-close anti-goals per-run).
+  - §12 (NEW): 8 v2.1 candidate refinements parked (A–H).
+- **Next:** Director ratification on this v1.1; post-ratification execution (entity filings + 6 triage thread opens).
