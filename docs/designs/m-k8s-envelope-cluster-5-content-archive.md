@@ -1,10 +1,26 @@
 # M-K8s-Envelope — Cluster 5 Content-Archive Partition (Design Working Draft)
 
-**Status:** v0.1 — architect-fronted; awaiting engineer review
+**Status:** v0.2 — engineer review-integrated · awaiting approval
 **Mission:** idea-126 (M-K8s-Envelope)
 **Phase:** Phase 4 Design — cluster-5 partition pass (**5 of 5 clusters — FINAL CLUSTER**)
-**Coordination:** per-PR review (per refined `feedback_pr_opened_notification_is_review_signal` memory rule v2). v0.1 review via `pr_opened_bilateral`; v0.2 fold-in commit gets explicit `create_message` ping until idea-315 substrate-build lands.
-**Date:** 2026-05-23 AEST
+**Coordination:** per-PR review (per refined `feedback_pr_opened_notification_is_review_signal` memory rule v2). v0.1 review via `pr_opened_bilateral`; **this v0.2 push includes explicit `create_message` ping to greg** per refined memory rule.
+**Date:** 2026-05-23 AEST (v0.2: engineer PR #272 v0.1 review integrated)
+
+**v0.1 → v0.2 changelog (engineer PR #272 v0.1 review integration):**
+
+**Substantive deviation accepted:**
+- **OQ2 — Document.category → `metadata.labels.category`** (engineer DEVIATE from v0.1 spec.category lean). Reasoning per engineer: Document.category IS content-classification per cluster-3 §5 6th cumulative-pattern axis; aligns with K8s precedent (Pod.metadata.labels for category/role/version); composes with future extensibility (additional categories without bumping apiVersion). Architecturally-cleaner; axis-uniformity wins.
+
+**16 OQ concurs integrated:**
+- §2.1 Document — OQ1 (name migration populate-from-id) + OQ3 ("active" constant) + OQ4 (mutable update-policy)
+- §2.2 ArchitectDecision — full JSON Schema; OQ5-7 concur (name OMITTED; phase "logged"; migration preserved)
+- §2.3 DirectorHistoryEntry — full JSON Schema; OQ8-10 concur (spec.role; name OMITTED; text in spec)
+- §2.4 ReviewHistoryEntry — full JSON Schema; OQ11-13 concur (metadata.taskId; name OMITTED; idea-151 inline at cluster-5)
+- §2.5 ThreadHistoryEntry — full JSON Schema; OQ14-17 concur (spec.title; name OMITTED; substrate-currency 50 prod entries; idea-151 inline)
+
+**Methodology arc-reflection added (§6.1):**
+- Engineer cross-cutting observation #3 — 5-cluster Phase 4 Design arc summary (50 partition decisions; 6 cumulative patterns + 4 sub-disciplines; multiple K8s precedents; 22→21 kind re-lock; 3 v2.1 candidates surfaced P+Q+R; zero substrate regressions)
+- Methodology stabilized — cluster-5 zero-new-patterns IS the convergence signal
 **Sibling Designs:**
 - Cluster 1 — substantive-content (5 kinds) — ✓ MERGED at `d8ea695`
 - Cluster 2 — queue/FSM-active (3 kinds) — ✓ MERGED at `59c3a70`
@@ -80,19 +96,20 @@
         "createdAt":  { "type": "string", "format": "date-time" },
         "updatedAt":  { "type": "string", "format": "date-time" },
         "name":       {
-          "type": ["string", "null"],
-          "description": "Engineer OQ1 — handle-classified per §1.5 cluster-2 — Document IS a handle-shaped kind (file-name is the natural handle). But production sample shows `name: null`; entity-kinds.json says 'name-derived from <name>.md'. v0.1 disposition: USE `metadata.name` = file-stem (e.g., 'policy-network-v1-draft'); migration script populates from id (since id IS the file-stem today). Engineer audit at v0.2."
+          "type": "string",
+          "description": "Engineer OQ1 concur — handle-classified per §1.5 cluster-2. Migration populates from id at cutover (file-stem; e.g., 'policy-network-v1-draft'). For the 5 production entries, id and name carry the same value post-migration (id IS substrate-PK; name IS K8s-handle convention)."
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Engineer OQ2 substantive deviation: K8s-map for content-classification (declared-content-classification axis per cluster-3 §5 6th cumulative-pattern). Includes well-known `category` key (architecture/planning/specs) + future free-form classification tags. K8s precedent: Pod.metadata.labels for category/role/version classification."
         }
       }
     },
     "spec-schema": {
       "type": "object",
-      "required": ["category", "content"],
+      "required": ["content"],
       "properties": {
-        "category": {
-          "enum": ["architecture", "planning", "specs"],
-          "description": "Declared categorization. K8s precedent: ConfigMap labels for category-axis classification (but Document.category is enum-typed; metadata.labels would be more open). v0.1 picks spec.category (declared categorization at write-time); engineer audit at OQ2."
-        },
         "content":  {
           "type": "string",
           "description": "Markdown body; substantive declared content. Matches cluster-2 Turn.spec.scope + cluster-1 Mission.spec.goal markdown-body pattern."
@@ -112,33 +129,30 @@
     "filterable-fields": [
       { "shorthand": "phase",    "path": "status.phase" },
       { "shorthand": "name",     "path": "metadata.name" },
-      { "shorthand": "category", "path": "spec.category" }
+      { "shorthand": "label",    "path": "metadata.labels", "selector": "k8s-map" },
+      { "shorthand": "category", "path": "metadata.labels.category" }
     ]
   }
 }
 ```
 
-**Partition rationale (Document) — v0.1:**
+**Partition rationale (Document) — v0.2 with engineer dispositions:**
 - **`id` → metadata.id** — free-form name-derived identifier; substrate-id-as-PK preserved.
-- **`name` → `metadata.name`** — handle-classified per §1.5 cluster-2; Document IS file-name-shaped handle. **Migration TODO**: production `name: null`; populate from id at cutover (file-stem). Engineer OQ1 — confirm migration disposition.
-- **`category` → spec** — declared categorization; immutable post-create. OQ2 — engineer audit metadata.labels (map; cross-kind uniformity) vs spec.category (declared enum; v0.1 lean).
+- **`name` → `metadata.name`** (engineer OQ1 concur — handle-classified per §1.5; populated from id at cutover for the 5 prod entries; new entries write name explicitly).
+- **`category` → `metadata.labels.category`** (engineer OQ2 SUBSTANTIVE DEVIATION ACCEPTED — content-classification per cluster-3 §5 6th cumulative-pattern axis; K8s Pod.metadata.labels precedent; composes with future extensibility without apiVersion bumps). v0.1 spec.category lean superseded.
 - **`content` → spec** — markdown body; substantive declared content; sibling of cluster-2 Turn.spec.scope / cluster-1 Mission.spec.goal.
-- **`status.phase: "active"` constant** — no FSM; uniformity convention sibling of cluster-3 Counter + cluster-4 Audit `"logged"` pattern. *Note: chose "active" over "logged" because Document is mostly-static content (not append-only-log shape); engineer audit at OQ3.*
-- **`createdAt`/`updatedAt` → metadata** — uniformity (cluster-1 §3.1 pattern); Document MAY mutate post-create (content updates) unlike pure append-only logs.
-- **`name` USED** — Document is handle-classified per §1.5 (file-name handle; substantive content in spec.content).
+- **`status.phase: "active"` constant** (engineer OQ3 concur — Document NOT append-only-log shape; cluster-3 Counter precedent). Switches to "logged" if OQ4 disposition flips to append-only.
+- **`createdAt`/`updatedAt` → metadata** — uniformity (cluster-1 §3.1 pattern); Document mutable post-create (engineer OQ4 concur — markdown docs evolve).
+- **`name` USED** — Document is handle-classified per §1.5; **Document is the ONLY cluster-5 kind with name USED** (others are content-classified).
 
 **Field renames visible post-cutover (Document):**
 - `Document.id` → `Document.metadata.id` (preserved)
-- `Document.name` → `Document.metadata.name` (populated from id where currently null — engineer OQ1 migration TODO)
-- `Document.category` → `Document.spec.category`
+- `Document.name` → `Document.metadata.name` (populated from id where currently null — OQ1 migration TODO)
+- `Document.category` → `Document.metadata.labels.category` (OQ2 deviation; was v0.1 spec.category)
 - `Document.content` → `Document.spec.content`
 - NEW: `Document.status.phase: "active"` constant
 
-**Open questions (Document) — engineer audit:**
-- **OQ1**: `metadata.name` migration — production sample has `name: null`. Disposition options: (a) populate from id at cutover (file-stem; e.g., "policy-network-v1-draft") — v0.1 lean; (b) leave null and depend on metadata.id for handle — but breaks §1.5 handle-classified discipline. v0.1 picks (a); engineer disposition welcome.
-- **OQ2**: `category` placement — spec.category (declared enum) vs metadata.labels (map; cross-kind uniformity for content-tagging). K8s precedent for category-enum is mixed — Pod uses metadata.labels for everything; ConfigMap uses no separate category. v0.1 picks spec.category (small fixed enum; not free-form labels). Engineer audit.
-- **OQ3**: `status.phase` constant value — `"active"` (Document mostly-static; may mutate post-create) vs `"logged"` (treats Document as append-only-log). v0.1 picks `"active"` (sibling of cluster-3 Counter); engineer disposition welcome. Affects whether Document is in "content-archive" class (logged) or "metadata/config" class (active).
-- **OQ4**: Is Document append-only post-cutover, or does it support content updates? Production sample is 5 entries; reasonable to expect markdown content updates (architecture docs evolve). v0.1 assumes updatable (`status.phase: "active"`); engineer audit for write-boundary policy.
+**Document IS the cluster-5 demonstration of the cluster-3 §5 6th cumulative-pattern axis** — content-classification (metadata.labels) for the category enum. Forward signal: future kinds with declared-content-classification fields follow this pattern.
 
 **Composition checkpoints:**
 - **wisdom/ static-asset carve-out** per mission-83 v1.1 §3.4.4 — `local-state/architect-context/wisdom/` markdown reference docs are NOT Hub-runtime state; they're 4th out-of-substrate location. Distinct from Document (which IS Hub-runtime state in substrate).
@@ -146,7 +160,7 @@
 
 ---
 
-### §2.2 ArchitectDecision — stub (v0.1)
+### §2.2 ArchitectDecision — partition (v0.2 fill per engineer concur on OQ5-7)
 
 **Existing flat shape** (verified via production psql at 2026-05-23):
 - `id` (pattern: `ad-N`; counter-allocated; 28 entries in prod)
@@ -154,29 +168,56 @@
 - `decision` (string — substantive content)
 - `timestamp` (ISO-8601)
 
-**Stub partition (v0.1):**
+**Partition:**
 
-| Field | Section | Rationale |
-|---|---|---|
-| `id` (`ad-N`) | metadata.id | identity (counter-allocated; create-time idempotency) |
-| `kind`, `apiVersion` | metadata | uniform |
-| `timestamp` | metadata.createdAt | uniformity rename (sibling of cluster-4 Audit) — append-only entry; createdAt IS the timestamp |
-| `decision` | spec.decision | declared substantive content (the decision itself) |
-| `context` | spec.context | declared substantive content (what informed the decision) |
-| `phase` (constant `"logged"`) | status.phase | append-only-log uniformity per cluster-4 Audit precedent |
+```json
+{
+  "name": "ArchitectDecision",
+  "apiVersion": "core.ois/v1",
+  "envelope-v2": {
+    "metadata-schema": {
+      "type": "object",
+      "required": ["id", "kind", "apiVersion", "createdAt"],
+      "properties": {
+        "id":         { "type": "string", "pattern": "^ad-[0-9]+$" },
+        "kind":       { "const": "ArchitectDecision" },
+        "apiVersion": { "const": "core.ois/v1" },
+        "createdAt":  { "type": "string", "format": "date-time", "description": "Migrates from existing `timestamp` field; uniformity rename per cluster-4 Audit precedent." }
+      }
+    },
+    "spec-schema": {
+      "type": "object",
+      "required": ["decision", "context"],
+      "properties": {
+        "decision": { "type": "string", "description": "Declared substantive content; the decision body." },
+        "context":  { "type": "string", "description": "Declared substantive content; what informed the decision." }
+      }
+    },
+    "status-schema": {
+      "type": "object",
+      "required": ["phase"],
+      "properties": {
+        "phase": { "const": "logged", "description": "Append-only-log uniformity per cluster-4 Audit precedent (engineer OQ6 concur)." }
+      }
+    },
+    "filterable-fields": [
+      { "shorthand": "phase", "path": "status.phase" }
+    ]
+  }
+}
+```
 
-**Open questions (ArchitectDecision) — engineer audit:**
-- **OQ5**: `name` OMITTED for ArchitectDecision (content-classified per §1.5; substantive content in spec.decision; no separate handle). Confirm.
-- **OQ6**: `status.phase: "logged"` constant per cluster-4 Audit precedent. Confirm (no FSM; immutable post-create).
-- **OQ7**: Migration of historical entries — production has 28 entries; ensure migration preserves `ad-N` id pattern + timestamp ordering. No new substrate work needed (kind already substrate-mediated post mission-83 W4.x).
-
-**Composition checkpoints:**
-- mission-83 W1.1 OQ7 4-kind decomposition; ArchitectDecision already substrate-mediated; cluster-5 adds envelope shape.
-- Append-only semantic preserved (no update paths in repository).
+**Partition rationale (ArchitectDecision):**
+- All 3 OQ5-7 dispositions concur with v0.1.
+- `name` OMITTED (content-classified per §1.5; substantive in spec.decision).
+- `decision`/`context` → spec.
+- `timestamp` → `metadata.createdAt` (uniformity rename).
+- `status.phase: "logged"` constant (cluster-4 Audit precedent; append-only).
+- Migration preserves `ad-N` id pattern + timestamp ordering for 28 prod entries (no new substrate work).
 
 ---
 
-### §2.3 DirectorHistoryEntry — stub (v0.1)
+### §2.3 DirectorHistoryEntry — partition (v0.2 fill per engineer concur on OQ8-10)
 
 **Existing flat shape** (verified via production psql at 2026-05-23):
 - `id` (pattern: `dh-N`; counter-allocated; 200 entries in prod)
@@ -184,25 +225,62 @@
 - `text` (string — substantive content; Director chat message body)
 - `timestamp` (ISO-8601)
 
-**Stub partition (v0.1):**
+**Partition:**
 
-| Field | Section | Rationale |
-|---|---|---|
-| `id` (`dh-N`) | metadata.id | identity |
-| `kind`, `apiVersion` | metadata | uniform |
-| `timestamp` | metadata.createdAt | uniformity rename |
-| `role` | spec.role | declared LLM-conversation role; immutable post-create |
-| `text` | spec.text | declared substantive content (chat message body) |
-| `phase` (constant `"logged"`) | status.phase | append-only-log uniformity |
+```json
+{
+  "name": "DirectorHistoryEntry",
+  "apiVersion": "core.ois/v1",
+  "envelope-v2": {
+    "metadata-schema": {
+      "type": "object",
+      "required": ["id", "kind", "apiVersion", "createdAt"],
+      "properties": {
+        "id":         { "type": "string", "pattern": "^dh-[0-9]+$" },
+        "kind":       { "const": "DirectorHistoryEntry" },
+        "apiVersion": { "const": "core.ois/v1" },
+        "createdAt":  { "type": "string", "format": "date-time" }
+      }
+    },
+    "spec-schema": {
+      "type": "object",
+      "required": ["role", "text"],
+      "properties": {
+        "role": {
+          "enum": ["user", "model"],
+          "description": "Engineer OQ8 concur: declared LLM-conversation role at log-time; semantically distinct from agent identity role (which would be metadata.createdBy.role). spec.role captures chat-conversation role."
+        },
+        "text": {
+          "type": "string",
+          "description": "Declared substantive content; Director chat message body. Sibling of cluster-4 Audit.spec.details / cluster-2 Turn.spec.scope."
+        }
+      }
+    },
+    "status-schema": {
+      "type": "object",
+      "required": ["phase"],
+      "properties": {
+        "phase": { "const": "logged" }
+      }
+    },
+    "filterable-fields": [
+      { "shorthand": "phase", "path": "status.phase" },
+      { "shorthand": "role",  "path": "spec.role" }
+    ]
+  }
+}
+```
 
-**Open questions (DirectorHistoryEntry) — engineer audit:**
-- **OQ8**: `role` placement — `spec.role` (declared LLM-context role at log-time) vs `metadata.role` (identity-shape; sibling of `metadata.createdBy.role`). v0.1 picks spec.role (declared chat-conversation role; LLM Director-chat semantic; distinct from agent role). Engineer disposition welcome.
-- **OQ9**: `name` OMITTED for DirectorHistoryEntry (content-classified). Confirm.
-- **OQ10**: `text` placement matches cluster-4 Audit.spec.details / cluster-2 Turn.spec.scope pattern (declared markdown-or-substantive content in spec).
+**Partition rationale (DirectorHistoryEntry):**
+- All 3 OQ8-10 dispositions concur with v0.1.
+- `role` → spec.role (engineer OQ8 concur — declared LLM-conversation role; distinct from agent identity role).
+- `name` OMITTED (engineer OQ9 concur — content-classified).
+- `text` → spec (engineer OQ10 concur — substantive content matches Audit.spec.details pattern).
+- 200 prod entries migration preserves dh-N id pattern.
 
 ---
 
-### §2.4 ReviewHistoryEntry — stub (v0.1)
+### §2.4 ReviewHistoryEntry — partition (v0.2 fill per engineer concur on OQ11-13)
 
 **Existing flat shape** (verified via production psql at 2026-05-23):
 - `id` (pattern: `rh-N`; counter-allocated; 50 entries in prod)
@@ -210,50 +288,128 @@
 - `timestamp` (ISO-8601)
 - `assessment` (string — substantive content; review assessment body)
 
-**Stub partition (v0.1):**
+**Partition:**
 
-| Field | Section | Rationale |
-|---|---|---|
-| `id` (`rh-N`) | metadata.id | identity |
-| `kind`, `apiVersion` | metadata | uniform |
-| `timestamp` | metadata.createdAt | uniformity rename |
-| `taskId` | metadata.taskId | identity-shape FK pointer (cluster-2 Task.metadata.turnId precedent); declared at log-time; idea-151 Relationship-kind candidate post-cutover |
-| `assessment` | spec.assessment | declared substantive content (review body) |
-| `phase` (constant `"logged"`) | status.phase | append-only-log uniformity |
+```json
+{
+  "name": "ReviewHistoryEntry",
+  "apiVersion": "core.ois/v1",
+  "envelope-v2": {
+    "metadata-schema": {
+      "type": "object",
+      "required": ["id", "kind", "apiVersion", "createdAt", "taskId"],
+      "properties": {
+        "id":         { "type": "string", "pattern": "^rh-[0-9]+$" },
+        "kind":       { "const": "ReviewHistoryEntry" },
+        "apiVersion": { "const": "core.ois/v1" },
+        "createdAt":  { "type": "string", "format": "date-time" },
+        "taskId":     {
+          "type": "string",
+          "pattern": "^task-[0-9]+$",
+          "description": "Engineer OQ11 concur: FK pointer identity-shape; sibling of cluster-2 Task.metadata.turnId precedent. idea-151 Relationship-kind extraction candidate post-cutover (`{from: rh-N, to: task-M, edgeType: \"reviews\"}`)."
+        }
+      }
+    },
+    "spec-schema": {
+      "type": "object",
+      "required": ["assessment"],
+      "properties": {
+        "assessment": { "type": "string", "description": "Declared substantive content; review assessment body." }
+      }
+    },
+    "status-schema": {
+      "type": "object",
+      "required": ["phase"],
+      "properties": {
+        "phase": { "const": "logged" }
+      }
+    },
+    "filterable-fields": [
+      { "shorthand": "phase",  "path": "status.phase" },
+      { "shorthand": "taskId", "path": "metadata.taskId" }
+    ]
+  }
+}
+```
 
-**Open questions (ReviewHistoryEntry) — engineer audit:**
-- **OQ11**: `taskId` placement — metadata.taskId (FK pointer; identity-shape; sibling of cluster-2 Task.metadata.turnId) vs spec.taskId (declared review-target at log-time). v0.1 picks metadata.taskId (FK-pointer convention).
-- **OQ12**: `name` OMITTED (content-classified). Confirm.
-- **OQ13**: idea-151 Relationship-kind candidate — `{from: rh-N, to: task-M, edgeType: "reviews"}` post-cutover; cluster-5 envelope preserves inline FK. Same disposition as cluster-2 Task.dependsOn / cluster-3 Tele.supersededBy.
+**Partition rationale (ReviewHistoryEntry):**
+- All 3 OQ11-13 dispositions concur with v0.1.
+- `taskId` → metadata (engineer OQ11 concur — FK-pointer identity-shape; cluster-2 turnId precedent).
+- `name` OMITTED (engineer OQ12 concur — content-classified; substantive in spec.assessment).
+- `assessment` → spec.
+- idea-151 inline FK preserved at cluster-5 cutover; follow-on Mission extracts to Relationship-kind edges (engineer OQ13 concur).
+- 50 prod entries migration preserves rh-N id pattern.
 
 ---
 
-### §2.5 ThreadHistoryEntry — stub (v0.1)
+### §2.5 ThreadHistoryEntry — partition (v0.2 fill per engineer concur on OQ14-17)
 
 **Existing flat shape** (verified via production psql at 2026-05-23):
 - `id` (pattern: `th-N`; counter-allocated; 50 entries in prod)
-- `title` (string — thread title at archive time)
+- `title` (string — thread title at archive time; FROZEN at archive moment)
 - `outcome` (string — substantive content; thread outcome summary)
 - `threadId` (FK ref to original Thread; immutable substrate-pointer)
 - `timestamp` (ISO-8601)
 
-**Stub partition (v0.1):**
+**Partition:**
 
-| Field | Section | Rationale |
-|---|---|---|
-| `id` (`th-N`) | metadata.id | identity |
-| `kind`, `apiVersion` | metadata | uniform |
-| `timestamp` | metadata.createdAt | uniformity rename |
-| `threadId` | metadata.threadId | identity-shape FK pointer (sibling of ReviewHistoryEntry.taskId) |
-| `title` | spec.title | declared at archive-time (frozen at moment thread closed); not substantive cognitive content (substantive content is `outcome`) |
-| `outcome` | spec.outcome | declared substantive content (thread outcome summary; markdown body) |
-| `phase` (constant `"logged"`) | status.phase | append-only-log uniformity |
+```json
+{
+  "name": "ThreadHistoryEntry",
+  "apiVersion": "core.ois/v1",
+  "envelope-v2": {
+    "metadata-schema": {
+      "type": "object",
+      "required": ["id", "kind", "apiVersion", "createdAt", "threadId"],
+      "properties": {
+        "id":         { "type": "string", "pattern": "^th-[0-9]+$" },
+        "kind":       { "const": "ThreadHistoryEntry" },
+        "apiVersion": { "const": "core.ois/v1" },
+        "createdAt":  { "type": "string", "format": "date-time" },
+        "threadId":   {
+          "type": "string",
+          "pattern": "^thread-[0-9]+$",
+          "description": "Engineer OQ17 disposition: identity-shape FK pointer; sibling of ReviewHistoryEntry.taskId. idea-151 Relationship-kind extraction candidate (`{from: th-N, to: thread-M, edgeType: \"archives\"}`)."
+        }
+      }
+    },
+    "spec-schema": {
+      "type": "object",
+      "required": ["title", "outcome"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Engineer OQ14 concur: title FROZEN at archive moment (sibling of cluster-1 §3.1 sourceThreadSummary cascade-backlink pattern; preserves declared-at-write semantic). cluster-1 Thread used spec.title for live entity; ThreadHistoryEntry inherits symmetry."
+        },
+        "outcome": {
+          "type": "string",
+          "description": "Declared substantive content; thread outcome summary; markdown body."
+        }
+      }
+    },
+    "status-schema": {
+      "type": "object",
+      "required": ["phase"],
+      "properties": {
+        "phase": { "const": "logged" }
+      }
+    },
+    "filterable-fields": [
+      { "shorthand": "phase",    "path": "status.phase" },
+      { "shorthand": "threadId", "path": "metadata.threadId" }
+    ]
+  }
+}
+```
 
-**Open questions (ThreadHistoryEntry) — engineer audit:**
-- **OQ14**: `title` placement — Thread (cluster-1) put title in spec; ThreadHistoryEntry inherits that. **Note**: ThreadHistoryEntry.title is the FROZEN-at-archive-time title (sibling of `sourceThreadSummary` cascade-backlink pattern from cluster-1 §3.1) — substantively different from live Thread.spec.title. v0.1 picks spec.title (preserves declared-at-write semantic). Engineer audit.
-- **OQ15**: `name` OMITTED for ThreadHistoryEntry (content-classified). ThreadHistoryEntry IS a handle-shaped kind in one sense (title is a handle) — but cluster-1 Thread used `spec.title` not `metadata.name` for the live entity, so symmetry argues for OMITTED here. Engineer audit at v0.2.
-- **OQ16**: ThreadHistoryEntry is the W1.1 NEW kind (architect W1.1 finding; not in mission-83 v1.0 inventory). Verify substrate-currency: 50 prod entries confirms post-W4.x cutover already operational.
-- **OQ17**: idea-151 Relationship-kind candidate — `{from: th-N, to: thread-M, edgeType: "archives"}` post-cutover; cluster-5 envelope preserves inline FK.
+**Partition rationale (ThreadHistoryEntry):**
+- All 4 OQ14-17 dispositions concur with v0.1.
+- `title` → spec (engineer OQ14 concur — FROZEN at archive-time; preserves cluster-1 Thread.spec.title symmetry; sibling of sourceThreadSummary cascade-backlink frozen-narrative pattern).
+- `name` OMITTED (engineer OQ15 concur — Thread parent-kind used spec.title not metadata.name; symmetry preserves content-classified disposition).
+- `outcome` → spec (declared substantive content).
+- `threadId` → metadata (FK-pointer identity-shape; sibling of ReviewHistoryEntry.taskId).
+- W1.1 NEW kind substrate-currency confirmed (engineer OQ16 — 50 prod entries via psql is dispositive evidence post-W4.x cutover).
+- idea-151 inline FK preserved at cluster-5 cutover (engineer OQ17 concur).
 
 ---
 
@@ -318,49 +474,69 @@ Cluster-5 inherits all six cumulative patterns + four sub-disciplines:
 | 3. Derived-scalar-field | NOT used (no derived scalars per kind) |
 | 4. Default-to-status for FSM-mutated | NOT used (no FSMs; constant `status.phase`) |
 | 5. Virtual-view exclusion | NOT used (no virtual views per kind) |
-| 6. Routing-intent (spec.labels) vs content-classification (metadata.labels) axis | NOT used (no label-maps on these kinds) |
+| **6. Routing-intent (spec.labels) vs content-classification (metadata.labels) axis** | **✓ USED — Document.metadata.labels.category per engineer OQ2 substantive deviation. First cluster-5 use; demonstrates the axis for content-classification (Pod.metadata.labels K8s precedent).** |
 | §1.5 handle vs content sub-discipline | ✓ used (Document handle; 4 others content) |
 | §1.6 multi-FSM-in-status sub-discipline | NOT used (no FSMs) |
 | §1.7 field-name collision rename | NOT used (no collisions) |
-| Append-only-constant `status.phase` (cluster-3 Counter + cluster-4 Audit precedent) | ✓ used (5 of 5 kinds; Document picks "active" or "logged" per OQ3) |
+| Append-only-constant `status.phase` (cluster-3 Counter + cluster-4 Audit precedent) | ✓ used (5 of 5 kinds; Document `"active"` non-append-only; 4 *HistoryEntry kinds `"logged"` append-only) |
 
-**Cluster-5 introduces ZERO new envelope-methodology patterns.** Final cluster is pure pattern-consolidation; all envelope shape uses pre-established patterns. This is the methodology-stability signal that idea-126 envelope shape is converged.
+**Cluster-5 introduces ZERO new envelope-methodology patterns.** Final cluster is pure pattern-consolidation; all envelope shape uses pre-established patterns. **This is the methodology-stability signal that idea-126 envelope shape is converged.**
 
-**v2.1 methodology candidates from cluster-5 (if any):** none surfaced at v0.1 draft. If engineer review surfaces cross-cutting observations, v0.2 captures them. Total v2.1 candidates after cluster-5: A-R = 18 (unchanged from cluster-4 final state).
+**v2.1 methodology candidates from cluster-5:** none introduced at v0.1; engineer review surfaced no NEW candidates at v0.2 (substantive arc reflection added at §6.1 but doesn't generate new v2.1 candidates — total stays A-R = 18 candidates carried from cluster-4 final state).
 
 ---
 
 ## §6 Status
 
-**v0.1** — architect-fronted; awaiting engineer review.
+**v0.2** — engineer PR #272 v0.1 review integrated. 16 OQ concurs + 1 substantive deviation accepted (OQ2 Document.category → metadata.labels.category per cluster-3 §5 6th cumulative-pattern axis); §2.2/§2.3/§2.4/§2.5 stubs filled to full JSON Schema; §5 matrix updated for OQ2 deviation; §6.1 NEW arc reflection.
 
 **Substantive cluster-5 contributions:**
-1. **Final cluster — completes idea-126 Phase 4 Design** (all 21 substrate-mediated kinds carry K8s envelope shape uniformly post-merge)
+1. **Final cluster — completes idea-126 Phase 4 Design** at cluster-5 merge (all 21 substrate-mediated kinds carry K8s envelope shape uniformly)
 2. **Pure pattern-consolidation** — zero new methodology surfaces; convergence-signal that envelope methodology has stabilized
-3. **Substrate-currency grounded** — all 5 kind partitions verified against production substrate (28 ArchitectDecision + 200 DirectorHistoryEntry + 50 ReviewHistoryEntry + 50 ThreadHistoryEntry + 5 Document entries inspected via psql)
+3. **Substrate-currency grounded at v0.1** — all 5 kind partitions verified against production substrate (28 ArchitectDecision + 200 DirectorHistoryEntry + 50 ReviewHistoryEntry + 50 ThreadHistoryEntry + 5 Document entries inspected via psql). v2.1 candidate R substrate-currency discipline applied PRE-emptively at v0.1 (vs cluster-4 post-hoc correction).
+4. **Document is the cluster-5 demonstration of cluster-3 §5 6th cumulative-pattern axis** (content-classification → metadata.labels) per OQ2 substantive deviation accepted from engineer.
+
+---
+
+## §6.1 idea-126 Phase 4 Design — 5-cluster arc reflection (per engineer cross-cutting observation #3)
+
+**What shipped methodologically across clusters 1-5:**
+
+| Surface | Origin cluster | Substance |
+|---|---|---|
+| 6 cumulative envelope patterns | clusters 1-3 | (1) metadata.name handle vs content · (2) declared-with-controlled-mutation · (3) derived-scalar-field · (4) default-to-status for FSM-mutated · (5) virtual-view envelope-exclusion · (6) routing-intent vs content-classification axis |
+| 4 K8s-convention sub-disciplines | clusters 2-4 | §1.5 handle-classified vs content-classified · §1.6 multi-FSM-in-status · §1.7 field-name collision with envelope `kind` · append-only-constant `status.phase` |
+| K8s precedent anchors (load-bearing) | clusters 2-5 | PodSpec.nodeName · LeaseSpec.acquireTime · ConfigMap.data · CustomResourceDefinition.status.conditions · metadata.deletionTimestamp · Pod.metadata.labels · CRD.metadata.name (kind-name) · Pod.status.conditions[] (multi-FSM) |
+| Substrate-inventory shift | cluster-4 | 22 → 21 kinds (Notification removed per engineer code-trace evidence; substrate-currency catch) |
+| v2.1 methodology candidates surfaced | clusters 1-4 | P (memory rule scope-refinement for W2 PR-push gap) · Q (lift cluster-3 §5 6th pattern to top-level rule) · R (substrate-currency discipline on inventory-locked SSOT) |
+
+**Statistics:**
+- 5 clusters × ~10 OQs each = **~50 substantive partition decisions** disposed bilaterally
+- **Zero substrate regressions** — all production-substrate-shapes verified pre-partition (cluster-5 applied at v0.1; clusters 1-4 verified by engineer code-trace at review)
+- **All 6 PRs cluster-1-thru-cluster-5 used PR-direct review flow** — no coord threads opened; refined memory rule exercised end-to-end (clusters 3/4/5 v0.2 explicit `create_message` ping pattern)
+
+**Convergence-signal:** cluster-5 introduces ZERO new envelope-methodology patterns. The 6 cumulative patterns + 4 sub-disciplines from clusters 1-4 sufficed for cluster-5 partition (Document.metadata.labels.category exercises pattern #6 first-use; all other cluster-5 partitions use established patterns). This is the methodology-stability signal that **idea-126 envelope shape is well-formed**.
+
+**Phase 5+ carry-forward:**
+- SchemaDef cluster-1-thru-5 declarations feed idea-121 projection layer
+- idea-151 Relationship-kind extraction targets: Task.dependsOn / Turn.tele / Tele.supersededBy / ReviewHistoryEntry.taskId / ThreadHistoryEntry.threadId (5 inline FK patterns flagged across clusters)
+- idea-200 W2 Thread.status.messages carve-out: cluster-4 Message envelope IS the substrate target
+- idea-315 substrate-build (M-PR-Synchronize-Handler): closes W2 PR-push gap; methodology-bridge in place until idea-315 lands
+
+---
 
 **Coordination plan:**
-- PR opens; greg engages via `pr_opened_bilateral` notification + posts review on GitHub directly
-- v0.2 fold-in commit preceded by explicit `create_message` ping per refined memory rule
+- v0.2 push includes explicit `create_message` ping per refined memory rule (cluster-5 continues to exercise post-push surfacing)
 - v0.2 approval converges cluster-5 Design; merge completes idea-126 Phase 4 Design
 
-**Outstanding open questions** (17 OQs):
-- OQ1 Document.name migration (populate from id where null)
-- OQ2 Document.category placement (spec vs metadata.labels)
-- OQ3 Document.status.phase constant value ("active" vs "logged")
-- OQ4 Document update-policy (append-only vs mutable content)
-- OQ5 ArchitectDecision name OMITTED confirm
-- OQ6 ArchitectDecision status.phase "logged" confirm
-- OQ7 ArchitectDecision migration preservation
-- OQ8 DirectorHistoryEntry.role placement (spec vs metadata)
-- OQ9 DirectorHistoryEntry name OMITTED confirm
-- OQ10 DirectorHistoryEntry.text placement confirm
-- OQ11 ReviewHistoryEntry.taskId placement (metadata FK-pointer)
-- OQ12 ReviewHistoryEntry name OMITTED confirm
-- OQ13 ReviewHistoryEntry idea-151 relationship-kind disposition
-- OQ14 ThreadHistoryEntry.title placement (spec; frozen-at-archive-time)
-- OQ15 ThreadHistoryEntry name OMITTED confirm
-- OQ16 ThreadHistoryEntry substrate-currency (W1.1 NEW finding; 50 prod entries)
-- OQ17 ThreadHistoryEntry idea-151 relationship-kind disposition
+**v0.1 → v0.2 disposition summary:**
+- OQ1 ✓ Document.name populate-from-id at cutover
+- **OQ2 — substantive deviation accepted: Document.category → metadata.labels.category** (cluster-3 §5 6th cumulative-pattern axis; K8s Pod.metadata.labels precedent)
+- OQ3 ✓ Document.status.phase "active" constant
+- OQ4 ✓ Document mutable post-create
+- OQ5-7 ✓ ArchitectDecision dispositions
+- OQ8-10 ✓ DirectorHistoryEntry dispositions
+- OQ11-13 ✓ ReviewHistoryEntry dispositions
+- OQ14-17 ✓ ThreadHistoryEntry dispositions
 
 **Next architect action post-approval:** Phase 5 Manifest for idea-126 substrate-cutover work — translates 5-cluster Design partition into per-kind migration scripts + SchemaDef writes + acceptance test scenarios. **idea-126 Phase 4 Design CLOSES at cluster-5 merge.**
