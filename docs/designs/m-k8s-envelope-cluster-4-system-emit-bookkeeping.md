@@ -1,15 +1,33 @@
 # M-K8s-Envelope — Cluster 4 System-Emit/Bookkeeping Partition (Design Working Draft)
 
-**Status:** v0.1 — architect-fronted; awaiting engineer review
+**Status:** v0.2 — engineer review-integrated · Director-ratified scope reduction · awaiting approval
 **Mission:** idea-126 (M-K8s-Envelope)
 **Phase:** Phase 4 Design — cluster-4 partition pass (4 of 5 clusters per substrate-grounded decomposition)
-**Coordination:** per-PR review (per refined `feedback_pr_opened_notification_is_review_signal` memory rule v2). v0.1 review via `pr_opened_bilateral`; v0.2 fold-in commit gets explicit `create_message` ping until idea-315 M-PR-Synchronize-Handler lands.
-**Date:** 2026-05-23 AEST
+**Coordination:** per-PR review (per refined `feedback_pr_opened_notification_is_review_signal` memory rule v2). v0.1 review via `pr_opened_bilateral`; **this v0.2 push includes explicit `create_message` ping to greg** per refined memory rule (post-push surfacing pending idea-315 substrate-build).
+**Date:** 2026-05-23 AEST (v0.2: engineer PR #271 v0.1 review integrated + Director-ratified scope reduction)
 **Sibling Designs:**
 - Cluster 1 — substantive-content (Idea / Bug / Thread / Mission / Proposal) — **MERGED** at `d8ea695`
 - Cluster 2 — queue/FSM-active (Task / PendingAction / Turn) — **MERGED** at `59c3a70`
 - Cluster 3 — metadata/config/projection (Agent / Tele / SchemaDef / Counter) — **MERGED** at `ddf7bb1`
 - Cluster 5 — content-archive (forthcoming; Document / ArchitectDecision / 3 HistoryEntry kinds)
+
+**v0.1 → v0.2 changelog (engineer PR #271 review + Director-ratified scope reduction):**
+
+**LOAD-BEARING — Notification dropped from cluster-4 scope** (engineer code-trace contradicted v0.1 framing; Director-ratified disposition (i)):
+- §2.3 Notification (v0.1) — **REMOVED**. Engineer code-trace showed mission-56 W5 IS fully complete: notifications ARE first-class Message entities with `kind: "external-injection"`; no INotificationStore-gap to close; `entity-kinds.json:149` was STALE
+- Cluster-4 scope reduces 5 kinds → 4 kinds (Message + Audit + RepoEventBridgeCursor + RepoEventBridgeDedupe)
+- Substrate inventory re-locks 22 kinds → 21 kinds; `hub/scripts/entity-kinds.json` updated to v1.2 with Notification moved from `kinds[]` to `kinds-explicitly-not-included`
+- mission-83 OQ8 framing was based on stale evidence; will re-file as separate Idea post-cluster-4 with corrected framing (semantic-separation question, not mediation-gap closure)
+- §3.3 mission-56 composition checkpoint reframed
+
+**Substantive cluster-currency catch:** substrate-currency discipline (engineer code-trace > architect spec-recall) applied at cluster-4 mirror cluster-1 Round 7 precedent. v2.1 methodology candidate **R** captured.
+
+**Engineer dispositions integrated (OQ1-8 + OQ13-15):**
+- §1.7 NEW sub-discipline — Field-name collision with envelope `kind`: rename current top-level discriminator to `metadata.<kind>Specific`. Demonstrated Message.messageKind. (Engineer cross-cutting observation #1)
+- §2.1 Message — OQ1-OQ5 applied (rename + opaque payload + intent/converged split + escalation in spec + idea-200 W2 target confirmed)
+- §2.2 Audit — OQ6-OQ8 applied (constant 1-state status.phase; relatedEntity in spec; name OMITTED)
+- §2.3 RepoEventBridgeCursor (renumbered from §2.4) — OQ13-OQ15 applied (status.cursor; opaque encoded; name OMITTED)
+- §2.4 RepoEventBridgeDedupe (renumbered from §2.5) — sibling dispositions same as §2.3
 
 **Survey input:** `docs/reviews/2026-05-23-survey-idea-126.md` (Director-ratified R1 A/A/A + R2 A/A/A). Same Survey applies to all clusters.
 
@@ -34,13 +52,28 @@
 |---|---|---|
 | Message | IMessageStore | **canonical worked example**; sovereign Message store (mission-51 W1 + mission-56 W3.2 extensions); ULID id; multi-membership (thread + inbox + outbox); multi-FSM (status + scheduledState) |
 | Audit | IAuditStore | append-only structured log; createOnly-write pattern; id `audit-N`; no FSM (immutable post-create) |
-| Notification | INotificationStore (**RE-INTRODUCED per mission-83 OQ8**) | closes mission-56 W5 partial-completion (entity removed but file-writes still happen via hub-networking.ts direct-writes; OQ8 disposition re-introduces I*Store); id `notif-N` |
 | RepoEventBridgeCursor | RepoEventBridgeSubstrateAdapter (bookkeeping-only) | NEW per mission-84 W3; per-`<owner>__<repo>` id-keyed; opaque cursor-store-encoded body; `watchable: false` |
 | RepoEventBridgeDedupe | RepoEventBridgeSubstrateAdapter (bookkeeping-only) | NEW per mission-84 W3; per-`<owner>__<repo>` id-keyed; opaque dedupe-LRU body; sibling of Cursor; `watchable: false` |
 
-**Shared property:** these kinds are **Hub-side write paths** — not user/agent-authored cognitive content. Partition pattern is **status-skewed** for active kinds (Message, Notification) and **spec-with-empty-status** for createOnly kinds (Audit). Bookkeeping kinds (RepoEventBridge*) carry opaque bodies in status.
+**Notification (v0.1) — DROPPED at v0.2 per Director-ratified disposition (i):** engineer code-trace (`grep -nE "writeFile|writeFileSync|notifications/" hub/src/hub-networking.ts` = 0 matches; `notification-helpers.ts:112` `emitLegacyNotification()` body = `messageStore.createMessage({kind: "external-injection", ...})`) contradicted v0.1 framing. mission-56 W5 IS fully complete; notifications ARE first-class Message entities. `entity-kinds.json:149` STALE. mission-83 OQ8 will re-file as separate Idea post-cluster-4 with corrected framing.
+
+**Shared property:** these kinds are **Hub-side write paths** — not user/agent-authored cognitive content. Partition pattern is **status-skewed** for active kinds (Message) and **spec-with-empty-status** for createOnly kinds (Audit). Bookkeeping kinds (RepoEventBridge*) carry opaque bodies in status.
 
 **Methodology note (cluster-4-specific):** unlike cluster-1 (default-to-spec on substantive content), cluster-2 (default-to-status on FSM-mutated), cluster-3 (per-kind heterogeneous), cluster-4 is mostly **Hub-emit-time-determined** — fields are populated by the Hub at write time + may mutate via Hub-side FSM transitions. Default partition: identity → metadata; declared dispatch-config → spec; FSM phase + Hub-derived observed fields → status.
+
+---
+
+## §1.7 K8s-convention sub-discipline — field-name collision with envelope `kind`
+
+**Surfaced at v0.2 (engineer cross-cutting observation #1 + OQ1 disposition).** Cluster-4 Message has a current top-level discriminator field `Message.kind` (`reply | note | external-injection | amendment | urgency-flag`) that collides with envelope `kind: "Message"`.
+
+**Methodology rule:** when a current kind has a top-level field that collides with envelope `kind`, rename the discriminator to `metadata.<kindName>Specific` (or similar disambiguating path). The current field name was chosen pre-envelope; envelope `kind` slot is reserved for entity-kind discrimination across the substrate.
+
+**Demonstrated:** `Message.kind` → `Message.metadata.messageKind` at cluster-4 cutover.
+
+**Forward signal for cluster-5:** if any cluster-5 kind surfaces a similar collision, follow Message's rename pattern. None expected at v0.1 scan (Document / ArchitectDecision / *HistoryEntry kinds don't appear to use `kind` as a top-level field).
+
+This sub-discipline composes with §1.5 (handle vs content) and §1.6 (multi-FSM) as the three K8s-convention refinements articulated across clusters 2-4.
 
 ---
 
@@ -271,38 +304,7 @@ Lifecycle:
 
 ---
 
-### §2.3 Notification — stub (v0.1; full at v0.2 per engineer dispositions)
-
-**Re-introduced kind per mission-83 OQ8.** Mission-56 W5 REMOVED INotificationStore abstraction; but `notifications/notif-N.json` persistence STILL HAPPENS via direct file-writes from `hub/src/hub-networking.ts:431,465,504,735` (NO I*Store mediation today). OQ8 disposition: re-introduce INotificationStore + NotificationRepository as part of mission-83 follow-on; closes mission-56 partial-completion; preserves Option Y composition discipline.
-
-**Existing flat shape** (per `notifications/notif-N.json` direct-write sites — needs engineer code-grep at v0.2 for exact field set):
-- `id` (pattern: `notif-N`)
-- (engineer-confirm at v0.2 — likely: kind, recipient, payload, timestamp, claimed-state, ack-state)
-
-**Stub partition (v0.1; **engineer code-grep needed for exact field inventory at v0.2**):**
-
-| Field | Section | Rationale (provisional) |
-|---|---|---|
-| `id` (`notif-N`) | metadata.id | identity; per mission-83 OQ8 persistence-prefix preserved |
-| `kind`, `apiVersion` | metadata | uniform |
-| `createdAt`, `updatedAt` | metadata | uniform |
-| (engineer-confirm: recipient/target) | spec.target | declared audience pattern (mirror Message.spec.target) |
-| (engineer-confirm: payload) | spec.payload | declared content |
-| `phase` (FSM TBD; likely `new → claimed → acked` mirroring Message) | status.phase | primary FSM |
-
-**Open questions (Notification) — engineer audit:**
-- **OQ9**: **MAJOR — engineer code-grep needed for exact field inventory.** Current direct-write sites at `hub/src/hub-networking.ts:431,465,504,735` carry the canonical field shape. v0.1 stub is provisional; v0.2 needs engineer-side full inventory.
-- **OQ10**: FSM partition — Notification is queue-shaped (sibling of Message); likely follows mission-56 W3.2 `new → received → acked` pattern. v0.1 picks the mission-83 OQ8 re-introduction to mirror Message FSM. Engineer disposition welcome (or pick distinct FSM if hub-networking direct-writes use different transitions).
-- **OQ11**: `name` OMITTED for Notification — confirm (system-emit; no handle).
-- **OQ12**: Composition with mission-83 W5 partial-completion — at cluster-4 cutover, Notification envelope shape is ready for the OQ8 follow-on Mission (re-introduces INotificationStore + NotificationRepository). Verify mission-83 OQ8 is in-scope for this cutover OR is a separate downstream Mission.
-
-**Composition checkpoints:**
-- mission-83 OQ8 disposition: re-introduce INotificationStore + NotificationRepository (closes mission-56 W5 partial-completion).
-- mission-56 W4.2 + W5: legacy Notification entity + INotificationStore removed; W3 Hub-event-bus → SSE injection flows through Message store as `kind: "external-injection"` Messages. Notification re-introduction is a DISTINCT entity from external-injection Message (per mission-83 OQ8).
-
----
-
-### §2.4 RepoEventBridgeCursor — stub (v0.1)
+### §2.3 RepoEventBridgeCursor — stub (v0.1; renumbered from v0.1 §2.4 after Notification drop)
 
 **Existing flat shape** (per `hub/src/storage-substrate/repo-event-bridge-adapter.ts`; mission-84 W3 NEW kind):
 - `id` (pattern: `<owner>__<repo>`)
@@ -320,24 +322,24 @@ Per entity-kinds.json v1.1 notes: `watchable: false` (bookkeeping writes; no con
 | `phase` (constant `"active"`) | status.phase | uniformity convention; bookkeeping kind; no FSM |
 | `body` (cursor-store-encoded-JSON) | status.cursor | observed cursor position; mutates on every poll-source advance |
 
-**Open questions (RepoEventBridgeCursor) — engineer audit:**
-- **OQ13**: `body` placement — `status.cursor` (observed state; mutates per poll) vs `spec.cursor` (declared cursor-position-at-write — semantically dubious). v0.1 picks status (observation matches cursor-advance pattern). Engineer disposition welcome.
-- **OQ14**: opaque-encoded vs decoded shape — `body` is cursor-store-encoded JSON (opaque to substrate; cursor-store.ts decodes). v0.1 keeps opaque (`type: "string"` or `type: "object"` per SchemaDef decision — engineer code-grep at v0.2 for exact field shape).
-- **OQ15**: `name` OMITTED — confirm (per-repo bookkeeping; no handle).
+**Engineer dispositions applied (v0.2):**
+- **OQ13 ✓** `body` → `status.cursor` (engineer concur — cursor mutates per poll-source advance; observed Hub-side state; sibling of Agent.status.lastHeartbeatAt pattern).
+- **OQ14 ✓** opaque-encoded body shape preserved (engineer recommend keep opaque per `cursor-store.ts` encoding; `type: "string"`; substrate doesn't need to interpret cursor-state; sibling of cluster-2 PendingAction.status.continuationState opaque-JSON disposition).
+- **OQ15 ✓** `name` OMITTED (engineer concur — per-repo bookkeeping; multi-instance (per `<owner>__<repo>`); not handle-classified). Engineer-note: NOT a singleton-meta-entity (cluster-3 §5 third class) — it's a per-repo plural meta-entity; §1.5 binary axis handles via OMITTED disposition.
 
 ---
 
-### §2.5 RepoEventBridgeDedupe — stub (v0.1)
+### §2.4 RepoEventBridgeDedupe — stub (v0.1; renumbered from v0.1 §2.5 after Notification drop)
 
-**Sibling of §2.4 RepoEventBridgeCursor.** Same shape; same partition rationale; same dispositions per OQ13-OQ15.
+**Sibling of §2.3 RepoEventBridgeCursor.** Same shape; same partition rationale; same engineer-ratified dispositions.
 
 **Stub partition (v0.1):**
 
-Identical to §2.4 except:
+Identical to §2.3 except:
 - `id` represents the per-repo dedupe-LRU instance (still `<owner>__<repo>` per entity-kinds.json)
 - `body` carries dedupe-LRU encoded state (different cursor-store.ts encoding; same opaque-to-substrate property)
 
-**Open questions:** same as OQ13-OQ15 above.
+**Engineer dispositions applied (v0.2):** same as §2.3 (OQ13-OQ15 apply equally; per-repo plural bookkeeping; opaque body in status; name OMITTED).
 
 **Composition checkpoints:**
 - mission-84 W3 NEW kind per Design v1.1 §2.3 Variant (ii) minimal-SchemaDef.
@@ -356,9 +358,13 @@ Identical to §2.4 except:
 
 Cluster-4 Message envelope preserves mission-51 W1 sovereign Message store design (5 kinds × 3 axes; ULID id; multi-membership via derived queries from `threadId` + `target.{role,agentId}` + `authorAgentId`).
 
-### §3.3 mission-56 (Notification → Message migration) — Notification re-introduction
+### §3.3 mission-56 (Notification → Message migration) — REFRAMED v0.2
 
-mission-56 W5 removed legacy Notification entity (migrated to Message kind=external-injection). mission-83 OQ8 RE-INTRODUCES Notification as a distinct kind to close W5 partial-completion (file-writes still happen via hub-networking.ts direct-writes without I*Store mediation). Cluster-4 §2.3 Notification envelope is the substrate target for OQ8 re-introduction.
+mission-56 W5 removed legacy Notification entity; migrated to Message kind=external-injection. **Engineer code-trace confirmed at v0.2: mission-56 W5 IS fully complete** — notifications ARE first-class Message entities with `kind: "external-injection"` discriminator today; no direct-write path to re-mediate; no INotificationStore-gap to close. Previous v0.1 framing assumed mission-83 OQ8 re-introduction of INotificationStore; **engineer code-trace contradicted the premise** (zero grep matches for `notifications/notif-*` direct file-writes in production code; "notif-N" strings are log-prefixes referencing Message ids, not separate entity ids).
+
+**Substrate-currency catch:** `hub/scripts/entity-kinds.json:149` Notification entry was STALE per engineer evidence. Substrate inventory re-locks 22 kinds → 21 kinds at v0.2; Notification moves from `kinds[]` to `kinds-explicitly-not-included` with engineer-code-trace disposition.
+
+**Follow-on:** mission-83 OQ8 re-files as a separate Idea post-cluster-4 with corrected framing — semantic-separation question (are system-emit notifications semantically distinct from external-injection Messages?), NOT mediation-gap closure.
 
 ### §3.4 mission-83 (Hub Storage Substrate) — bug-93 elimination preserved
 
@@ -388,7 +394,7 @@ This cluster-4 v0.2 push will continue to exercise the refined memory rule (expl
 
 ## §4 Acceptance criteria (cluster-4-specific)
 
-- All 5 cluster-4 kinds (Message / Audit / Notification / RepoEventBridgeCursor / RepoEventBridgeDedupe) carry valid envelope structure post-cutover (verified via psql JSON-shape inspection per kind)
+- All 4 cluster-4 kinds (Message / Audit / RepoEventBridgeCursor / RepoEventBridgeDedupe) carry valid envelope structure post-cutover (verified via psql JSON-shape inspection per kind). Notification dropped from cluster-4 v0.2 per Director-ratified disposition (i).
 - Each kind's `apiVersion: "core.ois/v1"`
 - Strict K8s partition (no top-level fields beyond `{id, name, kind, apiVersion, metadata, spec, status}`; `name` per-kind per OQ-dispositions)
 - `FilterableField.path` declarations per-kind enable shorthand-filter translation at `list_*` runtime; composes with idea-121
@@ -396,11 +402,11 @@ This cluster-4 v0.2 push will continue to exercise the refined memory rule (expl
 - **Field path moves preserved 1:1** in migration:
   - Message: status flat-enum → `status.phase`; kind → metadata.messageKind; all other → spec/status per partition
   - Audit: timestamp → metadata.createdAt; actor → metadata.actor; action/details/relatedEntity → spec.*
-  - Notification: shape TBD per engineer OQ9 v0.2 code-grep inventory
-  - RepoEventBridge*: body → status.cursor / status.dedupe (per OQ13)
+  - RepoEventBridge*: body → status.cursor / status.dedupe (per OQ13 engineer ratification)
+- **Substrate-inventory re-lock**: `hub/scripts/entity-kinds.json` updates v1.1 → v1.2; Notification removed from `kinds[]` + added to `kinds-explicitly-not-included` per engineer code-trace evidence; total locked count 22 → 21
 - **Cross-Mission dependency surfaces (cluster-4):**
   - Message envelope MUST be ready to receive idea-200 W2 Thread.status.messages migration (via migrationSourceId)
-  - Notification re-introduction per mission-83 OQ8 follow-on Mission scope (separate from cluster-4 envelope cutover)
+  - mission-83 OQ8 Notification semantic-separation question re-files as separate Idea post-cluster-4 (corrected framing; not in cluster-4 v0.2 scope)
   - RepoEventBridge* are mission-84 W3 already-ratified; cluster-4 just adds envelope shape
 - **bug-93 elimination preserved** — substrate-watch primitive enablement on Message envelope unchanged
 
@@ -426,28 +432,18 @@ Cluster-4 inherits all six patterns surfaced cumulatively:
 
 ## §6 Status
 
-**v0.1** — architect-fronted; awaiting engineer review.
+**v0.2** — engineer PR #271 v0.1 review integrated · Director-ratified scope reduction (drop Notification per disposition (i)) · awaiting v0.2 approval.
 
-**Coordination plan:**
-- PR opens; greg engages via `pr_opened_bilateral` notification + posts review on GitHub PR directly
-- **v0.2 fold-in commit** preceded by explicit `create_message` ping to greg per refined memory rule (W2 gap; pending idea-315)
-- v0.2 approval converges cluster-4 Design; cluster-5 opens fresh PR
+**Substantive cluster-4 contributions to envelope methodology** (signal for cluster-5):
 
-**Outstanding open questions** (engineer disposition expected — 15 OQs):
-- OQ1: Message.kind → metadata.messageKind rename naming
-- OQ2: Message.payload opaque-in-spec confirmation
-- OQ3: Message.intent/semanticIntent/converged placement
-- OQ4: Message.escalation placement (spec vs future status surface)
-- OQ5: idea-200 W2 carve-out composition (Message envelope target ready)
-- OQ6: Audit FSM enum — constant 1-state vs OMIT status
-- OQ7: Audit.relatedEntity placement (spec.* vs metadata.*)
-- OQ8: Audit name OMITTED confirmation
-- OQ9: **MAJOR — Notification field inventory** (engineer code-grep `hub-networking.ts:431,465,504,735` direct-write sites)
-- OQ10: Notification FSM partition (mirror Message vs distinct)
-- OQ11: Notification name OMITTED confirmation
-- OQ12: mission-83 OQ8 in-scope-here vs downstream Mission
-- OQ13: RepoEventBridgeCursor.body — status vs spec
-- OQ14: RepoEventBridge* opaque-encoded vs decoded shape
-- OQ15: RepoEventBridge* name OMITTED confirmation
+1. **§1.7 NEW sub-discipline — field-name collision with envelope `kind`** — when a current kind has a top-level discriminator field colliding with envelope `kind`, rename to `metadata.<kindName>Specific`. Demonstrated `Message.kind → metadata.messageKind`.
+2. **Substrate-currency catch** — engineer code-trace contradicting `entity-kinds.json:149` STALE Notification framing. Substrate inventory re-locks 22 → 21 kinds. Cluster-1 Round 7 precedent (substrate-currency wins over architect spec-recall) applied at cluster-4. **v2.1 methodology candidate R captured.**
+
+**Engineer approval posture (v0.1 → v0.2 transition):**
+- v0.1 approved by greg (PR #271 review APPROVED 2026-05-23T11:57Z at commit `89e28bd`)
+- v0.2 integrates 11 disposition-confirms (OQ1-8 + OQ13-15) + drops 4 OQs (OQ9-12) per Director-ratified Notification removal
+- **Architect-side explicit `create_message` ping to greg follows v0.2 push** per refined memory rule (cluster-4 v0.2 continues to exercise post-push surfacing)
+
+**v2.1 methodology candidate R** captured: substrate-currency catch on inventory-locked source-of-truth — entity-kinds.json + production code as SSOT, not architect-spec-recall, across mission-83-style inventory-locks.
 
 **Next architect action post-approval:** cluster-5 Design (Document / ArchitectDecision / DirectorHistoryEntry / ReviewHistoryEntry / ThreadHistoryEntry per cluster-2 §6 ratified scope).
