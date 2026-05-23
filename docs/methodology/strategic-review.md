@@ -1,281 +1,373 @@
-# Strategic Architectural Review — Methodology
+# Strategic Review — Methodology
 
-**Status:** v1.0 (2026-04-21). Treat as engineered component — version, critique, evolve.
-**Scope:** reusable template for high-level architectural reviews on the Agentic Network.
+**Status:** v2.0 (2026-05-23). Full rewrite — supersedes v1.0 (2026-04-21). Treat as engineered component — version, critique, evolve.
+**Scope:** routine prioritisation-pass methodology designed to operate at any cadence (ad-hoc to scheduled-daily); skill-mechanisable; designed at autonomy-target with manual fallback for the pre-substrate present.
+**Companions:**
+- `docs/methodology/ledger-reconciliation.md` — peer; reconcile the ledger before running a Strategic Review (a review over a rotted backlog evaluates noise).
+- `docs/methodology/mission-lifecycle.md` — downstream; consumes ratified Initiatives via the Survey → Design pipeline.
+- `docs/methodology/idea-survey.md` — downstream Phase 3 mechanism; the Survey skill operates on ratified Ideas the SR's triage routes to it.
 
-**Pending v1.1 deltas** (captured in 2026-04 retrospective-lite at `docs/reviews/2026-04-retrospective-lite.md`; fold at formal retrospective when first 2026-04 mission ships):
-Convergence Bounds (80-90% healthy ceiling) · Phase 2 Filing-Point ≠ Fault-Domain sub-step · Amendment Protocol 3-condition fold heuristic · Phase 4 Co-authoring composition pattern · Parallel-Pass vs Sequential phase-capability · Mission Filing Protocol proposed-default release-gate · Review-Thread Cadence maxRounds:20 · Anti-Goal Growth ~2× execution pattern.
+---
 
-**Companion methodology:** `docs/methodology/mission-preflight.md` — activation gate between review Phase 4 filing (`proposed`) and Director release-gate signal (`active`). Every Phase-4-filed mission requires a preflight artifact at `docs/missions/<mission-id>-preflight.md` before Director issues `update_mission(status="active")`.
+## v1.0 → v2.0 reframe (what changed)
 
-**Peer methodology:** `docs/methodology/ledger-reconciliation.md` — the factual counterpart to this evaluative review. Reconcile the ledger (true-up entity status) *before* a strategic review — a review run over a rotted backlog evaluates noise.
+v1.0 framed SR as a **heavy planning event** producing mission briefs. v2.0 reframes it as a **routine prioritisation-pass** producing Initiatives that route into the existing pipeline. The output unit shifts; the cadence flexes; the architect-autonomy intent becomes explicit. Full derivation in §Provenance.
+
+| | v1.0 | v2.0 |
+|---|---|---|
+| Trigger | "backlog has outpaced prioritisation" — episodic | scheduled / on-demand at any cadence |
+| Unit of analysis | full system | scope-parameterised subset |
+| Output | 3–5 ratified mission briefs | ratified Initiatives (route to Idea→Triage→Survey→Design→Mission pipeline) |
+| Director engagement | per-phase (6-step × 4 phases ≈ 24 touchpoints) | per-run (1 ratification — Standard/Quick); per-phase only in Deep mode |
+| Time cost | multi-session | single-session per run (Standard); rare multi-session (Deep) |
+| Phase decomposition | 4 fixed phases × 1 artifact each | mode-based (Quick / Standard / Deep) |
+| Methodology layer | mission production | initiative routing |
+| Autonomy target | implicit | explicit — workflow specifies substrate queries with manual fallback today |
+
+v1.0's 4-phase structure is preserved as **Deep mode only** (rare major re-orientations); Standard mode collapses to single-pass.
+
+---
 
 ## Purpose
 
-A strategic architectural review is a **deliberate, time-boxed pass over the system's current state to re-align trajectory with Tele**. It produces a prioritized investment plan, a ratified set of anti-goals, and a cleaned-up backlog — not code changes. It is the "run slow to run fast" counterweight to mission execution.
+A Strategic Review is a **routine prioritisation-pass over (some or all of) the backlog that produces ratified Initiatives**. It does prioritisation + routing; it does *not* do mission production (Survey + Design + Mission lifecycle own that downstream).
 
-## When to use this methodology
+The methodology operates at the **orientation layer** (Tier 1; see §Entity Model): given the current Tele set and Initiative set, given the in-scope subset of Tier-3 instances, produce the next ratified set of Initiatives + triage decisions + reverse-gap observations + anti-goals.
 
-- Accumulated backlog of ideas + bugs has outpaced coherent prioritization
-- Architectural direction feels ambiguous across the team
-- Tele set has recently changed (ratified audit, new concepts)
-- Multiple competing target-state architectures are in play
-- Velocity of evolution is slowing relative to backlog growth
-- Before committing to a large structural mission, to validate it's the right one
+The methodology is **designed at the autonomy target** — the workflow specifies substrate queries the architect would issue if the relationship graph existed today. Manual fallbacks are documented per sub-step. As the substrate fills in (idea-151 graph relationships; idea-121 verb-tool consolidation; lineage-capture work), the SR progressively autonomises.
+
+---
+
+## Entity model — three tiers
+
+The SR methodology operates against a three-tier entity model.
+
+### Tier 1 — Orientation
+
+`Tele` and `Initiative` are **peers**. Both required to plan.
+
+| | Tele | Initiative |
+|---|---|---|
+| Question | "where should we be heading?" | "what are we going to do to head there?" |
+| Concept | outcome axis | deliberate project effort |
+| Completion semantics | no — Teles don't ship | yes — Initiatives ship/abandon |
+| Cadence | stable (10–20 ever; refinement common, addition rare) | active (declared per SR run; ships/abandons frequently) |
+| Mutation primitive | Tele audit (rare); `supersede_tele` / `retire_tele` (refinement) | `create_initiative` / `update_initiative` (per SR run) |
+
+**Relationship:** Initiative declares Tele alignment (M-N). An Initiative without Tele alignment is suspect; either find one or propose a new Tele via the Tele audit primitive.
+
+**Reverse-gap signal:** Teles with no Initiatives → the system has an outcome axis no project is serving. Trigger for either a new Initiative proposal or (rare) re-examination of whether the Tele is still load-bearing.
+
+### Tier 2 — Class
+
+`Concept` and `Defect` are **peers**. Both emerge from instances; not declared in advance.
+
+| | Concept | Defect |
+|---|---|---|
+| Concept | architectural pattern | failure-mode pattern |
+| Example | "Sovereign Composition substrate-class promotion" | "DSV-class methodology-bypass" |
+| Relationship to Teles | Concepts exercise Teles (advance them when applied) | Defects violate Teles (regress them when present) |
+| Emergence | crystallises across multiple Ideas | crystallises across multiple Bugs |
+| Extraction cadence | rare; triggered by accumulated-instance threshold | rare; triggered by accumulated-instance threshold |
+
+Class-layer extraction is **emergent + occasional**. The SR may *surface candidates* for naming (e.g., "this Initiative recurs the substrate-class promotion pattern — Concept candidate"); the extraction-to-formal-doc is a separate (rarer) activity, possibly its own skill.
+
+### Tier 3 — Instance
+
+The execution chain: `Idea / Bug → Design → Mission`.
+
+- `Idea` — proposed unit of work (existing first-class)
+- `Bug` — observed defect (existing first-class)
+- `Design` — engineered solution (per idea-129 / current `Proposal` entity)
+- `Mission` — execution unit (existing first-class)
+
+**Relationships (all M-N unless noted):**
+
+- Ideas/Bugs align with Teles (M-N)
+- Ideas/Bugs compose under Initiatives (M-N) — multi-Initiative parentage is the cross-leverage signal
+- Ideas generalise into Concepts (M-N)
+- Bugs generalise into Defects (M-N)
+- Design `1-1` Idea (typically; at any time)
+- Mission `1-1` Design (Manifest binds them)
+
+### Properties (not entities)
+
+**Anti-goals** — scope-negation statements. Two forms:
+- **Per-Initiative property** — "this Initiative deliberately does NOT do X" (local scope)
+- **Per-SR-run accumulated output** — "this run deferred these candidates with rationale" (episodic)
+
+Anti-goals are *not* a Tier-1 entity. They're project-scoped negations, not system-level orientation axes.
+
+### Promotion status (2026-05-23)
+
+| Entity | Status |
+|---|---|
+| Tele | first-class Hub entity ✓ |
+| Idea | first-class Hub entity ✓ |
+| Bug | first-class Hub entity ✓ |
+| Mission | first-class Hub entity ✓ |
+| Design | first-class via current `Proposal` entity; rename per idea-129 |
+| **Initiative** | **proposed**; transitional vehicle = Idea with `kind: umbrella` tag |
+| **Concept** | **proposed** (idea-133); transitional vehicle = `docs/concepts/*.md` proxies |
+| **Defect** | **proposed**; transitional vehicle = `docs/defects/*.md` proxies |
+
+The Class-Tier promotion (Initiative + Concept + Defect ship-together as first-class) is itself an Initiative-shaped substrate-extension blocked-on idea-121 (verb-tool consolidation) + idea-126 (k8s-style envelope). First manual SR runs naturally surface it as a critical-path Initiative.
+
+---
+
+## When to use
+
+- Scheduled routine cadence (daily / weekly / per-mission-close)
+- Ad-hoc when a specific scope warrants a focused triage (Quick mode)
+- After ledger-reconciliation has run + the live-backlog is trustworthy
+- Before committing to a new mission cycle — validate the candidate Initiative still has tele-leverage
+- When a substrate-layer change (new Tele, new entity kind) shifts orientation
 
 ## When NOT to use
 
-- For tactical bug triage (use per-bug update flow)
-- For single-mission planning (use per-mission Design + Manifest)
-- When there are <5 open ideas or <3 active friction domains (insufficient surface for review overhead)
-- Mid-mission — do not pause execution for a review; review between missions
+- For tactical per-bug or per-task triage (use entity-specific update flows)
+- For single-mission planning (use `mission-lifecycle.md` Phase 3 Survey + Phase 4 Design)
+- Over a rotted backlog — reconcile first (`ledger-reconciliation.md`)
+- Mid-mission — review between missions, not during
+
+---
 
 ## Roles
 
-| Role | Responsibility | Default loading |
-|---|---|---|
-| **Director** | Ratifies each phase output. Provides strategic judgment. Owns anti-goal list. Owns final mission prioritization. | Human |
-| **Engineer agent** | Inventory legwork. Data collection from Hub state. Symptom cataloguing. Cost estimation. | Claude Code session registered as engineer |
-| **Architect agent** | Tele-alignment scoring. Naming (Concept / Defect extraction). Dependency mapping. Mission brief structure. | Claude Code session registered as architect |
+| Role | Default responsibility |
+|---|---|
+| **Director** | Ratifies the per-run artifact (Standard/Quick) or per-phase artifact (Deep). Owns strategic judgment. Owns Tele-set evolution (via separate Tele audit primitive). Owns final Initiative prioritisation. |
+| **Engineer agent** | Substrate queries (psql / `get-entities.sh`). Live-state verification (per `ledger-reconciliation.md` v1.1 §Roles split). Cost-estimation input. Critique of architect's draft. |
+| **Architect agent** | Tele-alignment scoring. Cluster-by-disposition. Initiative naming + composition. Reverse-gap detection. Concept/Defect candidate-surfacing. Drafts the per-run artifact. |
 
-Director-first critique protocol per phase:
-1. Author agent drafts phase artifact
-2. Director reviews + annotates
-3. Author revises against Director annotations
-4. Other agent critiques for logic, completeness, Tele alignment
-5. Author integrates critique
-6. Director ratifies → phase closes
+### Cadence per mode
 
-## Review Scope — Full vs Partial
+- **Standard / Quick:** architect drafts → engineer critiques → architect integrates → Director ratifies (per-run, not per-sub-step)
+- **Deep:** per-phase ratification (4 phase artifacts); approximates v1.0's 6-step protocol; reserved for major re-orientations
 
-Reviews can run at two scopes:
+---
 
-### Full review (default)
+## The workflow
 
-All 4 phases sequentially, per the structure below. Recommended when:
-- Multiple friction domains are acute simultaneously
-- Backlog scope has shifted meaningfully since last review
-- Tele set has changed
-- Direction ambiguity spans >1 friction cluster
+Single-pass for Standard mode (sub-steps in one artifact). Sub-steps re-expand into the 4-phase Deep-mode artifacts when scope warrants.
 
-### Partial-scope review
-
-A subset of phases, with explicit scope declaration. The 4 phases have different dependency properties:
-
-| Phase | Standalone-capable? | Inherits from | Use cases |
+| # | Sub-step | Substrate query (autonomy-target) | Manual fallback (today) |
 |---|---|---|---|
-| Phase 1 Cartography | ✓ yes | Hub state + Tele spec | Backlog-refresh after a mission lands that resolves 10+ ideas; post-Tele-audit resync; post-methodology-change |
-| Phase 2 Friction | partial | full prior Phase 1 **OR** explicit scope-limit | Narrow friction audit on specific domain (e.g., cascade-layer only, adapter-layer only) when a single cluster is acute enough for focused attention |
-| Phase 3 Concepts/Defects | ✗ no | requires Phase 2 (full or scoped) | Not standalone-runnable; would re-invent friction taxonomy implicitly |
-| Phase 4 Prioritization | partial | requires Phase 3 **OR** prior-review's Phase 3 if recent (≤60 days) | Mission-rebalance after a mission completes or fails; candidate re-scoring on existing concept/defect register |
+| 1 | **Scope resolve** | `query(kind, status, theme, since, tele)` | filter via `list_*` + ledger grep |
+| 2 | **Inventory** | per-entity bundle with metadata | cartography-doc style; psql cross-ref where available |
+| 3 | **Lineage walk** | `lineage(entity) → ancestors + descendants + cross-refs` | hand-walk IDs in entity bodies; tag-prefix analysis |
+| 4 | **Cluster** | M-N parentage detection + semantic similarity | apply FOLD/COMPOSES/DEFER/EXCLUDE vocabulary; manual cluster-naming |
+| 5 | **Friction surface** | bug-density, thread-roundCount-near-limit, recurring failures, DSV-instances | engineer enrichment-companion shape (friction inventory + DSV patterns) |
+| 6 | **Initiative analysis** | per-current-Initiative: advancing? blocking? orphan Ideas? | review each open Initiative + its child Idea/Bug set |
+| 7 | **Reverse-gap check** | `reverse-gap(tele) → [Initiative]`; orphan-Idea detection | manual cross-ref against current Tele set |
+| 8 | **Class-layer surface** | accumulated-instance triggers for Concept/Defect emergence | observation only (defer formal extraction unless threshold clear) |
+| 9 | **Critical-path mapping** | blocking-graph; upstream/downstream dependency walk | manual dependency reasoning; cite Initiative-to-Initiative blocks |
+| 10 | **Initiative output** | `create_initiative` / `update_initiative` via verb-tool with `kind: Initiative` | file as `Idea` with `kind: umbrella` tag (transitional) |
+| 11 | **Triage routing** | per-Idea/Bug → skip-Survey / triage-thread / queue / dismiss | apply Idea Triage Protocol (§Triage Routing below) |
+| 12 | **Anti-goals capture** | per-Initiative property + per-run accumulated output | inline in artifact §Anti-goals |
+| 13 | **Director ratify** | single ratification on per-run artifact (Standard/Quick); per-phase (Deep) | thread or direct |
 
-### Partial-scope guardrails
+**Convergence (Standard / Quick):** ratified artifact exists; every in-scope Idea/Bug has a triage disposition; every new/updated Initiative declares Tele alignment + scope + anti-goals.
 
-Partial reviews MUST:
-1. **Declare scope explicitly** at plan-authoring time (`docs/reviews/<date>-phase-N-scoped.md`). Scope statement names which phases will run + which are inherited from prior reviews.
-2. **Cite inheriting artifacts** — every claim that depends on an unrun phase must reference the prior artifact it inherits (e.g., "Phase 3 concept register at `agent/lily:ced70b8` current; not re-authored").
-3. **Narrow convergence criteria** to the scoped phase's convergence rule only — do not assert "2 mission briefs" if only Phase 1 runs.
-4. **Flag scope creep explicitly** — if mid-execution work surfaces that the scope was wrong (e.g., Phase 2 narrow on cascade-layer reveals the friction is upstream in adapter-layer), halt + re-scope rather than silently expand.
+**Convergence (Deep):** all 4 phase artifacts ratified per v1.0 phase-convergence criteria; cross-linked.
 
-### When to avoid partial-scope
+---
 
-- Backlog inventory stale (>90 days since full cartography) — run Phase 1 first even if the apparent trigger is Phase 4-shaped
-- Tele set changed since last full review — concept-defect grounding needs re-examination
-- Multiple friction clusters surfaced simultaneously — partial-scope forces arbitrary choice between them; full review is honest
+## Modes
 
-Partial-scope reviews are optimization for single-domain work. Full reviews are still the default when re-alignment across the full system is warranted.
+| Mode | Trigger | Sub-steps | Artifact(s) | Director engagement |
+|---|---|---|---|---|
+| **Quick** | ad-hoc; specific question or focused triage | 1, 2, 6, 11 (focused subset) | 1 artifact | 1 ratification |
+| **Standard** | scheduled routine cadence (daily / weekly / per-mission-close) | all 13 | 1 artifact | 1 ratification |
+| **Deep** | major re-orientation (Tele set shift; multi-friction-cluster acute; cross-program reframe) | sub-steps re-expand into 4 phase artifacts (cartography / friction / class-extract / prioritisation) | 4 artifacts | per-phase ratification |
 
-## Four-Phase Structure
+Default mode for scheduled cadence = **Standard**.
 
-Each phase produces exactly one durable artifact. Phases are sequential within the scope of the current review; partial-scope reviews run a subset per the rules above.
+---
 
-### Phase 1 — Inventory & Cartography
+## Scope filtering
 
-**Goal:** honest flat map of current state. No prioritization, no interpretation — facts only.
+Multi-dimensional, composable. Standard-mode default scope (when scheduled without parameter):
 
-**Inputs:** Hub state (all entity types), spec docs, recent work-traces.
+> *Everything filed/changed since last SR run + all open Initiatives + all reverse-gap Teles*
 
-**Sub-outputs bundled into one document:**
-- Ideas clustered by Tele alignment (and orphans: ideas with no Tele anchor)
-- Built / Ratified-but-unshipped / Open-idea split (reality check on the backlog)
-- Bugs clustered by severity + domain
-- Missions (active, completed, cancelled)
-- Concepts (proto-documented from already-ratified architectural ideas — Smart NIC, vocabulary chain, etc.)
-- Tele with zero inbound ideas or zero forward motion (reverse gaps)
+Filter primitives:
 
-**Artifact:** `docs/reviews/<date>-phase-1-cartography.md`
+| Dimension | Examples |
+|---|---|
+| **Entity kind** | `Idea` / `Bug` / `Mission` / `Thread` / `Initiative` / `Concept` / `Defect` / `any` |
+| **Status** | `open` / `triaged` / `dismissed` / `incorporated` / per-kind status enum / `any` |
+| **Theme** (anchor) | rooted at an Initiative or Concept; walks the lineage graph from the anchor |
+| **Time** | since last SR run / since date / within window |
+| **Tele** | rooted at a Tele (all entities advancing tele-N) |
+| **Tag cluster** | rooted at a tag prefix (e.g., `mission-41-wave-3`) |
 
-**Convergence:** every open idea appears in at least one cluster; every Tele is either populated or flagged as reverse-gap.
+Composition example:
+- Quick triage of a single program: `{ theme: initiative-X, kind: [Idea, Bug], status: open }`
+- Daily standard review: `{ since: last_sr_run, status: [open, investigating] }` + open Initiatives + reverse-gap Teles
+- Deep re-orientation: `{}` (no filter — all open entities of all kinds)
 
-### Phase 2 — Friction Cartography
+---
 
-**Goal:** ranked map of where the system hurts in use.
+## Substrate dependencies (autonomy target)
 
-**Inputs:** Phase 1 artifact, bug log, thread summaries, commit history if relevant.
+The workflow's autonomy column assumes these substrate primitives. Each is itself an Initiative-shaped piece of substrate work; the first SR runs naturally surface them on the critical path.
 
-**Sub-outputs:**
-- Friction domains enumeration (tool-surface, coordination, delivery, role-scoping, deployment, etc.)
-- For each domain: symptoms (cite specific bugs/threads), existing ratified fixes in backlog, remaining gaps
-- Ranking by (exercise frequency × cost per exercise)
+| Dependency | What it enables | Initiative / Idea reference |
+|---|---|---|
+| **First-class graph relationships** | sub-steps 3 (lineage walk), 4 (cluster), 7 (reverse-gap), 9 (critical-path) | idea-151 |
+| **Verb-tool consolidation** | sub-step 10 (Initiative output) without per-kind tool proliferation | idea-121 |
+| **k8s-style entity envelope** | verb-uniformity precondition | idea-126 |
+| **Lineage-capture (bug-118 reverse)** | sub-step 3 substrate-walkability for bugs (currently 0/118 have `sourceThreadId`) | bug-118 + related substrate work |
+| **Class-Tier promotion** | sub-step 10 native form (`Initiative` / `Concept` / `Defect` entities) | (proposed; blocked-on idea-121 + idea-126) |
+| **Scheduled SR runner** | sub-step 1 scope-default trigger | (out of scope of methodology; future skill-runner) |
 
-**Artifact:** `docs/reviews/<date>-phase-2-friction.md`
+Methodology is correct *now* with manual fallbacks; correctness *improves* as each substrate dependency lands.
 
-**Convergence:** every significant bug and every major in-thread friction report maps to a domain; domains are ranked with rationale.
+---
 
-### Phase 3 — Concept Extraction + Defect Classes
+## Per-run artifact
 
-**Goal:** pull implicit patterns out of the backlog into **named Concepts** and **named Defect classes**. Cross-reference which concepts resolve which defect classes.
+Each run produces one durable document at `docs/reviews/<YYYY-MM-DD>-sr-<scope>.md` (Standard/Quick) or 4 phase docs (Deep).
 
-**Approach:** use lightweight Document-form proxies (`docs/concepts/*.md`, `docs/defects/*.md`) rather than first-class Hub entities. Minimal shape:
-- Concept: name, mandate, mechanics, rationale, resolves-defects, instances-in-backlog
-- Defect: name, symptom, mechanics, example-instances, resolved-by-concepts
+### Standard / Quick artifact shape
 
-**Inputs:** Phases 1 + 2 artifacts, current Tele set.
+```markdown
+# Strategic Review — <YYYY-MM-DD> — <scope-tag>
 
-**Artifact:** `docs/reviews/<date>-phase-3-concepts-and-defects.md` (or split across `docs/concepts/` + `docs/defects/` directory structures).
+**Mode:** Standard / Quick
+**Scope:** { kind, status, theme, since, tele } — explicit declaration
+**Inputs:** Tele set vN; Initiative set @ N entities open; in-scope subset ([counts])
+**Prior SR run:** <link>
 
-**Convergence:** every Tele fault (from the 4-section template) maps to at least one defect class; every velocity-multiplier idea maps to at least one concept. Orphans are either named as new concepts/defects or explicitly deferred.
+## §1 Inventory + Lineage
+## §2 Cluster + cross-leverage (M-N parentage signals)
+## §3 Friction surface
+## §4 Per-Initiative analysis (status, advancing, blockers)
+## §5 Reverse-gaps (Teles without Initiatives; orphan Ideas)
+## §6 Class-layer surfacings (Concept / Defect candidates deferred to extraction)
+## §7 Critical-path observations (Initiative-to-Initiative dependencies)
+## §8 Initiative output (new + updated; per-Initiative: name, scope, Teles, anti-goals, downstream Ideas)
+## §9 Triage routing (per Idea/Bug: skip-Survey / triage-thread / queue / dismiss)
+## §10 Anti-goals (per-run accumulated)
+## §11 Director ratification log
+```
 
-### Phase 4 — Investment Prioritization
+### Deep artifact shape
 
-**Goal:** ratified small set of mission briefs + explicit anti-goals.
+Four artifacts per v1.0 4-phase structure, cross-linked: cartography → friction → concepts+defects → prioritisation. Used rarely; precedent: 2026-04 full review; 2026-05-23 Threads v3 cartography ran approximating this informally.
 
-**Inputs:** Phases 1–3 artifacts.
+---
 
-**Sub-outputs:**
-- Mission candidates grouped into: blockers / quick-wins / structural / velocity-multipliers
-- Ranking: Tele leverage (how many Teles advanced) × execution cost × unblocking power (how many downstream candidates enabled)
-- 3–5 ratified mission briefs, each with: name, Tele served, scope, success criteria, dependencies, estimated effort class (S/M/L/XL)
-- Explicit anti-goals: what this review *deliberately did not* commit to, with rationale
+## Triage routing
 
-**Artifact:** `docs/reviews/<date>-phase-4-investment-plan.md`
-
-**Convergence:** ratified mission set is achievable within the next mission cycle; anti-goals list is non-empty and specific.
-
-## Idea Triage Protocol
-
-Strategic Review is the heavy-event for collection-reasoning over the backlog. Between events, individual ideas are filed continuously. The Idea Triage Protocol routes each newly-filed idea to one of three paths based on triage characteristics; the protocol applies to all `create_idea` activations regardless of source role.
-
-### Three routing paths
+The SR's sub-step 11 routes each in-scope Idea/Bug to one of four dispositions:
 
 | Route | When | Mechanism |
 |---|---|---|
-| **(a) Skip-direct-to-Survey** | All 5 skip-criteria met | `update_idea(status="triaged")` directly; proceed to `mission-lifecycle.md` Phase 3 Survey |
-| **(b) Triage thread** | Bilateral negotiation needed | Open thread; bilateral converge; `close_no_action` + summary; status flip via `update_idea` or cascade staged action |
-| **(c) Queue-for-next-Strategic-Review** | Collection-reasoning warranted | Status remains `open`; idea surfaces in next Strategic Review Phase 1 Cartography |
+| **(a) Skip-direct-to-Survey** | All 5 skip-criteria met (see below); ready for Phase 3 Survey now | `update_idea(status="triaged")`; downstream to `mission-lifecycle.md` Phase 3 |
+| **(b) Triage thread** | Bilateral negotiation needed; under-specified; engineer pushback | open thread; bilateral converge; status-flip via cascade or post-seal `update_idea` |
+| **(c) Queue for next SR** | Collection-reasoning warranted; idea-cluster; cross-mission scope-flex | status remains `open`; surfaces in next SR Phase 1 |
+| **(d) Dismiss** | Stale; superseded; cross-project; obsolete-substrate | `update_idea(status="dismissed")` per `ledger-reconciliation.md` discipline |
 
-### (a) Skip-criteria
+### Skip-criteria (all 5 must hold for (a)):
 
-ALL 5 must hold:
+1. **Source ratification** — Director-originated OR Director-ratified-to-proceed
+2. **Scope concrete** — idea text declares in-scope, out-of-scope, anti-goals
+3. **No contest** — no engineer/peer pushback
+4. **Tele-aligned** — Tele alignment self-evident OR explicitly stated
+5. **Single-mission-shape** — not part of an idea-cluster requiring consolidation
 
-1. **Source ratification** — Director-originated OR Director-ratified-to-proceed (architect-relayed Director directive counts per `mission-lifecycle.md` §1.5.1)
-2. **Scope concrete** — idea text declares in-scope, out-of-scope, anti-goals; not a vague concept-stub
-3. **No contest** — no engineer/peer pushback; not under-specified at scope boundaries
-4. **Tele-aligned** — Tele alignment self-evident OR explicitly stated in idea text
-5. **Single-mission-shape** — not part of an idea-cluster requiring cross-idea consolidation
-
-When all 5 hold: architect calls `update_idea(status="triaged")` directly; capture skip-rationale in the update commit message OR architect-session note. Forward-mechanise: `idea.triageBypassReason` field captures rationale at status-flip time.
-
-### (b) Triage thread (bilateral negotiation needed)
-
-When any skip-criterion fails:
-- Engineer-surfaced idea needing architect ratification (criterion 1 fails)
-- Under-specified scope (criterion 2 fails)
-- Engineer/peer contesting or pushback (criterion 3 fails)
-- Tele alignment ambiguous (criterion 4 fails)
-
-Mechanism:
-- Open thread with `correlationId=idea-XX`, `semanticIntent=seek_approval` or `collaborative_brainstorm`
-- Bilateral converge → `close_no_action` staged action + non-empty `summary`
-- Cascade flips `idea.status` OR architect calls `update_idea` post-seal
-
-### (c) Queue-for-next-Strategic-Review
-
-When collection-reasoning warranted (criterion 5 fails or signals cluster):
-- **Idea-cluster** — overlapping scope with N other ideas (consolidation candidate)
-- **Cross-mission scope-flex** — could fold into multiple existing missions; warrants prioritization-pass
-- **Stale** — idea open >90 days without disposition
-- **Multi-architecture** — references multiple competing target-state architectures
-
-Architect leaves `status=open`; idea surfaces in next Strategic Review Phase 1 Cartography clustering. Architect captures queue-rationale via tag (e.g., `pending-strategic-review`) or thread on the idea.
+When any criterion fails, route to (b), (c), or (d) per anti-pattern guidance.
 
 ### Anti-patterns
 
-- **Architect-unilateral skip on engineer-surfaced idea** — engineer-source defaults to (b) triage thread for bilateral ratification; architect-judgment-bypass is constrained to architect-originated OR Director-originated ideas
-- **Triage thread on Director-ratified well-scoped idea** — adds bookkeeping overhead with zero bilateral-negotiation value; route via (a) skip-direct
-- **Indefinite queue-for-Strategic-Review** — ideas queued >90 days without surfacing in actual Strategic Review event accumulate as backlog rot; trigger Strategic Review when (c)-queue exceeds N=10 OR oldest queued idea exceeds 90 days
+- **Architect-unilateral skip on engineer-surfaced Idea** — defaults to (b) triage thread
+- **Triage thread on Director-ratified well-scoped Idea** — adds overhead with zero value; route via (a)
+- **Indefinite queue-for-next-SR** — Ideas queued >90 days without surfacing in actual SR event accumulate as rot; trigger SR when (c)-queue exceeds N=10 OR oldest queued idea exceeds 90 days
 
-### Forward-mechanise hooks
+The Idea Triage Protocol may be promoted to its own `docs/methodology/idea-triage.md` peer document in a future cycle; v2.0 includes it inline for self-containment.
 
-This protocol is documented + codified at v1.x. Future ideas/missions can mechanise the runtime layer:
+---
 
-- **`idea.triageBypassReason` field** — captures (a)-route skip-rationale at status-flip time; idea-129/130/131 vocabulary-chain composes
-- **Cascade trigger on Strategic Review thread convergence** — bulk-status-flip across queued (c)-route ideas
-- **Stale-idea trigger** — periodic check; >90 days open → architect inbox-item per `mission-lifecycle.md` §A row 1.1
-- **Idea-cluster detection** — Hub-side similarity heuristic flags new (c)-route candidates at filing time
+## Convergence criteria
 
-## Cold-Start Handover Pattern
+A Strategic Review run is complete when:
 
-Review spans sessions. New sessions must pick up cold. Every review instance document includes a **Cold-Start Checklist** at the top: the exact list of Hub entities + documents + local files the incoming agent must load before any phase work.
+1. Every in-scope entity has a disposition (cluster + triage route)
+2. Every new/updated Initiative declares Tele alignment + scope + anti-goals
+3. Reverse-gaps named (Teles without Initiatives; orphan Ideas surfaced)
+4. Per-run anti-goals captured with rationale
+5. Director-ratified
 
-Minimum checklist includes:
-- Methodology document (this file)
-- Instance document
-- Current canonical Tele spec
-- Entity vocabulary spec
-- Workflow-registry spec
-- Latest work-trace
-- Hub state queries: `list_ideas`, `list_bugs`, `list_missions`, `list_tele`, `list_threads` (recent)
+Deep mode adds: all 4 phase artifacts ratified per v1.0 phase convergence; cross-linked.
 
-Agent identity loads via `register_role` at session start.
+---
 
-## Artifact Conventions
+## Skill packaging (future)
 
-- All review artifacts authored in 4-section shape where applicable (Mandate / Mechanics / Rationale / Faults) — this IS the Zero-Loss Knowledge Tele applied to its own artifacts
-- Document-form concepts and defects are forward-compatible with eventual first-class Hub entities (idea-133 Concept, class-of-Bug Defect) — file structure should mirror expected entity schema
-- Each phase artifact cross-links its inputs (phase N-1) and outputs (phase N+1 inputs)
+This methodology is designed to mechanise into a `/strategic-review` skill (modelled on the Survey skill per `idea-survey.md`). Skill responsibilities:
 
-## Success Criteria for a Review
+- Accept `scope` parameter (multi-filter)
+- Accept `mode` parameter (`quick` / `standard` / `deep`)
+- Execute the workflow sub-steps with manual fallbacks where substrate gaps remain
+- Produce the per-run artifact in `docs/reviews/` per the shape above
+- Surface Director ratification touchpoint(s)
 
-A review is successful if:
+Skill landing is gated on this methodology being stable + the substrate dependencies progressing enough for the autonomy-target queries to start replacing manual fallbacks. v2.0 of the methodology is the spec; the skill is its mechanisation.
 
-1. 3–5 mission briefs produced, each concrete enough to start execution without additional design
-2. Concept register + Defect register documents exist, each entry cross-referenced
-3. Friction cartography with ranked domains exists
-4. Anti-goals list has ≥5 items with rationale
-5. All findings tie back to specific Hub state (idea/bug/thread/tele citations)
-6. Methodology gaps (places this template failed) captured in retrospective
+---
 
-## Review-of-the-Review (Retrospective)
+## Anti-patterns
 
-A review is not complete until it has a retrospective. Two variants:
+- **Review as backlog dump** — listing entities with no clustering or ranking
+- **Review as design session** — drafting implementations mid-review rather than naming Initiatives
+- **Skipping friction-surface** — jumping from inventory to prioritisation loses the reality-check step
+- **Unbounded sub-steps** — no convergence criteria means runs never close
+- **Concept proliferation** — naming every bug-cluster a "Concept" dilutes vocabulary; Concepts are *structural*, Defects are *symptomatic*
+- **Missing anti-goals** — without explicit deferrals, the run's consensus gets re-litigated next time
+- **Mission production inside SR** — Designs + Mission briefs are downstream (Survey + Design phases); SR produces Initiatives, not Designs
+- **Per-entity tool-surface in Initiative output** — defer per `feedback_defer_tool_surface_to_idea_121`; use verb-tool with `kind: Initiative` (or umbrella-Idea proxy today)
+- **Architect-autonomy claim without graph substrate** — until idea-151 + lineage-capture land, autonomy is aspirational; the methodology spec is correct but execution remains co-driven
 
-### Retrospective-lite (optional; methodology-only; early-trigger)
+---
 
-**Purpose:** capture methodology-level observations while session context is fresh. Input to the formal retrospective; does not supersede it.
-**When:** after mission filing but before first mission ships. Typically same-session as Phase 4 closure.
-**Scope:** methodology deltas only — observations about the review process, not about mission outcomes.
-**Artifact:** `docs/reviews/<date>-retrospective-lite.md`.
-**Authority:** architect-authored; Director-ratifiable independently of mission shipment.
+## Provenance
 
-### Formal retrospective (required; mission-outcome-triggered)
+- **v1.0** authored 2026-04-21 by architect; mission-30 (M-Ideas-Audit) was its first execution. Filed as heavy planning event.
+- **v1.0 → v2.0 reframe** discussed 2026-05-23 between Director + architect (lily). Triggering insight: the Threads v3 cartography arc (PRs #256-#260) ran v1.0 as Deep-mode informally and surfaced multiple structural gaps:
+  - Phase 1 "facts only" framing is aspirational; clustering IS interpretation
+  - Phase 4 was composition, not draft-and-critique (2026-04 retrospective-lite Delta 4)
+  - Daily-runnable cadence was structurally impossible under v1.0's 6-step × 4-phase protocol
+  - Output type was misnamed: "mission briefs" are Designs (downstream); SR's true output is the *Initiative* tier
+  - Architect-autonomy intent was implicit; methodology should be designed at the autonomy target
+- **Entity-model derivation** (Director-led, architect-validated 2026-05-23):
+  - Initiative as first-class Tier-1 entity, peer of Tele (axis-vs-vector)
+  - Concept + Defect as Tier-2 class-layer peers (orthogonal to instance chain)
+  - M-N cardinality across cross-tier relations (cross-leverage as prioritisation signal)
+  - Initiative + Concept + Defect promote ship-all-together (substrate-extension)
+- **Autonomy intent** (Director-articulated 2026-05-23): with robust entity relationships + formalised SR process + Class-Tier entities, the architect can autonomously learn, triage, and propose Initiatives + critical-path items.
+- **2026-04 retrospective-lite deltas** (`docs/reviews/2026-04-retrospective-lite.md`) — most absorbed structurally by the v2.0 reframe; non-overlapping items (convergence bounds, amendment protocol) carried forward into the workflow shape.
 
-**Trigger:** when the first ratified mission output ships (or blocks on something non-trivial).
+### Carried forward from v1.0
 
-**Questions the retrospective answers:**
-- Did the prioritization hold up once we started executing?
-- What did we miss in friction cartography?
-- What was easier than predicted? Harder?
-- Did Concept + Defect proxies earn their keep?
-- What should change in the methodology for next time?
+- Tele-leverage scoring (now formalised as per-Initiative declared field)
+- Reverse-gap concept (now structural in §Tier 1 + §sub-step 7)
+- Partial-scope guardrails (now generalised as multi-dimensional scope filtering)
+- Cold-start handover pattern (preserved; skill packaging will mechanise the checklist)
+- Idea Triage Protocol (preserved inline; candidate for promotion to peer doc)
+- Anti-patterns (selected; updated to v2.0 framing)
 
-**Artifact:** `docs/reviews/<date>-retrospective.md`. Feed any methodology edits back into this document (versioned).
+### Superseded from v1.0
 
-## Anti-patterns (do not do)
+- 4-phase mandatory decomposition (now Deep-mode only)
+- 6-step Director-first critique protocol per phase (now per-run for Standard/Quick)
+- "Output = 3-5 ratified mission briefs" (now Initiatives, not briefs)
+- "Phase 1 facts only" framing (clustering IS interpretation; Phase 1 produces an interpreted cartography)
+- Phase 3 "concepts/defects as document-form proxies" framing (now class-layer extraction is emergent + occasional; doc-proxies remain transitional)
 
-- **Review as backlog dump** — listing every idea with no clustering or ranking
-- **Review as design session** — drafting implementations mid-review rather than producing briefs
-- **Skipping Phase 2** — jumping from inventory to prioritization without friction analysis loses the reality-check step
-- **Unbounded phases** — no convergence criteria means phases never close; agent time compounds into ceremony
-- **Concept proliferation** — naming every bug cluster as a "concept" dilutes the vocabulary; Concepts are structural, not symptomatic (symptoms are Defects)
-- **Missing anti-goals** — without explicit deferrals, the review's consensus gets re-litigated by the next session
+### Next
+
+- The first Standard-mode SR run of this v2.0 will be the Threads v3 cartography's downstream prioritisation pass (using the existing cartography v1.1 + companion v1.1 as Phase-1-equivalent inputs).
+- The first SR runs surface the substrate-extension Initiatives (idea-121 + idea-126 + idea-151 + Class-Tier promotion) on the critical path; autonomy progressively activates as each lands.
+- A formal retrospective fires after the first Standard-mode SR ships its first downstream mission.
