@@ -17,32 +17,48 @@ If you're picking up cold, read in this order:
 1. **This file.**
 2. **Survey-of-record:** `docs/reviews/2026-05-23-survey-idea-126.md` (PR #264; Director-ratified A/A/A).
 3. **Cartography + SR context:** `docs/reviews/2026-05-23-threads-v3-cartography.md` v1.1 (§6 W1 wire-substrate) + `docs/reviews/2026-05-23-sr-threads-v3.md` v1.1 (§7 critical-path).
-4. **Bilateral Design thread:** thread-634 (architect-engineer Phase 4 Design; correlationId=design-idea-126).
-5. **Anti-goals carried forward:** Survey §6 (10 anti-goals) + Design Round 1 additions (5 engineer-side: no historical backfill / no cognitive-surface depth without ergonomic check / additive-only at metadata/spec/status partition until apiVersion bump / no IaC-runtime / operator-DX preserved through cutover). DO NOT re-litigate without explicit Director surface.
-6. **Composition surfaces:**
-   - bug-118 fix (substrate-wide bug-lineage `metadata.sourceThreadId` capture) — **IN SCOPE** as part of this Mission.
+4. **Bilateral Design threads:** thread-634 (Phase 4 Design Round 1; closed) + thread-635 (Phase 5 Manifest bilateral; active).
+5. **Phase 4 Design artefacts (5 cluster docs; merged to main):**
+   - cluster-1 substantive-content (Idea/Bug/Thread/Mission/Proposal) — d8ea695 / PR #267
+   - cluster-2 queue/FSM-active (Task/PendingAction/Turn) — 59c3a70 / PR #268
+   - cluster-3 metadata/config/projection (Agent/Tele/SchemaDef/Counter) — ddf7bb1 / PR #270
+   - cluster-4 system-emit/bookkeeping (Message/Audit/RepoEventBridgeCursor/RepoEventBridgeDedupe; Notification DROPPED at v0.2) — 3b1819a / PR #271
+   - cluster-5 content-archive (Document/ArchitectDecision/DirectorHistoryEntry/ReviewHistoryEntry/ThreadHistoryEntry) — 71690de / PR #272
+6. **Anti-goals carried forward:** Survey §6 (10 anti-goals) + Design Round 1 additions (5 engineer-side: no historical backfill / no cognitive-surface depth without ergonomic check / additive-only at metadata/spec/status partition until apiVersion bump / no IaC-runtime / operator-DX preserved through cutover). DO NOT re-litigate without explicit Director surface.
+7. **Composition surfaces:**
+   - bug-118 fix (substrate-wide bug-lineage `metadata.sourceThreadId` capture) — **IN SCOPE**; covered by cluster-1 + cluster-2 via `shared/provenance.ts`.
    - idea-121 (M-API-v2.0; `get_resource_shape` interface) — composes at Phase B; this Mission commits to SchemaDef shape only.
    - idea-151 (M-Graph-Relationships) — parallel-trackable W4 work; orthogonal substrate layer.
-7. **Current cadence:** Phase 4 Design bilateral; round 1 landed; awaiting architect Round 2 integration of engineer-side dispositions on Q2/Q4/Q5 + 5 additional Design dimensions.
+   - bug-97 (Counter-collision substrate-defect; mission-83 W5.4 open) — engineer-side **RECOMMEND** separate-and-prior to W3 per OQ6 disposition; awaiting architect Round-2 ratification.
+8. **Current cadence:** Phase 5 Manifest bilateral active (thread-635). Engineer Round-1 reply landed 2026-05-24 ~09:56 AEST covering 13 OQs + 5 additional surfacings. Awaiting architect Round 2 integration.
 
 ---
 
 ## In-flight
 
-▶ **Phase 4 Design — bilateral round in flight.**
-- thread-634 round 1 landed (engineer reply 2026-05-23 ~09:00 AEST).
-- Engineer dispositions queued for architect integration:
-  - **Q1 (per-kind partition strategy):** concur one-pass + batched-review at kinds 5/10/15/20; recommend grouping by structural similarity (substantive-content / queue-FSM / metadata-config / audit-event clusters).
-  - **Q2 (migration-script architecture; engineer-fronts):** per-kind modules under `hub/src/storage-substrate/migrations/v2-envelope/kinds/*.ts` with central registry runner + shared utilities (`metadata-extract`, `provenance`) extracted to `shared/` for unit-test surface.
-  - **Q3 (rollback strategy):** (a) forward-only + image-tag-pin rollback + **mandatory pre-cutover dry-run validation** against read-only postgres snapshot.
-  - **Q4 (test architecture):** 3-layer (per-kind unit + integration wire-flow + cutover rehearsal e2e); CI-gate blocking.
-  - **Q5 (bug-118 composition):** clean fit; `shared/provenance.ts` extracts session-context at write-time; forward-looking only (anti-goal: no historical backfill).
-- Engineer-surfaced additional Design dimensions (Q6–Q10):
-  - **Q6:** `apiVersion` evolution discipline (additive-only at partition level → preserve v1; bump v2 only for non-additive).
-  - **Q7:** Filter-path-naming convention for `list_*` post-cutover (`FilterableField.path` declaration in per-kind SchemaDef).
-  - **Q8:** Cognitive-surface fields top-level vs spec (engineer-recommend top-level for ergonomic; per-kind decision at partition pass).
-  - **Q9:** `get_resource_shape` interface contract deferred to idea-121 Design; this Mission commits SchemaDef shape only.
-  - **Q10:** Operator-DX migration aids (`get-entities.sh` + `psql-cookbook.md` updates) included in cutover scope.
+▶ **Phase 5 Manifest — bilateral round in flight (thread-635).**
+- Architect dispatched v0.1 wave plan + 13 OQs 2026-05-24 ~09:51 AEST.
+- Engineer Round-1 reply landed 2026-05-24 ~09:56 AEST (verified all 5 cluster Designs via origin/main read).
+- Engineer dispositions (concur unless flagged):
+  - **OQ1 (wave shape):** CONCUR cluster-mirrored W1→W5 + W6.
+  - **OQ2 (missionClass):** CONCUR `substrate-introduction`.
+  - **OQ3 (cutover-window):** CONCUR tolerant-dual-shape W0-W5 + strict-flip at W6.
+  - **OQ4 (migration approach):** CONCUR in-place SQL JSONB (per-kind modules under `hub/src/storage-substrate/migrations/v2-envelope/kinds/*.ts`).
+  - **OQ5 (SchemaDef self-migration):** CONCUR W3; flag restart-during-migration test at W3 acceptance gate.
+  - **OQ6 (Counter / bug-97):** **RECOMMEND SEPARATE-AND-PRIOR** to W3 (engineer-side substrate-defect-scope discipline; not fold-in).
+  - **OQ7 (reader-side parse):** CONCUR tolerant W0-W5 + strict at W6 (natural OQ3 pairing).
+  - **OQ8 (per-wave acceptance gate):** CONCUR full read/write/wire-flow per wave (calibration #62 territory).
+  - **OQ9 (entity-ID prefix retention):** CONCUR `metadata.name` preservation (operator-DX hard requirement).
+  - **OQ10 (production cutover timing):** CONCUR single W6 Hub-redeploy; flag pre-prod-substrate-mirror dependency at Phase 6 Preflight.
+  - **OQ11 (in-flight items):** **RECOMMEND hybrid** drain (PendingAction-sweeper) + tolerant-shape (Turn) + write-freeze (Task) — sub-OQ11 per-kind disposition.
+  - **OQ12 (bug-117 / bug-118):** bug-118 ALREADY in scope (cluster-1 + cluster-2 via `shared/provenance.ts`); **bug-117 needs clarification** (not found in docs/bugs/).
+  - **OQ13 (pulse cadence):** CONCUR ~30min default; recommend per-wave relaxation (W0/W5 ~60min; W6 tighten to ~15min during redeploy).
+- Engineer additional surfacings (5):
+  - **A1:** bug-117 clarification (architect-side).
+  - **A2:** Migration script idempotency + checkpoint-resume per-kind.
+  - **A3:** Pre-prod substrate-mirror availability (Phase 6 Preflight gate).
+  - **A4:** Operator-DX cutover continuity (`get-entities.sh` + `psql-cookbook.md` per-wave).
+  - **A5:** entity-kinds.json v1.3 update timing (W0 substrate-prep; ThreadHistoryEntry add).
 
 ---
 
@@ -86,7 +102,11 @@ If you're picking up cold, read in this order:
 
 ## Done this session
 
-✅ **Phase 4 Design Round 1 engineer reply landed** (thread-634, 2026-05-23 ~09:00 AEST). Substantive engagement on architect's 5 starter questions + 5 additional engineer-side dimensions surfaced. Awaiting architect Round 2.
+✅ **Phase 4 Design Round 1 engineer reply landed** (thread-634, 2026-05-23 ~09:00 AEST). Substantive engagement on architect's 5 starter questions + 5 additional engineer-side dimensions surfaced.
+
+✅ **Phase 4 Design CLOSED by architect** with 5 cluster Design docs merged to main (PRs #267-#272 / commits d8ea695, 59c3a70, ddf7bb1, 3b1819a, 71690de). 21 substrate-mediated kinds per entity-kinds.json v1.3 (Notification dropped at cluster-4 v0.2 per engineer substrate-currency catch).
+
+✅ **Phase 5 Manifest Round-1 engineer reply landed** (thread-635, 2026-05-24 ~09:56 AEST). 13 OQs + 5 additional surfacings (A1-A5). All 5 cluster Designs read in full to ground responses. Awaiting architect Round 2.
 
 ✅ **Work-trace spawned** (this file).
 
