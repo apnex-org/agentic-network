@@ -1,10 +1,19 @@
 # M-K8s-Envelope — Cluster 3 Metadata/Config/Projection Partition (Design Working Draft)
 
-**Status:** v0.1 — architect-fronted; awaiting engineer review
+**Status:** v0.2 — engineer review-integrated · awaiting approval
 **Mission:** idea-126 (M-K8s-Envelope)
 **Phase:** Phase 4 Design — cluster-3 partition pass (3 of 5 clusters per substrate-grounded decomposition)
-**Coordination:** per-PR review (per `feedback_pr_opened_notification_is_review_signal` v2 scope-refinement — initial PR-open IS the signal; v0.2 fold-in pushes get explicit `create_message` ping until M-PR-Synchronize-Handler / idea-315 lands)
-**Date:** 2026-05-23 AEST
+**Coordination:** per-PR review (per `feedback_pr_opened_notification_is_review_signal` v2 scope-refinement — initial PR-open IS the signal; v0.2 fold-in pushes get explicit `create_message` ping until M-PR-Synchronize-Handler / idea-315 lands). **This v0.2 commit exercises the refined memory rule: explicit ping to greg post-push.**
+**Date:** 2026-05-23 AEST (v0.2: engineer PR #270 v0.1 review integrated)
+
+**v0.1 → v0.2 changelog (engineer PR #270 review integration):**
+- §2.1 Agent — OQ1-OQ5 dispositions applied; all concur with v0.1 + K8s-precedent rationale notes added (PodSpec affinity for OQ1; metadata.deletionTimestamp for OQ2)
+- §2.2 Tele — stub partition → full JSON Schema; OQ6-OQ9 applied (all concur)
+- §2.3 SchemaDef — stub partition → full JSON Schema; OQ10-OQ13 applied. **OQ10 SUBSTANTIVE DEVIATION accepted**: SchemaDef gets `status.phase: "applied" | "pending" | "failed"` + `status.lastReconciledAt` per engineer's K8s CRD precedent (CustomResourceDefinition.status.conditions) + operator-DX queryability gain
+- §2.4 Counter — stub partition → full JSON Schema option (a); OQ14 ratified (engineer concur with K8s ConfigMap precedent); OQ15 ratified (singleton-meta-entity → name OMITTED)
+- §1.6 NEW — Multi-FSM-in-status sub-discipline (engineer observation #1)
+- §5 NEW 6th cumulative-pattern: declared-routing-intent (spec.labels) vs declared-content-classification (metadata.labels) axis (engineer observation #3 — OQ1 surfaced this)
+- §5 NEW singleton-meta-entity forward-question (engineer observation #2) — third class beyond §1.5 handle/content binary; formalize if clusters 4/5 surface more
 **Sibling Designs:**
 - Cluster 1 — substantive-content (Idea / Bug / Thread / Mission / Proposal) — **MERGED** at `d8ea695`
 - Cluster 2 — queue/FSM-active (Task / PendingAction / Turn) — **MERGED** at `59c3a70`
@@ -44,6 +53,27 @@
 - Counter: **bookkeeping-only** (special-case; OQ on envelope-shape applicability)
 
 **Methodology note (cluster-3-specific):** unlike cluster-1 (default-to-spec) and cluster-2 (default-to-status on FSM-mutated), cluster-3 partitions per-kind based on the kind's dominant pattern. Per-field partition follows strict K8s rules within each kind.
+
+---
+
+## §1.6 K8s-convention sub-discipline — multi-FSM in status
+
+**Surfaced at v0.2 engineer review observation #1.** Cluster-3 Agent introduces the first kind with **multiple orthogonal FSMs** in its observed state — 4 distinct FSMs in `Agent.status`:
+
+| FSM | Field | Domain |
+|---|---|---|
+| **Primary** | `status.phase` | `online \| offline` (registration FSM) |
+| Liveness composite (ADR-017) | `status.livenessState` | `online \| unresponsive_cognitive \| unresponsive_transport \| offline` |
+| Activity (Mission-62) | `status.activityState` | online_idle / online_working / online_quota_blocked / offline |
+| Component-TTL pair (Mission-75) | `status.cognitiveState` + `status.transportState` | `alive \| unresponsive \| unknown` each |
+
+**Methodology rule:** multi-FSM kinds carry **all FSMs in status as independent observables**. The K8s convention `status.phase` is reserved for the **primary FSM** (the kind's canonical lifecycle FSM — for Agent, it's the registration lifecycle online/offline). Additional FSMs use **semantically-named status fields** (livenessState / activityState / cognitiveState / transportState) — not nested under `status.phase` or extra-discriminated.
+
+**K8s precedent:** Pod.status carries `status.phase` (Pending/Running/Succeeded/Failed) AS WELL AS `status.conditions[]` (PodScheduled / Ready / Initialized / ContainersReady) — same pattern: primary FSM at `status.phase`, additional state-observations as siblings.
+
+**Forward signal for clusters 4/5:** if Notification / Message / RepoEventBridge* kinds surface multi-FSM patterns, follow Agent's precedent (primary at `status.phase`; additional FSMs as named status fields).
+
+This sub-discipline composes with §1.5 (handle vs content classification axis) — both are envelope-methodology refinements articulated in cluster-3.
 
 ---
 
@@ -210,15 +240,17 @@ Config (mission-75 Director Declarative-Primacy):
 }
 ```
 
-**Partition rationale (Agent):**
-- **`name` → `metadata.name`** — handle-classified per §1.5 cluster-2; Agent.name IS identity (sourced from `OIS_AGENT_NAME`; drives fingerprint + agentId derivation). Second cluster-3 kind to use `metadata.name` (after cluster-2 Turn).
+**Partition rationale (Agent) — v0.2 with engineer dispositions:**
+- **`name` → `metadata.name`** — handle-classified per §1.5 cluster-2; Agent.name IS identity (sourced from `OIS_AGENT_NAME`; drives fingerprint + agentId derivation). First of three cluster-3 kinds to use `metadata.name` (Agent + Tele + SchemaDef all use it).
 - **`fingerprint` → metadata** — identity-derived; immutable. Cleaner in metadata as identity-shape.
-- **`archived` → metadata** — append-only deletion marker; identity-disposition shape.
+- **`archived` → metadata** (engineer OQ2 concur with K8s precedent: **`metadata.deletionTimestamp`** is the exact analog — deletion/archival markers live in metadata. Plus archived is append-only post-archive → identity-disposition shape, not observable mutating state).
 - **`role` → spec** — declared identity; immutable post-creation; carries declared-intent semantic ("this agent declares its role").
-- **`labels` → spec.labels** (Mission-19) — **OQ1 below**. v0.1 picks spec because labels are declared-routing-affinity (K8s PodSpec precedent), not content-classification (cluster-1 pattern). **Engineer disposition welcome.**
+- **`labels` → spec.labels** (engineer OQ1 concur with K8s **PodSpec** scheduling-affinity precedent — Mission-19 labels ARE declared-routing-affinity (the agent declares which routing surface it serves) — not content-classification (cluster-1 pattern)). **This OQ1 disposition surfaces a load-bearing axis: declared-routing-intent (spec.labels) vs declared-content-classification (metadata.labels). See §5 6th cumulative-pattern.**
 - **`receiptSla`/`wakeEndpoint`/`livenessConfig`/`pulseConfig`/`clientMetadata` → spec** — declared at handshake; declared-with-controlled-mutation class (handshake refresh per CP3 C5 / bug-16). K8s precedent: PodSpec carries scheduling parameters.
-- **`status` (online/offline primary FSM) → `status.phase`** — 1:1 rename per K8s convention.
-- **All FSM/observed/telemetry fields → status** — sessionEpoch, currentSessionId, livenessState, lastHeartbeatAt, activityState, all *Since/quotaBlockedUntil, cognitive/transport TTL/State, adapterVersion (handshake-observed), ipAddress (Hub-derived), advisoryTags (Hub-projected), restartCount/restartHistoryMs/recentErrors.
+- **`clientMetadata` opaque-in-spec** (engineer OQ3 concur — sibling of cluster-2 PendingAction.spec.payload opaque-payload disposition; M18 handshake payload is consumed as a whole at register-time; sub-partition would add complexity without queryability gain).
+- **`status` (online/offline primary FSM) → `status.phase`** — 1:1 rename per K8s convention; primary FSM per §1.6 multi-FSM discipline.
+- **All FSM/observed/telemetry fields → status** — sessionEpoch, currentSessionId, livenessState (composite ADR-017), activityState (Mission-62), cognitive/transport TTL/State (Mission-75 — engineer OQ5 concur — observed Hub-side per Design v1.0 §3.1 truth-table; same partition rationale as livenessState). Multi-FSM in status per §1.6.
+- **`advisoryTags` → status** (engineer OQ4 concur — Hub-derived projection of declared-data at handshake; observed not declared; sibling of cluster-2 PendingAction.status.continuationState Hub-derived state).
 - **`firstSeenAt` → `metadata.createdAt`** (uniformity rename per cluster-2 PendingAction pattern).
 - **`lastSeenAt` → `metadata.updatedAt`** (uniformity rename).
 
@@ -230,16 +262,9 @@ Config (mission-75 Director Declarative-Primacy):
 - `Agent.lastSeenAt` → `Agent.metadata.updatedAt`
 - All other top-level → status.* or spec.* per partition above
 
-**Open questions (Agent) — engineer audit:**
-- **OQ1**: `Agent.labels` placement — `spec.labels` (declared-routing-affinity; PodSpec precedent) vs `metadata.labels` (cluster-1 content-classification pattern). v0.1 picks spec per K8s precedent + Mission-19 semantic ("agent declares routing surface at handshake"). Engineer disposition welcome.
-- **OQ2**: `archived` placement — currently `metadata.archived` (identity-disposition). Alternative: `status.archived` (observable state). K8s precedent: `metadata.deletionTimestamp` lives in metadata (sibling of `archived`). v0.1 picks metadata; engineer audit.
-- **OQ3**: `clientMetadata` size — full M18 handshake payload (~10 fields). Stays in spec as opaque sub-object OR partition further? v0.1 picks opaque-in-spec (sibling of cluster-2 PendingAction opaque-payload disposition).
-- **OQ4**: `advisoryTags` — mission-66 build-identity projections. Currently Hub-computed from clientMetadata; clearer fit in status (Hub-derived) vs spec (declared). v0.1 picks status (Hub-projected, observed).
-- **OQ5**: Component-TTL fields (`cognitiveTTL`/`transportTTL`/`cognitiveState`/`transportState`) — mission-75 added; orthogonal to composite livenessState. All four in status (correct partition). v0.1 confirmed.
-
 ---
 
-### §2.2 Tele — partition (v0.1; full at v0.2 per engineer dispositions)
+### §2.2 Tele — partition (v0.2 fill per engineer dispositions)
 
 **Existing flat shape** (per `hub/src/entities/tele.ts`):
 - `id`, `name`, `description`, `successCriteria` (markdown)
@@ -248,22 +273,86 @@ Config (mission-75 Director Declarative-Primacy):
 - `retiredAt?` (when status=retired; ISO timestamp)
 - `createdBy?`, `createdAt`
 
-**Stub partition (v0.1 — engineer-confirm at v0.2):**
+**Partition:**
 
-| Field | Section | Rationale |
-|---|---|---|
-| `id`, `createdAt`, `createdBy` | metadata | identity + provenance |
-| `name` | **metadata.name** | handle-classified per §1.5 cluster-2 (Tele names are short handles like "T1-Strategic-Clarity"; substantive content is `description` + `successCriteria`) |
-| `description`, `successCriteria` | spec | declared substantive content; immutable post-creation per Mission-43 ("content remains immutable; only lifecycle fields mutate") |
-| `phase` (renamed from `status`) | status | 3-state lifecycle FSM (`active → superseded → retired`) |
-| `supersededBy` | status | populated at superseded transition; observed lineage pointer |
-| `retiredAt` | status | populated at retired transition; FSM-transition timestamp |
+```json
+{
+  "name": "Tele",
+  "apiVersion": "core.ois/v1",
+  "envelope-v2": {
+    "metadata-schema": {
+      "type": "object",
+      "required": ["id", "kind", "apiVersion", "createdAt", "name"],
+      "properties": {
+        "id":         { "type": "string", "pattern": "^tele-[0-9]+$" },
+        "kind":       { "const": "Tele" },
+        "apiVersion": { "const": "core.ois/v1" },
+        "createdAt":  { "type": "string", "format": "date-time" },
+        "createdBy":  { "$ref": "#/definitions/Author" },
+        "name":       {
+          "type": "string",
+          "description": "Engineer OQ6 concur: handle-classified per §1.5; short handles like 'T1-Strategic-Clarity'. Third kind in cluster-3 to use metadata.name (after Agent; SchemaDef also uses it)."
+        }
+      }
+    },
+    "spec-schema": {
+      "type": "object",
+      "required": ["description", "successCriteria"],
+      "properties": {
+        "description":     {
+          "type": "string",
+          "description": "Declared substantive content; immutable post-creation per Mission-43 zero-backfill discipline."
+        },
+        "successCriteria": {
+          "type": "string",
+          "description": "Engineer OQ7 concur: markdown-body shape; matches Mission.spec.goal / Proposal.spec.body / Turn.spec.scope pattern (declared substantive content in spec)."
+        }
+      }
+    },
+    "status-schema": {
+      "type": "object",
+      "required": ["phase"],
+      "properties": {
+        "phase": {
+          "enum": ["active", "superseded", "retired"],
+          "description": "3-state lifecycle FSM. Migrated 1:1 from current flat Tele.status field."
+        },
+        "supersededBy": {
+          "type": ["string", "null"],
+          "pattern": "^tele-[0-9]+$",
+          "description": "Engineer OQ8 concur: populated at superseded transition; observed lineage pointer. Inline FK at cluster-3 cutover; idea-151 Relationship-kind extraction post-cutover (same disposition as Task.dependsOn / Turn.tele[])."
+        },
+        "retiredAt": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Populated at retired transition; FSM-transition timestamp."
+        }
+      }
+    },
+    "filterable-fields": [
+      { "shorthand": "phase",          "path": "status.phase" },
+      { "shorthand": "name",           "path": "metadata.name" },
+      { "shorthand": "supersededBy",   "path": "status.supersededBy" },
+      { "shorthand": "createdBy.role", "path": "metadata.createdBy.role" }
+    ]
+  }
+}
+```
 
-**Open questions (Tele) — engineer audit:**
-- **OQ6**: `name` placement (`metadata.name`) — Tele follows the handle-classified pattern (cluster-2 §1.5). Substantive content lives in `spec.description` + `spec.successCriteria`. v0.1 picks metadata.name; engineer confirm.
-- **OQ7**: `successCriteria` placement — markdown-body shape. Sibling of cluster-2 Turn.spec.scope (Mission.goal / Proposal.body cluster-1 pattern). v0.1 picks spec.
-- **OQ8**: `supersededBy` is a FK pointer to successor Tele id. idea-151 Relationship-kind candidate (`{from: tele-A, to: tele-B, edgeType: "superseded_by"}`)? v0.1 picks status.supersededBy inline at cluster-3 cutover; idea-151 follow-on Mission carves out if applicable. Same disposition as Task.dependsOn / Turn.tele[].
-- **OQ9**: Tele content-immutability discipline (per Mission-43 Decision 2; zero-backfill) — preserved post-envelope? Yes — spec immutability is a write-boundary policy, not envelope-shape concern. v0.1 confirmed.
+**Partition rationale (Tele) — v0.2 with engineer dispositions:**
+- **`name` → `metadata.name`** (engineer OQ6 concur; handle-classified per §1.5 cluster-2).
+- **`description`/`successCriteria` → spec** (engineer OQ7 concur; markdown-body shape; declared substantive content immutable per Mission-43).
+- **`status` → `status.phase`** (1:1 rename; 3-state FSM preserved).
+- **`supersededBy` → status** (engineer OQ8 concur; observed lineage pointer; inline at cluster-3 cutover; idea-151 follow-on extraction).
+- **`retiredAt` → status** (FSM-transition timestamp).
+- **`createdBy` → metadata** (cluster-1 §3.1 pattern).
+- **Content-immutability discipline preserved** (engineer OQ9 confirm — write-boundary policy at `tele-repository.ts` putIfMatch CAS retry; not envelope-shape concern).
+
+**Field renames visible post-cutover (Tele):**
+- `Tele.status` (flat FSM) → `Tele.status.phase`
+- `Tele.name` → `Tele.metadata.name`
+- `Tele.description`/`successCriteria` → `Tele.spec.*`
+- `Tele.supersededBy`/`retiredAt` → `Tele.status.*`
 
 **Composition checkpoints:**
 - CAS retry on supersede/retire (per `tele-repository.ts:157`) preserves under envelope (substrate-level putIfMatch per Design v1.4 §2.1).
@@ -271,7 +360,7 @@ Config (mission-75 Director Declarative-Primacy):
 
 ---
 
-### §2.3 SchemaDef — partition (v0.1; full at v0.2 per engineer dispositions)
+### §2.3 SchemaDef — partition (v0.2 fill per engineer dispositions)
 
 **Existing flat shape** (per `hub/src/storage-substrate/types.ts:14-25` — NEW per mission-83 W2):
 - `kind` (string — entity kind this defines, e.g., "Message")
@@ -280,33 +369,109 @@ Config (mission-75 Director Declarative-Primacy):
 - `indexes[]` (IndexDef[] — hot fields with per-kind expression indexes)
 - `watchable` (boolean — wire NOTIFY trigger; substrate-internal-events excluded)
 
-**Stub partition (v0.1 — engineer-confirm at v0.2):**
+**Partition:**
 
-| Field | Section | Rationale |
-|---|---|---|
-| `id` (= `kind`-name as PK per entity-kinds.json) | metadata.id | substrate uses kind-name as the PK (single SchemaDef per kind; latest-version-wins) |
-| `kind` | metadata.name | the entity kind this defines (Idea / Bug / Message / etc.); name semantically identifies the SchemaDef instance |
-| `version` | **spec.version** | declared schema-version; bumped on shape change |
-| `fields[]` | spec.fields | declared field schema |
-| `indexes[]` | spec.indexes | declared expression-index list |
-| `watchable` | spec.watchable | declared NOTIFY-trigger preference |
+```json
+{
+  "name": "SchemaDef",
+  "apiVersion": "core.ois/v1",
+  "envelope-v2": {
+    "metadata-schema": {
+      "type": "object",
+      "required": ["id", "kind", "apiVersion", "createdAt", "name"],
+      "properties": {
+        "id":         {
+          "type": "string",
+          "description": "PK equals the kind-name this SchemaDef describes (per entity-kinds.json; single SchemaDef per kind; latest-version-wins via spec.version)."
+        },
+        "kind":       { "const": "SchemaDef" },
+        "apiVersion": { "const": "core.ois/v1", "description": "Engineer OQ12 concur: uniform core.ois/v1 honors Survey Q2-A R2 minimal-2-group-taxonomy ratification, over K8s `apiextensions.ois.io/v1` analog (which is real but optional precedent)." },
+        "createdAt":  { "type": "string", "format": "date-time" },
+        "updatedAt":  { "type": "string", "format": "date-time" },
+        "name":       {
+          "type": "string",
+          "description": "Engineer OQ13 concur: metadata.name = <kind-name> (e.g., 'Idea', 'Bug', 'Message') per K8s CRD precedent (CustomResourceDefinition.metadata.name = 'tasks.batch.k8s.io'). Handle-classified per §1.5."
+        }
+      }
+    },
+    "spec-schema": {
+      "type": "object",
+      "required": ["version", "fields", "indexes", "watchable"],
+      "properties": {
+        "version":   { "type": "integer", "minimum": 1, "description": "Declared schema version; bumped on shape change. Reconciler reads latest." },
+        "fields":    {
+          "type": "array",
+          "items": { "$ref": "#/definitions/FieldDef" },
+          "description": "Declared field schema (validation-only, not column-promote since Flavor A per Design v1.1 §2.3)."
+        },
+        "indexes":   {
+          "type": "array",
+          "items": { "$ref": "#/definitions/IndexDef" },
+          "description": "Hot fields with per-kind expression indexes; reconciler emits DDL post-init."
+        },
+        "watchable": {
+          "type": "boolean",
+          "description": "Wire NOTIFY trigger for this kind (default true; substrate-internal-events excluded — e.g., Counter is false per cluster-3 §2.4 + bug-93 bookkeeping context)."
+        }
+      }
+    },
+    "status-schema": {
+      "type": "object",
+      "required": ["phase"],
+      "properties": {
+        "phase": {
+          "enum": ["pending", "applied", "failed"],
+          "description": "Engineer OQ10 SUBSTANTIVE DEVIATION ACCEPTED: SchemaDef gets reconciliation state on envelope per K8s CRD precedent (CustomResourceDefinition.status.conditions[] carries NamesAccepted / Established / etc.). pending = reconciler hasn't processed yet; applied = DDL emitted + indexes created successfully; failed = reconciler error (see status.reconcileError). Operator-DX queryability: `SELECT id FROM entities WHERE kind='SchemaDef' AND data->'status'->>'phase'='failed';`"
+        },
+        "lastReconciledAt": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Reconciler timestamp; set on phase transition to applied / failed."
+        },
+        "reconcileError": {
+          "type": ["string", "null"],
+          "description": "Populated when phase=failed; carries error message from reconciler for operator-DX surface."
+        },
+        "appliedVersion": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Spec version that was successfully applied (may lag spec.version when reconciler is mid-flight or failed on a pending bump)."
+        }
+      }
+    },
+    "filterable-fields": [
+      { "shorthand": "phase",           "path": "status.phase" },
+      { "shorthand": "name",            "path": "metadata.name" },
+      { "shorthand": "version",         "path": "spec.version" },
+      { "shorthand": "appliedVersion",  "path": "status.appliedVersion" },
+      { "shorthand": "watchable",       "path": "spec.watchable" }
+    ]
+  }
+}
+```
 
-**Status partition:** SchemaDef has **NO observed-state component**. The substrate reconciler reads SchemaDef + emits DDL; reconciliation success/failure is logged externally but not stored on SchemaDef itself. v0.1 picks **empty status block** (only `status.phase` required by uniformity convention — could enum on `"applied" | "pending"` if reconciliation state needs surfacing). **OQ10.**
+**Partition rationale (SchemaDef) — v0.2 with engineer dispositions:**
+- **`id` = kind-name (PK)** — preserves entity-kinds.json substrate-mediated property (single SchemaDef per kind).
+- **`name` → `metadata.name = <kind-name>`** (engineer OQ13 concur; K8s CRD precedent; handle-classified per §1.5).
+- **`apiVersion: "core.ois/v1"`** (engineer OQ12 concur; Survey Q2-A R2 minimal-taxonomy ratification preserved over K8s CRD `apiextensions.*` analog).
+- **`version`/`fields`/`indexes`/`watchable` → spec** (declared schema configuration; immutable except via explicit version bump).
+- **`status.phase: "pending" | "applied" | "failed"`** (**engineer OQ10 SUBSTANTIVE DEVIATION ACCEPTED** — K8s CRD precedent carries reconciliation state on envelope; operator-DX queryability via standard `list_*` filter beats grepping reconciler logs. Substrate cost ~5 lines in reconciler).
+- **`status.lastReconciledAt`/`reconcileError`/`appliedVersion`** — Hub-projected observed reconciliation state.
+- **Bootstrap-self-referential discipline preserved** (engineer OQ11 confirm — SchemaDef-for-SchemaDef written FIRST at substrate-init; reconciler reads + emits DDL per Design §2.3; kill-9-between-bootstrap-steps test per mission-83 Design v1.1 §2.3 M4 fold).
 
-**Open questions (SchemaDef) — engineer audit:**
-- **OQ10**: SchemaDef status partition — empty `status` OR `status.phase: "applied" | "pending" | "failed"` for reconciliation state surfacing? v0.1 picks empty status (reconciliation log is external); engineer audit whether SchemaDef envelope should carry reconciliation state.
-- **OQ11**: SchemaDef bootstrap-self-referential discipline — at cutover, SchemaDef-for-SchemaDef must be written FIRST (the meta-meta entity). Migration script orders writes accordingly. v0.1 confirms substrate-bootstrap discipline is preserved.
-- **OQ12**: `apiVersion` for SchemaDef itself — `core.ois/v1` (per cluster-wide minimal taxonomy)? Or distinct `apiextensions.ois.io/v1` per K8s CRD precedent (where CustomResourceDefinition has its own apiVersion)? v0.1 picks `core.ois/v1` for uniformity; engineer audit.
-- **OQ13**: `name` placement (`metadata.name = <kind-name>`)? Per K8s CRD precedent (`metadata.name = "tasks.batch.k8s.io"` for the Task CRD). v0.1 picks metadata.name = `<kind-name>` (e.g., "Idea", "Bug"). Handle-classified pattern applies.
+**Field renames visible post-cutover (SchemaDef):**
+- **NEW status fields** added at envelope cutover: `status.phase`, `status.lastReconciledAt`, `status.reconcileError`, `status.appliedVersion` (per OQ10 deviation)
+- **NEW reconciler substrate work** post-cutover: write `status.phase = "applied" | "failed"` + `status.lastReconciledAt` + (on failure) `status.reconcileError` per reconcile cycle. Migration writes existing SchemaDefs as `status.phase = "applied"` (they're operational on production substrate per mission-83 W4.x cutover).
 
 **Composition checkpoints:**
-- Bootstrap-self-referential: at substrate-init, SchemaDef-for-SchemaDef must be the first row written (kill-9-between-bootstrap-steps test per mission-83 Design v1.1 §2.3 M4 fold).
-- Reconciler reads SchemaDef + emits DDL per Design §2.3.
-- 22-kind inventory locked at mission-83 W1.1 (per entity-kinds.json v1.1).
+- Bootstrap-self-referential preserved per mission-83 Design v1.1 §2.3 M4 fold (engineer OQ11 confirm).
+- Reconciler reads SchemaDef.spec + emits DDL per Design §2.3 (now ALSO writes back status per OQ10).
+- 22-kind inventory locked at mission-83 W1.1 per entity-kinds.json v1.1.
+- New operator-DX surface (post-cutover): `list_resources({kind: "SchemaDef", filter: {phase: "failed"}})` finds reconciliation failures.
 
 ---
 
-### §2.4 Counter — partition (v0.1; substantive open question)
+### §2.4 Counter — partition (v0.2 fill; OQ14 ratified to option (a))
 
 **Existing flat shape** (per `hub/src/entities/substrate-counter.ts` + `storage-substrate/schemas/all-schemas.ts:92`):
 - **Single-row meta-entity**: id="counter" fixed
@@ -351,22 +516,70 @@ SchemaDef declares Counter as `envelope-applies: false`; substrate-write-boundar
 Pros: zero migration; preserves bug-97 W5.5 fix mechanism unchanged
 Cons: introduces "envelope-doesn't-apply" precedent — violates cluster-3 §1 "K8s envelope applies to all substrate-mediated kinds" implicit contract; substrate-currency-discipline says "all kinds get envelope"
 
-**Architect lean (v0.1):** **(a)** — envelope with embedded-map in status. Minimal migration cost; preserves SubstrateCounter contract via path-rewrite (current `data.taskCounter` → `data.status.counters.taskCounter` is a single read+write path); per-counter-domain queryability isn't a known requirement (Counter is bookkeeping-only; per all-schemas.ts `watchable: false`). **(b)** is technically cleaner but cost/benefit doesn't justify the migration churn for a write-only-by-substrate kind. **(c)** is architecturally compromised. Engineer disposition welcome.
+**Disposition (v0.2):** **(a) — RATIFIED** per engineer OQ14 concur. Engineer rationale carries the K8s ConfigMap precedent (single entity with `.data: {key: value}` embedded map; not per-key rows) — OIS Counter follows the same shape cleanly post-(a)-envelope. Engineer notes (b) "technically cleaner but migration churn isn't justified — Counter is bookkeeping-only (`watchable: false`); no known query pattern needs per-domain rows; bug-97 W5.5 fix mechanism would need rewrite"; (c) "architecturally compromised; introduces 'envelope-doesn't-apply' precedent that would propagate as anti-pattern across future singleton-meta-entities."
 
-**Stub partition (option a; v0.1):**
+**Partition:**
 
-| Field | Section | Rationale |
-|---|---|---|
-| `id` (= "counter" fixed) | metadata.id | special pattern preserved |
-| `kind` (= "Counter") | metadata.kind | uniform |
-| `apiVersion` | metadata.apiVersion | uniform |
-| `createdAt`, `updatedAt` | metadata | uniform |
-| `phase` (always "active") | status.phase | uniformity convention (no real FSM; bookkeeping kind) |
-| `counters: Record<string, number>` (embedded map) | status.counters | preserves current shape; SubstrateCounter path-rewrites read+write |
+```json
+{
+  "name": "Counter",
+  "apiVersion": "core.ois/v1",
+  "envelope-v2": {
+    "metadata-schema": {
+      "type": "object",
+      "required": ["id", "kind", "apiVersion", "createdAt"],
+      "properties": {
+        "id":         {
+          "const": "counter",
+          "description": "Special fixed pattern: single-row meta-entity (per memory-substrate.ts:364 + postgres-substrate.ts:349). Only one Counter instance ever exists."
+        },
+        "kind":       { "const": "Counter" },
+        "apiVersion": { "const": "core.ois/v1" },
+        "createdAt":  { "type": "string", "format": "date-time" },
+        "updatedAt":  { "type": "string", "format": "date-time" }
+      }
+    },
+    "spec-schema": {
+      "type": "object",
+      "description": "Counter has no declared-intent fields; spec is empty (uniformity convention; the entity is pure bookkeeping observed state).",
+      "properties": {}
+    },
+    "status-schema": {
+      "type": "object",
+      "required": ["phase", "counters"],
+      "properties": {
+        "phase": {
+          "const": "active",
+          "description": "Uniformity convention; Counter has no real FSM. Constant 'active' for envelope-shape conformance."
+        },
+        "counters": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "description": "K8s ConfigMap precedent (.data: {key: value} embedded map). Per-counter-domain values: taskCounter, ideaCounter, bugCounter, missionCounter, threadCounter, turnCounter, teleCounter, proposalCounter, etc. Open-ended additionalProperties per architect-judgment + engineer OQ14 ratification."
+        }
+      }
+    },
+    "filterable-fields": []
+  }
+}
+```
 
-**Open questions (Counter) — engineer audit:**
-- **OQ14**: Option (a) / (b) / (c) partition — see above; architect-lean (a) v0.1.
-- **OQ15**: `name` for Counter — there's only one Counter instance (id="counter" fixed). `metadata.name` either OMITTED (cluster-1 content-classified pattern; but Counter isn't content-classified) OR `"counter"` (degenerate single-instance handle). v0.1 picks OMITTED (Counter is a singleton bookkeeping-meta-entity; doesn't fit either §1.5 class cleanly). **Engineer disposition welcome.**
+**Partition rationale (Counter) — v0.2 with engineer dispositions:**
+- **OQ14 RATIFIED option (a)** — embedded-map in `status.counters`; K8s ConfigMap precedent; SubstrateCounter CAS mechanism preserved via path-rewrite (`data.taskCounter` → `data.status.counters.taskCounter`).
+- **`id` = `"counter"` constant** — preserves single-row meta-entity pattern.
+- **`spec` empty object** — Counter has no declared-intent fields; uniformity convention for envelope-shape conformance.
+- **`status.phase` constant `"active"`** — uniformity convention; no real FSM (Counter is pure bookkeeping). Could omit but uniformity wins.
+- **`status.counters: Record<string, number>`** — K8s ConfigMap precedent.
+- **`metadata.name` OMITTED** (engineer OQ15 concur — Counter is a **singleton-meta-entity**; only one instance; handle would be redundant. §1.5 binary axis (handle vs content) doesn't cleanly apply — Counter is informally a **third class**; see §5 forward-question on formalizing if clusters 4/5 surface additional singleton-meta-entities).
+- **`filterable-fields: []`** — Counter has no query surface (read by id only at SubstrateCounter mechanism; `watchable: false` per Mission-83 §3.4.1).
+
+**Field renames visible post-cutover (Counter):**
+- Embedded-map `{taskCounter, ideaCounter, ...}` → `status.counters.{taskCounter, ideaCounter, ...}`
+- SubstrateCounter path-rewrite at read+write boundary (single mechanism change; preserves bug-97 W5.5 CAS semantics)
+
+**Composition checkpoints:**
+- bug-97 W5.5 CAS preserved (engineer OQ14 ratification): getWithRevision + putIfMatch retry loop mechanism unchanged post-envelope.
+- K8s ConfigMap precedent for singleton-with-embedded-map shape.
 
 ---
 
@@ -432,45 +645,61 @@ Cluster-1 §4.2 pattern — `metadata.sourceThreadId`/`sourceActionId` envelope-
 
 ---
 
-## §5 Cluster-2 cumulative-pattern reuse note
+## §5 Cumulative-pattern reuse + cluster-3 additions
 
-Cluster-3 introduces no NEW envelope-methodology patterns. All five patterns surfaced at cluster-2 apply:
-1. `metadata.name` for handle-classified kinds (extended use: cluster-3 Agent + Tele + SchemaDef all use `metadata.name`)
-2. Declared-with-controlled-mutation pattern (Agent.spec.receiptSla / clientMetadata / labels OQ1)
+Cluster-3 inherits all five patterns surfaced at cluster-2:
+1. `metadata.name` for handle-classified kinds (extended use: cluster-3 Agent + Tele + SchemaDef all use `metadata.name` — three more handle-classified kinds beyond cluster-2 Turn)
+2. Declared-with-controlled-mutation pattern (Agent.spec.receiptSla / clientMetadata / wakeEndpoint)
 3. Derived-scalar-field discipline (not used in cluster-3 — no derived scalars per kind)
 4. Default-to-status for FSM-mutated fields (Agent ✓ Tele ✓)
 5. Virtual-view envelope-exclusion (not used in cluster-3 — no virtual views per kind)
 
-Cluster-3-specific surfaces:
-- **Multi-FSM in status** (Agent has 4 orthogonal FSMs — primary status.phase + livenessState + activityState + cognitiveState/transportState component pair). Methodology-consistent with cluster-1 partition (each FSM in status as independent observable).
-- **Bookkeeping-only kind special-case** (Counter §2.4) — substantive OQ14 disposition pending engineer review.
+**Cluster-3 adds 1 NEW cumulative pattern + 1 NEW sub-discipline (§1.6) + 1 forward-question:**
+
+### 6. Declared-routing-intent (spec.labels) vs declared-content-classification (metadata.labels) axis
+
+**Surfaced at v0.2 engineer review observation #3 (OQ1 Agent.labels disposition).** Two structurally-distinct uses of label-maps:
+
+| Class | Path | Semantic | Example | K8s precedent |
+|---|---|---|---|---|
+| **Declared-routing-intent** | `spec.labels` | Agent/dispatch declares which routing surface it serves; consumed at routing/matching time | Agent.spec.labels (Mission-19 routing); Task.metadata.labels carries same Mission-19 labels (inherited at submit-time) | PodSpec.nodeSelector / affinity / tolerations |
+| **Declared-content-classification** | `metadata.labels` | Author classifies the entity's content for queryable discovery | Idea.metadata.labels (tags for triage queries); Bug.metadata.labels (severity-class / area tags) | Pod.metadata.labels (app=foo, tier=backend) |
+
+**Methodology rule:** When a label-map carries **routing-intent / matching-affinity**, place at `spec.labels`. When a label-map carries **content-classification / discovery-tagging**, place at `metadata.labels`. Both are queryable via map-type filter (`selector: "k8s-map"`) — the partition difference reflects semantic, not technical capability.
+
+**Special case (Mission-19 Task.labels inheritance):** Task.metadata.labels carries the same map-shape inherited from creator at submit-time, but the inheritance semantic is closer to content-classification (carrying scope/context tags) than routing-intent (which would be Agent-side declaration). Cluster-2 §2.1 picked metadata.labels for Task — engineer OQ1 disposition for Agent diverges (spec.labels for Agent's own routing-intent). The two-axis discipline articulates why both placements are correct.
+
+### §1.6 multi-FSM in status (NEW sub-discipline)
+
+Per §1.6 above — multi-FSM kinds (Agent: 4 orthogonal FSMs) carry all FSMs in status as independent observables; `status.phase` is the primary FSM; additional FSMs use semantically-named fields. K8s precedent: Pod.status.phase + status.conditions[].
+
+### Forward-question — singleton-meta-entity as third class beyond §1.5 binary axis
+
+**Engineer observation #2 (OQ15 Counter discussion):** the §1.5 binary axis (handle-classified vs content-classified) didn't cleanly apply to Counter — it's a **singleton-meta-entity** (only one instance ever; id="counter" fixed). Cluster-3 §2.4 handled this as a special-case: `metadata.name` OMITTED with the rationale "Counter is a third (informal) class."
+
+**If clusters 4/5 surface additional singleton-meta-entities, formalize the third class.** RepoEventBridgeCursor / RepoEventBridgeDedupe are per-`<owner>__<repo>` id-keyed (not singleton) — likely don't qualify. Notification / Audit / Message are entity-keyed (id-N pattern; not singleton). Document / *HistoryEntry are content-archive (id-derived; not singleton).
+
+**Lean:** Counter may be the only singleton-meta-entity in the substrate; the third class may not need formalization. Mark as Cluster-3 v0.2 forward-question; engineer audit at cluster-4 reviewing.
+
+**v2.1 methodology candidate Q** (surfaced this session): articulate the cluster-3 6th cumulative-pattern (declared-routing-intent vs declared-content-classification axis) into a top-level methodology rule for future cluster Designs.
 
 ---
 
 ## §6 Status
 
-**v0.1** — architect-fronted; awaiting engineer review.
+**v0.2** — engineer PR #270 v0.1 review integrated. All 15 OQ dispositions applied; 3 cross-cutting engineer observations integrated (§1.6 multi-FSM sub-discipline + §5 6th cumulative-pattern + §5 singleton-meta-entity forward-question); §2.2/§2.3/§2.4 stubs filled to full JSON Schema.
 
-**Coordination plan:**
-- PR opens; greg engages via `pr_opened_bilateral` notification + posts review on GitHub PR directly (per refined memory scope)
-- **v0.2 fold-in commit** (post engineer review) will be preceded by explicit `create_message` ping to greg per memory rule scope-refinement (W2 gap; pending idea-315)
-- v0.2 approval converges cluster-3 Design; cluster-4 opens fresh PR
+**Substantive cluster-3 contributions to envelope methodology** (signal for clusters 4/5):
 
-**Outstanding open questions** (engineer disposition expected — 15 OQs):
-- OQ1: Agent.labels — spec (declared-routing-affinity) vs metadata.labels (cluster-1 content-classification pattern)
-- OQ2: Agent.archived — metadata (identity-disposition) vs status (observable)
-- OQ3: Agent.clientMetadata opaque-in-spec confirmation
-- OQ4: Agent.advisoryTags — status (Hub-projected) confirmation
-- OQ5: Agent component-TTL fields in status confirmation
-- OQ6: Tele.name — metadata.name handle-classified confirmation
-- OQ7: Tele.successCriteria markdown-body in spec
-- OQ8: Tele.supersededBy inline at cluster-3 / idea-151 follow-on
-- OQ9: Tele content-immutability discipline preserved
-- OQ10: SchemaDef status partition — empty vs `status.phase: applied/pending/failed`
-- OQ11: SchemaDef bootstrap-self-referential discipline confirmed
-- OQ12: SchemaDef apiVersion — `core.ois/v1` uniformity vs `apiextensions.ois.io/v1` K8s CRD precedent
-- OQ13: SchemaDef metadata.name = `<kind-name>` (K8s CRD precedent)
-- OQ14: **SUBSTANTIVE — Counter partition strategy** — option (a) embedded-map / (b) per-domain rows / (c) envelope carve-out; architect-lean (a)
-- OQ15: Counter.metadata.name OMITTED vs "counter"
+1. **§1.6 multi-FSM-in-status sub-discipline** — primary FSM at `status.phase`; additional FSMs use semantically-named status fields. K8s Pod.status.conditions[] precedent. Cluster-3 Agent demonstrates (4 orthogonal FSMs).
+2. **§5 6th cumulative-pattern: declared-routing-intent vs declared-content-classification axis** — `spec.labels` for routing/matching affinity (K8s PodSpec.nodeSelector precedent); `metadata.labels` for content-tagging (K8s Pod.metadata.labels precedent). Both queryable via `selector: "k8s-map"`. Articulated post-engineer-OQ1.
+3. **§2.3 SchemaDef envelope carries reconciliation state** (engineer OQ10 deviation accepted) — K8s CRD precedent (CustomResourceDefinition.status.conditions[]); operator-DX queryability gain. Substrate work: ~5 lines in reconciler to write `status.phase` + `status.lastReconciledAt`.
+4. **§2.4 Counter as singleton-meta-entity** — K8s ConfigMap embedded-map precedent (`status.counters: {key: value}`); preserves bug-97 W5.5 SubstrateCounter CAS mechanism via path-rewrite.
 
-**Next architect action post-approval:** cluster-4 Design (Message / Audit / Notification / RepoEventBridgeCursor / RepoEventBridgeDedupe per cluster-2 §6 ratified).
+**Engineer approval posture (v0.1 → v0.2 transition):**
+- v0.1 approved by greg (PR #270 review APPROVED 2026-05-23T11:31Z at commit `4f33ced`)
+- v0.2 integrates all dispositions + 3 cross-cutting observations; **architect-side explicit `create_message` ping to greg follows v0.2 push** per refined memory rule (post-push re-review surfacing pending idea-315 substrate-build)
+
+**v2.1 methodology candidate Q** captured: lift §5 6th cumulative-pattern (declared-routing-intent vs declared-content-classification axis) into top-level methodology rule.
+
+**Next architect action post-approval:** cluster-4 Design (Message / Audit / Notification / RepoEventBridgeCursor / RepoEventBridgeDedupe per cluster-2 §6 ratified scope).
