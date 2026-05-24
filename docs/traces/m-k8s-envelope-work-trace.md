@@ -111,7 +111,24 @@ If you're picking up cold, read in this order:
 - Engineer-proposed dispositions covered: trivial-resolves (apply substrate-truth) + 3 substantive-decisions for architect (Mission.pulses monolithic vs split partition; Proposal.summary/body confirmation; Mission v0.3 TODOs drop).
 - Acceptance shape: cluster-1 Design v0.3 update folded into W1 PR; KindMigrationModule consumes ratified partition rules.
 
-▶ **W1 BLOCKED on architect thread-643 disposition.** Will resume scaffolding post-ratification.
+✅ **thread-643 architect-ratified R2 (2026-05-24 ~12:48 AEST). All dispositions CONCUR.**
+- Trivial-resolves CONCUR (FSM enum corrections; drop non-existent Design fields; add updatedAt; Mission tasks/ideas virtual-hydrated OMIT; Thread cascade-pending bookkeeping → status).
+- 3 substantive-decisions CONCUR engineer-leans: (1) Mission.pulses monolithic `status.pulses` (substrate-extension-minimum-disruption; cluster-3 §1.6 multi-FSM-in-status precedent; split-to-spec/status defer to idea-200/idea-129 follow-on cycle); (2) Proposal.summary IS declared content (no spec.body; substrate-truth); (3) Mission v0.3 TODOs drops (sliceTracking + synthetic issuedTaskIds[]).
+- Architect added §3.4 OPEN-ENDED note for Mission.pulses deferred-split intent — engineer fold into Design v0.3.
+- Architect-staged action-1 close_no_action; thread converged at R3 engineer handshake (2026-05-24 ~12:49 AEST). Cascade-handshake committed action-1.
+- **Calibration-surface affirmation:** architect explicitly noted "engineer-proactive verify-before-bake at Q-class disposition is LOAD-BEARING discipline" — worth lifting to methodology rule (v2.1 candidate).
+
+✅ **W1 cluster-1 PR #276 SHIPPED** (2026-05-24 ~13:13 AEST; commit `471cd2d` on branch `agent-greg/m-k8s-envelope-w1-cluster-1`).
+- 15 files; +1457 / -25 lines.
+- 5 KindMigrationModule (`kinds/{Idea,Bug,Thread,Mission,Proposal}.ts`) consuming v0.3-ratified partition rules.
+- 5 per-kind unit tests (50 assertions; idempotency reference-equality per Q3); 3 batch wire-flow integration tests (5-kind migration; cursor isolation; idempotent re-run).
+- Cluster-1 Design v0.3 update (§3.0 ratified partition tables + §3.4 OPEN-ENDED pulses note + §6 drift-table-resolution-record).
+- Operator-DX (Q7 same-PR): get-entities.sh dotted-path filter (`status.phase=open`); psql-cookbook envelope-shape section (bug-118 closure verification query + per-kind navigation + labels/annotations).
+- vitest.config.ts NEW (excludes dist/ — local-DX flake fix per `feedback_local_test_masking_via_cached_state`).
+- Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 126 test files / 1599 tests pass (1 skipped) / commit-message-claims accurate.
+- Hub-rebuild dependency: NOT required for W1 (additive code; no Hub bootstrap touch).
+
+▶ **PR #276 in-flight; awaiting pr_opened_bilateral architect approve + CI completion.**
 
 ---
 
