@@ -348,6 +348,70 @@ WHERE kind = 'Counter' AND id = 'counter';
 
 Pre-W3 shape was `data->>'taskCounter'`; the migration relocates to `data->'status'->'counters'->>'taskCounter'`. SubstrateCounter primitive (`hub/src/entities/substrate-counter.ts`) ships atomic rewrite per A1; reads tolerate both shapes during dual-shape window; writes always emit envelope shape.
 
+### Message envelope-shape query — CANONICAL field-name-collision rename (cluster-4 §2.1)
+
+Per cluster-4 Design v0.3 §2.1 + §1.7 — legacy `Message.kind` discriminator collided with envelope `kind: "Message"`; rename to `metadata.messageKind` (FIRST cross-cluster use of envelope library renameMap for true field-name-collision):
+
+```sql
+-- Find Messages by messageKind discriminator (was: data->>'kind' pre-W4; collides with envelope kind)
+SELECT id,
+       data->'metadata'->>'messageKind' AS message_kind,
+       data->'metadata'->>'authorRole' AS author_role,
+       data->'metadata'->>'authorAgentId' AS author,
+       data->'metadata'->>'threadId' AS thread,
+       data->'status'->>'phase' AS phase,
+       data->'spec'->>'delivery' AS delivery
+FROM entities
+WHERE kind = 'Message'
+  AND data->'metadata'->>'messageKind' = 'reply'
+  AND data->'status'->>'phase' = 'new'
+ORDER BY data->'metadata'->>'createdAt' DESC
+LIMIT 20;
+```
+
+### Audit envelope-shape forensic (cluster-4 §2.2 append-only "logged" constant)
+
+Per cluster-4 Design v0.3 §2.2 — Audit timestamp renamed to metadata.createdAt; status.phase="logged" constant; append-only (no updatedAt):
+
+```sql
+-- Recent audit entries by actor (envelope-shape; phase always "logged" — Audit is immutable post-create)
+SELECT id,
+       data->'metadata'->>'createdAt' AS ts,
+       data->'metadata'->>'actor' AS actor,
+       data->'spec'->>'action' AS action,
+       data->'spec'->>'details' AS details,
+       data->'spec'->>'relatedEntity' AS related
+FROM entities
+WHERE kind = 'Audit'
+  AND data->'metadata'->>'actor' = 'architect'
+ORDER BY id DESC
+LIMIT 50;
+```
+
+Pre-W4 shape was `data->>'timestamp'` + `data->>'actor'`; post-W4 envelope navigation as above.
+
+### RepoEventBridge* opaque-body inspection (cluster-4 §2.3/§2.4)
+
+Per cluster-4 Design v0.3 §2.3 + §2.4 — RepoEventBridgeCursor body → `status.cursor`; RepoEventBridgeDedupe body → `status.dedupe`. Opaque cursor-store JSON preserved through migration; adapter (`hub/src/storage-substrate/repo-event-bridge-adapter.ts`) ships atomic rewrite per A1 (tolerant-dual-shape read + envelope write):
+
+```sql
+-- RepoEventBridge cursor state per repo (envelope-shape)
+SELECT id AS repo,
+       data->'status'->>'phase' AS phase,
+       data->'status'->'cursor' AS cursor_body
+FROM entities
+WHERE kind = 'RepoEventBridgeCursor';
+
+-- RepoEventBridge dedupe-LRU per repo (sibling kind; status.dedupe carries LRU)
+SELECT id AS repo,
+       data->'status'->>'phase' AS phase,
+       data->'status'->'dedupe' AS dedupe_lru
+FROM entities
+WHERE kind = 'RepoEventBridgeDedupe';
+```
+
+Pre-W4 shape was `data->>'body'`; post-W4 relocates to `data->'status'->'cursor'` / `data->'status'->'dedupe'`. Adapter reads tolerant-dual-shape; writes always emit envelope shape (race-clobber prevention per A1).
+
 ### Active envelope-shape Threads (FSM phase + currentTurn nested)
 
 ```sql

@@ -40,16 +40,25 @@ describe("RepoEventBridgeSubstrateAdapter — W0.4 spike", () => {
       const data = enc.encode(JSON.stringify({ cursor: "abc" }));
       const r = await adapter.createOnly("repo-event-bridge/cursor/anthropic__claude-code", data);
       expect(r.ok).toBe(true);
-      // Verify underlying substrate received correct kind+id
-      const stored = await substrate.get<{ id: string; body: unknown }>("RepoEventBridgeCursor", "anthropic__claude-code");
-      expect(stored).toEqual({ id: "anthropic__claude-code", body: { cursor: "abc" } });
+      // mission-88 W4 A1: adapter writes envelope-shape; body lives at status.cursor
+      const stored = await substrate.get<Record<string, unknown>>("RepoEventBridgeCursor", "anthropic__claude-code");
+      expect(stored).not.toBeNull();
+      expect(stored!.id).toBe("anthropic__claude-code");
+      expect(stored!.kind).toBe("RepoEventBridgeCursor");
+      expect(stored!.apiVersion).toBe("core.ois/v1");
+      expect((stored!.status as Record<string, unknown>).phase).toBe("active");
+      expect((stored!.status as Record<string, unknown>).cursor).toEqual({ cursor: "abc" });
     });
 
     it("maps dedupe path to RepoEventBridgeDedupe kind", async () => {
       const data = enc.encode(JSON.stringify({ seen: ["x", "y"] }));
       await adapter.createOnly("repo-event-bridge/dedupe/owner__repo", data);
-      const stored = await substrate.get<{ id: string; body: unknown }>("RepoEventBridgeDedupe", "owner__repo");
-      expect(stored).toEqual({ id: "owner__repo", body: { seen: ["x", "y"] } });
+      // mission-88 W4 A1: adapter writes envelope-shape; body lives at status.dedupe
+      const stored = await substrate.get<Record<string, unknown>>("RepoEventBridgeDedupe", "owner__repo");
+      expect(stored).not.toBeNull();
+      expect(stored!.id).toBe("owner__repo");
+      expect(stored!.kind).toBe("RepoEventBridgeDedupe");
+      expect((stored!.status as Record<string, unknown>).dedupe).toEqual({ seen: ["x", "y"] });
     });
 
     it("rejects path outside accept-list (single-prefix default)", async () => {
@@ -177,15 +186,18 @@ describe("RepoEventBridgeSubstrateAdapter — W0.4 spike", () => {
       // Main events-poll-source prefix
       const r1 = await dualAdapter.createOnly("repo-event-bridge/cursor/owner__repo", data1);
       expect(r1.ok).toBe(true);
-      const stored1 = await substrate.get<{ id: string; body: { cursor: string } }>("RepoEventBridgeCursor", "owner__repo");
-      expect(stored1?.body.cursor).toBe("main");
+      // mission-88 W4 A1: envelope-shape; cursor body at status.cursor
+      const stored1 = await substrate.get<Record<string, unknown>>("RepoEventBridgeCursor", "owner__repo");
+      const cursor1 = (stored1!.status as Record<string, unknown>).cursor as { cursor: string };
+      expect(cursor1.cursor).toBe("main");
 
       // Workflow-runs-poll-source prefix
       const r2 = await dualAdapter.createOnly("repo-event-bridge-workflow-runs/cursor/owner__repo-wf", data2);
       expect(r2.ok).toBe(true);
       // Both prefixes map to same substrate kind (RepoEventBridgeCursor); different id (prefix-disambig is at parsePath layer, not kind)
-      const stored2 = await substrate.get<{ id: string; body: { cursor: string } }>("RepoEventBridgeCursor", "owner__repo-wf");
-      expect(stored2?.body.cursor).toBe("workflow");
+      const stored2 = await substrate.get<Record<string, unknown>>("RepoEventBridgeCursor", "owner__repo-wf");
+      const cursor2 = (stored2!.status as Record<string, unknown>).cursor as { cursor: string };
+      expect(cursor2.cursor).toBe("workflow");
     });
 
     it("rejects path outside accept-list (dual-prefix)", async () => {
