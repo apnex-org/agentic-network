@@ -1,10 +1,10 @@
 # M-K8s-Envelope — Cluster 4 System-Emit/Bookkeeping Partition (Design Working Draft)
 
-**Status:** v0.2 — engineer review-integrated · Director-ratified scope reduction · awaiting approval
-**Mission:** idea-126 (M-K8s-Envelope)
-**Phase:** Phase 4 Design — cluster-4 partition pass (4 of 5 clusters per substrate-grounded decomposition)
-**Coordination:** per-PR review (per refined `feedback_pr_opened_notification_is_review_signal` memory rule v2). v0.1 review via `pr_opened_bilateral`; **this v0.2 push includes explicit `create_message` ping to greg** per refined memory rule (post-push surfacing pending idea-315 substrate-build).
-**Date:** 2026-05-23 AEST (v0.2: engineer PR #271 v0.1 review integrated + Director-ratified scope reduction)
+**Status:** v0.3 — substrate-truth ratified · ready for migration consumption
+**Mission:** mission-88 (M-K8s-Envelope; idea-126 anchor)
+**Phase:** Phase 4 Design — cluster-4 partition pass (4 of 5 clusters; Phase 8 W4 implementation)
+**Coordination:** `thread-646` (W4 Design-pass; converged at R3)
+**Date:** 2026-05-24 AEST (v0.3: W4 substrate-currency-ratification per thread-646 R2)
 **Sibling Designs:**
 - Cluster 1 — substantive-content (Idea / Bug / Thread / Mission / Proposal) — **MERGED** at `d8ea695`
 - Cluster 2 — queue/FSM-active (Task / PendingAction / Turn) — **MERGED** at `59c3a70`
@@ -424,7 +424,13 @@ Cluster-4 inherits all six patterns surfaced cumulatively:
 6. Declared-routing-intent (spec.labels) vs declared-content-classification (metadata.labels) axis (NOT used in cluster-4 — no label-maps on these kinds)
 - Multi-FSM-in-status per cluster-3 §1.6 (Message ✓ — primary phase + secondary scheduledState)
 
-**Cluster-4 introduces no NEW envelope-methodology patterns.** This is the most pattern-consolidation-heavy cluster — system-emit/bookkeeping kinds reuse existing patterns without new abstractions.
+**v0.3 update — Cluster-4 surfaces 7th cumulative envelope-methodology pattern:** **atomic-primitive-rewrite-with-wave-migration** (architect framing thread-646 R2). When a wave's structural-transformation requires a substrate primitive to know about envelope-shape, the primitive rewrite ships atomically with the wave migration to prevent race-clobber. **Instances:**
+- W3 SubstrateCounter rewrite shipped atomically with Counter migration (cluster-3 A1)
+- W4 RepoEventBridgeSubstrateAdapter rewrite shipped atomically with RepoEventBridge*/Cursor+Dedupe migrations (cluster-4 A1)
+
+Future W5 may extend if Document write-path has primitive-coupling (engineer-verify at W5 R1). Pattern complements §5 cumulative-patterns; architect-ratified for inclusion in cumulative methodology list.
+
+**Cluster-4 is otherwise most pattern-consolidation-heavy:** system-emit/bookkeeping kinds reuse existing patterns without new abstractions (other than 7th pattern above).
 
 **Cluster-4-specific observation: field-name collision with envelope `kind`.** Message.kind (discriminator field) collides with envelope `kind: "Message"`. v0.1 picks rename to `metadata.messageKind`. **No other cluster-4 kinds have this collision** (Audit.action, Notification field-set TBD, RepoEventBridge*.body — none use a top-level `kind` field).
 
@@ -432,7 +438,29 @@ Cluster-4 inherits all six patterns surfaced cumulatively:
 
 ## §6 Status
 
-**v0.2** — engineer PR #271 v0.1 review integrated · Director-ratified scope reduction (drop Notification per disposition (i)) · awaiting v0.2 approval.
+**v0.3** — substrate-truth ratified per thread-646 bilateral convergence (2026-05-24). §0-§5 partition tables consumed by W4 KindMigrationModule modules + RepoEventBridgeSubstrateAdapter atomic rewrite. Cluster-4 ratification gate cleared. **4 of 5 cluster waves implemented; W5 cluster-5 remaining.**
+
+**v0.2 → v0.3 substrate-currency-ratification record:**
+
+Engineer-proactive Q2 verify-before-bake applied UPFRONT at thread-646 R1 (4 clusters in a row self-prompting: cluster-2 + cluster-3 + cluster-4 zero-drift on Design v0.2 vs substrate-current truth). Code-grepped `hub/src/entities/{message.ts,message-repository-substrate.ts,audit-repository-substrate.ts}` + `hub/src/state.ts:1004` (AuditEntry) + `hub/src/storage-substrate/repo-event-bridge-adapter.ts` + `hub/scripts/entity-kinds.json` (v1.3 verified).
+
+**ZERO drift across all 4 kinds.** Cluster-4 Design v0.2 was authored 2026-05-23 alongside cluster-3 (same recency); substrate-accurate at authoring. Notification drop folded at v0.2 (engineer-side code-trace contradicted v0.1 framing; 22→21 kinds locked; entity-kinds.json v1.3 mutually consistent).
+
+**7th substrate-currency catch on mission-88 calibration cluster (thread-646 R1 + R2 ack):** engineer code-trace caught architect Q9 spec-recall drift — architect dispatch said "Message has sourceThreadId per substrate — cluster-4 likely expands IN-clause 8→9 kinds"; engineer verified Message has `threadId` + `authorAgentId` + `authorRole` NOT sourceThreadId; cluster-4 Design v0.2 §3.9 explicit framing ("Message + Audit + RepoEventBridge* are not cascade-spawn-shaped") had the correct answer. Architect spec-recall drifted from prior Design §3.9; engineer-proactive code-trace caught it. **Calibration significance:** even at "discipline-mature 4-clusters-in-a-row" stage, architect dispatch CAN drift from prior Design framing. Discipline doesn't get stale. **bug-118 IN-clause stays at 8 kinds.**
+
+**A1 RepoEventBridgeSubstrateAdapter atomic rewrite shipped in W4 PR** (substrate-correctness per A1 architect-ratified disposition; parallels W3 A1 SubstrateCounter):
+- Pre-W4: adapter reads/writes flat `{id, body}` shape
+- Post-W4: adapter reads tolerant-dual-shape (envelope OR legacy-flat) + writes envelope-shape always (`status.cursor` for RepoEventBridgeCursor / `status.dedupe` for RepoEventBridgeDedupe; preserves `status.phase: "active"` + bookkeeping metadata/spec uniformity)
+- Race-clobber risk eliminated; preserves cursor-store opaque JSON contract through adapter seam
+- Extended test coverage via wire-flow.test.ts cluster-4 batch (opaque-body preservation through renameMap)
+
+**7th cumulative envelope-methodology pattern: atomic-primitive-rewrite-with-wave-migration** (architect framing thread-646 R2; folded into §5 above). When wave structural-transformation requires substrate primitive to know about envelope-shape, primitive rewrite ships atomically. W3 SubstrateCounter + W4 RepoEventBridge adapter instances; W5 may extend if Document write-path has primitive-coupling.
+
+**Q3 Message.kind → metadata.messageKind CANONICAL field-name-collision use** (FIRST cross-cluster use of envelope library renameMap for true collision per §1.7; W0 primitive design-driver case finally first-used at W4). Wire-flow test asserts `envelope.metadata.messageKind === legacy.kind` AND `envelope.kind === "Message"` (no collision).
+
+**bug-118 coverage cluster-4 contributes ZERO new kinds** (per Q9 engineer-correction + 7th substrate-currency catch resolution). IN-clause stays at 8 kinds (W1 5 + W2 3). cluster-5 may expand at W5 ship (Document / ArchitectDecision / *HistoryEntry — engineer-verify at W5 R1).
+
+**v0.2 history-of-record** — engineer PR #271 v0.1 review integrated · Director-ratified scope reduction (drop Notification per disposition (i)) · awaiting v0.2 approval.
 
 **Substantive cluster-4 contributions to envelope methodology** (signal for cluster-5):
 

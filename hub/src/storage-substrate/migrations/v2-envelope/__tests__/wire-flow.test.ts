@@ -36,6 +36,10 @@ import { createAgentMigrationModule } from "../kinds/Agent.js";
 import { createTeleMigrationModule } from "../kinds/Tele.js";
 import { createSchemaDefMigrationModule } from "../kinds/SchemaDef.js";
 import { createCounterMigrationModule } from "../kinds/Counter.js";
+import { createMessageMigrationModule } from "../kinds/Message.js";
+import { createAuditMigrationModule } from "../kinds/Audit.js";
+import { createRepoEventBridgeCursorMigrationModule } from "../kinds/RepoEventBridgeCursor.js";
+import { createRepoEventBridgeDedupeMigrationModule } from "../kinds/RepoEventBridgeDedupe.js";
 import { isMigrationInProgress } from "../shared/migration-flag.js";
 import { setupSubstrate, teardownSubstrate, cleanKind, type SubstrateFixture } from "./harness/fixtures.js";
 
@@ -826,6 +830,177 @@ describe("W3 cluster-3 batch wire-flow — 4-kind migration + Counter structural
     for (const row of final.items) {
       expect(isEnvelopeShape(row)).toBe(true);
       expect((row as { status: { phase: string } }).status.phase).toBe("applied");
+    }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────
+// W4 cluster-4 batch-migration wire-flow (Q7 disposition; per thread-646 R2)
+// Message.kind → metadata.messageKind CANONICAL field-name-collision renameMap
+// FIRST cross-cluster use of envelope library renameMap for true collision.
+// ───────────────────────────────────────────────────────────────────────
+
+const CLUSTER_4_KINDS = ["Message", "Audit", "RepoEventBridgeCursor", "RepoEventBridgeDedupe"] as const;
+
+function seedCluster4Row(kind: typeof CLUSTER_4_KINDS[number], n: number): { id: string } & Record<string, unknown> {
+  switch (kind) {
+    case "Message":
+      return {
+        id: `01HMESSAGE${n.toString().padStart(16, "0")}`,
+        kind: "reply",  // LEGACY discriminator — collision target; will rename to metadata.messageKind
+        authorRole: "engineer", authorAgentId: `agent-${n}`,
+        target: { role: "architect" },
+        threadId: `thread-${600 + n}`, sequenceInThread: n,
+        delivery: "push-immediate", status: "new",
+        payload: { body: `msg ${n}` },
+        intent: null, semanticIntent: null, converged: false,
+        migrationSourceId: null,
+        createdAt: `2026-05-2${n}T00:00:00Z`,
+        updatedAt: `2026-05-2${n}T00:00:00Z`,
+      };
+    case "Audit":
+      return {
+        id: `audit-${n}`,
+        timestamp: `2026-05-2${n}T00:00:00Z`,
+        actor: "engineer", action: `action${n}`, details: `details ${n}`,
+        relatedEntity: `mission-${n}`,
+      };
+    case "RepoEventBridgeCursor":
+      return {
+        id: `apnex-org__repo-${n}`,
+        body: { last_event_id: `${n * 100}`, last_etag: `etag-${n}` },
+      };
+    case "RepoEventBridgeDedupe":
+      return {
+        id: `apnex-org__repo-${n}`,
+        body: { lru: [`dlv-${n}`, `dlv-${n + 1}`], max_size: 1000 },
+      };
+  }
+}
+
+function registerCluster4(runner: MigrationRunner): void {
+  runner.register(createMessageMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Message")!));
+  runner.register(createAuditMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Audit")!));
+  runner.register(createRepoEventBridgeCursorMigrationModule(ALL_SCHEMAS.find(s => s.kind === "RepoEventBridgeCursor")!));
+  runner.register(createRepoEventBridgeDedupeMigrationModule(ALL_SCHEMAS.find(s => s.kind === "RepoEventBridgeDedupe")!));
+}
+
+describe("W4 cluster-4 batch wire-flow — 4-kind migration + Message renameMap CANONICAL", () => {
+  beforeEach(async () => {
+    for (const k of CLUSTER_4_KINDS) await cleanKind(fixture.connStr, k);
+    await cleanKind(fixture.connStr, "MigrationCursor");
+  });
+
+  it("migrates all 4 cluster-4 kinds end-to-end + cursors isolate per-kind", async () => {
+    for (const kind of CLUSTER_4_KINDS) {
+      for (const n of [1, 2]) {
+        await fixture.substrate.put(kind, seedCluster4Row(kind, n));
+      }
+    }
+
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster4(runner);
+    expect(runner.registeredKinds()).toEqual([...CLUSTER_4_KINDS].sort());
+
+    const results = new Map<string, Awaited<ReturnType<MigrationRunner["runKind"]>>>();
+    for (const kind of CLUSTER_4_KINDS) {
+      results.set(kind, await runner.runKind(kind, { waveId: "W4" }));
+    }
+
+    for (const kind of CLUSTER_4_KINDS) {
+      const r = results.get(kind)!;
+      expect(r.rowsMigrated).toBe(2);
+      expect(r.rowsErrored).toBe(0);
+    }
+
+    for (const kind of CLUSTER_4_KINDS) {
+      const post = await fixture.substrate.list<unknown>(kind, { limit: 10 });
+      expect(post.items.length).toBe(2);
+      for (const row of post.items) {
+        expect(isEnvelopeShape(row)).toBe(true);
+        expect((row as { kind: string }).kind).toBe(kind);
+        expect((row as { apiVersion: string }).apiVersion).toBe("core.ois/v1");
+      }
+    }
+  });
+
+  it("Q3 CANONICAL renameMap: Message.kind → metadata.messageKind; envelope.kind='Message' preserved (no collision)", async () => {
+    await fixture.substrate.put("Message", seedCluster4Row("Message", 1));
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster4(runner);
+    await runner.runKind("Message");
+
+    const msg = await fixture.substrate.get<EnvelopeRow>("Message", "01HMESSAGE0000000000000001");
+    expect(msg!.kind).toBe("Message");                       // entity-kind discriminator
+    expect(msg!.metadata.messageKind).toBe("reply");         // legacy Message.kind renamed
+    expect(msg!.status.phase).toBe("new");                   // FSM rename
+    expect(msg!.metadata.authorRole).toBe("engineer");
+    expect(msg!.metadata.threadId).toBe("thread-601");
+    expect(msg!.spec.delivery).toBe("push-immediate");
+    expect(msg!.spec.payload).toEqual({ body: "msg 1" });
+    expect(msg!.metadata.kind).toBeUndefined();              // CRITICAL: no double-write of legacy.kind
+  });
+
+  it("Q4 Audit append-only 'logged' constant + timestamp→metadata.createdAt rename", async () => {
+    await fixture.substrate.put("Audit", seedCluster4Row("Audit", 1));
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster4(runner);
+    await runner.runKind("Audit");
+
+    const audit = await fixture.substrate.get<EnvelopeRow>("Audit", "audit-1");
+    expect(audit!.status.phase).toBe("logged");              // constant injection
+    expect(audit!.metadata.createdAt).toBe("2026-05-21T00:00:00Z"); // from legacy.timestamp
+    expect(audit!.metadata.actor).toBe("engineer");
+    expect(audit!.spec.action).toBe("action1");
+    expect(audit!.metadata.updatedAt).toBeUndefined();       // append-only; no updatedAt
+  });
+
+  it("Q5 RepoEventBridgeCursor opaque body → status.cursor (cursor-store JSON preserved)", async () => {
+    await fixture.substrate.put("RepoEventBridgeCursor", seedCluster4Row("RepoEventBridgeCursor", 1));
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster4(runner);
+    await runner.runKind("RepoEventBridgeCursor");
+
+    const cursor = await fixture.substrate.get<EnvelopeRow>("RepoEventBridgeCursor", "apnex-org__repo-1");
+    expect(cursor!.status.phase).toBe("active");
+    expect(cursor!.status.cursor).toEqual({ last_event_id: "100", last_etag: "etag-1" });
+    expect(cursor!.spec).toEqual({});
+  });
+
+  it("Q5 RepoEventBridgeDedupe opaque body → status.dedupe (sibling-kind separation)", async () => {
+    await fixture.substrate.put("RepoEventBridgeDedupe", seedCluster4Row("RepoEventBridgeDedupe", 1));
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster4(runner);
+    await runner.runKind("RepoEventBridgeDedupe");
+
+    const dedupe = await fixture.substrate.get<EnvelopeRow>("RepoEventBridgeDedupe", "apnex-org__repo-1");
+    expect(dedupe!.status.phase).toBe("active");
+    expect(dedupe!.status.dedupe).toEqual({ lru: ["dlv-1", "dlv-2"], max_size: 1000 });
+    expect(dedupe!.status.cursor).toBeUndefined();  // sibling-kind separation
+  });
+
+  it("idempotent re-run across cluster-4: all rows skip on second pass", async () => {
+    for (const kind of CLUSTER_4_KINDS) {
+      await fixture.substrate.put(kind, seedCluster4Row(kind, 1));
+    }
+
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster4(runner);
+
+    for (const kind of CLUSTER_4_KINDS) {
+      const r = await runner.runKind(kind);
+      expect(r.rowsMigrated).toBe(1);
+    }
+
+    const cursorRepo = new MigrationCursorRepository(fixture.substrate);
+    for (const kind of CLUSTER_4_KINDS) {
+      await cursorRepo.resetCheckpoint(kind);
+    }
+
+    for (const kind of CLUSTER_4_KINDS) {
+      const r = await runner.runKind(kind);
+      expect(r.rowsSkipped).toBe(1);
+      expect(r.rowsMigrated).toBe(0);
     }
   });
 });

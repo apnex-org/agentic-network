@@ -152,20 +152,96 @@ export class RepoEventBridgeSubstrateAdapter implements StorageProviderWithToken
   }
 
   // ── StorageProvider primitives consumed by cursor-store.ts ──────────────
+  //
+  // mission-88 W4 cluster-4 envelope-shape atomic-ship per A1 (parallels W3
+  // SubstrateCounter pattern):
+  //
+  //   Pre-W4: substrate stored flat `{id, body: <cursor-store-encoded-JSON>}`
+  //   Post-W4: substrate stores envelope-shape per cluster-4 Design v0.3 §2.3-§2.4:
+  //     RepoEventBridgeCursor: status.cursor carries opaque body (was top-level body)
+  //     RepoEventBridgeDedupe: status.dedupe carries opaque body (was top-level body)
+  //
+  // Read: tolerant-dual-shape (envelope-shape if present, legacy-flat backward-compat).
+  // Write: ALWAYS envelope-shape post-W4 atomic ship.
+  //
+  // Substrate-correctness rationale (A1 thread-646 R2): adapter writes must match
+  // envelope shape or post-cluster-4 substrate state desynchronizes (Counter race-
+  // clobber analog). Atomic ship eliminates the desync window.
+
+  /** Per-kind status field name carrying the opaque cursor-store body. */
+  private bodyStatusField(kind: string): "cursor" | "dedupe" {
+    return kind === "RepoEventBridgeDedupe" ? "dedupe" : "cursor";
+  }
+
+  /**
+   * Read the opaque body from either envelope-shape (post-W4) or legacy-flat
+   * (pre-W4 backward-compat during dual-shape window). Returns null if entity
+   * has no readable body shape.
+   */
+  private readBody(entity: unknown, kind: string): unknown | null {
+    if (typeof entity !== "object" || entity === null) return null;
+    const rec = entity as Record<string, unknown>;
+    // Envelope-shape probe: has status.{cursor|dedupe}
+    const status = rec.status as Record<string, unknown> | undefined;
+    if (status && typeof status === "object") {
+      const field = this.bodyStatusField(kind);
+      if (field in status) return status[field];
+    }
+    // Legacy-flat backward-compat: top-level body field
+    if ("body" in rec) return rec.body;
+    return null;
+  }
+
+  /**
+   * Construct envelope-shape entity for write. Preserves existing envelope fields
+   * (metadata, spec, status.phase) when entity already envelope-shaped; otherwise
+   * emits fresh envelope skeleton.
+   */
+  private buildEnvelopeWrite(
+    existing: unknown,
+    kind: string,
+    id: string,
+    body: unknown,
+  ): { id: string; name: string; kind: string; apiVersion: string;
+       metadata: Record<string, unknown>; spec: Record<string, unknown>;
+       status: Record<string, unknown> } {
+    const existingRec = (typeof existing === "object" && existing !== null
+      ? existing as Record<string, unknown>
+      : {}) as Record<string, unknown>;
+    const existingStatus = (existingRec.status as Record<string, unknown> | undefined) ?? {};
+    const field = this.bodyStatusField(kind);
+    return {
+      id,
+      name: id,
+      kind,
+      apiVersion: "core.ois/v1",
+      metadata: (existingRec.metadata as Record<string, unknown>) ?? {},
+      spec: (existingRec.spec as Record<string, unknown>) ?? {},
+      status: {
+        ...existingStatus,
+        phase: (existingStatus.phase as string | undefined) ?? "active",
+        [field]: body,
+      },
+    };
+  }
 
   async get(path: string): Promise<Uint8Array | null> {
     const { kind, id } = this.parsePath(path);
-    const entity = await this.substrate.get<{ id: string; body: unknown }>(kind, id);
+    const entity = await this.substrate.get<unknown>(kind, id);
     if (!entity) return null;
-    return enc.encode(JSON.stringify(entity.body));
+    const body = this.readBody(entity, kind);
+    if (body === null) return null;
+    return enc.encode(JSON.stringify(body));
   }
 
   async getWithToken(path: string): Promise<{ data: Uint8Array; token: string } | null> {
     const { kind, id } = this.parsePath(path);
-    const result = await this.substrate.getWithRevision<{ id: string; body: unknown }>(kind, id);
+    const result = await this.substrate.getWithRevision<unknown>(kind, id);
     if (!result) return null;
+    const body = this.readBody(result.entity, kind);
+    if (body === null) return null;
     return {
-      data: enc.encode(JSON.stringify(result.entity.body)),
+      data: enc.encode(JSON.stringify(body)),
       token: result.resourceVersion,
     };
   }
@@ -173,7 +249,8 @@ export class RepoEventBridgeSubstrateAdapter implements StorageProviderWithToken
   async createOnly(path: string, data: Uint8Array): Promise<CreateOnlyResult> {
     const { kind, id } = this.parsePath(path);
     const body = JSON.parse(dec.decode(data));
-    const result = await this.substrate.createOnly(kind, { id, body });
+    const envelope = this.buildEnvelopeWrite(undefined, kind, id, body);
+    const result = await this.substrate.createOnly(kind, envelope);
     if (result.ok) return { ok: true };
     return { ok: false };
   }
@@ -181,8 +258,11 @@ export class RepoEventBridgeSubstrateAdapter implements StorageProviderWithToken
   async putIfMatch(path: string, data: Uint8Array, ifMatchToken: string): Promise<PutIfMatchResult> {
     const { kind, id } = this.parsePath(path);
     const body = JSON.parse(dec.decode(data));
+    // Read existing entity (any shape) to preserve envelope fields if present
+    const existing = await this.substrate.get<unknown>(kind, id);
+    const envelope = this.buildEnvelopeWrite(existing, kind, id, body);
     try {
-      const result = await this.substrate.putIfMatch(kind, { id, body }, ifMatchToken);
+      const result = await this.substrate.putIfMatch(kind, envelope, ifMatchToken);
       if (result.ok) return { ok: true, newToken: result.resourceVersion };
       return { ok: false, currentToken: result.actualRevision };
     } catch (err) {
