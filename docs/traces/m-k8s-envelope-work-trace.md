@@ -44,11 +44,21 @@ If you're picking up cold, read in this order:
 - Architect R4 cascade close landed 2026-05-24 ~10:04 AEST: `propose_mission` action-1 staged with title=M-K8s-Envelope + full v0.2 wave plan in description + 8 goals (Pre-W0 + W0-W6); converged=true + summary populated.
 - Engineer R5 bilateral converge handshake landed 2026-05-24 ~10:06 AEST: converged=true, no stage operations (action-1 commits via handshake). **action-1 status: staged → committed; thread status → converged.**
 
-▶ **Awaiting architect post-thread cascade orchestration:**
-1. propose_mission cascade fires → Mission spawns at `draft` with back-link metadata (sourceThreadId=thread-635 / sourceActionId=action-1 / sourceThreadSummary).
-2. Architect `update_mission(status="proposed", missionClass="substrate-introduction", pulses={...})` brings Mission to methodology-canonical proposed state.
-3. Architect `update_idea(idea-126, missionId="<new>")` auto-flips idea.status → `incorporated`.
-4. Phase 6 Preflight authoring begins (next architect arc); pre-prod substrate-mirror availability is hard dependency per A3.
+✅ **Mission cascade landed (architect-orchestrated):**
+1. propose_mission cascade fired → mission-88 spawned 2026-05-24T00:06:19Z with back-link metadata intact (sourceThreadId=thread-635 / sourceActionId=action-1 / sourceThreadSummary populated).
+2. Architect bridged to `proposed` status + `missionClass=substrate-introduction` + pulses configured (1800s × architect + engineer / missedThreshold=2 / firstFireDelaySeconds=1800; await activation).
+3. idea-126 status flipped `triaged` → `incorporated` with `missionId=mission-88`.
+
+✅ **Phase 6 Preflight CLOSED — verdict YELLOW.**
+- Architect authored preflight artifact `docs/missions/m-k8s-envelope-preflight.md` at PR #273; opened 2026-05-24.
+- Engineer reviewed + approved 2026-05-24 ~10:46 AEST (verifications: mission-88 entity state + 21 kinds entity-kinds.json v1.3 + 5 cluster Design merge currency + E2 YELLOW framing + bounded Director-options).
+- PR #273 merged 2026-05-24T00:46:17Z (squash commit 6a95bbb2).
+- 6-category audit all PASS except E2 (deploy-gate dependencies; YELLOW reflects deliberate deferral of 2 operational decisions to Director-engagement at Phase 7).
+
+▶ **Awaiting Phase 7 Release-gate Director engagement (architect-orchestrated):**
+- **Pre-kickoff Decision (i)** — pre-prod substrate-mirror availability: (a) carve staging-env slice / (b) risk-accept production-only [architect+engineer-lean] / (c) hybrid local-dev with prod snapshot.
+- **Pre-kickoff Decision (ii)** — bug-97 pre-W0 sequencing: (a) ship as pre-W0 prerequisite slice [architect+engineer-lean] / (b) risk-accept carry-over / (c) fold into W3 (REJECTED at OQ6).
+- Combined recommendation: (i)(b) + (ii)(a). On Director ratification: `update_mission(status="active")` → pulses fire → engineer scaffolds Pre-W0 bug-97 fix slice → W0 substrate-prep begins.
 - Engineer dispositions (concur unless flagged):
   - **OQ1 (wave shape):** CONCUR cluster-mirrored W1→W5 + W6.
   - **OQ2 (missionClass):** CONCUR `substrate-introduction`.
