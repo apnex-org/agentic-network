@@ -153,7 +153,28 @@ If you're picking up cold, read in this order:
 - Operator-DX (Q7 same-PR): psql-cookbook bug-118 closure expanded 5→8 kinds + Turn handle-classified `metadata.name` lookup + PendingAction sweeper-queue envelope-shape (enqueuedAt→metadata.createdAt) + Task envelope-shape FSM query + in-flight migration flag operator inspection.
 - Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 130 test files / 1644 tests pass (1 skipped) / commit-message-claims accurate.
 
-▶ **PR #277 in-flight; awaiting `pr_opened_bilateral` architect approve + CI completion.**
+✅ **PR #277 MERGED at `5eca435`** (2026-05-24 ~13:23 AEST per W3 dispatch preamble). W2 cluster-2 envelope migration on main.
+
+✅ **W3 cluster-3 Design-pass converged at thread-645 R3** (2026-05-24 ~13:57 AEST). All Q1-Q9 + A1+A2 CONCUR engineer-leans + A4 documentation pin.
+- **Engineer-proactive verify-before-bake applied UPFRONT at R1** (cluster-2 + cluster-3 = 2 clusters in a row self-prompting; 3rd if W1 thread-643 retroactive included).
+- **MOSTLY ZERO substrate-currency drift** + 2 deliberate-extensions Design v0.2 EXPLICITLY carried (Counter structural-transform + SchemaDef OQ10 status-fields). Engineer correctly distinguished "Design explicitly adds new shape post-substrate" vs "Design drifted from substrate" — load-bearing nuance per `feedback_engineer_proactive_verify_before_bake_at_q_class`.
+- Q-dispositions: Q1 single-bundle PR / Q2 v0.3 = v0.2 + §6 substrate-truth-ratified record / Q3 Agent per-FSM-as-top-level (5 distinct status fields per K8s Pod.status precedent) / Q4 SchemaDef kill-9 mock-substrate-throw mid-migration (vitest scope appropriate) / Q5 Counter Option (a) embedded-map-in-status (K8s ConfigMap precedent) / Q6 concurrent migration / Q7 wire-flow extension / Q8 operator-DX same-PR / Q9 bug-118 cluster-3 contributes ZERO new kinds (no sourceThreadId in Agent/Tele/SchemaDef/Counter; IN-clause stays at 8).
+- A-decisions: A1 SubstrateCounter atomic rewrite IN W3 PR (substrate-correctness; race-clobber prevention; +~30 lines bounded scope) / A2 SchemaDef reconciler-side WRITES DEFER to follow-on PR (M-SchemaDef-Reconciler-Status-Write-Patch Idea filing at W3 ship-close) / A4 Tele `updatedAt`-omission precedent for immutable-content kinds.
+
+✅ **W3 cluster-3 PR #278 SHIPPED** (2026-05-24 ~14:08 AEST; commit `80bcef7` on branch `agent-greg/m-k8s-envelope-w3-cluster-3`).
+- 13 files; +1900+ lines.
+- 4 KindMigrationModule (`kinds/{Agent,Tele,SchemaDef,Counter}.ts`) consuming v0.3-ratified partition rules.
+- 4 per-kind unit tests (44 assertions; idempotency reference-equality + partition shape + FSM rename + Agent 5-distinct-status-fields + Tele NO updatedAt + SchemaDef OQ10 status injection + Counter structural transform).
+- wire-flow.test.ts cluster-3 batch extension: 6 new tests (4-kind concurrent migration + Counter structural verify + Agent per-FSM observability + Tele NO updatedAt + SchemaDef OQ10 status + Q4 SchemaDef kill-9-simulated restart-safety via mock-substrate-throw + reset-cursor clean-recovery pattern).
+- **SubstrateCounter atomic rewrite per A1**: `substrate-counter.ts` reads tolerant-dual-shape (envelope OR legacy-flat backward-compat); writes envelope-shape always; preserves bug-97 W5.5 CAS mechanism. Extended `substrate-counter.race.test.ts` with 4 envelope-shape race assertions.
+- Cluster-3 Design v0.2 → v0.3 update (§6 status flip + substrate-currency-ratification record + A1+A2+A4 dispositions + maturity signal: 3 clusters self-prompting).
+- Operator-DX (Q8 same-PR): psql-cookbook NEW sections (Agent per-FSM-status query showing 5 status fields observability; Tele lifecycle phase query; SchemaDef reconciliation-status query per OQ10 deviation; Counter envelope-shape inspection).
+- Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 134 test files / 1694 tests pass (1 skipped) / commit-message-claims accurate.
+- Hub-rebuild dependency REQUIRED for W3 dev-cycle verification (SubstrateCounter feeds 11 existing-substrate-version repositories for ID allocation).
+
+▶ **PR #278 in-flight; awaiting `pr_opened_bilateral` architect approve + CI completion.**
+
+▶ **Post-merge follow-on:** file `M-SchemaDef-Reconciler-Status-Write-Patch` Idea (substrate-extension class; OQ10 deferred reconciler-side WRITES; composes with idea-317).
 
 ---
 
