@@ -96,6 +96,23 @@ If you're picking up cold, read in this order:
 
 ▶ **W1 implementation DEFERRED to fresh engineer session.**
 
+✅ **Fresh-session pickup 2026-05-24 ~12:42 AEST.** Architect dispatched W1 scaffold via thread-642 (informational; no reply required). Engineer:
+- Verified W0 base at `e665de3` on origin/main.
+- Created branch `agent-greg/m-k8s-envelope-w1-cluster-1` from origin/main.
+- Read cluster-1 Design v0.2 (commit `d8ea695`) + W0 envelope library + W0 `_contract.ts`.
+- Q2 substrate-current shape verify: code-grepped `hub/src/entities/{idea,bug,thread,mission,proposal}-repository-substrate.ts` + FSM enum definitions in `hub/src/{entities/idea.ts,entities/bug.ts,entities/mission.ts,state.ts}`.
+
+▶ **Q2 application surfaced SUBSTANTIAL substrate-currency drift at thread-643 (2026-05-24 ~12:42 AEST). 6th catch on mission-88; pattern continues.**
+- Idea drift: minor (revisionCount field doesn't exist in substrate; add updatedAt to metadata).
+- Bug drift: minor (add updatedAt to metadata).
+- Thread drift: phase enum substantial (active/converged/closed/expired/abandoned → active/converged/round_limit/closed/abandoned/cascade_failed) + cascade-pending bookkeeping fields not in Design.
+- **Mission drift SUBSTANTIAL**: `goal`/`sourceIdeaId`/`sourceProposalId` don't exist; `documentRef`/`correlationId`/`turnId`/`missionClass`/`pulses` need partition; `tasks`/`ideas` are virtual-hydrated NOT persisted; phase enum `cancelled` → `abandoned`; `issuedTaskIds` synthetic vs PlannedTask.issuedTaskId-per-slot; `sliceTracking` no substrate counterpart.
+- **Proposal drift SUBSTANTIAL**: `body`/`linkedIdeaId`/`linkedMissionId`/`reviewCount` don't exist (W4.x.7 dropped body-storage); `summary`/`proposalRef`/`decision`/`feedback`/`correlationId`/`executionPlan`/`scaffoldResult`/`labels` need partition; phase enum entire 4-state set replaced by 5-state substrate-truth.
+- Engineer-proposed dispositions covered: trivial-resolves (apply substrate-truth) + 3 substantive-decisions for architect (Mission.pulses monolithic vs split partition; Proposal.summary/body confirmation; Mission v0.3 TODOs drop).
+- Acceptance shape: cluster-1 Design v0.3 update folded into W1 PR; KindMigrationModule consumes ratified partition rules.
+
+▶ **W1 BLOCKED on architect thread-643 disposition.** Will resume scaffolding post-ratification.
+
 ---
 
 ### Cold-pickup pointers for next engineer session
@@ -122,6 +139,7 @@ If you're picking up cold, read in this order:
 | 3 | thread-637 R1 | engineer → architect | bug-97 STALE-OPEN (architect dispatch-premise stale; fix landed at e109000) |
 | 4 | thread-639 R2 precision-pin (ii) | bilateral | Q2 "SchemaDef reconciler tolerance" → "write-validation envelope tolerance" doc-side framing |
 | 5 | thread-640 R2 Q2 | engineer proactive | substrate-current shape verify BEFORE baking W1 partition rules (5th = proactive, not reactive) |
+| 6 | thread-643 R1 W1 | engineer proactive | cluster-1 Design v0.2 partition rules SUBSTANTIAL drift vs substrate-current truth (Mission goal/sourceIdeaId/tasks-virtual/phase=abandoned; Proposal body/linked*/reviewCount; Thread phase enum; minor adds across all 5 kinds); Design v0.3 update folded into W1 PR |
 
 Pattern: **substrate-currency-discipline cuts both ways at all 4 surfaces (code-trace + entity-state + fix-commit + retired-file)**. Next engineer session should expect to apply this proactively at Q2 substrate-shape verification step.
 
