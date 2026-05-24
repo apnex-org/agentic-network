@@ -12,7 +12,7 @@
  *
  * ─── Behavior per architect R2 disposition ────────────────────────────────
  *
- * - Imports + registers all 21 KindMigrationModule (cluster-1+2+3+4+5)
+ * - Imports + registers all 22 KindMigrationModule (cluster-1+2+3+4+5; W8 bug-124 added Notification)
  * - Invokes runKind per-kind concurrently (per W0 MigrationRunner design;
  *   per-kind cursor isolation proven W1-W5)
  * - Reports per-kind state to stdout (structured-text default; --json opt-in)
@@ -40,7 +40,7 @@ import { createPostgresStorageSubstrate, type HubStorageSubstrate } from "../sto
 import { MigrationRunner, type MigrationRunOptions, type MigrationRunResult } from "../storage-substrate/migrations/v2-envelope/migration-runner.js";
 import { ALL_SCHEMAS } from "../storage-substrate/schemas/all-schemas.js";
 
-// ─── Module imports (all 21 KindMigrationModule per W1-W5 ship) ──────────────
+// ─── Module imports (all 22 KindMigrationModule per W1-W5 + W8 Notification add) ──────────────
 
 import { createIdeaMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Idea.js";
 import { createBugMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Bug.js";
@@ -59,6 +59,7 @@ import { createAuditMigrationModule } from "../storage-substrate/migrations/v2-e
 import { createRepoEventBridgeCursorMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/RepoEventBridgeCursor.js";
 import { createRepoEventBridgeDedupeMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/RepoEventBridgeDedupe.js";
 import { createDocumentMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Document.js";
+import { createNotificationMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Notification.js";
 import { createArchitectDecisionMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/ArchitectDecision.js";
 import { createDirectorHistoryEntryMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/DirectorHistoryEntry.js";
 import { createReviewHistoryEntryMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/ReviewHistoryEntry.js";
@@ -145,9 +146,10 @@ function registerAllModules(runner: MigrationRunner): void {
   runner.register(createSchemaDefMigrationModule(findSchema("SchemaDef")));
   runner.register(createCounterMigrationModule(findSchema("Counter")));
 
-  // cluster-4 (4): system-emit/bookkeeping
+  // cluster-4 (5): system-emit/bookkeeping (W8 bug-124 fix: Notification added; 4→5)
   runner.register(createMessageMigrationModule(findSchema("Message")));
   runner.register(createAuditMigrationModule(findSchema("Audit")));
+  runner.register(createNotificationMigrationModule(findSchema("Notification")));
   runner.register(createRepoEventBridgeCursorMigrationModule(findSchema("RepoEventBridgeCursor")));
   runner.register(createRepoEventBridgeDedupeMigrationModule(findSchema("RepoEventBridgeDedupe")));
 

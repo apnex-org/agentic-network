@@ -350,19 +350,26 @@ const SchemaDefMeta: SchemaDef = {
 };
 
 const Notification: SchemaDef = {
-  // Re-introduction per OQ8 + Design v1.1 §3.4.1 (closes mission-56 partial-completion;
-  // absorbs hub-networking.ts direct-write paths at W4 repository-composition)
+  // mission-88 W8 bug-124 fix: v2 schema matches actual production shape per W8
+  // Design v1.0 §2 audit. v1 fields (recipientRole/recipientAgentId) did NOT
+  // match production — actual shape carries targetRoles[] (array) + data (object) +
+  // timestamp. v1.3-cluster-4-correction removed Notification from kinds[] entirely
+  // based on incomplete code-trace; W8 production-state psql audit found 555 rows.
+  // Substrate-currency catch — sibling of W4.x.2 Audit-v2-correction pattern.
   kind: "Notification",
-  version: 1,
+  version: 2,
   fields: [
     { name: "id", type: "string", required: true },
-    { name: "event", type: "string", required: false },
-    { name: "recipientRole", type: "string", required: false },
-    { name: "recipientAgentId", type: "string", required: false },
+    { name: "event", type: "string", required: true },
+    { name: "timestamp", type: "string", required: true },
+    { name: "targetRoles", type: "array", required: true },
+    { name: "data", type: "object", required: false },
   ],
-  indexes: [
-    { name: "notification_recipient_idx", fields: ["recipientAgentId"] },
-  ],
+  // Index expressions deferred to W7 cluster-4 retro-audit (Q4 retro-audit
+  // timing concurred). targetRoles[] needs GIN-or-expression strategy.
+  // notification_recipient_idx removed: recipientAgentId field never existed in
+  // production shape (v1 inventory drift).
+  indexes: [],
   watchable: true,
 };
 
