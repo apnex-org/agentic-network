@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { tagsFromEntity } from "../shape-helpers.js";
+import { tagsFromEntity, arrayFieldFromEntity } from "../shape-helpers.js";
 
 describe("tagsFromEntity — legacy-flat shape", () => {
   it("returns a copy of top-level tags array (decoupled from input)", () => {
@@ -114,5 +114,118 @@ describe("tagsFromEntity — legacy-shape branch defense-in-depth (per W9 Q4 ref
   it("steady-state post-W11 expectation: all production rows are envelope-shape, but legacy still coerces correctly", () => {
     const legacyRow = { id: "x", tags: ["tag-a", "tag-b"] };
     expect(tagsFromEntity(legacyRow)).toEqual(["tag-a", "tag-b"]);
+  });
+});
+
+// W9.1 hot-fix (bug-134) — arrayFieldFromEntity generalized helper tests.
+
+describe("arrayFieldFromEntity — legacy-flat shape", () => {
+  it("returns copy of top-level array field", () => {
+    const bug = { id: "bug-1", linkedTaskIds: ["task-1", "task-2"] };
+    const result = arrayFieldFromEntity(bug, "linkedTaskIds");
+    expect(result).toEqual(["task-1", "task-2"]);
+    // Mutation of result must not affect input
+    (result as string[]).push("mutated");
+    expect(bug.linkedTaskIds).toEqual(["task-1", "task-2"]);
+  });
+
+  it("returns empty when top-level field is empty array", () => {
+    expect(arrayFieldFromEntity({ fixCommits: [] }, "fixCommits")).toEqual([]);
+  });
+});
+
+describe("arrayFieldFromEntity — envelope status section (Bug.linkedTaskIds + fixCommits per cluster-1)", () => {
+  it("probes status section per cluster-1 Bug.ts partition", () => {
+    const envelopeBug = {
+      id: "bug-2",
+      apiVersion: "core.ois/v1",
+      kind: "Bug",
+      metadata: { name: "bug-2" },
+      spec: { title: "..." },
+      status: {
+        phase: "resolved",
+        linkedTaskIds: ["task-9", "task-10"],
+        fixCommits: ["abc123", "def456"],
+      },
+    };
+    expect(arrayFieldFromEntity(envelopeBug, "linkedTaskIds")).toEqual(["task-9", "task-10"]);
+    expect(arrayFieldFromEntity(envelopeBug, "fixCommits")).toEqual(["abc123", "def456"]);
+  });
+
+  it("returns empty when envelope row has status section but field absent", () => {
+    const envelopeBug = { metadata: {}, spec: {}, status: { phase: "open" } };
+    expect(arrayFieldFromEntity(envelopeBug, "linkedTaskIds")).toEqual([]);
+  });
+});
+
+describe("arrayFieldFromEntity — envelope spec section (Turn.tele per cluster-2)", () => {
+  it("probes spec section per cluster-2 Turn.ts partition", () => {
+    const envelopeTurn = {
+      id: "turn-1",
+      apiVersion: "core.ois/v1",
+      kind: "Turn",
+      metadata: { name: "..." },
+      spec: { scope: "...", tele: ["T1", "T7"] },
+      status: { phase: "active" },
+    };
+    expect(arrayFieldFromEntity(envelopeTurn, "tele")).toEqual(["T1", "T7"]);
+  });
+});
+
+describe("arrayFieldFromEntity — envelope metadata section (hypothetical future cluster)", () => {
+  it("probes metadata section if field ends up there", () => {
+    const entity = { metadata: { tags: ["a", "b"], labels: {} }, spec: {}, status: {} };
+    expect(arrayFieldFromEntity(entity, "tags")).toEqual(["a", "b"]);
+  });
+});
+
+describe("arrayFieldFromEntity — probe order (top-level wins over envelope)", () => {
+  it("returns top-level when both present (legacy-flat takes precedence)", () => {
+    const mixed = {
+      linkedTaskIds: ["legacy-1"],
+      status: { linkedTaskIds: ["envelope-1"] },
+    };
+    expect(arrayFieldFromEntity(mixed, "linkedTaskIds")).toEqual(["legacy-1"]);
+  });
+
+  it("returns metadata when top-level absent, before spec/status", () => {
+    const entity = {
+      metadata: { tele: ["m1"] },
+      spec: { tele: ["s1"] },
+      status: { tele: ["st1"] },
+    };
+    expect(arrayFieldFromEntity(entity, "tele")).toEqual(["m1"]);
+  });
+
+  it("returns spec when top-level + metadata absent", () => {
+    const entity = { spec: { tele: ["s1"] }, status: { tele: ["st1"] } };
+    expect(arrayFieldFromEntity(entity, "tele")).toEqual(["s1"]);
+  });
+});
+
+describe("arrayFieldFromEntity — missing/null defensive (mirror tagsFromEntity coverage)", () => {
+  it("returns [] when entity is null", () => {
+    expect(arrayFieldFromEntity(null, "tags")).toEqual([]);
+  });
+
+  it("returns [] when entity is undefined", () => {
+    expect(arrayFieldFromEntity(undefined, "tags")).toEqual([]);
+  });
+
+  it("returns [] when entity is a primitive", () => {
+    expect(arrayFieldFromEntity(42, "tags")).toEqual([]);
+    expect(arrayFieldFromEntity("not-an-entity", "tags")).toEqual([]);
+  });
+
+  it("returns [] when neither top-level nor envelope sections have field", () => {
+    expect(arrayFieldFromEntity({ id: "x" }, "linkedTaskIds")).toEqual([]);
+  });
+
+  it("returns [] when section value is non-object (defensive)", () => {
+    expect(arrayFieldFromEntity({ status: "broken" }, "linkedTaskIds")).toEqual([]);
+  });
+
+  it("returns [] when field value is non-array (e.g., string)", () => {
+    expect(arrayFieldFromEntity({ status: { linkedTaskIds: "not-an-array" } }, "linkedTaskIds")).toEqual([]);
   });
 });

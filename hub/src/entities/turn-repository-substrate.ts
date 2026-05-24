@@ -22,6 +22,7 @@ import type { ITaskStore, EntityProvenance } from "../state.js";
 import type { IMissionStore } from "./mission.js";
 import type { ITurnStore, Turn, TurnStatus } from "./turn.js";
 import { SubstrateCounter } from "./substrate-counter.js";
+import { arrayFieldFromEntity } from "./shape-helpers.js";
 
 const KIND = "Turn";
 const MAX_CAS_RETRIES = 50;
@@ -114,7 +115,7 @@ export class TurnRepositorySubstrate implements ITurnStore {
       ...stored,
       missionIds: missions.filter((m) => m.turnId === stored.id).map((m) => m.id),
       taskIds: tasks.filter((t) => t.turnId === stored.id).map((t) => t.id),
-      tele: [...stored.tele],
+      tele: arrayFieldFromEntity(stored, "tele") as string[],
     };
   }
 
