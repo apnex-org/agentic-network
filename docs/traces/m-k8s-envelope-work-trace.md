@@ -193,13 +193,33 @@ If you're picking up cold, read in this order:
 - Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 138 test files / 1736 tests pass (1 skipped) / commit-message-claims accurate.
 - Hub-rebuild dependency REQUIRED for W4 dev-cycle verification (RepoEventBridgeSubstrateAdapter feeds bridge runtime at Hub startup).
 
-▶ **PR #279 in-flight; awaiting `pr_opened_bilateral` architect approve + CI completion.**
+✅ **PR #279 MERGED at `2099e08`** (2026-05-24 ~14:37 AEST per W5 dispatch preamble). W4 cluster-4 envelope migration on main.
+
+✅ **W5 cluster-5 Design-pass converged at thread-647 R3** (2026-05-24 ~14:41 AEST). **FINAL CLUSTER.** All Q1-Q10 + A1+A2 CONCUR + A3 architect-disposition.
+- **Engineer-proactive verify-before-bake applied UPFRONT at R1** (5 clusters in a row self-prompting — discipline-maturity capstone reached).
+- **ZERO substrate-currency drift** across all 5 cluster-5 kinds; cluster-5 Design v0.2 production-substrate-verified at Phase 4 closure 2026-05-23 via psql.
+- Q-dispositions: Q1 single-bundle PR / Q2 v0.3 = v0.2 + §6 substrate-truth-ratified record / Q3 Document.category → metadata.labels.category CONTENT-classification axis FIRST-instance (cluster-3 §5 6th cumulative-pattern materially bilateral; Agent.spec.labels was routing-intent first; Document.metadata.labels is content-classification first) / Q4 "logged" constant for 4 append-only kinds + Document "active" constant (mostly-static) / Q5 updatedAt-omission for 4 append-only HistoryEntry + ArchitectDecision + Document MAY have updatedAt forward-compat / Q6 concurrent migration / Q7 wire-flow extension / Q8 operator-DX same-PR / **Q9 bug-118 coverage CLOSED FINAL at 8 kinds** (ThreadHistoryEntry.threadId is forensic-pointer NOT cascade-provenance per Q9 engineer code-trace + Design §3.6 framing; cluster-5 contributes ZERO new kinds) / **Q10 7th cumulative pattern NOT APPLICABLE for W5** (Document write-path direct substrate.put; no primitive-coupling; pattern stays at 2 instances W3 SubstrateCounter + W4 RepoEventBridge adapter — **pattern set complete**).
+- A-decisions: A1 Document.metadata.labels content-classification FIRST-instance documented in cluster-5 v0.3 §5 / A2 Document.name = legacy.id file-stem convention / A3 M-SchemaDef-Reconciler-Status-Write-Patch Idea filing architect-disposition at W5 ship-close (composes with W6 cutover + Phase 10 retrospective context).
+
+✅ **W5 cluster-5 PR #280 SHIPPED — FINAL CLUSTER** (2026-05-24 ~14:50 AEST; commit `194be02` on branch `agent-greg/m-k8s-envelope-w5-cluster-5`).
+- 12 files; +1500+ lines.
+- 5 KindMigrationModule (`kinds/{Document,ArchitectDecision,DirectorHistoryEntry,ReviewHistoryEntry,ThreadHistoryEntry}.ts`) consuming v0.3-ratified partition rules.
+- 5 per-kind unit tests (41 assertions; Document content-classification axis first-use + name file-stem + "active" constant + category enum preservation + labels-omission on null; ArchitectDecision/DirectorHistory/ReviewHistory/ThreadHistory append-only "logged" + timestamp→createdAt + NO updatedAt + FK pointers + Q9 ThreadHistory threadId NOT sourceThreadId framing distinction).
+- wire-flow.test.ts cluster-5 batch extension: 4 new tests (5-kind concurrent + Document CONTENT-classification axis verification + 4-kind "logged" + Q5 updatedAt-omission for 4 append-only + Q9 FK pointer verification rh-N taskId / th-N threadId NOT sourceThreadId + idempotent re-run).
+- Cluster-5 Design v0.2 → v0.3 update (§6 substrate-truth-ratified record + discipline-maturity capstone framing + Q3 Document CONTENT-classification axis FIRST-instance + Q9 bug-118 CLOSED FINAL at 8 kinds + Q10 7th cumulative pattern stays at 2 instances [pattern set complete] + A2 Document.name file-stem + A3 architect-disposition Idea filing).
+- Operator-DX (Q8 same-PR): psql-cookbook NEW sections (Document envelope-shape CONTENT-classification query metadata.labels.category navigation FIRST-instance; 4 append-only HistoryEntry forensic queries all carrying status.phase="logged" constant + timestamp→metadata.createdAt rename + FK pointer navigation; ThreadHistory threadId forensic-pointer Q9 distinction documented).
+- Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 143 test files / 1781 tests pass (1 skipped) / commit-message-claims accurate.
+- Hub-rebuild dependency: NOT required for W5 (additive code; Document/HistoryEntry write-paths direct substrate.put; no primitive-coupling per Q10).
+
+▶ **PR #280 in-flight (FINAL CLUSTER WAVE); awaiting `pr_opened_bilateral` architect approve + CI completion.**
 
 ▶ **Post-merge follow-ons:**
-- File `M-SchemaDef-Reconciler-Status-Write-Patch` Idea (substrate-extension class; OQ10 deferred reconciler-side WRITES from cluster-3 A2; composes with idea-317).
-- W5 cluster-5 (Document / ArchitectDecision / 3 HistoryEntry kinds; FINAL cluster) dispatch via fresh coord-thread post W4 acceptance close.
+- **Architect-side: file `M-SchemaDef-Reconciler-Status-Write-Patch` Idea per A3 disposition** (substrate-extension class; OQ10 deferred reconciler-side WRITES from cluster-3 A2; composes with idea-317).
+- **W6 PRODUCTION CUTOVER + CLOSE dispatch via fresh coord-thread** post W5 acceptance close (substantively different shape: cutover runbook with image-pre-build per mission-83 W5.4 pattern + <30s effective downtime + SchemaDef strict-mode flip SUBSTRATE_ENVELOPE_TOLERANT env-var unset + production smoke verification + closing audit + ADR + entity-kinds.json v1.3→v2.0 envelope-marker bump + Mission.status → completed + Phase 10 retrospective trigger).
 
-**4 of 5 cluster waves implemented.** W5 cluster-5 is the FINAL cluster wave.
+**5 of 5 cluster waves implemented.** **idea-126 Phase 4 Design completes at PR #280 merge.** All 21 substrate-mediated kinds carry K8s envelope shape uniformly post-merge.
+
+**mission-88 calibration cluster maturity FINAL:** 7 substrate-currency catches + 7 cumulative envelope-methodology patterns articulated (pattern set complete) + 5 clusters in a row self-prompting at engineer-proactive R1 verify-before-bake + bug-118 IN-clause CLOSED at 8 kinds across all 5 cluster waves. Discipline working both directions reliably; engineer-proactive verify-before-bake at Q-class disposition is LOAD-BEARING self-prompting at engineer side. cluster-3 §5 6th cumulative-pattern axis materially bilateral with W5 Document.metadata.labels first-instance. Pattern is fully realized.
 
 ---
 
