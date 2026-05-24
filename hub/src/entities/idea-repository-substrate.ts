@@ -26,6 +26,7 @@ import type {
   CascadeBacklink,
 } from "./idea.js";
 import { SubstrateCounter } from "./substrate-counter.js";
+import { tagsFromEntity } from "./shape-helpers.js";
 
 const KIND = "Idea";
 const MAX_CAS_RETRIES = 50;
@@ -33,7 +34,7 @@ const MAX_CAS_RETRIES = 50;
 function cloneIdea(idea: Idea): Idea {
   return {
     ...idea,
-    tags: [...idea.tags],
+    tags: tagsFromEntity(idea),
   };
 }
 

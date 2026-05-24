@@ -33,6 +33,7 @@ import type {
   CascadeBacklink,
 } from "./bug.js";
 import { SubstrateCounter } from "./substrate-counter.js";
+import { tagsFromEntity } from "./shape-helpers.js";
 
 const KIND = "Bug";
 const MAX_CAS_RETRIES = 50;
@@ -40,7 +41,7 @@ const MAX_CAS_RETRIES = 50;
 function cloneBug(bug: Bug): Bug {
   return {
     ...bug,
-    tags: [...bug.tags],
+    tags: tagsFromEntity(bug),
     linkedTaskIds: [...bug.linkedTaskIds],
     fixCommits: [...bug.fixCommits],
   };
@@ -135,7 +136,7 @@ export class BugRepositorySubstrate implements IBugStore {
       .filter(bug => {
         if (filter?.tags && filter.tags.length > 0) {
           const tagSet = new Set(filter.tags);
-          if (!bug.tags.some(t => tagSet.has(t))) return false;
+          if (!tagsFromEntity(bug).some(t => tagSet.has(t))) return false;
         }
         return true;
       })
