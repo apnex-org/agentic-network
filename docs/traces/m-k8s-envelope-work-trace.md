@@ -81,7 +81,13 @@ If you're picking up cold, read in this order:
 - Ship-verify 3-layer (per `feedback_ship_verify_3_layer_discipline`): tsc-strict 0 errors / vitest W0 suite 27/27 pass (3.4s incl. testcontainers) / hub-bootstrap-substrate 2/2 pass after npm run build (initial flake was local-test-masking-via-cached-state — dist/ rebuild resolved).
 - PR test plan includes Hub-rebuild dependency per Q5 disposition (build-hub.sh + start-hub.sh per `feedback_adapter_restart_protocol_hub_container`).
 
-▶ **Awaiting architect cross-approval on PR #275** (pr_opened_bilateral notification expected). Post-merge: W1 cluster-1 dispatch via fresh coord-thread (Phase-5-spirit thread-coord for substantive substrate-touch within Phase 8 per thread-639 R2 architect-note).
+✅ **W0 PR #275 MERGED at e665de3** (2026-05-24 ~11:30 AEST per architect pulse-response). W0 substrate-prep primitives live on main: shared/envelope.ts + kinds/_contract.ts + migration-runner.ts + entities/migration-cursor-repository.ts + 23-entry SchemaDef seed + 27/27 tests + Q5 Hub-rebuild test plan.
+- Architect cross-approval + admin-merge cycle executed; pulse-cycle missed-threshold artifact of pulse-firing-during-active-architect-work (informational only; no escalation surface).
+
+▶ **Awaiting architect W1 cluster-1 dispatch via fresh coord-thread.**
+- W1 deliverables (per Phase 5 v0.2 wave plan): cluster-1 substantive-content envelope migration (Idea + Bug + Thread + Mission + Proposal; 5 kinds) — per-kind SchemaDef update + body migration + writer/reader code touches + handle-classified vs content-classified discipline per cluster-1 §1.5 + `metadata.sourceThreadId` envelope-level provenance per cluster-1 §3.1 (closes bug-118 envelope-shape portion) + per-kind read-after-migrate + write-after-migrate + wire-flow round-trip tests + operator-DX update last sub-step.
+- W1 uses W0 primitives: register KindMigrationModule per kind + MigrationRunner orchestrates + MigrationCursorRepository checkpoints + envelope library encodes/parses + SUBSTRATE_ENVELOPE_TOLERANT mode active during cutover.
+- Pulse cadence W1: ~30min default per OQ13 ratified (W1-W4 active migration class).
 - Engineer dispositions (concur unless flagged):
   - **OQ1 (wave shape):** CONCUR cluster-mirrored W1→W5 + W6.
   - **OQ2 (missionClass):** CONCUR `substrate-introduction`.
