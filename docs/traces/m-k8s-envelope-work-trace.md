@@ -211,11 +211,44 @@ If you're picking up cold, read in this order:
 - Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 143 test files / 1781 tests pass (1 skipped) / commit-message-claims accurate.
 - Hub-rebuild dependency: NOT required for W5 (additive code; Document/HistoryEntry write-paths direct substrate.put; no primitive-coupling per Q10).
 
-▶ **PR #280 in-flight (FINAL CLUSTER WAVE); awaiting `pr_opened_bilateral` architect approve + CI completion.**
+✅ **PR #280 MERGED at `b36cda4`** (2026-05-24 ~14:57 AEST per W6 dispatch preamble). W5 cluster-5 envelope migration on main. **idea-126 Phase 4 Design fully realized.**
 
-▶ **Post-merge follow-ons:**
-- **Architect-side: file `M-SchemaDef-Reconciler-Status-Write-Patch` Idea per A3 disposition** (substrate-extension class; OQ10 deferred reconciler-side WRITES from cluster-3 A2; composes with idea-317).
-- **W6 PRODUCTION CUTOVER + CLOSE dispatch via fresh coord-thread** post W5 acceptance close (substantively different shape: cutover runbook with image-pre-build per mission-83 W5.4 pattern + <30s effective downtime + SchemaDef strict-mode flip SUBSTRATE_ENVELOPE_TOLERANT env-var unset + production smoke verification + closing audit + ADR + entity-kinds.json v1.3→v2.0 envelope-marker bump + Mission.status → completed + Phase 10 retrospective trigger).
+✅ **W6 PRODUCTION CUTOVER + CLOSE Design-pass converged at thread-648 R3** (2026-05-24 ~15:01 AEST). **FINAL mission-88 wave bilateral closes here.** All Q1-Q9 + A1+A2+A3 CONCUR engineer-leans.
+- **Methodology refinement absorbed:** "runbook-shape should match operation-shape" (architect framing thread-648 R2) — bootstrap=prose (mission-83 W5.4); data-migration=script (mission-88 W6); cutover=script-with-gates. Engineer-correct divergence from prose-runbook precedent when operation-shape differs. Saved as engineer memory `feedback_runbook_shape_matches_operation_shape`.
+- Q-dispositions: Q1 Immediate cutover timing (autonomous-arc per RACI) / Q2 SINGLE automated `scripts/operator/m-k8s-envelope-cutover.sh` (runbook-as-code; reuses W0-W5 tested codepaths via MigrationRunner; dev-cyclable against testcontainers) / Q3 targeted smoke ~10s (per-kind shape probe 21 kinds + bug-118 closure query + per-cluster write smoke 5 writes) / Q4 image-tag-pin rollback + 4 specific triggers / Q5 closing audit architect-author + engineer-review / Q6 ADR 032-k8s-envelope-cutover architect-author / Q7 entity-kinds.json v1.3 → v2.0 envelope-marker bump (3 new fields) / Q8 Mission close sequencing (update_mission(completed) → pulses auto-suspend → Phase 9 → Phase 10 trigger) / Q9 Phase 10 Walkthrough mode architect-lean (substrate-introduction class warrants Director-time investment proportionate).
+- A-decisions: A1 migration runtime <60s within mission-83 W5.4 budget / A2 bug-118 closure query reuses psql-cookbook verbatim / A3 work-trace finalization post-Mission.status=completed.
+
+✅ **W6 PR #281 SHIPPED — FINAL mission-88 wave** (2026-05-24 ~15:07 AEST; commit `f45e227` on branch `agent-greg/m-k8s-envelope-w6-cutover-close`).
+- 4 files; +~700 lines.
+- `scripts/operator/m-k8s-envelope-cutover.sh` NEW — automated cutover-script with 6 steps + 4 rollback-triggers (pre-flight DB / MigrationRunner across 21 kinds / SchemaDef strict-mode flip / per-kind shape probe / bug-118 closure query / per-cluster write smoke); DRY_RUN mode for dev-cycle verification; runbook-as-code matches data-migration operation-shape; reuses W0-W5 tested codepaths.
+- `hub/scripts/entity-kinds.json` v1.3 → v2.0 envelope-marker bump (3 new fields: $cutover-completed-at + $envelope-marker="k8s-envelope-v1" + $generation-source v2.0 update; 21 kinds remain locked).
+- `docs/audits/m-k8s-envelope-closing-audit.md` STUB for architect-fill post-cutover (§1 Phase 8 ship metrics table + §2 bug-118 closure + §3 7 substrate-currency catches + §4 7 cumulative envelope-methodology patterns + §5 post-mission Idea filings + §6 calibration capstone).
+- `docs/decisions/032-k8s-envelope-cutover.md` STUB for architect-fill (next ADR per existing convention; 031-shim-observability was most recent).
+- Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 143 test files / 1781 tests pass (1 skipped) / commit-message-claims accurate. No test impact from W6 (operator-script + docs + JSON metadata).
+
+▶ **PR #281 in-flight (FINAL WAVE); awaiting `pr_opened_bilateral` architect approve + CI completion.**
+
+▶ **Post-merge architect-side execution arc (final mission-88 close-out):**
+1. Execute `scripts/operator/m-k8s-envelope-cutover.sh` against production hub-vm
+2. Verify smoke + bug-118 closure (cutover-script Step 4-5 outputs)
+3. Author closing audit doc (architect-fills `docs/audits/m-k8s-envelope-closing-audit.md` stub per A3)
+4. Author ADR 032 (architect-fills `docs/decisions/032-k8s-envelope-cutover.md` stub)
+5. Final entity-kinds.json bump with `$cutover-completed-at` ISO timestamp
+6. `update_mission(mission-88, status="completed")` → Phase 8 → Phase 9 Close → pulses auto-suspend
+7. Phase 10 Retrospective dispatch surface to Director (architect-lean Walkthrough mode per Q9)
+
+▶ **Director gate-engagement (Phase 10):** retrospective mode pick + retrospective execution per chosen mode.
+
+▶ **Engineer-side post-Mission.status=completed:**
+- Work-trace finalization commit (final mission-state-of-affairs entry; Phase 9 Close timestamp; Phase 10 Retrospective dispatch pointer when architect engages)
+- Work-trace branch (`agent-greg/m-k8s-envelope-work-trace`) retention through retrospective per A3
+
+▶ **Post-mission Idea filings (architect-side):**
+- **M-SchemaDef-Reconciler-Status-Write-Patch** Idea — substrate-extension class; cluster-3 A2 OQ10 deferred reconciler-side WRITES (architect-disposition at W5 or W6 ship-close)
+- **idea-200 M-Thread-Substrate-Carve-Out** — Thread.status.messages → cluster-4 Message store carve-out (composition checkpoint per cluster-1 §3.3 + cluster-4 §3.1)
+- **idea-151 M-Graph-Relationships** — FK pointer edge-extraction across multiple clusters
+
+**6 of 6 mission-88 waves implemented (W0-W6).** idea-126 Phase 4 Design fully realized. mission-88 cluster-work phase complete; W6 finalizes via production cutover + close + Phase 10 Retrospective trigger.
 
 **5 of 5 cluster waves implemented.** **idea-126 Phase 4 Design completes at PR #280 merge.** All 21 substrate-mediated kinds carry K8s envelope shape uniformly post-merge.
 
