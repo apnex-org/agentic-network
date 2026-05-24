@@ -69,16 +69,19 @@ If you're picking up cold, read in this order:
 - **Third substrate-currency catch on mission-88** — calibration-cluster ratified: (1) thread-635 R1 cluster-4 v0.2 Notification drop / (2) thread-635 R2 A5 worktree-stale / (3) thread-637 R1 bug-97 stale-open. Pattern: substrate-currency-discipline cuts both ways at all 4 surfaces (code-trace + entity-state + fix-commit + retired-file).
 - New methodology candidate U filed by architect: `feedback_architect_dispatch_premise_currency_check.md` (v2.1; mirror of engineer-side `feedback_substrate_currency_audit_rubric.md`).
 
-▶ **W0 substrate-prep slice CLAIMED by engineer (2026-05-24 ~11:05 AEST).**
-- 5 design questions Q1-Q5 surfaced upfront to architect for spec-level concur (NOT blockers):
-  - Q1 — envelope library API shape (`encodeEnvelope` + `parseEnvelope` two-function)
-  - Q2 — tolerance-mode flag plumbing (single substrate-level flag at reconciler boot)
-  - Q3 — migration-cursor row shape (`{kind: "MigrationCursor", id: "cursor-<kind>", lastMigratedId, waveId, startedAt, lastTickAt}`)
-  - Q4 — acceptance test harness directory (`hub/src/storage-substrate/migrations/v2-envelope/__tests__/`)
-  - Q5 — Hub-container build dependency (build-hub.sh + start-hub.sh per `feedback_adapter_restart_protocol_hub_container`)
-- W0 deliverables: SchemaDef reconciler tolerance mode + shared envelope encode/parse library + migration-cursor primitive + per-kind idempotency contract + acceptance test harness scaffolding.
-- Pulse cadence W0: ~60min architect + engineer (per OQ13 ratified).
-- Awaiting architect Q1-Q5 dispositions OR Design-pass refinement coord-thread before scaffolding.
+✅ **W0 Design-pass converged at thread-639 R3** (2026-05-24 ~11:14 AEST).
+- Architect picked Design-pass over inline-pulse-thread for substrate-extension class Q1-Q5 (thread-638 R2 disposition (b)).
+- thread-639 R1 engineer surface: Q1-Q5 with bounded options (A/B/C) + engineer-leans uniformly (A).
+- thread-639 R2 architect: all 5 engineer-leans CONCUR + 2 precision-pins: (i) Q1 schemaRef carries per-kind rename-mapping (cluster-4 §1.7 Message.kind → metadata.messageKind canonical); (ii) Q2 doc-side framing "SchemaDef reconciler tolerance" → "write-validation envelope tolerance" — **4th substrate-currency catch on mission-88**.
+- thread-639 R3 engineer ack + close_no_action handshake commit; W0 scaffolding begins.
+
+✅ **W0 substrate-prep PR #275 SHIPPED** (2026-05-24 ~11:25 AEST; commit 8c02203 on agent-greg/m-k8s-envelope-w0-substrate-prep).
+- 10 files (8 new + 2 modified); +1195 / -3 lines.
+- Deliverables: `shared/envelope.ts` (Q1 library) · `kinds/_contract.ts` (Q4 contract) · `migration-runner.ts` (Q4 runner) · `entities/migration-cursor-repository.ts` (Q3 wrapper) · MigrationCursor SchemaDef in all-schemas.ts (23rd entry) · `SUBSTRATE_ENVELOPE_TOLERANT` env-var in index.ts · `__tests__/{envelope,migration-cursor,wire-flow}.test.ts` + `__tests__/harness/fixtures.ts`.
+- Ship-verify 3-layer (per `feedback_ship_verify_3_layer_discipline`): tsc-strict 0 errors / vitest W0 suite 27/27 pass (3.4s incl. testcontainers) / hub-bootstrap-substrate 2/2 pass after npm run build (initial flake was local-test-masking-via-cached-state — dist/ rebuild resolved).
+- PR test plan includes Hub-rebuild dependency per Q5 disposition (build-hub.sh + start-hub.sh per `feedback_adapter_restart_protocol_hub_container`).
+
+▶ **Awaiting architect cross-approval on PR #275** (pr_opened_bilateral notification expected). Post-merge: W1 cluster-1 dispatch via fresh coord-thread (Phase-5-spirit thread-coord for substantive substrate-touch within Phase 8 per thread-639 R2 architect-note).
 - Engineer dispositions (concur unless flagged):
   - **OQ1 (wave shape):** CONCUR cluster-mirrored W1→W5 + W6.
   - **OQ2 (missionClass):** CONCUR `substrate-introduction`.
