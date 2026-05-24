@@ -134,11 +134,26 @@ If you're picking up cold, read in this order:
 - Engineer attempted admin-merge confirmed PR-already-merged; benign delete-branch error due to lily worktree main-checkout (per `feedback_pr_opened_notification_is_review_signal`).
 - W1 cluster-1 envelope migration modules + cluster-1 Design v0.3 + operator-DX touch + vitest.config.ts now on main.
 
-▶ **W2 cluster-2 (Task/PendingAction/Turn) is next.** Awaiting architect dispatch via fresh coord-thread per Phase 8 cadence. Engineer carries forward:
-- `feedback_engineer_proactive_verify_before_bake_at_q_class` discipline at W2 Q-class authoring
-- Branch convention: `agent-greg/m-k8s-envelope-w2-cluster-2`
-- Same Q1-Q7-shaped scaffold (5 kinds → 3 kinds for cluster-2 per cluster-2 Design)
-- bug-118 closure verification deferred until cluster-2 ships (substrate-wide `metadata.sourceThreadId` capture spans cluster-1 + cluster-2 per Design §4.2)
+✅ **W2 cluster-2 Design-pass converged at thread-644 R3** (2026-05-24 ~13:34 AEST). All Q1-Q8 + A1-A3 CONCUR engineer-leans; A4 deferred to W3 dispatch.
+- **Engineer-proactive verify-before-bake applied UPFRONT at R1** (not retroactively as W1 thread-643 was) — code-grepped 3 cluster-2 substrate repositories + cluster-2 Design v0.2 §2.1-§2.3 BEFORE drafting Q dispositions.
+- **ZERO substrate-currency drift** found — cluster-2 Design v0.2 was substrate-accurate at authoring (2026-05-23 post-W4.x.10 timing). The 7th anticipated catch did NOT materialize — positive-surprise outcome.
+- **Architect framing affirmation:** "Discipline working both directions — catches drift AND ratifies no-drift outcomes equally; calibration cluster maturing self-prompting at engineer side."
+- Q-dispositions: Q1 single-bundle PR / Q2 v0.3 = v0.2 + §6 substrate-truth-ratified record / Q3 single-FSM monolithic per W1 precedent (cluster-2 has NO multi-FSM kind; multi-FSM is forward-looking cluster-3 Agent) / Q4(a) env-var flag MIGRATION_IN_PROGRESS_<KIND>; (β)/(γ) defer distributed-Hub refactor / Q4(b) Turn TOLERANT-shape dual-row test / Q4(c) Task WRITE-FREEZE via env-var + MigrationInProgressError marker / Q5 concurrent migration / Q6 wire-flow extension / Q7 operator-DX same-PR / Q8 bug-118 coverage expand 5→8 kinds.
+- A-surfacings: A1 enqueuedAt → metadata.createdAt rename via renameMap / A2 naturalKey path-move + SchemaDef v2.0 derived-field forward-looking note / A3 4-class axis cross-cluster envelope-methodology pattern (declared-immutable / declared-with-controlled-mutation / observed-FSM-mutated / virtual-view) / A4 cluster-3 Agent multi-FSM per-FSM-as-top-level-status-fields (K8s PodSpec siblings precedent) DEFER to W3.
+
+✅ **W2 cluster-2 PR #277 SHIPPED** (2026-05-24 ~13:45 AEST; commit `785185f` on branch `agent-greg/m-k8s-envelope-w2-cluster-2`).
+- 12 files; +1700+ lines.
+- 3 KindMigrationModule (`kinds/{Task,PendingAction,Turn}.ts`) consuming v0.3-ratified partition rules.
+- 3 per-kind unit tests (38 assertions; idempotency reference-equality + partition shape + FSM rename + Turn handle-classified envelope.name+metadata.name pattern + PendingAction enqueuedAt rename).
+- in-flight-dispositions.test.ts NEW (env-var flag mechanism per-kind isolation + MigrationInProgressError marker + simulated writer/sweeper consumer patterns + dual-shape tolerant-read via module-level idempotency).
+- wire-flow.test.ts cluster-2 batch extension: 5 new tests (3-kind concurrent migration + cursor isolation + idempotent re-run + Q4(a)+(c) runner flag-set-on-runKind + flag-clear-on-error).
+- shared/migration-flag.ts NEW (Q4(a) env-var helper + MigrationInProgressError marker).
+- migration-runner.ts EXTENDED (setMigrationFlag/clearMigrationFlag at runKind try/finally boundary).
+- Cluster-2 Design v0.2 → v0.3 update (§7 status flip + drift-resolution-record + A3 4-class axis cross-cluster pattern + A4 forward-looking cluster-3 note + Q4(a) env-var rationale).
+- Operator-DX (Q7 same-PR): psql-cookbook bug-118 closure expanded 5→8 kinds + Turn handle-classified `metadata.name` lookup + PendingAction sweeper-queue envelope-shape (enqueuedAt→metadata.createdAt) + Task envelope-shape FSM query + in-flight migration flag operator inspection.
+- Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 130 test files / 1644 tests pass (1 skipped) / commit-message-claims accurate.
+
+▶ **PR #277 in-flight; awaiting `pr_opened_bilateral` architect approve + CI completion.**
 
 ---
 
