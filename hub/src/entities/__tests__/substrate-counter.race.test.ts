@@ -116,4 +116,70 @@ describe("SubstrateCounter bug-97 race fix (W5.5)", () => {
         .toEqual(Array.from({ length: callsPerDomain }, (_, i) => i + 1));
     }
   }, 60_000);
+
+  // ─── mission-88 W3 envelope-shape atomic-ship coverage (A1) ───────────
+
+  it("envelope-shape: first-write creates envelope-shape Counter entity", async () => {
+    const counter = new SubstrateCounter(substrate);
+
+    expect(await counter.next("envelopeTestDomain")).toBe(1);
+
+    const raw = await substrate.get<Record<string, unknown>>("Counter", "counter");
+    expect(raw).not.toBeNull();
+    // Verify envelope-shape persisted post-W3 atomic ship
+    expect(raw!.kind).toBe("Counter");
+    expect(raw!.apiVersion).toBe("core.ois/v1");
+    expect(raw!.metadata).toEqual({});
+    expect(raw!.spec).toEqual({});
+    const status = raw!.status as Record<string, unknown>;
+    expect(status.phase).toBe("active");
+    expect(status.counters).toEqual({ envelopeTestDomain: 1 });
+  });
+
+  it("envelope-shape: subsequent writes preserve envelope structure + advance counter", async () => {
+    const counter = new SubstrateCounter(substrate);
+    await counter.next("seqDomain"); // creates envelope row
+    await counter.next("seqDomain"); // updates envelope row
+
+    const raw = await substrate.get<Record<string, unknown>>("Counter", "counter");
+    expect(raw!.kind).toBe("Counter");
+    const status = raw!.status as Record<string, unknown>;
+    expect(status.phase).toBe("active");
+    expect(status.counters).toEqual({ seqDomain: 2 });
+  });
+
+  it("backward-compat read: tolerates legacy-flat Counter entity for monotonic continuation", async () => {
+    // Simulate a pre-W3 legacy-flat Counter row (unconditional put bypasses envelope)
+    await substrate.put("Counter", { id: "counter", legacyDomain: 5 });
+
+    const counter = new SubstrateCounter(substrate);
+    // next() should read legacy-flat 5 + advance to 6 + write envelope-shape back
+    expect(await counter.next("legacyDomain")).toBe(6);
+
+    const raw = await substrate.get<Record<string, unknown>>("Counter", "counter");
+    expect(raw!.kind).toBe("Counter");
+    const status = raw!.status as Record<string, unknown>;
+    expect((status.counters as Record<string, number>).legacyDomain).toBe(6);
+  });
+
+  it("envelope-shape: concurrent writes across multiple domains preserve all counters", async () => {
+    const counter = new SubstrateCounter(substrate);
+    const domains = ["envA", "envB", "envC"];
+    const N = 5;
+
+    const promises: Promise<{ domain: string; value: number }>[] = [];
+    for (const domain of domains) {
+      for (let i = 0; i < N; i++) {
+        promises.push(counter.next(domain).then(value => ({ domain, value })));
+      }
+    }
+    await Promise.all(promises);
+
+    // Verify all domains preserved in envelope.status.counters map
+    const raw = await substrate.get<Record<string, unknown>>("Counter", "counter");
+    const counters = (raw!.status as Record<string, unknown>).counters as Record<string, number>;
+    for (const domain of domains) {
+      expect(counters[domain], `${domain} preserved in envelope`).toBe(N);
+    }
+  }, 60_000);
 });
