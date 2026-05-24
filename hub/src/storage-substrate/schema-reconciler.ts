@@ -140,14 +140,51 @@ export class SchemaReconciler {
   /**
    * Emit per-kind expression indexes for a single SchemaDef. Idempotent via
    * CREATE INDEX CONCURRENTLY IF NOT EXISTS; failure-isolated per-index.
+   *
+   * mission-88 W7 (bug-123 fix): if SchemaDef.indexOwnershipPattern is set,
+   * also hard-drop any postgres index matching the pattern but NOT in
+   * `def.indexes[]` (handles index renames during envelope migration —
+   * e.g. `thread_status_idx` → `thread_status_phase_idx`). Foreign indexes
+   * (not matching pattern) are left alone per W7 Q3 refinement (operator-DX
+   * affordance for ad-hoc diagnostic indexes).
    */
   private async applySchemaIndexes(def: SchemaDef): Promise<void> {
+    // First pass: CREATE INDEX CONCURRENTLY IF NOT EXISTS for declared indexes
+    const declaredNames = new Set<string>();
     for (const idx of def.indexes) {
+      declaredNames.add(idx.name);
       try {
         const sql = this.buildCreateIndexSQL(def.kind, idx);
         await this.pool.query(sql);
       } catch (err) {
         this.warn(`failed to create index ${idx.name} for kind=${def.kind}; skipping`, err);
+      }
+    }
+
+    // Second pass: drop owned-but-deprecated indexes (W7 bug-123 fix; handles
+    // index renames + envelope-path migrations).
+    if (def.indexOwnershipPattern) {
+      try {
+        const pattern = new RegExp(def.indexOwnershipPattern);
+        const existing = await this.pool.query<{ indexname: string }>(
+          `SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'entities'`,
+        );
+        for (const row of existing.rows) {
+          const name = row.indexname;
+          if (pattern.test(name) && !declaredNames.has(name)) {
+            try {
+              await this.pool.query(`DROP INDEX CONCURRENTLY IF EXISTS ${name}`);
+              this.log(`reconcileIndexes — dropped owned-but-undeclared index: ${name} (kind=${def.kind})`);
+            } catch (dropErr) {
+              this.warn(`failed to drop deprecated index ${name} for kind=${def.kind}; skipping`, dropErr);
+            }
+          }
+        }
+      } catch (regexErr) {
+        this.warn(
+          `failed to compile indexOwnershipPattern='${def.indexOwnershipPattern}' for kind=${def.kind}; skipping ownership-pattern drop pass`,
+          regexErr,
+        );
       }
     }
   }

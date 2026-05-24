@@ -146,10 +146,11 @@ describe("Task SchemaDef v2 (SchemaDef-v2-compat)", () => {
     expect(fieldNames).not.toContain("assignedEngineerId");
   });
 
-  it("has index task_agent_idx on assignedAgentId, not task_assigned_agent_idx", () => {
+  it("has index task_spec_agent_idx on spec.assignedAgentId, not task_assigned_agent_idx (mission-88 W7 envelope-path rename)", () => {
     const idxNames = task?.indexes.map((i) => i.name) ?? [];
-    expect(idxNames).toContain("task_agent_idx");
+    expect(idxNames).toContain("task_spec_agent_idx");
     expect(idxNames).not.toContain("task_assigned_agent_idx");
-    expect(task?.indexes.find((i) => i.name === "task_agent_idx")?.fields).toEqual(["assignedAgentId"]);
+    expect(idxNames).not.toContain("task_agent_idx");  // pre-W7 name; auto-dropped by ownership-pattern
+    expect(task?.indexes.find((i) => i.name === "task_spec_agent_idx")?.fields).toEqual(["spec.assignedAgentId"]);
   });
 });
