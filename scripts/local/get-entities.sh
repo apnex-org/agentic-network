@@ -16,11 +16,17 @@
 # Usage:
 #   get-entities.sh <kind> [--id=<id>] [--filter='k=v,k2=v2'] [--limit=N] [--format=table|json]
 #
-# Examples:
-#   get-entities.sh Bug --filter='status=open' --limit=10
+# Filter syntax (mission-88 W1 — envelope-shape support):
+#   - Top-level key:   --filter='id=idea-1'              → data->>'id' = '...'
+#   - Dotted path:     --filter='status.phase=open'      → data->'status'->>'phase' = '...'
+#   - Mixed:           --filter='metadata.sourceThreadId=thread-100,status.phase=triaged'
+#
+# Examples (mission-88 W1+ envelope-shape kinds — Idea/Bug/Thread/Mission/Proposal):
+#   get-entities.sh Bug --filter='status.phase=open' --limit=10
 #   get-entities.sh Thread --id=thread-573
-#   get-entities.sh Mission --filter='status=active' --format=json
-#   get-entities.sh Counter  # special-case single-row
+#   get-entities.sh Mission --filter='status.phase=active' --format=json
+#   get-entities.sh Idea --filter='metadata.sourceThreadId=thread-635'
+#   get-entities.sh Counter  # special-case single-row (legacy-flat shape)
 #   get-entities.sh Audit --filter='actor=architect' --limit=20
 #
 # Env (local mode):
@@ -72,10 +78,14 @@ Env (remote mode — activates when HUB_PG_REMOTE_VM is set):
   HUB_PG_REMOTE_ZONE        GCE zone (e.g., australia-southeast1-a)
   HUB_PG_READER_PASSWORD    password for read-only `hub_reader` role
 
-Examples:
-  get-entities.sh Bug --filter='status=open' --limit=10
+Examples (legacy-flat kinds — Counter/Audit/etc.):
+  get-entities.sh Audit --filter='actor=architect' --limit=10
+
+Examples (envelope-shape kinds — Idea/Bug/Thread/Mission/Proposal post mission-88 W1):
+  get-entities.sh Bug --filter='status.phase=open' --limit=10
   get-entities.sh Thread --id=thread-573
-  get-entities.sh Mission --filter='status=active' --format=json
+  get-entities.sh Mission --filter='status.phase=active' --format=json
+  get-entities.sh Idea --filter='metadata.sourceThreadId=thread-635'
 USAGE
   exit 2
 }
@@ -108,7 +118,21 @@ if [ -n "$FILTER" ]; then
     # Safe-quote both key and value (basic SQL injection protection)
     key="${key//\'/\'\'}"
     val="${val//\'/\'\'}"
-    WHERE="$WHERE AND data->>'$key' = '$val'"
+    # Envelope-shape support (mission-88 W1+): if key contains '.', emit JSONB
+    # navigation path. e.g. 'status.phase' → data->'status'->>'phase';
+    # 'metadata.sourceThreadId' → data->'metadata'->>'sourceThreadId'.
+    # Top-level keys (no '.') stay legacy-flat data->>'key'.
+    if [[ "$key" == *.* ]]; then
+      IFS='.' read -ra SEGS <<< "$key"
+      PATH_EXPR="data"
+      for (( i=0; i<${#SEGS[@]}-1; i++ )); do
+        PATH_EXPR="$PATH_EXPR->'${SEGS[$i]}'"
+      done
+      PATH_EXPR="$PATH_EXPR->>'${SEGS[${#SEGS[@]}-1]}'"
+      WHERE="$WHERE AND $PATH_EXPR = '$val'"
+    else
+      WHERE="$WHERE AND data->>'$key' = '$val'"
+    fi
   done
 fi
 

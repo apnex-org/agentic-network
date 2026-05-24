@@ -176,6 +176,112 @@ ORDER BY id DESC;
 
 ---
 
+## Envelope-shape queries (mission-88 W1+)
+
+Post mission-88 W1, cluster-1 kinds (`Idea`, `Bug`, `Thread`, `Mission`, `Proposal`) carry the K8s envelope shape:
+
+```
+{
+  "id":         "idea-1",
+  "name":       "idea-1",
+  "kind":       "Idea",
+  "apiVersion": "core.ois/v1",
+  "metadata":   { "createdAt", "createdBy", "sourceThreadId", "sourceActionId", "labels", "annotations", "updatedAt" },
+  "spec":       { "text" },
+  "status":     { "phase", "missionId" }
+}
+```
+
+JSONB navigation is via `->` (descend) + `->>` (extract as text). Use `data->'metadata'->>'sourceThreadId'` not `data->>'sourceThreadId'`.
+
+### Envelope-shape coverage (cluster-1 bug-118 closure verification)
+
+Per cluster-1 acceptance gate (f). Returns per-kind: total row count + count of rows carrying `metadata.sourceThreadId` provenance.
+
+```sql
+SELECT
+  kind,
+  COUNT(*) AS total,
+  COUNT(*) FILTER (WHERE data->'metadata'->>'sourceThreadId' IS NOT NULL) AS with_provenance
+FROM entities
+WHERE kind IN ('Idea', 'Bug', 'Thread', 'Mission', 'Proposal')
+GROUP BY kind
+ORDER BY kind;
+```
+
+### Active envelope-shape Threads (FSM phase + currentTurn nested)
+
+```sql
+SELECT id,
+       data->'spec'->>'title' AS title,
+       data->'status'->>'phase' AS phase,
+       data->'status'->>'currentTurn' AS turn,
+       data->'status'->>'roundCount' AS rounds
+FROM entities
+WHERE kind = 'Thread'
+  AND data->'status'->>'phase' = 'active'
+  AND data->'status'->>'currentTurn' = 'engineer'
+ORDER BY updated_at DESC
+LIMIT 20;
+```
+
+### Envelope-shape probe (identify per-kind migration completeness)
+
+```sql
+SELECT
+  kind,
+  COUNT(*) AS total,
+  COUNT(*) FILTER (WHERE data ? 'apiVersion' AND data ? 'metadata' AND data ? 'spec' AND data ? 'status') AS envelope_shape,
+  COUNT(*) FILTER (WHERE NOT (data ? 'apiVersion' AND data ? 'metadata' AND data ? 'spec' AND data ? 'status')) AS legacy_shape
+FROM entities
+WHERE kind IN ('Idea', 'Bug', 'Thread', 'Mission', 'Proposal')
+GROUP BY kind
+ORDER BY kind;
+```
+
+### MigrationCursor checkpoint inspection (per-kind progress)
+
+```sql
+SELECT id,
+       data->>'lastMigratedId' AS last_id,
+       data->>'lastMigratedAt' AS last_at,
+       data->>'waveId' AS wave
+FROM entities
+WHERE kind = 'MigrationCursor'
+ORDER BY id;
+```
+
+### Labels filter (K8s-selector style)
+
+Per cluster-1 §3.1 — `tags[]` migrates to `metadata.labels{}` (map shape; empty-string values preserve set-semantics).
+
+```sql
+-- All Ideas with label 'refactor'
+SELECT id, data->'spec'->>'text' AS text
+FROM entities
+WHERE kind = 'Idea'
+  AND data->'metadata'->'labels' ? 'refactor'
+ORDER BY id DESC
+LIMIT 20;
+```
+
+### Annotations lookup (vendor-namespaced free-form data)
+
+Per cluster-1 §3.1 — `sourceThreadSummary` migrates to `metadata.annotations["ois.io/sourceThreadSummary"]`.
+
+```sql
+-- Show envelope-shape Ideas with their cascade-summary
+SELECT id,
+       data->'metadata'->'annotations'->>'ois.io/sourceThreadSummary' AS summary
+FROM entities
+WHERE kind = 'Idea'
+  AND data->'metadata'->'annotations' ? 'ois.io/sourceThreadSummary'
+ORDER BY id DESC
+LIMIT 10;
+```
+
+---
+
 ## Cross-kind queries
 
 ### Mission with its tasks + ideas (virtual-view rebuild)
