@@ -11,7 +11,8 @@
     "test": "vitest run",
     "coverage:invariants": "tsx scripts/invariant-coverage.ts",
     "migrate-fs-to-substrate": "tsx scripts/migrate-fs-to-substrate.ts",
-    "migrate-task-engineerid-to-agentid": "tsx scripts/migrate-task-engineerid-to-agentid.ts"
+    "migrate-task-engineerid-to-agentid": "tsx scripts/migrate-task-engineerid-to-agentid.ts",
+    "envelope-migrate": "node dist/scripts/run-envelope-migration.js"
   },
   "keywords": [],
   "author": "",

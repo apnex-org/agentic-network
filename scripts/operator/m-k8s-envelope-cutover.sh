@@ -17,7 +17,8 @@
 #   7. Success → exit 0; OR failure → halt + surface rollback decision
 #
 # Rollback triggers (halt + surface to architect):
-#   (1) MigrationRunner.runKind rowsErrored > 0 for any kind → halt
+#   (1) node hub/dist/scripts/run-envelope-migration.js exits non-zero
+#       (exit code 1 = any-kind rowsErrored > 0; exit code 2 = DB connection; etc.) → halt
 #   (2) Strict-flag-flip post-flip read-after fails on any kind → halt
 #   (3) Per-cluster write smoke fails any single write → halt
 #   (4) bug-118 closure query returns 0 with_provenance across ALL 8 kinds → flag for architect-review (NOT auto-rollback)
@@ -77,20 +78,32 @@ $PSQL -c "SELECT 1;" > /dev/null || {
   exit 2
 }
 
-# ─── Step 2: MigrationRunner (deferred to Hub-side runner invocation) ──
+# ─── Step 2: MigrationRunner CLI invocation (W6.1 bug-119 hotfix) ──
 
 echo "[cutover] Step 2/6: MigrationRunner across ${#KINDS[@]} kinds"
 echo "[cutover]   Per-kind concurrent batches (cursor isolation per W0-W5)"
 echo "[cutover]   Kinds: ${KINDS[*]}"
+
+# W6.1 bug-119 hotfix: invoke MigrationRunner via CLI entry-point
+# (hub/scripts/run-envelope-migration.ts → npm run envelope-migrate).
+# Replaces W6 placeholder echoes that hand-waved Hub-bootstrap-wiring
+# (which was never authored). Per thread-649 R2 architect-ratified disposition.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [[ "$DRY_RUN" == "true" ]]; then
-  echo "[cutover]   DRY_RUN: would invoke Hub MigrationRunner; skipped"
+  echo "[cutover]   DRY_RUN: cd $REPO_ROOT/hub && POSTGRES_CONNECTION_STRING=*** npm run envelope-migrate -- --dry-run"
+  (cd "$REPO_ROOT/hub" && POSTGRES_CONNECTION_STRING="$HUB_PG_CONNECTION_STRING" npm run envelope-migrate -- --dry-run)
+  MIGRATION_EXIT=$?
 else
-  echo "[cutover]   Invoke via Hub container per cutover orchestration"
-  echo "[cutover]   (Migration runs through MigrationRunner.runKind per-kind concurrent)"
-  echo "[cutover]   Hub-side execution: started via Hub bootstrap + MigrationRunner registration"
-  # In production cutover, this step is orchestrated via Hub container restart with
-  # MigrationRunner registered + invoked per ALL_SCHEMAS kinds. Script asserts post-
-  # condition via shape-probe in Step 4 below.
+  echo "[cutover]   cd $REPO_ROOT/hub && POSTGRES_CONNECTION_STRING=*** npm run envelope-migrate"
+  (cd "$REPO_ROOT/hub" && POSTGRES_CONNECTION_STRING="$HUB_PG_CONNECTION_STRING" npm run envelope-migrate)
+  MIGRATION_EXIT=$?
+fi
+
+if [[ "$MIGRATION_EXIT" != "0" ]]; then
+  echo "[cutover] HALT: MigrationRunner CLI exited with code $MIGRATION_EXIT (rollback-trigger 1)"
+  echo "[cutover]   Exit-code legend: 1=rowsErrored 2=DB-connection 3=module-registration 4=unhandled"
+  echo "[cutover] Surface to architect for rollback decision (image-tag-pin pattern per mission-83 W5.4)"
+  exit 4
 fi
 
 # ─── Step 3: Strict-flag-flip ──────────────────────────────────────────
