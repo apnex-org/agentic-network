@@ -475,12 +475,44 @@ const RepoEventBridgeDedupe: SchemaDef = {
   watchable: false,
 };
 
-// ─── Export all 22 SchemaDef entries ───────────────────────────────────────
+// ─── mission-88 W0 — MigrationCursor (per A2 thread-635 + Q3 thread-639) ───
 
 /**
- * All 22 substrate-mediated kinds — mission-84 W3 extends mission-83's 20-kind
+ * Per-kind migration progress checkpoint for the v2-envelope cutover.
+ *
+ * Counter-divergence rationale (per thread-639 R2 architect-note): Counter
+ * is a single-row meta entity ({id: "counter", taskCounter, ideaCounter, ...})
+ * because it's a tiny-write/high-frequency primitive where atomic CAS over
+ * one row is cheap. MigrationCursor is per-kind low-frequency — each kind
+ * gets its own row ({id: "cursor-<KindName>"}) to avoid CAS contention on
+ * parallel-wave updates AND to align with the per-wave acceptance-gate
+ * per-kind discipline + per-kind module idempotency contract.
+ *
+ * Single row per kind being migrated; substrate.get/put semantics with
+ * putIfMatch CAS-safe on resume. Inspectable via get-entities.sh per A4
+ * thread-635 disposition.
+ */
+const MigrationCursor: SchemaDef = {
+  kind: "MigrationCursor",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "lastMigratedId", type: "string", required: true },
+    { name: "lastMigratedAt", type: "string", required: true },
+    { name: "waveId", type: "string", required: false },
+  ],
+  indexes: [],  // low-volume; PK (kind, id="cursor-<kind>") sufficient
+  watchable: false,  // bookkeeping-only; no consumer needs change-events
+};
+
+// ─── Export all 23 SchemaDef entries ───────────────────────────────────────
+
+/**
+ * All 23 substrate-mediated kinds — mission-84 W3 extends mission-83's 20-kind
  * locked inventory with RepoEventBridgeCursor + RepoEventBridgeDedupe (cluster
- * #23 closure per Design v1.1 §2.3 Variant ii minimal-SchemaDef).
+ * #23 closure per Design v1.1 §2.3 Variant ii minimal-SchemaDef); mission-88
+ * W0 adds MigrationCursor (per-kind migration-progress checkpoint for the
+ * v2-envelope cutover per thread-639 Q3 disposition).
  *
  * Reconciler boot-time iterates this list + applies via substrate.put('SchemaDef', def).
  *
@@ -518,4 +550,7 @@ export const ALL_SCHEMAS: SchemaDef[] = [
   // 2 NEW mission-84 W3 (repo-event-bridge cursor + dedupe; cluster #23 closure)
   RepoEventBridgeCursor,
   RepoEventBridgeDedupe,
+
+  // 1 NEW mission-88 W0 (migration-progress checkpoint for v2-envelope cutover)
+  MigrationCursor,
 ];
