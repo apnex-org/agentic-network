@@ -85,7 +85,8 @@ echo "[cutover]   Per-kind concurrent batches (cursor isolation per W0-W5)"
 echo "[cutover]   Kinds: ${KINDS[*]}"
 
 # W6.1 bug-119 hotfix: invoke MigrationRunner via CLI entry-point
-# (hub/scripts/run-envelope-migration.ts → npm run envelope-migrate).
+# (hub/src/scripts/run-envelope-migration.ts → npm run envelope-migrate;
+# W6.2 bug-120 hotfix: source moved under src/ for compiled-path build).
 # Replaces W6 placeholder echoes that hand-waved Hub-bootstrap-wiring
 # (which was never authored). Per thread-649 R2 architect-ratified disposition.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

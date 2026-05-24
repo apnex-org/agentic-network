@@ -34,33 +34,33 @@
  * CLI as subprocess against testcontainer-postgres (per harness/fixtures.ts pattern).
  */
 
-import { createPostgresStorageSubstrate, type HubStorageSubstrate } from "../src/storage-substrate/index.js";
-import { MigrationRunner, type MigrationRunOptions, type MigrationRunResult } from "../src/storage-substrate/migrations/v2-envelope/migration-runner.js";
-import { ALL_SCHEMAS } from "../src/storage-substrate/schemas/all-schemas.js";
+import { createPostgresStorageSubstrate, type HubStorageSubstrate } from "../storage-substrate/index.js";
+import { MigrationRunner, type MigrationRunOptions, type MigrationRunResult } from "../storage-substrate/migrations/v2-envelope/migration-runner.js";
+import { ALL_SCHEMAS } from "../storage-substrate/schemas/all-schemas.js";
 
 // ─── Module imports (all 21 KindMigrationModule per W1-W5 ship) ──────────────
 
-import { createIdeaMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Idea.js";
-import { createBugMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Bug.js";
-import { createThreadMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Thread.js";
-import { createMissionMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Mission.js";
-import { createProposalMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Proposal.js";
-import { createTaskMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Task.js";
-import { createPendingActionMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/PendingAction.js";
-import { createTurnMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Turn.js";
-import { createAgentMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Agent.js";
-import { createTeleMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Tele.js";
-import { createSchemaDefMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/SchemaDef.js";
-import { createCounterMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Counter.js";
-import { createMessageMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Message.js";
-import { createAuditMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Audit.js";
-import { createRepoEventBridgeCursorMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/RepoEventBridgeCursor.js";
-import { createRepoEventBridgeDedupeMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/RepoEventBridgeDedupe.js";
-import { createDocumentMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/Document.js";
-import { createArchitectDecisionMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/ArchitectDecision.js";
-import { createDirectorHistoryEntryMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/DirectorHistoryEntry.js";
-import { createReviewHistoryEntryMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/ReviewHistoryEntry.js";
-import { createThreadHistoryEntryMigrationModule } from "../src/storage-substrate/migrations/v2-envelope/kinds/ThreadHistoryEntry.js";
+import { createIdeaMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Idea.js";
+import { createBugMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Bug.js";
+import { createThreadMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Thread.js";
+import { createMissionMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Mission.js";
+import { createProposalMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Proposal.js";
+import { createTaskMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Task.js";
+import { createPendingActionMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/PendingAction.js";
+import { createTurnMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Turn.js";
+import { createAgentMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Agent.js";
+import { createTeleMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Tele.js";
+import { createSchemaDefMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/SchemaDef.js";
+import { createCounterMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Counter.js";
+import { createMessageMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Message.js";
+import { createAuditMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Audit.js";
+import { createRepoEventBridgeCursorMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/RepoEventBridgeCursor.js";
+import { createRepoEventBridgeDedupeMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/RepoEventBridgeDedupe.js";
+import { createDocumentMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Document.js";
+import { createArchitectDecisionMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/ArchitectDecision.js";
+import { createDirectorHistoryEntryMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/DirectorHistoryEntry.js";
+import { createReviewHistoryEntryMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/ReviewHistoryEntry.js";
+import { createThreadHistoryEntryMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/ThreadHistoryEntry.js";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
