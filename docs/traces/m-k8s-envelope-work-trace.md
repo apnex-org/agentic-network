@@ -61,11 +61,24 @@ If you're picking up cold, read in this order:
 - bug-97 fix slice dispatched at thread-637.
 - Mission-88 engineer pulse fired at ~00:57Z (capture-time race with active-flip at ~00:55Z; pulses-active-mode going forward); thread-636 pulse-cycle informational close_no_action committed.
 
-▶ **bug-97 substrate-currency catch — thread-637 awaiting architect-disposition (α/β/γ).**
-- Engineer R2 code-trace evidence: bug-97 W5.5 fix LANDED at commit `e109000` (mission-83 W5.5); SubstrateCounter race-free per CAS retry-loop (`hub/src/entities/substrate-counter.ts:34-71`); live race-test `hub/src/entities/__tests__/substrate-counter.race.test.ts:78-94` verifies 20 concurrent next() returns distinct monotonic values. Legacy `counter.ts` retired at mission-84 W4 (commit `649938f`).
-- Three dispositions surfaced: (α) bug-97 STALE-OPEN — close entity + W0 begins immediately / (β) NEW defect post-W5.5 surfaced — architect-clarify new failure mode + acceptance / (γ) Fix incomplete in some way I'm not seeing — needs failure-mode trace.
-- **Third substrate-currency catch on mission-88** (after architect's cluster-4 v0.2 Notification drop at thread-635 R1 + engineer's A5 worktree-stale at thread-635 R2). Calibration-cluster: substrate-currency-discipline cuts three ways now — applies to bug entities + bug-status + fix-commits.
-- Engineer NOT picking fix-shape (A/B/C) until architect-clarifies. Per `feedback_verification_defect_surface_dont_dig`.
+✅ **bug-97 substrate-currency catch resolved at disposition (α). Thread-637 CONVERGED.**
+- Architect-side R3 (2026-05-24 ~11:03 AEST) independently verified all engineer code-trace evidence; acknowledged architect-side dispatch-premise-currency-failure.
+- Architect executed `update_bug(bug-97, status=resolved, fixCommits=[e109000], fixRevision="mission-83 W5.5 2026-05-17", linkedMissionId=mission-83)`.
+- Phase 7 (ii)(a) ratification was effectively no-op (Director ratified architect-framing; architect-framing was stale).
+- Engineer R4 (2026-05-24 ~11:05 AEST) close_no_action handshake commit; thread converged.
+- **Third substrate-currency catch on mission-88** — calibration-cluster ratified: (1) thread-635 R1 cluster-4 v0.2 Notification drop / (2) thread-635 R2 A5 worktree-stale / (3) thread-637 R1 bug-97 stale-open. Pattern: substrate-currency-discipline cuts both ways at all 4 surfaces (code-trace + entity-state + fix-commit + retired-file).
+- New methodology candidate U filed by architect: `feedback_architect_dispatch_premise_currency_check.md` (v2.1; mirror of engineer-side `feedback_substrate_currency_audit_rubric.md`).
+
+▶ **W0 substrate-prep slice CLAIMED by engineer (2026-05-24 ~11:05 AEST).**
+- 5 design questions Q1-Q5 surfaced upfront to architect for spec-level concur (NOT blockers):
+  - Q1 — envelope library API shape (`encodeEnvelope` + `parseEnvelope` two-function)
+  - Q2 — tolerance-mode flag plumbing (single substrate-level flag at reconciler boot)
+  - Q3 — migration-cursor row shape (`{kind: "MigrationCursor", id: "cursor-<kind>", lastMigratedId, waveId, startedAt, lastTickAt}`)
+  - Q4 — acceptance test harness directory (`hub/src/storage-substrate/migrations/v2-envelope/__tests__/`)
+  - Q5 — Hub-container build dependency (build-hub.sh + start-hub.sh per `feedback_adapter_restart_protocol_hub_container`)
+- W0 deliverables: SchemaDef reconciler tolerance mode + shared envelope encode/parse library + migration-cursor primitive + per-kind idempotency contract + acceptance test harness scaffolding.
+- Pulse cadence W0: ~60min architect + engineer (per OQ13 ratified).
+- Awaiting architect Q1-Q5 dispositions OR Design-pass refinement coord-thread before scaffolding.
 - Engineer dispositions (concur unless flagged):
   - **OQ1 (wave shape):** CONCUR cluster-mirrored W1→W5 + W6.
   - **OQ2 (missionClass):** CONCUR `substrate-introduction`.
