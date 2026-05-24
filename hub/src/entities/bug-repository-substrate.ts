@@ -33,7 +33,7 @@ import type {
   CascadeBacklink,
 } from "./bug.js";
 import { SubstrateCounter } from "./substrate-counter.js";
-import { tagsFromEntity } from "./shape-helpers.js";
+import { tagsFromEntity, arrayFieldFromEntity } from "./shape-helpers.js";
 
 const KIND = "Bug";
 const MAX_CAS_RETRIES = 50;
@@ -42,8 +42,8 @@ function cloneBug(bug: Bug): Bug {
   return {
     ...bug,
     tags: tagsFromEntity(bug),
-    linkedTaskIds: [...bug.linkedTaskIds],
-    fixCommits: [...bug.fixCommits],
+    linkedTaskIds: arrayFieldFromEntity(bug, "linkedTaskIds") as string[],
+    fixCommits: arrayFieldFromEntity(bug, "fixCommits") as string[],
   };
 }
 

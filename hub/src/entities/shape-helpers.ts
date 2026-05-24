@@ -66,3 +66,51 @@ export function tagsFromEntity(entity: unknown): string[] {
   }
   return [];
 }
+
+/**
+ * Coerce an array-valued field from an entity that may be in either legacy-flat
+ * or envelope shape. Probes the top-level field name AND each envelope partition
+ * section (`metadata`/`spec`/`status`); returns a copy of the first matching
+ * array, else `[]`.
+ *
+ * mission-88 W9.1 (bug-134 fix; engineer-side scope-extension of bug-125):
+ * Cluster-1/2/3/4/5 envelope migrations move array fields to different envelope
+ * partition sections per kind-Design. Hub repository code that spreads these
+ * arrays (`[...entity.X]`) crashes on envelope-shape rows where the field has
+ * been relocated. Examples:
+ *   - `bug.linkedTaskIds` → `bug.status.linkedTaskIds` (per cluster-1 Bug.ts §6)
+ *   - `bug.fixCommits` → `bug.status.fixCommits` (per cluster-1 Bug.ts §6)
+ *   - `turn.tele` → `turn.spec.tele` (per cluster-2 Turn.ts §6)
+ *
+ * Probe order: top-level → metadata.X → spec.X → status.X → []. Returns first
+ * matching `Array.isArray` value as a shallow copy. Defensive: never throws.
+ *
+ * **Generalized companion to `tagsFromEntity`** — tags has a special K8s map-
+ * vs-array shape mismatch (`labels{}` vs `tags[]`); this helper handles plain
+ * array-to-array migrations. Both helpers stay around indefinitely per W9 Q4
+ * keep-legacy-branch refinement (defense-in-depth post-W11-strict-flip).
+ *
+ * Scope-extension methodology calibration: future repository-class audits
+ * should grep ALL `[...entity.X]` spreads, not just one named field, to catch
+ * sibling-pattern cases sitting adjacent in cloneEntity bodies.
+ */
+export function arrayFieldFromEntity(entity: unknown, fieldName: string): unknown[] {
+  if (entity === null || entity === undefined || typeof entity !== "object") {
+    return [];
+  }
+  const e = entity as Record<string, unknown>;
+  // Legacy-flat: field at top-level.
+  if (Array.isArray(e[fieldName])) {
+    return [...e[fieldName]];
+  }
+  // Envelope-shape: field moved into one of the partition sections. Probe
+  // in canonical-Design order (metadata for provenance, spec for declared,
+  // status for FSM-mutated).
+  for (const section of ["metadata", "spec", "status"] as const) {
+    const sec = e[section];
+    if (sec && typeof sec === "object" && Array.isArray((sec as Record<string, unknown>)[fieldName])) {
+      return [...((sec as Record<string, unknown>)[fieldName] as unknown[])];
+    }
+  }
+  return [];
+}
