@@ -36,11 +36,19 @@ If you're picking up cold, read in this order:
 
 ## In-flight
 
-▶ **Phase 5 Manifest — bilateral converging (thread-635); R3 landed; awaiting architect R4 cascade close.**
+✅ **Phase 5 Manifest CLOSED on bilateral convergence (thread-635; status=converged).**
 - Architect dispatched v0.1 wave plan + 13 OQs 2026-05-24 ~09:51 AEST.
-- Engineer Round-1 reply landed 2026-05-24 ~09:56 AEST (verified all 5 cluster Designs via origin/main read).
+- Engineer R1 reply landed 2026-05-24 ~09:56 AEST (verified all 5 cluster Designs via origin/main read).
 - Architect R2 disposed all R1 refinements 2026-05-24 ~09:59 AEST; v0.2 wave plan published with deltas. A5 substrate-currency catch returned the other direction (worktree-stale; entity-kinds.json IS v1.3 / 21 kinds at origin/main HEAD).
-- Engineer R3 reply landed 2026-05-24 ~10:02 AEST (v0.2 ratified; A5 acknowledged; `propose_mission` cascade shape resolved via code-grep — payload is `{title, description, goals}` only, architect-converged-only, Mission spawns at `draft`; Path A recommended for architect R4 close).
+- Engineer R3 reply landed 2026-05-24 ~10:02 AEST (v0.2 ratified; A5 acknowledged; `propose_mission` cascade shape resolved via code-grep — payload is `{title, description, goals}` only, architect-converged-only, Mission spawns at `draft`).
+- Architect R4 cascade close landed 2026-05-24 ~10:04 AEST: `propose_mission` action-1 staged with title=M-K8s-Envelope + full v0.2 wave plan in description + 8 goals (Pre-W0 + W0-W6); converged=true + summary populated.
+- Engineer R5 bilateral converge handshake landed 2026-05-24 ~10:06 AEST: converged=true, no stage operations (action-1 commits via handshake). **action-1 status: staged → committed; thread status → converged.**
+
+▶ **Awaiting architect post-thread cascade orchestration:**
+1. propose_mission cascade fires → Mission spawns at `draft` with back-link metadata (sourceThreadId=thread-635 / sourceActionId=action-1 / sourceThreadSummary).
+2. Architect `update_mission(status="proposed", missionClass="substrate-introduction", pulses={...})` brings Mission to methodology-canonical proposed state.
+3. Architect `update_idea(idea-126, missionId="<new>")` auto-flips idea.status → `incorporated`.
+4. Phase 6 Preflight authoring begins (next architect arc); pre-prod substrate-mirror availability is hard dependency per A3.
 - Engineer dispositions (concur unless flagged):
   - **OQ1 (wave shape):** CONCUR cluster-mirrored W1→W5 + W6.
   - **OQ2 (missionClass):** CONCUR `substrate-introduction`.
@@ -66,8 +74,8 @@ If you're picking up cold, read in this order:
 
 ## Queued / filed (mission scope)
 
-- ○ **Mission entity spawn** — architect to file Mission entity post-Design-ratification per `mission-lifecycle.md` Phase 5.
-- ○ **idea-126 entity transition** — flip `triaged` → `incorporated` with `missionId` set, post-Mission spawn.
+- ▶ **Mission entity spawn** — propose_mission cascade fires post thread-635 convergence (engineer R5 commit handshake 2026-05-24 ~10:06 AEST). Awaiting Mission ID assignment + draft → proposed status transition by architect.
+- ▶ **idea-126 entity transition** — flip `triaged` → `incorporated` with `missionId` set, post-Mission spawn (architect `update_idea` cascade).
 - ○ **SchemaDef extension v1.1 → v2.0** (architect-fronts) — `hub/scripts/entity-kinds.json` per-kind partitioning into `metadata` / `spec` / `status` JSON Schemas. All 20 kinds.
 - ○ **Migration script** (engineer-fronts) — postgres in-place data migration; per-kind modules + registry; rollback strategy per Q3.
 - ○ **Code-path migration** (engineer-fronts) — `hub/src/entities/*-repository-substrate.ts` updated for envelope read/write.
