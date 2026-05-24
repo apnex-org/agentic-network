@@ -36,9 +36,11 @@ If you're picking up cold, read in this order:
 
 ## In-flight
 
-▶ **Phase 5 Manifest — bilateral round in flight (thread-635).**
+▶ **Phase 5 Manifest — bilateral converging (thread-635); R3 landed; awaiting architect R4 cascade close.**
 - Architect dispatched v0.1 wave plan + 13 OQs 2026-05-24 ~09:51 AEST.
 - Engineer Round-1 reply landed 2026-05-24 ~09:56 AEST (verified all 5 cluster Designs via origin/main read).
+- Architect R2 disposed all R1 refinements 2026-05-24 ~09:59 AEST; v0.2 wave plan published with deltas. A5 substrate-currency catch returned the other direction (worktree-stale; entity-kinds.json IS v1.3 / 21 kinds at origin/main HEAD).
+- Engineer R3 reply landed 2026-05-24 ~10:02 AEST (v0.2 ratified; A5 acknowledged; `propose_mission` cascade shape resolved via code-grep — payload is `{title, description, goals}` only, architect-converged-only, Mission spawns at `draft`; Path A recommended for architect R4 close).
 - Engineer dispositions (concur unless flagged):
   - **OQ1 (wave shape):** CONCUR cluster-mirrored W1→W5 + W6.
   - **OQ2 (missionClass):** CONCUR `substrate-introduction`.
@@ -106,7 +108,11 @@ If you're picking up cold, read in this order:
 
 ✅ **Phase 4 Design CLOSED by architect** with 5 cluster Design docs merged to main (PRs #267-#272 / commits d8ea695, 59c3a70, ddf7bb1, 3b1819a, 71690de). 21 substrate-mediated kinds per entity-kinds.json v1.3 (Notification dropped at cluster-4 v0.2 per engineer substrate-currency catch).
 
-✅ **Phase 5 Manifest Round-1 engineer reply landed** (thread-635, 2026-05-24 ~09:56 AEST). 13 OQs + 5 additional surfacings (A1-A5). All 5 cluster Designs read in full to ground responses. Awaiting architect Round 2.
+✅ **Phase 5 Manifest Round-1 engineer reply landed** (thread-635, 2026-05-24 ~09:56 AEST). 13 OQs + 5 additional surfacings (A1-A5). All 5 cluster Designs read in full to ground responses.
+
+✅ **Architect R2 dispositions integrated** (thread-635, 2026-05-24 ~09:59 AEST). All R1 engineer-side refinements accepted. v0.2 wave plan published with: pre-W0 bug-97 prerequisite slice / W0 + migration-cursor primitive + per-kind idempotency / W2 + per-kind in-flight disposition tests / W3 + kill-9-restart-safety test / per-wave operator-DX last sub-step / Phase 6 Preflight pre-prod-mirror flag / pulse cadence W0+W5 ~60min / W1-W4 ~30min / W6 ~15min active. A5 ground-truth corrected: entity-kinds.json IS at v1.3 / 21 kinds on origin/main HEAD; engineer worktree was stale.
+
+✅ **Phase 5 Manifest Round-3 engineer reply landed** (thread-635, 2026-05-24 ~10:02 AEST). v0.2 ratified; A5 substrate-currency catch acknowledged via `git show origin/main:hub/scripts/entity-kinds.json` verification (v1.3 / 21 kinds / Notification carved out at PR #271 / `3b1819a`). Architect's sanity-ask on cascade shape resolved via code-grep: `propose_mission` payload is `{title, description, goals}` only (NO `plannedTasks[]`); Mission spawns at `draft`; architect-converged-only per Hub policy gate. Path A recommended for R4 close (architect-staged propose_mission cascade preserves back-link metadata).
 
 ✅ **Work-trace spawned** (this file).
 
