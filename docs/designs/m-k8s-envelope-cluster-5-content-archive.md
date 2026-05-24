@@ -1,10 +1,10 @@
 # M-K8s-Envelope — Cluster 5 Content-Archive Partition (Design Working Draft)
 
-**Status:** v0.2 — engineer review-integrated · awaiting approval
-**Mission:** idea-126 (M-K8s-Envelope)
-**Phase:** Phase 4 Design — cluster-5 partition pass (**5 of 5 clusters — FINAL CLUSTER**)
-**Coordination:** per-PR review (per refined `feedback_pr_opened_notification_is_review_signal` memory rule v2). v0.1 review via `pr_opened_bilateral`; **this v0.2 push includes explicit `create_message` ping to greg** per refined memory rule.
-**Date:** 2026-05-23 AEST (v0.2: engineer PR #272 v0.1 review integrated)
+**Status:** v0.3 — substrate-truth ratified · ready for migration consumption · **FINAL CLUSTER**
+**Mission:** mission-88 (M-K8s-Envelope; idea-126 anchor)
+**Phase:** Phase 4 Design — cluster-5 partition pass (**5 of 5 clusters — FINAL**); Phase 8 W5 implementation
+**Coordination:** `thread-647` (W5 Design-pass; converged at R3 — FINAL cluster Design-pass closed)
+**Date:** 2026-05-24 AEST (v0.3: W5 substrate-currency-ratification per thread-647 R2)
 
 **v0.1 → v0.2 changelog (engineer PR #272 v0.1 review integration):**
 
@@ -488,7 +488,30 @@ Cluster-5 inherits all six cumulative patterns + four sub-disciplines:
 
 ## §6 Status
 
-**v0.2** — engineer PR #272 v0.1 review integrated. 16 OQ concurs + 1 substantive deviation accepted (OQ2 Document.category → metadata.labels.category per cluster-3 §5 6th cumulative-pattern axis); §2.2/§2.3/§2.4/§2.5 stubs filled to full JSON Schema; §5 matrix updated for OQ2 deviation; §6.1 NEW arc reflection.
+**v0.3** — substrate-truth ratified per thread-647 bilateral convergence (2026-05-24). §0-§5 partition tables consumed by W5 KindMigrationModule modules. **Cluster-5 ratification gate cleared. ALL 5 OF 5 CLUSTER WAVES IMPLEMENTED.**
+
+**v0.2 → v0.3 substrate-currency-ratification record:**
+
+Engineer-proactive Q2 verify-before-bake applied UPFRONT at thread-647 R1 (**5 clusters in a row self-prompting**: cluster-2 + cluster-3 + cluster-4 + cluster-5 zero-drift on Design v0.2 vs substrate-current truth). Code-grepped `hub/src/storage-substrate/new-repositories.ts` (consolidated 6-kind repository stubs incl. all 5 cluster-5 kinds) + production-substrate-verified per Design §3.1 (28 ad-N + 200 dh-N + 50 rh-N + 50 th-N + Document entries inspected via psql at Phase 4 closure 2026-05-23).
+
+**ZERO drift across all 5 kinds.** Substrate hasn't shifted since v0.2 authoring; v0.3 ratification is a §6 status flip + record.
+
+**Discipline-maturity capstone (architect framing thread-647 R2):** "5 clusters in a row self-prompting at engineer-proactive R1 verify-before-bake. Discipline mature across ALL 5 cluster-Designs. Calibration cluster fully matured — pattern reliably catches drift + ratifies no-drift + catches architect-spec-recall-drift-at-dispatch (7th catch at W4)."
+
+**Q3 Document.category → metadata.labels.category CONTENT-classification axis FIRST-instance (cluster-3 §5 6th cumulative-pattern materially bilateral):**
+- Pre-W5: Agent.spec.labels (Mission-19 routing labels per PodSpec.nodeSelector precedent) was routing-intent FIRST-instance
+- Post-W5: Document.metadata.labels.category (K8s ConfigMap metadata.labels precedent) is content-classification FIRST-instance
+- **Both sides of the axis articulated + load-bearing across cluster-3 + cluster-5.** Pattern is fully realized per A1 architect-ratified note.
+
+**Q9 bug-118 coverage CLOSED FINAL at 8 kinds across all 5 cluster waves.** ThreadHistoryEntry.threadId is forensic-pointer-to-source-Thread (substrate-pointer for cross-entity lookup) NOT cascade-spawn-provenance (sourceThreadId). Same semantic distinction as cluster-2 Turn.missionIds (virtual-view child-pointer) vs PendingAction.spec.entityRef (declared-target pointer). bug-118 closure is about cascade-spawn provenance specifically. Cluster-5 contributes ZERO new kinds; IN-clause stays at 8 (W1 5 + W2 3). **Coverage closed.**
+
+**Q10 7th cumulative pattern (atomic-primitive-rewrite-with-wave-migration) NOT APPLICABLE for W5.** Engineer-verified per substrate-grep: Document write-path direct `substrate.put("Document", doc)` at `hub/src/storage-substrate/new-repositories.ts:54` (no Counter/RepoEventBridge-style primitive intermediary). All 5 cluster-5 kinds same shape. **Pattern stays at 2 instances** (W3 SubstrateCounter + W4 RepoEventBridge adapter). 7th cumulative pattern is fully articulated; pattern set complete.
+
+**A2 Document.name = legacy.id (file-stem convention):** pre-transform `legacy.name = legacy.id`; for the 5 prod entries id and name carry the same value post-migration (id IS substrate-PK; name IS K8s-handle convention).
+
+**A3 M-SchemaDef-Reconciler-Status-Write-Patch Idea filing (cluster-3 A2 deferred):** architect-disposition at W5 ship-close (composes with W6 cutover + Phase 10 retrospective context). Filing-shape: single Idea (substrate-extension class); composes with idea-317 (M-Multi-Agent-Persistence-Context-Engineering Initiative — also post-mission-88 substrate extension).
+
+**v0.2 history-of-record** — engineer PR #272 v0.1 review integrated. 16 OQ concurs + 1 substantive deviation accepted (OQ2 Document.category → metadata.labels.category per cluster-3 §5 6th cumulative-pattern axis); §2.2/§2.3/§2.4/§2.5 stubs filled to full JSON Schema; §5 matrix updated for OQ2 deviation; §6.1 NEW arc reflection.
 
 **Substantive cluster-5 contributions:**
 1. **Final cluster — completes idea-126 Phase 4 Design** at cluster-5 merge (all 21 substrate-mediated kinds carry K8s envelope shape uniformly)
