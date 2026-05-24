@@ -128,7 +128,17 @@ If you're picking up cold, read in this order:
 - Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 126 test files / 1599 tests pass (1 skipped) / commit-message-claims accurate.
 - Hub-rebuild dependency: NOT required for W1 (additive code; no Hub bootstrap touch).
 
-▶ **PR #276 in-flight; awaiting pr_opened_bilateral architect approve + CI completion.**
+✅ **PR #276 MERGED at `f84de18`** (2026-05-24T03:23:23Z; squash-merge via architect approve + auto-merge).
+- All 9/9 CI checks green pre-merge.
+- Architect cross-approval landed via `pr_review_approved_bilateral` event; merge auto-fired.
+- Engineer attempted admin-merge confirmed PR-already-merged; benign delete-branch error due to lily worktree main-checkout (per `feedback_pr_opened_notification_is_review_signal`).
+- W1 cluster-1 envelope migration modules + cluster-1 Design v0.3 + operator-DX touch + vitest.config.ts now on main.
+
+▶ **W2 cluster-2 (Task/PendingAction/Turn) is next.** Awaiting architect dispatch via fresh coord-thread per Phase 8 cadence. Engineer carries forward:
+- `feedback_engineer_proactive_verify_before_bake_at_q_class` discipline at W2 Q-class authoring
+- Branch convention: `agent-greg/m-k8s-envelope-w2-cluster-2`
+- Same Q1-Q7-shaped scaffold (5 kinds → 3 kinds for cluster-2 per cluster-2 Design)
+- bug-118 closure verification deferred until cluster-2 ships (substrate-wide `metadata.sourceThreadId` capture spans cluster-1 + cluster-2 per Design §4.2)
 
 ---
 
