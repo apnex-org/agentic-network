@@ -324,8 +324,32 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     }
     const fingerprint = computeFingerprint(payload.name);
 
-    // Two attempts: natural + retry on OCC contention. Matches legacy budget.
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // mission-88 W10-ext (bug-127 fix): widen retry budget per Design v1.0 §5.
+    // - 8 attempts with exponential backoff (0/10/25/50/100/250/500/1000ms)
+    // - Jitter ±20% on each delay (prevents lockstep retry under contention)
+    // - 2000ms wall-time cap (per W10-ext Q1 refinement; defensive against
+    //   pathological all-retries-succeed-putIfMatch-but-lookup-races scenarios)
+    // - Per-fingerprint contention observability (log + Tele candidate)
+    //
+    // Sibling of bug-97 Counter-collision pattern per feedback_counter_collision_
+    // substrate_defect_pattern; systemic withAdvisoryLock primitive deferred to
+    // post-mission-88 idea-322 M-Substrate-OCC-Primitive.
+    const RETRY_DELAYS_MS = [0, 10, 25, 50, 100, 250, 500, 1000];
+    const MAX_WALL_TIME_MS = 2000;
+    const retryStartedAt = Date.now();
+    let attemptCount = 0;
+    for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
+      attemptCount = attempt + 1;
+      // Wall-time cap: stop retrying if cumulative elapsed exceeds budget
+      if (Date.now() - retryStartedAt > MAX_WALL_TIME_MS) {
+        break;
+      }
+      // Backoff with jitter (skip on first attempt; baseDelay=0 anyway)
+      if (attempt > 0) {
+        const baseDelay = RETRY_DELAYS_MS[attempt];
+        const jitter = baseDelay * (0.8 + Math.random() * 0.4);  // ±20%
+        await new Promise((r) => setTimeout(r, jitter));
+      }
       // Lookup by fingerprint via substrate.list with indexed filter
       const { items } = await this.substrate.list<Agent>(KIND, {
         filter: { fingerprint },
@@ -465,11 +489,18 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       };
     }
 
-    // Both attempts lost the OCC race.
+    // All attempts lost the OCC race OR wall-time cap reached.
+    // mission-88 W10-ext (bug-127 fix): transient retry-eligible code (NOT
+    // role_mismatch which was misclassified as fatal-halt in handshake).
+    const elapsed = Date.now() - retryStartedAt;
+    console.warn(
+      `[AgentRepositorySubstrate] OCC contention exhausted on assertIdentity for fingerprint=${fingerprint} ` +
+        `(${attemptCount} attempts, ${elapsed}ms elapsed)`,
+    );
     return {
       ok: false,
-      code: "role_mismatch",
-      message: `OCC contention exceeded retry budget on assertIdentity for fingerprint=${fingerprint}; likely concurrent registration storm.`,
+      code: "occ_contention_exhausted",
+      message: `OCC retry budget exhausted on assertIdentity for fingerprint=${fingerprint} (${attemptCount} attempts, ${elapsed}ms elapsed); transient — caller SHOULD retry. If repeated, indicates concurrent-registration storm at scale beyond 8-attempt budget.`,
     };
   }
 

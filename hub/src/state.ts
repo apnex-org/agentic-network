@@ -457,7 +457,14 @@ export interface AssertIdentityFailure {
   // idea-251 D-prime Phase 2: `name_collision` added — same name from
   // a different host (operator misconfiguration; loud-error rather than
   // silent last-write-wins on clientMetadata.hostname).
-  code: "role_mismatch" | "name_collision";
+  //
+  // mission-88 W10-ext (bug-127 fix): `occ_contention_exhausted` added —
+  // transient OCC retry-budget exhausted (NOT a fatal hard-boundary like
+  // role_mismatch or name_collision). Callers SHOULD retry. Must NOT be
+  // classified as FATAL_CODE in adapter-side handshake handling (per W10
+  // adapter PR composition). Distinct from agent_thrashing_detected (which
+  // IS fatal: caller has displaced >N times in window — permanent halt).
+  code: "role_mismatch" | "name_collision" | "occ_contention_exhausted";
   message: string;
 }
 
