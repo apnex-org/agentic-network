@@ -112,6 +112,20 @@ if (!POSTGRES_CONNECTION_STRING) {
   );
 }
 
+// mission-88 W0 (per thread-639 Q2 disposition) — write-validation envelope
+// tolerance mode flag. Accepts both old (legacy-flat) + new (envelope-shape)
+// entity shapes during the v2-envelope cutover window (W1-W5). At W6, the
+// flag is flipped (env-var set to "false" or unset) and the substrate
+// rejects legacy-shape writes; reader-parse becomes strict-only.
+//
+// Per thread-639 precision-pin (ii): "tolerance mode" here is a WRITE-
+// VALIDATION + READER-PARSE flag — NOT a SchemaDef-reconciler concern.
+// The reconciler manages indexes; per-kind validation happens at write-time
+// in repositories. W1+ per-kind modules consume this flag in their
+// validation logic; W0 just declares + logs the boot-time value.
+const SUBSTRATE_ENVELOPE_TOLERANT = process.env.SUBSTRATE_ENVELOPE_TOLERANT === "true";
+console.log(`[Hub] envelope tolerance mode: ${SUBSTRATE_ENVELOPE_TOLERANT ? "TOLERANT" : "STRICT"} (W6 default: STRICT)`);
+
 let taskStore: ITaskStore;
 let engineerRegistry: IEngineerRegistry;
 let proposalStore: IProposalStore;
