@@ -237,7 +237,27 @@ Sequential merge state on origin/main:
 - 6b07ee2 W3 cluster-3 metadata/config/projection
 - 2099e08 W4 cluster-4 system-emit/bookkeeping
 - b36cda4 W5 cluster-5 content-archive (FINAL CLUSTER)
-- **4085d63 W6 production cutover + close (FINAL WAVE)**
+- 4085d63 W6 production cutover + close (FINAL WAVE)
+
+⚠ **W6.1 hotfix surfaced 2026-05-24 ~15:35 AEST — bug-119 cutover-blocker** caught at architect-side cutover-execution dogfood (PRE-execution wire-flow check vs production). MigrationRunner had ZERO production invocation paths: W0 scaffolded primitive + W1-W5 built 21 KindMigrationModule but no wave specced operative invocation wiring. Deploying W6 Hub image + restarting would NOT have migrated any data; strict-mode flip post-deploy would reject all reads. **Director-ratified W6.1 hotfix slice 2026-05-24.**
+
+✅ **W6.1 Design-pass converged at thread-649 R3** (2026-05-24 ~15:38 AEST). All Q1-Q6 + A1-A3 CONCUR engineer-leans; Q3 --json flag YES + A2 npm-script YES + A3 closing-audit fold deferred to architect-fill.
+- **Bilateral catch-pair (closing-audit §3 8th methodology refinement framing):** Engineer-side wire-flow-verify-at-ship gap (W6 cutover-script Step 2 hand-waved over wiring-gap without verifying it exists) + architect-side own-spec-mechanism-presumption (no wave specced operative invocation; per-cluster acceptance gates verified per-kind correctness but cross-wave wire-flow not verified end-to-end at any wave). Pattern: "end-to-end-wire-flow dogfood as wave-acceptance-gate (not just per-layer-test)" — the missing acceptance gate that bug-119 catches.
+
+✅ **W6.1 hotfix PR #282 SHIPPED** (2026-05-24 ~15:43 AEST; commit `1b64963` on branch `agent-greg/m-k8s-envelope-w6.1-migration-cli`).
+- 4 files; +533 / -10 lines.
+- `hub/scripts/run-envelope-migration.ts` NEW — standalone CLI entry-point; imports + registers all 21 KindMigrationModule + invokes runKind per-kind concurrently per W0 design; structured-text default output + --json opt-in flag + --dry-run flag + distinct exit-codes (0/1/2/3/4 per architect R2).
+- `hub/package.json` MODIFIED — adds `envelope-migrate` npm-script (operator-DX win).
+- `scripts/operator/m-k8s-envelope-cutover.sh` MODIFIED — Step 2 replaces placeholder echoes with explicit `cd hub && npm run envelope-migrate [-- --dry-run]` invocation + halt-on-non-zero-exit (rollback-trigger 1).
+- `hub/src/__tests__/run-envelope-migration.cli.test.ts` NEW — 8 tests (3 unit + 4 integration + 1 sanity); subprocess-invokes CLI against testcontainer postgres; re-uses harness/fixtures.ts per Q5.
+- Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 144 test files / 1789 tests pass (1 skipped) / commit-message-claims accurate.
+- Hub-rebuild dependency REQUIRED for production-cutover (CLI compiled to dist/scripts/run-envelope-migration.js); local dev-cycle tests use tsx subprocess invocation.
+
+✅ **Engineer-side calibration filed at W6.1 ship:** `feedback_engineer_proactive_wire_flow_verify_at_ship` — inward-facing engineer-runtime discipline (grep caller-sites + bootstrap-wiring + CLI/npm-script presence before ship; per-layer tests can pass while production has no invocation path). Sibling of `feedback_engineer_proactive_verify_before_bake_at_q_class` (substrate-shape-verify) + `feedback_apply_directional_diagnostic_to_own_spec_authorship` (architect-side mechanism-presumption mirror).
+
+▶ **PR #282 in-flight; awaiting `pr_opened_bilateral` architect approve + CI completion.**
+
+▶ **Post-W6.1 ship:** architect-side re-executes W6 cutover (build Hub image with W6 + W6.1 code from main; deploy; CLI invocation; verify; strict-flip; smoke). Then mission-close arc per W6 Q5+Q6+Q7+Q8 (closing artifacts + Mission.status=completed + Phase 10 Retrospective dispatch).
 
 ▶ **Post-merge architect-side execution arc (final mission-88 close-out):**
 1. Execute `scripts/operator/m-k8s-envelope-cutover.sh` against production hub-vm
