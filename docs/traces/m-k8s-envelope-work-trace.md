@@ -55,10 +55,17 @@ If you're picking up cold, read in this order:
 - PR #273 merged 2026-05-24T00:46:17Z (squash commit 6a95bbb2).
 - 6-category audit all PASS except E2 (deploy-gate dependencies; YELLOW reflects deliberate deferral of 2 operational decisions to Director-engagement at Phase 7).
 
-▶ **Awaiting Phase 7 Release-gate Director engagement (architect-orchestrated):**
-- **Pre-kickoff Decision (i)** — pre-prod substrate-mirror availability: (a) carve staging-env slice / (b) risk-accept production-only [architect+engineer-lean] / (c) hybrid local-dev with prod snapshot.
-- **Pre-kickoff Decision (ii)** — bug-97 pre-W0 sequencing: (a) ship as pre-W0 prerequisite slice [architect+engineer-lean] / (b) risk-accept carry-over / (c) fold into W3 (REJECTED at OQ6).
-- Combined recommendation: (i)(b) + (ii)(a). On Director ratification: `update_mission(status="active")` → pulses fire → engineer scaffolds Pre-W0 bug-97 fix slice → W0 substrate-prep begins.
+✅ **Phase 7 Release-gate Director-ratified 2026-05-24** ("Agreed with recommendation. Approved for launch"). Combined recommendation (i)(b) + (ii)(a) approved without revision.
+- `update_mission(mission-88, status="active")` executed; mission live; pulses active-mode at 1800s cadence.
+- Preflight v0.2 GREEN PR #274 (architect-authored 2026-05-24 ~10:58 AEST); engineer reviewed + approved 2026-05-24 ~11:02 AEST; merged squash 59782a4381 at 2026-05-24T01:02:45Z.
+- bug-97 fix slice dispatched at thread-637.
+- Mission-88 engineer pulse fired at ~00:57Z (capture-time race with active-flip at ~00:55Z; pulses-active-mode going forward); thread-636 pulse-cycle informational close_no_action committed.
+
+▶ **bug-97 substrate-currency catch — thread-637 awaiting architect-disposition (α/β/γ).**
+- Engineer R2 code-trace evidence: bug-97 W5.5 fix LANDED at commit `e109000` (mission-83 W5.5); SubstrateCounter race-free per CAS retry-loop (`hub/src/entities/substrate-counter.ts:34-71`); live race-test `hub/src/entities/__tests__/substrate-counter.race.test.ts:78-94` verifies 20 concurrent next() returns distinct monotonic values. Legacy `counter.ts` retired at mission-84 W4 (commit `649938f`).
+- Three dispositions surfaced: (α) bug-97 STALE-OPEN — close entity + W0 begins immediately / (β) NEW defect post-W5.5 surfaced — architect-clarify new failure mode + acceptance / (γ) Fix incomplete in some way I'm not seeing — needs failure-mode trace.
+- **Third substrate-currency catch on mission-88** (after architect's cluster-4 v0.2 Notification drop at thread-635 R1 + engineer's A5 worktree-stale at thread-635 R2). Calibration-cluster: substrate-currency-discipline cuts three ways now — applies to bug entities + bug-status + fix-commits.
+- Engineer NOT picking fix-shape (A/B/C) until architect-clarifies. Per `feedback_verification_defect_surface_dont_dig`.
 - Engineer dispositions (concur unless flagged):
   - **OQ1 (wave shape):** CONCUR cluster-mirrored W1→W5 + W6.
   - **OQ2 (missionClass):** CONCUR `substrate-introduction`.
