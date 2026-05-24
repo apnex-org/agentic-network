@@ -32,6 +32,10 @@ import { createProposalMigrationModule } from "../kinds/Proposal.js";
 import { createTaskMigrationModule } from "../kinds/Task.js";
 import { createPendingActionMigrationModule } from "../kinds/PendingAction.js";
 import { createTurnMigrationModule } from "../kinds/Turn.js";
+import { createAgentMigrationModule } from "../kinds/Agent.js";
+import { createTeleMigrationModule } from "../kinds/Tele.js";
+import { createSchemaDefMigrationModule } from "../kinds/SchemaDef.js";
+import { createCounterMigrationModule } from "../kinds/Counter.js";
 import { isMigrationInProgress } from "../shared/migration-flag.js";
 import { setupSubstrate, teardownSubstrate, cleanKind, type SubstrateFixture } from "./harness/fixtures.js";
 
@@ -598,5 +602,230 @@ describe("W2 cluster-2 batch wire-flow — 3-kind migration + per-kind cursor is
     expect(r.rowsErrored).toBe(0);
     // Critical: flag cleared even when no rows were processed
     expect(isMigrationInProgress("PendingAction")).toBe(false);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────
+// W3 cluster-3 batch-migration wire-flow (Q7 disposition; per thread-645 R2)
+// ───────────────────────────────────────────────────────────────────────
+
+const CLUSTER_3_KINDS = ["Agent", "Tele", "SchemaDef", "Counter"] as const;
+
+function seedCluster3Row(kind: typeof CLUSTER_3_KINDS[number], n: number): { id: string } & Record<string, unknown> {
+  switch (kind) {
+    case "Agent":
+      return {
+        id: `agent-${n.toString().padStart(8, "0")}`,
+        fingerprint: "f".repeat(64),
+        role: "engineer", status: "online", archived: false,
+        sessionEpoch: 1, currentSessionId: null,
+        clientMetadata: {}, advisoryTags: {}, labels: {},
+        firstSeenAt: `2026-05-2${n}T00:00:00Z`,
+        lastSeenAt: `2026-05-2${n}T00:00:00Z`,
+        livenessState: "online", lastHeartbeatAt: `2026-05-2${n}T00:00:00Z`,
+        receiptSla: 30000, wakeEndpoint: null,
+        name: `agent-name-${n}`, activityState: "online_idle",
+        sessionStartedAt: null, lastToolCallAt: null, lastToolCallName: null,
+        idleSince: null, workingSince: null, quotaBlockedUntil: null,
+        cognitiveTTL: 300, transportTTL: 60,
+        cognitiveState: "alive", transportState: "alive",
+        adapterVersion: "test", ipAddress: null,
+        restartCount: 0, recentErrors: [], restartHistoryMs: [],
+      };
+    case "Tele":
+      return {
+        id: `tele-${n}`,
+        name: `T${n}-Test-Goal`,
+        description: `description ${n}`,
+        successCriteria: `criteria ${n}`,
+        status: "active",
+        createdBy: { role: "architect", agentId: "agent-arch" },
+        createdAt: `2026-05-2${n}T00:00:00Z`,
+      };
+    case "SchemaDef":
+      return {
+        id: `TestKind${n}`,
+        kind: `TestKind${n}`,
+        version: 1,
+        fields: [],
+        indexes: [],
+        watchable: true,
+      };
+    case "Counter":
+      return {
+        id: "counter",  // single-row constraint
+        [`testCounter${n}`]: n * 10,
+      };
+  }
+}
+
+function registerCluster3(runner: MigrationRunner): void {
+  runner.register(createAgentMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Agent")!));
+  runner.register(createTeleMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Tele")!));
+  runner.register(createSchemaDefMigrationModule(ALL_SCHEMAS.find(s => s.kind === "SchemaDef")!));
+  runner.register(createCounterMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Counter")!));
+}
+
+describe("W3 cluster-3 batch wire-flow — 4-kind migration + Counter structural transform", () => {
+  beforeEach(async () => {
+    for (const k of CLUSTER_3_KINDS) await cleanKind(fixture.connStr, k);
+    await cleanKind(fixture.connStr, "MigrationCursor");
+  });
+
+  it("migrates all 4 cluster-3 kinds end-to-end + cursors isolate per-kind", async () => {
+    // Counter is single-row; seed once. Others 2 rows each.
+    for (const n of [1, 2]) {
+      await fixture.substrate.put("Agent", seedCluster3Row("Agent", n));
+      await fixture.substrate.put("Tele", seedCluster3Row("Tele", n));
+      await fixture.substrate.put("SchemaDef", seedCluster3Row("SchemaDef", n));
+    }
+    await fixture.substrate.put("Counter", seedCluster3Row("Counter", 1));
+
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster3(runner);
+
+    expect(runner.registeredKinds()).toEqual([...CLUSTER_3_KINDS].sort());
+
+    const results = new Map<string, Awaited<ReturnType<MigrationRunner["runKind"]>>>();
+    for (const kind of CLUSTER_3_KINDS) {
+      results.set(kind, await runner.runKind(kind, { waveId: "W3" }));
+    }
+
+    // Per-kind acceptance: 2 rows for non-Counter; 1 for Counter
+    expect(results.get("Agent")!.rowsMigrated).toBe(2);
+    expect(results.get("Tele")!.rowsMigrated).toBe(2);
+    expect(results.get("SchemaDef")!.rowsMigrated).toBe(2);
+    expect(results.get("Counter")!.rowsMigrated).toBe(1);
+
+    // Verify envelope-shape per kind
+    for (const kind of CLUSTER_3_KINDS) {
+      const post = await fixture.substrate.list<unknown>(kind, { limit: 10 });
+      for (const row of post.items) {
+        expect(isEnvelopeShape(row)).toBe(true);
+        expect((row as { kind: string }).kind).toBe(kind);
+        expect((row as { apiVersion: string }).apiVersion).toBe("core.ois/v1");
+      }
+    }
+
+    // Counter STRUCTURAL TRANSFORMATION: top-level *Counter → status.counters
+    const counterRow = await fixture.substrate.get<EnvelopeRow>("Counter", "counter");
+    expect(counterRow!.status.counters).toEqual({ testCounter1: 10 });
+    expect(counterRow!.status.phase).toBe("active");
+    expect(counterRow!.spec).toEqual({});
+  });
+
+  it("Agent: 5 distinct status fields per Q3 per-FSM-as-top-level (canonical multi-FSM)", async () => {
+    await fixture.substrate.put("Agent", seedCluster3Row("Agent", 1));
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster3(runner);
+    await runner.runKind("Agent");
+
+    const agent = await fixture.substrate.get<EnvelopeRow>("Agent", "agent-00000001");
+    expect(agent!.status.phase).toBe("online");           // primary FSM
+    expect(agent!.status.livenessState).toBe("online");   // ADR-017 composite
+    expect(agent!.status.activityState).toBe("online_idle"); // Mission-62
+    expect(agent!.status.cognitiveState).toBe("alive");   // Mission-75 component
+    expect(agent!.status.transportState).toBe("alive");   // Mission-75 component
+    expect(agent!.metadata.createdAt).toBe("2026-05-21T00:00:00Z");  // firstSeenAt rename
+    expect(agent!.name).toBe("agent-name-1");
+  });
+
+  it("Tele: NO updatedAt (A4 precedent — immutable-content kind)", async () => {
+    await fixture.substrate.put("Tele", seedCluster3Row("Tele", 1));
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster3(runner);
+    await runner.runKind("Tele");
+
+    const tele = await fixture.substrate.get<EnvelopeRow>("Tele", "tele-1");
+    expect(tele!.metadata.updatedAt).toBeUndefined();
+    expect(tele!.name).toBe("T1-Test-Goal");
+    expect(tele!.status.phase).toBe("active");
+  });
+
+  it("SchemaDef: OQ10 deliberate-extension — status.phase='applied' injected", async () => {
+    await fixture.substrate.put("SchemaDef", seedCluster3Row("SchemaDef", 1));
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster3(runner);
+    await runner.runKind("SchemaDef");
+
+    const sd = await fixture.substrate.get<EnvelopeRow>("SchemaDef", "TestKind1");
+    expect(sd!.name).toBe("TestKind1");
+    expect(sd!.status.phase).toBe("applied");
+    expect(sd!.status.appliedVersion).toBe(1);
+    expect(sd!.status.reconcileError).toBeNull();
+  });
+
+  it("idempotent re-run across cluster-3: all rows skip on second pass", async () => {
+    await fixture.substrate.put("Agent", seedCluster3Row("Agent", 1));
+    await fixture.substrate.put("Tele", seedCluster3Row("Tele", 1));
+    await fixture.substrate.put("SchemaDef", seedCluster3Row("SchemaDef", 1));
+    await fixture.substrate.put("Counter", seedCluster3Row("Counter", 1));
+
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster3(runner);
+
+    for (const kind of CLUSTER_3_KINDS) {
+      const r = await runner.runKind(kind);
+      expect(r.rowsMigrated).toBe(1);
+    }
+
+    const cursorRepo = new MigrationCursorRepository(fixture.substrate);
+    for (const kind of CLUSTER_3_KINDS) {
+      await cursorRepo.resetCheckpoint(kind);
+    }
+
+    for (const kind of CLUSTER_3_KINDS) {
+      const r = await runner.runKind(kind);
+      expect(r.rowsSkipped).toBe(1);
+      expect(r.rowsMigrated).toBe(0);
+    }
+  });
+
+  it("Q4 SchemaDef kill-9-simulated restart-safety: substrate state recoverable after mid-migration error", async () => {
+    // Seed 3 SchemaDef rows; module throws on ALL invocations (simulates 'crash before any row commits')
+    for (const n of [1, 2, 3]) {
+      await fixture.substrate.put("SchemaDef", seedCluster3Row("SchemaDef", n));
+    }
+
+    const alwaysThrowingRunner = new MigrationRunner(fixture.substrate);
+    alwaysThrowingRunner.register({
+      kind: "SchemaDef",
+      schemaRef: { schema: ALL_SCHEMAS.find(s => s.kind === "SchemaDef")! },
+      migrateOne(): never { throw new Error("simulated kill-9 mid-SchemaDef-migration"); },
+    });
+
+    // First runKind: ALL rows error; no rows successfully migrated; flag cleared in finally
+    const r1 = await alwaysThrowingRunner.runKind("SchemaDef", { waveId: "W3-kill9-sim" });
+    expect(r1.rowsErrored).toBe(3);
+    expect(r1.errors[0].message).toMatch(/simulated kill-9/);
+    expect(r1.rowsMigrated).toBe(0);
+    expect(isMigrationInProgress("SchemaDef")).toBe(false);
+
+    // Substrate-state integrity: ALL 3 SchemaDef rows still readable post-crash (legacy shape preserved)
+    const postCrash = await fixture.substrate.list<unknown>("SchemaDef", { limit: 10 });
+    expect(postCrash.items.length).toBe(3);
+    for (const row of postCrash.items) {
+      expect(isEnvelopeShape(row)).toBe(false);  // legacy-shape preserved (no partial-state)
+    }
+
+    // Cursor MAY exist (if any prior advanceCheckpoint happened before throws — unlikely but possible);
+    // either way, the invariant is that re-running with a CLEAN module + reset cursor produces clean migration
+    const cursorRepo = new MigrationCursorRepository(fixture.substrate);
+    await cursorRepo.resetCheckpoint("SchemaDef");
+
+    // 2nd runKind with a fresh non-throwing module: completes ALL rows from scratch
+    const freshRunner = new MigrationRunner(fixture.substrate);
+    registerCluster3(freshRunner);
+    const r2 = await freshRunner.runKind("SchemaDef", { waveId: "W3-kill9-recover" });
+    expect(r2.rowsMigrated).toBe(3);
+    expect(r2.rowsErrored).toBe(0);
+
+    // SchemaDef-for-SchemaDef integrity preserved: all 3 rows envelope-shape post-recovery
+    const final = await fixture.substrate.list<unknown>("SchemaDef", { limit: 10 });
+    expect(final.items.length).toBe(3);
+    for (const row of final.items) {
+      expect(isEnvelopeShape(row)).toBe(true);
+      expect((row as { status: { phase: string } }).status.phase).toBe("applied");
+    }
   });
 });

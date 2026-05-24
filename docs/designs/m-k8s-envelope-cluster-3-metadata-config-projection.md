@@ -1,10 +1,10 @@
 # M-K8s-Envelope — Cluster 3 Metadata/Config/Projection Partition (Design Working Draft)
 
-**Status:** v0.2 — engineer review-integrated · awaiting approval
-**Mission:** idea-126 (M-K8s-Envelope)
-**Phase:** Phase 4 Design — cluster-3 partition pass (3 of 5 clusters per substrate-grounded decomposition)
-**Coordination:** per-PR review (per `feedback_pr_opened_notification_is_review_signal` v2 scope-refinement — initial PR-open IS the signal; v0.2 fold-in pushes get explicit `create_message` ping until M-PR-Synchronize-Handler / idea-315 lands). **This v0.2 commit exercises the refined memory rule: explicit ping to greg post-push.**
-**Date:** 2026-05-23 AEST (v0.2: engineer PR #270 v0.1 review integrated)
+**Status:** v0.3 — substrate-truth ratified · ready for migration consumption
+**Mission:** mission-88 (M-K8s-Envelope; idea-126 anchor)
+**Phase:** Phase 4 Design — cluster-3 partition pass (3 of 5 clusters; Phase 8 W3 implementation)
+**Coordination:** `thread-645` (W3 Design-pass; converged at R3)
+**Date:** 2026-05-24 AEST (v0.3: W3 substrate-currency-ratification per thread-645 R2)
 
 **v0.1 → v0.2 changelog (engineer PR #270 review integration):**
 - §2.1 Agent — OQ1-OQ5 dispositions applied; all concur with v0.1 + K8s-precedent rationale notes added (PodSpec affinity for OQ1; metadata.deletionTimestamp for OQ2)
@@ -687,7 +687,30 @@ Per §1.6 above — multi-FSM kinds (Agent: 4 orthogonal FSMs) carry all FSMs in
 
 ## §6 Status
 
-**v0.2** — engineer PR #270 v0.1 review integrated. All 15 OQ dispositions applied; 3 cross-cutting engineer observations integrated (§1.6 multi-FSM sub-discipline + §5 6th cumulative-pattern + §5 singleton-meta-entity forward-question); §2.2/§2.3/§2.4 stubs filled to full JSON Schema.
+**v0.3** — substrate-truth ratified per thread-645 bilateral convergence (2026-05-24). §0-§5 partition tables consumed by W3 KindMigrationModule modules. Cluster-3 ratification gate cleared.
+
+**v0.2 → v0.3 substrate-currency-ratification record:**
+
+Engineer-proactive Q2 verify-before-bake applied UPFRONT at thread-645 R1 (cluster-2 + cluster-3 = 2 clusters in a row self-prompting). Code-grepped `hub/src/{state.ts (Agent), entities/tele.ts, entities/agent-repository-substrate.ts, entities/tele-repository-substrate.ts, entities/substrate-counter.ts, storage-substrate/types.ts (SchemaDef)}`. Findings:
+
+| Kind | Drift vs substrate-current | Disposition |
+|---|---|---|
+| Agent | NO DRIFT — all 38+ fields match (incl. 5 distinct status FSM fields per §1.6) | Design v0.2 substrate-accurate |
+| Tele | NO DRIFT + first kind to legitimately OMIT `updatedAt` (Mission-43 zero-backfill immutable-content discipline) | A4 precedent established |
+| Counter | NO DRIFT — Design v0.2 §2.4 already specifies structural transformation (top-level `*Counter` → `status.counters` embedded map) per K8s ConfigMap precedent | Counter migration is structural; SubstrateCounter atomic rewrite per A1 |
+| SchemaDef | NO DRIFT — Design v0.2 §2.3 OQ10 SUBSTANTIVE DEVIATION ACCEPTED carries NEW status fields (phase / lastReconciledAt / reconcileError / appliedVersion) AS deliberate-extension, NOT drift | A2 follow-on reconciler-WRITE patch filed post-W3 ship as `M-SchemaDef-Reconciler-Status-Write-Patch` Idea |
+
+**Calibration cluster maturity (3 clusters in a row self-prompting at engineer-proactive R1):** the discipline reliably catches drift (cluster-1 W1 6th catch — substantial drift caught at thread-643 R1) AND ratifies no-drift outcomes equally (cluster-2 + cluster-3 zero drift; Counter/SchemaDef deliberate-extensions explicitly carried in Design). **Engineer correctly distinguished "Design explicitly adds new shape post-substrate" vs "Design drifted from substrate" — load-bearing nuance for cluster-currency catch classification (per `feedback_engineer_proactive_verify_before_bake_at_q_class`).**
+
+**OQ11 in-flight disposition mechanism (Q4 ratified at thread-645 R2):** SchemaDef kill-9 restart-safety test exercises mock-substrate-throw mid-migration pattern (NOT testcontainer process-kill; vitest scope appropriate; W0+W2 wire-flow error-recovery patterns established). Test asserts: substrate-state integrity post-error + clean recovery via reset-cursor + fresh non-throwing module → all 3 SchemaDef rows envelope-shape with status.phase="applied".
+
+**A1 SubstrateCounter atomic rewrite shipped in W3 PR** (substrate-correctness; +~30 lines bounded; race-clobber risk eliminated). `hub/src/entities/substrate-counter.ts` reads tolerant-dual-shape (envelope OR legacy-flat) + writes envelope-shape always. CAS retry preserved via getWithRevision + putIfMatch contract. Extended `substrate-counter.race.test.ts` with envelope-shape race assertions.
+
+**A2 SchemaDef reconciler-side WRITES deferred to follow-on PR.** W3 writes existing SchemaDefs as `status.phase="applied"` (matches operational post-W4.x.10 cutover state); future SchemaDef writes (new kind onboarding OR version-bumps post-W3) carry stale status until reconciler patch lands as visible degradation NOT regression. **Filing recommendation: `M-SchemaDef-Reconciler-Status-Write-Patch` Idea (substrate-extension class) at W3 ship-close.**
+
+**A4 Tele `updatedAt`-omission precedent:** Tele is the FIRST envelope kind to legitimately omit `updatedAt` (Mission-43 zero-backfill discipline; content immutable; only status/lineage fields mutate). **Establishes precedent for immutable-content kinds** — future clusters 4/5 (ArchitectDecision / HistoryEntries are append-only similar) may inherit.
+
+**v0.2 history-of-record** — engineer PR #270 v0.1 review integrated. All 15 OQ dispositions applied; 3 cross-cutting engineer observations integrated (§1.6 multi-FSM sub-discipline + §5 6th cumulative-pattern + §5 singleton-meta-entity forward-question); §2.2/§2.3/§2.4 stubs filled to full JSON Schema.
 
 **Substantive cluster-3 contributions to envelope methodology** (signal for clusters 4/5):
 

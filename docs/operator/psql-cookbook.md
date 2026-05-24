@@ -274,6 +274,80 @@ sudo docker exec ois-postgres-prod env | grep MIGRATION_IN_PROGRESS_ || echo "no
 
 Future distributed-Hub iteration (idea-200/idea-129 follow-on) will move this signal to a substrate-level lock kind queryable via psql.
 
+### Agent envelope-shape — per-FSM-as-top-level-status-fields query (cluster-3 §1.6)
+
+Per cluster-3 Design v0.3 §2.1 — Agent carries 5 distinct status fields (primary phase + livenessState + activityState + cognitiveState + transportState) as siblings per K8s Pod.status precedent. Operator-DX queries adjust:
+
+```sql
+-- Currently-online agents with per-FSM observability
+SELECT id,
+       data->'metadata'->>'name' AS name,
+       data->'spec'->>'role' AS role,
+       data->'status'->>'phase' AS phase,
+       data->'status'->>'livenessState' AS liveness,
+       data->'status'->>'activityState' AS activity,
+       data->'status'->>'cognitiveState' AS cognitive,
+       data->'status'->>'transportState' AS transport
+FROM entities
+WHERE kind = 'Agent'
+  AND data->'status'->>'phase' = 'online'
+ORDER BY data->'metadata'->>'updatedAt' DESC
+LIMIT 20;
+```
+
+### Tele lifecycle query (cluster-3 §2.2)
+
+```sql
+-- Active vs superseded Tele lineage (3-state FSM: active/superseded/retired)
+SELECT id,
+       data->'metadata'->>'name' AS handle,
+       data->'status'->>'phase' AS phase,
+       data->'status'->>'supersededBy' AS successor,
+       data->'spec'->>'description' AS description
+FROM entities
+WHERE kind = 'Tele'
+ORDER BY data->'status'->>'phase', id;
+```
+
+### SchemaDef reconciliation-status query (cluster-3 §2.3 OQ10 deliberate-extension)
+
+Per cluster-3 Design v0.3 §2.3 — SchemaDef carries reconciliation state on envelope. Operator finds reconciliation failures via standard `list_*` filter:
+
+```sql
+-- SchemaDef reconciliation failures (post W3 deliberate-extension)
+SELECT id,
+       data->'metadata'->>'name' AS kind_name,
+       data->'spec'->>'version' AS declared_version,
+       data->'status'->>'phase' AS phase,
+       data->'status'->>'appliedVersion' AS applied_version,
+       data->'status'->>'lastReconciledAt' AS last_reconciled,
+       data->'status'->>'reconcileError' AS error
+FROM entities
+WHERE kind = 'SchemaDef'
+  AND data->'status'->>'phase' IN ('pending', 'failed')
+ORDER BY id;
+```
+
+Note: until `M-SchemaDef-Reconciler-Status-Write-Patch` lands (deferred per A2 thread-645 R2), this query returns existing SchemaDefs at `phase='applied'` set at W3 migration time. Future SchemaDef writes carry stale status until reconciler patch lands.
+
+### Counter envelope-shape inspection (cluster-3 §2.4 ConfigMap precedent)
+
+Per cluster-3 Design v0.3 §2.4 — Counter is singleton-meta-entity with embedded `status.counters` map (K8s ConfigMap `.data: {key: value}` precedent). Post-W3 access shape:
+
+```sql
+-- All counter-domain values from the single Counter row (post-W3 envelope-shape)
+SELECT data->'status'->'counters' AS all_counters
+FROM entities
+WHERE kind = 'Counter' AND id = 'counter';
+
+-- Single counter-domain value (e.g., taskCounter)
+SELECT data->'status'->'counters'->>'taskCounter' AS task_counter
+FROM entities
+WHERE kind = 'Counter' AND id = 'counter';
+```
+
+Pre-W3 shape was `data->>'taskCounter'`; the migration relocates to `data->'status'->'counters'->>'taskCounter'`. SubstrateCounter primitive (`hub/src/entities/substrate-counter.ts`) ships atomic rewrite per A1; reads tolerate both shapes during dual-shape window; writes always emit envelope shape.
+
 ### Active envelope-shape Threads (FSM phase + currentTurn nested)
 
 ```sql
