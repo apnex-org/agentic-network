@@ -22,10 +22,18 @@ import {
   type SubstrateFixture,
 } from "../storage-substrate/migrations/v2-envelope/__tests__/harness/fixtures.js";
 
-// The compiled CLI lives at dist/scripts/run-envelope-migration.js post-build;
-// tests invoke via `npx tsx hub/scripts/run-envelope-migration.ts` for dev-cycle
-// (avoids requiring a build step before tests).
-const CLI_TS_PATH = join(__dirname, "..", "..", "scripts", "run-envelope-migration.ts");
+// mission-88 W6.2 (bug-120 hotfix): tests invoke the COMPILED CLI at
+// dist/scripts/run-envelope-migration.js — matches production-runtime path
+// per npm-script `node dist/scripts/run-envelope-migration.js`. Build must
+// have run (`npm run build`) before this test suite; see top-level guard below.
+const CLI_JS_PATH = join(__dirname, "..", "..", "dist", "scripts", "run-envelope-migration.js");
+
+if (!existsSync(CLI_JS_PATH)) {
+  throw new Error(
+    `[W6.2 CLI tests] compiled CLI missing at ${CLI_JS_PATH}; run \`npm run build\` first ` +
+      `(mission-88 W6.2 / bug-120: CLI tests verify production-runtime compiled-path, not source-path).`,
+  );
+}
 
 interface CliResult {
   exitCode: number;
@@ -35,7 +43,7 @@ interface CliResult {
 
 async function runCli(env: Record<string, string>, args: string[] = []): Promise<CliResult> {
   return new Promise((resolve) => {
-    const proc = spawn("npx", ["tsx", CLI_TS_PATH, ...args], {
+    const proc = spawn("node", [CLI_JS_PATH, ...args], {
       env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -49,8 +57,8 @@ async function runCli(env: Record<string, string>, args: string[] = []): Promise
 }
 
 describe("run-envelope-migration CLI — sanity", () => {
-  it("CLI source file exists at expected path", () => {
-    expect(existsSync(CLI_TS_PATH)).toBe(true);
+  it("compiled CLI file exists at expected path", () => {
+    expect(existsSync(CLI_JS_PATH)).toBe(true);
   });
 });
 
@@ -62,7 +70,7 @@ describe("run-envelope-migration CLI — exit-code error paths", () => {
     const result = await new Promise<CliResult>((resolve) => {
       // Build a minimal env that excludes POSTGRES_CONNECTION_STRING
       const cleanEnv: Record<string, string> = { PATH: process.env.PATH ?? "" };
-      const proc = spawn("npx", ["tsx", CLI_TS_PATH], {
+      const proc = spawn("node", [CLI_JS_PATH], {
         env: cleanEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });
