@@ -172,9 +172,34 @@ If you're picking up cold, read in this order:
 - Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 134 test files / 1694 tests pass (1 skipped) / commit-message-claims accurate.
 - Hub-rebuild dependency REQUIRED for W3 dev-cycle verification (SubstrateCounter feeds 11 existing-substrate-version repositories for ID allocation).
 
-▶ **PR #278 in-flight; awaiting `pr_opened_bilateral` architect approve + CI completion.**
+✅ **PR #278 MERGED at `6b07ee2`** (2026-05-24 ~14:17 AEST per W4 dispatch preamble). W3 cluster-3 envelope migration on main.
 
-▶ **Post-merge follow-on:** file `M-SchemaDef-Reconciler-Status-Write-Patch` Idea (substrate-extension class; OQ10 deferred reconciler-side WRITES; composes with idea-317).
+✅ **W4 cluster-4 Design-pass converged at thread-646 R3** (2026-05-24 ~14:21 AEST). All Q1-Q9 + A1+A2+A3 CONCUR engineer-leans.
+- **Engineer-proactive verify-before-bake applied UPFRONT at R1** (4 clusters in a row self-prompting: cluster-2 + cluster-3 + cluster-4 zero-drift).
+- **ZERO substrate-currency drift** across all 4 cluster-4 kinds; cluster-4 Design v0.2 substrate-accurate at authoring (2026-05-23 alongside cluster-3; same recency).
+- **7th substrate-currency catch on mission-88 calibration cluster** — engineer code-trace caught architect Q9 spec-recall drift (architect dispatch said "Message has sourceThreadId per substrate — cluster-4 likely expands IN-clause 8→9 kinds"; engineer verified Message has threadId/authorAgentId/authorRole NOT sourceThreadId; cluster-4 §3.9 had correct answer). **Even at "discipline-mature 4-clusters-in-a-row" stage, architect dispatch CAN drift from prior Design framing.**
+- Q-dispositions: Q1 single-bundle PR / Q2 v0.3 = v0.2 + §6 substrate-truth-ratified record / Q3 Message.kind → metadata.messageKind CANONICAL renameMap (FIRST cross-cluster use of envelope library renameMap for true field-name-collision; W0 primitive design-driver case finally first-used) / Q4 Audit append-only "logged" constant + timestamp→metadata.createdAt rename / Q5 RepoEventBridge* envelope-with-opaque-body in status (renameMap body→status.cursor/dedupe; K8s bookkeeping CRD precedent) / Q6 concurrent migration / Q7 wire-flow extension / Q8 operator-DX same-PR / Q9 CORRECTION CONCUR engineer code-trace — bug-118 IN-clause stays at 8 kinds.
+- A-decisions: A1 RepoEventBridgeSubstrateAdapter atomic rewrite IN W4 PR (substrate-correctness; parallels W3 A1 SubstrateCounter; race-clobber prevention; +~20 lines bounded) / A2 Q9 framing-correction acknowledged as 7th substrate-currency catch / A3 entity-kinds.json v1.3 consistency NO ACTION.
+- **NEW 7th cumulative envelope-methodology pattern (architect framing thread-646 R2):** atomic-primitive-rewrite-with-wave-migration — when wave structural-transformation requires substrate primitive to know about envelope-shape, primitive rewrite ships atomically (W3 SubstrateCounter + W4 RepoEventBridge adapter instances).
+
+✅ **W4 cluster-4 PR #279 SHIPPED** (2026-05-24 ~14:31 AEST; commit `293ee32` on branch `agent-greg/m-k8s-envelope-w4-cluster-4`).
+- 13 files; +1500+ lines.
+- 4 KindMigrationModule (`kinds/{Message,Audit,RepoEventBridgeCursor,RepoEventBridgeDedupe}.ts`) consuming v0.3-ratified partition rules.
+- 4 per-kind unit tests (36 assertions; idempotency + partition shape + Message CANONICAL renameMap envelope.kind="Message"+metadata.messageKind=legacy.kind + multi-FSM status + 5 messageKind enums + Audit "logged" constant + RepoEventBridge body→status.cursor/dedupe sibling separation).
+- wire-flow.test.ts cluster-4 batch extension: 5 new tests (4-kind concurrent + Message CANONICAL renameMap end-to-end + Audit "logged" envelope verify + RepoEventBridge* opaque-body preservation + idempotent re-run).
+- **RepoEventBridgeSubstrateAdapter atomic rewrite per A1**: `repo-event-bridge-adapter.ts` reads tolerant-dual-shape (envelope OR legacy-flat); writes envelope-shape always (status.cursor for Cursor / status.dedupe for Dedupe; bodyStatusField helper + buildEnvelopeWrite + readBody). Race-clobber risk eliminated; cursor-store opaque JSON contract preserved through adapter seam. Adapter tests updated (22/22 pass with envelope-shape assertions).
+- Cluster-4 Design v0.2 → v0.3 update (§6 substrate-currency-ratification record + A1 atomic adapter rewrite documented + 7th substrate-currency catch + Q3 Message renameMap CANONICAL first-use + bug-118 IN-clause stays at 8 kinds + 7th cumulative envelope-methodology pattern atomic-primitive-rewrite-with-wave-migration folded into §5).
+- Operator-DX (Q8 same-PR): psql-cookbook NEW sections (Message envelope-shape query CANONICAL field-name-collision rename; Audit envelope-shape forensic timestamp→createdAt rename "logged" constant; RepoEventBridge* opaque-body inspection status.cursor/status.dedupe navigation).
+- Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 138 test files / 1736 tests pass (1 skipped) / commit-message-claims accurate.
+- Hub-rebuild dependency REQUIRED for W4 dev-cycle verification (RepoEventBridgeSubstrateAdapter feeds bridge runtime at Hub startup).
+
+▶ **PR #279 in-flight; awaiting `pr_opened_bilateral` architect approve + CI completion.**
+
+▶ **Post-merge follow-ons:**
+- File `M-SchemaDef-Reconciler-Status-Write-Patch` Idea (substrate-extension class; OQ10 deferred reconciler-side WRITES from cluster-3 A2; composes with idea-317).
+- W5 cluster-5 (Document / ArchitectDecision / 3 HistoryEntry kinds; FINAL cluster) dispatch via fresh coord-thread post W4 acceptance close.
+
+**4 of 5 cluster waves implemented.** W5 cluster-5 is the FINAL cluster wave.
 
 ---
 
