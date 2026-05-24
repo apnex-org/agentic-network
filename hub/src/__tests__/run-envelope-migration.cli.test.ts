@@ -114,12 +114,12 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
     }
   });
 
-  it("full-sweep over empty substrate: exit 0; structured-text output; 21 kinds reported", async () => {
+  it("full-sweep over empty substrate: exit 0; structured-text output; 22 kinds reported", async () => {
     const result = await runCli({ POSTGRES_CONNECTION_STRING: fixture.connStr });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/\[envelope-migrate\] starting wave=W6\.1 kinds=21/);
+    expect(result.stdout).toMatch(/\[envelope-migrate\] starting wave=W6\.1 kinds=22/);
     // SUMMARY footer carries the per-kind count + totals
-    expect(result.stdout).toMatch(/\[envelope-migrate\] SUMMARY: 21 kinds; 0 total rowsMigrated; 0 total rowsErrored/);
+    expect(result.stdout).toMatch(/\[envelope-migrate\] SUMMARY: 22 kinds; 0 total rowsMigrated; 0 total rowsErrored/);
   }, 120_000);
 
   it("--dry-run flag: legacy-shape rows are NOT mutated", async () => {
@@ -159,7 +159,7 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
     expect(parsed.exitCode).toBe(0);
     expect(parsed.dryRun).toBe(false);
     expect(Array.isArray(parsed.perKind)).toBe(true);
-    expect(parsed.perKind.length).toBe(21);
+    expect(parsed.perKind.length).toBe(22);
     for (const kind of parsed.perKind) {
       expect(typeof kind.kind).toBe("string");
       expect(typeof kind.rowsMigrated).toBe("number");
@@ -204,7 +204,7 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
     const result = await runCli({ POSTGRES_CONNECTION_STRING: fixture.connStr });
     expect(result.exitCode).toBe(0);
     // 5 rows migrated; remaining 16 kinds empty
-    expect(result.stdout).toMatch(/SUMMARY: 21 kinds; 5 total rowsMigrated; 0 total rowsErrored/);
+    expect(result.stdout).toMatch(/SUMMARY: 22 kinds; 5 total rowsMigrated; 0 total rowsErrored/);
 
     // Verify per-cluster envelope-shape
     const ideaPost = await fixture.substrate.get<Record<string, unknown>>("Idea", "idea-1001");

@@ -1,8 +1,9 @@
 {
-  "$schema-version": "2.0",
+  "$schema-version": "2.1",
   "$generated": "2026-05-24",
   "$envelope-marker": "k8s-envelope-v1",
   "$cutover-completed-at": "TBD (architect fills post-cutover-execution with ISO timestamp)",
+  "$v2.1-w8-correction": "mission-88 W8 bug-124 cartography-gap correction: Notification re-added to kinds[] inventory. v1.3-cluster-4-correction premise CONTRADICTED by W8 production-state audit (psql `SELECT DISTINCT kind FROM entities` returned 555 Notification rows in production, NOT zero). The mission-56 W5 cleanup did NOT fully migrate Notification to Message-mediated path despite the engineer-code-trace evidence (hub/src/policy/notification-helpers.ts:112 was an ADAPTER WRAPPER that wrote Messages on TOP of separate Notification rows, NOT a full replacement). Total locked count: 21 → 22. Substrate-currency catch via architect-side production-state psql audit per W8 Design §3 (sibling to engineer code-trace; pre-W2 kind-inventory grep load-bearing audit step folded as 15th methodology refinement candidate).",
   "$generation-source": "v2.0 envelope-cutover-completion bump: mission-88 W6 production cutover completes idea-126 Phase 4 Design realization (5 of 5 cluster Design-pass + implementation waves shipped W0-W5; all 21 substrate-mediated kinds carry K8s envelope shape uniformly post-cutover; bug-118 closure FINAL at 8 kinds; 7 substrate-currency catches + 4 zero-drift ratifications + 7 cumulative envelope-methodology patterns articulated). Major-version bump signals envelope-shape-being-substrate-canonical per Survey 1 minimal 2-group taxonomy core.ois/v1 ratification. | v1.3 prior: idea-126 cluster-4 v0.2 substrate-currency correction (engineer code-trace contradicted v1.1 Notification re-introduction premise; mission-56 W5 IS fully complete — notifications ARE first-class Message entities with kind=external-injection; no direct file-writes; entity-kinds.json:149 was STALE). Notification moved from kinds[] to kinds-explicitly-not-included. Total locked count: 22 → 21. Substrate-currency catch per cluster-1 Round 7 precedent (engineer code-trace > architect spec-recall). | v1.2 prior: W0.2 spike filesystem-grep at HEAD a940a38 (origin/main); v1.1 update folds in architect-side W1.1 verification per Design v1.1 commit 11ce0ba (architect-VERIFIED 4 W0-validates kinds + 1 NEW finding ThreadHistoryEntry + wisdom/ static-asset carve-out)",
   "$mission": "mission-83",
   "$design-ref": "docs/designs/m-hub-storage-substrate-design.md (commit 11ce0ba; v1.1 inventory-currency cleanup; v1.0 RATIFIED at b0c6a02 per thread-563)",
@@ -203,15 +204,25 @@
       "persistence-prefix": "(substrate: kind=RepoEventBridgeDedupe; id=<owner>__<repo>; body={id, body: <cursor-store-encoded-JSON>})",
       "id-pattern": "<owner>__<repo>",
       "notes": "mission-84 W3 NEW kind per Design v1.1 §2.3 Variant (ii) minimal-SchemaDef — cluster #23 closure (repo-event-bridge dedupe LRU substrate-persistence). watchable: false (same rationale as RepoEventBridgeCursor sibling)."
+    },
+    {
+      "name": "Notification",
+      "mediation": "Direct write via emitLegacyNotification() helper (hub/src/policy/notification-helpers.ts); no INotificationStore interface (system-emit append-only; helper writes to substrate directly via messageStore-adapter — Notification ARE persisted as separate entities; v1.3-cluster-4-correction premise corrected by W8 production-state audit)",
+      "interface-file": "hub/src/policy/notification-helpers.ts (emit-helper; no IStore interface)",
+      "repository-file": "n/a (no per-entity-repository; system-emit append-only)",
+      "persistence-prefix": "(substrate: kind=Notification; id=<ULID>; envelope-shape post-W8 migration)",
+      "id-pattern": "<ULID 26-char base32>",
+      "notes": "mission-88 W8 bug-124 cartography-gap fix: Notification RE-ADDED to inventory after v1.3-cluster-4-correction wrongly removed it. Production has 555 Notification rows (psql audit 2026-05-24). v2.1 envelope-shape per W8 Design v1.0: id→envelope.id + metadata.name; timestamp→metadata.createdAt; event→spec.eventType (14-eventType closed-set + 'unknown' fallback); targetRoles→spec.targetRoles; data→spec.payload; status.phase='logged' constant (append-only per Audit precedent). Cascade-provenance per W8 Q2: REQUIRED thread-sourced eventTypes (thread_message/thread_converged/turn_created) carry metadata.sourceThreadId; OPTIONAL eventTypes (idea_submitted/proposal_submitted/proposal_decided/mission_created) inject if data.threadId present."
     }
   ],
 
   "kinds-explicitly-not-included": [
     {
       "name": "Notification",
+      "v2.1-w8-correction": "RE-INSTATED to kinds[] inventory at v2.1 (see kinds[] entry above). v1.3-cluster-4-correction premise was WRONG: emitLegacyNotification IS a Message-emit wrapper BUT ALSO writes Notification entities as separate substrate rows (dual-write pattern not single-replacement). W8 production-state psql audit found 555 Notification rows — disposition (i) at v1.3 was based on incomplete code-trace.",
       "design-v1.1-listing": "Listed at kinds[] entry (line 142-150 pre-v1.3); marked for mission-83 OQ8 re-introduction",
-      "v1.3-cluster-4-correction": "ENGINEER-CODE-TRACE CONTRADICTED v1.1 PREMISE — mission-56 W5 IS fully complete; notifications ARE first-class Message entities. Evidence:\n  (a) hub/src/policy/notification-helpers.ts:112 — emitLegacyNotification() body literally calls messageStore.createMessage({kind: \"external-injection\", authorRole: \"system\", authorAgentId: \"hub\", target: null, delivery: \"push-immediate\", payload})\n  (b) hub/src/hub-networking.ts:466 — await emitLegacyNotification(this.messageStore, event, augmentedData, targetRoles) invokes the messageStore-write path; line 467 log [Notify] Persisted notif-${notification.id} carries a Message id (notif- prefix is legacy log-grep compat)\n  (c) grep -nE 'writeFile|writeFileSync|notifications/' hub/src/hub-networking.ts returns zero matches\n  (d) grep -rnE 'notifications/notif' hub/src returns zero matches in production code\n  No INotificationStore-gap to close; no direct-write path to re-mediate.",
-      "disposition": "REMOVE from Design v1.1 §3.4.1 inventory in cluster-4 v0.2 (architect-judgment + Director-ratified disposition (i)). Substrate-currency catch via engineer code-trace per cluster-1 Round 7 precedent. mission-83 OQ8 framing re-files as separate Idea post-cluster-4 with corrected scope (semantic-separation question: are system-emit notifications semantically distinct from external-injection Messages? — NOT mediation-gap closure)."
+      "v1.3-cluster-4-correction-superseded": "ENGINEER-CODE-TRACE CONTRADICTED v1.1 PREMISE — mission-56 W5 IS fully complete; notifications ARE first-class Message entities. Evidence:\n  (a) hub/src/policy/notification-helpers.ts:112 — emitLegacyNotification() body literally calls messageStore.createMessage({kind: \"external-injection\", authorRole: \"system\", authorAgentId: \"hub\", target: null, delivery: \"push-immediate\", payload})\n  (b) hub/src/hub-networking.ts:466 — await emitLegacyNotification(this.messageStore, event, augmentedData, targetRoles) invokes the messageStore-write path; line 467 log [Notify] Persisted notif-${notification.id} carries a Message id (notif- prefix is legacy log-grep compat)\n  (c) grep -nE 'writeFile|writeFileSync|notifications/' hub/src/hub-networking.ts returns zero matches\n  (d) grep -rnE 'notifications/notif' hub/src returns zero matches in production code\n  No INotificationStore-gap to close; no direct-write path to re-mediate.",
+      "disposition": "SUPERSEDED by v2.1 W8 correction (kinds[] entry above)."
     },
     {
       "name": "DirectorNotification",
