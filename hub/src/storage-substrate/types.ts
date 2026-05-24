@@ -22,6 +22,17 @@ export interface SchemaDef {
   indexes: IndexDef[];
   /** Whether to wire a NOTIFY trigger for this kind (default true; substrate-internal-events excluded). */
   watchable: boolean;
+  /**
+   * mission-88 W7 (bug-123 fix): regex (as serializable string) matching index
+   * names this SchemaDef OWNS. `SchemaReconciler.reconcileIndexes` hard-drops any
+   * postgres index matching this pattern but NOT in `indexes[]` (handles index
+   * renames during envelope migration — e.g. `thread_status_idx` →
+   * `thread_status_phase_idx`). Indexes NOT matching the pattern are FOREIGN
+   * (ad-hoc operator-created; left alone). Per W7 Q3 refinement: hard-drop
+   * owned-deprecated + leave-foreign. Example: `"^thread_"` for Thread-owned.
+   * Optional — kinds without index-rename activity can omit.
+   */
+  indexOwnershipPattern?: string;
 }
 
 export interface FieldDef {

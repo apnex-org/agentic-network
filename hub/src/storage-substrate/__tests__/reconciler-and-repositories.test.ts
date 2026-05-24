@@ -94,16 +94,17 @@ describe("Reconciler", () => {
         `SELECT indexname FROM pg_indexes WHERE tablename = 'entities'`,
       );
       const indexNames = r.rows.map(row => row.indexname);
-      // From the subset, expect:
-      // - bug_status_idx + bug_class_idx (Bug)
-      // - idea_status_idx (Idea)
-      // - message_thread_idx + message_author_idx (Message)
+      // From the subset, expect (mission-88 W7 envelope-path + renamed per
+      // bug-123 fix; old names auto-dropped by reconciler ownership-pattern):
+      // - bug_status_phase_idx + bug_spec_class_idx (Bug)
+      // - idea_status_phase_idx (Idea)
+      // - message_metadata_thread_idx + message_metadata_author_idx (Message)
       expect(indexNames).toEqual(expect.arrayContaining([
-        "bug_status_idx",
-        "bug_class_idx",
-        "idea_status_idx",
-        "message_thread_idx",
-        "message_author_idx",
+        "bug_status_phase_idx",
+        "bug_spec_class_idx",
+        "idea_status_phase_idx",
+        "message_metadata_thread_idx",
+        "message_metadata_author_idx",
       ]));
     } finally {
       await pool.end();
