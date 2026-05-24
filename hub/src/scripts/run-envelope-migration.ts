@@ -21,12 +21,16 @@
  * - Summary footer:
  *     [envelope-migrate] SUMMARY: <K> kinds; <T> total rowsMigrated; <T> total rowsErrored; <T> elapsed-ms; exit-code=<E>
  * - JSON mode (--json): structured JSON per-kind + summary array (machine-grep-able)
- * - Exit codes:
- *     0 — all kinds rowsErrored=0; success
- *     1 — any kind rowsErrored > 0 (substrate-write-fail; cutover rollback-trigger 1)
- *     2 — DB connection failure (pre-flight or mid-run; transient; halt-not-rollback)
- *     3 — module-registration-failure (CLI-internal; bug-class)
- *     4 — unhandled exception (defensive; bug-class)
+ * - Exit codes (mission-88 bug-133 fix: time-budget exit=3 added):
+ *     0 — all kinds rowsErrored=0 + total elapsedMs < 5min budget; success
+ *     1 — any kind rowsErrored > 0 (partial success; substrate-write-fail;
+ *         cutover rollback-trigger 1)
+ *     2 — total failure — DB connection failure pre-flight or mid-run; transient
+ *     3 — halt-trigger time budget exceeded (NEW per bug-133; total elapsedMs
+ *         > 300_000ms = 5min; overrides exit=1 even if partial-success; surface
+ *         to architect for substrate-throughput investigation)
+ *     4 — CLI usage / module-registration failure (was 3 pre-bug-133)
+ *     5 — unhandled exception (defensive; bug-class; was 4 pre-bug-133)
  * - --dry-run flag: inventory-mode; reports what WOULD migrate; no writes;
  *   MigrationCursor cursor advancement NOT applied (per migration-runner.ts:118 contract)
  *
@@ -69,11 +73,33 @@ import { createThreadHistoryEntryMigrationModule } from "../storage-substrate/mi
 
 const WAVE_ID = "W6.1";
 
+// mission-88 bug-133 fix: exit-code semantics per architect-spec.
+// exit=0  all kinds 100% rowsWritten + within halt-trigger budget
+// exit=1  partial success (any kind row-write failure; rowsErrored > 0)
+// exit=2  total failure (DB connectivity / substrate-layer crash)
+// exit=3  halt-trigger time budget exceeded (NEW per bug-133) — elapsedMs > 300_000
+// exit=4  CLI usage / module-registration failure (was 3)
+// exit=5  unhandled exception (was 4)
 const EXIT_SUCCESS = 0;
 const EXIT_ROWS_ERRORED = 1;
-const EXIT_DB_CONNECTION = 2;
-const EXIT_MODULE_REGISTRATION = 3;
-const EXIT_UNHANDLED = 4;
+const EXIT_DB_CONNECTION = 2;  // alias: EXIT_TOTAL_FAILURE per architect-spec
+const EXIT_TIME_BUDGET_EXCEEDED = 3;
+const EXIT_MODULE_REGISTRATION = 4;
+const EXIT_UNHANDLED = 5;
+
+// W6.1 architect-R3 5th halt-trigger: if CLI per-kind elapsedMs > 300_000ms (5min)
+// → halt + surface for substrate-throughput investigation. Per architect bug-133
+// scope-narrow disposition: MAX per-kind elapsed (not SUM) since per-kind runs
+// concurrently via Promise.all; wall-clock budget is the max-of-set. Per
+// architect refinement: env-var override for tunable budget.
+//
+// W7-obviates the original btree-error trigger (envelope-path indexes target
+// small status.phase string, not stringified status object); time-budget is the
+// remaining halt-class to enforce. bug-133 scope-narrowed accordingly.
+const HALT_TRIGGER_ELAPSED_MS = parseInt(
+  process.env.ENVELOPE_MIGRATE_HALT_MS ?? "300000",
+  10,
+);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -110,12 +136,13 @@ Options:
 Env:
   POSTGRES_CONNECTION_STRING  Required; postgres connection string for the Hub substrate
 
-Exit codes:
-  0 — all kinds rowsErrored=0; success
-  1 — any kind rowsErrored > 0 (substrate-write-fail; cutover rollback-trigger)
-  2 — DB connection failure
-  3 — CLI usage / module-registration failure
-  4 — unhandled exception
+Exit codes (mission-88 bug-133 fix):
+  0 — all kinds rowsErrored=0 + within 5min budget; success
+  1 — any kind rowsErrored > 0 (partial success; cutover rollback-trigger)
+  2 — total failure — DB connection failure (transient; halt-not-rollback)
+  3 — halt-trigger time budget exceeded (NEW; total elapsedMs > 5min)
+  4 — CLI usage / module-registration failure
+  5 — unhandled exception
 `);
 }
 
@@ -257,7 +284,27 @@ async function main(): Promise<number> {
   reports.push(...settled);
 
   const totalErrored = reports.reduce((acc, r) => acc + r.rowsErrored, 0);
-  const exitCode = totalErrored > 0 ? EXIT_ROWS_ERRORED : EXIT_SUCCESS;
+  // Use MAX per-kind elapsed (not SUM) since per-kind runs concurrently via
+  // Promise.all; wall-clock budget = max-of-set per architect bug-133 refinement.
+  const maxKindElapsedMs = reports.reduce((acc, r) => Math.max(acc, r.elapsedMs), 0);
+  const breachingKind = reports.find((r) => r.elapsedMs > HALT_TRIGGER_ELAPSED_MS);
+
+  // mission-88 bug-133 fix: time-budget halt-trigger precedence.
+  // exit=3 overrides exit=1 even if rowsErrored>0 — surfaces substrate-throughput
+  // investigation regardless of partial-success-state.
+  let exitCode: number;
+  if (breachingKind) {
+    exitCode = EXIT_TIME_BUDGET_EXCEEDED;
+    console.error(
+      `[envelope-migrate] HALT: kind=${breachingKind.kind} elapsedMs=${breachingKind.elapsedMs} exceeds budget ${HALT_TRIGGER_ELAPSED_MS}ms ` +
+        `(max-per-kind=${maxKindElapsedMs}ms); surface to architect for substrate-throughput investigation. ` +
+        `Override budget via ENVELOPE_MIGRATE_HALT_MS env-var.`,
+    );
+  } else if (totalErrored > 0) {
+    exitCode = EXIT_ROWS_ERRORED;
+  } else {
+    exitCode = EXIT_SUCCESS;
+  }
 
   if (opts.json) {
     console.log(JSON.stringify({ wave: WAVE_ID, dryRun: opts.dryRun, exitCode, perKind: reports }, null, 2));

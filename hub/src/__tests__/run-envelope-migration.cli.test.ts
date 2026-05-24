@@ -83,9 +83,9 @@ describe("run-envelope-migration CLI — exit-code error paths", () => {
     expect(result.stderr).toMatch(/POSTGRES_CONNECTION_STRING/);
   }, 30_000);
 
-  it("exits 3 on unknown flag", async () => {
+  it("exits 4 on unknown flag (mission-88 bug-133: was 3 pre-fix; exit=3 reserved for time-budget)", async () => {
     const result = await runCli({ POSTGRES_CONNECTION_STRING: "postgres://invalid:invalid@localhost:1/invalid" }, ["--unknown-flag"]);
-    expect(result.exitCode).toBe(3);
+    expect(result.exitCode).toBe(4);
     expect(result.stderr).toMatch(/unknown flag/);
   }, 30_000);
 
