@@ -194,9 +194,9 @@ Post mission-88 W1, cluster-1 kinds (`Idea`, `Bug`, `Thread`, `Mission`, `Propos
 
 JSONB navigation is via `->` (descend) + `->>` (extract as text). Use `data->'metadata'->>'sourceThreadId'` not `data->>'sourceThreadId'`.
 
-### Envelope-shape coverage (cluster-1 bug-118 closure verification)
+### Envelope-shape coverage (cluster-1+2 bug-118 closure verification — 8 kinds)
 
-Per cluster-1 acceptance gate (f). Returns per-kind: total row count + count of rows carrying `metadata.sourceThreadId` provenance.
+Per cluster-1+2 acceptance gate (f). Returns per-kind: total row count + count of rows carrying `metadata.sourceThreadId` provenance. Expanded post W2 cluster-2 ship: cluster-1 5 kinds + cluster-2 3 kinds = 8 envelope-shape kinds.
 
 ```sql
 SELECT
@@ -204,10 +204,75 @@ SELECT
   COUNT(*) AS total,
   COUNT(*) FILTER (WHERE data->'metadata'->>'sourceThreadId' IS NOT NULL) AS with_provenance
 FROM entities
-WHERE kind IN ('Idea', 'Bug', 'Thread', 'Mission', 'Proposal')
+WHERE kind IN ('Idea', 'Bug', 'Thread', 'Mission', 'Proposal', 'Task', 'PendingAction', 'Turn')
 GROUP BY kind
 ORDER BY kind;
 ```
+
+### Turn handle-classified lookup (metadata.name K8s-canonical)
+
+Per cluster-2 §2.3 — Turn is the FIRST envelope-shape kind to use `metadata.name` as K8s-canonical handle. Lookup by human-friendly handle:
+
+```sql
+-- Find a Turn by its title (handle-classified post-cutover)
+SELECT id,
+       data->'metadata'->>'name' AS handle,
+       data->'status'->>'phase' AS phase,
+       data->'spec'->>'scope' AS scope
+FROM entities
+WHERE kind = 'Turn'
+  AND data->'metadata'->>'name' = 'Mission-88 W2 cluster-2'
+LIMIT 5;
+```
+
+### PendingAction sweeper-queue forensic (envelope-shape)
+
+Per cluster-2 §2.2 — PendingAction post-cutover has `state` → `status.phase` rename + `enqueuedAt` → `metadata.createdAt` rename. Operator-DX queries adjust accordingly:
+
+```sql
+-- Awaiting-receipt + receipt-acked pending actions per agent (envelope-shape)
+SELECT id,
+       data->'spec'->>'targetAgentId' AS agent,
+       data->'spec'->>'dispatchType' AS dispatch,
+       data->'spec'->>'entityRef' AS entity,
+       data->'status'->>'phase' AS phase,
+       data->'metadata'->>'createdAt' AS enqueued_at,
+       data->'spec'->>'receiptDeadline' AS receipt_deadline
+FROM entities
+WHERE kind = 'PendingAction'
+  AND data->'spec'->>'targetAgentId' = '<agent-id>'
+  AND data->'status'->>'phase' IN ('enqueued', 'receipt_acked')
+ORDER BY data->'metadata'->>'createdAt' DESC;
+```
+
+### Task envelope-shape FSM phase query (per cluster-2 §2.1)
+
+```sql
+-- Pending Tasks awaiting engineer claim (envelope-shape; 9-state FSM)
+SELECT id,
+       data->'spec'->>'directive' AS directive,
+       data->'spec'->>'title' AS title,
+       data->'spec'->>'assignedAgentId' AS assigned_agent,
+       data->'status'->>'phase' AS phase,
+       data->'metadata'->>'turnId' AS owning_turn,
+       data->'metadata'->>'correlationId' AS correlation
+FROM entities
+WHERE kind = 'Task'
+  AND data->'status'->>'phase' = 'pending'
+ORDER BY data->'metadata'->>'createdAt' DESC
+LIMIT 20;
+```
+
+### In-flight migration flag inspection (W2 OQ11 disposition; operator forensic)
+
+Per cluster-2 §7 — the `MIGRATION_IN_PROGRESS_<KIND>` env-var flag mechanism is process-local. The Hub publishes flag state via env-var; operators inspect via the Hub process environment (not via psql).
+
+```bash
+# From inside the Hub container (no SQL needed; env-var is process-local)
+sudo docker exec ois-postgres-prod env | grep MIGRATION_IN_PROGRESS_ || echo "no migrations in-flight"
+```
+
+Future distributed-Hub iteration (idea-200/idea-129 follow-on) will move this signal to a substrate-level lock kind queryable via psql.
 
 ### Active envelope-shape Threads (FSM phase + currentTurn nested)
 
