@@ -29,6 +29,10 @@ import { createBugMigrationModule } from "../kinds/Bug.js";
 import { createThreadMigrationModule } from "../kinds/Thread.js";
 import { createMissionMigrationModule } from "../kinds/Mission.js";
 import { createProposalMigrationModule } from "../kinds/Proposal.js";
+import { createTaskMigrationModule } from "../kinds/Task.js";
+import { createPendingActionMigrationModule } from "../kinds/PendingAction.js";
+import { createTurnMigrationModule } from "../kinds/Turn.js";
+import { isMigrationInProgress } from "../shared/migration-flag.js";
 import { setupSubstrate, teardownSubstrate, cleanKind, type SubstrateFixture } from "./harness/fixtures.js";
 
 // Use an existing watchable kind (Idea) as the wire-flow synthetic target —
@@ -390,3 +394,209 @@ interface EnvelopeRow {
   spec: Record<string, unknown>;
   status: Record<string, unknown>;
 }
+
+// ───────────────────────────────────────────────────────────────────────
+// W2 cluster-2 batch-migration wire-flow (Q6 disposition; per thread-644 R2)
+// ───────────────────────────────────────────────────────────────────────
+
+const CLUSTER_2_KINDS = ["Task", "PendingAction", "Turn"] as const;
+
+function seedCluster2Row(kind: typeof CLUSTER_2_KINDS[number], n: number): { id: string } & Record<string, unknown> {
+  const idPrefix = kind === "PendingAction" ? "pa-2026-05-24T03-00-00-000Z" : kind.toLowerCase();
+  const id = kind === "PendingAction" ? `${idPrefix}-${n}` : `${idPrefix}-${n}`;
+  switch (kind) {
+    case "Task":
+      return {
+        id, directive: `Task ${n}`, report: null, reportSummary: null, reportRef: null,
+        verification: null, reviewAssessment: null, reviewRef: null,
+        assignedAgentId: `agent-${n}`, clarificationQuestion: null, clarificationAnswer: null,
+        correlationId: `mission-${n}`, idempotencyKey: null, title: `Task ${n}`, description: `desc ${n}`,
+        dependsOn: [], revisionCount: 0, status: "pending",
+        labels: { class: "test" }, turnId: null,
+        sourceThreadId: `thread-${100 + n}`, sourceActionId: `action-${n}`,
+        sourceThreadSummary: `Summary ${n}`,
+        createdBy: { role: "engineer", agentId: "agent-greg" },
+        createdAt: `2026-05-2${n}T00:00:00Z`, updatedAt: `2026-05-2${n}T00:00:00Z`,
+      };
+    case "PendingAction":
+      return {
+        id, targetAgentId: `agent-${n}`, dispatchType: "thread_message",
+        entityRef: `thread-${100 + n}`,
+        naturalKey: `agent-${n}:thread-${100 + n}:thread_message`,
+        payload: { messageId: `msg-${n}` },
+        enqueuedAt: `2026-05-2${n}T00:00:00Z`,
+        receiptDeadline: `2026-05-2${n}T00:00:30Z`,
+        completionDeadline: `2026-05-2${n}T00:05:00Z`,
+        receiptAckedAt: null, completionAckedAt: null,
+        attemptCount: 0, lastAttemptAt: null,
+        state: "enqueued", escalationReason: null,
+        createdBy: { role: "architect", agentId: "agent-arch" },
+      };
+    case "Turn":
+      return {
+        id, title: `Turn ${n}`, scope: `Free-text scope ${n}`,
+        status: "planning", missionIds: [], taskIds: [], tele: [`tele-${n}`],
+        correlationId: id,
+        createdBy: { role: "engineer", agentId: "agent-greg" },
+        createdAt: `2026-05-2${n}T00:00:00Z`, updatedAt: `2026-05-2${n}T00:00:00Z`,
+      };
+  }
+}
+
+function registerCluster2(runner: MigrationRunner): void {
+  runner.register(createTaskMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Task")!));
+  runner.register(createPendingActionMigrationModule(ALL_SCHEMAS.find(s => s.kind === "PendingAction")!));
+  runner.register(createTurnMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Turn")!));
+}
+
+describe("W2 cluster-2 batch wire-flow — 3-kind migration + per-kind cursor isolation", () => {
+  beforeEach(async () => {
+    for (const k of CLUSTER_2_KINDS) await cleanKind(fixture.connStr, k);
+    await cleanKind(fixture.connStr, "MigrationCursor");
+  });
+
+  it("migrates all 3 cluster-2 kinds end-to-end + cursors isolate per-kind", async () => {
+    for (const kind of CLUSTER_2_KINDS) {
+      for (const n of [1, 2]) {
+        await fixture.substrate.put(kind, seedCluster2Row(kind, n));
+      }
+    }
+
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster2(runner);
+
+    expect(runner.registeredKinds()).toEqual([...CLUSTER_2_KINDS].sort());
+
+    const results = new Map<string, Awaited<ReturnType<MigrationRunner["runKind"]>>>();
+    for (const kind of CLUSTER_2_KINDS) {
+      results.set(kind, await runner.runKind(kind, { waveId: "W2" }));
+    }
+
+    for (const kind of CLUSTER_2_KINDS) {
+      const r = results.get(kind)!;
+      expect(r.kind).toBe(kind);
+      expect(r.rowsMigrated).toBe(2);
+      expect(r.rowsErrored).toBe(0);
+      expect(r.errors).toEqual([]);
+    }
+
+    for (const kind of CLUSTER_2_KINDS) {
+      const post = await fixture.substrate.list<unknown>(kind, { limit: 10 });
+      expect(post.items.length).toBe(2);
+      for (const row of post.items) {
+        expect(isEnvelopeShape(row)).toBe(true);
+        expect((row as { kind: string }).kind).toBe(kind);
+        expect((row as { apiVersion: string }).apiVersion).toBe("core.ois/v1");
+      }
+    }
+
+    const cursorRepo = new MigrationCursorRepository(fixture.substrate);
+    for (const kind of CLUSTER_2_KINDS) {
+      const cp = await cursorRepo.getCheckpoint(kind);
+      expect(cp).not.toBeNull();
+      expect(cp!.id).toBe(`cursor-${kind}`);
+      expect(cp!.waveId).toBe("W2");
+    }
+  });
+
+  it("idempotent re-run across cluster-2: all rows skip on second pass", async () => {
+    for (const kind of CLUSTER_2_KINDS) {
+      await fixture.substrate.put(kind, seedCluster2Row(kind, 1));
+    }
+
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster2(runner);
+
+    for (const kind of CLUSTER_2_KINDS) {
+      const r = await runner.runKind(kind);
+      expect(r.rowsMigrated).toBe(1);
+    }
+
+    const cursorRepo = new MigrationCursorRepository(fixture.substrate);
+    for (const kind of CLUSTER_2_KINDS) {
+      await cursorRepo.resetCheckpoint(kind);
+    }
+
+    for (const kind of CLUSTER_2_KINDS) {
+      const r = await runner.runKind(kind);
+      expect(r.rowsSkipped).toBe(1);
+      expect(r.rowsMigrated).toBe(0);
+    }
+  });
+
+  it("cluster-2 envelope-shape per kind: Task content-classified; PA queue-state; Turn handle-classified", async () => {
+    for (const kind of CLUSTER_2_KINDS) {
+      await fixture.substrate.put(kind, seedCluster2Row(kind, 1));
+    }
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster2(runner);
+    for (const kind of CLUSTER_2_KINDS) await runner.runKind(kind);
+
+    // Task: content-classified; envelope.name = id (no metadata.name)
+    const task = await fixture.substrate.get<EnvelopeRow>("Task", "task-1");
+    expect(task!.name).toBe("task-1");
+    expect(task!.status.phase).toBe("pending");
+    expect(task!.spec.directive).toBe("Task 1");
+    expect(task!.metadata.turnId).toBeNull();
+
+    // PendingAction: queue-state; enqueuedAt → metadata.createdAt rename verified
+    const pa = await fixture.substrate.get<EnvelopeRow>("PendingAction", "pa-2026-05-24T03-00-00-000Z-1");
+    expect(pa!.status.phase).toBe("enqueued");
+    expect(pa!.spec.targetAgentId).toBe("agent-1");
+    expect(pa!.metadata.createdAt).toBe("2026-05-21T00:00:00Z");  // from legacy enqueuedAt
+    expect((pa! as unknown as Record<string, unknown>).enqueuedAt).toBeUndefined();
+    expect(pa!.metadata.naturalKey).toBe("agent-1:thread-101:thread_message");
+
+    // Turn: handle-classified; envelope.name = title; metadata.name = title
+    const turn = await fixture.substrate.get<EnvelopeRow>("Turn", "turn-1");
+    expect(turn!.name).toBe("Turn 1");                  // handle-classified
+    expect(turn!.metadata.name).toBe("Turn 1");        // K8s-canonical
+    expect(turn!.status.phase).toBe("planning");
+    expect(turn!.spec.scope).toBe("Free-text scope 1");
+    expect(turn!.metadata.missionIds).toBeUndefined(); // virtual-hydrated
+    expect(turn!.metadata.taskIds).toBeUndefined();
+  });
+
+  it("Q4(a)+(c) in-flight migration flag: runner sets/clears at runKind boundary", async () => {
+    await fixture.substrate.put("Task", seedCluster2Row("Task", 1));
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster2(runner);
+
+    expect(isMigrationInProgress("Task")).toBe(false);
+    await runner.runKind("Task");
+    // Flag cleared on completion (finally block per runner.ts integration)
+    expect(isMigrationInProgress("Task")).toBe(false);
+  });
+
+  it("Q4(a)+(c) in-flight migration flag: runner clears flag even when per-row migrateOne throws", async () => {
+    // Seed a valid row + register a module whose migrateOne throws
+    await fixture.substrate.put("Task", seedCluster2Row("Task", 1));
+    const throwingRunner = new MigrationRunner(fixture.substrate);
+    throwingRunner.register({
+      kind: "Task",
+      schemaRef: { schema: ALL_SCHEMAS.find(s => s.kind === "Task")! },
+      migrateOne(): never { throw new Error("test-induced module failure"); },
+    });
+
+    expect(isMigrationInProgress("Task")).toBe(false);
+    const r = await throwingRunner.runKind("Task");
+    // Inner try/catch absorbs the throw into result.errors
+    expect(r.rowsErrored).toBe(1);
+    expect(r.errors[0].message).toMatch(/test-induced module failure/);
+    // Critical: finally block clears the flag even when rows error
+    expect(isMigrationInProgress("Task")).toBe(false);
+  });
+
+  it("Q4(a)+(c) in-flight migration flag: runner clears flag on empty-result run (no rows)", async () => {
+    // No rows seeded; runner iterates nothing but still passes through try/finally
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster2(runner);
+
+    expect(isMigrationInProgress("PendingAction")).toBe(false);
+    const r = await runner.runKind("PendingAction");
+    expect(r.rowsMigrated).toBe(0);
+    expect(r.rowsErrored).toBe(0);
+    // Critical: flag cleared even when no rows were processed
+    expect(isMigrationInProgress("PendingAction")).toBe(false);
+  });
+});

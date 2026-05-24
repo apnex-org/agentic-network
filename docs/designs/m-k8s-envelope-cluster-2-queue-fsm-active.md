@@ -1,10 +1,10 @@
 # M-K8s-Envelope — Cluster 2 Queue/FSM-Active Partition (Design Working Draft)
 
-**Status:** v0.2 — engineer review-integrated · awaiting approval
-**Mission:** idea-126 (M-K8s-Envelope)
-**Phase:** Phase 4 Design — cluster-2 partition pass (2 of 5 clusters per substrate-grounded §6 revision)
-**Coordination:** per-PR review (no separate Hub coord thread per `feedback_pr_opened_notification_is_review_signal`)
-**Date:** 2026-05-23 AEST (v0.2: engineer PR #268 v0.1 review integrated)
+**Status:** v0.3 — substrate-truth ratified · ready for migration consumption
+**Mission:** mission-88 (M-K8s-Envelope; idea-126 anchor)
+**Phase:** Phase 4 Design — cluster-2 partition pass (2 of 5 clusters; Phase 8 W2 implementation)
+**Coordination:** `thread-644` (W2 Design-pass; converged at R3)
+**Date:** 2026-05-24 AEST (v0.3: W2 substrate-currency-ratification per thread-644 R2)
 **Sibling Designs:**
 - Cluster 1 — substantive-content (Idea / Bug / Thread / Mission / Proposal) — **MERGED** at `d8ea695`
 - Cluster 3 — metadata/config/projection (forthcoming; scope ratified in §6)
@@ -12,6 +12,17 @@
 - Cluster 5 — content-archive (forthcoming; scope ratified in §6)
 
 **Survey input:** `docs/reviews/2026-05-23-survey-idea-126.md` (Director-ratified R1 A/A/A + R2 A/A/A — substrate-wide all-at-once + strict K8s + minimal 2-group taxonomy + big-bang cutover). Same Survey applies to all clusters.
+
+**v0.2 → v0.3 changelog (W2 substrate-currency-ratification per thread-644 R2):**
+- §6 NEW — v0.3 ratification record (ZERO drift vs substrate-current truth at engineer-proactive R1 verify-before-bake; 7th anticipated catch did NOT materialize — positive-surprise outcome; Design v0.2 was substrate-accurate at authoring time post-W4.x.10)
+- §3.2 PendingAction `naturalKey`: A2 forward-looking note — SchemaDef v2.0 `"derived":true` framing is read-side-projection concern; W2 envelope-migration treats as regular metadata field (path-move only; no derived-computation logic)
+- §6 NEW — declared-with-controlled-mutation 4-class axis (cross-cluster envelope-methodology pattern; A3 surfacing from thread-644 R1):
+  - declared-immutable (Task.directive, Proposal.summary)
+  - declared-with-controlled-mutation (Task.assignedAgentId, PendingAction.deadlines)
+  - observed-FSM-mutated (status.*, ackedAt, attemptCount)
+  - virtual-view (Mission.tasks, Turn.missionIds, Turn.taskIds)
+- W2 OQ11 in-flight disposition mechanism: env-var flag (`MIGRATION_IN_PROGRESS_<KIND>=true`) per Q4(a) ratified at thread-644 R2; β substrate-pause-lock + γ LISTEN/NOTIFY events DEFERRED to distributed-Hub substrate-refactor cycle (idea-200/idea-129 follow-on)
+- A4 forward-looking note for cluster-3 Agent partition: architect+engineer concur per-FSM-as-top-level-status-fields for multi-FSM kinds (K8s PodSpec siblings precedent; orthogonality is the point); deferred to W3 dispatch
 
 **v0.1 → v0.2 changelog (engineer PR #268 review integration):**
 - §1.5 NEW — `handle-classified vs content-classified` kinds methodology note (Turn introduces `metadata.name` use; engineer-surfaced signal for clusters 3/4/5)
@@ -581,7 +592,32 @@ Total: **22 kinds across 5 clusters** (matches `entity-kinds.json` v1.1 inventor
 
 ## §7 Status
 
-**v0.2** — engineer PR #268 v0.1 review integrated. All 13 OQ dispositions applied; 3 engineer observations (directive-immutability-verified · turnId-as-ownerReferences-analog · naturalKey-derived-field) folded in; §2.2/§2.3 stubs filled to full JSON Schema; §1.5 handle-classified vs content-classified methodology note added; §6 cluster decomposition (c) 5+5 split RATIFIED.
+**v0.3** — substrate-truth ratified per thread-644 bilateral convergence (2026-05-24). §0-§5 partition tables consumed by W2 KindMigrationModule modules. Cluster-2 ratification gate cleared.
+
+**v0.2 → v0.3 substrate-currency-ratification record:**
+
+Engineer-proactive Q2 verify-before-bake applied UPFRONT at thread-644 R1 (not retroactively as W1 thread-643 did). Code-grepped `hub/src/entities/{task,pending-action,turn}-repository-substrate.ts` + entity type files for substrate-current write/read shape per kind. **ZERO drift found** — Design v0.2 §2.1-§2.3 partitions match substrate-truth exactly. The 7th anticipated substrate-currency catch did NOT materialize; positive-surprise outcome documenting the discipline catches no-drift equally.
+
+**Why no drift:** cluster-2 Design v0.2 was authored 2026-05-23 post-W4.x.10 (mission-83 W5 completion); substrate-accurate at authoring. Cluster-1 v0.2 drift was a timing artifact (earlier authoring with forward-looking speculation).
+
+**Engineer-proactive verify-before-bake at Q-class disposition is LOAD-BEARING discipline** (per architect framing thread-643 R2 v1.2 candidate methodology rule). Discipline catches BOTH drift AND ratifies no-drift outcomes equally. Calibration cluster maturing self-prompting at engineer side.
+
+**v0.3 cross-cluster envelope-methodology pattern (declared-with-controlled-mutation 4-class axis):**
+
+| Class | Examples | Partition |
+|---|---|---|
+| Declared-immutable | Task.directive, Proposal.summary, Idea.text | spec (immutable post-create) |
+| Declared-with-controlled-mutation | Task.assignedAgentId (PodSpec.nodeName), PendingAction.{receiptDeadline, completionDeadline} (LeaseSpec.acquireTime) | spec (mutable via substrate-controlled mechanism without FSM-phase flip) |
+| Observed-FSM-mutated | status.phase, Task.report*/review*/clarification*, PendingAction.{receiptAckedAt, completionAckedAt, attemptCount} | status |
+| Virtual-view | Mission.tasks/ideas, Turn.missionIds/taskIds | OMIT (computed at repository.hydrate() read-time) |
+
+**W2 OQ11 in-flight disposition mechanism (Q4(a) ratified at thread-644 R2):**
+
+Env-var flag `MIGRATION_IN_PROGRESS_<KIND>=true`. Set by MigrationRunner at `runKind()` entry (`shared/migration-flag.ts:setMigrationFlag`); cleared in `finally` block. Consumers (sweepers + writers) call `isMigrationInProgress(kind)` at tick-start / write-boundary. `MigrationInProgressError` marker class for writers to throw with `kind` property.
+
+**Mechanism choice rationale:** scope-narrow for W2; matches W6 strict-flip env-var pattern + W0 `SUBSTRATE_ENVELOPE_TOLERANT` precedent; works for single-process Hub today. β substrate-pause-lock SchemaDef + γ LISTEN/NOTIFY events DEFERRED to distributed-Hub substrate-refactor cycle (idea-200/idea-129 follow-on; outside mission-88 scope per substrate-extension-minimum-disruption pattern from W1 Mission.pulses precedent).
+
+**v0.2 history-of-record** — engineer PR #268 v0.1 review integrated. All 13 OQ dispositions applied; 3 engineer observations (directive-immutability-verified · turnId-as-ownerReferences-analog · naturalKey-derived-field) folded in; §2.2/§2.3 stubs filled to full JSON Schema; §1.5 handle-classified vs content-classified methodology note added; §6 cluster decomposition (c) 5+5 split RATIFIED.
 
 **Substantive cluster-2 contributions to envelope methodology (signal for clusters 3/4/5):**
 

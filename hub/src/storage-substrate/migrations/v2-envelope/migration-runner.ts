@@ -20,6 +20,7 @@ import type { HubStorageSubstrate } from "../../index.js";
 import type { KindMigrationModule } from "./kinds/_contract.js";
 import { MigrationCursorRepository } from "../../../entities/migration-cursor-repository.js";
 import { encodeEnvelope, isEnvelopeShape } from "./shared/envelope.js";
+import { setMigrationFlag, clearMigrationFlag } from "./shared/migration-flag.js";
 
 const LIST_PAGE = 500;
 
@@ -85,53 +86,61 @@ export class MigrationRunner {
       errors: [],
     };
 
-    // Resume-from-checkpoint
-    const checkpoint = await this.cursorRepo.getCheckpoint(kind);
-    const resumeFromId = opts.resumeFromId ?? checkpoint?.lastMigratedId ?? "";
+    // mission-88 W2 OQ11(a)+(c): set in-flight migration flag at entry; clear at
+    // exit in finally. Sweepers (PendingAction) + writers (Task) consume via
+    // isMigrationInProgress(kind) per shared/migration-flag.ts.
+    setMigrationFlag(kind);
+    try {
+      // Resume-from-checkpoint
+      const checkpoint = await this.cursorRepo.getCheckpoint(kind);
+      const resumeFromId = opts.resumeFromId ?? checkpoint?.lastMigratedId ?? "";
 
-    // Paginated list + per-row migrate. Note: list() doesn't support
-    // id-greater-than filter at the substrate boundary today; we list all +
-    // skip-until pattern. Acceptable at <100K rows per kind.
-    let offset = 0;
-    while (true) {
-      const page = await this.substrate.list<{ id: string }>(kind, { limit: LIST_PAGE, offset });
-      if (page.items.length === 0) break;
+      // Paginated list + per-row migrate. Note: list() doesn't support
+      // id-greater-than filter at the substrate boundary today; we list all +
+      // skip-until pattern. Acceptable at <100K rows per kind.
+      let offset = 0;
+      while (true) {
+        const page = await this.substrate.list<{ id: string }>(kind, { limit: LIST_PAGE, offset });
+        if (page.items.length === 0) break;
 
-      for (const row of page.items) {
-        if (resumeFromId && row.id <= resumeFromId) {
-          continue;  // already migrated in a prior run
-        }
-        if (opts.maxRows !== undefined && result.rowsMigrated >= opts.maxRows) {
-          return result;
-        }
-        try {
-          const encoded = module.migrateOne(row);
-          if (encoded === row || (isEnvelopeShape(row) && encoded === row)) {
-            // Idempotency case: row was already envelope-shape; module returned it unchanged
-            result.rowsSkipped++;
-          } else if (!opts.dryRun) {
-            await this.substrate.put(kind, encoded as { id: string });
-            result.rowsMigrated++;
-          } else {
-            result.rowsMigrated++;  // dry-run: count as migrated
+        for (const row of page.items) {
+          if (resumeFromId && row.id <= resumeFromId) {
+            continue;  // already migrated in a prior run
           }
-          if (!opts.dryRun) {
-            await this.cursorRepo.advanceCheckpoint(kind, row.id, opts.waveId);
+          if (opts.maxRows !== undefined && result.rowsMigrated >= opts.maxRows) {
+            return result;
           }
-        } catch (e) {
-          result.rowsErrored++;
-          result.errors.push({
-            id: row.id,
-            message: e instanceof Error ? e.message : String(e),
-          });
+          try {
+            const encoded = module.migrateOne(row);
+            if (encoded === row || (isEnvelopeShape(row) && encoded === row)) {
+              // Idempotency case: row was already envelope-shape; module returned it unchanged
+              result.rowsSkipped++;
+            } else if (!opts.dryRun) {
+              await this.substrate.put(kind, encoded as { id: string });
+              result.rowsMigrated++;
+            } else {
+              result.rowsMigrated++;  // dry-run: count as migrated
+            }
+            if (!opts.dryRun) {
+              await this.cursorRepo.advanceCheckpoint(kind, row.id, opts.waveId);
+            }
+          } catch (e) {
+            result.rowsErrored++;
+            result.errors.push({
+              id: row.id,
+              message: e instanceof Error ? e.message : String(e),
+            });
+          }
         }
+
+        offset += page.items.length;
+        if (page.items.length < LIST_PAGE) break;
       }
 
-      offset += page.items.length;
-      if (page.items.length < LIST_PAGE) break;
+      return result;
+    } finally {
+      clearMigrationFlag(kind);
     }
-
-    return result;
   }
 
   /**
