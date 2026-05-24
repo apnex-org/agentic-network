@@ -7,7 +7,7 @@
 **Source Action:** action-1 (propose_mission cascade)
 **Preflight author:** lily (agent-40903c59)
 **Date:** 2026-05-24
-**Verdict:** **YELLOW**
+**Verdict:** **GREEN** (re-verdict 2026-05-24 post Director ratification; YELLOW audit-trail preserved below)
 **Freshness:** current (until 2026-06-23)
 
 ---
@@ -120,7 +120,31 @@
 
 ## Verdict summary
 
-**YELLOW** — all categories pass except E2 (deploy-gate dependencies) which surfaces two pre-kickoff Director decisions required at Phase 7 release-gate. Mission brief is faithful, currency-verified, scope-sealed via 4-round bilateral; the YELLOW reflects the bilateral's deliberate deferral of two operational decisions to Director-engagement (per thread-635 A3 disposition + OQ6 architect note). Both decisions are bounded with 3 Director-options each (no scope ambiguity); short Phase 7 kickoff ratifies + flips Mission status `proposed → active`.
+**GREEN** (re-verdict 2026-05-24 post Director ratification). Original YELLOW reflected E2 deploy-gate's 2 deferred Director-decisions per bilateral thread-635; both ratified at Phase 7 release-gate same-day per architect combined recommendation. Mission status flipped `proposed → active`; pulses configured (architect+engineer 30min `short_status`; first-fire at +1800s); engineer claim-eligible for pre-W0 bug-97 fix slice.
+
+## Director ratification (Phase 7 release-gate; 2026-05-24)
+
+**Director engagement:** in-session ratification 2026-05-24 ("Agreed with recommendation. Approved for launch"). Architect-combined recommendation (i)(b) + (ii)(a) approved without revision.
+
+| Decision | Director ratification | Architect-lean (pre-ratification) | Engineer concur (PR #273 review) |
+|---|---|---|---|
+| (i) Pre-prod substrate-mirror availability | **(b) Risk-accept production-only verification** | (b) ✓ | (b) ✓ |
+| (ii) bug-97 pre-W0 sequencing | **(a) Ships as pre-W0 prerequisite slice** | (a) ✓ | (a) ✓ |
+
+**Post-ratification actions executed:**
+- `update_mission(mission-88, status="active")` ✓ — Mission live; pulses begin firing at +1800s
+- Preflight v0.2 GREEN re-verdict committed (this PR)
+- bug-97 fix slice dispatch thread opened to greg (separate Hub thread; not in mission-88 plannedTasks per OQ6 structurally-independent disposition)
+
+**Operational implications of ratified dispositions:**
+- **(i)(b)** Per-wave acceptance gates run against production substrate with image-tag-pin rollback ready; matches mission-83 W5.4 pattern (image-pre-build + <30s effective downtime). No staging-env carve-out + no timeline extension.
+- **(ii)(a)** bug-97 fix ships as standalone slice before mission-88 W0 substrate-prep starts. Engineer scaffold-ready per PR #273 review note. Estimated 1-2 day scope per bug-97 body fix-shape options (engineer-picks shape A/B/C; architect-concur on engineer-design-pick).
+
+**Verdict update.** YELLOW → GREEN. Mission active. No remaining pre-kickoff decisions. Audit-trail below preserves the YELLOW reasoning per methodology canon (preflight history is informative for retrospective).
+
+## Original verdict summary (YELLOW; pre-ratification — audit-trail)
+
+**YELLOW** — all categories passed except E2 (deploy-gate dependencies) which surfaced two pre-kickoff Director decisions required at Phase 7 release-gate. Mission brief was faithful, currency-verified, scope-sealed via 4-round bilateral; the YELLOW reflected the bilateral's deliberate deferral of two operational decisions to Director-engagement (per thread-635 A3 disposition + OQ6 architect note). Both decisions bounded with 3 Director-options each (no scope ambiguity); short Phase 7 kickoff ratifies + flips Mission status `proposed → active`.
 
 **Activation recommendation:** schedule Phase 7 release-gate engagement with Director for the 2 pre-kickoff decisions; on Director ratification, re-verdict to GREEN + `update_mission(status="active")` + pulses begin firing.
 
