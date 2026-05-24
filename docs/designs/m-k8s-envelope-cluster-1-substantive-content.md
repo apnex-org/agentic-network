@@ -1,16 +1,26 @@
 # M-K8s-Envelope — Cluster 1 Substantive-Content Partition (Design Working Draft)
 
-**Status:** v0.2 — engineer review-integrated · awaiting approval
-**Mission:** idea-126 (M-K8s-Envelope)
-**Phase:** Phase 4 Design — cluster-1 partition pass (1 of 4 clusters per Round 1 grouping)
-**Coordination root:** `thread-634` — Phase 4 Design coordination
-**Date:** 2026-05-23 AEST (v0.2: engineer Round 7 review integrated)
+**Status:** v0.3 — substrate-truth ratified · ready for migration consumption
+**Mission:** mission-88 (M-K8s-Envelope; idea-126 anchor)
+**Phase:** Phase 4 Design — cluster-1 partition pass (1 of 5 clusters; Phase 8 W1 implementation)
+**Coordination root:** `thread-634` (Design Round 1; closed) · `thread-643` (W1 drift-resolution; closed)
+**Date:** 2026-05-24 AEST (v0.3: W1 substrate-currency drift-resolution per thread-643 ratification)
 **Sibling Designs (forthcoming):**
 - Cluster 2 — queue/FSM-active (Task / PendingActionItem / DirectorNotification / Turn / Clarification)
 - Cluster 3 — metadata/config/projection (Tele / Counter / Agent / Session)
 - Cluster 4 — audit/event (Message / Audit / RepoEvent)
 
 **Survey input:** `docs/reviews/2026-05-23-survey-idea-126.md` (Director-ratified R1 A/A/A + R2 A/A/A — substrate-wide all-at-once + strict K8s + minimal 2-group taxonomy + big-bang cutover)
+
+**v0.2 → v0.3 changelog (W1 substrate-currency drift-resolution per thread-643):**
+- §3.0 NEW — v0.3 ratified per-kind partition (substrate-truth tables; consumed by W1 KindMigrationModule)
+- §3.1 Idea: drop `revisionCount` (doesn't exist in substrate); add `updatedAt` → metadata
+- §3.2 Bug: add `updatedAt` → metadata; FSM enum confirmed (no drift)
+- §3.3 Thread: FSM enum corrected — `expired` REMOVED; `round_limit` + `cascade_failed` ADDED (substrate-truth); cascade-pending bookkeeping (`cascadePending` + `cascadePendingActionCount` + `cascadePendingStartedAt` + `cascadeCompletedAt`) → status
+- §3.4 Mission: drop `goal` / `sourceIdeaId` / `sourceProposalId` / `issuedTaskIds[]`-synthetic / `sliceTracking` (none exist in substrate); ADD `documentRef` (spec) / `correlationId` (metadata) / `turnId` (status) / `missionClass` (spec) / `pulses` (status MONOLITHIC); FSM enum corrected `cancelled` → `abandoned`; `tasks` + `ideas` virtual-hydrated DO NOT MIGRATE (envelope omits)
+- §3.4 NEW OPEN-ENDED note — Mission.pulses partition deferred-split: monolithic `status.pulses` for mission-88 W1 (substrate-extension-minimum-disruption preserves MissionPulses interface); split to `spec.pulses` (config) + `status.pulseTracking` (bookkeeping) is OPEN-ENDED candidate for idea-200/idea-129 follow-on substrate-refactor cycle
+- §3.5 Proposal: drop `body` / `linkedIdeaId` / `linkedMissionId` / `reviewCount` (none exist in substrate; W4.x.7 dropped body-storage); ADD `summary` (spec) / `proposalRef` (metadata vestigial) / `decision` + `feedback` + `scaffoldResult` (status) / `executionPlan` (spec) / `labels` + `sourceThread*` (metadata); FSM enum REPLACED `draft/under-review/ratified/closed` → `submitted/approved/rejected/changes_requested/implemented` (substrate-truth)
+- §6 NEW — drift-table-resolution-record (per-kind v0.2 → v0.3 audit trail)
 
 **v0.1 → v0.2 changelog (engineer Round 7 review integration):**
 - §3.1 Idea: `tags → metadata.labels` (K8s-convention map shape; migration translates array → map with empty values); `sourceThreadSummary → metadata.annotations["ois.io/sourceThreadSummary"]` (K8s-convention vendor-namespaced annotation); `dismissedReason` migration TODO added; `name` omitted for Idea (content-classified kind); nested-path filter semantics pinned with example
@@ -57,6 +67,70 @@ Each kind's existing flat fields partition into one of three sections:
 ---
 
 ## §3 Per-kind partitions
+
+### §3.0 v0.3 ratified partition (substrate-truth; W1 migration-module consumption)
+
+This section supersedes §3.1-§3.5 v0.2 partition JSON-schemas for IMPLEMENTATION CONSUMPTION (the v0.2 JSON blocks are preserved below as Design-history-of-record). The §3.0 tables below are the ground-truth field-lists per-kind that mission-88 W1 KindMigrationModule modules at `hub/src/storage-substrate/migrations/v2-envelope/kinds/{Idea,Bug,Thread,Mission,Proposal}.ts` implement.
+
+**Common across all 5 kinds (envelope top-level):**
+- `id` — preserved; substrate primary-key
+- `name` — defaults to `id` (omitted-name semantics for content-classified kinds per Survey §2)
+- `kind` — set to `Idea` / `Bug` / `Thread` / `Mission` / `Proposal`
+- `apiVersion` — `core.ois/v1`
+
+**Common rename across all 5 kinds:** `status` (FSM enum at top-level) → `status.phase` (K8s-convention nested FSM).
+
+#### Idea (substrate-truth)
+
+| Partition | Fields | Notes |
+|---|---|---|
+| `metadata` | `createdAt`, `createdBy`, `updatedAt`, `sourceThreadId`, `sourceActionId`, `labels`, `annotations` | `labels` populated from legacy `tags[]` (array → map; empty-string values); `annotations["ois.io/sourceThreadSummary"]` populated from legacy `sourceThreadSummary` |
+| `spec` | `text` | Declared content |
+| `status` | `phase`, `missionId` | FSM phase ∈ `open` / `triaged` / `incorporated` / `dismissed` |
+
+**Drops** (v0.2 listed; substrate has none): `revisionCount`.
+
+#### Bug (substrate-truth)
+
+| Partition | Fields | Notes |
+|---|---|---|
+| `metadata` | `createdAt`, `createdBy`, `updatedAt`, `sourceThreadId`, `sourceActionId`, `sourceIdeaId`, `surfacedBy`, `labels`, `annotations` | `labels` ← `tags[]`; `annotations` ← `sourceThreadSummary` |
+| `spec` | `title`, `description`, `severity`, `class` | Declared content + classification |
+| `status` | `phase`, `fixCommits`, `fixRevision`, `linkedTaskIds`, `linkedMissionId` | FSM phase ∈ `open` / `investigating` / `resolved` / `wontfix` |
+
+#### Thread (substrate-truth)
+
+| Partition | Fields | Notes |
+|---|---|---|
+| `metadata` | `createdAt`, `createdBy`, `updatedAt`, `correlationId`, `labels` | Thread already has `labels: Record<string,string>` (no `tags[]` transform); no `sourceThreadSummary` |
+| `spec` | `title`, `routingMode`, `recipientAgentId`, `maxRounds`, `semanticIntent`, `context`, `idleExpiryMs` | Declared at thread open |
+| `status` | `phase`, `roundCount`, `currentTurn`, `currentTurnAgentId`, `currentSemanticIntent`, `lastMessageConverged`, `lastMessageProjectedAt`, `outstandingIntent`, `summary`, `convergenceActions`, `participants`, `messages`, `cascadePending`, `cascadePendingActionCount`, `cascadePendingStartedAt`, `cascadeCompletedAt` | FSM phase ∈ `active` / `converged` / `round_limit` / `closed` / `abandoned` / `cascade_failed` (substrate-truth corrects v0.2's `expired`); cascade-pending bookkeeping → status (Q2 drift); `messages[]` staged-inside-envelope (idea-200 W2 carves out post-cutover per §3.3 v0.2) |
+
+#### Mission (substrate-truth) ⚠ OPEN-ENDED on pulses partition
+
+| Partition | Fields | Notes |
+|---|---|---|
+| `metadata` | `createdAt`, `createdBy`, `updatedAt`, `sourceThreadId`, `sourceActionId`, `correlationId`, `annotations` | `annotations` ← `sourceThreadSummary`; no `labels` field in substrate |
+| `spec` | `title`, `description`, `documentRef`, `missionClass`, `plannedTasks` | Declared at Mission creation; `plannedTasks[].issuedTaskId` is INTRINSIC per-slot tracking |
+| `status` | `phase`, `turnId`, `pulses` | FSM phase ∈ `proposed` / `active` / `completed` / `abandoned` (substrate-truth corrects v0.2's `cancelled`); `pulses` MONOLITHIC per architect-ratified disposition |
+
+**Drops** (v0.2 listed; substrate has none): `goal`, `sourceIdeaId`, `sourceProposalId`, synthetic `issuedTaskIds[]`, `sliceTracking`.
+
+**Virtual-hydrated DO NOT MIGRATE:** `tasks`, `ideas` — repository.hydrate() recomputes at read-time; envelope OMITS.
+
+**OPEN-ENDED — Mission.pulses partition deferred-split.** Mission-88 W1 commits monolithic `status.pulses` (preserves MissionPulses interface + handler call-sites unchanged; cluster-3 §1.6 multi-FSM-in-status pattern is precedent for tightly-coupled status fields). Split to `spec.pulses` (engineerPulse/architectPulse config: intervalSeconds + message + responseShape + missedThreshold + firstFireDelaySeconds) + `status.pulseTracking` (lastFiredAt + lastResponseAt + missedCount + lastEscalatedAt per pulse-kind) is K8s-purer but expands W1 scope to substrate refactor (MissionPulses interface change + pulse-sweeper change). Deferred to **idea-200 / idea-129 follow-on substrate-refactor cycle** when those Missions land. Document the intent here so it isn't lost.
+
+#### Proposal (substrate-truth)
+
+| Partition | Fields | Notes |
+|---|---|---|
+| `metadata` | `createdAt`, `createdBy`, `updatedAt`, `sourceThreadId`, `sourceActionId`, `correlationId`, `proposalRef`, `labels`, `annotations` | `proposalRef` is vestigial pointer (W4.x.7 dropped MD-file storage); `annotations` ← `sourceThreadSummary` |
+| `spec` | `title`, `summary`, `executionPlan` | Substrate has only `summary` (NOT `body`); `executionPlan` may mutate via reviewProposal |
+| `status` | `phase`, `decision`, `feedback`, `scaffoldResult` | FSM phase ∈ `submitted` / `approved` / `rejected` / `changes_requested` / `implemented` (substrate-truth REPLACES Design v0.2's `draft`/`under-review`/`ratified`/`closed`) |
+
+**Drops** (v0.2 listed; substrate has none): `body`, `linkedIdeaId`, `linkedMissionId`, `reviewCount`.
+
+---
 
 ### §3.1 Idea — canonical reference
 
@@ -520,15 +594,39 @@ Proposal kind name stays as `Proposal` at this Mission's cutover (Survey additiv
 
 ## §6 Status
 
-**v0.2** — engineer Round 7 review integrated. (A) refinements applied to §3.1; (B) dispositions applied to §3.2-§3.5; (6) acceptance criteria expanded with cross-Mission dependency surfaces.
+**v0.3** — substrate-truth ratified per thread-643 bilateral convergence (2026-05-24). §3.0 partition tables consumed by W1 KindMigrationModule modules. Cluster-1 ratification gate cleared.
 
-**Outstanding v0.3 TODOs** (engineer confirmation expected):
-- Mission FSM `phase` enum complete set (current draft: `proposed/active/completed/cancelled` — needs verify against `hub/src/entities/mission.ts`)
-- Mission `sliceTracking` object shape from current code
-- (Possibly other minor field-level confirmations per engineer code-audit at next review)
+**v0.2 → v0.3 drift-table-resolution-record:**
 
-**Engineer approval posture:** v0.1 was working-draft; v0.2 integrates all engineer review refinements + fills stubs per dispositions. Ready for engineer approval pending Mission v0.3 TODOs (which are minor confirmations, not architectural decisions).
+| Kind | v0.2 said | substrate-truth | v0.3 resolution |
+|---|---|---|---|
+| Idea | `revisionCount` in metadata | doesn't exist | dropped |
+| Idea | no `updatedAt` | exists | added → metadata |
+| Bug | no `updatedAt` | exists | added → metadata |
+| Thread | phase enum `expired` | substrate has no `expired` | dropped from enum |
+| Thread | phase enum missing `round_limit` / `cascade_failed` | substrate has both | added to enum |
+| Thread | no `cascadePending*` / `cascadeCompletedAt` | exist (cascade bookkeeping) | added → status |
+| Mission | `goal` in spec | doesn't exist | dropped |
+| Mission | `sourceIdeaId` in metadata | doesn't exist | dropped |
+| Mission | `sourceProposalId` in metadata | doesn't exist | dropped |
+| Mission | no `documentRef` | exists | added → spec |
+| Mission | no `correlationId` | exists | added → metadata |
+| Mission | no `turnId` | exists | added → status |
+| Mission | no `missionClass` | exists | added → spec |
+| Mission | no `pulses` | exists | added → status MONOLITHIC (deferred-split OPEN-ENDED per §3.0) |
+| Mission | `tasks` + `ideas` not addressed | virtual-hydrated (NOT persisted) | OMITTED from envelope |
+| Mission | phase enum `cancelled` | substrate has `abandoned` | corrected |
+| Mission | synthetic `issuedTaskIds[]` in status | doesn't exist | dropped (per-slot `plannedTasks[].issuedTaskId` is intrinsic) |
+| Mission | `sliceTracking` v0.3 TODO | doesn't exist | dropped (no substrate counterpart) |
+| Proposal | `body` in spec | doesn't exist (W4.x.7 dropped body-storage) | dropped |
+| Proposal | `linkedIdeaId` in metadata | doesn't exist | dropped |
+| Proposal | `linkedMissionId` in status | doesn't exist | dropped |
+| Proposal | `reviewCount` in status | doesn't exist | dropped |
+| Proposal | phase enum `draft/under-review/ratified/closed` | substrate has `submitted/approved/rejected/changes_requested/implemented` | REPLACED entirely |
+| Proposal | no `summary` / `proposalRef` / `executionPlan` / `decision` / `feedback` / `scaffoldResult` / `labels` | all exist | added to partition tables |
 
-**Round-budget plan:** thread-634 Round 9 architect commits v0.2 + brief re-confirm. Round 10 engineer approves with v0.3 TODOs noted (architect or engineer fills the 2 Mission-specific items in a follow-on commit). Cluster-1 review converges at Round 10; cluster-2 Design opens fresh thread/PR.
+**Calibration cluster:** v0.3 ratification is the 6th substrate-currency catch on mission-88 (engineer-proactive at Q2 verify-before-bake; thread-643 R1). Pattern: substrate-currency-discipline cuts both ways consistently; **engineer-proactive verify-before-bake at Q-class disposition is LOAD-BEARING** to prevent Design-stale drift from amplifying into migration-code defects.
 
-**Next architect action post-approval:** cluster-2 Design (queue/FSM-active: Task / PendingActionItem / DirectorNotification / Turn / Clarification).
+**v0.2 history-of-record** — engineer Round 7 review integrated. (A) refinements applied to §3.1; (B) dispositions applied to §3.2-§3.5; (6) acceptance criteria expanded with cross-Mission dependency surfaces.
+
+**Next mission-88 wave:** W2 cluster-2 (Task / PendingAction / Turn) — fresh coord-thread post-W1 acceptance close.

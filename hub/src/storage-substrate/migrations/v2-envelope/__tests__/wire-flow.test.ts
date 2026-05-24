@@ -24,6 +24,11 @@ import { createSchemaReconciler } from "../../../schema-reconciler.js";
 import { ALL_SCHEMAS } from "../../../schemas/all-schemas.js";
 import type { KindMigrationModule, MigrationSchemaRef } from "../kinds/_contract.js";
 import type { SchemaDef } from "../../../types.js";
+import { createIdeaMigrationModule } from "../kinds/Idea.js";
+import { createBugMigrationModule } from "../kinds/Bug.js";
+import { createThreadMigrationModule } from "../kinds/Thread.js";
+import { createMissionMigrationModule } from "../kinds/Mission.js";
+import { createProposalMigrationModule } from "../kinds/Proposal.js";
 import { setupSubstrate, teardownSubstrate, cleanKind, type SubstrateFixture } from "./harness/fixtures.js";
 
 // Use an existing watchable kind (Idea) as the wire-flow synthetic target —
@@ -198,3 +203,190 @@ describe("W0 wire-flow — runner + module + cursor + envelope", () => {
     expect(() => runner.register(testIdeaMigrationModule())).toThrow(/duplicate registration/);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────
+// W1 cluster-1 batch-migration wire-flow (Q4 disposition)
+// ───────────────────────────────────────────────────────────────────────
+
+const CLUSTER_1_KINDS = ["Idea", "Bug", "Thread", "Mission", "Proposal"] as const;
+
+function schemaFor(kind: string): SchemaDef {
+  const s = ALL_SCHEMAS.find(x => x.kind === kind);
+  if (!s) throw new Error(`No SchemaDef for ${kind}`);
+  return s;
+}
+
+function seedRow(kind: typeof CLUSTER_1_KINDS[number], n: number): { id: string } & Record<string, unknown> {
+  const idPrefix = kind === "Proposal" ? "prop" : kind.toLowerCase();
+  const id = `${idPrefix}-${n}`;
+  const common = {
+    id,
+    createdBy: { role: "engineer" as const, agentId: "agent-greg" },
+    createdAt: `2026-05-2${n}T00:00:00Z`,
+    updatedAt: `2026-05-2${n}T01:00:00Z`,
+    sourceThreadId: `thread-${100 + n}`,
+    sourceActionId: `action-${n}`,
+  };
+  switch (kind) {
+    case "Idea":
+      return { ...common, text: `Idea ${n}`, status: "open", missionId: null,
+        sourceThreadSummary: `Summary ${n}`, tags: [`tag${n}`] };
+    case "Bug":
+      return { ...common, title: `Bug ${n}`, description: `desc ${n}`, status: "open",
+        severity: "minor", class: null, tags: [`bugtag${n}`], sourceIdeaId: null,
+        sourceThreadSummary: `Summary ${n}`, linkedTaskIds: [], linkedMissionId: null,
+        fixCommits: [], fixRevision: null, surfacedBy: "prod-audit" };
+    case "Thread":
+      return { ...common, title: `Thread ${n}`, status: "active", routingMode: "unicast",
+        context: null, idleExpiryMs: null, currentTurn: "engineer", currentTurnAgentId: null,
+        roundCount: 1, maxRounds: 10, outstandingIntent: null, currentSemanticIntent: null,
+        correlationId: null, convergenceActions: [], summary: "", participants: [],
+        recipientAgentId: null, messages: [], labels: {}, lastMessageConverged: false };
+    case "Mission":
+      return { ...common, title: `Mission ${n}`, description: `desc ${n}`, documentRef: null,
+        status: "proposed", tasks: [], ideas: [], correlationId: id, turnId: null,
+        sourceThreadSummary: `Summary ${n}`, plannedTasks: [], missionClass: "spike",
+        pulses: undefined };
+    case "Proposal":
+      return { ...common, title: `Proposal ${n}`, summary: `summary ${n}`,
+        proposalRef: `proposals/${id}.md`, status: "submitted", decision: null,
+        feedback: null, correlationId: null, executionPlan: null, scaffoldResult: null,
+        labels: { class: "design" }, sourceThreadSummary: `Summary ${n}` };
+  }
+}
+
+describe("W1 cluster-1 batch wire-flow — 5-kind migration + per-kind cursor isolation", () => {
+  beforeEach(async () => {
+    for (const k of CLUSTER_1_KINDS) await cleanKind(fixture.connStr, k);
+    await cleanKind(fixture.connStr, "MigrationCursor");
+  });
+
+  it("migrates all 5 cluster-1 kinds end-to-end + cursors isolate per-kind", async () => {
+    // Seed 2 legacy rows per kind across all 5 kinds (10 total)
+    for (const kind of CLUSTER_1_KINDS) {
+      for (const n of [1, 2]) {
+        await fixture.substrate.put(kind, seedRow(kind, n));
+      }
+    }
+
+    // Register all 5 cluster-1 modules
+    const runner = new MigrationRunner(fixture.substrate);
+    runner.register(createIdeaMigrationModule(schemaFor("Idea")));
+    runner.register(createBugMigrationModule(schemaFor("Bug")));
+    runner.register(createThreadMigrationModule(schemaFor("Thread")));
+    runner.register(createMissionMigrationModule(schemaFor("Mission")));
+    runner.register(createProposalMigrationModule(schemaFor("Proposal")));
+
+    expect(runner.registeredKinds()).toEqual([...CLUSTER_1_KINDS].sort());
+
+    // Run migration per kind; collect results
+    const results = new Map<string, Awaited<ReturnType<MigrationRunner["runKind"]>>>();
+    for (const kind of CLUSTER_1_KINDS) {
+      results.set(kind, await runner.runKind(kind, { waveId: "W1" }));
+    }
+
+    // Per-kind acceptance: 2 rows migrated, 0 errors
+    for (const kind of CLUSTER_1_KINDS) {
+      const r = results.get(kind)!;
+      expect(r.kind).toBe(kind);
+      expect(r.rowsMigrated).toBe(2);
+      expect(r.rowsErrored).toBe(0);
+      expect(r.errors).toEqual([]);
+    }
+
+    // Verify all rows in substrate are envelope-shape
+    for (const kind of CLUSTER_1_KINDS) {
+      const post = await fixture.substrate.list<unknown>(kind, { limit: 10 });
+      expect(post.items.length).toBe(2);
+      for (const row of post.items) {
+        expect(isEnvelopeShape(row)).toBe(true);
+        expect((row as { kind: string }).kind).toBe(kind);
+        expect((row as { apiVersion: string }).apiVersion).toBe("core.ois/v1");
+      }
+    }
+
+    // Per-kind cursor isolation: each kind's checkpoint reflects only its rows
+    const cursorRepo = new MigrationCursorRepository(fixture.substrate);
+    for (const kind of CLUSTER_1_KINDS) {
+      const cp = await cursorRepo.getCheckpoint(kind);
+      expect(cp).not.toBeNull();
+      expect(cp!.id).toBe(`cursor-${kind}`);
+      expect(cp!.waveId).toBe("W1");
+      // lastMigratedId matches the highest seeded ID for that kind
+      const idPrefix = kind === "Proposal" ? "prop" : kind.toLowerCase();
+      expect(cp!.lastMigratedId).toBe(`${idPrefix}-2`);
+    }
+  });
+
+  it("idempotent re-run across cluster-1: all rows skip on second pass", async () => {
+    for (const kind of CLUSTER_1_KINDS) {
+      await fixture.substrate.put(kind, seedRow(kind, 1));
+    }
+
+    const runner = new MigrationRunner(fixture.substrate);
+    runner.register(createIdeaMigrationModule(schemaFor("Idea")));
+    runner.register(createBugMigrationModule(schemaFor("Bug")));
+    runner.register(createThreadMigrationModule(schemaFor("Thread")));
+    runner.register(createMissionMigrationModule(schemaFor("Mission")));
+    runner.register(createProposalMigrationModule(schemaFor("Proposal")));
+
+    // First pass: 5 rows migrated
+    for (const kind of CLUSTER_1_KINDS) {
+      const r = await runner.runKind(kind);
+      expect(r.rowsMigrated).toBe(1);
+    }
+
+    // Reset cursors to force re-iteration (forensic-replay case)
+    const cursorRepo = new MigrationCursorRepository(fixture.substrate);
+    for (const kind of CLUSTER_1_KINDS) {
+      await cursorRepo.resetCheckpoint(kind);
+    }
+
+    // Second pass: rows are envelope-shape → skipped per isEnvelopeShape
+    for (const kind of CLUSTER_1_KINDS) {
+      const r = await runner.runKind(kind);
+      expect(r.rowsSkipped).toBe(1);
+      expect(r.rowsMigrated).toBe(0);
+    }
+  });
+
+  it("partition assertions per kind: id, name, kind, apiVersion preserved + FSM rename applied", async () => {
+    for (const kind of CLUSTER_1_KINDS) {
+      await fixture.substrate.put(kind, seedRow(kind, 1));
+    }
+    const runner = new MigrationRunner(fixture.substrate);
+    runner.register(createIdeaMigrationModule(schemaFor("Idea")));
+    runner.register(createBugMigrationModule(schemaFor("Bug")));
+    runner.register(createThreadMigrationModule(schemaFor("Thread")));
+    runner.register(createMissionMigrationModule(schemaFor("Mission")));
+    runner.register(createProposalMigrationModule(schemaFor("Proposal")));
+    for (const kind of CLUSTER_1_KINDS) await runner.runKind(kind);
+
+    // Per-kind read-after-migrate; assert envelope structure + FSM rename
+    for (const kind of CLUSTER_1_KINDS) {
+      const idPrefix = kind === "Proposal" ? "prop" : kind.toLowerCase();
+      const id = `${idPrefix}-1`;
+      const row = await fixture.substrate.get<EnvelopeRow>(kind, id);
+      expect(row).not.toBeNull();
+      expect(row!.kind).toBe(kind);
+      expect(row!.apiVersion).toBe("core.ois/v1");
+      expect(row!.id).toBe(id);
+      expect(row!.name).toBe(id);
+      // FSM rename: status field is now nested as status.phase
+      const phase = (row!.status as Record<string, unknown>).phase;
+      // Per-kind expected phase from seed
+      const expectedPhase = kind === "Proposal" ? "submitted" : kind === "Mission" ? "proposed" : kind === "Thread" ? "active" : "open";
+      expect(phase).toBe(expectedPhase);
+    }
+  });
+});
+
+interface EnvelopeRow {
+  id: string;
+  name: string;
+  kind: string;
+  apiVersion: string;
+  metadata: Record<string, unknown>;
+  spec: Record<string, unknown>;
+  status: Record<string, unknown>;
+}
