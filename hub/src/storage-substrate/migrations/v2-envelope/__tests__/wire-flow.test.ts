@@ -40,6 +40,11 @@ import { createMessageMigrationModule } from "../kinds/Message.js";
 import { createAuditMigrationModule } from "../kinds/Audit.js";
 import { createRepoEventBridgeCursorMigrationModule } from "../kinds/RepoEventBridgeCursor.js";
 import { createRepoEventBridgeDedupeMigrationModule } from "../kinds/RepoEventBridgeDedupe.js";
+import { createDocumentMigrationModule } from "../kinds/Document.js";
+import { createArchitectDecisionMigrationModule } from "../kinds/ArchitectDecision.js";
+import { createDirectorHistoryEntryMigrationModule } from "../kinds/DirectorHistoryEntry.js";
+import { createReviewHistoryEntryMigrationModule } from "../kinds/ReviewHistoryEntry.js";
+import { createThreadHistoryEntryMigrationModule } from "../kinds/ThreadHistoryEntry.js";
 import { isMigrationInProgress } from "../shared/migration-flag.js";
 import { setupSubstrate, teardownSubstrate, cleanKind, type SubstrateFixture } from "./harness/fixtures.js";
 
@@ -998,6 +1003,176 @@ describe("W4 cluster-4 batch wire-flow — 4-kind migration + Message renameMap 
     }
 
     for (const kind of CLUSTER_4_KINDS) {
+      const r = await runner.runKind(kind);
+      expect(r.rowsSkipped).toBe(1);
+      expect(r.rowsMigrated).toBe(0);
+    }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────
+// W5 cluster-5 batch-migration wire-flow (Q7 disposition; per thread-647 R2)
+// FINAL cluster wave — Document.category → metadata.labels CONTENT-classification
+// axis first-instance + 4-kind "logged" constant verification.
+// ───────────────────────────────────────────────────────────────────────
+
+const CLUSTER_5_KINDS = ["Document", "ArchitectDecision", "DirectorHistoryEntry", "ReviewHistoryEntry", "ThreadHistoryEntry"] as const;
+
+function seedCluster5Row(kind: typeof CLUSTER_5_KINDS[number], n: number): { id: string } & Record<string, unknown> {
+  switch (kind) {
+    case "Document":
+      return {
+        id: `policy-doc-v${n}`,
+        category: n % 2 === 0 ? "planning" : "architecture",
+        content: `# Document ${n}\n\nbody ${n}`,
+      };
+    case "ArchitectDecision":
+      return {
+        id: `ad-${n}`,
+        context: `context ${n}`,
+        decision: `decision ${n}`,
+        timestamp: `2026-05-2${n}T00:00:00Z`,
+      };
+    case "DirectorHistoryEntry":
+      return {
+        id: `dh-${n}`,
+        role: n % 2 === 0 ? "model" : "user",
+        text: `chat ${n}`,
+        timestamp: `2026-05-2${n}T00:00:00Z`,
+      };
+    case "ReviewHistoryEntry":
+      return {
+        id: `rh-${n}`,
+        taskId: `task-${500 + n}`,
+        timestamp: `2026-05-2${n}T00:00:00Z`,
+        assessment: `assessment ${n}`,
+      };
+    case "ThreadHistoryEntry":
+      return {
+        id: `th-${n}`,
+        threadId: `thread-${640 + n}`,
+        title: `thread title ${n}`,
+        outcome: `outcome ${n}`,
+        timestamp: `2026-05-2${n}T00:00:00Z`,
+      };
+  }
+}
+
+function registerCluster5(runner: MigrationRunner): void {
+  runner.register(createDocumentMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Document")!));
+  runner.register(createArchitectDecisionMigrationModule(ALL_SCHEMAS.find(s => s.kind === "ArchitectDecision")!));
+  runner.register(createDirectorHistoryEntryMigrationModule(ALL_SCHEMAS.find(s => s.kind === "DirectorHistoryEntry")!));
+  runner.register(createReviewHistoryEntryMigrationModule(ALL_SCHEMAS.find(s => s.kind === "ReviewHistoryEntry")!));
+  runner.register(createThreadHistoryEntryMigrationModule(ALL_SCHEMAS.find(s => s.kind === "ThreadHistoryEntry")!));
+}
+
+describe("W5 cluster-5 batch wire-flow — 5-kind migration + Document content-classification axis (FINAL cluster)", () => {
+  beforeEach(async () => {
+    for (const k of CLUSTER_5_KINDS) await cleanKind(fixture.connStr, k);
+    await cleanKind(fixture.connStr, "MigrationCursor");
+  });
+
+  it("migrates all 5 cluster-5 kinds end-to-end + cursors isolate per-kind", async () => {
+    for (const kind of CLUSTER_5_KINDS) {
+      for (const n of [1, 2]) {
+        await fixture.substrate.put(kind, seedCluster5Row(kind, n));
+      }
+    }
+
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster5(runner);
+    expect(runner.registeredKinds()).toEqual([...CLUSTER_5_KINDS].sort());
+
+    const results = new Map<string, Awaited<ReturnType<MigrationRunner["runKind"]>>>();
+    for (const kind of CLUSTER_5_KINDS) {
+      results.set(kind, await runner.runKind(kind, { waveId: "W5" }));
+    }
+
+    for (const kind of CLUSTER_5_KINDS) {
+      const r = results.get(kind)!;
+      expect(r.rowsMigrated).toBe(2);
+      expect(r.rowsErrored).toBe(0);
+    }
+
+    for (const kind of CLUSTER_5_KINDS) {
+      const post = await fixture.substrate.list<unknown>(kind, { limit: 10 });
+      expect(post.items.length).toBe(2);
+      for (const row of post.items) {
+        expect(isEnvelopeShape(row)).toBe(true);
+        expect((row as { kind: string }).kind).toBe(kind);
+        expect((row as { apiVersion: string }).apiVersion).toBe("core.ois/v1");
+      }
+    }
+  });
+
+  it("Q3 Document.category → metadata.labels.category (CONTENT-classification axis FIRST-instance per cluster-3 §5)", async () => {
+    await fixture.substrate.put("Document", seedCluster5Row("Document", 1));
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster5(runner);
+    await runner.runKind("Document");
+
+    const doc = await fixture.substrate.get<EnvelopeRow>("Document", "policy-doc-v1");
+    expect(doc!.metadata.labels).toEqual({ category: "architecture" });  // CONTENT-classification first-instance
+    expect(doc!.name).toBe("policy-doc-v1");                              // A2: name = legacy.id (file-stem)
+    expect(doc!.status.phase).toBe("active");                             // Q4: mostly-static; no real FSM
+    expect(doc!.spec.content).toBe("# Document 1\n\nbody 1");
+  });
+
+  it('Q4 4-kind "logged" constant verification (ArchitectDecision + 3 HistoryEntry kinds)', async () => {
+    for (const kind of ["ArchitectDecision", "DirectorHistoryEntry", "ReviewHistoryEntry", "ThreadHistoryEntry"] as const) {
+      await fixture.substrate.put(kind, seedCluster5Row(kind, 1));
+    }
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster5(runner);
+    for (const kind of ["ArchitectDecision", "DirectorHistoryEntry", "ReviewHistoryEntry", "ThreadHistoryEntry"] as const) {
+      await runner.runKind(kind);
+    }
+
+    const ad = await fixture.substrate.get<EnvelopeRow>("ArchitectDecision", "ad-1");
+    const dh = await fixture.substrate.get<EnvelopeRow>("DirectorHistoryEntry", "dh-1");
+    const rh = await fixture.substrate.get<EnvelopeRow>("ReviewHistoryEntry", "rh-1");
+    const th = await fixture.substrate.get<EnvelopeRow>("ThreadHistoryEntry", "th-1");
+
+    expect(ad!.status.phase).toBe("logged");
+    expect(dh!.status.phase).toBe("logged");
+    expect(rh!.status.phase).toBe("logged");
+    expect(th!.status.phase).toBe("logged");
+
+    // Q5 updatedAt-omission for 4 append-only kinds
+    expect(ad!.metadata.updatedAt).toBeUndefined();
+    expect(dh!.metadata.updatedAt).toBeUndefined();
+    expect(rh!.metadata.updatedAt).toBeUndefined();
+    expect(th!.metadata.updatedAt).toBeUndefined();
+
+    // timestamp → metadata.createdAt uniformity
+    expect(ad!.metadata.createdAt).toBe("2026-05-21T00:00:00Z");
+    expect(dh!.metadata.createdAt).toBe("2026-05-21T00:00:00Z");
+
+    // FK pointers in metadata (forensic-pointers; Q9 framing)
+    expect(rh!.metadata.taskId).toBe("task-501");
+    expect(th!.metadata.threadId).toBe("thread-641");
+    expect(th!.metadata.sourceThreadId).toBeUndefined();  // Q9 distinction
+  });
+
+  it("idempotent re-run across cluster-5: all rows skip on second pass", async () => {
+    for (const kind of CLUSTER_5_KINDS) {
+      await fixture.substrate.put(kind, seedCluster5Row(kind, 1));
+    }
+
+    const runner = new MigrationRunner(fixture.substrate);
+    registerCluster5(runner);
+
+    for (const kind of CLUSTER_5_KINDS) {
+      const r = await runner.runKind(kind);
+      expect(r.rowsMigrated).toBe(1);
+    }
+
+    const cursorRepo = new MigrationCursorRepository(fixture.substrate);
+    for (const kind of CLUSTER_5_KINDS) {
+      await cursorRepo.resetCheckpoint(kind);
+    }
+
+    for (const kind of CLUSTER_5_KINDS) {
       const r = await runner.runKind(kind);
       expect(r.rowsSkipped).toBe(1);
       expect(r.rowsMigrated).toBe(0);

@@ -412,6 +412,71 @@ WHERE kind = 'RepoEventBridgeDedupe';
 
 Pre-W4 shape was `data->>'body'`; post-W4 relocates to `data->'status'->'cursor'` / `data->'status'->'dedupe'`. Adapter reads tolerant-dual-shape; writes always emit envelope shape (race-clobber prevention per A1).
 
+### Document envelope-shape — content-classification axis FIRST-instance (cluster-5 §2.1)
+
+Per cluster-5 Design v0.3 §2.1 + cluster-3 §5 6th cumulative-pattern — Document.category renamed to metadata.labels.category (K8s ConfigMap precedent; FIRST cross-cluster use of metadata.labels for CONTENT-classification axis — Agent.spec.labels was routing-intent first-instance):
+
+```sql
+-- Find Documents by category (CONTENT-classification axis; metadata.labels)
+SELECT id,
+       data->'metadata'->>'name' AS handle,
+       data->'metadata'->'labels'->>'category' AS category,
+       length(data->'spec'->>'content') AS content_len
+FROM entities
+WHERE kind = 'Document'
+  AND data->'metadata'->'labels'->>'category' = 'architecture'
+ORDER BY id;
+```
+
+### Append-only HistoryEntry forensic queries (cluster-5 §2.2-§2.5)
+
+Per cluster-5 Design v0.3 §2.2-§2.5 — ArchitectDecision + 3 HistoryEntry kinds use `status.phase: "logged"` constant; timestamp renamed to metadata.createdAt; append-only (no updatedAt):
+
+```sql
+-- Recent architect decisions (ad-N; append-only-log)
+SELECT id,
+       data->'metadata'->>'createdAt' AS ts,
+       data->'spec'->>'decision' AS decision,
+       data->'spec'->>'context' AS context
+FROM entities
+WHERE kind = 'ArchitectDecision'
+ORDER BY id DESC
+LIMIT 20;
+
+-- Director chat history (dh-N; LLM conversation archive; user/model role distinct from agent-identity role)
+SELECT id,
+       data->'metadata'->>'createdAt' AS ts,
+       data->'spec'->>'role' AS chat_role,
+       length(data->'spec'->>'text') AS msg_len
+FROM entities
+WHERE kind = 'DirectorHistoryEntry'
+ORDER BY id DESC
+LIMIT 30;
+
+-- Review history per task (rh-N; FK pointer at metadata.taskId)
+SELECT id,
+       data->'metadata'->>'taskId' AS task,
+       data->'metadata'->>'createdAt' AS ts,
+       data->'spec'->>'assessment' AS assessment
+FROM entities
+WHERE kind = 'ReviewHistoryEntry'
+  AND data->'metadata'->>'taskId' = 'task-500'
+ORDER BY id DESC;
+
+-- Thread history by source thread (th-N; FK forensic-pointer at metadata.threadId; NOT cascade-provenance per Q9 distinction)
+SELECT id,
+       data->'metadata'->>'threadId' AS source_thread,
+       data->'metadata'->>'createdAt' AS ts,
+       data->'spec'->>'title' AS frozen_title,
+       data->'spec'->>'outcome' AS outcome
+FROM entities
+WHERE kind = 'ThreadHistoryEntry'
+  AND data->'metadata'->>'threadId' = 'thread-647'
+ORDER BY id DESC;
+```
+
+Pre-W5 shapes used `data->>'timestamp'` / `data->>'taskId'` / `data->>'threadId'` / `data->>'decision'`; post-W5 envelope navigation via `data->'metadata'->>'createdAt'` / `data->'metadata'->>'taskId'` etc. All 4 append-only kinds carry `data->'status'->>'phase' = 'logged'` constant.
+
 ### Active envelope-shape Threads (FSM phase + currentTurn nested)
 
 ```sql
