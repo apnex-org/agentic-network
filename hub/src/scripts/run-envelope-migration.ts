@@ -34,6 +34,8 @@
  * CLI as subprocess against testcontainer-postgres (per harness/fixtures.ts pattern).
  */
 
+import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 import { createPostgresStorageSubstrate, type HubStorageSubstrate } from "../storage-substrate/index.js";
 import { MigrationRunner, type MigrationRunOptions, type MigrationRunResult } from "../storage-substrate/migrations/v2-envelope/migration-runner.js";
 import { ALL_SCHEMAS } from "../storage-substrate/schemas/all-schemas.js";
@@ -276,10 +278,27 @@ async function main(): Promise<number> {
   return exitCode;
 }
 
-main()
-  .then((code) => process.exit(code))
-  .catch((err) => {
-    console.error("[envelope-migrate] FATAL: unhandled exception");
-    console.error(err);
-    process.exit(EXIT_UNHANDLED);
-  });
+// isMainModule guard (mission-88 W6.2 follow-on; thread-651 R2 architect-noted
+// defense-in-depth): only fire main() when this module is invoked as the
+// entry-point (e.g. `node dist/scripts/run-envelope-migration.js`). Per memory
+// feedback_isMainModule_guard_symlink_safety — symlink-safe via realpathSync
+// of process.argv[1]. Prevents main() from firing if any sibling test or
+// internal-fn unit test ever imports this module into its graph.
+const isEntryPoint = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+})();
+
+if (isEntryPoint) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error("[envelope-migrate] FATAL: unhandled exception");
+      console.error(err);
+      process.exit(EXIT_UNHANDLED);
+    });
+}
