@@ -84,10 +84,50 @@ If you're picking up cold, read in this order:
 ✅ **W0 PR #275 MERGED at e665de3** (2026-05-24 ~11:30 AEST per architect pulse-response). W0 substrate-prep primitives live on main: shared/envelope.ts + kinds/_contract.ts + migration-runner.ts + entities/migration-cursor-repository.ts + 23-entry SchemaDef seed + 27/27 tests + Q5 Hub-rebuild test plan.
 - Architect cross-approval + admin-merge cycle executed; pulse-cycle missed-threshold artifact of pulse-firing-during-active-architect-work (informational only; no escalation surface).
 
-▶ **Awaiting architect W1 cluster-1 dispatch via fresh coord-thread.**
-- W1 deliverables (per Phase 5 v0.2 wave plan): cluster-1 substantive-content envelope migration (Idea + Bug + Thread + Mission + Proposal; 5 kinds) — per-kind SchemaDef update + body migration + writer/reader code touches + handle-classified vs content-classified discipline per cluster-1 §1.5 + `metadata.sourceThreadId` envelope-level provenance per cluster-1 §3.1 (closes bug-118 envelope-shape portion) + per-kind read-after-migrate + write-after-migrate + wire-flow round-trip tests + operator-DX update last sub-step.
-- W1 uses W0 primitives: register KindMigrationModule per kind + MigrationRunner orchestrates + MigrationCursorRepository checkpoints + envelope library encodes/parses + SUBSTRATE_ENVELOPE_TOLERANT mode active during cutover.
-- Pulse cadence W1: ~30min default per OQ13 ratified (W1-W4 active migration class).
+✅ **W1 Design-pass converged at thread-640 R3** (2026-05-24 ~11:58 AEST). All 7 Q1-Q7 dispositions sealed:
+- Q1 single-bundle PR; Q2 inline draft + substrate-current shape verify (5th proactive substrate-currency-discipline application); Q3 per-kind unit test re-encodes envelope-shape → asserts reference-equality; Q4 extend W0 wire-flow.test.ts (single canonical wire-flow file); Q5 substrate-wide bug-118 coverage query in PR test plan (forward-only per anti-goal 11); Q6 W1 = migration-path + cascade-handler pass-through (NO shared/provenance.ts; write-site audit = idea-312 W1 wire-substrate scope); Q7 same-W1-PR if scope-narrow per A4 "last per-wave sub-step".
+- close_no_action action-1 committed via R3 handshake; W1 scaffolding next.
+
+✅ **Engineer fresh-session handoff requested at thread-641 (2026-05-24 ~12:04 AEST); architect-accepted Option 1.**
+- Trigger: engineer-side context-runway management (no realtime context-window readout per engineer memory `feedback_no_realtime_context_awareness_implications`; estimated substantive portion of context consumed across mission-88 lifecycle in this session including PR #275 ~1000-line scaffold + 27 tests + multi-thread bilateral engagement + Hub state queries).
+- W1 scope: ~1000+ lines (5 KindMigrationModule + per-kind tests + W0 wire-flow.test.ts extension + operator-DX touch) — warrants fresh runway.
+- Architect Option 2 REJECTED (reduced-scope Idea+Bug only would muddle cluster-1 acceptance-gate per OQ8 requiring all 5 kinds).
+- thread-641 close_no_action action-1 committed via bilateral handshake.
+
+▶ **W1 implementation DEFERRED to fresh engineer session.**
+
+---
+
+### Cold-pickup pointers for next engineer session
+
+1. **Read this trace first.** Mission-88 state through W0 merge (PR #275, e665de3) + W1 Design-pass converged (thread-640 sealed; thread-641 handoff accepted).
+2. **Read `get_thread(thread-640)`** for the full W1 Q1-Q7 disposition table.
+3. **W1 deliverables shape (single bundle PR):**
+   - 5 KindMigrationModule at `hub/src/storage-substrate/migrations/v2-envelope/kinds/{Idea,Bug,Thread,Mission,Proposal}.ts` (each: schemaRef + migrateOne over `encodeEnvelope` with per-kind partition rules from cluster-1 §3.1-§3.5)
+   - 5 per-kind unit tests at `__tests__/kinds/{Idea,Bug,Thread,Mission,Proposal}.test.ts` (encode legacy → re-invoke migrateOne(envelope) → assert reference-equality for idempotency)
+   - Extension to W0 `__tests__/wire-flow.test.ts` with cluster-1 batch-migration synthetic test case (seeds 1-2 rows per kind across all 5; runs MigrationRunner; asserts cursor per-kind isolation)
+   - Operator-DX touch: `scripts/local/get-entities.sh` envelope-shape support + `docs/operator/psql-cookbook.md` envelope-shape example queries (same PR if scope-narrow ~50 lines bash + 1-2 markdown sections; spin separate PR if scope expands)
+4. **Substrate-current shape verify BEFORE baking partition rules** (Q2 disposition): code-grep on `hub/src/entities/{idea,bug,thread,mission,proposal}-repository-substrate.ts` for actual write-time field-list; optional psql `SELECT jsonb_object_keys(data) FROM entities WHERE kind = 'X' LIMIT 1` per kind for live-substrate confirmation. Cross-reference cluster-1 Design (commit `d8ea695`) partition rules; surface any drift as Q-class addition to architect.
+5. **Branch convention:** `agent-greg/m-k8s-envelope-w1-cluster-1` (new branch from origin/main).
+6. **Ship-verify 3-layer per `feedback_ship_verify_3_layer_discipline`:** tsc-strict + vitest + commit-message-claims accurate. Hub-rebuild dependency (build-hub.sh + start-hub.sh) in PR test plan per Q5 disposition + `feedback_adapter_restart_protocol_hub_container`.
+7. **PR flow per W0 precedent (#275):** open via `gh pr create`; architect cross-approves on pr_opened_bilateral notification; engineer admin-merge via `gh pr merge --squash --delete-branch` (delete-branch may error on lily worktree checkout — benign, lily's concern).
+8. **Bug-118 envelope-shape closure verification at W1 acceptance gate:** PR test plan includes `SELECT COUNT(*) FILTER (WHERE data->'metadata'->>'sourceThreadId' IS NOT NULL), COUNT(*) FROM entities WHERE kind IN ('Idea','Bug','Thread','Mission','Proposal')` smoke query (post-merge dev-cycle).
+
+### mission-88 calibration cluster (5 substrate-currency catches; pattern inherits)
+
+| # | Surface | Direction | Substrate-truth |
+|---|---------|-----------|-----------------|
+| 1 | thread-635 R1 | architect → engineer | cluster-4 v0.2 Notification drop (engineer spec-recall stale) |
+| 2 | thread-635 R2 | engineer → architect | A5 entity-kinds.json v1.2/20 → v1.3/21 (engineer worktree stale) |
+| 3 | thread-637 R1 | engineer → architect | bug-97 STALE-OPEN (architect dispatch-premise stale; fix landed at e109000) |
+| 4 | thread-639 R2 precision-pin (ii) | bilateral | Q2 "SchemaDef reconciler tolerance" → "write-validation envelope tolerance" doc-side framing |
+| 5 | thread-640 R2 Q2 | engineer proactive | substrate-current shape verify BEFORE baking W1 partition rules (5th = proactive, not reactive) |
+
+Pattern: **substrate-currency-discipline cuts both ways at all 4 surfaces (code-trace + entity-state + fix-commit + retired-file)**. Next engineer session should expect to apply this proactively at Q2 substrate-shape verification step.
+
+### Pulse cadence
+
+W1 = 30min default per OQ13. `missedThreshold=2` may fire benignly during the handoff window before next engineer engagement; informational only, no escalation surface needed.
 - Engineer dispositions (concur unless flagged):
   - **OQ1 (wave shape):** CONCUR cluster-mirrored W1→W5 + W6.
   - **OQ2 (missionClass):** CONCUR `substrate-introduction`.
