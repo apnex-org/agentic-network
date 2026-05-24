@@ -226,7 +226,18 @@ If you're picking up cold, read in this order:
 - `docs/decisions/032-k8s-envelope-cutover.md` STUB for architect-fill (next ADR per existing convention; 031-shim-observability was most recent).
 - Ship-verify 3-layer: tsc-strict 0 errors / vitest from hub/ 143 test files / 1781 tests pass (1 skipped) / commit-message-claims accurate. No test impact from W6 (operator-script + docs + JSON metadata).
 
-▶ **PR #281 in-flight (FINAL WAVE); awaiting `pr_opened_bilateral` architect approve + CI completion.**
+✅ **PR #281 MERGED at `4085d63`** (2026-05-24T05:10:08Z; architect approve + auto-merge per W2-W5 precedent pattern).
+
+**🎯 ALL 6 mission-88 SHIP PRS MERGED ON MAIN.** idea-126 Phase 4 Design FULLY REALIZED across all 21 substrate-mediated entity kinds.
+
+Sequential merge state on origin/main:
+- e665de3 W0 substrate-prep
+- f84de18 W1 cluster-1 substantive-content
+- 5eca435 W2 cluster-2 queue/FSM-active
+- 6b07ee2 W3 cluster-3 metadata/config/projection
+- 2099e08 W4 cluster-4 system-emit/bookkeeping
+- b36cda4 W5 cluster-5 content-archive (FINAL CLUSTER)
+- **4085d63 W6 production cutover + close (FINAL WAVE)**
 
 ▶ **Post-merge architect-side execution arc (final mission-88 close-out):**
 1. Execute `scripts/operator/m-k8s-envelope-cutover.sh` against production hub-vm
