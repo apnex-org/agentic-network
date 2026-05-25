@@ -121,6 +121,18 @@ export function createNotificationMigrationModule(schema: SchemaDef): KindMigrat
 function preTransform(legacy: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...legacy };
 
+  // mission-88 W8.1 (bug-135 hot-fix): coerce legacy-era numeric id → string.
+  // W11 Phase B cutover surfaced production-data id-shape drift: ~552 of 555
+  // Notification rows have NUMERIC ids (sequential integers from pre-ULID era);
+  // 3 rows have ULID strings (per W8 Design §2 audit sample). envelope encoder
+  // asserts id is non-empty STRING; numeric fails. Coerce-to-string at
+  // pre-transform passes the encoder assertion naturally. No envelope.ts change.
+  // Methodology calibration #22 (W8 Design audit sampled rows missed legacy-id
+  // shape drift; production-state grep would have surfaced pre-W2).
+  if (typeof out.id === "number") {
+    out.id = String(out.id);
+  }
+
   // Handle-classified: copy id to metadata.name (envelope-uniformity per
   // cluster-2 Turn precedent; metadata.name is the K8s-canonical handle).
   // Use dotted-path so encodeEnvelope's assignDottedPath routes to metadata.
