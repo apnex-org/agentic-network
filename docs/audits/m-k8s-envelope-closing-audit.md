@@ -1,10 +1,27 @@
-# M-K8s-Envelope — Mission Closing Audit (WORKING DRAFT)
+# M-K8s-Envelope — Mission Closing Audit (FINAL)
 
 **Mission:** mission-88 (M-K8s-Envelope; idea-126 anchor)
-**Phase:** 9 Close (post-cutover; pre-retrospective) — IN PROGRESS via TOLERANT-bridge arc
-**Status:** WORKING DRAFT — architect-fill in progress; pending W11 Phase B redo for final cutover-state metrics
-**Author:** architect (lily) — substantive content added 2026-05-24; engineer-review at PR
-**Date:** 2026-05-24 (initial substantive fold); TBD final post-W11 cutover
+**Phase:** 9 Close — COMPLETE via TOLERANT-bridge arc + W11 Phase B redo
+**Status:** FINAL — W11 cutover executed 2026-05-25 04:43 UTC; strict-flag-flip 05:25 UTC; 100% envelope across 22 data kinds
+**Author:** architect (lily) — substantive content 2026-05-24; W11 final-state fold 2026-05-25; engineer-review at PR
+**Date:** 2026-05-25 (FINAL post-W11 cutover)
+
+## W11 cutover-state metrics (post-strict-flip)
+
+| Metric | Value |
+|---|---|
+| Hub image | `sha256:898f9d186e2e...` |
+| envelope tolerance mode | **STRICT** (SUBSTRATE_ENVELOPE_TOLERANT env-var removed) |
+| SchemaDef reconciler boot | 23 of 23 kinds applied; 0 failures |
+| Data kinds at 100% envelope | **22 of 22** |
+| Infrastructure kind exemption | MigrationCursor: 22 legacy (deliberate per W0 substrate-prep; strict-mode tolerates) |
+| Total rows migrated (W11) | 5874 across all data kinds |
+| Total rows errored | 0 |
+| MigrationRunner CLI exit-code | 0 |
+| bug-118 IN-clause closure | Idea 66 / Mission 15 / Task 30 with provenance (matches handover DRY_RUN baseline; Bug/Thread/PA/Proposal/Turn 0 per anti-goal 11) |
+| Per-cluster write smoke (post-strict-flip) | 5/5 cluster-classes passed |
+| Watchtower resume | ✓ 2026-05-25 ~05:25 UTC |
+| Effective downtime | <90s (Hub container restart cycle; CLI sweep in TOLERANT mode was production-stable not downtime) |
 
 ---
 
