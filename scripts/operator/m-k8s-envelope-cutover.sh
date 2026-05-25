@@ -78,6 +78,49 @@ $PSQL -c "SELECT 1;" > /dev/null || {
   exit 2
 }
 
+# ─── Step 1.5: Wait for SchemaDef-reconciler index-swap complete ──
+#
+# mission-88 W7 (bug-123 fix): when the new Hub container deploys, the
+# SchemaDef-reconciler runs on startup and applies the envelope-path
+# expression indexes (CREATE INDEX CONCURRENTLY IF NOT EXISTS) + drops
+# any owned-but-deprecated legacy index names. The CLI migration in
+# Step 2 must NOT run until the reconciler index-swap is complete, OR
+# subsequent INSERTs into the entities table may trip btree-overflow
+# on legacy indexes that target the now-large status object.
+#
+# Polls pg_indexes for the count of expected envelope-shape indexes
+# (heuristic: at least 1 *_status_phase_idx + 1 *_metadata_*_idx).
+# 30s timeout with 2s polling; HALT if reconciler hasn't swapped.
+
+echo "[cutover] Step 1.5/6: wait for SchemaDef-reconciler index-swap (W7 bug-123)"
+RECONCILE_TIMEOUT_S=30
+RECONCILE_POLL_INTERVAL_S=2
+RECONCILE_ELAPSED=0
+RECONCILE_OK="false"
+while [[ "$RECONCILE_ELAPSED" -lt "$RECONCILE_TIMEOUT_S" ]]; do
+  # Detect envelope-path indexes (any *_status_phase_idx is a positive signal —
+  # legacy *_status_idx wouldn't match this name pattern).
+  ENV_IDX_COUNT=$($PSQL -tA -c "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND tablename='entities' AND indexname LIKE '%_status_phase_idx'" 2>/dev/null || echo "0")
+  if [[ "$ENV_IDX_COUNT" -ge "8" ]]; then
+    # At least 8 status_phase indexes signals W7 reconciler ran (Thread,
+    # Idea, Bug, Mission, Proposal, Task, Tele, Turn, PendingAction = 9
+    # status_phase indexes total; >= 8 is robust against per-index transient
+    # failures).
+    echo "[cutover]   reconciler index-swap complete (${ENV_IDX_COUNT} *_status_phase_idx present)"
+    RECONCILE_OK="true"
+    break
+  fi
+  echo "[cutover]   reconciler index-swap pending (${ENV_IDX_COUNT}/8 *_status_phase_idx after ${RECONCILE_ELAPSED}s)"
+  sleep "$RECONCILE_POLL_INTERVAL_S"
+  RECONCILE_ELAPSED=$((RECONCILE_ELAPSED + RECONCILE_POLL_INTERVAL_S))
+done
+if [[ "$RECONCILE_OK" != "true" ]]; then
+  echo "[cutover] HALT: SchemaDef-reconciler index-swap did not complete within ${RECONCILE_TIMEOUT_S}s"
+  echo "[cutover]   Likely cause: Hub container not yet bootstrapped OR reconciler crashed"
+  echo "[cutover]   Surface to architect: inspect Hub logs for [SchemaReconciler] entries"
+  exit 5
+fi
+
 # ─── Step 2: MigrationRunner CLI invocation (W6.1 bug-119 hotfix) ──
 
 echo "[cutover] Step 2/6: MigrationRunner across ${#KINDS[@]} kinds"
@@ -102,7 +145,7 @@ fi
 
 if [[ "$MIGRATION_EXIT" != "0" ]]; then
   echo "[cutover] HALT: MigrationRunner CLI exited with code $MIGRATION_EXIT (rollback-trigger 1)"
-  echo "[cutover]   Exit-code legend: 1=rowsErrored 2=DB-connection 3=module-registration 4=unhandled"
+  echo "[cutover]   Exit-code legend (mission-88 bug-133 fix): 1=rowsErrored 2=DB-connection 3=time-budget-exceeded(NEW) 4=module-registration 5=unhandled"
   echo "[cutover] Surface to architect for rollback decision (image-tag-pin pattern per mission-83 W5.4)"
   exit 4
 fi

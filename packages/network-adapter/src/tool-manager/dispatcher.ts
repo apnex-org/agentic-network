@@ -110,6 +110,19 @@ export interface SharedDispatcherOptions {
    */
   callToolGate?: Promise<void>;
 
+  /**
+   * mission-88 W10 (bug-126 fix): timeout in ms for `await callToolGate`.
+   * If the gate Promise neither resolves nor rejects within this budget,
+   * the dispatcher emits a structured `gate-timeout` log line + returns
+   * isError to host (instead of hanging indefinitely as the bug-126
+   * incident exhibited). Default 30000ms; set to 0 to disable.
+   *
+   * Defense against pending-forever sessionReady Promises (W10 Design §3
+   * H1+H3 hypotheses). The timeout is a fail-safe — production-correct
+   * handshake flow should never hit it.
+   */
+  callToolGateTimeoutMs?: number;
+
   // ── Tool-catalog cache hooks (probe-safe ListTools) ──
   //
   // When all four hooks are wired in, the dispatcher can serve
@@ -534,7 +547,27 @@ export function createSharedDispatcher(
       try {
         if (opts.callToolGate) {
           log(`[CallTool] ${requestedTool} awaiting callToolGate`);
-          await opts.callToolGate;
+          // mission-88 W10 (bug-126 fix): timeout the gate await to prevent
+          // indefinite hang on pending-forever sessionReady (the bug-126
+          // incident-window symptom). Default 30s; set callToolGateTimeoutMs=0
+          // to disable (test-only). Structured `gate-timeout` log emitted on
+          // timeout; isError response returned to host instead of hang.
+          const timeoutMs = opts.callToolGateTimeoutMs ?? 30000;
+          if (timeoutMs > 0) {
+            let timeoutHandle: NodeJS.Timeout | undefined;
+            const timeoutPromise = new Promise<void>((_resolve, reject) => {
+              timeoutHandle = setTimeout(() => {
+                reject(new Error(`callToolGate timeout after ${timeoutMs}ms`));
+              }, timeoutMs);
+            });
+            try {
+              await Promise.race([opts.callToolGate, timeoutPromise]);
+            } finally {
+              if (timeoutHandle) clearTimeout(timeoutHandle);
+            }
+          } else {
+            await opts.callToolGate;
+          }
           log(`[CallTool] ${requestedTool} gate passed (+${Date.now() - callStartedAt}ms)`);
         }
         const agent = opts.getAgent();
@@ -612,10 +645,21 @@ export function createSharedDispatcher(
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        log(`[CallTool] ${requestedTool} threw after ${Date.now() - callStartedAt}ms: ${message}`);
+        // mission-88 W10 (bug-126 fix): post-condition logging discipline —
+        // structured terminal log line distinguishes gate-timeout / gate-
+        // rejected / agent-call-threw / other-error paths. Every CallTool
+        // entry MUST emit exactly one terminal log line (W10 Design §4.1
+        // post-condition; prevents the bug-126 "no terminal log line ever
+        // appeared" silent-hang failure-mode).
+        const outcome = message.startsWith("callToolGate timeout")
+          ? "gate-timeout"
+          : "error-response";
+        log(
+          `[CallTool] ${requestedTool} terminal: outcome=${outcome} elapsed=${Date.now() - callStartedAt}ms message="${message}"`,
+        );
         return {
           content: [
-            { type: "text" as const, text: JSON.stringify({ error: message }) },
+            { type: "text" as const, text: JSON.stringify({ error: message, w10_outcome: outcome }) },
           ],
           isError: true,
         };
