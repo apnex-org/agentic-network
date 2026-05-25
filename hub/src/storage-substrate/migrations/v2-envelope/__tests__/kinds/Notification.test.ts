@@ -210,6 +210,24 @@ describe("Notification migration module — cascade-provenance (W8 Q2)", () => {
   });
 });
 
+describe("Notification migration module — W8.1 legacy-era numeric-id coercion (bug-135)", () => {
+  const module = createNotificationMigrationModule(notificationSchema);
+
+  it("coerces numeric id → string and produces valid envelope", () => {
+    const legacy = legacyNotification({ id: 567 as unknown as string });
+    const env = module.migrateOne(legacy) as EnvelopeShape;
+    expect(isEnvelopeShape(env)).toBe(true);
+    expect(env.id).toBe("567");
+    expect(env.metadata.name).toBe("567");
+  });
+
+  it("preserves ULID id unchanged (no double-coerce)", () => {
+    const env = module.migrateOne(legacyNotification({ id: "01KP2JD2Q408F58QKY32HQEEYS" })) as EnvelopeShape;
+    expect(env.id).toBe("01KP2JD2Q408F58QKY32HQEEYS");
+    expect(env.metadata.name).toBe("01KP2JD2Q408F58QKY32HQEEYS");
+  });
+});
+
 describe("Notification migration module — idempotency", () => {
   const module = createNotificationMigrationModule(notificationSchema);
 
