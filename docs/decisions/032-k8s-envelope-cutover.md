@@ -1,8 +1,8 @@
-# ADR 032 — K8s Envelope Cutover (STUB)
+# ADR 032 — K8s Envelope Cutover
 
-**Status:** STUB — architect-author post-cutover-execution per thread-648 R2 disposition Q6
+**Status:** FINAL — production cutover executed 2026-05-25; strict-mode active
 **Decision-record-of-permanence:** mission-88 production cutover from legacy-flat substrate shape to K8s envelope shape
-**Date:** TBD (architect fills post-cutover)
+**Date:** 2026-05-25 (W11 Phase B redo executed 04:43 / 05:25 strict-flip)
 
 ---
 
@@ -20,14 +20,31 @@ mission-88 (M-K8s-Envelope; idea-126 anchor) shipped 6 production PRs (W0 substr
 
 ## Decision
 
-Cutover executed at TBD (architect-fills ISO timestamp post-cutover-execution):
-- Hub container image: TBD (architect-fills image hash)
-- MigrationRunner across 21 kinds: TBD entities migrated in TBD seconds
-- SchemaDef strict-mode flip: SUBSTRATE_ENVELOPE_TOLERANT env-var unset (W0 primitive design-driver flip-point)
-- Per-kind shape probe: TBD/TBD kinds passed envelope-shape assertion
-- bug-118 closure verification: TBD with_provenance across 8 cascade-spawn-shaped kinds
-- Per-cluster write smoke: TBD/5 cluster-classes passed
-- Outcome: TBD (SUCCESS / FORWARD-FIX / ROLLBACK)
+**Production cutover executed via TOLERANT-bridge + W7-W10/ext substrate-hardening + W11 Phase B redo (per Director (D)-disposition 2026-05-24; refined from greg's original A/B/C halt-options):**
+
+- **Original Phase B attempt:** 2026-05-24 07:50 UTC — HALTED at Step 7 (491/651 Thread rows errored on btree-row-size; bug-123 + bug-124 + bug-125 + bug-126 + bug-127 all surfaced; engineer halt-discipline preserved disposition window)
+- **W7-W10/ext substrate-hardening:** 2026-05-24 (5 Design v1.0 ratifications + 6 impl PRs merged + bug-133 hot-fix; bilateral round-trip ~15min for 5 Designs at ideal pace)
+- **W11 Phase B redo:** 2026-05-25 04:43 UTC — CLI exit=0 + 0 errored across 22 kinds (post W8.1 hot-fix for Notification numeric-id; 5527 + 347 = 5874 rows newly migrated via MigrationCursor reset + re-run)
+- **STRICT-FLAG-FLIP:** 2026-05-25 ~05:25 UTC — Hub container restart WITHOUT `SUBSTRATE_ENVELOPE_TOLERANT` env-var; bootstrap log `envelope tolerance mode: STRICT (W6 default: STRICT)` + `SchemaDef application complete (23 of 23 kinds applied; 0 failures)`
+- **Hub container image:** `sha256:898f9d186e2e2f7644787a46588e04a3bbed7e406e8cc46936bea0e5991cd5c2` (post W8.1)
+- **MigrationRunner across 22 kinds:** 5874 entities migrated (Audit 1256 + Bug 2 + Message 3618 + Notification 552 + PA 580 + Proposal 2 + SchemaDef 23 + Task 12 + Thread 329 + others 0-skipped-already-envelope)
+- **Per-kind shape probe (post-strict-flip):** **23/23 kinds passed envelope-shape assertion** (22 data kinds at 100% envelope; MigrationCursor stays legacy per W0 infrastructure-kind exclusion — strict-mode tolerates)
+- **bug-118 closure verification:** Idea 66 / Mission 15 / Task 30 with `metadata.sourceThreadId` (matches handover DRY_RUN baseline; Bug/Thread/PendingAction/Proposal/Turn 0 per anti-goal 11 forward-only)
+- **Per-cluster write smoke:** 5/5 cluster-classes passed (list_threads/list_bugs/list_ideas/list_missions all OK via shim post-strict-flip)
+- **Watchtower resume:** 2026-05-25 ~05:25 UTC — `watchtower-prod Up`
+- **Outcome:** **SUCCESS** (target-state achieved: 100% envelope; strict-mode; no data loss; <90s effective cutover-window per step including 8.4min CLI sweep)
+
+**Substrate-engineering hardening waves added vs original W0-W6 plan:**
+- W7 #284 + #293 — Thread btree-index expression-path migration (bug-123 closed)
+- W8 #285 + #292 — Notification cartography fix (bug-124 closed)
+- W8.1 #298 — Notification numeric-id coerce hot-fix (bug-135 closed)
+- W9 #286 + #289 — Hub iterate-tags defensive guard (bug-125 closed)
+- W9.1 #290 — arrayFieldFromEntity scope-extension (bug-134 closed)
+- W10 #287 + #295 — Adapter callToolGate dispatcher harden (bug-126 closed)
+- W10-ext #288 + #294 — Hub M18 assertIdentity OCC discipline (bug-127 architecturally-closed; idea-322 systemic fix queued)
+- bug-133 #296 — CLI exit-code time-budget exit=3 (closed)
+- v0.1.6 release-prep #297 — adapter package version bump
+- bug-136 OPEN — single-instance turn_created cascade-provenance gap (Phase 10 bank; non-blocking)
 
 ## Consequences
 
@@ -60,4 +77,4 @@ Cutover executed at TBD (architect-fills ISO timestamp post-cutover-execution):
 
 ---
 
-**Architect to fill post-cutover-execution.** Final ADR text + cutover-timestamp + image hash + outcome.
+**FINALIZED 2026-05-25 post-cutover-execution.** All target-state criteria met (100% envelope across 22 data kinds; strict-mode active; bug-118 closure verified; Watchtower resumed). Engineer review at PR per A3.
