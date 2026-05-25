@@ -145,7 +145,7 @@ fi
 
 if [[ "$MIGRATION_EXIT" != "0" ]]; then
   echo "[cutover] HALT: MigrationRunner CLI exited with code $MIGRATION_EXIT (rollback-trigger 1)"
-  echo "[cutover]   Exit-code legend: 1=rowsErrored 2=DB-connection 3=module-registration 4=unhandled"
+  echo "[cutover]   Exit-code legend (mission-88 bug-133 fix): 1=rowsErrored 2=DB-connection 3=time-budget-exceeded(NEW) 4=module-registration 5=unhandled"
   echo "[cutover] Surface to architect for rollback decision (image-tag-pin pattern per mission-83 W5.4)"
   exit 4
 fi
