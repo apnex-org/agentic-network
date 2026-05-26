@@ -111,8 +111,13 @@ describe("withAdvisoryLock — memory substrate (in-process serialization)", () 
       order.push("B:out");
     });
     await Promise.all([callA, callB]);
-    // Serialized: A's critical section completes before B enters (or vice-versa)
-    expect(order).toEqual(["A:in", "A:out", "B:in", "B:out"]);
+    // Serialization invariant: no INTERLEAVING. Either A's critical section
+    // completes fully before B's, or vice versa. Which goes first is timing-
+    // dependent under Promise.all — both orderings are valid serialization.
+    expect([
+      ["A:in", "A:out", "B:in", "B:out"],
+      ["B:in", "B:out", "A:in", "A:out"],
+    ]).toContainEqual(order);
   });
 
   it("parallelizes calls for different lockKey (no false serialization)", async () => {
@@ -327,8 +332,13 @@ describe("withAdvisoryLock — postgres substrate (real pg_advisory_lock)", () =
       order.push("B:out");
     });
     await Promise.all([callA, callB]);
-    // A's critical section MUST complete fully before B enters (real pg session lock)
-    expect(order).toEqual(["A:in", "A:out", "B:in", "B:out"]);
+    // Serialization invariant: no INTERLEAVING. One critical section completes
+    // fully before the other enters; which-goes-first is timing-dependent
+    // (both orderings valid under real-pg poll-acquire race).
+    expect([
+      ["A:in", "A:out", "B:in", "B:out"],
+      ["B:in", "B:out", "A:in", "A:out"],
+    ]).toContainEqual(order);
   }, 30_000);
 
   it("parallelizes calls across distinct (class, key) — no cross-class serialization", async () => {
