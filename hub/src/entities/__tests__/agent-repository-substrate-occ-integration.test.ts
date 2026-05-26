@@ -29,10 +29,11 @@ import {
   type SchemaReconciler,
 } from "../../storage-substrate/index.js";
 import { AgentRepositorySubstrate } from "../agent-repository-substrate.js";
+import { computeFingerprint, deriveAgentId } from "../../state.js";
 
 const { Pool } = pg;
 
-describe("assertIdentity — testcontainer integration (real pg_advisory_lock contention)", () => {
+describe("assertIdentity — testcontainer integration (real pg_advisory_lock contention + envelope-shape rows)", () => {
   let pgContainer: StartedPostgreSqlContainer | undefined;
   let pgConnStr: string | undefined;
   let substrate: HubStorageSubstrate | undefined;
@@ -145,6 +146,112 @@ describe("assertIdentity — testcontainer integration (real pg_advisory_lock co
     }
     // Both ran in parallel; total time bounded by single assertIdentity latency
     expect(elapsed).toBeLessThan(5_000);
+  }, 30_000);
+
+  it("PRE-EXISTING envelope-shape Agent row → assertIdentity refresh succeeds + write preserves envelope (bug-138 (A3))", async () => {
+    if (!substrate) throw new Error("substrate not initialized");
+    const repo = new AgentRepositorySubstrate(substrate);
+
+    // Seed envelope-shape row directly (simulates post-W11-cutover production state).
+    // fingerprint + id MUST match what computeFingerprint + deriveAgentId derive
+    // from the name we'll re-assertIdentity with, otherwise the lookup-via-
+    // fingerprint won't find the seeded row.
+    const agentName = "agent-pre-existing";
+    const fingerprint = computeFingerprint(agentName);
+    const expectedAgentId = deriveAgentId(agentName);
+    const envelopeAgent = {
+      id: expectedAgentId,
+      name: agentName,
+      kind: "Agent",
+      apiVersion: "core.ois/v1",
+      metadata: {
+        fingerprint,
+        archived: false,
+        createdAt: "2026-05-25T00:00:00Z",
+        updatedAt: "2026-05-25T00:00:00Z",
+      },
+      spec: {
+        role: "engineer",
+        labels: { team: "platform" },
+        receiptSla: 3600000,
+        wakeEndpoint: null,
+        clientMetadata: { hostname: "host-pre" },
+      },
+      status: {
+        phase: "offline",
+        sessionEpoch: 0,
+        currentSessionId: null,
+        livenessState: "offline",
+        lastHeartbeatAt: "2026-05-25T00:00:00Z",
+        activityState: "offline",
+        sessionStartedAt: null,
+        lastToolCallAt: null,
+        lastToolCallName: null,
+        idleSince: null,
+        workingSince: null,
+        quotaBlockedUntil: null,
+        cognitiveTTL: null,
+        transportTTL: null,
+        cognitiveState: "unknown",
+        transportState: "unknown",
+        adapterVersion: "",
+        ipAddress: null,
+        advisoryTags: [],
+        restartCount: 0,
+        recentErrors: [],
+        restartHistoryMs: [],
+      },
+    };
+    await substrate.put("Agent", envelopeAgent);
+
+    // Verify on-disk shape pre-call
+    const preCallPool = new Pool({ connectionString: pgConnStr! });
+    const pre = await preCallPool.query<{ envelope: boolean; meta_fp: string; spec_role: string }>(
+      `SELECT data ? 'apiVersion' AS envelope, data->'metadata'->>'fingerprint' AS meta_fp, data->'spec'->>'role' AS spec_role FROM entities WHERE kind = 'Agent' AND id = $1`,
+      [envelopeAgent.id],
+    );
+    expect(pre.rows[0].envelope).toBe(true);
+    expect(pre.rows[0].meta_fp).toBe(fingerprint);
+    expect(pre.rows[0].spec_role).toBe("engineer");
+    await preCallPool.end();
+
+    // assertIdentity for the SAME name → SAME fingerprint → must hit the
+    // refresh-path (no createOnly conflict), AND role-comparison must succeed.
+    const result = await repo.assertIdentity(
+      {
+        role: "engineer",
+        name: agentName,
+        clientMetadata: {
+          clientName: "test",
+          clientVersion: "1.0",
+          proxyName: "test",
+          proxyVersion: "1.0",
+          hostname: "host-pre",
+        },
+      },
+      "session-pre",
+    );
+
+    // Must succeed — envelope-aware lookup found row; envelope-aware read
+    // hoisted role from spec.role; role-comparison succeeded.
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.agentId).toBe(expectedAgentId);
+      // wasCreated MUST be false — pre-existing row was REFRESHED, not created
+      expect(result.wasCreated).toBe(false);
+    }
+
+    // Verify on-disk row IS STILL envelope-shape (write preserved envelope)
+    const postCallPool = new Pool({ connectionString: pgConnStr! });
+    const post = await postCallPool.query<{ envelope: boolean; meta_fp: string; spec_role: string; top_fp: string | null }>(
+      `SELECT data ? 'apiVersion' AS envelope, data->'metadata'->>'fingerprint' AS meta_fp, data->'spec'->>'role' AS spec_role, data->>'fingerprint' AS top_fp FROM entities WHERE kind = 'Agent' AND id = $1`,
+      [envelopeAgent.id],
+    );
+    expect(post.rows[0].envelope).toBe(true);
+    expect(post.rows[0].meta_fp).toBe(fingerprint);
+    expect(post.rows[0].spec_role).toBe("engineer");
+    expect(post.rows[0].top_fp).toBeNull();  // NO top-level fingerprint (envelope preserved; no de-migration)
+    await postCallPool.end();
   }, 30_000);
 
   it("10 concurrent assertIdentity for SAME fingerprint all succeed under serialization", async () => {

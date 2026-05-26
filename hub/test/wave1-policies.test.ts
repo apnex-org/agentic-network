@@ -15,18 +15,21 @@ import type { IPolicyContext } from "../src/policy/types.js";
 
 const noop = () => {};
 
-// Mission-47 W7b → mission-84 W2: test fixture mutates Agent entity directly
-// via substrate primitives (was StorageProvider-backed `agents/<eid>.json` blob;
-// now HubStorageSubstrate entity at kind="Agent" id=<agentId>).
+// Mission-47 W7b → mission-84 W2 → mission-89 (A3): test fixture mutates Agent
+// entity directly via substrate primitives. Post-mission-89 (A3) Agent rows are
+// envelope-shape on disk; the fixture round-trips envelope→legacy-flat→patch→
+// envelope so on-disk shape is preserved across the patch.
 async function mutateAgentBlob(
   reg: any,
   agentId: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
+  const { envelopeToAgent, agentToEnvelope } = await import("../src/entities/agent-envelope-shape.js");
   const substrate = reg.substrate;
   const entity = await substrate.get("Agent", agentId);
   if (!entity) throw new Error(`agent entity not found for ${agentId}`);
-  await substrate.put("Agent", { ...entity, ...patch });
+  const legacy = envelopeToAgent(entity);
+  await substrate.put("Agent", agentToEnvelope({ ...legacy, ...patch } as any));
 }
 
 // ── Tele Policy ─────────────────────────────────────────────────────
