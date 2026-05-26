@@ -37,6 +37,7 @@ import { validateActionsWithRegistry } from "./action-validators/index.js";
 import type { ValidationContext } from "./action-validators/index.js";
 import { AUTONOMOUS_STAGED_ACTION_TYPES, checkConvergerAuthority } from "./staged-action-payloads.js";
 import { logShadowInvariantBreach } from "../observability/shadow-invariants.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 import { emitDirectorNotification } from "./director-notification-helpers.js";
 
 // mission-66 commit 6 (#26 marker-protocol): canonical preview-truncation
@@ -534,7 +535,8 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
     const current = await ctx.stores.thread.getThread(threadId);
     if (
       current &&
-      current.status === "active" &&
+      // mission-89 Phase 4 (bug-137): envelope-aware status read.
+      phaseFromEntity(current) === "active" &&
       current.currentTurn === author &&
       current.currentTurnAgentId &&
       current.currentTurnAgentId !== authorAgentId
@@ -631,7 +633,8 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   // forever (or get drained by a peer who will never reply). Sweep runs
   // BEFORE the reply-side enqueue below so the architect's just-issued
   // next-round item is not abandoned by mistake.
-  if (wasCoercing && authorAgentId && thread.status === "active") {
+  // mission-89 Phase 4 (bug-137): envelope-aware status read.
+  if (wasCoercing && authorAgentId && phaseFromEntity(thread) === "active") {
     const orphans = await ctx.stores.pendingAction.listNonTerminalByEntityRef(threadId);
     for (const orphan of orphans) {
       if (orphan.dispatchType !== "thread_message") continue;
@@ -640,7 +643,8 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
     }
   }
 
-  if (thread.status === "active") {
+  // mission-89 Phase 4 (bug-137): envelope-aware status read.
+  if (phaseFromEntity(thread) === "active") {
     const otherParticipantIds = thread.participants
       .filter((p) => p.agentId && p.agentId !== authorAgentId)
       .map((p) => p.agentId as string);

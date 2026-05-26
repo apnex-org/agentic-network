@@ -152,14 +152,23 @@ export class ProposalRepositorySubstrate implements IProposalStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Proposal | null> {
-    const { items } = await this.substrate.list<Proposal>(KIND, {
+    // mission-89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback.
+    const envelopeResult = await this.substrate.list<Proposal>(KIND, {
+      filter: {
+        "metadata.sourceThreadId": key.sourceThreadId,
+        "metadata.sourceActionId": key.sourceActionId,
+      },
+      limit: 1,
+    });
+    if (envelopeResult.items[0]) return envelopeResult.items[0];
+    const legacyResult = await this.substrate.list<Proposal>(KIND, {
       filter: {
         sourceThreadId: key.sourceThreadId,
         sourceActionId: key.sourceActionId,
       },
       limit: 1,
     });
-    return items[0] ?? null;
+    return legacyResult.items[0] ?? null;
   }
 
   async setScaffoldResult(proposalId: string, result: ScaffoldResult): Promise<boolean> {

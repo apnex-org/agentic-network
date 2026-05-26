@@ -14,6 +14,7 @@ import type { IPolicyContext, PolicyResult } from "./types.js";
 import { isValidTransition } from "./types.js";
 import { TASK_FSM } from "./task-policy.js";
 import { runTriggers } from "./triggers.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -40,7 +41,8 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
   const reviewRef = `reviews/${taskId}-v${version}-review.md`;
 
   if (decision === "approved") {
-    if (task.status === "completed") {
+    // mission-89 Phase 4 (bug-137 closure): envelope-aware status read.
+    if (phaseFromEntity(task) === "completed") {
       // bug-112: distinguish "genuinely already reviewed" from "completed but
       // never reviewed". A `completed` task with no `reviewAssessment` reached
       // `completed` via an FSM-bypassing admin edit (e.g. task-144, gsutil-

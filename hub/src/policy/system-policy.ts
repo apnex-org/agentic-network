@@ -10,6 +10,8 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { RECENT_DETAILS_CAP } from "../observability/metrics.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
+import type { Task, Proposal, Thread } from "../state.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -42,43 +44,57 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
   }
 
   // Reports awaiting Architect read (exclude already-reviewed).
+  // mission-89 Phase 4 (bug-137 closure): pre-compute envelope-aware phase
+  // for each entity so downstream filters work uniformly on both legacy-flat
+  // and envelope-shape rows.
+  const taskPhase = (t: Task) => phaseFromEntity(t);
+  const proposalPhase = (p: Proposal) => phaseFromEntity(p);
+  const threadPhase = (t: Thread) => phaseFromEntity(t);
+
   // idea-89 fix: submitReport transitions task → "in_review", but this
   // filter was only matching "completed"/"failed"/"reported_*". Result:
   // 14+ engineer reports sat in in_review indefinitely because the
   // architect's EventLoop poll saw unreviewedTasks:[] every tick.
   // Include "in_review" so the architect sandwich picks them up.
   const unreadReports = tasks.filter(
-    (t) => (t.status === "in_review" || t.status === "completed" || t.status === "failed") && t.report !== null && !t.reviewAssessment
+    (t) => {
+      const p = taskPhase(t);
+      return (p === "in_review" || p === "completed" || p === "failed") && t.report !== null && !t.reviewAssessment;
+    }
   );
 
   // Completed tasks without review. Same fix as above — add "in_review"
   // so the EventLoop.unreviewedTasks poll drains reports awaiting review.
   const unreviewedTasks = tasks.filter(
-    (t) =>
-      (t.status === "in_review" ||
-       t.status === "completed" ||
-       t.status === "failed" ||
-       t.status?.startsWith("reported_")) &&
-      !t.reviewAssessment
+    (t) => {
+      const p = taskPhase(t);
+      return (
+        (p === "in_review" ||
+         p === "completed" ||
+         p === "failed" ||
+         p?.startsWith("reported_")) &&
+        !t.reviewAssessment
+      );
+    }
   );
 
   // Proposals needing review
-  const pendingProposals = proposals.filter((p) => p.status === "submitted");
+  const pendingProposals = proposals.filter((p) => proposalPhase(p) === "submitted");
 
   // Threads awaiting Architect reply — excluding threads already
   // in-flight via the queue (Phase 2c ckpt-B, see note above).
   const threadsAwaitingArchitect = threads.filter(
-    (t) => t.status === "active" && t.currentTurn === "architect" && !inFlightThreadIds.has(t.id)
+    (t) => threadPhase(t) === "active" && t.currentTurn === "architect" && !inFlightThreadIds.has(t.id)
   );
 
   // Clarification requests
   const clarificationsPending = tasks.filter(
-    (t) => t.status === "input_required"
+    (t) => taskPhase(t) === "input_required"
   );
 
   // Converged threads awaiting closure
   const convergedThreads = threads.filter(
-    (t) => t.status === "converged"
+    (t) => threadPhase(t) === "converged"
   );
 
   // ── Anomalous States Detection ──────────────────────────────────
@@ -87,17 +103,17 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
   // Orphaned reviews: task in in_review but reviewRef already set
   // (review was stored but state transition failed — the deadlock scenario)
   const orphanedReviews = tasks.filter(
-    (t) => t.status === "in_review" && t.reviewRef !== null
+    (t) => taskPhase(t) === "in_review" && t.reviewRef !== null
   );
 
   // Dangling proposals: approved but no scaffold result and has execution plan
   const danglingProposals = proposals.filter(
-    (p) => p.status === "approved" && p.executionPlan && !p.scaffoldResult
+    (p) => proposalPhase(p) === "approved" && p.executionPlan && !p.scaffoldResult
   );
 
   // Escalated tasks: tasks stuck in escalated state requiring Director intervention
   const escalatedTasks = tasks.filter(
-    (t) => t.status === "escalated"
+    (t) => taskPhase(t) === "escalated"
   );
 
   const anomalyCount = orphanedReviews.length + danglingProposals.length + escalatedTasks.length;

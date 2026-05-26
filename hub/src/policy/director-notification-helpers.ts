@@ -42,6 +42,7 @@ import type {
   IMessageStore,
   Message,
 } from "../entities/index.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 
 /**
  * Mission-56 W5: severity + source enums inlined here from the deleted
@@ -140,7 +141,8 @@ export function projectMessageToDirectorNotification(
   if (typeof p.title !== "string") return null;
   if (typeof p.details !== "string") return null;
 
-  const acknowledged = m.status === "acked";
+  // mission-89 Phase 4 (bug-137): envelope-aware status read.
+  const acknowledged = phaseFromEntity(m) === "acked";
   return {
     id: m.id,
     severity: p.severity as NotificationSeverity,

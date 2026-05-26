@@ -18,6 +18,7 @@ import type { ProposedExecutionPlan, ScaffoldResult } from "../state.js";
 import { callerLabels } from "./labels.js";
 import { resolveCreatedBy } from "./caller-identity.js";
 import { dispatchProposalSubmitted } from "./dispatch-helpers.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 
 // ── Scaffolding ─────────────────────────────────────────────────────
 
@@ -352,7 +353,8 @@ async function createProposalReview(args: Record<string, unknown>, ctx: IPolicyC
     // Emit task_issued for each created task that is pending (not blocked)
     for (const t of scaffoldData.tasks) {
       const task = await ctx.stores.task.getTask(t.generatedId);
-      if (task && task.status === "pending") {
+      // mission-89 Phase 4 (bug-137): envelope-aware status read.
+      if (task && phaseFromEntity(task) === "pending") {
         await ctx.dispatch("task_issued", {
           taskId: t.generatedId,
           directive: (task.description || task.title || "").substring(0, 200),

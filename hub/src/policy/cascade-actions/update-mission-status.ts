@@ -16,6 +16,7 @@ import { registerActionSpec } from "../cascade-spec.js";
 import { UpdateMissionStatusActionPayloadSchema } from "../staged-action-payloads.js";
 import { dispatchMissionActivated } from "../dispatch-helpers.js";
 import type { Mission, MissionStatus } from "../../entities/mission.js";
+import { phaseFromEntity } from "../../entities/shape-helpers.js";
 
 const VALID_MISSION_STATUSES: ReadonlySet<string> = new Set<MissionStatus>(["proposed", "active", "completed", "abandoned"]);
 
@@ -57,12 +58,14 @@ registerActionSpec({
   auditDetails: (entity, action, thread, summary) => {
     const p = action.payload as { missionId: string; status: string };
     const mission = entity as Mission | null;
-    const prior = mission ? (lastTarget.get(p.missionId) ?? mission.status) : "(unknown)";
-    return `Mission ${p.missionId} status transitioned to ${p.status} from thread ${thread.id}/${action.id}. Prior resolved target: ${prior}. Summary: ${summary}.`;
+    // mission-89 Phase 4 (bug-137): envelope-aware status read.
+    const priorPhase = mission ? (lastTarget.get(p.missionId) ?? phaseFromEntity(mission)) : "(unknown)";
+    return `Mission ${p.missionId} status transitioned to ${p.status} from thread ${thread.id}/${action.id}. Prior resolved target: ${priorPhase ?? "(unknown)"}. Summary: ${summary}.`;
   },
   dispatch: async (ctx, entity, _thread) => {
     const mission = entity as Mission;
-    if (mission.status === "active" && lastTarget.get(mission.id) === "active") {
+    // mission-89 Phase 4 (bug-137): envelope-aware status read.
+    if (phaseFromEntity(mission) === "active" && lastTarget.get(mission.id) === "active") {
       await dispatchMissionActivated(ctx, mission);
       lastTarget.delete(mission.id);
     }

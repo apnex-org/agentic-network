@@ -145,14 +145,23 @@ export class MissionRepositorySubstrate implements IMissionStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Mission | null> {
-    const { items } = await this.substrate.list<Mission>(KIND, {
+    // mission-89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback.
+    const envelopeResult = await this.substrate.list<Mission>(KIND, {
+      filter: {
+        "metadata.sourceThreadId": key.sourceThreadId,
+        "metadata.sourceActionId": key.sourceActionId,
+      },
+      limit: 1,
+    });
+    if (envelopeResult.items[0]) return this.hydrate(envelopeResult.items[0]);
+    const legacyResult = await this.substrate.list<Mission>(KIND, {
       filter: {
         sourceThreadId: key.sourceThreadId,
         sourceActionId: key.sourceActionId,
       },
       limit: 1,
     });
-    return items[0] ? this.hydrate(items[0]) : null;
+    return legacyResult.items[0] ? this.hydrate(legacyResult.items[0]) : null;
   }
 
   async getMission(missionId: string): Promise<Mission | null> {
@@ -161,12 +170,31 @@ export class MissionRepositorySubstrate implements IMissionStore {
   }
 
   async listMissions(statusFilter?: MissionStatus): Promise<Mission[]> {
-    const substrateFilter: Record<string, string> = {};
-    if (statusFilter) substrateFilter.status = statusFilter;
-    const { items } = await this.substrate.list<Mission>(KIND, {
-      filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
+    // mission-89 Phase 4 (bug-138 systemic): no statusFilter → single fetch.
+    // With statusFilter: envelope (status.phase) + legacy (status) UNION via 2
+    // queries — defense-in-depth across the dual-shape data window per W9 Q4
+    // refinement (post-W11 production rows envelope; some test fixtures legacy).
+    if (!statusFilter) {
+      const { items } = await this.substrate.list<Mission>(KIND, { limit: 500 });
+      return Promise.all(items.map((m) => this.hydrate(m)));
+    }
+    const envelopeResult = await this.substrate.list<Mission>(KIND, {
+      filter: { "status.phase": statusFilter },
       limit: 500,
     });
+    const legacyResult = await this.substrate.list<Mission>(KIND, {
+      filter: { status: statusFilter },
+      limit: 500,
+    });
+    // De-dupe by id (envelope-shape rows would NOT match legacy filter, but
+    // mixed-shape rows might match both; preserve envelope-version on dup).
+    const seen = new Set<string>();
+    const items: Mission[] = [];
+    for (const m of [...envelopeResult.items, ...legacyResult.items]) {
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      items.push(m);
+    }
     return Promise.all(items.map((m) => this.hydrate(m)));
   }
 
