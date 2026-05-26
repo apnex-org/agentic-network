@@ -2,7 +2,7 @@
 
 **Mission:** M-Substrate-OCC-Primitive (idea-322 anchor)
 **Class:** substrate-extension (compound: substrate primitive + Hub-consumer audit)
-**Status:** v0.1 WORKING DRAFT
+**Status:** v1.0 RATIFIED — engineer Design-pass round-1 audit 2026-05-26 05:49 (sub-dispositions concurred); architect round-2 ratify with v1.0 updates applied
 **Author:** architect (lily) — direct-to-Design dispatch per Director ratification 2026-05-25 (skip-direct-to-Design route-a per Idea Triage Protocol skip-criteria; lean-defaults applied for Q1/Q2/Q3)
 **Anchor bugs:** bug-127 (M18 assertIdentity OCC contention; major), bug-137 (Hub update_* envelope-aware status comparison; minor; 3+ confirmed callsites), bug-97 (mission-83 W5.4 Counter-collision; sibling-pattern resolved-but-not-systemic)
 
@@ -42,34 +42,72 @@ Confirmed callsites (rapid audit 2026-05-25): update_mission, update_idea, updat
 
 ## §2 Architectural decision (lean-defaults per Director skip-Survey ratification)
 
-### Q1 — withAdvisoryLock primitive: architecture + location
+### Q1 — withAdvisoryLock primitive: architecture + location (v1.0 — namespace-split form per engineer Q2)
 
-**Decision: (c) Postgres pg_advisory_lock delegation primitive** — thin wrapper at substrate layer.
+**Decision: (c) Postgres pg_advisory_lock delegation primitive** — thin wrapper at substrate layer + namespace-split keyspace via 2-arg form per engineer Q2 sub-disposition (b) + timeout-via-poll-loop per engineer Q1 sub-disposition.
 
 ```typescript
 // hub/src/storage-substrate/advisory-lock.ts (NEW)
+
+export const LOCK_CLASS = {
+  assertIdentity: 1,
+  Counter: 2,
+  // Add new classes here; reserve up to int32 max
+} as const;
+export type LockClass = typeof LOCK_CLASS[keyof typeof LOCK_CLASS];
+
+export class LockAcquisitionTimeoutError extends Error {
+  constructor(public lockClass: LockClass, public lockKey: string, public elapsedMs: number) {
+    super(`pg_advisory_lock acquisition timeout after ${elapsedMs}ms (class=${lockClass}, key=${lockKey})`);
+  }
+}
+
 export async function withAdvisoryLock<T>(
   substrate: HubStorageSubstrate,
+  lockClass: LockClass,
   lockKey: string,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  opts?: { timeoutMs?: number; latencyWarnMs?: number },
 ): Promise<T> {
-  const numericKey = hashToInt64(lockKey);  // postgres advisory locks take int64
-  await substrate.query("SELECT pg_advisory_lock($1)", [numericKey]);
+  const numericKey = hashToInt32(lockKey);  // 2-arg form: int4 class + int4 key
+  const startedAt = Date.now();
+  const timeoutMs = opts?.timeoutMs;
+  const latencyWarnMs = opts?.latencyWarnMs ?? 100;
+
+  // Acquire via pg_try_advisory_lock poll-loop (NOT SET lock_timeout — session-scoped + needs RESET in pooled-conn contexts)
+  while (true) {
+    const { rows } = await substrate.query(
+      "SELECT pg_try_advisory_lock($1, $2) AS acquired",
+      [lockClass, numericKey],
+    );
+    if (rows[0].acquired) break;
+    const elapsed = Date.now() - startedAt;
+    if (timeoutMs !== undefined && elapsed >= timeoutMs) {
+      throw new LockAcquisitionTimeoutError(lockClass, lockKey, elapsed);
+    }
+    await sleep(10);  // 10ms poll cadence
+  }
+
+  const acquiredAt = Date.now();
+  const acquireLatencyMs = acquiredAt - startedAt;
+  if (acquireLatencyMs > latencyWarnMs) {
+    console.warn(`[advisory-lock] acquire latency ${acquireLatencyMs}ms exceeded ${latencyWarnMs}ms (class=${lockClass}, key=${lockKey})`);
+  }
+
   try {
     return await fn();
   } finally {
-    await substrate.query("SELECT pg_advisory_unlock($1)", [numericKey]);
+    await substrate.query("SELECT pg_advisory_unlock($1, $2)", [lockClass, numericKey]);
   }
 }
 ```
 
-Rationale:
-- Minimal surface area (single function)
-- Uses postgres native mechanism (well-tested at scale)
-- Session-scoped (auto-released on session disconnect — no orphan locks)
-- Composable with `try/finally` pattern
-- No new tables / state required
-- Memory + postgres substrate versions both supportable
+Rationale (v1.0 refinements):
+- **Namespace-split via 2-arg form** — `pg_advisory_lock(int4 class, int4 key)` gives isolated keyspaces per class. assertIdentity:fingerprint-A can NEVER collide with Counter:Idea structurally. Per engineer Q2 disposition: CRC32 (int32; ~100% collision @ 100k keys) was wrong choice; 2-arg form eliminates cross-class collisions; intra-class collisions remain at ~3e-10 per xxhash64 OR int32 hash (acceptable for sparse keyspace).
+- **Timeout via `pg_try_advisory_lock` poll-loop** (NOT `SET lock_timeout` which is session-scoped + needs RESET in pooled-conn contexts) — engineer Q1 sub-disposition; correct architectural choice.
+- **Distinct `LockAcquisitionTimeoutError`** — caller can distinguish lock-timeout from fn-throws-in-callback (different recovery semantics). Tests assert this discriminability.
+- **Observability via latency-warn log** (default 100ms threshold; per-callsite opt-out via `latencyWarnMs: Infinity`) — replaces W10-ext retry-budget-counter observability that's retired in Phase 5.
+- Other rationale unchanged: minimal surface; native mechanism; session-scoped auto-release; composable try/finally; no new tables/state.
 
 ### Q2 — Consumer migration scope: how aggressive
 
@@ -81,13 +119,13 @@ Rationale:
 - Defers (c) full audit to follow-on idea if more callsites surface
 - Limits regression-risk vs full-substrate-audit scope
 
-Migration pattern (per callsite):
+Migration pattern (per callsite; v1.0 namespace-split form):
 ```typescript
 // Before
 for (let attempt = 0; attempt < 8; attempt++) { /* OCC race + retry */ }
 
-// After
-return await withAdvisoryLock(substrate, `assertIdentity:${fingerprint}`, async () => {
+// After (v1.0 — namespace-split per engineer Q2 disposition)
+return await withAdvisoryLock(substrate, LOCK_CLASS.assertIdentity, fingerprint, async () => {
   /* single-attempt lookup + putIfMatch */
 });
 ```
@@ -141,27 +179,34 @@ Rationale:
 - `hub/src/entities/substrate-counter.ts` (per mission-83 W5.4 fix-site) — wrap counter-issue + createOnly inside `withAdvisoryLock(substrate, 'Counter:'+kind, ...)`
 - Update tests: counter-collision concurrent-call test (testcontainer; multiple concurrent counter-issue calls serialize)
 
-### Phase 4 — Hub-consumer envelope-aware audit (bug-137 fold)
+### Phase 4 — Hub-consumer envelope-aware audit (bug-137 fold; v1.0 file-list expanded per engineer Q4 scope-finding)
 
-- `hub/src/entities/shape-helpers.ts` — add `phaseFromEntity(entity)` per Q3 (extend existing file from W9 + W9.1)
-- Audit + patch:
+- `hub/src/entities/shape-helpers.ts` — add `phaseFromEntity(entity)` per Q3 (extend existing file from W9 + W9.1) + null-guard error message clarity per engineer Observation 3
+- **Audit + patch — file-list expanded per engineer Q4 grep-walk** (originally 9 files; expanded to 13+ confirmed; impl-time grep-walk replaces this list with actual count, both pre/post documented in commit):
   - `hub/src/policy/idea-policy.ts` (update_idea)
   - `hub/src/policy/mission-policy.ts` (update_mission)
   - `hub/src/policy/bug-policy.ts` (update_bug)
-  - `hub/src/policy/proposal-policy.ts` (update_proposal + close_proposal)
+  - `hub/src/policy/proposal-policy.ts` (update_proposal + close_proposal + line 355 sub-entity task.status check)
   - `hub/src/policy/turn-policy.ts` (update_turn)
   - `hub/src/policy/task-policy.ts` (update_task)
-  - `hub/src/policy/review-policy.ts` (review state transitions)
-  - Plus close_thread / force_close_thread / leave_thread state checks
+  - `hub/src/policy/review-policy.ts` (review state transitions + line 43 task.status === "completed")
+  - `hub/src/policy/thread-policy.ts` (close_thread / force_close_thread / leave_thread state checks; lines 537/634/643 explicit confirmation)
+  - **NEW (engineer Q4 grep)**: `hub/src/policy/cascade-actions/update-mission-status.ts:65` (`mission.status === "active"`)
+  - **NEW**: `hub/src/policy/preconditions.ts:70` (`thread?.status === "active"`)
+  - **NEW**: `hub/src/policy/system-policy.ts:51,59,71` (Task status compares: in_review/completed/failed/active)
+- **Phase 4 impl protocol:** grep-walk ALL of `hub/src/policy/*.ts` (and any `*-policy.ts` outside policy/) for `\.status === "[a-z_]+"` patterns; replace listed file-list with grep-derived list at impl-time; commit message documents both pre-grep + post-grep counts (closing-audit pattern)
 - Tests: per-callsite unit test asserting both legacy-flat string + envelope-object status comparison works; regression-guard ensures `phaseFromEntity` never throws
+- **Null-status guard** (engineer Observation 3): at every update_* callsite, if `phaseFromEntity(current) === null`, return clearer error `"Entity has no readable status; envelope shape may be malformed"` rather than the FSM-rejection error path's null/object stringification
 
-### Phase 5 — Dispositive verification + cleanup
+### Phase 5 — Dispositive verification + cleanup (v1.0 — engineer Observations 2 + 4 absorbed)
 
 - Architect dispositive tests post-rebuild:
   - `update_mission(mission-89, status='completed')` via shim → succeeds (was the bug-137 mission-88 close blocker)
   - `update_idea + update_bug` via shim → succeeds
   - 2 concurrent `assertIdentity` (architect bypass + shim) → both succeed within wall-time
+  - **Observation 2 fold:** post-deploy, restart greg-shim 5x with active lily shim; grep `~/work-dir/.ois/shim.log` for `parse_failed`; **zero occurrences = pass** (adapter handshake parse_failed eliminated)
 - Retire W10-ext per-callsite 8-attempt budget code (was the symptomatic fix; now obviated by primitive)
+- **Observation 4 fold:** retire code-emission of `"occ_contention_exhausted"` AssertIdentityFailure code (primitive replaces emit-site); KEEP enum-value with `@deprecated` JSDoc + retain test-coverage for the enum-discriminator path (callers may have logged; future regression-grep value). Formal enum-removal deferred to follow-on idea.
 - File post-mission methodology calibration #25 candidate: substrate-primitive-extraction-pattern (when 2+ callsites share a defect-class, extract primitive vs fix per-callsite)
 
 ## §4 Test plan
@@ -170,10 +215,14 @@ Rationale:
 - `advisory-lock.test.ts` — primitive correctness (acquire/release/serialize/parallelize/exception-safe)
 - `phaseFromEntity` tests in `shape-helpers.test.ts` extension — legacy-flat / envelope / missing / null / non-string / non-object
 
-### 4.2 Integration tests (testcontainer postgres)
-- assertIdentity concurrent-binding (2 callers; both succeed; serialized via lock)
-- Counter concurrent-issue (3 callers; sequential int allocation; no duplicates)
-- Hub policy update_* — legacy-shape row + envelope-shape row both accept status='completed'
+### 4.2 Integration tests (testcontainer postgres — REQUIRED per engineer Observation 1)
+
+**Engineer Observation 1 fold:** memory-substrate variant is contention-mute (in-process mutex map doesn't reflect real-pg lock semantics; mission-83 W5.4 Counter-collision was real-pg-only). **Tests verifying contention-serialization MUST hit testcontainer postgres**; tests where lock-presence is incidental may use memory variant.
+
+- assertIdentity concurrent-binding (2 callers; both succeed; serialized via lock) — **testcontainer pg required**
+- Counter concurrent-issue (3 callers; sequential int allocation; no duplicates) — **testcontainer pg required**
+- Hub policy update_* — legacy-shape row + envelope-shape row both accept status='completed' — memory variant OK
+- LockAcquisitionTimeoutError discriminability test (per engineer Q1 sub-disposition; assert distinct from holder-throws-in-fn errors) — testcontainer pg required
 
 ### 4.3 Regression tests
 - W10-ext per-callsite retry-budget tests deleted (replaced by primitive-locking; no retry needed)
