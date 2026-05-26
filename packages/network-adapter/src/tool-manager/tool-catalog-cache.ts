@@ -33,7 +33,10 @@
  * the primary flow):
  *   - missing file:           readCache returns null
  *   - parse error:            readCache returns null + logs
- *   - schema-version mismatch: readCache returns null
+ *   - schema-version mismatch: readCache returns null + logs +
+ *                              unlinks the stale file (bug-114
+ *                              fallback-gap hardening — forces clean
+ *                              rebuild on next bootstrap)
  *   - $WORK_DIR readonly:     writeCache logs + no-ops
  *   - disk full:              writeCache logs + no-ops
  */
@@ -108,8 +111,21 @@ export function readCache(
       !Array.isArray(parsed.catalog)
     ) {
       log?.(
-        `[tool-catalog-cache] readCache: cache invalid (schema/shape mismatch) at ${path}`,
+        `[tool-catalog-cache] readCache: cache invalid (schema/shape mismatch) at ${path} — unlinking to force clean rebuild`,
       );
+      // bug-114 fallback-gap hardening (2026-05-26): unlink the stale
+      // file so the next bootstrap doesn't repeatedly read-then-discard
+      // it. Without this, every cold-start after a
+      // CATALOG_SCHEMA_VERSION bump re-encounters the same stale file
+      // until operator intervention. Best-effort; primary flow tolerates
+      // unlink failures.
+      try {
+        unlinkSync(path);
+      } catch (unlinkErr) {
+        log?.(
+          `[tool-catalog-cache] readCache: unlink failed (non-fatal): ${(unlinkErr as Error).message ?? unlinkErr}`,
+        );
+      }
       return null;
     }
     return {

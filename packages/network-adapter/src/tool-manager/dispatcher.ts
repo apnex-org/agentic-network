@@ -24,6 +24,8 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
   InitializeRequestSchema,
+  McpError,
+  ErrorCode,
 } from "@modelcontextprotocol/sdk/types.js";
 import { MessageRouter, SeenIdCache } from "@apnex/message-router";
 import type {
@@ -66,8 +68,11 @@ export interface SharedDispatcherOptions {
    * Late-binding agent accessor. Some hosts (opencode) construct the
    * dispatcher before the McpAgentClient connection is established.
    * Returning `null` means "not connected yet" — the dispatcher
-   * surfaces a "Hub not connected" error envelope on CallTool and an
-   * empty tool-list on ListTools.
+   * surfaces a "Hub not connected" error envelope on CallTool and a
+   * structured MCP error on ListTools after a bounded retry window
+   * (bug-114 fallback-gap fix). Silent empty-tool-list response was
+   * retired 2026-05-26 — host MCP clients (e.g. Claude Code) cached
+   * the empty list as the authoritative surface, masking comms-loss.
    */
   getAgent: () => McpAgentClient | null;
 
@@ -288,6 +293,15 @@ export function createSharedDispatcher(
     return !!agent && agent.isConnected !== false;
   }
 
+  // bug-114 fallback-gap retry budget. Bootstrap-path ListTools races
+  // the Hub handshake on cold-start; this short retry window absorbs
+  // the narrow gap before raising a structured error. Worst-case
+  // latency: (LIST_TOOLS_RETRY_ATTEMPTS - 1) × LIST_TOOLS_RETRY_DELAY_MS
+  // (~600ms) before the error surfaces. Acceptable for cold-start;
+  // probe path remains <50ms via cached catalog.
+  const LIST_TOOLS_RETRY_ATTEMPTS = 4;
+  const LIST_TOOLS_RETRY_DELAY_MS = 200;
+
   // ADR-017 Phase 1.1: SSE thread_message events carry queueItemId
   // inline. Capture into pendingActionMap so the next settling
   // create_thread_reply can auto-inject sourceQueueItemId — even if
@@ -502,7 +516,9 @@ export function createSharedDispatcher(
             currentRevision,
           );
           if (valid) {
-            log("[ListTools] served from cache");
+            log(
+              `[ListTools] served from cache (${cached.catalog.length} tools)`,
+            );
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return { tools: cached.catalog as any[] };
           }
@@ -516,17 +532,58 @@ export function createSharedDispatcher(
 
       if (opts.listToolsGate) await opts.listToolsGate;
 
-      const agent = opts.getAgent();
-      if (!isUsableAgent(agent)) return { tools: [] };
+      // bug-114 fallback-gap fix (2026-05-26): on cold-start the
+      // bootstrap path can race the Hub transport's connection
+      // completion — `listToolsGate` is currently undefined in every
+      // host shim, so the await above is a no-op. Pre-fix the
+      // handler returned `{ tools: [] }` silently when
+      // `isUsableAgent(agent)` was false, and host MCP clients
+      // (Claude Code) cached the empty list as the authoritative
+      // tool surface for the session — invisible comms-loss across
+      // the agent population, especially after a
+      // CATALOG_SCHEMA_VERSION bump invalidated all on-disk caches.
+      //
+      // Post-fix: short bounded retry (LIST_TOOLS_RETRY_ATTEMPTS ×
+      // LIST_TOOLS_RETRY_DELAY_MS) to absorb the narrow handshake
+      // race, then raise a structured MCP error (-32603 InternalError)
+      // so the host surfaces an actionable failure instead of
+      // caching `{ tools: [] }`. Bootstrap-completed telemetry emits
+      // on every path exit so silent zero-returns are architecturally
+      // impossible.
+      let agent: McpAgentClient | null = null;
+      for (let attempt = 1; attempt <= LIST_TOOLS_RETRY_ATTEMPTS; attempt++) {
+        const candidate = opts.getAgent();
+        if (isUsableAgent(candidate)) {
+          agent = candidate;
+          break;
+        }
+        if (attempt < LIST_TOOLS_RETRY_ATTEMPTS) {
+          log(
+            `[ListTools] adapter not ready (attempt ${attempt}/${LIST_TOOLS_RETRY_ATTEMPTS}) — retrying in ${LIST_TOOLS_RETRY_DELAY_MS}ms`,
+          );
+          await new Promise((resolve) =>
+            setTimeout(resolve, LIST_TOOLS_RETRY_DELAY_MS),
+          );
+        }
+      }
+      if (!agent) {
+        log(
+          `[ListTools] bootstrap failed: adapter not ready after ${LIST_TOOLS_RETRY_ATTEMPTS} attempts — raising structured error`,
+        );
+        throw new McpError(
+          ErrorCode.InternalError,
+          "Adapter not ready: Hub transport has not connected yet. Retry the request.",
+        );
+      }
 
       // Route through agent.listTools() so any configured cognitive
       // pipeline's onListTools middleware (ToolDescriptionEnricher,
       // ResponseSummarizer, etc.) observes and modifies the surface.
       const tools = await agent.listTools();
 
-      // Best-effort cache write-back. Failures log + continue; the
-      // primary response is already on its way to the host.
-      if (opts.persistCatalog) {
+      // Best-effort cache write-back. Skip on empty results — never
+      // poison the cache with a zero-tool catalog (bug-114 hardening).
+      if (opts.persistCatalog && tools.length > 0) {
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           opts.persistCatalog(tools as any[]);
@@ -535,7 +592,12 @@ export function createSharedDispatcher(
             `[ListTools] persistCatalog hook threw (non-fatal): ${(err as Error).message ?? err}`,
           );
         }
+      } else if (opts.persistCatalog && tools.length === 0) {
+        log(
+          "[ListTools] persistCatalog skipped (zero tools — refusing to poison cache)",
+        );
       }
+      log(`[ListTools] bootstrap completed: ${tools.length} tools surfaced`);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return { tools: tools as any[] };
     });
