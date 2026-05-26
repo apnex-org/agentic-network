@@ -318,6 +318,73 @@ class MemoryStorageSubstrate implements HubStorageSubstrate {
     /* in-memory — nothing to release */
   }
 
+  // ─── Advisory-lock (mission-89 Phase 1) ───────────────────────────────────
+  //
+  // In-process Map<`${class}:${key}`, Promise> chain. Each acquire awaits the
+  // current chain-tail then becomes the new tail; release flips a single-shot
+  // resolver so the next waiter unblocks. Provides JS-process serialization
+  // semantics — adequate for unit tests where lock-presence is incidental;
+  // NOT a substitute for testcontainer pg per Design §4.2 Observation 1.
+  private readonly lockChain = new Map<string, Promise<void>>();
+
+  async withAdvisoryLock<T>(
+    lockClass: number,
+    lockKey: number,
+    fn: () => Promise<T>,
+    opts?: { timeoutMs?: number; latencyWarnMs?: number },
+  ): Promise<T> {
+    const compositeKey = `${lockClass}:${lockKey}`;
+    const startedAt = Date.now();
+    const timeoutMs = opts?.timeoutMs;
+    const latencyWarnMs = opts?.latencyWarnMs ?? 100;
+
+    const prior = this.lockChain.get(compositeKey) ?? Promise.resolve();
+    let releaseNext: () => void = () => {};
+    const next = new Promise<void>((resolve) => { releaseNext = resolve; });
+    this.lockChain.set(compositeKey, prior.then(() => next));
+
+    try {
+      if (timeoutMs !== undefined) {
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          prior,
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(async () => {
+              const elapsed = Date.now() - startedAt;
+              const { LockAcquisitionTimeoutError } = await import("./advisory-lock.js");
+              reject(new LockAcquisitionTimeoutError(lockClass, String(lockKey), elapsed));
+            }, timeoutMs);
+          }),
+        ]).finally(() => { if (timeoutHandle) clearTimeout(timeoutHandle); });
+      } else {
+        await prior;
+      }
+
+      const acquireLatencyMs = Date.now() - startedAt;
+      if (acquireLatencyMs > latencyWarnMs && latencyWarnMs !== Infinity) {
+        console.warn(
+          `[advisory-lock] acquire latency ${acquireLatencyMs}ms exceeded ${latencyWarnMs}ms ` +
+            `(class=${lockClass}, key=${lockKey})`,
+        );
+      }
+
+      return await fn();
+    } finally {
+      releaseNext();
+      // Clean up the chain entry if we're still the tail (best-effort GC).
+      const currentTail = this.lockChain.get(compositeKey);
+      // A waiter may have replaced the tail already; only drop the entry if
+      // chain is fully drained (tail resolves to undefined after settle).
+      if (currentTail) {
+        currentTail.then(() => {
+          if (this.lockChain.get(compositeKey) === currentTail) {
+            this.lockChain.delete(compositeKey);
+          }
+        }).catch(() => {/* swallow chain errors here; caller saw fn-throw */});
+      }
+    }
+  }
+
   // ─── Internal helpers ─────────────────────────────────────────────────────
 
   private getKindStore(kind: string): Map<string, EntityRow> {

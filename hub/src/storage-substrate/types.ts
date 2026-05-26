@@ -200,6 +200,41 @@ export interface HubStorageSubstrate {
   snapshot(targetPath: string): Promise<SnapshotRef>;
   restore(source: SnapshotRef): Promise<void>;
 
+  // ── Advisory-lock primitive (mission-89 Phase 1; bug-127/bug-97 sibling) ──
+  /**
+   * Acquire a substrate-level advisory lock identified by (lockClass, lockKey),
+   * run `fn`, then release the lock. Atomic try/finally semantics — lock is
+   * released even if `fn` throws.
+   *
+   * Postgres impl: `pg_try_advisory_lock(int4, int4)` poll-loop on a pinned
+   * pool-connection (session-scoped lock semantics require single-connection
+   * pinning across acquire + work + release); 2-arg form gives per-class
+   * namespace isolation (assertIdentity:fingerprint cannot collide with
+   * Counter:kind structurally). Session auto-release on connection drop
+   * eliminates orphan-lock risk.
+   *
+   * Memory impl: in-process Map<`${class}:${key}`, queue> for in-JS-process
+   * serialization. NOT a substitute for real-pg contention testing — per
+   * Design §4.2 Observation 1, tests verifying contention-correctness MUST
+   * use testcontainer postgres; memory variant is incidental-lock support.
+   *
+   * Options:
+   *   - `timeoutMs`: max wall-time waiting to acquire. Throws
+   *     `LockAcquisitionTimeoutError` (from `./advisory-lock.ts`) on timeout.
+   *     Default: undefined (wait indefinitely).
+   *   - `latencyWarnMs`: emit `console.warn` if acquire-latency exceeds this.
+   *     Default: 100. Set `Infinity` to disable.
+   *
+   * Callers SHOULD invoke via the `withAdvisoryLock()` helper in
+   * `./advisory-lock.ts` which handles string→int hashing + typed LockClass.
+   */
+  withAdvisoryLock<T>(
+    lockClass: number,
+    lockKey: number,
+    fn: () => Promise<T>,
+    opts?: { timeoutMs?: number; latencyWarnMs?: number },
+  ): Promise<T>;
+
   // ── Lifecycle ─────────────────────────────────────────────────────────────
   /**
    * Release the substrate's connection resources (the postgres connection

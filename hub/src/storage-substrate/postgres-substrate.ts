@@ -332,6 +332,75 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
     throw new Error("W1 substrate-shell — snapshot/restore lands at W5+ canonical hub-snapshot.sh wrapper");
   }
 
+  // ── Advisory-lock primitive (mission-89 Phase 1; bug-127/bug-97 sibling) ──
+  //
+  // 2-arg form `pg_try_advisory_lock(int4, int4)` for namespace-split keyspace
+  // per Design §2 Q1 v1.0. The HOLDER pins one pool-connection across acquire
+  // + fn + release because pg_advisory_lock is SESSION-scoped — acquire on
+  // conn-A, release on conn-B (different pool connections) breaks the
+  // protocol. POLL-waiters release their connection between failed polls so a
+  // K-concurrent-caller storm doesn't deadlock on a pool-size-K limit.
+  //
+  // Session auto-release on connection drop eliminates orphan-lock risk;
+  // try/finally guarantees release on fn-throw.
+
+  async withAdvisoryLock<T>(
+    lockClass: number,
+    lockKey: number,
+    fn: () => Promise<T>,
+    opts?: { timeoutMs?: number; latencyWarnMs?: number },
+  ): Promise<T> {
+    const startedAt = Date.now();
+    const timeoutMs = opts?.timeoutMs;
+    const latencyWarnMs = opts?.latencyWarnMs ?? 100;
+
+    // Poll-acquire: take a conn, try-lock, release conn between failed polls.
+    // Only the SUCCESSFUL acquire pins its connection (the holder-conn).
+    let holderClient: pg.PoolClient | undefined;
+    while (true) {
+      const client = await this.pool.connect();
+      try {
+        const r = await client.query<{ acquired: boolean }>(
+          `SELECT pg_try_advisory_lock($1, $2) AS acquired`,
+          [lockClass, lockKey],
+        );
+        if (r.rows[0]?.acquired === true) {
+          holderClient = client;  // pin this conn until release
+          break;
+        }
+      } catch (e) {
+        client.release();
+        throw e;
+      }
+      client.release();  // failed poll → release conn so pool isn't starved
+      const elapsed = Date.now() - startedAt;
+      if (timeoutMs !== undefined && elapsed >= timeoutMs) {
+        const { LockAcquisitionTimeoutError } = await import("./advisory-lock.js");
+        throw new LockAcquisitionTimeoutError(lockClass, String(lockKey), elapsed);
+      }
+      await new Promise<void>((r) => setTimeout(r, 10));  // 10ms poll cadence
+    }
+
+    const acquireLatencyMs = Date.now() - startedAt;
+    if (acquireLatencyMs > latencyWarnMs && latencyWarnMs !== Infinity) {
+      console.warn(
+        `[advisory-lock] acquire latency ${acquireLatencyMs}ms exceeded ${latencyWarnMs}ms ` +
+          `(class=${lockClass}, key=${lockKey})`,
+      );
+    }
+
+    try {
+      return await fn();
+    } finally {
+      try {
+        await holderClient.query(`SELECT pg_advisory_unlock($1, $2)`, [lockClass, lockKey]);
+      } catch (e) {
+        console.warn(`[advisory-lock] release error (class=${lockClass}, key=${lockKey}):`, e);
+      }
+      holderClient.release();
+    }
+  }
+
   /** Close the connection-pool. Called at Hub-shutdown. */
   async close(): Promise<void> {
     await this.pool.end();
