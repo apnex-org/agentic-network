@@ -25,6 +25,13 @@ export type {
 
 export { createPostgresStorageSubstrate } from "./postgres-substrate.js";
 export { createMemoryStorageSubstrate } from "./memory-substrate.js";
+export {
+  LOCK_CLASS,
+  LockAcquisitionTimeoutError,
+  withAdvisoryLock,
+  hashToInt32,
+} from "./advisory-lock.js";
+export type { LockClass, WithAdvisoryLockOptions } from "./advisory-lock.js";
 export { createSchemaReconciler, SchemaReconciler } from "./schema-reconciler.js";
 export type { SchemaReconcilerOptions } from "./schema-reconciler.js";
 export { ALL_SCHEMAS } from "./schemas/all-schemas.js";

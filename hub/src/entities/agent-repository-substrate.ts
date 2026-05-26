@@ -40,6 +40,7 @@
  */
 
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
+import { LOCK_CLASS, withAdvisoryLock } from "../storage-substrate/advisory-lock.js";
 import type {
   IEngineerRegistry,
   Agent,
@@ -324,33 +325,17 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     }
     const fingerprint = computeFingerprint(payload.name);
 
-    // mission-88 W10-ext (bug-127 fix): widen retry budget per Design v1.0 §5.
-    // - 8 attempts with exponential backoff (0/10/25/50/100/250/500/1000ms)
-    // - Jitter ±20% on each delay (prevents lockstep retry under contention)
-    // - 2000ms wall-time cap (per W10-ext Q1 refinement; defensive against
-    //   pathological all-retries-succeed-putIfMatch-but-lookup-races scenarios)
-    // - Per-fingerprint contention observability (log + Tele candidate)
+    // mission-89 Phase 2 (bug-127 systemic-close): single-attempt lookup +
+    // mutate under substrate-level advisory lock (LOCK_CLASS.assertIdentity).
+    // Replaces mission-88 W10-ext 8-attempt retry-budget with exclusive-access
+    // primitive — concurrent callers serialize behind the lock; no OCC race.
+    // Sibling of bug-97 Counter-collision pattern, both closed by primitive.
     //
-    // Sibling of bug-97 Counter-collision pattern per feedback_counter_collision_
-    // substrate_defect_pattern; systemic withAdvisoryLock primitive deferred to
-    // post-mission-88 idea-322 M-Substrate-OCC-Primitive.
-    const RETRY_DELAYS_MS = [0, 10, 25, 50, 100, 250, 500, 1000];
-    const MAX_WALL_TIME_MS = 2000;
-    const retryStartedAt = Date.now();
-    let attemptCount = 0;
-    for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
-      attemptCount = attempt + 1;
-      // Wall-time cap: stop retrying if cumulative elapsed exceeds budget
-      if (Date.now() - retryStartedAt > MAX_WALL_TIME_MS) {
-        break;
-      }
-      // Backoff with jitter (skip on first attempt; baseDelay=0 anyway)
-      if (attempt > 0) {
-        const baseDelay = RETRY_DELAYS_MS[attempt];
-        const jitter = baseDelay * (0.8 + Math.random() * 0.4);  // ±20%
-        await new Promise((r) => setTimeout(r, jitter));
-      }
-      // Lookup by fingerprint via substrate.list with indexed filter
+    // Lock-acquire is wait-indefinitely (no timeoutMs) to preserve drop-in
+    // retry-loop replacement semantics; latency-warn at default 100ms surfaces
+    // contention storms in logs (replaces retry-budget-counter observability).
+    return await withAdvisoryLock(this.substrate, LOCK_CLASS.assertIdentity, fingerprint, async () => {
+      // Lookup by fingerprint via substrate.list with indexed filter.
       const { items } = await this.substrate.list<Agent>(KIND, {
         filter: { fingerprint },
         limit: 1,
@@ -359,7 +344,8 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       const now = new Date().toISOString();
 
       if (!existingAgent) {
-        // First-contact create.
+        // First-contact create. Lock-held → no concurrent creator can win
+        // the race for this fingerprint; createOnly should always succeed.
         const agentId = deriveAgentId(payload.name);
         const advisoryTagsWithAdapterVersion = deriveAdvisoryTags(
           payload.advisoryTags,
@@ -402,8 +388,14 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         };
         const created = await this.substrate.createOnly(KIND, agent);
         if (!created.ok) {
-          // Lost the create race — retry on the lookup-path this iteration.
-          continue;
+          // Defensive: under primitive this shouldn't happen for the same
+          // fingerprint (lock-serialized). Possible across hash-collision
+          // between distinct fingerprints; surface as transient.
+          return {
+            ok: false,
+            code: "occ_contention_exhausted",
+            message: `createOnly conflict under advisory-lock for fingerprint=${fingerprint} — possible hash-collision with concurrent caller; transient.`,
+          };
         }
         if (sessionId) {
           this.sessionToEngineerId.set(sessionId, agentId);
@@ -419,11 +411,15 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         };
       }
 
-      // Re-fetch with revision for CAS-safe update path
+      // Re-fetch with revision for CAS-safe update path.
       const existing = await this.substrate.getWithRevision<Agent>(KIND, existingAgent.id);
       if (!existing) {
-        // Race with delete; retry the lookup
-        continue;
+        // Race with delete between list and getWithRevision; rare; surface.
+        return {
+          ok: false,
+          code: "occ_contention_exhausted",
+          message: `Agent ${existingAgent.id} deleted between lookup and re-fetch for fingerprint=${fingerprint}; transient.`,
+        };
       }
       const agent = normalizeAgentShape(existing.entity);
 
@@ -469,8 +465,14 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
 
       const result = await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
       if (!result.ok) {
-        // OCC lost — retry.
-        continue;
+        // Defensive: under primitive lock, OCC putIfMatch failure for same
+        // fingerprint shouldn't occur (lock-serialized). Possible across non-
+        // assertIdentity writers (e.g., heartbeat-path bumps); surface.
+        return {
+          ok: false,
+          code: "occ_contention_exhausted",
+          message: `putIfMatch conflict under advisory-lock for agentId=${agent.id}, fingerprint=${fingerprint} — non-assertIdentity concurrent writer; transient.`,
+        };
       }
       if (sessionId) {
         this.sessionToEngineerId.set(sessionId, updated.id);
@@ -487,21 +489,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         ...(changedFields.length > 0 ? { changedFields } : {}),
         ...(labelsChanged ? { priorLabels } : {}),
       };
-    }
-
-    // All attempts lost the OCC race OR wall-time cap reached.
-    // mission-88 W10-ext (bug-127 fix): transient retry-eligible code (NOT
-    // role_mismatch which was misclassified as fatal-halt in handshake).
-    const elapsed = Date.now() - retryStartedAt;
-    console.warn(
-      `[AgentRepositorySubstrate] OCC contention exhausted on assertIdentity for fingerprint=${fingerprint} ` +
-        `(${attemptCount} attempts, ${elapsed}ms elapsed)`,
-    );
-    return {
-      ok: false,
-      code: "occ_contention_exhausted",
-      message: `OCC retry budget exhausted on assertIdentity for fingerprint=${fingerprint} (${attemptCount} attempts, ${elapsed}ms elapsed); transient — caller SHOULD retry. If repeated, indicates concurrent-registration storm at scale beyond 8-attempt budget.`,
-    };
+    });
   }
 
   async claimSession(
