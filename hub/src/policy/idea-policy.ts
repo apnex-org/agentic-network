@@ -25,6 +25,7 @@ import {
 } from "./list-filters.js";
 import { dispatchIdeaSubmitted } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -183,15 +184,21 @@ async function updateIdea(args: Record<string, unknown>, ctx: IPolicyContext): P
   if (tags) updates.tags = tags;
   if (text !== undefined) updates.text = text;
 
-  // FSM guard: validate status transition if status is changing
+  // FSM guard: validate status transition if status is changing. mission-89
+  // Phase 4 (bug-137 closure): envelope-shape Idea has status as {phase,...}
+  // not string; use phaseFromEntity to coerce both shapes.
   if (updates.status) {
     const current = await ctx.stores.idea.getIdea(ideaId);
     if (!current) {
       return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Idea not found: ${ideaId}` }) }], isError: true };
     }
-    if (current.status !== updates.status && !isValidTransition(IDEA_FSM, current.status, updates.status)) {
+    const currentPhase = phaseFromEntity(current);
+    if (currentPhase === null) {
+      return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Idea ${ideaId} has no readable status; envelope shape may be malformed` }) }], isError: true };
+    }
+    if (currentPhase !== updates.status && !isValidTransition(IDEA_FSM, currentPhase as IdeaStatus, updates.status)) {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: `Invalid state transition: cannot move idea from '${current.status}' to '${updates.status}'` }) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Invalid state transition: cannot move idea from '${currentPhase}' to '${updates.status}'` }) }],
         isError: true,
       };
     }

@@ -29,6 +29,8 @@ import {
 import type { Task } from "../state.js";
 import { dispatchTaskSpawned } from "./dispatch-helpers.js";
 import { findNextUnissuedPlannedTask } from "../entities/mission.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
+import type { TaskStatus } from "../state.js";
 import { emitDirectorNotification } from "./director-notification-helpers.js";
 
 // ── Task FSM ────────────────────────────────────────────────────────
@@ -205,9 +207,18 @@ async function createReport(args: Record<string, unknown>, ctx: IPolicyContext):
       isError: true,
     };
   }
-  if (!isValidTransition(TASK_FSM, task.status, "in_review")) {
+  // mission-89 Phase 4 (bug-137 closure): envelope-shape Task has status as
+  // {phase,...} not string; use phaseFromEntity to coerce.
+  const taskPhase = phaseFromEntity(task);
+  if (taskPhase === null) {
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Invalid state transition: cannot report on task in '${task.status}' state (must be 'working')` }) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Task ${taskId} has no readable status; envelope shape may be malformed` }) }],
+      isError: true,
+    };
+  }
+  if (!isValidTransition(TASK_FSM, taskPhase as TaskStatus, "in_review")) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Invalid state transition: cannot report on task in '${taskPhase}' state (must be 'working')` }) }],
       isError: true,
     };
   }

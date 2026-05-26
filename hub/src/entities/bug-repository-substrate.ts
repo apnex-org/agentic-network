@@ -182,20 +182,40 @@ export class BugRepositorySubstrate implements IBugStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Bug | null> {
-    const { items } = await this.substrate.list<Bug>(KIND, {
+    // mission-89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback
+    // dual-lookup. Post-W11 cascade-key fields live at metadata.*; pre-W11
+    // (test fixtures + dual-shape data window) still at top-level. Defense-in-
+    // depth per W9 Q4 keep-legacy-branch refinement.
+    const envelopeResult = await this.substrate.list<Bug>(KIND, {
+      filter: {
+        "metadata.sourceThreadId": key.sourceThreadId,
+        "metadata.sourceActionId": key.sourceActionId,
+      },
+      limit: 1,
+    });
+    if (envelopeResult.items[0]) return cloneBug(envelopeResult.items[0]);
+    const legacyResult = await this.substrate.list<Bug>(KIND, {
       filter: {
         sourceThreadId: key.sourceThreadId,
         sourceActionId: key.sourceActionId,
       },
+      limit: 1,
     });
-    return items[0] ? cloneBug(items[0]) : null;
+    return legacyResult.items[0] ? cloneBug(legacyResult.items[0]) : null;
   }
 
   async findBySourceIdeaId(sourceIdeaId: string): Promise<Bug | null> {
-    const { items } = await this.substrate.list<Bug>(KIND, {
-      filter: { sourceIdeaId },
+    // mission-89 Phase 4 (bug-138): envelope-first + legacy fallback dual-lookup.
+    const envelopeResult = await this.substrate.list<Bug>(KIND, {
+      filter: { "metadata.sourceIdeaId": sourceIdeaId },
+      limit: 1,
     });
-    return items[0] ? cloneBug(items[0]) : null;
+    if (envelopeResult.items[0]) return cloneBug(envelopeResult.items[0]);
+    const legacyResult = await this.substrate.list<Bug>(KIND, {
+      filter: { sourceIdeaId },
+      limit: 1,
+    });
+    return legacyResult.items[0] ? cloneBug(legacyResult.items[0]) : null;
   }
 
   // ── Internal CAS retry loop (preserves Option Y per-entity logic) ───────

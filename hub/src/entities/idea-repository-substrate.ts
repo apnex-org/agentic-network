@@ -119,15 +119,24 @@ export class IdeaRepositorySubstrate implements IIdeaStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Idea | null> {
-    // Substrate-API list with idea_cascade_idx (SchemaDef v2 indexed)
-    const { items } = await this.substrate.list<Idea>(KIND, {
+    // Substrate-API list with idea_cascade_idx (SchemaDef v2 indexed). mission-
+    // 89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback dual-lookup.
+    const envelopeResult = await this.substrate.list<Idea>(KIND, {
+      filter: {
+        "metadata.sourceThreadId": key.sourceThreadId,
+        "metadata.sourceActionId": key.sourceActionId,
+      },
+      limit: 1,
+    });
+    if (envelopeResult.items[0]) return cloneIdea(envelopeResult.items[0]);
+    const legacyResult = await this.substrate.list<Idea>(KIND, {
       filter: {
         sourceThreadId: key.sourceThreadId,
         sourceActionId: key.sourceActionId,
       },
       limit: 1,
     });
-    return items[0] ? cloneIdea(items[0]) : null;
+    return legacyResult.items[0] ? cloneIdea(legacyResult.items[0]) : null;
   }
 
   // ── Internal CAS retry loop (Design v1.4 getWithRevision + putIfMatch) ─────

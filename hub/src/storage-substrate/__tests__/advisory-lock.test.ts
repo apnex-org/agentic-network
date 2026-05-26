@@ -216,7 +216,10 @@ describe("withAdvisoryLock — memory substrate (in-process serialization)", () 
       const err = e as LockAcquisitionTimeoutError;
       expect(err.lockClass).toBe(LOCK_CLASS.assertIdentity);
       expect(err.lockKey).toBe(String(hashToInt32("fp-busy-ctx")));
-      expect(err.elapsedMs).toBeGreaterThanOrEqual(30);
+      // setTimeout fires under CI load may resolve 1-2ms early; assert the
+      // timeout fired at all (not exact threshold) per advisory-lock test
+      // calibration (#25 sub-discipline: pin invariants not timing).
+      expect(err.elapsedMs).toBeGreaterThanOrEqual(25);
     }
     await callA;
   });

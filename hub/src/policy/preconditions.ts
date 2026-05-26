@@ -35,6 +35,7 @@
  */
 
 import type { IPolicyContext } from "./types.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 
 export interface Precondition {
   /** Registry name. Used as the `fn` field on Message.precondition. */
@@ -67,7 +68,8 @@ export const PRECONDITIONS: readonly Precondition[] = [
         return false;
       }
       const thread = await ctx.stores.thread.getThread(threadId);
-      return thread?.status === "active";
+      // mission-89 Phase 4 (bug-137 closure): envelope-aware status read.
+      return phaseFromEntity(thread) === "active";
     },
   },
   {
@@ -82,8 +84,8 @@ export const PRECONDITIONS: readonly Precondition[] = [
       const task = await ctx.stores.task.getTask(taskId);
       // Predicate true iff task exists AND status is not "completed".
       // Missing task → false (conservative: don't fire if we can't
-      // verify task state).
-      return task !== null && task.status !== "completed";
+      // verify task state). mission-89 Phase 4 (bug-137): envelope-aware.
+      return task !== null && phaseFromEntity(task) !== "completed";
     },
   },
   // Mission-68 W1 (Design v1.0 §4.2 C2 fold): `mission_idle_for_at_least`

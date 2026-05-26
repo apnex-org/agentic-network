@@ -94,6 +94,52 @@ export function tagsFromEntity(entity: unknown): string[] {
  * should grep ALL `[...entity.X]` spreads, not just one named field, to catch
  * sibling-pattern cases sitting adjacent in cloneEntity bodies.
  */
+/**
+ * Coerce the FSM phase string from an entity that may be in either legacy-flat
+ * or envelope shape. Reads:
+ *
+ * - Legacy-flat: `entity.status` is a string (e.g., `"resolved"`, `"active"`).
+ *   Returns it as-is.
+ * - Envelope:    `entity.status` is `{phase: "resolved", ...}` (post-W7 K8s-
+ *                style `status.phase` per cluster-3 ConfigMap-precedent Design).
+ *                Returns `entity.status.phase`.
+ * - Missing/non-string/null entity: returns `null`.
+ *
+ * mission-89 Phase 4 (bug-137 closure surface): Hub policy update_* handlers
+ * compare `current.status !== input.status` to gate FSM transitions. Pre-fix,
+ * envelope-shape entities returned `current.status` as `{phase, ...}` object;
+ * `{...} !== "resolved"` is always true → "Invalid state transition" error
+ * blocks legitimate updates (required psql workaround at mission-88 W11 close).
+ *
+ * Apply at every `entity.status === <enum>` / `entity.status !== <enum>` /
+ * `current.status` comparison site in policy/* + entities/*. Sibling pattern
+ * of `tagsFromEntity` / `arrayFieldFromEntity` (W9/W9.1; defense-in-depth
+ * read-coerce indefinitely per W9 Q4 keep-legacy-branch refinement).
+ *
+ * Defensive: never throws. Returns `null` for any non-object input or any
+ * object without a readable status — callers should handle null explicitly
+ * (typically: if null, reject with "entity has unreadable status; envelope
+ * shape may be malformed" rather than silently fall-through).
+ */
+export function phaseFromEntity(entity: unknown): string | null {
+  if (entity === null || entity === undefined || typeof entity !== "object") {
+    return null;
+  }
+  const e = entity as Record<string, unknown>;
+  // Legacy-flat: status is a string at top-level.
+  if (typeof e.status === "string") {
+    return e.status;
+  }
+  // Envelope-shape: status is {phase, ...} object (cluster-3 ConfigMap precedent).
+  if (e.status && typeof e.status === "object") {
+    const status = e.status as Record<string, unknown>;
+    if (typeof status.phase === "string") {
+      return status.phase;
+    }
+  }
+  return null;
+}
+
 export function arrayFieldFromEntity(entity: unknown, fieldName: string): unknown[] {
   if (entity === null || entity === undefined || typeof entity !== "object") {
     return [];
