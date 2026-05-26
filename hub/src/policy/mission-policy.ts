@@ -40,6 +40,7 @@ import {
 } from "./list-filters.js";
 import { dispatchMissionCreated, dispatchMissionActivated } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 import { runTriggers } from "./triggers.js";
 
 // ── Mission-57 W1: pulse-config validation + auto-injection ──────────
@@ -314,17 +315,23 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
     updates.pulses = value;
   }
 
-  // FSM guard: validate status transition if status is changing
+  // FSM guard: validate status transition if status is changing. mission-89
+  // Phase 4 (bug-137 closure): envelope-shape Mission has status as {phase,...}
+  // not string; use phaseFromEntity to coerce both shapes.
   let priorStatus: string | null = null;
   if (status) {
     const current = await ctx.stores.mission.getMission(missionId);
     if (!current) {
       return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Mission not found: ${missionId}` }) }], isError: true };
     }
-    priorStatus = current.status;
-    if (current.status !== status && !isValidTransition(MISSION_FSM, current.status, status)) {
+    const currentPhase = phaseFromEntity(current);
+    if (currentPhase === null) {
+      return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Mission ${missionId} has no readable status; envelope shape may be malformed` }) }], isError: true };
+    }
+    priorStatus = currentPhase;
+    if (currentPhase !== status && !isValidTransition(MISSION_FSM, currentPhase as MissionStatus, status)) {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: `Invalid state transition: cannot move mission from '${current.status}' to '${status}'` }) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Invalid state transition: cannot move mission from '${currentPhase}' to '${status}'` }) }],
         isError: true,
       };
     }

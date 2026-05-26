@@ -16,6 +16,7 @@ import type { BugStatus, BugSeverity } from "../entities/bug.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import { dispatchBugReported, dispatchBugStatusChanged } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 
 // ── FSM ─────────────────────────────────────────────────────────────
 
@@ -122,7 +123,9 @@ async function updateBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   const fixCommits = args.fixCommits as string[] | undefined;
   const fixRevision = args.fixRevision as string | null | undefined;
 
-  // FSM guard on status transitions
+  // FSM guard on status transitions. mission-89 Phase 4 (bug-137 closure):
+  // envelope-shape Bug entity has status as {phase, ...} not string; use
+  // phaseFromEntity to coerce both legacy + envelope shapes uniformly.
   if (status !== undefined) {
     const current = await ctx.stores.bug.getBug(bugId);
     if (!current) {
@@ -131,9 +134,16 @@ async function updateBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
         isError: true,
       };
     }
-    if (current.status !== status && !isValidTransition(BUG_FSM, current.status, status)) {
+    const currentPhase = phaseFromEntity(current);
+    if (currentPhase === null) {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: `Invalid state transition: cannot move bug from '${current.status}' to '${status}'` }) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Bug ${bugId} has no readable status; envelope shape may be malformed` }) }],
+        isError: true,
+      };
+    }
+    if (currentPhase !== status && !isValidTransition(BUG_FSM, currentPhase as BugStatus, status)) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Invalid state transition: cannot move bug from '${currentPhase}' to '${status}'` }) }],
         isError: true,
       };
     }

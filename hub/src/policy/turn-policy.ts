@@ -13,6 +13,7 @@ import type { FsmTransitionTable } from "./types.js";
 import type { TurnStatus } from "../entities/index.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import { resolveCreatedBy } from "./caller-identity.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -52,15 +53,21 @@ async function updateTurn(args: Record<string, unknown>, ctx: IPolicyContext): P
   if (scope !== undefined) updates.scope = scope;
   if (tele) updates.tele = tele;
 
-  // FSM guard: validate status transition if status is changing
+  // FSM guard: validate status transition if status is changing. mission-89
+  // Phase 4 (bug-137 closure): envelope-shape Turn has status as {phase,...}
+  // not string; use phaseFromEntity to coerce both shapes.
   if (status) {
     const current = await ctx.stores.turn.getTurn(turnId);
     if (!current) {
       return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Turn not found: ${turnId}` }) }], isError: true };
     }
-    if (current.status !== status && !isValidTransition(TURN_FSM, current.status, status)) {
+    const currentPhase = phaseFromEntity(current);
+    if (currentPhase === null) {
+      return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Turn ${turnId} has no readable status; envelope shape may be malformed` }) }], isError: true };
+    }
+    if (currentPhase !== status && !isValidTransition(TURN_FSM, currentPhase as TurnStatus, status)) {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ error: `Invalid state transition: cannot move turn from '${current.status}' to '${status}'` }) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ error: `Invalid state transition: cannot move turn from '${currentPhase}' to '${status}'` }) }],
         isError: true,
       };
     }
