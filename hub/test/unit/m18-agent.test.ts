@@ -224,10 +224,14 @@ describe("AgentRepository agent reaper (CP3 C4)", () => {
       // replaces FS-provider path-based mutation (entity kind="Agent").
       const agent = await reg.getAgent(first.agentId);
       expect(agent).not.toBeNull();
+      // mission-89 (A3): Agent rows are envelope-shape on disk; round-trip
+      // envelope→legacy-flat→patch→envelope to preserve on-disk shape.
+      const { envelopeToAgent, agentToEnvelope } = await import("../../src/entities/agent-envelope-shape.js");
       const substrate = provider as unknown as { get: (kind: string, id: string) => Promise<unknown>; put: (kind: string, entity: unknown) => Promise<unknown> };
       const entity = await substrate.get("Agent", first.agentId);
       if (!entity) throw new Error("agent entity not found in substrate");
-      await substrate.put("Agent", { ...(entity as object), lastSeenAt: lastSeenIsoOverride });
+      const legacy = envelopeToAgent(entity);
+      await substrate.put("Agent", agentToEnvelope({ ...legacy, lastSeenAt: lastSeenIsoOverride } as any));
     }
     return first.agentId;
   }

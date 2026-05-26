@@ -39,8 +39,13 @@
  * Proposal/Task/Tele/Thread/Turn).
  */
 
-import type { HubStorageSubstrate } from "../storage-substrate/index.js";
+import type { Filter, HubStorageSubstrate } from "../storage-substrate/index.js";
 import { LOCK_CLASS, withAdvisoryLock } from "../storage-substrate/advisory-lock.js";
+import {
+  agentToEnvelope,
+  envelopeToAgent,
+  agentFilterToEnvelope,
+} from "./agent-envelope-shape.js";
 import type {
   IEngineerRegistry,
   Agent,
@@ -225,6 +230,55 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
 
   constructor(private readonly substrate: HubStorageSubstrate) {}
 
+  // ── Envelope-aware substrate-boundary wrappers (mission-89 (A3); bug-138-class) ──
+  //
+  // Post-mission-88 W11 cutover, Agent rows are envelope-shape on disk; the
+  // legacy-flat Agent type is the in-memory shape. These wrappers encode at
+  // write and decode at read so the rest of this class operates on legacy-
+  // flat Agent unchanged. Roundtrip preserves envelope shape on disk (no
+  // de-migration on touch). See `agent-envelope-shape.ts` for the W11-
+  // partition-locked rename + partition contract.
+
+  private async loadAgent(id: string): Promise<Agent | null> {
+    const raw = await this.substrate.get<unknown>(KIND, id);
+    return raw === null ? null : envelopeToAgent(raw);
+  }
+
+  private async loadAgentWithRevision(
+    id: string,
+  ): Promise<{ entity: Agent; resourceVersion: string } | null> {
+    const got = await this.substrate.getWithRevision<unknown>(KIND, id);
+    if (!got) return null;
+    return { entity: envelopeToAgent(got.entity), resourceVersion: got.resourceVersion };
+  }
+
+  private async listAgentsRaw(
+    opts: { filter?: Filter; limit?: number; offset?: number } = {},
+  ): Promise<Agent[]> {
+    const envelopeFilter = agentFilterToEnvelope(opts.filter) as Filter | undefined;
+    const { items } = await this.substrate.list<unknown>(KIND, {
+      ...(envelopeFilter ? { filter: envelopeFilter } : {}),
+      ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+      ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
+    });
+    return items.map(envelopeToAgent);
+  }
+
+  private async createOnlyAgent(agent: Agent): Promise<{ ok: boolean }> {
+    return this.substrate.createOnly(KIND, agentToEnvelope(agent));
+  }
+
+  private async putIfMatchAgent(
+    agent: Agent,
+    expectedRevision: string,
+  ): Promise<{ ok: boolean }> {
+    return this.substrate.putIfMatch(KIND, agentToEnvelope(agent), expectedRevision);
+  }
+
+  private async putAgent(agent: Agent): Promise<{ id: string; resourceVersion: string }> {
+    return this.substrate.put(KIND, agentToEnvelope(agent));
+  }
+
   // ── Session role (SessionRole) in-memory bookkeeping ───────────────
 
   setSessionRole(sessionId: string, role: SessionRole): void {
@@ -335,11 +389,10 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     // retry-loop replacement semantics; latency-warn at default 100ms surfaces
     // contention storms in logs (replaces retry-budget-counter observability).
     return await withAdvisoryLock(this.substrate, LOCK_CLASS.assertIdentity, fingerprint, async () => {
-      // Lookup by fingerprint via substrate.list with indexed filter.
-      const { items } = await this.substrate.list<Agent>(KIND, {
-        filter: { fingerprint },
-        limit: 1,
-      });
+      // Lookup by fingerprint via envelope-aware listAgentsRaw wrapper (bug-138
+      // (A3): wrapper translates `fingerprint` filter-key → envelope JSONB
+      // path `metadata.fingerprint`; post-W11 cutover rows are envelope-shape).
+      const items = await this.listAgentsRaw({ filter: { fingerprint }, limit: 1 });
       const existingAgent = items[0] ?? null;
       const now = new Date().toISOString();
 
@@ -386,7 +439,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
           cognitiveState: "unknown",
           transportState: "unknown",
         };
-        const created = await this.substrate.createOnly(KIND, agent);
+        const created = await this.createOnlyAgent(agent);
         if (!created.ok) {
           // Defensive: under primitive this shouldn't happen for the same
           // fingerprint (lock-serialized). Possible across hash-collision
@@ -412,7 +465,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       }
 
       // Re-fetch with revision for CAS-safe update path.
-      const existing = await this.substrate.getWithRevision<Agent>(KIND, existingAgent.id);
+      const existing = await this.loadAgentWithRevision(existingAgent.id);
       if (!existing) {
         // Race with delete between list and getWithRevision; rare; surface.
         return {
@@ -463,7 +516,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       };
       const updated: Agent = { ...stamped, ...computeComponentStates(stamped, Date.parse(now)) };
 
-      const result = await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+      const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
       if (!result.ok) {
         // Defensive: under primitive lock, OCC putIfMatch failure for same
         // fingerprint shouldn't occur (lock-serialized). Possible across non-
@@ -498,7 +551,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     trigger: ClaimSessionTrigger,
   ): Promise<ClaimSessionResult> {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+      const existing = await this.loadAgentWithRevision(agentId);
       if (!existing) {
         return {
           ok: false,
@@ -546,7 +599,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         restartCount,
       };
       const updated: Agent = { ...stamped, ...computeComponentStates(stamped, nowMs) };
-      const result = await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+      const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
       if (!result.ok) {
         continue;
       }
@@ -578,7 +631,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
   }
 
   async getAgent(agentId: string): Promise<Agent | null> {
-    const raw = await this.substrate.get<Agent>(KIND, agentId);
+    const raw = await this.loadAgent(agentId);
     if (!raw) return null;
     return applyLivenessRecompute(normalizeAgentShape(raw), Date.now());
   }
@@ -591,7 +644,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
 
   async listAgents(): Promise<Agent[]> {
     // Substrate-API kind-uniform list; no path-scan + no by-fingerprint mirror skip.
-    const { items } = await this.substrate.list<Agent>(KIND, { limit: 500 });
+    const items = await this.listAgentsRaw({ limit: 500 });
     const nowMs = Date.now();
     return items.map((a) => applyLivenessRecompute(normalizeAgentShape(a), nowMs));
   }
@@ -647,7 +700,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     if (now - last < AGENT_TOUCH_MIN_INTERVAL_MS) return;
     this.lastTouchAt.set(agentId, now);
 
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     if (agent.currentSessionId !== sessionId) return;
@@ -658,11 +711,11 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     };
     const components = computeComponentStates(stamped, now);
     const updated: Agent = { ...stamped, ...components };
-    await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
   async refreshHeartbeat(agentId: string): Promise<void> {
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     const nowMs = Date.now();
@@ -673,19 +726,19 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     };
     const components = computeComponentStates(stamped, nowMs);
     const updated: Agent = { ...stamped, ...components };
-    await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
   async setLivenessState(agentId: string, state: AgentLivenessState): Promise<void> {
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     const updated: Agent = { ...agent, livenessState: state };
-    await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
   async updateAgentPulseLastFiredAt(agentId: string, lastFiredAt: string): Promise<void> {
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     if (!agent.pulseConfig) return;
@@ -693,21 +746,21 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       ...agent,
       pulseConfig: { ...agent.pulseConfig, lastFiredAt },
     };
-    await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
   // ── Mission-62 W1+W2 Pass 2: activity FSM transition handlers ──────
 
   async setActivityState(agentId: string, state: ActivityState): Promise<void> {
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     const updated: Agent = { ...agent, activityState: state };
-    await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
   async recordToolCallStart(agentId: string, toolName: string): Promise<void> {
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     const now = new Date().toISOString();
@@ -719,11 +772,11 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       workingSince: now,
       idleSince: null,
     };
-    await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
   async recordToolCallComplete(agentId: string): Promise<void> {
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     const now = new Date().toISOString();
@@ -733,11 +786,11 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       idleSince: now,
       workingSince: null,
     };
-    await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
   async recordQuotaBlocked(agentId: string, retryAfterSeconds: number): Promise<void> {
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     const nowMs = Date.now();
@@ -748,11 +801,11 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       quotaBlockedUntil,
       workingSince: null,
     };
-    await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
   async recordQuotaRecovered(agentId: string): Promise<void> {
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     const now = new Date().toISOString();
@@ -762,17 +815,17 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       idleSince: now,
       quotaBlockedUntil: null,
     };
-    await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
   async recordAgentError(agentId: string, error: AgentErrorRecord): Promise<void> {
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     const nextErrors = [...agent.recentErrors, error];
     while (nextErrors.length > AGENT_RECENT_ERRORS_CAP) nextErrors.shift();
     const updated: Agent = { ...agent, recentErrors: nextErrors };
-    await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
   /**
@@ -785,7 +838,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     this.sessionToEngineerId.delete(sessionId);
     if (!agentId) return;
 
-    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
+    const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
     if (agent.currentSessionId !== sessionId) return;
@@ -795,7 +848,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       livenessState: "offline",
       lastSeenAt: new Date().toISOString(),
     };
-    const result = await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
     if (!result.ok) return;
     console.log(`[AgentRepositorySubstrate] Agent marked offline: ${agentId}`);
   }
@@ -824,7 +877,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
   }
 
   async deleteAgent(agentId: string): Promise<boolean> {
-    const existing = await this.substrate.get<Agent>(KIND, agentId);
+    const existing = await this.loadAgent(agentId);
     if (!existing) return false;
     await this.substrate.delete(KIND, agentId);
     this.displacementHistory.delete(existing.fingerprint);
