@@ -25,16 +25,27 @@ If you're picking up cold:
 
 ## In-flight
 
-▶ **PR #302** (agent-greg/m-occ-primitive-pr2-counter) — Phase 3 Counter primitive migration
-- Status: pushed; CI just-kicked-off
-- Diff: 2 files; +63 / -24
-- Awaiting: CI green → architect admin-merge → Hub-rebuild → 2-concurrent-Counter.issue same-kind serialize dispositive
-- Lock-granularity: per-domain `withAdvisoryLock(LOCK_CLASS.Counter, domain, ...)` per architect dispatch ("per-kind lockKey isolation")
-- W5.5 retry-loop RETAINED (cross-domain races on shared single-row Counter still possible; lock only serializes intra-domain)
+▶ **PR #303** (agent-greg/m-occ-primitive-pr3-phase4-envelope-audit) — Phase 4 Hub-policy envelope-aware audit
+- Status: pushed; CI ALL GREEN (9/9 checks); ready-for-review; awaiting architect admin-merge
+- Diff: 14 files; +400 / -45
+- phaseFromEntity helper + 22 status-compare sites in policy/ + 5 entity-repo cascade-key dual-lookup
+- 7 new dispositive tests + full hub 1900/1900 green
+- Mid-impl scope-check posted at PR #302 issuecomment-4542210396; final PR-ready summary at PR #303 issuecomment-4542474342
+- Deferred per scope-cut: per-entity envelope-aware repository wrappers (Agent pattern scaled to 11 remaining kinds); task-repository internal status reads; sweeper substrate.list filter audit; PendingAction/Message/Thread filter callsites
+- Mid-impl pivot: first pass envelope-only filter broke 13 cascade-idempotency + pulse-sweeper tests (test fixtures pre-W11-shape); switched to dual-lookup pattern (envelope-first + legacy fallback) per W9 Q4 keep-legacy-branch refinement → 1900/1900 recovered
+- Awaiting: admin-merge → Hub-rebuild → bug-137 dispositive: `update_bug(bug-127, status='resolved')` succeeds cleanly (replaces psql workaround)
 
 ---
 
 ## Done this session
+
+✅ **PR #302** (agent-greg/m-occ-primitive-pr2-counter) — Phase 3 Counter primitive migration
+- MERGED 2026-05-26 08:23 UTC; commit 237786d; deploy-hub SUCCESS
+- 2 files; +63 / -24
+- Production dispositive: 20 concurrent same-architect notes (each Counter.next) → 20 unique ULIDs, 0 errors, 2.8s elapsed → **lock-serialized Counter path PRODUCTION-VERIFIED**
+- Lock-granularity: per-domain `withAdvisoryLock(LOCK_CLASS.Counter, domain, ...)` per architect dispatch
+- W5.5 retry-loop RETAINED (cross-domain races on shared single-row Counter; lock only serializes intra-domain)
+- bug-97 retroactively-systemic-closed (architectural-improvement vs bug-recurrence)
 
 ✅ **PR #301** (agent-greg/m-occ-primitive-pr1.1-bug-138) — (A3) envelope-aware Agent r/w + bug-138 (Agent slice) close
 - MERGED 2026-05-26 08:08 UTC; Hub-rebuild + dispositive verify CONFIRMED
@@ -66,16 +77,18 @@ If you're picking up cold:
 
 ## Queued / filed
 
-○ **PR 3** — Phase 4 Hub-policy envelope-aware audit (closes bug-137 + folds bug-138 systemic)
-- File: extend `hub/src/entities/shape-helpers.ts` with `phaseFromEntity(entity)`
-- Patch ~13 policy files per Design §3 Phase 4 file-list (grep-walk at impl-time to verify completeness)
-- ALSO: systemic substrate.list shape-aware refactor for all entity kinds (folds bug-138 beyond Agent-specific PR #301 tactical fix)
-- bug-139 (Agent write-shape preservation) FOLDED into Phase 4 substrate.list refactor scope per architect (A3) ratify
-
-○ **PR 4** — Phase 5 dispositive verify + cleanup + methodology #25 capture
+○ **PR 4** — Phase 5 dispositive verify + cleanup + methodology #25 capture (mission close)
 - Retire W10-ext per-callsite 8-attempt budget code (already retired in PR #300; Phase 5 confirms removal)
 - Retire emit-site of `occ_contention_exhausted` per Observation 4 (KEEP enum value with @deprecated JSDoc; retain test-coverage)
 - File methodology calibration #25 candidate: substrate-primitive-extraction-pattern
+- Mission-89 status flip → completed (once bug-137 dispositive PRODUCTION-VERIFIED-CLOSED via PR #303 merge)
+
+○ **Follow-on mission candidate** — full envelope-aware repository sweep (the Agent pattern scaled to 11 remaining kinds)
+- Per-entity envelope-aware wrappers for Bug/Idea/Mission/Turn/Proposal/Task/Thread/Message/PendingAction/Audit/Tele
+- task-repository INTERNAL status reads (unblockDependents/cancelDependents/getNextDirective/getNextReport/submitReport) — cascade trigger correctness
+- Sweeper substrate.list filter audit (pulse-sweeper/cascade-replay-sweeper/message-projection-sweeper/scheduled-message-sweeper)
+- PendingAction/Message/Thread filter callsites
+- Architectural intent: closes bug-138-class FULLY across all entity kinds; mission-89 PR #303 closed the entity-repo cascade-key class + policy-layer read-class as the priority surface
 
 ---
 
@@ -86,6 +99,16 @@ If you're picking up cold:
 ---
 
 ## Closing audit (engineer-side)
+
+To file at Phase 10 retrospective (mission-89-spanning):
+
+**Additional candidates from PR #303:**
+
+6. **Dual-lookup vs strict-envelope filter pattern** — first PR #303 pass tried envelope-only filters; broke 13 cascade-idempotency + pulse-sweeper tests because test fixtures seed legacy-shape via direct substrate.put. Switched to envelope-first + legacy-fallback dual-lookup. This is the FILTER-side companion to W9 Q4 keep-legacy-branch refinement (which was about READ-side defensive coerce). Methodology candidate: substrate-aware repository methods should ALSO do dual-shape filter lookups, not just dual-shape READS.
+
+7. **Mid-impl scope-cut as engineer-side authority** — PR #303 scope expanded mid-impl to 22 status-compare sites + 5 entity-repo filter dual-lookups, but engineer cut at deferring per-entity envelope-aware wrappers, task-repo internal reads, sweepers, and PendingAction/Message/Thread filters. Posted scope-cut explicitly in PR description + comment for architect ratify. Pattern: engineer-side scope-cut decisions are load-bearing when the load-bearing test target (bug-137 closure) is achieved while remaining work is non-blocking; surface explicitly so architect can ratify or expand.
+
+8. **Test fixtures pre-cutover are landmines** — PR #301 surfaced the `mutateAgentBlob` + `offlineAgentSeenAt` fixtures producing mixed-shape data. PR #303 surfaced cascade-idempotency + pulse-sweeper tests seeding legacy-shape rows. Both fix the symptom (envelope-aware fixtures + dual-lookup repo methods) but the deeper pattern is: tests that bypass the migration pipeline are perpetually drift-prone post-cutover. Methodology candidate: prescribe an envelope-aware test-fixture helper pattern OR force fixtures through the migration pipeline (creates SchemaDef-reconciler path for the kind, then writes via repo APIs).
 
 To file at Phase 10 retrospective:
 
