@@ -40,9 +40,14 @@
  */
 
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
+import { LOCK_CLASS, withAdvisoryLock } from "../storage-substrate/advisory-lock.js";
 
 const COUNTER_KIND = "Counter";
 const COUNTER_ID = "counter";
+// mission-89 Phase 3: lock-serialized same-domain callers means the W5.5 retry-
+// loop now only handles CROSS-domain races on the shared Counter row. Budget
+// retained at 50 — under the lock, intra-domain callers don't iterate; cross-
+// domain races resolve in a few retries even at high concurrency.
 const MAX_CAS_RETRIES = 50;
 const COUNTER_API_VERSION = "core.ois/v1";
 
@@ -135,36 +140,40 @@ export class SubstrateCounter {
   /**
    * Allocate the next value for the given counter-domain. Returns the new value.
    *
-   * Uses Design v1.4 getWithRevision + putIfMatch CAS retry loop. Race-free
-   * under concurrent callers — postgres-level CAS via resource_version. On
-   * revision-mismatch (concurrent winner advanced counter), re-read + retry
-   * with fresh N. On first-write (counter row absent), use createOnly +
-   * retry-on-conflict (concurrent first-create race).
+   * mission-89 Phase 3 (bug-97 retroactively-systemic close): wraps the
+   * getWithRevision + putIfMatch CAS retry loop in `withAdvisoryLock(LOCK_CLASS.
+   * Counter, domain, ...)`. Same-domain concurrent callers serialize through
+   * the lock — eliminates the bug-97 surface (concurrent callers racing on
+   * same-domain N). CROSS-domain concurrent callers still race on the shared
+   * Counter row (single-row entity with all domains as keys); the retry-loop
+   * handles those (rare; resolves in 1-2 iterations).
    *
    * Envelope-shape per mission-88 W3 atomic-ship (A1): reads tolerate both
    * envelope + legacy-flat shapes; writes always emit envelope-shape.
    */
   async next(domain: CounterDomain): Promise<number> {
-    for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
-      const existing = await this.substrate.getWithRevision<Record<string, unknown>>(COUNTER_KIND, COUNTER_ID);
+    return await withAdvisoryLock(this.substrate, LOCK_CLASS.Counter, domain, async () => {
+      for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+        const existing = await this.substrate.getWithRevision<Record<string, unknown>>(COUNTER_KIND, COUNTER_ID);
 
-      if (!existing) {
-        // First-write: counter row absent → use createOnly with envelope-shape entity
-        const firstWrite = buildEnvelopeWrite(undefined, domain, 1);
-        const result = await this.substrate.createOnly(COUNTER_KIND, firstWrite);
-        if (result.ok) return 1;
-        // createOnly conflict — concurrent first-creator beat us; retry from re-read
-        continue;
+        if (!existing) {
+          // First-write: counter row absent → use createOnly with envelope-shape entity
+          const firstWrite = buildEnvelopeWrite(undefined, domain, 1);
+          const result = await this.substrate.createOnly(COUNTER_KIND, firstWrite);
+          if (result.ok) return 1;
+          // createOnly conflict — concurrent first-creator (other domain) beat us; retry
+          continue;
+        }
+
+        // Subsequent writes: row exists → use putIfMatch with current resource_version
+        const currentValue = readDomainValue(existing.entity, domain);
+        const nextValue = currentValue + 1;
+        const updated = buildEnvelopeWrite(existing.entity, domain, nextValue);
+        const result = await this.substrate.putIfMatch(COUNTER_KIND, updated, existing.resourceVersion);
+        if (result.ok) return nextValue;
+        // revision-mismatch: cross-domain concurrent writer advanced row; retry from re-read
       }
-
-      // Subsequent writes: row exists → use putIfMatch with current resource_version
-      const currentValue = readDomainValue(existing.entity, domain);
-      const nextValue = currentValue + 1;
-      const updated = buildEnvelopeWrite(existing.entity, domain, nextValue);
-      const result = await this.substrate.putIfMatch(COUNTER_KIND, updated, existing.resourceVersion);
-      if (result.ok) return nextValue;
-      // revision-mismatch: concurrent writer advanced counter; retry from re-read
-    }
-    throw new Error(`[SubstrateCounter] next exhausted ${MAX_CAS_RETRIES} retries on domain=${domain}`);
+      throw new Error(`[SubstrateCounter] next exhausted ${MAX_CAS_RETRIES} retries on domain=${domain}`);
+    });
   }
 }

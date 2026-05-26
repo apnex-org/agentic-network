@@ -162,6 +162,36 @@ describe("SubstrateCounter bug-97 race fix (W5.5)", () => {
     expect((status.counters as Record<string, number>).legacyDomain).toBe(6);
   });
 
+  // ─── mission-89 Phase 3 — advisory-lock primitive integration (bug-97 sibling) ──
+
+  it("PR 2 dispositive: same-domain concurrent next() calls serialize through advisory-lock (no CAS retries needed for intra-domain race)", async () => {
+    if (!substrate) throw new Error("substrate not initialized");
+    const counter = new SubstrateCounter(substrate);
+
+    // Pre-mission-89: bug-97 surfaced when concurrent same-domain callers raced
+    // on the shared Counter row + both lost the putIfMatch CAS → retry loop.
+    // Post-mission-89: per-domain advisory-lock serializes intra-domain callers
+    // so they NEVER race on putIfMatch (single attempt always succeeds).
+    //
+    // We can't directly observe "no retries happened" without instrumenting the
+    // counter; instead assert the strict invariant: N concurrent same-domain
+    // next() calls return EXACTLY 1..N with no gaps or duplicates, under
+    // bounded total time (lock-serialization should be fast even at high N).
+    const N = 20;
+    const startedAt = Date.now();
+    const promises = Array.from({ length: N }, () => counter.next("phase3LockDomain"));
+    const values = await Promise.all(promises);
+    const elapsed = Date.now() - startedAt;
+
+    // Same correctness invariants as bug-97 race-fix test (uniqueness + monotonicity)
+    expect(new Set(values).size).toBe(N);
+    expect([...values].sort((a, b) => a - b)).toEqual(Array.from({ length: N }, (_, i) => i + 1));
+
+    // Lock-serialized + single-attempt path → bounded elapsed (~N * pg-round-trip;
+    // ~5ms each typical); allow generous 10s for testcontainer overhead.
+    expect(elapsed).toBeLessThan(10_000);
+  }, 30_000);
+
   it("envelope-shape: concurrent writes across multiple domains preserve all counters", async () => {
     const counter = new SubstrateCounter(substrate);
     const domains = ["envA", "envB", "envC"];

@@ -25,15 +25,23 @@ If you're picking up cold:
 
 ## In-flight
 
-▶ **PR #301** (agent-greg/m-occ-primitive-pr1.1-bug-138) — (A3) hot-fix for bug-138 + bug-127 production-verify
-- Status: pushed; CI re-running post flake-fix on advisory-lock serialization assertion (commit 7337a6e)
-- Diff: 6 files; +614 / -46
-- Awaiting: CI green → architect admin-merge → Hub-rebuild → bypass-tool M18 dispositive verify
-- Pre-flake CI surfaced ordering-flake in `serializes concurrent calls` test (asserted strict A-first; reality Promise.all callers race non-deterministically; ANY of {A,B} can win the lock first). Fix: assert invariant (no-interleaving) not specific order — toContainEqual against {[A,B], [B,A]}.
+▶ **PR #302** (agent-greg/m-occ-primitive-pr2-counter) — Phase 3 Counter primitive migration
+- Status: pushed; CI just-kicked-off
+- Diff: 2 files; +63 / -24
+- Awaiting: CI green → architect admin-merge → Hub-rebuild → 2-concurrent-Counter.issue same-kind serialize dispositive
+- Lock-granularity: per-domain `withAdvisoryLock(LOCK_CLASS.Counter, domain, ...)` per architect dispatch ("per-kind lockKey isolation")
+- W5.5 retry-loop RETAINED (cross-domain races on shared single-row Counter still possible; lock only serializes intra-domain)
 
 ---
 
 ## Done this session
+
+✅ **PR #301** (agent-greg/m-occ-primitive-pr1.1-bug-138) — (A3) envelope-aware Agent r/w + bug-138 (Agent slice) close
+- MERGED 2026-05-26 08:08 UTC; Hub-rebuild + dispositive verify CONFIRMED
+- 6 files; +614 / -46
+- bypass-tool M18 enriched register_role for fingerprint=lily succeeded against pre-existing-envelope-shape Agent row → **bug-127 PRODUCTION-VERIFIED-CLOSED** + **bug-138 (Agent slice) CLOSED**
+- bug-138 substrate-systemic class STAYS FILED for Phase 4 (cross-cutting substrate.list-filter shape-aware refactor for all entity kinds)
+- Pre-flake CI surfaced ordering-flake in `serializes concurrent calls` test (CI saw B-first vs local A-first); fix-up commit 7337a6e assert-invariant (no-interleaving) instead of specific order
 
 ✅ **PR #300** (agent-greg/m-substrate-occ-primitive-pr1) — Phase 1+2 bundled: substrate primitive + assertIdentity migration
 - Merged to main as commit cf7d2db
@@ -57,12 +65,6 @@ If you're picking up cold:
 ---
 
 ## Queued / filed
-
-○ **PR 2** — Phase 3 Counter migration (closes bug-97 retroactively-systemic)
-- File: `hub/src/entities/substrate-counter.ts`
-- Replace counter-issue + createOnly retry-loop with `withAdvisoryLock(LOCK_CLASS.Counter, kind, ...)`
-- Tests: counter-collision concurrent-call test (testcontainer; multiple concurrent counter-issue calls serialize)
-- Gated by: PR #301 merge + architect dispositive verify (bug-127 PRODUCTION-VERIFIED-CLOSED)
 
 ○ **PR 3** — Phase 4 Hub-policy envelope-aware audit (closes bug-137 + folds bug-138 systemic)
 - File: extend `hub/src/entities/shape-helpers.ts` with `phaseFromEntity(entity)`
