@@ -441,14 +441,19 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         };
         const created = await this.createOnlyAgent(agent);
         if (!created.ok) {
-          // Defensive: under primitive this shouldn't happen for the same
-          // fingerprint (lock-serialized). Possible across hash-collision
-          // between distinct fingerprints; surface as transient.
-          return {
-            ok: false,
-            code: "occ_contention_exhausted",
-            message: `createOnly conflict under advisory-lock for fingerprint=${fingerprint} — possible hash-collision with concurrent caller; transient.`,
-          };
+          // mission-89 Phase 5 (Observation 4): structurally unreachable under
+          // the per-fingerprint advisory lock — createOnly conflicts only on
+          // same agentId, and same name → same fingerprint → lock-serialized.
+          // hashToInt32 collision across different fingerprints is mathematically
+          // negligible (~3e-10 at 100k keys per FNV-1a-32 birthday-paradox math).
+          // If we reach here, the substrate state is anomalous; throw rather than
+          // silently emit a deprecated transient code.
+          throw new Error(
+            `[AgentRepositorySubstrate] assertIdentity invariant violation: createOnly conflict ` +
+              `under advisory-lock for agentId=${agentId}, fingerprint=${fingerprint}. ` +
+              `Lock-serialization should prevent same-fingerprint createOnly races; ` +
+              `investigate substrate state or hashToInt32 collision telemetry.`,
+          );
         }
         if (sessionId) {
           this.sessionToEngineerId.set(sessionId, agentId);
@@ -467,12 +472,17 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       // Re-fetch with revision for CAS-safe update path.
       const existing = await this.loadAgentWithRevision(existingAgent.id);
       if (!existing) {
-        // Race with delete between list and getWithRevision; rare; surface.
-        return {
-          ok: false,
-          code: "occ_contention_exhausted",
-          message: `Agent ${existingAgent.id} deleted between lookup and re-fetch for fingerprint=${fingerprint}; transient.`,
-        };
+        // mission-89 Phase 5 (Observation 4): structurally unreachable under
+        // the advisory lock — list returned existingAgent under-lock and the
+        // lock prevents concurrent deletion by the same-fingerprint path. A
+        // mid-flight delete by an OUT-of-band tool (operator script bypassing
+        // the registry) would land here; treat as anomalous + throw.
+        throw new Error(
+          `[AgentRepositorySubstrate] assertIdentity invariant violation: Agent ${existingAgent.id} ` +
+            `deleted between lookup and re-fetch for fingerprint=${fingerprint}. ` +
+            `Advisory lock should prevent concurrent deletion via the registry; ` +
+            `investigate out-of-band substrate mutation.`,
+        );
       }
       const agent = normalizeAgentShape(existing.entity);
 
@@ -516,16 +526,44 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       };
       const updated: Agent = { ...stamped, ...computeComponentStates(stamped, Date.parse(now)) };
 
-      const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
+      let result = await this.putIfMatchAgent(updated, existing.resourceVersion);
       if (!result.ok) {
-        // Defensive: under primitive lock, OCC putIfMatch failure for same
-        // fingerprint shouldn't occur (lock-serialized). Possible across non-
-        // assertIdentity writers (e.g., heartbeat-path bumps); surface.
-        return {
-          ok: false,
-          code: "occ_contention_exhausted",
-          message: `putIfMatch conflict under advisory-lock for agentId=${agent.id}, fingerprint=${fingerprint} — non-assertIdentity concurrent writer; transient.`,
+        // mission-89 Phase 5 (Observation 4): single in-lock retry. The
+        // advisory lock prevents same-fingerprint assertIdentity races, but
+        // OTHER write paths (heartbeat refresh, claim_session, mark_offline,
+        // etc.) write to the same Agent row without holding our lock. A
+        // concurrent bump from those paths can lose us the CAS once; a
+        // single re-read + retry under-lock resolves it (those paths are
+        // brief, non-contentious; second-attempt success rate is ~100%).
+        // If second putIfMatch ALSO fails, throw — the codebase has a real
+        // contention storm worth surfacing.
+        const refreshed = await this.loadAgentWithRevision(existingAgent.id);
+        if (!refreshed) {
+          throw new Error(
+            `[AgentRepositorySubstrate] assertIdentity in-lock retry: Agent ${existingAgent.id} ` +
+              `disappeared between putIfMatch attempts for fingerprint=${fingerprint}.`,
+          );
+        }
+        const refreshedAgent = normalizeAgentShape(refreshed.entity);
+        const restamped: Agent = {
+          ...refreshedAgent,
+          clientMetadata: payload.clientMetadata,
+          advisoryTags: refreshedAdvisoryTags,
+          labels: nextLabels,
+          lastHeartbeatAt: now,
+          receiptSla: payload.receiptSla ?? refreshedAgent.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS,
+          wakeEndpoint: payload.wakeEndpoint ?? refreshedAgent.wakeEndpoint ?? null,
         };
+        const reupdated: Agent = { ...restamped, ...computeComponentStates(restamped, Date.parse(now)) };
+        result = await this.putIfMatchAgent(reupdated, refreshed.resourceVersion);
+        if (!result.ok) {
+          throw new Error(
+            `[AgentRepositorySubstrate] assertIdentity in-lock retry exhausted: putIfMatch conflict ` +
+              `persisted across 2 attempts for agentId=${refreshedAgent.id}, fingerprint=${fingerprint}. ` +
+              `Indicates concurrent non-assertIdentity writer storm; investigate heartbeat-path or ` +
+              `claim_session contention telemetry.`,
+          );
+        }
       }
       if (sessionId) {
         this.sessionToEngineerId.set(sessionId, updated.id);

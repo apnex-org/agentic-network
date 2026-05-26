@@ -25,15 +25,25 @@ If you're picking up cold:
 
 ## In-flight
 
-▶ **PR #303** (agent-greg/m-occ-primitive-pr3-phase4-envelope-audit) — Phase 4 Hub-policy envelope-aware audit
-- Status: pushed; CI ALL GREEN (9/9 checks); ready-for-review; awaiting architect admin-merge
-- Diff: 14 files; +400 / -45
+▶ **PR #304** (agent-greg/m-occ-primitive-pr4-phase5-final) — Phase 5 retirement + methodology + mission close
+- Status: branch open; W10-ext OCC retry-budget retirement done; `occ_contention_exhausted` emit-sites removed (3 sites); state.ts enum @deprecated JSDoc added; 2 test cases updated to assert throws-not-emit pattern; full hub 1909/1909 green
+- Diff: TBD
+- Awaiting: closing audit doc + work-trace final state + idea-323 + idea-324 filings + PR-open + architect review + admin-merge + mission close
+
+---
+
+## Done this session (continued)
+
+✅ **PR #303** (agent-greg/m-occ-primitive-pr3-phase4-envelope-audit) — Phase 4 Hub-policy envelope-aware audit
+- MERGED 2026-05-26 ~09:45 UTC; commit deb6e57; deploy-hub SUCCESS
+- 14 files; +400 / -45
 - phaseFromEntity helper + 22 status-compare sites in policy/ + 5 entity-repo cascade-key dual-lookup
 - 7 new dispositive tests + full hub 1900/1900 green
+- **bug-137 DISPOSITIVE PASSED 2026-05-26 ~09:50 UTC** via `update_bug(bug-137, status='resolved')` succeeding cleanly via MCP — no psql workaround
 - Mid-impl scope-check posted at PR #302 issuecomment-4542210396; final PR-ready summary at PR #303 issuecomment-4542474342
-- Deferred per scope-cut: per-entity envelope-aware repository wrappers (Agent pattern scaled to 11 remaining kinds); task-repository internal status reads; sweeper substrate.list filter audit; PendingAction/Message/Thread filter callsites
+- Deferred per scope-cut: per-entity envelope-aware repository wrappers (Agent pattern scaled to 11 remaining kinds); task-repository internal status reads; sweeper substrate.list filter audit; PendingAction/Message/Thread filter callsites → filed as idea-324
 - Mid-impl pivot: first pass envelope-only filter broke 13 cascade-idempotency + pulse-sweeper tests (test fixtures pre-W11-shape); switched to dual-lookup pattern (envelope-first + legacy fallback) per W9 Q4 keep-legacy-branch refinement → 1900/1900 recovered
-- Awaiting: admin-merge → Hub-rebuild → bug-137 dispositive: `update_bug(bug-127, status='resolved')` succeeds cleanly (replaces psql workaround)
+- 2nd CI timing-flake on advisory-lock test caught at fix-up commit 6a651c5 (`elapsedMs >= 30` got 29; relaxed floor to 25; methodology #25 sub-discipline #1 confirmed)
 
 ---
 
@@ -77,18 +87,7 @@ If you're picking up cold:
 
 ## Queued / filed
 
-○ **PR 4** — Phase 5 dispositive verify + cleanup + methodology #25 capture (mission close)
-- Retire W10-ext per-callsite 8-attempt budget code (already retired in PR #300; Phase 5 confirms removal)
-- Retire emit-site of `occ_contention_exhausted` per Observation 4 (KEEP enum value with @deprecated JSDoc; retain test-coverage)
-- File methodology calibration #25 candidate: substrate-primitive-extraction-pattern
-- Mission-89 status flip → completed (once bug-137 dispositive PRODUCTION-VERIFIED-CLOSED via PR #303 merge)
-
-○ **Follow-on mission candidate** — full envelope-aware repository sweep (the Agent pattern scaled to 11 remaining kinds)
-- Per-entity envelope-aware wrappers for Bug/Idea/Mission/Turn/Proposal/Task/Thread/Message/PendingAction/Audit/Tele
-- task-repository INTERNAL status reads (unblockDependents/cancelDependents/getNextDirective/getNextReport/submitReport) — cascade trigger correctness
-- Sweeper substrate.list filter audit (pulse-sweeper/cascade-replay-sweeper/message-projection-sweeper/scheduled-message-sweeper)
-- PendingAction/Message/Thread filter callsites
-- Architectural intent: closes bug-138-class FULLY across all entity kinds; mission-89 PR #303 closed the entity-repo cascade-key class + policy-layer read-class as the priority surface
+_(nothing queued — mission-89 PR #304 is the final PR + mission close)_
 
 ---
 
@@ -121,6 +120,55 @@ To file at Phase 10 retrospective:
 4. **Lookup-only fix insufficient when downstream code reads legacy-flat top-level fields** — engineer scope-depth audit caught this BEFORE shipping PR #301-with-lookup-only-fix-only. Methodology: when a fix touches an envelope-shape-aware boundary, audit downstream code-paths that consume the returned data; spreading the encode/decode across the full substrate-boundary surface (not just the failing site) is the dispositive close.
 
 5. **bug-138 framing: Agent-specific tactical vs substrate-systemic** — architect could have dispatched (A3) as substrate.list shape-aware refactor (bug-138 root); instead dispatched as Agent-repository-tactical (preserves bug-138 for Phase 4 systemic). Trade-off: Agent-specific PR is smaller diff + clearer scope; Phase 4 absorbs the systemic refactor with all entity-kinds in scope. Architectural pattern: "tactical fix per entity + systemic refactor at the cross-cutting boundary" is sound vs "expand THIS PR to systemic" which would inflate scope.
+
+---
+
+## Methodology #25 capstone (engineer narrative for architect+Director ledger filing)
+
+**Title:** Substrate-primitive-extraction is necessary-but-not-sufficient — per-callsite envelope-aware-audit must companion-ship
+
+**Working type:** methodology-pattern (compound: substrate-extension primitive + consumer-callsite-audit companion-ship)
+
+### Narrative
+
+mission-89 began with a clean substrate-primitive-extraction premise: extract the OCC-contention-recovery concern from per-callsite retry-budgets (bug-127 W10-ext 8-attempt; bug-97 W5.5 CAS retry) into a substrate-layer `withAdvisoryLock` primitive that all serialization-sensitive callsites share. Design v1.0 §2 Q1 articulated this cleanly: pg_advisory_lock delegation with namespace-split keyspace; primitive replaces per-callsite mitigation.
+
+Phase 1+2 (PR #300) shipped the primitive + first consumer migration (assertIdentity). All tests green; 1886/1886 hub suite passing; testcontainer integration verified concurrent serialization under real-pg contention. By every architectural metric, bug-127 was closed.
+
+The primitive was NOT closed in production. Dispositive verify (architect bypass-tool M18 enriched `register_role(fingerprint=lily)`) STILL returned `occ_contention_exhausted` — the very code the primitive was supposed to obviate. Root cause: `substrate.list({filter: {fingerprint}})` was envelope-blind for indexed fields, and post-W11-cutover Agent rows had moved `fingerprint` to `metadata.fingerprint`. Lookup returned 0 rows → assertIdentity entered the createOnly path → conflicted with the existing row → defensive `occ_contention_exhausted` (added inside the lock as a "this shouldn't happen" guard) fired.
+
+**The primitive was architecturally sound. The CONSUMER call-sites weren't envelope-aware. Bug-127 stayed dormant — fixed at the substrate level, broken at the call-site.**
+
+PR #301 (the (A3) hot-fix) extracted the per-kind envelope-aware Agent repository wrapper pattern (`agent-envelope-shape.ts`); 5 substrate-boundary methods hide envelope encode/decode so the class body operates on legacy-flat Agent type unchanged. Bug-127 PRODUCTION-VERIFIED at 08:08 UTC.
+
+PR #303 (Phase 4) extended the pattern to the policy layer: `phaseFromEntity()` helper at 22 status-comparison sites + 5 entity-repo cascade-key filter dual-lookups. Bug-137 PRODUCTION-VERIFIED via `update_bug(bug-137, status='resolved')` succeeding cleanly via MCP — the closure operation that USES the bug-137 fix IS the verify.
+
+**Methodology rule:** every substrate-primitive that touches an entity-class needs companion grep-walk of consumer call-sites for shape-correctness (envelope vs legacy). Without this, the primitive ships dormant — works in tests, fails production at the call-site.
+
+### Diagnostic test (for filing future calibrations against this pattern)
+
+Three components compose to detect dormant-primitive risk:
+
+1. **Substrate-extension scope** — the change introduces a new primitive at the substrate layer (interface method, helper module, or boundary refactor)
+2. **Consumer call-sites span the entity-class** — multiple callers across policy/* and entities/* read or write entities of the kind that the primitive touches
+3. **Test-architecture uses synthetic data** — primitive tests construct entities via fresh substrate.put + reconciler-applied schema, NOT via production-shape data (post-cutover envelope rows with their actual on-disk shape)
+
+When all 3 are present, the primitive's correctness against production-shape data must be verified by `grep -rn '<consumer-pattern>' <consumer-dirs>` for envelope-blindness BEFORE ship. The shape-aware audit isn't optional companion-ship; it's the dispositive prerequisite.
+
+### Sub-disciplines surfaced
+
+(See `docs/audits/m-substrate-occ-primitive-closing-audit.md` §3 for the canonical enumeration. Reproduced here for ledger-narrative completeness:)
+
+1. **Concurrency-test invariant discipline** — pin to invariants (set-membership / monotonicity / no-interleaving / timeout-fired), NOT exact-timing or exact-ordering. 2 CI flakes this mission confirmed.
+2. **Dual-lookup pattern at filter-layer** — companion to W9 Q4 keep-legacy-branch refinement; substrate-aware repository methods do dual-shape filter lookups (envelope-first + legacy-fallback).
+3. **Engineer-side mid-impl scope-cut as load-bearing authority** — explicit scope-cut surfacing when the load-bearing test target is achieved while remaining work is non-blocking.
+4. **Test-fixture pre-cutover landmines** — fixtures that bypass the migration pipeline (write directly via substrate.put with legacy-flat shapes) are perpetually drift-prone post-cutover.
+5. **Pool-connection pinning + poll-waiter release** — postgres advisory locks + connection pool sizing interact in non-obvious ways; K+-concurrent testcontainer test is the catch-net.
+6. **Dispositive-call-IS-the-verify** — for fixes targeting a Hub policy code path, run the policy operation against a production entity that exercises that code path; success of the operation IS the closure proof.
+
+### Architect+Director ledger filing path
+
+Per CLAUDE.md `docs/calibrations.yaml` discipline: calibrations.yaml entries are architect-Director-only authored. This narrative serves as engineer-side draft; canonical capstone authored by architect (lily) post-mission per ledger discipline.
 
 ---
 

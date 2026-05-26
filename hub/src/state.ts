@@ -458,12 +458,19 @@ export interface AssertIdentityFailure {
   // a different host (operator misconfiguration; loud-error rather than
   // silent last-write-wins on clientMetadata.hostname).
   //
-  // mission-88 W10-ext (bug-127 fix): `occ_contention_exhausted` added —
+  // mission-88 W10-ext (bug-127 historic): `occ_contention_exhausted` added —
   // transient OCC retry-budget exhausted (NOT a fatal hard-boundary like
   // role_mismatch or name_collision). Callers SHOULD retry. Must NOT be
-  // classified as FATAL_CODE in adapter-side handshake handling (per W10
-  // adapter PR composition). Distinct from agent_thrashing_detected (which
-  // IS fatal: caller has displaced >N times in window — permanent halt).
+  // classified as FATAL_CODE in adapter-side handshake handling.
+  //
+  // @deprecated mission-89 Phase 5 (Observation 4): emit-sites RETIRED —
+  // advisory-lock primitive (`withAdvisoryLock(LOCK_CLASS.assertIdentity)`)
+  // eliminates the OCC-contention race-class structurally; no remaining
+  // code path returns this code. The enum value is RETAINED for:
+  //   (1) backward-compatibility — existing caller log-grep / regression-grep
+  //   (2) discriminated-union test-coverage (the type-narrowing path is
+  //       exercised by unit tests asserting code-discriminator shape)
+  // Formal enum-removal deferred to a follow-on idea per Design v1.0 §3 P5.
   code: "role_mismatch" | "name_collision" | "occ_contention_exhausted";
   message: string;
 }
