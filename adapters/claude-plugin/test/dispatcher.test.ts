@@ -402,7 +402,7 @@ describe("dispatcher gates", () => {
 // ── Hub-not-connected error envelope ────────────────────────────────
 
 describe("Hub-not-connected handling", () => {
-  it("ListTools returns empty tools[] when getAgent() returns null", async () => {
+  it("ListTools raises structured error when getAgent() returns null (bug-141)", async () => {
     const dispatcher = createSharedDispatcher({
       getAgent: () => null,
       proxyVersion: "test-1.0.0",
@@ -411,8 +411,13 @@ describe("Hub-not-connected handling", () => {
     const handlers = getHandlers(server);
     const listToolsHandler = handlers.get("tools/list")!;
 
-    const result = await listToolsHandler({ method: "tools/list", params: {} });
-    expect(result).toEqual({ tools: [] });
+    // bug-141: handler MUST NOT silently return tools=[] when agent is
+    // unavailable — host MCP clients would cache the empty list as the
+    // authoritative tool surface. Post-fix the handler retries briefly
+    // and then raises a structured McpError.
+    await expect(
+      listToolsHandler({ method: "tools/list", params: {} }),
+    ).rejects.toThrow(/not ready|adapter|not connected/i);
   });
 
   it("CallTool returns Hub-not-connected error envelope when getAgent() returns null", async () => {
