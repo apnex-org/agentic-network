@@ -435,8 +435,10 @@ async function main(): Promise<void> {
   // Three-phase ready signal.
   //
   //   identityReady — resolves when register_role returns (transport
-  //     connected + identity asserted). ~500ms typical. Gates ListTools
-  //     so the host's catalog fetch unblocks fast.
+  //     connected + identity asserted). ~500ms typical. Sync-readable
+  //     via identityReadyResolved flag; consumed by dispatcher's
+  //     probe-safe cache fallback to skip the early-return path once
+  //     identity has resolved.
   //
   //   sessionReady — resolves when:
   //     (a) eager mode: claim_session MCP tool returns
@@ -447,8 +449,17 @@ async function main(): Promise<void> {
   //
   //   syncReady — resolves when full agent.start() returns (handshake +
   //     runSynchronizingPhase + initial drain). Multi-second for
-  //     architects with non-empty pending-action queues. Tracked for
-  //     diagnostic logging only — CallTool gates on sessionReady.
+  //     architects with non-empty pending-action queues. Gates ListTools
+  //     (bug-141 pass-2 fix 2026-05-28): the prior `listToolsGate:
+  //     identityReady` wiring opened the gate before the McpAgentClient
+  //     reached `streaming` state (agent.isConnected=true), so the
+  //     dispatcher's `isUsableAgent` check inside the bootstrap-path
+  //     retry loop kept failing for ~1.3s — exhausting the 4×200ms
+  //     retry budget and surfacing structured McpError to the host
+  //     instead of returning the catalog. Gating on syncReady ensures
+  //     the agent is fully usable before ListTools fires; on probe-
+  //     path (`!identityReady`) the cache fallback still serves
+  //     instantly without waiting on syncReady.
 
   let resolveIdentityReady!: () => void;
   let rejectIdentityReady!: (err: unknown) => void;
@@ -630,7 +641,7 @@ async function main(): Promise<void> {
     serverName: "proxy",
     serverCapabilities: { tools: {}, experimental: { "claude/channel": {} } },
     log,
-    listToolsGate: identityReady,
+    listToolsGate: syncReady,
     callToolGate: sessionReady,
     getCachedCatalog: () => readCache(WORK_DIR, log),
     getIsIdentityReady: () => identityReadyResolved,

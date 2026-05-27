@@ -93,10 +93,19 @@ export interface SharedDispatcherOptions {
   log?: (msg: string) => void;
 
   /**
-   * Resolves when the underlying McpAgentClient handshake completes
-   * (transport connected + identity asserted). Gates the ListTools
-   * handler so the host's catalog fetch doesn't block on the slow
-   * full-sync phase. Omit when no gating is needed (tests).
+   * Resolves when the underlying McpAgentClient is fully usable
+   * (transport connected + identity asserted + streaming-state
+   * reached, i.e. `agent.start()` returned). Gates the ListTools
+   * handler's bootstrap path; on probe-path (`!identityReady`) the
+   * cache fallback runs without awaiting this gate.
+   *
+   * bug-141 pass-2 (2026-05-28): docs updated from "handshake
+   * completes" → "fully usable". The earlier wording prompted host
+   * shims to gate on `identityReady`, which opened the gate ~1.3s
+   * before `agent.isConnected` flipped true (during the synchronizing
+   * → streaming transition) — surfacing the bug-141 race. Hosts MUST
+   * gate on a Promise that resolves only after the agent is in
+   * streaming state (claude-plugin: `syncReady`).
    *
    * Was: `handshakeComplete` (per-plugin dispatchers). Renamed in
    * mission-55 cleanup per Design v1.2 Q5: name what is gated, not
@@ -293,13 +302,24 @@ export function createSharedDispatcher(
     return !!agent && agent.isConnected !== false;
   }
 
-  // bug-114 fallback-gap retry budget. Bootstrap-path ListTools races
-  // the Hub handshake on cold-start; this short retry window absorbs
-  // the narrow gap before raising a structured error. Worst-case
-  // latency: (LIST_TOOLS_RETRY_ATTEMPTS - 1) × LIST_TOOLS_RETRY_DELAY_MS
-  // (~600ms) before the error surfaces. Acceptable for cold-start;
-  // probe path remains <50ms via cached catalog.
-  const LIST_TOOLS_RETRY_ATTEMPTS = 4;
+  // bug-141 retry budget. Bootstrap-path ListTools races the Hub
+  // handshake on cold-start; this retry window absorbs the gap before
+  // raising a structured error. Worst-case latency:
+  // (LIST_TOOLS_RETRY_ATTEMPTS - 1) × LIST_TOOLS_RETRY_DELAY_MS
+  // (~2.8s) before the error surfaces. Probe path remains <50ms via
+  // cached catalog.
+  //
+  // Pass-1 (2026-05-26, bug-141 initial fix) set 4 × 200ms = 600ms
+  // budget. Pass-2 (2026-05-28) bumped to 15 × 200ms = 2.8s after
+  // observing greg-side cold-starts where the McpAgentClient reached
+  // `streaming` state (agent.isConnected=true) ~1.3s after
+  // identityReady resolved — 4 attempts wasn't enough to bridge the
+  // race. The architecturally-correct fix is for hosts to wire
+  // listToolsGate to syncReady instead of identityReady (claude-
+  // plugin shim does this); the wider retry budget defends opencode-
+  // plugin + any host that doesn't wire the gate, and is a belt-and-
+  // suspenders defense against future race-window widening.
+  const LIST_TOOLS_RETRY_ATTEMPTS = 15;
   const LIST_TOOLS_RETRY_DELAY_MS = 200;
 
   // ADR-017 Phase 1.1: SSE thread_message events carry queueItemId
