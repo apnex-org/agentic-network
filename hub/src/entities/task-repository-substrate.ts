@@ -189,11 +189,15 @@ export class TaskRepositorySubstrate implements ITaskStore {
     const unblocked: string[] = [];
 
     for (const task of allTasks) {
-      if (task.status !== "blocked") continue;
+      // bug-143 fix (greg-caught 2026-05-28): preview-filter on full-table list
+      // results uses in-code filter (no substrate-side filter:{status:...} narrowing).
+      // Must use currentPhase to handle envelope-shape Task entities; raw scalar
+      // compare short-circuits the entire fn before the inner CAS-guard runs.
+      if (currentPhase(task) !== "blocked") continue;
       if (!task.dependsOn || !task.dependsOn.includes(completedTaskId)) continue;
       const allDepsCompletedSnapshot = task.dependsOn.every((depId) => {
         const dep = allMap.get(depId);
-        return dep && dep.status === "completed";
+        return dep && currentPhase(dep) === "completed";
       });
       if (!allDepsCompletedSnapshot) continue;
       const ok = await this.tryCasUpdate(task.id, (current) => {
