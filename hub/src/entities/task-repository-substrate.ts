@@ -38,6 +38,7 @@ import type {
 import { taskClaimableBy } from "../state.js";
 import type { CascadeBacklink } from "./idea.js";
 import { SubstrateCounter } from "./substrate-counter.js";
+import { phaseFromEntity } from "./shape-helpers.js";
 
 const KIND = "Task";
 const MAX_CAS_RETRIES = 50;
@@ -48,6 +49,21 @@ class TransitionRejected extends Error {
     super(`transition rejected: ${reason}`);
     this.name = "TransitionRejected";
   }
+}
+
+/**
+ * bug-143 helper (2026-05-28): extract the scalar status phase from an
+ * envelope-shape Task entity. The substrate stores `data.status` as
+ * either a scalar string (legacy-flat) or an object `{phase, report, ...}`
+ * (envelope-shape per mission-89 Phase 4 / bug-137 closure). The Task
+ * interface types `status` as a scalar string, so any direct comparison
+ * (`current.status !== "blocked"`) silently fails against envelope-shape
+ * data because `{phase:"blocked",...} !== "blocked"` is true. Centralized
+ * helper avoids the bug-138 / bug-141 pattern of per-site fixes drifting.
+ */
+function currentPhase(current: Task): Task["status"] {
+  const extracted = phaseFromEntity(current);
+  return (extracted ?? current.status) as Task["status"];
 }
 
 class Mutex {
@@ -181,13 +197,13 @@ export class TaskRepositorySubstrate implements ITaskStore {
       });
       if (!allDepsCompletedSnapshot) continue;
       const ok = await this.tryCasUpdate(task.id, (current) => {
-        if (current.status !== "blocked") throw new TransitionRejected("already transitioned");
+        if (currentPhase(current) !== "blocked") throw new TransitionRejected("already transitioned");
         if (!current.dependsOn || !current.dependsOn.includes(completedTaskId)) {
           throw new TransitionRejected("dependency no longer relevant");
         }
         const stillAllDone = current.dependsOn.every((depId) => {
           const dep = allMap.get(depId);
-          return dep && dep.status === "completed";
+          return dep && currentPhase(dep) === "completed";
         });
         if (!stillAllDone) throw new TransitionRejected("deps not all completed");
         current.status = "pending";
@@ -211,7 +227,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
     for (const task of items) {
       if (!task.dependsOn || !task.dependsOn.includes(failedTaskId)) continue;
       const ok = await this.tryCasUpdate(task.id, (current) => {
-        if (current.status !== "blocked") throw new TransitionRejected("already transitioned");
+        if (currentPhase(current) !== "blocked") throw new TransitionRejected("already transitioned");
         if (!current.dependsOn || !current.dependsOn.includes(failedTaskId)) {
           throw new TransitionRejected("dependency no longer relevant");
         }
@@ -241,7 +257,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
         if (!taskClaimableBy(preview.labels ?? {}, claimant?.labels)) continue;
         let claimed: Task | null = null;
         const ok = await this.tryCasUpdate(preview.id, (current) => {
-          if (current.status !== "pending") throw new TransitionRejected("already claimed");
+          if (currentPhase(current) !== "pending") throw new TransitionRejected("already claimed");
           if (!taskClaimableBy(current.labels ?? {}, claimant?.labels)) {
             throw new TransitionRejected("labels diverged");
           }
@@ -319,12 +335,13 @@ export class TaskRepositorySubstrate implements ITaskStore {
       for (const preview of candidates) {
         let preTransition: Task | null = null;
         const ok = await this.tryCasUpdate(preview.id, (current) => {
-          if (!(current.status === "completed" || current.status === "failed")) {
+          const phase = currentPhase(current);
+          if (!(phase === "completed" || phase === "failed")) {
             throw new TransitionRejected("already reported or status flipped");
           }
           if (current.report === null) throw new TransitionRejected("report cleared");
           preTransition = { ...current };
-          current.status = ("reported_" + current.status) as TaskStatus;
+          current.status = ("reported_" + phase) as TaskStatus;
           current.updatedAt = new Date().toISOString();
           return current;
         });
@@ -352,10 +369,16 @@ export class TaskRepositorySubstrate implements ITaskStore {
     let priorStatus: Task["status"] | null = null;
     const ok = await this.tryCasUpdate(taskId, (current) => {
       const CANCELLABLE: Task["status"][] = ["pending", "working", "blocked", "input_required"];
-      if (!CANCELLABLE.includes(current.status)) {
-        throw new TransitionRejected(`not cancellable from status ${current.status}`);
+      // bug-143 fix (2026-05-28): envelope-shape Task carries status as
+      // {phase, report, ...} object; CANCELLABLE.includes(object) returns
+      // false for every task in the substrate. Extract the phase scalar
+      // via phaseFromEntity (same pattern as task-policy.ts:212).
+      const currentPhase = phaseFromEntity(current) as Task["status"] | null;
+      const cmpStatus = currentPhase ?? current.status;
+      if (!CANCELLABLE.includes(cmpStatus)) {
+        throw new TransitionRejected(`not cancellable from status ${cmpStatus}`);
       }
-      priorStatus = current.status;
+      priorStatus = cmpStatus;
       current.status = "cancelled";
       current.updatedAt = new Date().toISOString();
       return current;
@@ -368,7 +391,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
 
   async requestClarification(taskId: string, question: string): Promise<boolean> {
     const ok = await this.tryCasUpdate(taskId, (current) => {
-      if (current.status !== "working") throw new TransitionRejected("not working");
+      if (currentPhase(current) !== "working") throw new TransitionRejected("not working");
       current.status = "input_required";
       current.clarificationQuestion = question;
       current.updatedAt = new Date().toISOString();
@@ -380,7 +403,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
 
   async respondToClarification(taskId: string, answer: string): Promise<boolean> {
     const ok = await this.tryCasUpdate(taskId, (current) => {
-      if (current.status !== "input_required") throw new TransitionRejected("not input_required");
+      if (currentPhase(current) !== "input_required") throw new TransitionRejected("not input_required");
       current.status = "working";
       current.clarificationAnswer = answer;
       current.updatedAt = new Date().toISOString();

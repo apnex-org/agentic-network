@@ -102,9 +102,15 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
     }
 
     // FSM guard: in_review → completed
-    if (!isValidTransition(TASK_FSM, task.status, "completed")) {
+    // bug-143 fix (2026-05-28): envelope-shape Task carries `status` as an
+    // object {phase, report, ...}; isValidTransition expects the scalar phase
+    // string. Without phaseFromEntity extraction, `[object Object]` is passed
+    // to the FSM check and every create_review on a substrate-resident task
+    // fails. Sibling to the bug-137 closure (task-policy.ts:212 submitReport).
+    const approveFromPhase = phaseFromEntity(task);
+    if (!isValidTransition(TASK_FSM, approveFromPhase ?? "", "completed")) {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Invalid state transition: cannot approve task in '${task.status}' state (must be 'in_review')` }) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Invalid state transition: cannot approve task in '${approveFromPhase}' state (must be 'in_review')` }) }],
         isError: true,
       };
     }
@@ -190,10 +196,11 @@ async function createReview(args: Record<string, unknown>, ctx: IPolicyContext):
     const isEscalated = (task.revisionCount || 0) >= 3;
     const targetState = isEscalated ? "escalated" : "working";
 
-    // FSM guard
-    if (!isValidTransition(TASK_FSM, task.status, targetState)) {
+    // FSM guard — bug-143 fix: phaseFromEntity for envelope-shape Task.status
+    const rejectFromPhase = phaseFromEntity(task);
+    if (!isValidTransition(TASK_FSM, rejectFromPhase ?? "", targetState)) {
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Invalid state transition: cannot reject task in '${task.status}' state (must be 'in_review')` }) }],
+        content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Invalid state transition: cannot reject task in '${rejectFromPhase}' state (must be 'in_review')` }) }],
         isError: true,
       };
     }
