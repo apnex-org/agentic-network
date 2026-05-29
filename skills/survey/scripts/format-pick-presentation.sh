@@ -47,6 +47,13 @@ case "$ROUND" in
     ;;
 esac
 
+# bug-144 fix: anchor a relative --questions-file to the repo root (cwd-robust).
+if [[ "$QUESTIONS_FILE" != /* ]]; then
+  SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  REPO_ROOT=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/../../.." && pwd))
+  QUESTIONS_FILE="${REPO_ROOT}/${QUESTIONS_FILE}"
+fi
+
 if [[ ! -f "$QUESTIONS_FILE" ]]; then
   echo "[format-pick-presentation] questions-file not found: $QUESTIONS_FILE" >&2
   exit 1

@@ -60,6 +60,25 @@ assert_exists "$WD/docs/surveys/m-test-mission-survey.md" "envelope file"
 assert_grep "M-Test-Mission" "$WD/docs/surveys/m-test-mission-survey.md" "mission-name substituted"
 assert_grep "idea-999" "$WD/docs/surveys/m-test-mission-survey.md" "idea-id substituted"
 
+echo "[survey-init.test] bug-144: cwd-robust — run from a SUBDIR, artifact lands at root not cwd"
+WD="$TMPDIR/cwd-robust"
+setup_workdir "$WD"
+mkdir -p "$WD/skills/some/deep/subdir"
+# Invoke from a subdirectory (not the workdir root). Pre-fix this wrote the
+# envelope under the subdir's PWD; post-fix it anchors to REPO_ROOT (= $WD via
+# the git-rev-parse fallback, since the tmp workdir is not a git repo).
+( cd "$WD/skills/some/deep/subdir" && bash "$WD/skills/survey/scripts/survey-init.sh" --mission-name=M-Cwd-Test --idea-id=idea-777 >/dev/null 2>&1 )
+rc=$?
+assert_exit 0 "$rc" "cwd-robust invocation from subdir"
+assert_exists "$WD/docs/surveys/m-cwd-test-survey.md" "envelope at ROOT (not cwd)"
+if [[ ! -e "$WD/skills/some/deep/subdir/docs/surveys/m-cwd-test-survey.md" ]]; then
+  echo "  ✓ envelope NOT written under the caller's cwd"
+  PASS=$((PASS+1))
+else
+  echo "  ✗ envelope leaked under caller's cwd (cwd-fragility regression)" >&2
+  FAIL=$((FAIL+1))
+fi
+
 echo "[survey-init.test] Happy path with idea-text-file (Tier-1 happy)"
 WD="$TMPDIR/with-text"
 setup_workdir "$WD"

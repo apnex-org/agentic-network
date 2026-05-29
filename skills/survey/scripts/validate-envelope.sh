@@ -45,6 +45,15 @@ if [[ -z "$ENVELOPE_PATH" ]]; then
   exit 1
 fi
 
+# bug-144 fix: anchor a relative --envelope-path to the repo root so the
+# script works from any CWD (a relative path otherwise resolves against the
+# caller's PWD). Absolute paths pass through unchanged.
+if [[ "$ENVELOPE_PATH" != /* ]]; then
+  SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  REPO_ROOT=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/../../.." && pwd))
+  ENVELOPE_PATH="${REPO_ROOT}/${ENVELOPE_PATH}"
+fi
+
 if [[ ! -f "$ENVELOPE_PATH" ]]; then
   echo "[validate-envelope] envelope file not found: $ENVELOPE_PATH" >&2
   exit 1

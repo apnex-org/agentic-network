@@ -16,6 +16,16 @@
 
 set -euo pipefail
 
+# bug-145 fix: exit-code contract. The route is encoded in the exit code —
+# route-a=0, route-b=1, route-c=2 (per §Idea Triage Protocol routing below).
+# Usage/argument errors must NOT collide with those route codes, or a caller
+# cannot distinguish a route-b result from a bad invocation. Invocation errors
+# therefore use EX_USAGE (64, per BSD sysexits); the stub sentinel stays 42.
+# Reconciles the design-doc contradiction at
+# docs/designs/m-survey-process-as-skill-design.md (which mis-documented
+# exit-1 as "schema/auth failure" while the script uses exit-1 for route-b).
+EX_USAGE=64
+
 IDEA_ID=
 IDEA_TEXT_FILE=
 SOURCE=
@@ -36,14 +46,14 @@ for arg in "$@"; do
     *)
       echo "[check-skip-criteria] unknown argument: $arg" >&2
       echo "[check-skip-criteria] usage: check-skip-criteria.sh --idea-id=idea-<N> [--idea-text-file=<path>] [--source=director|architect|engineer] [--contest=none|engineer|peer] [--scope-concrete=true|false] [--tele-aligned=true|false] [--single-mission-shape=true|false]" >&2
-      exit 1
+      exit "$EX_USAGE"
       ;;
   esac
 done
 
 if [[ -z "$IDEA_ID" ]]; then
   echo "[check-skip-criteria] --idea-id is required" >&2
-  exit 1
+  exit "$EX_USAGE"
 fi
 
 # Criterion-1: source ratification (Director-originated OR Director-ratified)
