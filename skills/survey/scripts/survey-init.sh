@@ -14,6 +14,13 @@
 
 set -euo pipefail
 
+# bug-144 fix: anchor all artifact reads/writes to the repo root, not the
+# caller's CWD. survey-init previously wrote docs/surveys/ relative to PWD,
+# which is correct only when invoked from repo-root (the main-session case).
+# git-rev-parse with a SCRIPT_DIR-relative fallback makes it cwd-robust.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || (cd "$SCRIPT_DIR/../../.." && pwd))
+
 MISSION_NAME=
 IDEA_ID=
 IDEA_TEXT_FILE=
@@ -50,7 +57,7 @@ fi
 # Mission name → file slug: M-Survey-Process-as-Skill → m-survey-process-as-skill
 # Per convention in docs/surveys/ (all existing files use 'm-' lowercase prefix).
 SLUG=$(echo "$MISSION_NAME" | tr '[:upper:]' '[:lower:]')
-ENVELOPE_PATH="docs/surveys/${SLUG}-survey.md"
+ENVELOPE_PATH="${REPO_ROOT}/docs/surveys/${SLUG}-survey.md"
 
 if [[ -e "$ENVELOPE_PATH" ]]; then
   echo "[survey-init] envelope already exists at $ENVELOPE_PATH (refusing to overwrite)" >&2
@@ -58,9 +65,8 @@ if [[ -e "$ENVELOPE_PATH" ]]; then
   exit 1
 fi
 
-mkdir -p docs/surveys
+mkdir -p "${REPO_ROOT}/docs/surveys"
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 TEMPLATE_PATH="${SCRIPT_DIR}/../envelope-template.md"
 
 if [[ ! -f "$TEMPLATE_PATH" ]]; then
