@@ -160,7 +160,7 @@ Every helper script:
 - `set -euo pipefail`
 - Args parsed via `--key=value` form (consistent across scripts)
 - stdout for human-readable progress; stderr for errors
-- Exit codes: `0` success / `42` stub-not-implemented (Tier-2/3 sentinel) / `1` schema/auth failure / `2` route-(c) (per M5 fold for check-skip-criteria.sh) / non-zero other for failures
+- Exit codes: `0` success / `42` stub-not-implemented (Tier-2/3 sentinel) / invocation (usage/arg) errors use `64` (EX_USAGE). **check-skip-criteria.sh routing exit codes** (bug-145 reconciliation): `0` route-(a) skip-direct / `1` route-(b) triage-thread / `2` route-(c) Strategic Review queue — the route is the exit code; invocation errors are `64` so they never collide with route-(b)'s `1`. (Prior text mis-documented `1` as "schema/auth failure", contradicting the script's route-(b)=1 usage; corrected per bug-145.)
 
 ### §4.2 Script signatures (revised per C2 + M5 + M6)
 

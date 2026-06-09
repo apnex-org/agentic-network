@@ -83,9 +83,15 @@ set +e; bash "$SCRIPT" \
   >/dev/null 2>&1; rc=$?; set -e
 assert_exit 1 "$rc" "vague idea text → bilateral safety route (b)"
 
-echo "[check-skip-criteria.test] Missing --idea-id → exit 1"
+# bug-145: invocation errors use EX_USAGE (64), NOT exit 1 — exit 1 is route-b,
+# and a usage error must not be mistakable for a routing result.
+echo "[check-skip-criteria.test] Missing --idea-id → exit 64 (EX_USAGE, not route-b's exit 1)"
 set +e; bash "$SCRIPT" --source=director >/dev/null 2>&1; rc=$?; set -e
-assert_exit 1 "$rc" "missing --idea-id"
+assert_exit 64 "$rc" "missing --idea-id → EX_USAGE"
+
+echo "[check-skip-criteria.test] Unknown argument → exit 64 (EX_USAGE)"
+set +e; bash "$SCRIPT" --idea-id=idea-1 --bogus-flag=x >/dev/null 2>&1; rc=$?; set -e
+assert_exit 64 "$rc" "unknown arg → EX_USAGE"
 
 echo
 echo "[check-skip-criteria.test] Result: $PASS passed, $FAIL failed"
