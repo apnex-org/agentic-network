@@ -34,6 +34,17 @@ import type { HubStorageSubstrate, SchemaDef } from "../index.js";
 
 const { Pool } = pg;
 
+/**
+ * mission-90 W1: SchemaDef rows are stored ENVELOPE-shaped (boot-put fix —
+ * described kind at metadata.name, schema config under spec). Tests that read
+ * rows back resolve the described kind envelope-aware; bare passthrough kept
+ * for any legacy row in-flight.
+ */
+function describedKind(row: unknown): string {
+  const r = row as { kind?: string; metadata?: { name?: string } };
+  return r.metadata?.name ?? r.kind ?? "";
+}
+
 let container: StartedPostgreSqlContainer;
 let substrate: HubStorageSubstrate;
 let connStr: string;
@@ -82,9 +93,10 @@ describe("Reconciler", () => {
     });
     await reconciler.start();
 
-    // Verify SchemaDef entries query-able via substrate
+    // Verify SchemaDef entries query-able via substrate (envelope rows;
+    // described kind at metadata.name per mission-90 W1 boot-put fix)
     const { items } = await substrate.list<SchemaDef>("SchemaDef");
-    const kinds = items.map(i => i.kind);
+    const kinds = items.map(i => describedKind(i));
     expect(kinds).toEqual(expect.arrayContaining(["SchemaDef", "Bug", "Idea", "Message"]));
 
     // Verify per-kind indexes exist in pg_indexes catalog
@@ -137,11 +149,13 @@ describe("Reconciler", () => {
   }, 30_000);
 
   it("self-bootstrap: SchemaDef-for-SchemaDef applied first; substrate.list('SchemaDef') returns SchemaDef entry", async () => {
-    // SchemaDef-for-SchemaDef should be in the SchemaDef list (its own kind)
+    // SchemaDef-for-SchemaDef should be in the SchemaDef list (its own kind).
+    // mission-90 W1: rows are envelope-shaped — schema config under spec.
     const { items } = await substrate.list<SchemaDef>("SchemaDef");
-    const schemaDefMeta = items.find(i => i.kind === "SchemaDef");
+    const schemaDefMeta = items.find(i => describedKind(i) === "SchemaDef");
     expect(schemaDefMeta).toBeDefined();
-    expect(schemaDefMeta?.fields).toEqual(expect.arrayContaining([
+    const spec = (schemaDefMeta as unknown as { spec?: { fields?: unknown } })?.spec;
+    expect(spec?.fields).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "kind", type: "string" }),
       expect.objectContaining({ name: "version", type: "number" }),
     ]));
@@ -344,9 +358,10 @@ describe("Full substrate-readiness (ALL 20 SchemaDefs)", () => {
     });
     await reconciler.start();
 
-    // Verify substrate has all 20 SchemaDef entries
+    // Verify substrate has all SchemaDef entries (envelope rows; described
+    // kind at metadata.name per mission-90 W1 boot-put fix)
     const { items } = await substrate.list<SchemaDef>("SchemaDef");
-    const kinds = new Set(items.map(i => i.kind));
+    const kinds = new Set(items.map(i => describedKind(i)));
     const expectedKinds = ALL_SCHEMAS.map(s => s.kind);
     for (const expected of expectedKinds) {
       expect(kinds.has(expected)).toBe(true);

@@ -21,7 +21,9 @@
 
 import pg from "pg";
 import { attachPgErrorHandler } from "./pg-error-handler.js";
-import type { HubStorageSubstrate, SchemaDef, IndexDef } from "./types.js";
+import type { HubStorageSubstrate, SchemaDef, FieldDef, IndexDef, RenameMap } from "./types.js";
+import { isEnvelopeShape } from "./migrations/v2-envelope/shared/envelope.js";
+import { createSchemaDefMigrationModule } from "./migrations/v2-envelope/kinds/SchemaDef.js";
 
 const { Pool } = pg;
 
@@ -59,6 +61,31 @@ export class SchemaReconciler {
    * internal abort for clean shutdown of substrate.watch LISTEN client.
    */
   private readonly internalAbort: AbortController;
+
+  /**
+   * mission-90 W1 (Design §2.2): per-kind reverse-translation cache —
+   * Map<kind, Map<bare-filter-key, envelope-JSONB-dotted-path>>. Built as a
+   * side-effect of applySchemaIndexes (boot-time + runtime SchemaDef put);
+   * no TTL / no invalidation — exact to the current SchemaDef inventory;
+   * Hub restart rebuilds all caches at boot.
+   */
+  private readonly fieldTranslationMap = new Map<string, Map<string, string>>();
+
+  /**
+   * mission-90 W1 boot-put envelope-correctness (thread-658 preflight c1/c2
+   * fold): the SchemaDef migration module is the single shape-authority for
+   * envelope-encoding SchemaDef rows — reusing migrateOne guarantees boot-put
+   * rows are byte-shape-identical to migrated rows (rename kind→metadata.name,
+   * spec partition, status.phase="applied" stamp). The module only reads
+   * schema.kind at encode-time, so a minimal self-describing arg is deliberate.
+   */
+  private readonly schemaDefEnvelopeEncoder = createSchemaDefMigrationModule({
+    kind: "SchemaDef",
+    version: 1,
+    fields: [],
+    indexes: [],
+    watchable: true,
+  });
 
   constructor(
     private readonly substrate: HubStorageSubstrate,
@@ -108,7 +135,13 @@ export class SchemaReconciler {
         // Store SchemaDef in entities table (so runtime watch will see future changes
         // via NOTIFY). Per Design §2.3 bootstrap-self-referential: SchemaDef-for-
         // SchemaDef seeded first; subsequent entries reconciled via same path.
-        await this.substrate.put("SchemaDef", { id: def.kind, ...def });
+        //
+        // mission-90 W1 (thread-658 c1/c2 fold): rows are written ENVELOPE-shaped
+        // via the SchemaDef migration module — the prior bare `{id, ...def}` put
+        // re-bared all SchemaDef rows at every restart (a live bare-writer surface)
+        // and would clobber W5's status-writes. W5's status-write MERGES into this
+        // row shape (Design §4 W5 row).
+        await this.substrate.put("SchemaDef", this.toEnvelopeRow(def));
         await this.applySchemaIndexes(def);
       } catch (err) {
         // Per-kind failure: capture context for STRICT throw post-loop.
@@ -149,6 +182,16 @@ export class SchemaReconciler {
    * affordance for ad-hoc diagnostic indexes).
    */
   private async applySchemaIndexes(def: SchemaDef): Promise<void> {
+    // mission-90 W1 (Design §2.2): build the field-translation cache FIRST,
+    // OUTSIDE the per-index try/catch blocks below — a malformed-renameMap
+    // throw MUST propagate out of applySchemaIndexes to start()'s failure
+    // collector (STRICT-ALL-OR-NOTHING boot), NOT be swallowed like the
+    // per-index / ownership-pattern failures. Pure additive side-effect:
+    // reads ONLY def.renameMap; index DDL below reads ONLY
+    // kind/indexes/indexOwnershipPattern — zero index-churn by construction
+    // (ADR mechanism statement: Design §8).
+    this.buildFieldTranslationMap(def);
+
     // First pass: CREATE INDEX CONCURRENTLY IF NOT EXISTS for declared indexes
     const declaredNames = new Set<string>();
     for (const idx of def.indexes) {
@@ -187,6 +230,84 @@ export class SchemaReconciler {
         );
       }
     }
+  }
+
+  /**
+   * mission-90 W1 (Design §2.2): validate + cache def.renameMap into the
+   * per-kind reverse-translation table. Throws on malformed entries (empty
+   * key, non-string target, target not rooted at metadata/spec/status) —
+   * positioned in applySchemaIndexes so the throw reaches start()'s STRICT
+   * failure collector at boot.
+   */
+  private buildFieldTranslationMap(def: SchemaDef): void {
+    const entries = Object.entries(def.renameMap ?? {});
+    for (const [bareKey, targetPath] of entries) {
+      if (typeof bareKey !== "string" || bareKey.length === 0) {
+        throw new Error(`[SchemaReconciler] invalid renameMap for kind=${def.kind}: empty/non-string key`);
+      }
+      if (typeof targetPath !== "string" || !/^(metadata|spec|status)\.[A-Za-z0-9_.]+$/.test(targetPath)) {
+        throw new Error(
+          `[SchemaReconciler] invalid renameMap for kind=${def.kind}: key='${bareKey}' target='${String(targetPath)}' — target must be a dotted path rooted at metadata/spec/status`,
+        );
+      }
+    }
+    this.fieldTranslationMap.set(def.kind, new Map(entries));
+  }
+
+  /**
+   * mission-90 W1 (Design §2.2): public accessor consumed by the substrate
+   * filter/sort translation (W2, §2.3) and any later policy-layer consumer.
+   * Returns the envelope JSONB dotted-path for a renamed bare key, or null
+   * for non-renamed keys and unknown kinds (caller passes the bare key
+   * through unchanged on null).
+   */
+  public getFieldTranslation(kind: string, bareKey: string): string | null {
+    return this.fieldTranslationMap.get(kind)?.get(bareKey) ?? null;
+  }
+
+  /**
+   * mission-90 W1: envelope-encode a runtime SchemaDef for the boot put via
+   * the SchemaDef migration module (single shape-authority — see field-init
+   * comment). Input is the bare legacy shape `{id, ...def}`; output is the
+   * envelope row (metadata.name=kind, spec carries version/fields/indexes/
+   * watchable/indexOwnershipPattern/renameMap, status stamped "applied").
+   */
+  private toEnvelopeRow(def: SchemaDef): Record<string, unknown> {
+    return this.schemaDefEnvelopeEncoder.migrateOne({ id: def.kind, ...def }) as Record<string, unknown>;
+  }
+
+  /**
+   * mission-90 W1: decode a watched SchemaDef row back to the runtime
+   * SchemaDef shape. Envelope rows (post boot-put fix) carry the described
+   * kind at metadata.name and the schema config under spec; bare rows
+   * (legacy in-flight during first post-deploy boot) pass through unchanged.
+   * Without this decode, applySchemaIndexes(envelope) would read def.kind
+   * as the ENTITY kind ("SchemaDef") instead of the described kind.
+   */
+  private schemaDefFromRow(row: Record<string, unknown>): SchemaDef {
+    if (!isEnvelopeShape(row)) {
+      return row as unknown as SchemaDef;
+    }
+    const md = row.metadata as Record<string, unknown>;
+    const spec = row.spec as Record<string, unknown>;
+    const kind =
+      typeof md.name === "string" && md.name.length > 0
+        ? md.name
+        : String((row as { name?: unknown }).name ?? (row as { id?: unknown }).id ?? "");
+    const def: SchemaDef = {
+      kind,
+      version: typeof spec.version === "number" ? spec.version : 1,
+      fields: Array.isArray(spec.fields) ? (spec.fields as FieldDef[]) : [],
+      indexes: Array.isArray(spec.indexes) ? (spec.indexes as IndexDef[]) : [],
+      watchable: typeof spec.watchable === "boolean" ? spec.watchable : true,
+    };
+    if (typeof spec.indexOwnershipPattern === "string") {
+      def.indexOwnershipPattern = spec.indexOwnershipPattern;
+    }
+    if (spec.renameMap && typeof spec.renameMap === "object" && !Array.isArray(spec.renameMap)) {
+      def.renameMap = spec.renameMap as RenameMap;
+    }
+    return def;
   }
 
   /**
@@ -258,13 +379,17 @@ export class SchemaReconciler {
    */
   private async runtimeLoop(): Promise<void> {
     try {
-      for await (const event of this.substrate.watch<SchemaDef>("SchemaDef", { signal: this.internalAbort.signal })) {
+      for await (const event of this.substrate.watch<Record<string, unknown>>("SchemaDef", { signal: this.internalAbort.signal })) {
         if (event.op === "put" && event.entity) {
-          this.log(`runtime — re-reconciling kind=${event.entity.kind} (rv=${event.resourceVersion})`);
+          // mission-90 W1: rows are envelope-shaped post boot-put fix — decode
+          // back to the runtime SchemaDef (described kind at metadata.name)
+          // before reconciling; bare rows pass through (first-boot tolerance).
+          const def = this.schemaDefFromRow(event.entity);
+          this.log(`runtime — re-reconciling kind=${def.kind} (rv=${event.resourceVersion})`);
           try {
-            await this.applySchemaIndexes(event.entity);
+            await this.applySchemaIndexes(def);
           } catch (err) {
-            this.warn(`runtime apply failed for kind=${event.entity.kind}`, err);
+            this.warn(`runtime apply failed for kind=${def.kind}`, err);
           }
         } else if (event.op === "delete") {
           // Need the SchemaDef shape to know which indexes to drop. Watch payload

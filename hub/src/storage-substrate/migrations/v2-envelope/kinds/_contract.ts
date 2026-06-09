@@ -16,7 +16,7 @@
  * per-kind tests + wire-flow integration test exercise the full contract.
  */
 
-import type { HubStorageSubstrate, SchemaDef } from "../../../types.js";
+import type { HubStorageSubstrate, RenameMap, SchemaDef } from "../../../types.js";
 
 /**
  * Per-kind rename mapping. Cluster-4 §1.7 canonical case: Message.kind →
@@ -25,8 +25,12 @@ import type { HubStorageSubstrate, SchemaDef } from "../../../types.js";
  *
  * Mapping shape: `legacyFieldPath` → `envelopeFieldPath` (dotted paths).
  * Library honors mechanically; per-kind modules supply rules.
+ *
+ * mission-90 W1: declaration PROMOTED to the runtime contract surface
+ * (storage-substrate/types.ts) — re-exported here so existing migration-layer
+ * importers compile unchanged. Single type, no duplicate declaration.
  */
-export type RenameMap = Record<string, string>;
+export type { RenameMap };
 
 /**
  * SchemaDef + per-kind migration metadata passed to encode/parse functions
