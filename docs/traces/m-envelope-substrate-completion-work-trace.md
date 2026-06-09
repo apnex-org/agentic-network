@@ -37,3 +37,22 @@
 - Observed in-file LISTEN bleed across reconciler instances in tests (cycle N's loop drains puts from cycle N+1's boot) — idempotent no-op DDL, no churn; W1.5 deadline set generous. NOTE for W5: this confirms cross-instance NOTIFY delivery is real; production runs ONE reconciler, but the W5 storm-math should assume any concurrently-listening instance sees all puts.
 
 **tsc:** clean. **Suite:** storage-substrate re-run in flight at slice close.
+
+### ⏸ PARK-NOTE — mission-90 PAUSED (Director directive, 2026-06-10)
+
+**Parked at:** `agent-greg/m90-w1-renamemap-contract` @ `421491a` (pushed). **task-415 stays open/working** (pause is coordination-level, no FSM change). Pulses stripped architect-side; re-armed at resume.
+
+**Exact state (better than the pause-time architect snapshot — everything landed):**
+- Implementation COMMITTED: types.ts + _contract.ts + schema-reconciler.ts (cache/accessor/boot-put/watch-decode) + all-schemas.ts (28/20) — all in `421491a`.
+- ALL test fixes COMMITTED (not "in flight"): the 3 legacy-shape assertion updates in `reconciler-and-repositories.test.ts` (envelope-aware via `describedKind()` helper) + W1.3 malformed-row cleanup + W1.4 ALL_SCHEMAS-id scoping + W1.5 re-put loop (LISTEN-establishment race: a put fired before the runtime loop's LISTEN is active is lost — no replay without sinceRevision; test re-puts every 2s until caught).
+- **Full hub suite GREEN: 1917 passed / 0 failed / 7 skipped (153 files).** One earlier flake (testcontainers contention under parallel docker load) did not reproduce.
+- Local stack revived (postgres `ois-postgres-local-local` restarted; old hub container healed); W1 image BUILT via build-hub.sh (exit 0) but NOT yet started/validated.
+- Design v1.2 merged to main (`3e82284`, PR #312) — fully truthful doc for resume.
+
+**Remaining when resumed (in order):**
+1. `start-hub.sh` against the W1 image + boot-validate: log shows 23/23 SchemaDefs applied; local DB SchemaDef rows envelope-correct (`SELECT data ? 'metadata'`); restart twice for the oid-stability spot-check on a live boot.
+2. Self-review pass on the diff (code-review, high effort).
+3. Open the W1 PR. **PR-body must flag the 3 intentional assertion-shape changes in `reconciler-and-repositories.test.ts`** (architect-dispositioned 2026-06-10: in-scope + correct, but changed assertions get explicit reviewer eyes per refactor-introduces-regression discipline). Also note: STRICT for malformed-renameMap is ratified (W1 contract failure ⇒ Hub-start fail; WARN is W5's status-write posture — different surface).
+4. Report on task-415 (in_review) with verification output; architect reviews same-day per their note.
+
+**Context refs for cold-pickup:** thread-657 (round-1 audit), thread-658 (preflight + c1/c2), task-415 directive (full W1 spec + gate), Design v1.2 §4 W1 row @ main, `/tmp/m90-preflight.dump` (+ hub-vm:/tmp copy) for the W2/W6 harness corpus.
