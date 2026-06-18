@@ -25,25 +25,75 @@ import type {
   SnapshotRef,
   Filter,
   FilterValue,
+  FieldTranslator,
 } from "./types.js";
 
 const { Pool, Client } = pg;
 
 /**
- * Factory — returns a HubStorageSubstrate backed by a postgres connection-pool.
+ * Postgres substrate handle. Extends HubStorageSubstrate with the W2 late-bound
+ * field-translator injection point (setFieldTranslator) — kept OFF the
+ * HubStorageSubstrate interface so the memory substrate (and its consumers) are
+ * unaffected; only the postgres list-path translates bare keys to envelope paths.
  */
-export function createPostgresStorageSubstrate(connectionString: string): HubStorageSubstrate {
+export interface PostgresSubstrate extends HubStorageSubstrate {
+  setFieldTranslator(translator: FieldTranslator | null): void;
+}
+
+/**
+ * Factory — returns a PostgresSubstrate backed by a postgres connection-pool.
+ */
+export function createPostgresStorageSubstrate(connectionString: string): PostgresSubstrate {
   return new PostgresStorageSubstrate(connectionString);
 }
 
-class PostgresStorageSubstrate implements HubStorageSubstrate {
+class PostgresStorageSubstrate implements PostgresSubstrate {
   private readonly pool: pg.Pool;
+
+  /**
+   * mission-90 W2 (Design §2.3): bare-key → envelope-JSONB-path translator,
+   * late-bound via setFieldTranslator AFTER the reconciler is constructed +
+   * started (breaks the substrate↔reconciler construction cycle). null until
+   * wired (tests + memory-parity dev paths) → list() is a pure no-op passthrough.
+   */
+  private fieldTranslator: FieldTranslator | null = null;
 
   constructor(connectionString: string) {
     this.pool = new Pool({ connectionString });
     // bug-110 — without an 'error' listener an idle-connection backend error
     // is an uncaught exception that crashes the process (pg contract).
     attachPgErrorHandler(this.pool, "PostgresStorageSubstrate pool");
+  }
+
+  /**
+   * mission-90 W2 (Design §2.3): inject the reconciler's field-translation hook.
+   * Called once at Hub boot after reconciler.start(); a null arg clears it.
+   */
+  setFieldTranslator(translator: FieldTranslator | null): void {
+    this.fieldTranslator = translator;
+  }
+
+  /**
+   * mission-90 W2 (Design §2.3): translate a single bare filter/sort key for a
+   * kind to its envelope JSONB dotted-path. Pure no-op (returns the bare key)
+   * when no translator is wired or the key carries no rename.
+   */
+  private translateKey(kind: string, bareKey: string): string {
+    return this.fieldTranslator?.(kind, bareKey) ?? bareKey;
+  }
+
+  /**
+   * mission-90 W2 (Design §2.3): single pre-translation pass — rewrite every bare
+   * filter key to its envelope JSONB path BEFORE translateFilterClause/jsonbField
+   * (which are unchanged and receive already-translated path names). Fixes bug-138
+   * (envelope-blind filters) at the Layer-A chokepoint with no per-tool code.
+   */
+  private translateFilterKeysToEnvelopePaths(kind: string, filter: Filter): Filter {
+    const translated: Filter = {};
+    for (const [field, value] of Object.entries(filter)) {
+      translated[this.translateKey(kind, field)] = value;
+    }
+    return translated;
   }
 
   // ── Schema management (W2 reconciler integration; stubbed at W1) ──────────
@@ -111,19 +161,23 @@ class PostgresStorageSubstrate implements HubStorageSubstrate {
     const params: unknown[] = [kind];
     let p = 2;
 
+    // mission-90 W2 (Design §2.3): pre-translate bare filter keys → envelope JSONB
+    // paths BEFORE the existing clause/jsonbField loop (which stays unchanged).
     // Filter translation per FilterValue discriminated union (per Design v1.1 §2.1 N1)
     if (filter) {
-      for (const [field, value] of Object.entries(filter)) {
+      const translatedFilter = this.translateFilterKeysToEnvelopePaths(kind, filter);
+      for (const [field, value] of Object.entries(translatedFilter)) {
         const clause = translateFilterClause(field, value, p, params);
         where.push(clause.sql);
         p = clause.nextParamIndex;
       }
     }
 
-    // Sort translation: dotted-path field → JSONB extract
+    // Sort translation: bare key → envelope JSONB path (mission-90 W2, same hook),
+    // then dotted-path field → JSONB extract (jsonbField unchanged).
     let orderSql = "";
     if (sort && sort.length > 0) {
-      const parts = sort.map(s => `${jsonbField(s.field)} ${s.order === "desc" ? "DESC" : "ASC"}`);
+      const parts = sort.map(s => `${jsonbField(this.translateKey(kind, s.field))} ${s.order === "desc" ? "DESC" : "ASC"}`);
       orderSql = ` ORDER BY ${parts.join(", ")}`;
     }
 
