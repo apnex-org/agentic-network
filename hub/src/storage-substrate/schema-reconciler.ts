@@ -63,7 +63,8 @@ export class SchemaReconciler {
   private readonly internalAbort: AbortController;
 
   /**
-   * mission-90 W1 (Design §2.2): per-kind reverse-translation cache —
+   * mission-90 W1 (Design §2.2): per-kind field-translation cache (renameMap
+   * re-indexed by kind; FORWARD bare→envelope, same direction as renameMap) —
    * Map<kind, Map<bare-filter-key, envelope-JSONB-dotted-path>>. Built as a
    * side-effect of applySchemaIndexes (boot-time + runtime SchemaDef put);
    * no TTL / no invalidation — exact to the current SchemaDef inventory;
@@ -234,8 +235,9 @@ export class SchemaReconciler {
 
   /**
    * mission-90 W1 (Design §2.2): validate + cache def.renameMap into the
-   * per-kind reverse-translation table. Throws on malformed entries (empty
-   * key, non-string target, target not rooted at metadata/spec/status) —
+   * per-kind field-translation table. Throws on malformed entries (empty
+   * key, non-string target, target not a dotted path of non-empty segments
+   * rooted at metadata/spec/status) —
    * positioned in applySchemaIndexes so the throw reaches start()'s STRICT
    * failure collector at boot.
    */
@@ -245,7 +247,12 @@ export class SchemaReconciler {
       if (typeof bareKey !== "string" || bareKey.length === 0) {
         throw new Error(`[SchemaReconciler] invalid renameMap for kind=${def.kind}: empty/non-string key`);
       }
-      if (typeof targetPath !== "string" || !/^(metadata|spec|status)\.[A-Za-z0-9_.]+$/.test(targetPath)) {
+      // Target must be a dotted path rooted at metadata/spec/status with one or
+      // more NON-EMPTY segments. The `.` is the segment separator, NOT a segment
+      // char — keeping it inside the char class would admit empty segments
+      // (`status..phase`, `metadata.createdAt.`) that pass STRICT boot validation
+      // but split into empty JSONB path components at the W2 filter/sort consumer.
+      if (typeof targetPath !== "string" || !/^(metadata|spec|status)(\.[A-Za-z0-9_]+)+$/.test(targetPath)) {
         throw new Error(
           `[SchemaReconciler] invalid renameMap for kind=${def.kind}: key='${bareKey}' target='${String(targetPath)}' — target must be a dotted path rooted at metadata/spec/status`,
         );

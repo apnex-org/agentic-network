@@ -230,6 +230,37 @@ describe("W1.2-W1.5 reconciler contract (testcontainers postgres)", () => {
   );
 
   it(
+    "W1.3b empty-segment / trailing-dot renameMap target → start() FAILS (regex rejects empty JSONB path segments)",
+    async () => {
+      // The dotted-path separator '.' must NOT be admitted as a segment char —
+      // 'status..phase' and 'metadata.createdAt.' are well-rooted but split into
+      // empty JSONB path components downstream. STRICT boot must reject them.
+      for (const badTarget of ["status..phase", "metadata.createdAt.", "spec."]) {
+        const substrate = createPostgresStorageSubstrate(connStr);
+        const bad: SchemaDef = {
+          kind: "W1EmptySeg",
+          version: 1,
+          fields: [],
+          indexes: [],
+          watchable: true,
+          renameMap: { status: badTarget },
+        };
+        const reconciler = createSchemaReconciler(substrate, connStr, { initialSchemas: [bad] });
+        try {
+          await expect(reconciler.start(), `target='${badTarget}'`).rejects.toThrow(
+            /invalid renameMap for kind=W1EmptySeg/,
+          );
+        } finally {
+          await pool.query(`DELETE FROM entities WHERE kind = 'SchemaDef' AND id = 'W1EmptySeg'`);
+          await reconciler.close();
+          await substrate.close();
+        }
+      }
+    },
+    TEST_OP_TIMEOUT,
+  );
+
+  it(
     "W1.4 3× restart-cycle: zero index-DDL churn (oid-stable), SchemaDef rows envelope-correct each boot",
     async () => {
       let firstCycleOids: Map<string, string> | null = null;

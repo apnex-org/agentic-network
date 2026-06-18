@@ -50,9 +50,29 @@
 - Design v1.2 merged to main (`3e82284`, PR #312) — fully truthful doc for resume.
 
 **Remaining when resumed (in order):**
-1. `start-hub.sh` against the W1 image + boot-validate: log shows 23/23 SchemaDefs applied; local DB SchemaDef rows envelope-correct (`SELECT data ? 'metadata'`); restart twice for the oid-stability spot-check on a live boot.
+1. ~~`start-hub.sh` against the W1 image + boot-validate~~ **— SUPERSEDED 2026-06-19 (Director directive: "our hub is in Cloud Run, not local — remove any local hub image and re-orient").** Production Hub is a cloud-deployed artifact (hub-vm GCE docker-compose behind a Cloud Run nginx proxy, mission-86); a locally-built `ois-hub:local` boot proves nothing about prod and the local hub images have been removed. **Re-oriented boot-validation = the testcontainers integration suite** (real ephemeral postgres, real `SchemaReconciler.start()`): W1.4 asserts 3× restart-cycle index-oid stability (zero DDL churn) + SchemaDef rows envelope-correct each boot (`data ? 'metadata'`); W1.5 asserts watch-path decode. This is the dispositive in-repo boot-proof; the production boot is the deploy gate (post-merge / W7), not a pre-PR engineer step. Re-run the storage-substrate suite and capture the W1.4/W1.5 output as the verification artifact.
 2. Self-review pass on the diff (code-review, high effort).
 3. Open the W1 PR. **PR-body must flag two intentional out-of-stated-scope items for explicit reviewer eyes:** (a) the 3 assertion-shape changes in `reconciler-and-repositories.test.ts` (architect-dispositioned 2026-06-10: in-scope + correct, but changed assertions per refactor-introduces-regression discipline); (b) the **W1.5 LISTEN-establishment-race fix** (re-put-until-caught test harness) — an extra slice beyond task-415's stated scope, called out by architect 2026-06-10 (Msg 01KVEB3NWMG2BR88SH9G3TNVK0) so the review knows to look. Also note: STRICT for malformed-renameMap is ratified (W1 contract failure ⇒ Hub-start fail; WARN is W5's status-write posture — different surface).
 4. Report on task-415 (in_review) with verification output; architect reviews same-day per their note.
 
 **Context refs for cold-pickup:** thread-657 (round-1 audit), thread-658 (preflight + c1/c2), task-415 directive (full W1 spec + gate), Design v1.2 §4 W1 row @ main, `/tmp/m90-preflight.dump` (+ hub-vm:/tmp copy) for the W2/W6 harness corpus.
+
+---
+
+### Slice 2 — resume + re-orientation + self-review (2026-06-19)
+
+**Mission RESUMED** (Director directive 2026-06-19); pulses re-armed + acked each tick.
+
+**Topology re-orientation (Director-direct correction):** "our hub is in Cloud Run, not local — remove any local hub image and re-orient." Ground-truthed `deploy/README.md`: prod Hub = `hub-vm` GCE docker-compose (Hub+Postgres+Watchtower) **fronted by a Cloud Run nginx proxy** (mission-86). Removed ALL local hub images (684.9MB reclaimed) + the crash-looping `ois-hub-local-local` container. Corrected the prod-topology memory (the "Cloud Run retired" + "watchtower auto-deploy ~5min" claims were stale — deploy is manual per cloud-deploy-rollback-runbook.md). Director confirmed the testcontainers integration suite as the dispositive W1 boot-proof.
+
+**Boot-validation (re-oriented):** storage-substrate suite GREEN — W1.4 3× restart-cycle oid-stability + SchemaDef rows envelope-correct each boot; W1.5 watch-path decode; W1.3 STRICT malformed-renameMap → start() fails. Full hub suite regression: **153 files / 1917 passed / 7 skipped, exit 0** (matches park baseline).
+
+**Self-review (code-review high, 8 finder angles + verify):** two CONFIRMED → FIXED this slice; two design-seams → SURFACED to architect (not LLM-autonomous):
+- FIX 1 — `buildFieldTranslationMap` renameMap target regex was `^(metadata|spec|status)\.[A-Za-z0-9_.]+$`; the `.` inside the char class admitted empty segments (`status..phase`, `metadata.createdAt.`) that pass STRICT boot but split into empty JSONB path components at the W2 consumer. Tightened to `^(metadata|spec|status)(\.[A-Za-z0-9_]+)+$` + added gate test **W1.3b** (3 bad targets → start() fails). All 23 real SchemaDefs still apply.
+- FIX 2 — comment accuracy: cache was doc'd "reverse-translation" but maps bare→envelope FORWARD (= renameMap re-indexed; code already names it `fieldTranslationMap`/`getFieldTranslation`). Reworded.
+- SURFACE A — boot-put stamps `status.phase="applied"` (via the SchemaDef migration module's `preTransform`) BEFORE `applySchemaIndexes`, and substrate.put is a full-row REPLACE → re-stamps "applied" every restart. Latent in W1 (no status reader until W5), but the W1↔W5 status-merge seam needs the architect's eye in W5 design (the line-142 comment asserts "W5 MERGES into this row").
+- SURFACE B — altitude: reconciler self-encoding the boot-put sits against envelope.ts's "reconciler manages indexes only" boundary; `schemaDefFromRow` bare-passthrough has no retirement gate. Both are W4/W6 generalization seams (does the writer-cutover subsume the reconciler's self-encode?).
+
+**Verified-and-refuted during self-review** (so they don't resurface): renameMap/indexOwnershipPattern DO survive the boot-put round-trip (encodeEnvelope default-bucket → spec; W1.4 already asserts `spec.renameMap`), so no self-NOTIFY cache-wipe; dual-source drift IS guarded by the W1.1 parity test.
+
+**Resume tail from here:** open W1 PR (flags: 3 reconciler-test assertion-shape changes + W1.5 LISTEN-race harness + the 2 self-review fixes + the 2 surfaced seams) → report task-415 in_review → architect same-day review.
