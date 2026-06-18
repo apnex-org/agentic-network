@@ -82,20 +82,6 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     return this.fieldTranslator?.(kind, bareKey) ?? bareKey;
   }
 
-  /**
-   * mission-90 W2 (Design §2.3): single pre-translation pass — rewrite every bare
-   * filter key to its envelope JSONB path BEFORE translateFilterClause/jsonbField
-   * (which are unchanged and receive already-translated path names). Fixes bug-138
-   * (envelope-blind filters) at the Layer-A chokepoint with no per-tool code.
-   */
-  private translateFilterKeysToEnvelopePaths(kind: string, filter: Filter): Filter {
-    const translated: Filter = {};
-    for (const [field, value] of Object.entries(filter)) {
-      translated[this.translateKey(kind, field)] = value;
-    }
-    return translated;
-  }
-
   // ── Schema management (W2 reconciler integration; stubbed at W1) ──────────
 
   async applySchema(_def: SchemaDef): Promise<void> {
@@ -161,13 +147,15 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     const params: unknown[] = [kind];
     let p = 2;
 
-    // mission-90 W2 (Design §2.3): pre-translate bare filter keys → envelope JSONB
-    // paths BEFORE the existing clause/jsonbField loop (which stays unchanged).
+    // mission-90 W2 (Design §2.3): translate each bare filter key → envelope JSONB
+    // path INLINE (symmetric with the sort path below) so EACH original filter
+    // entry yields its own clause — a per-entry translate can never collapse two
+    // entries that map to the same path the way an object-rebuild would.
+    // translateFilterClause/jsonbField stay unchanged (they receive the path name).
     // Filter translation per FilterValue discriminated union (per Design v1.1 §2.1 N1)
     if (filter) {
-      const translatedFilter = this.translateFilterKeysToEnvelopePaths(kind, filter);
-      for (const [field, value] of Object.entries(translatedFilter)) {
-        const clause = translateFilterClause(field, value, p, params);
+      for (const [field, value] of Object.entries(filter)) {
+        const clause = translateFilterClause(this.translateKey(kind, field), value, p, params);
         where.push(clause.sql);
         p = clause.nextParamIndex;
       }
