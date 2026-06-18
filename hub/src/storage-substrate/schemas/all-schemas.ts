@@ -42,6 +42,10 @@ const Agent: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^agent_",
+  // mission-90 W1 (Design §2.1/§2.6): runtime renameMap — AUTHORITATIVE copy; entry content
+  // mirrors the per-kind v2-envelope migration module (28 entries across 20 kinds;
+  // Counter / Document / MigrationCursor carry none).
+  renameMap: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt" },
 };
 
 const Audit: SchemaDef = {
@@ -71,6 +75,7 @@ const Audit: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^audit_",
+  renameMap: { timestamp: "metadata.createdAt" },
 };
 
 const Bug: SchemaDef = {
@@ -90,6 +95,7 @@ const Bug: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^bug_",
+  renameMap: { status: "status.phase" },
 };
 
 const Counter: SchemaDef = {
@@ -127,6 +133,7 @@ const Idea: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^idea_",
+  renameMap: { status: "status.phase", missionId: "status.missionId" },
 };
 
 const Message: SchemaDef = {
@@ -150,6 +157,8 @@ const Message: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^message_",
+  // field-collision rename (cluster-4 §1.7 canonical): legacy Message.kind collides with envelope kind
+  renameMap: { kind: "metadata.messageKind", status: "status.phase" },
 };
 
 const Mission: SchemaDef = {
@@ -176,6 +185,7 @@ const Mission: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^mission_",
+  renameMap: { status: "status.phase" },
 };
 
 const PendingAction: SchemaDef = {
@@ -203,6 +213,7 @@ const PendingAction: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^pa_",
+  renameMap: { state: "status.phase", enqueuedAt: "metadata.createdAt" },
 };
 
 const Proposal: SchemaDef = {
@@ -228,6 +239,7 @@ const Proposal: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^proposal_",
+  renameMap: { status: "status.phase" },
 };
 
 const Task: SchemaDef = {
@@ -258,6 +270,7 @@ const Task: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^task_",
+  renameMap: { status: "status.phase" },
 };
 
 const Tele: SchemaDef = {
@@ -284,6 +297,7 @@ const Tele: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^tele_",
+  renameMap: { status: "status.phase", name: "metadata.name" },
 };
 
 const Thread: SchemaDef = {
@@ -316,6 +330,7 @@ const Thread: SchemaDef = {
   // Negative-lookahead excludes ThreadHistoryEntry's `threadhist_` prefix
   // (sibling-kind name-collision risk) from Thread's ownership domain.
   indexOwnershipPattern: "^thread_(?!hist_)",
+  renameMap: { status: "status.phase" },
 };
 
 const Turn: SchemaDef = {
@@ -345,6 +360,7 @@ const Turn: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^turn_",
+  renameMap: { status: "status.phase", title: "metadata.name" },
 };
 
 // ─── 2 NEW kinds this mission ──────────────────────────────────────────────
@@ -367,6 +383,8 @@ const SchemaDefMeta: SchemaDef = {
     // no separate index needed — engineer-judgment per architect "obvious cases just apply")
   ],
   watchable: true,
+  // the SchemaDef-kind rename attaches HERE (the only const with kind="SchemaDef"; Design §2.6)
+  renameMap: { kind: "metadata.name" },
 };
 
 const Notification: SchemaDef = {
@@ -395,6 +413,7 @@ const Notification: SchemaDef = {
   indexes: [],
   watchable: true,
   indexOwnershipPattern: "^notification_",
+  renameMap: { event: "spec.eventType", timestamp: "metadata.createdAt" },
 };
 
 // ─── 5 W0-architect-VERIFIED kinds ─────────────────────────────────────────
@@ -431,6 +450,7 @@ const ArchitectDecision: SchemaDef = {
     // unless mission-correlation queries surface (architect-judgment for v2+)
   ],
   watchable: true,
+  renameMap: { timestamp: "metadata.createdAt" },
 };
 
 const DirectorHistoryEntry: SchemaDef = {
@@ -446,6 +466,7 @@ const DirectorHistoryEntry: SchemaDef = {
     // Chronological per base index
   ],
   watchable: true,
+  renameMap: { timestamp: "metadata.createdAt" },
 };
 
 const ReviewHistoryEntry: SchemaDef = {
@@ -463,6 +484,7 @@ const ReviewHistoryEntry: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^review_",
+  renameMap: { timestamp: "metadata.createdAt" },
 };
 
 const ThreadHistoryEntry: SchemaDef = {
@@ -483,6 +505,7 @@ const ThreadHistoryEntry: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^threadhist_",
+  renameMap: { timestamp: "metadata.createdAt" },
 };
 
 // mission-84 W3: 2 new bookkeeping-only kinds for repo-event-bridge cursor +
@@ -501,6 +524,7 @@ const RepoEventBridgeCursor: SchemaDef = {
   ],
   indexes: [],
   watchable: false,
+  renameMap: { body: "status.cursor" },
 };
 
 const RepoEventBridgeDedupe: SchemaDef = {
@@ -511,6 +535,7 @@ const RepoEventBridgeDedupe: SchemaDef = {
   ],
   indexes: [],
   watchable: false,
+  renameMap: { body: "status.dedupe" },
 };
 
 // ─── mission-88 W0 — MigrationCursor (per A2 thread-635 + Q3 thread-639) ───

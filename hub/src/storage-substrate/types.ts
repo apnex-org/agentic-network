@@ -11,6 +11,15 @@
 
 // ─── Schema management (CRD-equivalent per Design §2.3) ─────────────────────
 
+/**
+ * Per-kind field-translation map: bare legacy field-key ("status") → envelope
+ * JSONB dotted-path ("status.phase"). Target paths root at metadata/spec/status.
+ *
+ * mission-90 W1 promotion (Design §2.1): single runtime declaration — the
+ * migration layer's kinds/_contract.ts re-exports this type (no duplicate).
+ */
+export type RenameMap = Record<string, string>;
+
 export interface SchemaDef {
   /** Entity kind this defines (e.g., "Message"). */
   kind: string;
@@ -33,6 +42,19 @@ export interface SchemaDef {
    * Optional — kinds without index-rename activity can omit.
    */
   indexOwnershipPattern?: string;
+  /**
+   * mission-90 W1 (Design §2.1): runtime field-translation contract, promoted
+   * from migration-only MigrationSchemaRef.renameMap. Generic for ANY key /
+   * ANY kind — FSM-phase (status→status.phase), field-collision
+   * (Message.kind→metadata.messageKind), opaque-state (body→status.cursor),
+   * K8s-name + timestamp relocations all covered. The SchemaReconciler builds
+   * its per-kind reverse-translation cache from this field (§2.2); consumed
+   * by substrate.list filter/sort translation at W2+. Optional — kinds
+   * without renames omit it. AUTHORITATIVE population: schemas/all-schemas.ts;
+   * migration modules carry a secondary copy for migration encapsulation
+   * (Design §2.7 dual-source discipline).
+   */
+  renameMap?: RenameMap;
 }
 
 export interface FieldDef {
