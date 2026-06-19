@@ -7,9 +7,11 @@ This report is the readiness EVIDENCE the architect surfaces to the Director for
 
 ---
 
-## Verdict: CONDITIONAL-GO — mechanism READY; one empirical step + the gaps-now-fixed need final sign-off
+## Verdict: see the EMPIRICAL ADDENDUM (bottom) — SUPERSEDES this pre-empirical verdict
 
-The W6 re-migration tooling + the shadow-read parity gate mechanism are BUILT and self-validated on synthetic clones. Self-review surfaced that the §3.2 dirty-cursor-trap mitigation was **specified but never wired into the cutover path** — now fixed. The remaining hard requirement is the **empirical run on a real prod snapshot** (count parity + timing + stuck-Message-40 forensics), which is a Director-gated prod-touch (snapshot acquisition) — see §7.
+> **UPDATE 2026-06-19:** the empirical run on the real prod snapshot (Director-authorized read-only) is DONE — see the ADDENDUM at the bottom. It found a SECOND latent data-loss bug (offset-pagination silent-skip) beyond the dirty-cursor trap (both now FIXED + validated on real data), and that the re-migration time now exceeds the <60s budget. Revised verdict: **NO-GO until the downtime-mitigation decision (E4)**; the two data-loss bugs are fixed. The §1–§8 below + the gate table are the pre-empirical (synthetic) state; the ADDENDUM (E1–E7) is authoritative for prod-state, the trapped-row counts, the stuck-Message root-cause, timing, and the corrected bug-151/152 liveness.
+
+The W6 re-migration tooling + the shadow-read parity gate mechanism are BUILT and self-validated on synthetic clones. Self-review surfaced that the §3.2 dirty-cursor-trap mitigation was **specified but never wired into the cutover path** — now fixed. The empirical run (ADDENDUM) then validated this on real data AND found the offset-skip bug.
 
 ---
 
@@ -118,3 +120,44 @@ Image pre-pull is a hub-vm ops action (watchtower is non-functional; manual). No
 - this report.
 
 Full hub suite GREEN (1960 passed / 7 skipped); tsc clean. Zero prod touch.
+
+---
+
+# ADDENDUM — EMPIRICAL RUN on the real prod snapshot (2026-06-19; Director-authorized read-only IAP-SSH)
+
+Director authorized option (b): read-only IAP-SSH. Acquired a fresh read-only snapshot (`pg_dump -Fc -U hub_reader -t entities`, 12.3MB, ZERO mutation) → restored into a LOCAL throwaway clone → ran all analysis on the clone. No writes/cursor-advance/Hub-stop/deploy on prod.
+
+## Revised verdict: NO-GO until the downtime-mitigation decision — TWO latent data-loss bugs found + fixed; timing now marginally over budget
+
+The empirical run found that, as-was, the cutover would have caused **silent data-loss** via TWO independent mechanisms (both now fixed), and that the re-migration time now exceeds the <60s budget due to 9 days of bare-write growth.
+
+## E1 — Prod state (real)
+25,240 entities. **1,488 non-cursor bare rows** (re-migration scope; grew from preflight's ~790 — the live-bare-writers, +~700 in 9 days): Message 1143, Audit 304, Bug 17, PendingAction 8, Task 6, Thread 4, Idea 4, Mission 2. Everything else fully envelope. (Counter/MigrationCursor/SchemaDef etc. as expected.)
+
+## E2 — DIRTY-CURSOR TRAP is LIVE (bug-154 validated with hard numbers)
+**27 rows are dirty-cursor-trapped RIGHT NOW** — bare rows whose ids sort lexically `<=` their stale checkpoint, which a single-pass migrate SKIPS:
+- Bug: 17 trapped (`cursor-Bug=bug-99`; bug-100..bug-154 sort before "bug-99")
+- Task: 6 trapped (`cursor-Task=task-97`)
+- Idea: 4 trapped (`cursor-Idea=idea-54`)
+
+Had the cutover run without `resetCheckpoint`-ALL, these 27 stay bare → the strict-flip makes them envelope-blind-UNREADABLE = **27 rows of silent data-loss** (17 bugs, 6 tasks, 4 ideas). **VALIDATED FIX:** `--reset-checkpoints` + re-migrate → all 27 recovered to envelope (Bug 154/0 bare, Task 420/0 bare, Idea 326/0 bare on the clone).
+
+## E3 — OFFSET-PAGINATION SILENT-SKIP — a SECOND, previously-unknown data-loss bug, found + FIXED
+The empirical re-migration left **104 bare rows un-migrated** (Message 85, Audit 19) even after the loop reported `migrated=0` (rowsErrored=0 — the preflight "stuck-Message" class, now ROOT-CAUSED). Cause: `MigrationRunner.runKind` lists with `{limit, offset}` and **no sort** → the substrate emits no `ORDER BY` → postgres returns rows in unstable heap order; because the loop `put`s (mutates) rows during OFFSET pagination, the heap shifts and the offset window silently SKIPS ~6-7% of rows per pass; the cursor then advances past them so subsequent passes resume-skip them too → the loop terminates with bare rows remaining = silent data-loss at the strict-flip. This is a PRE-EXISTING migration bug (would have under-migrated at every run, incl. 2026-05-25).
+
+**FIX (this PR):** `runKind` now lists with a stable `sort:[{field:"id",order:"asc"}]` — a migrated row keeps its id, so the order is stable under in-loop mutation → every row visited exactly once. **VALIDATED:** with the fix, a single productive pass migrated ALL 1,491 bare rows, 0 errored, **0 bare outside exemptions** (the strict-flip gate). FILE AS A NEW BUG (architect to assign — call it the runKind-offset-skip / stuck-Message root-cause).
+
+## E4 — Re-migration TIMING (real data, fixed runKind) — MARGINALLY OVER the <60s budget
+Measured on the clone: reset + loop-migrate-until-0 = **~40s wall-clock** (1 productive pass migrating 1,491 + 1 confirm pass; 0 errored; 0 bare after). Composite downtime estimate: pg_dump (~20s) + re-migrate (~40s) + SQL verify (<1s) + runbook bookends (~15s) ≈ **~66-75s — OVER the <60s budget** (the 9-days bare-write growth: 1,488 bare now vs preflight's 686 migrated). Pre-fix, the reset-before-each-pass workaround was ~80s+; the fix nearly halved it but it remains over budget. **DECISION NEEDED before GO:** (a) the §R11 parallel-per-kind lever (held in reserve); (b) deploy W4 first to stop the bare-writers, let the backlog migrate incrementally, then a small cutover; (c) accept ~70s downtime. The re-migration is now CORRECT (no data-loss) regardless of which.
+
+## E5 — bug-151/152 liveness — CORRECTED to LATENT (my earlier code-reasoning overclaimed)
+Empirically: **0 scheduled-Messages pending**; **653 envelope threads but 0 ACTIVE**; **13 envelope teles but 0 active** → **0 currently-affected rows**. The code-gaps (bug-151/152, fixed in W4/W5) are real but no live data is in the affected state — threads have been converging throughout the mission (the reply path works on prod's envelope threads). My §4 "prod IS broken today" was an overclaim; the empirical check corrected it to "latent — 0 currently-affected; the fixes prevent the bugs when the affected states recur." This LOWERS the go-urgency from bug-151/152 — the REAL active risk was the two data-loss bugs (E2/E3), now fixed.
+
+## E6 — Strict-flip gate + exemptions (real data) — MET
+With both fixes, the re-migration converges to **0 bare rows outside the exemption set** (MigrationCursor 22, by-design; SchemaDef 0 — the W1 boot-put fix holds, confirmed no bare SchemaDef). The §3.2-step-4 verification (zero-legacy-outside-exemptions) passes on real data.
+
+## E7 — Rollback
+The 12.3MB read-only snapshot IS the abort restore-path. `resetAllCheckpoints` leg tested; `pg_restore` leg is standard (data-only restore into the clone succeeded — 25,240 rows).
+
+## Net
+The empirical run was decisive: it caught a SECOND silent-data-loss bug (offset-skip, E3) beyond the dirty-cursor trap (E2) — both would have lost rows at the cutover — and surfaced that the downtime budget is now exceeded. Both data-loss bugs are FIXED + validated on real prod data. The remaining GO blocker is the downtime-mitigation decision (E4).
