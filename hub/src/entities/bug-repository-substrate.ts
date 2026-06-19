@@ -43,8 +43,13 @@ function cloneBug(bug: Bug): Bug {
   // (drop the raw artifact) + ensure the relocated status arrays (already flattened by
   // the generic decode) are present. Used at the read boundary AND the CAS path.
   const flat = decodeEnvelopeToFlat(bug as unknown as Record<string, unknown>) as Record<string, unknown>;
-  flat.tags = Object.keys((flat.labels as Record<string, string> | undefined) ?? {});
-  delete flat.labels;
+  // tags: from the envelope metadata.labels map OR a legacy-flat in-memory tags array.
+  if (flat.labels && typeof flat.labels === "object") {
+    flat.tags = Object.keys(flat.labels as Record<string, string>);
+    delete flat.labels;
+  } else if (!Array.isArray(flat.tags)) {
+    flat.tags = [];
+  }
   flat.linkedTaskIds = (flat.linkedTaskIds as string[] | undefined) ?? [];
   flat.fixCommits = (flat.fixCommits as string[] | undefined) ?? [];
   return flat as unknown as Bug;

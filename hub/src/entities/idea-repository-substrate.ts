@@ -37,8 +37,15 @@ function cloneIdea(idea: Idea): Idea {
   // reverse) and drop the raw labels artifact. Used at both the read boundary AND
   // the CAS path, so the legacy-flat `tags` array round-trips through the write-encoder.
   const flat = decodeEnvelopeToFlat(idea as unknown as Record<string, unknown>) as Record<string, unknown>;
-  flat.tags = Object.keys((flat.labels as Record<string, string> | undefined) ?? {});
-  delete flat.labels;
+  // tags: from the envelope metadata.labels map (flattened to flat.labels), OR an
+  // existing top-level tags array (a legacy-flat in-memory build, e.g. submitIdea's
+  // return). Drop the raw labels artifact.
+  if (flat.labels && typeof flat.labels === "object") {
+    flat.tags = Object.keys(flat.labels as Record<string, string>);
+    delete flat.labels;
+  } else if (!Array.isArray(flat.tags)) {
+    flat.tags = [];
+  }
   return flat as unknown as Idea;
 }
 

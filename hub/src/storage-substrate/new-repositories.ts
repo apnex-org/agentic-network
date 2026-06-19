@@ -21,6 +21,32 @@
  */
 
 import type { HubStorageSubstrate } from "./types.js";
+import { decodeEnvelopeToFlat } from "../entities/shape-helpers.js";
+
+// mission-90 W8: decode envelope→flat at these repos' read boundaries (extend-to-
+// all-relocating-kinds). `decodeWith` reverses leaf-renames the generic flatten
+// can't — it produces the envelope LEAF name (e.g. `createdAt` from
+// metadata.createdAt) where the domain wants a different name (e.g. `timestamp`).
+// Map shape: { domainField: envelopeLeafName }.
+function decodeWith<T>(raw: T, leafRenames: Record<string, string>): T {
+  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>) as Record<string, unknown>;
+  for (const [domain, leaf] of Object.entries(leafRenames)) {
+    if (flat[leaf] !== undefined) {
+      flat[domain] = flat[leaf];
+      if (leaf !== domain) delete flat[leaf];
+    }
+  }
+  return flat as unknown as T;
+}
+
+// Document: category↔metadata.labels.category (nested in the K8s labels map).
+function decodeDocument(raw: unknown): Document {
+  const flat = decodeEnvelopeToFlat(raw as Record<string, unknown>) as Record<string, unknown>;
+  const labels = flat.labels as Record<string, string> | undefined;
+  if (labels && labels.category !== undefined) flat.category = labels.category;
+  delete flat.labels;
+  return flat as unknown as Document;
+}
 
 // ─── Common entity-shape primitives ─────────────────────────────────────────
 
@@ -48,7 +74,8 @@ export class DocumentRepository implements IDocumentStore {
   constructor(private readonly substrate: HubStorageSubstrate) {}
 
   async get(id: string): Promise<Document | null> {
-    return this.substrate.get<Document>("Document", id);
+    const raw = await this.substrate.get<Document>("Document", id);
+    return raw ? decodeDocument(raw) : null;
   }
 
   async put(doc: Document): Promise<{ id: string; resourceVersion: string }> {
@@ -62,7 +89,7 @@ export class DocumentRepository implements IDocumentStore {
   async list(opts: { category?: string } = {}): Promise<Document[]> {
     const filter = opts.category ? { category: opts.category } : undefined;
     const { items } = await this.substrate.list<Document>("Document", filter ? { filter } : undefined);
-    return items;
+    return items.map(decodeDocument);
   }
 }
 
@@ -86,7 +113,8 @@ export class NotificationRepository implements INotificationStore {
   constructor(private readonly substrate: HubStorageSubstrate) {}
 
   async get(id: string): Promise<Notification | null> {
-    return this.substrate.get<Notification>("Notification", id);
+    const raw = await this.substrate.get<Notification>("Notification", id);
+    return raw ? decodeWith(raw, { event: "eventType", timestamp: "createdAt" }) : null;
   }
 
   async put(n: Notification): Promise<{ id: string; resourceVersion: string }> {
@@ -100,7 +128,7 @@ export class NotificationRepository implements INotificationStore {
   async list(opts: { recipientAgentId?: string } = {}): Promise<Notification[]> {
     const filter = opts.recipientAgentId ? { recipientAgentId: opts.recipientAgentId } : undefined;
     const { items } = await this.substrate.list<Notification>("Notification", filter ? { filter } : undefined);
-    return items;
+    return items.map((n) => decodeWith(n, { event: "eventType", timestamp: "createdAt" }));
   }
 }
 
@@ -123,7 +151,8 @@ export class ArchitectDecisionRepository implements IArchitectDecisionStore {
   constructor(private readonly substrate: HubStorageSubstrate) {}
 
   async get(id: string): Promise<ArchitectDecision | null> {
-    return this.substrate.get<ArchitectDecision>("ArchitectDecision", id);
+    const raw = await this.substrate.get<ArchitectDecision>("ArchitectDecision", id);
+    return raw ? decodeWith(raw, { timestamp: "createdAt" }) : null;
   }
 
   async put(d: ArchitectDecision): Promise<{ id: string; resourceVersion: string }> {
@@ -136,7 +165,7 @@ export class ArchitectDecisionRepository implements IArchitectDecisionStore {
 
   async list(): Promise<ArchitectDecision[]> {
     const { items } = await this.substrate.list<ArchitectDecision>("ArchitectDecision");
-    return items;
+    return items.map((d) => decodeWith(d, { timestamp: "createdAt" }));
   }
 }
 
@@ -158,7 +187,8 @@ export class DirectorHistoryEntryRepository implements IDirectorHistoryEntryStor
   constructor(private readonly substrate: HubStorageSubstrate) {}
 
   async get(id: string): Promise<DirectorHistoryEntry | null> {
-    return this.substrate.get<DirectorHistoryEntry>("DirectorHistoryEntry", id);
+    const raw = await this.substrate.get<DirectorHistoryEntry>("DirectorHistoryEntry", id);
+    return raw ? decodeWith(raw, { timestamp: "createdAt" }) : null;
   }
 
   async put(e: DirectorHistoryEntry): Promise<{ id: string; resourceVersion: string }> {
@@ -171,7 +201,7 @@ export class DirectorHistoryEntryRepository implements IDirectorHistoryEntryStor
 
   async list(): Promise<DirectorHistoryEntry[]> {
     const { items } = await this.substrate.list<DirectorHistoryEntry>("DirectorHistoryEntry");
-    return items;
+    return items.map((e) => decodeWith(e, { timestamp: "createdAt" }));
   }
 }
 
@@ -193,7 +223,8 @@ export class ReviewHistoryEntryRepository implements IReviewHistoryEntryStore {
   constructor(private readonly substrate: HubStorageSubstrate) {}
 
   async get(id: string): Promise<ReviewHistoryEntry | null> {
-    return this.substrate.get<ReviewHistoryEntry>("ReviewHistoryEntry", id);
+    const raw = await this.substrate.get<ReviewHistoryEntry>("ReviewHistoryEntry", id);
+    return raw ? decodeWith(raw, { timestamp: "createdAt" }) : null;
   }
 
   async put(e: ReviewHistoryEntry): Promise<{ id: string; resourceVersion: string }> {
@@ -207,7 +238,7 @@ export class ReviewHistoryEntryRepository implements IReviewHistoryEntryStore {
   async list(opts: { taskId?: string } = {}): Promise<ReviewHistoryEntry[]> {
     const filter = opts.taskId ? { taskId: opts.taskId } : undefined;
     const { items } = await this.substrate.list<ReviewHistoryEntry>("ReviewHistoryEntry", filter ? { filter } : undefined);
-    return items;
+    return items.map((e) => decodeWith(e, { timestamp: "createdAt" }));
   }
 }
 
@@ -231,7 +262,8 @@ export class ThreadHistoryEntryRepository implements IThreadHistoryEntryStore {
   constructor(private readonly substrate: HubStorageSubstrate) {}
 
   async get(id: string): Promise<ThreadHistoryEntry | null> {
-    return this.substrate.get<ThreadHistoryEntry>("ThreadHistoryEntry", id);
+    const raw = await this.substrate.get<ThreadHistoryEntry>("ThreadHistoryEntry", id);
+    return raw ? decodeWith(raw, { timestamp: "createdAt" }) : null;
   }
 
   async put(e: ThreadHistoryEntry): Promise<{ id: string; resourceVersion: string }> {
@@ -245,6 +277,6 @@ export class ThreadHistoryEntryRepository implements IThreadHistoryEntryStore {
   async list(opts: { threadId?: string } = {}): Promise<ThreadHistoryEntry[]> {
     const filter = opts.threadId ? { threadId: opts.threadId } : undefined;
     const { items } = await this.substrate.list<ThreadHistoryEntry>("ThreadHistoryEntry", filter ? { filter } : undefined);
-    return items;
+    return items.map((e) => decodeWith(e, { timestamp: "createdAt" }));
   }
 }
