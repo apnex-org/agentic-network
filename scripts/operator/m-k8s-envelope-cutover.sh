@@ -26,6 +26,22 @@
 # Forward-fix preference for transient failures (DB connection blips, etc.);
 # rollback for substrate-correctness failures (rowsErrored, smoke-fail).
 #
+# ─── COS-PORTABILITY GUARD (bug-156) ──────────────────────────────────────
+# hub-vm is Container-Optimized OS (COS); its busybox `grep` LACKS `-P` (Perl
+# regex). The W6 cutover's TRANSIENT in-window down-path script parsed the
+# migrate summary with `grep -oP` → empty parse → a FALSE HALT_ROWSERRORED fired
+# on a CORRECT migration (the in-window comms-dark, bug-157, made it un-resolvable
+# live). LESSON, codified here so it cannot regress:
+#   • Gate on the migrate CLI EXIT CODE (Step 2 below) — the portable, authoritative
+#     signal (exit-code legend: 1=rowsErrored 2=DB 3=time-budget 4=module 5=unhandled).
+#   • If you must parse the summary TEXT, pass `--json` (run-envelope-migration.ts
+#     emits a machine-grep-able JSON summary) and parse with a JSON tool — NEVER
+#     `grep -oP`/`-Po` or any GNU-only grep flag on COS.
+#   • On ANY in-window HALT, INDEPENDENTLY VERIFY the real condition (a read-only
+#     0-bare query) before rolling back — do not blindly trust OR distrust a guard.
+# This script itself is COS-portable: it gates on exit-codes + uses psql + `tr`/`sed`
+# (no `grep -P`). Audit any edit for GNU-isms before it touches the cutover path.
+#
 # Required env:
 #   HUB_PG_CONNECTION_STRING — postgres connection string (production)
 #   HUB_IMAGE_TAG — Hub container image tag (pre-built per Q1 mission-83 W5.4 pattern)
@@ -143,6 +159,8 @@ else
   MIGRATION_EXIT=$?
 fi
 
+# bug-156: gate on the EXIT CODE (COS-portable authority), NOT a grep-parse of the
+# summary text. See the COS-PORTABILITY GUARD in the header.
 if [[ "$MIGRATION_EXIT" != "0" ]]; then
   echo "[cutover] HALT: MigrationRunner CLI exited with code $MIGRATION_EXIT (rollback-trigger 1)"
   echo "[cutover]   Exit-code legend (mission-88 bug-133 fix): 1=rowsErrored 2=DB-connection 3=time-budget-exceeded(NEW) 4=module-registration 5=unhandled"

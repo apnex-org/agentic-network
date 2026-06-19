@@ -60,6 +60,19 @@ Project-level context binding all Claude Code instances on this repository.
 - idea-299 M-Hub-Storage-BlobBody-Substrate (Proposal/Task body-storage + Document MCP tools re-introduction)
 - idea-300 M-Hub-Storage-FS-Retirement-And-MemoryHubStorageSubstrate (full FS-version-repo retirement + test-architecture migration)
 
+## Envelope substrate — STRICT + decode-to-flat (post-mission-90)
+
+**The substrate is envelope-ONLY at the storage layer, and ONE flat domain shape above the repo membrane.** mission-90 (M-Envelope-Substrate-Completion) migrated every kind to the K8s envelope (`{apiVersion, kind, metadata, spec, status:{phase}}`), cut the production Hub to STRICT (W6, 2026-06-19), and retired the dual-shape tolerance entirely (W8).
+
+**Why:** the bug-137/bug-138 class — Hub consumer code reading relocated fields off a raw envelope row got `undefined` / a `{phase}` object, silently degrading FSM guards, CAS transforms, and list-filters. The structural fix is a single shape boundary: storage is envelope; repos decode at the read + CAS boundary; everything above reads flat. No dual-shape recurrence surface remains.
+
+**How to apply:**
+- **No tolerance flag:** `SUBSTRATE_ENVELOPE_TOLERANT` is GONE (W8). Boot logs `envelope substrate: STRICT`. Storage holds envelope rows only; there is no legacy-flat write path.
+- **Decode-to-flat read contract:** every repo decodes envelope→flat on `get`/`list`/`findBy*` AND inside `casUpdate`/`tryCasUpdate` (transform on flat → write-encoder re-envelopes). The generic decoder is `decodeEnvelopeToFlat` (`hub/src/entities/shape-helpers.ts`, renameMap+partition reverse); kinds with extra leaf-renames layer a bespoke decoder on it (Message/PendingAction/Turn/Audit/Document/Notification/the histories), and Thread/Tele/Agent keep their bespoke normalizers.
+- **phaseFromEntity is the below-membrane decode-mechanism** (the status-extractor the decoders call) — KEEP it. The W3-era above-membrane dual-layer readers (`fieldFromEntity` / `tagsFromEntity` / `arrayFieldFromEntity`) are DELETED; policy + consumers read flat fields directly. Do NOT reintroduce a dual-shape reader above the membrane.
+- **renameMap is the single authority:** write-ENCODE + filter-TRANSLATE + read-DECODE all derive from each kind's `renameMap` in `hub/src/storage-substrate/schemas/all-schemas.ts`. A new relocated field needs only its renameMap entry.
+- **Cutover runbook:** `docs/operator/envelope-substrate-cutover-runbook.md` (includes the CODE-ONLY redeploy class + the COS-portability + comms-dark lessons, bug-156/157).
+
 ## Companion policies
 
 Methodology + role-runtime + glossary docs (load when phase-engaged or role-engaged):

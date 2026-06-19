@@ -315,3 +315,44 @@ Post-cutover validation on the LIVE prod W6-strict substrate. Full report: `docs
 - **Docs:** runbook gained the **CODE-ONLY redeploy class** (build→recreate→live-verify; no data machinery) + rollback-target precision + the COS-safe `sudo bash -s` primitive; W7 report updated to post-redeploy reality (9/9 + ledger parity tables).
 
 **Status:** redeploy live + verified; W7 PR (#321) rebased + updated; pinging architect on the W7 PR. **stability-confirmed (architect's call)** pending: W7 PR merge + a brief live-stability soak. Rollback assets ALL retained until then: primary `f02a9bb`, deeper `dd61d96` + `/tmp/m90-cutover-rollback.dump`.
+
+### Slice 3 — W7 closure (2026-06-19)
+
+W7 PR (#321) merged (`cd89a230`). Architect called **stability-confirmed** after the live soak → the rollback dump was SHREDDED; `f02a9bb`/`dd61d96` returned to normal AR retention. Runbook learnings folded: CODE-ONLY-redeploy class, rollback-target precision, the COS-safe `sudo bash -s` primitive. W7 closed.
+
+## W8 — decode-to-flat structural close (idea-320, FINAL wave; branch `agent-greg/m90-w8-tolerant-retirement`)
+
+**Scope (Director END-STATE-2):** retire the envelope dual-shape entirely — full decode-to-flat everywhere (reads + CAS), delete the W3-era shape-helpers, one flat shape above the substrate membrane. Resolves idea-327 (output-shape consistency) and structurally eliminates the bug-138 read-side class.
+
+### The revelation — the faithful harness exposed the read-gap
+
+W7 declared bug-138 "fully closed" on LIVE spot-checks (9/9 list-tools + get_thread/get_tele decode). But making the TEST substrate store ENVELOPE like prod (memory factory-default-envelope + testcontainer setWriteEncoder) turned the suite RED: **193 failing**. The legacy-flat test fixtures had masked, mission-wide, that **most repos returned RAW envelope from get/list/CAS** — production code reading flat domain fields off those rows silently got `undefined` / a `{phase}` object. The read-side gap spanned ~13 kinds, not the 5 the W3 sweep targeted (calibration-#19 false-green, confirmed via the workflow map wgfjbq1gw).
+
+### The sweep (193 → 0, 10-step worklist)
+
+- **Generic decoder** `decodeEnvelopeToFlat<T>` (shape-helpers.ts): renameMap+partition reverse — flatten metadata/spec/status leaves to top-level, status.phase→top-level status string, strip envelope artifacts, surface the cascade sourceThreadSummary annotation. Exact for Task/Idea/Bug/Mission/Proposal.
+- **Bespoke decoders** (generic base + extra leaf-rename reversal): Message (kind←messageKind), PendingAction (state←status.phase, enqueuedAt←createdAt), Turn (title←metadata.name), Audit (timestamp←createdAt), Document (category←labels.category), Notification/ArchitectDecision/3-histories (timestamp/event). Thread/Tele/Agent keep their bespoke normalizers.
+- **CAS uniform recipe:** every tryCasUpdate/casUpdate decodes `existing.entity`→flat → transform on flat → putIfMatch(flat) → write-encoder re-envelopes (19 CAS transforms).
+- **Harness faithfulness:** `createMemoryStorageSubstrate` defaults to envelope (`{rawWrites:true}` opt-out for substrate-primitive/conformance tests); testcontainer repo tests wire setWriteEncoder.
+- **GREEN milestone** (e95eff3): full suite 1960 passed / 7 skipped, tsc clean.
+
+### bug-146 dispatch-half SOLVED
+
+The envelope-read crash in `dispatchTaskSpawned` (`task.directive.substring` on the spec-relocated directive) was silently degrading task_issued dispatch mission-wide (caught → poll-recovery) — the driver behind leaning on thread-dispatch-equivalence. The decode fixes it: **e2e-fsm-enforcement 22→0**; mission-19 p2p/labels (label-scoped claim routing) + e2e-workflows (cancel cascade) green. Caller-login-labeling axis → confirm at the post-deploy LIVE audit; IF the dispatch-degrade was THE driver, post-deploy may RETIRE thread-dispatch-equivalence + reclaim formal FSM task-dispatch (verify live + update bug-146).
+
+### Helper-deletion — architect ruling (A) (commit a9e4f51)
+
+Surfaced the A/B reconciliation (phaseFromEntity is load-bearing decode-machinery — called by decodeEnvelopeToFlat + the kept bespoke normalizers — so a clean "delete all 4" is impossible without either keeping it (A) or inlining it (B)). **Architect ruled (A)** (lower-risk; (B) regresses working normalizers for zero-function purity): KEEP phaseFromEntity as the below-membrane decode-mechanism (no longer an above-membrane recurrence surface once policy reads flat); DELETE `fieldFromEntity`/`tagsFromEntity`/`arrayFieldFromEntity`. Swapped the ~29 policy accessor call-sites (idea/mission/task/thread) to direct flat field access — each entity verified guaranteed-flat post-repo-decode (the testcontainer layer-B accessor sweep validates the flat reads against REAL envelope rows). shape-helpers.test rewritten to lock the two survivors. **Suite green: 1932 passed / 7 skipped, tsc clean.**
+
+### Ledger dispositions
+
+- **bug-138 / bug-143** — already `resolved` in the Hub (#301 e20d410 / #309 53b2ae35); W8 COMPLETES the structural elimination (no recurrence surface above the membrane). The 17 live prod-defects the read-decode closes are enumerated in the W8 report §1 (the audit's direct input) — a retro decision whether any warrant individual ledger entries.
+- **bug-156** (portability) — LANDED: no committed `grep -oP` existed (the false-halt was a transient in-window down-path script); the committed cutover automation is COS-portable (exit-code gating + the migrate CLI's `--json`). Codified the COS-PORTABILITY GUARD at the cutover-script code-site so it can't regress. Hub resolve post-merge with the fixCommit.
+- **bug-157** (comms-dark) — architect-side protocol flaw; the comms-dark/in-window-GO-unworkable lesson is documented in the cutover runbook (W7 fold, lines 116–117). Note satisfied.
+- **idea-327** (output-shape) — RESOLVED by decode-to-flat (its option (b): both list AND get decode to flat at the read boundary). Marked incorporated into mission-90.
+
+### Audit posture
+
+W8 report `docs/reviews/m90-w8-decode-to-flat-validation.md` = the Director-mandated deep adversarial audit's direct input (§1 prod-defect enumeration; §2 decode architecture; §3 judgment-spots — 19 CAS transforms + 6 bespoke decoders + renameMap completeness + PATTERN-G rewrites; §4 bug-146). Per architect: the audit fires on the COMPLETE green merge-candidate (the (A) deletion + all docs + green), NOT a partial; the green PR opens the audit, not the merge.
+
+**Status:** complete green merge-candidate assembled (decode-to-flat + (A) deletion + W8 report + CLAUDE.md strict-only + bug-156 guard + bug-157/idea-327 dispositions; suite green 1932/7-skip, tsc clean). Pinging architect that it's the complete candidate → fires the audit. No merge until the audit clears (Director mandate).
