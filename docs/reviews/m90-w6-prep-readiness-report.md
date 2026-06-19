@@ -27,7 +27,7 @@ The W6 re-migration tooling + the shadow-read parity gate mechanism are BUILT an
 | 6 | stuck-Message-40 root-caused | ⏳ PENDING SNAPSHOT | needs the real rows (40 Message survived 4 runs, errored=0 — silent decoder-skip suspect) |
 | 7 | Measured re-migration time within budget | ⏳ PENDING SNAPSHOT | preflight measured 47-57s on 9-day-old data; a FRESH measure de-risks the thin margin |
 | 8 | Rollback rehearsed on the clone | ✅ MECHANISM (resetAllCheckpoints) · ⏳ pg_restore leg pending snapshot | reset leg tested; the `pg_restore` leg needs a snapshot to rehearse end-to-end |
-| 9 | bug-151/152 prod-liveness | ✅ ANSWERED (code+repro): prod IS broken today | see §4 |
+| 9 | bug-151/152 prod-liveness | ✅ ANSWERED — empirically LATENT (0 currently-affected) | §4 is pre-empirical; ADDENDUM E5 is authoritative (corrected the "broken today" overclaim) |
 
 ---
 
