@@ -298,3 +298,20 @@ Post-cutover validation on the LIVE prod W6-strict substrate. Full report: `docs
 - **Docs:** runbook folded bug-156/157 + the ~4m46s downtime retro; bug-138/143 closure notes in the report.
 
 **Status:** W7 PR open (bug-158 fix + W7 report + runbook fold + idea-327). Per architect: bug-158 folds into the W7 PR (no off-branch fast-track); redeploy held for Director; ledger parity + stability-confirmed = post-redeploy. Rollback dump + dd61d96 retained.
+
+### Slice 2 — bug-158 FAST-TRACK (Director-ruled) + code-only redeploy + post-redeploy validation (2026-06-19)
+
+**Director REVERSED the fold-into-W7 plan → FAST-TRACK isolated hotfix.** Executed the architect's 5-step plan:
+
+1. **ISOLATE:** fresh branch `agent-greg/bug-158-mission-accessors` off main; cherry-picked ONLY the bug-158 commit (mission-policy.ts MISSION_ACCESSORS + layerb-accessor-sweep-w3 regression test; +53/-12, 2 files). tsc clean; W3 suite 7 green. **PR #322** opened.
+2. **MERGE:** architect peer-approved (mirrors IDEA_ACCESSORS exactly) + merged (squash `9f579f6`).
+3. **CODE-ONLY REDEPLOY off merged-main:** verified checkout content-identical to merged-main → `CI=1 OIS_ENV=prod build-hub.sh` → AR `hub:latest` = **`sha256:edc4792…`** (W6+bug-158). Confirmed `hub-image` metadata = the `:latest` TAG (no metadata edit). Recreate via the **stdin-piped `sudo bash -s`** COS-safe primitive (bug-156 lesson — no `--command` nesting, no Perl-grep): `docker pull :latest` → stop/rm `ois-hub-prod` → `google_metadata_script_runner startup`. Comms-dark <1min; NO migration / reset / shadow-gate (data already all-envelope). Boot clean: STRICT, reconciler 23/23 (0 failures), 71 tools, relay up, 0 errors.
+4. **LIVE-VERIFY (the gate) PASSED:** `list_missions` via MCP = oracle byte-for-byte — active 1 (mission-90) / completed 50 / abandoned 39 / total 90 (pre-fix: 0 for all, `_ois_query_unmatched`). **bug-158 closed live; 9/9 list-tools envelope-correct.**
+5. **REBASE:** `#321` rebased on main (`--onto origin/main`, dropping the merged bug-158 commit) → W7 PR now carries docs + report + idea-327 only.
+
+- **Rollback-target CORRECTION (surfaced pre-window; architect AFFIRMED):** a code-only redeploy rolls back to the **current running image `f02a9bb`** (re-tag → recreate; zero data risk), NOT pre-cutover `dd61d96` (bare-shape-expecting → unsafe alone vs migrated data; valid only in a full image+`pg_restore` unwind). No unwind intended.
+- **Ledger-reconciliation parity (idea-325) — CONFIRMED LIVE post-redeploy:** Mission 1/50/39/90, Idea-open 218, Bug-open 59, Task working 4 / cancelled 116 — all = oracle. idea-325 unblocked.
+- **bug-138 FULLY closed on the live substrate** (reads W2/W3 + writes W4 + reconciler W5 + cutover W6 + the bug-158 residual W7).
+- **Docs:** runbook gained the **CODE-ONLY redeploy class** (build→recreate→live-verify; no data machinery) + rollback-target precision + the COS-safe `sudo bash -s` primitive; W7 report updated to post-redeploy reality (9/9 + ledger parity tables).
+
+**Status:** redeploy live + verified; W7 PR (#321) rebased + updated; pinging architect on the W7 PR. **stability-confirmed (architect's call)** pending: W7 PR merge + a brief live-stability soak. Rollback assets ALL retained until then: primary `f02a9bb`, deeper `dd61d96` + `/tmp/m90-cutover-rollback.dump`.

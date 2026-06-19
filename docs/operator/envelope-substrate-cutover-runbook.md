@@ -115,4 +115,29 @@ The W6 cutover executed successfully (bug-138 closed live), but the live run sur
 - **bug-156 — in-window guard portability (`grep -oP`):** the down-path script parsed the migrate summary with `grep -oP` (Perl regex), which **COS grep does not support** → migrated/errored parsed empty → a FALSE `HALT_ROWSERRORED` fired even though the migrate succeeded (exit 0, 1491 migrated, 0 errored). LESSON: in-window the automated guards ARE the authority (the human is unreachable — see bug-157); a guard that false-trips is itself a hazard. Use a PORTABLE parser (`grep -oE` / `sed` / the `--json` summary), and on any HALT INDEPENDENTLY VERIFY the real condition (a read-only 0-bare query) before acting — do NOT blindly trust OR blindly distrust the guard.
 - **bug-157 — comms-dark in-window human-GO is impossible:** stopping `ois-hub-prod` ALSO kills the MCP relay (the Hub IS the channel), so the watch-protocol's "PING (c) → human GO before redeploy" cannot be delivered mid-window. The in-window authority must be the automated gate (0-bare verify) + the operator's own judgment, NOT a Hub-MCP round-trip. Future: out-of-band comms (a non-Hub channel) OR fully-automated guards-as-authority. The human GO belongs at the PRE-window gate (Step 0c PING (a)), which IS deliverable (Hub still up).
 - **Downtime retro (~4m46s vs the ~90s estimate):** the prod migrate ran slower than the local clone (docker-run-per-pass cold-starts + prod-PG), and the false-halt investigation + comms-dark handling added latency while the Hub was down. The ~90s estimate (from the faster local clone) was optimistic. For a re-run: pre-write a PORTABLE down-path script (bug-156), accept the automated 0-bare gate as in-window authority (bug-157), and budget the window from a prod-representative timing (not the local clone). Correctness was NOT compromised (rollback armed, not needed).
-- **bug-158 — list_missions accessor residual:** the strict cutover exposed a W3 accessor-sweep gap (MISSION_ACCESSORS envelope-blind). A code-only fix; redeploy = a container-recreate off merged-main (NO migration — data is already all-envelope), a much shorter window than this cutover and with no data-touch.
+- **bug-158 — list_missions accessor residual (SHIPPED, closed live @ ~08:58Z):** the strict cutover exposed a W3 accessor-sweep gap (MISSION_ACCESSORS envelope-blind). Code-only fix → isolated FAST-TRACK hotfix (PR #322 squash `9f579f6`) → container-recreate off merged-main (image `edc4792`, NO migration — data already all-envelope) → live re-verify (`list_missions` 1/50/39/90 = oracle). Downtime <1min, no data-touch. This established the **CODE-ONLY redeploy class** below.
+
+### CODE-ONLY redeploy class (post-cutover; from the bug-158 execution)
+A reader-policy / code-only bug found AFTER the cutover redeploys WITHOUT the data machinery — NO snapshot, NO re-migration, NO `--reset-checkpoints`, NO shadow-read gate, NO 0-bare verify (data is untouched; only the image changes). Steps reduce to: **build off merged-main → recreate → live-verify.**
+1. **Build:** `CI=1 OIS_ENV=prod scripts/local/build-hub.sh` → Cloud Build → AR `hub:latest`. RECORD the new digest (`CI=1` skips the unneeded local docker pull/tag).
+2. **No metadata edit:** the `hub-image` GCE metadata is the `hub:latest` TAG (verified — not a pinned digest), so the recreate's `docker pull` auto-resolves the new digest. (If ever pinned by digest, update it first.)
+3. **Recreate** (the only downtime; comms-dark — see the COS-safe primitive). Code-only, ~<1min.
+4. **Live-verify = the gate:** the exact symptom-read vs the psql oracle; mismatch → rollback.
+
+**Rollback-target precision (load-bearing lesson):** a CODE-ONLY redeploy rolls back to the **CURRENT RUNNING image** (the one being replaced), NOT the pre-cutover image.
+- **Primary rollback = the prior W6 image** (`f02a9bb` for bug-158): re-tag it to `:latest` (`gcloud artifacts docker tags add .../hub@sha256:<PRIOR> .../hub:latest`) → recreate. Removes only the code change; returns to the exact known-good strict/all-envelope state; ZERO data risk (it has read the migrated data correctly since the cutover).
+- **The pre-cutover image (`dd61d96`) is UNSAFE alone** vs migrated data — it is bare-shape-expecting, so deploying it over all-envelope data re-introduces envelope-blindness on the migrated reads. Valid ONLY in a full W6-unwind (image **+** `pg_restore` the rollback dump TOGETHER), which a code-only redeploy never needs.
+
+**COS-safe recreate primitive (bug-156 generalized):** drive the recreate by **piping the script to `sudo bash -s` over stdin**, NOT by nesting it in `gcloud ssh --command="..."`. This is the get-entities.sh quote-safe pattern; it sidesteps both the ssh→bash quote-layering AND the COS-`grep` Perl-regex trap, and needs no output-parsing:
+```
+cat <<'RECREATE' | gcloud compute ssh hub-vm --zone=australia-southeast1-a --command='sudo bash -s'
+set -e
+export DOCKER_CONFIG=/var/lib/hub/docker-config
+HUB_IMAGE=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/hub-image)
+docker pull "$HUB_IMAGE"
+docker stop ois-hub-prod 2>/dev/null || true
+docker rm -f ois-hub-prod 2>/dev/null || true
+google_metadata_script_runner startup
+RECREATE
+```
+The `gcloud ssh` channel is independent of the Hub/MCP relay, so this single command completes even though stopping `ois-hub-prod` makes the relay comms-dark; verify afterward via psql (postgres stays up) + the restored relay. Health: `docker ps` shows `ois-hub-prod` Up on `hub:latest`; logs show `envelope tolerance mode: STRICT` + reconciler `N of N kinds applied; 0 failures` + `Listening on port 8080`.
