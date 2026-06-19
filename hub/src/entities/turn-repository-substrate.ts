@@ -22,10 +22,23 @@ import type { ITaskStore, EntityProvenance } from "../state.js";
 import type { IMissionStore } from "./mission.js";
 import type { ITurnStore, Turn, TurnStatus } from "./turn.js";
 import { SubstrateCounter } from "./substrate-counter.js";
-import { arrayFieldFromEntity } from "./shape-helpers.js";
+import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Turn";
 const MAX_CAS_RETRIES = 50;
+
+/**
+ * mission-90 W8: Turn read-decode = generic envelope→flat + restore `title` from the
+ * `metadata.name` rename (the generic base strips the envelope `name` artifact, so
+ * capture title from the raw row). status→status.phase + tele@spec + scope@spec are
+ * handled by the generic flatten.
+ */
+function decodeTurn(raw: Turn): Turn {
+  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>) as Record<string, unknown>;
+  const rawName = (raw as { metadata?: { name?: unknown } }).metadata?.name;
+  if (rawName !== undefined) flat.title = rawName;
+  return flat as unknown as Turn;
+}
 
 export class TurnRepositorySubstrate implements ITurnStore {
   constructor(
@@ -111,11 +124,12 @@ export class TurnRepositorySubstrate implements ITurnStore {
       this.missionStore.listMissions(),
       this.taskStore.listTasks(),
     ]);
+    const flat = decodeTurn(stored);
     return {
-      ...stored,
+      ...flat,
       missionIds: missions.filter((m) => m.turnId === stored.id).map((m) => m.id),
       taskIds: tasks.filter((t) => t.turnId === stored.id).map((t) => t.id),
-      tele: arrayFieldFromEntity(stored, "tele") as string[],
+      tele: (flat.tele as string[] | undefined) ?? [],
     };
   }
 
@@ -130,7 +144,7 @@ export class TurnRepositorySubstrate implements ITurnStore {
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<Turn>(KIND, turnId);
       if (!existing) throw new Error(`Turn not found: ${turnId}`);
-      const next = transform({ ...existing.entity });
+      const next = transform(decodeTurn(existing.entity)); // mission-90 W8: flat CAS
       const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
       if (result.ok) return next;
       // revision-mismatch → retry from re-read

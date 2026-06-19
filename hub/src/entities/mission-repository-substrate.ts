@@ -314,7 +314,9 @@ export class MissionRepositorySubstrate implements IMissionStore {
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<Mission>(KIND, missionId);
       if (!existing) throw new Error(`Mission not found: ${missionId}`);
-      const next = transform({ ...existing.entity });
+      // mission-90 W8: decode → flat so the transform reads relocated fields
+      // (plannedTasks@spec, pulses@spec, status) flat; the write-encoder re-envelopes.
+      const next = transform(decodeEnvelopeToFlat(existing.entity));
       const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
       if (result.ok) return next;
       // revision-mismatch → retry from re-read
