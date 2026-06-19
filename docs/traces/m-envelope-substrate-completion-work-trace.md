@@ -282,3 +282,19 @@ Director authorized read-only IAP-SSH (option b). Acquired a fresh read-only sna
 - **Strict-flip gate MET on real data** (0 bare outside exemptions: MigrationCursor 22 by-design; SchemaDef 0 → W1 boot-put fix holds).
 
 **Status:** runKind offset-skip fix + empirical addendum pushed to #319 (360d30b). Full suite green (1960). Awaiting architect review + the Director's downtime-mitigation + cutover-go decision.
+
+---
+
+## W7 — post-cutover validation (task-420 cont.; branch `agent-greg/m90-w7-post-cutover-validation`)
+
+### Slice 1 — live validation + bug-158 catch/fix + docs (2026-06-19)
+
+Post-cutover validation on the LIVE prod W6-strict substrate. Full report: `docs/reviews/m90-w7-post-cutover-validation.md`.
+
+- **9 list-tools parity-vs-oracle (live):** 8/9 envelope-correct (ideas 217=217, bugs-open 58=58, bugs-major correct, threads-active 0=0, tele 0=0, + tasks/proposals/audit paths). **list_missions BROKEN → bug-158 FILED + FIXED:** MISSION_ACCESSORS read raw `m.status` (W3 accessor-sweep gap; every Mission field relocates → `m.status` was the {phase} object → 0 matches for ALL statuses vs oracle's 90 missions). Strict cutover exposed it (tolerant data masked it). Fixed (mirror IDEA_ACCESSORS) + regression test (layerb-accessor-sweep-w3.test.ts, 7 green) + full suite green (1961). CODE-only → needs a redeploy (default: container-recreate off merged-main, no migration).
+- **bug-152 read-side LIVE-CONFIRMED:** get_thread(thread-658) + get_tele(tele-3) decode envelope rows correctly (status→string, all fields). Write-side (reply/retire gates) covered by the live decoder + W4/W5 tests (full live reply needs two-party turns; 0 active threads on prod). bug-151 sweeper-fix live; 0 scheduled-pending backlog (empirical) → covered by the W4 test.
+- **Output-shape drift → idea-327:** get_X decode to flat; list_X return raw envelope (inconsistent consumer-contract). Follow-on idea filed; per-tool enumeration in the W7 report = its input.
+- **Ledger-reconciliation parity (idea-325):** POST-REDEPLOY closeout (list_missions is its core read; broken live until bug-158 redeploys).
+- **Docs:** runbook folded bug-156/157 + the ~4m46s downtime retro; bug-138/143 closure notes in the report.
+
+**Status:** W7 PR open (bug-158 fix + W7 report + runbook fold + idea-327). Per architect: bug-158 folds into the W7 PR (no off-branch fast-track); redeploy held for Director; ledger parity + stability-confirmed = post-redeploy. Rollback dump + dd61d96 retained.

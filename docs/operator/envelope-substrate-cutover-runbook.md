@@ -105,3 +105,14 @@ gcloud compute ssh hub-vm --zone=australia-southeast1-a --command='sudo bash -c 
 
 ## Tooling reference (mission-90 W6 additions)
 `npm run envelope-migrate -- --list-kinds | --reset-checkpoints | --dry-run [--json]`. Shadow-read harness: `shadow-read-parity-w6.test.ts`. Cursor-discipline proof: `migration-cursor-discipline-w6.test.ts`.
+
+---
+
+## Post-cutover learnings (mission-90 W7 fold — 2026-06-19 execution retro)
+
+The W6 cutover executed successfully (bug-138 closed live), but the live run surfaced learnings to fold here:
+
+- **bug-156 — in-window guard portability (`grep -oP`):** the down-path script parsed the migrate summary with `grep -oP` (Perl regex), which **COS grep does not support** → migrated/errored parsed empty → a FALSE `HALT_ROWSERRORED` fired even though the migrate succeeded (exit 0, 1491 migrated, 0 errored). LESSON: in-window the automated guards ARE the authority (the human is unreachable — see bug-157); a guard that false-trips is itself a hazard. Use a PORTABLE parser (`grep -oE` / `sed` / the `--json` summary), and on any HALT INDEPENDENTLY VERIFY the real condition (a read-only 0-bare query) before acting — do NOT blindly trust OR blindly distrust the guard.
+- **bug-157 — comms-dark in-window human-GO is impossible:** stopping `ois-hub-prod` ALSO kills the MCP relay (the Hub IS the channel), so the watch-protocol's "PING (c) → human GO before redeploy" cannot be delivered mid-window. The in-window authority must be the automated gate (0-bare verify) + the operator's own judgment, NOT a Hub-MCP round-trip. Future: out-of-band comms (a non-Hub channel) OR fully-automated guards-as-authority. The human GO belongs at the PRE-window gate (Step 0c PING (a)), which IS deliverable (Hub still up).
+- **Downtime retro (~4m46s vs the ~90s estimate):** the prod migrate ran slower than the local clone (docker-run-per-pass cold-starts + prod-PG), and the false-halt investigation + comms-dark handling added latency while the Hub was down. The ~90s estimate (from the faster local clone) was optimistic. For a re-run: pre-write a PORTABLE down-path script (bug-156), accept the automated 0-bare gate as in-window authority (bug-157), and budget the window from a prod-representative timing (not the local clone). Correctness was NOT compromised (rollback armed, not needed).
+- **bug-158 — list_missions accessor residual:** the strict cutover exposed a W3 accessor-sweep gap (MISSION_ACCESSORS envelope-blind). A code-only fix; redeploy = a container-recreate off merged-main (NO migration — data is already all-envelope), a much shorter window than this cutover and with no data-touch.
