@@ -61,6 +61,7 @@ import {
 } from "../state.js";
 import { validateStagedActions } from "../policy/staged-action-payloads.js";
 import { SubstrateCounter } from "./substrate-counter.js";
+import { fieldFromEntity, arrayFieldFromEntity } from "./shape-helpers.js";
 
 const KIND = "Thread";
 const MAX_CAS_RETRIES = 50;
@@ -70,20 +71,31 @@ const LIST_PREFETCH_CAP = 500;
  *  ThreadRepository (which ports from gcs-state.ts). */
 function normalizeThreadShape(t: unknown): Thread {
   const raw = t as Record<string, unknown>;
-  const convergenceActions = Array.isArray(raw.convergenceActions)
-    ? (raw.convergenceActions as unknown[]).map((a) => normalizeStagedActionShape(a))
-    : [];
+  // mission-90 W4 (bug-150 + W4 item-2 repo-internal-reads-envelope-native): read
+  // EVERY relocated field envelope-aware. Thread's partition moves summary/
+  // convergenceActions/participants/messages/currentTurnAgentId → status.* and
+  // routingMode → spec.* (Thread.ts). The prior `raw.<field>` reads were undefined
+  // on envelope rows → FORCE-DEFAULTED to ""/[]/null/"unicast", which W4's
+  // writer-closure (all new threads now envelope) would turn into empty messages/
+  // participants (broken get_thread, reply-routing, convergence) for every new
+  // thread. fieldFromEntity/arrayFieldFromEntity read bare top-level OR the
+  // envelope section (dual-shape; tolerant across the W6 straddle).
+  const ctx = fieldFromEntity(raw, "context");
+  const idleExpiry = fieldFromEntity(raw, "idleExpiryMs");
+  const summaryV = fieldFromEntity(raw, "summary");
+  const recipient = fieldFromEntity(raw, "recipientAgentId");
+  const currentTurnAgent = fieldFromEntity(raw, "currentTurnAgentId");
   return {
     ...raw,
-    routingMode: normalizeRoutingMode(raw.routingMode),
-    context: isThreadContext(raw.context) ? raw.context : null,
-    idleExpiryMs: typeof raw.idleExpiryMs === "number" ? raw.idleExpiryMs : null,
-    convergenceActions,
-    summary: typeof raw.summary === "string" ? raw.summary : "",
-    participants: Array.isArray(raw.participants) ? raw.participants : [],
-    recipientAgentId: typeof raw.recipientAgentId === "string" ? raw.recipientAgentId : null,
-    currentTurnAgentId: typeof raw.currentTurnAgentId === "string" ? raw.currentTurnAgentId : null,
-    messages: Array.isArray(raw.messages) ? raw.messages : [],
+    routingMode: normalizeRoutingMode(fieldFromEntity(raw, "routingMode")),
+    context: isThreadContext(ctx) ? ctx : null,
+    idleExpiryMs: typeof idleExpiry === "number" ? idleExpiry : null,
+    convergenceActions: arrayFieldFromEntity(raw, "convergenceActions").map((a) => normalizeStagedActionShape(a)),
+    summary: typeof summaryV === "string" ? summaryV : "",
+    participants: arrayFieldFromEntity(raw, "participants"),
+    recipientAgentId: typeof recipient === "string" ? recipient : null,
+    currentTurnAgentId: typeof currentTurnAgent === "string" ? currentTurnAgent : null,
+    messages: arrayFieldFromEntity(raw, "messages"),
   } as Thread;
 }
 

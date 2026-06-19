@@ -186,6 +186,10 @@ export class BugRepositorySubstrate implements IBugStore {
     // dual-lookup. Post-W11 cascade-key fields live at metadata.*; pre-W11
     // (test fixtures + dual-shape data window) still at top-level. Defense-in-
     // depth per W9 Q4 keep-legacy-branch refinement.
+    // mission-90 W4: KEEP the bare fallback — cascade-keys are NOT chokepoint-
+    // translated (W1 null-pin), so it's the SOLE straddle mechanism; removing
+    // pre-W6 risks a bug-147-class duplicate-on-missed-dedup. DELETE at W8
+    // (architect-ruled 2026-06-19; W8 carry-set).
     const envelopeResult = await this.substrate.list<Bug>(KIND, {
       filter: {
         "metadata.sourceThreadId": key.sourceThreadId,
@@ -206,6 +210,7 @@ export class BugRepositorySubstrate implements IBugStore {
 
   async findBySourceIdeaId(sourceIdeaId: string): Promise<Bug | null> {
     // mission-89 Phase 4 (bug-138): envelope-first + legacy fallback dual-lookup.
+    // mission-90 W4: KEEP bare fallback (sole straddle mechanism; W1 null-pin); DELETE at W8.
     const envelopeResult = await this.substrate.list<Bug>(KIND, {
       filter: { "metadata.sourceIdeaId": sourceIdeaId },
       limit: 1,

@@ -38,6 +38,7 @@ import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
   ALL_SCHEMAS,
+  buildEnvelopeWriteEncoder,
   type PostgresSubstrate,
   type SchemaReconciler,
 } from "./storage-substrate/index.js";
@@ -157,6 +158,11 @@ let messageStore: IMessageStore;
 const connRedacted = POSTGRES_CONNECTION_STRING.replace(/:[^:@]+@/, ":***@");
 console.log(`[Hub] substrate-mode active; postgres=${connRedacted}`);
 const substrate: PostgresSubstrate = createPostgresStorageSubstrate(POSTGRES_CONNECTION_STRING);
+// mission-90 W4 (idea-324): wire the write-side envelope encoder BEFORE any write
+// (incl. the reconciler boot-put + repos) so EVERY write lands envelope-shape —
+// the close-all-bare-writers chokepoint, complete-by-construction. Idempotent:
+// already-envelope rows (e.g. the W1 boot-put) pass through byte-identical.
+substrate.setWriteEncoder(buildEnvelopeWriteEncoder());
 // mission-86 W2 (bug-101): apply substrate migrations before the reconciler —
 // the Hub bootstraps a fresh empty postgres with no manual SQL.
 await applyMigrations(POSTGRES_CONNECTION_STRING, (msg) => console.log(`[Hub:migrations] ${msg}`));

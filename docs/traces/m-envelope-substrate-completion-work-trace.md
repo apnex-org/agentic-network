@@ -166,3 +166,30 @@ FSM-bypassed (bug-146); thread-dispatch from the task-417 directive; develop aga
 - Minor (not blocking): the `createdBy` accessor triplet repeats across 3 policies (pre-existing; candidate shared helper); test seeds envelope-only (legacy-flat branch unit-tested, not wire-tested); get_pending_actions wire-flow confirms the repo push-down (handler lives in system-policy, not registered in the test rig).
 
 **Status:** PR-open, awaiting architect review. routingMode finding flagged DECISION-REQUIRED.
+
+### ✅ W3 COMPLETION (2026-06-19) — MERGED @ `b63a1d6` (#316)
+
+Architect approved + merged. **All 9 list tools now envelope-correct** (W2 Layer-A + W3 Layer-B); bug-138 structurally closed network-wide pending the W6 prod deploy. **routingMode ruling: ACCEPT pre-existing-broken + W4-carry** (no W3 band-aid — it's a repo-normalization bug, not a policy-accessor gap; a Layer-B reach into spec would duplicate repo logic wrong-layer per §2.5/tele-3). **bug-150 filed** (normalizeThreadShape reads spec.routingMode → folded into W4). createdBy-triplet shared-helper → W4 cleanup candidate. Also peer-approved PR #315 (Design v1.3 doc — renameMap = complete field-movement authority, finding-A folded). W3 = DONE.
+
+---
+
+## W4 — repo/sweeper/watch envelope-native + close ALL bare-shape writers (task-418; branch `agent-greg/m90-w4-repo-sweeper-watch-writers`)
+
+### Slice 1 — implement (2026-06-19)
+
+FSM-bypassed (bug-146); thread-dispatch from task-418; develop against main @ b63a1d6. **The LAST read+write wave before the W6 data-touch cutover** + the largest. Three sub-areas: (1) watch-path `matchesFilter` envelope-aware in BOTH substrates (N1); (2) repo internal reads envelope-native + carries (bug-150 routingMode, cascade-key dual-path reconciliation, createdBy helper); (3) **CLOSE ALL LIVE BARE-SHAPE WRITERS** (idea-324 / preflight c1 — ~8 kinds: Message/Audit/Bug/PendingAction/Thread/Idea/Mission/Task) → route every write through the envelope encoder. Gate: watch e2e both substrates + no-new-bare CANARY (write every tool path → assert envelope lands per-kind) + W1–W4-without-W4 revertibility.
+
+**Shipped:**
+- **matchesFilter (both substrates):** translate filter key via renameMap authority then traverse, DUAL-SHAPE tolerant (envelope path → bare fallback) for the mixed-row straddle. postgres = injected W2 translator; memory = static ALL_SCHEMAS translator (reconciler-less). Closes N1 (sweeper watch filters) + N2 (memory false-green). bug-151 (architect-filed major): the scheduled-message-sweeper's Message {delivery,scheduledState} filter silently never fired envelope scheduled Messages since 2026-05-25 — fixed here (W6-prep: eyeball stuck-unfired backlog at the prod snapshot).
+- **Write-encoder seam (close-all-bare-writers):** new `write-encoder.ts` `buildEnvelopeWriteEncoder()` (per-kind migrateOne registry; idempotent passthrough; no-module → passthrough) + `substrate.setWriteEncoder` routed through put/createOnly/putIfMatch, wired at boot BEFORE any write. Complete-by-construction; symmetric to the W2 read translator (ADR at ship).
+- **bug-150 + broader normalizeThreadShape fix:** reads EVERY relocated Thread field envelope-native (routingMode→spec; summary/convergenceActions/participants/messages/currentTurnAgentId→status). Pre-fix force-defaulted them → W4's writer-closure would have shipped empty messages/participants for new threads.
+- **cascade-keys:** KEEP repo dual-path + delete-at-W8 comment across idea/bug(×2)/mission/task/proposal (architect-ruled — sole straddle mechanism, NOT chokepoint-redundant; W1 null-pin preserved). createdBy helper deferred → W8.
+
+**Self-review (code-review, 1 finder angle) — 2 CRITICAL catches FIXED** (encoder inert-in-tests → invisible to the suite):
+1. Turn was imported but MISSING from the write-encoder MODULE_FACTORIES → Turn writes stayed bare. Fixed + added to the canary.
+2. normalizeThreadShape force-defaulted relocated fields (beyond the flagged routingMode) → W4 writer-closure would break get_thread/reply-routing/convergence for new envelope threads. Fixed envelope-native + a thread-read regression test.
+- (low, documented) matchesFilter bare-fallback degenerate-matches the literal {kind:"Message"} (reserved-key collision); the bare fallback is needed for real bare-row kind filtering → accept + comment.
+
+**Verification:** `write-encoder-and-watch-w4.test.ts` (testcontainers, 7 tests): passthrough pins (byte-identical / put-then-put stable / status-survives / no-module); no-new-bare canary (all kinds incl. Turn + createOnly); watch matchesFilter both substrates; thread-read regression. Full hub suite GREEN (modulo the known advisory-lock flake); tsc clean. Revertibility: W4 hooks inert-unless-wired + matchesFilter back-compat → W1–W3 pass without W4.
+
+**Status:** PR-open, awaiting architect review.
