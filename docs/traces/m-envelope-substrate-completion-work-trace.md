@@ -248,3 +248,25 @@ idea-318 §2.8 (Director scope-in). NET-NEW: the SchemaDef reconciler now writes
 - NOTED (limitations, not fixed): status-write is non-CAS get→merge→put (concurrent spec-change clobber; unreachable in single-Hub prod + design specified MERGE-not-replace); on a BOOT apply-failure the provisional stamp leaves a contradictory appliedVersion (forensic-only; Hub fails-to-start anyway).
 
 **Status:** PR-open (#318), awaiting architect review + the F1 disposition. W6 carries logged: bug-151 (scheduled-Message backlog) + bug-152 (envelope-thread-reply / envelope-tele-retire) prod-snapshot liveness checks land in W6-prep; W8 mixed-read-shape unification.
+
+---
+
+## W6-prep — cutover readiness (task-420; branch `agent-greg/m90-w6-prep-cutover-readiness`)
+
+### Slice 1 — mechanism build + self-validation + readiness report (2026-06-19)
+
+CLONE-ONLY / ZERO prod-touch (the cutover EXECUTION is the Director-gated Phase 7 Release gate). FSM-bypassed (bug-146); off main @ 428db4c. Deliverable: the readiness report (`docs/reviews/m90-w6-prep-readiness-report.md`) — the evidence the architect surfaces to the Director for the cutover-go.
+
+**Built + self-validated (synthetic testcontainer clones):**
+- **§3.3 shadow-read parity harness** (`shadow-read-parity-w6.test.ts`, 3 green) — generic corpus from the all-schemas renameMap authority (every 49/21 entry + a non-renamed control); production read-path `substrate.list` (renameMap-translated) vs independent direct-psql oracle; **dispositive guard** asserts the EXACT seeded match-ids (catches claimed-path-vs-actual-placement divergence, not a both-empty false-pass). 100% parity on synthetic data. The W6 strict-flip GATE mechanism — runs identically on the real snapshot at cutover-prep.
+- **§3.2 cursor-discipline tooling** (was an UNWIRED GAP found in self-review): `MigrationRunner.resetAllCheckpoints()` + CLI `--reset-checkpoints` + `--list-kinds` (single-authority over registeredKinds — kills the hand-maintained 21-vs-22 Notification drift). `migration-cursor-discipline-w6.test.ts` (2 green) reproduces the preflight-c2 lexical checkpoint-skip trap (bare `bug-137` skipped under stale `bug-99` → stays bare) + proves the resetAll + loop-until-0 mitigation converges.
+- **cutover runbook** (`docs/operator/envelope-substrate-cutover-runbook.md`) — the design-named deliverable; encodes image-pre-pull → Hub-stop → snapshot → reset-checkpoints → loop-migrate-to-0 → shadow-verify → strict-flip → redeploy → verify-all-22 → rollback; Director-gate marker on Steps 3+.
+
+**Self-review findings (sub-agent tooling audit + my build):**
+- The §3.2 dirty-cursor-trap mitigation was SPECIFIED but never wired into the cutover path (resetCheckpoint was one-kind-only + never called; single-pass migrate; no --list-kinds). FIXED (above).
+- KINDS-array drift: the mission-88 script hand-lists 21, missing Notification → a VERIFICATION blind-spot (migrate iterates registeredKinds=22, so Notification migrates but is never shape-verified). Runbook derives from --list-kinds + verifies 22.
+- bug-151/152 LIVENESS: prod runs the pre-mission-90 (envelope-blind) code + has envelope rows → prod IS broken today (envelope scheduled-Messages never fire; envelope-thread reply / envelope-tele retire throw). Code+repro evidence; the cutover is the fix.
+
+**Empirical half FLAGGED (needs a prod snapshot — Director-gated; preflight dump gone from /tmp):** real-data count parity (the strict-flip gate), re-migration timing vs <60s, stuck-Message-40 forensics, empirical writer-closure scan, end-to-end pg_restore rollback, degraded-row counts. Architect surfacing the snapshot-access decision to the Director (lean: fresh pre-cutover snapshot for a fresh timing measure).
+
+**Verification:** full hub suite GREEN (1960 passed / 7 skips; +2 files / +5 tests); tsc clean. **Status:** readiness report delivered to architect; awaiting (a) the Director's snapshot/empirical decision + (b) the Director's cutover-go.

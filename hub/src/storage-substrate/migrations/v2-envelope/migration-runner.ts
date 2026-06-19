@@ -150,6 +150,23 @@ export class MigrationRunner {
     return Array.from(this.modules.keys()).sort();
   }
 
+  /**
+   * mission-90 W6-prep (Design §3.2 step-3 cursor discipline): reset the
+   * MigrationCursor checkpoint for EVERY registered kind. The lexical
+   * checkpoint-skip trap (preflight c2 — e.g. "bug-137" < "bug-99" string-
+   * ordered) permanently blinds post-cutover rows whose ids sort BEFORE a stale
+   * stored checkpoint, so the re-migration MUST resetCheckpoint ALL kinds before
+   * the run (then loop-until-migrated=0). Single-authority over registeredKinds()
+   * — no hand-maintained kind list. Idempotent (resetCheckpoint is a delete).
+   */
+  async resetAllCheckpoints(): Promise<string[]> {
+    const kinds = this.registeredKinds();
+    for (const kind of kinds) {
+      await this.cursorRepo.resetCheckpoint(kind);
+    }
+    return kinds;
+  }
+
   // Re-export for caller convenience.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   static readonly _DEFAULT_API_VERSION = "core.ois/v1";
