@@ -106,13 +106,21 @@ const HALT_TRIGGER_ELAPSED_MS = parseInt(
 interface CliOpts {
   dryRun: boolean;
   json: boolean;
+  /** mission-90 W6-prep: print registered kinds (single-authority for the
+   *  cutover KINDS array — kills the hand-maintained 21-vs-22 drift) + exit. */
+  listKinds: boolean;
+  /** mission-90 W6-prep: resetCheckpoint ALL registered kinds (§3.2 step-3
+   *  dirty-cursor-trap mitigation) + exit. Run BEFORE the loop-until-0 migrate. */
+  resetCheckpoints: boolean;
 }
 
 function parseArgs(argv: readonly string[]): CliOpts {
-  const opts: CliOpts = { dryRun: false, json: false };
+  const opts: CliOpts = { dryRun: false, json: false, listKinds: false, resetCheckpoints: false };
   for (const arg of argv) {
     if (arg === "--dry-run") opts.dryRun = true;
     else if (arg === "--json") opts.json = true;
+    else if (arg === "--list-kinds") opts.listKinds = true;
+    else if (arg === "--reset-checkpoints") opts.resetCheckpoints = true;
     else if (arg === "--help" || arg === "-h") {
       printUsage();
       process.exit(EXIT_SUCCESS);
@@ -129,9 +137,13 @@ function printUsage(): void {
   process.stderr.write(`Usage: node hub/dist/scripts/run-envelope-migration.js [--dry-run] [--json]
 
 Options:
-  --dry-run   Inventory mode; report what would migrate; no writes
-  --json      Emit structured JSON output (default: human-readable text)
-  -h, --help  Show this help
+  --dry-run            Inventory mode; report what would migrate; no writes
+  --json               Emit structured JSON output (default: human-readable text)
+  --list-kinds         Print the registered kinds (one per line) + exit; the
+                       single-authority source for the cutover KINDS array
+  --reset-checkpoints  Reset the MigrationCursor checkpoint for ALL kinds + exit
+                       (§3.2 dirty-cursor-trap mitigation; run before loop-migrate)
+  -h, --help           Show this help
 
 Env:
   POSTGRES_CONNECTION_STRING  Required; postgres connection string for the Hub substrate
@@ -238,6 +250,30 @@ async function main(): Promise<number> {
   }
 
   const kinds = runner.registeredKinds();
+
+  // mission-90 W6-prep: --list-kinds — single-authority source for the cutover
+  // KINDS array (reconciles the hand-maintained 21-vs-22 Notification drift).
+  // Prints the registered kinds one-per-line on stdout; nothing else.
+  if (opts.listKinds) {
+    for (const kind of kinds) console.log(kind);
+    await substrate.close();
+    return EXIT_SUCCESS;
+  }
+
+  // mission-90 W6-prep (§3.2 step-3): --reset-checkpoints — clear EVERY kind's
+  // MigrationCursor checkpoint before the loop-until-migrated=0 re-migration, so
+  // the lexical checkpoint-skip trap (preflight c2) cannot blind post-cutover rows.
+  if (opts.resetCheckpoints) {
+    const reset = await runner.resetAllCheckpoints();
+    if (opts.json) {
+      console.log(JSON.stringify({ action: "reset-checkpoints", kinds: reset }));
+    } else {
+      console.log(`[envelope-migrate] reset-checkpoints: cleared ${reset.length} kind cursors [${reset.join(", ")}]`);
+    }
+    await substrate.close();
+    return EXIT_SUCCESS;
+  }
+
   if (!opts.json) {
     console.log(`[envelope-migrate] starting wave=${WAVE_ID} kinds=${kinds.length} dryRun=${opts.dryRun}`);
   }

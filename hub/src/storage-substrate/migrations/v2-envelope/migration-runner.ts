@@ -98,9 +98,19 @@ export class MigrationRunner {
       // Paginated list + per-row migrate. Note: list() doesn't support
       // id-greater-than filter at the substrate boundary today; we list all +
       // skip-until pattern. Acceptable at <100K rows per kind.
+      //
+      // mission-90 W6-prep (offset-pagination silent-skip; bug filed at W6-prep):
+      // list with a STABLE ORDER BY id. Without an
+      // explicit sort the substrate emits no ORDER BY, so postgres returns rows in
+      // unstable heap order — and because this loop PUTs (mutates) rows during
+      // OFFSET pagination, the heap shifts and the offset window silently SKIPS a
+      // fraction of rows each pass (rowsMigrated under-counts, rowsErrored=0 — the
+      // preflight "stuck-Message" class). A migrated row keeps its id, so ordering
+      // by data->>'id' is stable under the in-loop mutation → every row is visited
+      // exactly once → single-pass convergence (no silent data-loss at cutover).
       let offset = 0;
       while (true) {
-        const page = await this.substrate.list<{ id: string }>(kind, { limit: LIST_PAGE, offset });
+        const page = await this.substrate.list<{ id: string }>(kind, { sort: [{ field: "id", order: "asc" }], limit: LIST_PAGE, offset });
         if (page.items.length === 0) break;
 
         for (const row of page.items) {
@@ -148,6 +158,23 @@ export class MigrationRunner {
    */
   registeredKinds(): string[] {
     return Array.from(this.modules.keys()).sort();
+  }
+
+  /**
+   * mission-90 W6-prep (Design §3.2 step-3 cursor discipline): reset the
+   * MigrationCursor checkpoint for EVERY registered kind. The lexical
+   * checkpoint-skip trap (preflight c2 — e.g. "bug-137" < "bug-99" string-
+   * ordered) permanently blinds post-cutover rows whose ids sort BEFORE a stale
+   * stored checkpoint, so the re-migration MUST resetCheckpoint ALL kinds before
+   * the run (then loop-until-migrated=0). Single-authority over registeredKinds()
+   * — no hand-maintained kind list. Idempotent (resetCheckpoint is a delete).
+   */
+  async resetAllCheckpoints(): Promise<string[]> {
+    const kinds = this.registeredKinds();
+    for (const kind of kinds) {
+      await this.cursorRepo.resetCheckpoint(kind);
+    }
+    return kinds;
   }
 
   // Re-export for caller convenience.
