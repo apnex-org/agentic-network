@@ -97,3 +97,28 @@ task-415's formal report path was FSM-blocked (the task is `pending`/unassigned,
 **Deploy reality (corrected + confirmed architect-direct, runbook B.3):** watchtower auto-update is NON-functional; prod deploy is **MANUAL IAP-SSH, BATCHED to the W6/W7 cutover window** (image-pre-pull + planned downtime). W1–W5 accumulate on `main`; no per-wave prod deploy, no Hub blip. Develop subsequent waves against `main`.
 
 **W1 = DONE.** Next: W2 (task-416, substrate translate-point §2.3).
+
+---
+
+## W2 — substrate.list translate-point (task-416; branch `agent-greg/m90-w2-substrate-translate`)
+
+### Slice 1 — implement + self-review + PR (2026-06-19)
+
+FSM-bypassed per bug-146 (router stamps caller login); worked from the task-416 directive via thread-dispatch equivalence; developed against main @ 0ba9707. Report folded here (completion-equivalence).
+
+**Shipped (§2.3):**
+- `postgres-substrate.ts` — `setFieldTranslator(FieldTranslator)` (late-bound at boot) + `translateKey(kind, bareKey)`; `list()` translates each filter key INLINE per entry + each sort key, then hands the path to the UNCHANGED `translateFilterClause`/`jsonbField`. NO projection (A6). Setter is on a new `PostgresSubstrate` type, NOT on `HubStorageSubstrate` → `memory-substrate.ts` untouched (W4 scope).
+- `types.ts` — `FieldTranslator` type. `index.ts` — wire `setFieldTranslator` AFTER `reconciler.start()` (breaks the substrate↔reconciler construction cycle).
+- `storage-substrate/index.ts` — export `PostgresSubstrate`.
+
+**Verification:** NET-NEW white-box wire-flow test `substrate-translate-w2.test.ts` (testcontainers; result-set + generated SQL path for Message kind-collision / Idea non-FSM / PendingAction FSM + passthrough no-regression + SORT translation + a bug-138 negative control). Full hub suite **154 files / 1923 passed / 7 skipped / 0 failed**, tsc clean. Inert unless wired (only Hub boot + this test call setFieldTranslator) → no regression to unwired tests.
+
+**Self-review (code-review high, 3 finder angles + verify) — 1 FIX, 3 SURFACED:**
+- FIX — filter-key collision: replaced the object-rebuild (`translateFilterKeysToEnvelopePaths` returning a `Filter`) with per-entry inline `translateKey` (symmetric with sort). The object-rebuild could last-write-collapse two entries mapping to the same path; per-entry can't. Also a simplification.
+- SURFACE A (DECISION-REQUIRED) — **relocation-coverage gap**: renameMap captures renames, NOT pure relocations. Bug partition relocates `severity`/`class` → `spec.*` but renameMap is only `{status}` → `list_bugs` severity/class filters STILL envelope-blind after W2 (status fixed; list_turns fully fixed). Likely systemic. The directive's "fixes list_bugs" holds only for status. Options: expand renameMap to relocations / read-side partition consult / follow-on. Recommend expand-renameMap; architect's scope call.
+- SURFACE B — **dual-shape fallback neutralized**: `listMissions` legacy branch `{status}` (mission-89 defense) gets translated to `status.phase` = identical to the envelope branch → legacy fallback dead. Recommend removing the now-redundant branch; flagged for ruling vs silent neutralization.
+- SURFACE C — **no migration-completion guard**: translator wired unconditionally; correctness rests on batched-deploy-after-W6-migration. Recommend confirm-accepted + a precondition comment.
+
+**Refuted during self-review:** no existing test wires the translator (suite stays green); memory-substrate untouched + doesn't need the setter; boot-order has no list() before the setter; cycle genuinely broken.
+
+**Status:** PR-open, awaiting architect same-day review + rulings on A/B/C. (Completion slice + merge SHA to follow at merge.)
