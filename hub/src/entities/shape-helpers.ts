@@ -8,13 +8,16 @@
  * policy + consumers read fields directly (the W3-era fieldFromEntity /
  * tagsFromEntity / arrayFieldFromEntity dual-layer readers are RETIRED).
  *
- * What remains here is the membrane MECHANISM, not an above-membrane reader:
+ * What remains here is the membrane MECHANISM, not a dual-shape reader:
  *  - `phaseFromEntity` — the status-extractor the decoders call to map an
  *    envelope `status.{phase}` bucket → the flat top-level `status` string. It
  *    is load-bearing decode-machinery (decodeEnvelopeToFlat + the kept bespoke
- *    normalizers normalizeThreadShape/normalizeTele/normalizeAgentShape call it),
- *    NOT a dual-shape recurrence surface — once policy reads flat, it never sees
- *    envelope. It survives BELOW the membrane by design (architect ruling (A)).
+ *    normalizers normalizeThreadShape/normalizeTele/normalizeAgentShape call it
+ *    below the membrane). It is ALSO reused above the membrane in the policy
+ *    status-accessors + a handful of CAS callbacks for a graceful status read —
+ *    safe per architect ruling (A): there the entity is already flat (it reads
+ *    the top-level string), and it is graceful on a stray {phase} object, so it
+ *    is NOT a dual-shape recurrence surface even where reused. Kept, not deleted.
  *  - `decodeEnvelopeToFlat` — the generic renameMap+partition reverse the repos
  *    apply on the read boundary.
  *
@@ -118,5 +121,10 @@ export function decodeEnvelopeToFlat<T>(raw: T): T {
   if (annotations && typeof annotations === "object" && annotations["ois.io/sourceThreadSummary"] !== undefined) {
     flat.sourceThreadSummary = annotations["ois.io/sourceThreadSummary"];
   }
+  // mission-90 W8 (audit m2): the K8s annotations map is an envelope metadata
+  // artifact, not a flat domain field — strip it after lifting sourceThreadSummary
+  // so it doesn't leak onto the decoded shape. (Only consumer of annotations is the
+  // encode path; nothing above the membrane reads flat.annotations.)
+  delete flat.annotations;
   return flat as T;
 }

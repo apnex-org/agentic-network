@@ -91,10 +91,10 @@ const IDEA_SORTABLE_FIELDS = [
 // mission-90 W8 (idea-320, decode-to-flat): the idea repo decodes envelope→flat
 // at every read boundary (cloneIdea), so listIdeas() hands these accessors
 // GUARANTEED-FLAT Ideas — relocated fields (createdAt/updatedAt/missionId/
-// source*/createdBy → top-level) read directly. status stays via phaseFromEntity,
-// the below-membrane decode-mechanism (graceful). W3 history: the fix was the
-// accessor body (matchField's bare-key lookup unchanged); W8 retires the
-// fieldFromEntity helper now that reads are flat.
+// source*/createdBy → top-level) read directly. status via phaseFromEntity — the
+// decode-mechanism, reused here for a graceful status read (safe per ruling A).
+// History: the W3 fix was the accessor body (matchField's bare-key lookup
+// unchanged); W8 retires the W3-era dual-shape reader now reads are flat.
 const ideaCreatedBy = (i: Idea) => i.createdBy;
 const IDEA_ACCESSORS: FieldAccessors<Idea> = {
   id: (i) => i.id,

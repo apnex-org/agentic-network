@@ -509,12 +509,12 @@ const MISSION_SORTABLE_FIELDS = [
 // envelope→flat at every read boundary (decodeEnvelopeToFlat in hydrate +
 // casUpdate), so listMissions() hands these accessors GUARANTEED-FLAT Missions
 // — every relocated field (createdAt/createdBy/correlationId/turnId/source* →
-// top-level) reads directly. status stays via phaseFromEntity, the below-
-// membrane decode-mechanism (graceful: reads the flat top-level string here,
-// and any raw {phase} object defensively). The W3→W7 history: W3's Layer-B
-// sweep added fieldFromEntity to IDEA/TASK/THREAD but MISSED these, W6's strict
-// cutover EXPOSED the {phase}-object reads (idea-325 list_missions({status})→0),
-// W7 fixed via fieldFromEntity, W8 retires the helper now reads are flat.
+// top-level) reads directly. status via phaseFromEntity — the decode-mechanism,
+// reused here for a graceful status read (the entity is flat so it reads the
+// top-level string; a raw {phase} object would degrade safely; safe per ruling A).
+// History: the W3-era dual-shape accessor reader covered IDEA/TASK/THREAD but
+// MISSED these; W6's strict cutover EXPOSED the {phase}-object reads (idea-325
+// list_missions({status})→0); W8 retires that reader now the repo decodes to flat.
 const missionCreatedBy = (m: Mission) => m.createdBy;
 const MISSION_ACCESSORS: FieldAccessors<Mission> = {
   id: (m) => m.id,

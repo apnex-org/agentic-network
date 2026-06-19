@@ -844,9 +844,10 @@ const THREAD_SORTABLE_FIELDS = [
 // convergence-action / participants logic the generic flatten can't do), which
 // emits GUARANTEED-FLAT top-level fields. So these accessors read relocated
 // fields (routingMode/currentTurn*/roundCount/intents/correlationId/recipient/
-// createdAt/updatedAt/createdBy) directly. status stays via phaseFromEntity, the
-// below-membrane decode-mechanism (graceful). W4 (bug-150) made normalizeThreadShape
-// read spec.routingMode envelope-aware; W8 retires fieldFromEntity now reads are flat.
+// createdAt/updatedAt/createdBy) directly. status via phaseFromEntity — the
+// decode-mechanism, reused here for a graceful status read (safe per ruling A).
+// W4 (bug-150) made normalizeThreadShape read spec.routingMode envelope-aware;
+// W8 retires the W3-era dual-shape reader now reads are flat.
 const threadCreatedBy = (t: Thread) => t.createdBy;
 const THREAD_ACCESSORS: FieldAccessors<Thread> = {
   id: (t) => t.id,

@@ -158,6 +158,40 @@ describe("PendingActionRepositorySubstrate (W4.x.6 Option Y sibling-pattern)", (
     expect(await repo.receiptAck("pa-nonexistent")).toBeNull();
   }, 60_000);
 
+  it("incrementAttempt decode-before-increment — attemptCount 0→1→2 (NOT NaN) on the envelope row (W8 audit m4)", async () => {
+    // mission-90 W8: incrementAttempt's CAS transform does `item.attemptCount += 1`.
+    // attemptCount relocates to status.attemptCount on the envelope row; pre-decode a
+    // raw read gave `undefined + 1 = NaN` (the watchdog attempt-count NaN class). The
+    // decode-before-transform (decodePendingAction in tryCasUpdate) makes it the real
+    // number. Positive-proof: enqueue (0) → increment → 1 → 2, persisted + re-read.
+    const counter = new SubstrateCounter(substrate);
+    const repo = new PendingActionRepositorySubstrate(substrate, counter);
+
+    const item = await repo.enqueue({
+      targetAgentId: "agent-greg",
+      dispatchType: "thread_message",
+      entityRef: "thread-attempt",
+      payload: {},
+    });
+    expect(item.attemptCount).toBe(0);
+
+    const a1 = await repo.incrementAttempt(item.id);
+    expect(Number.isNaN(a1?.attemptCount as number)).toBe(false);
+    expect(a1?.attemptCount).toBe(1); // NOT NaN — decode lifted status.attemptCount=0 first
+    expect(a1?.lastAttemptAt).toBeDefined();
+
+    const a2 = await repo.incrementAttempt(item.id);
+    expect(a2?.attemptCount).toBe(2); // monotonic on the decoded value
+
+    // Re-read via the read-path decode (not just the CAS return) confirms persistence.
+    const reRead = await repo.findOpenByNaturalKey({
+      targetAgentId: "agent-greg",
+      entityRef: "thread-attempt",
+      dispatchType: "thread_message",
+    });
+    expect(reRead?.attemptCount).toBe(2);
+  }, 60_000);
+
   it("saveContinuation + resumeContinuation FSM + TransitionRejected + abandon + listExpired/listStuck", async () => {
     const counter = new SubstrateCounter(substrate);
     const repo = new PendingActionRepositorySubstrate(substrate, counter);

@@ -330,10 +330,10 @@ const TASK_SORTABLE_FIELDS = [
 // mission-90 W8 (idea-320, decode-to-flat): the task repo decodes envelope→flat
 // at every read boundary, so listTasks() hands these accessors GUARANTEED-FLAT
 // Tasks — relocated fields (correlationId/assignedAgentId/createdAt/updatedAt/
-// createdBy → top-level) read directly. status stays via phaseFromEntity, the
-// below-membrane decode-mechanism (graceful). W3 history: TASK_ACCESSORS.status
-// was the 9th envelope-blind tool (t.status was the {phase} object); W3 fixed it
-// via fieldFromEntity, W8 retires the helper now that reads are flat.
+// createdBy → top-level) read directly. status via phaseFromEntity — the
+// decode-mechanism, reused here for a graceful status read (safe per ruling A).
+// History: TASK_ACCESSORS.status was the 9th envelope-blind tool (t.status was
+// the {phase} object); W8 retires the W3-era dual-shape reader now reads are flat.
 const taskCreatedBy = (t: Task) => t.createdBy;
 const TASK_ACCESSORS: FieldAccessors<Task> = {
   id: (t) => t.id,

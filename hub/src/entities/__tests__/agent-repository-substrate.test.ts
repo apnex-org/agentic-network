@@ -18,9 +18,11 @@ import pg from "pg";
 import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
+  buildEnvelopeWriteEncoder,
   ALL_SCHEMAS,
   type HubStorageSubstrate,
   type SchemaReconciler,
+  type PostgresSubstrate,
 } from "../../storage-substrate/index.js";
 import { AgentRepositorySubstrate } from "../agent-repository-substrate.js";
 
@@ -63,6 +65,13 @@ beforeAll(async () => {
     warn: () => { /* silent */ },
   });
   await reconciler.start();
+  // mission-90 W8 (audit MG2): match prod boot — envelope writes + bare-key→
+  // envelope-path translation, so this postgres test seeds + decodes ENVELOPE rows
+  // on the real Postgres-JSONB path (was storing legacy-flat = flat→flat passthrough,
+  // never exercising the envelope→flat decode the prod substrate runs).
+  const pgSub = substrate as PostgresSubstrate;
+  pgSub.setFieldTranslator((kind, key) => reconciler.getFieldTranslation(kind, key));
+  pgSub.setWriteEncoder(buildEnvelopeWriteEncoder());
 }, 60_000);
 
 afterAll(async () => {
