@@ -386,20 +386,36 @@ describe("withAdvisoryLock — postgres substrate (real pg_advisory_lock)", () =
 
   it("throws LockAcquisitionTimeoutError under real-pg contention", async () => {
     if (!substrate) throw new Error("substrate not initialized");
-    // A holds the lock for 300ms; B times out at 50ms
+    // bug-153: deterministic acquisition ORDERING. A's fn body only runs AFTER
+    // the lock is acquired, so signalling from inside it guarantees A holds the
+    // lock before B attempts — B reliably contends + times out, instead of racing
+    // the poll-acquire timing (under parallel-pg CI load B could otherwise WIN the
+    // race, run "B-should-not-run", resolve with no timeout → this assertion fails;
+    // and the un-awaited callA would then poll into afterAll's pool.end() →
+    // "pool after end" at postgres-substrate.ts withAdvisoryLock).
+    let signalAcquired!: () => void;
+    const aAcquired = new Promise<void>((resolve) => { signalAcquired = resolve; });
+    // A holds the lock for 300ms; B times out at 50ms.
     const callA = withAdvisoryLock(substrate, LOCK_CLASS.assertIdentity, "fp-pg-timeout", async () => {
+      signalAcquired();
       await new Promise((r) => setTimeout(r, 300));
       return "A-done";
     });
-    await expect(
-      withAdvisoryLock(
-        substrate,
-        LOCK_CLASS.assertIdentity,
-        "fp-pg-timeout",
-        async () => "B-should-not-run",
-        { timeoutMs: 50 },
-      ),
-    ).rejects.toBeInstanceOf(LockAcquisitionTimeoutError);
-    await expect(callA).resolves.toBe("A-done");
+    try {
+      await aAcquired; // B contends only once A demonstrably holds the lock
+      await expect(
+        withAdvisoryLock(
+          substrate,
+          LOCK_CLASS.assertIdentity,
+          "fp-pg-timeout",
+          async () => "B-should-not-run",
+          { timeoutMs: 50 },
+        ),
+      ).rejects.toBeInstanceOf(LockAcquisitionTimeoutError);
+    } finally {
+      // Keep the pool alive until A settles — never leak a polling op into
+      // teardown, even if the assertion above throws (bug-153 (b)).
+      await expect(callA).resolves.toBe("A-done");
+    }
   }, 30_000);
 });

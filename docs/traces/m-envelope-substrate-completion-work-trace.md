@@ -215,3 +215,13 @@ Architect CONFIRMED re-triage (fix Thread+Tele only; the 4 tolerant kinds left a
 **W6-prep liveness flag (NOT W4-blocking):** the 2026-05-25 migration already enveloped existing threads/teles → migrated rows MAY already break these gates in prod TODAY (envelope-thread reply → throw; envelope-tele retire silent). At the prod snapshot, eyeball whether prod envelope-thread reply / envelope-tele retire are currently broken (pairs with the bug-151 scheduled-Message backlog check).
 
 **W8 note (for that directive):** read-shape strategy is now MIXED — Thread/Tele/Agent/Counter decode-first; Idea/Bug/Mission/Turn consumer-tolerant. When dual-shape tolerance retires at W8, decide whether to unify (all decode-first).
+
+### Slice 3 — bug-153 advisory-lock test-stability fix (W4-CI-unblock, 2026-06-19)
+
+W4's new write-encoder-and-watch-w4 testcontainer tests added parallel-pg load that surfaced a PRE-EXISTING race in `advisory-lock.test.ts` (the real-pg contention test) — RELIABLY failing in CI on the W4 branch (2 consecutive, same signature: `advisory-lock.test.ts:402` 'B-should-not-run' + pool-after-end at `withAdvisoryLock`), though it passed locally. W3 CI was green → W4 is the load-trigger. Architect re-scoped bug-153 from a follow-on to **W4-merge-blocking** + recommended an in-branch companion fix (fastest unblock; the failure is genuinely W4-load-triggered).
+
+**Root race (one cause, both symptoms):** the contention test fired `callA` (holds the lock 300ms) UNAWAITED, then immediately contended with B (50ms timeout). Nothing guaranteed A acquired first — under load B could WIN the acquire race, run "B-should-not-run", resolve with NO timeout → the `.rejects.toBeInstanceOf(LockAcquisitionTimeoutError)` assertion fails → `await callA` is never reached → callA keeps polling into afterAll's `pool.end()` → "pool after end".
+
+**Fix (architect (a)+(b); NOT a skip/quarantine — the lock mechanism is load-bearing):** (a) deterministic acquisition ORDERING — A's fn body signals once it runs (which only happens AFTER the lock is held), and B attempts only after that signal → B reliably contends behind A + times out; (b) `await callA` in a `finally` → A always settles before teardown, never leaks a polling op into `pool.end()`. Real-contention semantics preserved (B genuinely contends on A's held lock).
+
+**Verification:** advisory-lock.test.ts green 3× isolated (20 tests); full hub suite green (1950 passed | 7 skips) under the parallel-load condition that triggers the CI failure; tsc clean. **bug-153 separately tracked** — this is the W4-unblock; any further advisory-lock-test-stability hardening (e.g. the timing-tolerant parallelize assertion) belongs in a CI-hygiene follow-on, not mission-90.
