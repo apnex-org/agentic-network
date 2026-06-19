@@ -225,3 +225,26 @@ W4's new write-encoder-and-watch-w4 testcontainer tests added parallel-pg load t
 **Fix (architect (a)+(b); NOT a skip/quarantine — the lock mechanism is load-bearing):** (a) deterministic acquisition ORDERING — A's fn body signals once it runs (which only happens AFTER the lock is held), and B attempts only after that signal → B reliably contends behind A + times out; (b) `await callA` in a `finally` → A always settles before teardown, never leaks a polling op into `pool.end()`. Real-contention semantics preserved (B genuinely contends on A's held lock).
 
 **Verification:** advisory-lock.test.ts green 3× isolated (20 tests); full hub suite green (1950 passed | 7 skips) under the parallel-load condition that triggers the CI failure; tsc clean. **bug-153 separately tracked** — this is the W4-unblock; any further advisory-lock-test-stability hardening (e.g. the timing-tolerant parallelize assertion) belongs in a CI-hygiene follow-on, not mission-90.
+
+---
+
+## W5 — reconciler status-write loop (task-419; branch `agent-greg/m90-w5-reconciler-status-write`; PR #318)
+
+### Slice 1 — implement + self-review + PR (2026-06-19)
+
+idea-318 §2.8 (Director scope-in). NET-NEW: the SchemaDef reconciler now writes the REAL reconcile outcome (`status.phase`/`appliedVersion`/`reconcileError`) back onto each SchemaDef row. FSM-bypassed (bug-146); thread-dispatch from task-419; off main @ aa06501. The LAST fully-autonomous wave (W6 = re-migration/strict-flip/first-prod-deploy = Phase 7 Release gate; Director re-engages).
+
+**Self-trigger constraint (load-bearing):** the status-write put fires the reconciler's OWN watch-loop (NOTIFY has no OLD-vs-NEW guard; `substrate.put` bumps resource_version unconditionally) → a literal per-cycle write infinite-loops. Ships BOTH guards:
+- **(i) converge-then-stop** — `reconcileStatusWrite()` puts ONLY on a MATERIAL status change (phase/appliedVersion/reconcileError differ). `lastReconciledAt` is DELIBERATELY EXCLUDED from the material comparison — a per-cycle timestamp refresh would self-trigger forever even with a data-changed guard (flagged deviation from idea-318's literal per-cycle-timestamp). Keyed on the REAL outcome, MERGED into the existing envelope row.
+- **(ii) spec-equality guard** — `specSignature()` canonicalises spec-relevant fields (kind/version/fields/indexes/indexOwnershipPattern/renameMap; status EXCLUDED; keys recursively sorted for JSONB-roundtrip invariance); runtimeLoop skips re-reconcile when unchanged → the status-write echo (status differs, spec doesn't) is skipped. Also kills today's wasteful no-op re-reconciles.
+
+**SEAM verified:** status-write lands AFTER `applySchemaIndexes`; the merged put is an already-envelope row → the W4 write-encoder passes it through byte-identical → the status SURVIVES the encoder (W4 passthrough pin + W5 restart-survival). Boot: the provisional `'applied'` stamp (toEnvelopeRow → SchemaDef preTransform) already matches the real success outcome → the material-guard makes the boot status-write a no-op (and LISTEN starts only after the boot loop → boot doubly safe). Boot-failure posture WARN (Director-dispositioned): a status-write failure never fails Hub start or kills the loop.
+
+**Verification:** `reconciler-status-write-w5.test.ts` (testcontainers, 4): BOUNDED-STORM (material write → exactly 1 reconcile + 1 status-write + a guard-skipped echo, NOT unbounded); spec-equality guard (status-only re-put skipped); status-write on FAILURE (reconcileError surfaced, appliedVersion unchanged, loop survives); restart-survival ×3. Zero index-DDL churn WITH the write active is covered by the existing W1.4 3×-restart test now running against this reconciler. Full hub suite GREEN (1954 passed | 7 skips); tsc clean.
+
+**Self-review (code-review, 10 finder angles):**
+- FIXED (clearly-mine): empty-error fallback (`|| String(err)` so a blank Error message still surfaces); test-timing hardened to poll-until-condition (avoids a bug-153-class fixed-sleep under-wait).
+- OPEN — surfaced to architect for disposition (scope/contract judgment): `applySchemaIndexes` SWALLOWS CREATE/DROP INDEX failures (bug-123-era per-index isolation, warn+continue) and only THROWS on malformed renameMap → the status `'failed'`/`reconcileError` path effectively fires ONLY for renameMap errors; a real index-DDL failure reports `'applied'`. The status surface is blind to the reconciler's PRIMARY failure mode. Recommendation: have `applySchemaIndexes` RETURN collected index-failures (keep isolation: don't throw/don't fail boot), caller writes `'failed'`+reconcileError when any failed (pairs with set-specCache-on-success-only for a bounded auto-retry). Awaiting architect call: fix-in-#318 vs follow-on.
+- NOTED (limitations, not fixed): status-write is non-CAS get→merge→put (concurrent spec-change clobber; unreachable in single-Hub prod + design specified MERGE-not-replace); on a BOOT apply-failure the provisional stamp leaves a contradictory appliedVersion (forensic-only; Hub fails-to-start anyway).
+
+**Status:** PR-open (#318), awaiting architect review + the F1 disposition. W6 carries logged: bug-151 (scheduled-Message backlog) + bug-152 (envelope-thread-reply / envelope-tele-retire) prod-snapshot liveness checks land in W6-prep; W8 mixed-read-shape unification.
