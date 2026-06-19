@@ -38,7 +38,7 @@ import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
   ALL_SCHEMAS,
-  type HubStorageSubstrate,
+  type PostgresSubstrate,
   type SchemaReconciler,
 } from "./storage-substrate/index.js";
 import { applyMigrations } from "./storage-substrate/migration-runner.js";
@@ -156,7 +156,7 @@ let messageStore: IMessageStore;
 // Substrate + reconciler-start. No dispatch logic; no env-var-fallback fatal.
 const connRedacted = POSTGRES_CONNECTION_STRING.replace(/:[^:@]+@/, ":***@");
 console.log(`[Hub] substrate-mode active; postgres=${connRedacted}`);
-const substrate: HubStorageSubstrate = createPostgresStorageSubstrate(POSTGRES_CONNECTION_STRING);
+const substrate: PostgresSubstrate = createPostgresStorageSubstrate(POSTGRES_CONNECTION_STRING);
 // mission-86 W2 (bug-101): apply substrate migrations before the reconciler —
 // the Hub bootstraps a fresh empty postgres with no manual SQL.
 await applyMigrations(POSTGRES_CONNECTION_STRING, (msg) => console.log(`[Hub:migrations] ${msg}`));
@@ -167,6 +167,19 @@ const reconciler: SchemaReconciler = createSchemaReconciler(substrate, POSTGRES_
 });
 await reconciler.start();
 console.log(`[Hub] substrate reconciler settled (${ALL_SCHEMAS.length} SchemaDefs applied)`);
+
+// mission-90 W2 (Design §2.3): wire the reconciler's field-translation into the
+// substrate so substrate.list rewrites bare filter/sort keys → envelope JSONB
+// paths (fixes bug-138 Layer-A envelope-blind filters with no per-tool code).
+// Late-bound here — AFTER reconciler.start() built the translation map and BEFORE
+// any repository serves a list() below — to break the substrate↔reconciler
+// construction cycle. No-rename keys pass through unchanged.
+//
+// PRECONDITION: the translate-point assumes ENVELOPE-shaped rows (it rewrites to
+// envelope JSONB paths). Correct only POST-W6 re-migration; W2 deploys batched
+// WITH W6 (never standalone) per the cutover discipline — the batched-deploy
+// ordering IS the guard (no runtime migration-state check by design).
+substrate.setFieldTranslator((kind, bareKey) => reconciler.getFieldTranslation(kind, bareKey));
 
 // Mission-47 W1-W7 + Mission-49 W8-W9: instantiate StorageProvider-backed
 // repositories. Counter is shared-by-design across all repositories —

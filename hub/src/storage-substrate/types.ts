@@ -20,6 +20,16 @@
  */
 export type RenameMap = Record<string, string>;
 
+/**
+ * mission-90 W2 (Design §2.3): the substrate's filter/sort key-translation hook.
+ * Maps a bare legacy filter/sort key for a kind to its envelope JSONB dotted-path,
+ * or null/undefined for non-renamed keys (caller passes the bare key through).
+ * Implemented by SchemaReconciler.getFieldTranslation; late-bound into the
+ * substrate via setFieldTranslator to break the substrate↔reconciler construction
+ * cycle (the reconciler is constructed with the substrate, then injected back).
+ */
+export type FieldTranslator = (kind: string, bareKey: string) => string | null;
+
 export interface SchemaDef {
   /** Entity kind this defines (e.g., "Message"). */
   kind: string;

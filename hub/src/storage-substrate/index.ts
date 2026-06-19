@@ -24,6 +24,7 @@ export type {
 } from "./types.js";
 
 export { createPostgresStorageSubstrate } from "./postgres-substrate.js";
+export type { PostgresSubstrate } from "./postgres-substrate.js";
 export { createMemoryStorageSubstrate } from "./memory-substrate.js";
 export {
   LOCK_CLASS,

@@ -76,3 +76,66 @@
 **Verified-and-refuted during self-review** (so they don't resurface): renameMap/indexOwnershipPattern DO survive the boot-put round-trip (encodeEnvelope default-bucket → spec; W1.4 already asserts `spec.renameMap`), so no self-NOTIFY cache-wipe; dual-source drift IS guarded by the W1.1 parity test.
 
 **Resume tail from here:** open W1 PR (flags: 3 reconciler-test assertion-shape changes + W1.5 LISTEN-race harness + the 2 self-review fixes + the 2 surfaced seams) → report task-415 in_review → architect same-day review.
+
+---
+
+### ✅ W1 COMPLETION SLICE (2026-06-19) — completion-equivalence record
+
+task-415's formal report path was FSM-blocked (the task is `pending`/unassigned, labeled `apnex-lily`; engineer `get_task` can't claim it; `create_report` rejects "must be working"). Root cause = **bug-146 (major, architect-filed): the task-router stamps the CALLER's login, not the executor's.** Architect ruling (Msg 01KVEGYCQ286QB3BA6QZEZT6BY): don't fight the FSM — **PR review+merge IS the W1 completion record** (entity-mechanics §3.4 / mission-56-57 thread-dispatch completion-equivalence). The formal task FSM stays bypassed for this mission until bug-146 is fixed; each wave's completion lives here in the work-trace. This slice is the folded W1 report.
+
+**Disposition:** PR **#313** REVIEWED + APPROVED + **MERGED (squash) @ `0ba9707` on main**. Gate met: per-kind-EXACT cache, STRICT malformed→fail, 3× restart oid-stability, independently revertible.
+
+**Verification (boot-proof = testcontainers integration suite; production boot is the W7/deploy gate):**
+- `renamemap-contract-w1.test.ts` — 9 passed: W1.1 inventory per-kind-EXACT (28/20) + closed-inventory + migration-module parity oracle; W1.2 `getFieldTranslation` (FSM/collision/opaque/non-renamed→null/unknown-kind→null); W1.3 malformed→`start()` FAILS (STRICT); W1.3b empty-segment/trailing-dot targets→FAIL; W1.4 3× restart-cycle zero index-DDL churn (oid-stable) + SchemaDef rows envelope-correct each boot (incl. `spec.renameMap` round-trip); W1.5 watch-path decode reconciles the described kind.
+- Boot log: `boot — initial SchemaDef application complete (23 of 23 kinds applied; 0 failures)`.
+- Full hub suite: **1918 passed / 7 skipped / 0 failed** (153 files), tsc clean.
+
+**Architect rulings on the 2 surfaced seams (carried forward as hard constraints):**
+- SURFACE A (status-stamp) — ACCEPTED-for-W1; carried to the **W5 directive as a hard constraint**: W5's status-write must land AFTER `applySchemaIndexes`, MERGE-not-replace, and its converge-guard must key on the real reconcile outcome, NOT the boot-put's provisional `status.phase=applied` stamp.
+- SURFACE B (altitude) — ACCEPTED; carried to **W4** (writer-inventory) + **W6** (`schemaDefFromRow` bare-passthrough retirement gate after the strict-flip).
+
+**Deploy reality (corrected + confirmed architect-direct, runbook B.3):** watchtower auto-update is NON-functional; prod deploy is **MANUAL IAP-SSH, BATCHED to the W6/W7 cutover window** (image-pre-pull + planned downtime). W1–W5 accumulate on `main`; no per-wave prod deploy, no Hub blip. Develop subsequent waves against `main`.
+
+**W1 = DONE.** Next: W2 (task-416, substrate translate-point §2.3).
+
+---
+
+## W2 — substrate.list translate-point (task-416; branch `agent-greg/m90-w2-substrate-translate`)
+
+### Slice 1 — implement + self-review + PR (2026-06-19)
+
+FSM-bypassed per bug-146 (router stamps caller login); worked from the task-416 directive via thread-dispatch equivalence; developed against main @ 0ba9707. Report folded here (completion-equivalence).
+
+**Shipped (§2.3):**
+- `postgres-substrate.ts` — `setFieldTranslator(FieldTranslator)` (late-bound at boot) + `translateKey(kind, bareKey)`; `list()` translates each filter key INLINE per entry + each sort key, then hands the path to the UNCHANGED `translateFilterClause`/`jsonbField`. NO projection (A6). Setter is on a new `PostgresSubstrate` type, NOT on `HubStorageSubstrate` → `memory-substrate.ts` untouched (W4 scope).
+- `types.ts` — `FieldTranslator` type. `index.ts` — wire `setFieldTranslator` AFTER `reconciler.start()` (breaks the substrate↔reconciler construction cycle).
+- `storage-substrate/index.ts` — export `PostgresSubstrate`.
+
+**Verification:** NET-NEW white-box wire-flow test `substrate-translate-w2.test.ts` (testcontainers; result-set + generated SQL path for Message kind-collision / Idea non-FSM / PendingAction FSM + passthrough no-regression + SORT translation + a bug-138 negative control). Full hub suite **154 files / 1923 passed / 7 skipped / 0 failed**, tsc clean. Inert unless wired (only Hub boot + this test call setFieldTranslator) → no regression to unwired tests.
+
+**Self-review (code-review high, 3 finder angles + verify) — 1 FIX, 3 SURFACED:**
+- FIX — filter-key collision: replaced the object-rebuild (`translateFilterKeysToEnvelopePaths` returning a `Filter`) with per-entry inline `translateKey` (symmetric with sort). The object-rebuild could last-write-collapse two entries mapping to the same path; per-entry can't. Also a simplification.
+- SURFACE A (DECISION-REQUIRED) — **relocation-coverage gap**: renameMap captures renames, NOT pure relocations. Bug partition relocates `severity`/`class` → `spec.*` but renameMap is only `{status}` → `list_bugs` severity/class filters STILL envelope-blind after W2 (status fixed; list_turns fully fixed). Likely systemic. The directive's "fixes list_bugs" holds only for status. Options: expand renameMap to relocations / read-side partition consult / follow-on. Recommend expand-renameMap; architect's scope call.
+- SURFACE B — **dual-shape fallback neutralized**: `listMissions` legacy branch `{status}` (mission-89 defense) gets translated to `status.phase` = identical to the envelope branch → legacy fallback dead. Recommend removing the now-redundant branch; flagged for ruling vs silent neutralization.
+- SURFACE C — **no migration-completion guard**: translator wired unconditionally; correctness rests on batched-deploy-after-W6-migration. Recommend confirm-accepted + a precondition comment.
+
+**Refuted during self-review:** no existing test wires the translator (suite stays green); memory-substrate untouched + doesn't need the setter; boot-order has no list() before the setter; cycle genuinely broken.
+
+**Status:** PR-open, awaiting architect same-day review + rulings on A/B/C. (Completion slice + merge SHA to follow at merge.)
+
+### Slice 2 — finding-A resolution: complete relocation inventory + sentinel-probe oracle (2026-06-19)
+
+Architect reviewed #314, ruled: **A HOLD-for-inventory-completion** (renameMap = the COMPLETE read-side bare→envelope movement authority, test-enforced); **B/C accept-with-comment**. Bugs filed: **bug-147** (idempotency, the load-bearing proof), **bug-148** (Notification phantom), **bug-149** (index-parity). Refinement: derive the oracle's expected path from the ACTUAL encoder (not partition re-derivation) → sentinel-probe; bound coverage to call-site-enumerated filterable keys.
+
+**Completeness sweep** (24-agent workflow): enumerated every substrate-side filter/sort key across 60 call-sites in 21 files + structural-transform exclusions + global audit (no missed pairs). Surfaced the live gaps.
+
+**Implemented (companion commit on #314):**
+- **all-schemas.ts renameMap expanded** to the complete filterable-relocation authority (read-side only; modules untouched — encoder places relocations via partition, validated by the probe): Agent fingerprint; Audit actor; Bug severity/class; Message threadId/migrationSourceId/authorAgentId/delivery/scheduledState + nested target.role/target.agentId; PendingAction naturalKey/targetAgentId/dispatchType/entityRef; Task **idempotencyKey (bug-147)**; Thread cascadePending/currentTurnAgentId; Document category (+ leaves rename-free set); ReviewHistoryEntry taskId; ThreadHistoryEntry threadId. 49 entries / 21 kinds.
+- **3 hot-path indexes folded in (bug-149 W6-deploy-gate):** Message spec.delivery + status.scheduledState (scheduled-sweeper), Thread status.cascadePending (Hub-startup) — else bug-93 sweeper-poll-pressure recurs as JSONB full-scans. Non-hot index-parity → bug-149 follow-on.
+- **Oracle rewritten** (renamemap-contract-w1.test.ts): old `all-schemas===module.renameMap` parity REPLACED by (W1.1b) **sentinel-probe faithfulness** — feed a sentinel through each module's real `migrateOne` and assert every renameMap entry lands where the encoder ACTUALLY places it (caught a pre-existing unfaithful entry surfacing: Notification.event needed an enum-valid probe value); (W1.1c) **classification completeness** — every substrate-FILTERABLE key (curated from sweep) is renameMap-covered OR documented-excluded OR unmoved (self-policing @ W3+); (W1.1d) **cascade-key contract** — deliberately-untranslated cascade-keys assert NOT-in-renameMap + genuinely-move (W1 null-pin preserved). W1.4 extended to assert the 3 net-new indexes create-once + oid-stable.
+- **B comment** on listMissions legacy branch (neutralized; delete-at-W8). **C precondition comment** at the translate-point (envelope-rows assumed; batched-with-W6 is the guard).
+- **W2.6 wire-flow** proves a RELOCATED key (Bug severity → spec.severity) now translates + negative control.
+
+**Deliberate exclusions (documented in oracle):** cascade-keys sourceThreadId/sourceActionId/sourceIdeaId on Bug/Idea/Mission/Proposal/Task (repo dual-path + W1 null-pin; W4 reconciles); Notification.recipientAgentId (phantom, bug-148); tags (client-side array-contains). 
+
+**Verification:** W1 11/11 + W2 6/6 green; tsc clean; full suite green.

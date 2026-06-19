@@ -182,6 +182,13 @@ export class MissionRepositorySubstrate implements IMissionStore {
       filter: { "status.phase": statusFilter },
       limit: 500,
     });
+    // mission-90 W2: this legacy bare-`status` branch is NEUTRALIZED by the
+    // substrate.list translate-point — `status` now rewrites to `status.phase`,
+    // so this query is byte-identical to envelopeResult above. Left in place
+    // (harmless duplicate) rather than coupling the translate-point to this
+    // dual-shape internal; redundant once W6 re-migration converts all rows to
+    // envelope (W2 only reaches prod batched WITH W6). DELETE at W8 (dual-shape /
+    // TOLERANT retirement wave) — architect-tracked.
     const legacyResult = await this.substrate.list<Mission>(KIND, {
       filter: { status: statusFilter },
       limit: 500,
