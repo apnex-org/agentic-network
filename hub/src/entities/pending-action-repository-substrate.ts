@@ -30,6 +30,7 @@ import {
   DEFAULT_COMPLETION_SLA_MS,
 } from "./pending-action.js";
 import { SubstrateCounter } from "./substrate-counter.js";
+import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "PendingAction";
 const MAX_CAS_RETRIES = 50;
@@ -37,6 +38,21 @@ const LIST_PREFETCH_CAP = 500;
 
 function naturalKey(opts: { targetAgentId: string; dispatchType: string; entityRef: string }): string {
   return `${opts.targetAgentId}:${opts.entityRef}:${opts.dispatchType}`;
+}
+
+/**
+ * mission-90 W8: PendingAction read-decode = generic envelope→flat + reverse the two
+ * leaf-renames the generic base can't (the domain FSM field is `state`, not `status`):
+ *   state      ← status.phase
+ *   enqueuedAt ← metadata.createdAt
+ * (naturalKey / targetAgentId / dispatchType / entityRef are leaf-preserving — the
+ * generic flatten already restores them.)
+ */
+function decodePendingAction(raw: PendingActionItem): PendingActionItem {
+  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>) as Record<string, unknown>;
+  if (flat.status !== undefined) { flat.state = flat.status; delete flat.status; }
+  if (flat.createdAt !== undefined) { flat.enqueuedAt = flat.createdAt; delete flat.createdAt; }
+  return flat as unknown as PendingActionItem;
 }
 
 class TransitionRejected extends Error {
@@ -56,7 +72,7 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
     const { items } = await this.substrate.list<PendingActionItem>(KIND, {
       limit: LIST_PREFETCH_CAP,
     });
-    return items;
+    return items.map(decodePendingAction);
   }
 
   async enqueue(opts: EnqueueOptions): Promise<PendingActionItem> {
@@ -67,7 +83,8 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
       filter: { naturalKey: key },
       limit: LIST_PREFETCH_CAP,
     });
-    for (const existing of items) {
+    for (const raw of items) {
+      const existing = decodePendingAction(raw);
       if (existing.state !== "completion_acked" && existing.state !== "errored") {
         return existing;
       }
@@ -106,7 +123,8 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
   }
 
   async getById(id: string): Promise<PendingActionItem | null> {
-    return this.substrate.get<PendingActionItem>(KIND, id);
+    const raw = await this.substrate.get<PendingActionItem>(KIND, id);
+    return raw ? decodePendingAction(raw) : null;
   }
 
   async listForAgent(
@@ -120,7 +138,7 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
       filter: substrateFilter,
       limit: LIST_PREFETCH_CAP,
     });
-    return items;
+    return items.map(decodePendingAction);
   }
 
   async findOpenByNaturalKey(
@@ -131,7 +149,8 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
       filter: { naturalKey: key },
       limit: LIST_PREFETCH_CAP,
     });
-    for (const item of items) {
+    for (const raw of items) {
+      const item = decodePendingAction(raw);
       if (item.state === "completion_acked" || item.state === "escalated" || item.state === "errored") continue;
       return item;
     }
@@ -216,7 +235,7 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
       filter: substrateFilter,
       limit: LIST_PREFETCH_CAP,
     });
-    return items.filter((item) => {
+    return items.map(decodePendingAction).filter((item) => {
       const enqueuedMs = new Date(item.enqueuedAt).getTime();
       return nowMs - enqueuedMs >= opts.olderThanMs;
     });
@@ -228,7 +247,7 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
       filter: { entityRef },
       limit: LIST_PREFETCH_CAP,
     });
-    return items.filter((item) =>
+    return items.map(decodePendingAction).filter((item) =>
       item.state !== "completion_acked" && item.state !== "escalated" && item.state !== "errored"
     );
   }
@@ -261,10 +280,11 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
   }
 
   async listContinuationItems(): Promise<PendingActionItem[]> {
-    const { items } = await this.substrate.list<PendingActionItem>(KIND, {
+    const { items: rawItems } = await this.substrate.list<PendingActionItem>(KIND, {
       filter: { state: "continuation_required" },
       limit: LIST_PREFETCH_CAP,
     });
+    const items = rawItems.map(decodePendingAction);
     items.sort((a, b) => {
       const at = a.continuationSavedAt ? Date.parse(a.continuationSavedAt) : 0;
       const bt = b.continuationSavedAt ? Date.parse(b.continuationSavedAt) : 0;
@@ -304,9 +324,9 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
    * on-disk state, bypassing FSM gates. substrate.put bypass (no CAS).
    */
   async __debugSetItem(id: string, patch: Partial<PendingActionItem>): Promise<void> {
-    const current = await this.substrate.get<PendingActionItem>(KIND, id);
-    if (!current) throw new Error(`[PendingActionRepositorySubstrate.__debugSetItem] item not found: ${id}`);
-    const next: PendingActionItem = { ...current, ...patch };
+    const raw = await this.substrate.get<PendingActionItem>(KIND, id);
+    if (!raw) throw new Error(`[PendingActionRepositorySubstrate.__debugSetItem] item not found: ${id}`);
+    const next: PendingActionItem = { ...decodePendingAction(raw), ...patch };
     await this.substrate.put(KIND, next);
   }
 
@@ -325,7 +345,7 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
       if (!existing) return null;
       let next: PendingActionItem;
       try {
-        next = transform({ ...existing.entity });
+        next = transform(decodePendingAction(existing.entity));
       } catch (err) {
         if (err instanceof TransitionRejected) {
           console.warn(`[PendingActionRepositorySubstrate] ${err.message}`);
