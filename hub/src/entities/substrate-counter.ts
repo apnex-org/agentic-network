@@ -73,63 +73,38 @@ interface CounterEnvelope {
 }
 
 /**
- * Probe whether the entity has envelope-shape (post-migration) vs legacy-flat
- * (pre-migration). Loose check — only requires `status.counters` map present.
- */
-function isEnvelopeShape(entity: Record<string, unknown>): boolean {
-  const status = entity.status as Record<string, unknown> | undefined;
-  return typeof status === "object" && status !== null && typeof status.counters === "object";
-}
-
-/**
- * Read the current value for a counter-domain, tolerating both envelope-shape
- * (post-W3) and legacy-flat (pre-W3) entity shapes.
+ * Read the current value for a counter-domain. mission-90 W8: envelope-only —
+ * Counter rows are `status.counters` maps (verified live: 0 legacy-flat; all
+ * writes envelope). The legacy top-level-key branch is retired.
  */
 function readDomainValue(entity: Record<string, unknown>, domain: string): number {
-  if (isEnvelopeShape(entity)) {
-    const counters = ((entity.status as Record<string, unknown>).counters
-      ?? {}) as Record<string, number>;
-    return counters[domain] ?? 0;
-  }
-  // Legacy-flat shape: domain values are top-level keys
-  const value = entity[domain];
-  return typeof value === "number" ? value : 0;
+  const status = entity.status as { counters?: Record<string, number> } | undefined;
+  return status?.counters?.[domain] ?? 0;
 }
 
 /**
  * Build the envelope-shape Counter to write back, preserving existing envelope
- * fields when present + mutating only `status.counters[domain]` to nextValue.
+ * fields + mutating only `status.counters[domain]` to nextValue. mission-90 W8:
+ * envelope-only — the legacy top-level numeric-sweep is retired.
  */
 function buildEnvelopeWrite(
   existing: Record<string, unknown> | undefined,
   domain: string,
   nextValue: number,
 ): CounterEnvelope {
-  // Extract existing counters map (envelope or legacy)
-  let counters: Record<string, number> = {};
-  if (existing) {
-    if (isEnvelopeShape(existing)) {
-      const status = existing.status as Record<string, unknown>;
-      counters = { ...((status.counters ?? {}) as Record<string, number>) };
-    } else {
-      // Legacy-flat: sweep all numeric top-level keys (except id)
-      for (const [k, v] of Object.entries(existing)) {
-        if (k === "id") continue;
-        if (typeof v === "number") counters[k] = v;
-      }
-    }
-  }
+  const existingStatus = existing?.status as Record<string, unknown> | undefined;
+  const counters: Record<string, number> = {
+    ...((existingStatus?.counters ?? {}) as Record<string, number>),
+  };
   counters[domain] = nextValue;
 
-  // Preserve existing envelope fields if entity already envelope-shaped
-  const existingEnvelope = existing && isEnvelopeShape(existing) ? existing : {};
   return {
-    ...(existingEnvelope as Record<string, unknown>),
+    ...((existing ?? {}) as Record<string, unknown>),
     id: COUNTER_ID,
     kind: COUNTER_KIND,
     apiVersion: COUNTER_API_VERSION,
-    metadata: (existingEnvelope as { metadata?: Record<string, unknown> }).metadata ?? {},
-    spec: (existingEnvelope as { spec?: Record<string, unknown> }).spec ?? {},
+    metadata: (existing as { metadata?: Record<string, unknown> } | undefined)?.metadata ?? {},
+    spec: (existing as { spec?: Record<string, unknown> } | undefined)?.spec ?? {},
     status: { counters, phase: "active" },
   };
 }

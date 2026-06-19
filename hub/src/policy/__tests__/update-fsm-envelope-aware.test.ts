@@ -204,35 +204,9 @@ describe("update_* FSM envelope-aware (bug-137 closure)", () => {
     expect(found!.id).toBe("bug-cascade-001");
   });
 
-  it("findByCascadeKey ALSO finds legacy-flat Bug (defense-in-depth dual-lookup)", async () => {
-    if (!substrate) throw new Error("substrate not initialized");
-    const { BugRepositorySubstrate } = await import("../../entities/bug-repository-substrate.js");
-    const { SubstrateCounter } = await import("../../entities/substrate-counter.js");
-
-    // Seed legacy-flat Bug (top-level sourceThreadId; pre-W11 shape)
-    await substrate.put("Bug", {
-      id: "bug-legacy-001",
-      sourceThreadId: "thread-legacy",
-      sourceActionId: "action-legacy",
-      title: "Legacy bug",
-      description: "test",
-      severity: "minor",
-      class: "test",
-      status: "open",
-      linkedTaskIds: [],
-      fixCommits: [],
-      createdAt: "2026-05-25T00:00:00Z",
-      createdBy: { role: "engineer", agentId: "agent-test" },
-    });
-
-    const counter = new SubstrateCounter(substrate);
-    const repo = new BugRepositorySubstrate(substrate, counter);
-    const found = await repo.findByCascadeKey({
-      sourceThreadId: "thread-legacy",
-      sourceActionId: "action-legacy",
-    });
-
-    expect(found).not.toBeNull();
-    expect(found!.id).toBe("bug-legacy-001");
-  });
+  // mission-90 W8: REMOVED "findByCascadeKey ALSO finds legacy-flat Bug
+  // (defense-in-depth dual-lookup)" — the bare top-level cascade-key fallback is
+  // retired (the substrate is envelope-only; findByCascadeKey queries metadata.*
+  // exclusively). Envelope-shape findByCascadeKey correctness is covered by
+  // bug-repository-substrate.test + the cascade-idempotency tests (wave3b).
 });

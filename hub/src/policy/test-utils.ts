@@ -11,7 +11,7 @@ import { TurnRepositorySubstrate } from "../entities/turn-repository-substrate.j
 import { TeleRepositorySubstrate } from "../entities/tele-repository-substrate.js";
 import { AuditRepositorySubstrate } from "../entities/audit-repository-substrate.js";
 import { SubstrateCounter } from "../entities/substrate-counter.js";
-import { createMemoryStorageSubstrate } from "../storage-substrate/index.js";
+import { createMemoryStorageSubstrate, buildEnvelopeWriteEncoder } from "../storage-substrate/index.js";
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
 import { BugRepositorySubstrate } from "../entities/bug-repository-substrate.js";
 import { MessageRepositorySubstrate } from "../entities/message-repository-substrate.js";
@@ -52,6 +52,11 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
   // v1.0 §2.1. SchemaDef pre-registration not required for memory-substrate (substrate-internal
   // enforcement is postgres-only via reconciler indexes; memory put/get/list work kind-agnostic).
   const substrate = createMemoryStorageSubstrate();
+  // mission-90 W8: store ENVELOPE shape (match prod — all writes envelope via the
+  // W4 encoder) so the memory test substrate validates the real envelope-only path,
+  // not a legacy-flat fixture artifact. Pairs with the built-in memoryTranslateKey
+  // (bare filter keys → envelope JSONB paths).
+  substrate.setWriteEncoder(buildEnvelopeWriteEncoder());
   const counter = new SubstrateCounter(substrate);
   const task = new TaskRepositorySubstrate(substrate, counter);
   const idea = new IdeaRepositorySubstrate(substrate, counter);

@@ -39,6 +39,8 @@ import type {
   Filter,
   FilterValue,
 } from "./types.js";
+import type { WriteEncoder } from "./postgres-substrate.js";
+import { buildEnvelopeWriteEncoder } from "./migrations/v2-envelope/write-encoder.js";
 import { ALL_SCHEMAS } from "./schemas/all-schemas.js";
 
 type EntityRow = { data: unknown; resourceVersion: number };
@@ -60,15 +62,51 @@ type WatchCallback<T = unknown> = (event: ChangeEvent<T>) => void;
  * Each call returns a fresh substrate instance with empty state; no global state
  * leakage between instances. Use one factory call per test for full isolation.
  */
-export function createMemoryStorageSubstrate(): HubStorageSubstrate {
-  return new MemoryStorageSubstrate();
+/**
+ * mission-90 W8: memory parity with PostgresSubstrate's write-encoder hook, so
+ * test harnesses (createTestContext, e2e orchestrator) can wire setWriteEncoder
+ * and store ENVELOPE shape — matching prod (all writes envelope via the W4
+ * encoder), validating the real envelope-only path rather than a legacy-flat
+ * fixture artifact.
+ */
+export interface MemorySubstrate extends HubStorageSubstrate {
+  setWriteEncoder(encoder: WriteEncoder | null): void;
 }
 
-class MemoryStorageSubstrate implements HubStorageSubstrate {
+/**
+ * mission-90 W8: a memory substrate stores ENVELOPE shape BY DEFAULT — faithful to
+ * prod, where the W4 envelope write-encoder is wired at Hub boot. This removes the
+ * test footgun (build a memory substrate, forget setWriteEncoder, silently store
+ * legacy-flat → the envelope-only filters/decoders then mismatch). `rawWrites: true`
+ * opts out for substrate-PRIMITIVE / migration / encoder tests that assert raw
+ * round-trip (they exercise the storage layer BELOW the envelope contract).
+ */
+export function createMemoryStorageSubstrate(opts?: { rawWrites?: boolean }): MemorySubstrate {
+  const substrate = new MemoryStorageSubstrate();
+  if (!opts?.rawWrites) {
+    substrate.setWriteEncoder(buildEnvelopeWriteEncoder());
+  }
+  return substrate;
+}
+
+class MemoryStorageSubstrate implements MemorySubstrate {
   // ─── State ────────────────────────────────────────────────────────────────
   private readonly entities = new Map<string, Map<string, EntityRow>>();
   private revisionCounter = 0;
   private readonly watchers = new Map<string, Set<WatchCallback>>();
+
+  // mission-90 W8: write-side envelope encoder (parity with PostgresSubstrate).
+  // Late-bound via setWriteEncoder; null → writes pass through as-given (no-op).
+  private writeEncoder: WriteEncoder | null = null;
+
+  setWriteEncoder(encoder: WriteEncoder | null): void {
+    this.writeEncoder = encoder;
+  }
+
+  /** Encode an entity for storage (envelope-shape) via the injected encoder; no-op if unwired. */
+  private encodeForWrite<T>(kind: string, entity: T): T {
+    return (this.writeEncoder ? this.writeEncoder(kind, entity) : entity) as T;
+  }
 
   // ─── Schema management ────────────────────────────────────────────────────
   // Schema-defs are stored as entities of kind="SchemaDef" (matches reconciler
@@ -106,15 +144,16 @@ class MemoryStorageSubstrate implements HubStorageSubstrate {
   }
 
   async put<T>(kind: string, entity: T): Promise<{ id: string; resourceVersion: string }> {
-    const id = extractId(entity, kind);
+    const stored = this.encodeForWrite(kind, entity); // mission-90 W8: envelope-encode (idempotent)
+    const id = extractId(stored, kind);
     const rv = ++this.revisionCounter;
     const store = this.getKindStore(kind);
-    store.set(id, { data: cloneEntity(entity), resourceVersion: rv });
+    store.set(id, { data: cloneEntity(stored), resourceVersion: rv });
     this.emit({
       op: "put",
       kind,
       id,
-      entity: cloneEntity(entity) as unknown,
+      entity: cloneEntity(stored) as unknown,
       resourceVersion: String(rv),
     });
     return { id, resourceVersion: String(rv) };
@@ -173,25 +212,27 @@ class MemoryStorageSubstrate implements HubStorageSubstrate {
   // ─── CAS primitives ───────────────────────────────────────────────────────
 
   async createOnly<T>(kind: string, entity: T): Promise<CreateOnlyResult> {
-    const id = extractId(entity, kind);
+    const stored = this.encodeForWrite(kind, entity); // mission-90 W8: envelope-encode (idempotent)
+    const id = extractId(stored, kind);
     const store = this.getKindStore(kind);
     if (store.has(id)) {
       return { ok: false, conflict: "existing" };
     }
     const rv = ++this.revisionCounter;
-    store.set(id, { data: cloneEntity(entity), resourceVersion: rv });
+    store.set(id, { data: cloneEntity(stored), resourceVersion: rv });
     this.emit({
       op: "put",
       kind,
       id,
-      entity: cloneEntity(entity) as unknown,
+      entity: cloneEntity(stored) as unknown,
       resourceVersion: String(rv),
     });
     return { ok: true, id, resourceVersion: String(rv) };
   }
 
   async putIfMatch<T>(kind: string, entity: T, expectedRevision: string): Promise<PutIfMatchResult> {
-    const id = extractId(entity, kind);
+    const stored = this.encodeForWrite(kind, entity); // mission-90 W8: envelope-encode (idempotent)
+    const id = extractId(stored, kind);
     const store = this.entities.get(kind);
     const row = store?.get(id);
     if (!row) {
@@ -205,12 +246,12 @@ class MemoryStorageSubstrate implements HubStorageSubstrate {
       };
     }
     const rv = ++this.revisionCounter;
-    store!.set(id, { data: cloneEntity(entity), resourceVersion: rv });
+    store!.set(id, { data: cloneEntity(stored), resourceVersion: rv });
     this.emit({
       op: "put",
       kind,
       id,
-      entity: cloneEntity(entity) as unknown,
+      entity: cloneEntity(stored) as unknown,
       resourceVersion: String(rv),
     });
     return { ok: true, resourceVersion: String(rv) };
@@ -510,14 +551,12 @@ function compareValues(a: unknown, b: unknown): number {
  */
 function matchesFilter(entity: Record<string, unknown>, filter: Filter, translateKey?: (bareKey: string) => string): boolean {
   for (const [rawField, value] of Object.entries(filter)) {
-    // mission-90 W4 (N1/N2): envelope-aware + DUAL-SHAPE tolerant. Rewrite the bare
-    // filter key to its envelope JSONB path via the renameMap authority (memory is
-    // reconciler-less → caller supplies a static all-schemas translator), read it,
-    // and fall back to the bare path for not-yet-migrated rows. Closes the memory
-    // false-green (N2) without breaking bare-shape fixtures/straddle rows.
+    // mission-90 W4 (N1/N2): envelope-aware — rewrite the bare filter key to its
+    // envelope JSONB path via the renameMap authority (memory is reconciler-less →
+    // caller supplies a static all-schemas translator) + read it. mission-90 W8:
+    // the dual-shape bare-straggler fallback is retired (W6 proved 0 bare rows).
     const envField = translateKey ? translateKey(rawField) : rawField;
-    let v = extractDotted(entity, envField);
-    if (v === undefined && envField !== rawField) v = extractDotted(entity, rawField);
+    const v = extractDotted(entity, envField);
 
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       if (String(v) !== String(value)) return false;

@@ -40,7 +40,7 @@ import {
 } from "./list-filters.js";
 import { dispatchMissionCreated, dispatchMissionActivated } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
-import { phaseFromEntity, fieldFromEntity } from "../entities/shape-helpers.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 import { runTriggers } from "./triggers.js";
 
 // ── Mission-57 W1: pulse-config validation + auto-injection ──────────
@@ -505,27 +505,26 @@ const MISSION_SORTABLE_FIELDS = [
   "createdBy.id",
 ] as const;
 
-// mission-90 W7 (bug-158): envelope-aware accessors. The W3 Layer-B sweep
-// converted IDEA/TASK/THREAD accessors to phaseFromEntity/fieldFromEntity but
-// MISSED MISSION_ACCESSORS, which read raw top-level fields. The W6 strict
-// all-envelope cutover EXPOSED it: every Mission field relocates (status→
-// status.phase; createdAt/createdBy/correlationId/sourceThreadId/sourceActionId/
-// updatedAt→metadata; turnId→status — Mission.ts partition), so `m.status` was
-// the {phase} OBJECT and the rest were undefined → list_missions({status}) and
-// every other mission filter/sort silently returned 0 on prod (breaking the
-// ledger / Survey flows, idea-325). The policy filters in-memory via these
-// accessors AFTER a no-statusFilter repo fetch, bypassing the repo's correct
-// status.phase translation — so the accessors themselves must be envelope-aware.
-const missionCreatedBy = (m: Mission) => fieldFromEntity(m, "createdBy") as { role?: string; agentId?: string } | undefined;
+// mission-90 W8 (idea-320, decode-to-flat): the mission repo now decodes
+// envelope→flat at every read boundary (decodeEnvelopeToFlat in hydrate +
+// casUpdate), so listMissions() hands these accessors GUARANTEED-FLAT Missions
+// — every relocated field (createdAt/createdBy/correlationId/turnId/source* →
+// top-level) reads directly. status via phaseFromEntity — the decode-mechanism,
+// reused here for a graceful status read (the entity is flat so it reads the
+// top-level string; a raw {phase} object would degrade safely; safe per ruling A).
+// History: the W3-era dual-shape accessor reader covered IDEA/TASK/THREAD but
+// MISSED these; W6's strict cutover EXPOSED the {phase}-object reads (idea-325
+// list_missions({status})→0); W8 retires that reader now the repo decodes to flat.
+const missionCreatedBy = (m: Mission) => m.createdBy;
 const MISSION_ACCESSORS: FieldAccessors<Mission> = {
   id: (m) => m.id,
   status: (m) => phaseFromEntity(m),
-  correlationId: (m) => fieldFromEntity(m, "correlationId"),
-  turnId: (m) => fieldFromEntity(m, "turnId"),
-  sourceThreadId: (m) => fieldFromEntity(m, "sourceThreadId"),
-  sourceActionId: (m) => fieldFromEntity(m, "sourceActionId"),
-  createdAt: (m) => fieldFromEntity(m, "createdAt"),
-  updatedAt: (m) => fieldFromEntity(m, "updatedAt"),
+  correlationId: (m) => m.correlationId,
+  turnId: (m) => m.turnId,
+  sourceThreadId: (m) => m.sourceThreadId,
+  sourceActionId: (m) => m.sourceActionId,
+  createdAt: (m) => m.createdAt,
+  updatedAt: (m) => m.updatedAt,
   "createdBy.role": (m) => missionCreatedBy(m)?.role ?? null,
   "createdBy.agentId": (m) => missionCreatedBy(m)?.agentId ?? null,
   "createdBy.id": (m) => { const cb = missionCreatedBy(m); return cb ? `${cb.role}:${cb.agentId}` : null; },

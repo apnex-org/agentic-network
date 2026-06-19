@@ -33,18 +33,26 @@ import type {
   CascadeBacklink,
 } from "./bug.js";
 import { SubstrateCounter } from "./substrate-counter.js";
-import { tagsFromEntity, arrayFieldFromEntity } from "./shape-helpers.js";
+import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Bug";
 const MAX_CAS_RETRIES = 50;
 
 function cloneBug(bug: Bug): Bug {
-  return {
-    ...bug,
-    tags: tagsFromEntity(bug),
-    linkedTaskIds: arrayFieldFromEntity(bug, "linkedTaskIds") as string[],
-    fixCommits: arrayFieldFromEntity(bug, "fixCommits") as string[],
-  };
+  // mission-90 W8: decode envelope→flat (idea-327); derive `tags` from metadata.labels
+  // (drop the raw artifact) + ensure the relocated status arrays (already flattened by
+  // the generic decode) are present. Used at the read boundary AND the CAS path.
+  const flat = decodeEnvelopeToFlat(bug as unknown as Record<string, unknown>) as Record<string, unknown>;
+  // tags: from the envelope metadata.labels map OR a legacy-flat in-memory tags array.
+  if (flat.labels && typeof flat.labels === "object") {
+    flat.tags = Object.keys(flat.labels as Record<string, string>);
+    delete flat.labels;
+  } else if (!Array.isArray(flat.tags)) {
+    flat.tags = [];
+  }
+  flat.linkedTaskIds = (flat.linkedTaskIds as string[] | undefined) ?? [];
+  flat.fixCommits = (flat.fixCommits as string[] | undefined) ?? [];
+  return flat as unknown as Bug;
 }
 
 export class BugRepositorySubstrate implements IBugStore {
@@ -132,15 +140,17 @@ export class BugRepositorySubstrate implements IBugStore {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
     });
 
+    // mission-90 W8: decode FIRST (cloneBug derives the flat `tags` array from the
+    // metadata.labels map), then filter on it.
     return items
+      .map(cloneBug)
       .filter(bug => {
         if (filter?.tags && filter.tags.length > 0) {
           const tagSet = new Set(filter.tags);
-          if (!tagsFromEntity(bug).some(t => tagSet.has(t))) return false;
+          if (!bug.tags.some(t => tagSet.has(t))) return false;
         }
         return true;
-      })
-      .map(cloneBug);
+      });
   }
 
   async updateBug(
@@ -182,14 +192,9 @@ export class BugRepositorySubstrate implements IBugStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Bug | null> {
-    // mission-89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback
-    // dual-lookup. Post-W11 cascade-key fields live at metadata.*; pre-W11
-    // (test fixtures + dual-shape data window) still at top-level. Defense-in-
-    // depth per W9 Q4 keep-legacy-branch refinement.
-    // mission-90 W4: KEEP the bare fallback — cascade-keys are NOT chokepoint-
-    // translated (W1 null-pin), so it's the SOLE straddle mechanism; removing
-    // pre-W6 risks a bug-147-class duplicate-on-missed-dedup. DELETE at W8
-    // (architect-ruled 2026-06-19; W8 carry-set).
+    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). Cascade-key
+    // fields live at metadata.*; the legacy top-level fallback is retired (W6 proved
+    // 0 bare rows live + all writes envelope via the W4 encoder).
     const envelopeResult = await this.substrate.list<Bug>(KIND, {
       filter: {
         "metadata.sourceThreadId": key.sourceThreadId,
@@ -197,30 +202,16 @@ export class BugRepositorySubstrate implements IBugStore {
       },
       limit: 1,
     });
-    if (envelopeResult.items[0]) return cloneBug(envelopeResult.items[0]);
-    const legacyResult = await this.substrate.list<Bug>(KIND, {
-      filter: {
-        sourceThreadId: key.sourceThreadId,
-        sourceActionId: key.sourceActionId,
-      },
-      limit: 1,
-    });
-    return legacyResult.items[0] ? cloneBug(legacyResult.items[0]) : null;
+    return envelopeResult.items[0] ? cloneBug(envelopeResult.items[0]) : null;
   }
 
   async findBySourceIdeaId(sourceIdeaId: string): Promise<Bug | null> {
-    // mission-89 Phase 4 (bug-138): envelope-first + legacy fallback dual-lookup.
-    // mission-90 W4: KEEP bare fallback (sole straddle mechanism; W1 null-pin); DELETE at W8.
+    // mission-90 W8: envelope-only — the legacy top-level sourceIdeaId fallback is retired.
     const envelopeResult = await this.substrate.list<Bug>(KIND, {
       filter: { "metadata.sourceIdeaId": sourceIdeaId },
       limit: 1,
     });
-    if (envelopeResult.items[0]) return cloneBug(envelopeResult.items[0]);
-    const legacyResult = await this.substrate.list<Bug>(KIND, {
-      filter: { sourceIdeaId },
-      limit: 1,
-    });
-    return legacyResult.items[0] ? cloneBug(legacyResult.items[0]) : null;
+    return envelopeResult.items[0] ? cloneBug(envelopeResult.items[0]) : null;
   }
 
   // ── Internal CAS retry loop (preserves Option Y per-entity logic) ───────
@@ -249,7 +240,7 @@ export class BugRepositorySubstrate implements IBugStore {
       const current = await this.substrate.get<Bug>(KIND, bugId);
       if (current === null) throw new Error(`Bug not found: ${bugId}`);
 
-      const next = transform({ ...current });
+      const next = transform(cloneBug(current)); // mission-90 W8: flat CAS
       try {
         // Spike-quality simple put (substrate-API per-row CAS extension is
         // W4.x territory). W5+ may extend substrate-API to expose per-row

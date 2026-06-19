@@ -37,7 +37,7 @@ import { validateActionsWithRegistry } from "./action-validators/index.js";
 import type { ValidationContext } from "./action-validators/index.js";
 import { AUTONOMOUS_STAGED_ACTION_TYPES, checkConvergerAuthority } from "./staged-action-payloads.js";
 import { logShadowInvariantBreach } from "../observability/shadow-invariants.js";
-import { phaseFromEntity, fieldFromEntity } from "../entities/shape-helpers.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 import { emitDirectorNotification } from "./director-notification-helpers.js";
 
 // mission-66 commit 6 (#26 marker-protocol): canonical preview-truncation
@@ -839,28 +839,29 @@ const THREAD_SORTABLE_FIELDS = [
   "createdBy.id",
 ] as const;
 
-// mission-90 W3 (Design §2.5): envelope-aware accessor BODIES. status via
-// phaseFromEntity; every other MOVED field via fieldFromEntity (legacy-flat OR
-// envelope-relocated into metadata/spec/status). id stays top-level (unmoved).
-const threadCreatedBy = (t: Thread) => fieldFromEntity(t, "createdBy") as { role?: string; agentId?: string } | undefined;
+// mission-90 W8 (idea-320, decode-to-flat): listThreads() runs every Thread
+// through normalizeThreadShape (the repo's kept bespoke normalizer — extra
+// convergence-action / participants logic the generic flatten can't do), which
+// emits GUARANTEED-FLAT top-level fields. So these accessors read relocated
+// fields (routingMode/currentTurn*/roundCount/intents/correlationId/recipient/
+// createdAt/updatedAt/createdBy) directly. status via phaseFromEntity — the
+// decode-mechanism, reused here for a graceful status read (safe per ruling A).
+// W4 (bug-150) made normalizeThreadShape read spec.routingMode envelope-aware;
+// W8 retires the W3-era dual-shape reader now reads are flat.
+const threadCreatedBy = (t: Thread) => t.createdBy;
 const THREAD_ACCESSORS: FieldAccessors<Thread> = {
   id: (t) => t.id,
   status: (t) => phaseFromEntity(t),
-  // mission-90 W4 (bug-150 FIXED): normalizeThreadShape now reads spec.routingMode
-  // envelope-aware (was force-defaulting every envelope thread to "unicast"), so the
-  // normalized top-level routingMode carries the real value and fieldFromEntity reads
-  // it correctly. (W3 had flagged this as not-Layer-B-recoverable — the clean fix was
-  // the repo normalizer, landed at W4.)
-  routingMode: (t) => fieldFromEntity(t, "routingMode"),
-  currentTurn: (t) => fieldFromEntity(t, "currentTurn"),
-  currentTurnAgentId: (t) => fieldFromEntity(t, "currentTurnAgentId") ?? null,
-  roundCount: (t) => fieldFromEntity(t, "roundCount"),
-  outstandingIntent: (t) => fieldFromEntity(t, "outstandingIntent"),
-  currentSemanticIntent: (t) => fieldFromEntity(t, "currentSemanticIntent"),
-  correlationId: (t) => fieldFromEntity(t, "correlationId"),
-  recipientAgentId: (t) => fieldFromEntity(t, "recipientAgentId") ?? null,
-  createdAt: (t) => fieldFromEntity(t, "createdAt"),
-  updatedAt: (t) => fieldFromEntity(t, "updatedAt"),
+  routingMode: (t) => t.routingMode,
+  currentTurn: (t) => t.currentTurn,
+  currentTurnAgentId: (t) => t.currentTurnAgentId ?? null,
+  roundCount: (t) => t.roundCount,
+  outstandingIntent: (t) => t.outstandingIntent,
+  currentSemanticIntent: (t) => t.currentSemanticIntent,
+  correlationId: (t) => t.correlationId,
+  recipientAgentId: (t) => t.recipientAgentId ?? null,
+  createdAt: (t) => t.createdAt,
+  updatedAt: (t) => t.updatedAt,
   "createdBy.role": (t) => threadCreatedBy(t)?.role ?? null,
   "createdBy.agentId": (t) => threadCreatedBy(t)?.agentId ?? null,
   "createdBy.id": (t) => { const cb = threadCreatedBy(t); return cb ? `${cb.role}:${cb.agentId}` : null; },

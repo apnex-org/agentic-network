@@ -311,7 +311,7 @@ const Task: SchemaDef = {
   // (findByIdempotencyKey, task-repo:177) with NO repo dual-path — bare → null on
   // envelope rows post-W6 → idempotency dedup silently breaks → duplicate task
   // creation. Relocates to metadata.idempotencyKey. (Cascade-keys excluded — see oracle.)
-  renameMap: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey" },
+  renameMap: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt" },
 };
 
 const Tele: SchemaDef = {

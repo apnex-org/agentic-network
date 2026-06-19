@@ -42,7 +42,7 @@ import { TurnRepositorySubstrate as TurnRepository } from "../../src/entities/tu
 import { TeleRepositorySubstrate as TeleRepository } from "../../src/entities/tele-repository-substrate.js";
 import { AuditRepositorySubstrate as AuditRepository } from "../../src/entities/audit-repository-substrate.js";
 import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
-import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
+import { createMemoryStorageSubstrate, buildEnvelopeWriteEncoder } from "../../src/storage-substrate/index.js";
 import { BugRepositorySubstrate as BugRepository } from "../../src/entities/bug-repository-substrate.js";
 import { PendingActionRepositorySubstrate as PendingActionRepository } from "../../src/entities/pending-action-repository-substrate.js";
 import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
@@ -493,6 +493,9 @@ export class TestOrchestrator {
     // stores removed in mission-56 W5 cleanup; alerts now flow through
     // the Message store.)
     const storageProvider = createMemoryStorageSubstrate();
+    // mission-90 W8: store ENVELOPE shape (match prod — all writes envelope) so the
+    // E2E memory substrate validates the real envelope-only path. See test-utils.ts.
+    storageProvider.setWriteEncoder(buildEnvelopeWriteEncoder());
     const storageCounter = new SubstrateCounter(storageProvider);
     const task = new TaskRepository(storageProvider, storageCounter);
     const idea = new IdeaRepository(storageProvider, storageCounter);

@@ -19,8 +19,10 @@ import pg from "pg";
 import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
+  buildEnvelopeWriteEncoder,
   ALL_SCHEMAS,
   type HubStorageSubstrate,
+  type PostgresSubstrate,
   type SchemaReconciler,
 } from "../../storage-substrate/index.js";
 import { MissionRepositorySubstrate } from "../mission-repository-substrate.js";
@@ -70,6 +72,11 @@ beforeAll(async () => {
     warn: () => { /* silent */ },
   });
   await reconciler.start();
+  // mission-90 W8: match prod boot — envelope writes + bare-key→envelope-path
+  // translation, so repo queries hit envelope rows (was storing legacy-flat).
+  const pgSub = substrate as PostgresSubstrate;
+  pgSub.setFieldTranslator((kind, key) => reconciler.getFieldTranslation(kind, key));
+  pgSub.setWriteEncoder(buildEnvelopeWriteEncoder());
 }, 60_000);
 
 afterAll(async () => {

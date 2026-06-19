@@ -98,9 +98,12 @@ export function agentToEnvelope(agent: Agent): EnvelopeShape {
 }
 
 /**
- * Decode an envelope-shape Agent row into legacy-flat Agent. Tolerant: if
- * input is ALREADY legacy-flat, returns it untouched (defensive — supports
- * mixed-shape data window during incremental envelope adoption).
+ * Decode an envelope-shape Agent row into legacy-flat Agent. READ-PATH
+ * graceful-degrade (mission-90 W8 lens-2): a non-envelope row returns as-is
+ * rather than crashing the read — a single stray bare row must never take down
+ * an agent list/get. (Bare-row DETECTION is the separate 0-bare anomaly-monitor
+ * follow-on, not a read-path throw.) All Agent writes go through agentToEnvelope,
+ * so this passthrough is dead in practice post-cutover.
  *
  * Reverses W11 partition: hoists `metadata.fingerprint`/`metadata.archived`
  * → top-level; `spec.{role,labels,...}` → top-level; `status.phase` → top-
@@ -109,7 +112,7 @@ export function agentToEnvelope(agent: Agent): EnvelopeShape {
  */
 export function envelopeToAgent(maybeEnvelope: unknown): Agent {
   if (!isEnvelopeShape(maybeEnvelope)) {
-    // Legacy-flat shape already — return as-is (trust caller).
+    // Read-path graceful-degrade — return as-is (never crash a read).
     return maybeEnvelope as Agent;
   }
   const env = maybeEnvelope;

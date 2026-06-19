@@ -148,12 +148,13 @@ describe("SubstrateCounter bug-97 race fix (W5.5)", () => {
     expect(status.counters).toEqual({ seqDomain: 2 });
   });
 
-  it("backward-compat read: tolerates legacy-flat Counter entity for monotonic continuation", async () => {
-    // Simulate a pre-W3 legacy-flat Counter row (unconditional put bypasses envelope)
-    await substrate.put("Counter", { id: "counter", legacyDomain: 5 });
+  it("envelope counter: reads status.counters + advances monotonically (W8: legacy-flat tolerance retired)", async () => {
+    // mission-90 W8: the Counter is envelope-only (status.counters); the pre-W3
+    // legacy-flat top-level-numeric read is retired.
+    await substrate.put("Counter", { id: "counter", kind: "Counter", apiVersion: "core.ois/v1", metadata: {}, spec: {}, status: { counters: { legacyDomain: 5 }, phase: "active" } });
 
     const counter = new SubstrateCounter(substrate);
-    // next() should read legacy-flat 5 + advance to 6 + write envelope-shape back
+    // next() reads status.counters.legacyDomain=5 + advances to 6.
     expect(await counter.next("legacyDomain")).toBe(6);
 
     const raw = await substrate.get<Record<string, unknown>>("Counter", "counter");

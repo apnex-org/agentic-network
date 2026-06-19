@@ -1,270 +1,127 @@
 /**
- * mission-88 W9 — tagsFromEntity unit tests (bug-125 fix).
+ * mission-90 W8 (idea-320 / idea-327) — shape-helpers DECODE-LAYER unit tests.
  *
- * Locks the dual-shape contract: legacy-flat (tags at top-level) AND
- * envelope (metadata.labels-as-K8s-map) both coerce to a string[] of
- * tag names. Defensive: never throws on any input.
+ * W8 retired the W3-era dual-layer readers (tagsFromEntity / fieldFromEntity /
+ * arrayFieldFromEntity) — above the membrane there is now ONE flat domain shape,
+ * so policy + consumers read fields directly and the repos decode at their read
+ * boundary. What remains in shape-helpers is the membrane MECHANISM:
+ *  - phaseFromEntity — the status-extractor the decoders call.
+ *  - decodeEnvelopeToFlat — the generic renameMap+partition reverse.
+ * This file locks both contracts directly (the deleted helpers' coverage now
+ * lives at the repo decode boundary — idea/bug-repository-substrate.test for the
+ * metadata.labels→tags inline derivation, layerb-accessor-sweep-w3 for the
+ * policy accessors' flat reads against real envelope rows).
  */
 
 import { describe, it, expect } from "vitest";
-import { tagsFromEntity, arrayFieldFromEntity, fieldFromEntity } from "../shape-helpers.js";
+import { phaseFromEntity, decodeEnvelopeToFlat } from "../shape-helpers.js";
 
-describe("tagsFromEntity — legacy-flat shape", () => {
-  it("returns a copy of top-level tags array (decoupled from input)", () => {
-    const entity = { id: "idea-1", tags: ["mission-88", "engineer-greg"] };
-    const result = tagsFromEntity(entity);
-    expect(result).toEqual(["mission-88", "engineer-greg"]);
-    // Mutation of result must not affect input
-    result.push("mutated");
-    expect(entity.tags).toEqual(["mission-88", "engineer-greg"]);
-  });
-
-  it("returns empty array when tags is present-but-empty", () => {
-    const entity = { id: "idea-2", tags: [] };
-    expect(tagsFromEntity(entity)).toEqual([]);
+describe("phaseFromEntity — envelope storage shape", () => {
+  it("reads status.phase from the {phase,...} bucket object", () => {
+    expect(phaseFromEntity({ id: "x", status: { phase: "active" } })).toBe("active");
+    expect(phaseFromEntity({ id: "x", status: { phase: "completed", livenessState: "online" } })).toBe("completed");
   });
 });
 
-describe("tagsFromEntity — envelope shape (post-W6.1 cluster-1 migration)", () => {
-  it("returns Object.keys(metadata.labels) per K8s-map-from-tags convention", () => {
-    const entity = {
-      id: "idea-3",
+describe("phaseFromEntity — decoded-flat domain shape", () => {
+  it("reads a top-level status string directly", () => {
+    expect(phaseFromEntity({ id: "x", status: "open" })).toBe("open");
+    expect(phaseFromEntity({ id: "x", status: "resolved" })).toBe("resolved");
+  });
+});
+
+describe("phaseFromEntity — graceful-degrade (never throws)", () => {
+  it("returns null for unreadable shapes", () => {
+    expect(phaseFromEntity(null)).toBeNull();
+    expect(phaseFromEntity(undefined)).toBeNull();
+    expect(phaseFromEntity({})).toBeNull();
+    expect(phaseFromEntity({ id: "x" })).toBeNull();
+    expect(phaseFromEntity({ id: "x", status: 42 })).toBeNull(); // non-string non-object
+    expect(phaseFromEntity({ id: "x", status: { foo: "bar" } })).toBeNull(); // object without phase
+    expect(phaseFromEntity("not-an-entity")).toBeNull();
+  });
+});
+
+describe("decodeEnvelopeToFlat — partition flatten", () => {
+  it("flattens metadata/spec/status leaves to top-level, status.phase → status string", () => {
+    const envelope = {
+      id: "idea-1",
+      name: "idea-1",
       apiVersion: "core.ois/v1",
       kind: "Idea",
-      metadata: { labels: { "mission-88": "", "engineer-greg": "" } },
-      spec: { text: "..." },
-      status: { phase: "open" },
+      metadata: { createdAt: "2026-06-01", createdBy: { role: "engineer", agentId: "a-1" }, missionId: "m-9" },
+      spec: { text: "do the thing" },
+      status: { phase: "open", linkedTaskIds: ["task-1"] },
     };
-    expect(tagsFromEntity(entity).sort()).toEqual(["engineer-greg", "mission-88"]);
+    const flat = decodeEnvelopeToFlat(envelope) as Record<string, unknown>;
+
+    // leaves lifted to top-level
+    expect(flat.createdAt).toBe("2026-06-01");
+    expect(flat.createdBy).toEqual({ role: "engineer", agentId: "a-1" });
+    expect(flat.missionId).toBe("m-9");
+    expect(flat.text).toBe("do the thing");
+    expect(flat.linkedTaskIds).toEqual(["task-1"]);
+    // status.phase → top-level status string
+    expect(flat.status).toBe("open");
+    // id preserved
+    expect(flat.id).toBe("idea-1");
   });
 
-  it("returns empty array when metadata.labels is empty object", () => {
-    const entity = {
-      id: "idea-4",
-      apiVersion: "core.ois/v1",
-      metadata: { labels: {} },
-    };
-    expect(tagsFromEntity(entity)).toEqual([]);
-  });
-
-  it("returns keys regardless of label values (lossy-by-design per W9 Q2)", () => {
-    // Cluster-1 migration writes empty-string values; this test locks the
-    // constraint that future non-empty values are LOST in the round-trip.
-    // If values become semantically meaningful, this helper must be retired
-    // in favor of idea-318 repository envelope-native rewrite or idea-320
-    // substrate-read normalization.
-    const entity = {
-      metadata: { labels: { foo: "v1", bar: "v2" } },
-    };
-    expect(tagsFromEntity(entity).sort()).toEqual(["bar", "foo"]);
-  });
-});
-
-describe("tagsFromEntity — missing/null defensive", () => {
-  it("returns [] when entity has neither tags nor metadata.labels", () => {
-    expect(tagsFromEntity({ id: "x" })).toEqual([]);
-  });
-
-  it("returns [] when metadata is present but labels is missing", () => {
-    expect(tagsFromEntity({ metadata: { createdAt: "2026-05-24" } })).toEqual([]);
-  });
-
-  it("returns [] when metadata.labels is null (defensive)", () => {
-    expect(tagsFromEntity({ metadata: { labels: null } })).toEqual([]);
-  });
-
-  it("returns [] when input is null", () => {
-    expect(tagsFromEntity(null)).toEqual([]);
-  });
-
-  it("returns [] when input is undefined", () => {
-    expect(tagsFromEntity(undefined)).toEqual([]);
-  });
-
-  it("returns [] when input is a primitive (string)", () => {
-    expect(tagsFromEntity("not-an-entity")).toEqual([]);
-  });
-
-  it("returns [] when input is a primitive (number)", () => {
-    expect(tagsFromEntity(42)).toEqual([]);
-  });
-});
-
-describe("tagsFromEntity — W8 Notification composition (per W9 R1 audit A7)", () => {
-  it("returns [] for envelope-shape Notification (no tags field; metadata has no labels)", () => {
-    // Per W8 Design, Notification has no `tags` semantic in production shape.
-    // tagsFromEntity must return [] without crashing.
-    const notification = {
-      id: "01KP2JD2Q408F58QKY32HQEEYS",
-      apiVersion: "core.ois/v1",
-      kind: "Notification",
-      metadata: { name: "01KP2JD2Q408F58QKY32HQEEYS", createdAt: "2026-04-13T04:43:08.901Z" },
-      spec: { eventType: "report_submitted", targetRoles: ["architect"], payload: {} },
-      status: { phase: "logged" },
-    };
-    expect(tagsFromEntity(notification)).toEqual([]);
-  });
-});
-
-describe("tagsFromEntity — legacy-shape branch defense-in-depth (per W9 Q4 refinement)", () => {
-  // W9 Q4: KEEP the legacy-flat branch indefinitely (don't strip post-W11
-  // strict-flip). Future substrate operations may transiently produce
-  // legacy-shape rows (incident hot-fixes via direct substrate.put;
-  // partial-migration windows; etc.). The helper continues to work.
-  it("steady-state post-W11 expectation: all production rows are envelope-shape, but legacy still coerces correctly", () => {
-    const legacyRow = { id: "x", tags: ["tag-a", "tag-b"] };
-    expect(tagsFromEntity(legacyRow)).toEqual(["tag-a", "tag-b"]);
-  });
-});
-
-// W9.1 hot-fix (bug-134) — arrayFieldFromEntity generalized helper tests.
-
-describe("arrayFieldFromEntity — legacy-flat shape", () => {
-  it("returns copy of top-level array field", () => {
-    const bug = { id: "bug-1", linkedTaskIds: ["task-1", "task-2"] };
-    const result = arrayFieldFromEntity(bug, "linkedTaskIds");
-    expect(result).toEqual(["task-1", "task-2"]);
-    // Mutation of result must not affect input
-    (result as string[]).push("mutated");
-    expect(bug.linkedTaskIds).toEqual(["task-1", "task-2"]);
-  });
-
-  it("returns empty when top-level field is empty array", () => {
-    expect(arrayFieldFromEntity({ fixCommits: [] }, "fixCommits")).toEqual([]);
-  });
-});
-
-describe("arrayFieldFromEntity — envelope status section (Bug.linkedTaskIds + fixCommits per cluster-1)", () => {
-  it("probes status section per cluster-1 Bug.ts partition", () => {
-    const envelopeBug = {
-      id: "bug-2",
+  it("strips the envelope artifacts (buckets + apiVersion/kind/phase/name)", () => {
+    const flat = decodeEnvelopeToFlat({
+      id: "x",
+      name: "x",
       apiVersion: "core.ois/v1",
       kind: "Bug",
-      metadata: { name: "bug-2" },
-      spec: { title: "..." },
-      status: {
-        phase: "resolved",
-        linkedTaskIds: ["task-9", "task-10"],
-        fixCommits: ["abc123", "def456"],
-      },
-    };
-    expect(arrayFieldFromEntity(envelopeBug, "linkedTaskIds")).toEqual(["task-9", "task-10"]);
-    expect(arrayFieldFromEntity(envelopeBug, "fixCommits")).toEqual(["abc123", "def456"]);
+      metadata: {},
+      spec: {},
+      status: { phase: "open" },
+    }) as Record<string, unknown>;
+
+    for (const artifact of ["metadata", "spec", "phase", "apiVersion", "kind", "name"]) {
+      expect(flat, `${artifact} stripped`).not.toHaveProperty(artifact);
+    }
+    // status is the decoded phase STRING, not the bucket object
+    expect(flat.status).toBe("open");
   });
 
-  it("returns empty when envelope row has status section but field absent", () => {
-    const envelopeBug = { metadata: {}, spec: {}, status: { phase: "open" } };
-    expect(arrayFieldFromEntity(envelopeBug, "linkedTaskIds")).toEqual([]);
-  });
-});
-
-describe("arrayFieldFromEntity — envelope spec section (Turn.tele per cluster-2)", () => {
-  it("probes spec section per cluster-2 Turn.ts partition", () => {
-    const envelopeTurn = {
-      id: "turn-1",
+  it("surfaces the cascade sourceThreadSummary from metadata.annotations", () => {
+    const flat = decodeEnvelopeToFlat({
+      id: "task-1",
       apiVersion: "core.ois/v1",
-      kind: "Turn",
-      metadata: { name: "..." },
-      spec: { scope: "...", tele: ["T1", "T7"] },
+      kind: "Task",
+      metadata: { annotations: { "ois.io/sourceThreadSummary": "converged on X" } },
+      spec: { directive: "go" },
+      status: { phase: "issued" },
+    }) as Record<string, unknown>;
+
+    expect(flat.sourceThreadSummary).toBe("converged on X");
+  });
+
+  it("preserves leaf objects/arrays by reference-spread (no deep mutation of input)", () => {
+    const nested = { foo: ["a", "b"] };
+    const flat = decodeEnvelopeToFlat({
+      id: "x",
+      metadata: {},
+      spec: { nested },
       status: { phase: "active" },
-    };
-    expect(arrayFieldFromEntity(envelopeTurn, "tele")).toEqual(["T1", "T7"]);
+    }) as Record<string, unknown>;
+    expect(flat.nested).toBe(nested); // leaf-preserving spread
   });
 });
 
-describe("arrayFieldFromEntity — envelope metadata section (hypothetical future cluster)", () => {
-  it("probes metadata section if field ends up there", () => {
-    const entity = { metadata: { tags: ["a", "b"], labels: {} }, spec: {}, status: {} };
-    expect(arrayFieldFromEntity(entity, "tags")).toEqual(["a", "b"]);
-  });
-});
-
-describe("arrayFieldFromEntity — probe order (top-level wins over envelope)", () => {
-  it("returns top-level when both present (legacy-flat takes precedence)", () => {
-    const mixed = {
-      linkedTaskIds: ["legacy-1"],
-      status: { linkedTaskIds: ["envelope-1"] },
-    };
-    expect(arrayFieldFromEntity(mixed, "linkedTaskIds")).toEqual(["legacy-1"]);
+describe("decodeEnvelopeToFlat — graceful-degrade (never throws)", () => {
+  it("passes a non-object through unchanged", () => {
+    expect(decodeEnvelopeToFlat(null)).toBeNull();
+    expect(decodeEnvelopeToFlat(undefined)).toBeUndefined();
+    expect(decodeEnvelopeToFlat("str" as unknown)).toBe("str");
+    expect(decodeEnvelopeToFlat(42 as unknown)).toBe(42);
   });
 
-  it("returns metadata when top-level absent, before spec/status", () => {
-    const entity = {
-      metadata: { tele: ["m1"] },
-      spec: { tele: ["s1"] },
-      status: { tele: ["st1"] },
-    };
-    expect(arrayFieldFromEntity(entity, "tele")).toEqual(["m1"]);
-  });
-
-  it("returns spec when top-level + metadata absent", () => {
-    const entity = { spec: { tele: ["s1"] }, status: { tele: ["st1"] } };
-    expect(arrayFieldFromEntity(entity, "tele")).toEqual(["s1"]);
-  });
-});
-
-describe("arrayFieldFromEntity — missing/null defensive (mirror tagsFromEntity coverage)", () => {
-  it("returns [] when entity is null", () => {
-    expect(arrayFieldFromEntity(null, "tags")).toEqual([]);
-  });
-
-  it("returns [] when entity is undefined", () => {
-    expect(arrayFieldFromEntity(undefined, "tags")).toEqual([]);
-  });
-
-  it("returns [] when entity is a primitive", () => {
-    expect(arrayFieldFromEntity(42, "tags")).toEqual([]);
-    expect(arrayFieldFromEntity("not-an-entity", "tags")).toEqual([]);
-  });
-
-  it("returns [] when neither top-level nor envelope sections have field", () => {
-    expect(arrayFieldFromEntity({ id: "x" }, "linkedTaskIds")).toEqual([]);
-  });
-
-  it("returns [] when section value is non-object (defensive)", () => {
-    expect(arrayFieldFromEntity({ status: "broken" }, "linkedTaskIds")).toEqual([]);
-  });
-
-  it("returns [] when field value is non-array (e.g., string)", () => {
-    expect(arrayFieldFromEntity({ status: { linkedTaskIds: "not-an-array" } }, "linkedTaskIds")).toEqual([]);
-  });
-});
-
-// ── mission-90 W3: fieldFromEntity (scalar/object envelope-tolerant read) ─────
-describe("fieldFromEntity — Layer-B accessor scalar reader", () => {
-  it("legacy-flat: returns the top-level value", () => {
-    expect(fieldFromEntity({ missionId: "m-1" }, "missionId")).toBe("m-1");
-  });
-
-  it("envelope status section: returns status.<field> (e.g. missionId→status.missionId)", () => {
-    expect(fieldFromEntity({ status: { phase: "open", missionId: "m-9" } }, "missionId")).toBe("m-9");
-  });
-
-  it("envelope metadata section: returns metadata.<field> (e.g. createdAt, actor)", () => {
-    expect(fieldFromEntity({ metadata: { createdAt: "2026-01-01", actor: "hub" } }, "actor")).toBe("hub");
-  });
-
-  it("envelope spec section: returns spec.<field> (e.g. severity)", () => {
-    expect(fieldFromEntity({ spec: { severity: "critical" } }, "severity")).toBe("critical");
-  });
-
-  it("object field: returns the whole object (e.g. createdBy→metadata.createdBy)", () => {
-    expect(fieldFromEntity({ metadata: { createdBy: { role: "architect", agentId: "a-1" } } }, "createdBy")).toEqual({ role: "architect", agentId: "a-1" });
-  });
-
-  it("NULL-shadow tolerance: a null top-level (repo-normalizer lift) does NOT shadow the section value", () => {
-    // thread-repo's normalizeThreadShape nulls top-level currentTurnAgentId on
-    // envelope rows; the real value lives at status.currentTurnAgentId.
-    expect(fieldFromEntity({ currentTurnAgentId: null, status: { currentTurnAgentId: "eng-9" } }, "currentTurnAgentId")).toBe("eng-9");
-  });
-
-  it("non-null top-level wins over a section (legacy data precedence)", () => {
-    expect(fieldFromEntity({ name: "legacy", metadata: { name: "envelope" } }, "name")).toBe("legacy");
-  });
-
-  it("absent field: returns undefined; non-object entity: returns undefined", () => {
-    expect(fieldFromEntity({ metadata: {}, spec: {}, status: {} }, "nope")).toBeUndefined();
-    expect(fieldFromEntity(null, "x")).toBeUndefined();
-    expect(fieldFromEntity("str", "x")).toBeUndefined();
+  it("a bare (already-flat) row with no buckets passes through (status preserved if string)", () => {
+    const flat = decodeEnvelopeToFlat({ id: "x", status: "open", title: "t" }) as Record<string, unknown>;
+    expect(flat.id).toBe("x");
+    expect(flat.status).toBe("open");
+    expect(flat.title).toBe("t");
   });
 });

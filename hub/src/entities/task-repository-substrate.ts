@@ -38,7 +38,7 @@ import type {
 import { taskClaimableBy } from "../state.js";
 import type { CascadeBacklink } from "./idea.js";
 import { SubstrateCounter } from "./substrate-counter.js";
-import { phaseFromEntity } from "./shape-helpers.js";
+import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Task";
 const MAX_CAS_RETRIES = 50;
@@ -62,8 +62,9 @@ class TransitionRejected extends Error {
  * helper avoids the bug-138 / bug-141 pattern of per-site fixes drifting.
  */
 function currentPhase(current: Task): Task["status"] {
-  const extracted = phaseFromEntity(current);
-  return (extracted ?? current.status) as Task["status"];
+  // mission-90 W8: every caller now passes a decoded-flat Task (repo read-boundary
+  // + tryCasUpdate decode), so status is the flat scalar directly.
+  return current.status as Task["status"];
 }
 
 class Mutex {
@@ -153,9 +154,8 @@ export class TaskRepositorySubstrate implements ITaskStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Task | null> {
-    // mission-89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback.
-    // mission-90 W4: KEEP bare fallback (sole straddle mechanism; cascade-keys NOT
-    // chokepoint-translated, W1 null-pin); DELETE at W8 (architect-ruled; W8 carry-set).
+    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). The legacy
+    // top-level cascade-key fallback is retired (W6 proved 0 bare rows live).
     const envelopeResult = await this.substrate.list<Task>(KIND, {
       filter: {
         "metadata.sourceThreadId": key.sourceThreadId,
@@ -163,15 +163,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
       },
       limit: 1,
     });
-    if (envelopeResult.items[0]) return envelopeResult.items[0];
-    const legacyResult = await this.substrate.list<Task>(KIND, {
-      filter: {
-        sourceThreadId: key.sourceThreadId,
-        sourceActionId: key.sourceActionId,
-      },
-      limit: 1,
-    });
-    return legacyResult.items[0] ?? null;
+    return envelopeResult.items[0] ? decodeEnvelopeToFlat(envelopeResult.items[0]) : null;
   }
 
   async findByIdempotencyKey(key: string): Promise<Task | null> {
@@ -179,14 +171,15 @@ export class TaskRepositorySubstrate implements ITaskStore {
       filter: { idempotencyKey: key },
       limit: 1,
     });
-    return items[0] ?? null;
+    return items[0] ? decodeEnvelopeToFlat(items[0]) : null;
   }
 
   async unblockDependents(completedTaskId: string): Promise<string[]> {
     // Load full snapshot for dependency-graph eval
-    const { items: allTasks } = await this.substrate.list<Task>(KIND, {
+    const { items: rawAllTasks } = await this.substrate.list<Task>(KIND, {
       limit: LIST_PREFETCH_CAP,
     });
+    const allTasks = rawAllTasks.map((t) => decodeEnvelopeToFlat(t)); // mission-90 W8: flat preview
     const allMap = new Map(allTasks.map((t) => [t.id, t]));
     const unblocked: string[] = [];
 
@@ -225,10 +218,11 @@ export class TaskRepositorySubstrate implements ITaskStore {
   }
 
   async cancelDependents(failedTaskId: string): Promise<string[]> {
-    const { items } = await this.substrate.list<Task>(KIND, {
+    const { items: rawItems } = await this.substrate.list<Task>(KIND, {
       filter: { status: "blocked" },
       limit: LIST_PREFETCH_CAP,
     });
+    const items = rawItems.map((t) => decodeEnvelopeToFlat(t)); // mission-90 W8: flat preview
     const cancelled: string[] = [];
     for (const task of items) {
       if (!task.dependsOn || !task.dependsOn.includes(failedTaskId)) continue;
@@ -255,10 +249,11 @@ export class TaskRepositorySubstrate implements ITaskStore {
     await this.taskLock.acquire();
     try {
       // Substrate-side filter on task_status_idx (hot-path)
-      const { items } = await this.substrate.list<Task>(KIND, {
+      const { items: rawItems } = await this.substrate.list<Task>(KIND, {
         filter: { status: "pending" },
         limit: LIST_PREFETCH_CAP,
       });
+      const items = rawItems.map((t) => decodeEnvelopeToFlat(t)); // mission-90 W8: flat preview
       for (const preview of items) {
         if (!taskClaimableBy(preview.labels ?? {}, claimant?.labels)) continue;
         let claimed: Task | null = null;
@@ -336,7 +331,9 @@ export class TaskRepositorySubstrate implements ITaskStore {
         filter: { status: "failed" },
         limit: LIST_PREFETCH_CAP,
       });
-      const candidates = [...completed.items, ...failed.items].filter((t) => t.report !== null);
+      const candidates = [...completed.items, ...failed.items]
+        .map((t) => decodeEnvelopeToFlat(t)) // mission-90 W8: flat preview
+        .filter((t) => t.report !== null);
 
       for (const preview of candidates) {
         let preTransition: Task | null = null;
@@ -363,24 +360,21 @@ export class TaskRepositorySubstrate implements ITaskStore {
   }
 
   async getTask(taskId: string): Promise<Task | null> {
-    return this.substrate.get<Task>(KIND, taskId);
+    const raw = await this.substrate.get<Task>(KIND, taskId);
+    return raw ? decodeEnvelopeToFlat(raw) : null;
   }
 
   async listTasks(): Promise<Task[]> {
     const { items } = await this.substrate.list<Task>(KIND, { limit: LIST_PREFETCH_CAP });
-    return items;
+    return items.map((t) => decodeEnvelopeToFlat(t));
   }
 
   async cancelTask(taskId: string): Promise<boolean> {
     let priorStatus: Task["status"] | null = null;
     const ok = await this.tryCasUpdate(taskId, (current) => {
       const CANCELLABLE: Task["status"][] = ["pending", "working", "blocked", "input_required"];
-      // bug-143 fix (2026-05-28): envelope-shape Task carries status as
-      // {phase, report, ...} object; CANCELLABLE.includes(object) returns
-      // false for every task in the substrate. Extract the phase scalar
-      // via phaseFromEntity (same pattern as task-policy.ts:212).
-      const currentPhase = phaseFromEntity(current) as Task["status"] | null;
-      const cmpStatus = currentPhase ?? current.status;
+      // mission-90 W8: current is decoded-flat (tryCasUpdate) → status is the scalar.
+      const cmpStatus = current.status;
       if (!CANCELLABLE.includes(cmpStatus)) {
         throw new TransitionRejected(`not cancellable from status ${cmpStatus}`);
       }
@@ -459,8 +453,9 @@ export class TaskRepositorySubstrate implements ITaskStore {
   async getReview(
     taskId: string,
   ): Promise<{ taskId: string; assessment: string; reviewRef: string } | null> {
-    const task = await this.substrate.get<Task>(KIND, taskId);
-    if (!task) return null;
+    const raw = await this.substrate.get<Task>(KIND, taskId);
+    if (!raw) return null;
+    const task = decodeEnvelopeToFlat(raw); // mission-90 W8: reviewAssessment/reviewRef relocate to status
     if (!task.reviewAssessment) return null;
     return {
       taskId: task.id,
@@ -474,9 +469,9 @@ export class TaskRepositorySubstrate implements ITaskStore {
    * FSM gates. substrate.put bypass (no CAS).
    */
   async __debugSetTask(taskId: string, patch: Partial<Task>): Promise<void> {
-    const current = await this.substrate.get<Task>(KIND, taskId);
-    if (!current) throw new Error(`[TaskRepositorySubstrate.__debugSetTask] Task not found: ${taskId}`);
-    const next: Task = { ...current, ...patch } as Task;
+    const raw = await this.substrate.get<Task>(KIND, taskId);
+    if (!raw) throw new Error(`[TaskRepositorySubstrate.__debugSetTask] Task not found: ${taskId}`);
+    const next: Task = { ...decodeEnvelopeToFlat(raw), ...patch } as Task;
     await this.substrate.put(KIND, next);
   }
 
@@ -495,7 +490,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
       if (!existing) return false;
       let next: Task;
       try {
-        next = transform({ ...existing.entity });
+        next = transform(decodeEnvelopeToFlat(existing.entity)); // mission-90 W8: flat CAS
       } catch (err) {
         if (err instanceof TransitionRejected) return false;
         throw err;

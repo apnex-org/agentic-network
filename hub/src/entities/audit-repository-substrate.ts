@@ -29,6 +29,7 @@
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
 import type { AuditEntry, IAuditStore } from "../state.js";
 import { SubstrateCounter } from "./substrate-counter.js";
+import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Audit";
 // Cap pre-sort fetch to bound memory; well above legacy listEntries(limit=50) use cases.
@@ -39,6 +40,16 @@ const LIST_PREFETCH_CAP = 500;
 function parseCounter(id: string): number {
   const m = id.match(/^audit-(\d+)$/);
   return m ? Number(m[1]) : NaN;
+}
+
+/**
+ * mission-90 W8: Audit read-decode = generic envelope→flat + restore `timestamp`
+ * from the `metadata.createdAt` rename (actor is leaf-preserving; Audit has no status).
+ */
+function decodeAudit(raw: AuditEntry): AuditEntry {
+  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>) as Record<string, unknown>;
+  if (flat.createdAt !== undefined) { flat.timestamp = flat.createdAt; delete flat.createdAt; }
+  return flat as unknown as AuditEntry;
 }
 
 export class AuditRepositorySubstrate implements IAuditStore {
@@ -87,8 +98,8 @@ export class AuditRepositorySubstrate implements IAuditStore {
     });
 
     return items
+      .map(decodeAudit)
       .sort((a, b) => parseCounter(b.id) - parseCounter(a.id))
-      .slice(0, limit)
-      .map(e => ({ ...e }));
+      .slice(0, limit);
   }
 }

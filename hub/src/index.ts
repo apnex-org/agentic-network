@@ -113,19 +113,12 @@ if (!POSTGRES_CONNECTION_STRING) {
   );
 }
 
-// mission-88 W0 (per thread-639 Q2 disposition) — write-validation envelope
-// tolerance mode flag. Accepts both old (legacy-flat) + new (envelope-shape)
-// entity shapes during the v2-envelope cutover window (W1-W5). At W6, the
-// flag is flipped (env-var set to "false" or unset) and the substrate
-// rejects legacy-shape writes; reader-parse becomes strict-only.
-//
-// Per thread-639 precision-pin (ii): "tolerance mode" here is a WRITE-
-// VALIDATION + READER-PARSE flag — NOT a SchemaDef-reconciler concern.
-// The reconciler manages indexes; per-kind validation happens at write-time
-// in repositories. W1+ per-kind modules consume this flag in their
-// validation logic; W0 just declares + logs the boot-time value.
-const SUBSTRATE_ENVELOPE_TOLERANT = process.env.SUBSTRATE_ENVELOPE_TOLERANT === "true";
-console.log(`[Hub] envelope tolerance mode: ${SUBSTRATE_ENVELOPE_TOLERANT ? "TOLERANT" : "STRICT"} (W6 default: STRICT)`);
+// mission-90 W8 (idea-320): the SUBSTRATE_ENVELOPE_TOLERANT flag is RETIRED.
+// The substrate is envelope-only (strict) — all writes land envelope (the W4
+// write-encoder) and reads are envelope-native; the dual-shape reader-parse +
+// the flag (which W6 had already defaulted to STRICT and nothing consumed at
+// runtime) are gone. Logged for operability.
+console.log(`[Hub] envelope substrate: STRICT (envelope-only; dual-shape tolerance retired at mission-90 W8)`);
 
 let taskStore: ITaskStore;
 let engineerRegistry: IEngineerRegistry;

@@ -1,204 +1,130 @@
 /**
- * Shape-helpers for envelope-aware entity reads.
+ * Shape-helpers — the envelope→flat DECODE-LAYER (below the repo membrane).
  *
- * mission-88 W9 (bug-125 fix): downstream repository code reads legacy-flat
- * field paths (e.g., `idea.tags`) but post-W6.1-envelope-migration the
- * substrate returns envelope-shape rows where those fields moved to nested
- * paths (e.g., `idea.metadata.labels`). The TOLERANT env-var governs only
- * substrate-write tolerance; the read-side repository layer needs its own
- * shape-defensive coercion until idea-320 (M-Substrate-TOLERANT-Read-
- * Normalization) lands as the systemic fix post-mission-88.
+ * mission-90 W8 (idea-320 / idea-327, Director END-STATE-2 + architect (A)):
+ * the substrate is envelope-ONLY at the STORAGE layer, and every repo decodes
+ * envelope→flat at its read + CAS boundary (decodeEnvelopeToFlat / the bespoke
+ * per-kind decoders). So ABOVE the membrane there is ONE flat domain shape —
+ * policy + consumers read fields directly (the W3-era fieldFromEntity /
+ * tagsFromEntity / arrayFieldFromEntity dual-layer readers are RETIRED).
  *
- * These helpers are the minimal-required interim per thread-652 R5
- * Director-ratified (D) TOLERANT-bridge disposition.
+ * What remains here is the membrane MECHANISM, not a dual-shape reader:
+ *  - `phaseFromEntity` — the status-extractor the decoders call to map an
+ *    envelope `status.{phase}` bucket → the flat top-level `status` string. It
+ *    is load-bearing decode-machinery (decodeEnvelopeToFlat + the kept bespoke
+ *    normalizers normalizeThreadShape/normalizeTele/normalizeAgentShape call it
+ *    below the membrane). It is ALSO reused above the membrane in the policy
+ *    status-accessors + a handful of CAS callbacks for a graceful status read —
+ *    safe per architect ruling (A): there the entity is already flat (it reads
+ *    the top-level string), and it is graceful on a stray {phase} object, so it
+ *    is NOT a dual-shape recurrence surface even where reused. Kept, not deleted.
+ *  - `decodeEnvelopeToFlat` — the generic renameMap+partition reverse the repos
+ *    apply on the read boundary.
+ *
+ * READ-PATH graceful-degrade (W8 review lens-2): a stray/malformed row returns a
+ * safe default (null), NEVER a throw — a single bad row must not crash a
+ * list/read. Bare-row DETECTION is the separate 0-bare anomaly-monitor follow-on
+ * (loud, out-of-band), not a read-path concern.
  */
 
-interface EntityWithMaybeTags {
-  readonly tags?: readonly string[];
-  readonly metadata?: {
-    readonly labels?: Record<string, string>;
-  };
-}
-
 /**
- * Coerce tags from an entity that may be in either legacy-flat or envelope
- * shape.
+ * Coerce the FSM phase string from an entity. Reads `status.phase` (envelope
+ * storage shape) OR a top-level `status` string (decoded-flat domain shape).
+ * Graceful-degrade: non-object / no readable status → `null` (never throws);
+ * callers handle null explicitly.
  *
- * - Legacy-flat: `entity.tags` is `string[]` at the top level. Returns a copy.
- * - Envelope:    `entity.metadata.labels` is `Record<string,string>` (per
- *                cluster-1 K8s-style array-to-map migration). Returns
- *                `Object.keys(labels)`.
- * - Missing both: returns `[]` (historically tags was present-but-empty array;
- *                 missing-both is a safe-default; never throws).
- *
- * **CONSTRAINT (W9 Q2 engineer-add):** this helper returns label-KEYS only.
- * Cluster-1 migration stored `labels.<tag> = ""` (empty-string values) per
- * K8s convention — existence is the signal; value is metadata-for-future-use.
- * If label-VALUES become semantically meaningful, this helper becomes lossy
- * (round-trip drops the value side) and callers must migrate to direct
- * `entity.metadata.labels` access. At that point, idea-320 substrate-read
- * normalization or idea-318 repository envelope-native rewrite is mandatory.
- *
- * **W9 Q4 keep-legacy-branch refinement:** the legacy-flat branch stays
- * indefinitely (defense-in-depth). Stripping post-W11-strict-flip introduces
- * fragility for future substrate operations that don't go through envelope
- * encoding (hot-fix direct substrate.put with legacy-flat payload during
- * incident response, etc.). Cost is ~3 lines; benefit is non-trivial
- * resilience.
- *
- * Defensive: never throws. Any input (including `null`/`undefined`/non-object)
- * coerces to `[]`.
- */
-export function tagsFromEntity(entity: unknown): string[] {
-  if (entity === null || entity === undefined || typeof entity !== "object") {
-    return [];
-  }
-  const e = entity as EntityWithMaybeTags;
-  // Legacy-flat: tags at top-level (pre-W6.1 production shape).
-  if (Array.isArray(e.tags)) {
-    return [...e.tags];
-  }
-  // Envelope-shape: tags moved to metadata.labels keys (post-W6.1 cluster-1
-  // migration; see hub/src/storage-substrate/migrations/v2-envelope/kinds/
-  // Idea.ts + Bug.ts for the canonical transformation).
-  if (e.metadata && typeof e.metadata === "object" && e.metadata.labels && typeof e.metadata.labels === "object") {
-    return Object.keys(e.metadata.labels);
-  }
-  return [];
-}
-
-/**
- * Coerce an array-valued field from an entity that may be in either legacy-flat
- * or envelope shape. Probes the top-level field name AND each envelope partition
- * section (`metadata`/`spec`/`status`); returns a copy of the first matching
- * array, else `[]`.
- *
- * mission-88 W9.1 (bug-134 fix; engineer-side scope-extension of bug-125):
- * Cluster-1/2/3/4/5 envelope migrations move array fields to different envelope
- * partition sections per kind-Design. Hub repository code that spreads these
- * arrays (`[...entity.X]`) crashes on envelope-shape rows where the field has
- * been relocated. Examples:
- *   - `bug.linkedTaskIds` → `bug.status.linkedTaskIds` (per cluster-1 Bug.ts §6)
- *   - `bug.fixCommits` → `bug.status.fixCommits` (per cluster-1 Bug.ts §6)
- *   - `turn.tele` → `turn.spec.tele` (per cluster-2 Turn.ts §6)
- *
- * Probe order: top-level → metadata.X → spec.X → status.X → []. Returns first
- * matching `Array.isArray` value as a shallow copy. Defensive: never throws.
- *
- * **Generalized companion to `tagsFromEntity`** — tags has a special K8s map-
- * vs-array shape mismatch (`labels{}` vs `tags[]`); this helper handles plain
- * array-to-array migrations. Both helpers stay around indefinitely per W9 Q4
- * keep-legacy-branch refinement (defense-in-depth post-W11-strict-flip).
- *
- * Scope-extension methodology calibration: future repository-class audits
- * should grep ALL `[...entity.X]` spreads, not just one named field, to catch
- * sibling-pattern cases sitting adjacent in cloneEntity bodies.
- */
-/**
- * Coerce the FSM phase string from an entity that may be in either legacy-flat
- * or envelope shape. Reads:
- *
- * - Legacy-flat: `entity.status` is a string (e.g., `"resolved"`, `"active"`).
- *   Returns it as-is.
- * - Envelope:    `entity.status` is `{phase: "resolved", ...}` (post-W7 K8s-
- *                style `status.phase` per cluster-3 ConfigMap-precedent Design).
- *                Returns `entity.status.phase`.
- * - Missing/non-string/null entity: returns `null`.
- *
- * mission-89 Phase 4 (bug-137 closure surface): Hub policy update_* handlers
- * compare `current.status !== input.status` to gate FSM transitions. Pre-fix,
- * envelope-shape entities returned `current.status` as `{phase, ...}` object;
- * `{...} !== "resolved"` is always true → "Invalid state transition" error
- * blocks legitimate updates (required psql workaround at mission-88 W11 close).
- *
- * Apply at every `entity.status === <enum>` / `entity.status !== <enum>` /
- * `current.status` comparison site in policy/* + entities/*. Sibling pattern
- * of `tagsFromEntity` / `arrayFieldFromEntity` (W9/W9.1; defense-in-depth
- * read-coerce indefinitely per W9 Q4 keep-legacy-branch refinement).
- *
- * Defensive: never throws. Returns `null` for any non-object input or any
- * object without a readable status — callers should handle null explicitly
- * (typically: if null, reject with "entity has unreadable status; envelope
- * shape may be malformed" rather than silently fall-through).
+ * This is the decode-layer status-extractor: decodeEnvelopeToFlat + the bespoke
+ * normalizers call it to project the envelope `{phase,...}` bucket to the flat
+ * top-level `status` string. (Above the membrane, entities are already flat, so
+ * `entity.status` is the string directly — phaseFromEntity reads it gracefully
+ * either way.)
  */
 export function phaseFromEntity(entity: unknown): string | null {
   if (entity === null || entity === undefined || typeof entity !== "object") {
     return null;
   }
   const e = entity as Record<string, unknown>;
-  // Legacy-flat: status is a string at top-level.
-  if (typeof e.status === "string") {
-    return e.status;
-  }
-  // Envelope-shape: status is {phase, ...} object (cluster-3 ConfigMap precedent).
+  // Envelope storage shape: status is the {phase,...} bucket object.
   if (e.status && typeof e.status === "object") {
     const status = e.status as Record<string, unknown>;
     if (typeof status.phase === "string") {
       return status.phase;
     }
   }
+  // Decoded-flat domain shape: status is the phase string directly.
+  if (typeof e.status === "string") {
+    return e.status;
+  }
   return null;
 }
 
 /**
- * mission-90 W3 (Design §2.5): envelope-tolerant SCALAR/OBJECT field read for
- * Layer-B FieldAccessor bodies. Sibling of `arrayFieldFromEntity` (W9) +
- * `phaseFromEntity` — reads a field whether the row is legacy-flat (field at
- * top-level) or envelope-shape (field relocated into metadata/spec/status).
+ * Decode an envelope-shape entity row (metadata/spec/status partitions) into the
+ * flat domain shape that consumers + the entity TS types expect. mission-90 W8
+ * (idea-327 resolved → decode-to-flat; Director-confirmed (A)): the substrate
+ * repos apply this on the get()/list()/findBy* return boundary, AFTER the
+ * substrate filter-translate — so the verified 9/9 filter-parity is untouched;
+ * only the RETURNED shape is flattened. This closes the read-side half of bug-138
+ * for the repos that returned raw envelope (Task/Proposal/Mission/Idea/Bug) — the
+ * gap the legacy-flat test fixtures masked mission-wide.
  *
- * - Legacy-flat: returns `entity[fieldName]`.
- * - Envelope:    probes metadata → spec → status (canonical-Design order) and
- *                returns the first section that owns the field.
- * - Absent / non-object entity: returns `undefined`.
+ * GENERIC renameMap+partition reverse (architect-preferred — completes the
+ * renameMap-as-universal-authority thesis: write-ENCODE + filter-TRANSLATE +
+ * read-DECODE from one declarative contract). Flattens the partition buckets to
+ * top-level (every relocation is leaf-preserving EXCEPT `status`, whose `phase`
+ * becomes the top-level `status` string — verified exact against the 5 kinds'
+ * all-schemas renameMaps), and strips the envelope artifacts (bucket objects +
+ * apiVersion / kind / phase). Reserved top-level fields (id, name) preserved.
  *
- * Use for any moved filterable field EXCEPT `status` (use `phaseFromEntity` —
- * top-level `status` on an envelope row IS the status bucket object, so a
- * top-level-first probe would wrongly return `{phase,...}` instead of the phase).
- * Cross-ref the complete renameMap (mission-90 W2) for which fields moved; do NOT
- * consume getFieldTranslation here (Layer-B fix is the accessor body, NOT key
- * translation — matchField's bare-key lookup is unchanged; A6).
+ * Graceful-degrade: a non-object input returns as-is; a bare (already legacy-flat)
+ * row has no buckets → passes through unchanged. Never throws.
+ *
+ * NOTE (layering): Agent/Thread/Tele keep their BESPOKE normalizers — extra
+ * leaf-renames (agent firstSeenAt↔metadata.createdAt) or extra domain logic
+ * (thread convergenceActions/proposer-shape/participants). This generic base is
+ * exact only for the 5 leaf-preserving-except-status kinds; the idea/bug repos
+ * derive `tags` from the metadata.labels map inline at their decode boundary
+ * (cloneIdea/cloneBug — the cluster-1 array↔map asymmetry the generic flatten
+ * can't reverse).
  */
-export function fieldFromEntity(entity: unknown, fieldName: string): unknown {
-  if (entity === null || entity === undefined || typeof entity !== "object") {
-    return undefined;
+export function decodeEnvelopeToFlat<T>(raw: T): T {
+  if (raw === null || raw === undefined || typeof raw !== "object") {
+    return raw;
   }
-  const e = entity as Record<string, unknown>;
-  // Legacy-flat: a NON-NULL top-level value wins (real legacy data). A null/
-  // undefined top-level is treated as "look deeper" — some repo normalizers lift
-  // envelope-relocated fields to top-level as `null` (e.g. thread-repo's
-  // normalizeThreadShape nulls currentTurnAgentId/recipientAgentId), which would
-  // otherwise SHADOW the real value living in a partition section.
-  const top = e[fieldName];
-  if (top !== undefined && top !== null) {
-    return top;
+  const r = raw as Record<string, unknown>;
+  const asObj = (v: unknown): Record<string, unknown> =>
+    v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const flat: Record<string, unknown> = {
+    ...r,
+    ...asObj(r.metadata),
+    ...asObj(r.spec),
+    ...asObj(r.status),
+  };
+  delete flat.metadata;
+  delete flat.spec;
+  delete flat.status;
+  delete flat.phase;
+  delete flat.apiVersion;
+  delete flat.kind;
+  delete flat.name; // envelope reserved artifact (= id); not a flat domain field
+                    // (bespoke decoders that map metadata.name→a domain field, e.g.
+                    //  Turn.title, must capture it BEFORE calling this generic base)
+  const phase = phaseFromEntity(raw);
+  if (phase !== null) {
+    flat.status = phase;
   }
-  // Envelope-shape: probe partition sections in canonical order.
-  for (const section of ["metadata", "spec", "status"] as const) {
-    const sec = e[section];
-    if (sec && typeof sec === "object" && Object.prototype.hasOwnProperty.call(sec as object, fieldName)) {
-      return (sec as Record<string, unknown>)[fieldName];
-    }
+  // mission-90 W8: the cascade back-link summary lives in the K8s annotations map
+  // (metadata.annotations["ois.io/sourceThreadSummary"]); surface it as the flat
+  // domain field for spawned Task/Proposal/Idea (the flatten put `annotations` at
+  // top-level). Cross-kind cascade convention — harmless for kinds without it.
+  const annotations = flat.annotations as Record<string, unknown> | undefined;
+  if (annotations && typeof annotations === "object" && annotations["ois.io/sourceThreadSummary"] !== undefined) {
+    flat.sourceThreadSummary = annotations["ois.io/sourceThreadSummary"];
   }
-  return top; // top-level null/undefined as last resort (field genuinely absent)
-}
-
-export function arrayFieldFromEntity(entity: unknown, fieldName: string): unknown[] {
-  if (entity === null || entity === undefined || typeof entity !== "object") {
-    return [];
-  }
-  const e = entity as Record<string, unknown>;
-  // Legacy-flat: field at top-level.
-  if (Array.isArray(e[fieldName])) {
-    return [...e[fieldName]];
-  }
-  // Envelope-shape: field moved into one of the partition sections. Probe
-  // in canonical-Design order (metadata for provenance, spec for declared,
-  // status for FSM-mutated).
-  for (const section of ["metadata", "spec", "status"] as const) {
-    const sec = e[section];
-    if (sec && typeof sec === "object" && Array.isArray((sec as Record<string, unknown>)[fieldName])) {
-      return [...((sec as Record<string, unknown>)[fieldName] as unknown[])];
-    }
-  }
-  return [];
+  // mission-90 W8 (audit m2): the K8s annotations map is an envelope metadata
+  // artifact, not a flat domain field — strip it after lifting sourceThreadSummary
+  // so it doesn't leak onto the decoded shape. (Only consumer of annotations is the
+  // encode path; nothing above the membrane reads flat.annotations.)
+  delete flat.annotations;
+  return flat as T;
 }
