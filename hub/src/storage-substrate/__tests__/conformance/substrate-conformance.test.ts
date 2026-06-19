@@ -76,7 +76,7 @@ afterAll(async () => {
 
 // ─── Factory wiring (postgres returns the singleton; memory returns fresh per call) ─
 
-const memoryFactory: SubstrateFactory = () => createMemoryStorageSubstrate();
+const memoryFactory: SubstrateFactory = () => createMemoryStorageSubstrate({ rawWrites: true });
 const postgresFactory: SubstrateFactory = () => {
   if (!pgSubstrate) throw new Error("postgresFactory called before beforeAll completed");
   return pgSubstrate;

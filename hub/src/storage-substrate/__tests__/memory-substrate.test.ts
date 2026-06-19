@@ -20,7 +20,9 @@ describe("MemoryHubStorageSubstrate — per-method parity baseline", () => {
   let substrate: HubStorageSubstrate;
 
   beforeEach(() => {
-    substrate = createMemoryStorageSubstrate();
+    // mission-90 W8: raw storage — this suite tests the substrate PRIMITIVE
+    // (put/get/CAS/watch round-trip + matchesFilter) below the envelope contract.
+    substrate = createMemoryStorageSubstrate({ rawWrites: true });
   });
 
   // ── get + put ─────────────────────────────────────────────────────────────

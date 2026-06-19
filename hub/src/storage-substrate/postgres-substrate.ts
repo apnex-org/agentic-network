@@ -592,10 +592,10 @@ function traversePath(entity: Record<string, unknown>, dottedPath: string): unkn
 
 function matchesFilter(entity: Record<string, unknown>, filter: Filter, translateKey?: (bareKey: string) => string): boolean {
   for (const [rawField, value] of Object.entries(filter)) {
+    // mission-90 W8: envelope-only — read the translated envelope JSONB path; the
+    // dual-shape bare-straggler fallback is retired (W6 proved 0 bare rows).
     const envField = translateKey ? translateKey(rawField) : rawField;
-    let v = traversePath(entity, envField);
-    // dual-shape: if the envelope path missed (bare straggler row), read the bare key.
-    if (v === undefined && envField !== rawField) v = traversePath(entity, rawField);
+    const v = traversePath(entity, envField);
 
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       if (String(v) !== String(value)) return false;

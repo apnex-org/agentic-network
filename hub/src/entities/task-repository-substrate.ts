@@ -38,7 +38,7 @@ import type {
 import { taskClaimableBy } from "../state.js";
 import type { CascadeBacklink } from "./idea.js";
 import { SubstrateCounter } from "./substrate-counter.js";
-import { phaseFromEntity } from "./shape-helpers.js";
+import { phaseFromEntity, decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Task";
 const MAX_CAS_RETRIES = 50;
@@ -153,9 +153,8 @@ export class TaskRepositorySubstrate implements ITaskStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Task | null> {
-    // mission-89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback.
-    // mission-90 W4: KEEP bare fallback (sole straddle mechanism; cascade-keys NOT
-    // chokepoint-translated, W1 null-pin); DELETE at W8 (architect-ruled; W8 carry-set).
+    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). The legacy
+    // top-level cascade-key fallback is retired (W6 proved 0 bare rows live).
     const envelopeResult = await this.substrate.list<Task>(KIND, {
       filter: {
         "metadata.sourceThreadId": key.sourceThreadId,
@@ -163,15 +162,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
       },
       limit: 1,
     });
-    if (envelopeResult.items[0]) return envelopeResult.items[0];
-    const legacyResult = await this.substrate.list<Task>(KIND, {
-      filter: {
-        sourceThreadId: key.sourceThreadId,
-        sourceActionId: key.sourceActionId,
-      },
-      limit: 1,
-    });
-    return legacyResult.items[0] ?? null;
+    return envelopeResult.items[0] ? decodeEnvelopeToFlat(envelopeResult.items[0]) : null;
   }
 
   async findByIdempotencyKey(key: string): Promise<Task | null> {
@@ -363,12 +354,13 @@ export class TaskRepositorySubstrate implements ITaskStore {
   }
 
   async getTask(taskId: string): Promise<Task | null> {
-    return this.substrate.get<Task>(KIND, taskId);
+    const raw = await this.substrate.get<Task>(KIND, taskId);
+    return raw ? decodeEnvelopeToFlat(raw) : null;
   }
 
   async listTasks(): Promise<Task[]> {
     const { items } = await this.substrate.list<Task>(KIND, { limit: LIST_PREFETCH_CAP });
-    return items;
+    return items.map((t) => decodeEnvelopeToFlat(t));
   }
 
   async cancelTask(taskId: string): Promise<boolean> {

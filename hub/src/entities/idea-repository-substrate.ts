@@ -26,14 +26,17 @@ import type {
   CascadeBacklink,
 } from "./idea.js";
 import { SubstrateCounter } from "./substrate-counter.js";
-import { tagsFromEntity } from "./shape-helpers.js";
+import { tagsFromEntity, decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Idea";
 const MAX_CAS_RETRIES = 50;
 
 function cloneIdea(idea: Idea): Idea {
+  // mission-90 W8: decode envelope→flat (idea-327) at the read boundary, then
+  // derive tags from labels (the cluster-1 array↔map asymmetry the generic
+  // decode can't reverse).
   return {
-    ...idea,
+    ...decodeEnvelopeToFlat(idea),
     tags: tagsFromEntity(idea),
   };
 }
@@ -128,21 +131,10 @@ export class IdeaRepositorySubstrate implements IIdeaStore {
       },
       limit: 1,
     });
-    if (envelopeResult.items[0]) return cloneIdea(envelopeResult.items[0]);
-    // mission-90 W4: KEEP this bare fallback — cascade-keys are NOT chokepoint-
-    // translated (W1 null-pin), so it's the SOLE straddle mechanism (unlike the
-    // listMissions status branch which is chokepoint-redundant). Removing it pre-W6
-    // would risk a bug-147-class duplicate-on-missed-dedup for bare stragglers.
-    // DELETE at W8 with all dual-shape tolerance, after W6 proves zero bare rows
-    // (architect-ruled 2026-06-19; W8 carry-set).
-    const legacyResult = await this.substrate.list<Idea>(KIND, {
-      filter: {
-        sourceThreadId: key.sourceThreadId,
-        sourceActionId: key.sourceActionId,
-      },
-      limit: 1,
-    });
-    return legacyResult.items[0] ? cloneIdea(legacyResult.items[0]) : null;
+    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). The legacy
+    // top-level cascade-key fallback is retired — W6 proved 0 bare rows live and
+    // every write lands envelope (W4 encoder), so the bare path is dead.
+    return envelopeResult.items[0] ? cloneIdea(envelopeResult.items[0]) : null;
   }
 
   // ── Internal CAS retry loop (Design v1.4 getWithRevision + putIfMatch) ─────

@@ -51,6 +51,7 @@ import type {
   MessageScheduledState,
 } from "./message.js";
 import { KIND_AXES } from "./message.js";
+import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 import { assertValidNotePayload } from "../policy/note-schema.js";
 
 const KIND = "Message";
@@ -206,7 +207,9 @@ export class MessageRepositorySubstrate implements IMessageStore {
   }
 
   async getMessage(id: string): Promise<Message | null> {
-    return this.substrate.get<Message>(KIND, id);
+    // mission-90 W8: decode envelope→flat (idea-327) at the read boundary.
+    const raw = await this.substrate.get<Message>(KIND, id);
+    return raw ? decodeEnvelopeToFlat(raw) : null;
   }
 
   async findByMigrationSourceId(migrationSourceId: string): Promise<Message | null> {
@@ -214,7 +217,7 @@ export class MessageRepositorySubstrate implements IMessageStore {
       filter: { migrationSourceId },
       limit: 1,
     });
-    return items[0] ?? null;
+    return items[0] ? decodeEnvelopeToFlat(items[0]) : null;
   }
 
   async listMessages(query: MessageQuery): Promise<Message[]> {
@@ -233,7 +236,9 @@ export class MessageRepositorySubstrate implements IMessageStore {
       filter: { threadId },
       limit: LIST_PREFETCH_CAP,
     });
+    // mission-90 W8: decode envelope→flat BEFORE the client-side sort/filter.
     return items
+      .map((m) => decodeEnvelopeToFlat(m))
       .sort((a, b) => (a.sequenceInThread ?? 0) - (b.sequenceInThread ?? 0))
       .filter(m => matchesAdditionalFilters(m, query));
   }
@@ -253,7 +258,7 @@ export class MessageRepositorySubstrate implements IMessageStore {
       sort: [{ field: "id", order: "asc" }],
       limit: LIST_PREFETCH_CAP,
     });
-    return items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return items.map((m) => decodeEnvelopeToFlat(m)).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   /**
@@ -285,6 +290,7 @@ export class MessageRepositorySubstrate implements IMessageStore {
       limit: opts.limit,
     });
     return items
+      .map((m) => decodeEnvelopeToFlat(m))
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       .slice(0, opts.limit);
   }

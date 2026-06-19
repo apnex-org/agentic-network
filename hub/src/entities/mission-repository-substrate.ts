@@ -26,6 +26,7 @@
  */
 
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
+import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 import type { ITaskStore, EntityProvenance } from "../state.js";
 import type { IIdeaStore, CascadeBacklink } from "./idea.js";
 import type {
@@ -145,9 +146,8 @@ export class MissionRepositorySubstrate implements IMissionStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Mission | null> {
-    // mission-89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback.
-    // mission-90 W4: KEEP bare fallback (sole straddle mechanism; cascade-keys NOT
-    // chokepoint-translated, W1 null-pin); DELETE at W8 (architect-ruled; W8 carry-set).
+    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). The legacy
+    // top-level cascade-key fallback is retired (W6 proved 0 bare rows live).
     const envelopeResult = await this.substrate.list<Mission>(KIND, {
       filter: {
         "metadata.sourceThreadId": key.sourceThreadId,
@@ -155,15 +155,7 @@ export class MissionRepositorySubstrate implements IMissionStore {
       },
       limit: 1,
     });
-    if (envelopeResult.items[0]) return this.hydrate(envelopeResult.items[0]);
-    const legacyResult = await this.substrate.list<Mission>(KIND, {
-      filter: {
-        sourceThreadId: key.sourceThreadId,
-        sourceActionId: key.sourceActionId,
-      },
-      limit: 1,
-    });
-    return legacyResult.items[0] ? this.hydrate(legacyResult.items[0]) : null;
+    return envelopeResult.items[0] ? this.hydrate(envelopeResult.items[0]) : null;
   }
 
   async getMission(missionId: string): Promise<Mission | null> {
@@ -172,38 +164,12 @@ export class MissionRepositorySubstrate implements IMissionStore {
   }
 
   async listMissions(statusFilter?: MissionStatus): Promise<Mission[]> {
-    // mission-89 Phase 4 (bug-138 systemic): no statusFilter → single fetch.
-    // With statusFilter: envelope (status.phase) + legacy (status) UNION via 2
-    // queries — defense-in-depth across the dual-shape data window per W9 Q4
-    // refinement (post-W11 production rows envelope; some test fixtures legacy).
-    if (!statusFilter) {
-      const { items } = await this.substrate.list<Mission>(KIND, { limit: 500 });
-      return Promise.all(items.map((m) => this.hydrate(m)));
-    }
-    const envelopeResult = await this.substrate.list<Mission>(KIND, {
-      filter: { "status.phase": statusFilter },
-      limit: 500,
-    });
-    // mission-90 W2: this legacy bare-`status` branch is NEUTRALIZED by the
-    // substrate.list translate-point — `status` now rewrites to `status.phase`,
-    // so this query is byte-identical to envelopeResult above. Left in place
-    // (harmless duplicate) rather than coupling the translate-point to this
-    // dual-shape internal; redundant once W6 re-migration converts all rows to
-    // envelope (W2 only reaches prod batched WITH W6). DELETE at W8 (dual-shape /
-    // TOLERANT retirement wave) — architect-tracked.
-    const legacyResult = await this.substrate.list<Mission>(KIND, {
-      filter: { status: statusFilter },
-      limit: 500,
-    });
-    // De-dupe by id (envelope-shape rows would NOT match legacy filter, but
-    // mixed-shape rows might match both; preserve envelope-version on dup).
-    const seen = new Set<string>();
-    const items: Mission[] = [];
-    for (const m of [...envelopeResult.items, ...legacyResult.items]) {
-      if (seen.has(m.id)) continue;
-      seen.add(m.id);
-      items.push(m);
-    }
+    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). Query
+    // status.phase directly; the legacy bare-`status` UNION + dedupe (the
+    // dual-shape data window) is retired — W6 proved all rows envelope.
+    const { items } = statusFilter
+      ? await this.substrate.list<Mission>(KIND, { filter: { "status.phase": statusFilter }, limit: 500 })
+      : await this.substrate.list<Mission>(KIND, { limit: 500 });
     return Promise.all(items.map((m) => this.hydrate(m)));
   }
 
@@ -329,8 +295,9 @@ export class MissionRepositorySubstrate implements IMissionStore {
       this.taskStore.listTasks(),
       this.ideaStore.listIdeas(),
     ]);
+    // mission-90 W8: decode envelope→flat (idea-327) at the read boundary.
     return {
-      ...stored,
+      ...decodeEnvelopeToFlat(stored),
       tasks: tasks.filter((t) => t.correlationId === stored.id).map((t) => t.id),
       ideas: ideas.filter((i) => i.missionId === stored.id).map((i) => i.id),
     };

@@ -27,6 +27,7 @@
  */
 
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
+import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 import type {
   IProposalStore,
   Proposal,
@@ -113,11 +114,13 @@ export class ProposalRepositorySubstrate implements IProposalStore {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
       limit: 500,
     });
-    return items;
+    // mission-90 W8: decode envelope→flat (idea-327) at the read boundary.
+    return items.map((p) => decodeEnvelopeToFlat(p));
   }
 
   async getProposal(proposalId: string): Promise<Proposal | null> {
-    return this.substrate.get<Proposal>(KIND, proposalId);
+    const p = await this.substrate.get<Proposal>(KIND, proposalId);
+    return p ? decodeEnvelopeToFlat(p) : null;
   }
 
   async reviewProposal(
@@ -152,9 +155,8 @@ export class ProposalRepositorySubstrate implements IProposalStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Proposal | null> {
-    // mission-89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback.
-    // mission-90 W4: KEEP bare fallback (sole straddle mechanism; cascade-keys NOT
-    // chokepoint-translated, W1 null-pin); DELETE at W8 (architect-ruled; W8 carry-set).
+    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). The legacy
+    // top-level cascade-key fallback is retired (W6 proved 0 bare rows live).
     const envelopeResult = await this.substrate.list<Proposal>(KIND, {
       filter: {
         "metadata.sourceThreadId": key.sourceThreadId,
@@ -162,15 +164,9 @@ export class ProposalRepositorySubstrate implements IProposalStore {
       },
       limit: 1,
     });
-    if (envelopeResult.items[0]) return envelopeResult.items[0];
-    const legacyResult = await this.substrate.list<Proposal>(KIND, {
-      filter: {
-        sourceThreadId: key.sourceThreadId,
-        sourceActionId: key.sourceActionId,
-      },
-      limit: 1,
-    });
-    return legacyResult.items[0] ?? null;
+    return envelopeResult.items[0]
+      ? decodeEnvelopeToFlat(envelopeResult.items[0])
+      : null;
   }
 
   async setScaffoldResult(proposalId: string, result: ScaffoldResult): Promise<boolean> {
