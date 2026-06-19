@@ -26,19 +26,20 @@ import type {
   CascadeBacklink,
 } from "./idea.js";
 import { SubstrateCounter } from "./substrate-counter.js";
-import { tagsFromEntity, decodeEnvelopeToFlat } from "./shape-helpers.js";
+import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Idea";
 const MAX_CAS_RETRIES = 50;
 
 function cloneIdea(idea: Idea): Idea {
-  // mission-90 W8: decode envelope→flat (idea-327) at the read boundary, then
-  // derive tags from labels (the cluster-1 array↔map asymmetry the generic
-  // decode can't reverse).
-  return {
-    ...decodeEnvelopeToFlat(idea),
-    tags: tagsFromEntity(idea),
-  };
+  // mission-90 W8: decode envelope→flat (idea-327); derive `tags` from the
+  // metadata.labels map (cluster-1 array↔map asymmetry the generic decode can't
+  // reverse) and drop the raw labels artifact. Used at both the read boundary AND
+  // the CAS path, so the legacy-flat `tags` array round-trips through the write-encoder.
+  const flat = decodeEnvelopeToFlat(idea as unknown as Record<string, unknown>) as Record<string, unknown>;
+  flat.tags = Object.keys((flat.labels as Record<string, string> | undefined) ?? {});
+  delete flat.labels;
+  return flat as unknown as Idea;
 }
 
 export class IdeaRepositorySubstrate implements IIdeaStore {
@@ -147,7 +148,7 @@ export class IdeaRepositorySubstrate implements IIdeaStore {
       const existing = await this.substrate.getWithRevision<Idea>(KIND, ideaId);
       if (!existing) throw new Error(`Idea not found: ${ideaId}`);
 
-      const next = transform({ ...existing.entity });
+      const next = transform(cloneIdea(existing.entity)); // mission-90 W8: flat CAS
       const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
       if (result.ok) {
         console.log(`[IdeaRepositorySubstrate] Idea updated: ${ideaId} → status=${next.status}`);

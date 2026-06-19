@@ -190,5 +190,13 @@ export function decodeEnvelopeToFlat<T>(raw: T): T {
   if (phase !== null) {
     flat.status = phase;
   }
+  // mission-90 W8: the cascade back-link summary lives in the K8s annotations map
+  // (metadata.annotations["ois.io/sourceThreadSummary"]); surface it as the flat
+  // domain field for spawned Task/Proposal/Idea (the flatten put `annotations` at
+  // top-level). Cross-kind cascade convention — harmless for kinds without it.
+  const annotations = flat.annotations as Record<string, unknown> | undefined;
+  if (annotations && typeof annotations === "object" && annotations["ois.io/sourceThreadSummary"] !== undefined) {
+    flat.sourceThreadSummary = annotations["ois.io/sourceThreadSummary"];
+  }
   return flat as T;
 }

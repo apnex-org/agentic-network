@@ -192,7 +192,7 @@ export class ProposalRepositorySubstrate implements IProposalStore {
       if (!existing) return false;
       let next: Proposal;
       try {
-        next = transform({ ...existing.entity });
+        next = transform(decodeEnvelopeToFlat(existing.entity)); // mission-90 W8: flat CAS
       } catch (err) {
         if (err instanceof TransitionRejected) return false;
         throw err;

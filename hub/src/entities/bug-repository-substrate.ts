@@ -33,20 +33,21 @@ import type {
   CascadeBacklink,
 } from "./bug.js";
 import { SubstrateCounter } from "./substrate-counter.js";
-import { tagsFromEntity, arrayFieldFromEntity, decodeEnvelopeToFlat } from "./shape-helpers.js";
+import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Bug";
 const MAX_CAS_RETRIES = 50;
 
 function cloneBug(bug: Bug): Bug {
-  // mission-90 W8: decode envelope→flat (idea-327) at the read boundary, then
-  // derive tags + the relocated status arrays.
-  return {
-    ...decodeEnvelopeToFlat(bug),
-    tags: tagsFromEntity(bug),
-    linkedTaskIds: arrayFieldFromEntity(bug, "linkedTaskIds") as string[],
-    fixCommits: arrayFieldFromEntity(bug, "fixCommits") as string[],
-  };
+  // mission-90 W8: decode envelope→flat (idea-327); derive `tags` from metadata.labels
+  // (drop the raw artifact) + ensure the relocated status arrays (already flattened by
+  // the generic decode) are present. Used at the read boundary AND the CAS path.
+  const flat = decodeEnvelopeToFlat(bug as unknown as Record<string, unknown>) as Record<string, unknown>;
+  flat.tags = Object.keys((flat.labels as Record<string, string> | undefined) ?? {});
+  delete flat.labels;
+  flat.linkedTaskIds = (flat.linkedTaskIds as string[] | undefined) ?? [];
+  flat.fixCommits = (flat.fixCommits as string[] | undefined) ?? [];
+  return flat as unknown as Bug;
 }
 
 export class BugRepositorySubstrate implements IBugStore {
@@ -134,15 +135,17 @@ export class BugRepositorySubstrate implements IBugStore {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
     });
 
+    // mission-90 W8: decode FIRST, then filter on the flat `tags` array (was a raw
+    // tagsFromEntity read on the envelope items before the clone).
     return items
+      .map(cloneBug)
       .filter(bug => {
         if (filter?.tags && filter.tags.length > 0) {
           const tagSet = new Set(filter.tags);
-          if (!tagsFromEntity(bug).some(t => tagSet.has(t))) return false;
+          if (!bug.tags.some(t => tagSet.has(t))) return false;
         }
         return true;
-      })
-      .map(cloneBug);
+      });
   }
 
   async updateBug(
@@ -232,7 +235,7 @@ export class BugRepositorySubstrate implements IBugStore {
       const current = await this.substrate.get<Bug>(KIND, bugId);
       if (current === null) throw new Error(`Bug not found: ${bugId}`);
 
-      const next = transform({ ...current });
+      const next = transform(cloneBug(current)); // mission-90 W8: flat CAS
       try {
         // Spike-quality simple put (substrate-API per-row CAS extension is
         // W4.x territory). W5+ may extend substrate-API to expose per-row
