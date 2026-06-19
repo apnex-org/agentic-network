@@ -14,6 +14,7 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import { resolveCreatedBy } from "./caller-identity.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -51,9 +52,15 @@ async function listTele(args: Record<string, unknown>, ctx: IPolicyContext): Pro
   const includeRetired = (args.includeRetired as boolean | undefined) ?? false;
 
   const all = await ctx.stores.tele.listTele();
+  // mission-90 W3 (Design §2.4): the include-flags guard is a BOOLEAN gate (not
+  // status-eq push-down), so it must read the envelope phase directly —
+  // `t.status === "superseded"` compared the {phase,...} status object to a
+  // string on envelope rows → always false → superseded/retired AUDIT views
+  // silently showed everything (envelope-blind). phaseFromEntity reads both shapes.
   const filtered = all.filter((t) => {
-    if (t.status === "superseded") return includeSuperseded;
-    if (t.status === "retired") return includeRetired;
+    const phase = phaseFromEntity(t);
+    if (phase === "superseded") return includeSuperseded;
+    if (phase === "retired") return includeRetired;
     return true; // active
   });
 

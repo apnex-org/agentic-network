@@ -139,3 +139,30 @@ Architect reviewed #314, ruled: **A HOLD-for-inventory-completion** (renameMap =
 **Deliberate exclusions (documented in oracle):** cascade-keys sourceThreadId/sourceActionId/sourceIdeaId on Bug/Idea/Mission/Proposal/Task (repo dual-path + W1 null-pin; W4 reconciles); Notification.recipientAgentId (phantom, bug-148); tags (client-side array-contains). 
 
 **Verification:** W1 11/11 + W2 6/6 green; tsc clean; full suite green.
+
+### ✅ W2 COMPLETION (2026-06-19) — MERGED @ `483cbf4` (#314)
+
+Architect reviewed + merged W2 (mechanism + complete relocation inventory + sentinel-probe/classification oracle + 3 W6-gate indexes + B/C comments). **bug-147 RESOLVED** (fixCommit 483cbf4; deploys at the W6 batch). bug-148 (Notification phantom) + bug-149 (non-hot index-parity) tracked as follow-ons; cascade-key dual-path reconciliation carried to W4. Design §2.1/§2.6 amended: renameMap = complete field-movement authority (49/21, renames + relocations). W2 = DONE. Next: W3 (task-417, Layer-B FieldAccessor sweep).
+
+---
+
+## W3 — Layer-B policy FieldAccessor envelope sweep (task-417; branch `agent-greg/m90-w3-layerb-accessor-sweep`)
+
+### Slice 1 — implement (2026-06-19)
+
+FSM-bypassed (bug-146); thread-dispatch from the task-417 directive; develop against main @ 483cbf4. Closes the Layer-B half of bug-138: load-all-then-filter tools (`list-filters.ts` applyQueryFilter/matchField + per-policy FieldAccessors) never hit the W2 substrate translate-point, so a `status:'open'` filter vs an envelope accessor returning `{phase:'open'}` silently misses. Fix-shape (§2.5): the ACCESSOR BODY reads envelope-aware (`phaseFromEntity`), NOT key-translation — matchField's bare-key lookup stays unchanged; do NOT consume getFieldTranslation at Layer-B (A6).
+
+**Shipped:**
+- `shape-helpers.ts` — NEW `fieldFromEntity(entity, field)` envelope-tolerant scalar/object reader (sibling of `arrayFieldFromEntity`/`phaseFromEntity`): non-null top-level wins (legacy), else probes metadata→spec→status. **Null-shadow tolerance:** a null/undefined top-level is treated as "look deeper" — repo normalizers (thread-repo's `normalizeThreadShape`) lift relocated fields to top-level `null`, which would otherwise shadow the section value.
+- `idea-policy.ts` / `task-policy.ts` / `thread-policy.ts` — FieldAccessor BODIES envelope-aware: `status`→`phaseFromEntity`; every other moved field→`fieldFromEntity` (Idea `missionId`→status.missionId non-FSM; Task `assignedAgentId`→spec; Thread `currentTurnAgentId`→status, recovered via null-skip); `createdBy.*` via `fieldFromEntity(createdBy)`. Task = the 9th broken tool.
+- `proposal-policy.ts` — `listProposals` PUSH-DOWN: `getProposals(status)` (repo substrate.list → W2 translate-point) replaces in-process `p.status===status`; `_ois_query_unmatched` preserved (full-count fetch only when filtered-empty).
+- `tele-policy.ts` — superseded/retired AUDIT-view boolean guard reads `phaseFromEntity` (was `t.status===…` envelope-blind).
+- get_pending_actions: confirmed alignment — its list path is a repo push-down (`listForAgent({state})` → W2 translates state→status.phase); no change.
+
+**Verification:** NEW `layerb-accessor-sweep-w3.test.ts` (testcontainers, REAL policy path via PolicyRouter.handle) — list_ideas (status + missionId + sourceThreadId + combined), list_tasks (status + assignedAgentId), list_threads (status + currentTurnAgentId), list_proposals (push-down + _ois_query_unmatched), list_tele (audit-views), get_pending_actions (repo push-down). + `shape-helpers.test.ts` fieldFromEntity unit cases (legacy / each section / null-shadow / precedence / absent). Full hub suite **155 files / 1940 passed / 7 skipped / 0 failed**, tsc clean.
+
+**Self-review (code-review, 2 finder angles) — 1 DECISION-REQUIRED surfaced (W3/W4 boundary):**
+- **Thread `routingMode` is NOT Layer-B-recoverable** — `normalizeThreadShape` force-defaults a NON-NULL top-level `routingMode` via `normalizeRoutingMode(raw.routingMode)`, and `raw.routingMode` is undefined on envelope rows (value at `spec.routingMode`) → yields "unicast" for every envelope thread. fieldFromEntity's non-null-top-level rule returns that default (same as pre-W3 `t.routingMode` — **NO regression**), and a Layer-B accessor can't recover it without duplicating the repo's `normalizeRoutingMode` + spec read. **Clean fix = `normalizeThreadShape` reads `spec.routingMode` (repo = W4).** Surfaced to architect as a W4-carry (the null-lifted fields currentTurnAgentId/recipientAgentId ARE recovered via fieldFromEntity null-skip; routingMode's force-default is the wrong-source repo bug).
+- Minor (not blocking): the `createdBy` accessor triplet repeats across 3 policies (pre-existing; candidate shared helper); test seeds envelope-only (legacy-flat branch unit-tested, not wire-tested); get_pending_actions wire-flow confirms the repo push-down (handler lives in system-policy, not registered in the test rig).
+
+**Status:** PR-open, awaiting architect review. routingMode finding flagged DECISION-REQUIRED.

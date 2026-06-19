@@ -14,7 +14,7 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
-import type { ProposedExecutionPlan, ScaffoldResult } from "../state.js";
+import type { ProposedExecutionPlan, ScaffoldResult, ProposalStatus } from "../state.js";
 import { callerLabels } from "./labels.js";
 import { resolveCreatedBy } from "./caller-identity.js";
 import { dispatchProposalSubmitted } from "./dispatch-helpers.js";
@@ -255,15 +255,20 @@ async function createProposal(args: Record<string, unknown>, ctx: IPolicyContext
 }
 
 async function listProposals(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  const status = args.status as string | undefined;
+  const status = args.status as ProposalStatus | undefined;
   const hasFilter = status != null;
-  // Fetch full collection so `_ois_query_unmatched` can compare pre- vs
-  // post-filter counts. CP2 C5 (task-307).
-  const all = await ctx.stores.proposal.getProposals();
-  const totalPreFilter = all.length;
-  const filtered = hasFilter ? all.filter((p) => p.status === status) : all;
+  // mission-90 W3 (Design §2.4): PUSH-DOWN the status filter to the repo's
+  // substrate.list — the W2 translate-point rewrites bare `status` → the envelope
+  // path (status.phase). Replaces the envelope-blind in-process `p.status===status`
+  // (which compared a string to the {phase,...} status object on envelope rows).
+  const filtered = await ctx.stores.proposal.getProposals(status);
+  // _ois_query_unmatched (CP2 C5 / task-307): only fetch the full count when the
+  // filtered set is empty — avoids a second query in the common matched case.
+  const totalForUnmatched = hasFilter && filtered.length === 0
+    ? (await ctx.stores.proposal.getProposals()).length
+    : filtered.length;
   const page = paginate(filtered, args);
-  const queryUnmatched = hasFilter && page.count === 0 && totalPreFilter > 0;
+  const queryUnmatched = hasFilter && page.count === 0 && totalForUnmatched > 0;
   return {
     content: [{
       type: "text" as const,
