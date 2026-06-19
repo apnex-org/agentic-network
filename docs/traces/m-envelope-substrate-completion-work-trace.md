@@ -282,3 +282,36 @@ Director authorized read-only IAP-SSH (option b). Acquired a fresh read-only sna
 - **Strict-flip gate MET on real data** (0 bare outside exemptions: MigrationCursor 22 by-design; SchemaDef 0 → W1 boot-put fix holds).
 
 **Status:** runKind offset-skip fix + empirical addendum pushed to #319 (360d30b). Full suite green (1960). Awaiting architect review + the Director's downtime-mitigation + cutover-go decision.
+
+---
+
+## W7 — post-cutover validation (task-420 cont.; branch `agent-greg/m90-w7-post-cutover-validation`)
+
+### Slice 1 — live validation + bug-158 catch/fix + docs (2026-06-19)
+
+Post-cutover validation on the LIVE prod W6-strict substrate. Full report: `docs/reviews/m90-w7-post-cutover-validation.md`.
+
+- **9 list-tools parity-vs-oracle (live):** 8/9 envelope-correct (ideas 217=217, bugs-open 58=58, bugs-major correct, threads-active 0=0, tele 0=0, + tasks/proposals/audit paths). **list_missions BROKEN → bug-158 FILED + FIXED:** MISSION_ACCESSORS read raw `m.status` (W3 accessor-sweep gap; every Mission field relocates → `m.status` was the {phase} object → 0 matches for ALL statuses vs oracle's 90 missions). Strict cutover exposed it (tolerant data masked it). Fixed (mirror IDEA_ACCESSORS) + regression test (layerb-accessor-sweep-w3.test.ts, 7 green) + full suite green (1961). CODE-only → needs a redeploy (default: container-recreate off merged-main, no migration).
+- **bug-152 read-side LIVE-CONFIRMED:** get_thread(thread-658) + get_tele(tele-3) decode envelope rows correctly (status→string, all fields). Write-side (reply/retire gates) covered by the live decoder + W4/W5 tests (full live reply needs two-party turns; 0 active threads on prod). bug-151 sweeper-fix live; 0 scheduled-pending backlog (empirical) → covered by the W4 test.
+- **Output-shape drift → idea-327:** get_X decode to flat; list_X return raw envelope (inconsistent consumer-contract). Follow-on idea filed; per-tool enumeration in the W7 report = its input.
+- **Ledger-reconciliation parity (idea-325):** POST-REDEPLOY closeout (list_missions is its core read; broken live until bug-158 redeploys).
+- **Docs:** runbook folded bug-156/157 + the ~4m46s downtime retro; bug-138/143 closure notes in the report.
+
+**Status:** W7 PR open (bug-158 fix + W7 report + runbook fold + idea-327). Per architect: bug-158 folds into the W7 PR (no off-branch fast-track); redeploy held for Director; ledger parity + stability-confirmed = post-redeploy. Rollback dump + dd61d96 retained.
+
+### Slice 2 — bug-158 FAST-TRACK (Director-ruled) + code-only redeploy + post-redeploy validation (2026-06-19)
+
+**Director REVERSED the fold-into-W7 plan → FAST-TRACK isolated hotfix.** Executed the architect's 5-step plan:
+
+1. **ISOLATE:** fresh branch `agent-greg/bug-158-mission-accessors` off main; cherry-picked ONLY the bug-158 commit (mission-policy.ts MISSION_ACCESSORS + layerb-accessor-sweep-w3 regression test; +53/-12, 2 files). tsc clean; W3 suite 7 green. **PR #322** opened.
+2. **MERGE:** architect peer-approved (mirrors IDEA_ACCESSORS exactly) + merged (squash `9f579f6`).
+3. **CODE-ONLY REDEPLOY off merged-main:** verified checkout content-identical to merged-main → `CI=1 OIS_ENV=prod build-hub.sh` → AR `hub:latest` = **`sha256:edc4792…`** (W6+bug-158). Confirmed `hub-image` metadata = the `:latest` TAG (no metadata edit). Recreate via the **stdin-piped `sudo bash -s`** COS-safe primitive (bug-156 lesson — no `--command` nesting, no Perl-grep): `docker pull :latest` → stop/rm `ois-hub-prod` → `google_metadata_script_runner startup`. Comms-dark <1min; NO migration / reset / shadow-gate (data already all-envelope). Boot clean: STRICT, reconciler 23/23 (0 failures), 71 tools, relay up, 0 errors.
+4. **LIVE-VERIFY (the gate) PASSED:** `list_missions` via MCP = oracle byte-for-byte — active 1 (mission-90) / completed 50 / abandoned 39 / total 90 (pre-fix: 0 for all, `_ois_query_unmatched`). **bug-158 closed live; 9/9 list-tools envelope-correct.**
+5. **REBASE:** `#321` rebased on main (`--onto origin/main`, dropping the merged bug-158 commit) → W7 PR now carries docs + report + idea-327 only.
+
+- **Rollback-target CORRECTION (surfaced pre-window; architect AFFIRMED):** a code-only redeploy rolls back to the **current running image `f02a9bb`** (re-tag → recreate; zero data risk), NOT pre-cutover `dd61d96` (bare-shape-expecting → unsafe alone vs migrated data; valid only in a full image+`pg_restore` unwind). No unwind intended.
+- **Ledger-reconciliation parity (idea-325) — CONFIRMED LIVE post-redeploy:** Mission 1/50/39/90, Idea-open 218, Bug-open 59, Task working 4 / cancelled 116 — all = oracle. idea-325 unblocked.
+- **bug-138 FULLY closed on the live substrate** (reads W2/W3 + writes W4 + reconciler W5 + cutover W6 + the bug-158 residual W7).
+- **Docs:** runbook gained the **CODE-ONLY redeploy class** (build→recreate→live-verify; no data machinery) + rollback-target precision + the COS-safe `sudo bash -s` primitive; W7 report updated to post-redeploy reality (9/9 + ledger parity tables).
+
+**Status:** redeploy live + verified; W7 PR (#321) rebased + updated; pinging architect on the W7 PR. **stability-confirmed (architect's call)** pending: W7 PR merge + a brief live-stability soak. Rollback assets ALL retained until then: primary `f02a9bb`, deeper `dd61d96` + `/tmp/m90-cutover-rollback.dump`.
