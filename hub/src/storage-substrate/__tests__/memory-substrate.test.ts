@@ -128,16 +128,18 @@ describe("MemoryHubStorageSubstrate — per-method parity baseline", () => {
     });
 
     it("filter by scalar field equality", async () => {
-      await substrate.put("Bug", { id: "bug-10", status: "open" });
-      await substrate.put("Bug", { id: "bug-11", status: "resolved" });
+      // mission-90 W8: envelope-shaped fixtures — matchesFilter translates the bare
+      // `status` filter to the status.phase envelope path (envelope-only substrate).
+      await substrate.put("Bug", { id: "bug-10", status: { phase: "open" } });
+      await substrate.put("Bug", { id: "bug-11", status: { phase: "resolved" } });
       const r = await substrate.list<{ id: string }>("Bug", { filter: { status: "open" } });
       expect(r.items.map(i => i.id)).toEqual(["bug-10"]);
     });
 
     it("filter $in operator", async () => {
-      await substrate.put("Bug", { id: "bug-12", status: "open" });
-      await substrate.put("Bug", { id: "bug-13", status: "resolved" });
-      await substrate.put("Bug", { id: "bug-14", status: "wontfix" });
+      await substrate.put("Bug", { id: "bug-12", status: { phase: "open" } });
+      await substrate.put("Bug", { id: "bug-13", status: { phase: "resolved" } });
+      await substrate.put("Bug", { id: "bug-14", status: { phase: "wontfix" } });
       const r = await substrate.list<{ id: string }>("Bug", {
         filter: { status: { $in: ["open", "resolved"] } },
       });
@@ -325,8 +327,8 @@ describe("MemoryHubStorageSubstrate — per-method parity baseline", () => {
       })();
 
       await new Promise(r => setImmediate(r));
-      await substrate.put("Bug", { id: "bug-24", status: "resolved" });
-      await substrate.put("Bug", { id: "bug-25", status: "open" });
+      await substrate.put("Bug", { id: "bug-24", status: { phase: "resolved" } });
+      await substrate.put("Bug", { id: "bug-25", status: { phase: "open" } });
       await consumer;
 
       expect(events).toHaveLength(1);

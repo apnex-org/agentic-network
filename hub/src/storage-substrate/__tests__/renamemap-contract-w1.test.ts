@@ -98,7 +98,7 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
     entityRef: "spec.entityRef",
   },
   Proposal: { status: "status.phase" },
-  Task: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey" },
+  Task: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt" },
   Tele: { status: "status.phase", name: "metadata.name" },
   Thread: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId" },
   Turn: { status: "status.phase", title: "metadata.name" },

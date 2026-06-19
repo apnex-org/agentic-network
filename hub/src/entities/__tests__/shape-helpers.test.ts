@@ -179,13 +179,16 @@ describe("arrayFieldFromEntity — envelope metadata section (hypothetical futur
   });
 });
 
-describe("arrayFieldFromEntity — probe order (top-level wins over envelope)", () => {
-  it("returns top-level when both present (legacy-flat takes precedence)", () => {
+describe("arrayFieldFromEntity — probe order (envelope section wins; mission-90 W8)", () => {
+  it("returns the envelope section when both present (envelope-first precedence)", () => {
+    // mission-90 W8: the helper probes the envelope partition FIRST (top-level is a
+    // graceful fallback for reserved/non-relocated fields), inverting the pre-W8
+    // legacy-first precedence — the substrate is envelope-only.
     const mixed = {
       linkedTaskIds: ["legacy-1"],
       status: { linkedTaskIds: ["envelope-1"] },
     };
-    expect(arrayFieldFromEntity(mixed, "linkedTaskIds")).toEqual(["legacy-1"]);
+    expect(arrayFieldFromEntity(mixed, "linkedTaskIds")).toEqual(["envelope-1"]);
   });
 
   it("returns metadata when top-level absent, before spec/status", () => {
@@ -258,8 +261,10 @@ describe("fieldFromEntity — Layer-B accessor scalar reader", () => {
     expect(fieldFromEntity({ currentTurnAgentId: null, status: { currentTurnAgentId: "eng-9" } }, "currentTurnAgentId")).toBe("eng-9");
   });
 
-  it("non-null top-level wins over a section (legacy data precedence)", () => {
-    expect(fieldFromEntity({ name: "legacy", metadata: { name: "envelope" } }, "name")).toBe("legacy");
+  it("envelope section wins over a top-level value (mission-90 W8 envelope-first precedence)", () => {
+    // mission-90 W8: partition-first probe — the substrate is envelope-only, so the
+    // metadata/spec/status section is authoritative over any stray top-level value.
+    expect(fieldFromEntity({ name: "legacy", metadata: { name: "envelope" } }, "name")).toBe("envelope");
   });
 
   it("absent field: returns undefined; non-object entity: returns undefined", () => {
