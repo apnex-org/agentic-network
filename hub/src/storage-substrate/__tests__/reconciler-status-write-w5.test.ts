@@ -189,6 +189,38 @@ describe("W5 reconciler status-write (converge-then-stop + spec-equality guard)"
     expect(row?.status.appliedVersion, "appliedVersion unchanged — a failed attempt is not 'applied'").toBe(1);
     // Boot-failure posture WARN: the runtime apply failure is WARNed, the loop survives.
     expect(logs.some((l) => /WARN .*runtime apply failed for kind=W5Fail/.test(l))).toBe(true);
+
+    // BOUNDED-CONVERGENCE (set-on-success-only): a PERSISTENT failure isn't cached,
+    // so its 'failed'-write echo re-reconciles ONCE more → same error → material-guard
+    // sees no change → no put → STOPS. Verify it stays bounded (≤1 echo): ≤2 reconciles
+    // and exactly 1 status-write (the second reconcile must NOT re-write).
+    await sleep(500); // settle window — an unbounded loop would reveal itself here
+    expect(logs.filter((l) => /re-reconciling kind=W5Fail/.test(l)).length,
+      "persistent failure converges — bounded reconciles (1 real + ≤1 echo retry)").toBeLessThanOrEqual(2);
+    expect(logs.filter((l) => /status-write kind=W5Fail/.test(l)).length,
+      "exactly one 'failed' write — the echo retry must not re-write").toBe(1);
+  }, OP_TIMEOUT);
+
+  it("status-write on INDEX-DDL failure (F1): a failed CREATE INDEX surfaces phase='failed'+reconcileError, and the Hub still boots (isolation)", async () => {
+    const logs: string[] = [];
+    // A malformed index NAME (spaces) → `CREATE INDEX ... w5idx bad name ...` →
+    // SQL syntax error → applySchemaIndexes catches + COLLECTS it (bug-123
+    // isolation: no throw, boot continues). Pre-F1 this was swallowed and the
+    // status falsely reported 'applied' — a silent failure (tele-7).
+    const r = reconciler([defOf("W5IdxFail", 1, { indexes: [{ name: "w5idx bad name", fields: ["foo"] }] })], logs);
+    await r.start(); // MUST NOT throw — index-DDL failure is isolated; Hub boots
+    await pollUntil(async () => {
+      const row = await substrate.get<Row>("SchemaDef", "W5IdxFail");
+      return row?.status.phase === "failed";
+    });
+
+    const row = await substrate.get<Row>("SchemaDef", "W5IdxFail");
+    expect(row?.status.phase, "index-DDL failure surfaced on the row, not a silent 'applied'").toBe("failed");
+    expect(typeof row?.status.reconcileError).toBe("string");
+    expect(String(row?.status.reconcileError)).toMatch(/index/i);
+    // Isolation preserved: boot COMPLETED (Hub started) despite the failed index.
+    expect(logs.some((l) => /boot — initial SchemaDef application complete/.test(l)),
+      "Hub booted despite the index-DDL failure (bug-123 isolation held)").toBe(true);
   }, OP_TIMEOUT);
 
   it("restart-survival: status re-converges across 3 restart cycles (not lost to the boot provisional clobber)", async () => {

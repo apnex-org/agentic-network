@@ -51,6 +51,12 @@ export function createSchemaReconciler(
   return new SchemaReconciler(substrate, connectionString, opts);
 }
 
+/** mission-90 W5 (F1): render collected index-DDL failures into a single
+ *  reconcileError string for the SchemaDef row's status. */
+function summarizeIndexFailures(failures: Array<{ name: string; error: string }>): string {
+  return `index reconcile failed: ${failures.map((f) => `${f.name}: ${f.error}`).join("; ")}`;
+}
+
 export class SchemaReconciler {
   private readonly pool: pg.Pool;
   private readonly log: (msg: string) => void;
@@ -81,8 +87,11 @@ export class SchemaReconciler {
    * substrate.put bumps resource_version unconditionally) — a literal per-cycle
    * write would self-trigger forever. The guard skips re-reconcile when the spec
    * is unchanged vs this cache, so a status-write echo (status differs, spec does
-   * NOT) is a no-op → converge-then-stop. Populated at boot + on each runtime
-   * spec-change; Hub restart rebuilds at boot.
+   * NOT) is a no-op → converge-then-stop. SET-ON-SUCCESS-ONLY: a kind's signature
+   * is cached only after a fully-successful reconcile (no index-DDL failures), so
+   * the guard skips only when the LAST reconcile of this exact spec SUCCEEDED — a
+   * previously-FAILED spec is never cached and thus retries (bounded auto-retry of
+   * a transient index failure; F1). Hub restart rebuilds at boot.
    */
   private readonly specCache = new Map<string, string>();
 
@@ -157,18 +166,27 @@ export class SchemaReconciler {
         // and would clobber W5's status-writes. W5's status-write MERGES into this
         // row shape (Design §4 W5 row).
         await this.substrate.put("SchemaDef", this.toEnvelopeRow(def));
-        await this.applySchemaIndexes(def);
-        // mission-90 W5: seed the spec-equality cache (so the first runtime echo
-        // for an unchanged kind is skipped) + write the REAL reconcile outcome.
-        // On success the provisional boot-put stamp already matches → the
-        // material-guard makes this a no-op (no boot write, no boot NOTIFY-echo —
-        // and the watch LISTEN starts only AFTER this loop, so boot is doubly safe).
-        this.specCache.set(def.kind, this.specSignature(def));
-        await this.reconcileStatusWrite(def, { phase: "applied" });
+        const { indexFailures } = await this.applySchemaIndexes(def);
+        // mission-90 W5 (set-on-success-only): seed the spec-equality cache +
+        // write the REAL outcome ONLY when the reconcile fully succeeded. On
+        // success the provisional boot-put stamp already matches → the
+        // material-guard makes the write a no-op (no boot write, no boot
+        // NOTIFY-echo — and the watch LISTEN starts only AFTER this loop, so boot
+        // is doubly safe). On an index-DDL failure (F1): surface phase="failed"
+        // + reconcileError on the row, but KEEP the bug-123 isolation — boot
+        // CONTINUES (not added to failures[], no STRICT throw); and do NOT seed
+        // the cache, so a later same-spec runtime put re-attempts the index.
+        if (indexFailures.length === 0) {
+          this.specCache.set(def.kind, this.specSignature(def));
+          await this.reconcileStatusWrite(def, { phase: "applied" });
+        } else {
+          await this.reconcileStatusWrite(def, { phase: "failed", error: summarizeIndexFailures(indexFailures) });
+        }
       } catch (err) {
-        // Per-kind failure: capture context for STRICT throw post-loop. Also
-        // surface the failure on the row's status (best-effort breadcrumb;
-        // WARN-only, never blocks the STRICT boot throw below).
+        // Per-kind APPLY failure (malformed renameMap → buildFieldTranslationMap
+        // throw): capture context for STRICT throw post-loop. Also surface it on
+        // the row's status (WARN-only; reconcileStatusWrite never throws, so it
+        // can't block the STRICT boot throw below).
         this.warn(`failed to apply SchemaDef for kind=${def.kind}`, err);
         await this.reconcileStatusWrite(def, {
           phase: "failed",
@@ -208,8 +226,21 @@ export class SchemaReconciler {
    * e.g. `thread_status_idx` → `thread_status_phase_idx`). Foreign indexes
    * (not matching pattern) are left alone per W7 Q3 refinement (operator-DX
    * affordance for ad-hoc diagnostic indexes).
+   *
+   * mission-90 W5 (idea-318 / self-review F1): per-index DDL failures stay
+   * ISOLATED (warn + continue — bug-123 posture; one bad index never blocks the
+   * others, never fails boot), but are now COLLECTED and RETURNED so the caller
+   * can surface them on the SchemaDef row's status (`reconcileError`). Without
+   * this, an index-DDL failure — the reconciler's PRIMARY runtime failure mode
+   * (lock-timeout / bad-expr / disk) — was swallowed and the status reported
+   * `phase="applied"`: a silent failure (tele-7) in the very wave meant to
+   * surface reconcile failures. A swallowing method now reports what it swallowed;
+   * the caller decides. The malformed-renameMap throw (buildFieldTranslationMap)
+   * still PROPAGATES — that is a boot-fatal STRICT-ALL-OR-NOTHING failure, not an
+   * isolated per-index one.
    */
-  private async applySchemaIndexes(def: SchemaDef): Promise<void> {
+  private async applySchemaIndexes(def: SchemaDef): Promise<{ indexFailures: Array<{ name: string; error: string }> }> {
+    const indexFailures: Array<{ name: string; error: string }> = [];
     // mission-90 W1 (Design §2.2): build the field-translation cache FIRST,
     // OUTSIDE the per-index try/catch blocks below — a malformed-renameMap
     // throw MUST propagate out of applySchemaIndexes to start()'s failure
@@ -229,6 +260,7 @@ export class SchemaReconciler {
         await this.pool.query(sql);
       } catch (err) {
         this.warn(`failed to create index ${idx.name} for kind=${def.kind}; skipping`, err);
+        indexFailures.push({ name: idx.name, error: (err as Error)?.message || String(err) });
       }
     }
 
@@ -248,6 +280,7 @@ export class SchemaReconciler {
               this.log(`reconcileIndexes — dropped owned-but-undeclared index: ${name} (kind=${def.kind})`);
             } catch (dropErr) {
               this.warn(`failed to drop deprecated index ${name} for kind=${def.kind}; skipping`, dropErr);
+              indexFailures.push({ name: `drop:${name}`, error: (dropErr as Error)?.message || String(dropErr) });
             }
           }
         }
@@ -256,8 +289,10 @@ export class SchemaReconciler {
           `failed to compile indexOwnershipPattern='${def.indexOwnershipPattern}' for kind=${def.kind}; skipping ownership-pattern drop pass`,
           regexErr,
         );
+        indexFailures.push({ name: `ownership-pattern:${def.indexOwnershipPattern}`, error: (regexErr as Error)?.message || String(regexErr) });
       }
     }
+    return { indexFailures };
   }
 
   /**
@@ -520,25 +555,36 @@ export class SchemaReconciler {
           // before reconciling; bare rows pass through (first-boot tolerance).
           const def = this.schemaDefFromRow(event.entity);
           // mission-90 W5 (ii) spec-equality guard: skip re-reconcile when the
-          // spec-relevant fields are unchanged vs the cache. This is what bounds
-          // the status-write self-trigger (the echo of our own status put changes
-          // ONLY status → unchanged signature → skipped) AND eliminates today's
-          // wasteful no-op re-reconciles. Cache is updated to the attempted spec
-          // BEFORE reconciling, so even a failed apply doesn't re-loop on its echo.
+          // spec-relevant fields are unchanged vs the cache — but the cache holds
+          // only LAST-SUCCESSFUL specs (set-on-success-only, below), so the guard
+          // skips only when the last reconcile of this exact spec SUCCEEDED. This
+          // bounds the status-write self-trigger (a successful reconcile's
+          // status-write echo changes ONLY status → unchanged signature → skipped)
+          // AND eliminates wasteful no-op re-reconciles, while still letting a
+          // previously-FAILED spec retry (its sig was never cached).
           const sig = this.specSignature(def);
           if (this.specCache.get(def.kind) === sig) {
             this.log(`runtime — skip re-reconcile kind=${def.kind} (spec unchanged; rv=${event.resourceVersion})`);
             continue;
           }
-          this.specCache.set(def.kind, sig);
           this.log(`runtime — re-reconciling kind=${def.kind} (rv=${event.resourceVersion})`);
           try {
-            await this.applySchemaIndexes(def);
-            // mission-90 W5 (i): write the REAL outcome (converge-then-stop,
-            // material-guarded). On a genuine spec-change this records the new
-            // appliedVersion; its echo is caught by the guard above.
-            await this.reconcileStatusWrite(def, { phase: "applied" });
+            const { indexFailures } = await this.applySchemaIndexes(def);
+            if (indexFailures.length === 0) {
+              // mission-90 W5 (i): success → cache the spec (so this success's
+              // status-write echo is skipped → converges) + write phase="applied".
+              this.specCache.set(def.kind, sig);
+              await this.reconcileStatusWrite(def, { phase: "applied" });
+            } else {
+              // F1: index-DDL failure → surface reconcileError; do NOT cache.
+              // Bounded: the "failed" write echoes once → re-reconcile → if the
+              // failure PERSISTS the material-guard sees no change → no put → STOP;
+              // if it was TRANSIENT the retry succeeds → "applied" → cache → STOP.
+              await this.reconcileStatusWrite(def, { phase: "failed", error: summarizeIndexFailures(indexFailures) });
+            }
           } catch (err) {
+            // malformed-renameMap (buildFieldTranslationMap throw) → surface +
+            // do NOT cache (same bounded echo-converge as the index-failure path).
             this.warn(`runtime apply failed for kind=${def.kind}`, err);
             await this.reconcileStatusWrite(def, {
               phase: "failed",
