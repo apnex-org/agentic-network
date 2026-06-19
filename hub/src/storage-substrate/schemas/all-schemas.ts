@@ -42,10 +42,15 @@ const Agent: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^agent_",
-  // mission-90 W1 (Design §2.1/§2.6): runtime renameMap — AUTHORITATIVE copy; entry content
-  // mirrors the per-kind v2-envelope migration module (28 entries across 20 kinds;
-  // Counter / Document / MigrationCursor carry none).
-  renameMap: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt" },
+  // mission-90 W1+W2 (Design §2.1/§2.6): runtime renameMap = the COMPLETE read-side
+  // bare→envelope field-movement authority for substrate.list filter/sort
+  // translation (renames AND partition-relocations). NOT a mirror of the migration
+  // module's renameMap (which carries renames only; partition handles relocations at
+  // write time) — instead every entry is validated against the encoder's ACTUAL
+  // placement by the W1 sentinel-probe oracle (renamemap-contract-w1.test.ts). W2
+  // added the partition-relocated FILTERABLE keys per the call-site sweep (finding A).
+  // `fingerprint` (substrate-side assertIdentity lookup) → metadata.fingerprint.
+  renameMap: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint" },
 };
 
 const Audit: SchemaDef = {
@@ -75,7 +80,8 @@ const Audit: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^audit_",
-  renameMap: { timestamp: "metadata.createdAt" },
+  // W2 finding-A: `actor` (substrate-side filter, audit-repo:84; indexed) relocates to metadata.actor.
+  renameMap: { timestamp: "metadata.createdAt", actor: "metadata.actor" },
 };
 
 const Bug: SchemaDef = {
@@ -95,7 +101,10 @@ const Bug: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^bug_",
-  renameMap: { status: "status.phase" },
+  // W2 finding-A: severity/class (substrate-side filters, bug-repo:128-129) relocate to spec.
+  // (Cascade-keys sourceThreadId/sourceActionId/sourceIdeaId are DELIBERATELY excluded —
+  // repo dual-path envelope-first dotted query + W1 null-pin; see oracle exclusion set.)
+  renameMap: { status: "status.phase", severity: "spec.severity", class: "spec.class" },
 };
 
 const Counter: SchemaDef = {
@@ -154,11 +163,30 @@ const Message: SchemaDef = {
     // metadata partition per cluster-4 Message.ts.
     { name: "message_metadata_thread_idx", fields: ["metadata.threadId"] },
     { name: "message_metadata_author_idx", fields: ["metadata.authorAgentId"] },
+    // mission-90 W2 (bug-149 hot-path W6-deploy-gate): the scheduled-message
+    // sweeper filters substrate-side on delivery + scheduledState every interval;
+    // post-W2 these resolve to envelope paths, so they MUST be indexed before W2
+    // reaches prod or bug-93 sweeper-poll-pressure recurs as JSONB full-scans.
+    { name: "message_spec_delivery_idx", fields: ["spec.delivery"] },
+    { name: "message_status_scheduledstate_idx", fields: ["status.scheduledState"] },
   ],
   watchable: true,
   indexOwnershipPattern: "^message_",
-  // field-collision rename (cluster-4 §1.7 canonical): legacy Message.kind collides with envelope kind
-  renameMap: { kind: "metadata.messageKind", status: "status.phase" },
+  // field-collision rename (cluster-4 §1.7 canonical): legacy Message.kind collides with envelope kind.
+  // W2 finding-A: substrate-side filters threadId/migrationSourceId/authorAgentId→metadata.*,
+  // delivery→spec.delivery, scheduledState→status.scheduledState (msg-repo + sweepers);
+  // nested target.role/target.agentId→spec.target.* (read-side-only; target object relocates whole).
+  renameMap: {
+    kind: "metadata.messageKind",
+    status: "status.phase",
+    threadId: "metadata.threadId",
+    migrationSourceId: "metadata.migrationSourceId",
+    authorAgentId: "metadata.authorAgentId",
+    delivery: "spec.delivery",
+    scheduledState: "status.scheduledState",
+    "target.role": "spec.target.role",
+    "target.agentId": "spec.target.agentId",
+  },
 };
 
 const Mission: SchemaDef = {
@@ -213,7 +241,16 @@ const PendingAction: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^pa_",
-  renameMap: { state: "status.phase", enqueuedAt: "metadata.createdAt" },
+  // W2 finding-A: substrate-side filters naturalKey→metadata.naturalKey (indexed),
+  // targetAgentId→spec.targetAgentId (indexed), dispatchType/entityRef→spec.* (pa-repo).
+  renameMap: {
+    state: "status.phase",
+    enqueuedAt: "metadata.createdAt",
+    naturalKey: "metadata.naturalKey",
+    targetAgentId: "spec.targetAgentId",
+    dispatchType: "spec.dispatchType",
+    entityRef: "spec.entityRef",
+  },
 };
 
 const Proposal: SchemaDef = {
@@ -270,7 +307,11 @@ const Task: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^task_",
-  renameMap: { status: "status.phase" },
+  // W2 finding-A / bug-147 (CRITICAL): idempotencyKey is a LIVE single-path filter
+  // (findByIdempotencyKey, task-repo:177) with NO repo dual-path — bare → null on
+  // envelope rows post-W6 → idempotency dedup silently breaks → duplicate task
+  // creation. Relocates to metadata.idempotencyKey. (Cascade-keys excluded — see oracle.)
+  renameMap: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey" },
 };
 
 const Tele: SchemaDef = {
@@ -325,12 +366,18 @@ const Thread: SchemaDef = {
     { name: "thread_status_phase_idx", fields: ["status.phase"] },
     // currentTurnAgentId moved to status partition per cluster-1 Thread.ts.
     { name: "thread_status_turn_agent_idx", fields: ["status.currentTurnAgentId"] },
+    // mission-90 W2 (bug-149 hot-path W6-deploy-gate): cascade-sweeper queries
+    // cascadePending at Hub-startup; post-W2 it resolves to status.cascadePending,
+    // so it must be indexed before W2 reaches prod (else startup JSONB full-scan).
+    { name: "thread_status_cascadepending_idx", fields: ["status.cascadePending"] },
   ],
   watchable: true,
   // Negative-lookahead excludes ThreadHistoryEntry's `threadhist_` prefix
   // (sibling-kind name-collision risk) from Thread's ownership domain.
   indexOwnershipPattern: "^thread_(?!hist_)",
-  renameMap: { status: "status.phase" },
+  // W2 finding-A: substrate-side filters cascadePending→status.cascadePending,
+  // currentTurnAgentId→status.currentTurnAgentId (thread-repo + cascade-sweeper).
+  renameMap: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId" },
 };
 
 const Turn: SchemaDef = {
@@ -433,6 +480,11 @@ const Document: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^document_",
+  // W2 finding-A: `category` (substrate-side filter, DocumentRepository.list, new-repos:63;
+  // indexed) → metadata.labels.category. preTransform is scalar→map-ENTRY (labels={category:v}),
+  // NOT array→map, so value-equality survives at the dotted path (probe-faithful). Document
+  // therefore leaves the rename-free set (was rename-free pre-W2).
+  renameMap: { category: "metadata.labels.category" },
 };
 
 const ArchitectDecision: SchemaDef = {
@@ -484,7 +536,9 @@ const ReviewHistoryEntry: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^review_",
-  renameMap: { timestamp: "metadata.createdAt" },
+  // W2 finding-A: taskId (substrate-side filter, new-repos:209; indexed) → metadata.taskId.
+  // (Repo unwired in prod today; completes the authority for when it wires.)
+  renameMap: { timestamp: "metadata.createdAt", taskId: "metadata.taskId" },
 };
 
 const ThreadHistoryEntry: SchemaDef = {
@@ -505,7 +559,9 @@ const ThreadHistoryEntry: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^threadhist_",
-  renameMap: { timestamp: "metadata.createdAt" },
+  // W2 finding-A: threadId (substrate-side filter, new-repos:247; indexed) → metadata.threadId.
+  // (Repo unwired in prod today; completes the authority for when it wires.)
+  renameMap: { timestamp: "metadata.createdAt", threadId: "metadata.threadId" },
 };
 
 // mission-84 W3: 2 new bookkeeping-only kinds for repo-event-bridge cursor +

@@ -46,14 +46,18 @@ const MIGRATION_FILES = ["001-entities-table.sql", "002-notify-trigger.sql", "00
 const FIXTURES: Array<{ kind: string; id: string; data: Record<string, unknown> }> = [
   // Message: bare filter key `kind` collides with the entity-kind column; must
   // resolve to metadata.messageKind (NOT data->>'kind', which is "Message").
-  { kind: "Message", id: "w2-m1", data: { id: "w2-m1", name: "w2-m1", kind: "Message", apiVersion: "core.ois/v1", metadata: { name: "w2-m1", messageKind: "note" }, spec: { body: "hi" }, status: { phase: "new" }, threadId: "w2-t1" } },
-  { kind: "Message", id: "w2-m2", data: { id: "w2-m2", name: "w2-m2", kind: "Message", apiVersion: "core.ois/v1", metadata: { name: "w2-m2", messageKind: "status_check" }, spec: { body: "yo" }, status: { phase: "acked" }, threadId: "w2-t2" } },
+  { kind: "Message", id: "w2-m1", data: { id: "w2-m1", name: "w2-m1", kind: "Message", apiVersion: "core.ois/v1", metadata: { name: "w2-m1", messageKind: "note" }, spec: { body: "hi" }, status: { phase: "new" } } },
+  { kind: "Message", id: "w2-m2", data: { id: "w2-m2", name: "w2-m2", kind: "Message", apiVersion: "core.ois/v1", metadata: { name: "w2-m2", messageKind: "status_check" }, spec: { body: "yo" }, status: { phase: "acked" } } },
   // Idea: non-FSM mutable link missionId → status.missionId.
   { kind: "Idea", id: "w2-i1", data: { id: "w2-i1", kind: "Idea", apiVersion: "core.ois/v1", metadata: { name: "w2-i1" }, spec: { title: "a" }, status: { phase: "triaged", missionId: "mission-90" } } },
   { kind: "Idea", id: "w2-i2", data: { id: "w2-i2", kind: "Idea", apiVersion: "core.ois/v1", metadata: { name: "w2-i2" }, spec: { title: "b" }, status: { phase: "proposed", missionId: "mission-91" } } },
   // PendingAction: FSM state → status.phase.
   { kind: "PendingAction", id: "w2-p1", data: { id: "w2-p1", kind: "PendingAction", apiVersion: "core.ois/v1", metadata: { name: "w2-p1" }, spec: {}, status: { phase: "working" } } },
   { kind: "PendingAction", id: "w2-p2", data: { id: "w2-p2", kind: "PendingAction", apiVersion: "core.ois/v1", metadata: { name: "w2-p2" }, spec: {}, status: { phase: "done" } } },
+  // Bug: pure RELOCATION (severity is NOT renamed — it relocates to spec.severity
+  // via partition). The finding-A case: renameMap must cover relocations, not just renames.
+  { kind: "Bug", id: "w2-b1", data: { id: "w2-b1", kind: "Bug", apiVersion: "core.ois/v1", metadata: { name: "w2-b1" }, spec: { title: "x", severity: "critical", class: "regression" }, status: { phase: "open" } } },
+  { kind: "Bug", id: "w2-b2", data: { id: "w2-b2", kind: "Bug", apiVersion: "core.ois/v1", metadata: { name: "w2-b2" }, spec: { title: "y", severity: "minor", class: "perf" }, status: { phase: "open" } } },
 ];
 
 describe("W2 substrate.list translate-point (testcontainers postgres)", () => {
@@ -159,17 +163,17 @@ describe("W2 substrate.list translate-point (testcontainers postgres)", () => {
   );
 
   it(
-    "W2.4 no-regression: an untranslated key passes through to the bare data->>'...' path",
+    "W2.4 no-regression: an UNMOVED key (id, top-level) passes through to the bare data->>'...' path",
     async () => {
       let res!: { items: Array<{ id: string }> };
       const sqls = await captureSql(async () => {
-        // `threadId` carries no renameMap entry → pure passthrough.
-        res = await substrate.list<{ id: string }>("Message", { filter: { threadId: "w2-t1" } });
+        // `id` stays at the envelope top-level (no renameMap entry) → pure passthrough.
+        res = await substrate.list<{ id: string }>("Message", { filter: { id: "w2-m1" } });
       });
       expect(res.items.map((i) => i.id)).toEqual(["w2-m1"]);
-      expect(sqls.some((s) => s.includes("data->>'threadId'"))).toBe(true);
-      // Passthrough must NOT fabricate an envelope path for a non-renamed key.
-      expect(sqls.some((s) => s.includes("data#>>'{") && s.includes("threadId"))).toBe(false);
+      expect(sqls.some((s) => s.includes("data->>'id'"))).toBe(true);
+      // Passthrough must NOT fabricate an envelope path for an unmoved key.
+      expect(sqls.some((s) => s.includes("data#>>'{") && s.includes("id"))).toBe(false);
     },
     TEST_OP_TIMEOUT,
   );
@@ -184,6 +188,32 @@ describe("W2 substrate.list translate-point (testcontainers postgres)", () => {
       // phase asc → "done" (w2-p2) before "working" (w2-p1)
       expect(res.items.map((i) => i.id)).toEqual(["w2-p2", "w2-p1"]);
       expect(sqls.some((s) => s.includes("ORDER BY") && s.includes("data#>>'{status,phase}'"))).toBe(true);
+    },
+    TEST_OP_TIMEOUT,
+  );
+
+  it(
+    "W2.6 RELOCATION (finding A): Bug filter {severity} → spec.severity (relocated, not renamed) — result-set + SQL path",
+    async () => {
+      // severity carries NO rename — it relocates to spec.severity via partition.
+      // This is the finding-A gap: renameMap must be the COMPLETE movement authority
+      // (relocations too), or list_bugs-by-severity stays envelope-blind.
+      let res!: { items: Array<{ id: string }> };
+      const sqls = await captureSql(async () => {
+        res = await substrate.list<{ id: string }>("Bug", { filter: { severity: "critical" } });
+      });
+      expect(res.items.map((i) => i.id)).toEqual(["w2-b1"]);
+      expect(sqls.some((s) => s.includes("data#>>'{spec,severity}'"))).toBe(true);
+
+      // Negative control: an UNWIRED substrate is blind to the relocation —
+      // {severity:"critical"} hits data->>'severity' (NULL on envelope rows) → empty.
+      const blind = createPostgresStorageSubstrate(connStr);
+      try {
+        const blindRes = await blind.list<{ id: string }>("Bug", { filter: { severity: "critical" } });
+        expect(blindRes.items).toHaveLength(0);
+      } finally {
+        await blind.close();
+      }
     },
     TEST_OP_TIMEOUT,
   );

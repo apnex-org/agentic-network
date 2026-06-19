@@ -77,6 +77,10 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    * mission-90 W2 (Design §2.3): translate a single bare filter/sort key for a
    * kind to its envelope JSONB dotted-path. Pure no-op (returns the bare key)
    * when no translator is wired or the key carries no rename.
+   *
+   * PRECONDITION: rewrites to envelope paths → correct only against envelope-
+   * shaped rows (post-W6 re-migration; W2 deploys batched with W6, never
+   * standalone). Inert until setFieldTranslator is wired (tests/dev = no-op).
    */
   private translateKey(kind: string, bareKey: string): string {
     return this.fieldTranslator?.(kind, bareKey) ?? bareKey;

@@ -122,3 +122,20 @@ FSM-bypassed per bug-146 (router stamps caller login); worked from the task-416 
 **Refuted during self-review:** no existing test wires the translator (suite stays green); memory-substrate untouched + doesn't need the setter; boot-order has no list() before the setter; cycle genuinely broken.
 
 **Status:** PR-open, awaiting architect same-day review + rulings on A/B/C. (Completion slice + merge SHA to follow at merge.)
+
+### Slice 2 — finding-A resolution: complete relocation inventory + sentinel-probe oracle (2026-06-19)
+
+Architect reviewed #314, ruled: **A HOLD-for-inventory-completion** (renameMap = the COMPLETE read-side bare→envelope movement authority, test-enforced); **B/C accept-with-comment**. Bugs filed: **bug-147** (idempotency, the load-bearing proof), **bug-148** (Notification phantom), **bug-149** (index-parity). Refinement: derive the oracle's expected path from the ACTUAL encoder (not partition re-derivation) → sentinel-probe; bound coverage to call-site-enumerated filterable keys.
+
+**Completeness sweep** (24-agent workflow): enumerated every substrate-side filter/sort key across 60 call-sites in 21 files + structural-transform exclusions + global audit (no missed pairs). Surfaced the live gaps.
+
+**Implemented (companion commit on #314):**
+- **all-schemas.ts renameMap expanded** to the complete filterable-relocation authority (read-side only; modules untouched — encoder places relocations via partition, validated by the probe): Agent fingerprint; Audit actor; Bug severity/class; Message threadId/migrationSourceId/authorAgentId/delivery/scheduledState + nested target.role/target.agentId; PendingAction naturalKey/targetAgentId/dispatchType/entityRef; Task **idempotencyKey (bug-147)**; Thread cascadePending/currentTurnAgentId; Document category (+ leaves rename-free set); ReviewHistoryEntry taskId; ThreadHistoryEntry threadId. 49 entries / 21 kinds.
+- **3 hot-path indexes folded in (bug-149 W6-deploy-gate):** Message spec.delivery + status.scheduledState (scheduled-sweeper), Thread status.cascadePending (Hub-startup) — else bug-93 sweeper-poll-pressure recurs as JSONB full-scans. Non-hot index-parity → bug-149 follow-on.
+- **Oracle rewritten** (renamemap-contract-w1.test.ts): old `all-schemas===module.renameMap` parity REPLACED by (W1.1b) **sentinel-probe faithfulness** — feed a sentinel through each module's real `migrateOne` and assert every renameMap entry lands where the encoder ACTUALLY places it (caught a pre-existing unfaithful entry surfacing: Notification.event needed an enum-valid probe value); (W1.1c) **classification completeness** — every substrate-FILTERABLE key (curated from sweep) is renameMap-covered OR documented-excluded OR unmoved (self-policing @ W3+); (W1.1d) **cascade-key contract** — deliberately-untranslated cascade-keys assert NOT-in-renameMap + genuinely-move (W1 null-pin preserved). W1.4 extended to assert the 3 net-new indexes create-once + oid-stable.
+- **B comment** on listMissions legacy branch (neutralized; delete-at-W8). **C precondition comment** at the translate-point (envelope-rows assumed; batched-with-W6 is the guard).
+- **W2.6 wire-flow** proves a RELOCATED key (Bug severity → spec.severity) now translates + negative control.
+
+**Deliberate exclusions (documented in oracle):** cascade-keys sourceThreadId/sourceActionId/sourceIdeaId on Bug/Idea/Mission/Proposal/Task (repo dual-path + W1 null-pin; W4 reconciles); Notification.recipientAgentId (phantom, bug-148); tags (client-side array-contains). 
+
+**Verification:** W1 11/11 + W2 6/6 green; tsc clean; full suite green.

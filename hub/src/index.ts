@@ -174,6 +174,11 @@ console.log(`[Hub] substrate reconciler settled (${ALL_SCHEMAS.length} SchemaDef
 // Late-bound here — AFTER reconciler.start() built the translation map and BEFORE
 // any repository serves a list() below — to break the substrate↔reconciler
 // construction cycle. No-rename keys pass through unchanged.
+//
+// PRECONDITION: the translate-point assumes ENVELOPE-shaped rows (it rewrites to
+// envelope JSONB paths). Correct only POST-W6 re-migration; W2 deploys batched
+// WITH W6 (never standalone) per the cutover discipline — the batched-deploy
+// ordering IS the guard (no runtime migration-state check by design).
 substrate.setFieldTranslator((kind, bareKey) => reconciler.getFieldTranslation(kind, bareKey));
 
 // Mission-47 W1-W7 + Mission-49 W8-W9: instantiate StorageProvider-backed

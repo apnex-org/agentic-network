@@ -41,6 +41,8 @@ import { createTeleMigrationModule } from "../migrations/v2-envelope/kinds/Tele.
 import { createThreadMigrationModule } from "../migrations/v2-envelope/kinds/Thread.js";
 import { createTurnMigrationModule } from "../migrations/v2-envelope/kinds/Turn.js";
 import { createSchemaDefMigrationModule } from "../migrations/v2-envelope/kinds/SchemaDef.js";
+import { createDocumentMigrationModule } from "../migrations/v2-envelope/kinds/Document.js";
+import type { KindMigrationModule } from "../migrations/v2-envelope/kinds/_contract.js";
 import { createNotificationMigrationModule } from "../migrations/v2-envelope/kinds/Notification.js";
 import { createArchitectDecisionMigrationModule } from "../migrations/v2-envelope/kinds/ArchitectDecision.js";
 import { createDirectorHistoryEntryMigrationModule } from "../migrations/v2-envelope/kinds/DirectorHistoryEntry.js";
@@ -65,30 +67,55 @@ const MIGRATION_FILES = [
  * this table fails the test — never a bare count.
  */
 const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
-  Agent: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt" },
-  Audit: { timestamp: "metadata.createdAt" },
-  Bug: { status: "status.phase" },
+  // mission-90 W2 finding-A expansion: renameMap is the COMPLETE read-side
+  // bare→envelope movement authority for substrate-side FILTERABLE keys (renames
+  // AND partition-relocations), per the call-site sweep. Cascade-keys
+  // (sourceThreadId/sourceActionId/sourceIdeaId) are DELIBERATELY excluded (repo
+  // dual-path; W1 null-pin) — see EXCLUDED_MOVED_FIELDS. Every entry below is
+  // validated against the encoder's ACTUAL placement by the sentinel-probe (W1.1b).
+  Agent: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint" },
+  Audit: { timestamp: "metadata.createdAt", actor: "metadata.actor" },
+  Bug: { status: "status.phase", severity: "spec.severity", class: "spec.class" },
   Idea: { status: "status.phase", missionId: "status.missionId" },
-  Message: { kind: "metadata.messageKind", status: "status.phase" },
+  Message: {
+    kind: "metadata.messageKind",
+    status: "status.phase",
+    threadId: "metadata.threadId",
+    migrationSourceId: "metadata.migrationSourceId",
+    authorAgentId: "metadata.authorAgentId",
+    delivery: "spec.delivery",
+    scheduledState: "status.scheduledState",
+    "target.role": "spec.target.role",
+    "target.agentId": "spec.target.agentId",
+  },
   Mission: { status: "status.phase" },
-  PendingAction: { state: "status.phase", enqueuedAt: "metadata.createdAt" },
+  PendingAction: {
+    state: "status.phase",
+    enqueuedAt: "metadata.createdAt",
+    naturalKey: "metadata.naturalKey",
+    targetAgentId: "spec.targetAgentId",
+    dispatchType: "spec.dispatchType",
+    entityRef: "spec.entityRef",
+  },
   Proposal: { status: "status.phase" },
-  Task: { status: "status.phase" },
+  Task: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey" },
   Tele: { status: "status.phase", name: "metadata.name" },
-  Thread: { status: "status.phase" },
+  Thread: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId" },
   Turn: { status: "status.phase", title: "metadata.name" },
   SchemaDef: { kind: "metadata.name" },
   Notification: { event: "spec.eventType", timestamp: "metadata.createdAt" },
   ArchitectDecision: { timestamp: "metadata.createdAt" },
   DirectorHistoryEntry: { timestamp: "metadata.createdAt" },
-  ReviewHistoryEntry: { timestamp: "metadata.createdAt" },
-  ThreadHistoryEntry: { timestamp: "metadata.createdAt" },
+  ReviewHistoryEntry: { timestamp: "metadata.createdAt", taskId: "metadata.taskId" },
+  ThreadHistoryEntry: { timestamp: "metadata.createdAt", threadId: "metadata.threadId" },
   RepoEventBridgeCursor: { body: "status.cursor" },
   RepoEventBridgeDedupe: { body: "status.dedupe" },
+  Document: { category: "metadata.labels.category" },
 };
 
-/** Runtime kinds that deliberately carry NO renameMap (Design §2.6). */
-const EXPECTED_RENAME_FREE_KINDS = ["Counter", "Document", "MigrationCursor"];
+/** Runtime kinds that deliberately carry NO renameMap (Design §2.6). Document
+ * LEFT this set at W2 (category→metadata.labels.category added). */
+const EXPECTED_RENAME_FREE_KINDS = ["Counter", "MigrationCursor"];
 
 function findSchema(kind: string): SchemaDef {
   const def = ALL_SCHEMAS.find((s) => s.kind === kind);
@@ -96,14 +123,147 @@ function findSchema(kind: string): SchemaDef {
   return def;
 }
 
-describe("W1.1 renameMap inventory — per-kind-EXACT (28 entries / 20 kinds)", () => {
+// ─── mission-90 W2: per-kind migration-module factories (encoder placement
+//     authority for the sentinel-probe + classification oracle) ───────────────
+const MODULE_FACTORIES: Record<string, (s: SchemaDef) => KindMigrationModule> = {
+  Agent: createAgentMigrationModule,
+  Audit: createAuditMigrationModule,
+  Bug: createBugMigrationModule,
+  Idea: createIdeaMigrationModule,
+  Message: createMessageMigrationModule,
+  Mission: createMissionMigrationModule,
+  PendingAction: createPendingActionMigrationModule,
+  Proposal: createProposalMigrationModule,
+  Task: createTaskMigrationModule,
+  Tele: createTeleMigrationModule,
+  Thread: createThreadMigrationModule,
+  Turn: createTurnMigrationModule,
+  SchemaDef: createSchemaDefMigrationModule,
+  Notification: createNotificationMigrationModule,
+  ArchitectDecision: createArchitectDecisionMigrationModule,
+  DirectorHistoryEntry: createDirectorHistoryEntryMigrationModule,
+  ReviewHistoryEntry: createReviewHistoryEntryMigrationModule,
+  ThreadHistoryEntry: createThreadHistoryEntryMigrationModule,
+  RepoEventBridgeCursor: createRepoEventBridgeCursorMigrationModule,
+  RepoEventBridgeDedupe: createRepoEventBridgeDedupeMigrationModule,
+  Document: createDocumentMigrationModule,
+};
+
+function moduleFor(kind: string): KindMigrationModule {
+  const factory = MODULE_FACTORIES[kind];
+  if (!factory) throw new Error(`no migration-module factory for kind=${kind}`);
+  return factory(findSchema(kind));
+}
+
+const PROBE_SENTINEL = "__W2_PROBE_SENTINEL__";
+
+/**
+ * Per-kind/per-key probe-value overrides for fields whose preTransform VALIDATES
+ * or COERCES the value (so the generic sentinel would be rewritten and the probe
+ * couldn't locate it). The override supplies a value that survives preTransform;
+ * the placement PATH is what's asserted, not the value. Notification.event is
+ * enum-coerced ("unknown" fallback for un-cataloged values) → use a known event.
+ */
+const PROBE_VALUE_OVERRIDES: Record<string, Record<string, string>> = {
+  Notification: { event: "thread_message" },
+};
+
+/** Place `val` at a (possibly dotted) key in a fresh legacy entity. */
+function setNested(obj: Record<string, unknown>, dottedKey: string, val: unknown): void {
+  const parts = dottedKey.split(".");
+  let cur: Record<string, unknown> = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const seg = parts[i]!;
+    if (typeof cur[seg] !== "object" || cur[seg] === null) cur[seg] = {};
+    cur = cur[seg] as Record<string, unknown>;
+  }
+  cur[parts[parts.length - 1]!] = val;
+}
+
+/** Deep-walk a bucket sub-tree for `needle`; return its dotted path (bucket-rooted). */
+function walkFor(node: unknown, prefix: string, needle: string): string | null {
+  if (node === needle) return prefix;
+  if (node && typeof node === "object" && !Array.isArray(node)) {
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      const found = walkFor(v, `${prefix}.${k}`, needle);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * mission-90 W2 (architect-blessed): probe the encoder's ACTUAL placement of a
+ * bare filter key by feeding a sentinel-valued legacy entity through the kind's
+ * migrateOne (= preTransform + encodeEnvelope, the real write path) and locating
+ * the sentinel within metadata/spec/status. Returns the envelope JSONB dotted
+ * path, or null if the key is unmoved / shape-transformed (needle not scalar-
+ * findable in any bucket). Buckets-only search ignores envelope-reserved
+ * top-level fields (id/name/kind/apiVersion) that some renames also populate.
+ */
+function probePlacement(kind: string, filterKey: string): string | null {
+  const needle = PROBE_VALUE_OVERRIDES[kind]?.[filterKey] ?? PROBE_SENTINEL;
+  const legacy: Record<string, unknown> = { id: "w2probe" };
+  setNested(legacy, filterKey, needle);
+  const env = moduleFor(kind).migrateOne(legacy) as Record<string, unknown>;
+  for (const bucket of ["metadata", "spec", "status"]) {
+    const found = walkFor(env[bucket], bucket, needle);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * mission-90 W2 finding-A: the substrate-SIDE filter/sort keys per kind, curated
+ * from the call-site sweep (every key passed into substrate.list filter/sort).
+ * This is the completeness BOUND (architect refinement (i): bound to the
+ * call-site-enumerated filterable keys — finite + known — rather than all moved
+ * fields). W1.1c asserts each is renameMap-covered OR documented-excluded OR
+ * unmoved. A new W3+ filter adds its key here; if untranslatable it fails W1.1c.
+ */
+const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
+  Agent: ["fingerprint"],
+  Audit: ["actor"],
+  Bug: ["status", "severity", "class", "sourceThreadId", "sourceActionId", "sourceIdeaId"],
+  Idea: ["status", "missionId", "sourceThreadId", "sourceActionId"],
+  Message: ["kind", "status", "threadId", "migrationSourceId", "authorAgentId", "delivery", "scheduledState", "target.role", "target.agentId", "id"],
+  Mission: ["status", "sourceThreadId", "sourceActionId"],
+  PendingAction: ["state", "naturalKey", "targetAgentId", "dispatchType", "entityRef"],
+  Proposal: ["status", "sourceThreadId", "sourceActionId"],
+  Task: ["status", "idempotencyKey", "sourceThreadId", "sourceActionId"],
+  Tele: [],
+  Thread: ["status", "cascadePending", "currentTurnAgentId"],
+  Turn: ["status"],
+  Document: ["category"],
+  ReviewHistoryEntry: ["taskId"],
+  ThreadHistoryEntry: ["threadId"],
+  Notification: ["recipientAgentId"],
+};
+
+/**
+ * Substrate-side FILTERABLE keys deliberately NOT given a renameMap entry, with a
+ * reason. 'cascade-dual-path': the repository runs an envelope-first DOTTED query
+ * + a dead-but-harmless bare fallback; W1 pins getFieldTranslation(...)===null and
+ * W4 reconciles/collapses these. 'phantom': field absent from real rows (bug-148).
+ * 'structural-transform': value shape changes → JSONB path-equality meaningless.
+ */
+const EXCLUDED_FILTERABLE_KEYS: Record<string, Record<string, string>> = {
+  Bug: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path", sourceIdeaId: "cascade-dual-path" },
+  Idea: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
+  Mission: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
+  Proposal: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
+  Task: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
+  Notification: { recipientAgentId: "phantom (bug-148: repo interface diverges from SchemaDef; field in no row)" },
+};
+
+describe("W1.1 renameMap inventory + faithfulness — complete field-movement authority (W2 finding-A)", () => {
   it("ALL_SCHEMAS carries exactly the expected renameMap per kind (no missing / no extra / no drift)", () => {
     for (const [kind, expected] of Object.entries(EXPECTED_RENAME_INVENTORY)) {
       expect(findSchema(kind).renameMap, `kind=${kind}`).toEqual(expected);
     }
   });
 
-  it("rename-free kinds carry NO renameMap (Counter / Document / MigrationCursor)", () => {
+  it("rename-free kinds carry NO renameMap (Counter / MigrationCursor)", () => {
     for (const kind of EXPECTED_RENAME_FREE_KINDS) {
       expect(findSchema(kind).renameMap, `kind=${kind}`).toBeUndefined();
     }
@@ -116,38 +276,55 @@ describe("W1.1 renameMap inventory — per-kind-EXACT (28 entries / 20 kinds)", 
         expect(expectedKinds.has(def.kind), `unexpected renameMap on kind=${def.kind}`).toBe(true);
       }
     }
-    // 23 runtime consts total; exactly 20 carry renameMap.
-    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(20);
+    // 23 runtime consts total; exactly 21 carry renameMap (W2 added Document).
+    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(21);
     expect(ALL_SCHEMAS).toHaveLength(23);
   });
 
-  it("runtime entries are in PARITY with the migration modules (source-of-truth, §2.7)", () => {
-    const modules = [
-      createAgentMigrationModule(findSchema("Agent")),
-      createAuditMigrationModule(findSchema("Audit")),
-      createBugMigrationModule(findSchema("Bug")),
-      createIdeaMigrationModule(findSchema("Idea")),
-      createMessageMigrationModule(findSchema("Message")),
-      createMissionMigrationModule(findSchema("Mission")),
-      createPendingActionMigrationModule(findSchema("PendingAction")),
-      createProposalMigrationModule(findSchema("Proposal")),
-      createTaskMigrationModule(findSchema("Task")),
-      createTeleMigrationModule(findSchema("Tele")),
-      createThreadMigrationModule(findSchema("Thread")),
-      createTurnMigrationModule(findSchema("Turn")),
-      createSchemaDefMigrationModule(findSchema("SchemaDef")),
-      createNotificationMigrationModule(findSchema("Notification")),
-      createArchitectDecisionMigrationModule(findSchema("ArchitectDecision")),
-      createDirectorHistoryEntryMigrationModule(findSchema("DirectorHistoryEntry")),
-      createReviewHistoryEntryMigrationModule(findSchema("ReviewHistoryEntry")),
-      createThreadHistoryEntryMigrationModule(findSchema("ThreadHistoryEntry")),
-      createRepoEventBridgeCursorMigrationModule(findSchema("RepoEventBridgeCursor")),
-      createRepoEventBridgeDedupeMigrationModule(findSchema("RepoEventBridgeDedupe")),
-    ];
-    for (const mod of modules) {
-      const runtime = findSchema(mod.kind).renameMap ?? {};
-      const migration = mod.schemaRef.renameMap ?? {};
-      expect(runtime, `parity drift for kind=${mod.kind}`).toEqual(migration);
+  it("W1.1b every renameMap entry resolves to the encoder's ACTUAL placement (sentinel-probe vs migrateOne)", () => {
+    // The architect-blessed faithfulness oracle: assert ACTUAL placement (not a
+    // model of it). A wrong/typo'd target fails here with the real path. Covers
+    // renames, relocations, collisions (kind→metadata.messageKind), nested
+    // (target.role→spec.target.role), and scalar→map-entry (category).
+    for (const [kind, map] of Object.entries(EXPECTED_RENAME_INVENTORY)) {
+      for (const [key, target] of Object.entries(map)) {
+        expect(probePlacement(kind, key), `${kind}.${key} → encoder places it at`).toBe(target);
+      }
+    }
+  });
+
+  it("W1.1c completeness: every substrate-FILTERABLE key is renameMap-covered OR documented-excluded OR unmoved (self-policing @ W3+)", () => {
+    const unclassified: string[] = [];
+    for (const [kind, keys] of Object.entries(SUBSTRATE_FILTERABLE_KEYS)) {
+      const covered = findSchema(kind).renameMap ?? {};
+      const excluded = EXCLUDED_FILTERABLE_KEYS[kind] ?? {};
+      for (const key of keys) {
+        const isCovered = key in covered;
+        const isExcluded = key in excluded;
+        const isUnmoved = probePlacement(kind, key) === null; // stays top-level (e.g. id) → bare path works
+        if (!isCovered && !isExcluded && !isUnmoved) {
+          unclassified.push(`${kind}.${key}`);
+        }
+      }
+    }
+    expect(
+      unclassified,
+      `substrate-filterable keys that are MOVED but neither renameMap-covered nor documented-excluded (envelope-blind risk — cover in renameMap or document): ${unclassified.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("W1.1d cascade-keys are deliberately UNtranslated (W1 dual-path contract) yet genuinely MOVE", () => {
+    // Each documented cascade-dual-path key: (1) is NOT in renameMap (W1 null-pin
+    // preserved), and (2) the encoder DOES move it (so omission is deliberate, not
+    // an oversight — the repo dual-path's envelope-first dotted query carries
+    // correctness; W4 reconciles/collapses these onto the single authority).
+    for (const [kind, excl] of Object.entries(EXCLUDED_FILTERABLE_KEYS)) {
+      for (const [field, reason] of Object.entries(excl)) {
+        if (reason === "cascade-dual-path") {
+          expect(findSchema(kind).renameMap?.[field], `${kind}.${field} must NOT be in renameMap`).toBeUndefined();
+          expect(probePlacement(kind, field), `${kind}.${field} should genuinely move`).not.toBeNull();
+        }
+      }
     }
   });
 });
@@ -301,6 +478,17 @@ describe("W1.2-W1.5 reconciler contract (testcontainers postgres)", () => {
             WHERE c.relkind = 'i' AND n.nspname = 'public'`,
         );
         const oids = new Map(idx.rows.map((r) => [r.indexname, r.oid]));
+        // mission-90 W2 (architect regression-guard): the 3 NET-NEW hot-path
+        // indexes (bug-149 W6-gate) are created on first boot AND, via the
+        // oid-stability + count checks below, proven to no-op (zero churn) on
+        // restarts — same discipline as W1's existing indexes.
+        for (const newIdx of [
+          "message_spec_delivery_idx",
+          "message_status_scheduledstate_idx",
+          "thread_status_cascadepending_idx",
+        ]) {
+          expect(oids.has(newIdx), `cycle ${cycle}: W2 net-new index ${newIdx} not created`).toBe(true);
+        }
         if (firstCycleOids === null) {
           firstCycleOids = oids;
         } else {
