@@ -166,3 +166,62 @@ FSM-bypassed (bug-146); thread-dispatch from the task-417 directive; develop aga
 - Minor (not blocking): the `createdBy` accessor triplet repeats across 3 policies (pre-existing; candidate shared helper); test seeds envelope-only (legacy-flat branch unit-tested, not wire-tested); get_pending_actions wire-flow confirms the repo push-down (handler lives in system-policy, not registered in the test rig).
 
 **Status:** PR-open, awaiting architect review. routingMode finding flagged DECISION-REQUIRED.
+
+### ✅ W3 COMPLETION (2026-06-19) — MERGED @ `b63a1d6` (#316)
+
+Architect approved + merged. **All 9 list tools now envelope-correct** (W2 Layer-A + W3 Layer-B); bug-138 structurally closed network-wide pending the W6 prod deploy. **routingMode ruling: ACCEPT pre-existing-broken + W4-carry** (no W3 band-aid — it's a repo-normalization bug, not a policy-accessor gap; a Layer-B reach into spec would duplicate repo logic wrong-layer per §2.5/tele-3). **bug-150 filed** (normalizeThreadShape reads spec.routingMode → folded into W4). createdBy-triplet shared-helper → W4 cleanup candidate. Also peer-approved PR #315 (Design v1.3 doc — renameMap = complete field-movement authority, finding-A folded). W3 = DONE.
+
+---
+
+## W4 — repo/sweeper/watch envelope-native + close ALL bare-shape writers (task-418; branch `agent-greg/m90-w4-repo-sweeper-watch-writers`)
+
+### Slice 1 — implement (2026-06-19)
+
+FSM-bypassed (bug-146); thread-dispatch from task-418; develop against main @ b63a1d6. **The LAST read+write wave before the W6 data-touch cutover** + the largest. Three sub-areas: (1) watch-path `matchesFilter` envelope-aware in BOTH substrates (N1); (2) repo internal reads envelope-native + carries (bug-150 routingMode, cascade-key dual-path reconciliation, createdBy helper); (3) **CLOSE ALL LIVE BARE-SHAPE WRITERS** (idea-324 / preflight c1 — ~8 kinds: Message/Audit/Bug/PendingAction/Thread/Idea/Mission/Task) → route every write through the envelope encoder. Gate: watch e2e both substrates + no-new-bare CANARY (write every tool path → assert envelope lands per-kind) + W1–W4-without-W4 revertibility.
+
+**Shipped:**
+- **matchesFilter (both substrates):** translate filter key via renameMap authority then traverse, DUAL-SHAPE tolerant (envelope path → bare fallback) for the mixed-row straddle. postgres = injected W2 translator; memory = static ALL_SCHEMAS translator (reconciler-less). Closes N1 (sweeper watch filters) + N2 (memory false-green). bug-151 (architect-filed major): the scheduled-message-sweeper's Message {delivery,scheduledState} filter silently never fired envelope scheduled Messages since 2026-05-25 — fixed here (W6-prep: eyeball stuck-unfired backlog at the prod snapshot).
+- **Write-encoder seam (close-all-bare-writers):** new `write-encoder.ts` `buildEnvelopeWriteEncoder()` (per-kind migrateOne registry; idempotent passthrough; no-module → passthrough) + `substrate.setWriteEncoder` routed through put/createOnly/putIfMatch, wired at boot BEFORE any write. Complete-by-construction; symmetric to the W2 read translator (ADR at ship).
+- **bug-150 + broader normalizeThreadShape fix:** reads EVERY relocated Thread field envelope-native (routingMode→spec; summary/convergenceActions/participants/messages/currentTurnAgentId→status). Pre-fix force-defaulted them → W4's writer-closure would have shipped empty messages/participants for new threads.
+- **cascade-keys:** KEEP repo dual-path + delete-at-W8 comment across idea/bug(×2)/mission/task/proposal (architect-ruled — sole straddle mechanism, NOT chokepoint-redundant; W1 null-pin preserved). createdBy helper deferred → W8.
+
+**Self-review (code-review, 1 finder angle) — 2 CRITICAL catches FIXED** (encoder inert-in-tests → invisible to the suite):
+1. Turn was imported but MISSING from the write-encoder MODULE_FACTORIES → Turn writes stayed bare. Fixed + added to the canary.
+2. normalizeThreadShape force-defaulted relocated fields (beyond the flagged routingMode) → W4 writer-closure would break get_thread/reply-routing/convergence for new envelope threads. Fixed envelope-native + a thread-read regression test.
+- (low, documented) matchesFilter bare-fallback degenerate-matches the literal {kind:"Message"} (reserved-key collision); the bare fallback is needed for real bare-row kind filtering → accept + comment.
+
+**Verification:** `write-encoder-and-watch-w4.test.ts` (testcontainers, 7 tests): passthrough pins (byte-identical / put-then-put stable / status-survives / no-module); no-new-bare canary (all kinds incl. Turn + createOnly); watch matchesFilter both substrates; thread-read regression. Full hub suite GREEN (modulo the known advisory-lock flake); tsc clean. Revertibility: W4 hooks inert-unless-wired + matchesFilter back-compat → W1–W3 pass without W4.
+
+**Status:** PR-open, awaiting architect review (Slice 1) → see Slice 2 for the pre-merge completeness fix.
+
+### Slice 2 — two pre-merge completeness confirmations → bug-152 fix (2026-06-19)
+
+Architect asked for TWO confirmations before merge: (1) is the write-encoder registry DERIVED/structurally-complete (not hand-enrolled — Turn was missed); (2) was the normalizer fix SYSTEMATIC (sweep ALL custom normalize*/hydrate readers).
+
+**(1) Registry-completeness backstop — DONE (green).** Added `writeEncoderRegisteredKinds()` export + a BIDIRECTIONAL test: fs-enumerate `kinds/*.ts` module files vs the `MODULE_FACTORIES` registry — every module must be registered (the Turn-class omission now fails structurally) AND no stale registry entry. Converts "complete by construction" → test-enforced.
+
+**(2) Systematic normalizer sweep — found the gap is BROADER than the 2 caught (idea-320 class).** Enumerated EVERY read-normalizer with an END-TO-END verdict (does repo→handler→consumer actually break on envelope, accounting for W2/W3/bug-137 read-site tolerance):
+- **GENUINELY BROKEN (W4 writer-closure makes universal):** **Thread FSM** — my Slice-1 `normalizeThreadShape` fix was INCOMPLETE (surfaced arrays but left status/currentTurn/roundCount/maxRounds as passthrough → `current.status` was the envelope OBJECT → `replyToThread`'s `status !== "active"` always threw → returned null → reply/convergence broken universally; + `cloneThread` labels wiped, `truncateClosedThreadMessages` never fired). **Tele FSM** — `normalizeTele` (`if(raw.status) return raw`) returned the envelope unchanged → supersede/retire gates never fired + get_tele/list_tele returned raw envelope.
+- **CONFIRMED ENVELOPE-NATIVE (verified, no change):** Idea/Bug/Mission/Turn (passthrough clones → tolerant consumers: lists via W2/W3 accessors, mutations via bug-137 `phaseFromEntity` ×14); Agent (decoded-first via `envelopeToAgent`); Counter (native).
+
+Architect CONFIRMED re-triage (fix Thread+Tele only; the 4 tolerant kinds left as-is — converting them would be a broad rewrite of WORKING code + consumer-tolerance is the designed-until-W8 mechanism). **bug-152 filed (major)** — the read-normalizer FSM-gate class; resolves on #317 merge.
+
+**Fix (altitude: decode ONCE at the normalizer, don't rewrite each gate):**
+- `normalizeThreadShape` → FULL envelope→legacy-flat decoder: flatten metadata/spec/status to top-level (every relocated field keeps its leaf name; only status→phase is a leaf-rename per Thread renameMap), derive status via `phaseFromEntity`, and STRIP envelope artifacts (metadata/spec/status objects + phase/apiVersion/kind) so the CAS put-back re-encodes a CLEAN legacy-flat row (leftover bucket objects would re-partition into `spec.metadata` garbage). Fixes the FSM gates + `cloneThread` (labels now surface) + `truncate` (operate on the decoded thread).
+- `normalizeTele` → same full-decode pattern; gates read `current` which casUpdate normalizes BEFORE the transform, so the decode is sufficient (no per-gate `phaseFromEntity` scatter). Legacy default `status: "active"` preserved via `phaseFromEntity(raw) ?? "active"`.
+
+**Verification:** 2 NEW dispositive FSM regression tests in `write-encoder-and-watch-w4.test.ts` (now 10 tests, all green) — both run END-TO-END on ENVELOPE-backed storage (encoder wired → openThread/defineTele store envelope): (a) thread reply + 2-round convergence FSM (pre-fix `replyToThread` returns null → fails; asserts round-trip to clean envelope + no `spec.metadata` garbage); (b) tele retire + supersede-gate (pre-fix the gate never fires → `rejects.toThrow(/retired/)` fails). **Full hub suite GREEN (1950 passed | 7 pre-existing skips); tsc clean.** Branch ff-merged to include Design v1.3 (#315).
+
+**W6-prep liveness flag (NOT W4-blocking):** the 2026-05-25 migration already enveloped existing threads/teles → migrated rows MAY already break these gates in prod TODAY (envelope-thread reply → throw; envelope-tele retire silent). At the prod snapshot, eyeball whether prod envelope-thread reply / envelope-tele retire are currently broken (pairs with the bug-151 scheduled-Message backlog check).
+
+**W8 note (for that directive):** read-shape strategy is now MIXED — Thread/Tele/Agent/Counter decode-first; Idea/Bug/Mission/Turn consumer-tolerant. When dual-shape tolerance retires at W8, decide whether to unify (all decode-first).
+
+### Slice 3 — bug-153 advisory-lock test-stability fix (W4-CI-unblock, 2026-06-19)
+
+W4's new write-encoder-and-watch-w4 testcontainer tests added parallel-pg load that surfaced a PRE-EXISTING race in `advisory-lock.test.ts` (the real-pg contention test) — RELIABLY failing in CI on the W4 branch (2 consecutive, same signature: `advisory-lock.test.ts:402` 'B-should-not-run' + pool-after-end at `withAdvisoryLock`), though it passed locally. W3 CI was green → W4 is the load-trigger. Architect re-scoped bug-153 from a follow-on to **W4-merge-blocking** + recommended an in-branch companion fix (fastest unblock; the failure is genuinely W4-load-triggered).
+
+**Root race (one cause, both symptoms):** the contention test fired `callA` (holds the lock 300ms) UNAWAITED, then immediately contended with B (50ms timeout). Nothing guaranteed A acquired first — under load B could WIN the acquire race, run "B-should-not-run", resolve with NO timeout → the `.rejects.toBeInstanceOf(LockAcquisitionTimeoutError)` assertion fails → `await callA` is never reached → callA keeps polling into afterAll's `pool.end()` → "pool after end".
+
+**Fix (architect (a)+(b); NOT a skip/quarantine — the lock mechanism is load-bearing):** (a) deterministic acquisition ORDERING — A's fn body signals once it runs (which only happens AFTER the lock is held), and B attempts only after that signal → B reliably contends behind A + times out; (b) `await callA` in a `finally` → A always settles before teardown, never leaks a polling op into `pool.end()`. Real-contention semantics preserved (B genuinely contends on A's held lock).
+
+**Verification:** advisory-lock.test.ts green 3× isolated (20 tests); full hub suite green (1950 passed | 7 skips) under the parallel-load condition that triggers the CI failure; tsc clean. **bug-153 separately tracked** — this is the W4-unblock; any further advisory-lock-test-stability hardening (e.g. the timing-tolerant parallelize assertion) belongs in a CI-hygiene follow-on, not mission-90.

@@ -30,14 +30,20 @@ import type {
 
 const { Pool, Client } = pg;
 
+/** mission-90 W4: write-side envelope encoder — `(kind, entity) => envelopeRow`. */
+export type WriteEncoder = (kind: string, entity: unknown) => unknown;
+
 /**
- * Postgres substrate handle. Extends HubStorageSubstrate with the W2 late-bound
- * field-translator injection point (setFieldTranslator) — kept OFF the
- * HubStorageSubstrate interface so the memory substrate (and its consumers) are
- * unaffected; only the postgres list-path translates bare keys to envelope paths.
+ * Postgres substrate handle. Extends HubStorageSubstrate with two late-bound
+ * injection points — kept OFF the HubStorageSubstrate interface so the memory
+ * substrate (and its consumers) are unaffected:
+ *   - setFieldTranslator (W2): READ-side bare-key → envelope-path translation.
+ *   - setWriteEncoder (W4): WRITE-side bare → envelope encoding at put/createOnly/
+ *     putIfMatch (idea-324 close-all-bare-writers). Symmetric declarative authorities.
  */
 export interface PostgresSubstrate extends HubStorageSubstrate {
   setFieldTranslator(translator: FieldTranslator | null): void;
+  setWriteEncoder(encoder: WriteEncoder | null): void;
 }
 
 /**
@@ -58,6 +64,16 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    */
   private fieldTranslator: FieldTranslator | null = null;
 
+  /**
+   * mission-90 W4 (idea-324): write-side envelope encoder, late-bound via
+   * setWriteEncoder at Hub boot. Routes every put/createOnly/putIfMatch through
+   * the single shape-authority (migration-module migrateOne) so ALL writes land
+   * envelope-shape — complete-by-construction (no per-repo writer can be missed).
+   * Idempotent (envelope rows pass through byte-identical). null until wired
+   * (tests/dev that don't wire it write the entity as-given — no-op).
+   */
+  private writeEncoder: WriteEncoder | null = null;
+
   constructor(connectionString: string) {
     this.pool = new Pool({ connectionString });
     // bug-110 — without an 'error' listener an idle-connection backend error
@@ -71,6 +87,19 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    */
   setFieldTranslator(translator: FieldTranslator | null): void {
     this.fieldTranslator = translator;
+  }
+
+  /**
+   * mission-90 W4 (idea-324): inject the write-side envelope encoder. Called once
+   * at Hub boot. A null arg clears it (writes pass through unencoded).
+   */
+  setWriteEncoder(encoder: WriteEncoder | null): void {
+    this.writeEncoder = encoder;
+  }
+
+  /** Encode an entity for storage (envelope-shape) via the injected write-encoder; no-op if unwired. */
+  private encodeForWrite<T>(kind: string, entity: T): T {
+    return (this.writeEncoder ? this.writeEncoder(kind, entity) : entity) as T;
   }
 
   /**
@@ -127,7 +156,8 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   }
 
   async put<T>(kind: string, entity: T): Promise<{ id: string; resourceVersion: string }> {
-    const id = extractId(entity, kind);
+    const stored = this.encodeForWrite(kind, entity); // mission-90 W4: envelope-encode (idempotent)
+    const id = extractId(stored, kind);
     const r = await this.pool.query<{ resource_version: string }>(
       `INSERT INTO entities (kind, id, data, created_at, updated_at)
        VALUES ($1, $2, $3, NOW(), NOW())
@@ -136,7 +166,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
              updated_at = NOW(),
              resource_version = nextval('entities_rv_seq')
        RETURNING resource_version`,
-      [kind, id, entity as object],
+      [kind, id, stored as object],
     );
     return { id, resourceVersion: String(r.rows[0]!.resource_version) };
   }
@@ -200,13 +230,14 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   // ── CAS primitives (per C1 fold-in; preserve v0 race-protection) ──────────
 
   async createOnly<T>(kind: string, entity: T): Promise<CreateOnlyResult> {
-    const id = extractId(entity, kind);
+    const stored = this.encodeForWrite(kind, entity); // mission-90 W4: envelope-encode (idempotent)
+    const id = extractId(stored, kind);
     const r = await this.pool.query<{ resource_version: string }>(
       `INSERT INTO entities (kind, id, data, created_at, updated_at)
        VALUES ($1, $2, $3, NOW(), NOW())
        ON CONFLICT (kind, id) DO NOTHING
        RETURNING resource_version`,
-      [kind, id, entity as object],
+      [kind, id, stored as object],
     );
     if (r.rowCount === 0) {
       return { ok: false, conflict: "existing" };
@@ -215,7 +246,8 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   }
 
   async putIfMatch<T>(kind: string, entity: T, expectedRevision: string): Promise<PutIfMatchResult> {
-    const id = extractId(entity, kind);
+    const stored = this.encodeForWrite(kind, entity); // mission-90 W4: envelope-encode (idempotent)
+    const id = extractId(stored, kind);
     const r = await this.pool.query<{ resource_version: string }>(
       `UPDATE entities
          SET data = $3,
@@ -223,7 +255,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
              resource_version = nextval('entities_rv_seq')
        WHERE kind = $1 AND id = $2 AND resource_version = $4
        RETURNING resource_version`,
-      [kind, id, entity as object, expectedRevision],
+      [kind, id, stored as object, expectedRevision],
     );
     if (r.rowCount === 0) {
       // Either row doesn't exist OR revision mismatch — fetch current for caller
@@ -267,7 +299,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
       );
       for (const row of r.rows) {
         if (signal?.aborted) return;
-        if (filter && !matchesFilter(row.data as Record<string, unknown>, filter)) continue;
+        if (filter && !matchesFilter(row.data as Record<string, unknown>, filter, (k) => this.translateKey(kind, k))) continue;
         yield {
           op: "put",
           kind: row.kind,
@@ -347,7 +379,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
             // entity MAY be undefined if post-NOTIFY fetch races concurrent delete
             // (per Design v1.2 §2.1 ChangeEvent race semantics — consumer-side stale-event)
             entity = r.rows[0]?.data;
-            if (filter && entity && !matchesFilter(entity as Record<string, unknown>, filter)) continue;
+            if (filter && entity && !matchesFilter(entity as Record<string, unknown>, filter, (k) => this.translateKey(kind, k))) continue;
           }
 
           yield {
@@ -538,19 +570,32 @@ function jsonbField(dottedPath: string): string {
  * provided a filter). Postgres-side filtering at notify-time would require
  * per-subscription filter SQL; client-side match is simpler + bounded since
  * replay is limited to events newer than sinceRevision.
+ *
+ * mission-90 W4 (N1): envelope-aware + DUAL-SHAPE tolerant. The watch path runs
+ * continuously over MIXED rows during the migration straddle (envelope + bare
+ * stragglers until W6), so each renamed/relocated key is read from its envelope
+ * JSONB path (via the renameMap translator — the W2 complete authority) AND falls
+ * back to the bare top-level path. Closes the bug-138 silent-miss on watch streams
+ * without breaking bare rows. No translator / no-rename key → bare read only.
  */
-function matchesFilter(entity: Record<string, unknown>, filter: Filter): boolean {
-  for (const [field, value] of Object.entries(filter)) {
-    const parts = field.split(".");
-    let v: unknown = entity;
-    for (const p of parts) {
-      if (v && typeof v === "object" && p in (v as object)) {
-        v = (v as Record<string, unknown>)[p];
-      } else {
-        v = undefined;
-        break;
-      }
+function traversePath(entity: Record<string, unknown>, dottedPath: string): unknown {
+  let v: unknown = entity;
+  for (const p of dottedPath.split(".")) {
+    if (v && typeof v === "object" && p in (v as object)) {
+      v = (v as Record<string, unknown>)[p];
+    } else {
+      return undefined;
     }
+  }
+  return v;
+}
+
+function matchesFilter(entity: Record<string, unknown>, filter: Filter, translateKey?: (bareKey: string) => string): boolean {
+  for (const [rawField, value] of Object.entries(filter)) {
+    const envField = translateKey ? translateKey(rawField) : rawField;
+    let v = traversePath(entity, envField);
+    // dual-shape: if the envelope path missed (bare straggler row), read the bare key.
+    if (v === undefined && envField !== rawField) v = traversePath(entity, rawField);
 
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       if (String(v) !== String(value)) return false;

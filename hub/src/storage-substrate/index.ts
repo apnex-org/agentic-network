@@ -24,7 +24,9 @@ export type {
 } from "./types.js";
 
 export { createPostgresStorageSubstrate } from "./postgres-substrate.js";
-export type { PostgresSubstrate } from "./postgres-substrate.js";
+export type { PostgresSubstrate, WriteEncoder } from "./postgres-substrate.js";
+export { buildEnvelopeWriteEncoder } from "./migrations/v2-envelope/write-encoder.js";
+export type { EnvelopeWriteEncoder } from "./migrations/v2-envelope/write-encoder.js";
 export { createMemoryStorageSubstrate } from "./memory-substrate.js";
 export {
   LOCK_CLASS,

@@ -846,15 +846,11 @@ const threadCreatedBy = (t: Thread) => fieldFromEntity(t, "createdBy") as { role
 const THREAD_ACCESSORS: FieldAccessors<Thread> = {
   id: (t) => t.id,
   status: (t) => phaseFromEntity(t),
-  // NOTE (W3/W4 boundary): routingMode is NOT cleanly Layer-B-recoverable. The
-  // thread repo's normalizeThreadShape force-defaults a NON-NULL top-level
-  // routingMode via normalizeRoutingMode(raw.routingMode) — and raw.routingMode is
-  // undefined on envelope rows (the value lives at spec.routingMode), so it yields
-  // "unicast" for every envelope thread. fieldFromEntity's non-null-top-level rule
-  // then returns that default (same result as the pre-W3 `t.routingMode` — NO
-  // regression), and a Layer-B accessor can't recover it without duplicating the
-  // repo's normalizeRoutingMode + spec read. CLEAN FIX = make normalizeThreadShape
-  // read spec.routingMode (repo = W4). Surfaced to architect as a W4-carry.
+  // mission-90 W4 (bug-150 FIXED): normalizeThreadShape now reads spec.routingMode
+  // envelope-aware (was force-defaulting every envelope thread to "unicast"), so the
+  // normalized top-level routingMode carries the real value and fieldFromEntity reads
+  // it correctly. (W3 had flagged this as not-Layer-B-recoverable — the clean fix was
+  // the repo normalizer, landed at W4.)
   routingMode: (t) => fieldFromEntity(t, "routingMode"),
   currentTurn: (t) => fieldFromEntity(t, "currentTurn"),
   currentTurnAgentId: (t) => fieldFromEntity(t, "currentTurnAgentId") ?? null,

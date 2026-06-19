@@ -129,6 +129,12 @@ export class IdeaRepositorySubstrate implements IIdeaStore {
       limit: 1,
     });
     if (envelopeResult.items[0]) return cloneIdea(envelopeResult.items[0]);
+    // mission-90 W4: KEEP this bare fallback — cascade-keys are NOT chokepoint-
+    // translated (W1 null-pin), so it's the SOLE straddle mechanism (unlike the
+    // listMissions status branch which is chokepoint-redundant). Removing it pre-W6
+    // would risk a bug-147-class duplicate-on-missed-dedup for bare stragglers.
+    // DELETE at W8 with all dual-shape tolerance, after W6 proves zero bare rows
+    // (architect-ruled 2026-06-19; W8 carry-set).
     const legacyResult = await this.substrate.list<Idea>(KIND, {
       filter: {
         sourceThreadId: key.sourceThreadId,

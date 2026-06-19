@@ -39,8 +39,19 @@ import type {
   Filter,
   FilterValue,
 } from "./types.js";
+import { ALL_SCHEMAS } from "./schemas/all-schemas.js";
 
 type EntityRow = { data: unknown; resourceVersion: number };
+
+// mission-90 W4 (N1/N2): static renameMap authority for the reconciler-less
+// memory backend — mirrors all-schemas.ts (the same authority the postgres
+// reconciler builds getFieldTranslation from in W2). Built once at module load.
+const MEMORY_RENAME_MAP = new Map<string, Record<string, string>>(
+  ALL_SCHEMAS.filter((s) => s.renameMap).map((s) => [s.kind, s.renameMap as Record<string, string>]),
+);
+function memoryTranslateKey(kind: string, bareKey: string): string {
+  return MEMORY_RENAME_MAP.get(kind)?.[bareKey] ?? bareKey;
+}
 type WatchCallback<T = unknown> = (event: ChangeEvent<T>) => void;
 
 /**
@@ -134,7 +145,7 @@ class MemoryStorageSubstrate implements HubStorageSubstrate {
     let items: unknown[] = Array.from(store.values()).map(r => r.data);
 
     if (filter) {
-      items = items.filter(item => matchesFilter(item as Record<string, unknown>, filter));
+      items = items.filter(item => matchesFilter(item as Record<string, unknown>, filter, (k) => memoryTranslateKey(kind, k)));
     }
 
     if (sort && sort.length > 0) {
@@ -228,7 +239,7 @@ class MemoryStorageSubstrate implements HubStorageSubstrate {
     const callback: WatchCallback = (event) => {
       // Type assertion: caller declared T; we accept any entity-type at runtime
       const typedEvent = event as ChangeEvent<T>;
-      if (filter && typedEvent.entity && !matchesFilter(typedEvent.entity as Record<string, unknown>, filter)) {
+      if (filter && typedEvent.entity && !matchesFilter(typedEvent.entity as Record<string, unknown>, filter, (k) => memoryTranslateKey(kind, k))) {
         return;
       }
       queue.push(typedEvent);
@@ -271,7 +282,7 @@ class MemoryStorageSubstrate implements HubStorageSubstrate {
             .sort((a, b) => a[1].resourceVersion - b[1].resourceVersion);
           for (const [id, row] of replayItems) {
             if (signal?.aborted) return;
-            if (filter && !matchesFilter(row.data as Record<string, unknown>, filter)) continue;
+            if (filter && !matchesFilter(row.data as Record<string, unknown>, filter, (k) => memoryTranslateKey(kind, k))) continue;
             yield {
               op: "put",
               kind,
@@ -497,9 +508,16 @@ function compareValues(a: unknown, b: unknown): number {
  * - $in → array membership
  * - $gt/$lt/$gte/$lte → numeric/ISO-date comparison
  */
-function matchesFilter(entity: Record<string, unknown>, filter: Filter): boolean {
-  for (const [field, value] of Object.entries(filter)) {
-    const v = extractDotted(entity, field);
+function matchesFilter(entity: Record<string, unknown>, filter: Filter, translateKey?: (bareKey: string) => string): boolean {
+  for (const [rawField, value] of Object.entries(filter)) {
+    // mission-90 W4 (N1/N2): envelope-aware + DUAL-SHAPE tolerant. Rewrite the bare
+    // filter key to its envelope JSONB path via the renameMap authority (memory is
+    // reconciler-less → caller supplies a static all-schemas translator), read it,
+    // and fall back to the bare path for not-yet-migrated rows. Closes the memory
+    // false-green (N2) without breaking bare-shape fixtures/straddle rows.
+    const envField = translateKey ? translateKey(rawField) : rawField;
+    let v = extractDotted(entity, envField);
+    if (v === undefined && envField !== rawField) v = extractDotted(entity, rawField);
 
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       if (String(v) !== String(value)) return false;

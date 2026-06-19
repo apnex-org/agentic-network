@@ -61,29 +61,69 @@ import {
 } from "../state.js";
 import { validateStagedActions } from "../policy/staged-action-payloads.js";
 import { SubstrateCounter } from "./substrate-counter.js";
+import { phaseFromEntity } from "./shape-helpers.js";
 
 const KIND = "Thread";
 const MAX_CAS_RETRIES = 50;
 const LIST_PREFETCH_CAP = 500;
 
-/** Normalise on-read: fill in defaults for legacy fields. Ported from
- *  ThreadRepository (which ports from gcs-state.ts). */
+/** Normalise on-read: full envelope→legacy-flat DECODE + fill legacy defaults.
+ *  Ported from ThreadRepository (which ports from gcs-state.ts). */
 function normalizeThreadShape(t: unknown): Thread {
   const raw = t as Record<string, unknown>;
-  const convergenceActions = Array.isArray(raw.convergenceActions)
-    ? (raw.convergenceActions as unknown[]).map((a) => normalizeStagedActionShape(a))
-    : [];
-  return {
+  // mission-90 W4 (bug-152 / idea-320 manifesting): FULL envelope→legacy-flat
+  // DECODE. Thread relocates nearly every field into metadata/spec/status
+  // (Thread.ts partition) and renames status→status.phase. Downstream EVERYTHING
+  // reads legacy-flat: the FSM gates in casUpdateOrThrow/replyToThread/leaveThread
+  // (current.status/.currentTurn/.roundCount/.maxRounds), cloneThread (t.labels),
+  // truncateClosedThreadMessages (t.status), and the summary projection. The prior
+  // shape surfaced only a handful of fields and left status as the envelope OBJECT
+  // → `current.status !== "active"` always threw on envelope rows (reply/converge
+  // broken universally once W4's writer-closure makes ALL new threads envelope).
+  // So decode ONCE here (the Agent envelopeToAgent pattern) rather than rewriting
+  // each gate: flatten the 3 buckets to top-level — every relocated field keeps its
+  // leaf name, only status→phase is a leaf-rename (Thread renameMap) — derive status
+  // via phaseFromEntity, and STRIP the envelope artifacts so the CAS put-back
+  // (putIfMatch → write-encoder migrateOne) re-encodes a CLEAN legacy-flat row.
+  // Without the strip, leftover metadata/spec OBJECTS would be re-partitioned into
+  // spec.metadata/spec.spec garbage on the next write. Bare rows: buckets absent →
+  // already legacy-flat (dual-shape tolerant across the W6 straddle).
+  const asObj = (v: unknown): Record<string, unknown> =>
+    v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const flat: Record<string, unknown> = {
     ...raw,
-    routingMode: normalizeRoutingMode(raw.routingMode),
-    context: isThreadContext(raw.context) ? raw.context : null,
-    idleExpiryMs: typeof raw.idleExpiryMs === "number" ? raw.idleExpiryMs : null,
-    convergenceActions,
-    summary: typeof raw.summary === "string" ? raw.summary : "",
-    participants: Array.isArray(raw.participants) ? raw.participants : [],
-    recipientAgentId: typeof raw.recipientAgentId === "string" ? raw.recipientAgentId : null,
-    currentTurnAgentId: typeof raw.currentTurnAgentId === "string" ? raw.currentTurnAgentId : null,
-    messages: Array.isArray(raw.messages) ? raw.messages : [],
+    ...asObj(raw.metadata),
+    ...asObj(raw.spec),
+    ...asObj(raw.status),
+  };
+  // Drop envelope artifacts: the bucket objects (re-partition garbage if kept),
+  // the lifted `phase` (not a legacy top-level field), and apiVersion/kind
+  // (encodeEnvelope re-derives both). status is re-set below to the phase STRING.
+  delete flat.metadata;
+  delete flat.spec;
+  delete flat.status;
+  delete flat.phase;
+  delete flat.apiVersion;
+  delete flat.kind;
+  const ctx = flat.context;
+  const idleExpiry = flat.idleExpiryMs;
+  const summaryV = flat.summary;
+  const recipient = flat.recipientAgentId;
+  const currentTurnAgent = flat.currentTurnAgentId;
+  return {
+    ...flat,
+    status: phaseFromEntity(raw),
+    routingMode: normalizeRoutingMode(flat.routingMode),
+    context: isThreadContext(ctx) ? ctx : null,
+    idleExpiryMs: typeof idleExpiry === "number" ? idleExpiry : null,
+    convergenceActions: Array.isArray(flat.convergenceActions)
+      ? (flat.convergenceActions as unknown[]).map((a) => normalizeStagedActionShape(a))
+      : [],
+    summary: typeof summaryV === "string" ? summaryV : "",
+    participants: Array.isArray(flat.participants) ? flat.participants : [],
+    recipientAgentId: typeof recipient === "string" ? recipient : null,
+    currentTurnAgentId: typeof currentTurnAgent === "string" ? currentTurnAgent : null,
+    messages: Array.isArray(flat.messages) ? flat.messages : [],
   } as Thread;
 }
 

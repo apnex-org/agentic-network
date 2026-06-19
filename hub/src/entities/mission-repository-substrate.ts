@@ -146,6 +146,8 @@ export class MissionRepositorySubstrate implements IMissionStore {
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Mission | null> {
     // mission-89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback.
+    // mission-90 W4: KEEP bare fallback (sole straddle mechanism; cascade-keys NOT
+    // chokepoint-translated, W1 null-pin); DELETE at W8 (architect-ruled; W8 carry-set).
     const envelopeResult = await this.substrate.list<Mission>(KIND, {
       filter: {
         "metadata.sourceThreadId": key.sourceThreadId,
