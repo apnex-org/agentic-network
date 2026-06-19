@@ -73,6 +73,20 @@ export class SchemaReconciler {
   private readonly fieldTranslationMap = new Map<string, Map<string, string>>();
 
   /**
+   * mission-90 W5 (idea-318 §2.8): per-kind spec-signature cache for the
+   * runtimeLoop spec-equality guard. Maps kind → a canonical signature of the
+   * spec-relevant fields (kind/version/fields/indexes/indexOwnershipPattern/
+   * renameMap). The status-WRITE (below) MERGES status into the SchemaDef row,
+   * which fires the reconciler's OWN watch-loop (NOTIFY has no OLD-vs-NEW guard;
+   * substrate.put bumps resource_version unconditionally) — a literal per-cycle
+   * write would self-trigger forever. The guard skips re-reconcile when the spec
+   * is unchanged vs this cache, so a status-write echo (status differs, spec does
+   * NOT) is a no-op → converge-then-stop. Populated at boot + on each runtime
+   * spec-change; Hub restart rebuilds at boot.
+   */
+  private readonly specCache = new Map<string, string>();
+
+  /**
    * mission-90 W1 boot-put envelope-correctness (thread-658 preflight c1/c2
    * fold): the SchemaDef migration module is the single shape-authority for
    * envelope-encoding SchemaDef rows — reusing migrateOne guarantees boot-put
@@ -144,9 +158,22 @@ export class SchemaReconciler {
         // row shape (Design §4 W5 row).
         await this.substrate.put("SchemaDef", this.toEnvelopeRow(def));
         await this.applySchemaIndexes(def);
+        // mission-90 W5: seed the spec-equality cache (so the first runtime echo
+        // for an unchanged kind is skipped) + write the REAL reconcile outcome.
+        // On success the provisional boot-put stamp already matches → the
+        // material-guard makes this a no-op (no boot write, no boot NOTIFY-echo —
+        // and the watch LISTEN starts only AFTER this loop, so boot is doubly safe).
+        this.specCache.set(def.kind, this.specSignature(def));
+        await this.reconcileStatusWrite(def, { phase: "applied" });
       } catch (err) {
-        // Per-kind failure: capture context for STRICT throw post-loop.
+        // Per-kind failure: capture context for STRICT throw post-loop. Also
+        // surface the failure on the row's status (best-effort breadcrumb;
+        // WARN-only, never blocks the STRICT boot throw below).
         this.warn(`failed to apply SchemaDef for kind=${def.kind}`, err);
+        await this.reconcileStatusWrite(def, {
+          phase: "failed",
+          error: (err as Error)?.message || String(err),
+        });
         failures.push({ kind: def.kind, error: err });
       }
     }
@@ -273,6 +300,106 @@ export class SchemaReconciler {
   }
 
   /**
+   * mission-90 W5: canonical signature of a SchemaDef's SPEC-relevant fields
+   * (kind/version/fields/indexes/indexOwnershipPattern/renameMap — NOT status).
+   * Object keys are sorted recursively so the signature is invariant to JSONB
+   * key-reordering across the store round-trip (the boot def and the watched-row
+   * decode produce the SAME signature for an unchanged spec); array order is
+   * preserved (semantically meaningful for fields[]/indexes[] and stable across
+   * JSONB). Excluding status is the load-bearing property: a status-write echo
+   * leaves this signature unchanged → the spec-equality guard skips it.
+   */
+  private specSignature(def: SchemaDef): string {
+    const canonical = (v: unknown): unknown => {
+      if (Array.isArray(v)) return v.map(canonical);
+      if (v !== null && typeof v === "object") {
+        const src = v as Record<string, unknown>;
+        return Object.keys(src).sort().reduce<Record<string, unknown>>((acc, k) => {
+          acc[k] = canonical(src[k]);
+          return acc;
+        }, {});
+      }
+      return v;
+    };
+    return JSON.stringify(canonical({
+      kind: def.kind,
+      version: def.version,
+      fields: def.fields,
+      indexes: def.indexes,
+      indexOwnershipPattern: def.indexOwnershipPattern ?? null,
+      renameMap: def.renameMap ?? null,
+    }));
+  }
+
+  /**
+   * mission-90 W5 (idea-318): write the reconcile outcome to the SchemaDef row's
+   * status, MERGED into the existing envelope row (NOT replace). Converge-then-stop:
+   *
+   *   - keyed on the REAL outcome (`outcome.phase`), NOT the boot-put / W4-encoder
+   *     provisional status.phase="applied" stamp;
+   *   - MATERIAL-change guard — write ONLY when phase / appliedVersion /
+   *     reconcileError differ from the stored status. Critically, NO
+   *     lastReconciledAt-style refresh on no-op cycles: a timestamp refreshed every
+   *     cycle would self-trigger forever even WITH a data-changed guard (the
+   *     deliberate, flagged deviation from idea-318's literal per-cycle-timestamp);
+   *   - the merged put is an already-envelope row → the W4 write-encoder passes it
+   *     through byte-identical, so this status SURVIVES the encoder (verified by the
+   *     W4 passthrough pin + the W5 restart-survival test);
+   *   - boot-failure posture WARN (Director-dispositioned): a status-write failure
+   *     must NEVER fail Hub start or kill the runtime loop — reconcileError is
+   *     itself the failure-surface (tele-7: loud, not fatal).
+   */
+  private async reconcileStatusWrite(
+    def: SchemaDef,
+    outcome: { phase: "applied" | "failed"; error?: string },
+  ): Promise<void> {
+    try {
+      const current = await this.substrate.get<Record<string, unknown>>("SchemaDef", def.kind);
+      if (!current || !isEnvelopeShape(current)) {
+        // No envelope row to merge into (defensive — the boot-put creates it).
+        return;
+      }
+      const curStatus =
+        current.status !== null && typeof current.status === "object"
+          ? (current.status as Record<string, unknown>)
+          : {};
+      const desiredPhase = outcome.phase;
+      // appliedVersion tracks the last SUCCESSFULLY-applied version; a failure
+      // leaves it at the prior value (the failed attempt is NOT "applied").
+      const desiredAppliedVersion =
+        outcome.phase === "applied" ? def.version : (curStatus.appliedVersion ?? null);
+      const desiredError =
+        outcome.phase === "failed" ? (outcome.error || "unknown reconcile error") : null;
+
+      if (
+        curStatus.phase === desiredPhase &&
+        (curStatus.appliedVersion ?? null) === desiredAppliedVersion &&
+        (curStatus.reconcileError ?? null) === desiredError
+      ) {
+        return; // no material change → no write → converges (bounds the self-trigger)
+      }
+
+      const merged: Record<string, unknown> = {
+        ...current,
+        status: {
+          ...curStatus,
+          phase: desiredPhase,
+          appliedVersion: desiredAppliedVersion,
+          reconcileError: desiredError,
+          lastReconciledAt: new Date().toISOString(), // refreshed ONLY on a material write
+        },
+      };
+      await this.substrate.put("SchemaDef", merged);
+      this.log(
+        `status-write kind=${def.kind} → phase=${desiredPhase} appliedVersion=${String(desiredAppliedVersion)}` +
+          (desiredError ? ` reconcileError=${desiredError}` : ""),
+      );
+    } catch (err) {
+      this.warn(`status-write failed for kind=${def.kind} (non-fatal; reconcileError is the surface)`, err);
+    }
+  }
+
+  /**
    * mission-90 W1: envelope-encode a runtime SchemaDef for the boot put via
    * the SchemaDef migration module (single shape-authority — see field-init
    * comment). Input is the bare legacy shape `{id, ...def}`; output is the
@@ -392,11 +519,31 @@ export class SchemaReconciler {
           // back to the runtime SchemaDef (described kind at metadata.name)
           // before reconciling; bare rows pass through (first-boot tolerance).
           const def = this.schemaDefFromRow(event.entity);
+          // mission-90 W5 (ii) spec-equality guard: skip re-reconcile when the
+          // spec-relevant fields are unchanged vs the cache. This is what bounds
+          // the status-write self-trigger (the echo of our own status put changes
+          // ONLY status → unchanged signature → skipped) AND eliminates today's
+          // wasteful no-op re-reconciles. Cache is updated to the attempted spec
+          // BEFORE reconciling, so even a failed apply doesn't re-loop on its echo.
+          const sig = this.specSignature(def);
+          if (this.specCache.get(def.kind) === sig) {
+            this.log(`runtime — skip re-reconcile kind=${def.kind} (spec unchanged; rv=${event.resourceVersion})`);
+            continue;
+          }
+          this.specCache.set(def.kind, sig);
           this.log(`runtime — re-reconciling kind=${def.kind} (rv=${event.resourceVersion})`);
           try {
             await this.applySchemaIndexes(def);
+            // mission-90 W5 (i): write the REAL outcome (converge-then-stop,
+            // material-guarded). On a genuine spec-change this records the new
+            // appliedVersion; its echo is caught by the guard above.
+            await this.reconcileStatusWrite(def, { phase: "applied" });
           } catch (err) {
             this.warn(`runtime apply failed for kind=${def.kind}`, err);
+            await this.reconcileStatusWrite(def, {
+              phase: "failed",
+              error: (err as Error)?.message || String(err),
+            });
           }
         } else if (event.op === "delete") {
           // Need the SchemaDef shape to know which indexes to drop. Watch payload
