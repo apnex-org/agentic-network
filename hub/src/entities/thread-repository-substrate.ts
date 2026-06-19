@@ -61,41 +61,69 @@ import {
 } from "../state.js";
 import { validateStagedActions } from "../policy/staged-action-payloads.js";
 import { SubstrateCounter } from "./substrate-counter.js";
-import { fieldFromEntity, arrayFieldFromEntity } from "./shape-helpers.js";
+import { phaseFromEntity } from "./shape-helpers.js";
 
 const KIND = "Thread";
 const MAX_CAS_RETRIES = 50;
 const LIST_PREFETCH_CAP = 500;
 
-/** Normalise on-read: fill in defaults for legacy fields. Ported from
- *  ThreadRepository (which ports from gcs-state.ts). */
+/** Normalise on-read: full envelope→legacy-flat DECODE + fill legacy defaults.
+ *  Ported from ThreadRepository (which ports from gcs-state.ts). */
 function normalizeThreadShape(t: unknown): Thread {
   const raw = t as Record<string, unknown>;
-  // mission-90 W4 (bug-150 + W4 item-2 repo-internal-reads-envelope-native): read
-  // EVERY relocated field envelope-aware. Thread's partition moves summary/
-  // convergenceActions/participants/messages/currentTurnAgentId → status.* and
-  // routingMode → spec.* (Thread.ts). The prior `raw.<field>` reads were undefined
-  // on envelope rows → FORCE-DEFAULTED to ""/[]/null/"unicast", which W4's
-  // writer-closure (all new threads now envelope) would turn into empty messages/
-  // participants (broken get_thread, reply-routing, convergence) for every new
-  // thread. fieldFromEntity/arrayFieldFromEntity read bare top-level OR the
-  // envelope section (dual-shape; tolerant across the W6 straddle).
-  const ctx = fieldFromEntity(raw, "context");
-  const idleExpiry = fieldFromEntity(raw, "idleExpiryMs");
-  const summaryV = fieldFromEntity(raw, "summary");
-  const recipient = fieldFromEntity(raw, "recipientAgentId");
-  const currentTurnAgent = fieldFromEntity(raw, "currentTurnAgentId");
-  return {
+  // mission-90 W4 (bug-152 / idea-320 manifesting): FULL envelope→legacy-flat
+  // DECODE. Thread relocates nearly every field into metadata/spec/status
+  // (Thread.ts partition) and renames status→status.phase. Downstream EVERYTHING
+  // reads legacy-flat: the FSM gates in casUpdateOrThrow/replyToThread/leaveThread
+  // (current.status/.currentTurn/.roundCount/.maxRounds), cloneThread (t.labels),
+  // truncateClosedThreadMessages (t.status), and the summary projection. The prior
+  // shape surfaced only a handful of fields and left status as the envelope OBJECT
+  // → `current.status !== "active"` always threw on envelope rows (reply/converge
+  // broken universally once W4's writer-closure makes ALL new threads envelope).
+  // So decode ONCE here (the Agent envelopeToAgent pattern) rather than rewriting
+  // each gate: flatten the 3 buckets to top-level — every relocated field keeps its
+  // leaf name, only status→phase is a leaf-rename (Thread renameMap) — derive status
+  // via phaseFromEntity, and STRIP the envelope artifacts so the CAS put-back
+  // (putIfMatch → write-encoder migrateOne) re-encodes a CLEAN legacy-flat row.
+  // Without the strip, leftover metadata/spec OBJECTS would be re-partitioned into
+  // spec.metadata/spec.spec garbage on the next write. Bare rows: buckets absent →
+  // already legacy-flat (dual-shape tolerant across the W6 straddle).
+  const asObj = (v: unknown): Record<string, unknown> =>
+    v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const flat: Record<string, unknown> = {
     ...raw,
-    routingMode: normalizeRoutingMode(fieldFromEntity(raw, "routingMode")),
+    ...asObj(raw.metadata),
+    ...asObj(raw.spec),
+    ...asObj(raw.status),
+  };
+  // Drop envelope artifacts: the bucket objects (re-partition garbage if kept),
+  // the lifted `phase` (not a legacy top-level field), and apiVersion/kind
+  // (encodeEnvelope re-derives both). status is re-set below to the phase STRING.
+  delete flat.metadata;
+  delete flat.spec;
+  delete flat.status;
+  delete flat.phase;
+  delete flat.apiVersion;
+  delete flat.kind;
+  const ctx = flat.context;
+  const idleExpiry = flat.idleExpiryMs;
+  const summaryV = flat.summary;
+  const recipient = flat.recipientAgentId;
+  const currentTurnAgent = flat.currentTurnAgentId;
+  return {
+    ...flat,
+    status: phaseFromEntity(raw),
+    routingMode: normalizeRoutingMode(flat.routingMode),
     context: isThreadContext(ctx) ? ctx : null,
     idleExpiryMs: typeof idleExpiry === "number" ? idleExpiry : null,
-    convergenceActions: arrayFieldFromEntity(raw, "convergenceActions").map((a) => normalizeStagedActionShape(a)),
+    convergenceActions: Array.isArray(flat.convergenceActions)
+      ? (flat.convergenceActions as unknown[]).map((a) => normalizeStagedActionShape(a))
+      : [],
     summary: typeof summaryV === "string" ? summaryV : "",
-    participants: arrayFieldFromEntity(raw, "participants"),
+    participants: Array.isArray(flat.participants) ? flat.participants : [],
     recipientAgentId: typeof recipient === "string" ? recipient : null,
     currentTurnAgentId: typeof currentTurnAgent === "string" ? currentTurnAgent : null,
-    messages: arrayFieldFromEntity(raw, "messages"),
+    messages: Array.isArray(flat.messages) ? flat.messages : [],
   } as Thread;
 }
 

@@ -12,6 +12,7 @@
 // ── Types ────────────────────────────────────────────────────────────
 
 import type { EntityProvenance } from "../state.js";
+import { phaseFromEntity } from "./shape-helpers.js";
 
 export type TeleStatus = "active" | "superseded" | "retired";
 
@@ -60,13 +61,42 @@ export interface ITeleStore {
 
 // ── Normalizer ───────────────────────────────────────────────────────
 
-/** Fill default `status: "active"` for legacy docs that lack the field.
- * Pure read-side transform — callers must NOT write the normalized
- * object back to storage (zero-backfill discipline per mission-43
- * Decision 2). */
+/** Full envelope→legacy-flat DECODE + fill default `status: "active"`.
+ *
+ * mission-90 W4 (bug-152 / idea-320): Tele relocates description/successCriteria
+ * → spec, supersededBy/retiredAt → status, name → metadata.name, and renames
+ * status → status.phase (Tele.ts partition + renameMap). The prior `if
+ * (raw.status) return raw` returned the ENVELOPE OBJECT unchanged on migrated
+ * rows → the supersede/retire FSM gates (`current.status === "retired"`) compared
+ * an object and never fired, and get_tele/list_tele returned the raw envelope.
+ * Decode here (the only Tele read-normalizer; casUpdate normalizes BEFORE the
+ * transform, so the gates read this output): flatten the buckets — every relocated
+ * field keeps its leaf name, only status→phase is a leaf-rename — derive status via
+ * phaseFromEntity (legacy default "active" preserved for docs lacking the field),
+ * and STRIP the envelope artifacts so the CAS put-back re-encodes a CLEAN legacy-
+ * flat row (leftover metadata/spec objects would re-partition into garbage). Bare
+ * rows: buckets absent → already legacy-flat.
+ *
+ * Pure read-side transform on READ paths (getTele/listTele) — those callers do
+ * NOT write back (zero-backfill discipline per mission-43 Decision 2); the
+ * supersede/retire paths legitimately mutate + write (not a backfill). */
 export function normalizeTele(raw: Tele): Tele {
-  if (raw.status) return raw;
-  return { ...raw, status: "active" };
+  const r = raw as unknown as Record<string, unknown>;
+  const asObj = (v: unknown): Record<string, unknown> =>
+    v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const flat: Record<string, unknown> = {
+    ...r,
+    ...asObj(r.metadata),
+    ...asObj(r.spec),
+    ...asObj(r.status),
+  };
+  delete flat.metadata;
+  delete flat.spec;
+  delete flat.status;
+  delete flat.phase;
+  delete flat.apiVersion;
+  delete flat.kind;
+  return { ...flat, status: phaseFromEntity(raw) ?? "active" } as unknown as Tele;
 }
 
 // Mission-47 W1: `MemoryTeleStore` deleted. `TeleRepository` in

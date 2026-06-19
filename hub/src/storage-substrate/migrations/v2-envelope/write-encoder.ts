@@ -78,6 +78,18 @@ const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModul
 export type EnvelopeWriteEncoder = (kind: string, entity: unknown) => unknown;
 
 /**
+ * The kinds the write-encoder registry covers (has a migration module). Exposed
+ * for the W4 registry-completeness backstop test, which fs-enumerates the
+ * kinds/*.ts module files and asserts this registry is bidirectionally complete —
+ * every module file is registered (no Turn-class silent omission) AND no registry
+ * entry points at a non-existent module. Documented module-less kinds (no envelope
+ * partition): Counter has a module; MigrationCursor does not (bookkeeping, by design).
+ */
+export function writeEncoderRegisteredKinds(): string[] {
+  return Object.keys(MODULE_FACTORIES).sort();
+}
+
+/**
  * Build the write-encoder from ALL_SCHEMAS + the per-kind migration modules.
  * Returns `(kind, entity) => envelopeRow` — idempotent (envelope passthrough),
  * and a no-op for kinds without a migration module (e.g. MigrationCursor).

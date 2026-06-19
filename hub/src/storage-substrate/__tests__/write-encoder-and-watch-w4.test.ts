@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
 import {
@@ -29,7 +29,9 @@ import {
   type HubStorageSubstrate,
 } from "../index.js";
 import { isEnvelopeShape } from "../migrations/v2-envelope/shared/envelope.js";
+import { writeEncoderRegisteredKinds } from "../migrations/v2-envelope/write-encoder.js";
 import { ThreadRepositorySubstrate } from "../../entities/thread-repository-substrate.js";
+import { TeleRepositorySubstrate } from "../../entities/tele-repository-substrate.js";
 import { SubstrateCounter } from "../../entities/substrate-counter.js";
 
 const SETUP_TIMEOUT = 90_000;
@@ -53,6 +55,25 @@ const BARE_FIXTURES: Array<{ kind: string; entity: Record<string, unknown> }> = 
 
 describe("W4 write-encoder + watch envelope-awareness", () => {
   const encoder = buildEnvelopeWriteEncoder();
+
+  describe("0. registry completeness (BACKSTOP — converts 'complete by construction' to test-enforced)", () => {
+    it("write-encoder registry is BIDIRECTIONALLY complete vs the kinds/*.ts migration modules", () => {
+      // Enumerate the per-kind migration-module files (the single kind authority).
+      const kindsDir = join(MIGRATIONS_DIR, "v2-envelope", "kinds");
+      const moduleKinds = readdirSync(kindsDir)
+        .filter((f) => f.endsWith(".ts") && f !== "_contract.ts")
+        .map((f) => f.replace(/\.ts$/, ""))
+        .sort();
+      const registry = writeEncoderRegisteredKinds();
+      // (a) every module file is registered — a future kind that adds a module but
+      // forgets the registry entry FAILS here (the Turn-class omission, structurally).
+      const missingFromRegistry = moduleKinds.filter((k) => !registry.includes(k));
+      expect(missingFromRegistry, `kinds with a migration module but NOT in the write-encoder registry`).toEqual([]);
+      // (b) no stale registry entry pointing at a non-existent module file.
+      const staleInRegistry = registry.filter((k) => !moduleKinds.includes(k));
+      expect(staleInRegistry, `write-encoder registry entries with no migration-module file`).toEqual([]);
+    });
+  });
 
   describe("1. passthrough invariants (architect-pinned)", () => {
     it("already-envelope row → encoder → byte-identical (no double-encode)", () => {
@@ -170,6 +191,91 @@ describe("W4 write-encoder + watch envelope-awareness", () => {
       expect(t.routingMode).toBe("broadcast");       // was force-defaulted "unicast" pre-fix (bug-150)
       expect(t.summary).toBe("s1");
       expect(t.currentTurnAgentId).toBe("eng-1");
+    }, OP_TIMEOUT);
+
+    it("bug-152: thread reply + 2-round convergence FSM runs end-to-end on ENVELOPE-backed storage", async () => {
+      // With the encoder wired (beforeAll), openThread STORES an envelope row, so
+      // the whole FSM below reads it back through normalizeThreadShape (which must
+      // FULL-DECODE status/currentTurn/roundCount to legacy-flat) and re-encodes on
+      // every CAS write. Pre-bug-152-fix the decode was partial → current.status was
+      // the envelope OBJECT → `current.status !== "active"` always threw
+      // TransitionRejected → replyToThread returned null (reply/convergence broken
+      // universally once W4's writer-closure makes ALL new threads envelope).
+      const repo = new ThreadRepositorySubstrate(substrate, new SubstrateCounter(substrate));
+      const t1 = await repo.openThread("envelope FSM", "init", "engineer", {
+        authorAgentId: "agent-greg-152",
+        recipientAgentId: "agent-lily-152",
+      });
+      const stored1 = await pool.query<{ data: Record<string, unknown> }>(
+        `SELECT data FROM entities WHERE kind='Thread' AND id=$1`, [t1.id]);
+      expect(isEnvelopeShape(stored1.rows[0]?.data), "openThread stored envelope (writer-closure)").toBe(true);
+
+      // architect replies — reads decoded status==="active" + currentTurn==="architect"
+      const t2 = await repo.replyToThread(t1.id, "arch response", "architect", { authorAgentId: "agent-lily-152" });
+      expect(t2, "reply on an envelope thread must NOT be turn-rejected (bug-152)").not.toBeNull();
+      expect(t2?.status).toBe("active");
+      expect(t2?.roundCount).toBe(2);
+      expect(t2?.messages).toHaveLength(2);
+      expect(t2?.currentTurn).toBe("engineer");
+
+      // engineer converges (round 1 — lastMessageConverged not yet true)
+      const t3 = await repo.replyToThread(t1.id, "eng converge", "engineer", {
+        authorAgentId: "agent-greg-152",
+        converged: true,
+        stagedActions: [{ kind: "stage", type: "close_no_action", payload: { reason: "done" } }],
+        summary: "converged",
+      });
+      expect(t3?.status).toBe("active");
+      expect(t3?.convergenceActions).toHaveLength(1);
+      expect(t3?.convergenceActions[0]?.status).toBe("staged");
+
+      // architect converges (round 2 → willConverge: status mutates to converged, actions commit)
+      const t4 = await repo.replyToThread(t1.id, "arch converge", "architect", {
+        authorAgentId: "agent-lily-152",
+        converged: true,
+        summary: "converged-confirmed",
+      });
+      expect(t4?.status).toBe("converged");
+      expect(t4?.convergenceActions[0]?.status).toBe("committed");
+      expect(t4?.messages).toHaveLength(4);
+
+      // FSM mutation round-trips back to a CLEAN envelope (status.phase reflects it).
+      const stored4 = await pool.query<{ data: Record<string, unknown> }>(
+        `SELECT data FROM entities WHERE kind='Thread' AND id=$1`, [t1.id]);
+      expect(isEnvelopeShape(stored4.rows[0]?.data)).toBe(true);
+      expect((stored4.rows[0]?.data.status as Record<string, unknown>).phase).toBe("converged");
+      // no re-partition garbage from the decode/encode cycle (spec must not carry a nested bucket)
+      expect((stored4.rows[0]?.data.spec as Record<string, unknown>).metadata).toBeUndefined();
+    }, OP_TIMEOUT);
+
+    it("bug-152: tele retire + supersede-gate FSM runs end-to-end on ENVELOPE-backed storage", async () => {
+      // defineTele stores an envelope row (writer-closure). retireTele/supersedeTele
+      // read it via normalizeTele, which must FULL-DECODE (status→phase legacy-flat).
+      // Pre-fix `if (raw.status) return raw` returned the envelope OBJECT → the
+      // supersede retire-gate (`current.status === "retired"`) never fired and the
+      // CAS write produced a hybrid row.
+      const repo = new TeleRepositorySubstrate(substrate, new SubstrateCounter(substrate));
+      const a = await repo.defineTele("Tele A 152", "desc", "criteria");
+      const b = await repo.defineTele("Tele B 152", "desc", "criteria"); // successor for the gate
+      const storedA0 = await pool.query<{ data: Record<string, unknown> }>(
+        `SELECT data FROM entities WHERE kind='Tele' AND id=$1`, [a.id]);
+      expect(isEnvelopeShape(storedA0.rows[0]?.data), "defineTele stored envelope").toBe(true);
+
+      const retired = await repo.retireTele(a.id);
+      expect(retired.status).toBe("retired");
+      expect(retired.retiredAt).toBeDefined();
+
+      const storedA1 = await pool.query<{ data: Record<string, unknown> }>(
+        `SELECT data FROM entities WHERE kind='Tele' AND id=$1`, [a.id]);
+      expect(isEnvelopeShape(storedA1.rows[0]?.data), "retired tele re-encoded to envelope").toBe(true);
+      expect((storedA1.rows[0]?.data.status as Record<string, unknown>).phase).toBe("retired");
+
+      // read-side decode surfaces the phase as legacy-flat status
+      const got = await repo.getTele(a.id);
+      expect(got?.status).toBe("retired");
+
+      // supersede-gate reads the decoded status === "retired" → rejects (was object-compare → never fired)
+      await expect(repo.supersedeTele(a.id, b.id)).rejects.toThrow(/retired/);
     }, OP_TIMEOUT);
   });
 
