@@ -28,6 +28,7 @@ import {
 } from "../../storage-substrate/index.js";
 import { SubstrateCounter } from "../../entities/substrate-counter.js";
 import { IdeaRepositorySubstrate } from "../../entities/idea-repository-substrate.js";
+import { MissionRepositorySubstrate } from "../../entities/mission-repository-substrate.js";
 import { TaskRepositorySubstrate } from "../../entities/task-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "../../entities/thread-repository-substrate.js";
 import { ProposalRepositorySubstrate } from "../../entities/proposal-repository-substrate.js";
@@ -35,6 +36,7 @@ import { TeleRepositorySubstrate } from "../../entities/tele-repository-substrat
 import { PendingActionRepositorySubstrate } from "../../entities/pending-action-repository-substrate.js";
 import { PolicyRouter } from "../router.js";
 import { registerIdeaPolicy } from "../idea-policy.js";
+import { registerMissionPolicy } from "../mission-policy.js";
 import { registerTaskPolicy } from "../task-policy.js";
 import { registerThreadPolicy } from "../thread-policy.js";
 import { registerProposalPolicy } from "../proposal-policy.js";
@@ -94,6 +96,7 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     const counter = new SubstrateCounter(substrate);
     const stores = {
       idea: new IdeaRepositorySubstrate(substrate, counter),
+      mission: new MissionRepositorySubstrate(substrate, counter, new TaskRepositorySubstrate(substrate, counter), new IdeaRepositorySubstrate(substrate, counter)),
       task: new TaskRepositorySubstrate(substrate, counter),
       thread: new ThreadRepositorySubstrate(substrate, counter),
       proposal: new ProposalRepositorySubstrate(substrate, counter),
@@ -106,6 +109,7 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
 
     router = new PolicyRouter(() => { /* silent */ });
     registerIdeaPolicy(router);
+    registerMissionPolicy(router);
     registerTaskPolicy(router);
     registerThreadPolicy(router);
     registerProposalPolicy(router);
@@ -131,7 +135,7 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
   }, 30_000);
 
   beforeEach(async () => {
-    await pool.query(`DELETE FROM entities WHERE kind IN ('Idea','Task','Thread','Proposal','Tele','PendingAction')`);
+    await pool.query(`DELETE FROM entities WHERE kind IN ('Idea','Mission','Task','Thread','Proposal','Tele','PendingAction')`);
   });
 
   function idea(id: string, phase: string, extra: Record<string, unknown> = {}, status: Record<string, unknown> = {}): Row {
@@ -153,6 +157,31 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     expect((parse(await router.handle("list_ideas", { filter: { status: "triaged", missionId: "mission-90" } }, ctx)).ideas as Array<{ id: string }>).map((i) => i.id)).toEqual(["w3-i1"]);
     // non-matching status → empty (and pre-W3 envelope-blind would have returned 0 for ALL of the above)
     expect((parse(await router.handle("list_ideas", { filter: { status: "dismissed" } }, ctx)).ideas as unknown[])).toHaveLength(0);
+  }, 30_000);
+
+  it("W7 (bug-158) list_missions: MISSION_ACCESSORS read envelope-aware — the W3-MISSED tool, exposed live by the strict cutover (F4)", async () => {
+    // mission-90 W7: the W3 sweep converted IDEA/TASK/THREAD accessors but missed
+    // MISSION_ACCESSORS (raw m.status / m.createdAt / ...). The strict all-envelope
+    // cutover exposed it: list_missions({status}) returned 0 for ALL statuses on
+    // prod (m.status was the {phase} OBJECT) — breaking ledger/Survey (idea-325).
+    await seed([
+      { kind: "Mission", id: "w7-m1", data: { id: "w7-m1", kind: "Mission", apiVersion: "core.ois/v1", metadata: { name: "w7-m1", correlationId: "corr-A", createdBy: { role: "architect", agentId: "arch-1" } }, spec: { title: "a" }, status: { phase: "active", turnId: "turn-7" } } },
+      { kind: "Mission", id: "w7-m2", data: { id: "w7-m2", kind: "Mission", apiVersion: "core.ois/v1", metadata: { name: "w7-m2", correlationId: "corr-B" }, spec: { title: "b" }, status: { phase: "completed" } } },
+    ]);
+    // status → status.phase (the dispositive prod regression: pre-fix → 0 matches)
+    expect((parse(await router.handle("list_missions", { filter: { status: "active" } }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m1"]);
+    // legacy scalar status path
+    expect((parse(await router.handle("list_missions", { status: "completed" }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m2"]);
+    // relocated metadata.correlationId accessor
+    expect((parse(await router.handle("list_missions", { filter: { correlationId: "corr-A" } }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m1"]);
+    // relocated status.turnId accessor
+    expect((parse(await router.handle("list_missions", { filter: { turnId: "turn-7" } }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m1"]);
+    // relocated metadata.createdBy accessor
+    expect((parse(await router.handle("list_missions", { filter: { "createdBy.role": "architect" } }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m1"]);
+    // non-matching status → empty + _ois_query_unmatched (pre-fix this was the result for EVERY status)
+    const none = parse(await router.handle("list_missions", { filter: { status: "abandoned" } }, ctx));
+    expect(none.missions as unknown[]).toHaveLength(0);
+    expect(none._ois_query_unmatched).toBe(true);
   }, 30_000);
 
   it("W3.2 list_tasks: envelope status accessor (the 9th broken tool) reads envelope-aware (F4)", async () => {
