@@ -37,7 +37,7 @@ import { validateActionsWithRegistry } from "./action-validators/index.js";
 import type { ValidationContext } from "./action-validators/index.js";
 import { AUTONOMOUS_STAGED_ACTION_TYPES, checkConvergerAuthority } from "./staged-action-payloads.js";
 import { logShadowInvariantBreach } from "../observability/shadow-invariants.js";
-import { phaseFromEntity } from "../entities/shape-helpers.js";
+import { phaseFromEntity, fieldFromEntity } from "../entities/shape-helpers.js";
 import { emitDirectorNotification } from "./director-notification-helpers.js";
 
 // mission-66 commit 6 (#26 marker-protocol): canonical preview-truncation
@@ -839,22 +839,35 @@ const THREAD_SORTABLE_FIELDS = [
   "createdBy.id",
 ] as const;
 
+// mission-90 W3 (Design §2.5): envelope-aware accessor BODIES. status via
+// phaseFromEntity; every other MOVED field via fieldFromEntity (legacy-flat OR
+// envelope-relocated into metadata/spec/status). id stays top-level (unmoved).
+const threadCreatedBy = (t: Thread) => fieldFromEntity(t, "createdBy") as { role?: string; agentId?: string } | undefined;
 const THREAD_ACCESSORS: FieldAccessors<Thread> = {
   id: (t) => t.id,
-  status: (t) => t.status,
-  routingMode: (t) => t.routingMode,
-  currentTurn: (t) => t.currentTurn,
-  currentTurnAgentId: (t) => t.currentTurnAgentId ?? null,
-  roundCount: (t) => t.roundCount,
-  outstandingIntent: (t) => t.outstandingIntent,
-  currentSemanticIntent: (t) => t.currentSemanticIntent,
-  correlationId: (t) => t.correlationId,
-  recipientAgentId: (t) => t.recipientAgentId ?? null,
-  createdAt: (t) => t.createdAt,
-  updatedAt: (t) => t.updatedAt,
-  "createdBy.role": (t) => t.createdBy?.role ?? null,
-  "createdBy.agentId": (t) => t.createdBy?.agentId ?? null,
-  "createdBy.id": (t) => (t.createdBy ? `${t.createdBy.role}:${t.createdBy.agentId}` : null),
+  status: (t) => phaseFromEntity(t),
+  // NOTE (W3/W4 boundary): routingMode is NOT cleanly Layer-B-recoverable. The
+  // thread repo's normalizeThreadShape force-defaults a NON-NULL top-level
+  // routingMode via normalizeRoutingMode(raw.routingMode) — and raw.routingMode is
+  // undefined on envelope rows (the value lives at spec.routingMode), so it yields
+  // "unicast" for every envelope thread. fieldFromEntity's non-null-top-level rule
+  // then returns that default (same result as the pre-W3 `t.routingMode` — NO
+  // regression), and a Layer-B accessor can't recover it without duplicating the
+  // repo's normalizeRoutingMode + spec read. CLEAN FIX = make normalizeThreadShape
+  // read spec.routingMode (repo = W4). Surfaced to architect as a W4-carry.
+  routingMode: (t) => fieldFromEntity(t, "routingMode"),
+  currentTurn: (t) => fieldFromEntity(t, "currentTurn"),
+  currentTurnAgentId: (t) => fieldFromEntity(t, "currentTurnAgentId") ?? null,
+  roundCount: (t) => fieldFromEntity(t, "roundCount"),
+  outstandingIntent: (t) => fieldFromEntity(t, "outstandingIntent"),
+  currentSemanticIntent: (t) => fieldFromEntity(t, "currentSemanticIntent"),
+  correlationId: (t) => fieldFromEntity(t, "correlationId"),
+  recipientAgentId: (t) => fieldFromEntity(t, "recipientAgentId") ?? null,
+  createdAt: (t) => fieldFromEntity(t, "createdAt"),
+  updatedAt: (t) => fieldFromEntity(t, "updatedAt"),
+  "createdBy.role": (t) => threadCreatedBy(t)?.role ?? null,
+  "createdBy.agentId": (t) => threadCreatedBy(t)?.agentId ?? null,
+  "createdBy.id": (t) => { const cb = threadCreatedBy(t); return cb ? `${cb.role}:${cb.agentId}` : null; },
 };
 
 const THREAD_FILTER_SCHEMA = buildQueryFilterSchema(THREAD_FILTERABLE_FIELDS);

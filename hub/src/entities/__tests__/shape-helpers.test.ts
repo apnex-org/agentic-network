@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { tagsFromEntity, arrayFieldFromEntity } from "../shape-helpers.js";
+import { tagsFromEntity, arrayFieldFromEntity, fieldFromEntity } from "../shape-helpers.js";
 
 describe("tagsFromEntity — legacy-flat shape", () => {
   it("returns a copy of top-level tags array (decoupled from input)", () => {
@@ -227,5 +227,44 @@ describe("arrayFieldFromEntity — missing/null defensive (mirror tagsFromEntity
 
   it("returns [] when field value is non-array (e.g., string)", () => {
     expect(arrayFieldFromEntity({ status: { linkedTaskIds: "not-an-array" } }, "linkedTaskIds")).toEqual([]);
+  });
+});
+
+// ── mission-90 W3: fieldFromEntity (scalar/object envelope-tolerant read) ─────
+describe("fieldFromEntity — Layer-B accessor scalar reader", () => {
+  it("legacy-flat: returns the top-level value", () => {
+    expect(fieldFromEntity({ missionId: "m-1" }, "missionId")).toBe("m-1");
+  });
+
+  it("envelope status section: returns status.<field> (e.g. missionId→status.missionId)", () => {
+    expect(fieldFromEntity({ status: { phase: "open", missionId: "m-9" } }, "missionId")).toBe("m-9");
+  });
+
+  it("envelope metadata section: returns metadata.<field> (e.g. createdAt, actor)", () => {
+    expect(fieldFromEntity({ metadata: { createdAt: "2026-01-01", actor: "hub" } }, "actor")).toBe("hub");
+  });
+
+  it("envelope spec section: returns spec.<field> (e.g. severity)", () => {
+    expect(fieldFromEntity({ spec: { severity: "critical" } }, "severity")).toBe("critical");
+  });
+
+  it("object field: returns the whole object (e.g. createdBy→metadata.createdBy)", () => {
+    expect(fieldFromEntity({ metadata: { createdBy: { role: "architect", agentId: "a-1" } } }, "createdBy")).toEqual({ role: "architect", agentId: "a-1" });
+  });
+
+  it("NULL-shadow tolerance: a null top-level (repo-normalizer lift) does NOT shadow the section value", () => {
+    // thread-repo's normalizeThreadShape nulls top-level currentTurnAgentId on
+    // envelope rows; the real value lives at status.currentTurnAgentId.
+    expect(fieldFromEntity({ currentTurnAgentId: null, status: { currentTurnAgentId: "eng-9" } }, "currentTurnAgentId")).toBe("eng-9");
+  });
+
+  it("non-null top-level wins over a section (legacy data precedence)", () => {
+    expect(fieldFromEntity({ name: "legacy", metadata: { name: "envelope" } }, "name")).toBe("legacy");
+  });
+
+  it("absent field: returns undefined; non-object entity: returns undefined", () => {
+    expect(fieldFromEntity({ metadata: {}, spec: {}, status: {} }, "nope")).toBeUndefined();
+    expect(fieldFromEntity(null, "x")).toBeUndefined();
+    expect(fieldFromEntity("str", "x")).toBeUndefined();
   });
 });

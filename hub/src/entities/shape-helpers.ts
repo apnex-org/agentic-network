@@ -140,6 +140,48 @@ export function phaseFromEntity(entity: unknown): string | null {
   return null;
 }
 
+/**
+ * mission-90 W3 (Design §2.5): envelope-tolerant SCALAR/OBJECT field read for
+ * Layer-B FieldAccessor bodies. Sibling of `arrayFieldFromEntity` (W9) +
+ * `phaseFromEntity` — reads a field whether the row is legacy-flat (field at
+ * top-level) or envelope-shape (field relocated into metadata/spec/status).
+ *
+ * - Legacy-flat: returns `entity[fieldName]`.
+ * - Envelope:    probes metadata → spec → status (canonical-Design order) and
+ *                returns the first section that owns the field.
+ * - Absent / non-object entity: returns `undefined`.
+ *
+ * Use for any moved filterable field EXCEPT `status` (use `phaseFromEntity` —
+ * top-level `status` on an envelope row IS the status bucket object, so a
+ * top-level-first probe would wrongly return `{phase,...}` instead of the phase).
+ * Cross-ref the complete renameMap (mission-90 W2) for which fields moved; do NOT
+ * consume getFieldTranslation here (Layer-B fix is the accessor body, NOT key
+ * translation — matchField's bare-key lookup is unchanged; A6).
+ */
+export function fieldFromEntity(entity: unknown, fieldName: string): unknown {
+  if (entity === null || entity === undefined || typeof entity !== "object") {
+    return undefined;
+  }
+  const e = entity as Record<string, unknown>;
+  // Legacy-flat: a NON-NULL top-level value wins (real legacy data). A null/
+  // undefined top-level is treated as "look deeper" — some repo normalizers lift
+  // envelope-relocated fields to top-level as `null` (e.g. thread-repo's
+  // normalizeThreadShape nulls currentTurnAgentId/recipientAgentId), which would
+  // otherwise SHADOW the real value living in a partition section.
+  const top = e[fieldName];
+  if (top !== undefined && top !== null) {
+    return top;
+  }
+  // Envelope-shape: probe partition sections in canonical order.
+  for (const section of ["metadata", "spec", "status"] as const) {
+    const sec = e[section];
+    if (sec && typeof sec === "object" && Object.prototype.hasOwnProperty.call(sec as object, fieldName)) {
+      return (sec as Record<string, unknown>)[fieldName];
+    }
+  }
+  return top; // top-level null/undefined as last resort (field genuinely absent)
+}
+
 export function arrayFieldFromEntity(entity: unknown, fieldName: string): unknown[] {
   if (entity === null || entity === undefined || typeof entity !== "object") {
     return [];

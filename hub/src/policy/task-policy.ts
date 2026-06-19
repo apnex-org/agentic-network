@@ -29,7 +29,7 @@ import {
 import type { Task } from "../state.js";
 import { dispatchTaskSpawned } from "./dispatch-helpers.js";
 import { findNextUnissuedPlannedTask } from "../entities/mission.js";
-import { phaseFromEntity } from "../entities/shape-helpers.js";
+import { phaseFromEntity, fieldFromEntity } from "../entities/shape-helpers.js";
 import type { TaskStatus } from "../state.js";
 import { emitDirectorNotification } from "./director-notification-helpers.js";
 
@@ -327,16 +327,20 @@ const TASK_SORTABLE_FIELDS = [
   "createdBy.id",
 ] as const;
 
+// mission-90 W3 (Design §2.5): envelope-aware accessor BODIES (the 9th broken
+// tool — TASK_ACCESSORS.status=(t)=>t.status was envelope-blind). status via
+// phaseFromEntity; every other MOVED field via fieldFromEntity. id stays top-level.
+const taskCreatedBy = (t: Task) => fieldFromEntity(t, "createdBy") as { role?: string; agentId?: string } | undefined;
 const TASK_ACCESSORS: FieldAccessors<Task> = {
   id: (t) => t.id,
-  status: (t) => t.status,
-  correlationId: (t) => t.correlationId,
-  assignedAgentId: (t) => t.assignedAgentId,
-  createdAt: (t) => t.createdAt,
-  updatedAt: (t) => t.updatedAt,
-  "createdBy.role": (t) => t.createdBy?.role ?? null,
-  "createdBy.agentId": (t) => t.createdBy?.agentId ?? null,
-  "createdBy.id": (t) => (t.createdBy ? `${t.createdBy.role}:${t.createdBy.agentId}` : null),
+  status: (t) => phaseFromEntity(t),
+  correlationId: (t) => fieldFromEntity(t, "correlationId"),
+  assignedAgentId: (t) => fieldFromEntity(t, "assignedAgentId"),
+  createdAt: (t) => fieldFromEntity(t, "createdAt"),
+  updatedAt: (t) => fieldFromEntity(t, "updatedAt"),
+  "createdBy.role": (t) => taskCreatedBy(t)?.role ?? null,
+  "createdBy.agentId": (t) => taskCreatedBy(t)?.agentId ?? null,
+  "createdBy.id": (t) => { const cb = taskCreatedBy(t); return cb ? `${cb.role}:${cb.agentId}` : null; },
 };
 
 const TASK_FILTER_SCHEMA = buildQueryFilterSchema(TASK_FILTERABLE_FIELDS);
