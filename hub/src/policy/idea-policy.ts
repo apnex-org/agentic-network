@@ -25,7 +25,7 @@ import {
 } from "./list-filters.js";
 import { dispatchIdeaSubmitted } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
-import { phaseFromEntity, fieldFromEntity } from "../entities/shape-helpers.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 
 // ── FSM Declaration ─────────────────────────────────────────────────
 
@@ -88,19 +88,22 @@ const IDEA_SORTABLE_FIELDS = [
   "createdBy.id",
 ] as const;
 
-// mission-90 W3 (Design §2.5): envelope-aware accessor BODIES (the fix is the
-// body, NOT key-translation — matchField's bare-key lookup is unchanged). status
-// via phaseFromEntity; every other MOVED field via fieldFromEntity (legacy-flat
-// OR envelope-relocated). id stays top-level (unmoved). createdBy → metadata.createdBy.
-const ideaCreatedBy = (i: Idea) => fieldFromEntity(i, "createdBy") as { role?: string; agentId?: string } | undefined;
+// mission-90 W8 (idea-320, decode-to-flat): the idea repo decodes envelope→flat
+// at every read boundary (cloneIdea), so listIdeas() hands these accessors
+// GUARANTEED-FLAT Ideas — relocated fields (createdAt/updatedAt/missionId/
+// source*/createdBy → top-level) read directly. status stays via phaseFromEntity,
+// the below-membrane decode-mechanism (graceful). W3 history: the fix was the
+// accessor body (matchField's bare-key lookup unchanged); W8 retires the
+// fieldFromEntity helper now that reads are flat.
+const ideaCreatedBy = (i: Idea) => i.createdBy;
 const IDEA_ACCESSORS: FieldAccessors<Idea> = {
   id: (i) => i.id,
   status: (i) => phaseFromEntity(i),
-  createdAt: (i) => fieldFromEntity(i, "createdAt"),
-  updatedAt: (i) => fieldFromEntity(i, "updatedAt"),
-  missionId: (i) => fieldFromEntity(i, "missionId"),
-  sourceThreadId: (i) => fieldFromEntity(i, "sourceThreadId"),
-  sourceActionId: (i) => fieldFromEntity(i, "sourceActionId"),
+  createdAt: (i) => i.createdAt,
+  updatedAt: (i) => i.updatedAt,
+  missionId: (i) => i.missionId,
+  sourceThreadId: (i) => i.sourceThreadId,
+  sourceActionId: (i) => i.sourceActionId,
   "createdBy.role": (i) => ideaCreatedBy(i)?.role ?? null,
   "createdBy.agentId": (i) => ideaCreatedBy(i)?.agentId ?? null,
   "createdBy.id": (i) => { const cb = ideaCreatedBy(i); return cb ? `${cb.role}:${cb.agentId}` : null; },

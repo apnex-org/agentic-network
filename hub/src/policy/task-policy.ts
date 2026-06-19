@@ -29,7 +29,7 @@ import {
 import type { Task } from "../state.js";
 import { dispatchTaskSpawned } from "./dispatch-helpers.js";
 import { findNextUnissuedPlannedTask } from "../entities/mission.js";
-import { phaseFromEntity, fieldFromEntity } from "../entities/shape-helpers.js";
+import { phaseFromEntity } from "../entities/shape-helpers.js";
 import type { TaskStatus } from "../state.js";
 import { emitDirectorNotification } from "./director-notification-helpers.js";
 
@@ -327,17 +327,21 @@ const TASK_SORTABLE_FIELDS = [
   "createdBy.id",
 ] as const;
 
-// mission-90 W3 (Design §2.5): envelope-aware accessor BODIES (the 9th broken
-// tool — TASK_ACCESSORS.status=(t)=>t.status was envelope-blind). status via
-// phaseFromEntity; every other MOVED field via fieldFromEntity. id stays top-level.
-const taskCreatedBy = (t: Task) => fieldFromEntity(t, "createdBy") as { role?: string; agentId?: string } | undefined;
+// mission-90 W8 (idea-320, decode-to-flat): the task repo decodes envelope→flat
+// at every read boundary, so listTasks() hands these accessors GUARANTEED-FLAT
+// Tasks — relocated fields (correlationId/assignedAgentId/createdAt/updatedAt/
+// createdBy → top-level) read directly. status stays via phaseFromEntity, the
+// below-membrane decode-mechanism (graceful). W3 history: TASK_ACCESSORS.status
+// was the 9th envelope-blind tool (t.status was the {phase} object); W3 fixed it
+// via fieldFromEntity, W8 retires the helper now that reads are flat.
+const taskCreatedBy = (t: Task) => t.createdBy;
 const TASK_ACCESSORS: FieldAccessors<Task> = {
   id: (t) => t.id,
   status: (t) => phaseFromEntity(t),
-  correlationId: (t) => fieldFromEntity(t, "correlationId"),
-  assignedAgentId: (t) => fieldFromEntity(t, "assignedAgentId"),
-  createdAt: (t) => fieldFromEntity(t, "createdAt"),
-  updatedAt: (t) => fieldFromEntity(t, "updatedAt"),
+  correlationId: (t) => t.correlationId,
+  assignedAgentId: (t) => t.assignedAgentId,
+  createdAt: (t) => t.createdAt,
+  updatedAt: (t) => t.updatedAt,
   "createdBy.role": (t) => taskCreatedBy(t)?.role ?? null,
   "createdBy.agentId": (t) => taskCreatedBy(t)?.agentId ?? null,
   "createdBy.id": (t) => { const cb = taskCreatedBy(t); return cb ? `${cb.role}:${cb.agentId}` : null; },

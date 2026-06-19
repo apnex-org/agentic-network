@@ -140,8 +140,8 @@ export class BugRepositorySubstrate implements IBugStore {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
     });
 
-    // mission-90 W8: decode FIRST, then filter on the flat `tags` array (was a raw
-    // tagsFromEntity read on the envelope items before the clone).
+    // mission-90 W8: decode FIRST (cloneBug derives the flat `tags` array from the
+    // metadata.labels map), then filter on it.
     return items
       .map(cloneBug)
       .filter(bug => {

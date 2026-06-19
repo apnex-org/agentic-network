@@ -1,60 +1,28 @@
 /**
- * Shape-helpers — canonical LAYER-SPANNING readers for entity fields.
+ * Shape-helpers — the envelope→flat DECODE-LAYER (below the repo membrane).
  *
- * mission-90 W8 (idea-320 / idea-327): the substrate is envelope-ONLY at the
- * STORAGE layer (no legacy-flat rows; the dual-shape STORAGE tolerance —
- * SUBSTRATE_ENVELOPE_TOLERANT flag, cascade bare-fallbacks, matchesFilter
- * bare-path, listMissions legacy UNION, counter legacy branch — is RETIRED).
+ * mission-90 W8 (idea-320 / idea-327, Director END-STATE-2 + architect (A)):
+ * the substrate is envelope-ONLY at the STORAGE layer, and every repo decodes
+ * envelope→flat at its read + CAS boundary (decodeEnvelopeToFlat / the bespoke
+ * per-kind decoders). So ABOVE the membrane there is ONE flat domain shape —
+ * policy + consumers read fields directly (the W3-era fieldFromEntity /
+ * tagsFromEntity / arrayFieldFromEntity dual-layer readers are RETIRED).
  *
- * But there are now TWO live shapes at DIFFERENT layers, both current (NOT a
- * legacy straddle): the STORAGE shape (envelope: {metadata,spec,status:{phase}})
- * read on raw rows (CAS via getWithRevision), and the DECODED DOMAIN shape (flat:
- * {status:"open",...}) produced by decodeEnvelopeToFlat on the repo read boundary
- * (idea-327 → decode-to-flat). These helpers read a field correctly from EITHER
- * layer, so a caller need not know which it holds.
+ * What remains here is the membrane MECHANISM, not an above-membrane reader:
+ *  - `phaseFromEntity` — the status-extractor the decoders call to map an
+ *    envelope `status.{phase}` bucket → the flat top-level `status` string. It
+ *    is load-bearing decode-machinery (decodeEnvelopeToFlat + the kept bespoke
+ *    normalizers normalizeThreadShape/normalizeTele/normalizeAgentShape call it),
+ *    NOT a dual-shape recurrence surface — once policy reads flat, it never sees
+ *    envelope. It survives BELOW the membrane by design (architect ruling (A)).
+ *  - `decodeEnvelopeToFlat` — the generic renameMap+partition reverse the repos
+ *    apply on the read boundary.
  *
  * READ-PATH graceful-degrade (W8 review lens-2): a stray/malformed row returns a
- * safe default (null / undefined / []), NEVER a throw — a single bad row must not
- * crash a list/read. Bare-row DETECTION is the separate 0-bare anomaly-monitor
- * follow-on (loud, out-of-band), not a read-path concern.
+ * safe default (null), NEVER a throw — a single bad row must not crash a
+ * list/read. Bare-row DETECTION is the separate 0-bare anomaly-monitor follow-on
+ * (loud, out-of-band), not a read-path concern.
  */
-
-interface EntityWithMaybeTags {
-  readonly tags?: readonly string[];
-  readonly labels?: Record<string, string>;
-  readonly metadata?: {
-    readonly labels?: Record<string, string>;
-  };
-}
-
-/**
- * Coerce tags from an entity. Reads, in order: an envelope `metadata.labels` map,
- * a decoded-flat top-level `labels` map (cluster-1 K8s array→map: existence is the
- * signal; returns the KEYS), or a legacy top-level `tags` array. Graceful-degrade:
- * none present → `[]` (never throws).
- *
- * Returns label-KEYS only; if label-VALUES become semantically meaningful this
- * becomes lossy and callers must read `entity.metadata.labels` directly.
- */
-export function tagsFromEntity(entity: unknown): string[] {
-  if (entity === null || entity === undefined || typeof entity !== "object") {
-    return [];
-  }
-  const e = entity as EntityWithMaybeTags;
-  // Envelope storage shape: metadata.labels map.
-  if (e.metadata && typeof e.metadata === "object" && e.metadata.labels && typeof e.metadata.labels === "object") {
-    return Object.keys(e.metadata.labels);
-  }
-  // Decoded-flat domain shape: top-level labels map (metadata.* flattened).
-  if (e.labels && typeof e.labels === "object") {
-    return Object.keys(e.labels);
-  }
-  // Legacy top-level tags array (defensive; storage is envelope-only).
-  if (Array.isArray(e.tags)) {
-    return [...e.tags];
-  }
-  return [];
-}
 
 /**
  * Coerce the FSM phase string from an entity. Reads `status.phase` (envelope
@@ -62,9 +30,11 @@ export function tagsFromEntity(entity: unknown): string[] {
  * Graceful-degrade: non-object / no readable status → `null` (never throws);
  * callers handle null explicitly.
  *
- * Apply at every `entity.status === <enum>` / `current.status` comparison site —
- * an envelope `status` is the `{phase,...}` bucket object, so a raw
- * `status === <enum>` compare is always false (the bug-137 / bug-138 class).
+ * This is the decode-layer status-extractor: decodeEnvelopeToFlat + the bespoke
+ * normalizers call it to project the envelope `{phase,...}` bucket to the flat
+ * top-level `status` string. (Above the membrane, entities are already flat, so
+ * `entity.status` is the string directly — phaseFromEntity reads it gracefully
+ * either way.)
  */
 export function phaseFromEntity(entity: unknown): string | null {
   if (entity === null || entity === undefined || typeof entity !== "object") {
@@ -83,57 +53,6 @@ export function phaseFromEntity(entity: unknown): string | null {
     return e.status;
   }
   return null;
-}
-
-/**
- * Read a SCALAR/OBJECT field that may live in an envelope partition (metadata /
- * spec / status) OR at top-level (decoded-flat domain, envelope reserved fields
- * like id/name, or non-relocated fields). Probes partitions first (where relocated
- * fields live in the storage shape), then top-level. Graceful-degrade: absent /
- * non-object → `undefined` (never throws).
- *
- * Use for any moved filterable field EXCEPT `status` (use `phaseFromEntity` — a
- * top-level envelope `status` IS the `{phase,...}` bucket object).
- */
-export function fieldFromEntity(entity: unknown, fieldName: string): unknown {
-  if (entity === null || entity === undefined || typeof entity !== "object") {
-    return undefined;
-  }
-  const e = entity as Record<string, unknown>;
-  for (const section of ["metadata", "spec", "status"] as const) {
-    const sec = e[section];
-    if (sec && typeof sec === "object" && Object.prototype.hasOwnProperty.call(sec as object, fieldName)) {
-      return (sec as Record<string, unknown>)[fieldName];
-    }
-  }
-  // Decoded-flat / reserved / non-relocated top-level field.
-  return e[fieldName];
-}
-
-/**
- * Read an ARRAY field that may live in an envelope partition (metadata / spec /
- * status) OR at top-level (decoded-flat domain). Probes partitions first, then
- * top-level. Returns a shallow copy. Graceful-degrade: absent / non-object → `[]`
- * (never throws).
- *
- * Per-kind envelope migrations relocate array fields to different sections (e.g.
- * `bug.linkedTaskIds`/`bug.fixCommits` → status; `turn.tele` → spec).
- */
-export function arrayFieldFromEntity(entity: unknown, fieldName: string): unknown[] {
-  if (entity === null || entity === undefined || typeof entity !== "object") {
-    return [];
-  }
-  const e = entity as Record<string, unknown>;
-  for (const section of ["metadata", "spec", "status"] as const) {
-    const sec = e[section];
-    if (sec && typeof sec === "object" && Array.isArray((sec as Record<string, unknown>)[fieldName])) {
-      return [...((sec as Record<string, unknown>)[fieldName] as unknown[])];
-    }
-  }
-  if (Array.isArray(e[fieldName])) {
-    return [...e[fieldName]];
-  }
-  return [];
 }
 
 /**
@@ -160,9 +79,10 @@ export function arrayFieldFromEntity(entity: unknown, fieldName: string): unknow
  * NOTE (layering): Agent/Thread/Tele keep their BESPOKE normalizers — extra
  * leaf-renames (agent firstSeenAt↔metadata.createdAt) or extra domain logic
  * (thread convergenceActions/proposer-shape/participants). This generic base is
- * exact only for the 5 leaf-preserving-except-status kinds; tags are derived via
- * tagsFromEntity (the cluster-1 array↔map asymmetry the generic flatten can't
- * reverse), so consumers read tags through that helper, not a flat `tags` array.
+ * exact only for the 5 leaf-preserving-except-status kinds; the idea/bug repos
+ * derive `tags` from the metadata.labels map inline at their decode boundary
+ * (cloneIdea/cloneBug — the cluster-1 array↔map asymmetry the generic flatten
+ * can't reverse).
  */
 export function decodeEnvelopeToFlat<T>(raw: T): T {
   if (raw === null || raw === undefined || typeof raw !== "object") {
