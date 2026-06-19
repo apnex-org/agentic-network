@@ -60,6 +60,21 @@ const MAX_CAS_RETRIES = 50;
 const LIST_PREFETCH_CAP = 500;
 
 /**
+ * mission-90 W8: Message read-decode = generic envelope→flat + restore the domain
+ * `kind` discriminator from `metadata.messageKind` (the §1.7 collision-rename — the
+ * envelope top-level `kind` is "Message"). decodeEnvelopeToFlat already maps
+ * status→phase and flattens metadata (messageKind / threadId / sequenceInThread / …).
+ */
+function decodeMessage(raw: Message): Message {
+  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>) as Record<string, unknown>;
+  if (flat.messageKind !== undefined) {
+    flat.kind = flat.messageKind;
+    delete flat.messageKind;
+  }
+  return flat as unknown as Message;
+}
+
+/**
  * Tiny in-process Mutex — same pattern as legacy MessageRepository.
  * Serializes per-thread sequence allocations within a single Hub process so
  * two concurrent createMessage calls don't both observe the same max-seq.
@@ -122,7 +137,10 @@ export class MessageRepositorySubstrate implements IMessageStore {
         limit: LIST_PREFETCH_CAP,
       });
       let maxSeq = -1;
-      for (const m of items) {
+      for (const raw of items) {
+        // mission-90 W8: decode — sequenceInThread relocates to metadata under the
+        // envelope; reading it raw (top-level) was undefined → every seq allocated 0.
+        const m = decodeMessage(raw);
         if (typeof m.sequenceInThread === "number" && m.sequenceInThread > maxSeq) {
           maxSeq = m.sequenceInThread;
         }
@@ -209,7 +227,7 @@ export class MessageRepositorySubstrate implements IMessageStore {
   async getMessage(id: string): Promise<Message | null> {
     // mission-90 W8: decode envelope→flat (idea-327) at the read boundary.
     const raw = await this.substrate.get<Message>(KIND, id);
-    return raw ? decodeEnvelopeToFlat(raw) : null;
+    return raw ? decodeMessage(raw) : null;
   }
 
   async findByMigrationSourceId(migrationSourceId: string): Promise<Message | null> {
@@ -217,7 +235,7 @@ export class MessageRepositorySubstrate implements IMessageStore {
       filter: { migrationSourceId },
       limit: 1,
     });
-    return items[0] ? decodeEnvelopeToFlat(items[0]) : null;
+    return items[0] ? decodeMessage(items[0]) : null;
   }
 
   async listMessages(query: MessageQuery): Promise<Message[]> {
@@ -238,7 +256,7 @@ export class MessageRepositorySubstrate implements IMessageStore {
     });
     // mission-90 W8: decode envelope→flat BEFORE the client-side sort/filter.
     return items
-      .map((m) => decodeEnvelopeToFlat(m))
+      .map((m) => decodeMessage(m))
       .sort((a, b) => (a.sequenceInThread ?? 0) - (b.sequenceInThread ?? 0))
       .filter(m => matchesAdditionalFilters(m, query));
   }
@@ -258,7 +276,7 @@ export class MessageRepositorySubstrate implements IMessageStore {
       sort: [{ field: "id", order: "asc" }],
       limit: LIST_PREFETCH_CAP,
     });
-    return items.map((m) => decodeEnvelopeToFlat(m)).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return items.map((m) => decodeMessage(m)).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   /**
@@ -290,7 +308,7 @@ export class MessageRepositorySubstrate implements IMessageStore {
       limit: opts.limit,
     });
     return items
-      .map((m) => decodeEnvelopeToFlat(m))
+      .map((m) => decodeMessage(m))
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       .slice(0, opts.limit);
   }
@@ -304,7 +322,10 @@ export class MessageRepositorySubstrate implements IMessageStore {
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<Message>(KIND, id);
       if (!existing) return null;
-      const message = existing.entity;
+      // mission-90 W8: decode the raw CAS row → flat (gate on the flat status string,
+      // build the update from flat so the write-encoder re-envelopes cleanly, and
+      // return the decoded entity so callers read flat status/claimedBy).
+      const message = decodeMessage(existing.entity);
       if (message.status !== "new") return message;  // idempotent / no-op
       const updated: Message = {
         ...message,
@@ -328,7 +349,7 @@ export class MessageRepositorySubstrate implements IMessageStore {
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<Message>(KIND, id);
       if (!existing) return null;
-      const message = existing.entity;
+      const message = decodeMessage(existing.entity);  // mission-90 W8: flat gate + return
       if (message.status !== "received") return message;  // idempotent / no-op
       const updated: Message = {
         ...message,
@@ -349,7 +370,7 @@ export class MessageRepositorySubstrate implements IMessageStore {
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<Message>(KIND, id);
       if (!existing) return null;
-      const message = existing.entity;
+      const message = decodeMessage(existing.entity);  // mission-90 W8: flat gate + return
       if (message.scheduledState === state) return message;
       const updated: Message = {
         ...message,

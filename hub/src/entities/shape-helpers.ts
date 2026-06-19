@@ -183,6 +183,9 @@ export function decodeEnvelopeToFlat<T>(raw: T): T {
   delete flat.phase;
   delete flat.apiVersion;
   delete flat.kind;
+  delete flat.name; // envelope reserved artifact (= id); not a flat domain field
+                    // (bespoke decoders that map metadata.name→a domain field, e.g.
+                    //  Turn.title, must capture it BEFORE calling this generic base)
   const phase = phaseFromEntity(raw);
   if (phase !== null) {
     flat.status = phase;
