@@ -31,11 +31,19 @@ rm -rf adapters/opencode-plugin/dist
 echo "[release-opencode] 2/3 esbuild self-contained bundle (from @apnex SRC — sidesteps the circular tsc dep-build)"
 npm run bundle -w @apnex/opencode-plugin
 
-echo "[release-opencode] 3/3 verify self-containment"
+echo "[release-opencode] 3/4 verify self-containment (zero @apnex imports)"
 OUT="$REPO_ROOT/adapters/opencode-plugin/dist/shim.js"
 [ -f "$OUT" ] || { echo "[release-opencode] ERROR: no bundle emitted at $OUT" >&2; exit 1; }
 if grep -qE "from[ ]*[\"']@apnex/" "$OUT"; then
   echo "[release-opencode] ERROR: bundle still references @apnex/* — not self-contained." >&2
   exit 1
 fi
-echo "[release-opencode] done → $OUT ($(wc -c < "$OUT") bytes); self-contained (no @apnex/* imports)."
+
+echo "[release-opencode] 4/4 verify export surface = HubPlugin ONLY (OpenCode 1.3.x: every export must be a plugin fn, thread-667)"
+EXPORTS="$(grep -E "^export[ ]*\{" "$OUT" | tr -d '\n')"
+echo "$EXPORTS" | grep -q "HubPlugin" || { echo "[release-opencode] ERROR: bundle does not export HubPlugin." >&2; exit 1; }
+if echo "$EXPORTS" | grep -qE "_testOnly|buildPluginCallbacks|makeOpenCodeFetchHandler"; then
+  echo "[release-opencode] ERROR: bundle export surface includes test/internal symbols — OpenCode 1.3.x would throw 'Plugin export is not a function'." >&2
+  exit 1
+fi
+echo "[release-opencode] done → $OUT ($(wc -c < "$OUT") bytes); self-contained + exports HubPlugin only."
