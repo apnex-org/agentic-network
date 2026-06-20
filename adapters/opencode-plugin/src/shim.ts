@@ -23,7 +23,6 @@ import {
   createSharedDispatcher,
   assertHostWiringComplete,
   getActionText,
-  type AgentClientCallbacks,
   type AgentEvent,
   type SessionState,
   type SessionReconnectReason,
@@ -73,6 +72,27 @@ const dispatcher = createSharedDispatcher({
   serverName: "hub-proxy",
   serverCapabilities: { tools: {}, logging: {} },
   log: (m) => log(m),
+  // M-OpenCode-Shim-Sovereign-Dedup Step-2 (idea-331): bind the OpenCode
+  // host surface through the shared DispatcherNotificationHooks seam (the
+  // same one Claude uses). This routes the wake THROUGH router.route(), so
+  // the MessageRouter/SeenIdCache push+poll dedup gates it — closing the
+  // prior bypass where buildPluginCallbacks surfaced OUTSIDE the router
+  // (duplicate deliveries that compounded the flood). buildPluginCallbacks
+  // is DELETED; the agent is wired via setCallbacks(dispatcher.callbacks).
+  //
+  // INVARIANT (path (b)): the dispatcher is constructed here at MODULE-INIT
+  // (before config/sdkClient/sessionActive exist), but these hooks FIRE only
+  // after connect — so they safely read module `let` state at invocation-time.
+  // Do NOT construct the dispatcher, or fire any hook, before connect.
+  // DEFER (2nd-OpenCode-class-host): Claude builds its dispatcher at RUNTIME
+  // in main(); OpenCode's module-init construction is itself drift. Align the
+  // construction lifecycle when a 2nd such host arrives — co-bucketed with the
+  // rate-limit/prompt-queue coalescing generalization. Not silently accepted.
+  notificationHooks: {
+    onActionableEvent: surfaceActionableEvent,
+    onInformationalEvent: surfaceInformationalEvent,
+    onStateChange: handleConnectionStateChange,
+  },
   pollBackstop: {
     role: process.env.OIS_HUB_ROLE ?? "engineer",
     firstTimerEnabled: true,
@@ -389,66 +409,68 @@ function isPulseEvent(eventType: string, eventData: Record<string, unknown>): bo
   return typeof payload?.pulseKind === "string" && PULSE_KINDS_SET.has(payload.pulseKind);
 }
 
-// ── Plugin Callbacks ─────────────────────────────────────────────────
+// ── Notification surface hooks (OpenCode last-mile) ──────────────────
 //
-// Composes the shared dispatcher's pendingActionMap-population callback
-// with OpenCode-specific notification/prompt/toast handling. Exported
-// for the shim.e2e test to drive synthetic events in isolation.
+// M-OpenCode-Shim-Sovereign-Dedup Step-2 (idea-331): the OpenCode host's
+// DispatcherNotificationHooks implementations, passed into createSharedDispatcher
+// (above) so the wake routes THROUGH router.route() — the MessageRouter's
+// SeenIdCache push+poll dedup gates it. This replaces the deleted
+// buildPluginCallbacks, which surfaced OUTSIDE the router (the dedup bypass).
+// The dispatcher's onActionableEvent does the pendingActionMap capture +
+// router.route BEFORE invoking these hooks, so they do surfacing ONLY (no
+// dispatcher.callbacks self-call). See the path-(b) invariant at the
+// createSharedDispatcher call site: these fire post-connect and read module
+// `let` state at invocation-time.
 
-export function buildPluginCallbacks(): AgentClientCallbacks {
-  return {
-    onActionableEvent: (event: AgentEvent) => {
-      // Shared dispatcher's pendingActionMap population (ADR-017 Phase 1.1).
-      dispatcher.callbacks.onActionableEvent?.(event);
-
-      const action = getActionText(event.event, event.data);
-      // Mission-57 W3: pulse Messages downgrade level from "actionable"
-      // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
-      // noise reduction during high-activity sub-PR cascades). Mirrors
-      // claude-plugin's `isPulseEvent` discrimination on
-      // `event.event === "message_arrived"` + `payload.pulseKind ∈
-      // {status_check, missed_threshold_escalation}`.
-      const isPulse = isPulseEvent(event.event, event.data);
-      const actionLabel = isPulse ? `[PULSE] ${action}` : action;
-      appendNotification(
-        { event: event.event, data: event.data, action: actionLabel },
-        { logPath: notificationLogPath },
-      );
-      const message = buildToastMessage(event.event, event.data);
-      const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
-      const notification: QueuedNotification = {
-        level: isPulse ? "informational" : "actionable",
-        message,
-        promptText,
-      };
-      if (sessionActive) {
-        notificationQueue.push(notification);
-      } else {
-        processNotification(notification);
-      }
-    },
-    onInformationalEvent: (event: AgentEvent) => {
-      // M-OpenCode-Shim-Sovereign-Dedup Step-1 (idea-331): informational events
-      // are LOG-ONLY — matching the Claude shim's already-correct disposition
-      // (claude shim.ts:672-676). The core (event-router) classifies these as
-      // informational precisely so they DON'T wake/surface; the prior toast +
-      // injectContext here was the OpenCode-only divergence that flooded the TUI
-      // and burned the session context window (tele-12). Diagnostic log only —
-      // no toast, no inject. (Supersedes the interim DEFAULT_SURFACE_SUPPRESS
-      // per-event band-aid, which a strict-thin shim must not carry.)
-      const action = getActionText(event.event, event.data);
-      appendNotification(
-        { event: event.event, data: event.data, action: `[INFO] ${action}` },
-        { logPath: notificationLogPath },
-      );
-    },
-    onStateChange: (state: SessionState, prev: SessionState, reason?: SessionReconnectReason) => {
-      log(`Connection: ${prev} → ${state}${reason ? ` (${reason})` : ""}`);
-      if (state === "streaming") {
-        syncTools();
-      }
-    },
+function surfaceActionableEvent(event: AgentEvent): void {
+  const action = getActionText(event.event, event.data);
+  // Mission-57 W3: pulse Messages downgrade level from "actionable"
+  // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
+  // noise reduction during high-activity sub-PR cascades).
+  const isPulse = isPulseEvent(event.event, event.data);
+  const actionLabel = isPulse ? `[PULSE] ${action}` : action;
+  appendNotification(
+    { event: event.event, data: event.data, action: actionLabel },
+    { logPath: notificationLogPath },
+  );
+  const message = buildToastMessage(event.event, event.data);
+  const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
+  const notification: QueuedNotification = {
+    level: isPulse ? "informational" : "actionable",
+    message,
+    promptText,
   };
+  if (sessionActive) {
+    notificationQueue.push(notification);
+  } else {
+    void processNotification(notification);
+  }
+}
+
+function surfaceInformationalEvent(event: AgentEvent): void {
+  // M-OpenCode-Shim-Sovereign-Dedup Step-1 (idea-331): informational events
+  // are LOG-ONLY — matching the Claude shim's already-correct disposition
+  // (claude shim.ts:672-676). The core (event-router) classifies these as
+  // informational precisely so they DON'T wake/surface; the prior toast +
+  // injectContext here was the OpenCode-only divergence that flooded the TUI
+  // and burned the session context window (tele-12). Diagnostic log only —
+  // no toast, no inject.
+  const action = getActionText(event.event, event.data);
+  appendNotification(
+    { event: event.event, data: event.data, action: `[INFO] ${action}` },
+    { logPath: notificationLogPath },
+  );
+}
+
+function handleConnectionStateChange(
+  state: SessionState,
+  prev: SessionState,
+  reason?: SessionReconnectReason,
+): void {
+  log(`Connection: ${prev} → ${state}${reason ? ` (${reason})` : ""}`);
+  if (state === "streaming") {
+    void syncTools();
+  }
 }
 
 // ── Connect to Hub ───────────────────────────────────────────────────
@@ -540,7 +562,13 @@ async function connectToHub(agentName: string): Promise<void> {
       }),
     },
   );
-  hubAdapter.setCallbacks(buildPluginCallbacks());
+  // M-OpenCode-Shim-Sovereign-Dedup Step-2 (idea-331): wire the agent directly
+  // to the dispatcher's callbacks (the Claude pattern, claude shim.ts:695). The
+  // dispatcher routes events through router.route() → its SeenIdCache dedup →
+  // the notificationHooks bag (surfaceActionableEvent / surfaceInformationalEvent
+  // / handleConnectionStateChange) supplied at construction. Replaces the deleted
+  // buildPluginCallbacks wrapper + its router-bypassing surface path.
+  hubAdapter.setCallbacks(dispatcher.callbacks);
 
   await hubAdapter.start();
   log("Connected to remote Hub via McpAgentClient");
@@ -623,7 +651,7 @@ async function startProxyServer(): Promise<number> {
 
   // Bun is only available inside the OpenCode runtime. Use a runtime
   // probe so TypeScript doesn't complain and so tests importing this
-  // module for buildPluginCallbacks don't require Bun.
+  // module (e.g. makeOpenCodeFetchHandler) don't require Bun.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const bunRuntime = (globalThis as any).Bun;
   if (!bunRuntime) {
