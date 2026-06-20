@@ -1,6 +1,6 @@
 # Mission-90 M-Envelope-Substrate-Completion — Architect Retrospective
 
-**Status:** Phase 8 Execution complete; all 8 waves merged to `main` (W8 `7550cfd`, PR #323); W8 code-only redeploy in flight at authoring. Phase 9 Close pending the post-deploy live-audit (see release-gate §6).
+**Status:** Mission **`completed`** (Director-ratified 2026-06-20; Phase 9 Close done). All 8 waves merged to `main` (W8 `7550cfd`, PR #323); W8 code-only redeploy LIVE on prod (image `0294ddc`, watchtower auto-deploy; STRICT / reconciler 23-23 / 71 tools). Post-deploy live-audit GREEN (9/9 list-parity + decode-to-flat on real data; bug-146 both axes + proposal-close + message-seq live-PASS). This doc = Phase 10 Retrospective.
 **Mode:** **Walkthrough** (Director-paced, section-by-section) per `feedback_retrospective_modes` — saga-substrate-completion / structural-inflection class. Architect-prepared full doc; Director engages section-by-section.
 **Authored:** 2026-06-20 / lily (architect; agent-40903c59).
 **Scope:** architect's reflection on mission-90 shipping outcomes, the methodology + architectural learnings, and calibration-ledger filing candidates. Companion to the W8 validation report (`docs/reviews/m90-w8-decode-to-flat-validation.md`) and the release-gate (`docs/missions/m-envelope-substrate-completion-release-gate.md`).
@@ -64,7 +64,7 @@ Stopping `ois-hub-prod` kills the coordination relay (the Hub *is* the channel, 
 
 ## §4 Calibration-ledger filing candidates
 
-Surfaced for Director-direct / architect-Director-bilateral ratification (filing + ID assignment is never LLM-autonomous, per CLAUDE.md). Candidates:
+Surfaced for Director-direct / architect-Director-bilateral ratification (filing + ID assignment is never LLM-autonomous, per CLAUDE.md). **RATIFIED 2026-06-20 (Director-bilateral): 7 filed as ledger entries #79–#85; candidates 6 + 7 kept runbook-captured (operational — already in the corrected runbook/Design; the ledger is methodology/substrate-shaped, not the home for operational facts).** Per-candidate filing map below the list. Candidates:
 
 1. **False-green-at-scale via unfaithful test fixtures** — test fixtures seeding a non-production shape mask the bug class they sit on; compounds with silent-degrade `try/catch` to make a defect class invisible to both the suite and prod monitoring. (Mission-scale manifestation / extension of calibration-#19 schema-rename-without-state-migration.)
 2. **Filter-vs-decode dual-surface of envelope-blindness** — closing the filter-translation path is not closing the read-decode path; the silent-failure class spans both; filter-parity (count) checks can pass while returned entities are still raw.
@@ -75,6 +75,8 @@ Surfaced for Director-direct / architect-Director-bilateral ratification (filing
 7. **Comms-dark = Hub-is-the-channel** (bug-157) — in-window human-GO is impossible by construction; in-window authority = automated guards + operator judgment; pre-window is where the human gate lives; in-window guard-robustness is therefore load-bearing (bug-156 portability).
 8. **Silent-degrade `try/catch` hides defects** — a catch that degrades-and-recovers silently masks the underlying defect; prefer fail-loud or a 0-bare / anomaly monitor (the proposed defense-in-depth replacement when the dual-shape tolerant read was retired).
 9. **Watchtower-functional / `:latest`-push-is-a-deploy** (operational; W8 near-miss) — the cutover runbook AND the architect's session-long mental model held "watchtower non-functional / deploy is MANUAL IAP-SSH," while the Design's own §4 cadence note recorded the opposite (bug-140 watchtower auto-deploy). The contradiction went unreconciled until a live deploy proved watchtower functional (W8 auto-deployed ~40s after the `:latest` push). Consequence: a `build-hub.sh` push to `:latest` IS a ~5-min auto-deploy, so a "non-prod-mutating pre-build" is actually a deploy — a near-miss when that pre-build was architect-authorized during a Director deploy-HOLD. Lesson: reconcile contradictory operational docs against ground-truth before relying on either; treat any `:latest` push as a prod-mutating deploy. (Runbook B.3 + Design §4 corrected in this PR.)
+
+**Filing map (ratified 2026-06-20; ledger 69 → 76):** 1 → **#79** · 2 → **#80** · 3 → **#81** · 4 → **#82** · 5 → **#83** · 6 → *runbook-captured, no ledger entry* · 7 → *runbook-captured, no ledger entry* · 8 → **#84** (status `open` — the fail-loud 0-bare anomaly-monitor replacement is a pending follow-on) · 9 → **#85** (the methodology meta-lesson is filed; the operational fact stays runbook-captured). The two compounding mechanisms #79 (test-side) + #84 (prod-side) cross-reference each other; #83 (deep-audit) cross-references the CDACC council it seeds.
 
 ---
 
