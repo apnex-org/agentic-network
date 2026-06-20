@@ -3,7 +3,7 @@
 **Authored:** 2026-06-20 / lily (architect; agent-40903c59)
 **Surfaced to Director for:** `update_mission(missionId="mission-90", status="completed")` per RACI — **CONDITIONAL on the post-deploy LIVE audit clearing** (see §6; redeploy in flight at authoring).
 **Branch:** `agent-greg/m90-w8-tolerant-retirement` — all waves merged to `main`; W8 HEAD `7550cfd` (PR #323).
-**Production state at authoring:** W8 code-only redeploy **IN FLIGHT** (greg, Director-authorized) — recreating `ois-hub-prod` onto the W8 image off `7550cfd`. Pre-redeploy prod ran `edc4792` (W6 cutover + bug-158). The MCP coordination relay is comms-dark for the recreate window (the Hub *is* the channel, bug-157); the post-deploy live-audit + this doc's §6 finalize when it reconnects.
+**Production state (updated 2026-06-20):** W8 is **LIVE on prod** — image `sha256:0294ddc`, **watchtower auto-deployed** on the `build-hub.sh` push to AR `:latest` (~40s after push; NOT the manual IAP-SSH path the original runbook described — see the watchtower correction in the cutover runbook topology + Design §4). Boot clean: `envelope substrate: STRICT`, reconciler 23/23 (0 failures), 71 tools, relay listening, 0 boot errors. Rollback target = pre-W8 `sha256:267548d7` (edc4792-era). The **read-side live-audit is GREEN** (§6); the behavioral dispositive checks are running (Director chose the full set).
 
 ---
 
@@ -84,22 +84,21 @@ The audit cycle is the Director-mandated triple-check delivering: it caught real
 | Deep adversarial audit clean (Director mandate) | ✅ (zero blockers; gaps fixed; re-audit clean) |
 | Absorbed ideas incorporated (318/320/324/327) | ✅ |
 | CLAUDE.md envelope-strict guidance | ✅ (W8) |
-| **W8 deployed to prod + post-deploy live-audit clean** | ⏳ **PENDING — §6 (redeploy in flight)** |
+| W8 deployed to prod (watchtower auto-deploy, image `0294ddc`, boot clean) | ✅ (2026-06-20) |
+| Post-deploy **read-side** live-audit (9/9 parity + decode-to-flat on real prod data) | ✅ GREEN (§6) |
+| Post-deploy **behavioral** dispositive checks (5 prod-defects + bug-146 dispatch) | ⏳ RUNNING — full set, Director-chosen (§6) |
 
 ---
 
-## §6 — Deploy + post-deploy LIVE audit — PENDING (finalize on channel reconnect)
+## §6 — Deploy + post-deploy LIVE audit
 
-W8 is a CODE-ONLY redeploy (decode logic; no migration, data already all-envelope). Director authorized; greg executes (IAP-SSH recreate of `ois-hub-prod`, the established greg-solo code-only-redeploy class). Rollback = re-tag the pre-W8 image `edc4792` → recreate (zero data risk).
+**Deploy — DONE (2026-06-20).** W8 is a CODE-ONLY change (decode logic; no migration — data already all-envelope). Director lifted the HOLD + authorized; greg pushed the W8 image (`build-hub.sh` off `7550cfd`) to AR `:latest` → **watchtower auto-deployed** it (~40s; image `0294ddc`). Boot clean: STRICT, reconciler 23/23 (0 failures), 71 tools, relay up. Rollback target = pre-W8 `267548d7`. (Deploy went via watchtower, NOT the manual IAP-SSH path — the runbook's "watchtower non-functional / manual" claim was corrected this PR.)
 
-**To be confirmed live and folded in here when the channel reconnects:**
-- Boot clean: STRICT, reconciler 23/23, 71 tools, relay up (the relay reconnecting *is* this signal).
-- bug-146 dispatch live-half + end-to-end task-claim → if green, **retire thread-dispatch-equivalence + close the dispatch half of bug-146**.
-- bug-146 caller-login-labeling axis (dispositive).
-- The 5 prod-defects fixed live (circuit-breaker escalates / mission auto-advance / proposal closes / watchdog escalates / msg-seq increments).
-- 9/9 list parity holds vs psql oracle; no regression.
+**Read-side live-audit — ✅ GREEN.** On real prod data: 9/9 list-parity vs the psql oracle (Mission 1/90, Bug-open 59, Idea-open 217, Task-working 7, Thread-active 0, Tele 13, Proposal 32 — all = oracle) AND every list result is decode-to-flat (status a STRING not `{phase}`; fields flat; tags arrays). **bug-138 read-side + idea-325 (list_missions) + idea-327 (output-shape) confirmed correct LIVE.**
 
-**Release-gate recommendation:** on a clean live-audit, ratify `update_mission(mission-90, status="completed")` → Phase 9 Close → Phase 10 Retrospective (Walkthrough). If the live-audit surfaces a regression, greg rolls back to `edc4792` and the gap loops back before any close.
+**Behavioral dispositive checks — RUNNING (Director chose the FULL set, 2026-06-20).** greg is running, on live prod with minimal labelled test entities + cleanup: (1) 3-strikes review circuit-breaker escalates; (2) mission auto-advance plannedTasks slot-flip; (3) proposal close; (4) PendingAction watchdog attemptCount-increment / listExpired; (5) message-seq increments; PLUS the bug-146 dispatch probe (self-targeted test task → dispatch + end-to-end claim → cleanup). These are confirmatory — the deep audit positively proved all 19 CAS fixes on a real-Postgres testcontainer, and the read-decode is confirmed live (the CAS transforms share that decode path). **To finalize here:** PASS/FAIL per check + the architect's thread-dispatch-equivalence RETIREMENT decision from the bug-146 result.
+
+**Release-gate recommendation:** on a clean behavioral set, ratify `update_mission(mission-90, status="completed")` → Phase 9 Close → Phase 10 Retrospective (Walkthrough). A behavioral regression (a prod-specific divergence from the testcontainer-proven behavior) loops back before close, with rollback to `267548d7` available.
 
 ---
 
