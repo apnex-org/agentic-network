@@ -40,7 +40,8 @@ if grep -qE "from[ ]*[\"']@apnex/" "$OUT"; then
 fi
 
 echo "[release-opencode] 4/4 verify export surface = HubPlugin ONLY (OpenCode 1.3.x: every export must be a plugin fn, thread-667)"
-EXPORTS="$(grep -E "^export[ ]*\{" "$OUT" | tr -d '\n')"
+# esbuild emits the export block multi-line (export {\n  HubPlugin\n};) — capture the whole block.
+EXPORTS="$(sed -n '/^export[ ]*{/,/};/p' "$OUT" | tr '\n' ' ')"
 echo "$EXPORTS" | grep -q "HubPlugin" || { echo "[release-opencode] ERROR: bundle does not export HubPlugin." >&2; exit 1; }
 if echo "$EXPORTS" | grep -qE "_testOnly|buildPluginCallbacks|makeOpenCodeFetchHandler"; then
   echo "[release-opencode] ERROR: bundle export surface includes test/internal symbols — OpenCode 1.3.x would throw 'Plugin export is not a function'." >&2
