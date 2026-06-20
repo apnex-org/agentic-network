@@ -16,7 +16,13 @@ import { resolveRecipient } from "../entities/recipient-resolver.js";
 // ── M18 Handshake: register_role ────────────────────────────────────
 
 function coerceAgentRole(role: string): AgentRole | null {
-  if (role === "engineer" || role === "architect" || role === "director") return role;
+  if (
+    role === "engineer" ||
+    role === "architect" ||
+    role === "director" ||
+    role === "verifier"
+  )
+    return role;
   return null;
 }
 
@@ -125,7 +131,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
     // the back-compat auto-claim hooks (T2 §10 deprecation runway).
     //
     // Set sessionRoles for RBAC parity with the pre-T2 path.
-    ctx.stores.engineerRegistry.setSessionRole(sid, tokenRole as "engineer" | "architect" | "director");
+    ctx.stores.engineerRegistry.setSessionRole(sid, tokenRole as "engineer" | "architect" | "director" | "verifier");
     const identity = await ctx.stores.engineerRegistry.assertIdentity(
       {
         name: payload.name,
@@ -235,7 +241,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
       `(globalInstanceId + clientMetadata). Dropping labels — caller will default to broadcast dispatch.`
     );
   }
-  ctx.stores.engineerRegistry.setSessionRole(sid, role as "engineer" | "architect");
+  ctx.stores.engineerRegistry.setSessionRole(sid, role as "engineer" | "architect" | "director" | "verifier");
   return {
     content: [{
       type: "text" as const,
@@ -652,7 +658,7 @@ export function registerSessionPolicy(router: PolicyRouter): void {
     "register_role",
     "[Any] Register this session's role and, optionally (M18), the full Agent handshake payload (name, clientMetadata, advisoryTags) to obtain a stable agentId with displacement-safe session rebinding. idea-251 D-prime: name is the canonical identity input (was globalInstanceId pre-D-prime; that field RETIRED).",
     {
-      role: z.enum(["engineer", "architect", "director"]).describe("The role of this session: 'engineer', 'architect', or 'director'"),
+      role: z.enum(["engineer", "architect", "director", "verifier"]).describe("The role of this session: 'engineer', 'architect', 'director', or 'verifier' (mission-93)"),
       name: z.string().min(1).max(32).regex(/^[a-zA-Z0-9_-]+$/).optional().describe("idea-251 D-prime: identity input (e.g., 'lily', 'greg'). Required for the M18 enriched-handshake path. Drives agentId derivation `agent-{8-hex-of-sha256(name)}`. 1-32 chars, alphanumeric + `_-`. Reserved set rejected (case-insensitive): director/system/hub/engineer/architect. Sourced from OIS_AGENT_NAME env var via the host shim."),
       clientMetadata: z
         .object({
@@ -766,8 +772,8 @@ export function registerSessionPolicy(router: PolicyRouter): void {
     {
       filter: z.object({
         role: z.union([
-          z.enum(["engineer", "architect", "director"]),
-          z.array(z.enum(["engineer", "architect", "director"])),
+          z.enum(["engineer", "architect", "director", "verifier"]),
+          z.array(z.enum(["engineer", "architect", "director", "verifier"])),
         ]).optional().describe("Filter by role; single or array."),
         livenessState: z.union([
           z.enum(["online", "degraded", "unresponsive", "offline"]),

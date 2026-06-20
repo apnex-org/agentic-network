@@ -7,7 +7,7 @@
 
 export type TaskStatus = "pending" | "working" | "blocked" | "input_required" | "in_review" | "completed" | "failed" | "escalated" | "cancelled";
 
-export type SessionRole = "engineer" | "architect" | "director" | "unknown";
+export type SessionRole = "engineer" | "architect" | "director" | "verifier" | "unknown";
 
 export interface Task {
   id: string;
@@ -148,7 +148,7 @@ export interface AgentAdvisoryTags {
   [key: string]: unknown;
 }
 
-export type AgentRole = "engineer" | "architect" | "director";
+export type AgentRole = "engineer" | "architect" | "director" | "verifier";
 export type AgentStatus = "online" | "offline";
 
 // Mission-19: routing metadata. Keys/values are caller-supplied strings.
@@ -626,8 +626,9 @@ export interface ThreadMessage {
 // ── Mission-21 Threads 2.0 ──────────────────────────────────────────
 
 /** Participant roles. Director reserved for future (idea-84) — Phase 1
- * populates only engineer and architect from Agent role resolution. */
-export type ParticipantRole = "engineer" | "architect" | "director";
+ * populates only engineer and architect from Agent role resolution.
+ * Verifier (mission-93) participates in verification threads. */
+export type ParticipantRole = "engineer" | "architect" | "director" | "verifier";
 
 export interface ThreadParticipant {
   role: ParticipantRole;
@@ -1018,7 +1019,7 @@ export interface Thread {
 export interface AuditEntry {
   id: string;
   timestamp: string;
-  actor: "architect" | "engineer" | "hub";
+  actor: "architect" | "engineer" | "verifier" | "hub";
   action: string;
   details: string;
   relatedEntity: string | null; // e.g., "task-24", "prop-7", "thread-3"

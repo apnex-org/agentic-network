@@ -9,7 +9,7 @@
 import type { ZodType } from "zod";
 import type { IPolicyContext, PolicyHandler, PolicyResult, DomainEvent } from "./types.js";
 
-type Role = "architect" | "engineer" | "director" | "any";
+type Role = "architect" | "engineer" | "director" | "verifier" | "any";
 export type RoleSet = ReadonlySet<Role>;
 
 /**
@@ -52,7 +52,7 @@ interface RegisteredTool {
 /**
  * Parse the role tag(s) from a tool description.
  * Looks for `[Role]` or `[Role1|Role2|...]` at the start. Known role
- * tokens: Architect, Engineer, Director, Any (case-insensitive).
+ * tokens: Architect, Engineer, Director, Verifier, Any (case-insensitive).
  * Missing or unrecognised tokens fall back to { "any" }.
  */
 function parseRoleTag(description: string): RoleSet {
@@ -61,7 +61,13 @@ function parseRoleTag(description: string): RoleSet {
   const roles = new Set<Role>();
   for (const token of m[1].split("|")) {
     const t = token.trim().toLowerCase();
-    if (t === "architect" || t === "engineer" || t === "director" || t === "any") {
+    if (
+      t === "architect" ||
+      t === "engineer" ||
+      t === "director" ||
+      t === "verifier" ||
+      t === "any"
+    ) {
       roles.add(t);
     }
   }
