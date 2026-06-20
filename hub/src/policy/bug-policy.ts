@@ -70,8 +70,9 @@ async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
   const severity = args.severity as BugSeverity | undefined;
   const classFilter = args.class as string | undefined;
   const tags = args.tags as string[] | undefined;
+  const linkedMissionId = args.linkedMissionId as string | undefined;
   const hasFilter = status != null || severity != null || classFilter != null || (tags != null && tags.length > 0);
-  const filtered = await ctx.stores.bug.listBugs({ status, severity, class: classFilter, tags });
+  const filtered = await ctx.stores.bug.listBugs({ status, severity, class: classFilter, tags, linkedMissionId });
   // CP2 C5 (task-307): detect "valid filter with zero matches" to fire
   // the _ois_query_unmatched sentinel. Pre-filter count comes from an
   // unfiltered list call ONLY when the filtered result is empty — cheap
@@ -199,12 +200,13 @@ export function registerBugPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_bugs",
-    "[Any] List bugs with optional filters (status, severity, class, tags match-any) + pagination.",
+    "[Any] List bugs with optional filters (status, severity, class, tags match-any, linkedMissionId) + pagination.",
     {
       status: z.enum(["open", "investigating", "resolved", "wontfix"]).optional(),
       severity: z.enum(["critical", "major", "minor"]).optional(),
       class: z.string().optional().describe("Filter by exact class match"),
       tags: z.array(z.string()).optional().describe("Match-any tag filter"),
+      linkedMissionId: z.string().optional().describe("Filter to bugs linked to a given mission"),
       ...LIST_PAGINATION_SCHEMA,
     },
     listBugs,

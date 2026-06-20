@@ -481,6 +481,7 @@ async function forceFirePulse(
 const MISSION_FILTERABLE_FIELDS: QueryableFieldSpec = {
   status: { type: "enum", values: ["proposed", "active", "completed", "abandoned"] },
   correlationId: { type: "string" },
+  missionClass: { type: "string" },
   turnId: { type: "string" },
   sourceThreadId: { type: "string" },
   sourceActionId: { type: "string" },
@@ -497,6 +498,7 @@ const MISSION_SORTABLE_FIELDS = [
   "createdAt",
   "updatedAt",
   "correlationId",
+  "missionClass",
   "turnId",
   "sourceThreadId",
   "sourceActionId",
@@ -520,6 +522,7 @@ const MISSION_ACCESSORS: FieldAccessors<Mission> = {
   id: (m) => m.id,
   status: (m) => phaseFromEntity(m),
   correlationId: (m) => m.correlationId,
+  missionClass: (m) => m.missionClass,
   turnId: (m) => m.turnId,
   sourceThreadId: (m) => m.sourceThreadId,
   sourceActionId: (m) => m.sourceActionId,

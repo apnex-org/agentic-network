@@ -56,6 +56,12 @@ function cloneBug(bug: Bug): Bug {
 }
 
 export class BugRepositorySubstrate implements IBugStore {
+  // Decode is the per-read hot cost (renameMap reverse + metadata.labels→tags
+  // derivation + annotation lift). Memoize the cloneBug projection keyed by the
+  // row's resourceVersion so repeated reads of an unchanged bug skip the
+  // re-decode (mission-90 W8 read-path; bug-93 CPU-pressure lineage).
+  private readonly decodeProjection = new Map<string, Bug>();
+
   constructor(
     private readonly substrate: HubStorageSubstrate,
     private readonly counter: SubstrateCounter,
@@ -118,8 +124,16 @@ export class BugRepositorySubstrate implements IBugStore {
   }
 
   async getBug(bugId: string): Promise<Bug | null> {
-    const bug = await this.substrate.get<Bug>(KIND, bugId);
-    return bug ? cloneBug(bug) : null;
+    const revisioned = await this.substrate.getWithRevision<Bug>(KIND, bugId);
+    if (!revisioned) return null;
+    const key = `${bugId}@${revisioned.resourceVersion}`;
+    let decoded = this.decodeProjection.get(key);
+    if (decoded === undefined) {
+      decoded = cloneBug(revisioned.entity);
+      if (this.decodeProjection.size >= 1024) this.decodeProjection.clear();
+      this.decodeProjection.set(key, decoded);
+    }
+    return structuredClone(decoded);
   }
 
   async listBugs(filter?: {
@@ -127,6 +141,7 @@ export class BugRepositorySubstrate implements IBugStore {
     severity?: BugSeverity;
     class?: string;
     tags?: string[];
+    linkedMissionId?: string;
   }): Promise<Bug[]> {
     // Substrate-API list with filter. tags is array-contains semantics; substrate
     // FilterValue doesn't directly support array-contains, so we filter
@@ -135,6 +150,7 @@ export class BugRepositorySubstrate implements IBugStore {
     if (filter?.status) substrateFilter.status = filter.status;
     if (filter?.severity) substrateFilter.severity = filter.severity;
     if (filter?.class !== undefined) substrateFilter.class = filter.class;
+    if (filter?.linkedMissionId !== undefined) substrateFilter.linkedMissionId = filter.linkedMissionId;
 
     const { items } = await this.substrate.list<Bug>(KIND, {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,

@@ -135,6 +135,12 @@ Sort **every** entity into exactly one disposition bucket. For the Idea ledger:
 | **Cross-project / mis-filed** | belongs to a different project's ledger | → separate handling; Director decides |
 | **Genuinely-live** | real, current, un-superseded | → stays `open` — untouched |
 
+Bucket assignment runs as a single pass over the §1 projection: for each entity read its
+disposition-signal, map it to the one bucket whose Signal it matches, and the Disposition
+column follows from the bucket. Apply the mapping uniformly across every entity in one sweep
+— do not weigh an entity's *worth* while clustering (that is strategic-review's evaluative
+job, §Boundary below).
+
 The same shape applies to any entity ledger — only the status vocabulary changes:
 Bug ledger → resolved-not-flipped `resolved`, obsolete/duplicate `wontfix`, live `open`;
 Mission ledger → shipped `completed`, dropped/moot `abandoned`;

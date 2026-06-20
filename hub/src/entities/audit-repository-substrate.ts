@@ -87,11 +87,13 @@ export class AuditRepositorySubstrate implements IAuditStore {
   async listEntries(
     limit = 50,
     actor?: AuditEntry["actor"],
+    relatedEntity?: string,
   ): Promise<AuditEntry[]> {
     // Substrate-side filter by actor (audit_actor_idx; v2 SchemaDef); client-
     // side counter-sort + slice preserves legacy parseCounter desc ordering.
     const substrateFilter: Record<string, string> = {};
     if (actor) substrateFilter.actor = actor;
+    if (relatedEntity) substrateFilter.relatedEntity = relatedEntity;
     const { items } = await this.substrate.list<AuditEntry>(KIND, {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
       limit: LIST_PREFETCH_CAP,

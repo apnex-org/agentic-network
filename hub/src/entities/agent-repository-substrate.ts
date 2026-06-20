@@ -776,12 +776,13 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
   }
 
   async updateAgentPulseLastFiredAt(agentId: string, lastFiredAt: string): Promise<void> {
-    const existing = await this.loadAgentWithRevision(agentId);
+    const existing = await this.substrate.getWithRevision<Agent>(KIND, agentId);
     if (!existing) return;
-    const agent = normalizeAgentShape(existing.entity);
+    const stored = existing.entity;
+    const agent = normalizeAgentShape(envelopeToAgent(stored));
     if (!agent.pulseConfig) return;
     const updated: Agent = {
-      ...agent,
+      ...stored,
       pulseConfig: { ...agent.pulseConfig, lastFiredAt },
     };
     await this.putIfMatchAgent(updated, existing.resourceVersion);

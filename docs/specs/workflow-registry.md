@@ -981,6 +981,15 @@ These invariants supersede INV-SYS-010 ("SSE delivery is at-least-once; clients 
 | INV-COMMS-L04  | Every queue item reaches a terminal state (`completion_acked` \| `escalated` \| `errored`). No item may remain non-terminal beyond `completionDeadline + maxWatchdogWindow`. **No silent drops — ever** | `test/e2e/comms-reliability.test.ts` "no silent drops" |
 | INV-COMMS-L05  | Escalation ladder is deterministic and auditable: re-dispatch (+ durable wake if `wakeEndpoint` present) → demote liveness → Director notification. Every stage writes an audit entry with queue-item ID | `test/e2e/comms-reliability.test.ts` "escalation ladder auditable" |
 
+### Substrate Referential-Integrity Invariants
+
+These invariants govern cross-kind referential integrity at the storage substrate. They are the ratified contract from the Hub-Storage-Substrate design (mission-83), sequenced as the idea-297 follow-on after the envelope cutover, so that the substrate is structurally incapable of being the source of a dangling cross-entity reference. INV-T6 (`Task.dependsOn` must point to existing Tasks) is the per-kind precedent these generalise across every kind.
+
+| ID             | Invariant                                                                                                    | Tested By                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| INV-SUB-FK-01  | The substrate MUST reject any `put` / `casUpdate` whose declared owning reference (`correlationId`, `missionId`, `dependsOn[]`, `relatedEntity`) resolves to a non-existent entity of the referenced kind. The write fails atomically with a `DanglingReferenceError`; no partial row is persisted | TBD — M-Hub-Storage-FK-Enforcement (idea-297) |
+| INV-SUB-FK-02  | Deleting an entity with live inbound references MUST fail unless the caller passes `cascade=true`, in which case the substrate cascades the delete to dependents in reverse-topological order inside the same transaction | TBD — M-Hub-Storage-FK-Enforcement (idea-297) |
+
 ---
 
 ## 6. Label/Selector Routing

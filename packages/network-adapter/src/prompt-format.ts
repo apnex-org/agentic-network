@@ -192,13 +192,28 @@ function renderReviewCompleted(data: Record<string, unknown>, cfg: PromptFormatC
   );
 }
 
+// Inline projection of the rejection assessment. The full assessment is
+// persisted verbatim on the Review entity (review-policy.ts emit-path); the
+// dispatch surfaces a leading preview so the LLM has the complete actionable
+// rationale inline in the common (short-feedback) case, with the retrieval
+// handle appended when the assessment exceeds the inline budget. Marker-
+// protocol parity with the thread_message preview convention (#26).
+const FEEDBACK_PREVIEW_CHARS = 240;
+
 function renderRevisionRequired(data: Record<string, unknown>, cfg: PromptFormatConfig): string {
   const p = cfg.toolPrefix;
+  const rawFeedback =
+    (data.feedback as string) || (data.assessment as string) || "No details provided";
+  const feedback =
+    rawFeedback.length > FEEDBACK_PREVIEW_CHARS
+      ? `${rawFeedback.slice(0, FEEDBACK_PREVIEW_CHARS).trimEnd()}… [full assessment via get_review]`
+      : rawFeedback;
   return (
     `[Architect] Your report for ${data.taskId || "task"} was REJECTED. ` +
-    `Feedback: ${data.feedback || data.assessment || "No details provided"}. ` +
+    `Feedback: ${feedback}. ` +
     `Previous report: ${data.previousReportRef || "unknown"}. ` +
-    `Revision ${data.revisionCount || "?"}. Please revise and resubmit using ${p}create_report.`
+    `Revision ${data.revisionCount || "?"}. Read the full assessment with ` +
+    `${p}get_review taskId="${data.taskId}", then revise and resubmit using ${p}create_report.`
   );
 }
 

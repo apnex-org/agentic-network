@@ -109,7 +109,7 @@ fields:
 
 **Storage backend (post-mission-49 close 2026-04-25):** All 12 first-class entity stores compose any `StorageProvider` (`@apnex/storage-provider`) via the `*Repository` pattern — single class per entity, no `Memory*Store` / `Gcs*Store` divergence. Mission-47 W1-W7 migrated tele / bug+idea / director-notification / mission / task+proposal / thread / turn+pending-action+agent (10 stores); mission-49 W8-W9 migrated audit + notification (final 2). The 6-primitive contract (`get` / `getWithToken` / `list` / `delete` / `put` / `createOnly` / `putIfMatch`) held throughout — see ADR-024 §6 Amendments for the local-fs reclassification (mission-48). Legacy `hub/src/entities/gcs/` directory + `Memory*Store` / `Gcs*Store` class pairs deleted across the wave sequence; tombstone comments at the original file locations carry the mission-N-W reference.
 
-
+**Revision model (post-mission-90 envelope substrate).** Beyond the current row, the substrate retains every prior revision of a first-class entity as an immutable history row keyed by `{kind, id, resourceVersion}`; a write never destroys the superseded shape. The point-in-time state of any entity is reconstructable via `getWithRevision(kind, id, resourceVersion)`, and `list_audit_entries` projects the per-field diff between adjacent revisions so the full mutation lineage is queryable without reading the raw store. This is the ratified Audit-History contract carried over from the storage-substrate design (mission-83) and sequenced as the idea-296 follow-on after the envelope cutover. *(Conformance suite: TBD — M-Hub-Storage-Audit-History.)*
 
 ### 3.1 Task
 

@@ -193,10 +193,12 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
   }
 
   async rescheduleReceiptDeadline(id: string, newDeadline: string): Promise<PendingActionItem | null> {
-    return this.tryCasUpdate(id, (item) => {
-      item.receiptDeadline = newDeadline;
-      return item;
-    });
+    const existing = await this.substrate.getWithRevision<PendingActionItem>(KIND, id);
+    if (!existing) return null;
+    const updated = { ...existing.entity, receiptDeadline: newDeadline };
+    const result = await this.substrate.putIfMatch(KIND, updated, existing.resourceVersion);
+    if (!result.ok) return null;
+    return { ...decodePendingAction(existing.entity), receiptDeadline: newDeadline };
   }
 
   async listExpired(nowMs: number): Promise<PendingActionItem[]> {

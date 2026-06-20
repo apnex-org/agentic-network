@@ -1033,7 +1033,7 @@ export interface AuditEntry {
 
 export interface IAuditStore {
   logEntry(actor: AuditEntry["actor"], action: string, details: string, relatedEntity?: string): Promise<AuditEntry>;
-  listEntries(limit?: number, actor?: AuditEntry["actor"]): Promise<AuditEntry[]>;
+  listEntries(limit?: number, actor?: AuditEntry["actor"], relatedEntity?: string): Promise<AuditEntry[]>;
 }
 
 /**

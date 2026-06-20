@@ -40,8 +40,9 @@ async function listAuditEntries(args: Record<string, unknown>, ctx: IPolicyConte
   // level cap when a caller wants to page deeper.
   const storeCap = Math.min(MAX_LIST_LIMIT, (args.limit as number) ?? DEFAULT_LIST_LIMIT);
   const actor = args.actor as string | undefined;
+  const relatedEntity = args.relatedEntity as string | undefined;
   const hasFilter = actor != null;
-  const entries = await ctx.stores.audit.listEntries(storeCap, actor as "architect" | "engineer" | "hub" | undefined);
+  const entries = await ctx.stores.audit.listEntries(storeCap, actor as "architect" | "engineer" | "hub" | undefined, relatedEntity);
   // CP2 C5 (task-307): sentinel for "valid filter with zero matches".
   // When the filtered window is empty, probe the unfiltered window at
   // the same cap to distinguish from truly-empty.
@@ -82,9 +83,10 @@ export function registerAuditPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_audit_entries",
-    "[Any] List audit entries with optional actor filter and pagination. Returns most recent first.",
+    "[Any] List audit entries with optional actor + relatedEntity filters and pagination. Returns most recent first.",
     {
       actor: z.enum(["architect", "engineer", "hub"]).optional().describe("Filter by actor (optional)"),
+      relatedEntity: z.string().optional().describe("Filter to entries about a given entity ID (e.g., 'task-24', 'thread-3')"),
       ...LIST_PAGINATION_SCHEMA,
     },
     listAuditEntries,

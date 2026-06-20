@@ -506,6 +506,32 @@ async function runThreadReaperTick(): Promise<void> {
       } catch (queueErr) {
         console.error(`[Reaper] failed to abandon queue items for reaped thread ${t.threadId}:`, queueErr);
       }
+
+      // Dangling-proposal cleanup: a proposal raised inside this thread that
+      // nobody reviewed should not linger in `submitted` once the thread is
+      // gone — auto-reject it so the proposer gets closure on next sync.
+      try {
+        const { items: spawnedProposals } = await substrate.list<{
+          id: string;
+          correlationId: string | null;
+          status: string;
+        }>("Proposal", { limit: 500 });
+        const dangling = spawnedProposals.filter(
+          (p) => p.correlationId === t.threadId && p.status === "submitted",
+        );
+        for (const p of dangling) {
+          await proposalStore.reviewProposal(
+            p.id,
+            "rejected",
+            `auto-rejected: parent thread ${t.threadId} reaped after ${Math.round(t.idleMs / 1000)}s idle`,
+          );
+        }
+        if (dangling.length > 0) {
+          console.log(`[Reaper] thread ${t.threadId}: ${dangling.length} dangling proposal(s) auto-rejected`);
+        }
+      } catch (propErr) {
+        console.error(`[Reaper] proposal cleanup failed for reaped thread ${t.threadId}:`, propErr);
+      }
     }
   } catch (err) {
     console.error("[Reaper] thread reaper tick failed:", err);
@@ -554,6 +580,25 @@ async function runAgentReaperTick(): Promise<void> {
     if (stale.length === 0) return;
     console.log(`[Reaper] agent reaper: ${stale.length} stale agent(s) to delete (threshold ${Math.round(HUB_AGENT_STALE_THRESHOLD_MS / 1000)}s)`);
     for (const agent of stale) {
+      // Transient-disconnect guard: a stale heartbeat doesn't mean the agent
+      // is dead if it still owns in-flight work — defer the reap one cycle so
+      // we don't orphan tasks mid-execution and force a needless re-claim.
+      const { items: assignedTasks } = await substrate.list<{
+        id: string;
+        assignedAgentId: string | null;
+        status: string;
+      }>("Task", { limit: 500 });
+      const inFlight = assignedTasks.filter(
+        (t) =>
+          t.assignedAgentId === agent.id &&
+          (t.status === "working" || t.status === "in_review"),
+      );
+      if (inFlight.length > 0) {
+        console.log(
+          `[Reaper] deferring reap of ${agent.id}: ${inFlight.length} in-flight task(s) still assigned`,
+        );
+        continue;
+      }
       const staleMs = Date.now() - Date.parse(agent.lastSeenAt);
       // CP3 C4 cascade unpin — strip the stale agentId from any thread
       // that still pins them to its currentTurnAgentId. Audited per

@@ -65,7 +65,7 @@ Claude loads `skills/survey/round-1-template.md` and prompts architect to design
 ### Step 3 — Round-1 pick capture + per-question interpretation (conversational)
 
 Claude prompts architect for each captured pick:
-- Per-question 1-2 paragraph interpretation per `idea-survey.md` §3 Step 4 (the matrix-solve step; cite Original-Idea + Tele-mapping + Aggregate-Surface)
+- Per-question 1-2 paragraph interpretation per `idea-survey.md` §3 Step 4 (the matrix-solve step: treat the captured picks as a constraint system where each pick fixes one variable, then solve it to the single consistent intent reading — the per-question interpretation is the deterministic resolution of that system against the Original-Idea + Tele-mapping + Aggregate-Surface dimensions)
 - Round-1 tele-mapping (primary + secondary; per `idea-survey.md` §3 Step 4 + §9 Step 5; anti-tele-drift discipline)
 - Contradictory-multi-pick observation (per `idea-survey.md` §7; if detected, capture as constraint envelope for Design-phase brainstorm)
 

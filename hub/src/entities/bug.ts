@@ -99,6 +99,7 @@ export interface IBugStore {
     severity?: BugSeverity;
     class?: string;
     tags?: string[];
+    linkedMissionId?: string;
   }): Promise<Bug[]>;
 
   /**

@@ -26,6 +26,12 @@ const KIND = "Tele";
 const MAX_CAS_RETRIES = 50;
 
 export class TeleRepositorySubstrate implements ITeleStore {
+  // Single-read normalize projection. Tele is a read-heavy reference set (the
+  // glossary decoder + policy status-accessors hit getTele repeatedly), so the
+  // normalizeTele pass is memoized per row-version; a write bumps the
+  // resourceVersion and the next read re-normalizes from the substrate row.
+  private readonly normalizedByVersion = new Map<string, Tele>();
+
   constructor(
     private readonly substrate: HubStorageSubstrate,
     private readonly counter: SubstrateCounter,
@@ -60,9 +66,18 @@ export class TeleRepositorySubstrate implements ITeleStore {
   }
 
   async getTele(teleId: string): Promise<Tele | null> {
-    const raw = await this.substrate.get<Tele>(KIND, teleId);
-    if (!raw) return null;
-    return normalizeTele(raw);
+    const revisioned = await this.substrate.getWithRevision<Tele>(KIND, teleId);
+    if (!revisioned) return null;
+    const versionKey = `${teleId}#${revisioned.resourceVersion}`;
+    const hit = this.normalizedByVersion.get(versionKey);
+    if (hit) return structuredClone(hit);
+    const normalized = normalizeTele(revisioned.entity);
+    if (this.normalizedByVersion.size > 512) {
+      const oldest = this.normalizedByVersion.keys().next().value;
+      if (oldest !== undefined) this.normalizedByVersion.delete(oldest);
+    }
+    this.normalizedByVersion.set(versionKey, normalized);
+    return structuredClone(normalized);
   }
 
   async listTele(): Promise<Tele[]> {
