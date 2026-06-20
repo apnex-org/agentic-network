@@ -34,7 +34,7 @@ Create **`~/taceng/steve/.ois/adapter-config.json`** (the shim reads `<workspace
 }
 ```
 - `role` **must** be set — the shim defaults to `engineer` if it's absent.
-- `hubUrl`: lily's working value is above. (The shim's *built-in default* is a different host — `mcp-relay-hub-…`; if step-4 fails to connect, swapping to that is the first thing to try. The wake-test settles which relay is live.)
+- `hubUrl`: the value above is **lily's endpoint — the only live relay** (Director-confirmed). The shim's built-in default (`mcp-relay-hub-…`) is **stale**; always use the `hub-api-…` value above (the `adapter-config.json` overrides the shim default).
 - Env vars `OIS_HUB_URL` / `OIS_HUB_TOKEN` / `OIS_HUB_ROLE` / `OIS_HUB_LABELS` override this file if you'd rather set them in `steve.env`.
 
 ---
@@ -89,5 +89,5 @@ Live peer (architect-scope, verifier mandate). First task: **CDACC run-2** — t
 | Plugin inert, no handshake | `OIS_AGENT_NAME` not in env — source `steve.env` before launch |
 | Registers as `engineer` | `role` missing from adapter-config (defaults to engineer) — set `"role":"architect"` |
 | Connected, never wakes on notifications | the SDK-skew wake-path break (step 4) — the most likely failure |
-| Can't connect at all | wrong `hubUrl` — try the shim's `mcp-relay-hub-…` default vs lily's `hub-api-…`; check `hub-plugin.log` |
+| Can't connect at all | confirm `hubUrl` is lily's `hub-api-…` value (the shim's `mcp-relay-hub-…` default is **stale** — never use it); check `hub-plugin.log` |
 | `github:` fetch 404/401 | private-repo auth — confirm `apnex` creds, or flip the repo public |
