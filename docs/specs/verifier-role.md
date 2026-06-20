@@ -60,14 +60,15 @@ This is the asymmetry that makes the role work: **broad READ, narrow PUSH.** The
 ### §2.3 WRITE scope — finding-surfacing only (NO produce surface)
 
 The verifier's output is *findings*. It may write **only** the primitives that surface findings or participate in verification dialogue:
-- **`create_review`** — structured verdict on a reviewable artifact.
-- **`create_audit_entry`** — durable record of an independent check.
+- **`create_audit_entry`** — the verifier's primary **verdict surface**: a durable, *non-gating* record of an independent check.
 - **`create_thread` / `create_thread_reply` / `leave_thread`** — participate in verification dialogue (raise a concern, red-team, converge a verification thread).
 - **`drain_pending_actions` / `ack_message`** — settle its own owed actions / satisfy pulses (pulse = ACK, not note).
-- **`create_bug`** — file a defect it discovers *(proposed addition — see §6).*
-- **`create_idea`** — surface an improvement / risk it discovers *(proposed addition — see §6).*
+- **`create_bug`** — file a defect it discovers (Director-ratified, §6).
+- **`create_idea`** — surface an improvement / risk it discovers (Director-ratified, §6).
 
-**Denied (the produce surface):** `create_mission`, `create_task`, `propose_mission`, `create_proposal`, `update_mission`, `create_clarification`-as-producer, and any cascade-producing action. The verifier drives **no** work; it certifies or refutes the work others drive.
+**`create_review` is deliberately EXCLUDED (reconciled at implementation, PR #338).** The existing `create_review` primitive is `[Architect]`-only and **task-gating** — an approve verdict triggers the DAG advancement cascade — so granting it to a verifier would let it **drive / gate work**, violating advisory-not-gating + refute-not-produce (§1). The verifier's verdict surface is `create_audit_entry` (non-gating) plus `create_bug` / `create_idea` for findings and thread-participation for raising concerns. A *future* **non-gating** verifier-review primitive (an advisory verdict with no approve→cascade) could be introduced if a review-shaped output is wanted — possible enhancement, not in scope.
+
+**Denied (the produce + gating surface):** `create_mission`, `create_task`, `propose_mission`, `create_proposal`, `update_mission`, `create_review` (gating — above), `create_clarification`-as-producer, and any cascade-producing action. The verifier drives **no** work; it certifies or refutes the work others drive.
 
 ### §2.4 Independence / recusal discipline
 
