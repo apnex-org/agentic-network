@@ -40,8 +40,13 @@ export const meta = {
 // args: { sha, spendGo, variantsPerPattern?, patterns? (override the catalog) }
 // ===========================================================================
 
-const FROZEN_SHA = (args && args.sha) || "a5af88a";
-const VARIANTS_PER_PATTERN = (args && args.variantsPerPattern) || 1;
+// Normalize args — the Workflow harness may deliver `args` as a JSON STRING or a
+// parsed object; handle both so the spend-gate + params bind reliably (a string
+// `args` made `args.spendGo` undefined → the gate correctly refused to spend).
+const A = typeof args === "string" ? JSON.parse(args) : (args && typeof args === "object" ? args : {});
+
+const FROZEN_SHA = A.sha || "a5af88a";
+const VARIANTS_PER_PATTERN = A.variantsPerPattern || 1;
 
 // Reproduced-tier fidelity guard (mirrors cdacc.workflow.js; pre-flight finding
 // wf_cb495375-9bd) — the holder's verify-reproduce MUST be production-faithful.
@@ -112,8 +117,8 @@ const VERIFY_SCHEMA = {
 };
 
 async function run() {
-  if (!(args && args.spendGo === true)) {
-    log("Canary orchestrator BLOCKED: args.spendGo !== true. Instantiation spawns agents (instantiator + holder verify) and is part of the Director-spend-gated full-sweep sequence. Aborting without spend.");
+  if (A.spendGo !== true) {
+    log("Canary orchestrator BLOCKED: spendGo !== true. Instantiation spawns agents and is part of the Director-spend-gated full-sweep sequence. Aborting without spend.");
     return { blocked: true, reason: "no Director spend-go", patternsReady: PATTERN_CATALOG.length };
   }
 

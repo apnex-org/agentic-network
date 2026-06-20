@@ -45,10 +45,15 @@ export const meta = {
 //     nonce: "<>=8 chars>" }          // commit-reveal nonce for the seal
 // ===========================================================================
 
-const FROZEN_SHA = (args && args.sha) || "a5af88a";
-const MODE = (args && args.mode) || "preflight";
-const TELE_SET = (args && args.teleSet) || [];
-const NONCE = (args && args.nonce) || "cdacc-preflight-nonce";
+// Normalize args — the Workflow harness may deliver `args` as a JSON STRING or a
+// parsed object; handle both so spendGo/teleSet bind reliably (a string `args`
+// makes args.spendGo undefined → runFull would wrongly block).
+const A = typeof args === "string" ? JSON.parse(args) : (args && typeof args === "object" ? args : {});
+
+const FROZEN_SHA = A.sha || "a5af88a";
+const MODE = A.mode || "preflight";
+const TELE_SET = A.teleSet || [];
+const NONCE = A.nonce || "cdacc-preflight-nonce";
 
 // ── Shared contract: the per-cell verdict schema (doc §B.4 P0) ─────────────
 // The ONE thing both altitudes must honor so two independent audits are
@@ -195,8 +200,8 @@ async function runPreflight() {
 // FULL — the per-tele sweep. HARD-GATED on the Director's explicit spend-go.
 // ===========================================================================
 async function runFull() {
-  if (!(args && args.spendGo === true)) {
-    log("FULL sweep BLOCKED: args.spendGo !== true. The full ~100-160-agent sweep requires the Director's explicit spend-go (doc §B.11). Aborting without spend.");
+  if (A.spendGo !== true) {
+    log("FULL sweep BLOCKED: spendGo !== true. The full ~100-160-agent sweep requires the Director's explicit spend-go (doc §B.11). Aborting without spend.");
     return { mode: "full", blocked: true, reason: "no Director spend-go" };
   }
   if (!TELE_SET.length) {
