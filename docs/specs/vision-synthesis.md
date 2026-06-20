@@ -1,7 +1,7 @@
 # The Sovereign Intelligence Engine — Vision Synthesis
 
-**Version:** v0.1 (DRAFT — architect-authored synthesis; awaiting Director ratification)
-**Status:** The binding narrative *above* the atomic teles. **Interpretive commentary offered for ratification — NOT a redefinition of the ratified Tele set.** The teles remain orthogonal and individually load-bearing; this doc proposes a *reading* of how they cohere, for the Director to confirm, correct, or reject.
+**Version:** v1.0 (gestalt RATIFIED by the Director 2026-06-20; §6-Q2 resolved; candidate tele-13 proposed in §9)
+**Status:** The binding narrative *above* the atomic teles. The gestalt (§§1–4) is **Director-RATIFIED**. It remains *interpretive commentary on* the ratified Tele set, not a redefinition — the teles stay orthogonal and individually load-bearing. §6-Q1 (destination scope) is purpose-clarified but export-magnitude-open; §6-Q2 (the human's terminal role) is **resolved**.
 **Relationship to the canonical sources:**
 - `tele-0` (Hub entity) = the umbrella **MANDATE** ("the constitutional north star").
 - `docs/specs/teles.md` = the **13 atomic teles** (each: Mandate / Mechanics / Rationale / Faults / Success Criteria), spec↔state isomorphic with the Hub.
@@ -23,6 +23,8 @@ That is a **tele-1 + tele-4 gap on the highest-altitude artifact**: the gestalt 
 > **OIS is a sovereign software organization that runs itself.** A single human — the Director — supplies *strategic intent* and adjudicates at decision points; a network of specialized autonomous agents collaboratively **designs, builds, tests, deploys, and self-heals** complex software, with **zero administrative friction, mathematical correctness, and perfect institutional memory.**
 
 The operative word is **sovereign**: the system owns its own truth, its own composition, and increasingly its own evolution — no opaque external dependency, no private state, no human doing transcription toil to keep the parts in sync. The Director manipulates *strategic what-if*; automated substrates handle *imperative how-to* (tele-0).
+
+**The aggregate purpose (Director-ratified 2026-06-20).** In combination with all the teles and this vision, the aggregate system exists to **augment, offload, and serve the Director** — for the purpose of *system, software, tool, process, and strategy invention* — so that research and development can **continue at scale and uninterrupted across extreme-long-horizon mission arcs**, with the **Director on-the-loop but always holding all final authority**. The Director's terminal role narrows to two things: *conveying intent effectively*, and *reviewing/approving the global-maximum hill-climb peaks* of the aggregate system. Everything below those peaks — the local optimization, the imperative how-to — the system carries. (This obligation has a correlate the current teles under-specify — that the system must *actively evolve how it elicits and resolves intent, and model the Director to anticipate it* — proposed as candidate **tele-13** in §9.)
 
 ---
 
@@ -59,7 +61,7 @@ The lens is a simplification, and the most important cross-links are worth namin
 What makes this a vision and not merely a workflow tool: **the system is built by the same agentic process it is building.** Missions that develop OIS are themselves coordinated through OIS's own primitives — missions, threads, pulses, the calibration ledger. Hardening the storage substrate hardens the backplane our own coordination runs on; the dogfood is structural, not rhetorical.
 
 Three consequences define the steady state:
-1. **The Director is intent + gates, not toil.** Engagement at Survey / Release-gate / Retrospective — strategic adjudication at the right altitudes — never low-level choreography (tele-0 Success Criterion 3; tele-6).
+1. **The Director is intent + global-peak approval, not toil.** The irreducible role is *conveying intent effectively* and *reviewing/approving the global-maximum hill-climb peaks for the aggregate system* — the system does the local optimization and surfaces the peaks; the Director selects among them. Strategic adjudication at the right altitudes (Survey / Release-gate / Retrospective), never low-level choreography. **All final authority is delegated to the Director** — Director-on-the-loop, supervisory, never autonomous final-authority (tele-0 Success Criterion 3; tele-6; the §6-Q2 resolution).
 2. **Institutional memory is operational, not aspirational.** The calibration ledger files every architectural lesson as a durable, queryable, named pattern, so the system does not re-learn what it has already learned (tele-4 made a mechanism).
 3. **Evolution is autopoietic.** Failure → Bug + post-mortem → a single ratification executes the self-healing chain (tele-10). The system's response to its own defects is itself a system.
 
@@ -91,8 +93,8 @@ Read together: OIS may be as much a **methodology and a substrate others run** a
 
 The synthesis is honest about its own boundaries. Two edges are interpretation, not ratified intent:
 
-1. **The destination's scope.** Is OIS this repo's self-hosting engine in perpetuity, a *productized substrate* others run, or is the **methodology/axioms** the real export and the code a proof-of-concept? The `@apnex` distribution intent and the axiom export point outward; the magnitude is unset.
-2. **The human's terminal role.** The direction is the Director converging toward *pure intent + gate adjudication*, the system asymptotically absorbing everything administrative and even self-healing on a single "Approve" (tele-6, tele-10). *How much judgment stays irreducibly the Director's* is a question about intent that can be inferred but should not be presumed.
+1. **The destination's scope** *(purpose clarified 2026-06-20; export-magnitude still open).* The *purpose* is now ratified (§1): a Director-augmentation engine for invention at scale across extreme-long-horizon arcs. What remains open is the *export magnitude* — whether OIS stays this Director's self-hosting engine, becomes a *productized substrate* others run, or whether the **methodology/axioms** are the real export and the code a proof-of-concept. The `@apnex` distribution + axiom-export vectors point outward; the magnitude is the Director's to set.
+2. **The human's terminal role** *(RESOLVED 2026-06-20).* The Director's irreducible role = **effectively conveying intent + reviewing/approving the global-maximum hill-climb peaks for the aggregate system**, with **all final authority delegated to the Director** (Director-on-the-loop, supervisory). Correlatively, the system bears a new first-class obligation — to *continuously evolve how it elicits and resolves intent, and to model the Director to anticipate it* — significant enough to be a candidate tele (**§9, tele-13**).
 
 ---
 
@@ -112,6 +114,47 @@ Surfaced while ground-truthing this synthesis against the Hub:
 - **The Director ratifies the gestalt** (§§1–4 — the telos, the four strata, the meta-property, the arc) and resolves the open framing questions (§6). On ratification, status moves DRAFT → RATIFIED and the version bumps.
 - **CDACC refines the margins.** Its tele-improvement output (language refinement, coverage gaps, un-operationalized obligations, the §7-class drift) writes back here — refine / enhance / expand, per Director instruction (2026-06-20). The drift-latent findings from any CDACC run that map to "the vision needs operationalizing" land in this doc, not just in the per-tele ledger.
 - **Versioning:** MINOR for additive synthesis or a resolved framing question; MAJOR for a re-reading of the strata or a change to the telos; PATCH for wording.
+
+---
+
+## 9. Director-originated constitutional extension (2026-06-20): candidate tele-13
+
+Resolving §6-Q2 surfaced a system obligation the current 13 teles under-specify, raised directly by the Director: *the system must continuously evolve the tooling and interfaces by which Director intent is conveyed and resolved, and must profile the Director to anticipate and recommend.* It is the correlate of the Director's terminal role — if the human narrows to intent + global-peak approval, the system must actively amplify exactly that surface.
+
+**Architect assessment (tele-pre-check).** This merits Tele status. It is a genuine *asymptote* (perfect amplification of Director intent is approached, never reached) and it is *orthogonal* to the existing set — not a sub-condition of any:
+- **vs tele-5 (Perceptual Parity):** parity is *shared perception of state*; this is *evolution of the intent-elicitation interface + a model of the Director*. Parity can be perfect while the intent interface never improves.
+- **vs tele-6 (Frictionless Collaboration):** tele-6 removes *execution* friction (atomic ratify→execute, no transcription toil); this *invents better ways to elicit + resolve intent* and *learns the Director*. tele-6 can be satisfied while the system never gets better at understanding the Director.
+- **vs tele-10 (Autopoietic Evolution):** tele-10 is *failure-driven architecture self-healing*; this is *Director-service-driven interface invention + preference-learning*. Different driver, different surface.
+
+So it fills a real **coverage gap**: the current teles richly specify the system's internal sovereignty, correctness, and cognition, but the *active amplification of the Director* — the surface through which intent enters and decisions are made — is under-named. In the four-strata reading (§2) it joins **Stratum II (Interface)**, with a cross-seam into Stratum IV (the Director-modeling facet is a learning activity).
+
+**Draft mandate — for Director ratification (name and scope are the Director's to set):**
+
+> **tele-13 — Director Intent Amplification**
+>
+> **Mandate.** The system continuously evolves how it elicits, clarifies, and resolves Director intent — inventing new mechanisms, input data, questions, forms, UIs, voice, and modalities — and profiles and characterises the Director's decisions and intents to anticipate them and offer recommended leans, so that conveying and resolving Director intent becomes maximally effective, efficient, and clear. The aggregate exists to augment, offload, and serve the Director for system / software / tool / process / strategy invention; all final authority remains the Director's.
+>
+> **Mechanics.**
+> - The intent-resolution interface is a first-class *evolving* surface — new mechanisms / inputs / questions / forms / UIs / voice / modalities are invented to raise intent-resolution efficacy, effectiveness, efficiency, and clarity.
+> - The system profiles + characterises the Director's decisions and intents, and offers *recommended leans* from that model (decision-support, not decision-making).
+> - The Director's engagement narrows to conveying intent + reviewing/approving global-maximum hill-climb peaks; the system does the local optimization and surfaces the peaks.
+> - All final authority is delegated to the Director — Director-on-the-loop, supervisory; never autonomous final-authority.
+>
+> **Rationale.** The existing teles specify the system's internal sovereignty, correctness, and cognition, but not the *active amplification of the Director*. Without a named asymptote, the intent interface ossifies, the Director's cognitive load never falls as the system scales, and the system never learns the Director. This tele makes Director-amplification a first-class, ever-improving obligation — the enabler of R&D continuing at scale, uninterrupted, across extreme-long-horizon arcs with the Director on-the-loop.
+>
+> **Faults.**
+> - **Interface Ossification** — how intent is captured never improves; the Director adapts to the system instead of the reverse.
+> - **Director Opacity** — the system never models the Director, so it cannot anticipate, pre-stage, or recommend; every decision starts cold.
+> - **Authority Creep** — "recommend leans" / "offload" is mistaken for final authority; the delegation boundary blurs.
+> - **Cognitive Plateau** — the Director's load never decreases as the system scales; intent-resolution doesn't get easier over time.
+>
+> **Success Criteria.**
+> 1. The intent-resolution interface demonstrably evolves — new mechanisms / forms / modalities ship that measurably raise intent-resolution efficacy/clarity.
+> 2. The system maintains a Director profile and offers recommended leans the Director accepts at a measurable + improving rate.
+> 3. The Director's engagement converges toward intent-conveyance + global-peak approval; local optimization is system-borne.
+> 4. Final authority is never exercised autonomously — every irreversible / global-peak action is Director-approved.
+
+**Disposition (Director-direct).** On ratification → `create_tele` (tele-13, architect-scope per the tele-11/12 precedent) + add to `docs/specs/teles.md` + fold into tele-0's enumeration (which also closes the §7 staleness). Until then: **proposed, not created.** Open sub-question for the Director: one tele covering both facets (interface-evolution + Director-modeling), or split into two?
 
 ---
 
