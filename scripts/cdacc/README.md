@@ -119,6 +119,25 @@ real canary run):
 Running it spawns agents → it's part of the **Director-spend-gated** full-sweep sequence
 (`args.spendGo === true`). Building it (the file) needs no spawn.
 
+### Run-sequence isolation invariant (attestation, thread-662)
+
+The seal's completeness rests on **P1 and P2 being SEPARATE Workflow invocations** with no
+shared per-agent context. This is guaranteed three ways, two of which this build controls:
+1. **Separate files, separate invocations** — `canary-orchestrator.workflow.js` (P1) and
+   `cdacc.workflow.js` (P2) are distinct scripts run by two distinct `Workflow()` calls; they
+   do not import each other.
+2. **Disjoint agent roles** — P1 spawns ONLY the instantiator + holder agents (no auditors), so
+   there is no auditor inside P1 to leak to even in principle; P2 spawns ONLY auditors (no
+   plant-data input).
+3. **The main loop passes disjoint args** — P1's plant-diff return goes to the holder store +
+   stays in the orchestrating main loop; **P2 is invoked with only `{sha, teleSet, mode,
+   spendGo, nonce}` — the plant-diff is NEVER an element of P2's args.** (Controlled here.)
+
+Named dependency (outside these files): standard Workflow **cross-run isolation** — separate
+runs are independent agent fleets with no shared trace-memory. The build relies on this
+documented harness contract; #1–#3 hold regardless, but #3 is the one this build enforces.
+**Never combine P1 and P2 into a single Workflow run.**
+
 ## The verdict-schema contract (the one shared interface)
 
 `VERDICT_SCHEMA` in `cdacc.workflow.js` is the bit-perfect interface that makes
