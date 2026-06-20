@@ -26,9 +26,10 @@ import { isPulseEvent, PULSE_KINDS } from "@apnex/network-adapter";
 // M-OpenCode-Shim-Sovereign-Dedup (idea-331): isPulseEvent + PULSE_KINDS are
 // hoisted to core (@apnex/network-adapter event-router) — they were verbatim
 // dups shared with the opencode shim. Re-export isPulseEvent so this module's
-// consumers (shim.ts, notification-surface.ts) keep importing it from
-// ./source-attribute unchanged (behavior-preserving). PULSE_KINDS is used
-// below by resolveSourceAttribute.
+// consumer (shim.ts) keeps importing it from ./source-attribute unchanged
+// (behavior-preserving; notification-surface.ts dropped its isPulseEvent import
+// in Step-2b — it now uses the core reconstructDrainedAction). PULSE_KINDS is
+// used below by resolveSourceAttribute.
 export { isPulseEvent };
 
 const SOURCE_REPO_EVENT = "plugin:agent-adapter:repo-event";
