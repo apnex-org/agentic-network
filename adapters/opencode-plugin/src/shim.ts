@@ -638,11 +638,13 @@ async function startProxyServer(): Promise<number> {
 // CRITICAL: No awaits during init. Everything deferred to background.
 
 export const HubPlugin: Plugin = async (ctx) => {
-  // SDK drift: older PluginInput had `directory` directly; current SDK
-  // exposes it via `ctx.app.path.cwd`. Fall back for forward compat.
+  // SDK drift: @opencode-ai/plugin 1.3.x exposes `directory: string` directly on
+  // PluginInput (preferred); 0.4.x exposed it via `app.path.cwd` (removed in 1.3.x).
+  // Cast both optional shapes to any so the fallback type-builds clean against
+  // EITHER SDK (1.3.x has no `app` on PluginInput → would error TS2339 otherwise).
   const workDir =
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (ctx as any).directory ?? ctx.app?.path?.cwd ?? process.cwd();
+    (ctx as any).directory ?? (ctx as any).app?.path?.cwd ?? process.cwd();
   initLogger(workDir);
   log(`mission-55 cleanup — shared MCP-boundary dispatcher (${SDK_VERSION})`);
 
