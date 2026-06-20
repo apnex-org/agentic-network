@@ -4,46 +4,38 @@
 # release artifact (idea-329/330: Steve installs a published bundle, never the
 # agentic-network source).
 #
-# Why a bundle: the plugin depends on the `@apnex/*` workspace packages
-# (cognitive-layer / message-router / network-adapter), which a standalone /
-# source-free install cannot resolve (the bug-116 deps-first snag, confirmed at
-# productionization). esbuild inlines them + their transitive deps into ONE
-# self-contained `dist/shim.js` whose only external is the host-provided
-# `@opencode-ai/plugin` SDK. Run this whenever the shared core changes.
+# Approach: esbuild bundles the plugin + its `@apnex/*` deps (cognitive-layer /
+# message-router / network-adapter) FROM SOURCE — the deps are aliased to their
+# `src/index.ts` (see the `bundle` script in adapters/opencode-plugin/package.json).
+# This deliberately sidesteps a clean-from-scratch `tsc` build of the deps, which
+# FAILS because `@apnex/network-adapter` and `@apnex/message-router` have a CIRCULAR
+# source-level dependency (network-adapter declares message-router; message-router's
+# src imports network-adapter) — tsc cannot emit either's .d.ts without the other's.
+# esbuild tolerates the circular module graph and drops the type-only
+# `@opencode-ai/plugin` import (the host SDK is provided at runtime), so it inlines
+# everything into ONE self-contained file with zero external `@apnex` deps.
+# (The circular @apnex source-dep is a pre-existing shared-package hygiene issue —
+# bug-116 territory — surfaced by this productionization; flagged to the architect.)
 #
-# Run from the repo root:  scripts/build/release-opencode-plugin.sh
-# Output:  adapters/opencode-plugin/dist/shim.js  (self-contained, zero @apnex deps)
-#          adapters/opencode-plugin/dist/shim.d.ts (types, from tsc)
+# Run this whenever the shared core changes.
+# Run from anywhere:  scripts/build/release-opencode-plugin.sh
+# Output:  adapters/opencode-plugin/dist/shim.js  (self-contained; zero @apnex deps)
 
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-echo "[release-opencode] 0/4 clean prior dist (idempotent rebuild — dist/ is gitignored;"
-echo "                       a stale dist makes the deps' tsc collide with its own emitted .d.ts, TS5055)"
-rm -rf packages/network-adapter/dist packages/cognitive-layer/dist \
-       packages/message-router/dist adapters/opencode-plugin/dist
+echo "[release-opencode] 1/3 clean prior bundle (dist/ is gitignored)"
+rm -rf adapters/opencode-plugin/dist
 
-echo "[release-opencode] 1/4 build @apnex/* workspace deps in TOPOLOGICAL order"
-echo "                       (leaves first: network-adapter depends on cognitive-layer+message-router;"
-echo "                        separate sequential invocations — npm -w order/parallelism is not guaranteed)"
-npm run build -w @apnex/cognitive-layer
-npm run build -w @apnex/message-router
-npm run build -w @apnex/network-adapter
-
-echo "[release-opencode] 2/4 typecheck + emit the plugin (tsc → dist + shim.d.ts)"
-npm run build -w @apnex/opencode-plugin
-
-echo "[release-opencode] 3/4 bundle into a self-contained dist/shim.js (esbuild)"
+echo "[release-opencode] 2/3 esbuild self-contained bundle (from @apnex SRC — sidesteps the circular tsc dep-build)"
 npm run bundle -w @apnex/opencode-plugin
 
-echo "[release-opencode] 4/4 verify self-containment"
-
+echo "[release-opencode] 3/3 verify self-containment"
 OUT="$REPO_ROOT/adapters/opencode-plugin/dist/shim.js"
-echo "[release-opencode] done → $OUT ($(wc -c < "$OUT") bytes)"
-# Self-containment guard: the bundle must carry ZERO unresolved @apnex imports.
+[ -f "$OUT" ] || { echo "[release-opencode] ERROR: no bundle emitted at $OUT" >&2; exit 1; }
 if grep -qE "from[ ]*[\"']@apnex/" "$OUT"; then
   echo "[release-opencode] ERROR: bundle still references @apnex/* — not self-contained." >&2
   exit 1
 fi
-echo "[release-opencode] self-contained OK (no @apnex/* imports remain)."
+echo "[release-opencode] done → $OUT ($(wc -c < "$OUT") bytes); self-contained (no @apnex/* imports)."

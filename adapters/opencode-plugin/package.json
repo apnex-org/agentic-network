@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "bundle": "esbuild src/shim.ts --bundle --platform=node --format=esm --outfile=dist/shim.js --external:@opencode-ai/plugin",
+    "bundle": "esbuild src/shim.ts --bundle --platform=node --format=esm --outfile=dist/shim.js --external:@opencode-ai/plugin --alias:@apnex/cognitive-layer=../../packages/cognitive-layer/src/index.ts --alias:@apnex/message-router=../../packages/message-router/src/index.ts --alias:@apnex/network-adapter=../../packages/network-adapter/src/index.ts",
     "start": "node dist/shim.js",
     "dev": "tsx src/shim.ts",
     "test": "vitest run"
