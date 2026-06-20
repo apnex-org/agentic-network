@@ -23,6 +23,7 @@ import {
   createSharedDispatcher,
   assertHostWiringComplete,
   getActionText,
+  isPulseEvent,
   type AgentEvent,
   type SessionState,
   type SessionReconnectReason,
@@ -384,30 +385,11 @@ async function syncTools(): Promise<void> {
   }
 }
 
-// ── Mission-57 W3: pulse-event detection helper ─────────────────────
-//
-// Mirrors `claude-plugin/src/source-attribute.ts:isPulseEvent`. Inlined
-// here (vs imported) because opencode-plugin doesn't share helpers with
-// claude-plugin; the function is small + has no other dependencies.
-// Pulse Messages arrive via `message_arrived` events with payload
-// containing `pulseKind: "status_check" | "missed_threshold_escalation"`
-// (per Hub-side PulseSweeper W2 wire format in Design v1.0 §4 + §5).
-//
-// Render-side effect: detected pulses downgrade level from "actionable"
-// to "informational" (S3 noise mitigation per Design v1.0 §4) so they
-// don't wake the LLM during high-activity sub-PR cascades.
-
-const PULSE_KINDS_SET: ReadonlySet<string> = new Set([
-  "status_check",
-  "missed_threshold_escalation",
-]);
-
-function isPulseEvent(eventType: string, eventData: Record<string, unknown>): boolean {
-  if (eventType !== "message_arrived" || !eventData) return false;
-  const message = eventData.message as { payload?: unknown } | undefined;
-  const payload = message?.payload as { pulseKind?: unknown } | undefined;
-  return typeof payload?.pulseKind === "string" && PULSE_KINDS_SET.has(payload.pulseKind);
-}
+// Mission-57 W3 pulse detection: `isPulseEvent` is now imported from
+// `@apnex/network-adapter` (event-router). M-OpenCode-Shim-Sovereign-Dedup
+// (idea-331) hoisted it to core — it was a verbatim mirror of the claude
+// shim's copy; both shims now share the one core impl. Detected pulses
+// downgrade their notification level "actionable" → "informational".
 
 // ── Notification surface hooks (OpenCode last-mile) ──────────────────
 //
