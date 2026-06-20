@@ -21,23 +21,21 @@
  * every `<channel>` push.
  */
 
+import { isPulseEvent, PULSE_KINDS } from "@apnex/network-adapter";
+
+// M-OpenCode-Shim-Sovereign-Dedup (idea-331): isPulseEvent + PULSE_KINDS are
+// hoisted to core (@apnex/network-adapter event-router) — they were verbatim
+// dups shared with the opencode shim. Re-export isPulseEvent so this module's
+// consumers (shim.ts, notification-surface.ts) keep importing it from
+// ./source-attribute unchanged (behavior-preserving). PULSE_KINDS is used
+// below by resolveSourceAttribute.
+export { isPulseEvent };
+
 const SOURCE_REPO_EVENT = "plugin:agent-adapter:repo-event";
 const SOURCE_DIRECTIVE = "plugin:agent-adapter:directive";
 const SOURCE_NOTIFICATION = "plugin:agent-adapter:notification";
 const SOURCE_PULSE = "plugin:agent-adapter:pulse";
 const SOURCE_PROXY = "plugin:agent-adapter:proxy";
-
-/**
- * Mission-57 W3: pulse-kind discriminator values that route to the
- * `plugin:agent-adapter:pulse` family. Mirrors the Hub-side
- * PulseSweeper payload.pulseKind taxonomy (status_check fires from
- * normal pulse cadence; missed_threshold_escalation fires from E1
- * mediation-invariant escalation routing per Design v1.0 §4).
- */
-const PULSE_KINDS: ReadonlySet<string> = new Set([
-  "status_check",
-  "missed_threshold_escalation",
-]);
 
 /**
  * Mirror of `@apnex/repo-event-bridge` `REPO_EVENT_SUBKINDS`. Hardcoded to
@@ -125,20 +123,6 @@ export function resolveSourceAttribute(
   if (eventType === "director_attention_required") return SOURCE_DIRECTIVE;
   if (HUB_NOTIFICATION_EVENTS.has(eventType)) return SOURCE_NOTIFICATION;
   return SOURCE_PROXY;
-}
-
-/**
- * Mission-57 W3: detect whether an event is a pulse Message
- * (status_check or missed_threshold_escalation). Pure helper for the
- * shim's `notificationHooks.onActionableEvent` to downgrade level from
- * "actionable" to "informational" when rendering pulses (S3 noise
- * mitigation per Design v1.0 §4).
- */
-export function isPulseEvent(eventType: string, eventData?: Record<string, unknown>): boolean {
-  if (eventType !== "message_arrived" || !eventData) return false;
-  const message = eventData.message as { payload?: unknown } | undefined;
-  const payload = message?.payload as { pulseKind?: unknown } | undefined;
-  return typeof payload?.pulseKind === "string" && PULSE_KINDS.has(payload.pulseKind);
 }
 
 /** Visibility for tests + diagnostics. */

@@ -38,6 +38,8 @@ export {
   classifyEvent,
   parseHubEvent,
   createDedupFilter,
+  isPulseEvent,
+  PULSE_KINDS,
 } from "./kernel/event-router.js";
 
 // idea-251 D-prime Phase 2: instance.ts deleted. Identity now flows from

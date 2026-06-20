@@ -145,6 +145,37 @@ export function classifyEvent(
   }
 }
 
+// ── Pulse detection (M-OpenCode-Shim-Sovereign-Dedup, idea-331) ──────
+//
+// Hoisted to core from the two shims (claude-plugin/src/source-attribute.ts
+// + the opencode shim's inlined mirror — its own comment admitted the dup).
+// Sibling to classifyEvent: both shims call isPulseEvent to downgrade a
+// pulse Message's notification level from "actionable" to "informational"
+// (Mission-57 W3 / Design v1.0 §4 — S3 noise reduction during high-activity
+// sub-PR cascades). `eventData` is OPTIONAL (Claude's signature) so the one
+// core impl serves both shims behavior-preservingly.
+
+/** Pulse-kind discriminators that route to informational level (Mission-57 W3). */
+export const PULSE_KINDS: ReadonlySet<string> = new Set([
+  "status_check",
+  "missed_threshold_escalation",
+]);
+
+/**
+ * Detect whether an event is a pulse Message (status_check or
+ * missed_threshold_escalation): a `message_arrived` event whose
+ * `data.message.payload.pulseKind` ∈ PULSE_KINDS.
+ */
+export function isPulseEvent(
+  eventType: string,
+  eventData?: Record<string, unknown>,
+): boolean {
+  if (eventType !== "message_arrived" || !eventData) return false;
+  const message = eventData.message as { payload?: unknown } | undefined;
+  const payload = message?.payload as { pulseKind?: unknown } | undefined;
+  return typeof payload?.pulseKind === "string" && PULSE_KINDS.has(payload.pulseKind);
+}
+
 // ── Event Parsing ────────────────────────────────────────────────────
 
 /**
