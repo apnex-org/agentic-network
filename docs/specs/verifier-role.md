@@ -1,6 +1,6 @@
 # Verifier role — definition + scope contract
 
-**Status:** v0.1 DRAFT — awaiting Director ratification. Source: idea-330 (Director-ratified 2026-06-20) → mission-93 (M-Verifier-Role). Born from CDACC run-1's headline finding (the org is *precision-trustworthy but recall-blind* — it cannot see its own blind spots, and same-lineage agreement is a hedge, not corroboration). Serves tele-8 (Gated Recursive Integrity), tele-9 (Chaos-Validated Resilience), tele-13 (Director Intent Amplification). First holder: **Steve** (GPT-5.5 / OpenCode — a deliberately *cross-lineage* model so its blind spots decorrelate from the Anthropic-lineage producers).
+**Status:** v1.0 RATIFIED (Director, 2026-06-20 — all §6 points ratified as written, incl `create_bug` / `create_idea` in the finding-surfacing set). Source: idea-330 → mission-93 (M-Verifier-Role). Born from CDACC run-1's headline finding (the org is *precision-trustworthy but recall-blind* — it cannot see its own blind spots, and same-lineage agreement is a hedge, not corroboration). Serves tele-8 (Gated Recursive Integrity), tele-9 (Chaos-Validated Resilience), tele-13 (Director Intent Amplification). First holder: **Steve** (GPT-5.5 / OpenCode — a deliberately *cross-lineage* model so its blind spots decorrelate from the Anthropic-lineage producers).
 
 This is the **architect deliverable that blocks the engineer Hub-enum work** on mission-93. §2 is the implementable contract; §4 is the Hub surface; §6 lists the points needing Director ratification before deploy.
 
@@ -109,13 +109,14 @@ Spec-level pointers (engineer holds the code ground-truth):
 
 ---
 
-## §6 Open ratification points (Director)
+## §6 Ratification (Director — 2026-06-20: RATIFIED as written)
 
-1. **Finding-surfacing additions** — idea-330's illustrative primitive list was `create_review` / `create_audit_entry` / thread-participate / `drain_pending_actions` / read surface. This contract adds **`create_bug`** and **`create_idea`** (§2.3): a verifier that finds a defect but cannot file it is hamstrung, and bug/idea are *surfacing*, not *producing* (they don't drive a work-cascade). Confirm these belong in the verifier set.
-2. **Advisory-not-gating** — confirm the verifier holds no veto; its verdicts are evidence into Director-held gates (tele-13). (This contract assumes yes.)
-3. **Own-push scope** — confirm the narrow directed-only PUSH + broad READ separation (§2.1/§2.2) as the standing verifier scope.
+All three points ratified by the Director ("Agree with 335 recommends. Include them"):
+1. **Finding-surfacing additions — RATIFIED.** `create_bug` + `create_idea` are **in** the verifier finding-surfacing set (§2.3): a verifier that finds a defect but cannot file it is hamstrung, and bug/idea are *surfacing*, not *producing* (they drive no work-cascade).
+2. **Advisory-not-gating — RATIFIED.** The verifier holds no veto; its verdicts are evidence into Director-held gates (tele-13).
+3. **Own-push scope — RATIFIED.** The narrow directed-only PUSH + broad READ separation (§2.1/§2.2) is the standing verifier scope.
 
-Once ratified, this contract unblocks greg's Hub-enum work on mission-93.
+This contract is now **authoritative** and unblocks greg's Hub-enum work on mission-93. The Hub **deploy** remains a separate Director-gated prod-write (§5); the Steve role-flip rides that deploy.
 
 ---
 
