@@ -2819,6 +2819,212 @@ calibrations:
       - tele-1
       - tele-3
 
+  - id: 79
+    class: methodology
+    title: "FALSE-GREEN-AT-SCALE via unfaithful test fixtures — a test substrate that stores a non-production shape exercises a passthrough that never runs the real decode, masking the exact bug class it sits on"
+    origin: mission-90
+    surfaced_at: mission-90 W8 retrospective §3.3 2026-06-20 — the faithful-harness migration (setWriteEncoder in the harnesses + memory factory default) flipped the suite green-but-lying to red-and-honest (193 failures), surfacing a class of silently-degraded live production state-machine defects (review circuit-breaker, mission auto-advance, proposal-close, PendingAction watchdog, message-sequencing) invisible since the original envelope migration
+    status: closed-folded
+    closure_mechanism: |
+      Pattern signature: a test fixture seeds entities in a shape the
+      production substrate does NOT store (here: legacy-flat fixtures while
+      prod stores K8s-envelope). The suite then exercises a flat->flat
+      passthrough and never runs the real envelope-decode path, so CI is
+      green while the decode is broken. Compounds with a silent-degrade
+      try/catch in prod (see #84): the same defect is invisible to BOTH the
+      test suite AND prod monitoring — false-green at scale.
+      Diagnostic: does the test substrate store the SAME shape production
+      stores? If not, every green is suspect for shape-sensitive logic.
+      Fix that exposed it: harness fidelity (see #82). Durable mitigation:
+      fail-loud / anomaly-monitor over silent-degrade (see #84).
+      Folded into retro §2.2 + §3.3; mission-scale manifestation of RETIRED
+      #19 (schema-rename without state migration).
+    closure_pr: 324
+    cross_refs:
+      - mission-90 (M-Envelope-Substrate-Completion; status=completed 2026-06-20)
+      - "#19 (schema-rename-without-state-migration; retired; this is the mission-scale manifestation)"
+      - "#82 (faithful-harness-as-exposure; the fix mechanism)"
+      - "#84 (silent-degrade try/catch; the compounding prod-side mechanism)"
+      - bug-138 (envelope-blind reads; the masked defect class)
+      - docs/reviews/m-envelope-substrate-completion-retrospective.md §2.2 + §3.3
+    tele_alignment:
+      - tele-7
+      - tele-9
+
+  - id: 80
+    class: substrate
+    title: "FILTER-vs-DECODE dual-surface of envelope-blindness — closing the filter-translation path is NOT closing the read-decode path; the silent-failure class spans both, and filter-parity (count) checks pass while returned entities are still raw envelope"
+    origin: mission-90
+    surfaced_at: mission-90 retrospective §3.2 2026-06-20 — bug-138 was conceived as filter-translation (W2/W3 fixed it there) but the returned-entity read path (a consumer reading a top-level field off a raw envelope row gets undefined or a phase-object) hid for the whole mission because filter-parity counts matched while the entities were unrendered
+    status: closed-structurally
+    closure_mechanism: |
+      Pattern signature: an envelope/encoding boundary has TWO read surfaces —
+      the query/filter path (does the row match?) and the returned-entity
+      path (does a consumer reading a relocated field get the value?).
+      Fixing the filter half leaves the decode half silently broken;
+      count-based filter-parity checks give false assurance because counts
+      match while returned bodies are raw. Structural close: decode-to-flat
+      at the repo read + CAS membrane (renameMap-derived decodeEnvelopeToFlat
+      + bespoke leaf-rename decoders) makes every read path return one flat
+      shape. bug-138 eliminated across BOTH surfaces.
+      Folded into retro §3.2; CLAUDE.md envelope-substrate STRICT +
+      decode-to-flat section.
+    closure_pr: 324
+    cross_refs:
+      - mission-90 (M-Envelope-Substrate-Completion)
+      - bug-138 (the dual-surface silent-failure class)
+      - bug-158 (list_missions envelope-blindness; filter-side residual exposed by the strict cutover)
+      - docs/reviews/m-envelope-substrate-completion-retrospective.md §3.2
+    tele_alignment:
+      - tele-1
+      - tele-7
+
+  - id: 81
+    class: methodology
+    title: "PREMATURE structural-closure claim from partial verification — claiming a defect CLASS is eliminated from a verified SUBSET; structural-elimination requires full-surface verification (every kind, every read path, every consumer), not extrapolation"
+    origin: mission-90
+    surfaced_at: mission-90 retrospective §3.1 2026-06-20 — bug-138-fully-closed was claimed THREE times (after the W6 filter-side cutover; after bug-158 closed 8/9 filter tools; each before the read-side decode was closed), each extrapolating closure from a verified subset; the corrections came from greg validation + the deep audit, not from architect assertion
+    status: closed-folded
+    closure_mechanism: |
+      Pattern signature: a class-X-eliminated claim is extrapolated from a
+      verified subset (some kinds / one read path / the filter half). The
+      gap between subset-verified and full-surface is exactly where the
+      class survives. Discipline: a structural-elimination claim is a BINARY
+      full-surface certification — enumerate every kind, every read path,
+      every consumer, and verify each, before the claim ships. Treat
+      partial-verification as PARTIAL, never as structural.
+      Composes with #83 (deep-adversarial-audit as the full-surface
+      instrument) + tele-8 binary pass/fail certification.
+      Folded into retro §3.1.
+    closure_pr: 324
+    cross_refs:
+      - mission-90 (M-Envelope-Substrate-Completion)
+      - bug-138 (claimed closed x3 prematurely)
+      - bug-158 (the residual the 2nd premature claim missed)
+      - "#83 (deep-adversarial-audit; the full-surface verification instrument)"
+      - docs/reviews/m-envelope-substrate-completion-retrospective.md §3.1
+    tele_alignment:
+      - tele-8
+      - tele-9
+
+  - id: 82
+    class: methodology
+    title: "FAITHFUL-HARNESS-as-EXPOSURE — making the test substrate store the production shape is the single highest-leverage exposure mechanism for shape-migration missions; harness fidelity to prod is non-negotiable"
+    origin: mission-90
+    surfaced_at: mission-90 retrospective §2.2 2026-06-20 — one fidelity change (setWriteEncoder in the harnesses + the memory factory default) took the suite from green-but-lying to red-and-honest (193 failures) and surfaced the entire latent prod-defect class
+    status: closed-folded
+    closure_mechanism: |
+      Pattern signature (the FIX side of #79): for any mission that changes
+      the stored shape, the highest-leverage first move is to make the test
+      substrate store the SAME shape production stores. A faithful harness
+      converts shape-sensitive defects from invisible (green-but-lying) to
+      visible (red-and-honest). A harness that stores a different shape than
+      production is a false-green generator (#79).
+      Live-co-drive complement (retro §5 meta-learning): harness-fidelity
+      catches SHAPE bugs; live cross-agent co-drive catches WORKFLOW-TOOLING
+      bugs a testcontainer bypasses (the W8 live set surfaced bug-159, which
+      the deep audit testcontainer could not, because the testcontainer
+      seeds claimable tasks directly and bypasses the login-label dispatch).
+      Folded into retro §2.2 + §5.
+    closure_pr: 324
+    cross_refs:
+      - mission-90 (M-Envelope-Substrate-Completion)
+      - "#79 (false-green-at-scale; the failure mode this fixes)"
+      - bug-159 (workflow-tooling bug a faithful unit harness still missed; live-co-drive complement)
+      - docs/reviews/m-envelope-substrate-completion-retrospective.md §2.2 + §5
+    tele_alignment:
+      - tele-9
+      - tele-5
+
+  - id: 83
+    class: methodology
+    title: "DEEP-ADVERSARIAL-AUDIT value at structural-elimination gates — an independent refute-not-confirm audit with a completeness-critic catches self-certification + green-CI gaps; warranted whenever a high-stakes class-eliminated claim is about to ship"
+    origin: mission-90
+    surfaced_at: mission-90 retrospective §2.3 2026-06-20 — a 9-agent refute-not-confirm audit (silent-miss sweep, CAS-fix positive-proof, false-green hunt, completeness-critic) on the merge-candidate found two real gaps the engineer self-report had glossed (an overstated consumers-always-see-flat claim + a postgres-path decode coverage hole for 4 kinds), both fixed before merge
+    status: closed-folded
+    closure_mechanism: |
+      Pattern signature: at a structural-elimination gate (a class-X-is-gone
+      claim about to ship), self-certification + green-CI both have a blind
+      spot for what was never tested. An independent audit instructed to
+      REFUTE (not confirm), plus a completeness-critic asking what is
+      UNverified, surfaces the residual the builder cannot see. Zero
+      correctness blockers does not mean zero gaps. Warranted at high-stakes
+      structural gates; the instrument that makes #81 full-surface
+      verification real.
+      Seed discipline for the CDACC dual-altitude conformance-council
+      exercise (docs/methodology/cdacc-dual-altitude-conformance-council.md).
+      Folded into retro §2.3.
+    closure_pr: 324
+    cross_refs:
+      - mission-90 (M-Envelope-Substrate-Completion)
+      - "#81 (premature-closure; this is the full-surface verification instrument)"
+      - docs/reviews/m-envelope-substrate-completion-retrospective.md §2.3
+      - docs/methodology/cdacc-dual-altitude-conformance-council.md (the council exercise this discipline seeds)
+    tele_alignment:
+      - tele-8
+      - tele-9
+
+  - id: 84
+    class: substrate
+    title: "SILENT-DEGRADE try/catch hides the defect it sits on — a catch that degrades-and-recovers (degrade-then-poll-recover) swallows read-crashes so no error surfaces in prod monitoring; prefer fail-loud or a 0-bare / anomaly monitor"
+    origin: mission-90
+    surfaced_at: mission-90 retrospective §3.3 + §5 2026-06-20 — the cascade try/catch swallowed the envelope-decode read-crashes (degrade-then-poll-recover), so the broken state-machine transitions surfaced no error in prod monitoring; combined with unfaithful fixtures (#79) the class was invisible everywhere
+    status: open
+    closure_mechanism: |
+      Pattern signature: an error-handler that degrades-and-recovers
+      silently masks the underlying defect — the system limps (poll-recover)
+      instead of surfacing the crash, so neither prod monitoring nor an
+      operator sees it. Compounds with #79 (unfaithful fixtures) to make a
+      defect class invisible to BOTH test and prod. The dual-shape tolerant
+      read that hosted this was structurally RETIRED at W8, but the durable
+      mitigation — a loud detector (assert/monitor that a bare envelope row
+      never appears above the membrane) — is a PROPOSED follow-on, not yet
+      built. OPEN until the 0-bare anomaly-monitor lands.
+      Folded into retro §3.3 + §5 (forward observation); tele-7
+      no-silent-failures is the governing mandate.
+    closure_pr: 324
+    cross_refs:
+      - mission-90 (M-Envelope-Substrate-Completion)
+      - "#79 (false-green-at-scale; the compounding test-side mechanism)"
+      - bug-138 (the defect class the silent-degrade masked)
+      - docs/reviews/m-envelope-substrate-completion-retrospective.md §3.3 + §5 (0-bare anomaly-monitor follow-on)
+    tele_alignment:
+      - tele-7
+      - tele-1
+
+  - id: 85
+    class: methodology
+    title: "RECONCILE contradictory operational docs against ground-truth before relying on either — unreconciled doc contradiction produces a near-miss (watchtower-functional / :latest-push-IS-a-deploy)"
+    origin: mission-90
+    surfaced_at: mission-90 retrospective §4 candidate 9 2026-06-20 — the cutover runbook + the architect session-long mental model held watchtower-non-functional / manual-IAP-SSH-deploy while the Design own §4 cadence note recorded the opposite (bug-140 watchtower auto-deploy); the contradiction went unreconciled until a live deploy proved watchtower functional (W8 auto-deployed ~40s after the :latest push), exposing a near-miss — an architect-authorized non-prod-mutating pre-build during a Director deploy-HOLD would actually have deployed
+    status: closed-folded
+    closure_mechanism: |
+      Pattern signature: two operational sources (or a doc vs a mental
+      model) assert contradictory facts about a deploy mechanism; the
+      contradiction is carried unreconciled and one side is relied upon.
+      Here: runbook + architect-model said watchtower non-functional /
+      manual deploy; the Design §4 said auto-deploy. Consequence: a :latest
+      push is treated as non-prod-mutating when it is actually a ~5-min
+      auto-deploy — a near-miss when that pre-build was authorized during a
+      deploy-HOLD. Discipline: when two operational sources disagree,
+      reconcile against GROUND-TRUTH (probe the live mechanism) before
+      relying on either; treat any :latest push as a prod-mutating deploy.
+      The operational facts (code-only-redeploy class; comms-dark =
+      Hub-is-the-channel) are captured in the corrected runbook + Design and
+      NOT duplicated here; this entry captures the METHODOLOGY meta-lesson.
+      Folded into retro §4 candidate 9; runbook B.3 + Design §4 corrected in
+      PR #324.
+    closure_pr: 324
+    cross_refs:
+      - mission-90 (M-Envelope-Substrate-Completion)
+      - bug-140 (watchtower auto-deploy; the Design-side fact)
+      - docs/operator/envelope-substrate-cutover-runbook.md B.3 (corrected in PR #324)
+      - docs/designs/m-envelope-substrate-completion-design.md §4 (corrected in PR #324)
+      - docs/reviews/m-envelope-substrate-completion-retrospective.md §4 candidate 9
+    tele_alignment:
+      - tele-2
+      - tele-5
+
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
 #   title                       string; human-readable pattern name
