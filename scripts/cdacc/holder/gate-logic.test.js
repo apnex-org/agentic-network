@@ -20,6 +20,7 @@ import {
   classifyCell,
   CELL,
   scoreCanary,
+  scoreResolved,
   qualityVerdict,
   DEFAULT_FLOORS,
 } from "./gate-logic.js";
@@ -113,13 +114,33 @@ test("classify: neither reached => UNAUDITED (never a silent blank)", () => {
   );
 });
 
-test("classify: same verdict via CONTRADICTORY evidence => DISAGREE", () => {
+test("classify: same verdict via CONTRADICTORY evidence (spec-recognized) => DISAGREE", () => {
   assert.equal(
     classifyCell(
       { verdict: "PASS", evidenceSig: "spec-cited", contradictory: true },
       { verdict: "PASS", evidenceSig: "code-reproduced" }
     ),
     CELL.DISAGREE
+  );
+});
+
+test("classify: CONTRADICTORY recognized by CODE-only also demotes (two-sided, concern A)", () => {
+  assert.equal(
+    classifyCell(
+      { verdict: "PASS", evidenceSig: "spec-cited" },
+      { verdict: "PASS", evidenceSig: "code-reproduced", contradictory: true }
+    ),
+    CELL.DISAGREE
+  );
+});
+
+test("classify: same verdict, same evidence, no contradiction => AGREE-PASS (no false demote)", () => {
+  assert.equal(
+    classifyCell(
+      { verdict: "PASS", evidenceSig: "same" },
+      { verdict: "PASS", evidenceSig: "same" }
+    ),
+    CELL.AGREE_PASS
   );
 });
 
@@ -156,13 +177,53 @@ test("scoreCanary: perfect run => recall 1, precision 1", () => {
   assert.equal(s.precision, 1);
 });
 
-test("scoreCanary: clean-cell false flags lower precision", () => {
+test("scoreCanary: flag on a HOLDER-HELD known-clean cell lowers precision (concern C)", () => {
   const plants = [{ id: "r1", kind: "real", site: "a.ts:10" }];
-  const s = scoreCanary(plants, [{ site: "a.ts:10", flagged: true }], {
-    cleanCellsFlagged: 1,
-  });
+  const s = scoreCanary(
+    plants,
+    [
+      { site: "a.ts:10", flagged: true }, // TP
+      { site: "z.ts:99", flagged: true }, // FP on a known-clean cell
+    ],
+    { knownCleanCells: ["z.ts:99"] }
+  );
   assert.equal(s.recall, 1);
   assert.equal(s.precision, 0.5); // TP=1, FP=1
+  assert.equal(s.precisionProvisional, false);
+  assert.deepEqual(s.cleanCellsFlagged, ["z.ts:99"]);
+});
+
+test("scoreCanary: flag on an UN-adjudicated cell is reported, not scored (precision provisional)", () => {
+  const plants = [{ id: "r1", kind: "real", site: "a.ts:10" }];
+  const s = scoreCanary(plants, [
+    { site: "a.ts:10", flagged: true }, // TP
+    { site: "q.ts:7", flagged: true }, // neither plant nor known-clean
+  ]);
+  assert.equal(s.recall, 1);
+  assert.equal(s.precision, 1); // un-adjudicated flag NOT counted as FP
+  assert.equal(s.precisionProvisional, true);
+  assert.deepEqual(s.unadjudicatedFlags, ["q.ts:7"]);
+});
+
+// ── resolution scoring (P7) ─────────────────────────────────────────────────
+test("scoreResolved: resolved/(resolved+forwarded) over contested cells", () => {
+  const r = scoreResolved([
+    { disposition: "reconciled" },
+    { disposition: "reconciled" },
+    { disposition: "dual-truth" },
+    { disposition: "tie-break" },
+    { disposition: "escalated" },
+  ]);
+  assert.equal(r, 0.8); // 4 resolved / 5 contested
+});
+
+test("scoreResolved: all escalated => 0 (faked convergence by punting)", () => {
+  assert.equal(scoreResolved([{ disposition: "escalated" }, { disposition: "escalated" }]), 0);
+});
+
+test("scoreResolved: no contested cells => null", () => {
+  assert.equal(scoreResolved([]), null);
+  assert.equal(scoreResolved([{ disposition: "not-a-disposition" }]), null);
 });
 
 // ── quality-floor policy ────────────────────────────────────────────────────

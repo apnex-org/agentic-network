@@ -18,7 +18,7 @@ Frozen snapshot for the first run (4-tuple, doc §B.5):
 
 | Path | What | Trust role |
 |---|---|---|
-| `holder/gate-logic.js` | Deterministic holder gates: commit-reveal, integrity-pin, cell-classify, canary recall/precision, quality-floor policy. | **The inspectable core** (4-tuple elem 4). Pure, no Hub/FS/net. |
+| `holder/gate-logic.js` | Deterministic holder gates: commit-reveal, integrity-pin, cell-classify (P4), canary recall/precision (P5), resolved/forwarded ratio (P7), quality-floor policy. | **The inspectable core** (4-tuple elem 4). Pure, no Hub/FS/net. |
 | `holder/gate-logic.test.js` | Holder self-test (scoring half). Deterministic, **zero spend**. | Proves the scorer is correct on KNOWN probes before it scores the real canary. |
 | `cdacc.workflow.js` | Engineer-altitude P2 fan-out + holder orchestration (Workflow script). PREFLIGHT + FULL modes. | The agent orchestration. |
 
@@ -39,6 +39,15 @@ hold (thread-661). The architect's neutrality review checks them here:
 3. **Fixed / inspectable scoring.** The arithmetic is pure + deterministic + unit-
    tested — it cannot selectively credit one principal. (Inspect: `gate-logic.test.js`
    pins exact recall/precision on a known probe set.)
+4. **Precision ground-truth is holder-held** (added thread-661 concern C). `scoreCanary`'s
+   known-clean-cell set — the basis on which a non-plant flag counts as a false-positive —
+   MUST come from the holder / a neutral adjudication source, **never a principal-aligned
+   party**. So **recall is fully mechanical; precision is mechanical only over the
+   adjudicated set** (plants ∪ known-clean). A flag on any other cell is an
+   `unadjudicatedFlag` and sets `precisionProvisional` — reported, never silently scored.
+   For run-1 (diagnostic floors) precision ships flagged-provisional; the cross-principal
+   orchestrator that supplies the known-clean set lands on its own branch and re-clears
+   this same neutrality review before the real canary run.
 
 Temporal separation reinforces it: instantiation = **P1** (pre-pin), scoring =
 **P5** (post-seal) — different phases of the same deterministic logic.
