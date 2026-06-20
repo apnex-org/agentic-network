@@ -55,6 +55,17 @@ const MODE = A.mode || "preflight";
 const TELE_SET = A.teleSet || [];
 const NONCE = A.nonce || "cdacc-preflight-nonce";
 
+// Model-diversity (run-2 #A): the code fan-out's model is PARAMETERIZED, never
+// hard-pinned — A.model assigns the audit-pass model (per-altitude cross-model
+// corroboration), A.refuteModel assigns the adversarial-verify pass a DIFFERENT
+// model so the refute catches model-specific blind spots rather than sharing them.
+// Both default UNSET (inherit the session model). withModel/withRefuteModel only
+// set opts.model when assigned, so an un-parameterized run behaves exactly as run-1.
+const AUDIT_MODEL = A.model;          // e.g. "opus" | "sonnet" | "fable"
+const REFUTE_MODEL = A.refuteModel;   // a DIFFERENT model than AUDIT_MODEL
+const withModel = (o) => (AUDIT_MODEL ? { ...o, model: AUDIT_MODEL } : o);
+const withRefuteModel = (o) => (REFUTE_MODEL ? { ...o, model: REFUTE_MODEL } : o);
+
 // ── Shared contract: the per-cell verdict schema (doc §B.4 P0) ─────────────
 // The ONE thing both altitudes must honor so two independent audits are
 // comparable. Note `blastRadius` — the reachability trace the materiality dial
@@ -130,6 +141,9 @@ const SCOPE_NOTE = (tele) =>
   `Audited surface = Hub PRODUCT (hub/src + docs/specs + relevant config); EXCLUDE scripts/cdacc/ — that directory is the CDACC audit instrument itself, NOT part of the audited system.`;
 
 // ── P2 fan-out for ONE tele (the engineer pipeline P2a -> P2d) ─────────────
+// Cross-model adversarial-verify (run-2 #A): P2a/P2b-audit run on AUDIT_MODEL; the
+// P2b-REFUTE breaker runs on REFUTE_MODEL (a DIFFERENT model) so the refutation
+// catches model-specific blind spots rather than sharing them with the audit.
 async function auditTele(tele, phasePrefix) {
   // P2a — classify (cheap): class + required-tier + harness + candidate surfaces.
   const cls = await agent(
@@ -138,25 +152,88 @@ async function auditTele(tele, phasePrefix) {
       `is it behavioral (a runtime guard/transform/filter), structural (a code-shape invariant), or methodology (a practice)? ` +
       `State its required evidence tier and the reproducing harness {schema-decode|chaos-injection|incident-replay|metric-observation|none} ` +
       `and whether that harness is reachable in-window. List candidate code surfaces (files/functions/tests) to inspect.`,
-    { schema: CLASSIFY_SCHEMA, phase: `${phasePrefix}a-classify`, effort: "low" }
+    withModel({ schema: CLASSIFY_SCHEMA, phase: `${phasePrefix}a-classify`, effort: "low" })
   );
   if (!cls) return null;
 
-  // P2b — gather evidence, climbing the tier ladder until the bar is hit or
-  // exhausted, then adversarial-verify (breaker, default-to-refuted).
-  const verdict = await agent(
-    `CDACC engineer-altitude P2b. Frozen SHA ${FROZEN_SHA}. ${SCOPE_NOTE(tele)} ` +
+  // P2b-audit — gather evidence on AUDIT_MODEL, climb the tier ladder, emit a DRAFT.
+  const draft = await agent(
+    `CDACC engineer-altitude P2b-AUDIT. Frozen SHA ${FROZEN_SHA}. ${SCOPE_NOTE(tele)} ` +
       `Audit ${tele} (class=${cls.teleClass}, required-tier=${cls.requiredTier}, harness=${cls.harness || "n/a"}). ` +
       `Candidate surfaces: ${(cls.candidateSurfaces || []).join(", ")}. ` +
       `Climb the evidence ladder only as far as the required tier: read -> trace the call-path/data-flow -> run/cite a test -> reproduce via the harness. ` +
-      `Then adversarially self-verify: try to REFUTE your own verdict; default to refuted if uncertain. ` +
-      FALSIFIER_BAR +
-      ` ` +
-      HARNESS_FIDELITY +
-      ` Emit the verdict-vector for ${tele}.`,
-    { schema: VERDICT_SCHEMA, phase: `${phasePrefix}b-evidence`, effort: "high" }
+      FALSIFIER_BAR + ` ` + HARNESS_FIDELITY +
+      ` Emit a DRAFT verdict-vector for ${tele}.`,
+    withModel({ schema: VERDICT_SCHEMA, phase: `${phasePrefix}b-audit`, effort: "high" })
   );
-  return verdict;
+  if (!draft) return null;
+
+  // P2b-refute — a CROSS-MODEL breaker attacks the draft (default-to-refuted),
+  // then emits the FINAL verdict (downgrades any claim that doesn't survive).
+  const verdict = await agent(
+    `CDACC engineer-altitude P2b-REFUTE (cross-model breaker). Frozen SHA ${FROZEN_SHA}. ${SCOPE_NOTE(tele)} ` +
+      `A DRAFT verdict for ${tele} is below — adversarially REFUTE it: find the call-site / input / reproduction that breaks its claim; default to refuted if uncertain. ` +
+      `DRAFT: ${JSON.stringify(draft)}. ` +
+      FALSIFIER_BAR + ` ` + HARNESS_FIDELITY +
+      ` Emit the FINAL verdict-vector for ${tele}: downgrade the tier/verdict if the draft over-claimed; confirm only what survives refutation; keep findings the draft got right.`,
+    withRefuteModel({ schema: VERDICT_SCHEMA, phase: `${phasePrefix}b-refute`, effort: "high" })
+  );
+  return verdict || draft;
+}
+
+// ── P2-STRUCTURAL — the recall-surface sweep (run-2 #2 / calibration #87) ──
+// Run-1 missed all 6 reproduced-real plants because the per-tele fan-out never
+// swept the surfaces they lived in. This is a TELE-INDEPENDENT sweep of the
+// bug-137/138 silently-wrong-read class across EVERY substrate-consumer call-site,
+// so a plant is caught regardless of which tele it maps to. Guard-oracle: the W1
+// SUBSTRATE_FILTERABLE_KEYS contract ∩ each kind's renameMap (the run-1 plants
+// used filter keys OUTSIDE that contract — that's the deterministic signature).
+const STRUCTURAL_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    category: { type: "string" },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          site: { type: "string" },
+          kind: { type: "string" },
+          mechanism: { type: "string" },
+          reproduced: { type: "boolean" },
+          severity: { enum: ["none", "low", "medium", "high", "critical"] },
+        },
+        required: ["site", "kind"],
+      },
+    },
+  },
+  required: ["category", "findings"],
+};
+
+async function runStructuralSweep(phaseTitle) {
+  phase(phaseTitle);
+  const STRUCT_SCOPE =
+    `Frozen SHA ${FROZEN_SHA}. Audit the CURRENT working tree, Hub PRODUCT only (hub/src), EXCLUDE scripts/cdacc/. ` +
+    `This is a TELE-INDEPENDENT structural sweep for the bug-137/138 silently-wrong-read class — report EVERY offending site, not one-per-tele.`;
+  const cats = [
+    ["raw-read", `CATEGORY raw-read: find EVERY hub/src call-site that calls substrate.list/get/getWithRevision and then reads a RELOCATED field (per the kind's renameMap + migrations/v2-envelope/kinds partition) WITHOUT first decoding via decodeEnvelopeToFlat or a bespoke decoder — INCLUDING boot-path consumers in index.ts (reapers, sweepers). Such a site reads undefined / a {phase} object at runtime (bug-138). Reproduce where feasible.`],
+    ["filter-key-gap", `CATEGORY filter-key-gap: find EVERY substrate.list(kind,{filter}) whose filter key is NOT in SUBSTRATE_FILTERABLE_KEYS ∩ that kind's renameMap. A relocated key the translator doesn't map resolves null in SQL → silently-empty/wrong filter. The W1 SUBSTRATE_FILTERABLE_KEYS contract is the deterministic guard — the run-1 plants used keys outside it.`],
+    ["cas-decode", `CATEGORY cas-decode: find EVERY casUpdate/tryCasUpdate / read-modify-write that transforms the entity BEFORE decoding the raw envelope row, or re-envelopes a stale field on write-back. Round-trip drift caught only by write-then-read reproduction.`],
+  ];
+  const results = await parallel(
+    cats.map(([label, c]) => () =>
+      agent(
+        `CDACC engineer-altitude P2-STRUCTURAL. ${STRUCT_SCOPE} ${c} ${FALSIFIER_BAR} ${HARNESS_FIDELITY}`,
+        withModel({ schema: STRUCTURAL_SCHEMA, phase: phaseTitle, label: `struct:${label}`, effort: "high" })
+      )
+    )
+  );
+  const byCat = results.filter(Boolean);
+  const findings = byCat.flatMap((r) => r.findings || []);
+  log(`P2-STRUCTURAL: ${findings.length} bug-138-class findings across ${byCat.length}/${cats.length} categories.`);
+  return { findings, byCategory: byCat };
 }
 
 // ===========================================================================
@@ -224,6 +301,12 @@ async function runFull() {
     (tele) => auditTele(tele, "P2")
   );
 
+  // P2-STRUCTURAL (run-2 #2): the tele-independent bug-138-class consumer sweep —
+  // the recall-surface fix that catches the run-1-missed plant classes. Its
+  // findings are sealed alongside the per-tele verdicts so the holder's canary
+  // scoring counts them toward recall.
+  const structural = await runStructuralSweep("P2-STRUCTURAL");
+
   // P2c — completeness-critic over the whole sweep (one barrier here is correct:
   // "what tele×component cells did we not reach?" needs all verdicts at once).
   phase("P2c-completeness");
@@ -245,6 +328,8 @@ async function runFull() {
     sha: FROZEN_SHA,
     nonce: NONCE,
     verdicts: reached,
+    structuralFindings: structural.findings,
+    structuralByCategory: structural.byCategory,
     completeness,
     sealNote:
       "Holder (gate-logic.js) computes the content-free commitment per verdict-vector, registers it, and only reveals after BOTH principals' commitments exist; then pins (hash, resourceVersion, updatedAt).",
