@@ -14,6 +14,11 @@
  */
 
 import type { Plugin } from "@opencode-ai/plugin";
+// Type-only (esbuild drops it → zero bundle impact; the SDK client is provided
+// by the host at runtime). The v2 Event discriminated union types the plugin
+// event handler so session-event property access is compile-checked (the fence
+// that catches the 0.4.x-drift class — thread-669/bug-161).
+import type { Event } from "@opencode-ai/sdk";
 import {
   McpAgentClient,
   McpTransport,
@@ -23,7 +28,8 @@ import {
   createSharedDispatcher,
   assertHostWiringComplete,
   getActionText,
-  type AgentClientCallbacks,
+  isPulseEvent,
+  reconstructDrainedAction,
   type AgentEvent,
   type SessionState,
   type SessionReconnectReason,
@@ -73,6 +79,27 @@ const dispatcher = createSharedDispatcher({
   serverName: "hub-proxy",
   serverCapabilities: { tools: {}, logging: {} },
   log: (m) => log(m),
+  // M-OpenCode-Shim-Sovereign-Dedup Step-2 (idea-331): bind the OpenCode
+  // host surface through the shared DispatcherNotificationHooks seam (the
+  // same one Claude uses). This routes the wake THROUGH router.route(), so
+  // the MessageRouter/SeenIdCache push+poll dedup gates it — closing the
+  // prior bypass where buildPluginCallbacks surfaced OUTSIDE the router
+  // (duplicate deliveries that compounded the flood). buildPluginCallbacks
+  // is DELETED; the agent is wired via setCallbacks(dispatcher.callbacks).
+  //
+  // INVARIANT (path (b)): the dispatcher is constructed here at MODULE-INIT
+  // (before config/sdkClient/sessionActive exist), but these hooks FIRE only
+  // after connect — so they safely read module `let` state at invocation-time.
+  // Do NOT construct the dispatcher, or fire any hook, before connect.
+  // DEFER (2nd-OpenCode-class-host): Claude builds its dispatcher at RUNTIME
+  // in main(); OpenCode's module-init construction is itself drift. Align the
+  // construction lifecycle when a 2nd such host arrives — co-bucketed with the
+  // rate-limit/prompt-queue coalescing generalization. Not silently accepted.
+  notificationHooks: {
+    onActionableEvent: surfaceActionableEvent,
+    onInformationalEvent: surfaceInformationalEvent,
+    onStateChange: handleConnectionStateChange,
+  },
   pollBackstop: {
     role: process.env.OIS_HUB_ROLE ?? "engineer",
     firstTimerEnabled: true,
@@ -115,14 +142,6 @@ interface HubConfig {
    * From adapter-config.json `labels` field or OIS_HUB_LABELS env var (JSON).
    */
   labels?: Record<string, string>;
-  /**
-   * thread-671: extra Hub event types to suppress from the toast/inject
-   * surface (presence/telemetry FYI). `agent_state_changed` is ALWAYS
-   * suppressed (see DEFAULT_SURFACE_SUPPRESS); this list ADDS to that
-   * default. From adapter-config.json `suppressEvents` or the
-   * OIS_HUB_SUPPRESS_EVENTS env var (JSON array of event-type strings).
-   */
-  suppressEvents?: string[];
 }
 
 function parseLabels(raw: string | undefined, source: string): Record<string, string> | undefined {
@@ -138,20 +157,6 @@ function parseLabels(raw: string | undefined, source: string): Record<string, st
     }
   } catch (err) {
     log(`WARNING: Failed to parse labels from ${source}: ${err}`);
-  }
-  return undefined;
-}
-
-function parseStringArray(raw: string | undefined, source: string): string[] | undefined {
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      const out = parsed.filter((x): x is string => typeof x === "string");
-      return out.length > 0 ? out : undefined;
-    }
-  } catch (err) {
-    log(`WARNING: Failed to parse ${source}: ${err}`);
   }
   return undefined;
 }
@@ -177,40 +182,7 @@ function loadConfig(directory: string): HubConfig {
     cfg.autoPrompt = process.env.HUB_PLUGIN_AUTO_PROMPT.toLowerCase() !== "false";
   const envLabels = parseLabels(process.env.OIS_HUB_LABELS, "OIS_HUB_LABELS env var");
   if (envLabels) cfg.labels = envLabels;
-  const envSuppress = parseStringArray(
-    process.env.OIS_HUB_SUPPRESS_EVENTS,
-    "OIS_HUB_SUPPRESS_EVENTS env var",
-  );
-  if (envSuppress) cfg.suppressEvents = envSuppress;
   return cfg;
-}
-
-// ── Notification-surface suppression (thread-671) ────────────────────
-//
-// Presence/telemetry events are classified `informational` by event-router
-// for agent-population cache-coherence (Mission-62), NOT to be shown to the
-// user — and there is no cache CONSUMER of them in the adapter today, so
-// dropping them from the surface costs nothing. Left unfiltered they flood
-// the TUI with a wall of `state-changed` toasts AND inject every transition
-// into the session, burning the context window (tele-12) for zero signal.
-// Suppressed events are still written to the diagnostic notification log;
-// only the toast + context-inject are skipped. Applied to the INFORMATIONAL
-// path only — never to actionable events (suppressing those would silently
-// drop work that needs a response).
-const DEFAULT_SURFACE_SUPPRESS: ReadonlyArray<string> = ["agent_state_changed"];
-
-/**
- * Pure predicate (exported for unit tests): is this event type suppressed from
- * the toast/inject surface? `extra` is the operator's `config.suppressEvents`,
- * which ADDS to the always-on `DEFAULT_SURFACE_SUPPRESS` set.
- */
-export function isEventSuppressed(eventType: string, extra?: ReadonlyArray<string>): boolean {
-  if (DEFAULT_SURFACE_SUPPRESS.includes(eventType)) return true;
-  return extra?.includes(eventType) ?? false;
-}
-
-function isSurfaceSuppressed(eventType: string): boolean {
-  return isEventSuppressed(eventType, config.suppressEvents);
 }
 
 // ── Rate-limited prompt queue ────────────────────────────────────────
@@ -419,95 +391,74 @@ async function syncTools(): Promise<void> {
   }
 }
 
-// ── Mission-57 W3: pulse-event detection helper ─────────────────────
-//
-// Mirrors `claude-plugin/src/source-attribute.ts:isPulseEvent`. Inlined
-// here (vs imported) because opencode-plugin doesn't share helpers with
-// claude-plugin; the function is small + has no other dependencies.
-// Pulse Messages arrive via `message_arrived` events with payload
-// containing `pulseKind: "status_check" | "missed_threshold_escalation"`
-// (per Hub-side PulseSweeper W2 wire format in Design v1.0 §4 + §5).
-//
-// Render-side effect: detected pulses downgrade level from "actionable"
-// to "informational" (S3 noise mitigation per Design v1.0 §4) so they
-// don't wake the LLM during high-activity sub-PR cascades.
+// Mission-57 W3 pulse detection: `isPulseEvent` is now imported from
+// `@apnex/network-adapter` (event-router). M-OpenCode-Shim-Sovereign-Dedup
+// (idea-331) hoisted it to core — it was a verbatim mirror of the claude
+// shim's copy; both shims now share the one core impl. Detected pulses
+// downgrade their notification level "actionable" → "informational".
 
-const PULSE_KINDS_SET: ReadonlySet<string> = new Set([
-  "status_check",
-  "missed_threshold_escalation",
-]);
+// ── Notification surface hooks (OpenCode last-mile) ──────────────────
+//
+// M-OpenCode-Shim-Sovereign-Dedup Step-2 (idea-331): the OpenCode host's
+// DispatcherNotificationHooks implementations, passed into createSharedDispatcher
+// (above) so the wake routes THROUGH router.route() — the MessageRouter's
+// SeenIdCache push+poll dedup gates it. This replaces the deleted
+// buildPluginCallbacks, which surfaced OUTSIDE the router (the dedup bypass).
+// The dispatcher's onActionableEvent does the pendingActionMap capture +
+// router.route BEFORE invoking these hooks, so they do surfacing ONLY (no
+// dispatcher.callbacks self-call). See the path-(b) invariant at the
+// createSharedDispatcher call site: these fire post-connect and read module
+// `let` state at invocation-time.
 
-function isPulseEvent(eventType: string, eventData: Record<string, unknown>): boolean {
-  if (eventType !== "message_arrived" || !eventData) return false;
-  const message = eventData.message as { payload?: unknown } | undefined;
-  const payload = message?.payload as { pulseKind?: unknown } | undefined;
-  return typeof payload?.pulseKind === "string" && PULSE_KINDS_SET.has(payload.pulseKind);
+function surfaceActionableEvent(event: AgentEvent): void {
+  const action = getActionText(event.event, event.data);
+  // Mission-57 W3: pulse Messages downgrade level from "actionable"
+  // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
+  // noise reduction during high-activity sub-PR cascades).
+  const isPulse = isPulseEvent(event.event, event.data);
+  const actionLabel = isPulse ? `[PULSE] ${action}` : action;
+  appendNotification(
+    { event: event.event, data: event.data, action: actionLabel },
+    { logPath: notificationLogPath },
+  );
+  const message = buildToastMessage(event.event, event.data);
+  const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
+  const notification: QueuedNotification = {
+    level: isPulse ? "informational" : "actionable",
+    message,
+    promptText,
+  };
+  if (sessionActive) {
+    notificationQueue.push(notification);
+  } else {
+    void processNotification(notification);
+  }
 }
 
-// ── Plugin Callbacks ─────────────────────────────────────────────────
-//
-// Composes the shared dispatcher's pendingActionMap-population callback
-// with OpenCode-specific notification/prompt/toast handling. Exported
-// for the shim.e2e test to drive synthetic events in isolation.
+function surfaceInformationalEvent(event: AgentEvent): void {
+  // M-OpenCode-Shim-Sovereign-Dedup Step-1 (idea-331): informational events
+  // are LOG-ONLY — matching the Claude shim's already-correct disposition
+  // (claude shim.ts:672-676). The core (event-router) classifies these as
+  // informational precisely so they DON'T wake/surface; the prior toast +
+  // injectContext here was the OpenCode-only divergence that flooded the TUI
+  // and burned the session context window (tele-12). Diagnostic log only —
+  // no toast, no inject.
+  const action = getActionText(event.event, event.data);
+  appendNotification(
+    { event: event.event, data: event.data, action: `[INFO] ${action}` },
+    { logPath: notificationLogPath },
+  );
+}
 
-export function buildPluginCallbacks(): AgentClientCallbacks {
-  return {
-    onActionableEvent: (event: AgentEvent) => {
-      // Shared dispatcher's pendingActionMap population (ADR-017 Phase 1.1).
-      dispatcher.callbacks.onActionableEvent?.(event);
-
-      const action = getActionText(event.event, event.data);
-      // Mission-57 W3: pulse Messages downgrade level from "actionable"
-      // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
-      // noise reduction during high-activity sub-PR cascades). Mirrors
-      // claude-plugin's `isPulseEvent` discrimination on
-      // `event.event === "message_arrived"` + `payload.pulseKind ∈
-      // {status_check, missed_threshold_escalation}`.
-      const isPulse = isPulseEvent(event.event, event.data);
-      const actionLabel = isPulse ? `[PULSE] ${action}` : action;
-      appendNotification(
-        { event: event.event, data: event.data, action: actionLabel },
-        { logPath: notificationLogPath },
-      );
-      const message = buildToastMessage(event.event, event.data);
-      const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
-      const notification: QueuedNotification = {
-        level: isPulse ? "informational" : "actionable",
-        message,
-        promptText,
-      };
-      if (sessionActive) {
-        notificationQueue.push(notification);
-      } else {
-        processNotification(notification);
-      }
-    },
-    onInformationalEvent: (event: AgentEvent) => {
-      const action = getActionText(event.event, event.data);
-      appendNotification(
-        { event: event.event, data: event.data, action: `[INFO] ${action}` },
-        { logPath: notificationLogPath },
-      );
-      // thread-671: presence/telemetry (agent_state_changed) is cache-coherence
-      // FYI — logged above, but must NOT toast or inject (TUI flood + context-
-      // window burn, tele-12). Suppress AFTER the diagnostic log, before surface.
-      if (isSurfaceSuppressed(event.event)) return;
-      const message = buildToastMessage(event.event, event.data);
-      const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
-      const notification: QueuedNotification = { level: "informational", message, promptText };
-      if (sessionActive) {
-        notificationQueue.push(notification);
-      } else {
-        processNotification(notification);
-      }
-    },
-    onStateChange: (state: SessionState, prev: SessionState, reason?: SessionReconnectReason) => {
-      log(`Connection: ${prev} → ${state}${reason ? ` (${reason})` : ""}`);
-      if (state === "streaming") {
-        syncTools();
-      }
-    },
-  };
+function handleConnectionStateChange(
+  state: SessionState,
+  prev: SessionState,
+  reason?: SessionReconnectReason,
+): void {
+  log(`Connection: ${prev} → ${state}${reason ? ` (${reason})` : ""}`);
+  if (state === "streaming") {
+    void syncTools();
+  }
 }
 
 // ── Connect to Hub ───────────────────────────────────────────────────
@@ -553,33 +504,27 @@ async function connectToHub(agentName: string): Promise<void> {
         },
         onPendingActionItem: (item) => {
           pendingActionItemHandler(item);
-          const actionHint =
-            item.dispatchType === "thread_message"
-              ? `Reply with create_thread_reply to thread ${item.entityRef}`
-              : `Owed: ${item.dispatchType} on ${item.entityRef}`;
+          // M-Sovereign-Dedup (idea-331): the reconstruction (event/data +
+          // actionHint + pulse-aware level) is the core helper shared with the
+          // claude shim; the WAKE below stays opencode-specific (build a
+          // QueuedNotification + route it through the same notificationQueue /
+          // processNotification wake the live SSE path uses — the bug-108 fix).
+          const { agentEvent, actionHint, level } = reconstructDrainedAction(item);
           appendNotification(
-            { event: item.dispatchType, data: item.payload, action: actionHint },
+            { event: agentEvent.event, data: agentEvent.data, action: actionHint },
             { logPath: notificationLogPath },
           );
-          // bug-108: a reconnect-drained pending action arrived while the
-          // wire was down — it must WAKE the session, not only log. Mirror
-          // onActionableEvent's surface path: build a QueuedNotification and
-          // route it through the same notificationQueue / processNotification
-          // wake. The drained payload IS the original dispatchPayload (hub
-          // thread-policy.ts enqueues `payload: dispatchPayload`), so
-          // {event,data} reconstructs the live SSE AgentEvent.
-          const isPulse = isPulseEvent(item.dispatchType, item.payload);
           const notification: QueuedNotification = {
-            level: isPulse ? "informational" : "actionable",
-            message: buildToastMessage(item.dispatchType, item.payload),
-            promptText: buildPromptText(item.dispatchType, item.payload, {
+            level,
+            message: buildToastMessage(agentEvent.event, agentEvent.data),
+            promptText: buildPromptText(agentEvent.event, agentEvent.data, {
               toolPrefix: "architect-hub_",
             }),
           };
           if (sessionActive) {
             notificationQueue.push(notification);
           } else {
-            processNotification(notification);
+            void processNotification(notification);
           }
         },
       },
@@ -599,7 +544,13 @@ async function connectToHub(agentName: string): Promise<void> {
       }),
     },
   );
-  hubAdapter.setCallbacks(buildPluginCallbacks());
+  // M-OpenCode-Shim-Sovereign-Dedup Step-2 (idea-331): wire the agent directly
+  // to the dispatcher's callbacks (the Claude pattern, claude shim.ts:695). The
+  // dispatcher routes events through router.route() → its SeenIdCache dedup →
+  // the notificationHooks bag (surfaceActionableEvent / surfaceInformationalEvent
+  // / handleConnectionStateChange) supplied at construction. Replaces the deleted
+  // buildPluginCallbacks wrapper + its router-bypassing surface path.
+  hubAdapter.setCallbacks(dispatcher.callbacks);
 
   await hubAdapter.start();
   log("Connected to remote Hub via McpAgentClient");
@@ -682,7 +633,7 @@ async function startProxyServer(): Promise<number> {
 
   // Bun is only available inside the OpenCode runtime. Use a runtime
   // probe so TypeScript doesn't complain and so tests importing this
-  // module for buildPluginCallbacks don't require Bun.
+  // module (e.g. makeOpenCodeFetchHandler) don't require Bun.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const bunRuntime = (globalThis as any).Bun;
   if (!bunRuntime) {
@@ -703,6 +654,51 @@ async function startProxyServer(): Promise<number> {
 
 // ── Plugin Export ────────────────────────────────────────────────────
 // CRITICAL: No awaits during init. Everything deferred to background.
+
+// ── Session-event handling (de-any + bug-161) ───────────────────────
+//
+// Extracted from the HubPlugin event hook so it's unit-testable and typed
+// against the v2 @opencode-ai/sdk Event discriminated union (dropping the old
+// `event: any`). Typing it surfaced two 0.4.x drifts the cast had hidden:
+//   • session.created/updated carry the session at `properties.info` (a Session
+//     object); the old `|| properties.id` legacy fallback is invalid on the v2
+//     type (and dead at runtime) — dropped (thread-669).
+//   • bug-161: v2 `SessionStatus` is an OBJECT {type:"idle"|"retry"|"busy"}, not
+//     a 0.4.x status string. The old `status === "idle"|"running"|"streaming"|…`
+//     string compares were always-false in v2 → sessionActive NEVER went true →
+//     the notificationQueue never engaged (notifications surfaced mid-stream).
+//     Map status.type: "idle" → inactive (flush); "busy"/"retry" → active.
+async function handleSessionEvent(event: Event): Promise<void> {
+  switch (event.type) {
+    case "session.created":
+    case "session.updated":
+      currentSessionId = event.properties.info.id;
+      break;
+    case "session.status": {
+      if (event.properties.status.type === "idle") {
+        sessionActive = false;
+        if (notificationQueue.length > 0) await flushQueue();
+        else if (deferredBacklog.length > 0) await flushBacklog();
+      } else {
+        // "busy" | "retry" — the session is mid-task; buffer notifications.
+        sessionActive = true;
+      }
+      break;
+    }
+    case "session.idle":
+      sessionActive = false;
+      if (notificationQueue.length > 0) await flushQueue();
+      else if (deferredBacklog.length > 0) await flushBacklog();
+      if (hubAdapter && !hubAdapter.isConnected) {
+        try {
+          await hubAdapter.start();
+        } catch {
+          /* will retry on next idle */
+        }
+      }
+      break;
+  }
+}
 
 export const HubPlugin: Plugin = async (ctx) => {
   // SDK drift: @opencode-ai/plugin 1.3.x exposes `directory: string` directly on
@@ -786,48 +782,8 @@ export const HubPlugin: Plugin = async (ctx) => {
   }, 3000);
 
   return {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    event: async ({ event }: { event: any }) => {
-      switch (event.type) {
-        // SDK drift (thread-669): v2 EventSessionCreated/Updated carry the session
-        // at `properties.info` (a Session object), NOT `properties.id`. Reading the
-        // old 0.4.x `properties.id` returns undefined → currentSessionId froze to the
-        // boot-time session.list()[0], so injects landed in a session the TUI wasn't
-        // showing (the "Steve replied but Director couldn't see it" root cause). Read
-        // `info.id` first, tolerate the legacy flat `.id` as a fallback.
-        case "session.created":
-          currentSessionId =
-            event.properties?.info?.id || event.properties?.id || currentSessionId;
-          break;
-        case "session.updated": {
-          const updatedId = event.properties?.info?.id || event.properties?.id;
-          if (updatedId) currentSessionId = updatedId;
-          break;
-        }
-        case "session.status": {
-          const status = event.properties?.status;
-          if (status === "idle" || status === "completed") {
-            sessionActive = false;
-            if (notificationQueue.length > 0) await flushQueue();
-            else if (deferredBacklog.length > 0) await flushBacklog();
-          } else if (status === "running" || status === "pending" || status === "streaming") {
-            sessionActive = true;
-          }
-          break;
-        }
-        case "session.idle":
-          sessionActive = false;
-          if (notificationQueue.length > 0) await flushQueue();
-          else if (deferredBacklog.length > 0) await flushBacklog();
-          if (hubAdapter && !hubAdapter.isConnected) {
-            try {
-              await hubAdapter.start();
-            } catch {
-              /* will retry on next idle */
-            }
-          }
-          break;
-      }
+    event: async ({ event }: { event: Event }) => {
+      await handleSessionEvent(event);
     },
   };
 };
@@ -837,6 +793,12 @@ export const HubPlugin: Plugin = async (ctx) => {
 export const _testOnly = {
   dispatcher,
   makeOpenCodeFetchHandler,
+  handleSessionEvent,
+  getSessionActive: () => sessionActive,
+  setSessionActive: (v: boolean) => {
+    sessionActive = v;
+  },
+  getCurrentSessionId: () => currentSessionId,
   getHubAdapter: () => hubAdapter,
   setHubAdapter: (agent: McpAgentClient | null) => {
     hubAdapter = agent;
