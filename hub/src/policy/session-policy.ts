@@ -131,7 +131,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
     // the back-compat auto-claim hooks (T2 §10 deprecation runway).
     //
     // Set sessionRoles for RBAC parity with the pre-T2 path.
-    ctx.stores.engineerRegistry.setSessionRole(sid, tokenRole as "engineer" | "architect" | "director");
+    ctx.stores.engineerRegistry.setSessionRole(sid, tokenRole as "engineer" | "architect" | "director" | "verifier");
     const identity = await ctx.stores.engineerRegistry.assertIdentity(
       {
         name: payload.name,
@@ -241,7 +241,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
       `(globalInstanceId + clientMetadata). Dropping labels — caller will default to broadcast dispatch.`
     );
   }
-  ctx.stores.engineerRegistry.setSessionRole(sid, role as "engineer" | "architect");
+  ctx.stores.engineerRegistry.setSessionRole(sid, role as "engineer" | "architect" | "director" | "verifier");
   return {
     content: [{
       type: "text" as const,
