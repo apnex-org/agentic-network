@@ -19,14 +19,21 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-echo "[release-opencode] 1/3 build @apnex/* workspace deps (deps-first; else TS2307)"
+echo "[release-opencode] 0/4 clean prior dist (idempotent rebuild — dist/ is gitignored;"
+echo "                       a stale dist makes the deps' tsc collide with its own emitted .d.ts, TS5055)"
+rm -rf packages/network-adapter/dist packages/cognitive-layer/dist \
+       packages/message-router/dist adapters/opencode-plugin/dist
+
+echo "[release-opencode] 1/4 build @apnex/* workspace deps (deps-first; else TS2307)"
 npm run build -w @apnex/network-adapter -w @apnex/cognitive-layer -w @apnex/message-router
 
-echo "[release-opencode] 2/3 typecheck + emit the plugin (tsc → dist + shim.d.ts)"
+echo "[release-opencode] 2/4 typecheck + emit the plugin (tsc → dist + shim.d.ts)"
 npm run build -w @apnex/opencode-plugin
 
-echo "[release-opencode] 3/3 bundle into a self-contained dist/shim.js (esbuild)"
+echo "[release-opencode] 3/4 bundle into a self-contained dist/shim.js (esbuild)"
 npm run bundle -w @apnex/opencode-plugin
+
+echo "[release-opencode] 4/4 verify self-containment"
 
 OUT="$REPO_ROOT/adapters/opencode-plugin/dist/shim.js"
 echo "[release-opencode] done → $OUT ($(wc -c < "$OUT") bytes)"
