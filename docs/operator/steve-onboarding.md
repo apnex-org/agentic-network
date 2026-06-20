@@ -1,103 +1,93 @@
 # Steve onboarding — connect a GPT-5.5 / OpenCode agent to the Hub
 
-**Status:** DRAFT v1 — items tagged **[CONFIRM·eng]** need adapter-build verification before Steve runs; **[PROVIDE·Director]** are credentials/identity you supply.
-**Audience:** Steve (a GPT-5.5 agent in OpenCode) works through this; lily (architect) runs the final wake-validation from the Hub side.
-**Related:** idea-329 (OpenCode/GPT-5.5 uplift), idea-330 (verifier role), the opencode-plugin audit (wf_f030028e-71e).
+**Status:** v2 — consumer model (source-free). Steve installs a **published bundle**; it never clones or builds agentic-network.
+**Audience:** Steve works through steps 1–3 in its own OpenCode session; lily (architect) runs the step-4 wake-validation from the Hub side.
+**Related:** idea-329 (uplift), idea-330 (verifier role), bug-160 (shared-pkg circular dep — does not affect this), the bundle repo `apnex/opencode-hub-plugin`.
 
 ---
 
-## 0. Who Steve is
-
-Steve is the org's first **cross-lineage VERIFIER** — the independent "verify" leg (refute / audit / red-team, not produce). Because the Hub role enum doesn't yet carry `verifier` (idea-330), Steve registers at **`architect`-scope** as an interim — that gives the audit visibility a verifier needs — with the verifier *mandate* applied behaviourally. Flipping to `verifier` later is a one-line adapter-config change + reconnect.
-
-Steve is a **consumer** of the Hub network, not a co-developer of agentic-network. It reads the codebase via a **standalone clone** when it needs to, and is *not* a git worktree of lily/greg's repo.
+## Who Steve is
+The org's first cross-lineage **verifier** (refute / audit / red-team, not produce). Registers at **`architect`-scope** interim (verifier mandate applied behaviourally; the `verifier` role lands via idea-330, then it's a one-line flip). A **consumer** of the Hub — installs the plugin as a published artifact, reads agentic-network code only via an on-demand standalone clone (never a worktree).
 
 ---
 
-## 1. Prerequisites
-
-- `~/taceng/steve` OpenCode workspace with GPT-5.5 reachable — **done.**
-- Steve's Hub identity:
-  - `OIS_AGENT_NAME` = `steve` (REQUIRED — the plugin aborts inert without it)
-  - role = `architect` (interim → `verifier`)
-  - **`hubToken`** — **[PROVIDE·Director]** (a token distinct from lily's pin)
-  - Hub relay endpoint URL — **[PROVIDE·Director]** (same relay lily/greg use)
-  - labels: `env=prod`
-- Read access to the agentic-network repo (global `apnex` creds).
+## Prerequisites (in place)
+- `~/taceng/steve` OpenCode workspace, GPT-5.5 reachable via your OAuth provider — ✅
+- `~/.config/apnex-agents/steve.env` with `OIS_AGENT_NAME=steve` + `GH_TOKEN=<global apnex>` — ✅ (sourced at OpenCode launch; the plugin goes **inert** without `OIS_AGENT_NAME`)
+- The shared **`hubToken`** (same value as lily's) — you have it.
 
 ---
 
-## 2. Clone the repo (standalone — not a worktree)
+## Step 1 — the adapter config (one file)
 
+Create **`~/taceng/steve/.ois/adapter-config.json`** (the shim reads `<workspace>/.ois/adapter-config.json`). Mirror lily's; change only `role` + the github-login label:
+
+```json
+{
+  "hubUrl": "https://hub-api-5muxctm3ta-ts.a.run.app/mcp",
+  "hubToken": "<SHARED — the same token as lily's>",
+  "role": "architect",
+  "labels": {
+    "env": "prod",
+    "ois.io/github/login": "apnex"
+  }
+}
 ```
-git clone <agentic-network-remote> ~/taceng/steve/agentic-network
-cd ~/taceng/steve/agentic-network
+- `role` **must** be set — the shim defaults to `engineer` if it's absent.
+- `hubUrl`: lily's working value is above. (The shim's *built-in default* is a different host — `mcp-relay-hub-…`; if step-4 fails to connect, swapping to that is the first thing to try. The wake-test settles which relay is live.)
+- Env vars `OIS_HUB_URL` / `OIS_HUB_TOKEN` / `OIS_HUB_ROLE` / `OIS_HUB_LABELS` override this file if you'd rather set them in `steve.env`.
+
+---
+
+## Step 2 — register the plugin (one line)
+
+In **`~/taceng/steve/opencode.json`**, add the published bundle to the top-level `plugin` array (and drop the carried-over LiteLLM/Gemini provider — Steve runs GPT-5.5 via your OAuth provider only):
+
+```jsonc
+{
+  "plugin": ["github:apnex/opencode-hub-plugin"]
+}
 ```
-
-> ⚠️ **Do NOT build inside lily's or greg's worktree.** They run live Hub adapters off a shared-workspace `node_modules`; a build there can disrupt their live connection. Steve builds only in its own clone.
-
----
-
-## 3. Build the hub plugin (in your clone) — **[CONFIRM·eng]**
-
-The plugin is `adapters/opencode-plugin` — a working model-agnostic HTTP-MCP bridge that was frozen at mission-64 *packaging* (the bridge code itself works). Exact build commands to be confirmed by the engineer before you run them; the shape is:
-
-1. Install workspace deps from the repo root (the `@apnex/*` shared core resolves from `packages/*`; `node_modules` is currently empty).
-2. Delete the 3 dead `@ois/*.tgz` tarballs in the plugin dir (stale, unreferenced).
-3. Pin `@opencode-ai/plugin` to the live runtime (**~1.3.6**, not the declared 0.4.30).
-4. Build → `dist/shim.js` (the package currently builds `--noEmit`; the engineer will switch it to emit).
-
-> Bun runtime is required (the shim uses `Bun.serve`) — fine when launched by OpenCode.
+No clone, no build — OpenCode fetches the self-contained bundle. (`apnex/opencode-hub-plugin` is **private**; OpenCode fetches it with your `apnex` GitHub creds. If the private `github:` fetch can't authenticate, we flip the repo public — the bundle is a built artifact, not source.)
 
 ---
 
-## 4. Register the plugin in `steve`'s `opencode.json` — **[CONFIRM·eng]**
+## Step 3 — start OpenCode
 
-Add the built plugin to `~/taceng/steve/opencode.json` `plugin[]`. The exact registration form for OpenCode **1.3.6** must be confirmed (path-to-`dist/shim.js` vs local-package form). **Drop the LiteLLM/Gemini provider** carried over from `codex` — Steve runs GPT-5.5 via your OAuth provider only.
+Launch OpenCode in `~/taceng/steve` **with `steve.env` sourced** (so `OIS_AGENT_NAME=steve` is in the environment the plugin sees). On start the plugin runs the `register_role` handshake, opens its local MCP proxy, and connects to the relay.
 
----
-
-## 5. Set Steve's Hub identity
-
-The adapter reads identity from `.ois/adapter-config.json` (or env). Set `OIS_AGENT_NAME=steve`, `role=architect`, the `hubToken` and relay endpoint from §1, and `env=prod`. **This must be Steve's own config — not a copy of lily's architect pin.**
-
----
-
-## 6. Start OpenCode + self-check
-
-Start OpenCode in `~/taceng/steve`. On launch the plugin should: run the `register_role` handshake (M18), open the local MCP proxy (`Bun.serve` on `127.0.0.1:<dyn>/mcp`), and connect to the relay.
-
-Steve self-checks (necessary, **not sufficient**):
-- Does `list_available_peers` / `get_agents` show `steve`?
-- Does a Hub read tool (e.g. `get_thread`, `list_threads`) return data?
+Self-checks (necessary, **not sufficient**):
+- `list_available_peers` / `get_agents` shows `steve`.
+- A Hub read tool (`list_threads`, `get_thread`) returns data.
+- Diagnostics: `~/taceng/steve/.ois/hub-plugin.log` (+ `hub-plugin-notifications.log`) — the shim logs handshake + config resolution here.
 
 ---
 
-## 7. VALIDATE the wake-path — the gating step (the SDK-skew landmine)
+## Step 4 — the wake validation (gating — do not skip)
 
-**Why this is non-negotiable:** the `@opencode-ai/plugin` major skew (0.4.30 → 1.3.6) can silently break the *wake-path* — `session.promptAsync`, `mcp.add({type:"remote"})`, or the SSE event shapes. If it did, **Steve connects but never wakes on a Hub notification, with no error** — and can't self-report (it won't wake to tell us). So §6's self-checks are not enough; we validate from outside.
+**Why:** the `@opencode-ai/plugin` skew (declared 0.4.30 → live 1.3.x) can silently break the *wake-path* (`session.promptAsync` / `mcp.add` / SSE event shapes). If it did, Steve connects but **never wakes on a notification, with no error** — and can't self-report (it won't wake to tell us). So a self-attestation isn't enough.
 
 **The test:**
 1. lily (architect) opens a Hub thread addressed to `steve`.
 2. Steve should **wake** and be able to `get_thread` + `create_thread_reply`.
-   - ✅ Steve wakes + replies → wake-path good → **onboarding complete.**
-   - ❌ Steve does NOT wake within ~2 min → the wake-path is broken. From its OpenCode session (which *is* awake to the human), Steve reports: the installed `@opencode-ai/plugin` version, and whether `session.promptAsync` / `mcp.add({type:"remote"})` / the session event shapes (`session.status|idle|created`) still exist in 1.3.6. That localises the skew break for a fix.
+   - ✅ wakes + replies → **onboarded.**
+   - ❌ no wake within ~2 min → the wake-path broke. From its OpenCode session (awake to the human), Steve reports: the installed `@opencode-ai/plugin` version, whether `session.promptAsync` / `mcp.add({type:"remote"})` / the session event shapes exist, and the tail of `hub-plugin.log`. That localises the skew break.
 
-> Do not mark Steve onboarded on a self-attestation ("looks connected"). Onboarded = a **Hub-side-confirmed wake**.
+> Onboarded = a **Hub-side-confirmed wake**, never a self-attestation.
 
 ---
 
-## 8. After validation
-
-Steve is a live Hub peer (architect-scope, verifier mandate). First real assignment: **CDACC run-2** — the spec-altitude audit + the cross-lineage refutation passes (the decorrelated check the run was un-parked for).
+## Step 5 — first assignment
+Live peer (architect-scope, verifier mandate). First task: **CDACC run-2** — the spec-altitude audit + cross-lineage refutation passes (the decorrelated check the run was un-parked for).
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause |
+| Symptom | Cause / fix |
 |---|---|
-| Plugin inert, no registration | `OIS_AGENT_NAME` unset (required) |
-| Registers but never wakes on notifications | the §7 SDK-skew wake-path break — most likely failure |
-| Auth/401 to relay | `hubToken` wrong or lily-pinned config copied |
-| Build fails on deps | empty `node_modules` / the bug-116 `@apnex/repo-event-bridge` workspace-resolution issue (engineer) |
+| Plugin inert, no handshake | `OIS_AGENT_NAME` not in env — source `steve.env` before launch |
+| Registers as `engineer` | `role` missing from adapter-config (defaults to engineer) — set `"role":"architect"` |
+| Connected, never wakes on notifications | the SDK-skew wake-path break (step 4) — the most likely failure |
+| Can't connect at all | wrong `hubUrl` — try the shim's `mcp-relay-hub-…` default vs lily's `hub-api-…`; check `hub-plugin.log` |
+| `github:` fetch 404/401 | private-repo auth — confirm `apnex` creds, or flip the repo public |
