@@ -123,11 +123,18 @@ const FALSIFIER_BAR = [
 const HARNESS_FIDELITY =
   "REPRODUCED-TIER FIDELITY (mandatory): when you stand up a postgres testcontainer from the frozen SHA, you MUST wire substrate.setWriteEncoder(buildEnvelopeWriteEncoder()) exactly as hub/src/index.ts:158 AND start the SchemaDef reconciler for the kinds under test. A substrate WITHOUT the write-encoder silently stores FLAT rows (no apiVersion/metadata/spec/status buckets) — any reproduction built that way is a FALSE NEGATIVE. Before trusting a reproduced verdict, confirm the raw stored row is a genuine envelope (has apiVersion/metadata/spec/status). Reuse the existing harness pattern in hub/src/storage-substrate/__tests__ (PostgreSqlContainer postgres:15-alpine).";
 
+// Scope + frozen-obligation directive, injected into every fan-out agent.
+const SCOPE_NOTE = (tele) =>
+  `SCOPE: First call get_tele('${tele}') (MCP) to load this tele's FROZEN obligation (mandate + successCriteria) — that obligation is the spec you audit code conformance against. ` +
+  `Audit the CURRENT working tree (the instantiated canary snapshot at the frozen SHA) — do NOT git-checkout another ref. ` +
+  `Audited surface = Hub PRODUCT (hub/src + docs/specs + relevant config); EXCLUDE scripts/cdacc/ — that directory is the CDACC audit instrument itself, NOT part of the audited system.`;
+
 // ── P2 fan-out for ONE tele (the engineer pipeline P2a -> P2d) ─────────────
 async function auditTele(tele, phasePrefix) {
   // P2a — classify (cheap): class + required-tier + harness + candidate surfaces.
   const cls = await agent(
-    `CDACC engineer-altitude P2a. Frozen SHA ${FROZEN_SHA}. Classify ${tele} for the CODE/reality audit: ` +
+    `CDACC engineer-altitude P2a. Frozen SHA ${FROZEN_SHA}. ${SCOPE_NOTE(tele)} ` +
+      `Classify ${tele} for the CODE/reality audit: ` +
       `is it behavioral (a runtime guard/transform/filter), structural (a code-shape invariant), or methodology (a practice)? ` +
       `State its required evidence tier and the reproducing harness {schema-decode|chaos-injection|incident-replay|metric-observation|none} ` +
       `and whether that harness is reachable in-window. List candidate code surfaces (files/functions/tests) to inspect.`,
@@ -138,7 +145,8 @@ async function auditTele(tele, phasePrefix) {
   // P2b — gather evidence, climbing the tier ladder until the bar is hit or
   // exhausted, then adversarial-verify (breaker, default-to-refuted).
   const verdict = await agent(
-    `CDACC engineer-altitude P2b. Frozen SHA ${FROZEN_SHA}. Audit ${tele} (class=${cls.teleClass}, required-tier=${cls.requiredTier}, harness=${cls.harness || "n/a"}). ` +
+    `CDACC engineer-altitude P2b. Frozen SHA ${FROZEN_SHA}. ${SCOPE_NOTE(tele)} ` +
+      `Audit ${tele} (class=${cls.teleClass}, required-tier=${cls.requiredTier}, harness=${cls.harness || "n/a"}). ` +
       `Candidate surfaces: ${(cls.candidateSurfaces || []).join(", ")}. ` +
       `Climb the evidence ladder only as far as the required tier: read -> trace the call-path/data-flow -> run/cite a test -> reproduce via the harness. ` +
       `Then adversarially self-verify: try to REFUTE your own verdict; default to refuted if uncertain. ` +
