@@ -21,6 +21,7 @@ Frozen snapshot for the first run (4-tuple, doc §B.5):
 | `holder/gate-logic.js` | Deterministic holder gates: commit-reveal, integrity-pin, cell-classify (P4), canary recall/precision (P5), resolved/forwarded ratio (P7), quality-floor policy. | **The inspectable core** (4-tuple elem 4). Pure, no Hub/FS/net. |
 | `holder/gate-logic.test.js` | Holder self-test (scoring half). Deterministic, **zero spend**. | Proves the scorer is correct on KNOWN probes before it scores the real canary. |
 | `cdacc.workflow.js` | Engineer-altitude P2 fan-out + holder orchestration (Workflow script). PREFLIGHT + FULL modes. | The agent orchestration. |
+| `canary-orchestrator.workflow.js` | P1 canary injection (the plant-wiring orchestrator): neutral instantiation of co-authored patterns at unseen sites + holder verify-reproduce → the sealed plant-diff + knownCleanCells. | **Concern (B)** — the one place plant-sites are created. Re-clears the architect neutrality review before any real canary run. |
 
 ## Holder neutrality — the three SoD invariants (architect reviews these)
 
@@ -98,6 +99,25 @@ confirm the raw row is a genuine envelope before trusting a reproduced verdict).
 **Holder-on-live-agents:** the deterministic scorer (26/26) also ingested the live probe output
 correctly — `scoreCanary` recall=1 on the seeded reproduction; `classifyCell` resolved the
 reproduce-PASS/skeptic-FAIL pair to DISAGREE.
+
+## Plant-wiring orchestrator (P1, concern B) — the neutrality contract to review
+
+`canary-orchestrator.workflow.js` is the only place plant-sites are created, so its
+neutrality contract is the strictest in the build (the architect re-clears this before any
+real canary run):
+1. **Blindness by LOCATION, not pattern** — principals co-author trap intents (the catalog);
+   a neutral instantiation agent with **no audit role** picks the sites + generates variants
+   of both sides.
+2. **Plant-diff is holder-sealed, never reaches a fan-out** — the plant-diff (with sites) is
+   this script's RETURN, handed to the holder store; it is **never** an argument to
+   `cdacc.workflow.js` (whose args are only `{sha, teleSet, mode, spendGo, nonce}`). Plant
+   sites cannot structurally reach an auditor's prompt.
+3. **Ground-truth is holder-verified** — each plant is verify-reproduced at plant-time
+   (real → reproduces FAIL; fp → runs-correct); unverified plants are dropped, never trusted.
+4. **Non-greppable** — every plant + variant, so pattern-knowledge can't become location-knowledge.
+
+Running it spawns agents → it's part of the **Director-spend-gated** full-sweep sequence
+(`args.spendGo === true`). Building it (the file) needs no spawn.
 
 ## The verdict-schema contract (the one shared interface)
 
