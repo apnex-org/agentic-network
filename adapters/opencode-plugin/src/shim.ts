@@ -199,9 +199,18 @@ function loadConfig(directory: string): HubConfig {
 // drop work that needs a response).
 const DEFAULT_SURFACE_SUPPRESS: ReadonlyArray<string> = ["agent_state_changed"];
 
-function isSurfaceSuppressed(eventType: string): boolean {
+/**
+ * Pure predicate (exported for unit tests): is this event type suppressed from
+ * the toast/inject surface? `extra` is the operator's `config.suppressEvents`,
+ * which ADDS to the always-on `DEFAULT_SURFACE_SUPPRESS` set.
+ */
+export function isEventSuppressed(eventType: string, extra?: ReadonlyArray<string>): boolean {
   if (DEFAULT_SURFACE_SUPPRESS.includes(eventType)) return true;
-  return config.suppressEvents?.includes(eventType) ?? false;
+  return extra?.includes(eventType) ?? false;
+}
+
+function isSurfaceSuppressed(eventType: string): boolean {
+  return isEventSuppressed(eventType, config.suppressEvents);
 }
 
 // ── Rate-limited prompt queue ────────────────────────────────────────
