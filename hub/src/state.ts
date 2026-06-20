@@ -1019,7 +1019,7 @@ export interface Thread {
 export interface AuditEntry {
   id: string;
   timestamp: string;
-  actor: "architect" | "engineer" | "hub";
+  actor: "architect" | "engineer" | "verifier" | "hub";
   action: string;
   details: string;
   relatedEntity: string | null; // e.g., "task-24", "prop-7", "thread-3"

@@ -17,9 +17,13 @@ async function createAuditEntry(args: Record<string, unknown>, ctx: IPolicyConte
   const details = args.details as string;
   const relatedEntity = args.relatedEntity as string | undefined;
 
-  // Derive actor from session role — not hardcoded
+  // Derive actor from session role — not hardcoded. mission-93: verifier
+  // entries attribute to 'verifier' (NOT silently to 'architect') — the
+  // audit-entry IS the verifier's verdict surface (verifier-role.md §2.3), so
+  // mis-attributing it to architect would defeat the independent-verifier point.
   const role = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
-  const actor = (role === "engineer" || role === "architect") ? role : "architect";
+  const actor =
+    role === "engineer" || role === "architect" || role === "verifier" ? role : "architect";
   const entry = await ctx.stores.audit.logEntry(actor, action, details, relatedEntity);
   return {
     content: [{

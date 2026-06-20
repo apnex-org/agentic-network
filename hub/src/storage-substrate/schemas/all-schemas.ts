@@ -27,7 +27,7 @@ const Agent: SchemaDef = {
   fields: [
     { name: "id", type: "string", required: true },
     { name: "fingerprint", type: "string", required: true },
-    { name: "role", type: "string", required: true, enum: ["engineer", "architect", "director", "unknown"] },
+    { name: "role", type: "string", required: true, enum: ["engineer", "architect", "director", "verifier", "unknown"] },
     { name: "labels", type: "object", required: false },
     { name: "lastSeenAt", type: "string", required: false },
     { name: "lastHeartbeatAt", type: "string", required: false },
@@ -68,7 +68,7 @@ const Audit: SchemaDef = {
   fields: [
     { name: "id", type: "string", required: true },
     { name: "timestamp", type: "string", required: true },
-    { name: "actor", type: "string", required: true, enum: ["architect", "engineer", "hub"] },
+    { name: "actor", type: "string", required: true, enum: ["architect", "engineer", "verifier", "hub"] },
     { name: "action", type: "string", required: true },
     { name: "details", type: "string", required: true },
     { name: "relatedEntity", type: "string", required: false },
