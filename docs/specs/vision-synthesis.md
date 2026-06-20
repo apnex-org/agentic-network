@@ -1,7 +1,7 @@
 # The Sovereign Intelligence Engine — Vision Synthesis
 
-**Version:** v1.0 (gestalt RATIFIED by the Director 2026-06-20; §6-Q2 resolved; candidate tele-13 proposed in §9)
-**Status:** The binding narrative *above* the atomic teles. The gestalt (§§1–4) is **Director-RATIFIED**. It remains *interpretive commentary on* the ratified Tele set, not a redefinition — the teles stay orthogonal and individually load-bearing. §6-Q1 (destination scope) is purpose-clarified but export-magnitude-open; §6-Q2 (the human's terminal role) is **resolved**.
+**Version:** v1.1 (gestalt Director-RATIFIED 2026-06-20; §6-Q1 + §6-Q2 both resolved; tele-13 ratified — instantiation bundled)
+**Status:** The binding narrative *above* the atomic teles. The gestalt (§§1–4) is **Director-RATIFIED**. It remains *interpretive commentary on* the ratified Tele set, not a redefinition — the teles stay orthogonal and individually load-bearing. **Both §6 framing questions are now resolved.** Candidate **tele-13** (§9) is Director-ratified; its sovereign-store instantiation is bundled with the tele-0 umbrella refresh (Disposition, §9).
 **Relationship to the canonical sources:**
 - `tele-0` (Hub entity) = the umbrella **MANDATE** ("the constitutional north star").
 - `docs/specs/teles.md` = the **13 atomic teles** (each: Mandate / Mechanics / Rationale / Faults / Success Criteria), spec↔state isomorphic with the Hub.
@@ -85,7 +85,7 @@ The vision is not confined to this repository. Two outward vectors are in motion
 - **Teles → project-agnostic axioms.** The export of the teles into implementation-agnostic axioms (mission-kit) says the *substance* is meant to generalize into a reusable methodology, not stay a bespoke instance — strip the OIS implementation, keep the domain substance.
 - **Beyond one model.** Model-diversity (genuinely different models/harnesses in the agent network) is a deferred-but-named future; it is the real cure for the same-base-model correlation that CDACC currently only *mitigates*. The network is designed to eventually span models.
 
-Read together: OIS may be as much a **methodology and a substrate others run** as it is this one self-hosting instance. How far that goes is the Director's to set.
+Read together — and now Director-resolved (§6-Q1): OIS is **both** this Director's self-hosting engine **and** a replicable **sovereign foundry** — instances of the platform that other humans run as their own Directors, seeded from the portable methodology/axioms and **self-evolving into divergence** (drift between instances is acceptable by design).
 
 ---
 
@@ -93,7 +93,7 @@ Read together: OIS may be as much a **methodology and a substrate others run** a
 
 The synthesis is honest about its own boundaries. Two edges are interpretation, not ratified intent:
 
-1. **The destination's scope** *(purpose clarified 2026-06-20; export-magnitude still open).* The *purpose* is now ratified (§1): a Director-augmentation engine for invention at scale across extreme-long-horizon arcs. What remains open is the *export magnitude* — whether OIS stays this Director's self-hosting engine, becomes a *productized substrate* others run, or whether the **methodology/axioms** are the real export and the code a proof-of-concept. The `@apnex` distribution + axiom-export vectors point outward; the magnitude is the Director's to set.
+1. **The destination's scope** *(RESOLVED 2026-06-20).* OIS exports as **replicable instances of the platform** — each configured for a different human who assumes the *Director* role over their own instance: a **sovereign foundry/factory** for system / software / tool / process / strategy invention. Because each instance is self-evolving (tele-10 + tele-13), instances **drift apart over time — and that divergence is acceptable by design** (each optimizes for its own Director). So OIS is *both* this Director's self-hosting engine *and* a productized sovereign substrate others run; the methodology/axioms are the portable seed, each instantiation diverging from there.
 2. **The human's terminal role** *(RESOLVED 2026-06-20).* The Director's irreducible role = **effectively conveying intent + reviewing/approving the global-maximum hill-climb peaks for the aggregate system**, with **all final authority delegated to the Director** (Director-on-the-loop, supervisory). Correlatively, the system bears a new first-class obligation — to *continuously evolve how it elicits and resolves intent, and to model the Director to anticipate it* — significant enough to be a candidate tele (**§9, tele-13**).
 
 ---
@@ -128,7 +128,7 @@ Resolving §6-Q2 surfaced a system obligation the current 13 teles under-specify
 
 So it fills a real **coverage gap**: the current teles richly specify the system's internal sovereignty, correctness, and cognition, but the *active amplification of the Director* — the surface through which intent enters and decisions are made — is under-named. In the four-strata reading (§2) it joins **Stratum II (Interface)**, with a cross-seam into Stratum IV (the Director-modeling facet is a learning activity).
 
-**Draft mandate — for Director ratification (name and scope are the Director's to set):**
+**Mandate — Director-RATIFIED 2026-06-20** (sovereign-store instantiation bundled; see Disposition):
 
 > **tele-13 — Director Intent Amplification**
 >
@@ -136,7 +136,7 @@ So it fills a real **coverage gap**: the current teles richly specify the system
 >
 > **Mechanics.**
 > - The intent-resolution interface is a first-class *evolving* surface — new mechanisms / inputs / questions / forms / UIs / voice / modalities are invented to raise intent-resolution efficacy, effectiveness, efficiency, and clarity.
-> - The system profiles + characterises the Director's decisions and intents, and offers *recommended leans* from that model (decision-support, not decision-making).
+> - The system profiles the Director's *revealed preferences* over time — which teles, mechanics, and approaches the Director weights most heavily — and uses that learned model **only to tie-break genuine divergences**: when teles or approaches conflict, it places *focus* on the Director's historically-preferred tele and surfaces it as a *recommended lean*. It does **not** rework the options or decisions themselves — the choice set is untouched; only the suggested emphasis is informed. (Decision-support, strictly bounded to tie-breaking; refinement deferred per Director 2026-06-20.)
 > - The Director's engagement narrows to conveying intent + reviewing/approving global-maximum hill-climb peaks; the system does the local optimization and surfaces the peaks.
 > - All final authority is delegated to the Director — Director-on-the-loop, supervisory; never autonomous final-authority.
 >
@@ -154,7 +154,7 @@ So it fills a real **coverage gap**: the current teles richly specify the system
 > 3. The Director's engagement converges toward intent-conveyance + global-peak approval; local optimization is system-borne.
 > 4. Final authority is never exercised autonomously — every irreversible / global-peak action is Director-approved.
 
-**Disposition (Director-direct).** On ratification → `create_tele` (tele-13, architect-scope per the tele-11/12 precedent) + add to `docs/specs/teles.md` + fold into tele-0's enumeration (which also closes the §7 staleness). Until then: **proposed, not created.** Open sub-question for the Director: one tele covering both facets (interface-evolution + Director-modeling), or split into two?
+**Disposition (Director-RATIFIED 2026-06-20).** Kept as **ONE tele** — the Director's refinement bounds the Director-modeling facet to *tele-priority tie-breaking only*, which removes the Authority-Creep rationale for a split. Sovereign-store instantiation — `create_tele` (tele-13, architect-scope per the tele-11/12 precedent) + add to `docs/specs/teles.md` + refresh tele-0's enumeration to include tele-11 / tele-12 / **tele-13** — is bundled as **one atomic constitution-refresh** to preserve spec↔state isomorphism (doing it piecemeal would itself create the drift CDACC catches). The **tele-0 staleness (§7) is intentionally left as CDACC's first canary** per the Director ("agree with 2" + "get to CDACC"); the umbrella refresh + tele-13 instantiation ride together — with CDACC's first tele-improvement output, or a focused follow-up (Director's call).
 
 ---
 
