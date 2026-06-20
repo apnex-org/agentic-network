@@ -7,6 +7,10 @@
  * (Push-to-LLM for the Plugin, Sandwich pattern for the Architect).
  */
 
+// Type-only import (erased at runtime → no value-level circular dep;
+// state-sync.ts does not import event-router). Used by reconstructDrainedAction.
+import type { DrainedPendingAction } from "./state-sync.js";
+
 // ── Event Types ──────────────────────────────────────────────────────
 
 /** All known Hub event types */
@@ -174,6 +178,41 @@ export function isPulseEvent(
   const message = eventData.message as { payload?: unknown } | undefined;
   const payload = message?.payload as { pulseKind?: unknown } | undefined;
   return typeof payload?.pulseKind === "string" && PULSE_KINDS.has(payload.pulseKind);
+}
+
+// ── bug-108 reconnect-drained reconstruction (M-Sovereign-Dedup, idea-331) ──
+//
+// Hoisted to core from both shims (claude-plugin surfacePendingActionItem +
+// the opencode shim's onPendingActionItem). RECONSTRUCTION ONLY — the WAKE
+// stays host-specific (claude → pushChannelNotification; opencode → the
+// QueuedNotification queue/processNotification). A drained pending action is a
+// notification that arrived while the wire was down; its `payload` IS the
+// original dispatchPayload (hub thread-policy.ts enqueues `payload:
+// dispatchPayload`), so {event: dispatchType, data: payload} reconstructs the
+// live SSE AgentEvent. The returned `agentEvent` is a plain {event,data} —
+// structurally an AgentEvent (optional fields omitted) — so this stays a
+// type-only dependency on DrainedPendingAction and avoids a value-level
+// event-router↔agent-client circular import.
+
+export interface DrainedActionReconstruction {
+  /** {event,data} — structurally an AgentEvent for the host wake to consume. */
+  agentEvent: { event: string; data: Record<string, unknown> };
+  /** Diagnostic-log action hint (identical across both shims). */
+  actionHint: string;
+  /** Notification level — pulse Messages downgrade to informational. */
+  level: "actionable" | "informational";
+}
+
+export function reconstructDrainedAction(item: DrainedPendingAction): DrainedActionReconstruction {
+  const agentEvent = { event: item.dispatchType, data: item.payload };
+  const actionHint =
+    item.dispatchType === "thread_message"
+      ? `Reply with create_thread_reply to thread ${item.entityRef}`
+      : `Owed: ${item.dispatchType} on ${item.entityRef}`;
+  const level: "actionable" | "informational" = isPulseEvent(agentEvent.event, agentEvent.data)
+    ? "informational"
+    : "actionable";
+  return { agentEvent, actionHint, level };
 }
 
 // ── Event Parsing ────────────────────────────────────────────────────

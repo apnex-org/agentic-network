@@ -24,6 +24,7 @@ import {
   assertHostWiringComplete,
   getActionText,
   isPulseEvent,
+  reconstructDrainedAction,
   type AgentEvent,
   type SessionState,
   type SessionReconnectReason,
@@ -498,33 +499,27 @@ async function connectToHub(agentName: string): Promise<void> {
         },
         onPendingActionItem: (item) => {
           pendingActionItemHandler(item);
-          const actionHint =
-            item.dispatchType === "thread_message"
-              ? `Reply with create_thread_reply to thread ${item.entityRef}`
-              : `Owed: ${item.dispatchType} on ${item.entityRef}`;
+          // M-Sovereign-Dedup (idea-331): the reconstruction (event/data +
+          // actionHint + pulse-aware level) is the core helper shared with the
+          // claude shim; the WAKE below stays opencode-specific (build a
+          // QueuedNotification + route it through the same notificationQueue /
+          // processNotification wake the live SSE path uses — the bug-108 fix).
+          const { agentEvent, actionHint, level } = reconstructDrainedAction(item);
           appendNotification(
-            { event: item.dispatchType, data: item.payload, action: actionHint },
+            { event: agentEvent.event, data: agentEvent.data, action: actionHint },
             { logPath: notificationLogPath },
           );
-          // bug-108: a reconnect-drained pending action arrived while the
-          // wire was down — it must WAKE the session, not only log. Mirror
-          // onActionableEvent's surface path: build a QueuedNotification and
-          // route it through the same notificationQueue / processNotification
-          // wake. The drained payload IS the original dispatchPayload (hub
-          // thread-policy.ts enqueues `payload: dispatchPayload`), so
-          // {event,data} reconstructs the live SSE AgentEvent.
-          const isPulse = isPulseEvent(item.dispatchType, item.payload);
           const notification: QueuedNotification = {
-            level: isPulse ? "informational" : "actionable",
-            message: buildToastMessage(item.dispatchType, item.payload),
-            promptText: buildPromptText(item.dispatchType, item.payload, {
+            level,
+            message: buildToastMessage(agentEvent.event, agentEvent.data),
+            promptText: buildPromptText(agentEvent.event, agentEvent.data, {
               toolPrefix: "architect-hub_",
             }),
           };
           if (sessionActive) {
             notificationQueue.push(notification);
           } else {
-            processNotification(notification);
+            void processNotification(notification);
           }
         },
       },

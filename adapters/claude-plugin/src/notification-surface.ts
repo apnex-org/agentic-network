@@ -15,10 +15,11 @@ import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   appendNotification,
   buildPromptText,
+  reconstructDrainedAction,
   type AgentEvent,
   type DrainedPendingAction,
 } from "@apnex/network-adapter";
-import { resolveSourceAttribute, isPulseEvent } from "./source-attribute.js";
+import { resolveSourceAttribute } from "./source-attribute.js";
 
 /**
  * Inject an actionable/informational event into the Claude session as a
@@ -100,23 +101,16 @@ export function surfacePendingActionItem(
   },
   item: DrainedPendingAction,
 ): void {
+  // M-Sovereign-Dedup (idea-331): the reconstruction (event/data + actionHint +
+  // pulse-aware level) is the core helper shared with the opencode shim; the
+  // WAKE below stays claude-specific (`<channel>` push).
+  const { agentEvent, actionHint, level } = reconstructDrainedAction(item);
   // Diagnostic log mirror (the former appendPendingActionLog).
-  const actionHint =
-    item.dispatchType === "thread_message"
-      ? `Reply with create_thread_reply to thread ${item.entityRef}`
-      : `Owed: ${item.dispatchType} on ${item.entityRef}`;
   appendNotification(
     { event: item.dispatchType, data: item.payload, action: actionHint },
     { logPath: opts.logPath, mirror: opts.mirror },
   );
   // The actionable wake — the bug-108 fix. Converges the reconnect-drain
   // handler onto the same `<channel>` injection the live SSE path uses.
-  const agentEvent: AgentEvent = {
-    event: item.dispatchType,
-    data: item.payload,
-  };
-  const level = isPulseEvent(agentEvent.event, agentEvent.data)
-    ? "informational"
-    : "actionable";
   pushChannelNotification(opts.server, agentEvent, level, opts.log);
 }
