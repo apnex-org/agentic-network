@@ -117,6 +117,31 @@ The builder/breaker adversarial axis is **already composed in** by the altitude 
 - **P9 — Converge & materialize.** `close_thread` converged=true, summary = the ratified drift-matrix; cascade `create_audit_entry` (per verdict + surviving evidence + dissent), `create_bug` (per material DUAL-TRUTH/FAIL), `create_idea` (remediation / UNAUDITED-waiver / tele-mis-spec). **Tele-mutations (`retire_tele`/`supersede_tele`/`create_tele`) are `[Architect]`-gated → the architect executes any close whose cascade mutates a tele.** Emit convergence-quality metrics (resolved/forwarded, canary recall+precision, drift-rate).
 - **P10 — Director gate.** Scorecard → explicit go / no-go / prioritized-backlog. Re-runnable against the next snapshot for drift tracking.
 
+### B.4.1 Contract vs. construction — what CDACC specifies vs. what each principal builds
+
+CDACC prescribes the **contract**, not the **construction**. This boundary is load-bearing — getting it wrong in either direction breaks the instrument (over-specify → the audits correlate and the headline yield collapses; under-specify → the audits aren't comparable and the council can't run).
+
+**Prescribed — the shared contract (both principals MUST honor it):**
+- **The output** — the per-cell verdict schema (P0). The bit-perfect interface that makes two independent audits *comparable*.
+- **The evidence standard** — the tier ladder + the dual proof-bars (B.6). Without a shared standard, a spec-PASS and a code-FAIL cannot be crossed into a drift finding.
+- **The anti-self-deception disciplines** — adversarial-verify (breaker, default-to-refuted), completeness-critic, loop-until-dry, severity-by-a-separate-rater. Mandated because they are the honesty/decorrelation guarantees, not search instructions.
+- **The coupling points** — the canary (P1), the seal protocol (P3), the per-tele harness table (B.6 — architect specifies the obligation the tele's intent demands; engineer specifies the harness that reaches it), the knobs/budgets (B.7), the decision ladder (P7).
+
+**Each principal's sovereign construction — NOT prescribed:**
+- How the fan-out is decomposed (by module / by tele / by layer), how many sub-agents, the pipeline shape.
+- The sub-agent prompts and search strategy.
+- The Workflow script itself, and which surfaces each agent reads in what order.
+- How a tier is actually reached (the harness implementation).
+
+The **P2a–d skeleton is the engineer altitude's *own* construction template** (engineer-authored in the co-design), not an architect imposition; the architect's spec-altitude fan-out is likewise the architect's own. Each principal owns its internals and exposes only the verdict schema.
+
+**Why the line is here:**
+1. **Decorrelation is the value.** Dictating a principal's construction makes its errors inherit the other's blind spots — the two audits correlate, and the spec×code cross (the headline finding) collapses into an echo.
+2. **tele-3 (Sovereign Composition).** Each principal is a sovereign unit owning one concern, exposing a bit-perfect interface (the verdict schema), composing without leaking internals (its fan-out). CDACC is an instance of the project's own tele-3.
+3. **The canary makes sovereignty safe.** Construction quality is *measured* (canary recall + precision) and fail-fast-checked (the ~5-agent harness pre-flight), not mandated — so leaving construction sovereign carries no quality risk the instrument can't see.
+
+**The residual the line accepts:** run-to-run variance in fan-out quality — absorbed by the pre-flight (catches a broken harness before the spend), the canary (measures the miss rate), and the mandated completeness-critic + loop-until-dry (bound under-coverage). CDACC *measures and disciplines* construction variance rather than dictating the method.
+
 ## B.5 The frozen snapshot — a 4-tuple
 
 Reproduction is dispositive only against a pinned world. The snapshot is **four pinned artifacts**, not just a git SHA:
