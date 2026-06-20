@@ -77,6 +77,28 @@ Workflow({ scriptPath: "scripts/cdacc/cdacc.workflow.js",
 explicit spend-go (doc §B.11). Defense in depth: the gate is in the script, not
 just the process.
 
+## Pre-flight result (run `wf_cb495375-9bd`, Director-authorized 2026-06-20)
+
+CLEAN PASS — `harnessReachesReproduced: true` across all 3 probes (not marginal):
+- **reproduce** — built a postgres:15-alpine testcontainer from the frozen SHA, wired the
+  production write-encoder, and reproduced the bug-138 shape (raw envelope row →
+  `status={phase}` object + relocated leaves `undefined`; `decodeEnvelopeToFlat` corrects).
+  Confirms the membrane is load-bearing — no defect.
+- **refute** (skeptic) — the attempt to show *non*-reproduction FAILED; the bypass reproduces
+  every time once the encoder is wired. Sealed at reproduced-tier.
+- **harness** — `npx vitest run postgres-substrate.test.ts` from the SHA → 24/24 green, 4.81s,
+  ephemeral container stood up + torn down clean.
+
+**Harness-fidelity finding (now guarded):** a testcontainer that omits
+`substrate.setWriteEncoder(buildEnvelopeWriteEncoder())` silently stores FLAT rows, not
+envelope → a reproduced-tier probe built that way is a FALSE NEGATIVE. Baked into the fan-out
+as the `HARNESS_FIDELITY` directive (every reproduced-tier sweep probe must wire the encoder +
+confirm the raw row is a genuine envelope before trusting a reproduced verdict).
+
+**Holder-on-live-agents:** the deterministic scorer (26/26) also ingested the live probe output
+correctly — `scoreCanary` recall=1 on the seeded reproduction; `classifyCell` resolved the
+reproduce-PASS/skeptic-FAIL pair to DISAGREE.
+
 ## The verdict-schema contract (the one shared interface)
 
 `VERDICT_SCHEMA` in `cdacc.workflow.js` is the bit-perfect interface that makes

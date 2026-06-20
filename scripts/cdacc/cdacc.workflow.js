@@ -111,6 +111,13 @@ const FALSIFIER_BAR = [
   "For every finding, record blastRadius as a REACHABILITY trace (consumers/call-sites/kinds), not the local symptom.",
 ].join(" ");
 
+// Reproduced-tier fidelity guard — surfaced by the PREFLIGHT run (wf_cb495375-9bd):
+// a postgres testcontainer that OMITS the write-encoder silently stores FLAT rows,
+// not envelope, so a reproduction built that way tests the wrong storage shape and
+// yields a FALSE NEGATIVE. Mandatory for every reproduced-tier probe in the sweep.
+const HARNESS_FIDELITY =
+  "REPRODUCED-TIER FIDELITY (mandatory): when you stand up a postgres testcontainer from the frozen SHA, you MUST wire substrate.setWriteEncoder(buildEnvelopeWriteEncoder()) exactly as hub/src/index.ts:158 AND start the SchemaDef reconciler for the kinds under test. A substrate WITHOUT the write-encoder silently stores FLAT rows (no apiVersion/metadata/spec/status buckets) — any reproduction built that way is a FALSE NEGATIVE. Before trusting a reproduced verdict, confirm the raw stored row is a genuine envelope (has apiVersion/metadata/spec/status). Reuse the existing harness pattern in hub/src/storage-substrate/__tests__ (PostgreSqlContainer postgres:15-alpine).";
+
 // ── P2 fan-out for ONE tele (the engineer pipeline P2a -> P2d) ─────────────
 async function auditTele(tele, phasePrefix) {
   // P2a — classify (cheap): class + required-tier + harness + candidate surfaces.
@@ -131,6 +138,8 @@ async function auditTele(tele, phasePrefix) {
       `Climb the evidence ladder only as far as the required tier: read -> trace the call-path/data-flow -> run/cite a test -> reproduce via the harness. ` +
       `Then adversarially self-verify: try to REFUTE your own verdict; default to refuted if uncertain. ` +
       FALSIFIER_BAR +
+      ` ` +
+      HARNESS_FIDELITY +
       ` Emit the verdict-vector for ${tele}.`,
     { schema: VERDICT_SCHEMA, phase: `${phasePrefix}b-evidence`, effort: "high" }
   );
