@@ -210,16 +210,21 @@ A real **stateful component**, not a role. It pins the commitments (P3), holds t
 
 ~100-160 sub-agent invocations (the two fan-outs run in PARALLEL = max, not sum) + a ~5-agent pre-flight + ~24 council dispute-turns. A **one-off mission-wave instrument**, NOT a recurring CI gate — the tele-11 (cognitive-minimalism) tension is explicit and bounded by ratified cadence (B.11).
 
-## B.11 P0 ratification checklist (what remains for the Director gate)
+## B.11 P0 ratification — RATIFIED 2026-06-20
 
-The co-design (thread-660) RESOLVED most of v1.0's open questions (seal primitive, snapshot mechanics, proof-bars, knobs, holder). What remains for Director ratification:
-- **Charter sign-off:** the verdict-schema + severity rubric (Director-impact-on-blast-radius) + the per-tele harness table (verdict-neutral).
-- **Canary sign-off:** plant count + the real/false-positive mix + holder/authorship (architect spec-traps, engineer code ground-truth) + who-may-see (holder only).
-- **Snapshot logistics:** can we pin a code-SHA + deploy-freeze window if any live-prod secondary corroboration is wanted, or testcontainer-only for v1?
-- **Director SLA** at the single P10 gate + the default-verdict-on-timeout policy (reconciled with gate-points-only RACI).
-- **Run cadence:** one-off mission-wave vs periodic (the ~100-160-agent sweep vs tele-11).
-- **v1 scope confirm:** tele-7/9 substrate-crash slice built for v1; deploy-self-heal + network-chaos deferred to v2 (B.6 table).
-- **Quality-floor policy:** diagnostic-on-run-1 / gating-from-run-2 (B.7-knobs).
+The co-design (thread-660) resolved the core mechanics; the Director ratified the remaining calls 2026-06-20. Build follow-through is in thread-661.
+
+**Ratified calls:**
+- **Snapshot logistics:** **testcontainer-from-SHA only for v1** — no live-prod secondary, no deploy-freeze.
+- **Run cadence:** **one-off mission-wave** (not periodic).
+- **Canary:** **~8–12 plants, ~60/40 real-bug to false-positive-trap, both altitudes, opaque.** *Authorship resolved (thread-661):* principals author the trap **PATTERNS/INTENTS** (two-altitude expertise — architect: spec-interpretation-FP intents; engineer: reproduced-tier code-trap signatures + code FP-traps); a **neutral instantiation sub-agent (no audit role)** places each pattern at a site neither principal can see and wires it into a live runtime path (real-bug traps actually reproduce FAIL; FP-traps actually run-correct); the holder verify-reproduces each plant at plant-time and records the expected verdict. **Blindness lives in LOCATION, not PATTERN** — principals know trap *types*, not *where/how-many*, so recall stays real. Discipline: code-trap patterns must be **non-greppable** (pattern-knowledge can't collapse into location-knowledge).
+- **Director P10 SLA:** the single batched escalation gate = one adjudication session (gate-points-only RACI); default-verdict-on-timeout is orchestration-owned.
+
+**Blessed as-designed:** the verdict-schema + blast-radius severity rubric + per-tele harness table (verdict-neutral); the tele-7/9 v1 split (substrate-crash reproduced / deploy-self-heal + network-chaos deferred to v2); diagnostic-floors-on-run-1 / gating-from-run-2.
+
+**Holder separation-of-duties (thread-661):** the holder is the only component that knows plant-locations AND runs orchestration — acceptable iff (i) it authors no *audit* verdict (only mechanical gates + recall/precision *arithmetic*), (ii) the plant-diff is sealed from the fan-out sub-agents (they query the *snapshot*, never the holder's plant-knowledge), (iii) the scoring arithmetic is fixed/inspectable. Temporally separated: instantiation = P1 (pre-pin), scoring = P5 (post-seal). The **~5-agent pre-flight doubles as a holder self-test** — a known self-seeded probe confirms the holder scores recall correctly *before* it is trusted on the neutral canary.
+
+**Execution gate:** the full ~100–160-agent sweep is gated on (a) the pre-flight + holder self-test passing AND (b) the **Director's explicit spend-go** — the Director retains final authority on the large/expensive action (tele-11 + tele-13).
 
 ---
 
