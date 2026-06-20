@@ -109,6 +109,7 @@ Standard RACI semantics: **R**esponsible (does the work) / **A**ccountable (fina
 - **Pulse-driven coordination** (§4) does NOT change RACI; pulses are structured-mediation channels, not role-shifts.
 - **Bypass cases**: Survey bypass per `idea-survey.md` §8 still preserves RACI; spawned-Idea linkage MANDATORY for traceability.
 - **First-canonical-execution missions** may have higher Director engagement (active-collaborator mode per §5.2); does not violate RACI as long as architect holds the gate on routine mechanics per §5.1 categorised-concerns table.
+- **Verifier (the VERIFY leg)** is an advisory cross-cutting role, **not** a per-phase R/A holder; it engages **C** at verification points per §1.5.2 + `docs/specs/verifier-role.md`. It never holds R or A; the Director stays Accountable at every gate.
 
 ### §1.5.1 Engineer-runtime decision-moment routing (calibration #57 codification)
 
@@ -142,6 +143,24 @@ Standard RACI semantics: **R**esponsible (does the work) / **A**ccountable (fina
 **Failure-resilience hierarchy** (post mission-85): Layer (b) adapter hook is engineer-side observability + Layer (a) methodology discipline ensures cognitive-cycle awareness. Architect-side PR-review-readiness signal is achieved via **engineer-thread-explicit-surface on coord-thread** (operational discipline; empirically proven across mission-84 6-PR cycle + bug-99/100/101 cycle). Engineer surfaces PR-URL + commit-SHA + AG-verifier outcomes on the active coord-thread when ready for architect cross-approval; no Hub-side handler needed.
 
 **Cross-party authorship resolution** (post-retirement): role-identity belongs at Hub-context layer where it already lives (Agent `ois.io/github/login` label populated at register_role handshake from `OIS_GH_LOGIN` env or git config). Engineer's identity in any architect-relevant signal is engineer-asserted on coord-thread, not extracted from credential-layer artifacts.
+
+### §1.5.2 Verifier role — the VERIFY leg (mission-93; idea-330)
+
+**The verifier is an advisory, cross-cutting role — not a per-phase R/A holder.** It is the independent VERIFY leg, orthogonal to INTEND (Director) / SPECIFY (architect) / BUILD (engineer): it certifies or refutes what the others claim, surfacing independent evidence to the Accountable party. Born from CDACC run-1's recall-blind finding; first holder is **Steve** (cross-lineage GPT-5.5 / OpenCode, so its blind spots decorrelate from the Anthropic-lineage producers). Full role definition + scope contract: `docs/specs/verifier-role.md`.
+
+**Two invariants:** (1) **advisory, not gating** — the verifier holds no veto; its verdicts are evidence into Director-held gates (tele-13 authority-non-delegation); (2) **refute-not-produce** — no produce surface (`create_mission` / `create_task` / `propose_mission` / `create_proposal`), so independence is structural, not merely disciplined.
+
+**Engagement (C at verification points; never R/A):**
+
+| Verification point | Verifier |
+|---|---|
+| Phase 4 Design | C — adversarial red-team before ratification (on request) |
+| Phase 6 Preflight | C — independent check of structural-elimination claims (calibration-#83 discipline) |
+| Phase 7 Release-gate | C — independent pre-ship verification; advisory to the Director's status=active ratification |
+| Phase 8 Execution | C — convergence red-team; drift / normative audit (CDACC altitudes) |
+| Phase 10 Retrospective | C — verifies retrospective claims rather than trusting the producer's self-report |
+
+**Mediation:** verifier findings route to the Director (and architect), never direct-to-engineer mechanics (§5.3 holds). **Scope:** broad READ (pull; architect-equivalent) + narrow PUSH (directed-only — never role-fanned), which is also the structural fix for verifier-holder cross-talk (`verifier-role.md` §2).
 
 ---
 
