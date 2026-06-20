@@ -24,8 +24,12 @@ echo "                       a stale dist makes the deps' tsc collide with its o
 rm -rf packages/network-adapter/dist packages/cognitive-layer/dist \
        packages/message-router/dist adapters/opencode-plugin/dist
 
-echo "[release-opencode] 1/4 build @apnex/* workspace deps (deps-first; else TS2307)"
-npm run build -w @apnex/network-adapter -w @apnex/cognitive-layer -w @apnex/message-router
+echo "[release-opencode] 1/4 build @apnex/* workspace deps in TOPOLOGICAL order"
+echo "                       (leaves first: network-adapter depends on cognitive-layer+message-router;"
+echo "                        separate sequential invocations — npm -w order/parallelism is not guaranteed)"
+npm run build -w @apnex/cognitive-layer
+npm run build -w @apnex/message-router
+npm run build -w @apnex/network-adapter
 
 echo "[release-opencode] 2/4 typecheck + emit the plugin (tsc → dist + shim.d.ts)"
 npm run build -w @apnex/opencode-plugin
