@@ -14,6 +14,11 @@
  */
 
 import type { Plugin } from "@opencode-ai/plugin";
+// Type-only (esbuild drops it → zero bundle impact; the SDK client is provided
+// by the host at runtime). The v2 Event discriminated union types the plugin
+// event handler so session-event property access is compile-checked (the fence
+// that catches the 0.4.x-drift class — thread-669/bug-161).
+import type { Event } from "@opencode-ai/sdk";
 import {
   McpAgentClient,
   McpTransport,
@@ -650,6 +655,51 @@ async function startProxyServer(): Promise<number> {
 // ── Plugin Export ────────────────────────────────────────────────────
 // CRITICAL: No awaits during init. Everything deferred to background.
 
+// ── Session-event handling (de-any + bug-161) ───────────────────────
+//
+// Extracted from the HubPlugin event hook so it's unit-testable and typed
+// against the v2 @opencode-ai/sdk Event discriminated union (dropping the old
+// `event: any`). Typing it surfaced two 0.4.x drifts the cast had hidden:
+//   • session.created/updated carry the session at `properties.info` (a Session
+//     object); the old `|| properties.id` legacy fallback is invalid on the v2
+//     type (and dead at runtime) — dropped (thread-669).
+//   • bug-161: v2 `SessionStatus` is an OBJECT {type:"idle"|"retry"|"busy"}, not
+//     a 0.4.x status string. The old `status === "idle"|"running"|"streaming"|…`
+//     string compares were always-false in v2 → sessionActive NEVER went true →
+//     the notificationQueue never engaged (notifications surfaced mid-stream).
+//     Map status.type: "idle" → inactive (flush); "busy"/"retry" → active.
+async function handleSessionEvent(event: Event): Promise<void> {
+  switch (event.type) {
+    case "session.created":
+    case "session.updated":
+      currentSessionId = event.properties.info.id;
+      break;
+    case "session.status": {
+      if (event.properties.status.type === "idle") {
+        sessionActive = false;
+        if (notificationQueue.length > 0) await flushQueue();
+        else if (deferredBacklog.length > 0) await flushBacklog();
+      } else {
+        // "busy" | "retry" — the session is mid-task; buffer notifications.
+        sessionActive = true;
+      }
+      break;
+    }
+    case "session.idle":
+      sessionActive = false;
+      if (notificationQueue.length > 0) await flushQueue();
+      else if (deferredBacklog.length > 0) await flushBacklog();
+      if (hubAdapter && !hubAdapter.isConnected) {
+        try {
+          await hubAdapter.start();
+        } catch {
+          /* will retry on next idle */
+        }
+      }
+      break;
+  }
+}
+
 export const HubPlugin: Plugin = async (ctx) => {
   // SDK drift: @opencode-ai/plugin 1.3.x exposes `directory: string` directly on
   // PluginInput (preferred); 0.4.x exposed it via `app.path.cwd` (removed in 1.3.x).
@@ -732,48 +782,8 @@ export const HubPlugin: Plugin = async (ctx) => {
   }, 3000);
 
   return {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    event: async ({ event }: { event: any }) => {
-      switch (event.type) {
-        // SDK drift (thread-669): v2 EventSessionCreated/Updated carry the session
-        // at `properties.info` (a Session object), NOT `properties.id`. Reading the
-        // old 0.4.x `properties.id` returns undefined → currentSessionId froze to the
-        // boot-time session.list()[0], so injects landed in a session the TUI wasn't
-        // showing (the "Steve replied but Director couldn't see it" root cause). Read
-        // `info.id` first, tolerate the legacy flat `.id` as a fallback.
-        case "session.created":
-          currentSessionId =
-            event.properties?.info?.id || event.properties?.id || currentSessionId;
-          break;
-        case "session.updated": {
-          const updatedId = event.properties?.info?.id || event.properties?.id;
-          if (updatedId) currentSessionId = updatedId;
-          break;
-        }
-        case "session.status": {
-          const status = event.properties?.status;
-          if (status === "idle" || status === "completed") {
-            sessionActive = false;
-            if (notificationQueue.length > 0) await flushQueue();
-            else if (deferredBacklog.length > 0) await flushBacklog();
-          } else if (status === "running" || status === "pending" || status === "streaming") {
-            sessionActive = true;
-          }
-          break;
-        }
-        case "session.idle":
-          sessionActive = false;
-          if (notificationQueue.length > 0) await flushQueue();
-          else if (deferredBacklog.length > 0) await flushBacklog();
-          if (hubAdapter && !hubAdapter.isConnected) {
-            try {
-              await hubAdapter.start();
-            } catch {
-              /* will retry on next idle */
-            }
-          }
-          break;
-      }
+    event: async ({ event }: { event: Event }) => {
+      await handleSessionEvent(event);
     },
   };
 };
@@ -783,6 +793,12 @@ export const HubPlugin: Plugin = async (ctx) => {
 export const _testOnly = {
   dispatcher,
   makeOpenCodeFetchHandler,
+  handleSessionEvent,
+  getSessionActive: () => sessionActive,
+  setSessionActive: (v: boolean) => {
+    sessionActive = v;
+  },
+  getCurrentSessionId: () => currentSessionId,
   getHubAdapter: () => hubAdapter,
   setHubAdapter: (agent: McpAgentClient | null) => {
     hubAdapter = agent;
