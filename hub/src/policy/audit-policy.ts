@@ -45,7 +45,11 @@ async function listAuditEntries(args: Record<string, unknown>, ctx: IPolicyConte
   const storeCap = Math.min(MAX_LIST_LIMIT, (args.limit as number) ?? DEFAULT_LIST_LIMIT);
   const actor = args.actor as string | undefined;
   const hasFilter = actor != null;
-  const entries = await ctx.stores.audit.listEntries(storeCap, actor as "architect" | "engineer" | "hub" | undefined);
+  // mission-93: 'verifier' is a first-class audit actor (the verifier's
+  // verdicts are logged with actor='verifier') — so it must be a queryable
+  // filter value, not just a writable one. (#338 widened the WRITE enums;
+  // this is the sibling READ/filter site, caught by the verifier RBAC e2e.)
+  const entries = await ctx.stores.audit.listEntries(storeCap, actor as "architect" | "engineer" | "verifier" | "hub" | undefined);
   // CP2 C5 (task-307): sentinel for "valid filter with zero matches".
   // When the filtered window is empty, probe the unfiltered window at
   // the same cap to distinguish from truly-empty.
@@ -88,7 +92,7 @@ export function registerAuditPolicy(router: PolicyRouter): void {
     "list_audit_entries",
     "[Any] List audit entries with optional actor filter and pagination. Returns most recent first.",
     {
-      actor: z.enum(["architect", "engineer", "hub"]).optional().describe("Filter by actor (optional)"),
+      actor: z.enum(["architect", "engineer", "verifier", "hub"]).optional().describe("Filter by actor (optional). 'verifier' surfaces the verifier's logged verdicts (mission-93)."),
       ...LIST_PAGINATION_SCHEMA,
     },
     listAuditEntries,
