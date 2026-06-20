@@ -71,7 +71,7 @@ async function listAuditEntries(args: Record<string, unknown>, ctx: IPolicyConte
 export function registerAuditPolicy(router: PolicyRouter): void {
   router.register(
     "create_audit_entry",
-    "[Architect] Log an audit entry recording an autonomous action taken by the Architect. Persisted in GCS for Director oversight. Every autonomous decision should be audited.",
+    "[Architect|Verifier] Log an audit entry recording an autonomous action taken by the Architect, OR an independent verification check by the Verifier (mission-93 — the verifier's durable verdict-record surface; advisory, not gating). Persisted for Director oversight. Every autonomous decision should be audited.",
     {
       action: z.string().describe("Short action name (e.g., 'auto_review', 'auto_clarification', 'task_issued')"),
       details: z.string().describe("Description of what was done and why"),

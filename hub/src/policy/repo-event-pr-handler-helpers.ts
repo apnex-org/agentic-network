@@ -188,6 +188,16 @@ export async function synthesizePrNotification<P>(
     return [];
   }
 
+  // mission-93: verifier is refute-not-produce — it has no produce surface and
+  // is not part of the bilateral engineer↔architect PR cross-approval routing;
+  // skip like director (no peer-role to route).
+  if (role === "verifier") {
+    console.info(
+      `[repo-event-${opts.subkind}-handler] verifier-author event for gh-login=${authorLogin}; no peer-role to route; skipping`,
+    );
+    return [];
+  }
+
   // role is "engineer" or "architect" — emit symmetric notification.
   const peerRole = role === "engineer" ? "architect" : "engineer";
   const body = opts.bodyTemplate(role, payload);

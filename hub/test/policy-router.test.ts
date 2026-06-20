@@ -106,7 +106,7 @@ describe("PolicyRouter", () => {
     // Bind a session to a role directly on the in-memory registry —
     // bypasses session-policy since we only want to exercise the
     // router's RBAC enforcement here, not the full handshake.
-    async function bindRole(ctx: TestPolicyContext, role: "architect" | "engineer" | "director"): Promise<void> {
+    async function bindRole(ctx: TestPolicyContext, role: "architect" | "engineer" | "director" | "verifier"): Promise<void> {
       await ctx.stores.engineerRegistry.registerAgent(
         ctx.sessionId,
         role,
@@ -165,11 +165,52 @@ describe("PolicyRouter", () => {
       router.register("anyone_tool", "[Any] Anyone tool", {}, async () => ({
         content: [{ type: "text", text: "ok" }],
       }));
-      for (const role of ["architect", "engineer", "director"] as const) {
+      for (const role of ["architect", "engineer", "director", "verifier"] as const) {
         const c = createTestContext({ role });
         await bindRole(c, role);
         expect((await router.handle("anyone_tool", {}, c)).isError).toBeUndefined();
       }
+    });
+
+    // ── mission-93: verifier role RBAC (verifier-role.md v1.0 §2.3) ──
+    // Refute-not-produce. GRANT = read + finding-surfacing ([Any] tools,
+    // covered above, + the explicitly tagged [Architect|Verifier]
+    // create_audit_entry / get_metrics). DENY = the produce surface — the
+    // [Architect]/[Engineer] tools the verifier must NOT be able to drive.
+    it("[Architect|Verifier] permits verifier + architect, rejects engineer (create_audit_entry/get_metrics grant)", async () => {
+      router.register("verdict_tool", "[Architect|Verifier] Verifier verdict-record tool", {}, async () => ({
+        content: [{ type: "text", text: "ok" }],
+      }));
+      const verCtx = createTestContext({ role: "verifier" });
+      await bindRole(verCtx, "verifier");
+      expect((await router.handle("verdict_tool", {}, verCtx)).isError).toBeUndefined();
+
+      const archCtx = createTestContext({ role: "architect", stores: verCtx.stores });
+      await bindRole(archCtx, "architect");
+      expect((await router.handle("verdict_tool", {}, archCtx)).isError).toBeUndefined();
+
+      const engCtx = createTestContext({ role: "engineer", stores: verCtx.stores });
+      await bindRole(engCtx, "engineer");
+      expect((await router.handle("verdict_tool", {}, engCtx)).isError).toBe(true);
+    });
+
+    it("verifier is DENIED the produce surface: [Architect] + [Engineer] tools reject verifier", async () => {
+      router.register("produce_arch", "[Architect] Produce tool (e.g. create_mission/create_task/update_mission)", {}, async () => ({
+        content: [{ type: "text", text: "ok" }],
+      }));
+      router.register("produce_eng", "[Engineer] Produce tool (e.g. create_proposal)", {}, async () => ({
+        content: [{ type: "text", text: "ok" }],
+      }));
+      const verCtx = createTestContext({ role: "verifier" });
+      await bindRole(verCtx, "verifier");
+
+      const r1 = await router.handle("produce_arch", {}, verCtx);
+      expect(r1.isError).toBe(true);
+      expect(JSON.parse(r1.content[0].text).error).toMatch(/architect/);
+
+      const r2 = await router.handle("produce_eng", {}, verCtx);
+      expect(r2.isError).toBe(true);
+      expect(JSON.parse(r2.content[0].text).error).toMatch(/engineer/);
     });
 
     it("missing/unknown role tag falls back to [Any]", async () => {

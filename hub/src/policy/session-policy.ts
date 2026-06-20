@@ -16,7 +16,13 @@ import { resolveRecipient } from "../entities/recipient-resolver.js";
 // ── M18 Handshake: register_role ────────────────────────────────────
 
 function coerceAgentRole(role: string): AgentRole | null {
-  if (role === "engineer" || role === "architect" || role === "director") return role;
+  if (
+    role === "engineer" ||
+    role === "architect" ||
+    role === "director" ||
+    role === "verifier"
+  )
+    return role;
   return null;
 }
 
