@@ -243,8 +243,12 @@ async function injectContext(text: string): Promise<void> {
     await sdkClient.session.promptAsync({
       path: { id: currentSessionId },
       body: {
+        // SDK drift (thread-669): v2 SessionPromptData.system is a system-PROMPT
+        // string, not a boolean "this is a system message" flag. The old `system: true`
+        // was a type mismatch (boolean where string expected). `noReply: true` already
+        // gives the silent/informational path (no assistant turn); the `[Hub Notification]`
+        // prefix marks it. Dropped the bogus boolean.
         noReply: true,
-        system: true,
         parts: [{ type: "text", text: `[Hub Notification] ${text}` }],
       },
     });
@@ -722,12 +726,21 @@ export const HubPlugin: Plugin = async (ctx) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     event: async ({ event }: { event: any }) => {
       switch (event.type) {
+        // SDK drift (thread-669): v2 EventSessionCreated/Updated carry the session
+        // at `properties.info` (a Session object), NOT `properties.id`. Reading the
+        // old 0.4.x `properties.id` returns undefined → currentSessionId froze to the
+        // boot-time session.list()[0], so injects landed in a session the TUI wasn't
+        // showing (the "Steve replied but Director couldn't see it" root cause). Read
+        // `info.id` first, tolerate the legacy flat `.id` as a fallback.
         case "session.created":
-          currentSessionId = event.properties?.id || currentSessionId;
+          currentSessionId =
+            event.properties?.info?.id || event.properties?.id || currentSessionId;
           break;
-        case "session.updated":
-          if (event.properties?.id) currentSessionId = event.properties.id;
+        case "session.updated": {
+          const updatedId = event.properties?.info?.id || event.properties?.id;
+          if (updatedId) currentSessionId = updatedId;
           break;
+        }
         case "session.status": {
           const status = event.properties?.status;
           if (status === "idle" || status === "completed") {
