@@ -115,14 +115,6 @@ interface HubConfig {
    * From adapter-config.json `labels` field or OIS_HUB_LABELS env var (JSON).
    */
   labels?: Record<string, string>;
-  /**
-   * thread-671: extra Hub event types to suppress from the toast/inject
-   * surface (presence/telemetry FYI). `agent_state_changed` is ALWAYS
-   * suppressed (see DEFAULT_SURFACE_SUPPRESS); this list ADDS to that
-   * default. From adapter-config.json `suppressEvents` or the
-   * OIS_HUB_SUPPRESS_EVENTS env var (JSON array of event-type strings).
-   */
-  suppressEvents?: string[];
 }
 
 function parseLabels(raw: string | undefined, source: string): Record<string, string> | undefined {
@@ -138,20 +130,6 @@ function parseLabels(raw: string | undefined, source: string): Record<string, st
     }
   } catch (err) {
     log(`WARNING: Failed to parse labels from ${source}: ${err}`);
-  }
-  return undefined;
-}
-
-function parseStringArray(raw: string | undefined, source: string): string[] | undefined {
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      const out = parsed.filter((x): x is string => typeof x === "string");
-      return out.length > 0 ? out : undefined;
-    }
-  } catch (err) {
-    log(`WARNING: Failed to parse ${source}: ${err}`);
   }
   return undefined;
 }
@@ -177,40 +155,7 @@ function loadConfig(directory: string): HubConfig {
     cfg.autoPrompt = process.env.HUB_PLUGIN_AUTO_PROMPT.toLowerCase() !== "false";
   const envLabels = parseLabels(process.env.OIS_HUB_LABELS, "OIS_HUB_LABELS env var");
   if (envLabels) cfg.labels = envLabels;
-  const envSuppress = parseStringArray(
-    process.env.OIS_HUB_SUPPRESS_EVENTS,
-    "OIS_HUB_SUPPRESS_EVENTS env var",
-  );
-  if (envSuppress) cfg.suppressEvents = envSuppress;
   return cfg;
-}
-
-// ── Notification-surface suppression (thread-671) ────────────────────
-//
-// Presence/telemetry events are classified `informational` by event-router
-// for agent-population cache-coherence (Mission-62), NOT to be shown to the
-// user — and there is no cache CONSUMER of them in the adapter today, so
-// dropping them from the surface costs nothing. Left unfiltered they flood
-// the TUI with a wall of `state-changed` toasts AND inject every transition
-// into the session, burning the context window (tele-12) for zero signal.
-// Suppressed events are still written to the diagnostic notification log;
-// only the toast + context-inject are skipped. Applied to the INFORMATIONAL
-// path only — never to actionable events (suppressing those would silently
-// drop work that needs a response).
-const DEFAULT_SURFACE_SUPPRESS: ReadonlyArray<string> = ["agent_state_changed"];
-
-/**
- * Pure predicate (exported for unit tests): is this event type suppressed from
- * the toast/inject surface? `extra` is the operator's `config.suppressEvents`,
- * which ADDS to the always-on `DEFAULT_SURFACE_SUPPRESS` set.
- */
-export function isEventSuppressed(eventType: string, extra?: ReadonlyArray<string>): boolean {
-  if (DEFAULT_SURFACE_SUPPRESS.includes(eventType)) return true;
-  return extra?.includes(eventType) ?? false;
-}
-
-function isSurfaceSuppressed(eventType: string): boolean {
-  return isEventSuppressed(eventType, config.suppressEvents);
 }
 
 // ── Rate-limited prompt queue ────────────────────────────────────────
@@ -483,23 +428,19 @@ export function buildPluginCallbacks(): AgentClientCallbacks {
       }
     },
     onInformationalEvent: (event: AgentEvent) => {
+      // M-OpenCode-Shim-Sovereign-Dedup Step-1 (idea-331): informational events
+      // are LOG-ONLY — matching the Claude shim's already-correct disposition
+      // (claude shim.ts:672-676). The core (event-router) classifies these as
+      // informational precisely so they DON'T wake/surface; the prior toast +
+      // injectContext here was the OpenCode-only divergence that flooded the TUI
+      // and burned the session context window (tele-12). Diagnostic log only —
+      // no toast, no inject. (Supersedes the interim DEFAULT_SURFACE_SUPPRESS
+      // per-event band-aid, which a strict-thin shim must not carry.)
       const action = getActionText(event.event, event.data);
       appendNotification(
         { event: event.event, data: event.data, action: `[INFO] ${action}` },
         { logPath: notificationLogPath },
       );
-      // thread-671: presence/telemetry (agent_state_changed) is cache-coherence
-      // FYI — logged above, but must NOT toast or inject (TUI flood + context-
-      // window burn, tele-12). Suppress AFTER the diagnostic log, before surface.
-      if (isSurfaceSuppressed(event.event)) return;
-      const message = buildToastMessage(event.event, event.data);
-      const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
-      const notification: QueuedNotification = { level: "informational", message, promptText };
-      if (sessionActive) {
-        notificationQueue.push(notification);
-      } else {
-        processNotification(notification);
-      }
     },
     onStateChange: (state: SessionState, prev: SessionState, reason?: SessionReconnectReason) => {
       log(`Connection: ${prev} → ${state}${reason ? ` (${reason})` : ""}`);
