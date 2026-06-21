@@ -205,3 +205,17 @@ Both principals weighed in and both threads converged: **greg** (build-reality, 
 - **Coverage:** collectively serves tele-3/4/6/8/9/10/12/13; no glaring missed-tele the exercise revealed.
 
 → **Director gate:** ratify the shortlist + sequence + the tele-tension resolutions → each arc → its own Design (Survey → Design → Mission).
+
+---
+
+## ✅ RATIFIED (Director, 2026-06-21)
+
+The Director ratified the stint-2 roadmap at the consolidated gate (after all 5 designs landed — C1/C2/C3/C4 + D-1):
+
+1. **Roadmap + sequencing + tele-resolutions — RATIFIED as laid out.** The 4 arcs + the D-1 spine; Wave-0 (C3 opener + C2 capability-spike + C4-R1 charter + D-1 R0/R1 read-plane) → Wave-1 (D-1 write/actuate + C1 work-queue riding on it + C2-lifecycle-if-spike-greens) → Wave-2 capstone. Tele-resolutions hold: verifier stays advisory-not-gating; C2 auto-act behind fidelity-bounds + circuit-breakers + verifier-audit; RBAC tighten-only (a Hub-grant only tightens the local ceiling).
+2. **D-1 REST↔MCP — REST-sovereign; MCP stays one co-equal live binding.** Both project from `router.handle()`; MCP keeps serving the in-harness adapters unchanged (no break); REST is the new sovereign surface for the CLI + agentic/automation drive.
+3. **D-1 authority-seam change — APPROVED.** The bounded change so REST enforces the SAME RBAC as MCP, fails CLOSED (closes the unknown-role fail-open), with real provenance — and incidentally fixes bug-168/169. (Plain approve; no verifier-gate condition attached.)
+
+**Architect-decided + documented (leans the Director did not override):** governance-batch (#3) = one batched proposal before any auto-path arms (C3 full-automation+envelope picks shape it); keystone-sequencing (#4) = C1 work-queue lands after D-1-R3 write/actuate; D-1 credentials = token-bound role via mission-86 TokenStore; oisctl = thin TS client reusing Hub zod; root-layout = `api/` + `cli/` + `hub/src/rest/`; API version `core.ois/v1`.
+
+**Next:** each arc → Survey→Design→Mission. C3 (Survey done, idea-340) Design opens; D-1-R0 charter+identity-seam-spike + C2 W0 capability-spike + C4-R1 charter start as the Wave-0 parallel banks.
