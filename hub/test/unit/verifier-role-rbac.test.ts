@@ -103,4 +103,29 @@ describe("verifier cutover — role-CHANGE boundary on an existing agent (missio
     const agent = await ctxA.stores.engineerRegistry.getAgentForSession(ctxA.sessionId);
     expect(agent?.role).toBe("architect");
   });
+
+  it("register_role MATCHES + succeeds when persisted role already equals registered role (post-cutover steady state)", async () => {
+    // The mirror of the rejection — and the path the live cutover took AFTER
+    // the operator set the persisted role to verifier (the in-place UPDATE):
+    // a verifier re-registering MATCHES (verifier===verifier) → assertIdentity
+    // proceeds → online. (When the durable sanctioned role-change primitive
+    // (1b) lands, a sibling test will drive that primitive end-to-end instead
+    // of the already-verifier steady state.)
+    const router = new PolicyRouter(noop);
+    registerSessionPolicy(router);
+    const reg = router.getToolRegistration("register_role");
+    const parse = (args: Record<string, unknown>) => z.object(reg!.schema).parse(args);
+
+    // Session 1: fresh-register as verifier → createOnly path.
+    const ctxA = createTestContext({ role: "verifier" });
+    const r1 = await router.handle("register_role", parse({ role: "verifier", name: "verifier-steady", ...HANDSHAKE }), ctxA);
+    expect(JSON.parse(r1.content[0].text).ok).toBe(true);
+
+    // Session 2: re-register SAME name + SAME role → MATCH (no role_mismatch).
+    const ctxB = createTestContext({ stores: ctxA.stores, substrate: ctxA.substrate, role: "verifier" });
+    const r2 = await router.handle("register_role", parse({ role: "verifier", name: "verifier-steady", ...HANDSHAKE }), ctxB);
+    expect(JSON.parse(r2.content[0].text).ok).toBe(true);
+    const agent = await ctxB.stores.engineerRegistry.getAgentForSession(ctxB.sessionId);
+    expect(agent?.role).toBe("verifier");
+  });
 });

@@ -115,3 +115,44 @@ describe("E2E Verifier RBAC (mission-93 #338 pre-deploy gate)", () => {
     expect(r.isError).toBeUndefined();
   });
 });
+
+describe("E2E verifier thread participation (mission-93 — thread-674 turn-role bug)", () => {
+  // Live cutover (2026-06-20): a directed unicast thread to the verifier got
+  // currentTurn='engineer' (the recipient-role resolution excluded verifier →
+  // fell back to the architect-counterpart formula), so the verifier's reply
+  // was rejected 'not your turn' and it had to work around via kind=note. This
+  // proves a verifier is a first-class thread turn-holder: directed thread →
+  // currentTurn=verifier → the verifier can reply (the role's CORE interaction).
+  it("a verifier can reply to a directed unicast verification thread", async () => {
+    const orch = TestOrchestrator.create();
+    const arch = orch.asArchitect();
+    const verifier = orch.asVerifier();
+
+    // Register the verifier so it has an agent record + resolvable agentId.
+    await verifier.call("list_tasks", {});
+    const vAgent = await orch.stores.engineerRegistry.getAgentForSession("session-verifier-default");
+    expect(vAgent?.role).toBe("verifier");
+
+    // Architect opens a UNICAST verification thread DIRECTED at the verifier.
+    const opened = await arch.createThread("Verify claim X", "Please verify claim X.", {
+      recipientAgentId: vAgent!.id,
+      routingMode: "unicast",
+    });
+    const threadId = (opened.threadId ?? opened.id) as string;
+    expect(threadId).toBeTruthy();
+
+    // FIX: the thread turn must be the VERIFIER's (was 'engineer' → reply blocked).
+    const t = await orch.stores.thread.getThread(threadId);
+    expect(t?.currentTurn).toBe("verifier");
+    expect(t?.currentTurnAgentId).toBe(vAgent!.id);
+
+    // The verifier replies — must SUCCEED (turn-check: currentTurn===author
+    // AND currentTurnAgentId===authorAgentId both pass for the verifier).
+    const reply = await verifier.call("create_thread_reply", {
+      threadId,
+      message: "Verdict: claim X holds — verified.",
+    });
+    expect(reply.isError).toBeUndefined();
+    expect(JSON.parse(reply.content[0].text).success).not.toBe(false);
+  });
+});
