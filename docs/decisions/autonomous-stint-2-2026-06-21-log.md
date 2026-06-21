@@ -38,4 +38,13 @@
 - **Surface (greg #348 cross-review, thread-681 convergence):** the D-1-R0 charter (§4.2) proposes the identity-seam consume **ctx-first** (registry fallback) and claims it "incidentally fixes bug-168/169." But **#346 already merged a bug-168/169 fix that is registry-first.** So (a) the "fixes bug-168/169" claim is likely STALE (may already be closed by #346), and (b) ctx-first vs the merged registry-first is a precedence question to reconcile.
 - **Decision:** This is an R2-design reconciliation, NOT an R0 blocker — but DON'T merge #348 asserting a stale claim. HOLD #348; correct the charter's §4.2 claim (flag the #346 reconciliation as an explicit R2 open-question; verify bug-168/169's actual closed-state before re-asserting) before merging. Architect-spec work (delegated-draft staleness caught by peer review — validates the cross-review discipline).
 - **Tele:** tele-2 (isomorphic spec — the charter must match merged reality), tele-12 (precision).
-- **Status:** OPEN — charter correction pending (R2 / next-touch of d1-r0-charter); #348 held.
+- **Status:** RESOLVED at R0 (charter §4.2 corrected, d0b7590 — claim retracted; #348 UNHELD). The ctx-first-vs-#346-registry-first reconciliation still carries forward to the R2 design.
+
+## DR-S2-007 — Eliminate the HUB_HEALTH_URL var dependency (self-sufficient roll-confirm)
+- **Context:** the C3-R1 roll-confirm (greg's design) read `vars.HUB_HEALTH_URL` with warn-skip-if-unset. Setting the repo var was blocked for me (auto-mode: shared-CI/CD-config) AND the Director stated they cannot provide it ("I cannot provide the var. You must work it out. Full autonomous."). A warn-skip-forever = the R1 roll-signal never fires = the rung's value is inert. Unacceptable → must resolve sovereignly.
+- **Decision:** amend #349 (greg, thread-686) so the roll-confirm URL DEFAULTS to the known public endpoint (`https://hub-api-5muxctm3ta-ts.a.run.app/health`) when the var is unset; `vars.HUB_HEALTH_URL` preserved as an OPTIONAL override. Removes the manual-var dependency entirely; the gate fires with zero setup.
+- **Rationale/tele:** better ship-integrity — no "forgot-to-arm-the-var" silent-skip failure mode (on-C3-thesis, tele-4); sovereign (no dependency on a Director-only or harness-blocked action — the full-autonomous resolution the Director directed); the URL is public + unauthenticated (greg-curled, 200/no-auth) so a workflow default is appropriate, NOT a secret.
+- **Reversible?** Yes — a workflow default; the var override remains.
+- **Verifier:** Steve delta-verifies the amended #349 (one-line default change; he already passed the rest) before merge, per DR-002.
+- **Supersedes DR-S2-005** (the var-set-deferral is moot — we eliminate the dependency rather than defer the set).
+- **Status:** IN PROGRESS — greg amending (thread-686) → Steve delta-verify → merge (apnex keyring) → watch roll-confirm.
