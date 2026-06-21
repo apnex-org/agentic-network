@@ -377,7 +377,12 @@ const Thread: SchemaDef = {
   indexOwnershipPattern: "^thread_(?!hist_)",
   // W2 finding-A: substrate-side filters cascadePending→status.cascadePending,
   // currentTurnAgentId→status.currentTurnAgentId (thread-repo + cascade-sweeper).
-  renameMap: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId" },
+  // mission-93 bug-170: recipientAgentId→spec.recipientAgentId — the Thread.ts
+  // partition relocates it to spec (Thread.test.ts:81) but the finding-A sweep
+  // missed the renameMap entry, so substrate-side filter-translate mis-pathed it
+  // to top-level → directed-thread discovery by recipientAgentId returned zero
+  // (read still worked via normalizeThreadShape's flat-spread, masking the gap).
+  renameMap: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId", recipientAgentId: "spec.recipientAgentId" },
 };
 
 const Turn: SchemaDef = {
