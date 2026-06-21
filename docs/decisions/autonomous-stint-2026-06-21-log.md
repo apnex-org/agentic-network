@@ -74,4 +74,9 @@ Cron heartbeat (~15 min, session-scoped) + event-driven wakes from peer response
   5. **verify-then-close (deferred):** bug-121, bug-126, bug-40, bug-62, bug-63.
 - **Disposition:** triage adopted; (1) executed; (3) next mission-design; (4) greg wave-2; (2)+(5) deferred/parked.
 
-*(Subsequent decisions appended as DR-006, … during the stint.)*
+### DR-006 — Defer #342 (R5 calibration ledger) merge to Director bilateral-confirm · `director-deferred`
+- **Context:** greg cross-approved #339/#340/#341/#342 (real reviews). #342 edits `docs/calibrations.yaml` — the constitutional calibration ledger.
+- **Hard line:** merging the constitutional ledgers (teles, calibrations) without strong cause = director-deferred (CLAUDE.md: calibration filings/IDs are Director-direct or architect-Director-bilateral). greg independently flagged a courtesy bilateral-confirm-when-back — aligned.
+- **Disposition:** MERGE #339 (audit) + #340 (R3 spec) + #341 (1b design) now (ratified, non-constitutional, greg-approved). **HOLD #342** — PR stays ready + approved; Director confirms the #88 ID + content on return (bilateral), then merge. `director-deferred`.
+
+*(Subsequent decisions appended as DR-007, … during the stint.)*
