@@ -24,6 +24,18 @@
 - **Tele:** tele-4 (no-silent-failure), tele-8 (gated integrity).
 - **Status:** RATIFIED (architect authority; reversible config; recorded in thread-681).
 
-## DR-S2-004 — Open: prod /health external reachability (load-bearing for the observer model)
-- **Surface (not yet a decision):** R1's CI roll-confirm + R2's external prober both require prod `/health` reachable from outside the Hub (GitHub runner). greg referenced a "Cloud Run nginx proxy URL"; my model is VM+watchtower. Flagged to greg (thread-681) to confirm external reachability + the real prod ingress topology. If `/health` is NOT externally reachable, that's a design-level finding (ingress decision) — escalate to a DR, do not let R1 hard-code around it.
-- **Status:** OPEN — awaiting greg's ground-truth.
+## DR-S2-004 — prod /health external reachability (RESOLVED)
+- **Surface:** R1's CI roll-confirm + R2's external prober both require prod `/health` reachable from outside the Hub.
+- **RESOLVED (greg ground-truth curl 2026-06-21):** prod `/health` IS externally reachable — `https://hub-api-5muxctm3ta-ts.a.run.app/health` → 200, 149ms, no auth. Real topology: **Cloud Run nginx proxy** (public ingress, mission-86 cloud-deploy §4.15: TLS → Direct VPC Egress) IN FRONT of the internal GCE VM + watchtower (backend). My VM+watchtower model was the backend half. External-observer model sound; no ingress decision needed.
+- **Status:** RESOLVED.
+
+## DR-S2-005 — Defer the HUB_HEALTH_URL repo-var set (auto-mode guardrail)
+- **Decision:** Defer setting `vars.HUB_HEALTH_URL = https://hub-api-5muxctm3ta-ts.a.run.app/health` to the C3-R1 deploy-occasion. The away-stint auto-mode guardrail blocked it (shared CI/CD config flagged as needing explicit Director consent); I will not work around the denial. NOT blocking — greg's warn-skip-if-unset means the build/PR/CI proceed; the roll-confirm gate arms the moment the var lands. The C3-R1 deploy is a Director-gated prod-deploy under DR-002 anyway, so the var-set rides that consented occasion.
+- **Tele:** tele-4 (the gate stays honest — warn-skip is loudly annotated, not silent).
+- **Status:** DEFERRED (to #349 deploy-occasion).
+
+## DR-S2-006 — Hold #348; reconcile the charter's ctx-first seam vs the merged #346 registry-first (R2)
+- **Surface (greg #348 cross-review, thread-681 convergence):** the D-1-R0 charter (§4.2) proposes the identity-seam consume **ctx-first** (registry fallback) and claims it "incidentally fixes bug-168/169." But **#346 already merged a bug-168/169 fix that is registry-first.** So (a) the "fixes bug-168/169" claim is likely STALE (may already be closed by #346), and (b) ctx-first vs the merged registry-first is a precedence question to reconcile.
+- **Decision:** This is an R2-design reconciliation, NOT an R0 blocker — but DON'T merge #348 asserting a stale claim. HOLD #348; correct the charter's §4.2 claim (flag the #346 reconciliation as an explicit R2 open-question; verify bug-168/169's actual closed-state before re-asserting) before merging. Architect-spec work (delegated-draft staleness caught by peer review — validates the cross-review discipline).
+- **Tele:** tele-2 (isomorphic spec — the charter must match merged reality), tele-12 (precision).
+- **Status:** OPEN — charter correction pending (R2 / next-touch of d1-r0-charter); #348 held.
