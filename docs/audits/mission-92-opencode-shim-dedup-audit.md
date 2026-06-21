@@ -57,7 +57,7 @@ Two honest corrections to the in-flight narrative:
 
 **This was worse than "SDK 0.4.x→1.3.x drift."** Ground truth from the pinned SDK type union: `session.status`/`session.created` **do not exist in the 0.4.x Event union at all**, and 0.4.x `session.updated` carried `properties.info`, not `.id`. The original handler was `any`-cast **speculative code that typechecked against nothing** — it matched neither the pinned SDK nor the runtime. The handler shipped 2026-04-19; because the only true-path never matched any version it ran against, **the queue gate was dead on arrival and stayed non-functional in production for ~2 months** against Steve's 1.3.x host. The de-any pass (applying real types, removing the `event: any` cast) is what converted a silent runtime no-op into a compile error that got fixed.
 
-**Fix correctness:** correct, with **one unhandled terminal state** — `session.error` is in the union and is **not handled**; a session that goes busy/retry then dies via `session.error` (rather than idle) leaves `sessionActive` stuck true and the queue never flushes. There is **no watchdog, no max-queue-size cap.** Mitigation exists (dual idle triggers: `session.status{idle}` *and* `session.idle`), so a single missed event doesn't strand it — but the `session.error` path + a host disconnect remain a narrow, real stuck-queue window. bug-161's fix needs a small completion: handle `session.error` + a bounded fallback flush.
+**Fix correctness:** correct, with **one unhandled terminal state** — `session.error` is in the union and is **not handled**; a session that goes busy/retry then dies via `session.error` (rather than idle) leaves `sessionActive` stuck true and the queue never flushes. There is a transport-level SSE watchdog (reconnect/recovery), but **no *session-state* watchdog and no max-queue-size cap** for the notification queue — scoping the original blanket "no watchdog" wording per the verifier cross-check (Steve, audit-3794). Mitigation exists (dual idle triggers: `session.status{idle}` *and* `session.idle`), so a single missed event doesn't strand it — but the `session.error` path + a host disconnect remain a narrow, real stuck-queue window. bug-161's fix needs a small completion: handle `session.error` + a bounded fallback flush.
 
 **Regression safety (Claude path):** behaviour-preserving. Core changes are strictly additive (only new exports); `reconstructDrainedAction` is character-for-character the prior claude logic; the `isPulseEvent` hoist is byte-identical. One correction to the review claim: `source-attribute.ts` is **not "comment-only"** — it deletes the local defs and re-imports from core (a real, behaviour-preserving refactor, not a comment change). The 172/172 claim is plausible-by-inspection (not re-executed in this audit; see §5 for why that number is narrower than it sounds).
 
@@ -91,6 +91,18 @@ Every shortfall above is the same root. Mission-92 optimised for a **structural/
 ## 7. The validating irony
 
 The verifier's **very first act of value — its own onboarding — caught two latent bugs the production test process structurally could not.** The dedup audit is, incidentally, the empirical case *for* the verifier role: an independent cross-lineage perspective surfaced defects that same-lineage review + a Claude-path test suite were blind to. mission-92's gaps are exactly the gaps a cross-lineage runtime check closes.
+
+---
+
+## 7a. Verifier cross-check (Steve / audit-3794, 2026-06-21)
+
+The verdict was independently cross-checked on the live OpenCode/Bun host by Steve (cross-lineage verifier):
+- **Strengthened** on all three axes — strict-thin-not-met, defect-class-not-retired, and cross-lineage test blindness all confirmed from the running bundle.
+- **Refined one claim:** the live bundle *does* have a transport-level SSE watchdog (reconnect), so §4's "no watchdog" is scoped to **session-state / `session.error` handling + the notification-queue flush**, not the transport (applied above).
+- **New finding → bug-164 (major):** the verifier session handshakes correctly as `verifier` but the **poll-backstop starts with `role=engineer`** — role-drift in the backstop path, likely sharing a root with the thread `currentTurn=engineer` participation symptom (Rung-0). One fix may close both. Routed to greg's rung-list.
+- **Surfacing observations:** directed actionable traffic reaches the host via prompt/context **inject (no separate toast)**; the *informational* log shows **flood-like `AGENT_STATE_CHANGED` bursts** (log-level, post-Step-1 no-inject), but **actionable-notification coalescing could not be proven either way from live data** — so the R3 harness must *deterministically* prove actionable coalescing and cover the verifier poll-backstop role (bug-164).
+
+This is the verifier→artifact loop working: an independent cross-lineage seat corrected one claim, hardened the rest, and surfaced a fresh defect — on the very audit of the bundle it consumes.
 
 ---
 
