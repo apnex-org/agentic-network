@@ -161,3 +161,13 @@ Your current session uses Haiku 4.5, which is NOT eligible for auto mode. Upgrad
 - Likely **re-ranks/re-scopes C1** toward a foundational early substrate the other arcs build their surfaces on (a sequencing shift from the draft).
 
 **Council lens added:** the C1 thread explores the sovereign-plane shape (root `cli/`+`api/`, resource/verb model, metrics exposure); ALL principals answer the cross-cutting question — *which of my arc's primitives should be resources/verbs on the sovereign plane?*
+
+### D-2 · Containerised agent runtime + context as a monitored/actuated resource (2026-06-21)
+**Directive/hypothesis (Director):** run OpenCode / Claude Code as a binary + shell INSIDE a docker container → enabling INFRA-DRIVEN agent construction/restart (start/stop/recreate the container = construct/restart the agent; docker = the supervisor — the concrete form of the spike's "run headless under a supervisor" leg). Context-management is the harder, research-gated part, and is BOTH:
+- **code-level:** expose a metric to MONITOR context (remaining-context — the key API unknown);
+- **process-level:** if monitorable, MECHANISE A TRIGGER (to the Hub or another agent) to ACTUATE (compaction / handoff / restart) when context runs low. (+ etc. — open mechanism space.)
+
+**Sharpens + raises the C2 W0-spike** — it must validate: (a) containerise the harness for construct/restart; (b) read remaining-context [measurability]; (c) trigger compaction/lifecycle externally [actuation]; (d) route the trigger via Hub/peer [closed process loop]. C2's rungs split into CODE primitives (containerise · context-metric · actuate-API) + PROCESS design (the trigger-loop/controller policy).
+
+### Emerging architecture — OIS as a control-plane over containerised agents (k8s-analog)
+D-1 + D-2 converge: a **sovereign control plane** (D-1: root cli/api) that **observes** (C1) and **actuates lifecycle** (C2) on **containerised agent-pods** (D-2), with **context-runway a first-class monitored + actuated resource** (analogous to CPU/memory → eviction/OOM in k8s). On this read, C1 + C2 + D-1 are facets of ONE architecture (control plane + agent-runtime); C3 (ship-integrity) is the orthogonal delivery-hardening; C4 (governed autonomy) is the governance layer over it. **The C2 W0-spike is the pivotal feasibility gate for this whole vision** — council + spike validate before committing the architecture.
