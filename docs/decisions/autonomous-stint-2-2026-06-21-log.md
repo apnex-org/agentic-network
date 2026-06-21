@@ -79,6 +79,19 @@
 - **Reversible?** Yes — revert PR; test-only change.
 - **Status:** DONE — #352 merged (beafcd0), deployed (no-op roll, roll-confirm PASS), thread-688 converged. #350/#351 rebase onto main@beafcd0 is greg's next step (his stack; agreed sequencing). The `gh pr merge` rule is now proven-live for the rest of the stint.
 
+## DR-S2-012 — D-3 telemetry-standardisation direction (Director-agreed)
+- **Context:** the D-3 standardisation question was evaluated by an Ultracode eval-panel (wf_44577f85) + an OpenCode-OTEL probe + a claude-code-guide OTEL probe → **Option B (OIS-native normalized shape at the shim→core boundary); REJECT Option A (OTLP-as-the-wire/Hub-format); C = B-renamed.** OTEL stays a Claude INPUT only, plus a future Hub-edge EGRESS exporter (export-out-never-ingest-in).
+- **Decision:** Director **"Agree with recommendations"** (2026-06-21) — the D-3 standardisation **direction** is ratified as the **Survey-default** (NOT a finalized design; D-3 still gets its formal Survey→Design pass). Closes Option A; blesses the direction. Sub-decisions agreed: B over A/C; egress-only OTEL docked to the deferred WebSocket transport-convergence arc; asymmetric-error-fidelity represented via the C2-L1 `{measured|estimated|heuristic}` tag; C2-W0 spike gates idea-343; **honest-scope transport = a latest-value gauge on the existing Agent entity, NOT a dedicated telemetry-plane** (architect self-corrected from the earlier dedicated-plane lean per the panel's honest-scope review).
+- **Tele:** tele-13 (Director sees + manages the org), tele-3 (sovereign-composition, no vendor-schema coupling), tele-4 (no silent collector-blackhole), tele-10 (declarative-truth, no vendor-rename staleness).
+- **Status:** RATIFIED (direction; Survey-default). Full verdict folded into idea-343.
+
+## DR-S2-013 — Execution-model: "both headless or interactive, within the containerised model" (Director reframe)
+- **Context:** the C2-W0 mutual-exclusivity hypothesis — statusline-context-measurability + stdin-`/compact` favor INTERACTIVE; clean restart/resume favors HEADLESS `claude -p`. Architect initially leaned "detached-interactive-in-container dissolves the tension → don't need `-p`."
+- **Decision:** Director reframe (2026-06-21) — *"consider both headless or interactive — whichever delivers what we need — if we standardise on a containerised model."* The **container is the standardisation invariant**; headless-vs-interactive is a **per-need choice within it** (the two may coexist — interactive for long-lived measurable/compactable agents; headless for one-shot/CI). Architect accepted the reframe (corrected the over-narrow "interactive beats `-p`").
+- **Action:** C2-detached-interactive eval (wf_a1164f0b) running — reframed from "do we need `-p`" to "which mode delivers which leg within the container, and do we run both" (the panel's `stillNeedPWhen` output) → feeds the refined C2-W0 spike + the C2 Survey execution-model question.
+- **Tele:** tele-3 (sovereign-composition across modes), tele-12 (precise per-mode capability).
+- **Status:** OPEN (panel resolving; C2 Survey input).
+
 ---
 
 ## Verifier integrity-backstop record (DR-010 pattern, this stint)
