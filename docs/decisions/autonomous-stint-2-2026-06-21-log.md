@@ -22,7 +22,7 @@
 - **Decision:** Approve greg's proposed roll-confirm SLA — 600s timeout, 15s poll cadence, wired as a tunable workflow var. Rationale: watchtower `--interval 300` + ~140s roll (pull+restart+substrate-reconnect) + margin ≈ ~480s worst-case healthy, so 600s cleanly separates a slow-but-healthy roll from the bug-107 token-race stall. R1 = positive-signal + fail-loud (ALARM via loud workflow fail) only; NO auto-revert (auto-rollback is R3, behind the governance-batch).
 - **Reversible?** Yes — a tunable workflow var; tighten from real roll-time data; R2/R3 formalize it as a first-class signal/field.
 - **Tele:** tele-4 (no-silent-failure), tele-8 (gated integrity).
-- **Status:** RATIFIED (architect authority; reversible config; recorded in thread-681).
+- **Status:** RATIFIED **+ PROVEN** — the roll-confirm fired clean on #349 (prod /health gitSha=2d51198) and again on #352; the 600s/15s SLA held (no slow-roll false-alarm, no bug-107 token-race stall). Steve cross-lineage delta-PASS (audit-3961). Recorded in thread-681.
 
 ## DR-S2-004 — prod /health external reachability (RESOLVED)
 - **Surface:** R1's CI roll-confirm + R2's external prober both require prod `/health` reachable from outside the Hub.
@@ -47,4 +47,39 @@
 - **Reversible?** Yes — a workflow default; the var override remains.
 - **Verifier:** Steve delta-verifies the amended #349 (one-line default change; he already passed the rest) before merge, per DR-002.
 - **Supersedes DR-S2-005** (the var-set-deferral is moot — we eliminate the dependency rather than defer the set).
-- **Status:** IN PROGRESS — greg amending (thread-686) → Steve delta-verify → merge (apnex keyring) → watch roll-confirm.
+- **Status:** RESOLVED — #349 amended (default landed @5449237); Steve cross-lineage delta-PASS (audit-3961: `${{ vars.HUB_HEALTH_URL || 'https://hub-api-5muxctm3ta-ts.a.run.app/health' }}` sound, preserves non-empty override); merged (2d51198), deployed, **roll-confirm PASSED** (prod /health gitSha=2d51198 — the roll-signal self-proved). The manual-var dependency is eliminated; the gate fires with zero setup. Re-confirmed clean on the #352 deploy (beafcd0).
+
+---
+
+## DR-S2-008 — C2-W0 capability spike GRADUATES (both harnesses feasible)
+- **Decision:** graduate C2-W0; **C2 (Agent-Lifecycle Substrate) is feasible on BOTH harnesses** — no RED on either. Claude-side (lily, own harness): (a) context-readout GREEN (statusline stdin JSON), (b) external-compaction AMBER (no programmatic `-p` trigger), (c) headless+reclaim GREEN, (d) Hub-route GREEN (design). OpenCode-side (Steve, audit-3950): (a) AMBER, (b) GREEN (`POST /session/{id}/summarize`), (c)/(d) GREEN (`opencode export --sanitize` + `opencode import`). The harnesses are **complementary** — each is AMBER exactly where the other is GREEN.
+- **Load-bearing structural finding:** surfacing remaining-context is **never via the MCP adapter/shim tool surface** on either side — Claude reads the *statusline command's stdin*, OpenCode reads the *session DB* (custom shim code; **Director-confirmed 2026-06-21:** "context is in the DB, would require custom code in the shim to surface"). So **C2-L1's context-runway gauge is a per-host wrapper/sidecar → Hub telemetry sink**, NOT an MCP-shim capability. This dovetails with D-3 (idea-343): the same wrapper is the natural emit-point for API-call volume + error-counts + quota.
+- **Open fork → C2 Survey:** the L3/L4 **execution-model** (restartability-vs-measurability process shape) is unresolved on BOTH harnesses (the mutual-exclusivity tension, now confirmed cross-adapter) — the genuine Director-survey question.
+- **Verifier:** Steve's audit-3950 is the cross-lineage OpenCode evidence-tier (real runtime, not mocks).
+- **Tele:** tele-3 (sovereign composition across heterogeneous harnesses), tele-12 (precise per-host capability truth).
+- **Status:** GRADUATED (architect verdict on the completed matrix `docs/spikes/c2-w0-capability-matrix.md`; execution-model fork carries to the C2 Survey).
+
+## DR-S2-009 — Fold the mission-92 shim-dedup remainder into idea-342
+- **Context:** the mission-92 OpenCode/Claude shim-dedup audit graded it "a B+ structural win mis-graded as complete" — and it's half-landed (#334 OPEN → #336 DRAFT → #337 merged-only-into-#336; the dedup is NOT on main, so Steve runs the published bundle, not main).
+- **Decision:** fold the open remainder into ONE cleanup mission, **idea-342 (M-Adapter-Convergence-Cleanup)**, under the D-1 "one authority, two bindings" adapter-convergence thesis — land the unmerged code stack + bug-161/164 fix + strict-thin completion + the cross-lineage acceptance-gate harness + a formal Claude-vs-OpenCode shim-equality parity matrix; **folds idea-341** (OpenCode note-injection routing) onto the same shim surface. Director-approved fold ("fold. I leave autonomy to you").
+- **Tele:** tele-2 (spec==reality — retire the mis-graded-complete state), tele-3.
+- **Status:** FILED (idea-342, open); sequenced as a stint-2 rung after/with D-1.
+
+## DR-S2-010 — Relaxed deploy-gate during verifier outage + D-3 telemetry directive
+- **Context:** Steve (verifier) went **offline mid-stint on LLM-API quota exhaustion** with ZERO org-visibility (learned only via a manual Director offline). DR-002's VERIFIER-GATED prod-deploy precondition can no longer be met for the rest of the stint.
+- **Decision (relaxed gate):** low-risk **additive/reversible** prod-deploys proceed under **TESTED + REVERSIBLE + architect-review + greg same-lineage cross-check**, with the **verifier-gate DEFERRED to RETROACTIVE** (Steve re-audits when quota returns); **pause higher-risk deploys.** The architect's own posture tightens on borderline prod-mutations (the Director is the live check). This relaxes — does NOT void — DR-002: the verifier audit still happens, just after the fact.
+- **D-3 directive (idea-343):** first-class **centralised queryable per-agent telemetry** — context (runway/burn) + LLM-API-call volume + error-counts (503/429) + quota/availability. Motivated by Steve's zero-visibility quota-death (rising 429s → exhaustion → agent-down would have been visible). Folds into **C1** (org-health spine, queryable via D-1 / `oisctl get agents --metrics`), **C2** (the L1 per-agent gauge extended from context to API/errors/quota), **C4** (verifier/agent-availability is a deploy-gate + integrity-backstop single-point-of-failure → needs a fallback when a key agent is down).
+- **Tele:** tele-13 (Director sees + manages the org at a glance), tele-4 (no silent agent-death), tele-12.
+- **Status:** RATIFIED (Director: "Agree with relaxed gate. You would still be fully autonomous during stints. ... we need first-class telemetry of each agent ... Steve will be down for the rest of this stint."); D-3 = idea-343 (open), folds into the shortlist directives + C1/C2 designs at the next docs-PR.
+
+## DR-S2-011 — Land #352 (de-flake) under the relaxed gate; gh-pr-merge rule hot-applies
+- **Context:** updating #350's (R4a) branch onto main surfaced a combined-CI failure. greg root-caused it as a **pre-existing timing flake** in `advisory-lock.test.ts` (`expected 200 to be less than 200` — the old bound equalled the 2-way-serialized floor; full-suite concurrent-container load closed the margin), **NOT a #349+R4a coupling** (combined repro = 1 failed / 1951 passed → R4a sound). Fixed standalone in **#352** (SLEEP_MS=300, bound 2×SLEEP_MS).
+- **Decision:** approve + merge #352 as the **first exercise of the relaxed gate** — test-only (no runtime change → no-op deploy), fully green CI, architect-reviewed, greg-authored (architect = cross-check). Steve re-audits retroactively.
+- **Findings:** (1) the Director-approved **`gh pr merge` permission rule HOT-APPLIED — no lily-restart needed** (greg's open question, now answered). (2) **C3 data point:** the branch-onto-main update SURFACED a latent flake standalone runs never hit — exactly the integration-CI value the ship-integrity arc is about (on-thesis).
+- **Reversible?** Yes — revert PR; test-only change.
+- **Status:** DONE — #352 merged (beafcd0), deployed (no-op roll, roll-confirm PASS), thread-688 converged. #350/#351 rebase onto main@beafcd0 is greg's next step (his stack; agreed sequencing). The `gh pr merge` rule is now proven-live for the rest of the stint.
+
+---
+
+## Verifier integrity-backstop record (DR-010 pattern, this stint)
+Steve's **audit-3962** (DR-010 integrity-audit of the acting-Director's autonomous-stint ledger + decisions): **no blocking overreach / hard-line breach found.** Cleanup punch-list issued (all actioned here): update the C2 matrix with audit-3950 ✓; advance DR-S2-007 after #349 merge/deploy ✓; note #348 approval dismissed after the correction commit (greg re-approval pending); fix the #349 empty-override comment later (minor). Shallow-fetch phantom-delete concern cleared after deepening history — the ledger branch true-diff is additive-only. Per the C4-R1 charter §5, this backstop was *convened* (the per-DR coverage flag is satisfied for the stint's high-authority actions).
