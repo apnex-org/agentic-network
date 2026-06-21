@@ -283,6 +283,28 @@ const HUB_VERSION: string = (() => {
   }
 })();
 
+// C3-R1 M-Roll-Signal (idea-340) — deploy-truth bank. scripts/local/build-hub.sh
+// stamps hub/build-info.json {gitSha, builtAt} into the image (the Dockerfile
+// COPYs it to /app); /health reports it so an external observer (the
+// deploy-hub.yml roll-confirm step) can prove the new image actually rolled,
+// closing the bug-107/DR-011 silent-deploy class. Read once at boot via the
+// same ../build-info.json resolution as HUB_VERSION (dist/index.js → /app).
+// Graceful empty-fallback when the file is absent (local dev / tests) —
+// mirrors the bug-114 toolSurfaceRevision "" fallback; never crashes boot.
+const BUILD_INFO: { gitSha: string; builtAt: string } = (() => {
+  try {
+    const biPath = join(dirname(fileURLToPath(import.meta.url)), "..", "build-info.json");
+    const bi = JSON.parse(readFileSync(biPath, "utf8")) as { gitSha?: unknown; builtAt?: unknown };
+    return {
+      gitSha: typeof bi.gitSha === "string" ? bi.gitSha : "",
+      builtAt: typeof bi.builtAt === "string" ? bi.builtAt : "",
+    };
+  } catch {
+    return { gitSha: "", builtAt: "" };
+  }
+})();
+console.log(`[Hub] build-info: gitSha=${BUILD_INFO.gitSha || "(none)"} builtAt=${BUILD_INFO.builtAt || "(none)"}`);
+
 // ADR-017: start the comms-reliability watchdog. Stateless scanner over
 // the pending-actions queue; enforces deadlines + escalation ladder. The
 // injectable wake-client uses fetch (best-effort); failures are logged but
@@ -403,6 +425,8 @@ const hub = new HubNetworking(
     quiet: false,
     version: HUB_VERSION,
     toolSurfaceRevision,
+    gitSha: BUILD_INFO.gitSha,
+    builtAt: BUILD_INFO.builtAt,
   },
   // M-Session-Claim-Separation (mission-40) T2: thread audit store through
   // for SSE-subscribe auto-claim hook to emit agent_session_implicit_claim
