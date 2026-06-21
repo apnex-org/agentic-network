@@ -30,7 +30,19 @@ export const HUB_SYSTEM_PROVENANCE: EntityProvenance = {
 };
 
 export async function resolveCreatedBy(ctx: IPolicyContext): Promise<EntityProvenance> {
-  const role = ctx.role && ctx.role !== "unknown" ? ctx.role : null;
+  // mission-93 bug-168: resolve the role from the registry (the authoritative
+  // registered role) first, falling back to ctx.role. ctx.role can be "unknown"
+  // on some create_* paths even for a registered agent — a verifier's
+  // create_idea stamped createdBy=system/hub-system because ctx.role wasn't
+  // "verifier" there. getRole(sessionId) is the same authoritative source the
+  // message author-derivation uses (bug-169).
+  const registeredRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
+  const role =
+    registeredRole && registeredRole !== "unknown"
+      ? registeredRole
+      : ctx.role && ctx.role !== "unknown"
+        ? ctx.role
+        : null;
 
   let agentId: string | null = null;
   try {

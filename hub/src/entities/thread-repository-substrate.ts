@@ -391,8 +391,16 @@ export class ThreadRepositorySubstrate implements IThreadStore {
     return truncateClosedThreadMessages(normalized);
   }
 
-  async listThreads(status?: ThreadStatus): Promise<Thread[]> {
-    const substrateFilter: Record<string, string> = {};
+  async listThreads(status?: ThreadStatus, equalityFilter?: Record<string, string>): Promise<Thread[]> {
+    // mission-93 bug-170: `equalityFilter` pushes simple-equality discovery
+    // predicates (recipientAgentId / currentTurnAgentId) to the SUBSTRATE so a
+    // directed-thread lookup matches across ALL threads — not just whatever
+    // arbitrary LIST_PREFETCH_CAP (500, unordered) window the client-side filter
+    // would otherwise see. With 500+ threads, the newest (incl verifier-directed)
+    // fell outside that window → list_threads returned zero for them. Both keys
+    // translate correctly substrate-side (recipientAgentId top-level;
+    // currentTurnAgentId → status.currentTurnAgentId via renameMap).
+    const substrateFilter: Record<string, string> = { ...(equalityFilter ?? {}) };
     if (status) substrateFilter.status = status;
     const { items } = await this.substrate.list<Thread>(KIND, {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
