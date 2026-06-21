@@ -26,6 +26,10 @@ import { Pool } from "pg";
 import { createPostgresStorageSubstrate, createSchemaReconciler, ALL_SCHEMAS } from "../index.js";
 import type { SchemaDef, RenameMap } from "../types.js";
 import { isEnvelopeShape } from "../migrations/v2-envelope/shared/envelope.js";
+// C3-R4a: the substrate-filterable map + exclusions are now the shared reviewed
+// source-of-truth in conformance/filterable-keys.ts (drift-gated against the live
+// call-site scanner in filterable-keys-drift-gate.test.ts). W1.1c consumes them.
+import { SUBSTRATE_FILTERABLE_KEYS, EXCLUDED_FILTERABLE_KEYS } from "../conformance/filterable-keys.js";
 
 // Per-kind migration modules — parity oracle for entry content (§2.7).
 import { createAgentMigrationModule } from "../migrations/v2-envelope/kinds/Agent.js";
@@ -213,48 +217,9 @@ function probePlacement(kind: string, filterKey: string): string | null {
   return null;
 }
 
-/**
- * mission-90 W2 finding-A: the substrate-SIDE filter/sort keys per kind, curated
- * from the call-site sweep (every key passed into substrate.list filter/sort).
- * This is the completeness BOUND (architect refinement (i): bound to the
- * call-site-enumerated filterable keys — finite + known — rather than all moved
- * fields). W1.1c asserts each is renameMap-covered OR documented-excluded OR
- * unmoved. A new W3+ filter adds its key here; if untranslatable it fails W1.1c.
- */
-const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
-  Agent: ["fingerprint"],
-  Audit: ["actor"],
-  Bug: ["status", "severity", "class", "sourceThreadId", "sourceActionId", "sourceIdeaId"],
-  Idea: ["status", "missionId", "sourceThreadId", "sourceActionId"],
-  Message: ["kind", "status", "threadId", "migrationSourceId", "authorAgentId", "delivery", "scheduledState", "target.role", "target.agentId", "id"],
-  Mission: ["status", "sourceThreadId", "sourceActionId"],
-  PendingAction: ["state", "naturalKey", "targetAgentId", "dispatchType", "entityRef"],
-  Proposal: ["status", "sourceThreadId", "sourceActionId"],
-  Task: ["status", "idempotencyKey", "sourceThreadId", "sourceActionId"],
-  Tele: [],
-  Thread: ["status", "cascadePending", "currentTurnAgentId", "recipientAgentId"],
-  Turn: ["status"],
-  Document: ["category"],
-  ReviewHistoryEntry: ["taskId"],
-  ThreadHistoryEntry: ["threadId"],
-  Notification: ["recipientAgentId"],
-};
-
-/**
- * Substrate-side FILTERABLE keys deliberately NOT given a renameMap entry, with a
- * reason. 'cascade-dual-path': the repository runs an envelope-first DOTTED query
- * + a dead-but-harmless bare fallback; W1 pins getFieldTranslation(...)===null and
- * W4 reconciles/collapses these. 'phantom': field absent from real rows (bug-148).
- * 'structural-transform': value shape changes → JSONB path-equality meaningless.
- */
-const EXCLUDED_FILTERABLE_KEYS: Record<string, Record<string, string>> = {
-  Bug: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path", sourceIdeaId: "cascade-dual-path" },
-  Idea: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Mission: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Proposal: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Task: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Notification: { recipientAgentId: "phantom (bug-148: repo interface diverges from SchemaDef; field in no row)" },
-};
+// SUBSTRATE_FILTERABLE_KEYS + EXCLUDED_FILTERABLE_KEYS moved to
+// conformance/filterable-keys.ts (imported above) — C3-R4a made them the shared
+// reviewed artifact drift-gated against the live call-site scanner.
 
 describe("W1.1 renameMap inventory + faithfulness — complete field-movement authority (W2 finding-A)", () => {
   it("ALL_SCHEMAS carries exactly the expected renameMap per kind (no missing / no extra / no drift)", () => {
