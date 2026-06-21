@@ -85,4 +85,11 @@ Cron heartbeat (~15 min, session-scoped) + event-driven wakes from peer response
 - **Decision:** fix-shape = separate identity (login-label/provenance) from claim-routing — first-class assignee on create_task (label the EXECUTOR not the caller); stop using creator-login as a claim-selector; optional global-pool fallback + update_task re-dispatch. **Survey SKIPPED** (narrow fix space + confirmed root; recorded here in lieu of a Survey per the architect-Director-bilateral norm).
 - **Disposition:** `lily-executed` (design) — idea-336 + docs/designs/m-task-dispatch-repair-design.md (PR #344). Mission **chartering deferred** until engineer bandwidth frees (after mission-93 hardening + mission-92 shim batch) — NOT creating a competing active mission now.
 
-*(Subsequent decisions appended as DR-008, … during the stint.)*
+### DR-008 — #343 roll completion via the sanctioned watchtower-refresher (bug-107 live) · `lily-executed`
+- **Context:** #343 built+pushed (02:27) but watchtower-prod 401'd on the AR pull (token expired) → roll stalled ~20min → ois-hub-prod stuck on the 4h-old #338 image.
+- **Investigation (read-only):** watchtower 401 logs; the refresher is systemd `refresh-docker-token.service` (metadata-minted token; 30-min timer; `/var/lib/docker-creds/refresh.sh`) with an intermittent token-TTL-vs-interval race → bug-107 (now root-diagnosed, updated major/investigating).
+- **Safe nudges:** (1) restart watchtower-prod → no effect (re-reads the stale file); (2) **trigger the SANCTIONED refresher `sudo systemctl start refresh-docker-token.service`** → minted a fresh metadata token → watchtower's 02:45 poll authed + rolled #343 via its OWN safe recreate. The Hub container was NEVER hand-recreated (hard line held).
+- **Tele:** tele-8/9 (completed the deploy through the sanctioned mechanism, not a risky improvisation); tele-4 (surfaced the silent CD failure → bug-107).
+- **Disposition:** `lily-executed`. **#343 LIVE** — toolSurfaceRevision ebc5a0→a11543f8; the verifier conformance cluster (bug-166/167/169/170 + H20) is deployed. **Closes DR-003.** Verifier-gate IN PROGRESS: thread-678 opened currentTurn=**verifier** (bug-166/170 fix confirmed live + correct) → Steve confirms behaviorally by replying. bug-107 stays open (refresher race needs a proper fix; workaround documented above + in the bug).
+
+*(Subsequent decisions appended as DR-009, … during the stint.)*
