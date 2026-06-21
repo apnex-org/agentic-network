@@ -165,7 +165,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
       },
       limit: 1,
     });
-    return envelopeResult.items[0] ? decodeEnvelopeToFlat(envelopeResult.items[0]) : null;
+    return envelopeResult.items[0] ? decodeEnvelopeToFlat(envelopeResult.items[0], "Task") : null;
   }
 
   async findByIdempotencyKey(key: string): Promise<Task | null> {
@@ -173,7 +173,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
       filter: { idempotencyKey: key },
       limit: 1,
     });
-    return items[0] ? decodeEnvelopeToFlat(items[0]) : null;
+    return items[0] ? decodeEnvelopeToFlat(items[0], "Task") : null;
   }
 
   async unblockDependents(completedTaskId: string): Promise<string[]> {
@@ -181,7 +181,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
     const { items: rawAllTasks } = await this.substrate.list<Task>(KIND, {
       limit: LIST_PREFETCH_CAP,
     });
-    const allTasks = rawAllTasks.map((t) => decodeEnvelopeToFlat(t)); // mission-90 W8: flat preview
+    const allTasks = rawAllTasks.map((t) => decodeEnvelopeToFlat(t, "Task")); // mission-90 W8: flat preview
     const allMap = new Map(allTasks.map((t) => [t.id, t]));
     const unblocked: string[] = [];
 
@@ -224,7 +224,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
       filter: { status: "blocked" },
       limit: LIST_PREFETCH_CAP,
     });
-    const items = rawItems.map((t) => decodeEnvelopeToFlat(t)); // mission-90 W8: flat preview
+    const items = rawItems.map((t) => decodeEnvelopeToFlat(t, "Task")); // mission-90 W8: flat preview
     const cancelled: string[] = [];
     for (const task of items) {
       if (!task.dependsOn || !task.dependsOn.includes(failedTaskId)) continue;
@@ -255,7 +255,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
         filter: { status: "pending" },
         limit: LIST_PREFETCH_CAP,
       });
-      const items = rawItems.map((t) => decodeEnvelopeToFlat(t)); // mission-90 W8: flat preview
+      const items = rawItems.map((t) => decodeEnvelopeToFlat(t, "Task")); // mission-90 W8: flat preview
       for (const preview of items) {
         if (!taskClaimableBy(preview.labels ?? {}, claimant?.labels)) continue;
         let claimed: Task | null = null;
@@ -334,7 +334,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
         limit: LIST_PREFETCH_CAP,
       });
       const candidates = [...completed.items, ...failed.items]
-        .map((t) => decodeEnvelopeToFlat(t)) // mission-90 W8: flat preview
+        .map((t) => decodeEnvelopeToFlat(t, "Task")) // mission-90 W8: flat preview
         .filter((t) => t.report !== null);
 
       for (const preview of candidates) {
@@ -363,12 +363,12 @@ export class TaskRepositorySubstrate implements ITaskStore {
 
   async getTask(taskId: string): Promise<Task | null> {
     const raw = await this.substrate.get<Task>(KIND, taskId);
-    return raw ? decodeEnvelopeToFlat(raw) : null;
+    return raw ? decodeEnvelopeToFlat(raw, "Task") : null;
   }
 
   async listTasks(): Promise<Task[]> {
     const { items } = await this.substrate.list<Task>(KIND, { limit: LIST_PREFETCH_CAP });
-    return items.map((t) => decodeEnvelopeToFlat(t));
+    return items.map((t) => decodeEnvelopeToFlat(t, "Task"));
   }
 
   async cancelTask(taskId: string): Promise<boolean> {
@@ -457,7 +457,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
   ): Promise<{ taskId: string; assessment: string; reviewRef: string } | null> {
     const raw = await this.substrate.get<Task>(KIND, taskId);
     if (!raw) return null;
-    const task = decodeEnvelopeToFlat(raw); // mission-90 W8: reviewAssessment/reviewRef relocate to status
+    const task = decodeEnvelopeToFlat(raw, "Task"); // mission-90 W8: reviewAssessment/reviewRef relocate to status
     if (!task.reviewAssessment) return null;
     return {
       taskId: task.id,
@@ -473,7 +473,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
   async __debugSetTask(taskId: string, patch: Partial<Task>): Promise<void> {
     const raw = await this.substrate.get<Task>(KIND, taskId);
     if (!raw) throw new Error(`[TaskRepositorySubstrate.__debugSetTask] Task not found: ${taskId}`);
-    const next: Task = { ...decodeEnvelopeToFlat(raw), ...patch } as Task;
+    const next: Task = { ...decodeEnvelopeToFlat(raw, "Task"), ...patch } as Task;
     await this.substrate.put(KIND, next);
   }
 
@@ -492,7 +492,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
       if (!existing) return false;
       let next: Task;
       try {
-        next = transform(decodeEnvelopeToFlat(existing.entity)); // mission-90 W8: flat CAS
+        next = transform(decodeEnvelopeToFlat(existing.entity, "Task")); // mission-90 W8: flat CAS
       } catch (err) {
         if (err instanceof TransitionRejected) return false;
         throw err;

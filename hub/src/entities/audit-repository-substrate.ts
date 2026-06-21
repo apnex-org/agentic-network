@@ -47,7 +47,7 @@ function parseCounter(id: string): number {
  * from the `metadata.createdAt` rename (actor is leaf-preserving; Audit has no status).
  */
 function decodeAudit(raw: AuditEntry): AuditEntry {
-  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>) as Record<string, unknown>;
+  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>, "Audit") as Record<string, unknown>;
   if (flat.createdAt !== undefined) { flat.timestamp = flat.createdAt; delete flat.createdAt; }
   return flat as unknown as AuditEntry;
 }

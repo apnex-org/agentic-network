@@ -36,7 +36,7 @@ function cloneIdea(idea: Idea): Idea {
   // metadata.labels map (cluster-1 array↔map asymmetry the generic decode can't
   // reverse) and drop the raw labels artifact. Used at both the read boundary AND
   // the CAS path, so the legacy-flat `tags` array round-trips through the write-encoder.
-  const flat = decodeEnvelopeToFlat(idea as unknown as Record<string, unknown>) as Record<string, unknown>;
+  const flat = decodeEnvelopeToFlat(idea as unknown as Record<string, unknown>, "Idea") as Record<string, unknown>;
   // tags: from the envelope metadata.labels map (flattened to flat.labels), OR an
   // existing top-level tags array (a legacy-flat in-memory build, e.g. submitIdea's
   // return). Drop the raw labels artifact.

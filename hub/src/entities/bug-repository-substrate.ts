@@ -42,7 +42,7 @@ function cloneBug(bug: Bug): Bug {
   // mission-90 W8: decode envelope→flat (idea-327); derive `tags` from metadata.labels
   // (drop the raw artifact) + ensure the relocated status arrays (already flattened by
   // the generic decode) are present. Used at the read boundary AND the CAS path.
-  const flat = decodeEnvelopeToFlat(bug as unknown as Record<string, unknown>) as Record<string, unknown>;
+  const flat = decodeEnvelopeToFlat(bug as unknown as Record<string, unknown>, "Bug") as Record<string, unknown>;
   // tags: from the envelope metadata.labels map OR a legacy-flat in-memory tags array.
   if (flat.labels && typeof flat.labels === "object") {
     flat.tags = Object.keys(flat.labels as Record<string, string>);

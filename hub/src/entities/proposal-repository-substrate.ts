@@ -115,12 +115,12 @@ export class ProposalRepositorySubstrate implements IProposalStore {
       limit: 500,
     });
     // mission-90 W8: decode envelope→flat (idea-327) at the read boundary.
-    return items.map((p) => decodeEnvelopeToFlat(p));
+    return items.map((p) => decodeEnvelopeToFlat(p, "Proposal"));
   }
 
   async getProposal(proposalId: string): Promise<Proposal | null> {
     const p = await this.substrate.get<Proposal>(KIND, proposalId);
-    return p ? decodeEnvelopeToFlat(p) : null;
+    return p ? decodeEnvelopeToFlat(p, "Proposal") : null;
   }
 
   async reviewProposal(
@@ -167,7 +167,7 @@ export class ProposalRepositorySubstrate implements IProposalStore {
       limit: 1,
     });
     return envelopeResult.items[0]
-      ? decodeEnvelopeToFlat(envelopeResult.items[0])
+      ? decodeEnvelopeToFlat(envelopeResult.items[0], "Proposal")
       : null;
   }
 
@@ -194,7 +194,7 @@ export class ProposalRepositorySubstrate implements IProposalStore {
       if (!existing) return false;
       let next: Proposal;
       try {
-        next = transform(decodeEnvelopeToFlat(existing.entity)); // mission-90 W8: flat CAS
+        next = transform(decodeEnvelopeToFlat(existing.entity, "Proposal")); // mission-90 W8: flat CAS
       } catch (err) {
         if (err instanceof TransitionRejected) return false;
         throw err;

@@ -299,7 +299,7 @@ export class MissionRepositorySubstrate implements IMissionStore {
     ]);
     // mission-90 W8: decode envelope→flat (idea-327) at the read boundary.
     return {
-      ...decodeEnvelopeToFlat(stored),
+      ...decodeEnvelopeToFlat(stored, "Mission"),
       tasks: tasks.filter((t) => t.correlationId === stored.id).map((t) => t.id),
       ideas: ideas.filter((i) => i.missionId === stored.id).map((i) => i.id),
     };
@@ -318,7 +318,7 @@ export class MissionRepositorySubstrate implements IMissionStore {
       if (!existing) throw new Error(`Mission not found: ${missionId}`);
       // mission-90 W8: decode → flat so the transform reads relocated fields
       // (plannedTasks@spec, pulses@spec, status) flat; the write-encoder re-envelopes.
-      const next = transform(decodeEnvelopeToFlat(existing.entity));
+      const next = transform(decodeEnvelopeToFlat(existing.entity, "Mission"));
       const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
       if (result.ok) return next;
       // revision-mismatch → retry from re-read

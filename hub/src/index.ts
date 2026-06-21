@@ -44,6 +44,7 @@ import {
 } from "./storage-substrate/index.js";
 import { applyMigrations } from "./storage-substrate/migration-runner.js";
 import { TokenStore } from "./storage-substrate/token-store.js";
+import { armBareEnvelopeDetector } from "./storage-substrate/bare-envelope-error.js";
 import { SubstrateCounter } from "./entities/substrate-counter.js";
 import { AgentRepositorySubstrate } from "./entities/agent-repository-substrate.js";
 import { AuditRepositorySubstrate } from "./entities/audit-repository-substrate.js";
@@ -184,6 +185,13 @@ substrate.setFieldTranslator((kind, bareKey) => reconciler.getFieldTranslation(k
 // at filter-translate, rather than silently mis-pathing the JSONB query (the
 // bug-138/bug-170 silent-filter-miss class). Inert without this wiring (tests/dev).
 substrate.setPartitionedKindCheck((kind) => reconciler.hasTranslations(kind));
+// C3-R4b (piece 2): arm the 0-bare detector — the DECODE-side twin of piece 1.
+// A row that reaches a consumer STILL enveloped (a skipped/broken decode, never a
+// legit row post-W8-STRICT) now fails LOUD at the repo decode-to-flat boundary
+// (BareEnvelopeError), instead of silently degrading then poll-recovering (cal-84).
+// Same oracle as piece 1 (reconciler.hasTranslations) → armed only for known
+// partitioned kinds; inert without this wiring (tests/dev/ad-hoc kinds).
+armBareEnvelopeDetector((kind) => reconciler.hasTranslations(kind));
 
 // Mission-47 W1-W7 + Mission-49 W8-W9: instantiate StorageProvider-backed
 // repositories. Counter is shared-by-design across all repositories —
@@ -730,7 +738,8 @@ const messageProjectionSweeper = new MessageProjectionSweeper(
   // mission-83 W5.4 cutover); the 74% CPU pressure that motivated PR #203 was
   // structurally eliminated. Sweeper continues to poll (substrate-watch
   // subscription is W8/W9 architectural-future-leverage; v1 keeps polling).
-  { intervalMs: 5000 },
+  // C3-R4b piece 2: audit = durable queryable 0-bare-violation sink.
+  { intervalMs: 5000, audit: auditStore, metrics: createMetricsCounter() },
 );
 
 // Mission-51 W4: scheduled-message sweeper. Polls every 1s for
@@ -781,6 +790,8 @@ const cascadeReplaySweeper = new CascadeReplaySweeper(
       internalEvents: [],
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
+  // C3-R4b piece 2: durable queryable sink for 0-bare-violation audit entries.
+  { audit: auditStore },
 );
 
 // Mission-57 W2: PulseSweeper — single-instance recurring sweeper that
