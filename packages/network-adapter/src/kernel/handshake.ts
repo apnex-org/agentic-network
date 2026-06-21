@@ -84,12 +84,24 @@ export interface HandshakeFatalError {
  */
 export function parseHandshakeError(result: unknown): HandshakeFatalError | null {
   try {
-    const r = result as { content?: Array<{ text?: string }>; isError?: boolean };
-    if (!r || r.isError !== true || !Array.isArray(r.content) || !r.content[0]?.text) {
-      return null;
+    const r = result as { content?: Array<{ text?: string }>; isError?: boolean } & Record<string, unknown>;
+    if (!r || typeof r !== "object") return null;
+    let body: Record<string, unknown>;
+    let envelopeError = false;
+    if (Array.isArray(r.content) && r.content[0]?.text) {
+      // {content:[{text:<json>}], isError} envelope shape.
+      body = JSON.parse(r.content[0].text);
+      envelopeError = r.isError === true;
+    } else {
+      // Parsed-body-directly shape: executeTool unwraps the envelope on some
+      // transports (e.g. bun-serve-proxy / opencode), dropping the isError
+      // flag — so the body-level `ok:false` is the failure signal. mission-93:
+      // this unwrapped path is exactly why a role_mismatch rejection fell
+      // through to parse_failed + silent engineer/offline degrade for Steve.
+      body = r;
     }
-    const body = JSON.parse(r.content[0].text);
-    if (body && typeof body.code === "string" && FATAL_CODES.has(body.code)) {
+    const isFailure = envelopeError || body.ok === false;
+    if (isFailure && typeof body.code === "string" && FATAL_CODES.has(body.code)) {
       return { code: body.code, message: String(body.message ?? "") };
     }
   } catch {
@@ -204,6 +216,13 @@ export interface HandshakeResult {
   response: HandshakeResponse | null;
   /** New epoch to persist for the next reconnect's displacement check. */
   epoch: number;
+  /**
+   * True when register_role was REJECTED by a structured fatal error
+   * (FATAL_CODES — e.g. role_mismatch). The caller MUST HALT, not silently
+   * degrade to streaming with a fallback role. mission-93 cutover: that
+   * silent degrade masked a role-change rejection for an hour.
+   */
+  fatal?: boolean;
 }
 
 /**
@@ -301,7 +320,7 @@ export async function performHandshake(
       `[Handshake] FATAL ${fatal.code}: ${fatal.message}`
     );
     if (ctx.onFatalHalt) ctx.onFatalHalt(fatal);
-    return { response: null, epoch: ctx.previousEpoch };
+    return { response: null, epoch: ctx.previousEpoch, fatal: true };
   }
 
   const response = parseHandshakeResponse(result);
