@@ -136,17 +136,20 @@ const ARCHITECT_INFORMATIONAL: ReadonlySet<string> = new Set([
  */
 export function classifyEvent(
   event: string,
-  role: "engineer" | "architect"
+  role: "engineer" | "architect" | "verifier"
 ): EventDisposition {
   if (role === "engineer") {
     if (ENGINEER_ACTIONABLE.has(event)) return "actionable";
     if (ENGINEER_INFORMATIONAL.has(event)) return "informational";
     return "unhandled";
-  } else {
-    if (ARCHITECT_ACTIONABLE.has(event)) return "actionable";
-    if (ARCHITECT_INFORMATIONAL.has(event)) return "informational";
-    return "unhandled";
   }
+  // architect + verifier (mission-93): the verifier's directed-wake surface
+  // ≈ the architect's (thread_message / review_requested / pulse / directed
+  // notifications per verifier-role.md §2.1), so it shares the architect
+  // classification set rather than mis-falling through an engineer path.
+  if (ARCHITECT_ACTIONABLE.has(event)) return "actionable";
+  if (ARCHITECT_INFORMATIONAL.has(event)) return "informational";
+  return "unhandled";
 }
 
 // ── Pulse detection (M-OpenCode-Shim-Sovereign-Dedup, idea-331) ──────
