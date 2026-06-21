@@ -179,6 +179,11 @@ console.log(`[Hub] substrate reconciler settled (${ALL_SCHEMAS.length} SchemaDef
 // WITH W6 (never standalone) per the cutover discipline — the batched-deploy
 // ordering IS the guard (no runtime migration-state check by design).
 substrate.setFieldTranslator((kind, bareKey) => reconciler.getFieldTranslation(kind, bareKey));
+// C3-R4b (piece 1): arm FilterTranslationGapError — a filter/sort on a known
+// envelope-partitioned kind's domain field with NO renameMap entry now fails LOUD
+// at filter-translate, rather than silently mis-pathing the JSONB query (the
+// bug-138/bug-170 silent-filter-miss class). Inert without this wiring (tests/dev).
+substrate.setPartitionedKindCheck((kind) => reconciler.hasTranslations(kind));
 
 // Mission-47 W1-W7 + Mission-49 W8-W9: instantiate StorageProvider-backed
 // repositories. Counter is shared-by-design across all repositories —

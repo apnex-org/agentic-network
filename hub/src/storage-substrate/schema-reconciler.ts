@@ -335,6 +335,16 @@ export class SchemaReconciler {
   }
 
   /**
+   * C3-R4b (piece 1): does this kind carry ANY renameMap translations — i.e. is it
+   * a known envelope-partitioned domain kind? Gates FilterTranslationGapError: a
+   * null translation is a GAP only for a partitioned kind (a non-reserved domain
+   * field the encoder bucketed), not for an unknown/ad-hoc kind.
+   */
+  public hasTranslations(kind: string): boolean {
+    return this.fieldTranslationMap.has(kind);
+  }
+
+  /**
    * mission-90 W5: canonical signature of a SchemaDef's SPEC-relevant fields
    * (kind/version/fields/indexes/indexOwnershipPattern/renameMap — NOT status).
    * Object keys are sorted recursively so the signature is invariant to JSONB
