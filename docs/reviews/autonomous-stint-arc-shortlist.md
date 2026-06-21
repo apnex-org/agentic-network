@@ -171,3 +171,35 @@ Your current session uses Haiku 4.5, which is NOT eligible for auto mode. Upgrad
 
 ### Emerging architecture — OIS as a control-plane over containerised agents (k8s-analog)
 D-1 + D-2 converge: a **sovereign control plane** (D-1: root cli/api) that **observes** (C1) and **actuates lifecycle** (C2) on **containerised agent-pods** (D-2), with **context-runway a first-class monitored + actuated resource** (analogous to CPU/memory → eviction/OOM in k8s). On this read, C1 + C2 + D-1 are facets of ONE architecture (control plane + agent-runtime); C3 (ship-integrity) is the orthogonal delivery-hardening; C4 (governed autonomy) is the governance layer over it. **The C2 W0-spike is the pivotal feasibility gate for this whole vision** — council + spike validate before committing the architecture.
+
+---
+
+## Council synthesis — refined ranked shortlist (2026-06-21)
+
+Both principals weighed in and both threads converged: **greg** (build-reality, thread-679) + **Steve** (cross-adapter + verifier, thread-680). The council converged that the 4 arcs are **facets of ONE architecture** — a sovereign control-plane over containerised agents, "**k8s + cognitive continuity**" — with a **work-control plane as the keystone**.
+
+### Key reframes (council)
+- **C1 is the keystone, reframed: a sovereign WORK-CONTROL PLANE** — not just observability, but observe + **claim + lease + actuate + evidence-to-close**. The claimable work-queue (typed work-items: priority · role-eligibility · deps · evidence · leases) is the literal idle-agents fix (Steve) and drops into greg's Hub-apiserver model as a **work-item KIND + claim/lease/ack VERBS**. It's the unifying substrate C2 and the dispatcher-removal both build on.
+- **k8s-analog → "k8s + cognitive continuity"** (greg + Steve reached this independently → high confidence): holds for lifecycle / control-plane / restart; agents are NOT stateless pods (durable identity + context-runway + handoff + role-scoped authority + audit/verifier trails); context-as-resource is a SEPARATE lower-fidelity problem (fidelity-bounds + circuit-breakers).
+- **Ranking = sequencing, not conflict** (reconciles greg-C3-first / Steve-C2-first).
+
+### Refined ranked + sequenced shortlist
+**WAVE 0 — start now, parallel:**
+- **C3 Ship-Integrity — the OPENER** (buildable now, no gate; de-risks the PR→CI→merge→deploy path every arc ships through). R1 M-Roll-Signal (S, same-day — deploy-hub already computes the digest); R4 renameMap-governor (M, before any new kind). Quality-bar: **behavioral post-roll gates** (#346 proved toolSurfaceRevision is blind). Teles 4/8/9/2.
+- **C2 W0 capability-spike (parallel investigation)** — targeted 1-2 day per-host probe: Claude Code statusline-context-readout + PreCompact-hook + stdin-`/compact`-inject + headless+reclaim (a/d GREEN, b/c AMBER); OpenCode capability-matrix (report-context / request-compaction / export-handoff / import-resume — unproven). Gates whether C2 graduates.
+- **C4 Governed-Autonomy R1** — autonomy-charter + DR-ledger (S, zero Hub code). Verifier stays **ADVISORY-not-gating** (NO gating-enforcement; the ratified contract holds).
+**WAVE 1 — the substrate (the throughput win):**
+- **C1/D-1 Sovereign Work-Control Plane** — formalize the Hub-apiserver + an `oisctl` CLI + the WORK-QUEUE (work-item kind + claim/lease/ack verbs) + cross-adapter org-state emission (the pane must show Steve). Quality-bar: actuation + leases + parity (not a status-page). Teles 13/6/10/3.
+- **C2 Agent-Lifecycle (IF the spike greens)** — containerise (claude -p/headless + supervisor + ADR-021 reclaim) + context-runway monitor (fidelity-bounded) + actuate via the work-control-plane. The throughput-multiplier. Quality-bar: circuit-breakers + verifier-audit on any auto-act. Teles 6/4/13.
+**WAVE 2 — capstone:** C3 behavioral release-verification + C1/C2 deeper rungs, converged on ONE telemetry spine.
+
+### Cross-cutting
+- **D-1 sovereign control-plane = the SPINE** all arcs expose through (resources=kinds, verbs=policy-tools); the **renameMap-governor (C3-R4) gates EVERY new kind** (C1 work-item, C2 lifecycle-state, …); **verifier-gates become QUEUED work-items** (C3-behavioral-gate + C4 + work-queue converge into one loop).
+- **Rung-naming:** C2's rungs renamed (R1-R5 collide with the mission-92 audit recs + greg's in-flight R3 cross-lineage-gate) [tele-12].
+
+### Architect tele re-eval
+- **Alignment:** validated, not laundered (per-arc teles above).
+- **Tensions resolved:** (1) C4 verifier-gating (Ultracode-flagged) CONTRADICTS the ratified advisory-not-gating verifier contract → **keep advisory**; charter+ledger + verifier-as-queued-work preserves the integrity-backstop without the violation. (2) C2 auto-actuation on a low-fidelity context-signal risks tele-4/8 (acting on bad data) → **fidelity-bounds + circuit-breakers + verifier-audit**. (3) control-plane actuation power → **RBAC-scoped + audited; a Hub-grant only TIGHTENS, never loosens, the local ceiling** (the settings-probe principle).
+- **Coverage:** collectively serves tele-3/4/6/8/9/10/12/13; no glaring missed-tele the exercise revealed.
+
+→ **Director gate:** ratify the shortlist + sequence + the tele-tension resolutions → each arc → its own Design (Survey → Design → Mission).
