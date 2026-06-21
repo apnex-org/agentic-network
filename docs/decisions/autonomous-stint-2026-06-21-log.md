@@ -113,4 +113,15 @@ Cron heartbeat (~15 min, session-scoped) + event-driven wakes from peer response
 - **Remaining tail:** bug-164 (shim-side, Director-restart-gated), bug-171 (R3-G backpressure, queued), bug-172 (write-scope-determinism). R3 harness (greg building Leg-A) is the durable systemic gate.
 - **Disposition:** `lily-executed`.
 
-*(Subsequent decisions appended as DR-012, … during the stint.)*
+### DR-012 — Autonomous stint CLOSE-OUT (Director returned) · `ratification-pending`
+- **Context:** Director returned 2026-06-21 ~14:52 and paused autonomous mode. Heartbeat cron cancelled; **temporary Director authority reverted to the Director.** No background tasks running. This entry freezes the stint's decision record.
+- **Tally:** DR-001 (framework) … DR-011 (milestone) + this close-out. **11 bugs closed** (134/158/57/123/125 stale; 166/167/169/165 + 168/170 verifier-verified). **2 prod Hub deploys** (DR-002 policy — #343 verifier-cutover, #346 Hub-tail; both verifier-gated + Steve-verified live). **1 live CD outage diagnosed + recovered** (bug-107 watchtower token race, via the sanctioned `refresh-docker-token.service` — no hard-line breach). **Verifier-first-class CORE arc COMPLETE + independently verified.** C1 mission designed (idea-336). R3 keystone → contract v0.2 → construction-scope. **NO Ultracode/Workflow runs — lily or greg — confirmed (artifact-verified).**
+- **Hard lines HELD:** no Tele edits; no irreversible/destructive prod ops (explicitly refused hand-recreating the Hub container); no constitutional-ledger merges (#342 held).
+- **Awaiting Director (the "plan" step):** ratify DR-001..011; disposition the director-deferred items — #342 (calibration-ledger merge) · partition-renameMap calibration candidate · missioncraft-22 migration · bug-107 proper fix · the open-PR batch (#344/#345/scope-PR/CDACC set) · the restart-gated shim batch (R1/R2/R4 → bug-161/164).
+- **Disposition:** stint concluded; record frozen. Ratification + deferred-item dispositions pending Director (this review session).
+
+---
+
+## Stint close-out ratification (Director)
+
+*(Director ratification of DR-001..012 + deferred-item dispositions recorded here during the 2026-06-21 review session.)*
