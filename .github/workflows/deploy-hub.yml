@@ -55,23 +55,27 @@ jobs:
       # behind the Director governance-batch. A timeout means the image built
       # but did NOT roll: suspect a watchtower stall (bug-107 token-race).
       #
-      # Tunable repo vars (no code change to adjust):
-      #   vars.HUB_HEALTH_URL          — public /health URL (REQUIRED to arm;
-      #                                  warn-skips if unset so this PR's own
-      #                                  deploy isn't blocked before it lands)
+      # Self-sufficient: HEALTH_URL DEFAULTS to the known public prod endpoint, so
+      # the gate fires with ZERO manual setup — no "forgot to arm the var"
+      # silent-skip failure mode (on-C3-thesis). All knobs are optional overrides:
+      #   vars.HUB_HEALTH_URL          — public /health URL override (default: the
+      #                                  prod Cloud Run endpoint below; env-portability)
       #   vars.ROLL_CONFIRM_TIMEOUT_S  — overall budget  (default 600)
       #   vars.ROLL_CONFIRM_POLL_S     — poll cadence    (default 15)
       - name: Confirm roll (poll /health gitSha == github.sha)
         env:
-          HEALTH_URL: ${{ vars.HUB_HEALTH_URL }}
+          HEALTH_URL: ${{ vars.HUB_HEALTH_URL || 'https://hub-api-5muxctm3ta-ts.a.run.app/health' }}
           EXPECTED_SHA: ${{ github.sha }}
           TIMEOUT_S: ${{ vars.ROLL_CONFIRM_TIMEOUT_S || '600' }}
           POLL_S: ${{ vars.ROLL_CONFIRM_POLL_S || '15' }}
           BUILT_DIGEST: ${{ steps.digest.outputs.built_digest }}
         run: |
           set -uo pipefail
+          # Defensive escape-hatch only: HEALTH_URL defaults to the prod endpoint
+          # above, so this fires solely if an operator sets the override to empty
+          # to intentionally disable the gate.
           if [ -z "${HEALTH_URL}" ]; then
-            echo "::warning title=roll-confirm skipped::vars.HUB_HEALTH_URL is not set — cannot confirm the prod roll. Set it (e.g. https://hub-api-<hash>.a.run.app/health) to arm the C3-R1 deploy-truth gate."
+            echo "::warning title=roll-confirm disabled::HUB_HEALTH_URL override is empty — roll-confirm gate intentionally skipped."
             exit 0
           fi
           echo "Roll-confirm: polling ${HEALTH_URL} for gitSha == ${EXPECTED_SHA}"
