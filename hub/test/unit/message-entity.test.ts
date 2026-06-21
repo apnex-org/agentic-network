@@ -290,11 +290,13 @@ describe("Path helpers", () => {
 });
 
 describe("Constant arrays — completeness check", () => {
-  it("MESSAGE_AUTHOR_ROLES = [architect, engineer, director, system]", () => {
+  it("MESSAGE_AUTHOR_ROLES = [architect, engineer, director, verifier, system]", () => {
+    // mission-93: verifier added so it can author verification-thread replies (§2.3).
     expect(MESSAGE_AUTHOR_ROLES).toEqual([
       "architect",
       "engineer",
       "director",
+      "verifier",
       "system",
     ]);
   });

@@ -499,7 +499,7 @@ export function registerProposalPolicy(router: PolicyRouter): void {
 
   router.register(
     "get_proposal",
-    "[Engineer] Check the Architect's decision on a specific proposal. Returns the proposal status, decision, and feedback.",
+    "[Engineer|Verifier] Check the decision on a specific proposal (by id). Returns the proposal status, decision, and feedback. (mission-93 bug-167: verifier broad/audit read per verifier-role.md §2.2.)",
     {
       proposalId: z.string().describe("The proposal ID to check"),
     },
