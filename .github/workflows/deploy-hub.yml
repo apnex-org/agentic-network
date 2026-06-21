@@ -37,7 +37,62 @@ jobs:
         run: ./scripts/local/build-hub.sh
 
       - name: Log image digest
+        id: digest
         run: |
-          gcloud artifacts docker images describe \
+          BUILT_DIGEST=$(gcloud artifacts docker images describe \
             australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/hub:latest \
-            --format='value(image_summary.digest)'
+            --format='value(image_summary.digest)')
+          echo "built_digest=$BUILT_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Built image digest: $BUILT_DIGEST"
+
+      # C3-R1 M-Roll-Signal (idea-340) — same-day deploy-truth bank.
+      # The image is built+pushed above; watchtower (--interval 300) on the
+      # prod VM auto-pulls + rolls it. This step is the OBSERVER: it runs on
+      # the GitHub runner (NOT the Hub) so it survives the restart, and polls
+      # the public /health (Cloud Run nginx ingress -> VM Hub) until the
+      # rolled image reports gitSha == this commit. It ALARMS LOUD on timeout
+      # (red X + notification) and does NOT auto-revert — auto-rollback is R3,
+      # behind the Director governance-batch. A timeout means the image built
+      # but did NOT roll: suspect a watchtower stall (bug-107 token-race).
+      #
+      # Self-sufficient: HEALTH_URL DEFAULTS to the known public prod endpoint, so
+      # the gate fires with ZERO manual setup — no "forgot to arm the var"
+      # silent-skip failure mode (on-C3-thesis). All knobs are optional overrides:
+      #   vars.HUB_HEALTH_URL          — public /health URL override (default: the
+      #                                  prod Cloud Run endpoint below; env-portability)
+      #   vars.ROLL_CONFIRM_TIMEOUT_S  — overall budget  (default 600)
+      #   vars.ROLL_CONFIRM_POLL_S     — poll cadence    (default 15)
+      - name: Confirm roll (poll /health gitSha == github.sha)
+        env:
+          HEALTH_URL: ${{ vars.HUB_HEALTH_URL || 'https://hub-api-5muxctm3ta-ts.a.run.app/health' }}
+          EXPECTED_SHA: ${{ github.sha }}
+          TIMEOUT_S: ${{ vars.ROLL_CONFIRM_TIMEOUT_S || '600' }}
+          POLL_S: ${{ vars.ROLL_CONFIRM_POLL_S || '15' }}
+          BUILT_DIGEST: ${{ steps.digest.outputs.built_digest }}
+        run: |
+          set -uo pipefail
+          # Defensive escape-hatch only: HEALTH_URL defaults to the prod endpoint
+          # above, so this fires solely if an operator sets the override to empty
+          # to intentionally disable the gate.
+          if [ -z "${HEALTH_URL}" ]; then
+            echo "::warning title=roll-confirm disabled::HUB_HEALTH_URL override is empty — roll-confirm gate intentionally skipped."
+            exit 0
+          fi
+          echo "Roll-confirm: polling ${HEALTH_URL} for gitSha == ${EXPECTED_SHA}"
+          echo "  budget ${TIMEOUT_S}s, every ${POLL_S}s; built digest ${BUILT_DIGEST:-<unknown>}"
+          deadline=$(( SECONDS + TIMEOUT_S ))
+          last="<none>"
+          while [ "${SECONDS}" -lt "${deadline}" ]; do
+            body=$(curl -fsS -m 10 "${HEALTH_URL}" 2>/dev/null || true)
+            got=$(printf '%s' "${body}" | jq -r '.gitSha // ""' 2>/dev/null || true)
+            [ -n "${got}" ] && last="${got}"
+            if [ "${got}" = "${EXPECTED_SHA}" ]; then
+              built=$(printf '%s' "${body}" | jq -r '.builtAt // ""' 2>/dev/null || true)
+              echo "Roll confirmed: /health gitSha == ${EXPECTED_SHA} (builtAt=${built}) after ~${SECONDS}s"
+              exit 0
+            fi
+            echo "  ...not yet rolled (gitSha=${got:-<unreachable>}); sleeping ${POLL_S}s"
+            sleep "${POLL_S}"
+          done
+          echo "::error title=roll-confirm FAILED::prod /health did not report gitSha == ${EXPECTED_SHA} within ${TIMEOUT_S}s (last seen: ${last}). Image built+pushed (digest ${BUILT_DIGEST:-<unknown>}) but did NOT roll — suspect a watchtower stall (bug-107 token-race). No auto-revert (R1 is alarm-only)."
+          exit 1
