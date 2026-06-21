@@ -79,4 +79,10 @@ Cron heartbeat (~15 min, session-scoped) + event-driven wakes from peer response
 - **Hard line:** merging the constitutional ledgers (teles, calibrations) without strong cause = director-deferred (CLAUDE.md: calibration filings/IDs are Director-direct or architect-Director-bilateral). greg independently flagged a courtesy bilateral-confirm-when-back — aligned.
 - **Disposition:** MERGE #339 (audit) + #340 (R3 spec) + #341 (1b design) now (ratified, non-constitutional, greg-approved). **HOLD #342** — PR stays ready + approved; Director confirms the #88 ID + content on return (bilateral), then merge. `director-deferred`.
 
-*(Subsequent decisions appended as DR-007, … during the stint.)*
+### DR-007 — Design M-Task-Dispatch-Repair (C1) as a queued mission · `lily-executed`
+- **Context:** bug-triage DR-005 named C1 (bug-146 root + bug-159 + bug-94) the top structural-leverage cluster. Designed as M-Task-Dispatch-Repair.
+- **Tele:** tele-6/13/4/3/2 (frictionless dispatch / Director-amplification / no-silent-failure / identity≠routing / FSM spec==reality).
+- **Decision:** fix-shape = separate identity (login-label/provenance) from claim-routing — first-class assignee on create_task (label the EXECUTOR not the caller); stop using creator-login as a claim-selector; optional global-pool fallback + update_task re-dispatch. **Survey SKIPPED** (narrow fix space + confirmed root; recorded here in lieu of a Survey per the architect-Director-bilateral norm).
+- **Disposition:** `lily-executed` (design) — idea-336 + docs/designs/m-task-dispatch-repair-design.md (PR #344). Mission **chartering deferred** until engineer bandwidth frees (after mission-93 hardening + mission-92 shim batch) — NOT creating a competing active mission now.
+
+*(Subsequent decisions appended as DR-008, … during the stint.)*
