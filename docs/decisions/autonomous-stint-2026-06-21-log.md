@@ -51,4 +51,16 @@ Cron heartbeat (~15 min, session-scoped) + event-driven wakes from peer response
 
 ---
 
-*(Subsequent decisions appended as DR-003, DR-004, … during the stint.)*
+### DR-003 — Deploy verifier-cutover-fixes (mission-93 conformance cluster) · `lily-executed`
+- **Context:** greg delivered the verifier-conformance cluster @ `882c113` on agent-greg/verifier-cutover-fixes (bug-166 turn-holder, bug-167 audit-reads, bug-169 attribution, bug-170 discovery, H20 + role-change guard). 171 LOC / 7 src + 2 test files. Suite 1946 green, tsc clean. First prod deploy under the grant.
+- **Tele-triangulation:** per DR-002 — TESTED (1946 green + new e2e-verifier-rbac/verifier-role-rbac), REVERSIBLE (watchtower redeploy), VERIFIER-GATED (Steve verifies post-roll). tele-6 (unblocks verifier participation), tele-8/9 (validated deployment).
+- **Review:** architect-reviewed the diff — verifier added to MESSAGE_AUTHOR_ROLES + ThreadAuthor; turn-holder + recipient-participant seeding + author-attribution all preserve verifier WITHOUT altering the engineer/architect paths; scoped + commented. Clean, no regression surface.
+- **Disposition:** `lily-executed` — PR opened + architect-approved → merge to main → deploy-hub.yml → watchtower roll → verify toolSurfaceRevision + Steve post-roll verification. (Roll result recorded on completion.)
+
+### DR-004 — Verifier get_task scope (not a gap) · `lily-executed`
+- **Context:** greg asked whether get_task being denied to the verifier is a gap (bug-167 sub-item).
+- **Tele-triangulation:** tele-3 (clean role-semantics) — get_task is parameterless engineer **work-pickup** ("give me my next directive"), a distinct semantic from audit read-by-id. The verifier's broad-READ is satisfied by list_tasks ([Any]) + the read-by-id surfaces (get_proposal/get_clarification, now [Engineer|Verifier]).
+- **Options:** (a) widen get_task to [Verifier] — conflates work-pickup with audit-read; (b) new read-task-by-id primitive — YAGNI; (c) keep get_task [Engineer]; verifier reads tasks via list_tasks.
+- **Disposition:** **(c)**, `lily-executed`. get_task denial for the verifier is CORRECT, not a gap — bug-167's get_task sub-item closed as not-a-gap. Revisit (b) only if a real verifier task-by-id need arises.
+
+*(Subsequent decisions appended as DR-005, … during the stint.)*
