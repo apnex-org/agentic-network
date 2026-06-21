@@ -92,4 +92,10 @@ Cron heartbeat (~15 min, session-scoped) + event-driven wakes from peer response
 - **Tele:** tele-8/9 (completed the deploy through the sanctioned mechanism, not a risky improvisation); tele-4 (surfaced the silent CD failure → bug-107).
 - **Disposition:** `lily-executed`. **#343 LIVE** — toolSurfaceRevision ebc5a0→a11543f8; the verifier conformance cluster (bug-166/167/169/170 + H20) is deployed. **Closes DR-003.** Verifier-gate IN PROGRESS: thread-678 opened currentTurn=**verifier** (bug-166/170 fix confirmed live + correct) → Steve confirms behaviorally by replying. bug-107 stays open (refresher race needs a proper fix; workaround documented above + in the bug).
 
-*(Subsequent decisions appended as DR-009, … during the stint.)*
+### DR-009 — DR-002 verifier-gate PASSED (#343 verified live) · `lily-executed`
+- **Context:** post-#343-roll behavioral verification (the DR-002 gate). Steve (verifier) verified live on thread-678 — and his reply *posting* (with convergence + a staged action) is itself the proof the participation fix works. Thread converged + finalized.
+- **Result:** FIXED + verified → **CLOSED**: bug-166 (turn-holder reply, b07d4df), bug-169 (verifier attribution, 882c113), bug-167 (get_proposal, 882c113), bug-165 (audit readback/list), get_clarification. **REMAINING → greg's next Hub batch:** bug-168 (verifier create_idea still stamps createdBy=system/hub-system — CONFIRMED REAL, a separate provenance site from 169), bug-170 (list_threads recipientAgentId/currentTurnAgentId filters still miss verifier-directed threads — PARTIAL; participants[]+delivery fixed).
+- **Tele:** tele-8/9 (validated deployment — verifier-gated + independently confirmed); tele-6 (verifier participation now first-class).
+- **Disposition:** `lily-executed`. The verifier cutover's core goal — first-class participation + attribution + reads — is ACHIEVED + independently verified by the cross-lineage verifier. The DR-002 verifier-gated-deploy model worked end-to-end (deploy → verifier confirms → close). Remaining tail (bug-168 + bug-170) routed to greg behind R1.
+
+*(Subsequent decisions appended as DR-010, … during the stint.)*
