@@ -145,6 +145,11 @@ describe("E2E verifier thread participation (mission-93 — thread-674 turn-role
     const t = await orch.stores.thread.getThread(threadId);
     expect(t?.currentTurn).toBe("verifier");
     expect(t?.currentTurnAgentId).toBe(vAgent!.id);
+    // bug-170: the addressed verifier is seeded as a PARTICIPANT (drives the
+    // recipient's list_threads discovery — it could not FIND its threads).
+    expect((t?.participants ?? []).some(
+      (p: { role: string; agentId: string | null }) => p.agentId === vAgent!.id && p.role === "verifier",
+    )).toBe(true);
 
     // The verifier replies — must SUCCEED (turn-check: currentTurn===author
     // AND currentTurnAgentId===authorAgentId both pass for the verifier).

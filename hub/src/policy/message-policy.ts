@@ -183,7 +183,9 @@ async function createMessage(
       ? "engineer"
       : callerRole === "director"
         ? "director"
-        : "architect"; // architect is the default fallback for system-callers
+        : callerRole === "verifier"
+          ? "verifier" // mission-93 bug-169: verifier's notes/messages must attribute to verifier, not silently architect
+          : "architect"; // architect is the default fallback for system-callers
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(
     ctx.sessionId,
   ).catch(() => null);
@@ -402,7 +404,9 @@ async function resolveCallerAgentId(ctx: IPolicyContext): Promise<string> {
       ? "engineer"
       : callerRole === "director"
         ? "director"
-        : "architect";
+        : callerRole === "verifier"
+          ? "verifier" // mission-93 bug-169: verifier attribution
+          : "architect";
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(
     ctx.sessionId,
   ).catch(() => null);
