@@ -159,7 +159,10 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
   }
 
   const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
-  const author: ThreadAuthor = callerRole === "engineer" ? "engineer" : "architect";
+  // mission-93: preserve verifier (was coerced to architect) so a verifier
+  // is a first-class thread turn-holder — the turn-check is currentTurn===author.
+  const author: ThreadAuthor =
+    callerRole === "engineer" ? "engineer" : callerRole === "verifier" ? "verifier" : "architect";
   // Mission-19: propagate caller's Agent labels onto the new Thread.
   const labels = await callerLabels(ctx);
   // Mission-21 Phase 1: resolve the caller's agentId so openThread can
@@ -173,7 +176,11 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
   let recipientRole: ThreadAuthor | null = null;
   if (recipientAgentId) {
     const recipientAgent = await (ctx.stores.engineerRegistry as any).getAgent?.(recipientAgentId).catch(() => null);
-    if (recipientAgent && (recipientAgent.role === "architect" || recipientAgent.role === "engineer")) {
+    // mission-93: verifier recipient must seed currentTurn=verifier so a
+    // directed verification thread is the verifier's turn (was excluded →
+    // currentTurn fell back to the engineer/architect-counterpart formula →
+    // the verifier could never reply: bug from thread-674 live test).
+    if (recipientAgent && (recipientAgent.role === "architect" || recipientAgent.role === "engineer" || recipientAgent.role === "verifier")) {
       recipientRole = recipientAgent.role;
     }
   }
@@ -195,8 +202,8 @@ async function createThread(args: Record<string, unknown>, ctx: IPolicyContext):
   // Same idempotency + non-fatal failure semantics as the reply shim
   // (see create_thread_reply for full rationale).
   try {
-    const openAuthorRole: "engineer" | "architect" =
-      author === "engineer" ? "engineer" : "architect";
+    // mission-93: preserve verifier (H20 added it to MESSAGE_AUTHOR_ROLES).
+    const openAuthorRole: ThreadAuthor = author;
     const openAuthorAgentId = authorAgentId ?? `anonymous-${author}`;
     await ctx.stores.message.createMessage({
       kind: "reply",
@@ -351,7 +358,11 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   const sourceQueueItemId = (args.sourceQueueItemId as string | undefined) ?? null;
 
   const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
-  const author: ThreadAuthor = callerRole === "engineer" ? "engineer" : "architect";
+  // mission-93: preserve verifier so the turn-check (currentTurn===author)
+  // admits a verifier replying to a directed verification thread (bug from
+  // thread-674: verifier coerced to architect → currentTurn=verifier mismatch).
+  const author: ThreadAuthor =
+    callerRole === "engineer" ? "engineer" : callerRole === "verifier" ? "verifier" : "architect";
   // Mission-21 Phase 1: resolve the caller's agentId so the store can
   // attach it to the ThreadMessage and upsert into participants[].
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(ctx.sessionId).catch(() => null);
@@ -581,8 +592,9 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
   // (audit failures don't block dispatch; here, shadow-write failures
   // don't block the reply response).
   try {
-    const replyAuthorRole: "engineer" | "architect" =
-      author === "engineer" ? "engineer" : "architect";
+    // mission-93: preserve verifier (H20 added it to MESSAGE_AUTHOR_ROLES) so a
+    // verifier's verdict reply attributes to the verifier, not silently architect.
+    const replyAuthorRole: ThreadAuthor = author;
     const replyAuthorAgentId = authorAgentId ?? `anonymous-${author}`;
     const sourceSeq = thread.roundCount;
     const sourceId = `${threadId}/${sourceSeq}`;

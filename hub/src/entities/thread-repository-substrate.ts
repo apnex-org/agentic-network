@@ -213,12 +213,27 @@ export class ThreadRepositorySubstrate implements IThreadStore {
       correlationId: correlationId || null,
       convergenceActions: [],
       summary: "",
-      participants: [{
-        role: author,
-        agentId: authorAgentId,
-        joinedAt: now,
-        lastActiveAt: now,
-      }],
+      participants: [
+        {
+          role: author,
+          agentId: authorAgentId,
+          joinedAt: now,
+          lastActiveAt: now,
+        },
+        // mission-93 bug-170: seed the addressed recipient as a participant on
+        // a directed thread so it surfaces in the recipient's discovery
+        // (participants drives list_threads "my threads") — the verifier could
+        // not FIND its directed verification threads. Only when the role is
+        // resolved (thread-policy resolves recipientRole for eng/arch/verifier).
+        ...(recipientAgentId && recipientRole
+          ? [{
+              role: recipientRole,
+              agentId: recipientAgentId,
+              joinedAt: now,
+              lastActiveAt: now,
+            }]
+          : []),
+      ],
       recipientAgentId: recipientAgentId ?? null,
       messages: [firstMessage],  // EMBEDDED — no separate per-message createOnly
       labels: labels || {},

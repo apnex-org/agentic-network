@@ -598,7 +598,10 @@ export interface ThreadContext {
 }
 
 export type ThreadIntent = "decision_needed" | "agreement_pending" | "director_input" | "implementation_ready" | null;
-export type ThreadAuthor = "engineer" | "architect";
+// mission-93: verifier is a thread turn-holder so it can reply to directed
+// verification threads (the turn-check is currentTurn===author; a verifier
+// recipient must therefore be a valid currentTurn role). See verifier-role.md §2.3.
+export type ThreadAuthor = "engineer" | "architect" | "verifier";
 export type SemanticIntent =
   | "seek_rigorous_critique"
   | "seek_approval"
