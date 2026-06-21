@@ -3025,6 +3025,48 @@ calibrations:
       - tele-2
       - tele-5
 
+  - id: 88
+    class: methodology
+    title: "Cross-lineage cutover without a runtime acceptance gate — same-lineage suite-green is not a completeness signal for a cross-lineage deliverable (mission-92)"
+    origin: mission-92
+    surfaced_at: mission-92 dedup optimality audit 2026-06-21 (PR #339) + thread-676 (Steve verifier cross-check)
+    status: closed-folded
+    closure_mechanism: |
+      mission-92 graded an OpenCode-shim deliverable on a code-tidiness metric
+      (line-count / delegation-to-core) while the real risk surface for a bundle a
+      CROSS-LINEAGE peer (Steve, GPT-5.5/OpenCode) runs is behavioural-contract
+      fidelity against a real non-Claude runtime. The test process was confined to the
+      adapter subsystem + a SAME-LINEAGE harness, so behavioural-contract defects
+      against the consumer's real runtime stayed invisible until the consumer cut over
+      live. Evidence: bug-161 (notification queue-gate dead-on-arrival ~2 months in
+      prod — object-vs-string SessionStatus compare) + the verifier-cutover cluster
+      (bug-164 poll-backstop role-drift; bug-165 verifier finding-channel write-only;
+      Rung-0 verifier thread-reply; the assertIdentity role-change boundary) — all on
+      the behavioural/cross-lineage axis a green same-lineage suite cannot see
+      ("172/172" was the Claude suite; the OpenCode runtime was never exercised).
+      Disposition: any adapter-only mission shipping a bundle a cross-lineage peer
+      consumes REQUIRES a system-level (hub + adapter + real-runtime) acceptance gate
+      proving the behavioural contract BEFORE the consumer cuts over. Folded into the
+      R3 Cross-Lineage Runtime Acceptance Gate contract
+      (docs/specs/cross-lineage-runtime-acceptance-gate.md, PR #340; v1 = verifier as
+      live cross-lineage leg). Durable harness (OpenCode/Bun-in-CI) tracked as idea-333
+      — the follow-on that flips the pattern from contract-defined to
+      structurally-enforced.
+    closure_pr: 340
+    pattern_membership:
+      - cross-lineage-cutover-without-runtime-acceptance-gate
+    cross_refs:
+      - docs/audits/mission-92-opencode-shim-dedup-audit.md
+      - docs/specs/cross-lineage-runtime-acceptance-gate.md
+      - idea-333
+      - bug-161
+      - bug-164
+      - bug-165
+    tele_alignment:
+      - tele-8
+      - tele-9
+      - tele-4
+
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
 #   title                       string; human-readable pattern name
@@ -3173,3 +3215,39 @@ patterns:
     surfaced_by_calibrations:
       - 42
     methodology_doc_subsection: "docs/methodology/multi-agent-pr-workflow.md#post-event-narration-aest-utc-date-conflation-discipline"
+
+  - id: cross-lineage-cutover-without-runtime-acceptance-gate
+    title: "Cross-lineage cutover without a runtime acceptance gate"
+    origin: mission-92
+    description: |
+      Architectural-pathology pattern. An adapter/shim mission optimised for STRUCTURAL
+      metrics (line-count, delegation-to-core) ships a distribution bundle that a
+      CROSS-LINEAGE consumer runs (different model + harness — e.g. the
+      @apnex/opencode-hub-plugin bundle a GPT-5.5/OpenCode peer consumes), but the
+      mission's test process is confined to its own subsystem + a SAME-LINEAGE harness.
+      Behavioural-contract defects against the consumer's real runtime — and the
+      cross-membrane interactions the consumer triggers — stay invisible until the
+      consumer cuts over live. A green same-lineage suite is NOT a completeness signal
+      for a cross-lineage deliverable.
+
+      Diagnostic signature:
+      1. The deliverable is a bundle/artifact a cross-lineage peer (other model/harness)
+         runs, not just the authoring lineage.
+      2. Success was graded on a structural/code metric (line-count, delegation,
+         "N/N tests green") rather than behavioural-contract fidelity against the
+         consumer's real runtime.
+      3. The passing suite is the AUTHORING lineage's (here: the Claude suite); the
+         consumer's runtime (OpenCode/Bun) is exercised by no test.
+      4. Defects surface only at live cutover (here: bug-161 dead queue-gate; the
+         verifier participation/identity cluster — bug-164/bug-165 + thread-reply +
+         the role-change boundary).
+
+      Forward-discipline: any adapter-only mission shipping a bundle a cross-lineage
+      peer consumes REQUIRES a system-level (hub + adapter + real-runtime) acceptance
+      gate proving the handshake / surfacing / participation / read invariants against
+      the consumer's real runtime BEFORE the consumer cuts over (the R3 Cross-Lineage
+      Runtime Acceptance Gate). Same-lineage suite-green gates regressions; it does not
+      satisfy this gate.
+    surfaced_by_calibrations:
+      - 88
+    methodology_doc_subsection: "docs/specs/cross-lineage-runtime-acceptance-gate.md"
