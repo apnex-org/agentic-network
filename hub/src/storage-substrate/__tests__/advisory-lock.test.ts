@@ -346,24 +346,34 @@ describe("withAdvisoryLock — postgres substrate (real pg_advisory_lock)", () =
 
   it("parallelizes calls across distinct (class, key) — no cross-class serialization", async () => {
     if (!substrate) throw new Error("substrate not initialized");
+    // De-flake: the original used 100ms sleeps with a `< 200` bound. The bound
+    // equals the 2-way-serialized floor (2×100), so the only headroom was the
+    // per-call lock overhead — and under full-suite concurrent-testcontainer load
+    // that overhead (~100ms for 3 simultaneous pg advisory-lock round-trips)
+    // closed the margin to exactly 200 → "expected 200 to be less than 200".
+    // Widening the per-call sleep makes the fixed overhead small relative to the
+    // parallel-vs-serial gap: parallel ≈ SLEEP_MS (+overhead, ~100ms); the bound
+    // is 2×SLEEP_MS, so it still catches even 2-way serialization while leaving
+    // ~SLEEP_MS of load headroom above the parallel floor.
+    const SLEEP_MS = 300;
     const startedAt = Date.now();
     const callA = withAdvisoryLock(substrate, LOCK_CLASS.assertIdentity, "fp-pg-parA", async () => {
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, SLEEP_MS));
       return "A";
     });
     const callB = withAdvisoryLock(substrate, LOCK_CLASS.Counter, "fp-pg-parA", async () => {
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, SLEEP_MS));
       return "B";
     });
     const callC = withAdvisoryLock(substrate, LOCK_CLASS.assertIdentity, "fp-pg-parC", async () => {
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, SLEEP_MS));
       return "C";
     });
     const results = await Promise.all([callA, callB, callC]);
     const elapsed = Date.now() - startedAt;
     expect(results).toEqual(["A", "B", "C"]);
-    // All three run in parallel; max ~100ms, not 300ms
-    expect(elapsed).toBeLessThan(200);
+    // Parallel ≈ SLEEP_MS (+overhead); 2-way serial = 2×SLEEP_MS, full serial = 3×.
+    expect(elapsed).toBeLessThan(2 * SLEEP_MS);
   }, 30_000);
 
   it("releases pg session-lock on fn-throw (try/finally discipline; B can acquire after A throws)", async () => {
