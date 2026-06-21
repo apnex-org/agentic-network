@@ -98,4 +98,19 @@ Cron heartbeat (~15 min, session-scoped) + event-driven wakes from peer response
 - **Tele:** tele-8/9 (validated deployment — verifier-gated + independently confirmed); tele-6 (verifier participation now first-class).
 - **Disposition:** `lily-executed`. The verifier cutover's core goal — first-class participation + attribution + reads — is ACHIEVED + independently verified by the cross-lineage verifier. The DR-002 verifier-gated-deploy model worked end-to-end (deploy → verifier confirms → close). Remaining tail (bug-168 + bug-170) routed to greg behind R1.
 
-*(Subsequent decisions appended as DR-010, … during the stint.)*
+### DR-010 — Verifier integrity-audit of the architect's autonomous bug-closes · `lily-executed`
+- **Context:** the verifier (Steve) independently audited the architect's autonomous stale-bug closes (audit-3875) — the integrity check on the architect-with-temporary-Director-authority.
+- **Outcome:** bug-134 VERIFIED live; bug-123/125 SUPPORTED; **bug-158 architect-RE-CONFIRMED clean** (list_missions({status:active}) returns 92/93 envelope-decoded — the clean call Steve's client couldn't make); bug-57 stays resolved (empirically dispatch works) + a formal architect→engineer dispatch→drain regression fixture folded into C1; **NO reopens**. bug-171 (transport fragility) CONFIRMED RECURRING → R3-G.
+- **Tele:** tele-8/9 — the verifier integrity-check on autonomous authority is the safety mechanism that makes the stint sound.
+- **Disposition:** `lily-executed`. The backstop functioned — flagged 2 thin-evidence closes (158/57), both held. The autonomous-stint verifier-as-integrity-loop is proven.
+
+### DR-011 — Hub-tail #346 deployed + verified; verifier-first-class CORE arc COMPLETE · `lily-executed`
+- **Context:** greg's bug-168/170 Hub-tail deployed via DR-002 (2nd autonomous deploy). His verifier-cutover-fixes branch had forked pre-#339/340/341, so a direct merge would have DELETED those docs → I cherry-picked 3eef8d7 onto a fresh branch off main (#346, net = the 7 bug-168/170 files only).
+- **Deploy:** #346 merged 04:19 → build → the deploy-roll-script **proactively triggered refresh-docker-token.service (pre-empting bug-107)** → watchtower rolled 04:25:22 (image 5a424eda; container-restart + Updated=1). **LESSON: toolSurfaceRevision reflects only tool-SURFACE changes — for internal-only deploys it does NOT change; use container-restart/Updated=1 as the roll-signal.**
+- **Verification:** Steve re-verified live (audit-3886) — bug-168 PASS (idea-339 createdBy.role=verifier), bug-170 PASS (list_threads finds 3 directed threads via both filters). **bug-168 + bug-170 CLOSED.**
+- **MILESTONE:** the verifier-first-class CORE arc is COMPLETE + independently verified — participation (bug-166), attribution (169/168), discovery (170), reads (167), audit-readback (165), deny-surface (security) all fixed + live. The full loop executed end-to-end autonomously: verifier sweep → architect contract → engineer fixes → verifier re-verify.
+- **Tele:** tele-6 (verifier participation first-class); tele-8/9 (verifier-gated validated deployment).
+- **Remaining tail:** bug-164 (shim-side, Director-restart-gated), bug-171 (R3-G backpressure, queued), bug-172 (write-scope-determinism). R3 harness (greg building Leg-A) is the durable systemic gate.
+- **Disposition:** `lily-executed`.
+
+*(Subsequent decisions appended as DR-012, … during the stint.)*
