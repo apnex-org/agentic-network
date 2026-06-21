@@ -63,3 +63,44 @@ describe("verifier role — real register_role handshake + RBAC (mission-93, #33
     expect(JSON.parse(denied.content[0].text).error).toMatch(/architect/);
   });
 });
+
+describe("verifier cutover — role-CHANGE boundary on an existing agent (mission-93 cutover incident regression guard)", () => {
+  // The live cutover (2026-06-20) failed because Steve's agent record persisted
+  // role=architect while the cutover registered role=verifier. assertIdentity's
+  // role-immutability "hard security boundary" (agent-repository-substrate.ts
+  // :489-496) rejected the CHANGE → role_mismatch → the agent never came online
+  // as verifier. A fresh-register-only test passes while this real role-change
+  // fails — that gap is exactly what masked the bug for an hour. This guards it:
+  // we LOCK IN that an unsanctioned role change via re-register is rejected
+  // (not silently accepted, not silently degraded). When the durable sanctioned
+  // role-change path (1b) lands, add a sibling test that it ALLOWS the change.
+  const HANDSHAKE = {
+    clientMetadata: { clientName: "test", clientVersion: "0.0.0", proxyName: "@apnex/test", proxyVersion: "0.0.0" },
+  };
+
+  it("register_role REJECTS changing an existing agent's role (architect→verifier) with role_mismatch", async () => {
+    const router = new PolicyRouter(noop);
+    registerSessionPolicy(router);
+    const reg = router.getToolRegistration("register_role");
+    const parse = (args: Record<string, unknown>) => z.object(reg!.schema).parse(args);
+
+    // Session 1: register name 'cutover-agent' as architect → creates the record.
+    const ctxA = createTestContext({ role: "architect" });
+    const r1 = await router.handle("register_role", parse({ role: "architect", name: "cutover-agent", ...HANDSHAKE }), ctxA);
+    expect(JSON.parse(r1.content[0].text).ok).toBe(true); // agent record created as architect
+
+    // Session 2: SAME registry + SAME name, role=verifier → the role CHANGE.
+    // (Sharing stores via override; distinct sessionId so it's a genuine
+    // second handshake against the same persisted agent.)
+    const ctxB = createTestContext({ stores: ctxA.stores, substrate: ctxA.substrate, role: "verifier" });
+    const r2 = await router.handle("register_role", parse({ role: "verifier", name: "cutover-agent", ...HANDSHAKE }), ctxB);
+    const body2 = JSON.parse(r2.content[0].text);
+    expect(body2.ok).toBe(false);
+    expect(body2.code).toBe("role_mismatch");
+    expect(body2.message).toMatch(/does not match persisted/i);
+
+    // The persisted agent role stays architect (the change did NOT commit).
+    const agent = await ctxA.stores.engineerRegistry.getAgentForSession(ctxA.sessionId);
+    expect(agent?.role).toBe("architect");
+  });
+});
