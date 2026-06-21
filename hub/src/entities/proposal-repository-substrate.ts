@@ -155,12 +155,14 @@ export class ProposalRepositorySubstrate implements IProposalStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Proposal | null> {
-    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). The legacy
-    // top-level cascade-key fallback is retired (W6 proved 0 bare rows live).
+    // C3-R4b (dual-path collapse): flat cascade key; substrate translates via
+    // renameMap (sourceThreadId→metadata.sourceThreadId, sourceActionId→
+    // metadata.sourceActionId) — renameMap is the single field-path authority.
+    // (mission-90 W8 already retired the legacy bare-row fallback: 0 bare rows.)
     const envelopeResult = await this.substrate.list<Proposal>(KIND, {
       filter: {
-        "metadata.sourceThreadId": key.sourceThreadId,
-        "metadata.sourceActionId": key.sourceActionId,
+        sourceThreadId: key.sourceThreadId,
+        sourceActionId: key.sourceActionId,
       },
       limit: 1,
     });

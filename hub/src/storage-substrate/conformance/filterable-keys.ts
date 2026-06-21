@@ -42,17 +42,16 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
 
 /**
  * Substrate-side FILTERABLE keys deliberately NOT given a renameMap entry, with a
- * reason. 'cascade-dual-path': the repository runs an envelope-first DOTTED query
- * + a dead-but-harmless bare fallback; W1 pins getFieldTranslation(...)===null and
- * R4b reconciles/collapses these. 'phantom': field absent from real rows (bug-148).
- * 'structural-transform': value shape changes → JSONB path-equality meaningless.
+ * reason. 'phantom': field absent from real rows (bug-148). 'structural-transform':
+ * value shape changes → JSONB path-equality meaningless.
+ *
+ * C3-R4b COLLAPSED the former 'cascade-dual-path' exclusions: the cascade keys
+ * (sourceThreadId / sourceActionId / sourceIdeaId on Bug/Idea/Mission/Proposal/
+ * Task) now carry renameMap entries (flat→metadata.*) and the repos filter by the
+ * flat key, so they are COVERED, not excluded — renameMap is their single
+ * field-path authority now.
  */
 export const EXCLUDED_FILTERABLE_KEYS: Record<string, Record<string, string>> = {
-  Bug: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path", sourceIdeaId: "cascade-dual-path" },
-  Idea: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Mission: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Proposal: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Task: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
   Notification: { recipientAgentId: "phantom (bug-148: repo interface diverges from SchemaDef; field in no row)" },
 };
 

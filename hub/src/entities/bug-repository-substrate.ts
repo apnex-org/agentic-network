@@ -192,13 +192,15 @@ export class BugRepositorySubstrate implements IBugStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Bug | null> {
-    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). Cascade-key
-    // fields live at metadata.*; the legacy top-level fallback is retired (W6 proved
-    // 0 bare rows live + all writes envelope via the W4 encoder).
+    // C3-R4b (dual-path collapse): filter by the FLAT cascade key — the substrate
+    // translates via renameMap (sourceThreadId→metadata.sourceThreadId,
+    // sourceActionId→metadata.sourceActionId), so renameMap is the single
+    // field-path authority. (mission-90 W8 already retired the legacy bare-row
+    // fallback: 0 bare rows live; all writes envelope via the W4 encoder.)
     const envelopeResult = await this.substrate.list<Bug>(KIND, {
       filter: {
-        "metadata.sourceThreadId": key.sourceThreadId,
-        "metadata.sourceActionId": key.sourceActionId,
+        sourceThreadId: key.sourceThreadId,
+        sourceActionId: key.sourceActionId,
       },
       limit: 1,
     });
@@ -206,9 +208,9 @@ export class BugRepositorySubstrate implements IBugStore {
   }
 
   async findBySourceIdeaId(sourceIdeaId: string): Promise<Bug | null> {
-    // mission-90 W8: envelope-only — the legacy top-level sourceIdeaId fallback is retired.
+    // C3-R4b: flat cascade key; substrate translates sourceIdeaId→metadata.sourceIdeaId.
     const envelopeResult = await this.substrate.list<Bug>(KIND, {
-      filter: { "metadata.sourceIdeaId": sourceIdeaId },
+      filter: { sourceIdeaId },
       limit: 1,
     });
     return envelopeResult.items[0] ? cloneBug(envelopeResult.items[0]) : null;

@@ -65,6 +65,11 @@ describe("update_* FSM envelope-aware (bug-137 closure)", () => {
       warn: () => { /* silent */ },
     });
     await reconciler.start();
+    // C3-R4b: wire the renameMap field-translator as production does (index.ts) so
+    // substrate.list({filter:{flatKey}}) translates flat→envelope-path. Required now
+    // that findByCascadeKey filters by the FLAT cascade key (collapsed dual-path).
+    const pgSub = substrate as ReturnType<typeof createPostgresStorageSubstrate>;
+    pgSub.setFieldTranslator((kind, bareKey) => reconciler!.getFieldTranslation(kind, bareKey));
   }, 60_000);
 
   afterAll(async () => {
@@ -172,7 +177,7 @@ describe("update_* FSM envelope-aware (bug-137 closure)", () => {
     expect(phaseFromEntity(raw)).toBe("proposed");
   });
 
-  it("findByCascadeKey finds envelope-shape Bug via metadata.sourceThreadId dotted-path", async () => {
+  it("findByCascadeKey finds envelope-shape Bug via the flat cascade key (C3-R4b renameMap-translated)", async () => {
     if (!substrate) throw new Error("substrate not initialized");
     const { BugRepositorySubstrate } = await import("../../entities/bug-repository-substrate.js");
     const { SubstrateCounter } = await import("../../entities/substrate-counter.js");
