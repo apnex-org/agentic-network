@@ -883,12 +883,6 @@ const THREAD_FILTER_SCHEMA = buildQueryFilterSchema(THREAD_FILTERABLE_FIELDS);
 const THREAD_SORT_SCHEMA = buildQuerySortSchema(THREAD_SORTABLE_FIELDS);
 
 async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  let threads = await ctx.stores.thread.listThreads();
-  const totalPreFilter = threads.length;
-
-  // Legacy label match-all filter (pre-QueryShape; preserved).
-  threads = applyLabelFilter(threads, args.labels as Record<string, string> | undefined);
-
   // Backwards-compat: legacy scalar `status` arg subsumed by the new
   // `filter.status` field. filter.status wins when both are present.
   const legacyStatus = typeof args.status === "string" ? args.status : undefined;
@@ -898,6 +892,27 @@ async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): 
     effectiveFilter.status = legacyStatus;
   }
   const hasFilter = Object.keys(effectiveFilter).length > 0;
+
+  // mission-93 bug-170: push simple-equality DISCOVERY predicates
+  // (recipientAgentId / currentTurnAgentId) to the SUBSTRATE so a directed-thread
+  // lookup matches across ALL threads — not just the arbitrary, unordered
+  // LIST_PREFETCH_CAP (500) window the client-side filter sees, which excludes
+  // the newest threads (incl verifier-directed ones → the bug). Only plain string
+  // equality is pushed; richer operators ($in/$gt/…) stay client-side below.
+  const substratePush: Record<string, string> = {};
+  for (const k of ["recipientAgentId", "currentTurnAgentId"] as const) {
+    const v = effectiveFilter[k];
+    if (typeof v === "string") substratePush[k] = v;
+  }
+
+  let threads = await ctx.stores.thread.listThreads(
+    undefined,
+    Object.keys(substratePush).length > 0 ? substratePush : undefined,
+  );
+  const totalPreFilter = threads.length;
+
+  // Legacy label match-all filter (pre-QueryShape; preserved).
+  threads = applyLabelFilter(threads, args.labels as Record<string, string> | undefined);
 
   if (hasFilter) {
     threads = applyQueryFilter(threads, effectiveFilter, THREAD_ACCESSORS);

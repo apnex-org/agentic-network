@@ -1118,7 +1118,7 @@ export interface IThreadStore {
   openThread(title: string, message: string, author: ThreadAuthor, options?: OpenThreadOptions): Promise<Thread>;
   replyToThread(threadId: string, message: string, author: ThreadAuthor, options?: ReplyToThreadOptions): Promise<Thread | null>;
   getThread(threadId: string): Promise<Thread | null>;
-  listThreads(status?: ThreadStatus): Promise<Thread[]>;
+  listThreads(status?: ThreadStatus, equalityFilter?: Record<string, string>): Promise<Thread[]>;
   closeThread(threadId: string): Promise<boolean>;
   /**
    * Mission-24 Phase 2 (ADR-014, M24-T6): participant-initiated exit
