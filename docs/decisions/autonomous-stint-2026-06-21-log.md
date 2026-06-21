@@ -63,4 +63,15 @@ Cron heartbeat (~15 min, session-scoped) + event-driven wakes from peer response
 - **Options:** (a) widen get_task to [Verifier] — conflates work-pickup with audit-read; (b) new read-task-by-id primitive — YAGNI; (c) keep get_task [Engineer]; verifier reads tasks via list_tasks.
 - **Disposition:** **(c)**, `lily-executed`. get_task denial for the verifier is CORRECT, not a gap — bug-167's get_task sub-item closed as not-a-gap. Revisit (b) only if a real verifier task-by-id need arises.
 
-*(Subsequent decisions appended as DR-005, … during the stint.)*
+### DR-005 — Open-bug ledger strategic triage + dispositions · `lily-executed`
+- **Context:** autonomous-stint move-on work — strategic triage of the 72 open bugs (subagent-assisted, read-only). Buckets: 16 resolvable-now · 10 stale · 29 clustered (incl. a 22-bug missioncraft cluster) · 6 mission-sized · 11 in-flight.
+- **Tele:** tele-2/tele-10 (accurate ledger = source-of-truth hygiene); tele-6/tele-13 (stop a foreign backlog draining Hub triage bandwidth).
+- **Dispositions:**
+  1. **CLOSED (resolved) 5 confirmed-stale** — bug-134 + bug-158 (live-proven: list_bugs/list_missions return clean post-mission-90 decode-to-flat), bug-57 (PR #200 / e0fad4f4), bug-123 (critical; resolved by mission-90 W6 strict-cutover success), bug-125 (PR #289). `lily-executed`.
+  2. **missioncraft cluster (~22 bugs, bug-64..92)** — a DIFFERENT product's CLI/SDK backlog filed vs superseded npm versions, polluting the Hub-substrate ledger. RECOMMEND Director migrate to missioncraft's own tracker + re-validate vs current npm head. Actual external migration = HARD LINE (new external surface) → **director-deferred**; parked pending Director return.
+  3. **C1 task-dispatch cluster (bug-146 root + bug-94 + bug-159)** = highest structural leverage (breaks the formal Task FSM for architect-driven missions; masked only by the thread-dispatch workaround) → **queued as the next substrate mission-design** (lily, autonomous).
+  4. **A-wins → greg wave-2** (after current hardening + shim batch): bug-117 (list cap=10), bug-48 (round_limit vs converged), bug-96 (thread-reply silent-degrade), bug-100 (reconciler reconnect), bug-162 (pulse forgive-miss).
+  5. **verify-then-close (deferred):** bug-121, bug-126, bug-40, bug-62, bug-63.
+- **Disposition:** triage adopted; (1) executed; (3) next mission-design; (4) greg wave-2; (2)+(5) deferred/parked.
+
+*(Subsequent decisions appended as DR-006, … during the stint.)*
