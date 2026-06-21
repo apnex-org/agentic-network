@@ -113,7 +113,7 @@ Cron heartbeat (~15 min, session-scoped) + event-driven wakes from peer response
 - **Remaining tail:** bug-164 (shim-side, Director-restart-gated), bug-171 (R3-G backpressure, queued), bug-172 (write-scope-determinism). R3 harness (greg building Leg-A) is the durable systemic gate.
 - **Disposition:** `lily-executed`.
 
-### DR-012 — Autonomous stint CLOSE-OUT (Director returned) · `ratification-pending`
+### DR-012 — Autonomous stint CLOSE-OUT (Director returned) · `ratified` (Director, 2026-06-21)
 - **Context:** Director returned 2026-06-21 ~14:52 and paused autonomous mode. Heartbeat cron cancelled; **temporary Director authority reverted to the Director.** No background tasks running. This entry freezes the stint's decision record.
 - **Tally:** DR-001 (framework) … DR-011 (milestone) + this close-out. **11 bugs closed** (134/158/57/123/125 stale; 166/167/169/165 + 168/170 verifier-verified). **2 prod Hub deploys** (DR-002 policy — #343 verifier-cutover, #346 Hub-tail; both verifier-gated + Steve-verified live). **1 live CD outage diagnosed + recovered** (bug-107 watchtower token race, via the sanctioned `refresh-docker-token.service` — no hard-line breach). **Verifier-first-class CORE arc COMPLETE + independently verified.** C1 mission designed (idea-336). R3 keystone → contract v0.2 → construction-scope. **NO Ultracode/Workflow runs — lily or greg — confirmed (artifact-verified).**
 - **Hard lines HELD:** no Tele edits; no irreversible/destructive prod ops (explicitly refused hand-recreating the Hub container); no constitutional-ledger merges (#342 held).
@@ -124,4 +124,8 @@ Cron heartbeat (~15 min, session-scoped) + event-driven wakes from peer response
 
 ## Stint close-out ratification (Director)
 
-*(Director ratification of DR-001..012 + deferred-item dispositions recorded here during the 2026-06-21 review session.)*
+**Director RATIFIED DR-001…012 — 2026-06-21 review session (post-return).**
+- **DR-002 (prod-deploy authority)** — explicitly blessed: *"that was correct."* Affirmed as the right interpretation — tested + reversible + verifier-gated prod Hub deploys are within an autonomous grant of this kind.
+- **DR-008 (prod-infra-ops via the sanctioned refresher)** — agreed **for this instance** (*"in this instance"*). NOTE: ratified case-by-case, NOT established as a blanket standing authority for unsupervised prod-infra ops. The durable principle is the hard-line discipline that refused the riskier hand-recreate; future occurrences remain a judgment call.
+- All other DRs (001 / 003 / 004 / 005 / 006 / 007 / 009 / 010 / 011 / 012) ratified as recorded.
+- Deferred-item dispositions (#342, partition-renameMap calibration, missioncraft-22, bug-107 fix, open-PR batch, restart-gated shim batch) carried to the post-stint plan step.
