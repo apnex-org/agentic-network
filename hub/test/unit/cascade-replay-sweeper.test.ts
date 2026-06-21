@@ -150,7 +150,7 @@ describe("CascadeReplaySweeper.fullSweep — no-op cases", () => {
   it("returns zero counts when no threads have the marker", async () => {
     const { sweeper } = await makeFixture();
     const result = await sweeper.fullSweep();
-    expect(result).toEqual({ scanned: 0, replayed: 0, errors: 0 });
+    expect(result).toEqual({ scanned: 0, replayed: 0, errors: 0, quarantined: 0 });
   });
 
   it("clears marker on threads with no committed actions (no-op replay)", async () => {
