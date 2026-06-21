@@ -73,7 +73,7 @@ Why it works:
 - **Fails CLOSED.** REST resolves a CONCRETE role from a token-bound credential and never reaches `router.handle()` as `'unknown'` — so the `router.ts:150` fail-open hole is structurally unreachable on the REST path. Unknown / no-identity → DENY.
 - **Makes the token→role binding actually gate RBAC.** With RBAC consuming `ctx.role` first, a presented bearer's role gates the verb. It is **tighten-only**: a token can never grant more than its role.
 - **Gives real provenance.** `agentId` is threaded via `ctx` directly — no `getAgentForSession` call is needed for REST — so a REST-created entity is attributed to the real `agentId` (e.g. `lily`), not `anonymous-<role>`.
-- **Incidentally fixes bug-168/169.** It also closes the documented `ctx.role`-vs-`getRole` drift, because identity now has one source on `ctx` that both bindings share.
+- **bug-168/169 — RECONCILE WITH #346 AT R2 (do NOT assert as a clean fix; greg #348 review).** The merged **#346 already shipped a bug-168/169 fix that is registry-first.** So this charter's ctx-first precedence must be reconciled against #346 at R2: verify bug-168/169's actual closed-state, and determine whether ctx-first supersedes, layers cleanly over, or is mooted by the merged registry-first fix. The earlier framing ("incidentally fixes bug-168/169") is RETRACTED pending that reconciliation — #346 may already own it. Tracked: DR-S2-006.
 - **MCP path behavior is unchanged.** MCP continues to populate `ctx` (or fall back to the registry lookup) exactly as today; the consolidation is read-compatible.
 
 ### §4.3 The `setSessionRole`-without-`claimSession` mechanism (avoids ADR-021 displacement)
