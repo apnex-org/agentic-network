@@ -58,6 +58,7 @@ import { TaskRepositorySubstrate } from "./entities/task-repository-substrate.js
 import { TeleRepositorySubstrate } from "./entities/tele-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "./entities/thread-repository-substrate.js";
 import { TurnRepositorySubstrate } from "./entities/turn-repository-substrate.js";
+import { WorkItemRepositorySubstrate } from "./entities/work-item-repository-substrate.js";
 import { DocumentRepository } from "./storage-substrate/new-repositories.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy, computeToolSurfaceRevision } from "./policy/index.js";
@@ -78,6 +79,7 @@ import { registerProposalPolicy } from "./policy/proposal-policy.js";
 import { registerThreadPolicy } from "./policy/thread-policy.js";
 import { registerMessagePolicy } from "./policy/message-policy.js";
 import { registerBugPolicy } from "./policy/bug-policy.js";
+import { registerWorkItemPolicy } from "./policy/work-item-policy.js";
 import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
 import { registerTransportHeartbeatPolicy } from "./handlers/transport-heartbeat-handler.js";
 import { Watchdog } from "./policy/watchdog.js";
@@ -224,7 +226,9 @@ missionStore = new MissionRepositorySubstrate(substrate!, substrateCounter, task
 turnStore = new TurnRepositorySubstrate(substrate!, substrateCounter, missionStore, taskStore);
 // mission-84 W6: DocumentRepository (substrate-backed; W2.4 stub now production)
 const documentStore = new DocumentRepository(substrate!);
-console.log("[Hub] substrate-mode repositories instantiated (12 substrate-versions + Document store)");
+// C1-R2 (mission-94): WorkItem work-queue store (claim/lease/FSM verbs + complete_work).
+const workItemStore = new WorkItemRepositorySubstrate(substrate!, substrateCounter);
+console.log("[Hub] substrate-mode repositories instantiated (13 substrate-versions + Document store)");
 
 // ── Aggregate Store Object ────────────────────────────────────────────
 const allStores: AllStores = {
@@ -241,6 +245,7 @@ const allStores: AllStores = {
   pendingAction: pendingActionStore,
   message: messageStore,
   document: documentStore,
+  workItem: workItemStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────
@@ -266,6 +271,10 @@ registerReviewPolicy(policyRouter);
 registerProposalPolicy(policyRouter);
 registerThreadPolicy(policyRouter);
 registerBugPolicy(policyRouter);
+// C1-R2 (mission-94): WorkItem work-queue verbs (claim_work / list_ready_work / start /
+// block / resume / renew / release / abandon / complete_work). idea-121 finalizes the
+// tool surface; the keystone is dormant-until-assembled on the integration branch.
+registerWorkItemPolicy(policyRouter);
 registerPendingActionPolicy(policyRouter);
 // mission-75 v1.0 §3.3 — adapter-internal periodic transport-liveness
 // signal; tier="adapter-internal" excludes it from shim's LLM tool catalogue.

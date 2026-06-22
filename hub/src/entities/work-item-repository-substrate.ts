@@ -34,6 +34,9 @@ import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "WorkItem";
 const LIST_CAP = 500;
+/** The substrate hard-clamps list() to 500 rows; the ready-scan uses it as the cap and
+ *  flags truncation when hit (list_ready_work is truncation-HONEST, audit-4070 #3). */
+const READY_SCAN_CAP = 500;
 const MAX_CAS_RETRIES = 50;
 
 /** The lease TTL (claim sets expiresAt = claimedAt + this; renewLease re-extends).
@@ -308,6 +311,30 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       limit: LIST_CAP,
     });
     return items.map(cloneWorkItem);
+  }
+
+  /**
+   * The list_ready_work projection (sub-PR-3b): ready items a `role` may claim, with
+   * the empty-role OR-in (audit-4085 — an empty roleEligibility = any-role, claimable,
+   * therefore listable for EVERY role). The substrate can't express "$contains role OR
+   * roleEligibility is empty" ($or forbidden + no is-empty operator), so the OR-in is
+   * applied in-memory over the ready scan. TRUNCATION-HONEST (audit-4070 #3): if the
+   * scan hits READY_SCAN_CAP, `truncated` is set — NEVER a silent cap (the caller must
+   * refine by role, or read it as a backlog-pressure signal; tele-4).
+   *
+   * NOTE (follow-on): the in-memory OR-in scans up to the cap before role-filtering, so a
+   * very large ready backlog (>cap) can hide eligible items beyond the scan — `truncated`
+   * surfaces that. A complete server-side role projection (a role-index or an is-empty
+   * operator) is a later optimization; the loud flag keeps v1 honest.
+   */
+  async listReadyForRole(role: string | undefined, limit: number): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    const { items } = await this.substrate.list<WorkItem>(KIND, { filter: { status: "ready" }, limit: READY_SCAN_CAP });
+    const truncated = items.length >= READY_SCAN_CAP;
+    const ready = items.map(cloneWorkItem);
+    const eligible = role
+      ? ready.filter((w) => w.roleEligibility.length === 0 || w.roleEligibility.includes(role))
+      : ready;
+    return { items: eligible.slice(0, Math.max(0, limit)), truncated };
   }
 
   // ── Claim / lease / FSM verbs (C1-R2 sub-PR-3a) ───────────────────────────

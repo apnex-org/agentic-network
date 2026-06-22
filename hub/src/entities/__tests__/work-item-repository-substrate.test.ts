@@ -196,4 +196,21 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
     const doneEng = await repo.listWorkItems({ status: "done", role: "engineer" });
     expect(new Set(doneEng.map((x) => x.id)).has("work-edge-done")).toBe(true);
   }, OP_TIMEOUT);
+
+  it("listReadyForRole: role-eligible + empty(any-role) OR'd in; other-role excluded (sub-PR-3b)", async () => {
+    const eng = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"] });
+    const arch = await repo.createWorkItem({ type: "task", roleEligibility: ["architect"] });
+    const any = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+    const { items, truncated } = await repo.listReadyForRole("engineer", 500);
+    const ids = new Set(items.map((w) => w.id));
+    expect(ids.has(eng.id)).toBe(true);    // engineer-eligible
+    expect(ids.has(any.id)).toBe(true);    // empty roleEligibility = any-role → OR'd in
+    expect(ids.has(arch.id)).toBe(false);  // architect-only → excluded for engineer
+    expect(truncated).toBe(false);         // well under the scan cap
+    // role undefined → all ready (no role filter), so the architect-only item appears
+    const all = new Set((await repo.listReadyForRole(undefined, 500)).items.map((w) => w.id));
+    expect(all.has(arch.id)).toBe(true);
+    // limit slices the projection
+    expect((await repo.listReadyForRole("engineer", 1)).items.length).toBe(1);
+  }, OP_TIMEOUT);
 });

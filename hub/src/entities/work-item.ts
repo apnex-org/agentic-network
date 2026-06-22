@@ -124,6 +124,11 @@ export interface IWorkItemStore {
    *  (sub-PR-3) projects over. */
   listWorkItems(filter?: { status?: WorkItemPhase; role?: string }): Promise<WorkItem[]>;
 
+  /** The list_ready_work projection: ready items claimable by `role` (empty
+   *  roleEligibility = any-role, OR'd in). truncation-HONEST — `truncated` flags a
+   *  capped scan (never a silent cap). `role` undefined = all ready items. */
+  listReadyForRole(role: string | undefined, limit: number): Promise<{ items: WorkItem[]; truncated: boolean }>;
+
   // ── Claim / lease / FSM verbs (C1-R2 sub-PR-3) ────────────────────────────
   // Each returns the updated WorkItem on success, null if `workId` is absent.
   // FSM-illegal source phases throw TransitionRejected; a non-holder OR a stale
