@@ -1309,8 +1309,9 @@ export interface IEngineerRegistry {
    *  new {thrashCount, quarantined} (null if the agent is absent). */
   recordWorkItemThrash(agentId: string, quarantineCap: number): Promise<{ thrashCount: number; quarantined: boolean } | null>;
   /** Reset the thrash counter to 0 on demonstrated progress (a successful complete_work).
+   *  Returns the PRIOR thrashCount (0 if no-op) so the caller can audit a non-noop reset.
    *  Does NOT clear `quarantined` (that is the manual clear path). */
-  resetWorkItemThrash(agentId: string): Promise<void>;
+  resetWorkItemThrash(agentId: string): Promise<number>;
   /** Manual quarantine escape (R2 interim; architect/director-authorized at the policy
    *  layer): clear `quarantined` + reset the thrash counter. C2 auto-recovery deferred. */
   clearWorkItemQuarantine(agentId: string): Promise<void>;

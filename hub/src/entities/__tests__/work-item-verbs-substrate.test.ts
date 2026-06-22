@@ -250,4 +250,15 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
     expect(final!.status).toBe("claimed");
     expect(["agent-raceA", "agent-raceB"]).toContain(final!.lease!.holder);
   }, OP_TIMEOUT);
+
+  it("renewLease rejects an ALREADY-EXPIRED lease (audit-4103) — it's the sweeper's to re-queue", async () => {
+    // an expired-lease item (verb-reached state → direct put), held by agent-re/tok-re.
+    await substrate.put("WorkItem", {
+      id: "work-renew-expired", type: "task", priority: "normal", roleEligibility: [], dependsOn: [],
+      evidenceRequirements: [], targetRef: null, status: "claimed",
+      lease: { holder: "agent-re", token: "tok-re", claimedAt: "2020-01-01T00:00:00.000Z", expiresAt: "2020-01-01T00:05:00.000Z", heartbeatAt: "2020-01-01T00:00:00.000Z" },
+      evidence: [], blockedOn: null, leaseExpiryCount: 0, createdAt: "2020-01-01T00:00:00.000Z", updatedAt: "2020-01-01T00:00:00.000Z",
+    });
+    await expect(repo.renewLease("work-renew-expired", "agent-re", "tok-re")).rejects.toThrow(/already expired/);
+  }, OP_TIMEOUT);
 });

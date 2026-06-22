@@ -112,8 +112,16 @@ export class WorkItemLeaseSweeper {
    *  holder's work re-queues within ~TTL + one interval. Idempotent. */
   start(intervalMs: number): void {
     if (this.handle) return;
+    // audit-4103 (LOW): in-flight mutex — a sweep slower than the tick must NOT overlap
+    // itself (the scheduled-message-sweeper idiom). `if(this.handle)return` is double-START
+    // only; this skips a tick while the prior sweep is still running.
+    let inFlight = false;
     this.handle = setInterval(() => {
-      this.fullSweep(new Date().toISOString()).catch((err) => this.logger.error("periodic lease sweep failed:", err));
+      if (inFlight) { this.logger.warn("skipping tick — previous lease sweep still in flight"); return; }
+      inFlight = true;
+      this.fullSweep(new Date().toISOString())
+        .catch((err) => this.logger.error("periodic lease sweep failed:", err))
+        .finally(() => { inFlight = false; });
     }, intervalMs);
     if (typeof this.handle.unref === "function") this.handle.unref(); // don't keep the process alive
     this.logger.log(`started (interval=${intervalMs}ms, poisonCap=${this.poisonCap})`);

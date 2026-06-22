@@ -51,11 +51,22 @@ export interface PostgresSubstrate extends HubStorageSubstrate {
   setPartitionedKindCheck(check: ((kind: string) => boolean) | null): void;
 }
 
+/** Per-instance pool tuning (C1-R2 audit-4103). Both fall back to env / defaults when
+ *  omitted — existing callers pass connStr only (unchanged). Lets tests parametrize the
+ *  pool to assert the starvation regression guard. */
+export interface PostgresSubstrateOptions {
+  /** node-pg pool max connections (default env POSTGRES_POOL_MAX ?? 25, floor 2). */
+  max?: number;
+  /** ms a query waits for a free connection before erroring (default env
+   *  POSTGRES_CONNECTION_TIMEOUT_MS, else undefined = wait indefinitely — prod unchanged). */
+  connectionTimeoutMillis?: number;
+}
+
 /**
  * Factory — returns a PostgresSubstrate backed by a postgres connection-pool.
  */
-export function createPostgresStorageSubstrate(connectionString: string): PostgresSubstrate {
-  return new PostgresStorageSubstrate(connectionString);
+export function createPostgresStorageSubstrate(connectionString: string, opts?: PostgresSubstrateOptions): PostgresSubstrate {
+  return new PostgresStorageSubstrate(connectionString, opts);
 }
 
 class PostgresStorageSubstrate implements PostgresSubstrate {
@@ -87,8 +98,23 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    */
   private writeEncoder: WriteEncoder | null = null;
 
-  constructor(connectionString: string) {
-    this.pool = new Pool({ connectionString });
+  constructor(connectionString: string, opts?: PostgresSubstrateOptions) {
+    // C1-R2 audit-4103 (construction HIGH): pool-starvation fix. withAdvisoryLock pins ONE
+    // connection for the lock session while the inner list/CAS each need ANOTHER from the
+    // pool — so each concurrent distinct-agent claim transiently needs ~2 connections. At
+    // the pg default max=10 this DEADLOCKS at >=10 concurrent distinct claimers (the
+    // lock-holders pin all 10 → the inner ops can't acquire → hang). Set an explicit max
+    // sized for expected concurrency (env POSTGRES_POOL_MAX, default 25 — Steve's audit-4120
+    // headroom formula 2·expected + reserve for ~10 distinct claimers, leaving room for the
+    // schema/token/watch/sweeper/non-claim traffic that also draws on the pool). The
+    // structural fix (inner ops reusing the pinned connection → 1-per-claim) is the
+    // wide-adoption follow-on. connectionTimeoutMillis (opt/env) makes a starved query
+    // fail-fast+loud instead of hanging — undefined by default (prod unchanged), settable
+    // per-instance (the regression guard uses it).
+    const max = Math.max(2, opts?.max ?? Number(process.env.POSTGRES_POOL_MAX ?? 25));
+    const connectionTimeoutMillis = opts?.connectionTimeoutMillis
+      ?? (process.env.POSTGRES_CONNECTION_TIMEOUT_MS ? Number(process.env.POSTGRES_CONNECTION_TIMEOUT_MS) : undefined);
+    this.pool = new Pool({ connectionString, max, ...(connectionTimeoutMillis ? { connectionTimeoutMillis } : {}) });
     // bug-110 — without an 'error' listener an idle-connection backend error
     // is an uncaught exception that crashes the process (pg contract).
     attachPgErrorHandler(this.pool, "PostgresStorageSubstrate pool");
