@@ -81,6 +81,14 @@ export interface IndexDef {
   name: string;
   /** Dotted-path fields participating in the index. */
   fields: string[];
+  /**
+   * Index method. Default "btree" (text-extracted expression index, the existing
+   * behavior). "gin" (C1-R2) emits a GIN index over the JSON-extracted path
+   * (`data#>'{path}' jsonb_path_ops`) for the `$contains` (`@>`) array-membership
+   * operator — required for an INDEXED containment filter (e.g. roleEligibility[]).
+   * GIN is single-field only.
+   */
+  type?: "btree" | "gin";
   /** Optional partial-index predicate (substrate-translated to JSONB syntax). */
   where?: string;
 }
@@ -126,6 +134,9 @@ export interface WatchOptions {
  * per-field QueryableFieldType discipline:
  *   - $gt/$lt/$gte/$lte permitted only on numeric + date fields
  *   - $in permitted on all scalar types
+ *   - $contains permitted only on ARRAY fields (C1-R2: JSONB array-membership —
+ *     "the stored array CONTAINS this scalar", `data#>'{path}' @> to_jsonb($v)`;
+ *     the inverse of $in, which is "the stored scalar is one of these candidates")
  *   - $regex/$where/$expr/$or/$and/$not forbidden (substrate enforces; errors on use)
  *
  * SchemaDef.FieldDef.type drives narrowing at validation time.
@@ -133,6 +144,7 @@ export interface WatchOptions {
 export type FilterValue =
   | string | number | boolean
   | { $in: Array<string | number | boolean> }
+  | { $contains: string | number | boolean }
   | { $gt?: number | string; $lt?: number | string; $gte?: number | string; $lte?: number | string };
 
 export type Filter = Record<string, FilterValue>;

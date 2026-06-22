@@ -565,6 +565,11 @@ function matchesFilter(entity: Record<string, unknown>, filter: Filter, translat
     if (typeof value === "object" && value !== null) {
       const op = value as Record<string, unknown>;
       if ("$in" in op && Array.isArray(op.$in) && !op.$in.map(String).includes(String(v))) return false;
+      // $contains (C1-R2): JSONB array-membership — the stored array `v` CONTAINS
+      // the scalar (inverse of $in). Mirrors postgres `@>` for watch/memory parity.
+      if ("$contains" in op && op.$contains !== undefined) {
+        if (!Array.isArray(v) || !v.map(String).includes(String(op.$contains))) return false;
+      }
       // bug-104: range comparison — numeric when both sides coerce to a finite
       // number (numbers + ISO-dates), else lexical string comparison. This
       // mirrors postgres `data->>'field' > $param` text semantics, and is

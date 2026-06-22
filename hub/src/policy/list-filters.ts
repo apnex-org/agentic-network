@@ -102,9 +102,11 @@ export function paginate<T>(items: T[], args: Record<string, unknown>): Paginate
  * as string but with a `values` allowlist for additional client-side
  * diagnostics (not enforced by Zod — a typo on an enum value returns
  * empty-match, not a Zod error, which keeps the reject-with-hint
- * surface narrow).
+ * surface narrow). "array" (C1-R2) = a stored array field, queried by
+ * `$contains` array-membership ONLY (the stored array CONTAINS the scalar;
+ * the inverse of $in) — no implicit-equality on an array field.
  */
-export type QueryableFieldType = "string" | "date" | "number" | "enum";
+export type QueryableFieldType = "string" | "date" | "number" | "enum" | "array";
 
 export interface QueryableField {
   type: QueryableFieldType;
@@ -159,6 +161,14 @@ function fieldFilterSchema(spec: QueryableField): z.ZodTypeAny {
         $lte: iso.optional(),
       }).strict(),
     ]);
+  }
+  if (spec.type === "array") {
+    // C1-R2: array-membership ONLY — `{$contains: scalar}` (the stored array
+    // CONTAINS the scalar). No implicit-equality form: an array field is never
+    // compared by whole-value equality at the filter surface.
+    return z.object({
+      $contains: z.union([z.string(), z.number(), z.boolean()]),
+    }).strict();
   }
   // "string" and "enum": implicit eq or $in only (no range semantics)
   return z.union([

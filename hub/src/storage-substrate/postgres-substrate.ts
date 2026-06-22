@@ -566,6 +566,18 @@ function translateFilterClause(
       return { sql: `${fieldSql} = ANY($${paramIndex})`, nextParamIndex: paramIndex + 1 };
     }
 
+    // $contains (C1-R2): JSONB array-membership — the stored ARRAY at `field`
+    // CONTAINS the scalar (the inverse of $in). JSON-extract (`#>`, not text `#>>`)
+    // + the `@>` containment operator; the param is the JSON-encoded scalar.
+    // GIN-indexable (jsonb_path_ops) — see schema-reconciler buildCreateIndexSQL.
+    if (
+      "$contains" in v &&
+      (typeof v.$contains === "string" || typeof v.$contains === "number" || typeof v.$contains === "boolean")
+    ) {
+      params.push(JSON.stringify(v.$contains));
+      return { sql: `${jsonbFieldJson(field)} @> $${paramIndex}::jsonb`, nextParamIndex: paramIndex + 1 };
+    }
+
     // Range operators — all may co-exist on same field (e.g. {$gt: 5, $lt: 10})
     const parts: string[] = [];
     let p = paramIndex;
@@ -595,6 +607,21 @@ function jsonbField(dottedPath: string): string {
     return `data->>'${parts[0]}'`;
   }
   return `data#>>'{${parts.join(",")}}'`;
+}
+
+/**
+ * JSON-extract variant of jsonbField — returns jsonb (`->`/`#>`), NOT text
+ * (`->>`/`#>>`). Used by the `$contains` (`@>`) array-membership operator (C1-R2),
+ * where the LHS must be jsonb for the containment comparison.
+ *   "roleEligibility"      → "data->'roleEligibility'"
+ *   "spec.roleEligibility" → "data#>'{spec,roleEligibility}'"
+ */
+function jsonbFieldJson(dottedPath: string): string {
+  const parts = dottedPath.split(".");
+  if (parts.length === 1) {
+    return `data->'${parts[0]}'`;
+  }
+  return `data#>'{${parts.join(",")}}'`;
 }
 
 /**

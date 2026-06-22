@@ -525,11 +525,20 @@ export class SchemaReconciler {
    * use-cases. Partial-index support deferrable to W2.x or v2 architect-decision.
    */
   private buildCreateIndexSQL(kind: string, idx: IndexDef): string {
-    const fieldExprs = idx.fields.map(f => this.jsonbExtract(f));
-    const fieldsList = fieldExprs.map(e => `(${e})`).join(", ");
     // Use double-single-quote escaping for kind name (basic SQL injection mitigation —
     // SchemaDef.kind is engineer-authored content, not external input, but safe-by-default)
     const safeKind = kind.replace(/'/g, "''");
+    // C1-R2: GIN index over the JSON-extracted path for the $contains (@>)
+    // array-membership operator (e.g. roleEligibility[]). Single-field only;
+    // jsonb_path_ops is the compact operator class that supports @>.
+    if (idx.type === "gin") {
+      if (idx.fields.length !== 1 || !idx.fields[0]) {
+        throw new Error(`[SchemaReconciler] GIN index '${idx.name}' requires exactly one field (got ${idx.fields.length})`);
+      }
+      return `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${idx.name} ON entities USING gin ((${this.jsonbExtractJson(idx.fields[0])}) jsonb_path_ops) WHERE kind = '${safeKind}'`;
+    }
+    const fieldExprs = idx.fields.map(f => this.jsonbExtract(f));
+    const fieldsList = fieldExprs.map(e => `(${e})`).join(", ");
     return `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${idx.name} ON entities (${fieldsList}) WHERE kind = '${safeKind}'`;
   }
 
@@ -550,6 +559,21 @@ export class SchemaReconciler {
     }
     const safe = parts.map(p => p.replace(/'/g, "''")).join(",");
     return `data#>>'{${safe}}'`;
+  }
+
+  /**
+   * JSON-extract variant of jsonbExtract — returns jsonb (`->`/`#>`), NOT text
+   * (`->>`/`#>>`). Used for C1-R2 GIN indexes backing the `$contains` (`@>`)
+   * array-membership operator (the LHS of `@>` must be jsonb).
+   */
+  private jsonbExtractJson(dottedPath: string): string {
+    const parts = dottedPath.split(".");
+    if (parts.length === 1) {
+      const safe = parts[0]!.replace(/'/g, "''");
+      return `data->'${safe}'`;
+    }
+    const safe = parts.map(p => p.replace(/'/g, "''")).join(",");
+    return `data#>'{${safe}}'`;
   }
 
   /**
