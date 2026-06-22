@@ -125,7 +125,7 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
     // lease is verb-populated (sub-PR-3 claim); prove the STORAGE decode contract now
     // by writing the flat shape a claim verb will, through the very same encoder.
     const lease: WorkItemLease = {
-      holder: "agent-x", claimedAt: "2026-06-22T00:00:00.000Z",
+      holder: "agent-x", token: "tok-x", claimedAt: "2026-06-22T00:00:00.000Z",
       expiresAt: "2026-06-22T00:05:00.000Z", heartbeatAt: "2026-06-22T00:00:00.000Z",
     };
     await substrate.put("WorkItem", {
