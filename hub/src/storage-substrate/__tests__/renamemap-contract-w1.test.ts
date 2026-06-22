@@ -26,6 +26,10 @@ import { Pool } from "pg";
 import { createPostgresStorageSubstrate, createSchemaReconciler, ALL_SCHEMAS } from "../index.js";
 import type { SchemaDef, RenameMap } from "../types.js";
 import { isEnvelopeShape } from "../migrations/v2-envelope/shared/envelope.js";
+// C3-R4a: the substrate-filterable map + exclusions are now the shared reviewed
+// source-of-truth in conformance/filterable-keys.ts (drift-gated against the live
+// call-site scanner in filterable-keys-drift-gate.test.ts). W1.1c consumes them.
+import { SUBSTRATE_FILTERABLE_KEYS, EXCLUDED_FILTERABLE_KEYS } from "../conformance/filterable-keys.js";
 
 // Per-kind migration modules — parity oracle for entry content (§2.7).
 import { createAgentMigrationModule } from "../migrations/v2-envelope/kinds/Agent.js";
@@ -69,14 +73,15 @@ const MIGRATION_FILES = [
 const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   // mission-90 W2 finding-A expansion: renameMap is the COMPLETE read-side
   // bare→envelope movement authority for substrate-side FILTERABLE keys (renames
-  // AND partition-relocations), per the call-site sweep. Cascade-keys
-  // (sourceThreadId/sourceActionId/sourceIdeaId) are DELIBERATELY excluded (repo
-  // dual-path; W1 null-pin) — see EXCLUDED_MOVED_FIELDS. Every entry below is
-  // validated against the encoder's ACTUAL placement by the sentinel-probe (W1.1b).
+  // AND partition-relocations), per the call-site sweep. C3-R4b COLLAPSED the
+  // cascade-keys (sourceThreadId/sourceActionId/sourceIdeaId) onto renameMap —
+  // they are now INCLUDED (→ metadata.*), no longer the W1 dual-path null-pin.
+  // Every entry below is validated against the encoder's ACTUAL placement by the
+  // sentinel-probe (W1.1b).
   Agent: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint" },
   Audit: { timestamp: "metadata.createdAt", actor: "metadata.actor" },
-  Bug: { status: "status.phase", severity: "spec.severity", class: "spec.class" },
-  Idea: { status: "status.phase", missionId: "status.missionId" },
+  Bug: { status: "status.phase", severity: "spec.severity", class: "spec.class", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId", sourceIdeaId: "metadata.sourceIdeaId" },
+  Idea: { status: "status.phase", missionId: "status.missionId", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
   Message: {
     kind: "metadata.messageKind",
     status: "status.phase",
@@ -88,7 +93,7 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
     "target.role": "spec.target.role",
     "target.agentId": "spec.target.agentId",
   },
-  Mission: { status: "status.phase" },
+  Mission: { status: "status.phase", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
   PendingAction: {
     state: "status.phase",
     enqueuedAt: "metadata.createdAt",
@@ -97,8 +102,8 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
     dispatchType: "spec.dispatchType",
     entityRef: "spec.entityRef",
   },
-  Proposal: { status: "status.phase" },
-  Task: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt" },
+  Proposal: { status: "status.phase", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
+  Task: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
   Tele: { status: "status.phase", name: "metadata.name" },
   Thread: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId", recipientAgentId: "spec.recipientAgentId" },
   Turn: { status: "status.phase", title: "metadata.name" },
@@ -213,48 +218,9 @@ function probePlacement(kind: string, filterKey: string): string | null {
   return null;
 }
 
-/**
- * mission-90 W2 finding-A: the substrate-SIDE filter/sort keys per kind, curated
- * from the call-site sweep (every key passed into substrate.list filter/sort).
- * This is the completeness BOUND (architect refinement (i): bound to the
- * call-site-enumerated filterable keys — finite + known — rather than all moved
- * fields). W1.1c asserts each is renameMap-covered OR documented-excluded OR
- * unmoved. A new W3+ filter adds its key here; if untranslatable it fails W1.1c.
- */
-const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
-  Agent: ["fingerprint"],
-  Audit: ["actor"],
-  Bug: ["status", "severity", "class", "sourceThreadId", "sourceActionId", "sourceIdeaId"],
-  Idea: ["status", "missionId", "sourceThreadId", "sourceActionId"],
-  Message: ["kind", "status", "threadId", "migrationSourceId", "authorAgentId", "delivery", "scheduledState", "target.role", "target.agentId", "id"],
-  Mission: ["status", "sourceThreadId", "sourceActionId"],
-  PendingAction: ["state", "naturalKey", "targetAgentId", "dispatchType", "entityRef"],
-  Proposal: ["status", "sourceThreadId", "sourceActionId"],
-  Task: ["status", "idempotencyKey", "sourceThreadId", "sourceActionId"],
-  Tele: [],
-  Thread: ["status", "cascadePending", "currentTurnAgentId", "recipientAgentId"],
-  Turn: ["status"],
-  Document: ["category"],
-  ReviewHistoryEntry: ["taskId"],
-  ThreadHistoryEntry: ["threadId"],
-  Notification: ["recipientAgentId"],
-};
-
-/**
- * Substrate-side FILTERABLE keys deliberately NOT given a renameMap entry, with a
- * reason. 'cascade-dual-path': the repository runs an envelope-first DOTTED query
- * + a dead-but-harmless bare fallback; W1 pins getFieldTranslation(...)===null and
- * W4 reconciles/collapses these. 'phantom': field absent from real rows (bug-148).
- * 'structural-transform': value shape changes → JSONB path-equality meaningless.
- */
-const EXCLUDED_FILTERABLE_KEYS: Record<string, Record<string, string>> = {
-  Bug: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path", sourceIdeaId: "cascade-dual-path" },
-  Idea: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Mission: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Proposal: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Task: { sourceThreadId: "cascade-dual-path", sourceActionId: "cascade-dual-path" },
-  Notification: { recipientAgentId: "phantom (bug-148: repo interface diverges from SchemaDef; field in no row)" },
-};
+// SUBSTRATE_FILTERABLE_KEYS + EXCLUDED_FILTERABLE_KEYS moved to
+// conformance/filterable-keys.ts (imported above) — C3-R4a made them the shared
+// reviewed artifact drift-gated against the live call-site scanner.
 
 describe("W1.1 renameMap inventory + faithfulness — complete field-movement authority (W2 finding-A)", () => {
   it("ALL_SCHEMAS carries exactly the expected renameMap per kind (no missing / no extra / no drift)", () => {
@@ -313,17 +279,24 @@ describe("W1.1 renameMap inventory + faithfulness — complete field-movement au
     ).toEqual([]);
   });
 
-  it("W1.1d cascade-keys are deliberately UNtranslated (W1 dual-path contract) yet genuinely MOVE", () => {
-    // Each documented cascade-dual-path key: (1) is NOT in renameMap (W1 null-pin
-    // preserved), and (2) the encoder DOES move it (so omission is deliberate, not
-    // an oversight — the repo dual-path's envelope-first dotted query carries
-    // correctness; W4 reconciles/collapses these onto the single authority).
-    for (const [kind, excl] of Object.entries(EXCLUDED_FILTERABLE_KEYS)) {
-      for (const [field, reason] of Object.entries(excl)) {
-        if (reason === "cascade-dual-path") {
-          expect(findSchema(kind).renameMap?.[field], `${kind}.${field} must NOT be in renameMap`).toBeUndefined();
-          expect(probePlacement(kind, field), `${kind}.${field} should genuinely move`).not.toBeNull();
-        }
+  it("W1.1d cascade-keys are now renameMap-COVERED at metadata.* (C3-R4b dual-path collapse)", () => {
+    // C3-R4b collapsed the former cascade-dual-path: the cascade keys now carry
+    // renameMap entries (→ metadata.*) and the repos filter by the FLAT key, so
+    // renameMap is their single field-path authority. Assert each is covered AND
+    // the encoder actually places it where renameMap says (faithfulness) — the
+    // positive successor to the old "deliberately untranslated" dual-path contract.
+    const CASCADE_KEYS: Record<string, string[]> = {
+      Bug: ["sourceThreadId", "sourceActionId", "sourceIdeaId"],
+      Idea: ["sourceThreadId", "sourceActionId"],
+      Mission: ["sourceThreadId", "sourceActionId"],
+      Proposal: ["sourceThreadId", "sourceActionId"],
+      Task: ["sourceThreadId", "sourceActionId"],
+    };
+    for (const [kind, keys] of Object.entries(CASCADE_KEYS)) {
+      for (const key of keys) {
+        const target = `metadata.${key}`;
+        expect(findSchema(kind).renameMap?.[key], `${kind}.${key} must be renameMap-covered (R4b)`).toBe(target);
+        expect(probePlacement(kind, key), `${kind}.${key} encoder placement`).toBe(target);
       }
     }
   });
@@ -367,8 +340,10 @@ describe("W1.2-W1.5 reconciler contract (testcontainers postgres)", () => {
         expect(reconciler.getFieldTranslation("RepoEventBridgeCursor", "body")).toBe("status.cursor");
         // Non-FSM mutable-link (the A7 matrix non-status case)
         expect(reconciler.getFieldTranslation("Idea", "missionId")).toBe("status.missionId");
+        // C3-R4b: cascade key now renamed → metadata.* (was the dual-path null-pin)
+        expect(reconciler.getFieldTranslation("Bug", "sourceThreadId")).toBe("metadata.sourceThreadId");
         // Non-renamed key → null (caller passes bare key through)
-        expect(reconciler.getFieldTranslation("Bug", "sourceThreadId")).toBeNull();
+        expect(reconciler.getFieldTranslation("Bug", "nonRenamedField")).toBeNull();
         // Unknown kind → null
         expect(reconciler.getFieldTranslation("NoSuchKind", "status")).toBeNull();
       } finally {

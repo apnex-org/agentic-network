@@ -43,6 +43,7 @@ describe("MessageProjectionSweeper.sweep — per-tick projection", () => {
       threadsProjected: 0,
       messagesProjected: 0,
       errors: 0,
+      quarantined: 0,
     });
   });
 

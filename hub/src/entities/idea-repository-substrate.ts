@@ -36,7 +36,7 @@ function cloneIdea(idea: Idea): Idea {
   // metadata.labels map (cluster-1 array↔map asymmetry the generic decode can't
   // reverse) and drop the raw labels artifact. Used at both the read boundary AND
   // the CAS path, so the legacy-flat `tags` array round-trips through the write-encoder.
-  const flat = decodeEnvelopeToFlat(idea as unknown as Record<string, unknown>) as Record<string, unknown>;
+  const flat = decodeEnvelopeToFlat(idea as unknown as Record<string, unknown>, "Idea") as Record<string, unknown>;
   // tags: from the envelope metadata.labels map (flattened to flat.labels), OR an
   // existing top-level tags array (a legacy-flat in-memory build, e.g. submitIdea's
   // return). Drop the raw labels artifact.
@@ -130,18 +130,19 @@ export class IdeaRepositorySubstrate implements IIdeaStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Idea | null> {
-    // Substrate-API list with idea_cascade_idx (SchemaDef v2 indexed). mission-
-    // 89 Phase 4 (bug-138 systemic): envelope-first + legacy fallback dual-lookup.
+    // Substrate-API list with idea_cascade_idx (metadata JSONB index). C3-R4b
+    // (dual-path collapse): filter by the FLAT cascade key — the substrate
+    // translates it via renameMap (sourceThreadId→metadata.sourceThreadId,
+    // sourceActionId→metadata.sourceActionId), retiring the dotted special-casing
+    // so renameMap is the single field-path authority. (mission-90 W8 already
+    // retired the legacy bare-row fallback: 0 bare rows live; all writes envelope.)
     const envelopeResult = await this.substrate.list<Idea>(KIND, {
       filter: {
-        "metadata.sourceThreadId": key.sourceThreadId,
-        "metadata.sourceActionId": key.sourceActionId,
+        sourceThreadId: key.sourceThreadId,
+        sourceActionId: key.sourceActionId,
       },
       limit: 1,
     });
-    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). The legacy
-    // top-level cascade-key fallback is retired — W6 proved 0 bare rows live and
-    // every write lands envelope (W4 encoder), so the bare path is dead.
     return envelopeResult.items[0] ? cloneIdea(envelopeResult.items[0]) : null;
   }
 
