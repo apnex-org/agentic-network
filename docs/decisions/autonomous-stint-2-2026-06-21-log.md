@@ -134,6 +134,13 @@
 - **Tele:** tele-8/9 (verifier-gated integrity, deferred-not-voided), tele-4 (no silent verifier-death — the recurrence motivates D-3 visibility), tele-13 (Director resolving; architect continues autonomously).
 - **Status:** ACTIVE (Steve-offline posture). Build continues; assembly-gate deferred. Director resolving quota.
 
+## DR-S2-019 — Steve back → normal DR-002 restored → keystone ASSEMBLY-VERIFICATION engaged (Steve gate + ultracode Workflow panel)
+- **Context:** Director: "Steve is back online" (2026-06-22, quota resolved) + ultracode ON. The C1-R2 keystone is BUILT-COMPLETE + dormant on #356 (16 commits, 2078 green, governor-clean). DR-S2-018's deferred reads + assembly-gate now engage.
+- **Decision:** (a) the relaxed-gate (DR-S2-018) is LIFTED — **normal DR-002 verifier-gate RESTORED** (the keystone deploy is verifier-gated). (b) Run the marquee-deploy verification on TWO tracks: **Steve's formal DR-002 ASSEMBLY-VERIFY** of the complete keystone (thread-701 — subsumes the deferred 3a-ii/3b reads; fold-fidelity of the 5 catches + cross-cutting + the Agent-schema-migration) AND an **independent adversarial Workflow panel** (wf_24af4a60-cb4, ultracode breadth — 7 dimensions × adversarial-verify × synth, sub-agents read the code so the architect stays spec-level). Reconcile both → deploy-readiness.
+- **Deploy sequencing:** assembly-deploy (merge #356 → watchtower roll) gates on: clean verify (Steve + Workflow reconciled, must-fix-before-deploy folded) + **the prod-deploy per-occasion Director auth** (the standing hard-line greg re-flagged — NOT covered by the relaxed-gate; deploy is architect-EXECUTABLE but Director-AUTHORIZED per-occasion). Then roll-confirm → adoption/dogfood → friction-council (Steve's voice).
+- **Tele:** tele-8/9 (verifier-gated integrity restored + double-verified for the marquee deploy), tele-4 (no-silent-failure — exhaustive pre-deploy), tele-13 (Director gate at the prod-deploy).
+- **Status:** IN PROGRESS — Steve assembly-verify (thread-701) + Workflow panel (wf_24af4a60-cb4) running in parallel; deploy pending clean-verify + Director prod-auth.
+
 ---
 
 ## Verifier integrity-backstop record (DR-010 pattern, this stint)
