@@ -24,6 +24,8 @@ import type {
   WorkItemLease,
   WorkItemBlockedOn,
   EvidenceRequirement,
+  EvidenceItem,
+  EvidenceKind,
   IWorkItemStore,
 } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
@@ -88,6 +90,118 @@ export class WipCapExceeded extends Error {
     super(`WIP cap exceeded: agent ${agentId} holds ${inFlight} in-flight item(s) (cap ${cap})`);
     this.name = "WipCapExceeded";
   }
+}
+
+/** Thrown by completeWork when the anti-gameability evidence predicate fails. Carries
+ *  a SPECIFIC reason (which requirement uncovered / which evidence failed freshness or
+ *  resolve) — never a silent close (audit-4082 evidence contract). */
+export class EvidencePredicateFailed extends Error {
+  constructor(reason: string) {
+    super(`evidence predicate failed: ${reason}`);
+    this.name = "EvidencePredicateFailed";
+  }
+}
+
+/** Phases from which complete_work is legal (FSM §3.1). */
+const COMPLETABLE_PHASES: readonly WorkItemPhase[] = ["in_progress", "review"];
+
+/** OIS-INTERNAL evidence kinds whose ref is EXISTENCE-checked (substrate-get) when the
+ *  requirement is refResolvable. audit→Audit; review→WorkItem (the verifier-gate
+ *  work-item, design §3.4 linkage — there is no standalone Review entity kind; flagged
+ *  to architect). External kinds (commit/pr/test-run/doc) are format-validated only. */
+const OIS_INTERNAL_EVIDENCE_KINDS: Partial<Record<EvidenceKind, string>> = {
+  audit: "Audit",
+  review: "WorkItem",
+};
+
+/** A ref the completeWork predicate must existence-check (async, outside the CAS). */
+interface RefToResolve { requirementId: string; kind: string; id: string }
+
+/** ISO-8601 chronological compare (parse-based — tolerates timezone/format variance;
+ *  a malformed timestamp is treated as NOT-fresh, fail-closed). */
+function producedAtOnOrAfter(producedAt: string, claimedAt: string): boolean {
+  const p = Date.parse(producedAt);
+  const c = Date.parse(claimedAt);
+  if (!Number.isFinite(p) || !Number.isFinite(c)) return false;
+  return p >= c;
+}
+
+/** Append supplied evidence to the existing set, DEDUPED by identity
+ *  (requirementId|kind|ref|producedAt) — so a network-retry can't double-append
+ *  (audit-4082 #3 idempotency). */
+function mergeEvidence(existing: EvidenceItem[], supplied: EvidenceItem[]): EvidenceItem[] {
+  const seen = new Set<string>();
+  const out: EvidenceItem[] = [];
+  for (const e of [...existing, ...supplied]) {
+    const key = `${e.requirementId}|${e.kind}|${e.ref ?? ""}|${e.producedAt}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out;
+}
+
+/**
+ * The anti-gameability evidence predicate (audit-4082 evidence contract). PURE +
+ * synchronous (so it runs inside the CAS transform); OIS-internal ref existence-checks
+ * are returned as `refsToResolve` for the async caller. Throws EvidencePredicateFailed
+ * with a specific reason on any unmet condition, EXCEPT an uncovered review requirement
+ * (which legitimately PARKS the item in `review` awaiting the verifier).
+ *
+ *   #1 coverage-by-BINDING (evidence names the requirement id, not just kind)
+ *   #2 kind-match  #3 freshness (producedAt >= lease.claimedAt unless allowPreClaim)
+ *   #5 no-double-count (structural: one entry names one requirementId)
+ *   #6 empty-req floor (>=1 freeform evidence; no silent zero-evidence close)
+ */
+function evaluateEvidence(
+  requirements: EvidenceRequirement[],
+  evidence: EvidenceItem[],
+  lease: WorkItemLease | null,
+): { nextPhase: WorkItemPhase; refsToResolve: RefToResolve[] } {
+  const claimedAt = lease?.claimedAt ?? null;
+  const refsToResolve: RefToResolve[] = [];
+
+  // #6 EMPTY-REQ FLOOR
+  if (requirements.length === 0) {
+    if (!evidence.some((e) => e.kind === "freeform")) {
+      throw new EvidencePredicateFailed("no evidence requirements declared, but complete_work still requires >=1 freeform evidence (no silent zero-evidence close)");
+    }
+    return { nextPhase: "done", refsToResolve };
+  }
+
+  let reviewDeferred = false;
+  for (const req of requirements) {
+    // #1 coverage-by-binding: evidence entries that NAME this requirement's id.
+    const boundById = evidence.filter((e) => e.requirementId === req.id);
+    if (boundById.length === 0) {
+      // an uncovered REVIEW requirement parks the item in `review` (verifier not yet);
+      // any other uncovered requirement is a hard fail (the agent's evidence is short).
+      if (req.kind === "review") { reviewDeferred = true; continue; }
+      throw new EvidencePredicateFailed(`requirement '${req.id}' (${req.kind}) has no bound evidence`);
+    }
+    // #2 kind-match
+    const kindMatched = boundById.filter((e) => e.kind === req.kind);
+    if (kindMatched.length === 0) {
+      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence kind mismatch (expected ${req.kind}, bound entries: ${boundById.map((e) => e.kind).join(", ")})`);
+    }
+    // #3 freshness
+    const fresh = kindMatched.filter((e) => req.allowPreClaim || (claimedAt != null && producedAtOnOrAfter(e.producedAt, claimedAt)));
+    if (fresh.length === 0) {
+      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence failed freshness (producedAt before lease.claimedAt=${claimedAt}; set allowPreClaim to permit a pre-claim artifact)`);
+    }
+    // #4 refResolvable: OIS-internal → existence-check (queued); external → format-only.
+    if (req.refResolvable) {
+      const e = fresh[0]; // the binding evidence
+      const internalKind = OIS_INTERNAL_EVIDENCE_KINDS[e.kind];
+      if (internalKind) {
+        if (!e.ref || e.ref.trim() === "") throw new EvidencePredicateFailed(`requirement '${req.id}' refResolvable evidence has no ref`);
+        refsToResolve.push({ requirementId: req.id, kind: internalKind, id: e.ref });
+      } else if (!e.ref || e.ref.trim() === "") {
+        throw new EvidencePredicateFailed(`requirement '${req.id}' refResolvable evidence has a malformed (empty) ref`);
+      }
+    }
+  }
+  return { nextPhase: reviewDeferred ? "review" : "done", refsToResolve };
 }
 
 /** Decode envelope→flat + normalize the array/object fields to their empty
@@ -285,6 +399,48 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       }
       if (!RELEASABLE_PHASES.includes(w.status)) throw new TransitionRejected(`abandon requires an active claim, was ${w.status}`);
       return { ...w, status: "abandoned", lease: null, blockedOn: null, updatedAt: new Date().toISOString() };
+    });
+  }
+
+  /**
+   * {in_progress|review} → review|done, gated by the anti-gameability evidence
+   * predicate (audit-4082 contract; see evaluateEvidence). Appends + dedups the
+   * supplied evidence, validates coverage/kind/freshness/refResolvable/floor, and
+   * transitions: `review` while a review requirement is unmet, `done` once all are
+   * covered. Throws EvidencePredicateFailed (specific reason) on any unmet condition —
+   * row UNCHANGED (atomic: evidence is stored only on a passing predicate). NEVER
+   * requires a passing verdict.
+   *
+   * The OIS-internal ref existence-check (#4) is async, so it runs on a PRE-READ before
+   * the synchronous CAS; requirements are immutable (spec), so the resolution is stable
+   * across the CAS re-read. The CAS re-runs the sync predicate on the fresh row.
+   */
+  async completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[]): Promise<WorkItem | null> {
+    const pre = await this.substrate.get<WorkItem>(KIND, workId);
+    if (!pre) return null;
+    const item = cloneWorkItem(pre);
+    // fail-fast auth + phase (re-checked authoritatively inside the CAS)
+    this.assertLease(item, agentId, leaseToken, "complete");
+    if (!COMPLETABLE_PHASES.includes(item.status)) {
+      throw new TransitionRejected(`complete requires in_progress or review, was ${item.status}`);
+    }
+    // fail-fast the sync predicate + collect OIS-internal refs to resolve.
+    const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.lease);
+    // #4 async existence-check (OIS-internal refResolvable refs MUST resolve).
+    for (const r of plan.refsToResolve) {
+      const exists = await this.substrate.get(r.kind, r.id);
+      if (!exists) {
+        throw new EvidencePredicateFailed(`requirement '${r.requirementId}' refResolvable evidence ref ${r.kind}/${r.id} does not resolve`);
+      }
+    }
+    // Authoritative CAS: re-check auth + phase + re-run the predicate on the FRESH row,
+    // then store the merged evidence + transition atomically.
+    return this.tryCasUpdate(workId, (w) => {
+      this.assertLease(w, agentId, leaseToken, "complete");
+      if (!COMPLETABLE_PHASES.includes(w.status)) throw new TransitionRejected(`complete requires in_progress or review, was ${w.status}`);
+      const merged = mergeEvidence(w.evidence, evidence);
+      const { nextPhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease);
+      return { ...w, status: nextPhase, evidence: merged, updatedAt: new Date().toISOString() };
     });
   }
 

@@ -20,19 +20,31 @@ export type WorkItemPriority = "critical" | "high" | "normal" | "low";
 export type WorkItemPhase =
   | "ready" | "claimed" | "in_progress" | "blocked" | "review" | "done" | "abandoned";
 
-/** Evidence-requirement descriptor (spec). `refResolvable` validates an
- *  OIS-INTERNAL entity ref exists + is relevant at complete_work (external
- *  commit/pr/url refs are format-validated only; never existence-checked). */
+/** Evidence kind taxonomy (shared by requirement + supplied evidence). OIS-INTERNAL
+ *  kinds (audit/review) are existence-checked when refResolvable; external kinds
+ *  (commit/pr/test-run/doc) are format-validated only, never existence-checked. */
+export type EvidenceKind = "commit" | "pr" | "audit" | "review" | "test-run" | "doc" | "freeform";
+
+/** Evidence-requirement descriptor (spec). The anti-gameability contract (audit-4082
+ *  evidence predicate): complete_work binds supplied evidence to each requirement by
+ *  `id`, kind-matches, and (unless `allowPreClaim`) requires freshness vs the lease
+ *  claim. `refResolvable` additionally existence-checks an OIS-INTERNAL ref. */
 export interface EvidenceRequirement {
   id: string;
-  kind: "commit" | "pr" | "audit" | "test-run" | "doc" | "freeform";
+  kind: EvidenceKind;
+  description?: string;
+  /** OIS-INTERNAL bound evidence ref must resolve via substrate-get (audit/review);
+   *  an external ref (commit/pr/...) is format-validated only (malformed rejects). */
   refResolvable?: boolean;
+  /** When set, freshness (producedAt >= lease.claimedAt) is NOT required — permits a
+   *  pre-claim artifact (e.g. a design doc authored before the work was claimed). */
+  allowPreClaim?: boolean;
 }
 
 /** Supplied evidence (status). Binds to a requirement by `requirementId`. */
 export interface EvidenceItem {
   requirementId: string;
-  kind: EvidenceRequirement["kind"];
+  kind: EvidenceKind;
   ref?: string;
   producedAt: string;
   note?: string;
@@ -140,4 +152,13 @@ export interface IWorkItemStore {
   /** {claimed|in_progress|blocked} → abandoned, terminal. The lease-holder (with a
    *  matching token) OR the creator (no token — override authority) may abandon. */
   abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null>;
+
+  /** {in_progress|review} → review|done. Appends + dedups the supplied evidence, then
+   *  validates the anti-gameability predicate (coverage-by-binding + kind-match +
+   *  freshness + refResolvable + no-double-count + empty-req floor). Throws
+   *  EvidencePredicateFailed (fail-loud, specific reason) on any unmet condition; the
+   *  row is unchanged. Parks in `review` when a review requirement is present + unmet;
+   *  reaches `done` once all requirements are covered. NEVER requires a passing verdict
+   *  (review evidence satisfies by EXISTING). Holder + matching token. */
+  completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[]): Promise<WorkItem | null>;
 }
