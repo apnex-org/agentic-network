@@ -104,7 +104,7 @@ const Bug: SchemaDef = {
   // W2 finding-A: severity/class (substrate-side filters, bug-repo:128-129) relocate to spec.
   // (Cascade-keys sourceThreadId/sourceActionId/sourceIdeaId are DELIBERATELY excluded —
   // repo dual-path envelope-first dotted query + W1 null-pin; see oracle exclusion set.)
-  renameMap: { status: "status.phase", severity: "spec.severity", class: "spec.class" },
+  renameMap: { status: "status.phase", severity: "spec.severity", class: "spec.class", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId", sourceIdeaId: "metadata.sourceIdeaId" },
 };
 
 const Counter: SchemaDef = {
@@ -142,7 +142,7 @@ const Idea: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^idea_",
-  renameMap: { status: "status.phase", missionId: "status.missionId" },
+  renameMap: { status: "status.phase", missionId: "status.missionId", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
 };
 
 const Message: SchemaDef = {
@@ -213,7 +213,7 @@ const Mission: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^mission_",
-  renameMap: { status: "status.phase" },
+  renameMap: { status: "status.phase", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
 };
 
 const PendingAction: SchemaDef = {
@@ -276,7 +276,7 @@ const Proposal: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^proposal_",
-  renameMap: { status: "status.phase" },
+  renameMap: { status: "status.phase", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
 };
 
 const Task: SchemaDef = {
@@ -311,7 +311,7 @@ const Task: SchemaDef = {
   // (findByIdempotencyKey, task-repo:177) with NO repo dual-path — bare → null on
   // envelope rows post-W6 → idempotency dedup silently breaks → duplicate task
   // creation. Relocates to metadata.idempotencyKey. (Cascade-keys excluded — see oracle.)
-  renameMap: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt" },
+  renameMap: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
 };
 
 const Tele: SchemaDef = {

@@ -27,6 +27,7 @@ import type {
   FilterValue,
   FieldTranslator,
 } from "./types.js";
+import { translateKeyOrThrow } from "./filter-translation-error.js";
 
 const { Pool, Client } = pg;
 
@@ -40,10 +41,13 @@ export type WriteEncoder = (kind: string, entity: unknown) => unknown;
  *   - setFieldTranslator (W2): READ-side bare-key → envelope-path translation.
  *   - setWriteEncoder (W4): WRITE-side bare → envelope encoding at put/createOnly/
  *     putIfMatch (idea-324 close-all-bare-writers). Symmetric declarative authorities.
+ *   - setPartitionedKindCheck (C3-R4b): the known-partitioned-kind oracle that arms
+ *     FilterTranslationGapError at the filter-translate path.
  */
 export interface PostgresSubstrate extends HubStorageSubstrate {
   setFieldTranslator(translator: FieldTranslator | null): void;
   setWriteEncoder(encoder: WriteEncoder | null): void;
+  setPartitionedKindCheck(check: ((kind: string) => boolean) | null): void;
 }
 
 /**
@@ -63,6 +67,14 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    * wired (tests + memory-parity dev paths) → list() is a pure no-op passthrough.
    */
   private fieldTranslator: FieldTranslator | null = null;
+
+  /**
+   * C3-R4b (piece 1): "is this a known envelope-partitioned kind?" oracle,
+   * late-bound via setPartitionedKindCheck at Hub boot (→ reconciler.hasTranslations).
+   * Gates FilterTranslationGapError: a null translation is a GAP only for a known
+   * partitioned kind. null until wired (tests/dev) → the gap-throw is inert.
+   */
+  private partitionedKindCheck: ((kind: string) => boolean) | null = null;
 
   /**
    * mission-90 W4 (idea-324): write-side envelope encoder, late-bound via
@@ -90,6 +102,16 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   }
 
   /**
+   * C3-R4b (piece 1): inject the known-partitioned-kind oracle
+   * (→ reconciler.hasTranslations). Wired in production (index.ts) after
+   * reconciler.start(); arms FilterTranslationGapError on the filter-translate
+   * path. A null arg clears it (gap-throw inert — tests/dev).
+   */
+  setPartitionedKindCheck(check: ((kind: string) => boolean) | null): void {
+    this.partitionedKindCheck = check;
+  }
+
+  /**
    * mission-90 W4 (idea-324): inject the write-side envelope encoder. Called once
    * at Hub boot. A null arg clears it (writes pass through unencoded).
    */
@@ -112,7 +134,17 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    * standalone). Inert until setFieldTranslator is wired (tests/dev = no-op).
    */
   private translateKey(kind: string, bareKey: string): string {
-    return this.fieldTranslator?.(kind, bareKey) ?? bareKey;
+    if (!this.fieldTranslator) return bareKey; // inert until wired (tests/dev)
+    // C3-R4b (piece 1): fail-loud at filter-translate when a known partitioned
+    // kind's domain key has no renameMap entry (the silent-miss gap, bug-138/
+    // bug-170). Arms only when the partitioned-kind oracle is ALSO wired
+    // (production); otherwise the bare key passes through, exactly as before.
+    return translateKeyOrThrow(
+      kind,
+      bareKey,
+      (k, b) => this.fieldTranslator!(k, b),
+      (k) => this.partitionedKindCheck?.(k) ?? false,
+    );
   }
 
   // ── Schema management (W2 reconciler integration; stubbed at W1) ──────────
