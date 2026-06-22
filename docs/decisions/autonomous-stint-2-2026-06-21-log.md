@@ -118,6 +118,14 @@
 - **Tele:** tele-13 (Director-intent gate-point), tele-3 (sovereign-composition: queue on the D-1 spine, no forked API), tele-10 (one authority, two bindings), tele-4 (loud-`unknown`, honest-scope label).
 - **Status:** RESOLVED (Survey closed; all defaults confirmed). C1 → Design.
 
+## DR-S2-017 — C1 Wave-1 keystone: Design Phase-4 COMPLETE (triple-reviewed) + R2 mission BANKED
+- **Context:** post-Survey (DR-S2-016), C1 ran its Phase-4 Design — the architect↔greg construction-design pass (thread-692 CONVERGED: greg graded substrate-accuracy SOUND, 8 construction flags + 3 completeness items resolved) + Steve's ADVISORY pre-bank adversarial read (thread-693 CONVERGED: HOLDS-WITH-CONDITIONS, audit-4037, 5 named holes). ALL folded into #355 (@c6dfba7, PHASE-4 DESIGN AGREED).
+- **Decision (autonomous, acting-Director):** bank the C1-R2 keystone + launch the build NOW — the design is fully ratified (Director Survey + greg + Steve) and banking executes the ratified C1–C4 roadmap; flowed per the autonomous posture (not a hard-line; reversible — a proposed mission can be abandoned), recorded here + surfaced post-hoc. Created **mission-94** (`M-Work-Queue-Substrate`, structural-inflection, proposed) = greg's R2 build pickup, with greg's 8 + Steve's 3 conditions as explicit acceptance criteria. greg LEADS build; architect owns contract shape; verifier advisory-non-gating. Steve filed **bug-174** (substrate numeric-range TEXT-cast, general hardening, not C1-blocking).
+- **Verifier-conditions folded as R2/R3 acceptance criteria:** R3 label-gate becomes EVIDENCE-shaped (C1-R3-ACTUATION-DOGFOOD: dual-harness claim audit-IDs + org-state snapshot; an assertion/heartbeat-proxy FAILS) + a field truth-source matrix w/ fidelity tags (C1-R3-UNKNOWN-BUDGET: currentWorkItem/canAcceptWorkNow rendering `unknown` ⇒ VISIBILITY-parity FAILED). R2: $contains across ALL substrate surfaces; explicit `pg_try_advisory_lock` WIP-cap; evidence-gameability hardening.
+- **Pending:** #355 merge (greg final-approval on c6dfba7 via thread-694 — the doc gained Steve's conditions since greg's "lock it"); mission-94 preflight→active when greg's R2 spec lands; R1/R3/R4 become missions as deps clear (R1 dep D-1 R1; R3 dep R2; R4 co-seq C2-L1).
+- **Tele:** tele-13 (Director gate → autonomous execution), tele-3/10 (sovereign work-control, one authority two bindings), tele-8/9 (verifier-advisory integrity + evidence-shaped R3 gate), tele-4 (loud-`unknown` can't hollow the label).
+- **Status:** Design COMPLETE + triple-reviewed; R2 BANKED (mission-94); build launching.
+
 ---
 
 ## Verifier integrity-backstop record (DR-010 pattern, this stint)
