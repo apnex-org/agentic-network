@@ -133,6 +133,19 @@ greg's R2 construction-feasibility review (grounded against `postgres-substrate.
 
 **First R2 artifact (born-under-governor):** WorkItem's SchemaDef + renameMap + its SUBSTRATE_FILTERABLE_KEYS entries (`conformance/filterable-keys.ts`), exercised by the R4a value-round-trip oracle — which forces flag #1 (the containment operator) to be resolved at the governor gate before banking. greg leads the build; architect owns the operator + renameMap/index + verb-semantics + evidence-predicate contract shapes.
 
+## Verifier pre-bank conditions (audit-4037 — Steve advisory read, thread-693)
+
+Steve's ADVISORY pre-bank adversarial read: **HOLDS-WITH-CONDITIONS** (non-gating) on all 3 areas — the over-claim line holds (the supervisor-controller is a REAL ACTUATION-parity discharge path, not a reframe), OpenCode emission is achievable field-by-field, and the construction resolutions are directionally sound. 5 named holes ACCEPTED as **R2/R3 acceptance criteria** (born-with):
+
+**R3 label-gate (the honesty teeth):**
+- **C1-R3-ACTUATION-DOGFOOD** — R3 acceptance is **EVIDENCE-shaped, not prose-shaped**: required evidence = `claim_work`/`renew`/`release`-or-`complete` **audit IDs for BOTH harness families** (the supervisor claims a WorkItem for a Claude agent AND for an OpenCode/verifier agent), each lease/FSM/audit-visible, PLUS an `oisctl org-state` snapshot rendering the controlled agent + WorkItem owner/lease. An architectural assertion OR a heartbeat/idle proxy that merely shows "Steve exists" **FAILS R3.**
+- **C1-R3-UNKNOWN-BUDGET** — R3 requires a **FIELD TRUTH-SOURCE MATRIX**, `fidelity ∈ {measured|estimated|heuristic|unknown}`. Per Steve's OpenCode reality-check, the per-field source-of-truth: `role/identity` = surfaceable (adapter config/Agent projection); `currentWorkItem` = WorkItem.lease/supervisor-state (NOT session-title/transcript inference); `queueDepth` = Hub `list_ready_work` projection; `blockedOn` = WorkItem `block_work` FSM state (NOT the OpenCode todo/session tables); `contextRunway` = estimated/heuristic (OpenCode DB has model+token counters, NO clean exact remaining-context gauge — cache-read/cumulative ≠ live occupancy; emit via the C2-L1 fidelity tag); `canAcceptWorkNow` = a conservative computed predicate (session idle/completed AND Hub WIP-cap/quarantine/quota clear — `false` reliable when running, `true` needs the combined predicate). **GATE:** `currentWorkItem` or `canAcceptWorkNow` rendering `unknown` under the supervisor-owned model ⇒ VISIBILITY-parity has NOT passed (loud-`unknown` may NOT hollow the label).
+
+**R2 construction acceptance criteria:**
+- **C1-R2-JSONB-CONTAINMENT** — the `$contains`/`$any` operator (resolution #1) is incomplete unless it spans **ALL substrate surfaces**: extend the `FilterValue` type + the SQL translator (`#>`/`@>` with explicit JSON typing) + the watch-side `matchesFilter` semantics + the filter whitelist/type-validation + the R4a value-round-trip oracle + the GIN index DDL for `roleEligibility`. List-SQL-only ⇒ WATCH/list parity + governor coverage drift.
+- **C1-R2-WIP-LOCK-FLAVOR** — choose explicitly (resolution #4): use the **existing proven session-scoped `pg_try_advisory_lock` wrapper** (greg de-flaked it in #352), reserve a WorkItem/WIP **lock class**, and run count+CAS **inside** that lock with **fail-closed timeout** behavior. (Ambiguity reopens TOCTOU.)
+- **C1-R2-EVIDENCE-GAMEABILITY** — harden resolution #6: evidence must **bind to a requirement-id**, validate ref existence **AND relevance** to the WorkItem/targetRef, prefer `producedAt >= claimedAt` (unless explicitly allowed), and a single evidence item may NOT satisfy multiple distinct requirements unless the requirement declares it. (refResolvable stays OIS-internal-only.) Empty-requirements-still-needs-≥1-freeform stays.
+
 ## Spec (the concrete artifact / contract shape)
 
 **WHAT C1 OWNS (the delta on top of D-1's already-approved contract machinery):**
