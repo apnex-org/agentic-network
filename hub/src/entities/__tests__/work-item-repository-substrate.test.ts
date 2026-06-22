@@ -16,6 +16,7 @@ import { Pool } from "pg";
 import { createPostgresStorageSubstrate, createSchemaReconciler, ALL_SCHEMAS, buildEnvelopeWriteEncoder } from "../../storage-substrate/index.js";
 import { SubstrateCounter } from "../substrate-counter.js";
 import { WorkItemRepositorySubstrate } from "../work-item-repository-substrate.js";
+import type { EvidenceRequirement, EvidenceItem, WorkItemLease } from "../work-item.js";
 
 const SETUP_TIMEOUT = 90_000;
 const OP_TIMEOUT = 120_000;
@@ -91,5 +92,108 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
 
     const forArchitect = await repo.listWorkItems({ role: "architect" });
     expect(new Set(forArchitect.map((w) => w.id)).has(arch.id)).toBe(true);
+  }, OP_TIMEOUT);
+
+  // ── audit-4070 #2: edge coverage (Steve's sub-PR-2b read) ───────────────────
+  // Lock the decode + envelope round-trip at the boundaries: empty/absent
+  // collections, verb-populated status fields (lease/evidence — written through the
+  // same encoder a sub-PR-3 verb will use), deeply-nested payload, targetRef vs
+  // free-standing, and a combined status+role AND with a negative result.
+
+  it("EDGE: empty roleEligibility=[] round-trips as [] and is excluded by every role filter", async () => {
+    const w = await repo.createWorkItem({ type: "freeform", roleEligibility: [] });
+    const got = await repo.getWorkItem(w.id);
+    expect(got!.roleEligibility).toEqual([]);
+    // $contains over an empty array never matches → never surfaces in a role projection.
+    const forEng = await repo.listWorkItems({ role: "engineer" });
+    expect(new Set(forEng.map((x) => x.id)).has(w.id)).toBe(false);
+  }, OP_TIMEOUT);
+
+  it("EDGE: a freshly-created lease/blockedOn is null and round-trips null through the envelope", async () => {
+    const w = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"] });
+    const got = await repo.getWorkItem(w.id);
+    expect(got!.lease).toBeNull();
+    expect(got!.blockedOn).toBeNull();
+    // createWorkItem sets these explicitly → the encoder stores status.lease as
+    // JSON null (faithfully, not omitted), and decode yields null (not "null"/undefined).
+    const raw = await pool.query<{ data: { status?: { lease?: unknown; blockedOn?: unknown } } }>(`SELECT data FROM entities WHERE kind='WorkItem' AND id=$1`, [w.id]);
+    expect(raw.rows[0].data.status?.lease).toBeNull();
+    expect(raw.rows[0].data.status?.blockedOn).toBeNull();
+  }, OP_TIMEOUT);
+
+  it("EDGE: a populated multi-field lease round-trips through encode→decode (the sub-PR-3 verb write-shape)", async () => {
+    // lease is verb-populated (sub-PR-3 claim); prove the STORAGE decode contract now
+    // by writing the flat shape a claim verb will, through the very same encoder.
+    const lease: WorkItemLease = {
+      holder: "agent-x", claimedAt: "2026-06-22T00:00:00.000Z",
+      expiresAt: "2026-06-22T00:05:00.000Z", heartbeatAt: "2026-06-22T00:00:00.000Z",
+    };
+    await substrate.put("WorkItem", {
+      id: "work-edge-lease", type: "task", priority: "normal", roleEligibility: ["engineer"],
+      dependsOn: [], evidenceRequirements: [], targetRef: null, status: "claimed",
+      lease, evidence: [], blockedOn: null, leaseExpiryCount: 2,
+      createdAt: "2026-06-22T00:00:00.000Z", updatedAt: "2026-06-22T00:00:00.000Z",
+    });
+    const got = await repo.getWorkItem("work-edge-lease");
+    expect(got!.lease).toEqual(lease);
+    expect(got!.status).toBe("claimed");
+    expect(got!.leaseExpiryCount).toBe(2);
+    const raw = await pool.query<{ data: { status?: { lease?: { holder?: string } } } }>(`SELECT data FROM entities WHERE kind='WorkItem' AND id='work-edge-lease'`);
+    expect(raw.rows[0].data.status?.lease?.holder).toBe("agent-x");
+  }, OP_TIMEOUT);
+
+  it("EDGE: multi-element evidenceRequirements (spec) + evidence (status) round-trip verbatim", async () => {
+    const evidenceRequirements: EvidenceRequirement[] = [
+      { id: "r1", kind: "commit", refResolvable: false },
+      { id: "r2", kind: "pr", refResolvable: false },
+      { id: "r3", kind: "audit", refResolvable: true },
+    ];
+    const evidence: EvidenceItem[] = [
+      { requirementId: "r1", kind: "commit", ref: "abc123", producedAt: "2026-06-22T00:00:00.000Z" },
+      { requirementId: "r2", kind: "pr", ref: "#999", producedAt: "2026-06-22T00:01:00.000Z", note: "secondary" },
+    ];
+    await substrate.put("WorkItem", {
+      id: "work-edge-ev", type: "review", priority: "normal", roleEligibility: ["verifier"],
+      dependsOn: [], evidenceRequirements, targetRef: null, status: "review",
+      lease: null, evidence, blockedOn: null, leaseExpiryCount: 0,
+      createdAt: "2026-06-22T00:00:00.000Z", updatedAt: "2026-06-22T00:00:00.000Z",
+    });
+    const got = await repo.getWorkItem("work-edge-ev");
+    expect(got!.evidenceRequirements).toEqual(evidenceRequirements);
+    expect(got!.evidence).toEqual(evidence);
+  }, OP_TIMEOUT);
+
+  it("EDGE: a deeply-nested payload survives the envelope round-trip verbatim", async () => {
+    const payload = { a: { b: { c: [1, 2, { d: "deep", e: [true, null, "x"] }] } }, list: [{ k: "v" }, { k: "w" }] };
+    const w = await repo.createWorkItem({ type: "freeform", roleEligibility: ["engineer"], payload });
+    const got = await repo.getWorkItem(w.id);
+    expect(got!.payload).toEqual(payload);
+  }, OP_TIMEOUT);
+
+  it("EDGE: targetRef-bearing vs free-standing (payload-only) both round-trip", async () => {
+    const ref = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"], targetRef: { kind: "Task", id: "task-7" } });
+    const free = await repo.createWorkItem({ type: "freeform", roleEligibility: ["engineer"], payload: { note: "standalone" } });
+    expect((await repo.getWorkItem(ref.id))!.targetRef).toEqual({ kind: "Task", id: "task-7" });
+    const gotFree = await repo.getWorkItem(free.id);
+    expect(gotFree!.targetRef).toBeNull();
+    expect(gotFree!.payload).toEqual({ note: "standalone" });
+  }, OP_TIMEOUT);
+
+  it("EDGE: combined status+role filter ANDs — role-match but status-mismatch is EXCLUDED", async () => {
+    // engineer-eligible but DONE (status is verb-controlled → put directly).
+    await substrate.put("WorkItem", {
+      id: "work-edge-done", type: "task", priority: "normal", roleEligibility: ["engineer"],
+      dependsOn: [], evidenceRequirements: [], targetRef: null, status: "done",
+      lease: null, evidence: [], blockedOn: null, leaseExpiryCount: 0,
+      createdAt: "2026-06-22T00:00:00.000Z", updatedAt: "2026-06-22T00:00:00.000Z",
+    });
+    const readyEng = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"] });
+    const readyEngineers = await repo.listWorkItems({ status: "ready", role: "engineer" });
+    const ids = new Set(readyEngineers.map((x) => x.id));
+    expect(ids.has(readyEng.id)).toBe(true);        // ready AND engineer → included
+    expect(ids.has("work-edge-done")).toBe(false);  // engineer but DONE → AND excludes
+    // and it DOES surface when the status leg matches:
+    const doneEng = await repo.listWorkItems({ status: "done", role: "engineer" });
+    expect(new Set(doneEng.map((x) => x.id)).has("work-edge-done")).toBe(true);
   }, OP_TIMEOUT);
 });
