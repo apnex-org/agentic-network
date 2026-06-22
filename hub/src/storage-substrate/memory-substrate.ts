@@ -42,6 +42,7 @@ import type {
 import type { WriteEncoder } from "./postgres-substrate.js";
 import { buildEnvelopeWriteEncoder } from "./migrations/v2-envelope/write-encoder.js";
 import { ALL_SCHEMAS } from "./schemas/all-schemas.js";
+import { assertKnownFilterOps } from "./types.js";
 
 type EntityRow = { data: unknown; resourceVersion: number };
 
@@ -564,11 +565,14 @@ function matchesFilter(entity: Record<string, unknown>, filter: Filter, translat
     }
     if (typeof value === "object" && value !== null) {
       const op = value as Record<string, unknown>;
+      // C1-R2 (audit-4054): FAIL-LOUD on any operator not implemented here — kills
+      // the silent-no-op CLASS (tele-4), keeps memory at parity with the SQL path.
+      assertKnownFilterOps(op, rawField);
       if ("$in" in op && Array.isArray(op.$in) && !op.$in.map(String).includes(String(v))) return false;
-      // $contains (C1-R2): JSONB array-membership — the stored array `v` CONTAINS
-      // the scalar (inverse of $in). Mirrors postgres `@>` for watch/memory parity.
+      // $contains (C1-R2): TYPED array-membership (SameValueZero; [3] does NOT match
+      // "3", ['true'] does NOT match true) — parity with the typed JSONB `@>`.
       if ("$contains" in op && op.$contains !== undefined) {
-        if (!Array.isArray(v) || !v.map(String).includes(String(op.$contains))) return false;
+        if (!Array.isArray(v) || !v.includes(op.$contains)) return false;
       }
       // bug-104: range comparison — numeric when both sides coerce to a finite
       // number (numbers + ISO-dates), else lexical string comparison. This

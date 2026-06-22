@@ -5,7 +5,7 @@
  * storage-substrate/__tests__/contains-operator.test.ts.)
  */
 import { describe, it, expect } from "vitest";
-import { buildQueryFilterSchema } from "../list-filters.js";
+import { buildQueryFilterSchema, applyQueryFilter } from "../list-filters.js";
 
 describe("list-filters — $contains on an array field-type (C1-R2)", () => {
   const schema = buildQueryFilterSchema({
@@ -35,5 +35,38 @@ describe("list-filters — $contains on an array field-type (C1-R2)", () => {
 
   it("rejects an unknown field name (.strict() allowlist)", () => {
     expect(schema.safeParse({ nope: { $contains: "x" } }).success).toBe(false);
+  });
+});
+
+describe("list-filters — applyQueryFilter runtime $contains (audit-4054 #2: matcher + fail-loud)", () => {
+  type Row = { id: string; roles: string[] };
+  const rows: Row[] = [
+    { id: "match", roles: ["engineer", "verifier"] },
+    { id: "decoy", roles: ["architect"] },
+    { id: "empty", roles: [] },
+    { id: "absent", roles: undefined as unknown as string[] },
+  ];
+  const accessors = { roles: (r: Row) => r.roles };
+
+  function run(filter: Record<string, unknown>): Set<string> {
+    return new Set(applyQueryFilter(rows, filter, accessors).map((r) => r.id));
+  }
+
+  it("matches only items whose array CONTAINS the scalar (not silent-true on every item)", () => {
+    const ids = run({ roles: { $contains: "engineer" } });
+    expect(ids.has("match")).toBe(true);
+    expect(ids.has("decoy")).toBe(false);
+    expect(ids.has("empty")).toBe(false);
+    expect(ids.has("absent")).toBe(false);
+  });
+
+  it("is TYPED — [3] matches 3 not \"3\"", () => {
+    const typedRows = [{ id: "n", roles: [3] as unknown as string[] }];
+    expect(applyQueryFilter(typedRows, { roles: { $contains: 3 } }, accessors).length).toBe(1);
+    expect(applyQueryFilter(typedRows, { roles: { $contains: "3" } }, accessors).length).toBe(0);
+  });
+
+  it("FAIL-LOUD: an operator the zod would never pass but that reaches the matcher THROWS (no silent-true)", () => {
+    expect(() => run({ roles: { $bogus: "x" } })).toThrow(/unsupported operator/i);
   });
 });

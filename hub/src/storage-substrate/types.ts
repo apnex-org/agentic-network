@@ -149,6 +149,32 @@ export type FilterValue =
 
 export type Filter = Record<string, FilterValue>;
 
+/**
+ * The operator keys a FilterValue object may legally carry. SINGLE SOURCE OF
+ * TRUTH — every matcher (postgres SQL translateFilterClause, the postgres + memory
+ * watch matchesFilter, the policy matchField) keys off this set.
+ */
+export const KNOWN_FILTER_OPERATORS = ["$in", "$contains", "$gt", "$lt", "$gte", "$lte"] as const;
+
+/**
+ * FAIL-LOUD guard (C1-R2 audit-4054): throw if a filter operator object carries
+ * an operator NOT in KNOWN_FILTER_OPERATORS. This kills the silent-no-op CLASS —
+ * an operator accepted by upstream validation (zod / FilterValue type) but not
+ * implemented by a matcher must NEVER silently return the row (tele-4); it must
+ * throw so the gap is loud, not a wrong result-set. Same fail-loud philosophy as
+ * the C3-R4 governor.
+ */
+export function assertKnownFilterOps(op: Record<string, unknown>, field: string): void {
+  for (const k of Object.keys(op)) {
+    if (!(KNOWN_FILTER_OPERATORS as readonly string[]).includes(k)) {
+      throw new Error(
+        `[filter] unsupported operator '${k}' on field '${field}' — accepted upstream but not ` +
+          `implemented by the matcher (fail-loud; no silent-true). Known: ${KNOWN_FILTER_OPERATORS.join(", ")}.`,
+      );
+    }
+  }
+}
+
 // ─── Change events (per Design §2.1) ─────────────────────────────────────────
 
 export type ChangeEvent<T = unknown> = {

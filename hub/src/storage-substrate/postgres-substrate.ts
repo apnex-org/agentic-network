@@ -28,6 +28,7 @@ import type {
   FieldTranslator,
 } from "./types.js";
 import { translateKeyOrThrow } from "./filter-translation-error.js";
+import { assertKnownFilterOps } from "./types.js";
 
 const { Pool, Client } = pg;
 
@@ -662,7 +663,17 @@ function matchesFilter(entity: Record<string, unknown>, filter: Filter, translat
     }
     if (typeof value === "object" && value !== null) {
       const op = value as Record<string, unknown>;
+      // C1-R2 (audit-4054): FAIL-LOUD — an operator validated upstream but not
+      // implemented here is a silent-no-op (returns the row anyway), the exact
+      // watch/list parity hole. Throw on any unknown operator (kills the CLASS,
+      // tele-4), so a new FilterValue operator can never silently pass the watch.
+      assertKnownFilterOps(op, rawField);
       if ("$in" in op && Array.isArray(op.$in) && !op.$in.map(String).includes(String(v))) return false;
+      // C1-R2: $contains = TYPED array-membership (SameValueZero; [3] does NOT
+      // match "3") — parity with the typed JSONB `@>` in translateFilterClause.
+      if ("$contains" in op && op.$contains !== undefined) {
+        if (!Array.isArray(v) || !v.includes(op.$contains)) return false;
+      }
       if ("$gt" in op && op.$gt !== undefined && !(numericCmp(v) > numericCmp(op.$gt))) return false;
       if ("$lt" in op && op.$lt !== undefined && !(numericCmp(v) < numericCmp(op.$lt))) return false;
       if ("$gte" in op && op.$gte !== undefined && !(numericCmp(v) >= numericCmp(op.$gte))) return false;

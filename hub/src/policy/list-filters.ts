@@ -9,6 +9,7 @@
  */
 
 import { z } from "zod";
+import { assertKnownFilterOps } from "../storage-substrate/types.js";
 
 export const DEFAULT_LIST_LIMIT = 100;
 export const MAX_LIST_LIMIT = 500;
@@ -219,6 +220,15 @@ export function applyQueryFilter<T>(
 ): T[] {
   const fields = Object.keys(filter);
   if (fields.length === 0) return items;
+  // C1-R2 (audit-4054): FAIL-LOUD before matching — an operator the zod accepted
+  // but matchField doesn't implement must THROW, never silently match every item
+  // (the silent-no-op class, tele-4). Kills the class, not just this instance.
+  for (const name of fields) {
+    const pred = filter[name];
+    if (pred !== null && typeof pred === "object" && !Array.isArray(pred)) {
+      assertKnownFilterOps(pred as Record<string, unknown>, name);
+    }
+  }
   return items.filter((item) =>
     fields.every((name) => matchField(item, filter[name], accessors[name])),
   );
@@ -237,6 +247,11 @@ function matchField<T>(
   const p = predicate as Record<string, unknown>;
   if ("$in" in p && Array.isArray(p.$in)) {
     if (!(p.$in as unknown[]).includes(value)) return false;
+  }
+  // C1-R2: $contains = TYPED array-membership — the stored array `value` CONTAINS
+  // the scalar (SameValueZero; [3] does NOT match "3"). Parity with JSONB `@>`.
+  if ("$contains" in p) {
+    if (!Array.isArray(value) || !(value as unknown[]).includes(p.$contains)) return false;
   }
   if ("$gt" in p) {
     if (!(comparable(value) && comparable(p.$gt) && (value as any) > (p.$gt as any))) return false;
