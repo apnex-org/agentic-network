@@ -1,6 +1,6 @@
 # Autonomy Charter — the governed-autonomy operating model
 
-**Status:** DRAFT — architect (lily), 2026-06-21. Origin: C4-R1 (`M-Autonomy-Charter-And-DR-Ledger`), the zero-Hub-code rung of the ratified C4 Governed-Autonomy arc (`docs/designs/c4-governed-autonomy-arc-design.md`). Pending Director ratification.
+**Status:** RATIFIED — architect (lily), 2026-06-21; **Director-ratified 2026-06-22** (DR-S2-015). Origin: C4-R1 (`M-Autonomy-Charter-And-DR-Ledger`), the zero-Hub-code rung of the ratified C4 Governed-Autonomy arc (`docs/designs/c4-governed-autonomy-arc-design.md`). The operating model + DR-ledger discipline are ratified; two sub-items remain explicitly OPEN *within* the ratified charter — the §6 cold-pickup wiring (PROPOSED) and the stint-1 seed-provenance approach (a Director-survey question, §4).
 
 **Posture:** record-first, NO-enforcement. This rung ships a *prose constitution* + the markdown DR-ledger discipline — it does **not** ship Hub-policy enforcement. The decision protocol, the AuthorityGrant model, and the hard-line taxonomy below are codified as **doctrine**, made queryable, and made reviewable. They are not mechanized into a deny-set, an auto-revert, a verifier-gate, or a harness pre-authorization. Build the wall after the breach, not before (§3.4 evidence-gate). Enforcement is C4-R2+ and is gated on an evidence-of-recurrence trigger.
 
