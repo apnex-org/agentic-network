@@ -49,7 +49,7 @@ function naturalKey(opts: { targetAgentId: string; dispatchType: string; entityR
  * generic flatten already restores them.)
  */
 function decodePendingAction(raw: PendingActionItem): PendingActionItem {
-  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>) as Record<string, unknown>;
+  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>, "PendingAction") as Record<string, unknown>;
   if (flat.status !== undefined) { flat.state = flat.status; delete flat.status; }
   if (flat.createdAt !== undefined) { flat.enqueuedAt = flat.createdAt; delete flat.createdAt; }
   return flat as unknown as PendingActionItem;

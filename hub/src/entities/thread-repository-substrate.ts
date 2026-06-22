@@ -62,6 +62,7 @@ import {
 import { validateStagedActions } from "../policy/staged-action-payloads.js";
 import { SubstrateCounter } from "./substrate-counter.js";
 import { phaseFromEntity } from "./shape-helpers.js";
+import { assertDecodedFlat } from "../storage-substrate/bare-envelope-error.js";
 
 const KIND = "Thread";
 const MAX_CAS_RETRIES = 50;
@@ -110,7 +111,7 @@ function normalizeThreadShape(t: unknown): Thread {
   const summaryV = flat.summary;
   const recipient = flat.recipientAgentId;
   const currentTurnAgent = flat.currentTurnAgentId;
-  return {
+  return assertDecodedFlat({
     ...flat,
     status: phaseFromEntity(raw),
     routingMode: normalizeRoutingMode(flat.routingMode),
@@ -124,7 +125,7 @@ function normalizeThreadShape(t: unknown): Thread {
     recipientAgentId: typeof recipient === "string" ? recipient : null,
     currentTurnAgentId: typeof currentTurnAgent === "string" ? currentTurnAgent : null,
     messages: Array.isArray(flat.messages) ? flat.messages : [],
-  } as Thread;
+  } as Thread, "Thread");
 }
 
 function normalizeRoutingMode(v: unknown): "unicast" | "broadcast" | "multicast" {
@@ -509,7 +510,13 @@ export class ThreadRepositorySubstrate implements IThreadStore {
       filter: { cascadePending: true },
       limit: LIST_PREFETCH_CAP,
     });
-    return items.map((t) => truncateClosedThreadMessages(normalizeThreadShape(t)));
+    // C3-R4b piece 2: exclude threads terminal-quarantined on a structural 0-bare
+    // defect (cascade-replay-sweeper → markCascadeFailed → status cascade_failed).
+    // They stay cascadePending=true (forensic diagnostic) but are visibly NOT
+    // "done" and are NO LONGER re-dispatched — the cal-84 silent-infinite-retry kill.
+    return items
+      .map((t) => truncateClosedThreadMessages(normalizeThreadShape(t)))
+      .filter((t) => t.status !== "cascade_failed");
   }
 
   async leaveThread(threadId: string, leaverAgentId: string): Promise<Thread | null> {
