@@ -83,14 +83,41 @@
 
 ---
 
+## F. Stint-2 C1-R2-arc-execution addendum (appended 2026-06-22, post-arc-seal)
+
+*Frictions + one positive pattern surfaced while driving the C1-R2 arc to seal (keystone #356 + hardening #358 + RBAC fail-CLOSED #359, all merged + deployed). Also durable in entities (bug-177, bug-178) + the DR-ledger (DR-S2-020..022); folded here for council completeness.*
+
+### FR-15 — Thread read-projection lag: recently-written thread state invisible to readers
+`get_thread` is authoritative, but `list_threads` + per-reader projections lag the write-commit. Twice this arc: thread-702 (active) was absent from `list_threads` ~6min post-create; thread-706's architect reply + turn-flip were not projected to the verifier (OpenCode adapter) ~17s post-write → the verifier flagged a possibly-lost decision and asked for re-dispatch (false alarm — the message was canonical). Hazard: a reader falsely concludes "stuck / no new message." Filed **bug-177** (minor). → **COUNCIL** (coordination-ergonomics class; a candidate the C1/C2 substrate-coordination may dissolve).
+
+### FR-16 — Recurring CI flake: pg-57P01 substrate-watch teardown unhandled rejection
+`vitest(hub)` exits FAILURE on an unhandled postgres `57P01` from a substrate-watch LISTEN client at testcontainer teardown, DESPITE every test passing (174 files / 2091 tests, 0 assertion failures). Blocked merge on #358 e1438a7 + #359 → needed manual re-runs. Risk: a real failure dismissed as "the flake." Filed **bug-178** (minor; eng teardown-hygiene). → **FIX-NOW**.
+
+### FR-17 — MCP write returns connection-error AFTER succeeding → duplicate-on-retry
+A `create_bug` returned `MCP error -32000: Connection closed` but had already written server-side; the naive retry created a duplicate (bug-178 + bug-179; deduped by hand). Entity-create tools carry no idempotency key, so a transient drop-after-write + retry silently double-writes. → **DOCUMENT** (retry discipline: on a write that errors, verify-before-recreate) + **IDEA** (idempotency-key / client-token on entity-create).
+
+### FR-18 — Thread round-cap + strict turn-lock fragments long architect-driven coordination
+One logical coordination on #358 hit two thread limits at once: `maxRounds=10` (thread-703 reached 9/10) AND strict turn-alternation (could not reply to 703 while it was the engineer's turn). Together they forced sibling threads — thread-705 (fix-shape catches, opened because 703 was turn-locked) + thread-707 (to continue #358 after the round-lock) — fragmenting one topic across three. → **COUNCIL** (the thread primitive fits bilateral request-response, not a long architect-orchestrated multi-step; another dissolve-candidate for the work-queue/supervisor).
+
+### FR-19 — Pulse auto-generated text goes stale across mission phases
+The mission-94 `status_check` pulse still read *"paused-for-Steve (dormant on #356)"* long after the keystone deployed + hardened — stale framing on every fire. Refreshing needs `update_mission(pulses)` (MERGE-semantics, FR-2) + force_fire re-anchoring — fiddly enough that it was left as-is and just ack'd. → **FIX-NOW-small** (eng: template pulse text from live mission status at phase transitions); relates to FR-2.
+
+### (reinforces FR-3) note round-trip overhead recurred heavily
+The `kind=note` response loop (peer's note → claim → ack → reply-note, 2-3 calls each, "silent" delivery that doesn't wake the peer) was the dominant engineer↔architect channel this arc. Another data point that note is a heavyweight, ambiguous response channel vs a thread turn.
+
+### ✅ What WORKED — positive patterns for the council to weigh formalizing
+**(a) Ultracode adversarial Workflow panel as a deploy-gate complement.** For the real-live-effect bug-175 deploy (#2, repo-wide RBAC fail-CLOSED), an 8-agent panel (wf_98785060) ran in parallel with the single verifier (Steve) — independently TRIPLE-confirming the Director-lockout was moot + sweeping the caller-path breadth + the ~50-test migration fidelity a single verifier might not exhaustively cover; converged with the verifier on DEPLOY-READY. **(b) Verifier-authored acceptance-oracle BEFORE the engineer builds the fix** (audit-4120) caught two weak fix-shapes pre-implementation, saving re-verify rounds. Candidates: formalize "verifier + adversarial panel" for repo-wide / real-live-effect deploys (verifier-only for narrow/dormant), and "oracle-before-artifact" as standard for non-trivial fixes.
+
+---
+
 ## Triage summary
 
 | Disposition | Frictions |
 |---|---|
-| `COUNCIL` (deferred adversarial review) | FR-1 (pulse ack-vs-activity), FR-3 (note-delivery contract), FR-11 (memory cadence), FR-14 (reporting cadence) |
-| `IDEA` (filed) | FR-7 (idea-346 + idea-344 cluster) |
-| `FIX-NOW` (done or small-owned) | FR-2 (pulse merge — needs eng), FR-4 (deprecated tool), FR-8 (fail-closed filter — done in R2) |
-| `DOCUMENT` (playbook/memory) | FR-5 (tool prefix), FR-6 (stacked-merge), FR-9 (checkout/untracked), FR-10 (file-state reset), FR-13 (verifier queue — banked) |
+| `COUNCIL` (deferred adversarial review) | FR-1 (pulse ack-vs-activity), FR-3 (note-delivery contract), FR-11 (memory cadence), FR-14 (reporting cadence), FR-15 (thread read-projection lag), FR-18 (thread round-cap/turn-lock fragmentation) |
+| `IDEA` (filed) | FR-7 (idea-346 + idea-344 cluster), FR-17 (idempotency-key on entity-create — candidate) |
+| `FIX-NOW` (done or small-owned) | FR-2 (pulse merge — needs eng), FR-4 (deprecated tool), FR-8 (fail-closed filter — done in R2), FR-16 (bug-178 CI teardown flake), FR-19 (pulse stale-text) |
+| `DOCUMENT` (playbook/memory) | FR-5 (tool prefix), FR-6 (stacked-merge), FR-9 (checkout/untracked), FR-10 (file-state reset), FR-13 (verifier queue — banked), FR-17 (write-retry verify-before-recreate) |
 | `ACCEPT` | FR-12 (parallel-load-self honesty) |
 
 **Pattern observation:** the `COUNCIL` cluster (FR-1/3/11/14) is mostly **coordination-mechanism + architect-runtime cadence** — i.e. the autonomous-stint model's *coordination ergonomics*, not its correctness. The model is sound; its friction is in the human-replacing-coordination loop (pulses, notes, reporting cadence, self-pacing). That is exactly the C1 work-control-plane + C2 supervisor + D-3 telemetry territory — several of these frictions likely DISSOLVE once coordination runs through the sovereign work-queue + a supervisor-controller rather than ad-hoc pulses/notes. The council should test that hypothesis: **how many of FR-1/2/3/11/13/14 are artifacts of pre-C1 manual coordination that the keystone retires?**
@@ -103,7 +130,11 @@ Per Director direction (2026-06-22): *"adversarially convene the real council wh
 - **Charge:** for each `COUNCIL` friction — is the proposed fix right, or does it paper over a deeper model flaw? + the pattern-observation hypothesis (which frictions does C1/C2/D-3 dissolve vs which are intrinsic?). + surface frictions this v1 missed (a completeness critic).
 - **Output:** ratified fixes (→ ideas/missions/calibrations) + a sharper autonomous-stint operating model. Calibration filings stay Director-direct/bilateral.
 
+**Status (2026-06-22, post-C1-R2-arc-seal):** the build-lull trigger has ARRIVED (keystone + hardening + RBAC all sealed), and the backlog was refreshed to FR-19 + positive patterns (Section F). **Director-deferred** — *"We will not proceed with council now."* The council therefore remains a STANDING convene-on-Director-signal action; the log is council-ready whenever it is called.
+
 ---
 
 ## Provenance
 Opened 2026-06-22 (stint-2) at Director direction after the FR-1 pulse false-escalation. Frictions FR-1..14 are from stint-1 + stint-2 lived experience. Living doc — append as new friction surfaces; re-triage at each council convening.
+
+Updated 2026-06-22 (post-C1-R2-arc-seal): +Section F (FR-15..19 + positive patterns) from the keystone/hardening/RBAC arc-execution; council-trigger lull arrived but Director-deferred ("We will not proceed with council now").
