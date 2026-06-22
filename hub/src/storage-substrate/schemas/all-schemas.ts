@@ -629,6 +629,44 @@ const MigrationCursor: SchemaDef = {
   watchable: false,  // bookkeeping-only; no consumer needs change-events
 };
 
+// ─── C1-R2 (mission-94): the WorkItem work-queue kind (kind #26) ─────────────
+// Reference-only claimable work-item; born under the live C3-R4 governor.
+const WorkItem: SchemaDef = {
+  kind: "WorkItem",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "type", type: "string", required: false, enum: ["task", "bug", "review", "verifier-gate", "freeform"] },
+    { name: "priority", type: "string", required: false, enum: ["critical", "high", "normal", "low"] },
+    { name: "status", type: "string", required: false, enum: ["ready", "claimed", "in_progress", "blocked", "review", "done", "abandoned"] },
+  ],
+  indexes: [
+    { name: "workitem_status_phase_idx", fields: ["status.phase"] },
+    { name: "workitem_status_lease_holder_idx", fields: ["status.lease.holder"] },
+    { name: "workitem_status_lease_expiresat_idx", fields: ["status.lease.expiresAt"] },
+    // C1-R2: GIN index backing the $contains (@>) array-membership on roleEligibility.
+    { name: "workitem_spec_roleeligibility_gin_idx", fields: ["spec.roleEligibility"], type: "gin" },
+  ],
+  watchable: true,
+  indexOwnershipPattern: "^workitem_",
+  // status→status.phase; the status sub-objects (lease/evidence/blockedOn/
+  // leaseExpiryCount) route to status; the FILTERABLE spec fields (priority/type/
+  // roleEligibility) route to spec. dependsOn/evidenceRequirements/targetRef/payload
+  // are unfiltered → default-partition to spec (no entry needed). The two HOT lease
+  // sub-fields (holder, expiresAt) filter via the bucket-prefixed dotted path
+  // (status.lease.*) — NO renameMap alias (option (c), thread-694; governor-sanctioned).
+  renameMap: {
+    status: "status.phase",
+    lease: "status.lease",
+    evidence: "status.evidence",
+    blockedOn: "status.blockedOn",
+    leaseExpiryCount: "status.leaseExpiryCount",
+    priority: "spec.priority",
+    type: "spec.type",
+    roleEligibility: "spec.roleEligibility",
+  },
+};
+
 // ─── Export all 23 SchemaDef entries ───────────────────────────────────────
 
 /**
@@ -677,4 +715,7 @@ export const ALL_SCHEMAS: SchemaDef[] = [
 
   // 1 NEW mission-88 W0 (migration-progress checkpoint for v2-envelope cutover)
   MigrationCursor,
+
+  // 1 NEW C1-R2 mission-94 (the claimable work-queue keystone kind)
+  WorkItem,
 ];
