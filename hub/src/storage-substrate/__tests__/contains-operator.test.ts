@@ -182,4 +182,16 @@ describe("C1-R2 $contains operator (memory-substrate parity)", () => {
     await s.put("M", { id: "g1", tags: ["x"] });
     await expect(listIds(s, "M", { tags: { $bogus: "x" } })).rejects.toThrow(/unknown operator/i);
   });
+
+  it("FAIL-CLOSED: a forbidden-only op ($regex) matches NOTHING — no throw, no row-leak (audit-4070)", async () => {
+    // The memory matchesFilter mirrors the policy matchField fail-CLOSED contract:
+    // assertKnownFilterOps does NOT throw for a FORBIDDEN op (that's the Zod-layer
+    // rejection), but the matcher must then match-NOTHING — never fall through to the
+    // `return true` tail that leaks every row (the prior fail-OPEN hole).
+    const s = mem();
+    await s.put("M", { id: "f1", tags: ["x"] });
+    await s.put("M", { id: "f2", tags: ["y"] });
+    const ids = await listIds(s, "M", { tags: { $regex: "x" } });
+    expect(ids.size).toBe(0); // not {f1, f2}
+  });
 });

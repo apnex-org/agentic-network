@@ -28,7 +28,7 @@ import type {
   FieldTranslator,
 } from "./types.js";
 import { translateKeyOrThrow } from "./filter-translation-error.js";
-import { assertKnownFilterOps } from "./types.js";
+import { assertKnownFilterOps, hasImplementedFilterOp } from "./types.js";
 
 const { Pool, Client } = pg;
 
@@ -668,6 +668,10 @@ function matchesFilter(entity: Record<string, unknown>, filter: Filter, translat
       // watch/list parity hole. Throw on any unknown operator (kills the CLASS,
       // tele-4), so a new FilterValue operator can never silently pass the watch.
       assertKnownFilterOps(op, rawField);
+      // FAIL-CLOSED backstop (audit-4070): a predicate with NO implemented operator
+      // (forbidden-only / empty) is UNEVALUABLE → match NOTHING, never fall through
+      // to the `return true` tail (the fail-OPEN hole). Parity with policy matchField.
+      if (!hasImplementedFilterOp(op)) return false;
       if ("$in" in op && Array.isArray(op.$in) && !op.$in.map(String).includes(String(v))) return false;
       // C1-R2: $contains = TYPED array-membership (SameValueZero; [3] does NOT
       // match "3") — parity with the typed JSONB `@>` in translateFilterClause.

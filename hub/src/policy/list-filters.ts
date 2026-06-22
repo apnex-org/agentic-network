@@ -9,7 +9,7 @@
  */
 
 import { z } from "zod";
-import { assertKnownFilterOps } from "../storage-substrate/types.js";
+import { assertKnownFilterOps, hasImplementedFilterOp } from "../storage-substrate/types.js";
 
 export const DEFAULT_LIST_LIMIT = 100;
 export const MAX_LIST_LIMIT = 500;
@@ -245,6 +245,13 @@ function matchField<T>(
     return value === predicate;
   }
   const p = predicate as Record<string, unknown>;
+  // FAIL-CLOSED backstop (audit-4070 / C1-R2-FORBIDDEN-FALLTHROUGH): a predicate
+  // with NO implemented operator (a forbidden-only op like $regex that bypassed
+  // Zod, or an empty {}) is UNEVALUABLE → match NOTHING, never match-everything
+  // (the prior `return true` tail was the fail-OPEN hole). Zod/MCP is the primary
+  // rejection; genuinely-unknown ops still THROW via assertKnownFilterOps in
+  // applyQueryFilter (runs before this).
+  if (!hasImplementedFilterOp(p)) return false;
   if ("$in" in p && Array.isArray(p.$in)) {
     if (!(p.$in as unknown[]).includes(value)) return false;
   }

@@ -70,12 +70,23 @@ describe("list-filters — applyQueryFilter runtime $contains (audit-4054 #2: ma
     expect(() => run({ roles: { $bogus: "x" } })).toThrow(/unknown operator/i);
   });
 
-  it("does NOT fail-loud on a FORBIDDEN op ($regex/$where) — that class is the Zod-layer rejection (audit-4064); the matcher falls through (defense-in-depth)", () => {
+  it("FAIL-CLOSED on a FORBIDDEN-only op ($regex/$where): no throw, and matches NOTHING (audit-4070)", () => {
     // 3-class taxonomy: FORBIDDEN ($regex/$where/$expr/$or/$and/$not) is rejected at
     // the Zod/MCP boundary WITH a hint; the runtime fail-loud guard must NOT conflate
-    // it with UNKNOWN. At the un-Zod'd router level a forbidden op falls through,
-    // never throwing from the guard (test/policy-router.test.ts:674 contract).
+    // it with UNKNOWN — so the guard does NOT throw (test/policy-router.test.ts
+    // contract). But audit-4070: the matcher must then fail-CLOSED — a forbidden-only
+    // predicate that bypassed Zod is UNEVALUABLE and matches NOTHING, NEVER
+    // match-everything (the prior fall-through `return true` was a fail-OPEN row-leak).
     expect(() => run({ roles: { $regex: "^x" } })).not.toThrow();
     expect(() => run({ roles: { $where: "x" } })).not.toThrow();
+    expect(run({ roles: { $regex: "^x" } }).size).toBe(0); // match-NOTHING, not all 4 rows
+    expect(run({ roles: { $where: "x" } }).size).toBe(0);
+  });
+
+  it("FAIL-CLOSED on an empty operator object {}: matches NOTHING (no-implemented-op, audit-4070)", () => {
+    // An empty per-field predicate carries no implemented operator → unevaluable →
+    // match-nothing. (A truly absent constraint is expressed by omitting the field,
+    // handled by applyQueryFilter's `fields.length === 0` short-circuit.)
+    expect(run({ roles: {} }).size).toBe(0);
   });
 });

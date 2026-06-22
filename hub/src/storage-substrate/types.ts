@@ -185,6 +185,24 @@ export function assertKnownFilterOps(op: Record<string, unknown>, field: string)
   }
 }
 
+/**
+ * FAIL-CLOSED backstop (C1-R2 audit-4070): does this operator object carry at
+ * least one IMPLEMENTED operator? A predicate with NONE — a forbidden-only op that
+ * bypassed Zod (e.g. `{$regex}`), or an empty `{}` — is UNEVALUABLE, and every
+ * matcher MUST treat it as match-NOTHING, never match-EVERYTHING (the fail-OPEN
+ * hole: an un-Zod'd forbidden-only predicate would otherwise leak every row).
+ *
+ * Pairs with `assertKnownFilterOps` (which THROWS for a genuinely-unknown op);
+ * this returns a boolean the matcher acts on (`if (!hasImplementedFilterOp(op))
+ * return false`). Zod/MCP stays the PRIMARY rejection for forbidden ops; this is
+ * the defense-in-depth backstop at the un-Zod'd matcher level, keyed off the same
+ * single-source-of-truth KNOWN_FILTER_OPERATORS set so the three matchers (policy
+ * matchField, memory + postgres watch matchesFilter) stay at parity.
+ */
+export function hasImplementedFilterOp(op: Record<string, unknown>): boolean {
+  return Object.keys(op).some((k) => (KNOWN_FILTER_OPERATORS as readonly string[]).includes(k));
+}
+
 // ─── Change events (per Design §2.1) ─────────────────────────────────────────
 
 export type ChangeEvent<T = unknown> = {

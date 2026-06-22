@@ -42,7 +42,7 @@ import type {
 import type { WriteEncoder } from "./postgres-substrate.js";
 import { buildEnvelopeWriteEncoder } from "./migrations/v2-envelope/write-encoder.js";
 import { ALL_SCHEMAS } from "./schemas/all-schemas.js";
-import { assertKnownFilterOps } from "./types.js";
+import { assertKnownFilterOps, hasImplementedFilterOp } from "./types.js";
 
 type EntityRow = { data: unknown; resourceVersion: number };
 
@@ -568,6 +568,10 @@ function matchesFilter(entity: Record<string, unknown>, filter: Filter, translat
       // C1-R2 (audit-4054): FAIL-LOUD on any operator not implemented here — kills
       // the silent-no-op CLASS (tele-4), keeps memory at parity with the SQL path.
       assertKnownFilterOps(op, rawField);
+      // FAIL-CLOSED backstop (audit-4070): a predicate with NO implemented operator
+      // (forbidden-only / empty) is UNEVALUABLE → match NOTHING, never fall through
+      // to the `return true` tail (the fail-OPEN hole). Parity with policy matchField.
+      if (!hasImplementedFilterOp(op)) return false;
       if ("$in" in op && Array.isArray(op.$in) && !op.$in.map(String).includes(String(v))) return false;
       // $contains (C1-R2): TYPED array-membership (SameValueZero; [3] does NOT match
       // "3", ['true'] does NOT match true) — parity with the typed JSONB `@>`.
