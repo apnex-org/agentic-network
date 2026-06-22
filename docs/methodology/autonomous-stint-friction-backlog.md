@@ -102,6 +102,9 @@ One logical coordination on #358 hit two thread limits at once: `maxRounds=10` (
 ### FR-19 — Pulse auto-generated text goes stale across mission phases
 The mission-94 `status_check` pulse still read *"paused-for-Steve (dormant on #356)"* long after the keystone deployed + hardened — stale framing on every fire. Refreshing needs `update_mission(pulses)` (MERGE-semantics, FR-2) + force_fire re-anchoring — fiddly enough that it was left as-is and just ack'd. → **FIX-NOW-small** (eng: template pulse text from live mission status at phase transitions); relates to FR-2.
 
+### FR-20 — No designed council PROCESS / agenda; friction-intake is architect-only (META — Director-flagged)
+This backlog (FR-1..19) is entirely **architect-observed**. greg (engineer) + Steve (verifier) have NOT yet surfaced *their own* lived frictions — and the autonomous-stint looks different from each seat (engineer: fold-cadence, re-verify round-trips, work-trace discipline, CI flakes, the bigger-than-spec migration surprise; verifier: dispatch latency, the advisory-not-gating boundary, oracle-before-artifact ordering, cross-adapter read-lag, the CONDITIONAL-PASS-vs-deploy-gate ownership seam). AND there is no designed PROCESS for running the council itself: how friction is gathered from all three roles, the deliberation format (CDACC dual-altitude vs Workflow panel vs live multi-agent), the agenda, and the output→ratification flow. **To be DESIGNED later** (Director, 2026-06-22). → **DESIGN-FIRST** — a prerequisite the convening depends on; the council can't run well on one-sided intake + an ad-hoc format.
+
 ### (reinforces FR-3) note round-trip overhead recurred heavily
 The `kind=note` response loop (peer's note → claim → ack → reply-note, 2-3 calls each, "silent" delivery that doesn't wake the peer) was the dominant engineer↔architect channel this arc. Another data point that note is a heavyweight, ambiguous response channel vs a thread turn.
 
@@ -119,6 +122,7 @@ The `kind=note` response loop (peer's note → claim → ack → reply-note, 2-3
 | `FIX-NOW` (done or small-owned) | FR-2 (pulse merge — needs eng), FR-4 (deprecated tool), FR-8 (fail-closed filter — done in R2), FR-16 (bug-178 CI teardown flake), FR-19 (pulse stale-text) |
 | `DOCUMENT` (playbook/memory) | FR-5 (tool prefix), FR-6 (stacked-merge), FR-9 (checkout/untracked), FR-10 (file-state reset), FR-13 (verifier queue — banked), FR-17 (write-retry verify-before-recreate) |
 | `ACCEPT` | FR-12 (parallel-load-self honesty) |
+| `DESIGN-FIRST` (council prerequisite) | FR-20 (council process + agenda + multi-party friction intake — design before convening) |
 
 **Pattern observation:** the `COUNCIL` cluster (FR-1/3/11/14) is mostly **coordination-mechanism + architect-runtime cadence** — i.e. the autonomous-stint model's *coordination ergonomics*, not its correctness. The model is sound; its friction is in the human-replacing-coordination loop (pulses, notes, reporting cadence, self-pacing). That is exactly the C1 work-control-plane + C2 supervisor + D-3 telemetry territory — several of these frictions likely DISSOLVE once coordination runs through the sovereign work-queue + a supervisor-controller rather than ad-hoc pulses/notes. The council should test that hypothesis: **how many of FR-1/2/3/11/13/14 are artifacts of pre-C1 manual coordination that the keystone retires?**
 
@@ -130,7 +134,9 @@ Per Director direction (2026-06-22): *"adversarially convene the real council wh
 - **Charge:** for each `COUNCIL` friction — is the proposed fix right, or does it paper over a deeper model flaw? + the pattern-observation hypothesis (which frictions does C1/C2/D-3 dissolve vs which are intrinsic?). + surface frictions this v1 missed (a completeness critic).
 - **Output:** ratified fixes (→ ideas/missions/calibrations) + a sharper autonomous-stint operating model. Calibration filings stay Director-direct/bilateral.
 
-**Status (2026-06-22, post-C1-R2-arc-seal):** the build-lull trigger has ARRIVED (keystone + hardening + RBAC all sealed), and the backlog was refreshed to FR-19 + positive patterns (Section F). **Director-deferred** — *"We will not proceed with council now."* The council therefore remains a STANDING convene-on-Director-signal action; the log is council-ready whenever it is called.
+**Status (2026-06-22, post-C1-R2-arc-seal):** the build-lull trigger has ARRIVED (keystone + hardening + RBAC all sealed), and the backlog was refreshed to FR-20 + positive patterns (Section F). **Director-deferred** — *"We will not proceed with council now."* The council remains a STANDING convene-on-Director-signal action.
+
+**Prerequisite before convening (FR-20, Director-flagged):** the council PROCESS itself is undesigned. Design it first — (a) **multi-party friction intake**: greg (engineer) + Steve (verifier) each surface their role's lived frictions, not just architect-observed; (b) the **deliberation format + agenda + output→ratification flow**. The Vehicle/Charge/Output above is a sketch, not a designed process. This design is itself a "to be designed later" item, not part of this stint.
 
 ---
 
