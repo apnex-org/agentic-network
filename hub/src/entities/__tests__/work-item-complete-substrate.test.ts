@@ -54,7 +54,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
 
   /** create → claim → start; returns ids + token + the lease claimedAt. */
   async function started(reqs: EvidenceRequirement[], agent: string) {
-    const w = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"], evidenceRequirements: reqs });
+    const w = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements: reqs });
     const claimed = await repo.claimWorkItem(w.id, agent);
     const token = claimed!.lease!.token;
     await repo.startWork(w.id, agent, token);
@@ -139,7 +139,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
   }, OP_TIMEOUT);
 
   it("complete from claimed (not started) → TransitionRejected", async () => {
-    const w = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"] });
+    const w = await repo.createWorkItem({ type: "task", roleEligibility: [] });
     const claimed = await repo.claimWorkItem(w.id, "agent-c9");
     await expect(repo.completeWork(w.id, "agent-c9", claimed!.lease!.token, [ev({ requirementId: "x", kind: "freeform" })]))
       .rejects.toThrow(/complete requires in_progress or review/);

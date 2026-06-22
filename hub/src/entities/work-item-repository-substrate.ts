@@ -102,6 +102,28 @@ export class EvidencePredicateFailed extends Error {
   }
 }
 
+/** Thrown by claimWorkItem when the agent is role-INELIGIBLE for the item, or the item's
+ *  dependencies are not all done (audit-4085 #1). Distinct from TransitionRejected (a
+ *  phase-conflict) — this is a claim PRECONDITION failure (role / dependency), so the
+ *  policy layer can surface it distinctly (403/424-class vs 409). */
+export class ClaimRejected extends Error {
+  constructor(reason: string) {
+    super(`claim rejected: ${reason}`);
+    this.name = "ClaimRejected";
+  }
+}
+
+/** Role-eligibility guard (audit-4085 #1). An EMPTY roleEligibility means any role; a
+ *  non-empty one requires a matching `role` — fail-CLOSED if `role` is absent/unmatched.
+ *  claim_work is the AUTHORITY (a direct claim-by-ID bypasses the list_ready_work
+ *  projection), so it re-enforces eligibility itself. */
+function assertRoleEligible(w: WorkItem, role?: string): void {
+  if (w.roleEligibility.length === 0) return; // empty = any-role
+  if (!role || !w.roleEligibility.includes(role)) {
+    throw new ClaimRejected(`agent role ${role ?? "(none)"} is not in roleEligibility [${w.roleEligibility.join(", ")}]`);
+  }
+}
+
 /** Phases from which complete_work is legal (FSM §3.1). */
 const COMPLETABLE_PHASES: readonly WorkItemPhase[] = ["in_progress", "review"];
 
@@ -315,8 +337,22 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         const { items: inFlight } = await this.substrate.list<WorkItem>(KIND, { filter: inFlightFilter, limit: cap });
         if (inFlight.length >= cap) throw new WipCapExceeded(agentId, inFlight.length, cap);
 
+        // audit-4085 #1: claim_work is the AUTHORITY — re-enforce role-eligibility +
+        // dependency-readiness fail-closed (a direct claim-by-ID bypasses list_ready_work;
+        // the `ready` phase alone is NOT trusted — a reconciler/stale state could set it).
+        // dependsOn phases resolve async here (done is terminal → the snapshot is stable
+        // across the CAS); dependsOn + roleEligibility are immutable spec, so the CAS
+        // transform re-asserts both synchronously against the resolved snapshot.
+        const pre = await this.substrate.get<WorkItem>(KIND, workId);
+        if (!pre) return null;
+        const depsNotDone = await this.unmetDependencies(cloneWorkItem(pre).dependsOn);
+
         return this.tryCasUpdate(workId, (w) => {
           if (w.status !== "ready") throw new TransitionRejected(`claim requires ready, was ${w.status}`);
+          assertRoleEligible(w, role); // (a) role ∈ roleEligibility (empty = any-role)
+          if (depsNotDone.length > 0) { // (b) all dependsOn must be phase=done
+            throw new ClaimRejected(`dependencies not done: ${depsNotDone.join(", ")}`);
+          }
           const now = new Date();
           const nowISO = now.toISOString();
           const lease: WorkItemLease = {
@@ -445,6 +481,18 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   }
 
   // ── Internal ──────────────────────────────────────────────────────────────
+
+  /** Resolve each dependency's phase; return the ids NOT in phase=done (audit-4085 #1).
+   *  An ABSENT dep counts as unmet (fail-CLOSED). done is terminal so the result is
+   *  stable across the subsequent CAS. */
+  private async unmetDependencies(depIds: string[]): Promise<string[]> {
+    const unmet: string[] = [];
+    for (const depId of depIds) {
+      const dep = await this.substrate.get<WorkItem>(KIND, depId);
+      if (!dep || cloneWorkItem(dep).status !== "done") unmet.push(depId);
+    }
+    return unmet;
+  }
 
   /** Holder + token guard for lease-bound verbs (audit-4082 #1/#4). A non-holder OR a
    *  stale token (after a lease-expiry-requeue or a fresh re-claim) REJECTS — even for

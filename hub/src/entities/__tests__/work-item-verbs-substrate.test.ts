@@ -58,7 +58,9 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
     if (container) await container.stop();
   }, OP_TIMEOUT);
 
-  const ready = () => repo.createWorkItem({ type: "task", roleEligibility: ["engineer"] });
+  // any-role items (empty roleEligibility) keep these FSM/lease/WIP tests focused — the
+  // claim role-eligibility + dependency enforcement (audit-4085 #1) has its own suite.
+  const ready = () => repo.createWorkItem({ type: "task", roleEligibility: [] });
   /** claim + return {id, token} for token-threading. */
   async function claim(agent: string, role?: string): Promise<{ id: string; token: string }> {
     const w = await ready();
@@ -118,6 +120,22 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
     await expect(repo.startWork(w.id, agent, token)).rejects.toThrow(/start requires claimed/);    // already started
   }, OP_TIMEOUT);
 
+  it("illegal edges leave the row UNCHANGED (atomic fail, audit-4085 #2)", async () => {
+    const agent = "agent-unchanged";
+    const w = await ready();
+    const claimed = await repo.claimWorkItem(w.id, agent);
+    const token = claimed!.lease!.token;
+    const before = await repo.getWorkItem(w.id);
+    // a battery of rejected verbs from `claimed` (wrong-phase, non-holder, stale-token)
+    await expect(repo.resumeWork(w.id, agent, token)).rejects.toThrow(TransitionRejected);      // not blocked
+    await expect(repo.blockWork(w.id, agent, token, BLOCK)).rejects.toThrow(TransitionRejected); // not in_progress
+    await expect(repo.startWork(w.id, "intruder", token)).rejects.toThrow(TransitionRejected);   // non-holder
+    await expect(repo.startWork(w.id, agent, "stale-token")).rejects.toThrow(TransitionRejected); // stale token
+    await expect(repo.completeWork(w.id, agent, token, [])).rejects.toThrow(TransitionRejected);  // not completable
+    const after = await repo.getWorkItem(w.id);
+    expect(after).toEqual(before); // byte-identical after every rejected verb — nothing wrote
+  }, OP_TIMEOUT);
+
   it("holder guard: a non-holder cannot drive a claimed item", async () => {
     const { id, token } = await claim("agent-owner");
     await expect(repo.startWork(id, "agent-intruder", token)).rejects.toThrow(/requires the lease-holder/);
@@ -144,7 +162,7 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
 
   it("abandon creator-override: the creator (no token) can abandon a held item; a random party cannot", async () => {
     const creator = { role: "architect", agentId: "agent-creator" };
-    const w = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"], createdBy: creator });
+    const w = await repo.createWorkItem({ type: "task", roleEligibility: [], createdBy: creator });
     await repo.claimWorkItem(w.id, "agent-holder");                        // held by someone else
     const abandoned = await repo.abandonWork(w.id, "agent-creator", { reason: "creator pulled it" });
     expect(abandoned!.status).toBe("abandoned");
@@ -155,7 +173,7 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
 
   it("terminal immutability: an abandoned item rejects further transitions", async () => {
     const creator = { role: "architect", agentId: "agent-term" };
-    const w = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"], createdBy: creator });
+    const w = await repo.createWorkItem({ type: "task", roleEligibility: [], createdBy: creator });
     const claimed = await repo.claimWorkItem(w.id, "agent-term");
     const token = claimed!.lease!.token;
     await repo.abandonWork(w.id, "agent-term", { leaseToken: token });     // → abandoned
