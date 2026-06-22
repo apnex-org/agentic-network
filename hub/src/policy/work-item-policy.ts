@@ -59,6 +59,12 @@ async function claimWork(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
+  // 4b-ii: a claim-thrash-quarantined agent is locked OUT of claiming (the wedged-agent
+  // guard; the C2 supervisor actuates on the same flag). Cleared via clear_work_quarantine.
+  const agent = await ctx.stores.engineerRegistry.getAgent(caller.agentId);
+  if (agent?.quarantined) {
+    return err("quarantined", `agent ${caller.agentId} is claim-thrash quarantined; an admin clear_work_quarantine is required (R2 interim — C2 auto-recovery deferred)`);
+  }
   try {
     const w = await store.claimWorkItem(args.workId as string, caller.agentId, caller.role);
     return w ? workItemResult(w) : notFound(args.workId as string);
@@ -151,8 +157,21 @@ async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext):
   const evidence = (args.evidence as EvidenceItem[] | undefined) ?? [];
   try {
     const w = await store.completeWork(args.workId as string, caller.agentId, args.leaseToken as string, evidence);
-    return w ? workItemResult(w) : notFound(args.workId as string);
+    if (!w) return notFound(args.workId as string);
+    // 4b-ii: a successful complete (evidence attached → review|done) is demonstrated
+    // progress → reset the agent's claim-thrash counter (leaves quarantine to manual clear).
+    await ctx.stores.engineerRegistry.resetWorkItemThrash(caller.agentId);
+    return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
+}
+
+async function clearWorkQuarantine(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  // 4b-ii R2 interim manual quarantine escape (admin-gated at the tool level). Clears the
+  // agent's claim-thrash quarantine + counter. C2 supervisor-restart auto-recovery deferred.
+  const agentId = args.agentId as string;
+  await ctx.stores.engineerRegistry.clearWorkItemQuarantine(agentId);
+  const agent = await ctx.stores.engineerRegistry.getAgent(agentId);
+  return ok({ agentId, quarantined: agent?.quarantined ?? false, thrashCount: agent?.thrashCount ?? 0 });
 }
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
@@ -242,5 +261,12 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
     "[Any] Complete work ({in_progress|review} → review|done), gated by the anti-gameability evidence predicate (coverage-by-binding, kind-match, freshness, refResolvable, no-double-count, empty-req floor). Parks in `review` while a review requirement is unmet; reaches `done` once all are covered. Requires the lease-holder + matching leaseToken.",
     { workId: z.string(), leaseToken: z.string(), evidence: z.array(evidenceItemSchema).describe("Supplied evidence, bound to requirements by requirementId") },
     completeWork,
+  );
+
+  router.register(
+    "clear_work_quarantine",
+    "[Architect|Director] Clear an agent's claim-thrash quarantine (R2 interim manual escape; C2 supervisor auto-recovery is deferred). Resets the thrash counter + un-quarantines so the agent can claim again.",
+    { agentId: z.string().describe("The quarantined agent's id") },
+    clearWorkQuarantine,
   );
 }

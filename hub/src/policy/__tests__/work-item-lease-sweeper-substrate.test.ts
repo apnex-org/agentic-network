@@ -126,4 +126,43 @@ describe("WorkItemLeaseSweeper (real-pg)", () => {
   it("expireLease on an absent item → skipped (no throw)", async () => {
     expect(await repo.expireLease("work-ghost", FUTURE, 3)).toBe("skipped");
   }, OP_TIMEOUT);
+
+  // ── 4b-ii: per-AGENT thrash-quarantine wiring (stub AgentThrashStore) ────────
+  function agentStub(ret: { thrashCount: number; quarantined: boolean } = { thrashCount: 1, quarantined: false }) {
+    const calls: Array<{ agentId: string; cap: number }> = [];
+    return { calls, recordWorkItemThrash: async (agentId: string, cap: number) => { calls.push({ agentId, cap }); return ret; } };
+  }
+
+  it("a claim→expire-WITHOUT-evidence increments the holder's thrash counter", async () => {
+    const stub = agentStub();
+    const sw = new WorkItemLeaseSweeper(repo, ctxProvider, { agentStore: stub, thrashCap: 3 });
+    const w = await ready();
+    await repo.claimWorkItem(w.id, "agent-thrash-x");
+    await sw.fullSweep(FUTURE);
+    expect(stub.calls).toContainEqual({ agentId: "agent-thrash-x", cap: 3 });
+  }, OP_TIMEOUT);
+
+  it("a lapse WITH evidence (review-phase item) does NOT thrash the holder", async () => {
+    const stub = agentStub();
+    const sw = new WorkItemLeaseSweeper(repo, ctxProvider, { agentStore: stub, thrashCap: 3 });
+    // a review-phase item that HAS evidence + an already-expired lease (verb-reached state → direct put).
+    await substrate.put("WorkItem", {
+      id: "work-rev-ev", type: "task", priority: "normal", roleEligibility: [], dependsOn: [],
+      evidenceRequirements: [], targetRef: null, status: "review",
+      lease: { holder: "agent-rev-ev", token: "t", claimedAt: "2020-01-01T00:00:00.000Z", expiresAt: "2020-01-01T00:05:00.000Z", heartbeatAt: "2020-01-01T00:00:00.000Z" },
+      evidence: [{ requirementId: "r", kind: "freeform", producedAt: "2020-01-01T00:01:00.000Z" }],
+      blockedOn: null, leaseExpiryCount: 0, createdAt: "2020-01-01T00:00:00.000Z", updatedAt: "2020-01-01T00:00:00.000Z",
+    });
+    await sw.fullSweep(FUTURE); // requeues the review item (review is lease-held) but hadEvidence → no thrash
+    expect(stub.calls.find((c) => c.agentId === "agent-rev-ev")).toBeUndefined();
+  }, OP_TIMEOUT);
+
+  it("an agent newly hitting the thrash cap → result.agentsQuarantined + LOUD audit", async () => {
+    const stub = agentStub({ thrashCount: 3, quarantined: true }); // every record returns at-cap+quarantined
+    const sw = new WorkItemLeaseSweeper(repo, ctxProvider, { agentStore: stub, thrashCap: 3, audit });
+    const w = await ready();
+    await repo.claimWorkItem(w.id, "agent-quar-y");
+    const res = await sw.fullSweep(FUTURE);
+    expect(res.agentsQuarantined).toBeGreaterThanOrEqual(1);
+  }, OP_TIMEOUT);
 });

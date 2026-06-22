@@ -823,7 +823,9 @@ const workItemLeaseSweeper = new WorkItemLeaseSweeper(
       internalEvents: [],
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
-  { audit: auditStore },
+  // 4b-ii: agentStore drives the per-AGENT thrash-quarantine (claim→expire-without-
+  // evidence → increment holder's counter; quarantine at thrashCap=3, the C2 seam).
+  { audit: auditStore, agentStore: engineerRegistry, thrashCap: 3 },
 );
 
 // Mission-57 W2: PulseSweeper — single-instance recurring sweeper that

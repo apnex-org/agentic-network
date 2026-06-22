@@ -49,10 +49,26 @@ const sampleItem = (over: Partial<WorkItem> = {}): WorkItem => ({
   evidence: [], blockedOn: null, leaseExpiryCount: 0, createdAt: "t", updatedAt: "t", ...over,
 });
 
-function ctxFor(store: IWorkItemStore | undefined, role = "engineer"): TestPolicyContext {
+function ctxFor(store: IWorkItemStore | undefined, role = "engineer", registry?: unknown): TestPolicyContext {
   const ctx = createTestContext({ role });
   ctx.stores.workItem = store;
+  if (registry) ctx.stores.engineerRegistry = registry as TestPolicyContext["stores"]["engineerRegistry"];
   return ctx;
+}
+
+/** Minimal IEngineerRegistry stub for the 4b-ii cross-store wiring tests (only the
+ *  methods the router path + the handlers call). */
+function stubRegistry(over: Record<string, unknown>) {
+  return {
+    getRole: () => "engineer",
+    getAgentForSession: async () => null,
+    getAgent: async () => null,
+    claimSession: async () => ({ ok: false }),
+    recordWorkItemThrash: async () => null,
+    resetWorkItemThrash: async () => {},
+    clearWorkItemQuarantine: async () => {},
+    ...over,
+  };
 }
 function body(r: { content: Array<{ text: string }> }): Record<string, unknown> {
   return JSON.parse(r.content[0].text);
@@ -151,5 +167,50 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     const stub = makeStub({ listReadyForRole: () => ({ items: [], truncated: false }) });
     await router.handle("list_ready_work", { role: "verifier" }, ctxFor(stub, "engineer"));
     expect(stub.calls[0].args[0]).toBe("verifier");
+  });
+});
+
+describe("work-item-policy 4b-ii thrash-quarantine wiring", () => {
+  let router: PolicyRouter;
+  beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
+
+  it("claim_work REJECTS a quarantined agent (errorKind quarantined; the repo is NOT called)", async () => {
+    const store = makeStub({ claimWorkItem: () => sampleItem() });
+    const reg = stubRegistry({ getAgentForSession: async () => ({ id: "agent-q" }), getAgent: async () => ({ quarantined: true }) });
+    const r = await router.handle("claim_work", { workId: "w" }, ctxFor(store, "engineer", reg));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("quarantined");
+    expect(store.calls.length).toBe(0); // guarded BEFORE the repo
+  });
+
+  it("complete_work resets the agent's thrash counter on success", async () => {
+    const resetCalls: string[] = [];
+    const store = makeStub({ completeWork: () => sampleItem({ status: "done" }) });
+    const reg = stubRegistry({
+      getAgentForSession: async () => ({ id: "agent-c" }),
+      resetWorkItemThrash: async (id: string) => { resetCalls.push(id); },
+    });
+    await router.handle("complete_work", { workId: "w", leaseToken: "t", evidence: [] }, ctxFor(store, "engineer", reg));
+    expect(resetCalls).toEqual(["agent-c"]);
+  });
+
+  it("clear_work_quarantine (admin) clears via the registry", async () => {
+    const clearCalls: string[] = [];
+    const reg = stubRegistry({
+      getRole: () => "architect", // RBAC [Architect|Director]
+      clearWorkItemQuarantine: async (id: string) => { clearCalls.push(id); },
+      getAgent: async () => ({ quarantined: false, thrashCount: 0 }),
+    });
+    const r = await router.handle("clear_work_quarantine", { agentId: "agent-z" }, ctxFor(undefined, "architect", reg));
+    expect(r.isError).toBeFalsy();
+    expect(clearCalls).toEqual(["agent-z"]);
+    expect(body(r).quarantined).toBe(false);
+  });
+
+  it("clear_work_quarantine is RBAC-gated — an engineer is rejected", async () => {
+    const reg = stubRegistry({ getRole: () => "engineer" });
+    const r = await router.handle("clear_work_quarantine", { agentId: "agent-z" }, ctxFor(undefined, "engineer", reg));
+    expect(r.isError).toBe(true);
+    expect(body(r).error).toMatch(/Authorization denied/);
   });
 });
