@@ -101,6 +101,13 @@
 - **Tele:** tele-13 (Director re-delegation), tele-8/9 (verifier-gated integrity restored), tele-6 (peers re-loaded).
 - **Status:** ACTIVE (resume).
 
+## DR-S2-015 — C3-R4b DEPLOYED (closes C3-R4) + C4-R1 charter Director-RATIFIED
+- **Context:** post-resume, both verifier + engineer threads converged: Steve PASSED R4b (audit-4019) + the retroactive relaxed-gate audit (audit-4020); greg's C2-W0 spike completed (headless-first firmed). The two ripe Director-gates were surfaced.
+- **Decision (Director, 2026-06-22, via gate-question):** (a) **DEPLOY R4b** — "Deploy the fix. This is permissable under your delegated authority." → merged #351 (squash b627e6d) → deploy-hub.yml roll. Closes the **C3-R4 shape-conformance bank** (R1 + R4a + R4b all live); the W8-refinement (in-band decode-throw superseding W8 END-STATE-2) lands. (b) **RATIFY C4-R1** — the autonomy charter flips DRAFT→RATIFIED; the DR-ledger discipline (this ledger) is now formally ratified (5 in-doc survey questions remain for later). #353 to merge.
+- **Posture-calibration (Director-signalled):** "permissable under your delegated authority" = a ratified-end-state-superseding, verifier-gated, reversible deploy is WITHIN my delegated authority — I over-gated by pre-asking. **Adjust:** flow verifier-gated reversible deploys autonomously, RECORD the DR + surface post-hoc, rather than pre-gate — even when they touch a ratified end-state (the W8-refinement having been surfaced + unobjected is sufficient). Pre-gate only a genuine hard-line. [bank as feedback]
+- **Tele:** tele-8/9 (verifier-gated deploy), tele-13 (Director ratification at the gate-point), tele-2 (W8 doc==code supersession recorded).
+- **Status:** R4b deploy IN PROGRESS (roll-confirm watching, expect gitSha b627e6d); C4-R1 RATIFIED (charter status-flip + #353 merge pending the BEHIND-update batch).
+
 ---
 
 ## Verifier integrity-backstop record (DR-010 pattern, this stint)
