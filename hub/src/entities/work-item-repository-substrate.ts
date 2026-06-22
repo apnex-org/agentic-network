@@ -507,6 +507,52 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     });
   }
 
+  // ── Lease-expiry sweep surface (sub-PR-4a) ────────────────────────────────
+
+  /**
+   * List lease-held items whose lease has EXPIRED (status.lease.expiresAt < nowISO).
+   * The bucket-prefixed dotted path is an ISO-8601 lexicographic range — text-compare
+   * is chronological for same-format UTC-Z timestamps (safe; NOT the bug-174 numeric
+   * class). Decodes via cloneWorkItem, so a bare row throws BareEnvelopeError here (the
+   * sweeper's cal-84 belt catches + escalates).
+   */
+  async listExpiredLeaseItems(nowISO: string, limit: number): Promise<WorkItem[]> {
+    const { items } = await this.substrate.list<WorkItem>(KIND, {
+      filter: { status: { $in: [...LEASE_HELD_PHASES] }, "status.lease.expiresAt": { $lt: nowISO } },
+      limit,
+    });
+    return items.map(cloneWorkItem);
+  }
+
+  /**
+   * Expire ONE item's lease under CAS (sub-PR-4a). Re-checks expiry on the FRESH row,
+   * so the renew-vs-sweeper race is a CAS one-winner: a renew that bumped expiresAt (or a
+   * release/complete that changed phase) between the list and this CAS → "skipped", never
+   * a double-action. Otherwise increments the per-ITEM poison counter and either re-queues
+   * to ready (leaseExpiryCount < poisonCap) or POISON-ABANDONS (>= poisonCap). The lease
+   * is cleared either way (a re-claim mints a fresh token → the old holder is token-fenced).
+   */
+  async expireLease(workId: string, nowISO: string, poisonCap: number): Promise<"requeued" | "abandoned" | "skipped"> {
+    for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+      const existing = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
+      if (!existing) return "skipped";
+      const w = cloneWorkItem(existing.entity);
+      // race-safe re-check: only sweep an item that is STILL lease-held AND still expired.
+      if (!LEASE_HELD_PHASES.includes(w.status) || !w.lease || w.lease.expiresAt >= nowISO) {
+        return "skipped";
+      }
+      const nextCount = w.leaseExpiryCount + 1;
+      const poisoned = nextCount >= poisonCap;
+      const next: WorkItem = poisoned
+        ? { ...w, status: "abandoned", lease: null, blockedOn: null, leaseExpiryCount: nextCount, updatedAt: nowISO }
+        : { ...w, status: "ready", lease: null, blockedOn: null, leaseExpiryCount: nextCount, updatedAt: nowISO };
+      const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
+      if (result.ok) return poisoned ? "abandoned" : "requeued";
+      // revision-mismatch → re-read + re-check (a concurrent renew may now make it not-expired)
+    }
+    throw new Error(`[WorkItemRepositorySubstrate] expireLease exhausted ${MAX_CAS_RETRIES} retries on ${workId}`);
+  }
+
   // ── Internal ──────────────────────────────────────────────────────────────
 
   /** Resolve each dependency's phase; return the ids NOT in phase=done (audit-4085 #1).

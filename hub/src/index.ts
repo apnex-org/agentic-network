@@ -87,6 +87,7 @@ import { MessageProjectionSweeper } from "./policy/message-projection-sweeper.js
 import { ScheduledMessageSweeper } from "./policy/scheduled-message-sweeper.js";
 import { CascadeReplaySweeper } from "./policy/cascade-replay-sweeper.js";
 import { PulseSweeper } from "./policy/pulse-sweeper.js";
+import { WorkItemLeaseSweeper } from "./policy/work-item-lease-sweeper.js";
 import {
   RepoEventBridge,
   createPolicyRouterInvoker,
@@ -803,6 +804,28 @@ const cascadeReplaySweeper = new CascadeReplaySweeper(
   { audit: auditStore },
 );
 
+// C1-R2 (mission-94) sub-PR-4a: WorkItem lease-expiry sweeper. Periodic tick (well
+// under LEASE_TTL_MS 15min) re-queues a crashed/wedged holder's lapsed lease to ready
+// (leaseExpiryCount++) and POISON-ABANDONS an item that has lapsed poisonCap (3) times.
+// Inherits the cal-84 bare-row escalation (audit + metric). Cadence configurable.
+const WORKITEM_LEASE_SWEEP_INTERVAL_MS = Number(process.env.OIS_WORKITEM_LEASE_SWEEP_INTERVAL_MS ?? 60_000);
+const workItemLeaseSweeper = new WorkItemLeaseSweeper(
+  workItemStore,
+  {
+    forSweeper: () => ({
+      stores: allStores,
+      metrics: createMetricsCounter(),
+      emit: async () => {},
+      dispatch: async () => {},
+      sessionId: "workitem-lease-sweeper",
+      clientIp: "127.0.0.1",
+      role: "system",
+      internalEvents: [],
+    } as unknown as import("./policy/types.js").IPolicyContext),
+  },
+  { audit: auditStore },
+);
+
 // Mission-57 W2: PulseSweeper — single-instance recurring sweeper that
 // drives declarative per-mission pulse coordination. 60s tick; iterates
 // active missions with `pulses.{engineerPulse, architectPulse}` config;
@@ -946,6 +969,17 @@ startupSequence().then(async () => {
   } catch (err) {
     console.warn("[Hub] Startup cascade-replay sweep failed; Hub still starts:", err);
   }
+  // C1-R2 sub-PR-4a: WorkItem lease-expiry sweep — startup pass (catches leases that
+  // lapsed during a Hub-down window) then periodic ticking.
+  try {
+    const swept = await workItemLeaseSweeper.fullSweep(new Date().toISOString());
+    if (swept.requeued > 0 || swept.abandoned > 0 || swept.errors > 0 || swept.quarantined > 0) {
+      console.log(`[Hub] Startup WorkItem lease sweep: scanned=${swept.scanned} requeued=${swept.requeued} abandoned=${swept.abandoned} skipped=${swept.skipped} errors=${swept.errors} quarantined=${swept.quarantined}`);
+    }
+  } catch (err) {
+    console.warn("[Hub] Startup WorkItem lease sweep failed; sweeper still starts:", err);
+  }
+  workItemLeaseSweeper.start(WORKITEM_LEASE_SWEEP_INTERVAL_MS);
   // Mission-52 T3: start repo-event-bridge if configured. PAT failures
   // are caught inside .start() — Hub continues with bridge in `failed`
   // state per directive (no Hub-crash on under-scoped tokens).
