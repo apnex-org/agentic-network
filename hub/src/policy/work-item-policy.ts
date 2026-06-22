@@ -160,7 +160,17 @@ async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext):
     if (!w) return notFound(args.workId as string);
     // 4b-ii: a successful complete (evidence attached → review|done) is demonstrated
     // progress → reset the agent's claim-thrash counter (leaves quarantine to manual clear).
-    await ctx.stores.engineerRegistry.resetWorkItemThrash(caller.agentId);
+    const priorThrash = await ctx.stores.engineerRegistry.resetWorkItemThrash(caller.agentId);
+    // audit-4133: audit a NON-NOOP reset (forensic symmetry with the quarantine SET + clear
+    // paths; low-volume since most completes have thrashCount=0).
+    if (priorThrash > 0) {
+      try {
+        await ctx.stores.audit.logEntry("hub", "agent_workitem_thrash_reset",
+          `Agent ${caller.agentId} claim-thrash counter reset ${priorThrash}->0 on a successful complete_work (${args.workId})`, caller.agentId);
+      } catch (auditErr) {
+        console.warn(`[work-item-policy] thrash-reset audit write failed for ${caller.agentId}:`, auditErr);
+      }
+    }
     return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
 }

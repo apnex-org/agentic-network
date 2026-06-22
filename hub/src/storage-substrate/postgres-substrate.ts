@@ -55,7 +55,7 @@ export interface PostgresSubstrate extends HubStorageSubstrate {
  *  omitted — existing callers pass connStr only (unchanged). Lets tests parametrize the
  *  pool to assert the starvation regression guard. */
 export interface PostgresSubstrateOptions {
-  /** node-pg pool max connections (default env POSTGRES_POOL_MAX ?? 20, floor 2). */
+  /** node-pg pool max connections (default env POSTGRES_POOL_MAX ?? 25, floor 2). */
   max?: number;
   /** ms a query waits for a free connection before erroring (default env
    *  POSTGRES_CONNECTION_TIMEOUT_MS, else undefined = wait indefinitely — prod unchanged). */

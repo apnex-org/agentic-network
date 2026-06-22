@@ -7,10 +7,11 @@
  * lock-holder and the inner queries can't acquire → starvation/deadlock. CI never exercised
  * >=10 distinct agents, so the pg default max=10 hid this.
  *
- * BOTH-WAYS guard (per architect): the SAME 12-concurrent-claimer scenario STARVES at the
- * old default max=10 (a real regression guard, not just a green check) but SUCCEEDS at the
- * new default max=20. The starved pool uses a short connectionTimeoutMillis so starvation
- * surfaces as fail-fast errors instead of an indefinite hang.
+ * BOTH-WAYS guard (per architect): STARVES — at max=10 all 10 connections pin → the 11th
+ * acquire cannot proceed (the deadlock root, asserted deterministically at the pool level
+ * with fully-awaited cleanup — no connectionTimeoutMillis, so no pg-pool zombie-connect
+ * teardown race). SUCCEEDS — 12 concurrent claims succeed at the new default max=25 (a
+ * revert to a too-small max deadlocks→times-out→fails this, so it stays a real guard).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
@@ -32,7 +33,7 @@ describe("WorkItem pool-starvation regression guard (real-pg)", () => {
   let pool: Pool;
   let connStr: string;
   let reconciler: ReturnType<typeof createSchemaReconciler>;
-  let healthy: ReturnType<typeof createPostgresStorageSubstrate>; // default max=20
+  let healthy: ReturnType<typeof createPostgresStorageSubstrate>; // default max=25
   let healthyRepo: WorkItemRepositorySubstrate;
 
   beforeAll(async () => {
@@ -41,7 +42,7 @@ describe("WorkItem pool-starvation regression guard (real-pg)", () => {
     connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
     pool = new Pool({ connectionString: connStr });
     for (const f of MIGRATION_FILES) await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
-    healthy = createPostgresStorageSubstrate(connStr); // default max=20 (the fix)
+    healthy = createPostgresStorageSubstrate(connStr); // default max=25 (the fix)
     reconciler = createSchemaReconciler(healthy, connStr, { initialSchemas: ALL_SCHEMAS });
     await reconciler.start();
     healthy.setFieldTranslator((kind, key) => reconciler.getFieldTranslation(kind, key));

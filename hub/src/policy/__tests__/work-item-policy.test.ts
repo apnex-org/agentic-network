@@ -65,7 +65,7 @@ function stubRegistry(over: Record<string, unknown>) {
     getAgent: async () => null,
     claimSession: async () => ({ ok: false }),
     recordWorkItemThrash: async () => null,
-    resetWorkItemThrash: async () => {},
+    resetWorkItemThrash: async () => 0,
     clearWorkItemQuarantine: async () => {},
     ...over,
   };
@@ -183,15 +183,29 @@ describe("work-item-policy 4b-ii thrash-quarantine wiring", () => {
     expect(store.calls.length).toBe(0); // guarded BEFORE the repo
   });
 
-  it("complete_work resets the agent's thrash counter on success", async () => {
+  it("complete_work resets the agent's thrash + audits a NON-NOOP reset (audit-4133)", async () => {
     const resetCalls: string[] = [];
+    const auditActions: string[] = [];
     const store = makeStub({ completeWork: () => sampleItem({ status: "done" }) });
     const reg = stubRegistry({
       getAgentForSession: async () => ({ id: "agent-c" }),
-      resetWorkItemThrash: async (id: string) => { resetCalls.push(id); },
+      resetWorkItemThrash: async (id: string) => { resetCalls.push(id); return 2; }, // non-noop: prior thrashCount 2
     });
-    await router.handle("complete_work", { workId: "w", leaseToken: "t", evidence: [] }, ctxFor(store, "engineer", reg));
+    const ctx = ctxFor(store, "engineer", reg);
+    ctx.stores.audit = { logEntry: async (_a: string, action: string) => { auditActions.push(action); return {} as never; } } as unknown as typeof ctx.stores.audit;
+    await router.handle("complete_work", { workId: "w", leaseToken: "t", evidence: [] }, ctx);
     expect(resetCalls).toEqual(["agent-c"]);
+    expect(auditActions).toContain("agent_workitem_thrash_reset");
+  });
+
+  it("complete_work does NOT audit a no-op thrash reset (prior=0)", async () => {
+    const auditActions: string[] = [];
+    const store = makeStub({ completeWork: () => sampleItem({ status: "done" }) });
+    const reg = stubRegistry({ getAgentForSession: async () => ({ id: "agent-c0" }), resetWorkItemThrash: async () => 0 });
+    const ctx = ctxFor(store, "engineer", reg);
+    ctx.stores.audit = { logEntry: async (_a: string, action: string) => { auditActions.push(action); return {} as never; } } as unknown as typeof ctx.stores.audit;
+    await router.handle("complete_work", { workId: "w", leaseToken: "t", evidence: [] }, ctx);
+    expect(auditActions).not.toContain("agent_workitem_thrash_reset");
   });
 
   it("clear_work_quarantine (admin) clears via the registry + emits a forensic audit (audit-4103)", async () => {

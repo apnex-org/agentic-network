@@ -805,16 +805,21 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     return null; // best-effort: exhausted retries — never crash the sweep
   }
 
-  async resetWorkItemThrash(agentId: string): Promise<void> {
+  /** Returns the PRIOR thrashCount (0 if no-op) so the caller can audit a NON-NOOP reset
+   *  (audit-4133). Quarantined is cleared only by the manual clear path. */
+  async resetWorkItemThrash(agentId: string): Promise<number> {
     for (let attempt = 0; attempt < WORKITEM_THRASH_CAS_RETRIES; attempt++) {
       const existing = await this.loadAgentWithRevision(agentId);
-      if (!existing) return;
+      if (!existing) return 0;
       const agent = normalizeAgentShape(existing.entity);
-      if (agent.thrashCount === 0) return; // no-op (quarantined cleared only by the manual path)
+      if (agent.thrashCount === 0) return 0; // no-op
+      const prior = agent.thrashCount;
       const updated: Agent = { ...agent, thrashCount: 0 };
       const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
-      if (result.ok) return;
+      if (result.ok) return prior;
+      // revision-mismatch → retry
     }
+    return 0; // exhausted retries (best-effort)
   }
 
   async clearWorkItemQuarantine(agentId: string): Promise<void> {
