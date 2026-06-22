@@ -92,6 +92,10 @@ const MAX_CAS_RETRIES = 50;
  * the liveness-layer (ADR-017) or mission-62 activity-layer fields get sane
  * defaults on read. Ported byte-for-byte from agent-repository.ts.
  */
+/** C1-R2: CAS-retry budget for the claim-thrash counter mutations (so a concurrent
+ *  heartbeat/touch write doesn't silently drop a thrash increment). */
+const WORKITEM_THRASH_CAS_RETRIES = 5;
+
 function normalizeAgentShape(a: Agent): Agent {
   if (!a) return a;
   const raw = a as unknown as Record<string, unknown>;
@@ -132,6 +136,10 @@ function normalizeAgentShape(a: Agent): Agent {
     restartHistoryMs: Array.isArray(a.restartHistoryMs)
       ? (a.restartHistoryMs as number[])
       : [],
+    // C1-R2 (mission-94): WorkItem claim-thrash quarantine defaults (legacy agents
+    // predate these fields).
+    thrashCount: typeof a.thrashCount === "number" ? a.thrashCount : 0,
+    quarantined: a.quarantined === true,
     cognitiveTTL: typeof a.cognitiveTTL === "number" ? a.cognitiveTTL : null,
     transportTTL: typeof a.transportTTL === "number" ? a.transportTTL : null,
     cognitiveState: isComponentState(a.cognitiveState) ? a.cognitiveState : "unknown",
@@ -438,6 +446,9 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
           transportTTL: null,
           cognitiveState: "unknown",
           transportState: "unknown",
+          // C1-R2 (mission-94): claim-thrash quarantine — fresh agent starts clean.
+          thrashCount: 0,
+          quarantined: false,
         };
         const created = await this.createOnlyAgent(agent);
         if (!created.ok) {
@@ -773,6 +784,49 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     const agent = normalizeAgentShape(existing.entity);
     const updated: Agent = { ...agent, livenessState: state };
     await this.putIfMatchAgent(updated, existing.resourceVersion);
+  }
+
+  // ── C1-R2 (mission-94) — WorkItem claim-thrash quarantine ──────────────────
+  // CAS-retry loops (NOT silent-skip-on-conflict like touchAgent) so a concurrent
+  // heartbeat write never drops a thrash increment / reset.
+
+  async recordWorkItemThrash(agentId: string, quarantineCap: number): Promise<{ thrashCount: number; quarantined: boolean } | null> {
+    for (let attempt = 0; attempt < WORKITEM_THRASH_CAS_RETRIES; attempt++) {
+      const existing = await this.loadAgentWithRevision(agentId);
+      if (!existing) return null;
+      const agent = normalizeAgentShape(existing.entity);
+      const thrashCount = agent.thrashCount + 1;
+      const quarantined = agent.quarantined || thrashCount >= quarantineCap;
+      const updated: Agent = { ...agent, thrashCount, quarantined };
+      const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
+      if (result.ok) return { thrashCount, quarantined };
+      // revision-mismatch → re-read + retry (don't lose the increment)
+    }
+    return null; // best-effort: exhausted retries — never crash the sweep
+  }
+
+  async resetWorkItemThrash(agentId: string): Promise<void> {
+    for (let attempt = 0; attempt < WORKITEM_THRASH_CAS_RETRIES; attempt++) {
+      const existing = await this.loadAgentWithRevision(agentId);
+      if (!existing) return;
+      const agent = normalizeAgentShape(existing.entity);
+      if (agent.thrashCount === 0) return; // no-op (quarantined cleared only by the manual path)
+      const updated: Agent = { ...agent, thrashCount: 0 };
+      const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
+      if (result.ok) return;
+    }
+  }
+
+  async clearWorkItemQuarantine(agentId: string): Promise<void> {
+    for (let attempt = 0; attempt < WORKITEM_THRASH_CAS_RETRIES; attempt++) {
+      const existing = await this.loadAgentWithRevision(agentId);
+      if (!existing) return;
+      const agent = normalizeAgentShape(existing.entity);
+      if (agent.thrashCount === 0 && !agent.quarantined) return; // no-op
+      const updated: Agent = { ...agent, thrashCount: 0, quarantined: false };
+      const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
+      if (result.ok) return;
+    }
   }
 
   async updateAgentPulseLastFiredAt(agentId: string, lastFiredAt: string): Promise<void> {

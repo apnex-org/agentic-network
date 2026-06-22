@@ -50,7 +50,11 @@ const Agent: SchemaDef = {
   // placement by the W1 sentinel-probe oracle (renamemap-contract-w1.test.ts). W2
   // added the partition-relocated FILTERABLE keys per the call-site sweep (finding A).
   // `fingerprint` (substrate-side assertIdentity lookup) → metadata.fingerprint.
-  renameMap: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint" },
+  // C1-R2 (mission-94): thrashCount/quarantined relocate into status.* (claim-thrash
+  // quarantine). NOT list-filtered, but declared here per the dual-source discipline
+  // (idea-346) so the W1 sentinel-probe verifies their encoder placement (the
+  // WorkItem-seeding-bug class) — mirrored in migrations/v2-envelope/kinds/Agent.ts.
+  renameMap: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint", thrashCount: "status.thrashCount", quarantined: "status.quarantined" },
 };
 
 const Audit: SchemaDef = {

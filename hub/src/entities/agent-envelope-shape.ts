@@ -85,6 +85,10 @@ const AGENT_SCHEMA_REF: MigrationSchemaRef = {
       "restartCount",
       "recentErrors",
       "restartHistoryMs",
+      // C1-R2 (mission-94): WorkItem claim-thrash quarantine. MUST stay byte-for-byte
+      // with migrations/v2-envelope/kinds/Agent.ts partition.status.
+      "thrashCount",
+      "quarantined",
     ],
   },
 };
@@ -175,6 +179,9 @@ export function envelopeToAgent(maybeEnvelope: unknown): Agent {
     restartCount: status.restartCount,
     recentErrors: status.recentErrors,
     restartHistoryMs: status.restartHistoryMs,
+    // C1-R2 (mission-94): WorkItem claim-thrash quarantine (status bucket → flat).
+    thrashCount: status.thrashCount,
+    quarantined: status.quarantined,
   };
   return assertDecodedFlat(out as unknown as Agent, "Agent");
 }

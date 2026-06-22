@@ -79,7 +79,7 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   // they are now INCLUDED (→ metadata.*), no longer the W1 dual-path null-pin.
   // Every entry below is validated against the encoder's ACTUAL placement by the
   // sentinel-probe (W1.1b).
-  Agent: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint" },
+  Agent: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint", thrashCount: "status.thrashCount", quarantined: "status.quarantined" },
   Audit: { timestamp: "metadata.createdAt", actor: "metadata.actor" },
   Bug: { status: "status.phase", severity: "spec.severity", class: "spec.class", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId", sourceIdeaId: "metadata.sourceIdeaId" },
   Idea: { status: "status.phase", missionId: "status.missionId", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
