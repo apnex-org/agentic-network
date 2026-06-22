@@ -367,11 +367,14 @@ describe("TaskPolicy", () => {
   });
 
   it("createReport returns error for non-existent task", async () => {
+    // bug-175: create_report is [Engineer] — run it as an engineer so the handler executes
+    // and returns the not-found error (else the architect ctx is RBAC-denied first).
+    const engineerCtx = createTestContext({ role: "engineer", stores: ctx.stores });
     const result = await router.handle("create_report", {
       taskId: "task-999",
       report: "Done",
       summary: "OK",
-    }, ctx);
+    }, engineerCtx);
 
     expect(result.isError).toBe(true);
     const parsed = JSON.parse(result.content[0].text);
