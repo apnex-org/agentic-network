@@ -157,21 +157,31 @@ export type Filter = Record<string, FilterValue>;
 export const KNOWN_FILTER_OPERATORS = ["$in", "$contains", "$gt", "$lt", "$gte", "$lte"] as const;
 
 /**
- * FAIL-LOUD guard (C1-R2 audit-4054): throw if a filter operator object carries
- * an operator NOT in KNOWN_FILTER_OPERATORS. This kills the silent-no-op CLASS —
- * an operator accepted by upstream validation (zod / FilterValue type) but not
- * implemented by a matcher must NEVER silently return the row (tele-4); it must
- * throw so the gap is loud, not a wrong result-set. Same fail-loud philosophy as
- * the C3-R4 governor.
+ * Security-rejected operators (ReDoS / arbitrary-code-exec / unbounded logical
+ * composition): $regex/$where/$expr/$or/$and/$not. These are rejected at the
+ * Zod/MCP validation boundary WITH a permitted-set hint — NOT by the runtime
+ * matcher's fail-loud guard (C1-R2 audit-4064). The 3-class operator taxonomy:
+ * IMPLEMENTED (KNOWN_FILTER_OPERATORS), FORBIDDEN (this set), UNKNOWN (neither).
+ */
+export const FORBIDDEN_FILTER_OPERATORS = ["$regex", "$where", "$expr", "$or", "$and", "$not"] as const;
+
+/**
+ * FAIL-LOUD guard (C1-R2 audit-4054, refined audit-4064): throw ONLY for a
+ * GENUINELY-UNKNOWN operator (neither IMPLEMENTED nor FORBIDDEN) — killing the
+ * silent-no-op CLASS (an operator accepted upstream but unimplemented must never
+ * silently return the row; tele-4). FORBIDDEN ops are deliberately NOT thrown here:
+ * their enforcement is the Zod/MCP forbidden-rejection-with-hint (running first);
+ * at the un-Zod'd router level they fall through to the defense-in-depth
+ * match-nothing. So: $regex → forbidden-rejection (Zod); a typo'd op → fail-loud.
  */
 export function assertKnownFilterOps(op: Record<string, unknown>, field: string): void {
   for (const k of Object.keys(op)) {
-    if (!(KNOWN_FILTER_OPERATORS as readonly string[]).includes(k)) {
-      throw new Error(
-        `[filter] unsupported operator '${k}' on field '${field}' — accepted upstream but not ` +
-          `implemented by the matcher (fail-loud; no silent-true). Known: ${KNOWN_FILTER_OPERATORS.join(", ")}.`,
-      );
-    }
+    if ((KNOWN_FILTER_OPERATORS as readonly string[]).includes(k)) continue; // IMPLEMENTED
+    if ((FORBIDDEN_FILTER_OPERATORS as readonly string[]).includes(k)) continue; // FORBIDDEN → Zod-layer rejection, not here
+    throw new Error(
+      `[filter] unknown operator '${k}' on field '${field}' — neither implemented nor a recognized ` +
+        `forbidden op (fail-loud; no silent-true). Implemented: ${KNOWN_FILTER_OPERATORS.join(", ")}.`,
+    );
   }
 }
 

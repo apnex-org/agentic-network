@@ -105,7 +105,7 @@ describe("C1-R2 $contains operator (real-pg list + watch-replay)", () => {
     const ac = new AbortController();
     await expect((async () => {
       for await (const _ev of substrate.watch("CGuard", { sinceRevision: snap, filter: { tags: { $bogus: "x" } } as never, signal: ac.signal })) { /* should throw before yielding */ }
-    })()).rejects.toThrow(/unsupported operator/i);
+    })()).rejects.toThrow(/unknown operator/i);
     ac.abort();
   }, TEST_OP_TIMEOUT);
 
@@ -180,6 +180,6 @@ describe("C1-R2 $contains operator (memory-substrate parity)", () => {
   it("FAIL-LOUD: an unknown operator throws (no silent-true)", async () => {
     const s = mem();
     await s.put("M", { id: "g1", tags: ["x"] });
-    await expect(listIds(s, "M", { tags: { $bogus: "x" } })).rejects.toThrow(/unsupported operator/i);
+    await expect(listIds(s, "M", { tags: { $bogus: "x" } })).rejects.toThrow(/unknown operator/i);
   });
 });
