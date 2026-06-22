@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
 import { createPostgresStorageSubstrate, createSchemaReconciler, ALL_SCHEMAS } from "../index.js";
-import { SUBSTRATE_FILTERABLE_KEYS, EXCLUDED_FILTERABLE_KEYS } from "../conformance/filterable-keys.js";
+import { SUBSTRATE_FILTERABLE_KEYS, EXCLUDED_FILTERABLE_KEYS, ARRAY_FILTERABLE_KEYS } from "../conformance/filterable-keys.js";
 
 const TEST_SETUP_TIMEOUT = 90_000;
 const TEST_OP_TIMEOUT = 120_000;
@@ -103,23 +103,29 @@ describe("C3-R4a renameMap-governor — filter value-round-trip oracle (real-pg,
           const matchId = `rt-${kind}-${flatKey.replace(/\W/g, "_")}-match`;
           const decoyId = `rt-${kind}-${flatKey.replace(/\W/g, "_")}-decoy`;
 
+          // C1-R2: array-membership keys (e.g. WorkItem.roleEligibility) seed an
+          // ARRAY [sentinel] and query via $contains (the @> operator), NOT scalar
+          // equality — the one place $contains meets the governor's round-trip oracle.
+          const isArrayKey = (ARRAY_FILTERABLE_KEYS[kind] ?? []).includes(flatKey);
           const matchRow: Record<string, unknown> = { id: matchId };
-          setNested(matchRow, envPath, sentinel);
+          setNested(matchRow, envPath, isArrayKey ? [sentinel] : sentinel);
           const decoyRow: Record<string, unknown> = { id: decoyId };
-          setNested(decoyRow, envPath, decoy);
+          setNested(decoyRow, envPath, isArrayKey ? [decoy] : decoy);
 
           await substrate.put(kind, matchRow);
           await substrate.put(kind, decoyRow);
 
-          const { items } = await substrate.list<{ id: string }>(kind, { filter: { [flatKey]: sentinel }, limit: 500 });
+          const filter = isArrayKey ? { [flatKey]: { $contains: sentinel } } : { [flatKey]: sentinel };
+          const { items } = await substrate.list<{ id: string }>(kind, { filter, limit: 500 });
           const ids = new Set(items.map((r) => r.id));
           exercised++;
 
+          const op = isArrayKey ? "$contains" : "eq";
           if (!ids.has(matchId)) {
-            failures.push(`${kind}.${flatKey}: match row NOT returned (filter translated '${flatKey}'→'${envPath}' missed the value — renameMap gap?)`);
+            failures.push(`${kind}.${flatKey} [${op}]: match row NOT returned (filter translated '${flatKey}'→'${envPath}' missed the value — renameMap gap?)`);
           }
           if (ids.has(decoyId)) {
-            failures.push(`${kind}.${flatKey}: decoy row WAS returned (filter did not discriminate by value — count-parity false-pass, cal-80)`);
+            failures.push(`${kind}.${flatKey} [${op}]: decoy row WAS returned (filter did not discriminate by value — count-parity false-pass, cal-80)`);
           }
         }
       }

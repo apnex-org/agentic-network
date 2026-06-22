@@ -66,7 +66,16 @@ describe("list-filters — applyQueryFilter runtime $contains (audit-4054 #2: ma
     expect(applyQueryFilter(typedRows, { roles: { $contains: "3" } }, accessors).length).toBe(0);
   });
 
-  it("FAIL-LOUD: an operator the zod would never pass but that reaches the matcher THROWS (no silent-true)", () => {
-    expect(() => run({ roles: { $bogus: "x" } })).toThrow(/unsupported operator/i);
+  it("FAIL-LOUD: a genuinely-UNKNOWN operator (typo) reaching the matcher THROWS (no silent-true)", () => {
+    expect(() => run({ roles: { $bogus: "x" } })).toThrow(/unknown operator/i);
+  });
+
+  it("does NOT fail-loud on a FORBIDDEN op ($regex/$where) — that class is the Zod-layer rejection (audit-4064); the matcher falls through (defense-in-depth)", () => {
+    // 3-class taxonomy: FORBIDDEN ($regex/$where/$expr/$or/$and/$not) is rejected at
+    // the Zod/MCP boundary WITH a hint; the runtime fail-loud guard must NOT conflate
+    // it with UNKNOWN. At the un-Zod'd router level a forbidden op falls through,
+    // never throwing from the guard (test/policy-router.test.ts:674 contract).
+    expect(() => run({ roles: { $regex: "^x" } })).not.toThrow();
+    expect(() => run({ roles: { $where: "x" } })).not.toThrow();
   });
 });

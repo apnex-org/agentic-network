@@ -38,6 +38,12 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   ReviewHistoryEntry: ["taskId"],
   ThreadHistoryEntry: ["threadId"],
   Notification: ["recipientAgentId"],
+  // C1-R2 (mission-94): status (→status.phase, equality) + roleEligibility (the
+  // $contains array-membership key, → spec.roleEligibility; see ARRAY_FILTERABLE_KEYS).
+  // The hot lease sub-fields are filtered via the bucket-prefixed dotted path
+  // (status.lease.holder / status.lease.expiresAt — isBucketPrefixed, no renameMap
+  // entry, sub-PR-3), NOT listed here.
+  WorkItem: ["status", "roleEligibility"],
 };
 
 /**
@@ -53,6 +59,17 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
  */
 export const EXCLUDED_FILTERABLE_KEYS: Record<string, Record<string, string>> = {
   Notification: { recipientAgentId: "phantom (bug-148: repo interface diverges from SchemaDef; field in no row)" },
+};
+
+/**
+ * C1-R2 (mission-94): substrate-filterable keys queried by `$contains` ARRAY-
+ * MEMBERSHIP (not scalar equality) — the value-round-trip oracle exercises these
+ * via `{key:{$contains:v}}` against a seeded ARRAY, not an equality filter. The
+ * first such key is WorkItem.roleEligibility (role ∈ spec.roleEligibility[]).
+ * Every key here MUST also appear in SUBSTRATE_FILTERABLE_KEYS.
+ */
+export const ARRAY_FILTERABLE_KEYS: Record<string, string[]> = {
+  WorkItem: ["roleEligibility"],
 };
 
 /**
