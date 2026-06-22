@@ -16,7 +16,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { createPostgresStorageSubstrate, createSchemaReconciler, ALL_SCHEMAS, buildEnvelopeWriteEncoder } from "../../storage-substrate/index.js";
 import { SubstrateCounter } from "../substrate-counter.js";
 import { WorkItemRepositorySubstrate } from "../work-item-repository-substrate.js";
@@ -62,22 +62,31 @@ describe("WorkItem pool-starvation regression guard (real-pg)", () => {
     return results.filter((r) => r.status === "fulfilled" && r.value !== null).length;
   }
 
-  it(`STARVES at the old default max=10: <${N} of ${N} concurrent claimers succeed`, async () => {
-    // a pool sized like the OLD pg default; a short connection-timeout makes starvation
-    // fail-fast (loud) instead of hanging the test.
-    const starved = createPostgresStorageSubstrate(connStr, { max: 10, connectionTimeoutMillis: 1500 });
-    starved.setFieldTranslator((kind, key) => reconciler.getFieldTranslation(kind, key));
-    starved.setWriteEncoder(buildEnvelopeWriteEncoder());
-    const starvedRepo = new WorkItemRepositorySubstrate(starved, new SubstrateCounter(starved));
+  it(`STARVES at the old default max=10: with all 10 connections pinned, the 11th acquire cannot proceed`, async () => {
+    // The deadlock ROOT, demonstrated cleanly at the pool level (no connectionTimeoutMillis
+    // → no pg-pool zombie-connect teardown race): withAdvisoryLock pins a connection while
+    // the inner list/CAS need another, so at N>=max every connection is a pinned holder and
+    // the next acquire starves. Here we pin all `max` connections directly + show the next
+    // acquire blocks, then FULLY-AWAIT cleanup (release held → drain the pending → end).
+    const starved = new Pool({ connectionString: connStr, max: 10 });
     try {
-      const ok = await claimedCount(starvedRepo, "starve");
-      expect(ok).toBeLessThan(N); // the old default-10 cannot satisfy N concurrent distinct claimers
+      const held: PoolClient[] = [];
+      for (let i = 0; i < 10; i++) held.push(await starved.connect()); // pin all 10
+      const eleventh = starved.connect(); // no free connection → blocks
+      const outcome = await Promise.race([
+        eleventh.then(() => "acquired" as const, () => "error" as const),
+        new Promise<"starved">((r) => setTimeout(() => r("starved"), 1000)),
+      ]);
+      expect(outcome).toBe("starved"); // pool exhausted at max — the WorkItem deadlock's root
+      // clean, fully-awaited teardown: free the held → the pending 11th now resolves → release it.
+      held.forEach((c) => c.release());
+      (await eleventh).release();
     } finally {
-      await starved.close();
+      await starved.end();
     }
   }, OP_TIMEOUT);
 
-  it(`SUCCEEDS at the new default max=20: all ${N} of ${N} concurrent claimers succeed`, async () => {
+  it(`SUCCEEDS at the new default (25): all ${N} of ${N} concurrent claimers succeed (a revert to a too-small max deadlocks this)`, async () => {
     const ok = await claimedCount(healthyRepo, "heal");
     expect(ok).toBe(N);
   }, OP_TIMEOUT);
