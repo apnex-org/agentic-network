@@ -170,6 +170,15 @@ async function clearWorkQuarantine(args: Record<string, unknown>, ctx: IPolicyCo
   // agent's claim-thrash quarantine + counter. C2 supervisor-restart auto-recovery deferred.
   const agentId = args.agentId as string;
   await ctx.stores.engineerRegistry.clearWorkItemQuarantine(agentId);
+  // audit-4103 (LOW): forensic symmetry with the sweeper's quarantine-SET audit — record
+  // WHO cleared the quarantine (the SET path is audited; the clear path was not).
+  const caller = await resolveCreatedBy(ctx);
+  try {
+    await ctx.stores.audit.logEntry("hub", "agent_workitem_quarantine_cleared",
+      `Agent ${agentId} claim-thrash quarantine cleared by ${caller.role}/${caller.agentId} (manual R2 escape)`, agentId);
+  } catch (auditErr) {
+    console.warn(`[work-item-policy] quarantine-clear audit write failed for ${agentId}:`, auditErr);
+  }
   const agent = await ctx.stores.engineerRegistry.getAgent(agentId);
   return ok({ agentId, quarantined: agent?.quarantined ?? false, thrashCount: agent?.thrashCount ?? 0 });
 }

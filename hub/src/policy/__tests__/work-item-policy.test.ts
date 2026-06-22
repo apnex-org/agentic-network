@@ -194,17 +194,22 @@ describe("work-item-policy 4b-ii thrash-quarantine wiring", () => {
     expect(resetCalls).toEqual(["agent-c"]);
   });
 
-  it("clear_work_quarantine (admin) clears via the registry", async () => {
+  it("clear_work_quarantine (admin) clears via the registry + emits a forensic audit (audit-4103)", async () => {
     const clearCalls: string[] = [];
     const reg = stubRegistry({
       getRole: () => "architect", // RBAC [Architect|Director]
       clearWorkItemQuarantine: async (id: string) => { clearCalls.push(id); },
       getAgent: async () => ({ quarantined: false, thrashCount: 0 }),
     });
-    const r = await router.handle("clear_work_quarantine", { agentId: "agent-z" }, ctxFor(undefined, "architect", reg));
+    const ctx = ctxFor(undefined, "architect", reg);
+    const auditCalls: Array<{ action: string; related?: string }> = [];
+    ctx.stores.audit = { logEntry: async (_a: string, action: string, _d: string, related?: string) => { auditCalls.push({ action, related }); return {} as never; } } as unknown as typeof ctx.stores.audit;
+    const r = await router.handle("clear_work_quarantine", { agentId: "agent-z" }, ctx);
     expect(r.isError).toBeFalsy();
     expect(clearCalls).toEqual(["agent-z"]);
     expect(body(r).quarantined).toBe(false);
+    // forensic symmetry with the sweeper's quarantine-SET audit
+    expect(auditCalls).toContainEqual({ action: "agent_workitem_quarantine_cleared", related: "agent-z" });
   });
 
   it("clear_work_quarantine is RBAC-gated — an engineer is rejected", async () => {

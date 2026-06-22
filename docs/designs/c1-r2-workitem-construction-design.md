@@ -152,3 +152,35 @@ Each green under the C3-R4 governor before the next.
 4. **`IndexDef.type:"gin"`** extension — OK to extend the SchemaDef IndexDef + reconciler buildCreateIndexSQL for GIN (needed for the indexed `@>`), or prefer a different roleEligibility index strategy?
 5. **Verb working-names** — confirm the 9 names are fine as placeholders pending idea-121, or you want specific ones now.
 6. **`Agent.status` quarantine + thrash-counter fields** — confirm the field names land on the Agent SchemaDef (couples to the D-3/C2-L1 telemetry gauge — intentional per resolution #8).
+
+## 8. As-shipped reconciliation (post-build + audit-4082/4085/4103/4120 hardening)
+
+This blueprint is the pre-build design-of-record; the keystone shipped (#356) + hardened
+(#358) with these deltas. Listed so the blueprint stays honest (doc-fidelity, audit-4103
+LOW; no runtime change):
+
+- **Verb count: 10, not 9** (§5/§6). `clear_work_quarantine` ([Architect|Director], the R2
+  manual quarantine-escape) was added alongside the 9, per audit-4082's per-AGENT
+  thrash-quarantine. C2 supervisor auto-recovery stays deferred.
+- **WIP_PHASES = [claimed, in_progress, blocked, review]**, not the §3.2 two-phase
+  `{claimed,in_progress}`. Steve's threat-model audit-4082 widened the WIP in-flight count
+  to ALL non-terminal lease-held phases (blocked/review keep the lease → excluding them
+  would let an agent hoard + claim past the cap). Strengthens backpressure.
+- **Item-poison vs lease-sweep phases** (§3.5). The lease-expiry sweep LISTS all lease-held
+  phases, but the per-ITEM poison counter (leaseExpiryCount++ → terminal abandon) accrues
+  ONLY on claimed/in_progress lapses (audit-4103 #3) — review/blocked re-queue without
+  incrementing (a parked, evidenced review item waiting on a slow verifier must not be
+  poison-abandoned). Agent-thrash is the orthogonal counter.
+- **SUBSTRATE_FILTERABLE_KEYS shipped as `["status", "roleEligibility"]`** — priority/type
+  carry renameMap entries but were NOT added to the filterable set (§1.4 overstated). They
+  remain enum-validated + re-addable when a priority-ordered-claim rung needs them.
+- **Evidence predicate hardening** (audit-4103 #1/#2 + audit-4120): refResolvable now checks
+  existence AND relevance (audit→Audit relatedEntity ∈ {workId,targetRef}; review→the
+  resolved verifier-gate WorkItem's Hub-stamped targetRef === workId + phase=done +
+  createdBy.role===verifier — non-spoofable, trusts the gate not the caller's payload). A
+  non-refResolvable review falls back to the caller's producedBy claim (spoofable v1
+  residual, idea-347). complete_work still never requires a passing verdict.
+- **Pool sizing** (audit-4103 construction-HIGH): explicit POSTGRES_POOL_MAX (default 25 per
+  the 2·expected+headroom formula) closes the withAdvisoryLock pin-1 + inner-needs-another
+  starvation at the pg default-10; the structural inner-ops-reuse-pinned-connection fix is a
+  wide-adoption follow-on.

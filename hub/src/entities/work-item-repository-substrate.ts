@@ -237,9 +237,11 @@ function evaluateEvidence(
         throw new EvidencePredicateFailed(`requirement '${req.id}' refResolvable evidence has a malformed (empty) ref`);
       }
     }
-    // #2 (audit-4103): review-kind binding evidence must be authored by a verifier — queue
-    // the producedBy→role check (async). Applies to ALL review-kind, not only refResolvable.
-    if (req.kind === "review") {
+    // #2 (audit-4103/4120): review-kind provenance. A refResolvable review resolves the
+    // gate WorkItem + checks ITS Hub-stamped createdBy=verifier (non-spoofable; done in the
+    // async refsToResolve phase). A NON-refResolvable review has no gate → fall back to the
+    // caller's producedBy claim (spoofable v1 residual, idea-347).
+    if (req.kind === "review" && !req.refResolvable) {
       verifierChecks.push({ requirementId: req.id, producedBy: e.producedBy });
     }
   }
@@ -445,6 +447,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!LEASE_HELD_PHASES.includes(w.status)) throw new TransitionRejected(`renew requires a held lease, was ${w.status}`);
       const now = new Date();
       const nowISO = now.toISOString();
+      // audit-4103 (LOW): cannot renew an ALREADY-EXPIRED lease — it's the sweeper's to
+      // re-queue; renewing a dead lease would race the sweeper. Fail-loud (ISO-8601
+      // lexicographic compare = chronological for same-format UTC-Z timestamps).
+      if (w.lease && w.lease.expiresAt < nowISO) {
+        throw new TransitionRejected(`renew rejected: lease already expired (expiresAt=${w.lease.expiresAt} < now=${nowISO})`);
+      }
       const lease: WorkItemLease = {
         ...(w.lease as WorkItemLease),
         heartbeatAt: nowISO,
@@ -516,6 +524,16 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       }
       if (!this.refRelatesToWork(r.evidenceKind, e, item)) {
         throw new EvidencePredicateFailed(`requirement '${r.requirementId}' evidence ref ${r.kind}/${r.id} does not RELATE to this work-item (${item.id}) or its targetRef — existence alone is insufficient`);
+      }
+      // audit-4120 #2 (non-spoofable v1): a refResolvable REVIEW gate must be VERIFIER-
+      // CREATED — trust the gate WorkItem's Hub-stamped createdBy, NEVER the caller's
+      // producedBy (a worker can forge that). The producedBy claim is only the residual
+      // fallback for a NON-refResolvable review (idea-347 — verifier-direct-attach class).
+      if (r.evidenceKind === "review") {
+        const gateRole = cloneWorkItem(e as unknown as WorkItem).createdBy?.role;
+        if (gateRole !== "verifier") {
+          throw new EvidencePredicateFailed(`requirement '${r.requirementId}' review gate ${r.id} was not created by a verifier (createdBy.role=${gateRole ?? "unknown"}) — a worker-created gate is not a verifier review`);
+        }
       }
     }
     // audit-4103 #2: review-kind evidence must be authored by a real verifier (a verifier

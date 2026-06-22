@@ -122,23 +122,31 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     expect(okFresh!.status).toBe("done");
   }, OP_TIMEOUT);
 
-  it("#1/#2 review→WorkItem: nonexistent → fail; unrelated gate → fail (relevance); done gate targeting THIS item + verifier author → done", async () => {
-    await mkAgent("verifier-c6", "verifier");
+  it("#1/#2 review→WorkItem (audit-4120 non-spoofable): nonexistent → fail; unrelated → fail; WORKER-created gate → fail; verifier-created done gate targeting THIS item → done", async () => {
     const reqs: EvidenceRequirement[] = [{ id: "r1", kind: "review", refResolvable: true }];
     const good = await started(reqs, "agent-c6b");
+    const reviewEv = (ref: string) => ev({ requirementId: "r1", kind: "review", ref });
+    const mkGate = (targetId: string, creatorRole: string) =>
+      repo.createWorkItem({ type: "verifier-gate", roleEligibility: [], targetRef: { kind: "WorkItem", id: targetId }, createdBy: { role: creatorRole, agentId: `${creatorRole}-1` } });
     // nonexistent ref → fail (existence)
-    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [ev({ requirementId: "r1", kind: "review", ref: "work-nonexistent", producedBy: "verifier-c6" })]))
+    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv("work-nonexistent")]))
       .rejects.toThrow(/does not resolve/);
-    // a real, DONE verifier-gate that targets a DIFFERENT item → fail (audit-4103 #1 relevance)
-    const unrelated = await repo.createWorkItem({ type: "verifier-gate", roleEligibility: [], targetRef: { kind: "WorkItem", id: "work-elsewhere" } });
+    // a verifier-created, DONE gate that targets a DIFFERENT item → fail (#1 relevance; the
+    // gate's Hub-stamped targetRef — not a caller payload — is checked)
+    const unrelated = await mkGate("work-elsewhere", "verifier");
     await driveDone(unrelated.id, "agent-vg-u");
-    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [ev({ requirementId: "r1", kind: "review", ref: unrelated.id, producedBy: "verifier-c6" })]))
+    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv(unrelated.id)]))
       .rejects.toThrow(/does not RELATE/);
-    // a verifier-gate targeting THIS item + phase=done + verifier author → done
-    const gate = await repo.createWorkItem({ type: "verifier-gate", roleEligibility: [], targetRef: { kind: "WorkItem", id: good.id } });
+    // a WORKER-created gate targeting THIS item + done → fail (#2 non-spoofable: the gate's
+    // Hub-stamped createdBy is checked, not the caller's producedBy claim)
+    const workerGate = await mkGate(good.id, "engineer");
+    await driveDone(workerGate.id, "agent-vg-w");
+    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv(workerGate.id)]))
+      .rejects.toThrow(/not created by a verifier/);
+    // a VERIFIER-created gate targeting THIS item + phase=done → done
+    const gate = await mkGate(good.id, "verifier");
     await driveDone(gate.id, "agent-vg-g");
-    const done = await repo.completeWork(good.id, "agent-c6b", good.token, [ev({ requirementId: "r1", kind: "review", ref: gate.id, producedBy: "verifier-c6" })]);
-    expect(done!.status).toBe("done");
+    expect((await repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv(gate.id)]))!.status).toBe("done");
   }, OP_TIMEOUT);
 
   it("#1 audit relevance: an unrelated Audit → fail; an Audit about THIS item → pass", async () => {
