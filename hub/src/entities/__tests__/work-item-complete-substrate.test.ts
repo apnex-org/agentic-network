@@ -63,6 +63,24 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
   const ev = (e: Partial<EvidenceItem> & Pick<EvidenceItem, "requirementId" | "kind">): EvidenceItem =>
     ({ producedAt: new Date().toISOString(), ...e });
 
+  // ── audit-4103 #1/#2 helpers ────────────────────────────────────────────────
+  /** Insert a raw envelope Agent with a given role (resolveAgentRole reads spec.role). */
+  async function mkAgent(id: string, role: string): Promise<void> {
+    await pool.query("INSERT INTO entities(kind,id,data) VALUES('Agent',$1,$2) ON CONFLICT (kind,id) DO NOTHING",
+      [id, JSON.stringify({ apiVersion: "core.ois/v1", kind: "Agent", id, metadata: {}, spec: { role }, status: { phase: "online" } })]);
+  }
+  /** Insert a raw envelope Audit with a given relatedEntity (Audit.relatedEntity → spec.relatedEntity). */
+  async function mkAudit(id: string, relatedEntity: string): Promise<void> {
+    await pool.query("INSERT INTO entities(kind,id,data) VALUES('Audit',$1,$2) ON CONFLICT (kind,id) DO NOTHING",
+      [id, JSON.stringify({ apiVersion: "core.ois/v1", kind: "Audit", id, metadata: {}, spec: { action: "x", details: "y", relatedEntity }, status: {} })]);
+  }
+  /** Drive an any-role WorkItem to phase=done (for verifier-gate fixtures). */
+  async function driveDone(id: string, agent: string): Promise<void> {
+    const c = await repo.claimWorkItem(id, agent);
+    await repo.startWork(id, agent, c!.lease!.token);
+    await repo.completeWork(id, agent, c!.lease!.token, [{ requirementId: "x", kind: "freeform", producedAt: new Date().toISOString() }]);
+  }
+
   it("#6 floor: no requirements + a freeform evidence → done", async () => {
     const { id, token } = await started([], "agent-c1");
     const done = await repo.completeWork(id, "agent-c1", token, [ev({ requirementId: "x", kind: "freeform" })]);
@@ -104,16 +122,36 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     expect(okFresh!.status).toBe("done");
   }, OP_TIMEOUT);
 
-  it("#4 refResolvable OIS-internal (review→WorkItem): nonexistent ref → fail; existing ref → done", async () => {
+  it("#1/#2 review→WorkItem: nonexistent → fail; unrelated gate → fail (relevance); done gate targeting THIS item + verifier author → done", async () => {
+    await mkAgent("verifier-c6", "verifier");
     const reqs: EvidenceRequirement[] = [{ id: "r1", kind: "review", refResolvable: true }];
-    const bad = await started(reqs, "agent-c6a");
-    await expect(repo.completeWork(bad.id, "agent-c6a", bad.token, [ev({ requirementId: "r1", kind: "review", ref: "work-nonexistent" })]))
-      .rejects.toThrow(/does not resolve/);
-
-    // a real verifier-gate WorkItem exists → its id resolves.
-    const vg = await repo.createWorkItem({ type: "verifier-gate", roleEligibility: ["verifier"] });
     const good = await started(reqs, "agent-c6b");
-    const done = await repo.completeWork(good.id, "agent-c6b", good.token, [ev({ requirementId: "r1", kind: "review", ref: vg.id })]);
+    // nonexistent ref → fail (existence)
+    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [ev({ requirementId: "r1", kind: "review", ref: "work-nonexistent", producedBy: "verifier-c6" })]))
+      .rejects.toThrow(/does not resolve/);
+    // a real, DONE verifier-gate that targets a DIFFERENT item → fail (audit-4103 #1 relevance)
+    const unrelated = await repo.createWorkItem({ type: "verifier-gate", roleEligibility: [], targetRef: { kind: "WorkItem", id: "work-elsewhere" } });
+    await driveDone(unrelated.id, "agent-vg-u");
+    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [ev({ requirementId: "r1", kind: "review", ref: unrelated.id, producedBy: "verifier-c6" })]))
+      .rejects.toThrow(/does not RELATE/);
+    // a verifier-gate targeting THIS item + phase=done + verifier author → done
+    const gate = await repo.createWorkItem({ type: "verifier-gate", roleEligibility: [], targetRef: { kind: "WorkItem", id: good.id } });
+    await driveDone(gate.id, "agent-vg-g");
+    const done = await repo.completeWork(good.id, "agent-c6b", good.token, [ev({ requirementId: "r1", kind: "review", ref: gate.id, producedBy: "verifier-c6" })]);
+    expect(done!.status).toBe("done");
+  }, OP_TIMEOUT);
+
+  it("#1 audit relevance: an unrelated Audit → fail; an Audit about THIS item → pass", async () => {
+    await mkAudit("audit-unrel", "work-elsewhere");
+    await mkAudit("audit-rel", "PLACEHOLDER"); // relatedEntity patched below to the real id
+    const reqs: EvidenceRequirement[] = [{ id: "a1", kind: "audit", refResolvable: true }];
+    const w = await started(reqs, "agent-au");
+    // unrelated audit (exists, but relatedEntity points elsewhere) → relevance fail
+    await expect(repo.completeWork(w.id, "agent-au", w.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-unrel" })]))
+      .rejects.toThrow(/does not RELATE/);
+    // an audit whose relatedEntity IS this work-item → pass
+    await pool.query("UPDATE entities SET data = jsonb_set(data, '{spec,relatedEntity}', to_jsonb($2::text)) WHERE kind='Audit' AND id=$1", ["audit-rel", w.id]);
+    const done = await repo.completeWork(w.id, "agent-au", w.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-rel" })]);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
@@ -127,14 +165,20 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     expect(done!.status).toBe("done"); // external refs are NOT existence-checked
   }, OP_TIMEOUT);
 
-  it("FSM: a review requirement parks in_progress→review, then review→done when review evidence arrives", async () => {
+  it("FSM: a review requirement parks in_progress→review, then review→done when VERIFIER-authored review evidence arrives", async () => {
+    await mkAgent("verifier-c8", "verifier");
+    await mkAgent("eng-c8", "engineer");
     const reqs: EvidenceRequirement[] = [{ id: "code", kind: "commit" }, { id: "rev", kind: "review" }];
     const { id, token } = await started(reqs, "agent-c8");
     // first complete: code covered, review unmet → parks in review (no fail).
     const parked = await repo.completeWork(id, "agent-c8", token, [ev({ requirementId: "code", kind: "commit", ref: "abc" })]);
     expect(parked!.status).toBe("review");
-    // verifier looked → review evidence; review→done (no passing verdict required).
-    const done = await repo.completeWork(id, "agent-c8", token, [ev({ requirementId: "rev", kind: "review", ref: "verdict-note" })]);
+    // a SELF-authored (non-verifier) review evidence → rejected (audit-4103 #2)
+    await expect(repo.completeWork(id, "agent-c8", token, [ev({ requirementId: "rev", kind: "review", ref: "note", producedBy: "eng-c8" })]))
+      .rejects.toThrow(/is not a verifier/);
+    expect((await repo.getWorkItem(id))!.status).toBe("review"); // unchanged — still parked
+    // a verifier genuinely looked → review→done (no passing verdict required, just provenance).
+    const done = await repo.completeWork(id, "agent-c8", token, [ev({ requirementId: "rev", kind: "review", ref: "verdict-note", producedBy: "verifier-c8" })]);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 

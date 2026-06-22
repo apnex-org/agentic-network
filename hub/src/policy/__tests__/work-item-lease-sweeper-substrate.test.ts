@@ -165,4 +165,31 @@ describe("WorkItemLeaseSweeper (real-pg)", () => {
     const res = await sw.fullSweep(FUTURE);
     expect(res.agentsQuarantined).toBeGreaterThanOrEqual(1);
   }, OP_TIMEOUT);
+
+  // ── audit-4103 #3: review/blocked lapse re-queues WITHOUT poison ─────────────
+  it("review/blocked lease-expiry re-queues WITHOUT poison-increment; claimed still abandons at cap", async () => {
+    const expiredLease = { holder: "a", token: "t", claimedAt: "2020-01-01T00:00:00.000Z", expiresAt: "2020-01-01T00:05:00.000Z", heartbeatAt: "2020-01-01T00:00:00.000Z" };
+    const mk = (id: string, status: string, extra: Record<string, unknown> = {}) => substrate.put("WorkItem", {
+      id, type: "task", priority: "normal", roleEligibility: [], dependsOn: [], evidenceRequirements: [],
+      targetRef: null, status, lease: expiredLease, evidence: [], blockedOn: null,
+      leaseExpiryCount: 3, createdAt: "2020-01-01T00:00:00.000Z", updatedAt: "2020-01-01T00:00:00.000Z", ...extra,
+    });
+    await mk("work-h3-review", "review", { evidence: [{ requirementId: "r", kind: "freeform", producedAt: "2020-01-01T00:01:00.000Z" }] });
+    await mk("work-h3-blocked", "blocked", { blockedOn: { blockerKind: "WorkItem", reason: "dep" } });
+    await mk("work-h3-claimed", "claimed");
+
+    // review + blocked at cap(3): re-queue, count UNCHANGED, NOT abandoned
+    expect(await repo.expireLease("work-h3-review", FUTURE, 3)).toBe("requeued");
+    const rev = await repo.getWorkItem("work-h3-review");
+    expect(rev!.status).toBe("ready");
+    expect(rev!.leaseExpiryCount).toBe(3); // unchanged — never accrues poison
+    expect(rev!.evidence.length).toBe(1);  // evidence preserved on re-queue (recoverable)
+
+    expect(await repo.expireLease("work-h3-blocked", FUTURE, 3)).toBe("requeued");
+    expect((await repo.getWorkItem("work-h3-blocked"))!.leaseExpiryCount).toBe(3);
+
+    // claimed at cap(3): poison STILL applies → terminal abandon
+    expect(await repo.expireLease("work-h3-claimed", FUTURE, 3)).toBe("abandoned");
+    expect((await repo.getWorkItem("work-h3-claimed"))!.status).toBe("abandoned");
+  }, OP_TIMEOUT);
 });

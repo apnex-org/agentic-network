@@ -183,6 +183,7 @@ const evidenceItemSchema = z.object({
   ref: z.string().optional().describe("The artifact ref (commit sha / PR url / OIS-internal entity id)"),
   producedAt: z.string().describe("ISO-8601 timestamp the evidence was produced"),
   note: z.string().optional(),
+  producedBy: z.string().optional().describe("Authoring agent id — REQUIRED for review-kind evidence (must resolve to a verifier-role agent before review→done)"),
 }).strict();
 const blockedOnSchema = z.object({
   blockerKind: z.string().describe("Blocker category, e.g. WorkItem | Task | external | dependency"),

@@ -65,6 +65,12 @@ const LEASE_HELD_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "
  *  sweeper (sub-PR-4); review-edge finalization lands with complete_work (3a-ii). */
 const RELEASABLE_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "blocked"];
 
+/** Phases whose lease-expiry accrues per-ITEM poison (audit-4103 #3): ONLY the
+ *  claim-and-crash phases. A review/blocked item that lapses (e.g. a parked, evidenced
+ *  review item waiting on a slow verifier) re-queues WITHOUT incrementing leaseExpiryCount
+ *  — it must never terminal-abandon + lose real work. */
+const POISON_ELIGIBLE_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress"];
+
 /** Default per-agent WIP cap. Per-role override map is construction-design open-Q #3
  *  (pending architect); until then every role gets the default. */
 const DEFAULT_WIP_CAP = 3;
@@ -139,8 +145,12 @@ const OIS_INTERNAL_EVIDENCE_KINDS: Partial<Record<EvidenceKind, string>> = {
   review: "WorkItem",
 };
 
-/** A ref the completeWork predicate must existence-check (async, outside the CAS). */
-interface RefToResolve { requirementId: string; kind: string; id: string }
+/** A ref the completeWork predicate must existence-check AND relevance-check (audit-4103
+ *  #1) async (outside the CAS). `evidenceKind` selects the relevance rule. */
+interface RefToResolve { requirementId: string; kind: string; id: string; evidenceKind: EvidenceKind }
+
+/** A review-requirement binding whose producedBy must resolve to a verifier (audit-4103 #2). */
+interface VerifierCheck { requirementId: string; producedBy?: string }
 
 /** ISO-8601 chronological compare (parse-based — tolerates timezone/format variance;
  *  a malformed timestamp is treated as NOT-fresh, fail-closed). */
@@ -182,16 +192,17 @@ function evaluateEvidence(
   requirements: EvidenceRequirement[],
   evidence: EvidenceItem[],
   lease: WorkItemLease | null,
-): { nextPhase: WorkItemPhase; refsToResolve: RefToResolve[] } {
+): { nextPhase: WorkItemPhase; refsToResolve: RefToResolve[]; verifierChecks: VerifierCheck[] } {
   const claimedAt = lease?.claimedAt ?? null;
   const refsToResolve: RefToResolve[] = [];
+  const verifierChecks: VerifierCheck[] = [];
 
   // #6 EMPTY-REQ FLOOR
   if (requirements.length === 0) {
     if (!evidence.some((e) => e.kind === "freeform")) {
       throw new EvidencePredicateFailed("no evidence requirements declared, but complete_work still requires >=1 freeform evidence (no silent zero-evidence close)");
     }
-    return { nextPhase: "done", refsToResolve };
+    return { nextPhase: "done", refsToResolve, verifierChecks };
   }
 
   let reviewDeferred = false;
@@ -214,19 +225,25 @@ function evaluateEvidence(
     if (fresh.length === 0) {
       throw new EvidencePredicateFailed(`requirement '${req.id}' evidence failed freshness (producedAt before lease.claimedAt=${claimedAt}; set allowPreClaim to permit a pre-claim artifact)`);
     }
-    // #4 refResolvable: OIS-internal → existence-check (queued); external → format-only.
+    const e = fresh[0]; // the binding evidence
+    // #4 refResolvable: OIS-internal → existence + RELEVANCE check (queued, audit-4103 #1);
+    // external → format-only.
     if (req.refResolvable) {
-      const e = fresh[0]; // the binding evidence
       const internalKind = OIS_INTERNAL_EVIDENCE_KINDS[e.kind];
       if (internalKind) {
         if (!e.ref || e.ref.trim() === "") throw new EvidencePredicateFailed(`requirement '${req.id}' refResolvable evidence has no ref`);
-        refsToResolve.push({ requirementId: req.id, kind: internalKind, id: e.ref });
+        refsToResolve.push({ requirementId: req.id, kind: internalKind, id: e.ref, evidenceKind: e.kind });
       } else if (!e.ref || e.ref.trim() === "") {
         throw new EvidencePredicateFailed(`requirement '${req.id}' refResolvable evidence has a malformed (empty) ref`);
       }
     }
+    // #2 (audit-4103): review-kind binding evidence must be authored by a verifier — queue
+    // the producedBy→role check (async). Applies to ALL review-kind, not only refResolvable.
+    if (req.kind === "review") {
+      verifierChecks.push({ requirementId: req.id, producedBy: e.producedBy });
+    }
   }
-  return { nextPhase: reviewDeferred ? "review" : "done", refsToResolve };
+  return { nextPhase: reviewDeferred ? "review" : "done", refsToResolve, verifierChecks };
 }
 
 /** Decode envelope→flat + normalize the array/object fields to their empty
@@ -487,13 +504,29 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     if (!COMPLETABLE_PHASES.includes(item.status)) {
       throw new TransitionRejected(`complete requires in_progress or review, was ${item.status}`);
     }
-    // fail-fast the sync predicate + collect OIS-internal refs to resolve.
+    // fail-fast the sync predicate + collect the async checks.
     const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.lease);
-    // #4 async existence-check (OIS-internal refResolvable refs MUST resolve).
+    // #4 + audit-4103 #1: each OIS-internal ref must RESOLVE *and* RELATE to this work-item
+    // or its targetRef (existence-AND-relevance — closes the existence-theatre where any
+    // org-wide entity, incl. the item's own id, satisfied existence-only).
     for (const r of plan.refsToResolve) {
-      const exists = await this.substrate.get(r.kind, r.id);
-      if (!exists) {
+      const e = await this.substrate.get<Record<string, unknown>>(r.kind, r.id);
+      if (!e) {
         throw new EvidencePredicateFailed(`requirement '${r.requirementId}' refResolvable evidence ref ${r.kind}/${r.id} does not resolve`);
+      }
+      if (!this.refRelatesToWork(r.evidenceKind, e, item)) {
+        throw new EvidencePredicateFailed(`requirement '${r.requirementId}' evidence ref ${r.kind}/${r.id} does not RELATE to this work-item (${item.id}) or its targetRef — existence alone is insufficient`);
+      }
+    }
+    // audit-4103 #2: review-kind evidence must be authored by a real verifier (a verifier
+    // genuinely looked) before review→done — never a passing verdict, just provenance.
+    for (const v of plan.verifierChecks) {
+      if (!v.producedBy) {
+        throw new EvidencePredicateFailed(`requirement '${v.requirementId}' review evidence has no producedBy (a verifier must author it)`);
+      }
+      const role = await this.resolveAgentRole(v.producedBy);
+      if (role !== "verifier") {
+        throw new EvidencePredicateFailed(`requirement '${v.requirementId}' review evidence producedBy ${v.producedBy} is not a verifier (role=${role ?? "unknown"}) — self-authored review is not a verifier review`);
       }
     }
     // Authoritative CAS: re-check auth + phase + re-run the predicate on the FRESH row,
@@ -541,8 +574,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!LEASE_HELD_PHASES.includes(w.status) || !w.lease || w.lease.expiresAt >= nowISO) {
         return "skipped";
       }
-      const nextCount = w.leaseExpiryCount + 1;
-      const poisoned = nextCount >= poisonCap;
+      // audit-4103 #3: only claimed/in_progress lapses accrue item-poison. review/blocked
+      // re-queue WITHOUT incrementing → never terminal-abandon (evidence preserved on
+      // re-queue, so a parked review item that loses its holder is recoverable, not lost).
+      const poisonEligible = POISON_ELIGIBLE_PHASES.includes(w.status);
+      const nextCount = poisonEligible ? w.leaseExpiryCount + 1 : w.leaseExpiryCount;
+      const poisoned = poisonEligible && nextCount >= poisonCap;
       const next: WorkItem = poisoned
         ? { ...w, status: "abandoned", lease: null, blockedOn: null, leaseExpiryCount: nextCount, updatedAt: nowISO }
         : { ...w, status: "ready", lease: null, blockedOn: null, leaseExpiryCount: nextCount, updatedAt: nowISO };
@@ -554,6 +591,37 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   }
 
   // ── Internal ──────────────────────────────────────────────────────────────
+
+  /**
+   * Evidence-relevance (audit-4103 #1): does the resolved OIS-internal entity RELATE to
+   * this work-item or its targetRef (not merely exist)?
+   *   - audit→Audit: Audit.relatedEntity (spec.relatedEntity, governed) ∈ {workId, targetRef.id}
+   *     (an audit can legitimately be about the work OR its target).
+   *   - review→WorkItem: the verifier-gate's targetRef.id === workId STRICTLY (the gate
+   *     reviews THIS work, not its target — `=== workId`, not the {workId,targetRef} set,
+   *     which would let the item's own id self-satisfy) AND the gate is phase=done (the
+   *     review actually completed; audit-4103 #2-optional).
+   */
+  private refRelatesToWork(evidenceKind: EvidenceKind, resolved: Record<string, unknown>, item: WorkItem): boolean {
+    const targetId = item.targetRef?.id;
+    if (evidenceKind === "audit") {
+      const related = (resolved.spec as { relatedEntity?: unknown } | undefined)?.relatedEntity;
+      return related === item.id || (targetId != null && related === targetId);
+    }
+    if (evidenceKind === "review") {
+      const gate = cloneWorkItem(resolved as unknown as WorkItem);
+      return gate.targetRef?.id === item.id && gate.status === "done";
+    }
+    return false;
+  }
+
+  /** Resolve an Agent's role from the substrate (audit-4103 #2). Reads the governed
+   *  Agent envelope path spec.role (Agent.role → spec.role). null if absent. */
+  private async resolveAgentRole(agentId: string): Promise<string | null> {
+    const a = await this.substrate.get<Record<string, unknown>>("Agent", agentId);
+    if (!a) return null;
+    return ((a.spec as { role?: string } | undefined)?.role) ?? null;
+  }
 
   /** Resolve each dependency's phase; return the ids NOT in phase=done (audit-4085 #1).
    *  An ABSENT dep counts as unmet (fail-CLOSED). done is terminal so the result is

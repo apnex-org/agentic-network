@@ -48,6 +48,10 @@ export interface EvidenceItem {
   ref?: string;
   producedAt: string;
   note?: string;
+  /** Authoring agent id (audit-4103 #2). REQUIRED for review-kind evidence + must resolve
+   *  to a role=verifier Agent before review→done (a verifier genuinely looked) — never a
+   *  passing verdict. Optional provenance for other kinds. */
+  producedBy?: string;
 }
 
 /** The claim lease (status). Cohesive object; `holder`/`expiresAt` are the hot
