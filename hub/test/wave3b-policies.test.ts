@@ -27,7 +27,9 @@ describe("ProposalPolicy", () => {
   beforeEach(async () => {
     router = new PolicyRouter(noop);
     registerProposalPolicy(router);
-    ctx = createTestContext();
+    // bug-175: proposals are engineer-initiated ([Engineer] create/close, [Engineer|Verifier]
+    // get); the full-lifecycle review uses its own architect reviewCtx.
+    ctx = createTestContext({ role: "engineer" });
   });
 
   it("registers all proposal tools", () => {
