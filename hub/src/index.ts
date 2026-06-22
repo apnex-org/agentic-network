@@ -58,6 +58,7 @@ import { TaskRepositorySubstrate } from "./entities/task-repository-substrate.js
 import { TeleRepositorySubstrate } from "./entities/tele-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "./entities/thread-repository-substrate.js";
 import { TurnRepositorySubstrate } from "./entities/turn-repository-substrate.js";
+import { WorkItemRepositorySubstrate } from "./entities/work-item-repository-substrate.js";
 import { DocumentRepository } from "./storage-substrate/new-repositories.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy, computeToolSurfaceRevision } from "./policy/index.js";
@@ -78,6 +79,7 @@ import { registerProposalPolicy } from "./policy/proposal-policy.js";
 import { registerThreadPolicy } from "./policy/thread-policy.js";
 import { registerMessagePolicy } from "./policy/message-policy.js";
 import { registerBugPolicy } from "./policy/bug-policy.js";
+import { registerWorkItemPolicy } from "./policy/work-item-policy.js";
 import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
 import { registerTransportHeartbeatPolicy } from "./handlers/transport-heartbeat-handler.js";
 import { Watchdog } from "./policy/watchdog.js";
@@ -85,6 +87,7 @@ import { MessageProjectionSweeper } from "./policy/message-projection-sweeper.js
 import { ScheduledMessageSweeper } from "./policy/scheduled-message-sweeper.js";
 import { CascadeReplaySweeper } from "./policy/cascade-replay-sweeper.js";
 import { PulseSweeper } from "./policy/pulse-sweeper.js";
+import { WorkItemLeaseSweeper } from "./policy/work-item-lease-sweeper.js";
 import {
   RepoEventBridge,
   createPolicyRouterInvoker,
@@ -224,7 +227,9 @@ missionStore = new MissionRepositorySubstrate(substrate!, substrateCounter, task
 turnStore = new TurnRepositorySubstrate(substrate!, substrateCounter, missionStore, taskStore);
 // mission-84 W6: DocumentRepository (substrate-backed; W2.4 stub now production)
 const documentStore = new DocumentRepository(substrate!);
-console.log("[Hub] substrate-mode repositories instantiated (12 substrate-versions + Document store)");
+// C1-R2 (mission-94): WorkItem work-queue store (claim/lease/FSM verbs + complete_work).
+const workItemStore = new WorkItemRepositorySubstrate(substrate!, substrateCounter);
+console.log("[Hub] substrate-mode repositories instantiated (13 substrate-versions + Document store)");
 
 // ── Aggregate Store Object ────────────────────────────────────────────
 const allStores: AllStores = {
@@ -241,6 +246,7 @@ const allStores: AllStores = {
   pendingAction: pendingActionStore,
   message: messageStore,
   document: documentStore,
+  workItem: workItemStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────
@@ -266,6 +272,10 @@ registerReviewPolicy(policyRouter);
 registerProposalPolicy(policyRouter);
 registerThreadPolicy(policyRouter);
 registerBugPolicy(policyRouter);
+// C1-R2 (mission-94): WorkItem work-queue verbs (claim_work / list_ready_work / start /
+// block / resume / renew / release / abandon / complete_work). idea-121 finalizes the
+// tool surface; the keystone is dormant-until-assembled on the integration branch.
+registerWorkItemPolicy(policyRouter);
 registerPendingActionPolicy(policyRouter);
 // mission-75 v1.0 §3.3 — adapter-internal periodic transport-liveness
 // signal; tier="adapter-internal" excludes it from shim's LLM tool catalogue.
@@ -794,6 +804,30 @@ const cascadeReplaySweeper = new CascadeReplaySweeper(
   { audit: auditStore },
 );
 
+// C1-R2 (mission-94) sub-PR-4a: WorkItem lease-expiry sweeper. Periodic tick (well
+// under LEASE_TTL_MS 15min) re-queues a crashed/wedged holder's lapsed lease to ready
+// (leaseExpiryCount++) and POISON-ABANDONS an item that has lapsed poisonCap (3) times.
+// Inherits the cal-84 bare-row escalation (audit + metric). Cadence configurable.
+const WORKITEM_LEASE_SWEEP_INTERVAL_MS = Number(process.env.OIS_WORKITEM_LEASE_SWEEP_INTERVAL_MS ?? 60_000);
+const workItemLeaseSweeper = new WorkItemLeaseSweeper(
+  workItemStore,
+  {
+    forSweeper: () => ({
+      stores: allStores,
+      metrics: createMetricsCounter(),
+      emit: async () => {},
+      dispatch: async () => {},
+      sessionId: "workitem-lease-sweeper",
+      clientIp: "127.0.0.1",
+      role: "system",
+      internalEvents: [],
+    } as unknown as import("./policy/types.js").IPolicyContext),
+  },
+  // 4b-ii: agentStore drives the per-AGENT thrash-quarantine (claim→expire-without-
+  // evidence → increment holder's counter; quarantine at thrashCap=3, the C2 seam).
+  { audit: auditStore, agentStore: engineerRegistry, thrashCap: 3 },
+);
+
 // Mission-57 W2: PulseSweeper — single-instance recurring sweeper that
 // drives declarative per-mission pulse coordination. 60s tick; iterates
 // active missions with `pulses.{engineerPulse, architectPulse}` config;
@@ -937,6 +971,17 @@ startupSequence().then(async () => {
   } catch (err) {
     console.warn("[Hub] Startup cascade-replay sweep failed; Hub still starts:", err);
   }
+  // C1-R2 sub-PR-4a: WorkItem lease-expiry sweep — startup pass (catches leases that
+  // lapsed during a Hub-down window) then periodic ticking.
+  try {
+    const swept = await workItemLeaseSweeper.fullSweep(new Date().toISOString());
+    if (swept.requeued > 0 || swept.abandoned > 0 || swept.errors > 0 || swept.quarantined > 0) {
+      console.log(`[Hub] Startup WorkItem lease sweep: scanned=${swept.scanned} requeued=${swept.requeued} abandoned=${swept.abandoned} skipped=${swept.skipped} errors=${swept.errors} quarantined=${swept.quarantined}`);
+    }
+  } catch (err) {
+    console.warn("[Hub] Startup WorkItem lease sweep failed; sweeper still starts:", err);
+  }
+  workItemLeaseSweeper.start(WORKITEM_LEASE_SWEEP_INTERVAL_MS);
   // Mission-52 T3: start repo-event-bridge if configured. PAT failures
   // are caught inside .start() — Hub continues with bridge in `failed`
   // state per directive (no Hub-crash on under-scoped tokens).

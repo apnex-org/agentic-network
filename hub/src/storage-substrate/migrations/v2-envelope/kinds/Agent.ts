@@ -75,6 +75,10 @@ export function createAgentMigrationModule(schema: SchemaDef): KindMigrationModu
         "restartCount",
         "recentErrors",
         "restartHistoryMs",
+        // C1-R2 (mission-94): WorkItem claim-thrash quarantine (status bucket). MUST
+        // stay byte-for-byte with agent-envelope-shape.ts AGENT_SCHEMA_REF.
+        "thrashCount",
+        "quarantined",
       ],
     },
   };

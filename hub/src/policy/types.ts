@@ -45,6 +45,12 @@ export interface AllStores {
    */
   document?: import("../storage-substrate/index.js").IDocumentStore;
   /**
+   * C1-R2 (mission-94) — the WorkItem work-queue store (claim/lease/FSM verbs +
+   * complete_work + list_ready_work). Optional in test rigs that don't exercise the
+   * work-queue MCP tools (the keystone is dormant-until-assembled).
+   */
+  workItem?: import("../entities/work-item.js").IWorkItemStore;
+  /**
    * Mission-57 W2: PulseSweeper instance (optional; not all test rigs
    * wire it). When present, `message-policy.ts:ackMessage` invokes
    * `onPulseAcked` post-status-flip when payload.pulseKind === "status_check"

@@ -368,6 +368,14 @@ export interface Agent {
   // suppression when agent on any active mission per Design §3.4 M3 fold).
   livenessConfig?: AgentLivenessConfig;
   pulseConfig?: AgentPulseConfig;
+
+  // ── C1-R2 (mission-94) — WorkItem claim-thrash quarantine (status bucket) ──
+  // Consecutive claim→lease-expire-WITHOUT-evidence count; reset to 0 on a successful
+  // complete_work (progress). At the cap → `quarantined`. The C1→C2 supervisor seam.
+  thrashCount: number;
+  // Locked out of claim_work once thrashCount hits the cap (the wedged-agent signal the
+  // C2 supervisor reads). R2: cleared only by the manual clear verb (C2 auto-recovery deferred).
+  quarantined: boolean;
 }
 
 export interface RegisterAgentPayload {
@@ -1295,6 +1303,17 @@ export interface IEngineerRegistry {
   getAgent(agentId: string): Promise<Agent | null>;
   /** Mission-19: resolve the Agent bound to an SSE session (null if none). */
   getAgentForSession(sessionId: string): Promise<Agent | null>;
+  // ── C1-R2 (mission-94) — WorkItem claim-thrash quarantine ──
+  /** Increment the agent's claim-thrash counter (a lease expired without evidence);
+   *  quarantines at `quarantineCap`. CAS-retry so increments aren't lost. Returns the
+   *  new {thrashCount, quarantined} (null if the agent is absent). */
+  recordWorkItemThrash(agentId: string, quarantineCap: number): Promise<{ thrashCount: number; quarantined: boolean } | null>;
+  /** Reset the thrash counter to 0 on demonstrated progress (a successful complete_work).
+   *  Does NOT clear `quarantined` (that is the manual clear path). */
+  resetWorkItemThrash(agentId: string): Promise<void>;
+  /** Manual quarantine escape (R2 interim; architect/director-authorized at the policy
+   *  layer): clear `quarantined` + reset the thrash counter. C2 auto-recovery deferred. */
+  clearWorkItemQuarantine(agentId: string): Promise<void>;
   listAgents(): Promise<Agent[]>;
   /** Mission-19: return non-archived, online agents matching the selector (role ∧ matchLabels equality). */
   selectAgents(selector: Selector): Promise<Agent[]>;

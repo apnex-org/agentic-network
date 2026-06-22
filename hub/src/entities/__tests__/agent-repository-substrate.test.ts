@@ -218,3 +218,52 @@ describe("AgentRepositorySubstrate (W4.x.1 Option Y sibling-pattern)", () => {
     expect(stillOnline?.status).toBe("online");  // not flipped offline
   }, 60_000);
 });
+
+describe("AgentRepositorySubstrate — C1-R2 claim-thrash quarantine (mission-94)", () => {
+  async function makeAgent(name: string): Promise<{ repo: AgentRepositorySubstrate; agentId: string }> {
+    const repo = new AgentRepositorySubstrate(substrate);
+    const id = await repo.assertIdentity({
+      name, role: "engineer",
+      clientMetadata: { clientName: "test", clientVersion: "1.0", proxyName: "test", proxyVersion: "1.0", hostname: "h", sdkVersion: "1.0.0" },
+      advisoryTags: {}, labels: {},
+    }, `sess-${name}`);
+    if (!id.ok) throw new Error(`assertIdentity failed for ${name}`);
+    return { repo, agentId: id.agentId };
+  }
+
+  it("fresh agent: thrashCount=0, quarantined=false (round-trips through the envelope)", async () => {
+    const { repo, agentId } = await makeAgent("thrash-fresh");
+    const a = await repo.getAgent(agentId);
+    expect(a!.thrashCount).toBe(0);
+    expect(a!.quarantined).toBe(false);
+  }, 60_000);
+
+  it("recordWorkItemThrash increments + quarantines at the cap; reset clears the count (not quarantine)", async () => {
+    const { repo, agentId } = await makeAgent("thrash-count");
+    expect(await repo.recordWorkItemThrash(agentId, 3)).toEqual({ thrashCount: 1, quarantined: false });
+    expect(await repo.recordWorkItemThrash(agentId, 3)).toEqual({ thrashCount: 2, quarantined: false });
+    expect(await repo.recordWorkItemThrash(agentId, 3)).toEqual({ thrashCount: 3, quarantined: true }); // cap → quarantine
+    expect((await repo.getAgent(agentId))!.quarantined).toBe(true);
+
+    // reset (on a successful complete) zeroes the count but LEAVES quarantine (manual-clear only)
+    await repo.resetWorkItemThrash(agentId);
+    const afterReset = await repo.getAgent(agentId);
+    expect(afterReset!.thrashCount).toBe(0);
+    expect(afterReset!.quarantined).toBe(true); // sticky until the manual clear
+  }, 60_000);
+
+  it("clearWorkItemQuarantine (manual escape) clears BOTH the flag + the count", async () => {
+    const { repo, agentId } = await makeAgent("thrash-clear");
+    await repo.recordWorkItemThrash(agentId, 1); // → quarantined immediately (cap 1)
+    expect((await repo.getAgent(agentId))!.quarantined).toBe(true);
+    await repo.clearWorkItemQuarantine(agentId);
+    const cleared = await repo.getAgent(agentId);
+    expect(cleared!.quarantined).toBe(false);
+    expect(cleared!.thrashCount).toBe(0);
+  }, 60_000);
+
+  it("recordWorkItemThrash on an absent agent → null (no throw)", async () => {
+    const repo = new AgentRepositorySubstrate(substrate);
+    expect(await repo.recordWorkItemThrash("agent-nonexistent", 3)).toBeNull();
+  }, 60_000);
+});

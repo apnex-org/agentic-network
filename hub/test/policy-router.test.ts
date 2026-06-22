@@ -680,11 +680,13 @@ describe("TaskPolicy", () => {
       );
       // Zod validation happens via MCP binding layer in production, but
       // at the router level we test that the handler still receives the
-      // un-validated args and the filter's unknown operator just
-      // matches nothing (defense-in-depth). The primary enforcement is
-      // at the Zod boundary — covered by the MCP integration tests.
+      // un-validated args and a forbidden-only predicate matches NOTHING
+      // (fail-CLOSED defense-in-depth, audit-4070 — NOT fall-through to
+      // match-everything, which was the prior fail-OPEN row-leak). The
+      // primary enforcement is the Zod boundary — covered by MCP integration tests.
       const parsed = JSON.parse(result.content[0].text);
       expect(Array.isArray(parsed.tasks)).toBe(true);
+      expect(parsed.tasks.length).toBe(0); // fail-CLOSED: leaks zero rows, not the whole table
     });
 
     it("sort: createdAt asc returns oldest-first", async () => {

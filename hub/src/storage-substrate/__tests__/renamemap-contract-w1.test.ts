@@ -46,6 +46,7 @@ import { createThreadMigrationModule } from "../migrations/v2-envelope/kinds/Thr
 import { createTurnMigrationModule } from "../migrations/v2-envelope/kinds/Turn.js";
 import { createSchemaDefMigrationModule } from "../migrations/v2-envelope/kinds/SchemaDef.js";
 import { createDocumentMigrationModule } from "../migrations/v2-envelope/kinds/Document.js";
+import { createWorkItemMigrationModule } from "../migrations/v2-envelope/kinds/WorkItem.js";
 import type { KindMigrationModule } from "../migrations/v2-envelope/kinds/_contract.js";
 import { createNotificationMigrationModule } from "../migrations/v2-envelope/kinds/Notification.js";
 import { createArchitectDecisionMigrationModule } from "../migrations/v2-envelope/kinds/ArchitectDecision.js";
@@ -78,10 +79,15 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   // they are now INCLUDED (→ metadata.*), no longer the W1 dual-path null-pin.
   // Every entry below is validated against the encoder's ACTUAL placement by the
   // sentinel-probe (W1.1b).
-  Agent: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint" },
+  Agent: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint", thrashCount: "status.thrashCount", quarantined: "status.quarantined" },
   Audit: { timestamp: "metadata.createdAt", actor: "metadata.actor" },
   Bug: { status: "status.phase", severity: "spec.severity", class: "spec.class", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId", sourceIdeaId: "metadata.sourceIdeaId" },
   Idea: { status: "status.phase", missionId: "status.missionId", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
+  // C1-R2 (mission-94): the first kind with OBJECT/ARRAY renameMap entries
+  // (lease/evidence objects, roleEligibility array). The W1.1b sentinel-probe is
+  // placement-based (value-type-agnostic) so all entries validate here; only the
+  // W6 equality-shadow step carves out the object/array entries (see that test).
+  WorkItem: { status: "status.phase", lease: "status.lease", evidence: "status.evidence", blockedOn: "status.blockedOn", leaseExpiryCount: "status.leaseExpiryCount", priority: "spec.priority", type: "spec.type", roleEligibility: "spec.roleEligibility" },
   Message: {
     kind: "metadata.messageKind",
     status: "status.phase",
@@ -152,6 +158,7 @@ const MODULE_FACTORIES: Record<string, (s: SchemaDef) => KindMigrationModule> = 
   RepoEventBridgeCursor: createRepoEventBridgeCursorMigrationModule,
   RepoEventBridgeDedupe: createRepoEventBridgeDedupeMigrationModule,
   Document: createDocumentMigrationModule,
+  WorkItem: createWorkItemMigrationModule,  // C1-R2 mission-94
 };
 
 function moduleFor(kind: string): KindMigrationModule {
@@ -242,9 +249,9 @@ describe("W1.1 renameMap inventory + faithfulness — complete field-movement au
         expect(expectedKinds.has(def.kind), `unexpected renameMap on kind=${def.kind}`).toBe(true);
       }
     }
-    // 23 runtime consts total; exactly 21 carry renameMap (W2 added Document).
-    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(21);
-    expect(ALL_SCHEMAS).toHaveLength(23);
+    // 24 runtime consts total; exactly 22 carry renameMap (C1-R2 mission-94 added WorkItem).
+    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(22);
+    expect(ALL_SCHEMAS).toHaveLength(24);
   });
 
   it("W1.1b every renameMap entry resolves to the encoder's ACTUAL placement (sentinel-probe vs migrateOne)", () => {

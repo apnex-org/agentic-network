@@ -28,6 +28,7 @@ import type {
   FieldTranslator,
 } from "./types.js";
 import { translateKeyOrThrow } from "./filter-translation-error.js";
+import { assertKnownFilterOps, hasImplementedFilterOp } from "./types.js";
 
 const { Pool, Client } = pg;
 
@@ -566,6 +567,18 @@ function translateFilterClause(
       return { sql: `${fieldSql} = ANY($${paramIndex})`, nextParamIndex: paramIndex + 1 };
     }
 
+    // $contains (C1-R2): JSONB array-membership — the stored ARRAY at `field`
+    // CONTAINS the scalar (the inverse of $in). JSON-extract (`#>`, not text `#>>`)
+    // + the `@>` containment operator; the param is the JSON-encoded scalar.
+    // GIN-indexable (jsonb_path_ops) — see schema-reconciler buildCreateIndexSQL.
+    if (
+      "$contains" in v &&
+      (typeof v.$contains === "string" || typeof v.$contains === "number" || typeof v.$contains === "boolean")
+    ) {
+      params.push(JSON.stringify(v.$contains));
+      return { sql: `${jsonbFieldJson(field)} @> $${paramIndex}::jsonb`, nextParamIndex: paramIndex + 1 };
+    }
+
     // Range operators — all may co-exist on same field (e.g. {$gt: 5, $lt: 10})
     const parts: string[] = [];
     let p = paramIndex;
@@ -595,6 +608,21 @@ function jsonbField(dottedPath: string): string {
     return `data->>'${parts[0]}'`;
   }
   return `data#>>'{${parts.join(",")}}'`;
+}
+
+/**
+ * JSON-extract variant of jsonbField — returns jsonb (`->`/`#>`), NOT text
+ * (`->>`/`#>>`). Used by the `$contains` (`@>`) array-membership operator (C1-R2),
+ * where the LHS must be jsonb for the containment comparison.
+ *   "roleEligibility"      → "data->'roleEligibility'"
+ *   "spec.roleEligibility" → "data#>'{spec,roleEligibility}'"
+ */
+function jsonbFieldJson(dottedPath: string): string {
+  const parts = dottedPath.split(".");
+  if (parts.length === 1) {
+    return `data->'${parts[0]}'`;
+  }
+  return `data#>'{${parts.join(",")}}'`;
 }
 
 /**
@@ -635,7 +663,21 @@ function matchesFilter(entity: Record<string, unknown>, filter: Filter, translat
     }
     if (typeof value === "object" && value !== null) {
       const op = value as Record<string, unknown>;
+      // C1-R2 (audit-4054): FAIL-LOUD — an operator validated upstream but not
+      // implemented here is a silent-no-op (returns the row anyway), the exact
+      // watch/list parity hole. Throw on any unknown operator (kills the CLASS,
+      // tele-4), so a new FilterValue operator can never silently pass the watch.
+      assertKnownFilterOps(op, rawField);
+      // FAIL-CLOSED backstop (audit-4070): a predicate with NO implemented operator
+      // (forbidden-only / empty) is UNEVALUABLE → match NOTHING, never fall through
+      // to the `return true` tail (the fail-OPEN hole). Parity with policy matchField.
+      if (!hasImplementedFilterOp(op)) return false;
       if ("$in" in op && Array.isArray(op.$in) && !op.$in.map(String).includes(String(v))) return false;
+      // C1-R2: $contains = TYPED array-membership (SameValueZero; [3] does NOT
+      // match "3") — parity with the typed JSONB `@>` in translateFilterClause.
+      if ("$contains" in op && op.$contains !== undefined) {
+        if (!Array.isArray(v) || !v.includes(op.$contains)) return false;
+      }
       if ("$gt" in op && op.$gt !== undefined && !(numericCmp(v) > numericCmp(op.$gt))) return false;
       if ("$lt" in op && op.$lt !== undefined && !(numericCmp(v) < numericCmp(op.$lt))) return false;
       if ("$gte" in op && op.$gte !== undefined && !(numericCmp(v) >= numericCmp(op.$gte))) return false;
