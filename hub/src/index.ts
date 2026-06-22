@@ -44,6 +44,7 @@ import {
 } from "./storage-substrate/index.js";
 import { applyMigrations } from "./storage-substrate/migration-runner.js";
 import { TokenStore } from "./storage-substrate/token-store.js";
+import { armBareEnvelopeDetector } from "./storage-substrate/bare-envelope-error.js";
 import { SubstrateCounter } from "./entities/substrate-counter.js";
 import { AgentRepositorySubstrate } from "./entities/agent-repository-substrate.js";
 import { AuditRepositorySubstrate } from "./entities/audit-repository-substrate.js";
@@ -179,6 +180,18 @@ console.log(`[Hub] substrate reconciler settled (${ALL_SCHEMAS.length} SchemaDef
 // WITH W6 (never standalone) per the cutover discipline — the batched-deploy
 // ordering IS the guard (no runtime migration-state check by design).
 substrate.setFieldTranslator((kind, bareKey) => reconciler.getFieldTranslation(kind, bareKey));
+// C3-R4b (piece 1): arm FilterTranslationGapError — a filter/sort on a known
+// envelope-partitioned kind's domain field with NO renameMap entry now fails LOUD
+// at filter-translate, rather than silently mis-pathing the JSONB query (the
+// bug-138/bug-170 silent-filter-miss class). Inert without this wiring (tests/dev).
+substrate.setPartitionedKindCheck((kind) => reconciler.hasTranslations(kind));
+// C3-R4b (piece 2): arm the 0-bare detector — the DECODE-side twin of piece 1.
+// A row that reaches a consumer STILL enveloped (a skipped/broken decode, never a
+// legit row post-W8-STRICT) now fails LOUD at the repo decode-to-flat boundary
+// (BareEnvelopeError), instead of silently degrading then poll-recovering (cal-84).
+// Same oracle as piece 1 (reconciler.hasTranslations) → armed only for known
+// partitioned kinds; inert without this wiring (tests/dev/ad-hoc kinds).
+armBareEnvelopeDetector((kind) => reconciler.hasTranslations(kind));
 
 // Mission-47 W1-W7 + Mission-49 W8-W9: instantiate StorageProvider-backed
 // repositories. Counter is shared-by-design across all repositories —
@@ -282,6 +295,28 @@ const HUB_VERSION: string = (() => {
     return "0.0.0";
   }
 })();
+
+// C3-R1 M-Roll-Signal (idea-340) — deploy-truth bank. scripts/local/build-hub.sh
+// stamps hub/build-info.json {gitSha, builtAt} into the image (the Dockerfile
+// COPYs it to /app); /health reports it so an external observer (the
+// deploy-hub.yml roll-confirm step) can prove the new image actually rolled,
+// closing the bug-107/DR-011 silent-deploy class. Read once at boot via the
+// same ../build-info.json resolution as HUB_VERSION (dist/index.js → /app).
+// Graceful empty-fallback when the file is absent (local dev / tests) —
+// mirrors the bug-114 toolSurfaceRevision "" fallback; never crashes boot.
+const BUILD_INFO: { gitSha: string; builtAt: string } = (() => {
+  try {
+    const biPath = join(dirname(fileURLToPath(import.meta.url)), "..", "build-info.json");
+    const bi = JSON.parse(readFileSync(biPath, "utf8")) as { gitSha?: unknown; builtAt?: unknown };
+    return {
+      gitSha: typeof bi.gitSha === "string" ? bi.gitSha : "",
+      builtAt: typeof bi.builtAt === "string" ? bi.builtAt : "",
+    };
+  } catch {
+    return { gitSha: "", builtAt: "" };
+  }
+})();
+console.log(`[Hub] build-info: gitSha=${BUILD_INFO.gitSha || "(none)"} builtAt=${BUILD_INFO.builtAt || "(none)"}`);
 
 // ADR-017: start the comms-reliability watchdog. Stateless scanner over
 // the pending-actions queue; enforces deadlines + escalation ladder. The
@@ -403,6 +438,8 @@ const hub = new HubNetworking(
     quiet: false,
     version: HUB_VERSION,
     toolSurfaceRevision,
+    gitSha: BUILD_INFO.gitSha,
+    builtAt: BUILD_INFO.builtAt,
   },
   // M-Session-Claim-Separation (mission-40) T2: thread audit store through
   // for SSE-subscribe auto-claim hook to emit agent_session_implicit_claim
@@ -701,7 +738,8 @@ const messageProjectionSweeper = new MessageProjectionSweeper(
   // mission-83 W5.4 cutover); the 74% CPU pressure that motivated PR #203 was
   // structurally eliminated. Sweeper continues to poll (substrate-watch
   // subscription is W8/W9 architectural-future-leverage; v1 keeps polling).
-  { intervalMs: 5000 },
+  // C3-R4b piece 2: audit = durable queryable 0-bare-violation sink.
+  { intervalMs: 5000, audit: auditStore, metrics: createMetricsCounter() },
 );
 
 // Mission-51 W4: scheduled-message sweeper. Polls every 1s for
@@ -752,6 +790,8 @@ const cascadeReplaySweeper = new CascadeReplaySweeper(
       internalEvents: [],
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
+  // C3-R4b piece 2: durable queryable sink for 0-bare-violation audit entries.
+  { audit: auditStore },
 );
 
 // Mission-57 W2: PulseSweeper — single-instance recurring sweeper that

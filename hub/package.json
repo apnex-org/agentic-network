@@ -34,6 +34,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.5.2",
     "testcontainers": "^11.14.0",
+    "ts-morph": "^28.0.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.4"
