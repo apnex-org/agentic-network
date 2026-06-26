@@ -2,7 +2,7 @@
 
 *The single strategic dashboard for the agentic-network: the standing answer to **"what are we working on, and why?"** Read by the Director (status at a glance) and the architect (cold-pickup handover). **Arc-level, current-state only** — no history (decisions → `docs/decisions/` DR-ledger; per-arc scope → `docs/designs/`). **Interim** until coordination is further mechanised. Refreshed at gate-points (Survey / Release / Retro).*
 
-**As of:** 2026-06-22 · **Prod:** `2fa4723` · **Headline:** C1 work-control-plane keystone sealed + live (dormant); entering NARROW adoption.
+**As of:** 2026-06-27 · **Prod:** `2fa4723` · **Headline:** C1 work-control-plane keystone sealed + live (dormant); entering NARROW adoption.
 
 ## Why — the through-line
 Convert the proven-once autonomous operating model into **durable substrate**, shaped as **"k8s + cognitive continuity"**: a sovereign REST control-plane (**D-1** — Hub = apiserver, oisctl = kubectl, agents = controllers) that **observes + actuates** (**C1** work-queue) over **containerised, context-aware agents** (**C2 / D-2**), shipped through a **self-verifying, fail-loud** delivery path (**C3**), **bounded by governed autonomy** (**C4**). North-stars: **tele-13** (amplify the Director's non-scalable attention — the org self-drives) + **tele-4** (nothing completes silently or masks its own failure). The arcs are facets of **one** architecture, not separate programs.
