@@ -207,22 +207,27 @@ export class ResponseSummarizer implements CognitiveMiddleware {
     // number overrides maxItems.
     const override = this.perToolMaxItems[ctx.tool];
     if (override === null) return result;
-    const effectiveMaxItems = typeof override === "number" ? override : this.maxItems;
+    let effectiveMaxItems = typeof override === "number" ? override : this.maxItems;
 
-    // M-QueryShape Phase 1 (idea-119, task-302) — respect caller's
-    // `limit` parameter. If the LLM explicitly asked for a bounded
-    // subset AND the bound is ≤ our summarize threshold, the caller
-    // got exactly what it asked for — don't second-guess by truncating
-    // further. Applies when filter+sort produced the intended subset
-    // directly, so the LLM doesn't need to chase paginated data it
-    // already decided isn't needed. Only bypasses when `limit` is
-    // present AND numeric AND within the summarizer's threshold.
+    // M-QueryShape Phase 1 (idea-119, task-302) + bug-117 — respect the
+    // caller's explicit `limit`. Two cases, BOTH honoring the caller:
+    //   DOWNWARD (limit ≤ threshold): the LLM asked for a bounded subset
+    //     within our threshold — it got exactly what it asked for, so
+    //     return as-is without second-guessing by truncating further.
+    //   UPWARD (limit > threshold): the LLM explicitly asked for MORE than
+    //     the default — RAISE the summarize cap to the caller's limit so an
+    //     explicit larger ask isn't structurally truncated back to the
+    //     default (bug-117: this silent 10-cap broke exhaustive list_*
+    //     batch-pulls — cross-ref / audit / ledger-reconciliation had to
+    //     paginate around it; tele-4 zero-loss-knowledge).
+    // Only acts when `limit` is present AND numeric AND positive.
     const callerLimit =
       ctx.args && typeof ctx.args === "object" && !Array.isArray(ctx.args)
         ? (ctx.args as Record<string, unknown>).limit
         : undefined;
-    if (typeof callerLimit === "number" && callerLimit > 0 && callerLimit <= effectiveMaxItems) {
-      return result;
+    if (typeof callerLimit === "number" && callerLimit > 0) {
+      if (callerLimit <= effectiveMaxItems) return result;
+      effectiveMaxItems = Math.max(effectiveMaxItems, callerLimit);
     }
 
     if (!this.shouldSummarize(ctx.tool, result)) return result;

@@ -180,15 +180,47 @@ describe("ResponseSummarizer — respects caller's `limit` (M-QueryShape Phase 1
     expect(context.tags.summarized).toBeUndefined();
   });
 
-  it("summarizes when args.limit > maxItems (caller asked for more than we'd ship)", async () => {
+  it("bug-117: honors args.limit > maxItems — raises the cap to the caller's limit, not the default", async () => {
     const summarizer = new ResponseSummarizer({ maxItems: 5 });
     const items = Array.from({ length: 100 }, (_, i) => ({ id: i }));
     const next = vi.fn().mockResolvedValue(items);
-    // Caller asked for 50 items; summarizer caps at 5
+    // Caller explicitly asked for 50; the OLD code truncated to maxItems=5
+    // (the bug-117 silent cap). Now the cap is RAISED to the caller's 50.
     const context = ctx({ tool: "list_tasks", args: { limit: 50 } });
-    const result = await summarizer.onToolCall(context, next) as { _ois_pagination: unknown; items: unknown[] };
-    expect(result._ois_pagination).toBeDefined();
-    expect(result.items).toHaveLength(5);
+    const result = await summarizer.onToolCall(context, next) as {
+      _ois_pagination: { total: number; count: number };
+      items: unknown[];
+    };
+    expect(result.items).toHaveLength(50); // the caller's limit, not 5
+    expect(result._ois_pagination.total).toBe(100);
+    expect(result._ois_pagination.count).toBe(50);
+  });
+
+  it("bug-117: an explicit limit > default (10) returns > 10 items (the reported regression)", async () => {
+    // The exact evidence case: DEFAULT maxItems (10), caller asks for 25.
+    const summarizer = new ResponseSummarizer(); // DEFAULT_MAX_ITEMS = 10
+    const items = Array.from({ length: 100 }, (_, i) => ({ id: i }));
+    const next = vi.fn().mockResolvedValue(items);
+    const context = ctx({ tool: "list_bugs", args: { limit: 25 } });
+    const result = await summarizer.onToolCall(context, next) as {
+      _ois_pagination: { count: number };
+      items: unknown[];
+    };
+    expect(result.items.length).toBeGreaterThan(10);
+    expect(result.items).toHaveLength(25);
+    expect(result._ois_pagination.count).toBe(25);
+  });
+
+  it("bug-117: a limit larger than the result set returns the FULL set unwrapped (zero-loss, tele-4)", async () => {
+    // Caller raised the limit and the list fits under it → no truncation,
+    // no pagination envelope.
+    const summarizer = new ResponseSummarizer({ maxItems: 5 });
+    const items = Array.from({ length: 30 }, (_, i) => ({ id: i }));
+    const next = vi.fn().mockResolvedValue(items);
+    const context = ctx({ tool: "list_tasks", args: { limit: 50 } });
+    const result = await summarizer.onToolCall(context, next);
+    expect(result).toBe(items); // reference-equal — full set, no envelope
+    expect(context.tags.summarized).toBeUndefined();
   });
 
   it("summarizes when args.limit is absent (legacy behaviour preserved)", async () => {
