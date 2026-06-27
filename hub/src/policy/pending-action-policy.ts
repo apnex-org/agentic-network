@@ -156,7 +156,9 @@ async function pruneStuckQueueItems(
               targetAgentId: item.targetAgentId,
               reason,
             },
-            { agentIds: participantAgentIds, matchLabels: thread.labels },
+            // bug-61: pinpoint dispatch to explicit participants — NO matchLabels
+            // (named recipients must not be label-gated; bug-18 precedent).
+            { agentIds: participantAgentIds },
           );
         }
       }

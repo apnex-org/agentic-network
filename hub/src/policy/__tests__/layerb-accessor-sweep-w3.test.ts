@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { createTestPool } from "../../storage-substrate/__tests__/_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -42,9 +43,6 @@ import { registerThreadPolicy } from "../thread-policy.js";
 import { registerProposalPolicy } from "../proposal-policy.js";
 import { registerTelePolicy } from "../tele-policy.js";
 import type { IPolicyContext, AllStores } from "../types.js";
-
-const { Pool } = pg;
-
 const MIGRATIONS_DIR = join(__dirname, "..", "..", "storage-substrate", "migrations");
 const MIGRATION_FILES = ["001-entities-table.sql", "002-notify-trigger.sql", "003-jsonb-size-check.sql"];
 
@@ -77,7 +75,7 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     container = await new PostgreSqlContainer("postgres:15-alpine")
       .withUsername("hub").withPassword("hub").withDatabase("hub").start();
     connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-    pool = new Pool({ connectionString: connStr });
+    pool = createTestPool(connStr, "layerb-accessor-sweep-w3");
     for (const f of MIGRATION_FILES) {
       await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
     }

@@ -44,10 +44,23 @@
 import type { ILogger, LegacyStringLogger } from "../logger.js";
 import type { ITransport } from "../wire/transport.js";
 import type { HandshakeFatalError, HandshakeResponse } from "./handshake.js";
-import type { DrainedPendingAction } from "./state-sync.js";
+// bug-160 — SessionState / SessionReconnectReason / AgentEvent / DrainedPendingAction
+// are the Message-union payload contract; they were relocated DOWN to
+// @apnex/message-router (L2) to break the L2↔L4 source cycle. This package's index
+// re-exports them, so consumers importing them from @apnex/network-adapter are
+// unaffected.
+import type {
+  AgentEvent,
+  DrainedPendingAction,
+  SessionReconnectReason,
+  SessionState,
+} from "@apnex/message-router";
+// Re-export the 3 that internal kernel consumers import `from "./agent-client.js"`
+// (mcp-agent-client / poll-backstop / dispatcher) — keeps those resolving.
+export type { AgentEvent, SessionState, SessionReconnectReason };
 
 /**
- * Session FSM state exposed to shims.
+ * Session FSM the AgentClient drives `SessionState` through:
  *
  *   disconnected → connecting → synchronizing → streaming
  *                                    ↑                ↓
@@ -60,33 +73,6 @@ import type { DrainedPendingAction } from "./state-sync.js";
  *   G4: Consecutive SSE failures trigger exponential backoff
  *   G5: All reconnections carry a classified SessionReconnectReason
  */
-export type SessionState =
-  | "disconnected"
-  | "connecting"
-  | "synchronizing"
-  | "streaming"
-  | "reconnecting";
-
-/** Classifies why a session re-entered `reconnecting`. */
-export type SessionReconnectReason =
-  | "heartbeat_failed"   // heartbeat POST failed
-  | "sse_watchdog"       // no keepalive received within threshold
-  | "sse_never_opened"   // first keepalive never arrived after connect
-  | "session_invalid";   // Hub rejected session (redeploy, expiry)
-
-/**
- * Classified hub event delivered to the shim. Mirrors the existing
- * `HubEvent` shape from `event-router.ts` but re-declared here so the
- * AgentClient surface can be consumed without importing the router.
- * Phase 3+ will unify these back to one source of truth.
- */
-export interface AgentEvent {
-  readonly id?: number | string;
-  readonly event: string;
-  readonly data: Record<string, unknown>;
-  readonly timestamp?: string;
-  readonly targetRoles?: readonly string[];
-}
 
 /**
  * What a shim plugs into an AgentClient. All callbacks are optional —

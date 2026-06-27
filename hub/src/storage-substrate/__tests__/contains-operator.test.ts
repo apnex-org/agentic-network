@@ -16,6 +16,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { createTestPool } from "./_pg-test-pool.js";
 import { createPostgresStorageSubstrate, createSchemaReconciler } from "../index.js";
 import { createMemoryStorageSubstrate } from "../memory-substrate.js";
 import type { SchemaDef } from "../types.js";
@@ -35,7 +36,7 @@ describe("C1-R2 $contains operator (real-pg list + watch-replay)", () => {
     container = await new PostgreSqlContainer("postgres:15-alpine")
       .withUsername("hub").withPassword("hub").withDatabase("hub").start();
     connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-    pool = new Pool({ connectionString: connStr });
+    pool = createTestPool(connStr, "contains-operator");
     for (const f of MIGRATION_FILES) await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
     substrate = createPostgresStorageSubstrate(connStr);
   }, TEST_SETUP_TIMEOUT);

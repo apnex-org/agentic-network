@@ -47,6 +47,8 @@ TPS_SWAP_APPLIED=0
 _tps_cleanup_state() {
   if [[ $TPS_SWAP_APPLIED -eq 1 && -n "$TPS_BACKUP_DIR" && -d "$TPS_BACKUP_DIR" ]]; then
     [[ -f "$TPS_BACKUP_DIR/package.json" ]] && mv -f "$TPS_BACKUP_DIR/package.json" "$TPS_TARGET_DIR/package.json"
+    # bug-142 — restore the lockfile too (only when it was backed up).
+    [[ -f "$TPS_BACKUP_DIR/package-lock.json" ]] && mv -f "$TPS_BACKUP_DIR/package-lock.json" "$TPS_TARGET_DIR/package-lock.json"
   fi
   if [[ ${#TPS_STAGED_TARBALLS[@]} -gt 0 ]]; then
     local tarball
@@ -85,6 +87,10 @@ swap_workspace_deps_to_tarballs() {
 
   TPS_BACKUP_DIR=$(mktemp -d -t transient-swap-XXXXXX)
   cp "$target_dir/package.json" "$TPS_BACKUP_DIR/package.json"
+  # bug-142 — `npm pack` rewrites package-lock.json to match the swapped `file:`
+  # refs, so back it up too; otherwise a failed prepack leaves the lockfile
+  # swapped (the trap restored package.json only). Not every target has a lockfile.
+  [[ -f "$target_dir/package-lock.json" ]] && cp "$target_dir/package-lock.json" "$TPS_BACKUP_DIR/package-lock.json"
   TPS_SWAP_APPLIED=1
 
   local entry pkg_name pkg_source pkg_dir tarball_name
