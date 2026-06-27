@@ -24,7 +24,14 @@ import {
   EvidencePredicateFailed,
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
-import type { WorkItem, WorkItemBlockedOn, EvidenceItem } from "../entities/work-item.js";
+import type {
+  WorkItem,
+  WorkItemBlockedOn,
+  EvidenceItem,
+  EvidenceRequirement,
+  WorkItemType,
+  WorkItemPriority,
+} from "../entities/work-item.js";
 
 function ok(obj: unknown): PolicyResult {
   return { content: [{ type: "text" as const, text: JSON.stringify(obj, null, 2) }] };
@@ -193,6 +200,70 @@ async function clearWorkQuarantine(args: Record<string, unknown>, ctx: IPolicyCo
   return ok({ agentId, quarantined: agent?.quarantined ?? false, thrashCount: agent?.thrashCount ?? 0 });
 }
 
+// ── On-ramp: create_work + get_work (C1 NARROW adoption) ────────────────────────
+//
+// createWorkItem (repo) is test-callers-only; this is the agent-reachable creation seam —
+// the queue's own bootstrap. createWorkItem stores dependsOn + targetRef OPAQUELY (it does
+// zero existence-checking), so the "unresolvable internal refs → reject, no silent coercion"
+// fail-closed posture (bug-175) lives HERE, in the policy tool:
+//   - dependsOn → existence-checked (a dangling dep = a permanently-unclaimable item, a
+//     silent claim-trap; tele-4 → loud reject at authoring).
+//   - evidenceRequirement ids → unique within the item (complete_work binds by requirementId;
+//     a dup makes the bind ambiguous + could weaken no-double-count).
+//   - targetRef → opaque + shape-validated only (thread-709 (b)): it's advisory "this work is
+//     ABOUT entity X", not a claim-gate, so a dangling targetRef is not a trap; cross-kind
+//     create-time resolution belongs in the D-1 / idea-121 uniform resolver, not here.
+
+async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const caller = await resolveCreatedBy(ctx);
+
+  const roleEligibility = (args.roleEligibility as string[] | undefined) ?? [];
+  const dependsOn = (args.dependsOn as string[] | undefined) ?? [];
+  const evidenceRequirements = (args.evidenceRequirements as EvidenceRequirement[] | undefined) ?? [];
+
+  // Fail-closed: a duplicate requirement id makes complete_work's bind-by-requirementId
+  // ambiguous (and could weaken no-double-count) — reject, never coerce.
+  const reqIds = evidenceRequirements.map((r) => r.id);
+  const dupId = reqIds.find((id, i) => reqIds.indexOf(id) !== i);
+  if (dupId !== undefined) {
+    return err("invalid_evidence_requirements", `duplicate evidenceRequirement id "${dupId}" — requirement ids must be unique within a WorkItem (complete_work binds by requirementId)`);
+  }
+
+  // Fail-closed: a dangling dependsOn is a permanently-unclaimable item (claim-time
+  // dependency-readiness never resolves) — reject at authoring rather than silently store it.
+  for (const depId of dependsOn) {
+    const dep = await store.getWorkItem(depId);
+    if (!dep) return err("unresolvable_ref", `dependsOn references a non-existent WorkItem: ${depId}`);
+  }
+
+  try {
+    const w = await store.createWorkItem({
+      type: args.type as WorkItemType,
+      priority: args.priority as WorkItemPriority | undefined,
+      roleEligibility,
+      dependsOn,
+      evidenceRequirements,
+      targetRef: (args.targetRef as { kind: string; id: string } | null | undefined) ?? null,
+      payload: args.payload,
+      createdBy: caller,
+    });
+    return workItemResult(w);
+  } catch (e) { return mapVerbError(e); }
+}
+
+async function getWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const w = await store.getWorkItem(args.workId as string);
+  // A read: return the full item (incl. lease, for the org-state snapshot's observability),
+  // but do NOT hoist leaseToken to the top level — that hoist is a claim-affordance for the
+  // HOLDER and is misleading on a read (a non-holder who reads the token still can't use it;
+  // every lease-bound verb also fences on holder===caller.agentId).
+  return w ? ok({ workItem: w }) : notFound(args.workId as string);
+}
+
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
 const EVIDENCE_KIND = z.enum(["commit", "pr", "audit", "review", "test-run", "doc", "freeform"]);
@@ -210,9 +281,45 @@ const blockedOnSchema = z.object({
   reason: z.string().describe("Human-readable why"),
 }).strict();
 
+const WORK_TYPE = z.enum(["task", "bug", "review", "verifier-gate", "freeform"]);
+const WORK_PRIORITY = z.enum(["critical", "high", "normal", "low"]);
+const evidenceRequirementSchema = z.object({
+  id: z.string().min(1).describe("Author-supplied requirement id — complete_work binds evidence to it by requirementId (unique within the item)"),
+  kind: EVIDENCE_KIND,
+  description: z.string().optional(),
+  refResolvable: z.boolean().optional().describe("When set, an OIS-internal bound ref (audit/review) must existence-resolve at complete; external refs (commit/pr/...) are format-validated only"),
+  allowPreClaim: z.boolean().optional().describe("When set, freshness (producedAt >= claimedAt) is NOT required — permits a pre-claim artifact"),
+}).strict();
+const targetRefSchema = z.object({
+  kind: z.string().min(1),
+  id: z.string().min(1),
+}).strict();
+
 // ── Registration ──────────────────────────────────────────────────────────────
 
 export function registerWorkItemPolicy(router: PolicyRouter): void {
+  router.register(
+    "create_work",
+    "[Architect] Create a WorkItem on the queue (status=ready) — the C1 adoption on-ramp. Mirrors the WorkItem spec: type + role-eligibility (empty/omitted = any role) + dependsOn (existence-checked; a dangling dep is REJECTED — it would be permanently unclaimable) + evidenceRequirements (the anti-gameability contract complete_work enforces; requirement ids must be unique) + targetRef ({kind,id}; opaque/advisory at create) + priority + payload. Provenance is the spoof-proof session caller. NARROW adoption: the architect authors mission-level work; the [Any] lifecycle verbs let any eligible role claim→execute.",
+    {
+      type: WORK_TYPE.describe("WorkItem type"),
+      roleEligibility: z.array(z.string()).optional().describe("Roles that may claim; empty/omitted = any role"),
+      priority: WORK_PRIORITY.optional().describe("Priority (default: normal)"),
+      dependsOn: z.array(z.string()).optional().describe("WorkItem ids that must complete before this is claimable; each must already exist (dangling → rejected)"),
+      evidenceRequirements: z.array(evidenceRequirementSchema).optional().describe("Anti-gameability evidence contract enforced by complete_work"),
+      targetRef: targetRefSchema.nullable().optional().describe("Pointer to the entity this work is about ({kind,id}); opaque/advisory at create"),
+      payload: z.unknown().optional().describe("Freeform work payload (e.g. the task brief)"),
+    },
+    createWork,
+  );
+
+  router.register(
+    "get_work",
+    "[Any] Read a WorkItem by id (any phase — incl. non-ready items the org-state snapshot wants). Returns the flat item (incl. lease, for observability) or not_found.",
+    { workId: z.string().describe("The WorkItem id to read") },
+    getWork,
+  );
+
   router.register(
     "claim_work",
     "[Any] Claim a ready WorkItem (ready → claimed). Enforces role-eligibility + dependency-readiness + the per-agent WIP cap fail-closed; mints a lease token returned as `leaseToken` — capture it for every subsequent lease-bound verb. C1-R2 (working name; idea-121 finalizes the tool surface).",

@@ -9,6 +9,7 @@
  * is exercised deterministically through the real PolicyRouter dispatch path.
  */
 import { describe, it, expect, beforeEach } from "vitest";
+import { z } from "zod";
 import { PolicyRouter } from "../router.js";
 import { registerWorkItemPolicy } from "../work-item-policy.js";
 import { createTestContext, type TestPolicyContext } from "../test-utils.js";
@@ -78,8 +79,8 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("registers all 9 verbs", () => {
-    for (const t of ["claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
+  it("registers all 11 tools (create_work + get_work on-ramp + the 9 lifecycle verbs)", () => {
+    for (const t of ["create_work", "get_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
   });
@@ -231,5 +232,123 @@ describe("work-item-policy 4b-ii thrash-quarantine wiring", () => {
     const r = await router.handle("clear_work_quarantine", { agentId: "agent-z" }, ctxFor(undefined, "engineer", reg));
     expect(r.isError).toBe(true);
     expect(body(r).error).toMatch(/Authorization denied/);
+  });
+});
+
+// ── create_work + get_work (C1 NARROW adoption on-ramp; thread-709) ──────────────
+describe("work-item-policy on-ramp: create_work + get_work", () => {
+  let router: PolicyRouter;
+  beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
+
+  const readyItem = (over: Partial<WorkItem> = {}) => sampleItem({ status: "ready", lease: null, ...over });
+  const createArg = (calls: Call[]) => calls.find((c) => c.method === "createWorkItem")?.args[0] as Record<string, unknown> | undefined;
+  const unknownCtx = (store?: IWorkItemStore) => {
+    const ctx = createTestContext(undefined, { skipRoleRegister: true }); // getRole → "unknown"
+    ctx.stores.workItem = store;
+    return ctx;
+  };
+
+  // ── create_work [Architect] gate (bug-175 fail-closed posture) ──
+  it("create_work: architect creates a ready item with the SPOOF-PROOF provenance", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem({ id: "work-7", type: "task" }) });
+    const r = await router.handle("create_work", {
+      type: "task", roleEligibility: ["engineer"], priority: "high",
+      createdBy: { agentId: "HACKER", role: "architect" }, // spoof attempt in args — must be ignored
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    expect((body(r).workItem as WorkItem).id).toBe("work-7");
+    const passed = createArg(stub.calls)!;
+    expect(passed.createdBy).toMatchObject({ agentId: "anonymous-architect", role: "architect" }); // session, not args
+    expect(passed).toMatchObject({ type: "task", roleEligibility: ["engineer"], priority: "high" });
+  });
+
+  it("create_work: an ENGINEER is denied at the [Architect] gate (membership-gate)", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", { type: "task" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(body(r).error).toMatch(/Authorization denied/);
+    expect(stub.calls.length).toBe(0); // gate denies BEFORE the handler/repo
+  });
+
+  it("create_work: an UNKNOWN (pre-register_role) caller is denied (no fail-open)", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", { type: "task" }, unknownCtx(stub));
+    expect(r.isError).toBe(true);
+    expect(body(r).error).toMatch(/Authorization denied/);
+    expect(stub.calls.length).toBe(0);
+  });
+
+  // ── create_work fail-closed validations (repo stores refs OPAQUELY) ──
+  it("create_work: a dangling dependsOn is REJECTED (unresolvable_ref — would be permanently unclaimable)", async () => {
+    const stub = makeStub({
+      getWorkItem: (id: unknown) => (id === "work-real" ? readyItem({ id: "work-real" }) : null),
+      createWorkItem: () => readyItem(),
+    });
+    const r = await router.handle("create_work", { type: "task", dependsOn: ["work-real", "work-ghost"] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("unresolvable_ref");
+    expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(false); // never created
+  });
+
+  it("create_work: an existing dependsOn passes the existence-check through to create", async () => {
+    const stub = makeStub({ getWorkItem: () => readyItem({ id: "work-real" }), createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", { type: "task", dependsOn: ["work-real"] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(true);
+  });
+
+  it("create_work: duplicate evidenceRequirement ids are REJECTED (bind integrity)", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", {
+      type: "review",
+      evidenceRequirements: [{ id: "r1", kind: "review" }, { id: "r1", kind: "audit" }],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("invalid_evidence_requirements");
+    expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(false);
+  });
+
+  it("create_work: a missing workItem store → not_wired", async () => {
+    const r = await router.handle("create_work", { type: "task" }, ctxFor(undefined, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("not_wired");
+  });
+
+  // ── create_work schema enum guard (validated at the MCP boundary, not router.handle) ──
+  it("create_work: the registered schema rejects a bad `type` enum (MCP-boundary guard)", () => {
+    const reg = router.getToolRegistration("create_work")!;
+    const schema = z.object(reg.schema);
+    expect(schema.safeParse({ type: "bogus" }).success).toBe(false);
+    expect(schema.safeParse({ type: "verifier-gate" }).success).toBe(true);
+  });
+
+  // ── get_work [Any] — pins the create=[Architect]→deny / get=[Any]→allow asymmetry ──
+  it("get_work: an ENGINEER can read by id ([Any] reachable — the asymmetry vs create)", async () => {
+    const stub = makeStub({ getWorkItem: () => readyItem({ id: "work-3" }) });
+    const r = await router.handle("get_work", { workId: "work-3" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBeFalsy();
+    expect((body(r).workItem as WorkItem).id).toBe("work-3");
+  });
+
+  it("get_work: a VERIFIER can also read by id ([Any])", async () => {
+    const stub = makeStub({ getWorkItem: () => readyItem({ id: "work-3" }) });
+    const r = await router.handle("get_work", { workId: "work-3" }, ctxFor(stub, "verifier"));
+    expect(r.isError).toBeFalsy();
+    expect((body(r).workItem as WorkItem).id).toBe("work-3");
+  });
+
+  it("get_work: does NOT hoist leaseToken to the top level (read affordance ≠ claim affordance)", async () => {
+    const claimed = sampleItem({ id: "work-5", status: "claimed" }); // lease.token = tok-abc
+    const stub = makeStub({ getWorkItem: () => claimed });
+    const b = body(await router.handle("get_work", { workId: "work-5" }, ctxFor(stub, "engineer")));
+    expect(b.leaseToken).toBeUndefined();                          // not hoisted on a read
+    expect((b.workItem as WorkItem).lease?.token).toBe("tok-abc"); // still on the item for observability
+  });
+
+  it("get_work: a non-existent id → not_found", async () => {
+    const stub = makeStub({ getWorkItem: () => null });
+    const r = await router.handle("get_work", { workId: "ghost" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("not_found");
   });
 });
