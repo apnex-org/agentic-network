@@ -26,8 +26,6 @@ import {
   readCache,
   writeCache,
   ToolSurfaceReconciler,
-  ClaimableDigestTracker,
-  WorkLeaseTracker,
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,
@@ -40,7 +38,7 @@ import {
   type LogFields,
 } from "@apnex/network-adapter";
 import { CognitivePipeline } from "@apnex/cognitive-layer";
-import { readFileSync, existsSync, appendFileSync, statSync, renameSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -134,109 +132,33 @@ const SHIM_LOG_FILE = process.env.OIS_SHIM_LOG_FILE || join(WORK_DIR, ".ois", "s
 const SHIM_EVENTS_FILE = process.env.OIS_SHIM_EVENTS_FILE || join(WORK_DIR, ".ois", "shim-events.ndjson");
 const SHIM_LOG_ROTATE_BYTES = Number(process.env.OIS_SHIM_LOG_ROTATE_BYTES) || 10 * 1024 * 1024;
 
-function ensureDir(path: string): void {
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-  } catch {
-    /* best-effort */
-  }
-}
-
-function rotateIfNeeded(file: string): void {
-  try {
-    const stat = statSync(file);
-    if (stat.size > SHIM_LOG_ROTATE_BYTES) {
-      const rotated = `${file}.${Date.now()}`;
-      renameSync(file, rotated);
-    }
-  } catch {
-    /* file doesn't exist yet, that's fine */
-  }
-}
-
-ensureDir(SHIM_LOG_FILE);
-ensureDir(SHIM_EVENTS_FILE);
-rotateIfNeeded(SHIM_LOG_FILE);
-rotateIfNeeded(SHIM_EVENTS_FILE);
-
-function appendText(line: string): void {
-  try {
-    appendFileSync(SHIM_LOG_FILE, line);
-  } catch {
-    /* best-effort — never disturb the call loop */
-  }
-}
-
-// mission-66 commit 4: redaction + log-level helpers extracted to
-// `./observability.ts` for unit-test tractability (shim.ts module init
-// has process.exit(1) side effect via loadConfig()).
-import { redactFields, parseLogLevel, shouldEmitLevel, type LogLevel } from "./observability.js";
+// mission-66 commit 4: redaction + log-level helpers extracted for unit-test
+// tractability (shim.ts module init has a process.exit(1) side effect via
+// loadConfig()). idea-355 SLICE-1: the file-backed logger (NDJSON + text +
+// stderr fan-out, rotation, redaction, level-filter) is hoisted to the kernel
+// `createFileLogger`. The shim injects only its file paths + format choices.
+import { parseLogLevel, createFileLogger, type LogLevel } from "@apnex/network-adapter";
 const SHIM_LOG_LEVEL: LogLevel = parseLogLevel(process.env.OIS_SHIM_LOG_LEVEL);
 
-function appendEvent(event: string, fields: LogFields, message?: string): void {
-  // mission-66 commit 4: OIS_SHIM_LOG_LEVEL filter (ADR-031 §3). Events
-  // tagged with `fields.level` below the configured threshold are
-  // suppressed (no-op). Events without `level` always emit (default INFO).
-  if (!shouldEmitLevel(fields.level as string | undefined, SHIM_LOG_LEVEL)) {
-    return;
-  }
-  const line = JSON.stringify({
-    ts: new Date().toISOString(),
-    event,
-    fields: redactFields(fields),
-    message: message ?? null,
-    pid: process.pid,
-  }) + "\n";
-  try {
-    appendFileSync(SHIM_EVENTS_FILE, line);
-  } catch {
-    /* best-effort */
-  }
-}
+const __fileLog = createFileLogger({
+  textFile: SHIM_LOG_FILE,
+  eventsFile: SHIM_EVENTS_FILE,
+  rotateBytes: SHIM_LOG_ROTATE_BYTES,
+  mirrorToStderr: true,
+  logLevel: SHIM_LOG_LEVEL,
+  pid: process.pid,
+  bound: { pid: process.pid, role: config.role },
+});
 
-// ── Logging (stderr + file) ─────────────────────────────────────────
-
+// Standalone text + structured-event sinks. Function declarations (not const)
+// preserve hoisting for the many call sites that precede this definition.
 function log(msg: string): void {
-  const ts = new Date().toISOString().replace("T", " ").replace("Z", "");
-  const line = `[${ts}] ${msg}\n`;
-  process.stderr.write(line);
-  appendText(line);
+  __fileLog.log(msg);
 }
-
-// FileBackedLogger — concrete ILogger that fans out to:
-//   1. NDJSON events file (every .log call, structured fields preserved)
-//   2. text log file + stderr (rendered friendly form)
-// Bound fields apply to every emission via `child()` for scoped loggers
-// (per-session, per-reconnect, etc.).
-class FileBackedLogger implements ILogger {
-  constructor(private readonly bound: LogFields = {}) {}
-
-  log(event: string, fields?: LogFields, message?: string): void {
-    const merged: LogFields = { ...this.bound, ...(fields ?? {}) };
-    appendEvent(event, merged, message);
-    if (message) {
-      log(`[${event}] ${message}`);
-    } else {
-      const fieldsStr = renderFields(merged);
-      log(fieldsStr ? `[${event}]${fieldsStr}` : `[${event}]`);
-    }
-  }
-
-  child(fields: LogFields): ILogger {
-    return new FileBackedLogger({ ...this.bound, ...fields });
-  }
+function appendEvent(event: string, fields: LogFields, message?: string): void {
+  __fileLog.appendEvent(event, fields, message);
 }
-
-function renderFields(fields: LogFields): string {
-  const parts: string[] = [];
-  for (const k of Object.keys(fields)) {
-    const v = fields[k];
-    parts.push(` ${k}=${Array.isArray(v) ? `[${v.join(",")}]` : String(v)}`);
-  }
-  return parts.join("");
-}
-
-const eventsLogger: ILogger = new FileBackedLogger({ pid: process.pid, role: config.role });
+const eventsLogger: ILogger = __fileLog.logger;
 
 // ── Render-surface: Claude `<channel>` notification injection ───────
 //
@@ -347,12 +269,9 @@ async function main(): Promise<void> {
   // exists (post-createMcpServer); referenced lazily by the identityReady (L1)
   // trigger + the PollBackstop heartbeat (L2) closure.
   let reconciler: ToolSurfaceReconciler | null = null;
-  // idea-353 — queue wake/stall reconciliation state. The digest tracker holds
-  // the W1 level-trigger/de-dup baseline; the lease tracker holds the W2 held-
-  // lease map (fed by the dispatcher's onToolCallResult observer). Both assigned
-  // once mcpServer exists; referenced lazily by the heartbeat tick + observer.
-  let claimableDigest: ClaimableDigestTracker | null = null;
-  let workLeases: WorkLeaseTracker | null = null;
+  // idea-355 §4.3 — the queue wake/stall reconcile (trackers + reconcile body +
+  // the W2 observer) is now kernel-internal in the dispatcher; the shim wires
+  // none of it. This shim keeps only its host-coupled bug-180 live-refresh.
   const getClientInfo = () =>
     dispatcherRef ? dispatcherRef.getClientInfo() : { name: "unknown", version: "0.0.0" };
 
@@ -627,25 +546,21 @@ async function main(): Promise<void> {
     // notifications missed while the adapter was disconnected. SSE inline
     // delivers only to a connected recipient; offline → the note is lost
     // without this poll. `role` (config.role) is the poll's targetRole filter.
-    // idea-353 W2 — observe this agent's own work-verb tool-call results so the
-    // outbound stall-prompt can track held leases locally (no Hub round-trip).
-    // Lazy `workLeases` ref (assigned once mcpServer exists, below).
-    onToolCallResult: (method, args, result) => {
-      workLeases?.observe(method, args, result, Date.now());
-    },
+    // idea-355 §4.3 — the idea-353 W2 lease observer is now kernel-internal in
+    // the dispatcher (onToolCallResult site), so this shim no longer wires it.
     pollBackstop: {
       role: config.role,
       firstTimerEnabled: true,
       log,
-      // bug-180 L2 — revision-poll backstop on the heartbeat cadence. Lazy
-      // reference: `reconciler` is assigned once mcpServer exists (below);
-      // the first heartbeat tick fires ≥1 interval after start(), so it is
-      // always populated by the time this runs. Catches a redeploy WHILE the
-      // session stays connected (no reconnect → no fresh identityReady).
-      // idea-353 — the same tick also drives the queue wake/stall reconcile.
+      // bug-180 L2 — tool-surface revision-poll backstop on the heartbeat
+      // cadence. The kernel drives this host hook off the tick (idea-355 §4.3,
+      // isolated in its own try/catch) ALONGSIDE the now-kernel-internal queue
+      // wake/stall reconcile — so the shim provides only the host-coupled
+      // live-refresh (mcpServer.sendToolListChanged), not the wake/stall wiring.
+      // Lazy `reconciler` ref (assigned once mcpServer exists, below); the first
+      // tick fires ≥1 interval after start() so it is always populated.
       onHeartbeatTick: async () => {
         await reconciler?.reconcile("heartbeat");
-        await runWakeStallReconcile();
       },
     },
   });
@@ -678,74 +593,12 @@ async function main(): Promise<void> {
   });
   reconciler = liveReconciler;
 
-  // idea-353 — queue wake/stall reconciliation trackers. Created once mcpServer
-  // exists so the heartbeat tick can emit notifications. The lease tracker is
-  // fed by the dispatcher's onToolCallResult observer wired above.
-  claimableDigest = new ClaimableDigestTracker();
-  workLeases = new WorkLeaseTracker();
-
-  // idea-353 — the heartbeat-cadence wake/stall reconcile (W1 inbound digest +
-  // W2 outbound stall-prompt + W3 emit-only status seam). Hoisted; invoked from
-  // the PollBackstop onHeartbeatTick wired above (alongside the bug-180 L2
-  // revision reconcile). Gated on a live streaming agent + an existing mcpServer.
-  async function runWakeStallReconcile(): Promise<void> {
-    const a = agent;
-    if (!a || a.state !== "streaming" || !mcpServer) return;
-    const idle = dispatcherRef?.isIdle() ?? true;
-    const nowMs = Date.now();
-    let claimableCount = 0;
-
-    // W1 — inbound claimable digest. Read the CALLER-CLAIMABLE set via the
-    // stable list_ready_work contract with scopeToCaller (idea-353 WI-2.1 /
-    // audit-4265: the Hub applies claim_work's FULL predicate — deps + role +
-    // WIP-cap + quarantine — so the digest count never over-reports what this
-    // agent can actually claim; AC5 strict parity). On a failed read, skip the
-    // tracker entirely so a transient empty/aborted read cannot manufacture a
-    // false 0→N replay (AC3).
-    try {
-      const raw = await a.call("list_ready_work", { role: config.role, scopeToCaller: true }, { internal: true });
-      const items = (raw as { items?: Array<{ id?: unknown }> } | null)?.items;
-      if (Array.isArray(items)) {
-        const claimableIds = items
-          .map((i) => i?.id)
-          .filter((id): id is string => typeof id === "string");
-        claimableCount = claimableIds.length;
-        const decision = claimableDigest?.reconcile({ claimableIds, isIdle: idle });
-        if (decision?.emit) {
-          const event: AgentEvent = {
-            event: "work_claimable_digest",
-            data: { role: config.role, count: decision.count, newCount: decision.newCount },
-          };
-          pushChannelNotification(mcpServer, event, "actionable", log);
-          log(`[idea-353] inbound digest emitted — ${decision.count} claimable (${decision.newCount} new) for ${config.role}`);
-        }
-      }
-    } catch (err) {
-      log(`[idea-353] list_ready_work tick failed (non-fatal): ${(err as Error)?.message ?? err}`);
-    }
-
-    // W2 — outbound stall-prompt. Idle-gated: never pester a visibly-progressing
-    // holder (an in-flight CallTool = active progress). A held lease past ~60%
-    // of its window without a renew gets ONE renew/block/abandon nudge.
-    if (idle && workLeases) {
-      for (const due of workLeases.dueForStallPrompt(nowMs)) {
-        const event: AgentEvent = {
-          event: "work_lease_stall",
-          data: { workId: due.workId, msUntilExpiry: due.msUntilExpiry },
-        };
-        pushChannelNotification(mcpServer, event, "actionable", log);
-        workLeases.markPrompted(due.workId);
-        log(`[idea-353] outbound stall-prompt emitted — ${due.workId} (~${Math.round(due.msUntilExpiry / 60000)}m left)`);
-      }
-    }
-
-    // W3 — emit-only Agent.status idle/stall telemetry seam. Thin + non-gating
-    // (DEFER rich taxonomy + the D-3/C2 binding per DR-S2-027): a structured
-    // status line a future D-3 gauge / C2 supervisor binds to.
-    const heldLeases = workLeases?.size() ?? 0;
-    const statusState = !idle ? "working" : heldLeases > 0 ? "holding" : "idle";
-    log(`[idea-353][agent-status] state=${statusState} idle=${idle} claimable=${claimableCount} heldLeases=${heldLeases}`);
-  }
+  // idea-355 §4.3 — the queue wake/stall reconcile (W1 inbound digest + W2
+  // outbound stall-prompt + W3 status seam) + its trackers + the W2 lease
+  // observer are now kernel-internal in the dispatcher, driven off the same
+  // heartbeat tick as the bug-180 live-refresh below. The shim wires none of it;
+  // the kernel emits through notificationHooks.onActionableEvent → this shim's
+  // pushChannelNotification, so the surface is unchanged.
 
   // bug-180 L1 (primary) — reconcile on identityReady. Once identity resolves
   // the live revision is fetchable + the dispatcher serves the live surface

@@ -33,3 +33,13 @@ export {
 export type {
   SeenIdCacheOptions,
 } from "./seen-id-cache.js";
+
+export {
+  NotificationCoalescer,
+} from "./notification-coalescer.js";
+
+export type {
+  CoalescedNotification,
+  CoalescerIO,
+  NotificationCoalescerOptions,
+} from "./notification-coalescer.js";

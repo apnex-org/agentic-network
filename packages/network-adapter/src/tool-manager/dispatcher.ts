@@ -38,6 +38,8 @@ import type { McpAgentClient } from "../kernel/mcp-agent-client.js";
 import { PollBackstop, type PollBackstopOptions } from "../kernel/poll-backstop.js";
 import type { DrainedPendingAction } from "../kernel/state-sync.js";
 import type { CachedCatalog } from "./tool-catalog-cache.js";
+import { ClaimableDigestTracker } from "./claimable-digest-tracker.js";
+import { WorkLeaseTracker } from "./work-lease-tracker.js";
 
 export interface DispatcherClientInfo {
   name: string;
@@ -307,6 +309,21 @@ export function injectQueueItemId(
   return { ...args, sourceQueueItemId: queueItemId };
 }
 
+// idea-355 §4.3 (review fix) — tight timeout on the wake/stall reconcile's Hub
+// read. The liveness heartbeat now runs concurrently with the reconcile (see
+// PollBackstop.tickHeartbeat), but this still bounds how long the reconcile can
+// hold the heartbeat cadence (heartbeatInFlight) and resource use. On timeout
+// the read is treated as a failed read (AC3 — tracker skipped, no false replay).
+const WAKE_STALL_READ_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
+
 export function createSharedDispatcher(
   opts: SharedDispatcherOptions,
 ): SharedDispatcher {
@@ -465,6 +482,118 @@ export function createSharedDispatcher(
     },
   };
 
+  // idea-355 §4.3 — kernel-internal queue wake/stall reconcile. Hoisted from the
+  // claude shim so EVERY host gets it via the dispatcher heartbeat tick with ZERO
+  // shim wiring (the shim that wires none of these seams still emits via
+  // notificationHooks on a tick). The trackers are per-dispatcher-instance and
+  // persist ACROSS ticks — the level-triggered, ID-keyed dedup state must survive
+  // tick-to-tick or every tick re-emits (digest spam).
+  const claimableDigest = new ClaimableDigestTracker();
+  const workLeases = new WorkLeaseTracker();
+  let wakeStallInFlight = false;
+
+  // The reconcile body. Drives W1 (inbound claimable digest), W2 (outbound
+  // stall-prompt), W3 (emit-only status log). Invoked from the heartbeat tick
+  // below (wrapped in its own try/catch alongside the host live-refresh hook).
+  async function runWakeStallReconcile(): Promise<void> {
+    // Invariant: in-flight latch so overlapping ticks don't double-emit. The
+    // gates below run BEFORE the latch is taken, so an early return never needs
+    // to release it.
+    if (wakeStallInFlight) return;
+
+    const agent = opts.getAgent();
+    // Gate on a live streaming agent (the call path requires it anyway).
+    if (!agent || agent.state !== "streaming") return;
+    // Invariant: gate on identityReady — role + agentId come from the post-
+    // handshake identity; a pre-handshake tick would read an undefined identity
+    // and list_ready_work the wrong (or empty) set.
+    const agentId = agent.getMetrics?.().agentId;
+    if (!agentId) return;
+    const role = opts.pollBackstop?.role;
+    if (!role) return;
+
+    wakeStallInFlight = true;
+    try {
+      const idle = activeCallCount === 0;
+      const nowMs = Date.now();
+      let claimableCount = 0;
+
+      // W1 — inbound claimable digest. Read the CALLER-CLAIMABLE set via the
+      // stable list_ready_work contract with scopeToCaller (idea-353 WI-2.1 /
+      // audit-4265: the Hub applies claim_work's FULL predicate — deps + role +
+      // WIP-cap + quarantine — so the digest never over-reports what this agent
+      // can actually claim; AC5 strict parity). On a failed read, skip the
+      // tracker entirely so a transient empty/aborted read cannot manufacture a
+      // false 0→N replay (AC3).
+      try {
+        const raw = await withTimeout(
+          agent.call(
+            "list_ready_work",
+            { role, scopeToCaller: true },
+            { internal: true },
+          ),
+          WAKE_STALL_READ_TIMEOUT_MS,
+          "list_ready_work wake/stall read",
+        );
+        const items = (raw as { items?: Array<{ id?: unknown }> } | null)?.items;
+        if (Array.isArray(items)) {
+          const claimableIds = items
+            .map((i) => i?.id)
+            .filter((id): id is string => typeof id === "string");
+          claimableCount = claimableIds.length;
+          const decision = claimableDigest.reconcile({ claimableIds, isIdle: idle });
+          if (decision.emit) {
+            router.route({
+              kind: "notification.actionable",
+              event: {
+                event: "work_claimable_digest",
+                data: { role, count: decision.count, newCount: decision.newCount },
+              },
+            });
+            log(
+              `[idea-353] inbound digest emitted — ${decision.count} claimable (${decision.newCount} new) for ${role}`,
+            );
+          }
+        }
+      } catch (err) {
+        log(
+          `[idea-353] list_ready_work tick failed (non-fatal): ${(err as Error)?.message ?? err}`,
+        );
+      }
+
+      // W2 — outbound stall-prompt. Idle-gated: never pester a visibly-
+      // progressing holder (an in-flight CallTool = active progress). A held
+      // lease past ~60% of its window without a renew gets ONE nudge.
+      if (idle) {
+        for (const due of workLeases.dueForStallPrompt(nowMs)) {
+          router.route({
+            kind: "notification.actionable",
+            event: {
+              event: "work_lease_stall",
+              data: { workId: due.workId, msUntilExpiry: due.msUntilExpiry },
+            },
+          });
+          workLeases.markPrompted(due.workId);
+          log(
+            `[idea-353] outbound stall-prompt emitted — ${due.workId} (~${Math.round(due.msUntilExpiry / 60000)}m left)`,
+          );
+        }
+      }
+
+      // W3 — emit-only Agent.status idle/stall telemetry seam. Thin + non-gating.
+      const heldLeases = workLeases.size();
+      const statusState = !idle ? "working" : heldLeases > 0 ? "holding" : "idle";
+      log(
+        `[idea-353][agent-status] state=${statusState} idle=${idle} claimable=${claimableCount} heldLeases=${heldLeases}`,
+      );
+    } finally {
+      // Invariant: release the latch on BOTH success and error — a thrown
+      // reconcile must not wedge the latch (that would silently disable the
+      // wake forever).
+      wakeStallInFlight = false;
+    }
+  }
+
   // Mission-56 W3.3: PollBackstop construction (opt-in via opts.pollBackstop).
   // The backstop fires `list_messages({status:"new", since:<lastSeen>})`
   // periodically and routes each delta Message through the same
@@ -472,6 +601,12 @@ export function createSharedDispatcher(
   // push+poll race overlap. Polled Messages also fire claim_message
   // (the router invocation goes through onActionableEvent which
   // already includes fireClaimMessage).
+  // idea-355 §4.3 — the kernel owns the heartbeat tick. The host's optional
+  // onHeartbeatTick (e.g. claude's bug-180 tool-surface live-refresh, which is
+  // host-coupled via mcpServer.sendToolListChanged) and the kernel wake/stall
+  // reconcile SHARE the tick; each runs in its OWN try/catch (invariant #5) so a
+  // failing or slow one cannot break or block the other.
+  const hostHeartbeatTick = opts.pollBackstop?.onHeartbeatTick;
   const pollBackstop = opts.pollBackstop
     ? new PollBackstop({
         ...opts.pollBackstop,
@@ -479,6 +614,24 @@ export function createSharedDispatcher(
         onPolledMessage: (event) => {
           router.route({ kind: "notification.actionable", event });
           fireClaimMessage(event);
+        },
+        onHeartbeatTick: async () => {
+          if (hostHeartbeatTick) {
+            try {
+              await hostHeartbeatTick();
+            } catch (err) {
+              log(
+                `[tick] host heartbeat hook threw (non-fatal): ${(err as Error)?.message ?? err}`,
+              );
+            }
+          }
+          try {
+            await runWakeStallReconcile();
+          } catch (err) {
+            log(
+              `[tick] wake/stall reconcile threw (non-fatal): ${(err as Error)?.message ?? err}`,
+            );
+          }
         },
       })
     : undefined;
@@ -740,10 +893,20 @@ export function createSharedDispatcher(
         try {
           result = await agent.call(name, outgoingArgs);
           log(`[CallTool] ${name} agent.call returned in ${Date.now() - agentCallStart}ms`);
-          // idea-353 W2: surface the (method, args, result) so the host can
-          // track this agent's own work-lease state locally (claim/renew open
-          // a lease window; complete/abandon/release/block close it) without a
-          // Hub round-trip. Best-effort — never disturb the tool-call return.
+          // idea-355 §4.3 (invariant #3) — kernel-side W2 observer. Feed this
+          // agent's own work-verb results to the lease tracker (claim/renew/start
+          // open a lease window; complete/abandon/release/block close it) so the
+          // heartbeat tick's stall-prompt has a populated lease map. Hoisted from
+          // the claude shim's onToolCallResult so wake/stall needs ZERO shim
+          // wiring. Best-effort — its own try/catch (review nit: symmetry with the
+          // host hook below) so a malformed result never disturbs the tool return.
+          try {
+            workLeases.observe(name, outgoingArgs, result, Date.now());
+          } catch (obsErr) {
+            log(`[idea-353] kernel lease observe threw (non-fatal): ${(obsErr as Error)?.message ?? obsErr}`);
+          }
+          // idea-353 W2: the optional host hook still fires for any host-specific
+          // observation (the kernel observer above is the lease-tracking source).
           if (opts.onToolCallResult) {
             try {
               opts.onToolCallResult(name, outgoingArgs, result);
