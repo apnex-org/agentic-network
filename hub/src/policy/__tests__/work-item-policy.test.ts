@@ -169,6 +169,35 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     await router.handle("list_ready_work", { role: "verifier" }, ctxFor(stub, "engineer"));
     expect(stub.calls[0].args[0]).toBe("verifier");
   });
+
+  it("list_ready_work scopeToCaller: threads the caller agentId into the agent-scoped projection (AC5 / idea-353 WI-2.1)", async () => {
+    const stub = makeStub({ listReadyForRole: () => ({ items: [sampleItem({ status: "ready" })], truncated: false }) });
+    const reg = stubRegistry({ getAgent: async () => ({ quarantined: false }) });
+    const r = await router.handle("list_ready_work", { scopeToCaller: true }, ctxFor(stub, "engineer", reg));
+    const b = body(r);
+    expect(b.scopedToCaller).toBe(true);
+    expect(b.count).toBe(1);
+    expect(stub.calls[0].args[0]).toBe("engineer");          // role
+    expect(stub.calls[0].args[2]).toBe("anonymous-engineer"); // caller agentId threaded → WIP-cap parity
+  });
+
+  it("list_ready_work scopeToCaller: a QUARANTINED caller gets count 0 + the projection is NOT called (parity with claim_work)", async () => {
+    const stub = makeStub({ listReadyForRole: () => ({ items: [sampleItem({ status: "ready" })], truncated: false }) });
+    const reg = stubRegistry({ getAgent: async () => ({ quarantined: true }) });
+    const r = await router.handle("list_ready_work", { scopeToCaller: true }, ctxFor(stub, "engineer", reg));
+    const b = body(r);
+    expect(b.count).toBe(0);
+    expect(b.items).toEqual([]);
+    expect(b.scopedToCaller).toBe(true);
+    expect(stub.calls.length).toBe(0); // short-circuited BEFORE the projection, like the claim gate
+  });
+
+  it("list_ready_work default (non-scoped): does NOT thread agentId — the role view + D-1 R1 seam preserved", async () => {
+    const stub = makeStub({ listReadyForRole: () => ({ items: [], truncated: false }) });
+    const r = await router.handle("list_ready_work", {}, ctxFor(stub, "engineer"));
+    expect(body(r).scopedToCaller).toBeUndefined();
+    expect(stub.calls[0].args[2]).toBeUndefined(); // role-view only, no agent scoping
+  });
 });
 
 describe("work-item-policy 4b-ii thrash-quarantine wiring", () => {

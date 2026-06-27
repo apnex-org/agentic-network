@@ -242,4 +242,28 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
     // projection now matches the claim predicate (no eligible-role-deps-unmet divergence).
     await expect(repo.claimWorkItem(blocked.id, "agent-verifier-x", "verifier")).rejects.toThrow(/dependencies not done/);
   }, OP_TIMEOUT);
+
+  it("listReadyForRole agent-scoped: a WIP-capped caller's projection is EMPTY (AC5 parity / idea-353 WI-2.1)", async () => {
+    const MAXED = "agent-wip-maxed";
+    const FRESH = "agent-wip-fresh";
+    const ROLE = "engineer";
+    // Default WIP cap is 3 — claim 3 ready items to max MAXED out.
+    for (let i = 0; i < 3; i++) {
+      const w = await repo.createWorkItem({ type: "task", roleEligibility: [ROLE] });
+      expect((await repo.claimWorkItem(w.id, MAXED, ROLE))?.status).toBe("claimed");
+    }
+    // A fresh claimable item for the same role (no deps, role-eligible).
+    const target = await repo.createWorkItem({ type: "task", roleEligibility: [ROLE] });
+
+    // Non-agent-scoped projection (the role view / D-1 R1 seam) STILL lists it — unchanged.
+    expect(new Set((await repo.listReadyForRole(ROLE, 500)).items.map((w) => w.id)).has(target.id)).toBe(true);
+
+    // Agent-scoped projection for the MAXED caller → empty (can't claim anything).
+    expect((await repo.listReadyForRole(ROLE, 500, MAXED)).items).toEqual([]);
+    // Parity with the AUTHORITY: claim_work rejects the maxed caller with the same predicate.
+    await expect(repo.claimWorkItem(target.id, MAXED, ROLE)).rejects.toThrow(/WIP cap exceeded/);
+
+    // A DIFFERENT, under-cap caller → the agent-scoped projection DOES include it.
+    expect(new Set((await repo.listReadyForRole(ROLE, 500, FRESH)).items.map((w) => w.id)).has(target.id)).toBe(true);
+  }, OP_TIMEOUT);
 });

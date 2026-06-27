@@ -779,13 +779,15 @@ async function main(): Promise<void> {
     const nowMs = Date.now();
     let claimableCount = 0;
 
-    // W1 — inbound claimable digest. Read the truly-claimable set via the
-    // stable list_ready_work contract (post-bug-181: deps+role filtered
-    // Hub-side; D-1 R1 no-touch seam). On a failed read, skip the tracker
-    // entirely so a transient empty/aborted read cannot manufacture a false
-    // 0→N replay (AC3).
+    // W1 — inbound claimable digest. Read the CALLER-CLAIMABLE set via the
+    // stable list_ready_work contract with scopeToCaller (idea-353 WI-2.1 /
+    // audit-4265: the Hub applies claim_work's FULL predicate — deps + role +
+    // WIP-cap + quarantine — so the digest count never over-reports what this
+    // agent can actually claim; AC5 strict parity). On a failed read, skip the
+    // tracker entirely so a transient empty/aborted read cannot manufacture a
+    // false 0→N replay (AC3).
     try {
-      const raw = await a.call("list_ready_work", { role: config.role }, { internal: true });
+      const raw = await a.call("list_ready_work", { role: config.role, scopeToCaller: true }, { internal: true });
       const items = (raw as { items?: Array<{ id?: unknown }> } | null)?.items;
       if (Array.isArray(items)) {
         const claimableIds = items
