@@ -55,6 +55,7 @@ export {
   buildHandshakePayload,
   performHandshake,
   makeStdioFatalHalt,
+  readRequiredAgentName,
 } from "./kernel/handshake.js";
 export type {
   HandshakeClientMetadata,
@@ -147,7 +148,7 @@ export {
 } from "./prompt-format.js";
 export type { PromptFormatConfig } from "./prompt-format.js";
 
-export { appendNotification } from "./notification-log.js";
+export { appendNotification, buildPendingTaskNotification } from "./notification-log.js";
 export type {
   NotificationLogEntry,
   NotificationLogOptions,

@@ -23,6 +23,8 @@ import {
   McpAgentClient,
   McpTransport,
   appendNotification,
+  buildPendingTaskNotification,
+  readRequiredAgentName,
   buildPromptText,
   buildToastMessage,
   createSharedDispatcher,
@@ -542,10 +544,9 @@ async function connectToHub(agentName: string): Promise<void> {
         llmModel: process.env.HUB_LLM_MODEL,
         onFatalHalt,
         onPendingTask: (task) => {
-          appendNotification(
-            { event: "task_issued", data: task, action: "Pick up with get_task" },
-            { logPath: notificationLogPath },
-          );
+          appendNotification(buildPendingTaskNotification(task), {
+            logPath: notificationLogPath,
+          });
         },
         onPendingActionItem: (item) => {
           pendingActionItemHandler(item);
@@ -791,15 +792,11 @@ export const HubPlugin: Plugin = async (ctx) => {
         log(`Session list failed: ${err}`);
       }
 
-      // 2. idea-251 D-prime Phase 2: identity from OIS_AGENT_NAME env. REQUIRED;
-      // log + abort connect-flow if absent (OpenCode plugin can't process.exit;
-      // operator sees the loud-error in plugin log).
-      const agentName = process.env.OIS_AGENT_NAME?.trim();
-      if (!agentName) {
-        log("[Handshake] FATAL: OIS_AGENT_NAME env var required (idea-251 D-prime). Set in ~/.config/apnex-agents/{name}.env. Plugin inert until restart.");
-        return;
-      }
-      log(`[Handshake] OIS_AGENT_NAME=${agentName}`);
+      // 2. idea-251 D-prime Phase 2 identity (hoisted to the kernel in idea-355
+      // SLICE-1). The shim keeps only its host-specific abort: OpenCode can't
+      // process.exit, so it returns — plugin inert until restart.
+      const agentName = readRequiredAgentName(log);
+      if (!agentName) return;
 
       // 3. Connect to remote Hub
       try {
