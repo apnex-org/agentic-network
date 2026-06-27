@@ -72,6 +72,12 @@ export class BugRepositorySubstrate implements IBugStore {
       surfacedBy?: string;
       backlink?: CascadeBacklink;
       createdBy?: EntityProvenance;
+      // bug-118 — direct lineage for the manual create_bug path. The cascade
+      // path carries thread/action via `backlink`; a manually-reported bug from
+      // a thread/mission context passes these so it isn't an orphan in the
+      // lineage graph. linkedMissionId is set from sourceMissionId.
+      sourceThreadId?: string;
+      sourceMissionId?: string;
     } = {},
   ): Promise<Bug> {
     const num = await this.counter.next("bugCounter");
@@ -86,11 +92,11 @@ export class BugRepositorySubstrate implements IBugStore {
       class: options.classHint ?? null,
       tags: options.tags ?? [],
       sourceIdeaId: options.sourceIdeaId ?? null,
-      sourceThreadId: options.backlink?.sourceThreadId ?? null,
+      sourceThreadId: options.backlink?.sourceThreadId ?? options.sourceThreadId ?? null,
       sourceActionId: options.backlink?.sourceActionId ?? null,
       sourceThreadSummary: options.backlink?.sourceThreadSummary ?? null,
       linkedTaskIds: [],
-      linkedMissionId: null,
+      linkedMissionId: options.sourceMissionId ?? null,
       fixCommits: [],
       fixRevision: null,
       surfacedBy: options.surfacedBy ?? null,

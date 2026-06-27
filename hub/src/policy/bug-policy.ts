@@ -39,6 +39,11 @@ async function createBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   const tags = args.tags as string[] | undefined;
   const surfacedBy = args.surfacedBy as string | undefined;
   const sourceIdeaId = args.sourceIdeaId as string | undefined;
+  // bug-118 — lineage: carry the thread/mission this bug was surfaced from so a
+  // manually-reported bug isn't an orphan in the lineage graph (the cascade path
+  // already carries this via a backlink; the create_bug tool path was blind).
+  const sourceThreadId = args.sourceThreadId as string | undefined;
+  const sourceMissionId = args.sourceMissionId as string | undefined;
 
   const createdBy = await resolveCreatedBy(ctx);
   const bug = await ctx.stores.bug.createBug(title, description, severity, {
@@ -47,6 +52,8 @@ async function createBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
     sourceIdeaId,
     surfacedBy,
     createdBy,
+    sourceThreadId,
+    sourceMissionId,
   });
 
   // Uses the shared helper so the cascade path (cascade-actions/
@@ -193,6 +200,8 @@ export function registerBugPolicy(router: PolicyRouter): void {
       tags: z.array(z.string()).optional().describe("Open-ended categorization tags"),
       surfacedBy: z.string().optional().describe("Discovery channel: itw-smoke | unit-test | prod-audit | integration-test | code-review | llm-self-review"),
       sourceIdeaId: z.string().optional().describe("For bugs migrated from bug-tagged Ideas — links back to the source idea"),
+      sourceThreadId: z.string().optional().describe("Lineage (bug-118): the thread this bug was surfaced from — links the bug into the thread's lineage graph"),
+      sourceMissionId: z.string().optional().describe("Lineage (bug-118): the mission this bug relates to — sets the bug's linkedMissionId"),
     },
     createBug,
   );

@@ -89,6 +89,10 @@ export interface IBugStore {
       surfacedBy?: string;
       backlink?: CascadeBacklink;
       createdBy?: EntityProvenance;
+      // bug-118 — direct lineage for the manual create_bug path (cascade path
+      // carries thread/action via `backlink`). sourceMissionId → linkedMissionId.
+      sourceThreadId?: string;
+      sourceMissionId?: string;
     }
   ): Promise<Bug>;
 

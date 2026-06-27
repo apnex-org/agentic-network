@@ -60,6 +60,7 @@ import type {
   WireEvent,
   WireEventHandler,
 } from "./transport.js";
+import { SlotGate } from "./slot-gate.js";
 import type { ILogger } from "../logger.js";
 import { normalizeToILogger } from "../logger.js";
 
@@ -90,7 +91,23 @@ interface ResolvedConfig {
   firstKeepaliveDeadline: number;
   sseWatchdogInterval: number;
   reconnectDelay: number;
+  maxInFlight: number;
   getLastEventId?: () => string | undefined;
+}
+
+const DEFAULT_MAX_IN_FLIGHT = 8;
+
+/**
+ * bug-171: resolve the in-flight concurrency cap. Explicit config wins;
+ * otherwise `OIS_ADAPTER_MAX_INFLIGHT` env var (integer); otherwise
+ * {@link DEFAULT_MAX_IN_FLIGHT}. Floored at 1 (a cap of 0 would deadlock every
+ * request) so a malformed override can never wedge the wire.
+ */
+function resolveMaxInFlight(explicit?: number): number {
+  const fromEnv = parseInt(process.env.OIS_ADAPTER_MAX_INFLIGHT ?? "", 10);
+  const chosen =
+    explicit ?? (Number.isFinite(fromEnv) ? fromEnv : DEFAULT_MAX_IN_FLIGHT);
+  return Math.max(1, Math.floor(chosen));
 }
 
 export class McpTransport implements ITransport {
@@ -117,7 +134,12 @@ export class McpTransport implements ITransport {
   private totalReconnects = 0;
   private consecutiveReconnects = 0;
   private lastReconnectCause?: WireReconnectCause;
-  private requestsInFlight = 0;
+
+  // bug-171: bounded-concurrency gate for `request()` — caps concurrent
+  // in-flight calls at `cfg.maxInFlight` so a parallel read burst cannot
+  // overwhelm + drop the single shared wire. Excess callers FIFO-queue for a
+  // slot. Constructed in the ctor once `cfg.maxInFlight` is resolved.
+  private readonly slots: SlotGate;
 
   // Re-entrancy guard: prevents overlapping reconnects.
   private reconnecting = false;
@@ -133,9 +155,11 @@ export class McpTransport implements ITransport {
       firstKeepaliveDeadline: config.firstKeepaliveDeadline ?? 60_000,
       sseWatchdogInterval: config.sseWatchdogInterval ?? 30_000,
       reconnectDelay: config.reconnectDelay ?? 5_000,
+      maxInFlight: resolveMaxInFlight(config.maxInFlight),
       getLastEventId: config.getLastEventId,
     };
     this.log = normalizeToILogger(config.logger, "McpTransport");
+    this.slots = new SlotGate(this.cfg.maxInFlight);
   }
 
   // ── ITransport: public surface ──────────────────────────────────────
@@ -190,11 +214,15 @@ export class McpTransport implements ITransport {
     method: string,
     params: Record<string, unknown>
   ): Promise<unknown> {
-    if (this._wireState !== "connected" || !this.client) {
-      throw new Error(`McpTransport.request: wire is ${this._wireState}`);
-    }
-    this.requestsInFlight++;
+    // bug-171: acquire a concurrency slot BEFORE the wire-state guard so the
+    // guard (and the call) run at slot-grant time, not enqueue time — a caller
+    // parked through a wire drop fails per-call here instead of NPE-ing on a
+    // torn-down client. The slot is always released in `finally`.
+    await this.slots.acquire();
     try {
+      if (this._wireState !== "connected" || !this.client) {
+        throw new Error(`McpTransport.request: wire is ${this._wireState}`);
+      }
       const result = await this.client.callTool({
         name: method,
         arguments: params,
@@ -209,7 +237,7 @@ export class McpTransport implements ITransport {
       }
       return null;
     } finally {
-      this.requestsInFlight--;
+      this.slots.release();
     }
   }
 
@@ -250,7 +278,8 @@ export class McpTransport implements ITransport {
       consecutiveReconnects: this.consecutiveReconnects,
       lastReconnectCause: this.lastReconnectCause,
       lastKeepaliveAt: this.lastKeepaliveAt || undefined,
-      requestsInFlight: this.requestsInFlight,
+      requestsInFlight: this.slots.inFlight,
+      requestsQueued: this.slots.queued,
     };
   }
 
