@@ -449,6 +449,33 @@ Each shim does its own host-specific bootstrap (how to discover URL +
 token, how to format toasts, how to persist `globalInstanceId`) and
 funnels everything else through `McpAgentClient`.
 
+### 8.1 SHIM-BOUNDARY note — tool-surface reconciler `readServedRevision` (idea-355 SLICE-1T)
+
+Both the claude and opencode shims drive the **same** kernel
+`ToolSurfaceReconciler` (bug-180 / FR-21) off the same two triggers — L1
+`identityReady` (seed) + L2 the pollBackstop heartbeat tick — and share the same
+hoisted `/health` revision fetcher (`makeFetchLiveToolSurfaceRevision`). They
+differ in exactly one injected dependency, and the difference is a **conscious,
+documented shim divergence — not drift**:
+
+| Shim     | `readServedRevision`                                  | Why                                                                                                 |
+| -------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| claude   | `() => readCache(WORK_DIR)?.toolSurfaceRevision`      | claude persists an on-disk **tool-catalog cache**; the pre-identity probe serves it, so the served revision is a real baseline that can be stale vs live. |
+| opencode | `() => null`                                          | opencode has **no** persistent tool-catalog cache (its MCP sessions are per-Initialize, Bun.serve, in-memory). There is no served-revision to baseline against. |
+
+Consequence of `readServedRevision = () => null` for opencode: the first
+reconcile (the L1 `identityReady` seed pass) baselines `appliedRevision` from
+**live** and emits **nothing** — so there is no spurious first `list_changed`.
+A redeploy that changes the surface mid-session is then caught by the **L2
+heartbeat** backstop (applied→live drift within one heartbeat interval), which
+fans `sendToolListChanged()` over every active proxy server + raises the
+opencode toast. claude additionally catches the *stale-cache-vs-live* delta at
+seed time precisely because it has a cache to compare against; opencode has no
+such surface to go stale, so it loses nothing by seeding from live.
+
+This single-dependency divergence is the entire shim difference; the reconcile
+decision, the fetcher, and both trigger points are shared kernel code.
+
 ## 9. Adding a new shim
 
 The checklist:

@@ -21,7 +21,6 @@ import type { Plugin } from "@opencode-ai/plugin";
 import type { Event } from "@opencode-ai/sdk";
 import {
   McpAgentClient,
-  McpTransport,
   appendNotification,
   buildPendingTaskNotification,
   readRequiredAgentName,
@@ -37,6 +36,8 @@ import {
   getActionText,
   isPulseEvent,
   reconstructDrainedAction,
+  ToolSurfaceReconciler,
+  makeFetchLiveToolSurfaceRevision,
   type HubConfig,
   type FileLogger,
   type AgentEvent,
@@ -128,7 +129,12 @@ let proxyPort = 0;
 let sdkClient: any = null;
 let currentSessionId: string | null = null;
 let config: HubConfig;
-let lastToolHash = "";
+// idea-355 SLICE-1T — opencode's tool-surface is now owned by the kernel
+// ToolSurfaceReconciler (replacing the local computeToolHash/syncTools hash
+// loop). Lazy: constructed in connectToHub once config.hubUrl is known (the
+// dispatcher is built at module-init before config exists), then driven by the
+// L1 identityReady trigger + the L2 heartbeat tick. null until then.
+let reconciler: ToolSurfaceReconciler | null = null;
 const activeProxyServers: Server[] = [];
 
 // Shared MCP-boundary dispatcher. Layer-1c factory; see Design v1.2.
@@ -172,6 +178,15 @@ const dispatcher = createSharedDispatcher({
     role: process.env.OIS_HUB_ROLE ?? "engineer",
     firstTimerEnabled: true,
     log: (m) => log(m),
+    // idea-355 SLICE-1T / bug-180 L2 — tool-surface revision-poll backstop on
+    // the heartbeat cadence. Catches a Hub redeploy that changes the surface
+    // WHILE a session stays connected (the case L1's identityReady misses — no
+    // reconnect, so no fresh identityReady). Lazy `reconciler` ref (assigned in
+    // connectToHub once config.hubUrl is known); the first tick fires ≥1
+    // interval after start() so it is always populated.
+    onHeartbeatTick: async () => {
+      await reconciler?.reconcile("heartbeat");
+    },
   },
 });
 
@@ -272,58 +287,60 @@ const coalescer = new NotificationCoalescer({
 });
 
 // ── Tool discovery sync ──────────────────────────────────────────────
+//
+// idea-355 SLICE-1T — the local computeToolHash + syncTools hash loop is
+// DELETED; opencode's tool-surface is now owned by the kernel
+// ToolSurfaceReconciler (bug-180 / FR-21), the same primitive the claude shim
+// uses. The reconciler is constructed in connectToHub and driven by:
+//   - L1 (seed/primary): handleConnectionStateChange on `state === "streaming"`
+//     → reconciler.reconcile("identityReady");
+//   - L2 (backstop): the pollBackstop heartbeat tick → reconcile("heartbeat").
+// On applied-vs-live /health revision drift the reconciler fans
+// `sendToolListChanged()` over activeProxyServers + raises the opencode toast.
+// See the SHIM-BOUNDARY note in docs/network/00-network-adapter-architecture.md:
+// opencode has NO persistent tool-catalog cache, so its reconciler uses
+// readServedRevision=() => null — the seed pass baselines appliedRevision from
+// live and does NOT emit; the L2 heartbeat covers mid-session redeploys.
 
-function computeToolHash(tools: unknown[]): string {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sorted = [...tools].sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""));
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const canonical = sorted.map((t: any) => `${t.name}:${JSON.stringify(t.inputSchema || {})}`).join("|");
-  let hash = 0;
-  for (let i = 0; i < canonical.length; i++) {
-    hash = ((hash << 5) - hash + canonical.charCodeAt(i)) | 0;
+// idea-355 SLICE-1T — the tool-surface drift emit: fan `sendToolListChanged`
+// over the LIVE activeProxyServers array (the exact fan-out the old syncTools
+// did at ~310-317) + raise the opencode toast (host-unique shim UX). Iterating
+// the live array — not a snapshot — means a session that initializes AFTER the
+// reconciler was built is still notified on the next drift. Module-level so the
+// production reconciler closure and the harness test exercise the SAME path.
+function emitToolListChanged(): void {
+  for (const server of activeProxyServers) {
+    // F1 (review): per-server isolation the deleted syncTools had — a mid-close
+    // session's sendToolListChanged rejects, and an unhandled rejection is
+    // process-fatal under Bun. Catch + log; never let one dead session take the
+    // others (or the process) down.
+    void server
+      .sendToolListChanged()
+      .catch((err) => log(`[ToolSurface] sendToolListChanged failed (non-fatal): ${err}`));
   }
-  return hash.toString(36);
+  void showToast("Hub tools updated — re-enumerating", "success");
 }
 
-async function syncTools(): Promise<void> {
-  if (!hubAdapter) return;
-  const s = hubAdapter.state;
-  if (s !== "streaming" && s !== "synchronizing") return;
-
-  try {
-    const transport = hubAdapter.getTransport() as McpTransport;
-    const tools = await transport.listToolsRaw();
-    const newHash = computeToolHash(tools);
-    const isFirstSync = lastToolHash === "";
-
-    if (isFirstSync) {
-      lastToolHash = newHash;
-      log(`[ToolSync] Initial tool hash: ${newHash} (${tools.length} tools)`);
-    } else if (newHash === lastToolHash) {
-      log(`[ToolSync] Tools unchanged (hash: ${newHash})`);
-      return;
-    } else {
-      log(`[ToolSync] Tools changed! Old: ${lastToolHash}, New: ${newHash} (${tools.length} tools)`);
-      lastToolHash = newHash;
-    }
-
-    for (const server of activeProxyServers) {
-      try {
-        await server.sendToolListChanged();
-        log(`[ToolSync] Sent tools/list_changed to proxy server`);
-      } catch (err) {
-        log(`[ToolSync] Failed to send tools/list_changed: ${err}`);
-      }
-    }
-
-    await showToast(
-      isFirstSync ? "Hub connected — tools available" : "Hub tools updated following reconnection",
-      "success",
-    );
-    log(`[ToolSync] Tool sync complete — OpenCode notified`);
-  } catch (err) {
-    log(`[ToolSync] Failed to sync tools: ${err}`);
-  }
+// idea-355 SLICE-1T — build the kernel ToolSurfaceReconciler for opencode.
+// `fetchLiveRevision` defaults to the hoisted /health fetcher; the harness test
+// injects a fake to drive seed-vs-drift deterministically. readServedRevision
+// is the deliberate SHIM-BOUNDARY divergence (() => null — opencode has no
+// persistent tool-catalog cache; claude reads its on-disk cache here): the seed
+// pass baselines appliedRevision from live WITHOUT emitting, the L2 heartbeat
+// catches mid-session redeploys.
+function buildToolSurfaceReconciler(
+  hubUrl: string,
+  fetchLiveRevision: () => Promise<string | null> = makeFetchLiveToolSurfaceRevision({
+    hubUrl,
+    log,
+  }),
+): ToolSurfaceReconciler {
+  return new ToolSurfaceReconciler({
+    fetchLiveRevision,
+    readServedRevision: () => null,
+    emitListChanged: emitToolListChanged,
+    log,
+  });
 }
 
 // Mission-57 W3 pulse detection: `isPulseEvent` is now imported from
@@ -390,7 +407,12 @@ function handleConnectionStateChange(
 ): void {
   log(`Connection: ${prev} → ${state}${reason ? ` (${reason})` : ""}`);
   if (state === "streaming") {
-    void syncTools();
+    // idea-355 SLICE-1T / bug-180 L1 (primary + seed). Once identity resolves
+    // the live /health revision is fetchable + the dispatcher serves the live
+    // surface. With readServedRevision=() => null the FIRST pass seeds
+    // appliedRevision from live and does NOT emit (no spurious list_changed);
+    // a later in-life redeploy then drifts applied→live and fans the emit.
+    void reconciler?.reconcile("identityReady");
   }
 }
 
@@ -489,6 +511,13 @@ async function connectToHub(agentName: string): Promise<void> {
   // / handleConnectionStateChange) supplied at construction. Replaces the deleted
   // buildPluginCallbacks wrapper + its router-bypassing surface path.
   hubAdapter.setCallbacks(dispatcher.callbacks);
+
+  // idea-355 SLICE-1T / bug-180 — construct the kernel tool-surface reconciler
+  // now that config.hubUrl is known (the dispatcher is built at module-init,
+  // before config exists — so the reconciler is built here, claude-style lazy
+  // ref). It MUST exist before hubAdapter.start() so the streaming state-change
+  // (which fires the L1 seed reconcile) finds it populated.
+  reconciler = buildToolSurfaceReconciler(config.hubUrl);
 
   await hubAdapter.start();
   log("Connected to remote Hub via McpAgentClient");
@@ -744,5 +773,26 @@ export const _testOnly = {
   getHubAdapter: () => hubAdapter,
   setHubAdapter: (agent: McpAgentClient | null) => {
     hubAdapter = agent;
+  },
+  // idea-355 SLICE-1T — tool-surface reconciler harness hooks. Build a
+  // reconciler over the SAME production emitListChanged/readServedRevision wiring
+  // with an injectable fetchLiveRevision, and manipulate the live
+  // activeProxyServers array, so the test can prove the kernel reconciler now
+  // owns opencode's tool-surface (seed-no-emit + multi-server drift fan-out)
+  // without a live Hub or Bun.
+  buildToolSurfaceReconciler,
+  // F2 (review): set the MODULE reconciler the PRODUCTION triggers use
+  // (pollBackstop.onHeartbeatTick + handleConnectionStateChange→streaming), so a
+  // test can pin that the production heartbeat wiring actually drives reconcile →
+  // emit (the L2-silently-disabled seam that would waste steve's one-shot restart).
+  setReconciler: (r: ToolSurfaceReconciler | null) => {
+    reconciler = r;
+  },
+  pushProxyServer: (s: Server) => activeProxyServers.push(s),
+  clearProxyServers: () => {
+    activeProxyServers.length = 0;
+  },
+  setSdkClient: (c: unknown) => {
+    sdkClient = c;
   },
 };

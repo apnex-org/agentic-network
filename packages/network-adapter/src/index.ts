@@ -148,6 +148,12 @@ export type {
   ReconcileOutcome,
 } from "./tool-manager/tool-surface-reconciler.js";
 
+// idea-355 SLICE-1T — the Hub /health toolSurfaceRevision fetcher, hoisted from
+// the shims so both share ONE network mechanism (pure; the cache side-effect
+// stays shim-side).
+export { makeFetchLiveToolSurfaceRevision } from "./tool-manager/health-revision.js";
+export type { FetchLiveToolSurfaceRevisionOptions } from "./tool-manager/health-revision.js";
+
 // idea-353 — queue wake/stall reconciliation primitives.
 export { ClaimableDigestTracker } from "./tool-manager/claimable-digest-tracker.js";
 export type {

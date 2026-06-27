@@ -26,6 +26,7 @@ import {
   readCache,
   writeCache,
   ToolSurfaceReconciler,
+  makeFetchLiveToolSurfaceRevision,
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,
@@ -347,43 +348,24 @@ async function main(): Promise<void> {
   // tool-catalog-cache.isCacheValid). The `version` field is logged as a
   // diagnostic only — no longer load-bearing for cache correctness.
   let cachedToolSurfaceRevision: string | null = null;
-  const healthUrl = config.hubUrl.replace(/\/mcp(\/.*)?$/, "/health");
 
   // bug-114 + bug-180 — resolve the Hub's live tool-surface revision from
-  // /health. Side-effect: updates the in-memory `cachedToolSurfaceRevision`
-  // (the probe-path invalidation key consumed by getCurrentToolSurfaceRevision
-  // + persistCatalog). Returns the live revision, or null when the fetch fails
-  // or the Hub doesn't report the field — the bug-180 reconciler treats null
-  // as "unknown, trust the cache" and never emits a spurious list_changed.
-  // Plain HTTP, independent of the Hub MCP transport.
+  // /health. The network mechanism (URL derivation + fetch + field extraction)
+  // is single-homed in the kernel `makeFetchLiveToolSurfaceRevision` (idea-355
+  // SLICE-1T); this shim wrapper keeps ONLY its host side-effect: updating the
+  // in-memory `cachedToolSurfaceRevision` (the probe-path invalidation key
+  // consumed by getCurrentToolSurfaceRevision + persistCatalog) on a non-null
+  // result. Returns the live revision, or null when the fetch fails or the Hub
+  // doesn't report the field — the bug-180 reconciler treats null as "unknown,
+  // trust the cache" and never emits a spurious list_changed.
+  const __fetchLiveRev = makeFetchLiveToolSurfaceRevision({
+    hubUrl: config.hubUrl,
+    log,
+  });
   const fetchLiveToolSurfaceRevision = async (): Promise<string | null> => {
-    try {
-      const res = await fetch(healthUrl);
-      if (!res.ok) {
-        log(`[Cache] /health fetch returned status ${res.status} — cache invalidation will trust existing cache`);
-        return null;
-      }
-      const json = (await res.json()) as {
-        version?: unknown;
-        toolSurfaceRevision?: unknown;
-      };
-      if (typeof json.version === "string") {
-        log(`[Cache] Hub version: ${json.version}`);
-      }
-      if (
-        typeof json.toolSurfaceRevision === "string" &&
-        json.toolSurfaceRevision !== ""
-      ) {
-        cachedToolSurfaceRevision = json.toolSurfaceRevision;
-        log(`[Cache] Tool-surface revision resolved: ${cachedToolSurfaceRevision}`);
-        return cachedToolSurfaceRevision;
-      }
-      log(`[Cache] /health returned no toolSurfaceRevision field — cache invalidation will trust existing cache`);
-      return null;
-    } catch (err) {
-      log(`[Cache] /health fetch failed (non-fatal): ${(err as Error).message ?? err}`);
-      return null;
-    }
+    const rev = await __fetchLiveRev();
+    if (rev !== null) cachedToolSurfaceRevision = rev;
+    return rev;
   };
 
   // Warm the probe-path invalidation key once at startup in the background;
