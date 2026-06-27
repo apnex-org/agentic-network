@@ -44,6 +44,10 @@ import {
   type SharedDispatcher,
   type TelemetryEvent,
 } from "@apnex/network-adapter";
+import {
+  NotificationCoalescer,
+  type CoalescedNotification,
+} from "@apnex/message-router";
 import { CognitivePipeline } from "@apnex/cognitive-layer";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -81,7 +85,6 @@ const NETWORK_ADAPTER_PKG_VERSION = (() => {
 })();
 const PROXY_VERSION = OPENCODE_PLUGIN_PKG_VERSION;
 const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
-const RATE_LIMIT_MS = 30_000;
 
 let diagLogPath = "";
 let notificationLogPath = "";
@@ -94,9 +97,7 @@ let proxyPort = 0;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let sdkClient: any = null;
 let currentSessionId: string | null = null;
-let sessionActive = false;
 let config: HubConfig;
-let lastPromptTime = 0;
 let lastToolHash = "";
 const activeProxyServers: Server[] = [];
 
@@ -170,68 +171,14 @@ function log(msg: string): void {
 // the loadConfig call site below. OpenCode keeps no credential abort (can't kill
 // the TUI; it surfaces missing creds via the handshake-fail path).
 
-// ── Rate-limited prompt queue ────────────────────────────────────────
-
-interface QueuedNotification {
-  level: "actionable" | "informational";
-  message: string;
-  promptText: string;
-}
-
-const notificationQueue: QueuedNotification[] = [];
-const deferredBacklog: QueuedNotification[] = [];
-
-// R1 (bug-161 completion): bounded fallback. Notifications buffer in
-// notificationQueue while a session is active and flush on idle. If the session
-// never reaches idle — it dies via session.error / session.deleted, or hangs —
-// the queue would grow unbounded and never surface (the dead-queue class
-// bug-161 first exposed). Cap the buffer: once it hits the cap, flush (surface
-// coalesced) rather than wait for an idle that may never come.
-const NOTIFICATION_QUEUE_FLUSH_CAP = 50;
-
-function isRateLimited(): boolean {
-  return Date.now() - lastPromptTime < RATE_LIMIT_MS;
-}
-
-function buildBacklogSuffix(): string {
-  if (deferredBacklog.length === 0) return "";
-  const lines = [
-    "",
-    `--- Deferred Backlog (${deferredBacklog.length} event${deferredBacklog.length > 1 ? "s" : ""}) ---`,
-    "The following actionable events arrived while you were busy and were deferred.",
-    "Please review and address them after your current task:",
-  ];
-  for (let i = 0; i < deferredBacklog.length; i++) {
-    lines.push(`${i + 1}. ${deferredBacklog[i].promptText}`);
-  }
-  return lines.join("\n");
-}
-
-function drainBacklog(): string {
-  const suffix = buildBacklogSuffix();
-  deferredBacklog.length = 0;
-  return suffix;
-}
-
-async function flushBacklog(): Promise<void> {
-  if (deferredBacklog.length === 0) return;
-  if (!config.autoPrompt) {
-    deferredBacklog.length = 0;
-    return;
-  }
-  const lines = ["You have deferred Hub events that need attention:"];
-  for (let i = 0; i < deferredBacklog.length; i++) {
-    lines.push(`${i + 1}. ${deferredBacklog[i].promptText}`);
-  }
-  lines.push("\nPlease review and address these items.");
-  deferredBacklog.length = 0;
-
-  if (!isRateLimited()) {
-    await promptLLM(lines.join("\n"));
-  } else {
-    await injectContext(lines.join("\n"));
-  }
-}
+// ── Notification coalescing (delivery pacing) ────────────────────────
+//
+// idea-355 SLICE-1 single-home: the rate-limit / prompt-queue / deferred-
+// backlog machinery (bug-161 + R1 bounded-fallback) is hoisted to the L2
+// `NotificationCoalescer` in @apnex/message-router. The shim keeps only its
+// last-mile render bindings (promptLLM / injectContext / showToast, below) and
+// feeds session-activity from its own session-event stream. The coalescer is
+// constructed once those bindings are defined (see below).
 
 // ── OpenCode SDK integration ─────────────────────────────────────────
 
@@ -247,7 +194,8 @@ async function showToast(message: string, variant: string = "info"): Promise<voi
 async function promptLLM(text: string): Promise<void> {
   if (!sdkClient || !currentSessionId) return;
   try {
-    lastPromptTime = Date.now();
+    // The rate-limit clock is stamped by the coalescer (which owns the pacing
+    // decision); this binding is now purely the SDK promptAsync last mile.
     await sdkClient.session.promptAsync({
       path: { id: currentSessionId },
       body: { parts: [{ type: "text", text }] },
@@ -281,53 +229,17 @@ async function injectContext(text: string): Promise<void> {
   }
 }
 
-async function processNotification(n: QueuedNotification): Promise<void> {
-  await showToast(n.message);
-  if (!config.autoPrompt) return;
-
-  if (n.level === "actionable") {
-    if (isRateLimited()) {
-      deferredBacklog.push(n);
-      await showToast("Rate limited: queued for follow-up", "warning");
-    } else {
-      const backlog = drainBacklog();
-      await promptLLM(n.promptText + backlog);
-    }
-  } else {
-    await injectContext(n.promptText);
-  }
-}
-
-async function flushQueue(): Promise<void> {
-  if (notificationQueue.length === 0) return;
-  const items = notificationQueue.splice(0);
-  if (items.length === 1) {
-    await processNotification(items[0]);
-    return;
-  }
-  for (const item of items) await showToast(item.message);
-  if (!config.autoPrompt) return;
-
-  const lines = ["While you were working, the following Hub events occurred:"];
-  for (let i = 0; i < items.length; i++) {
-    lines.push(`${i + 1}. ${items[i].promptText}`);
-  }
-  const hasActionable = items.some((i) => i.level === "actionable");
-  if (hasActionable) {
-    lines.push("\nPlease address the actionable items above.");
-    if (!isRateLimited()) {
-      const backlog = drainBacklog();
-      await promptLLM(lines.join("\n") + backlog);
-    } else {
-      for (const item of items) {
-        if (item.level === "actionable") deferredBacklog.push(item);
-      }
-      await showToast("Rate limited: queued for follow-up", "warning");
-    }
-  } else {
-    await injectContext(lines.join("\n"));
-  }
-}
+// The L2 delivery pacer. Render bindings are the shim's last mile; session
+// activity is fed from handleSessionEvent; `autoPrompt` is read live off the
+// runtime config (assigned at plugin init, before any notification fires).
+const coalescer = new NotificationCoalescer({
+  io: {
+    promptLLM,
+    injectContext,
+    showToast,
+    autoPrompt: () => !!config.autoPrompt,
+  },
+});
 
 // ── Tool discovery sync ──────────────────────────────────────────────
 
@@ -416,20 +328,14 @@ function surfaceActionableEvent(event: AgentEvent): void {
   );
   const message = buildToastMessage(event.event, event.data);
   const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
-  const notification: QueuedNotification = {
+  const notification: CoalescedNotification = {
     level: isPulse ? "informational" : "actionable",
     message,
     promptText,
   };
-  if (sessionActive) {
-    notificationQueue.push(notification);
-    // R1: bounded fallback — don't let a never-idling session wedge the queue.
-    if (notificationQueue.length >= NOTIFICATION_QUEUE_FLUSH_CAP) {
-      void flushQueue();
-    }
-  } else {
-    void processNotification(notification);
-  }
+  // Live SSE path: bounded-flush cap engaged (R1 — a never-idling session
+  // can't wedge the queue).
+  void coalescer.enqueue(notification);
 }
 
 function surfaceInformationalEvent(event: AgentEvent): void {
@@ -502,26 +408,23 @@ async function connectToHub(agentName: string): Promise<void> {
           pendingActionItemHandler(item);
           // M-Sovereign-Dedup (idea-331): the reconstruction (event/data +
           // actionHint + pulse-aware level) is the core helper shared with the
-          // claude shim; the WAKE below stays opencode-specific (build a
-          // QueuedNotification + route it through the same notificationQueue /
-          // processNotification wake the live SSE path uses — the bug-108 fix).
+          // claude shim; the WAKE below stays opencode-specific (route a
+          // notification through the same coalescer the live SSE path uses —
+          // the bug-108 fix). capFlush:false preserves this path's original
+          // no-bounded-cap behavior (the drain is a finite batch, not a stream).
           const { agentEvent, actionHint, level } = reconstructDrainedAction(item);
           appendNotification(
             { event: agentEvent.event, data: agentEvent.data, action: actionHint },
             { logPath: notificationLogPath },
           );
-          const notification: QueuedNotification = {
+          const notification: CoalescedNotification = {
             level,
             message: buildToastMessage(agentEvent.event, agentEvent.data),
             promptText: buildPromptText(agentEvent.event, agentEvent.data, {
               toolPrefix: "architect-hub_",
             }),
           };
-          if (sessionActive) {
-            notificationQueue.push(notification);
-          } else {
-            void processNotification(notification);
-          }
+          void coalescer.enqueue(notification, { capFlush: false });
         },
       },
     },
@@ -671,20 +574,12 @@ async function handleSessionEvent(event: Event): Promise<void> {
       currentSessionId = event.properties.info.id;
       break;
     case "session.status": {
-      if (event.properties.status.type === "idle") {
-        sessionActive = false;
-        if (notificationQueue.length > 0) await flushQueue();
-        else if (deferredBacklog.length > 0) await flushBacklog();
-      } else {
-        // "busy" | "retry" — the session is mid-task; buffer notifications.
-        sessionActive = true;
-      }
+      // idle → inactive (the coalescer flushes its buffer); busy/retry → active.
+      await coalescer.setSessionActive(event.properties.status.type !== "idle");
       break;
     }
     case "session.idle":
-      sessionActive = false;
-      if (notificationQueue.length > 0) await flushQueue();
-      else if (deferredBacklog.length > 0) await flushBacklog();
+      await coalescer.setSessionActive(false);
       if (hubAdapter && !hubAdapter.isConnected) {
         try {
           await hubAdapter.start();
@@ -696,13 +591,11 @@ async function handleSessionEvent(event: Event): Promise<void> {
     case "session.error":
     case "session.deleted":
       // R1 (bug-161 completion): a session that ENDS via error/deletion (NOT a
-      // clean idle) must still flush its buffered notifications — otherwise
-      // sessionActive stays true and the queue is stranded (the exact gap that
-      // shipped silently with bug-161). Mirror the idle flush; skip the
-      // idle-only reconnect (an errored/deleted session isn't a reconnect cue).
-      sessionActive = false;
-      if (notificationQueue.length > 0) await flushQueue();
-      else if (deferredBacklog.length > 0) await flushBacklog();
+      // clean idle) must still flush its buffered notifications — otherwise it
+      // stays "active" and the queue is stranded (the exact gap that shipped
+      // silently with bug-161). setSessionActive(false) mirrors the idle flush;
+      // skip the idle-only reconnect (an errored/deleted session isn't a cue).
+      await coalescer.setSessionActive(false);
       break;
   }
 }
@@ -802,9 +695,11 @@ export const _testOnly = {
   dispatcher,
   makeOpenCodeFetchHandler,
   handleSessionEvent,
-  getSessionActive: () => sessionActive,
+  getSessionActive: () => coalescer.getSessionActive(),
+  // Sync test-setup: the coalescer sets its session-active field synchronously
+  // (before any flush await), so an empty-queue setup observes it immediately.
   setSessionActive: (v: boolean) => {
-    sessionActive = v;
+    void coalescer.setSessionActive(v);
   },
   getCurrentSessionId: () => currentSessionId,
   getHubAdapter: () => hubAdapter,
