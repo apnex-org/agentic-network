@@ -168,6 +168,40 @@ describe("W4 write-encoder + watch envelope-awareness", () => {
       expect(seen).not.toContain("w4-sched-miss");
     }, OP_TIMEOUT);
 
+    it("bug-187: a write committed in the LISTEN→replay window is delivered EXACTLY once (gap-free + dedup)", async () => {
+      // Seed a baseline so the watch has a sinceRevision floor; its NOTIFY fires
+      // BEFORE the watch's LISTEN, so the baseline is itself never replayed.
+      const base = await substrate.put("Bug", { id: "b187-base", title: "t", severity: "minor", class: "c", status: "open" });
+
+      // Plant a racing write INSIDE the (now-closed) LISTEN→replay window via the
+      // test seam: it commits AFTER LISTEN (its NOTIFY is buffered live) AND
+      // BEFORE the replay SELECT (the SELECT also sees it) → the overlap. The fix
+      // must surface it EXACTLY once — not zero (the old SELECT-before-LISTEN
+      // order would miss it: the lost-NOTIFY gap, bug-187) and not twice
+      // (subscribe-before-replay WITHOUT the resource_version dedup would dupe it).
+      (substrate as unknown as { _watchTestHookAfterListen?: () => Promise<void> })._watchTestHookAfterListen =
+        async () => {
+          await substrate.put("Bug", { id: "b187-race", title: "r", severity: "minor", class: "c", status: "open" });
+        };
+
+      const ac = new AbortController();
+      const seen: Array<{ id: string; op: string }> = [];
+      const done = (async () => {
+        for await (const ev of substrate.watch<{ id: string }>("Bug", { sinceRevision: base.resourceVersion, signal: ac.signal })) {
+          seen.push({ id: ev.id, op: ev.op });
+        }
+      })();
+
+      // Allow the watch to start, fire the seam (race write), run replay + the
+      // live drain — plus slack for a (wrong) duplicate to surface before assert.
+      await new Promise((r) => setTimeout(r, 800));
+      ac.abort();
+      await done.catch(() => {});
+
+      const raceDeliveries = seen.filter((e) => e.id === "b187-race");
+      expect(raceDeliveries).toHaveLength(1); // exactly once: gap-free AND no dupe
+    }, OP_TIMEOUT);
+
     it("bug-150+W4: normalizeThreadShape reads relocated fields envelope-native (messages/participants/routingMode survive)", async () => {
       // W4 closes the Thread writer → all new threads are envelope (status.messages/
       // participants/summary/currentTurnAgentId, spec.routingMode). The repo

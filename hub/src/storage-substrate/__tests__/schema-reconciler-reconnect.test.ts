@@ -92,4 +92,71 @@ describe("bug-100 — runtime watch-loop reconnects after a LISTEN drop", () => 
     await reconciler.close();
     expect(true).toBe(true); // close() returned without hanging
   });
+
+  it("bug-100 — reconnect REPLAYS the gap: re-enters watch with sinceRevision=last-seen + a gap-written event is delivered post-reconnect", async () => {
+    // The original gap (steve's work-33 finding): runtimeWatchSession re-entered
+    // substrate.watch WITHOUT sinceRevision, so a reconnect live-tailed from
+    // "now" — a SchemaDef change written during the prior-session-death →
+    // new-LISTEN gap was silently missed. This drives a controlled reconnect and
+    // proves the fix two ways: (1) the reconnect carries sinceRevision = the
+    // last-seen rv (NOT undefined), and (2) the event written during the gap is
+    // actually delivered + handled post-reconnect (not merely that resubscribe
+    // happened). The mock stands in for the gap-free subscribe-before-replay
+    // primitive (bug-187): given sinceRevision it replays the gap write.
+    const sinceRevisions: (string | undefined)[] = [];
+    let watchCalls = 0;
+    const warn = vi.fn();
+
+    const mockSubstrate = {
+      watch: vi.fn((_kind: string, opts: { signal: AbortSignal; sinceRevision?: string }) => {
+        watchCalls++;
+        sinceRevisions.push(opts.sinceRevision);
+        const attempt = watchCalls;
+        return (async function* () {
+          if (attempt === 1) {
+            // Session 1 delivers a SchemaDef change (rv=5) → advances the
+            // reconciler's cursor — then the LISTEN connection drops.
+            yield { op: "delete" as const, kind: "SchemaDef", id: "schemadef-before-gap", resourceVersion: "5" };
+            throw new Error("simulated 57P01 — terminating connection due to administrator command");
+          }
+          // Session 2 (reconnect): stands in for the gap-free primitive — given
+          // sinceRevision=5 it REPLAYS the event written during the gap (rv=7).
+          yield { op: "delete" as const, kind: "SchemaDef", id: "schemadef-gap-write", resourceVersion: "7" };
+          await new Promise<void>((resolve) => {
+            if (opts.signal.aborted) return resolve();
+            opts.signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+        })();
+      }),
+    } as unknown as HubStorageSubstrate;
+
+    const reconciler = createSchemaReconciler(mockSubstrate, "postgres://fake:5432/db", {
+      initialSchemas: [],
+      reconnectInitialBackoffMs: 5,
+      reconnectMaxBackoffMs: 5,
+      log: () => {},
+      warn,
+    });
+
+    await reconciler.start();
+
+    await vi.waitFor(
+      () => {
+        // Reconnected (≥2 watch calls) AND the gap-written event was handled
+        // post-reconnect (the delete handler warns with the event id).
+        expect(watchCalls).toBeGreaterThanOrEqual(2);
+        expect(warn.mock.calls.some((c) => String(c[0]).includes("schemadef-gap-write"))).toBe(true);
+      },
+      { timeout: 2000, interval: 10 },
+    );
+
+    // THE FIX: session 1 cold-tails (sinceRevision undefined); the RECONNECT
+    // carries the cursor (= the last-seen rv "5"), so the primitive replays the
+    // gap. Pre-fix this was undefined → live-tail from "now" → the rv=7 gap write
+    // was missed until some later SchemaDef event happened to re-trigger.
+    expect(sinceRevisions[0]).toBeUndefined();
+    expect(sinceRevisions[1]).toBe("5");
+
+    await reconciler.close();
+  });
 });

@@ -76,6 +76,15 @@ export class SchemaReconciler {
   private readonly reconnectMaxBackoffMs: number;
   /** ISO timestamp of the last runtime-watch event processed — liveness signal. */
   private lastWatchHealthyAt: string | null = null;
+
+  // bug-100 — watch cursor. Advanced to each delivered event's resourceVersion,
+  // then passed as `sinceRevision` when (re)entering substrate.watch so a
+  // reconnect REPLAYS any SchemaDef change written during the prior-session-
+  // death → new-LISTEN gap instead of live-tailing from "now" and missing it.
+  // The substrate's subscribe-before-replay primitive (bug-187) makes that
+  // replay gap-free. undefined on the first (cold) session → live-tail from now,
+  // matching the prior behavior (boot already applied the current schemas).
+  private lastSeenResourceVersion: string | undefined = undefined;
   /**
    * Internal AbortController for runtime-loop cancellation. Chains to opts.signal
    * if provided (caller-side abort triggers internal abort); close() also triggers
@@ -622,10 +631,18 @@ export class SchemaReconciler {
    */
   private async runtimeWatchSession(onHealthy: () => void): Promise<"abort" | "reconnect"> {
     try {
-      for await (const event of this.substrate.watch<Record<string, unknown>>("SchemaDef", { signal: this.internalAbort.signal })) {
+      // bug-100 — pass the watch cursor as sinceRevision so a reconnect replays
+      // the gap (subscribe-before-replay, gap-free per bug-187). undefined on the
+      // first session → live-tail from now.
+      for await (const event of this.substrate.watch<Record<string, unknown>>("SchemaDef", { signal: this.internalAbort.signal, sinceRevision: this.lastSeenResourceVersion })) {
         // Watch is delivering → healthy.
         this.lastWatchHealthyAt = new Date().toISOString();
         onHealthy();
+        // bug-100 — advance the cursor as each event is RECEIVED (before the
+        // skip-reconcile guard / processing), so a reconnect replays strictly
+        // after the last event we actually saw. Re-processing on overlap is
+        // idempotent (the specCache guard + status-write converge).
+        this.lastSeenResourceVersion = event.resourceVersion;
         if (event.op === "put" && event.entity) {
           // mission-90 W1: rows are envelope-shaped post boot-put fix — decode
           // back to the runtime SchemaDef (described kind at metadata.name)

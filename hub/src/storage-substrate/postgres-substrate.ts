@@ -337,10 +337,28 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   // ── Watch / change-notification (per Design §2.4 LISTEN/NOTIFY) ───────────
 
   /**
+   * bug-187 TEST SEAM (test-only; undefined in production). Awaited inside
+   * watch() AFTER LISTEN is registered but BEFORE the replay SELECT, so a test
+   * can deterministically commit a write into the (now-closed) LISTEN→replay
+   * window and prove it surfaces EXACTLY once (gap-free replay + overlap dedup).
+   * Cleared after firing once so it cannot perturb later watches.
+   */
+  public _watchTestHookAfterListen?: () => Promise<void>;
+
+  /**
    * Returns AsyncIterable<ChangeEvent>. Implements list-then-watch backfill
    * per OQ5 disposition: caller does substrate.list() → captures snapshotRevision
    * → substrate.watch({ sinceRevision }). Substrate replays events strictly
    * newer than that revision; no missed-events window.
+   *
+   * bug-187 — subscribe-before-replay. The dedicated LISTEN client is connected
+   * and LISTENing (buffering notifications) BEFORE the replay SELECT runs. The
+   * OLD order (replay SELECT, THEN LISTEN) had a race: a write committing in the
+   * SELECT→LISTEN window fired NOTIFY with no listener AND was absent from the
+   * replay (it committed after the SELECT snapshot) → silently missed. Now the
+   * overlap (a write visible to BOTH the buffered NOTIFY stream and the replay
+   * SELECT) is de-duplicated by resource_version so it surfaces exactly once.
+   * Mirrors MemoryHubStorageSubstrate's subscribe-before-replay, plus dedup.
    *
    * Uses a dedicated pg.Client for LISTEN (postgres protocol requires LISTEN
    * on its own connection; not shared via pool).
@@ -348,28 +366,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   async *watch<T = unknown>(kind: string, opts: WatchOptions = {}): AsyncIterable<ChangeEvent<T>> {
     const { filter, sinceRevision, signal } = opts;
 
-    // Step 1: replay events from sinceRevision (if provided) via SELECT
-    if (sinceRevision) {
-      const r = await this.pool.query<{ kind: string; id: string; data: T; resource_version: string }>(
-        `SELECT kind, id, data, resource_version FROM entities
-         WHERE kind = $1 AND resource_version > $2
-         ORDER BY resource_version ASC`,
-        [kind, sinceRevision],
-      );
-      for (const row of r.rows) {
-        if (signal?.aborted) return;
-        if (filter && !matchesFilter(row.data as Record<string, unknown>, filter, (k) => this.translateKey(kind, k))) continue;
-        yield {
-          op: "put",
-          kind: row.kind,
-          id: row.id,
-          entity: row.data,
-          resourceVersion: String(row.resource_version),
-        };
-      }
-    }
-
-    // Step 2: LISTEN on entities_change channel; yield notifications matching kind+filter
+    // bug-187 Step 0: connect the dedicated LISTEN client FIRST (before replay).
     const client = new Client({ connectionString: (this.pool as unknown as { options: { connectionString: string } }).options.connectionString });
     // bug-110 — the dedicated LISTEN connection needs its own 'error' handler;
     // a backend error mid-watch would otherwise crash the process uncaught.
@@ -389,31 +386,65 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     }
 
     try {
-      await client.query(`LISTEN entities_change`);
-
-      // pg Client emits 'notification' events; we adapt to async-iterable
+      // pg Client emits 'notification' events; we buffer them. The handler is
+      // attached BEFORE the LISTEN command so a NOTIFY arriving the instant LISTEN
+      // takes effect cannot slip past an unattached handler.
       const notifications: pg.Notification[] = [];
       let resolve: (() => void) | null = null;
       const ready = () => new Promise<void>((r) => { resolve = r; });
-
-      client.on("notification", (n) => {
-        notifications.push(n);
+      const wake = () => {
         if (resolve) {
           const r = resolve;
           resolve = null;
           r();
         }
-      });
-
+      };
+      client.on("notification", (n) => { notifications.push(n); wake(); });
       // 'end' event resolves the ready() wait so the abort path returns cleanly
-      client.on("end", () => {
-        if (resolve) {
-          const r = resolve;
-          resolve = null;
-          r();
-        }
-      });
+      client.on("end", () => wake());
 
+      await client.query(`LISTEN entities_change`);
+
+      // bug-187 TEST SEAM — fires once, here in the (now-closed) LISTEN→replay
+      // window so a test can commit a racing write and assert exactly-once
+      // delivery. Undefined / no-op in production.
+      if (this._watchTestHookAfterListen) {
+        const hook = this._watchTestHookAfterListen;
+        this._watchTestHookAfterListen = undefined;
+        await hook();
+      }
+
+      // bug-187 Step 1 (now AFTER LISTEN): replay events strictly newer than
+      // sinceRevision via SELECT. Record each replayed resource_version so the
+      // live drain can dedup the overlap (a write committed between LISTEN and
+      // this SELECT appears in BOTH streams). resource_version is a unique
+      // monotonic sequence, so an exact-set match is precise — and (unlike a
+      // max-rv watermark) it never drops an interleaved delete, whose rv is
+      // never in the replay set. Bounded by the replay size.
+      const replayedRvs = new Set<string>();
+      if (sinceRevision) {
+        const r = await this.pool.query<{ kind: string; id: string; data: T; resource_version: string }>(
+          `SELECT kind, id, data, resource_version FROM entities
+           WHERE kind = $1 AND resource_version > $2
+           ORDER BY resource_version ASC`,
+          [kind, sinceRevision],
+        );
+        for (const row of r.rows) {
+          if (signal?.aborted) return;
+          replayedRvs.add(String(row.resource_version));
+          if (filter && !matchesFilter(row.data as Record<string, unknown>, filter, (k) => this.translateKey(kind, k))) continue;
+          yield {
+            op: "put",
+            kind: row.kind,
+            id: row.id,
+            entity: row.data,
+            resourceVersion: String(row.resource_version),
+          };
+        }
+      }
+
+      // bug-187 Step 2: live loop. Yield buffered notifications, skipping any
+      // whose resource_version the replay already surfaced (overlap dedup).
       while (true) {
         if (signal?.aborted) return;
 
@@ -428,6 +459,8 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
             continue;
           }
           if (payload.kind !== kind) continue;
+          // bug-187 overlap dedup: this exact change already came through replay.
+          if (replayedRvs.has(String(payload.resource_version))) continue;
 
           let entity: T | undefined;
           if (payload.op === "put") {
