@@ -139,6 +139,16 @@ let proxyPort = 0;
 let sdkClient: any = null;
 let currentSessionId: string | null = null;
 let config: HubConfig;
+// bug-173 — the dispatcher (and its pollBackstop) is constructed at MODULE-INIT,
+// BEFORE loadConfig runs, so the poll/wake-stall role filter cannot read
+// config.role at construction. This module `let` seeds from the env default
+// (backward-compat) and is RE-pointed to the resolved config.role inside
+// connectToHub; pollBackstop.role is a `() => currentRole` thunk (the kernel
+// resolves it at use-time) so the catch-up poll + idea-353 reconcile track the
+// CONFIGURED role (e.g. a config-file-only "verifier"), not the frozen
+// module-init env default. (Claude's shim builds its dispatcher at runtime with
+// config.role already known, so it passes a plain string and needs no thunk.)
+let currentRole = process.env.OIS_HUB_ROLE ?? "engineer";
 // idea-355 SLICE-1T — opencode's tool-surface is now owned by the kernel
 // ToolSurfaceReconciler (replacing the local computeToolHash/syncTools hash
 // loop). Lazy: constructed in connectToHub once config.hubUrl is known (the
@@ -154,9 +164,9 @@ const activeProxyServers: Server[] = [];
 // bug-103: firstTimerEnabled re-enabled — the list_messages Pull-mode first-timer
 // is the catch-up path that recovers role-targeted kind:note notifications
 // missed while the adapter was disconnected. `role` (the poll's targetRole
-// filter) is resolved from OIS_HUB_ROLE at module-init — the config object
-// loads later inside HubPlugin — so the env var is now load-bearing for the
-// catch-up query, not just log lines.
+// filter) is the use-time `() => currentRole` thunk (bug-173) — the config
+// object loads later inside HubPlugin, so the thunk reads config.role
+// post-connect rather than freezing the module-init env default.
 const dispatcher = createSharedDispatcher({
   getAgent: () => hubAdapter,
   proxyVersion: PROXY_VERSION,
@@ -185,7 +195,10 @@ const dispatcher = createSharedDispatcher({
     onStateChange: handleConnectionStateChange,
   },
   pollBackstop: {
-    role: process.env.OIS_HUB_ROLE ?? "engineer",
+    // bug-173 — use-time role resolver. config.role is unknown at this
+    // module-init construction; the kernel invokes the thunk on each
+    // poll/reconcile, by which point connectToHub has set `currentRole`.
+    role: () => currentRole,
     firstTimerEnabled: true,
     log: (m) => log(m),
     // idea-355 SLICE-1T / bug-180 L2 — tool-surface revision-poll backstop on
@@ -440,6 +453,13 @@ async function connectToHub(agentName: string): Promise<void> {
   if (config.labels) {
     log(`Labels: ${JSON.stringify(config.labels)}`);
   }
+
+  // bug-173 — re-point the poll/wake-stall role filter from the module-init env
+  // default to the RESOLVED config.role (honors a config-file-only role, not just
+  // OIS_HUB_ROLE). pollBackstop.role is the `() => currentRole` thunk above, so
+  // this assignment propagates without re-constructing the dispatcher.
+  currentRole = config.role;
+  log(`[bug-173] poll-backstop role bound to config.role="${config.role}"`);
 
   const pendingActionItemHandler = dispatcher.makePendingActionItemHandler();
 

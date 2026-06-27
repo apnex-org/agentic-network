@@ -45,6 +45,7 @@ import {
   type MessageDelivery,
   type MessageTarget,
   type CreateMessageInput,
+  type Message,
 } from "../entities/index.js";
 import { findRepoEventHandler } from "./repo-event-handlers.js";
 import { resolveRecipient } from "../entities/recipient-resolver.js";
@@ -186,9 +187,16 @@ async function createMessage(
         : callerRole === "verifier"
           ? "verifier" // mission-93 bug-169: verifier's notes/messages must attribute to verifier, not silently architect
           : "architect"; // architect is the default fallback for system-callers
+  // bug-193 — DON'T swallow lookup errors. The old `.catch(()=>null)` collapsed
+  // BOTH "no agent for this session" (legitimately null) AND "the registry read
+  // THREW" (a substrate/infra fault) into the same anonymous-${role} default →
+  // a transient fault silently mis-attributed the message to anonymous instead
+  // of its real (registered) author + buried the fault. A genuine miss still
+  // returns null → defaults (system-callers / unmapped session); a THROWN lookup
+  // now propagates (fail-loud) so attribution integrity + the infra fault surface.
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(
     ctx.sessionId,
-  ).catch(() => null);
+  );
   const authorAgentId: string =
     agent?.id ?? `anonymous-${authorRole}`;
 
@@ -407,9 +415,12 @@ async function resolveCallerAgentId(ctx: IPolicyContext): Promise<string> {
         : callerRole === "verifier"
           ? "verifier" // mission-93 bug-169: verifier attribution
           : "architect";
+  // bug-193 — don't swallow lookup errors (see createMessage above): a genuine
+  // miss returns null → defaults; a THROWN registry read propagates (fail-loud)
+  // rather than silently mis-attributing claimedBy to anonymous-${role}.
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(
     ctx.sessionId,
-  ).catch(() => null);
+  );
   return agent?.id ?? `anonymous-${fallbackRole}`;
 }
 
@@ -600,6 +611,37 @@ export function pushSelector(target: MessageTarget | null): Selector {
   }
   if (target.agentId) sel.agentId = target.agentId;
   return sel;
+}
+
+/**
+ * bug-192 — the canonical "system-emitter create + push-on-create" path.
+ *
+ * A system-emitter (trigger, director-notification, downstream-actor, sweeper)
+ * that calls `ctx.stores.message.createMessage` DIRECTLY bypasses the SSE push
+ * step the `create_message` MCP verb performs — so `delivery:"push-immediate"`
+ * is INERT and a poll-less (opencode) recipient never sees the Message live,
+ * only on reconnect-replay (compounds bug-189). Route every system-emit through
+ * this helper so create + push stay coupled (the mission-60/61 pulse-path
+ * lesson, generalized — the next emitter can't silently re-introduce the gap).
+ * Dispatch failure is non-fatal: the Message is already committed; cold
+ * reconnect-replay / poll-backstop recover any pushed-but-undelivered event.
+ */
+export async function emitAndPush(
+  ctx: IPolicyContext,
+  input: CreateMessageInput,
+): Promise<Message> {
+  const message = await ctx.stores.message.createMessage(input);
+  if (message.delivery === "push-immediate") {
+    try {
+      await ctx.dispatch("message_arrived", { message }, pushSelector(message.target ?? null));
+    } catch (err) {
+      // Non-fatal — the Message is committed; cold-replay / poll-backstop recover.
+      console.error(
+        `[emitAndPush] push-on-create dispatch failed for ${message.id} (non-fatal): ${(err as Error)?.message ?? String(err)}`,
+      );
+    }
+  }
+  return message;
 }
 
 // ── Registration ─────────────────────────────────────────────────────

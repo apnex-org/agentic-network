@@ -93,6 +93,25 @@ if [[ -z "$POSTGRES_CONNECTION_STRING" ]]; then
   echo "              Local-dev: see docs/operator/hub-storage-substrate-local-dev.md for postgres-up steps." >&2
   exit 1
 fi
+
+# bug-105 — the Hub runs in a container, so it must (a) share the substrate
+# postgres's docker network to reach it, and (b) NOT use a `localhost`/`127.0.0.1`
+# connection host (which resolves to the Hub container itself, not postgres). The
+# docker run previously had neither → the Hub container could not reach postgres.
+# Derive the network from the running postgres container + rewrite a host-local
+# connection host to the postgres container name (resolvable on that network).
+SUBSTRATE_PG_CONTAINER="${SUBSTRATE_PG_CONTAINER:-hub-substrate-postgres}"
+SUBSTRATE_NETWORK="${SUBSTRATE_NETWORK:-$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$SUBSTRATE_PG_CONTAINER" 2>/dev/null | awk '{print $1}')}"
+if [[ -z "$SUBSTRATE_NETWORK" ]]; then
+  echo "[start-hub] WARN: could not derive the substrate postgres network from container '$SUBSTRATE_PG_CONTAINER'." >&2
+  echo "             Is postgres-up running? (docker compose -f hub/spike/W0/docker-compose.yml up -d)" >&2
+  echo "             The Hub container may be unable to reach postgres — override with SUBSTRATE_NETWORK=<net>." >&2
+fi
+CONTAINER_PG_CONNECTION_STRING="$POSTGRES_CONNECTION_STRING"
+if [[ "$POSTGRES_CONNECTION_STRING" == *"@localhost:"* || "$POSTGRES_CONNECTION_STRING" == *"@127.0.0.1:"* ]]; then
+  CONTAINER_PG_CONNECTION_STRING="$(printf '%s' "$POSTGRES_CONNECTION_STRING" | sed -E "s#@(localhost|127\.0\.0\.1):#@${SUBSTRATE_PG_CONTAINER}:#")"
+  echo "[start-hub] bug-105: rewrote connection host → ${SUBSTRATE_PG_CONTAINER} for the containerized Hub (reachable on the substrate docker network)."
+fi
 WATCHDOG_ENABLED="false"   # ADR-017 watchdog paused locally; queue still operational
 NODE_ENV="production"
 PROJECT_ID="${PROJECT_ID:-}"
@@ -214,7 +233,7 @@ DOCKER_ARGS=(
   -e "PORT=$CONTAINER_PORT"
   -e "GOOGLE_APPLICATION_CREDENTIALS=/secrets/sa-key.json"
   -e "GCS_BUCKET=$GCS_BUCKET"
-  -e "POSTGRES_CONNECTION_STRING=$POSTGRES_CONNECTION_STRING"
+  -e "POSTGRES_CONNECTION_STRING=$CONTAINER_PG_CONNECTION_STRING"
   -e "HUB_API_TOKEN=$HUB_API_TOKEN"
   -e "WATCHDOG_ENABLED=$WATCHDOG_ENABLED"
   # mission-84 W7: PR #203 revert — OIS_SCHEDULED_MESSAGE_SWEEPER_INTERVAL_MS +
@@ -225,6 +244,12 @@ DOCKER_ARGS=(
   -v "$GOOGLE_APPLICATION_CREDENTIALS:/secrets/sa-key.json:ro"
   --security-opt seccomp=unconfined
 )
+
+# bug-105 — attach the Hub to the substrate postgres's docker network so it can
+# reach postgres by container-name (the connection host was rewritten above).
+if [[ -n "$SUBSTRATE_NETWORK" ]]; then
+  DOCKER_ARGS+=( --network "$SUBSTRATE_NETWORK" )
+fi
 
 # mission-84 W5: local-fs bind-mount + OIS_LOCAL_FS_ROOT propagation DELETED
 # (substrate sole storage path; postgres persistence handled by postgres-up).
