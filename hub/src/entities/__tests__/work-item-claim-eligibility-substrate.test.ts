@@ -9,6 +9,7 @@
  *   LockAcquisitionTimeoutError, never an unlocked claim).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createTestPool } from "../../storage-substrate/__tests__/_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +35,7 @@ describe("WorkItem claim_work authority enforcement (real-pg)", () => {
     container = await new PostgreSqlContainer("postgres:15-alpine")
       .withUsername("hub").withPassword("hub").withDatabase("hub").start();
     const connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-    pool = new Pool({ connectionString: connStr });
+    pool = createTestPool(connStr, "work-item-claim-eligibility-substrate");
     for (const f of MIGRATION_FILES) await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
     substrate = createPostgresStorageSubstrate(connStr);
     reconciler = createSchemaReconciler(substrate, connStr, { initialSchemas: ALL_SCHEMAS });

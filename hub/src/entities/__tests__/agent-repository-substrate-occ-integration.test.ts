@@ -17,6 +17,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createTestPool } from "../../storage-substrate/__tests__/_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -30,9 +31,6 @@ import {
 } from "../../storage-substrate/index.js";
 import { AgentRepositorySubstrate } from "../agent-repository-substrate.js";
 import { computeFingerprint, deriveAgentId } from "../../state.js";
-
-const { Pool } = pg;
-
 describe("assertIdentity — testcontainer integration (real pg_advisory_lock contention + envelope-shape rows)", () => {
   let pgContainer: StartedPostgreSqlContainer | undefined;
   let pgConnStr: string | undefined;
@@ -54,7 +52,7 @@ describe("assertIdentity — testcontainer integration (real pg_advisory_lock co
       .start();
     pgConnStr = `postgres://hub:hub@${pgContainer.getHost()}:${pgContainer.getPort()}/hub`;
 
-    const pool = new Pool({ connectionString: pgConnStr });
+    const pool = createTestPool(pgConnStr, "agent-repository-substrate-occ-integration");
     for (const f of MIGRATION_FILES) {
       const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
       await pool.query(sql);
@@ -205,7 +203,7 @@ describe("assertIdentity — testcontainer integration (real pg_advisory_lock co
     await substrate.put("Agent", envelopeAgent);
 
     // Verify on-disk shape pre-call
-    const preCallPool = new Pool({ connectionString: pgConnStr! });
+    const preCallPool = createTestPool(pgConnStr!, "agent-repository-substrate-occ-integration");
     const pre = await preCallPool.query<{ envelope: boolean; meta_fp: string; spec_role: string }>(
       `SELECT data ? 'apiVersion' AS envelope, data->'metadata'->>'fingerprint' AS meta_fp, data->'spec'->>'role' AS spec_role FROM entities WHERE kind = 'Agent' AND id = $1`,
       [envelopeAgent.id],
@@ -242,7 +240,7 @@ describe("assertIdentity — testcontainer integration (real pg_advisory_lock co
     }
 
     // Verify on-disk row IS STILL envelope-shape (write preserved envelope)
-    const postCallPool = new Pool({ connectionString: pgConnStr! });
+    const postCallPool = createTestPool(pgConnStr!, "agent-repository-substrate-occ-integration");
     const post = await postCallPool.query<{ envelope: boolean; meta_fp: string; spec_role: string; top_fp: string | null }>(
       `SELECT data ? 'apiVersion' AS envelope, data->'metadata'->>'fingerprint' AS meta_fp, data->'spec'->>'role' AS spec_role, data->>'fingerprint' AS top_fp FROM entities WHERE kind = 'Agent' AND id = $1`,
       [envelopeAgent.id],
