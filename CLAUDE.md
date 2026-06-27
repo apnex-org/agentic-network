@@ -18,7 +18,7 @@ Project-level context binding all Claude Code instances on this repository.
 
 **Why:** defeats LLM-state-fidelity drift — narrative-doc recall produces hallucinated cross-references; ledger queries return ground truth.
 
-**How to apply:** `python3 scripts/calibrations/calibrations.py {list,show,status}`. Read-only surface; ledger entries are architect-authored — calibration filings + ID assignments are Director-direct or architect-Director-bilateral, never LLM-autonomous.
+**How to apply:** `python3 scripts/calibrations/calibrations.py {list,show,status}` (read surface). Calibrations are **architect-fileable, not Director-gated** (relaxed 2026-06-27): file when evidence-anchored (origin + surfaced_at + cross_refs) and — for substrate/architectural entries — peer-verified (bilateral architect+engineer concur, or an adversarial-verify pass); methodology/working-discipline entries the architect may file solo. IDs are next-monotonic-integer (deterministic; a Phase-2 write-verb will mechanize filing + validation). The **Director curates** — retire / downgrade / re-class authority + periodic review — rather than gating each filing (Director-direct filing remains for Director-originated entries). **Why relaxed:** removes the Director-as-minting-bottleneck so the org self-records its learning; the Director curates the high-signal ledger instead (tele-13 — amplify Director attention, don't gate on it). **Still true:** query the ledger via the Skill rather than narrative recall (ground-truth, not hallucinated cross-refs).
 
 ## Mission RACI
 
