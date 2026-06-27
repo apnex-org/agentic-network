@@ -266,7 +266,9 @@ describe("SessionPolicy", () => {
 
   it("registers all session tools", () => {
     expect(router.has("register_role")).toBe(true);
-    expect(router.has("get_engineer_status")).toBe(true);
+    // bug-184: get_engineer_status HARD-REMOVED (idea-355 SLICE-4); get_agents
+    // is the canonical roster.
+    expect(router.has("get_engineer_status")).toBe(false);
     // idea-252 §2: list_available_peers RETIRED (hard remove). Replacement
     // is `get_agents` with `filter: { livenessState: "online", role?: ... }`.
     expect(router.has("list_available_peers")).toBe(false);
@@ -281,7 +283,8 @@ describe("SessionPolicy", () => {
     expect(router.has("signal_quota_recovered")).toBe(true);
     // mission-62 W1+W2 Pass 4: get_agents added.
     expect(router.has("get_agents")).toBe(true);
-    expect(router.size).toBe(9);
+    // bug-184 (idea-355 SLICE-4): get_engineer_status hard-removed → 9 → 8.
+    expect(router.size).toBe(8);
   });
 
   const engineerHandshake = {
@@ -461,24 +464,8 @@ describe("SessionPolicy", () => {
     expect((await reg.getAgent(eid)).status).toBe("offline");
   });
 
-  it("get_engineer_status projects from M18 Agents store", async () => {
-    // Register + claim an engineer via M18 handshake so an Agent exists with claimed session
-    await router.handle("register_role", engineerHandshake, ctx);
-    await router.handle("claim_session", {}, ctx);
-
-    // Call get_engineer_status from a separate session (now [Any], any role works)
-    const archCtx = createTestContext({ stores: ctx.stores, sessionId: "test-arch-session" });
-    await router.handle("register_role", { role: "architect" }, archCtx);
-    const result = await router.handle("get_engineer_status", {}, archCtx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.engineers).toBeDefined();
-    expect(parsed.engineers.length).toBeGreaterThanOrEqual(1);
-    const eng = parsed.engineers[0];
-    expect(eng.agentId).toBeDefined();
-    expect(eng.status).toBe("online");
-    expect(eng.clientMetadata.proxyName).toBe("@apnex/test-plugin");
-    expect(eng.sessionEpoch).toBe(1);
-  });
+  // bug-184: get_engineer_status projection test REMOVED (idea-355 SLICE-4 —
+  // tool hard-removed). Roster-projection coverage lives in get_agents tests.
 
   // idea-252 §2: list_available_peers test suite REMOVED (tool retired).
   // Replacement coverage of {agentId, role, labels, livenessState} surface

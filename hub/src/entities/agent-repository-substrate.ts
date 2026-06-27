@@ -53,7 +53,6 @@ import type {
   AgentClientMetadata,
   AgentLivenessState,
   AgentRole,
-  EngineerStatusEntry,
   RegisterAgentPayload,
   RegisterAgentResult,
   AssertIdentityPayload,
@@ -307,25 +306,6 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
 
   getRole(sessionId: string): SessionRole {
     return this.sessionRoles.get(sessionId) || "unknown";
-  }
-
-  async getStatusSummary() {
-    const agents = await this.listAgents();
-    const engineers: EngineerStatusEntry[] = agents
-      .filter((a) => !a.archived)
-      .map((a) => ({
-        agentId: a.id,
-        sessionId: a.currentSessionId,
-        status: a.status,
-        sessionEpoch: a.sessionEpoch,
-        clientMetadata: a.clientMetadata,
-        advisoryTags: a.advisoryTags,
-        labels: a.labels ?? {},
-        firstSeenAt: a.firstSeenAt,
-        lastSeenAt: a.lastSeenAt,
-      }));
-    const connected = engineers.filter((e) => e.status === "online").length;
-    return { connected, engineers };
   }
 
   // ── M18 Agent methods ──────────────────────────────────────────────

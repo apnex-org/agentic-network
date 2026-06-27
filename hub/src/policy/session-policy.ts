@@ -1,7 +1,7 @@
 /**
  * Session Policy — Role registration, agent handshake, and engineer status.
  *
- * Tools: register_role (with optional M18 Agent payload), get_engineer_status,
+ * Tools: register_role (with optional M18 Agent payload),
  *        migrate_agent_queue (Architect-only admin).
  */
 
@@ -385,16 +385,6 @@ async function migrateAgentQueue(args: Record<string, unknown>, ctx: IPolicyCont
   };
 }
 
-async function getEngineerStatus(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  const summary = await ctx.stores.engineerRegistry.getStatusSummary();
-  return {
-    content: [{
-      type: "text" as const,
-      text: JSON.stringify(summary, null, 2),
-    }],
-  };
-}
-
 // ── mission-63 W1+W2: get_agents pull primitive (canonical envelope) ──
 // idea-252 §2: list_available_peers RETIRED (hard remove; no soft alias).
 // `get_agents` with `livenessState: "online"` filter is the strict superset
@@ -710,12 +700,9 @@ export function registerSessionPolicy(router: PolicyRouter): void {
     "adapter-internal",
   );
 
-  router.register(
-    "get_engineer_status",
-    "[Any] Get the connection status of all registered Engineers, including their IDs, connection times, and task completion counts.",
-    {},
-    getEngineerStatus,
-  );
+  // bug-184: get_engineer_status HARD-REMOVED (idea-355 SLICE-4). get_agents
+  // is the canonical roster; the dropped status-summary fields are off-wire
+  // with no live consumer (list_available_peers clean-cutover precedent).
 
   // idea-252 §2: list_available_peers retired (hard remove; no legacy debt).
   // Replacement: get_agents with `filter: { livenessState: "online", role?: ... }`.

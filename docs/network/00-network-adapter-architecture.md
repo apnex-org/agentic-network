@@ -1,8 +1,8 @@
 ---
 title: Network Adapter Architecture — L4/L7 Split
 status: canonical reference
-version: "@apnex/network-adapter@2.0.0"
-updated: 2026-04-16
+version: "@apnex/network-adapter@0.1.4"
+updated: 2026-06-27
 ---
 
 # Network Adapter Architecture
@@ -30,10 +30,10 @@ These are the load-bearing properties the adapter must hold, anchored in concret
    - *Canonical scars*: SSE partition behind Cloud Run's proxy (outbound keepalive succeeds while inbound is dead — fixed by making liveness prove itself via inbound POSTs, ADR-007); displacement on plugin restart (fixed by epoch rebinding on `registerAgent`); shared-token collisions between engineers (fixed by fingerprint-derived `engineerId`); zombie sessions that pass keepalive but can't receive targeted push (fixed by session reaper + `markAgentOffline` on cleanup); GCS OCC contention on concurrent registrations (fixed by `ifGenerationMatch` + bounded retry + thrashing circuit breaker).
 
 4. **Authoritative.** Every entity has exactly one canonical source of truth. No dual-store projections, no legacy-namespace mirroring, no "this field lives in two places and we reconcile on read". When an entity has dual namespaces, drift and race conditions are mathematically guaranteed over time.
-   - *Canonical scar*: `ConnectedEngineer` (legacy `engineers/*.json`) coexisted with the M18 `agents/*.json` store. `getStatusSummary` read the legacy namespace; M18 `registerAgent` wrote the new one. Operators saw 7 connected zombies that didn't exist, the live plugin session missing from status, and `clientMetadata`/`sessionEpoch`/`globalInstanceId` absent from the projection — three distinct symptoms, all one root cause. Fixed by purging `ConnectedEngineer` entirely and projecting `get_engineer_status` from `listAgents()`. State is written once, to one place, and read from that same place.
+   - *Canonical scar*: `ConnectedEngineer` (legacy `engineers/*.json`) coexisted with the M18 `agents/*.json` store. `getStatusSummary` read the legacy namespace; M18 `registerAgent` wrote the new one. Operators saw 7 connected zombies that didn't exist, the live plugin session missing from status, and `clientMetadata`/`sessionEpoch`/`globalInstanceId` absent from the projection — three distinct symptoms, all one root cause. Fixed by purging `ConnectedEngineer` entirely and projecting `get_agents` from `listAgents()`. State is written once, to one place, and read from that same place.
 
 5. **Verifiable.** The adapter's current state must be inspectable from outside without reading session transcripts or SSH-ing into the process. Operators and the Architect need to answer "which engineer is on which model, which build, which epoch, how fresh, what SSE state" from a single tool call. Observability is a distinct architectural requirement, not a byproduct of resilience — a system can be perfectly resilient and still completely opaque.
-   - *Canonical scar*: before the M18 projection rewrite, the `ConnectedEngineer` shape lacked `clientMetadata`, `proxyName`, `sessionEpoch`, and `globalInstanceId` entirely. A full Architect ↔ Engineer debugging session was needed on 2026-04-14 to establish identity facts that should have been one tool call away. The post-rewrite projection surfaces the full Agent entity (engineerId, sessionId, status, sessionEpoch, clientMetadata, advisoryTags, firstSeenAt, lastSeenAt) in the `get_engineer_status` response.
+   - *Canonical scar*: before the M18 projection rewrite, the `ConnectedEngineer` shape lacked `clientMetadata`, `proxyName`, `sessionEpoch`, and `globalInstanceId` entirely. A full Architect ↔ Engineer debugging session was needed on 2026-04-14 to establish identity facts that should have been one tool call away. The post-rewrite projection surfaces the full Agent entity (engineerId, sessionId, status, sessionEpoch, clientMetadata, advisoryTags, firstSeenAt, lastSeenAt) in the `get_agents` response.
 
 6. **Efficient.** Hot paths (notification delivery, session heartbeat, tool invocation) must scale to single-connection-at-max throughput on a Cloud Run `maxScale: 1` instance without introducing quadratic behavior or speculative fan-out. Efficiency is last because it is the most tempting premature optimization — and because the first five goals constrain the solution space enough that efficiency usually falls out of correctness done right.
    - *Canonical scar*: `touchAgent` is rate-limited to one persisted GCS write per 30 seconds per agent because writing on every inbound POST would thrash GCS at steady-state tool-call volume, burn quota, and amplify OCC contention into thrashing-circuit-breaker territory. The rate-limit is an in-memory bookkeeping step (`lastTouchAt` map) that collapses concurrent heartbeats into a single write — the simplest intervention that preserves correctness.
@@ -121,38 +121,64 @@ packages/network-adapter/
 ├── src/
 │   ├── index.ts               — public surface re-exports
 │   │
-│   ├── transport.ts           — ITransport, TransportConfig, WireEvent types  (L4)
-│   ├── mcp-transport.ts       — McpTransport implementation                   (L4)
+│   ├── wire/                  — L4 transport
+│   │   ├── transport.ts            — ITransport, TransportConfig, WireEvent types
+│   │   └── mcp-transport.ts        — McpTransport implementation
 │   │
-│   ├── agent-client.ts        — IAgentClient, AgentClientCallbacks,
-│   │                            SessionState, SessionReconnectReason types    (L7)
-│   ├── mcp-agent-client.ts    — McpAgentClient implementation                 (L7)
+│   ├── kernel/                — L7 session + identity
+│   │   ├── agent-client.ts         — IAgentClient, AgentClientCallbacks, SessionState types
+│   │   ├── mcp-agent-client.ts     — McpAgentClient implementation
+│   │   ├── handshake.ts            — buildHandshakePayload, performHandshake, FATAL_CODES
+│   │   ├── state-sync.ts           — performStateSync (get_task + get_pending_actions)
+│   │   ├── event-router.ts         — classifyEvent, parseHubEvent, createDedupFilter
+│   │   ├── adapter-config.ts       — adapter configuration resolution
+│   │   ├── build-identity.ts       — globalInstanceId / build-identity bootstrap
+│   │   ├── poll-backstop.ts        — SSE-gap poll backstop
+│   │   └── session-claim.ts        — explicit claim_session orchestration
 │   │
-│   ├── handshake.ts           — buildHandshakePayload, performHandshake,
-│   │                            parseHandshakeError, FATAL_CODES              (L7 helper)
-│   ├── state-sync.ts          — performStateSync (get_task + get_pending_actions)
-│   ├── event-router.ts        — classifyEvent, parseHubEvent, createDedupFilter
-│   ├── instance.ts            — loadOrCreateGlobalInstanceId (identity bootstrap)
-│   ├── logger.ts              — ILogger, LegacyStringLogger bridging
+│   ├── tool-manager/         — tool-surface lifecycle
+│   │   ├── dispatcher.ts                 — tool dispatch + idle gating
+│   │   ├── tool-surface-reconciler.ts    — live tool-surface refresh
+│   │   ├── tool-catalog-cache.ts         — cached tool catalog
+│   │   ├── claimable-digest-tracker.ts   — claimable-work digest tracking
+│   │   └── work-lease-tracker.ts         — work-lease bookkeeping
 │   │
-│   ├── prompt-format.ts       — engineer-side prompt text helpers (shim-facing)
-│   └── notification-log.ts    — engineer-side notification append helper (shim-facing)
+│   ├── observability.ts      — adapter observability surface
+│   ├── hub-error.ts          — HubError taxonomy
+│   ├── file-logger.ts        — FileBackedLogger
+│   ├── logger.ts             — ILogger, LegacyStringLogger bridging
+│   ├── prompt-format.ts      — engineer-side prompt text helpers (shim-facing)
+│   └── notification-log.ts   — engineer-side notification append helper (shim-facing)
 │
 └── test/
-    ├── unit/
-    │   ├── handshake.test.ts        — 19 tests
-    │   ├── instance.test.ts         —  6 tests
-    │   ├── deferred-backlog.test.ts — 19 tests
-    │   └── reconnect-backoff.test.ts —  6 tests (G1 — backoff curve)
-    └── integration/
-        ├── mcp-transport.test.ts         — 7 tests  (L4 surface, real wire)
-        ├── mcp-agent-client.test.ts      — 6 tests  (L7 surface + FSM, loopback)
-        ├── register-role-payload.test.ts — 1 test   (Invariant #9, loopback)
-        ├── sync-phase-rpcs.test.ts       — 1 test   (Invariant #10, loopback)
-        └── invariant-gaps.test.ts        — 3 tests  (G2/G3/G4, loopback)
+    ├── unit/                         (15 files)
+    │   ├── handshake.test.ts                              — 32 tests
+    │   ├── dispatcher-router-integration.test.ts          — 31 tests
+    │   ├── poll-backstop.test.ts                          — 20 tests
+    │   ├── deferred-backlog.test.ts                       — 19 tests
+    │   ├── prompt-format-mission-63-w3.test.ts            — 17 tests
+    │   ├── host-wiring-assertion.test.ts                  — 10 tests
+    │   ├── dispatcher-tick-drive.test.ts                  —  8 tests
+    │   ├── claimable-digest-tracker.test.ts               —  7 tests
+    │   ├── list-tools-cache-fallback.test.ts              —  7 tests
+    │   ├── work-lease-tracker.test.ts                     —  7 tests
+    │   ├── prompt-format-message-arrived.test.ts          —  6 tests
+    │   ├── prompt-format-thread-message-truncation.test.ts —  6 tests
+    │   ├── reconnect-backoff.test.ts                      —  6 tests (G1 — backoff curve)
+    │   ├── dispatcher-idle-gate.test.ts                   —  5 tests
+    │   └── prompt-format-idea-353.test.ts                 —  5 tests
+    └── integration/                  (8 files)
+        ├── threads-2-smoke.test.ts          — 11 tests
+        ├── cognitive-integration.test.ts    —  7 tests
+        ├── mcp-transport.test.ts            —  7 tests  (L4 surface, real wire)
+        ├── mcp-agent-client.test.ts         —  6 tests  (L7 surface + FSM, loopback)
+        ├── label-routing.test.ts            —  5 tests
+        ├── invariant-gaps.test.ts           —  3 tests  (G2/G3/G4, loopback)
+        ├── register-role-payload.test.ts    —  1 test   (Invariant #9, loopback)
+        └── sync-phase-rpcs.test.ts          —  1 test   (Invariant #10, loopback)
 ```
 
-**Total:** 68 tests across 9 files. L4 runs against real `McpTransport` + a loopback-bound `TestHub`; L7 runs against `McpAgentClient` + in-memory `LoopbackTransport`/`LoopbackHub`. See `06-test-specification.md` for the invariant-to-test map.
+**Total:** 227 tests across 23 files. L4 runs against real `McpTransport` + a loopback-bound `TestHub`; L7 runs against `McpAgentClient` + in-memory `LoopbackTransport`/`LoopbackHub`. See `06-test-specification.md` for the invariant-to-test map.
 
 ## 5. L4 — ITransport / McpTransport
 
@@ -377,7 +403,7 @@ const agent = new McpAgentClient(
       proxyName: "@apnex/claude-plugin",
       proxyVersion: "1.2.3",
       transport: "stdio",
-      sdkVersion: "@apnex/network-adapter@2.0.0",
+      sdkVersion: "@apnex/network-adapter@0.1.4",
       getClientInfo: () => ({ name: "Claude Code", version: "..." }),
       onFatalHalt: makeStdioFatalHalt(),
     },
@@ -411,7 +437,7 @@ two-layer split exists specifically so that shims talk to L7 only.
 
 ## 8. Shims today
 
-Three shims consume `@apnex/network-adapter@2.0.0`.
+Three shims consume `@apnex/network-adapter@0.1.4`.
 
 | Shim                                              | Transport host   | Manual sync | Notes                                                                                                 |
 | ------------------------------------------------- | ---------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
@@ -427,7 +453,7 @@ funnels everything else through `McpAgentClient`.
 
 The checklist:
 
-1. **Pin the tarball.** Add `"@apnex/network-adapter": "file:./ois-network-adapter-2.0.0.tgz"` (or newer) to your `package.json`. Don't float it.
+1. **Pin the tarball.** Add `"@apnex/network-adapter": "file:./ois-network-adapter-0.1.4.tgz"` (or newer) to your `package.json`. Don't float it.
 2. **Bootstrap identity.** Call `loadOrCreateGlobalInstanceId()` once per process with a host-appropriate path (e.g. `~/.ois/<host>-instance.json`). Persist the result across restarts.
 3. **Build callbacks.** Implement `AgentClientCallbacks` — only the handlers you actually need. Shims that don't prompt LLMs can omit `onActionableEvent`.
 4. **Construct.** `new McpAgentClient({role, handshake, logger}, {transportConfig})`. Pass the full enriched handshake unless you genuinely don't care about the M18 identity (Architect is the only such case, and it's grandfathered).
@@ -439,7 +465,7 @@ The checklist:
 
 | Component                         | Version                    |
 | --------------------------------- | -------------------------- |
-| `@apnex/network-adapter` (package)  | 2.0.0                      |
+| `@apnex/network-adapter` (package)  | 0.1.4                      |
 | Tarball consumers                 | pinned via `file:` path    |
 | Phase 7 refactor                  | complete (2026-04-15)       |
 | Phase 8 doc / test cleanup        | in progress                 |

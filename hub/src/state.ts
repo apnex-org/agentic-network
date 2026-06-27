@@ -85,24 +85,6 @@ export interface EntityProvenance {
   agentId: string;
 }
 
-/**
- * Projected view of an M18 Agent for the `get_engineer_status` tool.
- * `sessionId` is an alias for `currentSessionId` preserved so task-policy
- * can match `engStatus.engineers.find(e => e.sessionId === sid)` against the
- * caller's live MCP session without knowing the M18 field name.
- */
-export interface EngineerStatusEntry {
-  agentId: string;
-  sessionId: string | null;
-  status: "online" | "offline";
-  sessionEpoch: number;
-  clientMetadata: AgentClientMetadata;
-  advisoryTags: AgentAdvisoryTags;
-  labels: AgentLabels;
-  firstSeenAt: string;
-  lastSeenAt: string;
-}
-
 // ── M18: Agent as First-Class Entity ─────────────────────────────────
 // Design from thread-79. Decouples stable identity (globalInstanceId)
 // from authentication (token) and role (token claim).
@@ -1268,10 +1250,6 @@ export interface IEngineerRegistry {
   /** Bare role-set used by the legacy register_role path and auto-register in task-policy. */
   setSessionRole(sessionId: string, role: SessionRole): void;
   getRole(sessionId: string): SessionRole;
-  getStatusSummary(): Promise<{
-    connected: number;
-    engineers: EngineerStatusEntry[];
-  }>;
   // M18: Agent entity operations.
   registerAgent(sessionId: string, tokenRole: AgentRole, payload: RegisterAgentPayload, address?: string): Promise<RegisterAgentResult>;
   /**

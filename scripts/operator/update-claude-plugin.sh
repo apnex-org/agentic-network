@@ -89,7 +89,7 @@ cat <<EOF
 [update] ✅ staged + installed: $PLUGIN $NEW_VER ($NEW_SHA)
 [update] ⚠ FINAL STEP — in EACH Claude Code client you want upgraded:
 [update]     fully EXIT and relaunch (respawns the proxy).  NOT /reload-plugins.
-[update] verify after restart:  get_engineer_status -> proxyVersion=$NEW_VER, sdkCommitSha=$NEW_SHA
+[update] verify after restart:  get_agents (or scripts/local/get-agents.sh) -> proxyVersion=$NEW_VER, sdkCommitSha=$NEW_SHA
 [update] break-glass (proxy still on old sha):  rm -rf ~/.claude/plugins/cache/$MARKET  then restart.
 [update] rollback the stage:  rm -rf "$STAGE_DIR" && mv "$BACKUP" "$STAGE_DIR" && bash "$STAGE_DIR/install.sh"
 EOF
