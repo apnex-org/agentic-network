@@ -107,6 +107,19 @@ export class TaskRepositorySubstrate implements ITaskStore {
     const id = `task-${num}`;
     const now = new Date().toISOString();
     const hasDeps = dependsOn && dependsOn.length > 0;
+    // bug-2 (DAG retroactive-unblock): a task whose deps are ALL already
+    // 'completed' at creation must be created claimable ('pending'), not
+    // 'blocked'. The unblock scan (markTaskCompleted, below) only fires when a
+    // dep COMPLETES — deps already terminal at creation never re-fire it, so the
+    // task would stay stuck-blocked forever. Resolved here (the single source of
+    // truth for every submitDirective caller — createDirective + the proposal-
+    // cascade DAG) using the SAME 'completed' predicate the unblock scan uses.
+    let depsAllComplete = false;
+    if (hasDeps) {
+      const depTasks = await Promise.all(dependsOn!.map((depId) => this.getTask(depId)));
+      depsAllComplete = depTasks.every((d) => d !== null && currentPhase(d) === "completed");
+    }
+    const initialStatus = hasDeps && !depsAllComplete ? "blocked" : "pending";
 
     const task: Task = {
       id,
@@ -126,7 +139,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
       description: description || null,
       dependsOn: dependsOn || [],
       revisionCount: 0,
-      status: hasDeps ? "blocked" : "pending",
+      status: initialStatus,
       labels: labels || {},
       turnId: null,
       sourceThreadId: backlink?.sourceThreadId ?? null,
@@ -144,7 +157,7 @@ export class TaskRepositorySubstrate implements ITaskStore {
       );
     }
     console.log(
-      `[TaskRepositorySubstrate] Directive submitted: ${id} (status: ${hasDeps ? "blocked" : "pending"}` +
+      `[TaskRepositorySubstrate] Directive submitted: ${id} (status: ${initialStatus}` +
         (backlink ? `, cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId}` : "") +
         ")",
     );

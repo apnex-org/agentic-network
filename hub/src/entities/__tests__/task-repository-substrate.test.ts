@@ -226,4 +226,52 @@ describe("TaskRepositorySubstrate (W4.x.8 Option Y sibling-pattern)", () => {
     const tApproved = await repo.getTask(taskApprove);
     expect(tApproved?.status).toBe("completed");
   }, 60_000);
+
+  it("bug-2 — task whose deps are ALL already completed is created 'pending' (claimable), not stuck-blocked", async () => {
+    const counter = new SubstrateCounter(substrate);
+    const repo = new TaskRepositorySubstrate(substrate, counter);
+
+    // Two deps that are ALREADY completed BEFORE the dependent is created.
+    const depA = await repo.submitDirective("Dep A");
+    const depB = await repo.submitDirective("Dep B");
+    await repo.__debugSetTask(depA, { status: "completed" });
+    await repo.__debugSetTask(depB, { status: "completed" });
+
+    // Pre-bug-2 this was unconditionally 'blocked' and never unblocked — the
+    // unblock scan only fires on a dep COMPLETING, and these deps are already
+    // terminal, so no event ever re-fires → stuck-blocked forever. Now: 'pending'.
+    const dependent = await repo.submitDirective(
+      "Dependent on already-done work", undefined, undefined, undefined, undefined, [depA, depB],
+    );
+    const t = await repo.getTask(dependent);
+    expect(t?.status).toBe("pending");
+    expect(t?.dependsOn).toEqual([depA, depB]);
+
+    // And it is genuinely CLAIMABLE (the FSM is not stuck) — getNextDirective
+    // returns it (depA/depB are completed, so the dependent is the only pending).
+    const claimed = await repo.getNextDirective({ agentId: "agent-claimer" });
+    expect(claimed?.id).toBe(dependent);
+  }, 60_000);
+
+  it("bug-2 — a NOT-yet-complete dep still yields 'blocked' (only ALL-complete → pending); normal unblock still works", async () => {
+    const counter = new SubstrateCounter(substrate);
+    const repo = new TaskRepositorySubstrate(substrate, counter);
+
+    const doneDep = await repo.submitDirective("Done dep");
+    const pendingDep = await repo.submitDirective("Pending dep");
+    await repo.__debugSetTask(doneDep, { status: "completed" });
+    // pendingDep stays 'pending' (NOT completed) → not all deps satisfied.
+
+    const dependent = await repo.submitDirective(
+      "Partially-satisfied", undefined, undefined, undefined, undefined, [doneDep, pendingDep],
+    );
+    expect((await repo.getTask(dependent))?.status).toBe("blocked");
+
+    // Completing the remaining dep unblocks it the normal way → pending
+    // (regression guard: bug-2 doesn't disturb the existing unblock path).
+    await repo.__debugSetTask(pendingDep, { status: "completed" });
+    const unblocked = await repo.unblockDependents(pendingDep);
+    expect(unblocked).toEqual([dependent]);
+    expect((await repo.getTask(dependent))?.status).toBe("pending");
+  }, 60_000);
 });
