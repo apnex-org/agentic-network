@@ -55,6 +55,7 @@ export {
   buildHandshakePayload,
   performHandshake,
   makeStdioFatalHalt,
+  readRequiredAgentName,
 } from "./kernel/handshake.js";
 export type {
   HandshakeClientMetadata,
@@ -66,6 +67,16 @@ export type {
   HandshakeContext,
   HandshakeResult,
 } from "./kernel/handshake.js";
+
+export { parseLabels, loadConfig } from "./kernel/adapter-config.js";
+export type { HubConfig, LoadConfigOptions } from "./kernel/adapter-config.js";
+
+export {
+  readPackageVersion,
+  readBuildInfo,
+  UNKNOWN_BUILD_INFO,
+} from "./kernel/build-identity.js";
+export type { BuildInfo } from "./kernel/build-identity.js";
 
 export { performStateSync } from "./kernel/state-sync.js";
 export type { StateSyncContext, DrainedPendingAction } from "./kernel/state-sync.js";
@@ -147,7 +158,7 @@ export {
 } from "./prompt-format.js";
 export type { PromptFormatConfig } from "./prompt-format.js";
 
-export { appendNotification } from "./notification-log.js";
+export { appendNotification, buildPendingTaskNotification } from "./notification-log.js";
 export type {
   NotificationLogEntry,
   NotificationLogOptions,

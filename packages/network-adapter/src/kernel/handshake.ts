@@ -253,6 +253,26 @@ export function resolveClientVersion(raw: string | undefined, proxyVersion: stri
 }
 
 /**
+ * idea-251 D-prime Phase 2 + idea-355 SLICE-1 dedup: read the REQUIRED
+ * OIS_AGENT_NAME identity (name IS identity per idea-251). Reads + trims +
+ * loud-errors if absent (returns null) so misconfiguration surfaces at startup
+ * rather than a silent Hub-side identity collision. The caller keeps the
+ * one-line host-specific abort (claude `process.exit(2)`; opencode `return` —
+ * it can't kill the TUI).
+ */
+export function readRequiredAgentName(log: (m: string) => void): string | null {
+  const agentName = process.env.OIS_AGENT_NAME?.trim();
+  if (!agentName) {
+    log(
+      "[Handshake] FATAL: OIS_AGENT_NAME env var required (idea-251 D-prime). Set in ~/.config/apnex-agents/{name}.env.",
+    );
+    return null;
+  }
+  log(`[Handshake] OIS_AGENT_NAME=${agentName}`);
+  return agentName;
+}
+
+/**
  * Build the enriched register_role payload.
  */
 export function buildHandshakePayload(config: HandshakeConfig): HandshakePayload {

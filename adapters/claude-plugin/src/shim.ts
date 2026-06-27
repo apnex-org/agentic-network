@@ -12,6 +12,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   McpAgentClient,
   appendNotification,
+  buildPendingTaskNotification,
+  readRequiredAgentName,
+  loadConfig,
+  readPackageVersion,
+  readBuildInfo,
+  UNKNOWN_BUILD_INFO,
   buildPromptText,
   makeStdioFatalHalt,
   createSharedDispatcher,
@@ -47,72 +53,20 @@ import {
 
 // ── Configuration ───────────────────────────────────────────────────
 
-interface HubConfig {
-  hubUrl: string;
-  hubToken: string;
-  role: string;
-  /**
-   * Mission-19 routing labels. Stamped onto the Agent entity via the
-   * enriched register_role handshake; scoped dispatches (tasks, threads,
-   * etc.) filter by these. Read from adapter-config.json `labels` field or
-   * the `OIS_HUB_LABELS` env var (JSON-encoded). Omit for broadcast.
-   */
-  labels?: Record<string, string>;
+// idea-355 SLICE-1 single-home: HubConfig + parseLabels + loadConfig hoisted to
+// the kernel (@apnex/network-adapter). The shim injects its host specifics (the
+// WORK_DIR/cwd directory + the console.error warn sink) and keeps only the
+// last-mile credential abort (claude can process.exit; opencode can't).
+const config = loadConfig({
+  directory: process.env.WORK_DIR || process.cwd(),
+  warn: (m) => console.error(m),
+});
+if (!config.hubUrl || !config.hubToken) {
+  console.error(
+    "ERROR: Hub credentials not found. Checked .ois/adapter-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars",
+  );
+  process.exit(1);
 }
-
-function parseLabels(raw: string | undefined, source: string): Record<string, string> | undefined {
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const out: Record<string, string> = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === "string") out[k] = v;
-      }
-      return Object.keys(out).length > 0 ? out : undefined;
-    }
-  } catch (err) {
-    console.error(`WARNING: Failed to parse labels from ${source}: ${err}`);
-  }
-  return undefined;
-}
-
-function loadConfig(): HubConfig {
-  const workDir = process.env.WORK_DIR || process.cwd();
-  const configPath = resolve(workDir, ".ois", "adapter-config.json");
-
-  let fileConfig: Partial<HubConfig> = {};
-  if (existsSync(configPath)) {
-    try {
-      const raw = JSON.parse(readFileSync(configPath, "utf-8"));
-      fileConfig = {
-        hubUrl: raw.hubUrl,
-        hubToken: raw.hubToken,
-        role: raw.role,
-        labels: raw.labels,
-      };
-    } catch (err) {
-      console.error(`WARNING: Failed to parse ${configPath}: ${err}`);
-    }
-  }
-
-  const hubUrl = process.env.OIS_HUB_URL || fileConfig.hubUrl || "";
-  const hubToken = process.env.OIS_HUB_TOKEN || fileConfig.hubToken || "";
-  const role = process.env.OIS_HUB_ROLE || fileConfig.role || "engineer";
-  const labels =
-    parseLabels(process.env.OIS_HUB_LABELS, "OIS_HUB_LABELS env var") ?? fileConfig.labels;
-
-  if (!hubUrl || !hubToken) {
-    console.error(
-      "ERROR: Hub credentials not found. Checked .ois/adapter-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars",
-    );
-    process.exit(1);
-  }
-
-  return { hubUrl, hubToken, role, labels };
-}
-
-const config = loadConfig();
 const WORK_DIR = process.env.WORK_DIR || process.cwd();
 const LOG_FILE = join(WORK_DIR, ".ois", "claude-notifications.log");
 const SHUTDOWN_TIMEOUT_MS = 3000;
@@ -127,15 +81,9 @@ const SHUTDOWN_TIMEOUT_MS = 3000;
 const __shimDir = dirname(fileURLToPath(import.meta.url));
 const __require = createRequire(import.meta.url);
 
-function readPackageVersion(pkgJsonPath: string, fallback: string): string {
-  try {
-    const raw = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
-    return typeof raw.version === "string" ? raw.version : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
+// readPackageVersion / readBuildInfo / BuildInfo hoisted to the kernel
+// (@apnex/network-adapter) in idea-355 SLICE-1. The shim keeps only its
+// host-specific path resolution + the derived version/build-info constants.
 const CLAUDE_PLUGIN_PKG_VERSION = readPackageVersion(
   resolve(__shimDir, "..", "package.json"),
   "unknown",
@@ -156,34 +104,6 @@ const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
 // via the existing mission-66 #40 wire-pattern (clientMetadata propagation
 // → Hub deriveAdvisoryTags projection → AgentAdvisoryTags). Surfaces in
 // get-agents as SHIM_COMMIT + ADAPTER_COMMIT columns.
-interface BuildInfo {
-  commitSha: string;
-  dirty: boolean;
-  buildTime: string | null;
-  branch: string;
-}
-
-const UNKNOWN_BUILD_INFO: BuildInfo = {
-  commitSha: "unknown",
-  dirty: false,
-  buildTime: null,
-  branch: "unknown",
-};
-
-function readBuildInfo(buildInfoPath: string): BuildInfo {
-  try {
-    const raw = JSON.parse(readFileSync(buildInfoPath, "utf-8"));
-    return {
-      commitSha: typeof raw.commitSha === "string" ? raw.commitSha : "unknown",
-      dirty: !!raw.dirty,
-      buildTime: typeof raw.buildTime === "string" ? raw.buildTime : null,
-      branch: typeof raw.branch === "string" ? raw.branch : "unknown",
-    };
-  } catch {
-    return UNKNOWN_BUILD_INFO;
-  }
-}
-
 const PROXY_BUILD_INFO = readBuildInfo(resolve(__shimDir, "build-info.json"));
 const SDK_BUILD_INFO = (() => {
   try {
@@ -405,15 +325,11 @@ async function main(): Promise<void> {
     sdkBranch: SDK_BUILD_INFO.branch,
   });
 
-  // idea-251 D-prime Phase 2: identity from OIS_AGENT_NAME env. REQUIRED;
-  // loud-error if absent so misconfiguration is visible at startup rather
-  // than producing a silent identity collision on the Hub side.
-  const agentName = process.env.OIS_AGENT_NAME?.trim();
-  if (!agentName) {
-    log("[Handshake] FATAL: OIS_AGENT_NAME env var required (idea-251 D-prime). Set in ~/.config/apnex-agents/{name}.env. Aborting.");
-    process.exit(2);
-  }
-  log(`[Handshake] OIS_AGENT_NAME=${agentName}`);
+  // idea-251 D-prime Phase 2 identity (hoisted to the kernel in idea-355
+  // SLICE-1). The shim keeps only its host-specific abort: claude can
+  // process.exit on misconfiguration.
+  const agentName = readRequiredAgentName(log);
+  if (!agentName) process.exit(2);
 
   const fatalHalt = makeStdioFatalHalt(log);
 
@@ -606,10 +522,10 @@ async function main(): Promise<void> {
           }
         },
         onPendingTask: (task) => {
-          appendNotification(
-            { event: "task_issued", data: task, action: "Pick up with get_task" },
-            { logPath: LOG_FILE, mirror: (block) => process.stderr.write(block) },
-          );
+          appendNotification(buildPendingTaskNotification(task), {
+            logPath: LOG_FILE,
+            mirror: (block) => process.stderr.write(block),
+          });
         },
         onPendingActionItem: (item) => {
           if (dispatcherRef) {
