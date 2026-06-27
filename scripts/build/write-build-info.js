@@ -94,6 +94,20 @@ function assertSkip(note) {
 }
 
 function runAssert() {
+  // idea-355 SLICE-3 hot-gate scoping (fork-1 follow-up, architect decision B):
+  // the gate's intent is "can't PUBLISH unstamped" — a CONSUMER-publish check.
+  // The hub-internal transient-vendor-pack (build-hub.sh → transient-package-
+  // swap.sh) vendors sovereign SOURCE into the hub image, which is traced by its
+  // OWN git-sha build-info — it is NOT a registry ship, so firing the gate there
+  // is a false positive. That pack sets OIS_SKIP_VERSION_ASSERT=1 to skip ONLY
+  // this FAIL check; the build-info stamp (above) + the package's prepare/tsc
+  // build still run, so dist stays intact (NOT a blanket --ignore-scripts). The
+  // real publish paths (publish-packages.sh / release-plugin / release-opencode)
+  // leave the flag unset and still gate.
+  if (process.env.OIS_SKIP_VERSION_ASSERT === "1") {
+    assertSkip("OIS_SKIP_VERSION_ASSERT=1 (internal vendor-pack; gate scoped to consumer publishes)");
+    return;
+  }
   // No git context → the top-level `git rev-parse` already fell back to
   // "unknown". Nothing to assert against.
   if (sha === "unknown") {

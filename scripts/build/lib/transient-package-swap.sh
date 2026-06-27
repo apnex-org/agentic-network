@@ -102,7 +102,13 @@ swap_workspace_deps_to_tarballs() {
     # Pre-install package devDeps so the `prepare` hook (which runs `tsc`)
     # can succeed during npm pack. Idempotent on populated node_modules.
     ( cd "$pkg_dir" && npm install --no-audit --no-fund --silent )
-    tarball_name=$( cd "$pkg_dir" && npm pack --pack-destination "$target_dir" --silent )
+    # idea-355 SLICE-3 (decision B): this is an INTERNAL vendor-pack of sovereign
+    # SOURCE into the hub image (traced by the hub's own git-sha), NOT a registry
+    # ship — so scope the bug-182 version-bump assert OUT of it. OIS_SKIP_VERSION_ASSERT
+    # skips ONLY the assert's FAIL check; `prepare`/tsc + the build-info stamp still
+    # run, so dist stays intact (do NOT use --ignore-scripts here). The real
+    # consumer-publish paths leave this unset and still gate.
+    tarball_name=$( cd "$pkg_dir" && OIS_SKIP_VERSION_ASSERT=1 npm pack --pack-destination "$target_dir" --silent )
     if [[ -z "$tarball_name" || ! -f "$target_dir/$tarball_name" ]]; then
       echo "[transient-swap] ERROR: npm pack did not produce a tarball for $pkg_name." >&2
       return 1
