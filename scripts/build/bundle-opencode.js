@@ -41,6 +41,19 @@ execSync(`node ${JSON.stringify(writeBuildInfo)}`, {
 // 2. Read it back to inline into the bundle (NO runtime file read).
 const buildInfo = JSON.parse(readFileSync(resolve(pkgDir, "dist", "build-info.json"), "utf-8"));
 
+// 2b. idea-355 SLICE-3 follow-up (bug-183 opencode close): inline the REAL
+//     kernel version (@apnex/network-adapter) at build time. In the
+//     self-contained bundle the kernel is inlined FROM SOURCE — there is no
+//     resolvable @apnex/network-adapter/package.json on disk at runtime — so
+//     without this the shim's NETWORK_ADAPTER_PKG_VERSION catch-falls-back to
+//     the SHIM's OWN version, making sdkVersion report a FALSE kernel skew
+//     (steve @shim-version vs claude @kernel-version for the SAME kernel = the
+//     phantom-version class). Inlining the source-of-truth version keeps
+//     sdkVersion honest. pkgDir = adapters/opencode-plugin (npm cwd); ../../ = repo root.
+const networkAdapterVersion = JSON.parse(
+  readFileSync(resolve(pkgDir, "..", "..", "packages", "network-adapter", "package.json"), "utf-8"),
+).version;
+
 // 3. esbuild self-contained bundle with build-info inlined via --define.
 await build({
   absWorkingDir: pkgDir,
@@ -58,10 +71,13 @@ await build({
   define: {
     // esbuild substitutes the identifier with this JSON object literal.
     __OPENCODE_BUILD_INFO__: JSON.stringify(buildInfo),
+    // ...and the real kernel version (string literal) for honest sdkVersion.
+    __NETWORK_ADAPTER_VERSION__: JSON.stringify(networkAdapterVersion),
   },
 });
 
 process.stderr.write(
   `[bundle-opencode] dist/shim.js bundled; build-info inlined ` +
-    `(${buildInfo.commitSha}${buildInfo.dirty ? "-dirty" : ""} on ${buildInfo.branch})\n`,
+    `(${buildInfo.commitSha}${buildInfo.dirty ? "-dirty" : ""} on ${buildInfo.branch}); ` +
+    `kernel @apnex/network-adapter@${networkAdapterVersion} inlined\n`,
 );

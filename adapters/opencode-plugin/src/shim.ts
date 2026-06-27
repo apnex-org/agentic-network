@@ -81,22 +81,32 @@ const OPENCODE_PLUGIN_PKG_VERSION = readPackageVersion(
   resolve(__shimDir, "..", "package.json"),
   "unknown",
 );
-const NETWORK_ADAPTER_PKG_VERSION = (() => {
-  try {
-    return readPackageVersion(
-      __require.resolve("@apnex/network-adapter/package.json"),
-      OPENCODE_PLUGIN_PKG_VERSION,
-    );
-  } catch {
-    // idea-355 SLICE-3 (fork 3): in the esbuild self-contained bundle the
-    // kernel is inlined FROM SOURCE — there is no resolvable
-    // @apnex/network-adapter/package.json on disk. It is ONE build, so the
-    // bundle's own version IS the kernel's effective version (the inlined git
-    // sha in SDK_BUILD_INFO carries the precise identity). Report the bundle
-    // version instead of the old "@apnex/network-adapter@unknown" phantom.
-    return OPENCODE_PLUGIN_PKG_VERSION;
-  }
-})();
+// idea-355 SLICE-3 follow-up (bug-183 opencode close): the kernel version is
+// INLINED at bundle time via esbuild `define` (__NETWORK_ADAPTER_VERSION__, see
+// scripts/build/bundle-opencode.js), read here behind a typeof-guard. It is the
+// SOURCE-OF-TRUTH kernel version (@apnex/network-adapter's package.json at build
+// time), so sdkVersion reports the REAL kernel — matching the claude shim on the
+// SAME kernel — not a false skew. The PRIOR catch-fallback returned the SHIM's
+// own version, which made the self-contained bundle report sdkVersion==shimVersion:
+// a phantom kernel-drift signal on get_agents (steve @shim-version vs claude @kernel)
+// = exactly the phantom-version class (bug-183) the consolidation exists to kill.
+// On the dev/test (tsx/vitest) path the define is absent (typeof "undefined", no
+// throw) → resolve the kernel package.json off node_modules (the workspace symlink),
+// falling back to the shim version only if even that fails.
+declare const __NETWORK_ADAPTER_VERSION__: string | undefined;
+const NETWORK_ADAPTER_PKG_VERSION =
+  typeof __NETWORK_ADAPTER_VERSION__ !== "undefined"
+    ? __NETWORK_ADAPTER_VERSION__
+    : (() => {
+        try {
+          return readPackageVersion(
+            __require.resolve("@apnex/network-adapter/package.json"),
+            OPENCODE_PLUGIN_PKG_VERSION,
+          );
+        } catch {
+          return OPENCODE_PLUGIN_PKG_VERSION;
+        }
+      })();
 const PROXY_VERSION = OPENCODE_PLUGIN_PKG_VERSION;
 const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
 
