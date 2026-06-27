@@ -152,11 +152,10 @@ describe("M-Build-Identity-AdvisoryTag — deriveAdvisoryTags projection", () =>
     expect(result.advisoryTags.sdkCommitSha).toBe("2222222");
   });
 
-  it("report-both (idea-355 SLICE-3 / bug-183): emits sdkVersion + shimVersion from clientMetadata", async () => {
-    // The legacy `adapterVersion` field is mislabeled — it carries the SHIM
-    // version (clientMetadata.proxyVersion), NOT the SDK. The report-both fix
-    // ADDITIVELY surfaces both versions under intent-aligned keys while leaving
-    // adapterVersion untouched (back-compat; AG-8 retire is a later slice).
+  it("report-both (idea-355 SLICE-3 / bug-183): emits sdkVersion + shimVersion; adapterVersion RETIRED (SLICE-4 AG-8)", async () => {
+    // SLICE-3 added the intent-aligned sdkVersion + shimVersion keys; SLICE-4
+    // (AG-8 retire) then REMOVED the mislabeled legacy `adapterVersion` write
+    // (it carried the SHIM proxyVersion — a redundant duplicate of shimVersion).
     const result = await reg.registerAgent(
       "sess-1",
       "engineer",
@@ -169,8 +168,10 @@ describe("M-Build-Identity-AdvisoryTag — deriveAdvisoryTags projection", () =>
     expect(result.advisoryTags.sdkVersion).toBe("@apnex/network-adapter@0.1.2");
     // shimVersion = clientMetadata.proxyVersion (the SHIM / plugin)
     expect(result.advisoryTags.shimVersion).toBe("0.1.4");
-    // Legacy adapterVersion preserved, still mirrors proxyVersion (the SHIM).
-    expect(result.advisoryTags.adapterVersion).toBe("0.1.4");
+    // AG-8 retire: the mislabeled advisoryTags.adapterVersion is GONE (shimVersion
+    // is its honest replacement). The DIFFERENT top-level Agent.adapterVersion is
+    // unaffected (not part of advisoryTags).
+    expect(result.advisoryTags.adapterVersion).toBeUndefined();
   });
 
   it("report-both: absent clientMetadata.{sdk,proxy}Version → no spurious sdk/shim keys", async () => {
