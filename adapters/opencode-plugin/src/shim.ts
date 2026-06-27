@@ -42,12 +42,45 @@ import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { readFileSync, appendFileSync, mkdirSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, resolve } from "path";
+import { fileURLToPath } from "url";
+import { createRequire } from "module";
 
 // ── Module state ─────────────────────────────────────────────────────
 
-const PROXY_VERSION = "4.3.0";
-const SDK_VERSION = "@apnex/network-adapter@2.1.0";
+// idea-355 SLICE-0 / bug-183 reported-half: kill the hardcoded version phantom.
+// Mirror the mission-66 #40 fix the claude shim already carries — read the REAL
+// versions from package.json instead of the drifted "4.3.0" / "2.1.0" literals.
+// PROXY_VERSION = opencode-plugin/package.json; SDK_VERSION = the @apnex/network-adapter
+// package.json. In the esbuild self-contained bundle the kernel is inlined (no
+// resolvable package.json on disk) → SDK_VERSION falls back to "unknown" — honest,
+// NOT the old phantom; the real bundled-kernel version lands in SLICE-3's build-info
+// version scheme. (claude ships node_modules so its resolve hits the real 0.1.4.)
+const __shimDir = dirname(fileURLToPath(import.meta.url));
+const __require = createRequire(import.meta.url);
+
+function readPackageVersion(pkgJsonPath: string, fallback: string): string {
+  try {
+    const raw = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+    return typeof raw.version === "string" ? raw.version : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const OPENCODE_PLUGIN_PKG_VERSION = readPackageVersion(
+  resolve(__shimDir, "..", "package.json"),
+  "unknown",
+);
+const NETWORK_ADAPTER_PKG_VERSION = (() => {
+  try {
+    return readPackageVersion(__require.resolve("@apnex/network-adapter/package.json"), "unknown");
+  } catch {
+    return "unknown";
+  }
+})();
+const PROXY_VERSION = OPENCODE_PLUGIN_PKG_VERSION;
+const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
 const RATE_LIMIT_MS = 30_000;
 
 let diagLogPath = "";
