@@ -1,17 +1,19 @@
 # Teleological Goals — Canonical Specification
 
-**Status:** Teles 0-10 ratified 2026-04-21 AEST (Director). Tele 11 Cognitive Minimalism and Tele 12 Precision Context Engineering both added 2026-04-22 AEST per Director direction during 2026-04 architectural review Phase 1 (architect-authored; explicit two-tele exception to review anti-goal §7 "Modifying the ratified Tele set"). Hub state matches this spec exactly.
+**Status:** Teles 0-10 ratified 2026-04-21 AEST (Director). Tele 11 Cognitive Minimalism and Tele 12 Precision Context Engineering both added 2026-04-22 AEST per Director direction during 2026-04 architectural review Phase 1 (architect-authored; explicit two-tele exception to review anti-goal §7 "Modifying the ratified Tele set"). Tele 13 Director Intent Amplification added 2026-06-20 per Director direction (architect-authored; Director-ratified following CDACC run-1). Hub state matches this spec exactly (14 teles).
 **Source audit:** idea-149 (initial 11) + architect authority 2026-04-22 (tele-11 + tele-12)
 **Template:** 4-section (Mandate → Mechanics → Rationale → Faults) + measurable Success Criteria
 **Axiom harvest source:** `/home/apnex/taceng/ois/org/gov/axioms` (OIS KMS-META-010 through KMS-META-070) for teles 0-10; teles 11 and 12 are architect-proposed, not AX-harvested.
 
 ## Context
 
-This document is the canonical specification of the 13 ratified teleological goals for the Agentic Network. Each tele is a declaration of perfection — a qualitative asymptote toward which the system is engineered. The list is structured as **1 umbrella vision + 10 orthogonal load-bearing asymptotes (tele-0..tele-10, Director-ratified 2026-04-21) + 2 architect-proposed orthogonal asymptotes (tele-11 and tele-12, added 2026-04-22 per Director direction)**; each orthogonal tele composes as a necessary sub-condition of the umbrella. Teles 11 and 12 form an adjacent pair on LLM-efficiency (extensive + intensive margins respectively) distinct from but composing with tele-5 Perceptual Parity.
+This document is the canonical specification of the 14 ratified teleological goals for the Agentic Network. Each tele is a declaration of perfection — a qualitative asymptote toward which the system is engineered. The list is structured as **1 umbrella vision + 10 orthogonal load-bearing asymptotes (tele-0..tele-10, Director-ratified 2026-04-21) + 3 architect-proposed orthogonal asymptotes (tele-11 and tele-12 added 2026-04-22; tele-13 added 2026-06-20, per Director direction)**; each orthogonal tele composes as a necessary sub-condition of the umbrella. Teles 11 and 12 form an adjacent pair on LLM-efficiency (extensive + intensive margins respectively) distinct from but composing with tele-5 Perceptual Parity. Tele 13 Director Intent Amplification economizes the orthogonal scarce resource — Director attention — and is distinct from tele-11/12 (LLM tokens) and tele-5/6 (perception/friction between actors).
+
+> **Note (umbrella enumeration):** tele-0's own Mechanics + Success Criteria still enumerate the composing sub-conditions as "tele-1 through tele-10" — authored before tele-11/12 (2026-04-22) and tele-13 (2026-06-20). Read it as *all orthogonal teles* (currently tele-1..tele-13). The literal text is not edited in place because tele content is immutable (§Tele Lifecycle); the correction rides idea-328 (M-Tele-Amendment-Primitive), which introduces a ratified, lineage-preserving in-place edit. Surfaced as the normative canary of CDACC run-1.
 
 Per Director ratification, all teles are authored in the 4-section template (Mandate / Mechanics / Rationale / Faults) with a measurable Success Criteria list. This template is adopted from the shape discipline of the OIS KMS-META axioms for orthogonal-expression consistency.
 
-**Hub state (as of 2026-04-22):** The Hub contains exactly **13 teles**, with Hub IDs `tele-0` through `tele-12` mapped 1-to-1 against the spec numbering below. Teles 0-10 carry `createdBy: { role: "director", agentId: "seed-ratified-2026-04-21" }`. Teles 11 and 12 carry `createdBy: { role: "architect", agentId: "eng-40903c59d19f" }` with provenance: Director-directed exceptions during 2026-04 architectural review Phase 1. Original 11-tele state was reached via full direct-write reset (`scripts/reset-teles.ts`) after architect-adapter tool-surface issues blocked the normal `create_tele` path; the tele-11 and tele-12 additions both used the normal `create_tele` MCP tool successfully (role-gate did not block architect-scope invocation). Pre-reset Hub state (9 legacy `pre-provenance` teles + 7 seed-ratified at IDs 10-16) was backed up to `scripts/reset-teles-backup-2026-04-21T23-35-09-585Z/` before destructive operations.
+**Hub state (as of 2026-06-20):** The Hub contains exactly **14 teles**, with Hub IDs `tele-0` through `tele-13` mapped 1-to-1 against the spec numbering below. Tele 13 was added 2026-06-20 via the normal `create_tele` MCP tool (architect-scope), Director-ratified. Teles 0-10 carry `createdBy: { role: "director", agentId: "seed-ratified-2026-04-21" }`. Teles 11 and 12 carry `createdBy: { role: "architect", agentId: "eng-40903c59d19f" }` with provenance: Director-directed exceptions during 2026-04 architectural review Phase 1. Original 11-tele state was reached via full direct-write reset (`scripts/reset-teles.ts`) after architect-adapter tool-surface issues blocked the normal `create_tele` path; the tele-11 and tele-12 additions both used the normal `create_tele` MCP tool successfully (role-gate did not block architect-scope invocation). Pre-reset Hub state (9 legacy `pre-provenance` teles + 7 seed-ratified at IDs 10-16) was backed up to `scripts/reset-teles-backup-2026-04-21T23-35-09-585Z/` before destructive operations.
 
 ---
 
@@ -403,6 +405,37 @@ Per Director ratification, all teles are authored in the 4-section template (Man
 
 ---
 
+## Tele #13 — Director Intent Amplification
+
+**Hub ID:** `tele-13`. **Source:** architect-proposed 2026-06-20 per Director direction; third architect-authored orthogonal addition (tele-11/12 precedent). Director-ratified 2026-06-20 following the CDACC run-1 + vision-synthesis work. Conceptual origin: `docs/specs/vision-synthesis.md` §9 + Director framing 2026-06-20.
+
+**Mandate.** The single human Director is the one irreplaceable, non-scalable resource in the network. The aggregate system exists to augment, offload, and serve the Director — and continuously evolves the interfaces by which Director intent is elicited, clarified, and resolved, maximizing efficacy, effectiveness, efficiency, and clarity per unit of Director attention. The system profiles the Director's revealed preferences and offers recommended **leans**, used *only* to tie-break genuine inter-tele divergences; it never reworks the option set nor pre-empts the decision. All final authority remains delegated to the Director.
+
+**Mechanics.**
+- **Intent-Interface Evolution** — the mechanisms, forms, surfaces, and modalities (text, structured UI, voice, ambient) by which the Director conveys intent are a first-class, evolving subsystem; friction in intent-conveyance surfaces as a refactor candidate, not an accepted cost.
+- **Revealed-Preference Profiling** — the system characterizes the Director's decisions and trade-offs over time (which teles they consistently favor, which leans they make) to build a model of *revealed* priority — observed, never assumed.
+- **Lean-as-Tie-Break (bounded)** — the preference model is applied **only** at a genuine inter-tele divergence (two teles pull opposite ways and the option set is otherwise balanced): it places *focus* on the Director's historically-preferred tele and surfaces a recommended lean. It does **not** re-rank options, narrow the choice set, or decide.
+- **Attention as the Scarce Resource** — Director attention is the binding constraint on extreme-long-horizon, uninterrupted arcs; every interface improvement is measured by *Director-intent resolved per unit of Director attention spent*. Distinct from tele-11/12, which economize LLM tokens; this economizes Director attention.
+- **Authority Non-Delegation** — amplification serves the decision, never substitutes for it; every final call remains the Director's.
+
+**Rationale.** On extreme-long-horizon R&D arcs the system can scale agents, compute, and missions without bound — but it cannot scale the Director. The leverage point is therefore the interface between Director intent and system action. Without a tele that makes intent-amplification first-class, interface friction accretes silently: the Director spends attention transcribing, disambiguating, and re-conveying intent that better surfaces would have resolved, and "recommended leans" drift from advisory toward decisional. Naming the mandate keeps the loop honest — the system works to need *less* of the Director's attention per intent, while keeping every final call the Director's.
+
+**Faults.**
+- **Attention Leak** — the Director spends attention on intent-conveyance a better interface would have absorbed; toil masquerades as collaboration.
+- **Preference Overreach** — the revealed-preference model crosses from tie-breaking into re-ranking or deciding; the lean becomes a silent veto.
+- **Interface Fossilization** — intent-elicitation surfaces stop evolving; the Director adapts to the tool instead of the tool adapting to the Director.
+- **Authority Drift** — final authority erodes as the system pre-empts decisions "to save time"; the Director slides from sovereign to rubber-stamp.
+- **Profile Miscalibration** — the preference model is built on stale or misread decisions; leans point the wrong way at exactly the divergences that matter.
+
+**Success Criteria.**
+1. Intent-elicitation/resolution interfaces are a tracked, evolving subsystem; friction in intent-conveyance surfaces as an improvement candidate within a review cycle.
+2. The system maintains a revealed-preference profile of the Director (favored teles, characteristic trade-offs) derived from actual decisions, not assumption.
+3. Recommended leans are applied only at genuine inter-tele divergences and are advisory — an audit shows zero lean-driven decisions taken without explicit Director ratification.
+4. Director-intent-resolved per unit of Director attention trends up over time (interface improvements measurably reduce attention-per-intent).
+5. Final authority on every decision is and remains the Director's; no decision is auto-taken on a lean.
+
+---
+
 ## Tele Lifecycle
 
 Mission-43 (M-Tele-Retirement-Primitive) added lifecycle primitives that replace the direct-write workaround used during the 2026-04-21 tele-audit reset. Content fields (`name`, `description`, `successCriteria`) remain immutable once a tele is filed; only the lifecycle state (`status`, `supersededBy`, `retiredAt`) mutates through the dedicated tools.
@@ -480,6 +513,7 @@ Bug-24 ("No retirement primitive for teles — create_tele is immutable with no 
 | 10 | Autopoietic Evolution | `tele-10` | pre-reset `tele-8` |
 | 11 | Cognitive Minimalism | `tele-11` | architect-proposed 2026-04-22 per Director direction (not AX-harvested; orthogonal addition to the 2026-04-21 ratified set) |
 | 12 | Precision Context Engineering | `tele-12` | architect-proposed 2026-04-22 per Director direction (follows tele-11 as the intensive-margin companion; distinction surfaced by Director probe "Are you sure Cognitive Minimalism is the same as Precision Engineered Context?") |
+| 13 | Director Intent Amplification | `tele-13` | architect-proposed 2026-06-20 per Director direction (third architect-authored orthogonal addition; economizes Director attention; Director-ratified following CDACC run-1 + vision-synthesis) |
 
 Spec number equals Hub ID by design; 1-to-1 mapping is an invariant of the reset and of subsequent architect-authored additions.
 
@@ -517,7 +551,7 @@ Source: `/home/apnex/taceng/ois/org/gov/axioms` (read-only external project; not
 
 ### Hub-state parity
 
-**Target achieved (as of 2026-04-22 — second revision, same day).** Hub contains exactly 13 teles with IDs `tele-0`..`tele-12` matching spec numbering 1-to-1. Teles 0-10 authored in 4-section template with `director/seed-ratified-2026-04-21` provenance. Teles 11 and 12 authored in the same 4-section template with `architect/eng-40903c59d19f` provenance (Director-directed additions 2026-04-22; see Coordination artifacts above). `teleCounter` in `meta/counter.json` advanced to `12`; next live `create_tele` call would assign `tele-13`.
+**Target achieved (as of 2026-06-20).** Hub contains exactly 14 teles with IDs `tele-0`..`tele-13` matching spec numbering 1-to-1. Teles 0-10 authored in 4-section template with `director/seed-ratified-2026-04-21` provenance. Teles 11 and 12 authored in the same 4-section template with `architect/eng-40903c59d19f` provenance (Director-directed additions 2026-04-22; see Coordination artifacts above). Tele 13 added 2026-06-20 via `create_tele` (architect-scope, Director-ratified). `teleCounter` in `meta/counter.json` advanced to `13`; next live `create_tele` call would assign `tele-14`.
 
 **Remaining blockers (for future tele lifecycle operations, not current state):**
 
