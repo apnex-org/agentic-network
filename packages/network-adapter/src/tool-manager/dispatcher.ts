@@ -35,7 +35,7 @@ import type {
   SessionReconnectReason,
 } from "../kernel/agent-client.js";
 import type { McpAgentClient } from "../kernel/mcp-agent-client.js";
-import { PollBackstop, type PollBackstopOptions } from "../kernel/poll-backstop.js";
+import { PollBackstop, resolveRole, type PollBackstopOptions } from "../kernel/poll-backstop.js";
 import type { DrainedPendingAction } from "../kernel/state-sync.js";
 import type { CachedCatalog } from "./tool-catalog-cache.js";
 import { ClaimableDigestTracker } from "./claimable-digest-tracker.js";
@@ -509,7 +509,12 @@ export function createSharedDispatcher(
     // and list_ready_work the wrong (or empty) set.
     const agentId = agent.getMetrics?.().agentId;
     if (!agentId) return;
-    const role = opts.pollBackstop?.role;
+    // bug-173 — resolve the role at USE-time (it may be a `() => string` thunk
+    // for hosts whose dispatcher is constructed before config.role loads), so the
+    // idea-353 wake/stall reconcile filters on the SAME configured role the
+    // PollBackstop tick uses — not a frozen module-init env default.
+    const roleOpt = opts.pollBackstop?.role;
+    const role = roleOpt === undefined ? undefined : resolveRole(roleOpt);
     if (!role) return;
 
     wakeStallInFlight = true;

@@ -61,8 +61,17 @@ export interface PollBackstopOptions {
   /**
    * Role this adapter polls for (e.g. "engineer", "architect"). Becomes
    * the `target.role` filter on each `list_messages` call.
+   *
+   * bug-173: accepts a `() => string` resolver in addition to a plain
+   * string. A host whose dispatcher is constructed at MODULE-INIT (before
+   * its config — and thus `config.role` — has loaded) passes a thunk that
+   * reads the role at USE-time, so the poll/reconcile filter tracks the
+   * CONFIGURED role rather than freezing the module-init env default.
+   * Resolved on every use via {@link resolveRole}; a plain string is
+   * returned as-is (the claude-shim path builds its dispatcher at runtime
+   * with `config.role` already known, so it stays a string — unchanged).
    */
-  role: string;
+  role: string | (() => string);
 
   /**
    * Poll cadence in seconds. Defaults to `OIS_ADAPTER_POLL_BACKSTOP_S`
@@ -157,6 +166,19 @@ interface CursorFile {
  */
 export function defaultCursorFile(role: string, agentId: string): string {
   return join(homedir(), ".ois", `poll-cursor-${role}-${agentId}.json`);
+}
+
+/**
+ * Resolve a {@link PollBackstopOptions.role} to its current string value.
+ * A plain string is returned as-is; a `() => string` thunk is invoked at
+ * call-time (bug-173 — lets a dispatcher constructed at MODULE-INIT track
+ * the host's configured role once `config.role` has loaded, instead of
+ * freezing whatever the env default was at construction). Used by both the
+ * PollBackstop tick (target.role filter) and the dispatcher's idea-353
+ * wake/stall reconcile so the two read the SAME resolved role.
+ */
+export function resolveRole(role: string | (() => string)): string {
+  return typeof role === "function" ? role() : role;
 }
 
 /**
@@ -265,6 +287,16 @@ export class PollBackstop {
   private inFlight = false;
   private heartbeatInFlight = false;
 
+  /**
+   * bug-173 — the role resolved at USE-time (`this.opts.role` may be a
+   * `() => string` thunk for hosts that construct the dispatcher before
+   * config loads). Every role read (poll filter, cursor file, log) goes
+   * through here so a configured role propagates without re-construction.
+   */
+  private get currentRole(): string {
+    return resolveRole(this.opts.role);
+  }
+
   constructor(opts: PollBackstopOptions) {
     const fromEnv = parseInt(
       process.env.OIS_ADAPTER_POLL_BACKSTOP_S ?? "",
@@ -312,7 +344,7 @@ export class PollBackstop {
     if (this.timer || this.heartbeatTimer) return;
     const cadenceMs = this.opts.cadenceSeconds * 1000;
     this.opts.log(
-      `[poll-backstop] starting (role=${this.opts.role}, cadenceS=${this.opts.firstTimerEnabled ? this.opts.cadenceSeconds : "disabled"}, heartbeatMs=${this.opts.heartbeatEnabled ? this.opts.heartbeatIntervalMs : "disabled"})`,
+      `[poll-backstop] starting (role=${this.currentRole}, cadenceS=${this.opts.firstTimerEnabled ? this.opts.cadenceSeconds : "disabled"}, heartbeatMs=${this.opts.heartbeatEnabled ? this.opts.heartbeatIntervalMs : "disabled"})`,
     );
     // bug-53: skip first-timer scheduling when firstTimerEnabled === false
     // (heartbeat-only hosts; current shim/opencode adapters use SSE for
@@ -372,14 +404,14 @@ export class PollBackstop {
           // session id which cycles on reconnect.
           const metrics = agent.getMetrics?.();
           const id = metrics?.agentId ?? agentId;
-          this.resolvedCursorFile = defaultCursorFile(this.opts.role, id);
+          this.resolvedCursorFile = defaultCursorFile(this.currentRole, id);
         }
       }
       const cursorFile = this.resolvedCursorFile;
 
       const since = readCursor(cursorFile);
       const args: Record<string, unknown> = {
-        targetRole: this.opts.role,
+        targetRole: this.currentRole,
         status: "new",
       };
       if (since !== undefined) args.since = since;
