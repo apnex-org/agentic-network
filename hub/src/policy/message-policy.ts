@@ -45,6 +45,7 @@ import {
   type MessageDelivery,
   type MessageTarget,
   type CreateMessageInput,
+  type Message,
 } from "../entities/index.js";
 import { findRepoEventHandler } from "./repo-event-handlers.js";
 import { resolveRecipient } from "../entities/recipient-resolver.js";
@@ -600,6 +601,37 @@ export function pushSelector(target: MessageTarget | null): Selector {
   }
   if (target.agentId) sel.agentId = target.agentId;
   return sel;
+}
+
+/**
+ * bug-192 — the canonical "system-emitter create + push-on-create" path.
+ *
+ * A system-emitter (trigger, director-notification, downstream-actor, sweeper)
+ * that calls `ctx.stores.message.createMessage` DIRECTLY bypasses the SSE push
+ * step the `create_message` MCP verb performs — so `delivery:"push-immediate"`
+ * is INERT and a poll-less (opencode) recipient never sees the Message live,
+ * only on reconnect-replay (compounds bug-189). Route every system-emit through
+ * this helper so create + push stay coupled (the mission-60/61 pulse-path
+ * lesson, generalized — the next emitter can't silently re-introduce the gap).
+ * Dispatch failure is non-fatal: the Message is already committed; cold
+ * reconnect-replay / poll-backstop recover any pushed-but-undelivered event.
+ */
+export async function emitAndPush(
+  ctx: IPolicyContext,
+  input: CreateMessageInput,
+): Promise<Message> {
+  const message = await ctx.stores.message.createMessage(input);
+  if (message.delivery === "push-immediate") {
+    try {
+      await ctx.dispatch("message_arrived", { message }, pushSelector(message.target ?? null));
+    } catch (err) {
+      // Non-fatal — the Message is committed; cold-replay / poll-backstop recover.
+      console.error(
+        `[emitAndPush] push-on-create dispatch failed for ${message.id} (non-fatal): ${(err as Error)?.message ?? String(err)}`,
+      );
+    }
+  }
+  return message;
 }
 
 // ── Registration ─────────────────────────────────────────────────────
