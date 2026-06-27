@@ -30,6 +30,7 @@ KM="$HOME/.claude/plugins/known_marketplaces.json"
 
 command -v gh  >/dev/null || { echo "ERROR: gh CLI required + authenticated" >&2; exit 1; }
 command -v jq  >/dev/null || { echo "ERROR: jq required" >&2; exit 1; }
+command -v tar >/dev/null || { echo "ERROR: tar required" >&2; exit 1; }
 
 # 1. Resolve the staged marketplace directory from the marketplace registration
 #    (falls back to the known default if the registration can't be read).
