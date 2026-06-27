@@ -17,6 +17,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { createTestPool } from "./_pg-test-pool.js";
 import { createPostgresStorageSubstrate, ALL_SCHEMAS, type HubStorageSubstrate } from "../index.js";
 import { MigrationRunner } from "../migrations/v2-envelope/migration-runner.js";
 import { MigrationCursorRepository } from "../../entities/migration-cursor-repository.js";
@@ -41,7 +42,7 @@ describe("W6-prep re-migration cursor discipline (§3.2 step-3 dirty-cursor-trap
     container = await new PostgreSqlContainer("postgres:15-alpine")
       .withUsername("hub").withPassword("hub").withDatabase("hub").start();
     const connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-    pool = new Pool({ connectionString: connStr });
+    pool = createTestPool(connStr, "migration-cursor-discipline-w6");
     for (const f of MIGRATION_FILES) await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
     substrate = createPostgresStorageSubstrate(connStr);
     runner = new MigrationRunner(substrate);

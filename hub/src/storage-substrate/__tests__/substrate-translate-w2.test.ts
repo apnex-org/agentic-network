@@ -28,6 +28,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { createTestPool } from "./_pg-test-pool.js";
 import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
@@ -83,7 +84,7 @@ describe("W2 substrate.list translate-point (testcontainers postgres)", () => {
     container = await new PostgreSqlContainer("postgres:15-alpine")
       .withUsername("hub").withPassword("hub").withDatabase("hub").start();
     connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-    pool = new Pool({ connectionString: connStr });
+    pool = createTestPool(connStr, "substrate-translate-w2");
     for (const f of MIGRATION_FILES) {
       await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
     }
