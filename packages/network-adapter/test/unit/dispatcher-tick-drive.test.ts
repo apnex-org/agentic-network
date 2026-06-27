@@ -269,3 +269,35 @@ describe("idea-355 §4.3 — invariant #1: the in-flight latch is released even 
     expect(recorded.some((e) => e.event === "work_lease_stall")).toBe(true);
   });
 });
+
+describe("bug-173 — the wake/stall reconcile resolves a `() => string` role at use-time", () => {
+  it("a thunk role reaches list_ready_work's role filter AND the emitted digest", async () => {
+    // The opencode shim builds the dispatcher at module-init (before config.role
+    // loads) and passes `role: () => currentRole`. The reconcile must resolve it
+    // at use-time so list_ready_work (and the digest) filter on the CONFIGURED
+    // role — not a frozen module-init env default.
+    const readyArgs: unknown[] = [];
+    const agent = streamingAgent(async (method, args) => {
+      if (method === "list_ready_work") {
+        readyArgs.push(args);
+        return { items: [{ id: "work-1" }, { id: "work-2" }] };
+      }
+      if (method === "transport_heartbeat" || method.startsWith("signal_")) return "ok";
+      return "ok";
+    });
+    const { dispatcher, onActionable } = build({
+      getAgent: () => agent,
+      pollBackstop: { role: () => "verifier" },
+    });
+
+    await dispatcher.pollBackstop!.tickHeartbeat(() => agent);
+
+    // The role filter on the Hub read carries the resolved "verifier".
+    expect(readyArgs).toContainEqual({ role: "verifier", scopeToCaller: true });
+    // And the surfaced digest is scoped to that same role.
+    const digest = onActionable.mock.calls
+      .map((c) => c[0] as AgentEvent)
+      .find((e) => e.event === "work_claimable_digest")!;
+    expect(digest.data).toMatchObject({ role: "verifier", count: 2 });
+  });
+});

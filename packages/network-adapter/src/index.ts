@@ -104,6 +104,7 @@ export type { StateSyncContext } from "./kernel/state-sync.js";
 export {
   PollBackstop,
   defaultCursorFile,
+  resolveRole,
   readCursor,
   writeCursor,
 } from "./kernel/poll-backstop.js";
