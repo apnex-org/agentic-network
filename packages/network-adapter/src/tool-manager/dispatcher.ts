@@ -309,6 +309,21 @@ export function injectQueueItemId(
   return { ...args, sourceQueueItemId: queueItemId };
 }
 
+// idea-355 §4.3 (review fix) — tight timeout on the wake/stall reconcile's Hub
+// read. The liveness heartbeat now runs concurrently with the reconcile (see
+// PollBackstop.tickHeartbeat), but this still bounds how long the reconcile can
+// hold the heartbeat cadence (heartbeatInFlight) and resource use. On timeout
+// the read is treated as a failed read (AC3 — tracker skipped, no false replay).
+const WAKE_STALL_READ_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
+
 export function createSharedDispatcher(
   opts: SharedDispatcherOptions,
 ): SharedDispatcher {
@@ -511,10 +526,14 @@ export function createSharedDispatcher(
       // tracker entirely so a transient empty/aborted read cannot manufacture a
       // false 0→N replay (AC3).
       try {
-        const raw = await agent.call(
-          "list_ready_work",
-          { role, scopeToCaller: true },
-          { internal: true },
+        const raw = await withTimeout(
+          agent.call(
+            "list_ready_work",
+            { role, scopeToCaller: true },
+            { internal: true },
+          ),
+          WAKE_STALL_READ_TIMEOUT_MS,
+          "list_ready_work wake/stall read",
         );
         const items = (raw as { items?: Array<{ id?: unknown }> } | null)?.items;
         if (Array.isArray(items)) {
@@ -879,8 +898,13 @@ export function createSharedDispatcher(
           // open a lease window; complete/abandon/release/block close it) so the
           // heartbeat tick's stall-prompt has a populated lease map. Hoisted from
           // the claude shim's onToolCallResult so wake/stall needs ZERO shim
-          // wiring. Best-effort — never disturb the tool-call return.
-          workLeases.observe(name, outgoingArgs, result, Date.now());
+          // wiring. Best-effort — its own try/catch (review nit: symmetry with the
+          // host hook below) so a malformed result never disturbs the tool return.
+          try {
+            workLeases.observe(name, outgoingArgs, result, Date.now());
+          } catch (obsErr) {
+            log(`[idea-353] kernel lease observe threw (non-fatal): ${(obsErr as Error)?.message ?? obsErr}`);
+          }
           // idea-353 W2: the optional host hook still fires for any host-specific
           // observation (the kernel observer above is the lease-tracking source).
           if (opts.onToolCallResult) {

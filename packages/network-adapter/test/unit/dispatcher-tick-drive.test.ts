@@ -117,7 +117,7 @@ describe("idea-355 §4.3 — kernel wake/stall on a zero-shim-wiring tick", () =
     expect(onActionable).not.toHaveBeenCalled();
   });
 
-  it("AC3 + invariant #1 — a failed list_ready_work read emits nothing, doesn't throw, and does NOT wedge the latch", async () => {
+  it("AC3 — a failed list_ready_work read emits nothing, doesn't throw, and a later good tick recovers", async () => {
     // The read throws on the first tick, succeeds on the second (stateful agent;
     // the dispatcher's getAgent ref is fixed at construction).
     let readN = 0;
@@ -202,5 +202,70 @@ describe("idea-355 §4.3 — invariant #3: the W2 lease observer is wired kernel
       .find((e) => e.event === "work_lease_stall");
     expect(stall).toBeDefined();
     expect(stall!.data).toMatchObject({ workId: "work-77" });
+  });
+});
+
+describe("idea-355 §4.3 — invariant #1: the in-flight latch is released even when the reconcile THROWS", () => {
+  it("a throw in the W2 emit path (outside the W1 catch) hits the finally → the next tick still emits", async () => {
+    // This is the NON-vacuous latch test (review fix): the induced throw must
+    // reach the latched `finally`, NOT the W1 inner catch. So we throw from the
+    // W2 stall emit (a due-for-stall lease whose onActionableEvent throws on the
+    // first emit). If the reset were moved out of `finally` into the success
+    // path, tick 1's throw would skip it → the latch wedges → tick 2 early-
+    // returns → no emit → this test fails (the mutation is caught).
+    const T0 = 1_000_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+
+    let failNextStall = true;
+    const recorded: AgentEvent[] = [];
+    const onActionable = vi.fn((event: AgentEvent) => {
+      if (event.event === "work_lease_stall" && failNextStall) {
+        failNextStall = false;
+        throw new Error("emit boom"); // OUTSIDE the W1 inner catch → reaches finally
+      }
+      recorded.push(event);
+    });
+
+    const agent = streamingAgent(
+      ticking([], async (method) => {
+        if (method === "claim_work") {
+          return {
+            workItem: {
+              id: "work-55",
+              lease: { expiresAt: new Date(T0 + 1000).toISOString() },
+            },
+          };
+        }
+        return "ok";
+      }),
+    );
+    const dispatcher = createSharedDispatcher({
+      proxyVersion: "test",
+      callToolGateTimeoutMs: 0,
+      notificationHooks: { onActionableEvent: onActionable },
+      pollBackstop: { role: "engineer" },
+      getAgent: () => agent,
+    });
+
+    // Track a lease via a real claim_work CallTool.
+    const server = dispatcher.createMcpServer();
+    const handlers = (server as unknown as {
+      _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
+    })._requestHandlers;
+    const callTool = handlers.get("tools/call")!;
+    await callTool({ method: "tools/call", params: { name: "claim_work", arguments: { workId: "work-55" } } });
+
+    // 70% into the 1000ms window — due for a stall prompt.
+    vi.setSystemTime(T0 + 700);
+
+    // Tick 1: the W2 stall emit throws → the reconcile's finally must release the
+    // latch (the throw is then caught by the dispatcher's per-concern try/catch).
+    await dispatcher.pollBackstop!.tickHeartbeat(() => agent);
+    // Tick 2: latch must be free → the still-due lease emits (markPrompted was
+    // never reached on tick 1, so it is still due).
+    await dispatcher.pollBackstop!.tickHeartbeat(() => agent);
+
+    expect(recorded.some((e) => e.event === "work_lease_stall")).toBe(true);
   });
 });
