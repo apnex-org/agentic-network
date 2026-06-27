@@ -26,6 +26,7 @@ import {
   buildPendingTaskNotification,
   readRequiredAgentName,
   loadConfig,
+  readPackageVersion,
   buildPromptText,
   buildToastMessage,
   createSharedDispatcher,
@@ -63,15 +64,8 @@ import { createRequire } from "module";
 const __shimDir = dirname(fileURLToPath(import.meta.url));
 const __require = createRequire(import.meta.url);
 
-function readPackageVersion(pkgJsonPath: string, fallback: string): string {
-  try {
-    const raw = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
-    return typeof raw.version === "string" ? raw.version : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
+// readPackageVersion hoisted to the kernel (@apnex/network-adapter) in idea-355
+// SLICE-1. The shim keeps its host-specific path resolution + version constants.
 const OPENCODE_PLUGIN_PKG_VERSION = readPackageVersion(
   resolve(__shimDir, "..", "package.json"),
   "unknown",

@@ -71,6 +71,13 @@ export type {
 export { parseLabels, loadConfig } from "./kernel/adapter-config.js";
 export type { HubConfig, LoadConfigOptions } from "./kernel/adapter-config.js";
 
+export {
+  readPackageVersion,
+  readBuildInfo,
+  UNKNOWN_BUILD_INFO,
+} from "./kernel/build-identity.js";
+export type { BuildInfo } from "./kernel/build-identity.js";
+
 export { performStateSync } from "./kernel/state-sync.js";
 export type { StateSyncContext, DrainedPendingAction } from "./kernel/state-sync.js";
 

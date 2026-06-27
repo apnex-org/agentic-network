@@ -15,6 +15,9 @@ import {
   buildPendingTaskNotification,
   readRequiredAgentName,
   loadConfig,
+  readPackageVersion,
+  readBuildInfo,
+  UNKNOWN_BUILD_INFO,
   buildPromptText,
   makeStdioFatalHalt,
   createSharedDispatcher,
@@ -78,15 +81,9 @@ const SHUTDOWN_TIMEOUT_MS = 3000;
 const __shimDir = dirname(fileURLToPath(import.meta.url));
 const __require = createRequire(import.meta.url);
 
-function readPackageVersion(pkgJsonPath: string, fallback: string): string {
-  try {
-    const raw = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
-    return typeof raw.version === "string" ? raw.version : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
+// readPackageVersion / readBuildInfo / BuildInfo hoisted to the kernel
+// (@apnex/network-adapter) in idea-355 SLICE-1. The shim keeps only its
+// host-specific path resolution + the derived version/build-info constants.
 const CLAUDE_PLUGIN_PKG_VERSION = readPackageVersion(
   resolve(__shimDir, "..", "package.json"),
   "unknown",
@@ -107,34 +104,6 @@ const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
 // via the existing mission-66 #40 wire-pattern (clientMetadata propagation
 // → Hub deriveAdvisoryTags projection → AgentAdvisoryTags). Surfaces in
 // get-agents as SHIM_COMMIT + ADAPTER_COMMIT columns.
-interface BuildInfo {
-  commitSha: string;
-  dirty: boolean;
-  buildTime: string | null;
-  branch: string;
-}
-
-const UNKNOWN_BUILD_INFO: BuildInfo = {
-  commitSha: "unknown",
-  dirty: false,
-  buildTime: null,
-  branch: "unknown",
-};
-
-function readBuildInfo(buildInfoPath: string): BuildInfo {
-  try {
-    const raw = JSON.parse(readFileSync(buildInfoPath, "utf-8"));
-    return {
-      commitSha: typeof raw.commitSha === "string" ? raw.commitSha : "unknown",
-      dirty: !!raw.dirty,
-      buildTime: typeof raw.buildTime === "string" ? raw.buildTime : null,
-      branch: typeof raw.branch === "string" ? raw.branch : "unknown",
-    };
-  } catch {
-    return UNKNOWN_BUILD_INFO;
-  }
-}
-
 const PROXY_BUILD_INFO = readBuildInfo(resolve(__shimDir, "build-info.json"));
 const SDK_BUILD_INFO = (() => {
   try {
