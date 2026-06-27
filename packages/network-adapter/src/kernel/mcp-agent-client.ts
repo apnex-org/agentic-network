@@ -593,6 +593,19 @@ export class McpAgentClient implements IAgentClient {
     });
 
     this.totalHandshakes++;
+    if (result.fatal) {
+      // FAIL LOUD (mission-93): register_role was REJECTED by a structured
+      // fatal error (e.g. role_mismatch). Do NOT degrade to streaming with a
+      // fallback role — that silent degrade masked the verifier cutover bug
+      // for an hour. Throw so runSynchronizingPhase fails clean (first-boot →
+      // disconnected + rethrow); onFatalHalt already fired (stops reconnect).
+      this.log.log(
+        "agent.handshake.registration_rejected",
+        { role: this.cfg.role },
+        `[Handshake] REGISTRATION REJECTED (fatal) for role=${this.cfg.role} — HALTING, not degrading to streaming. Check role/identity config.`
+      );
+      throw new Error(`register_role rejected (fatal) for role=${this.cfg.role}: handshake halted`);
+    }
     if (result.response) {
       this._lastEpoch = result.epoch;
       this._sessionEpoch = result.response.sessionEpoch;
@@ -682,7 +695,7 @@ export class McpAgentClient implements IAgentClient {
   private routeEvent(event: AgentEvent): void {
     const disposition = classifyEvent(
       event.event,
-      this.cfg.role as "engineer" | "architect"
+      this.cfg.role as "engineer" | "architect" | "verifier"
     );
     try {
       switch (disposition) {

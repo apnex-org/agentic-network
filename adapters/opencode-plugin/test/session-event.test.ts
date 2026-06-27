@@ -30,6 +30,12 @@ const sessionUpdated = (id: string): SessionEvent =>
 const sessionIdle = (): SessionEvent =>
   ({ type: "session.idle", properties: { sessionID: "s1" } }) as unknown as SessionEvent;
 
+const sessionError = (): SessionEvent =>
+  ({ type: "session.error", properties: { sessionID: "s1" } }) as unknown as SessionEvent;
+
+const sessionDeleted = (): SessionEvent =>
+  ({ type: "session.deleted", properties: { sessionID: "s1" } }) as unknown as SessionEvent;
+
 describe("handleSessionEvent — sessionActive tracking (bug-161, de-any)", () => {
   beforeEach(() => {
     _testOnly.setSessionActive(false);
@@ -57,6 +63,18 @@ describe("handleSessionEvent — sessionActive tracking (bug-161, de-any)", () =
   it("session.idle → sessionActive false", async () => {
     _testOnly.setSessionActive(true);
     await _testOnly.handleSessionEvent(sessionIdle());
+    expect(_testOnly.getSessionActive()).toBe(false);
+  });
+
+  it("session.error → sessionActive false (R1 bug-161: a session that dies via error must unstick the queue, not strand it)", async () => {
+    _testOnly.setSessionActive(true);
+    await _testOnly.handleSessionEvent(sessionError());
+    expect(_testOnly.getSessionActive()).toBe(false);
+  });
+
+  it("session.deleted → sessionActive false (R1: terminal session end flushes/unsticks)", async () => {
+    _testOnly.setSessionActive(true);
+    await _testOnly.handleSessionEvent(sessionDeleted());
     expect(_testOnly.getSessionActive()).toBe(false);
   });
 

@@ -196,6 +196,14 @@ interface QueuedNotification {
 const notificationQueue: QueuedNotification[] = [];
 const deferredBacklog: QueuedNotification[] = [];
 
+// R1 (bug-161 completion): bounded fallback. Notifications buffer in
+// notificationQueue while a session is active and flush on idle. If the session
+// never reaches idle — it dies via session.error / session.deleted, or hangs —
+// the queue would grow unbounded and never surface (the dead-queue class
+// bug-161 first exposed). Cap the buffer: once it hits the cap, flush (surface
+// coalesced) rather than wait for an idle that may never come.
+const NOTIFICATION_QUEUE_FLUSH_CAP = 50;
+
 function isRateLimited(): boolean {
   return Date.now() - lastPromptTime < RATE_LIMIT_MS;
 }
@@ -430,6 +438,10 @@ function surfaceActionableEvent(event: AgentEvent): void {
   };
   if (sessionActive) {
     notificationQueue.push(notification);
+    // R1: bounded fallback — don't let a never-idling session wedge the queue.
+    if (notificationQueue.length >= NOTIFICATION_QUEUE_FLUSH_CAP) {
+      void flushQueue();
+    }
   } else {
     void processNotification(notification);
   }
@@ -696,6 +708,17 @@ async function handleSessionEvent(event: Event): Promise<void> {
           /* will retry on next idle */
         }
       }
+      break;
+    case "session.error":
+    case "session.deleted":
+      // R1 (bug-161 completion): a session that ENDS via error/deletion (NOT a
+      // clean idle) must still flush its buffered notifications — otherwise
+      // sessionActive stays true and the queue is stranded (the exact gap that
+      // shipped silently with bug-161). Mirror the idle flush; skip the
+      // idle-only reconnect (an errored/deleted session isn't a reconnect cue).
+      sessionActive = false;
+      if (notificationQueue.length > 0) await flushQueue();
+      else if (deferredBacklog.length > 0) await flushBacklog();
       break;
   }
 }
