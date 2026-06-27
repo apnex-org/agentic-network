@@ -43,3 +43,19 @@ Both parked ~2026-06-20 when the stint pivoted to C1 dogfooding. **mission-64 (M
 **FRICTION observed (for the deferred council):** built work stranded by a mid-stint pivot — mission-92/93 carried 17–19 unmerged commits parked 7 days; near-miss duplicate because parked-active missions weren't surfaced at the new-focus framing. Reinforces the ledger-reconciliation-before-proposing discipline.
 
 **Provenance:** list_missions (active/proposed) + get_mission mission-64/92/93; git branch forensics; thread-728 (open).
+
+## DR-S3-004 — VEHICLE = (C): land parked work first (code-only), then idea-355 = only-new; ONE redeploy at SLICE-2
+greg's branch audit (thread-728, converged) settled the vehicle with two corrections folded:
+- **#337 merged = de-any/bug-161 TAIL only**; the core dedup stack (Step-1/2a/2b/2c + opencode esbuild release pipeline) was never PR'd — deprioritized for C1 ~06-20, not a failed merge. Build *looks* complete; confirm via rebase+build.
+- **Branches DIVERGED, not nested** (shared 16-commit base, forked at c20a9a3). mission-93's unique delta = **2 adapter commits**; the dedup is **fully separable** from the verifier Hub deploy (Hub-side already merged #335/#338/#343/#346).
+- **Rebase pain LOW:** exactly one trivial `index.ts` barrel collision with #362/#363; hoists live in files those PRs never touched. 92 already BUILT the opencode release pipeline (`release-opencode-plugin.sh` + esbuild bundle) → SLICE-2 de-risked.
+
+**DECISION (C):** clear the parked debt first as a fast zero-loss CODE-ONLY merge (normal PR flow, NOT dogfood-queued), then idea-355 = crisp follow-on for genuinely-new work. Beats (A)/(B) because it doesn't drag an 06-20 build through a fresh design/preflight/dogfood lifecycle, and shrinks idea-355's design to only-new.
+
+**REDEPLOY (architect call on greg's caveat): ONE redeploy, at SLICE-2.** Merge 92/93 code now with NO redeploy — redeploying opencode at 92-close would be WASTED (thinner shim but still dormant on wake/stall until SLICE-1 hoists the runWakeStallReconcile tick-drive). steve stays on the old 4.3.0 bundle (no regression — already lacks wake/stall) until SLICE-2's single republish picks up everything: 92 dedup + 93 hardening + SLICE-1 hoists + version-fix. The opencode shim republish is architect-publishable + reversible → flow at SLICE-2 autonomously, surface post-hoc ([[feedback_flow_verifier_gated_deploys]]).
+
+**EXECUTION:**
+- PHASE-1 (now): greg rebases dedup stack onto main + build-verify → PR → architect cross-approves + merges → close mission-92; then land mission-93's 2 remaining adapter commits → close mission-93. Code-only.
+- PHASE-2: idea-355 mission = SLICE-0 (version-fix) + SLICE-1 remaining generic-infra hoists + runWakeStallReconcile/tick-drive/live-refresh kernel-drive + SLICE-2 (single redeploy) + SLICE-3 (versioning/bug-182 + idea-256 wire) + SLICE-4 (tooling: bug-184 + sweep). Architect writes the design on `agent-lily/idea-355-design` (parallel with greg's rebase), proposes + preflights, seeds dogfood-3.
+
+**Provenance:** thread-728 (converged implementation_ready 2026-06-27).
