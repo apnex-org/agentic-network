@@ -159,4 +159,59 @@ describe("bug-100 — runtime watch-loop reconnects after a LISTEN drop", () => 
 
     await reconciler.close();
   });
+
+  it("bug-100 — boot-baseline: the FIRST session seeds sinceRevision from the high-water mark, so a reconnect BEFORE any event still replays from the baseline (not 'now')", async () => {
+    // Closes the residual edge: the cursor was tracked from delivered events only,
+    // so a reconnect before a session's first event live-tailed from "now". Boot
+    // now seeds the cursor from substrate.list()'s snapshotRevision (substrate-wide
+    // high-water mark), so EVERY session — the first and a reconnect-before-any-
+    // event — carries a gap-free sinceRevision floor.
+    const sinceRevisions: (string | undefined)[] = [];
+    let watchCalls = 0;
+
+    const mockSubstrate = {
+      // The boot-baseline read — high-water mark rv=3.
+      list: vi.fn(async () => ({ items: [], snapshotRevision: "3" })),
+      watch: vi.fn((_kind: string, opts: { signal: AbortSignal; sinceRevision?: string }) => {
+        watchCalls++;
+        sinceRevisions.push(opts.sinceRevision);
+        const attempt = watchCalls;
+        return (async function* () {
+          if (attempt === 1) {
+            // Drop BEFORE delivering ANY event (the reconnect-before-first-event edge).
+            throw new Error("simulated LISTEN drop before the first event");
+          }
+          // Session 2: deliver, then stay open until aborted.
+          yield { op: "delete" as const, kind: "SchemaDef", id: "schemadef-y", resourceVersion: "9" };
+          await new Promise<void>((resolve) => {
+            if (opts.signal.aborted) return resolve();
+            opts.signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+        })();
+      }),
+    } as unknown as HubStorageSubstrate;
+
+    const reconciler = createSchemaReconciler(mockSubstrate, "postgres://fake:5432/db", {
+      initialSchemas: [],
+      reconnectInitialBackoffMs: 5,
+      reconnectMaxBackoffMs: 5,
+      log: () => {},
+      warn: () => {},
+    });
+
+    await reconciler.start();
+
+    await vi.waitFor(
+      () => { expect(watchCalls).toBeGreaterThanOrEqual(2); },
+      { timeout: 2000, interval: 10 },
+    );
+
+    // Both the first session AND the reconnect-before-any-event carry the boot
+    // baseline (rv=3) — NOT undefined (which would live-tail from "now" and miss a
+    // write in the gap). This is the residual the boot-baseline seed closes.
+    expect(sinceRevisions[0]).toBe("3");
+    expect(sinceRevisions[1]).toBe("3");
+
+    await reconciler.close();
+  });
 });

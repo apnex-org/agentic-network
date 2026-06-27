@@ -237,6 +237,22 @@ export class SchemaReconciler {
     }
     this.log(`boot — initial SchemaDef application complete (${successCount} of ${initial.length} kinds applied; 0 failures)`);
 
+    // bug-100 — seed the watch cursor from the substrate high-water mark BEFORE
+    // the first watch session, so even a reconnect that happens before this
+    // session delivers its first event replays from the boot baseline (gap-free)
+    // rather than live-tailing from "now". list()'s snapshotRevision is
+    // COALESCE(MAX(resource_version),0) substrate-wide — a correct lower bound for
+    // any future SchemaDef write. Best-effort: a substrate without list (mock/
+    // dev) or a transient read error simply leaves the cursor undefined → the
+    // prior live-tail-from-now behavior, never a boot failure.
+    try {
+      const { snapshotRevision } = await this.substrate.list("SchemaDef", { limit: 1 });
+      this.lastSeenResourceVersion = snapshotRevision;
+      this.log(`boot — watch cursor seeded at high-water rv=${snapshotRevision}`);
+    } catch (err) {
+      this.warn(`boot — watch-cursor baseline seed skipped (list unavailable); first session live-tails`, err);
+    }
+
     // ── Runtime: subscribe to substrate.watch('SchemaDef') for ongoing changes ──
     // Fire-and-forget; runs until opts.signal is aborted OR substrate.watch terminates
     void this.runtimeLoop();
