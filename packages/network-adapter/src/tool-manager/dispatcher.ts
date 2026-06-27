@@ -175,6 +175,19 @@ export interface SharedDispatcherOptions {
   notificationHooks?: DispatcherNotificationHooks;
 
   /**
+   * idea-353 W2: observe each host-driven CallTool's (method, args, result)
+   * after it returns. The host wires this to a WorkLeaseTracker so the
+   * outbound stall-prompt can track this agent's own held leases locally
+   * (claim/renew/complete/abandon) with no Hub round-trip. Best-effort —
+   * a throw is caught + logged and never affects the tool-call return.
+   */
+  onToolCallResult?: (
+    method: string,
+    args: Record<string, unknown>,
+    result: unknown,
+  ) => void;
+
+  /**
    * Mission-56 W3.3: opt-in adapter-side hybrid poll backstop. When
    * supplied, the dispatcher constructs a PollBackstop (Design v1.2
    * commitment #5) that periodically calls `list_messages` with a
@@ -236,6 +249,17 @@ export interface SharedDispatcher {
    * re-render it.
    */
   ackMessage: (messageId: string) => Promise<void>;
+
+  /**
+   * idea-353 W1 idle-gate: number of host-driven CallTool requests currently
+   * in flight. The wake/stall reconciler reads this on the heartbeat tick to
+   * skip surfacing while the agent is mid-task (AC4). The tick's own internal
+   * `agent.call`s do not pass through the CallTool handler, so they are not
+   * counted (an idle poll never self-gates).
+   */
+  getActiveCallCount: () => number;
+  /** idea-353 W1 idle-gate convenience: `getActiveCallCount() === 0`. */
+  isIdle: () => boolean;
 }
 
 /** Compose the pendingActionMap key. Pure helper; exported for tests. */
@@ -291,6 +315,13 @@ export function createSharedDispatcher(
   const serverCapabilities = opts.serverCapabilities ?? { tools: {}, logging: {} };
 
   const pendingActionMap = new Map<string, string>();
+
+  // idea-353 W1 idle-gate: count of host-driven CallTool requests currently in
+  // flight. The wake/stall reconciler reads this on the heartbeat tick to avoid
+  // interrupting a mid-task agent (AC4). The tick's own internal `agent.call`s
+  // (list_ready_work etc.) do NOT pass through this handler, so an idle poll
+  // never self-gates.
+  let activeCallCount = 0;
 
   let capturedClientInfo: DispatcherClientInfo = {
     name: "unknown",
@@ -626,6 +657,9 @@ export function createSharedDispatcher(
       const callStartedAt = Date.now();
       const requestedTool = request.params.name;
       log(`[CallTool] ${requestedTool} entered`);
+      // idea-353 W1 idle-gate: mark the agent busy for the full lifespan of this
+      // host CallTool (gate-wait included), cleared in the finally below.
+      activeCallCount++;
       try {
         if (opts.callToolGate) {
           log(`[CallTool] ${requestedTool} awaiting callToolGate`);
@@ -706,6 +740,17 @@ export function createSharedDispatcher(
         try {
           result = await agent.call(name, outgoingArgs);
           log(`[CallTool] ${name} agent.call returned in ${Date.now() - agentCallStart}ms`);
+          // idea-353 W2: surface the (method, args, result) so the host can
+          // track this agent's own work-lease state locally (claim/renew open
+          // a lease window; complete/abandon/release/block close it) without a
+          // Hub round-trip. Best-effort — never disturb the tool-call return.
+          if (opts.onToolCallResult) {
+            try {
+              opts.onToolCallResult(name, outgoingArgs, result);
+            } catch (hookErr) {
+              log(`[idea-353] onToolCallResult hook threw (non-fatal): ${(hookErr as Error)?.message ?? hookErr}`);
+            }
+          }
         } finally {
           if (wrapWithSignal) {
             agent.call("signal_working_completed", {}).catch((err: unknown) => {
@@ -745,6 +790,9 @@ export function createSharedDispatcher(
           ],
           isError: true,
         };
+      } finally {
+        // idea-353 W1 idle-gate: this CallTool is no longer in flight.
+        activeCallCount--;
       }
     });
 
@@ -759,6 +807,8 @@ export function createSharedDispatcher(
     makePendingActionItemHandler,
     pollBackstop,
     ackMessage,
+    getActiveCallCount: () => activeCallCount,
+    isIdle: () => activeCallCount === 0,
   };
 }
 

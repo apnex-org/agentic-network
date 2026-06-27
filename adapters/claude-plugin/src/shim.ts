@@ -20,6 +20,8 @@ import {
   readCache,
   writeCache,
   ToolSurfaceReconciler,
+  ClaimableDigestTracker,
+  WorkLeaseTracker,
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,
@@ -429,6 +431,12 @@ async function main(): Promise<void> {
   // exists (post-createMcpServer); referenced lazily by the identityReady (L1)
   // trigger + the PollBackstop heartbeat (L2) closure.
   let reconciler: ToolSurfaceReconciler | null = null;
+  // idea-353 — queue wake/stall reconciliation state. The digest tracker holds
+  // the W1 level-trigger/de-dup baseline; the lease tracker holds the W2 held-
+  // lease map (fed by the dispatcher's onToolCallResult observer). Both assigned
+  // once mcpServer exists; referenced lazily by the heartbeat tick + observer.
+  let claimableDigest: ClaimableDigestTracker | null = null;
+  let workLeases: WorkLeaseTracker | null = null;
   const getClientInfo = () =>
     dispatcherRef ? dispatcherRef.getClientInfo() : { name: "unknown", version: "0.0.0" };
 
@@ -703,6 +711,12 @@ async function main(): Promise<void> {
     // notifications missed while the adapter was disconnected. SSE inline
     // delivers only to a connected recipient; offline → the note is lost
     // without this poll. `role` (config.role) is the poll's targetRole filter.
+    // idea-353 W2 — observe this agent's own work-verb tool-call results so the
+    // outbound stall-prompt can track held leases locally (no Hub round-trip).
+    // Lazy `workLeases` ref (assigned once mcpServer exists, below).
+    onToolCallResult: (method, args, result) => {
+      workLeases?.observe(method, args, result, Date.now());
+    },
     pollBackstop: {
       role: config.role,
       firstTimerEnabled: true,
@@ -712,8 +726,10 @@ async function main(): Promise<void> {
       // the first heartbeat tick fires ≥1 interval after start(), so it is
       // always populated by the time this runs. Catches a redeploy WHILE the
       // session stays connected (no reconnect → no fresh identityReady).
+      // idea-353 — the same tick also drives the queue wake/stall reconcile.
       onHeartbeatTick: async () => {
         await reconciler?.reconcile("heartbeat");
+        await runWakeStallReconcile();
       },
     },
   });
@@ -745,6 +761,73 @@ async function main(): Promise<void> {
     log,
   });
   reconciler = liveReconciler;
+
+  // idea-353 — queue wake/stall reconciliation trackers. Created once mcpServer
+  // exists so the heartbeat tick can emit notifications. The lease tracker is
+  // fed by the dispatcher's onToolCallResult observer wired above.
+  claimableDigest = new ClaimableDigestTracker();
+  workLeases = new WorkLeaseTracker();
+
+  // idea-353 — the heartbeat-cadence wake/stall reconcile (W1 inbound digest +
+  // W2 outbound stall-prompt + W3 emit-only status seam). Hoisted; invoked from
+  // the PollBackstop onHeartbeatTick wired above (alongside the bug-180 L2
+  // revision reconcile). Gated on a live streaming agent + an existing mcpServer.
+  async function runWakeStallReconcile(): Promise<void> {
+    const a = agent;
+    if (!a || a.state !== "streaming" || !mcpServer) return;
+    const idle = dispatcherRef?.isIdle() ?? true;
+    const nowMs = Date.now();
+    let claimableCount = 0;
+
+    // W1 — inbound claimable digest. Read the truly-claimable set via the
+    // stable list_ready_work contract (post-bug-181: deps+role filtered
+    // Hub-side; D-1 R1 no-touch seam). On a failed read, skip the tracker
+    // entirely so a transient empty/aborted read cannot manufacture a false
+    // 0→N replay (AC3).
+    try {
+      const raw = await a.call("list_ready_work", { role: config.role }, { internal: true });
+      const items = (raw as { items?: Array<{ id?: unknown }> } | null)?.items;
+      if (Array.isArray(items)) {
+        const claimableIds = items
+          .map((i) => i?.id)
+          .filter((id): id is string => typeof id === "string");
+        claimableCount = claimableIds.length;
+        const decision = claimableDigest?.reconcile({ claimableIds, isIdle: idle });
+        if (decision?.emit) {
+          const event: AgentEvent = {
+            event: "work_claimable_digest",
+            data: { role: config.role, count: decision.count, newCount: decision.newCount },
+          };
+          pushChannelNotification(mcpServer, event, "actionable", log);
+          log(`[idea-353] inbound digest emitted — ${decision.count} claimable (${decision.newCount} new) for ${config.role}`);
+        }
+      }
+    } catch (err) {
+      log(`[idea-353] list_ready_work tick failed (non-fatal): ${(err as Error)?.message ?? err}`);
+    }
+
+    // W2 — outbound stall-prompt. Idle-gated: never pester a visibly-progressing
+    // holder (an in-flight CallTool = active progress). A held lease past ~60%
+    // of its window without a renew gets ONE renew/block/abandon nudge.
+    if (idle && workLeases) {
+      for (const due of workLeases.dueForStallPrompt(nowMs)) {
+        const event: AgentEvent = {
+          event: "work_lease_stall",
+          data: { workId: due.workId, msUntilExpiry: due.msUntilExpiry },
+        };
+        pushChannelNotification(mcpServer, event, "actionable", log);
+        workLeases.markPrompted(due.workId);
+        log(`[idea-353] outbound stall-prompt emitted — ${due.workId} (~${Math.round(due.msUntilExpiry / 60000)}m left)`);
+      }
+    }
+
+    // W3 — emit-only Agent.status idle/stall telemetry seam. Thin + non-gating
+    // (DEFER rich taxonomy + the D-3/C2 binding per DR-S2-027): a structured
+    // status line a future D-3 gauge / C2 supervisor binds to.
+    const heldLeases = workLeases?.size() ?? 0;
+    const statusState = !idle ? "working" : heldLeases > 0 ? "holding" : "idle";
+    log(`[idea-353][agent-status] state=${statusState} idle=${idle} claimable=${claimableCount} heldLeases=${heldLeases}`);
+  }
 
   // bug-180 L1 (primary) — reconcile on identityReady. Once identity resolves
   // the live revision is fetchable + the dispatcher serves the live surface

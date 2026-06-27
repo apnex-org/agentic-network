@@ -213,4 +213,33 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
     // limit slices the projection
     expect((await repo.listReadyForRole("engineer", 1)).items.length).toBe(1);
   }, OP_TIMEOUT);
+
+  it("listReadyForRole: bug-181 — eligible-role item with UNMET deps is filtered (projection == claim_work's deps gate)", async () => {
+    // A DONE dependency (status is verb-controlled → put directly, mirroring the EDGE test).
+    await substrate.put("WorkItem", {
+      id: "work-181-dep-done", type: "task", priority: "normal", roleEligibility: ["engineer"],
+      dependsOn: [], evidenceRequirements: [], targetRef: null, status: "done",
+      lease: null, evidence: [], blockedOn: null, leaseExpiryCount: 0,
+      createdAt: "2026-06-22T00:00:00.000Z", updatedAt: "2026-06-22T00:00:00.000Z",
+    });
+    // A NOT-done dependency (stays `ready`) — its dependents are not yet claimable.
+    const depPending = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"] });
+
+    // The bug-181 repro: VERIFIER-eligible, deps UNMET. Pre-fix this passed the role
+    // filter and listed as `ready`, then a claim hit ClaimRejected (eligible-role-deps-unmet leak).
+    const blocked = await repo.createWorkItem({ type: "task", roleEligibility: ["verifier"], dependsOn: [depPending.id] });
+    // VERIFIER-eligible, deps MET (dep is done) → must list ready.
+    const claimable = await repo.createWorkItem({ type: "task", roleEligibility: ["verifier"], dependsOn: ["work-181-dep-done"] });
+    // Absent dep → fail-CLOSED unmet → excluded (parity with unmetDependencies).
+    const absentDep = await repo.createWorkItem({ type: "task", roleEligibility: ["verifier"], dependsOn: ["work-181-ghost"] });
+
+    const ids = new Set((await repo.listReadyForRole("verifier", 500)).items.map((w) => w.id));
+    expect(ids.has(claimable.id)).toBe(true);   // deps done → claimable → listed
+    expect(ids.has(blocked.id)).toBe(false);    // dep not done → NOT claimable → filtered (bug-181)
+    expect(ids.has(absentDep.id)).toBe(false);  // absent dep → fail-closed unmet → filtered
+
+    // Parity with the AUTHORITY: claim_work rejects the same filtered item, proving the
+    // projection now matches the claim predicate (no eligible-role-deps-unmet divergence).
+    await expect(repo.claimWorkItem(blocked.id, "agent-verifier-x", "verifier")).rejects.toThrow(/dependencies not done/);
+  }, OP_TIMEOUT);
 });

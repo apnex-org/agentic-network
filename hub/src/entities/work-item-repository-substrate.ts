@@ -353,7 +353,25 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const eligible = role
       ? ready.filter((w) => w.roleEligibility.length === 0 || w.roleEligibility.includes(role))
       : ready;
-    return { items: eligible.slice(0, Math.max(0, limit)), truncated };
+    // bug-181 (idea-353 fold): the `ready` phase + role-eligibility alone is NOT
+    // claimability. claimWorkItem is the AUTHORITY and re-checks dependency-readiness
+    // fail-CLOSED (lines ~392-401): an item whose dependsOn are not all `done` rejects
+    // at claim. The projection MUST apply the SAME deps gate or it LIES — an
+    // eligible-role item with unmet deps lists as `ready`, then a claim hits
+    // ClaimRejected (the bug-181 eligible-role-deps-unmet leak; manufactures the exact
+    // silent-friction idea-353 exists to kill, tele-7). Single source of truth = the
+    // unmetDependencies check claimWorkItem uses. Async per-item (mirrors the in-memory
+    // OR-in cost note above); only items WITH deps pay the resolve, and we stop once
+    // `limit` claimable items are collected so the scan cost stays bounded.
+    const claimable: WorkItem[] = [];
+    const cap = Math.max(0, limit);
+    for (const w of eligible) {
+      if (claimable.length >= cap) break;
+      if (w.dependsOn.length === 0 || (await this.unmetDependencies(w.dependsOn)).length === 0) {
+        claimable.push(w);
+      }
+    }
+    return { items: claimable, truncated };
   }
 
   // ── Claim / lease / FSM verbs (C1-R2 sub-PR-3a) ───────────────────────────
