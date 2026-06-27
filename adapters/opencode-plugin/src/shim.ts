@@ -25,6 +25,7 @@ import {
   appendNotification,
   buildPendingTaskNotification,
   readRequiredAgentName,
+  loadConfig,
   buildPromptText,
   buildToastMessage,
   createSharedDispatcher,
@@ -32,6 +33,7 @@ import {
   getActionText,
   isPulseEvent,
   reconstructDrainedAction,
+  type HubConfig,
   type AgentEvent,
   type SessionState,
   type SessionReconnectReason,
@@ -166,59 +168,11 @@ function log(msg: string): void {
 
 // ── Configuration ───────────────────────────────────────────────────
 
-interface HubConfig {
-  hubUrl: string;
-  hubToken: string;
-  autoPrompt: boolean;
-  role: string;
-  /**
-   * Mission-19 routing labels. Stamped onto the Agent entity via the
-   * enriched register_role handshake; scoped dispatches filter by these.
-   * From adapter-config.json `labels` field or OIS_HUB_LABELS env var (JSON).
-   */
-  labels?: Record<string, string>;
-}
-
-function parseLabels(raw: string | undefined, source: string): Record<string, string> | undefined {
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const out: Record<string, string> = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === "string") out[k] = v;
-      }
-      return Object.keys(out).length > 0 ? out : undefined;
-    }
-  } catch (err) {
-    log(`WARNING: Failed to parse labels from ${source}: ${err}`);
-  }
-  return undefined;
-}
-
-function loadConfig(directory: string): HubConfig {
-  let cfg: HubConfig = {
-    hubUrl: "https://mcp-relay-hub-5muxctm3ta-ts.a.run.app/mcp",
-    hubToken: "",
-    autoPrompt: true,
-    role: "engineer",
-  };
-  try {
-    const configPath = join(directory, ".ois", "adapter-config.json");
-    const raw = readFileSync(configPath, "utf-8");
-    cfg = { ...cfg, ...JSON.parse(raw) };
-  } catch {
-    /* no config file — use defaults */
-  }
-  if (process.env.OIS_HUB_URL) cfg.hubUrl = process.env.OIS_HUB_URL;
-  if (process.env.OIS_HUB_TOKEN) cfg.hubToken = process.env.OIS_HUB_TOKEN;
-  if (process.env.OIS_HUB_ROLE) cfg.role = process.env.OIS_HUB_ROLE;
-  if (process.env.HUB_PLUGIN_AUTO_PROMPT)
-    cfg.autoPrompt = process.env.HUB_PLUGIN_AUTO_PROMPT.toLowerCase() !== "false";
-  const envLabels = parseLabels(process.env.OIS_HUB_LABELS, "OIS_HUB_LABELS env var");
-  if (envLabels) cfg.labels = envLabels;
-  return cfg;
-}
+// idea-355 SLICE-1 single-home: HubConfig + parseLabels + loadConfig hoisted to
+// the kernel (@apnex/network-adapter). The shim injects its host specifics — the
+// relay hubUrl default, autoPrompt:true, the log() warn sink, readAutoPrompt — at
+// the loadConfig call site below. OpenCode keeps no credential abort (can't kill
+// the TUI; it surfaces missing creds via the handshake-fail path).
 
 // ── Rate-limited prompt queue ────────────────────────────────────────
 
@@ -768,7 +722,12 @@ export const HubPlugin: Plugin = async (ctx) => {
   initLogger(workDir);
   log(`mission-55 cleanup — shared MCP-boundary dispatcher (${SDK_VERSION})`);
 
-  config = loadConfig(workDir);
+  config = loadConfig({
+    directory: workDir,
+    defaults: { hubUrl: "https://mcp-relay-hub-5muxctm3ta-ts.a.run.app/mcp", autoPrompt: true },
+    warn: log,
+    readAutoPrompt: true,
+  });
   log(`Auto-prompt: ${config.autoPrompt ? "enabled" : "DISABLED"}`);
 
   sdkClient = ctx.client;

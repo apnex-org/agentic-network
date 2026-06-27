@@ -68,6 +68,9 @@ export type {
   HandshakeResult,
 } from "./kernel/handshake.js";
 
+export { parseLabels, loadConfig } from "./kernel/adapter-config.js";
+export type { HubConfig, LoadConfigOptions } from "./kernel/adapter-config.js";
+
 export { performStateSync } from "./kernel/state-sync.js";
 export type { StateSyncContext, DrainedPendingAction } from "./kernel/state-sync.js";
 

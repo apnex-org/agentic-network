@@ -14,6 +14,7 @@ import {
   appendNotification,
   buildPendingTaskNotification,
   readRequiredAgentName,
+  loadConfig,
   buildPromptText,
   makeStdioFatalHalt,
   createSharedDispatcher,
@@ -49,72 +50,20 @@ import {
 
 // ── Configuration ───────────────────────────────────────────────────
 
-interface HubConfig {
-  hubUrl: string;
-  hubToken: string;
-  role: string;
-  /**
-   * Mission-19 routing labels. Stamped onto the Agent entity via the
-   * enriched register_role handshake; scoped dispatches (tasks, threads,
-   * etc.) filter by these. Read from adapter-config.json `labels` field or
-   * the `OIS_HUB_LABELS` env var (JSON-encoded). Omit for broadcast.
-   */
-  labels?: Record<string, string>;
+// idea-355 SLICE-1 single-home: HubConfig + parseLabels + loadConfig hoisted to
+// the kernel (@apnex/network-adapter). The shim injects its host specifics (the
+// WORK_DIR/cwd directory + the console.error warn sink) and keeps only the
+// last-mile credential abort (claude can process.exit; opencode can't).
+const config = loadConfig({
+  directory: process.env.WORK_DIR || process.cwd(),
+  warn: (m) => console.error(m),
+});
+if (!config.hubUrl || !config.hubToken) {
+  console.error(
+    "ERROR: Hub credentials not found. Checked .ois/adapter-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars",
+  );
+  process.exit(1);
 }
-
-function parseLabels(raw: string | undefined, source: string): Record<string, string> | undefined {
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const out: Record<string, string> = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === "string") out[k] = v;
-      }
-      return Object.keys(out).length > 0 ? out : undefined;
-    }
-  } catch (err) {
-    console.error(`WARNING: Failed to parse labels from ${source}: ${err}`);
-  }
-  return undefined;
-}
-
-function loadConfig(): HubConfig {
-  const workDir = process.env.WORK_DIR || process.cwd();
-  const configPath = resolve(workDir, ".ois", "adapter-config.json");
-
-  let fileConfig: Partial<HubConfig> = {};
-  if (existsSync(configPath)) {
-    try {
-      const raw = JSON.parse(readFileSync(configPath, "utf-8"));
-      fileConfig = {
-        hubUrl: raw.hubUrl,
-        hubToken: raw.hubToken,
-        role: raw.role,
-        labels: raw.labels,
-      };
-    } catch (err) {
-      console.error(`WARNING: Failed to parse ${configPath}: ${err}`);
-    }
-  }
-
-  const hubUrl = process.env.OIS_HUB_URL || fileConfig.hubUrl || "";
-  const hubToken = process.env.OIS_HUB_TOKEN || fileConfig.hubToken || "";
-  const role = process.env.OIS_HUB_ROLE || fileConfig.role || "engineer";
-  const labels =
-    parseLabels(process.env.OIS_HUB_LABELS, "OIS_HUB_LABELS env var") ?? fileConfig.labels;
-
-  if (!hubUrl || !hubToken) {
-    console.error(
-      "ERROR: Hub credentials not found. Checked .ois/adapter-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars",
-    );
-    process.exit(1);
-  }
-
-  return { hubUrl, hubToken, role, labels };
-}
-
-const config = loadConfig();
 const WORK_DIR = process.env.WORK_DIR || process.cwd();
 const LOG_FILE = join(WORK_DIR, ".ois", "claude-notifications.log");
 const SHUTDOWN_TIMEOUT_MS = 3000;
