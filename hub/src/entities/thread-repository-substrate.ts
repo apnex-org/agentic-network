@@ -385,6 +385,13 @@ export class ThreadRepositorySubstrate implements IThreadStore {
     return thread;
   }
 
+  // bug-177 OBS-2 (→ bug-189): get_thread is a direct keyed substrate read —
+  // STRONGLY CONSISTENT (sees every committed write immediately). It is the
+  // authoritative re-sync when a reader suspects staleness: the SSE-delivered
+  // inbox/notification view is a delivery PROJECTION that can lag (esp. on the
+  // opencode adapter, which is SSE-push-only with no message poll-backstop), so
+  // never infer "no new message" / a stale currentTurn from that view — re-read
+  // via get_thread (or list_messages). The adapter-side poll fallback is bug-189.
   async getThread(threadId: string): Promise<Thread | null> {
     const raw = await this.substrate.get<Thread>(KIND, threadId);
     if (!raw) return null;
@@ -406,6 +413,23 @@ export class ThreadRepositorySubstrate implements IThreadStore {
     const { items } = await this.substrate.list<Thread>(KIND, {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
       limit: LIST_PREFETCH_CAP,
+      // bug-177 OBS-1 — default-order the LIST_PREFETCH_CAP window by updatedAt
+      // DESC so it holds the NEWEST threads, not an arbitrary (unordered) heap-
+      // order slice. Without an ORDER BY, postgres returns the 500-row window in
+      // insertion/heap order, so with 500+ threads the newest (and recently-
+      // active) ones fall OUTSIDE the window → list_threads omits them while
+      // get_thread still sees them (the reported symptom).
+      // Path note: `updatedAt` is partitioned into the ENVELOPE metadata (Thread
+      // migration module) and is intentionally NOT in the renameMap (the generic
+      // decoder spreads metadata→flat on READ), so this SQL sort — which runs
+      // PRE-decode — must address the envelope path `metadata.updatedAt`
+      // explicitly; a bare `updatedAt` would sort on a NULL `data->>'updatedAt'`
+      // (a silent no-op).
+      // RESIDUAL (bug-188): the 500-cap still bounds the TOTAL result set — a
+      // fully-correct list (e.g. the 501st-newest active thread) needs
+      // filter+sort+pagination pushed substrate-side (folds with idea-357). This
+      // closes the newest-omitted symptom only; it is NOT the whole-class fix.
+      sort: [{ field: "metadata.updatedAt", order: "desc" }],
     });
     return items.map((t) => truncateClosedThreadMessages(normalizeThreadShape(t)));
   }

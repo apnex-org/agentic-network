@@ -19,7 +19,9 @@ import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
   ALL_SCHEMAS,
+  buildEnvelopeWriteEncoder,
   type HubStorageSubstrate,
+  type PostgresSubstrate,
   type SchemaReconciler,
 } from "../../storage-substrate/index.js";
 import { ThreadRepositorySubstrate } from "../thread-repository-substrate.js";
@@ -136,6 +138,54 @@ describe("ThreadRepositorySubstrate (W4.x.10 Option Y sibling-pattern)", () => {
     expect(t4?.status).toBe("converged");  // 2-round convergence triggered
     expect(t4?.convergenceActions[0].status).toBe("committed");  // staged → committed
     expect(t4?.messages).toHaveLength(4);
+  }, 60_000);
+
+  it("bug-177 OBS-1: listThreads returns newest-by-updatedAt first (envelope metadata.updatedAt order, not heap order)", async () => {
+    // OBS-1 mechanism: with no default ORDER BY, the LIST_PREFETCH_CAP window is
+    // unordered (postgres heap order), so the newest threads can fall outside it
+    // and list_threads omits them. The fix default-orders by updatedAt DESC.
+    // updatedAt lives in the ENVELOPE metadata (Thread migration module), so this
+    // also proves the sort addresses the correct envelope path — a bare
+    // `updatedAt` would sort on a NULL `data->>'updatedAt'` (a silent no-op).
+    // Wire the prod write path (envelope) for this test only, like Hub boot does.
+    const pg = substrate as unknown as PostgresSubstrate;
+    pg.setFieldTranslator((kind, key) => reconciler.getFieldTranslation(kind, key));
+    pg.setWriteEncoder(buildEnvelopeWriteEncoder());
+    const pool = createTestPool(connStr, "thread-repo-bug177");
+    try {
+      const counter = new SubstrateCounter(substrate);
+      const repo = new ThreadRepositorySubstrate(substrate, counter);
+      // Insertion order thread-1, thread-2, thread-3 — stored ENVELOPE-shaped
+      // (encoder wired), so updatedAt lands at metadata.updatedAt like prod.
+      for (const title of ["T1", "T2", "T3"]) {
+        await repo.openThread(title, "init", "engineer", {
+          authorAgentId: "agent-greg",
+          recipientAgentId: "agent-lily",
+        });
+      }
+
+      // Bump distinct metadata.updatedAt (direct SQL on the envelope path) so the
+      // updatedAt order DIFFERS from insertion/heap order: thread-2 newest, then
+      // thread-3, then thread-1. If the sort were a no-op (sorting a NULL field)
+      // the result would be heap/insertion order [thread-1, thread-2, thread-3]
+      // and this assertion would fail.
+      const bump = async (id: string, iso: string) => {
+        await pool.query(
+          `UPDATE entities SET data = jsonb_set(data, '{metadata,updatedAt}', $2::jsonb) WHERE kind = 'Thread' AND id = $1`,
+          [id, JSON.stringify(iso)],
+        );
+      };
+      await bump("thread-1", "2099-01-01T00:00:00.000Z");
+      await bump("thread-2", "2099-01-03T00:00:00.000Z"); // newest
+      await bump("thread-3", "2099-01-02T00:00:00.000Z");
+
+      const list = await repo.listThreads();
+      expect(list.map((t) => t.id)).toEqual(["thread-2", "thread-3", "thread-1"]);
+    } finally {
+      pg.setWriteEncoder(null);
+      pg.setFieldTranslator(null);
+      await pool.end();
+    }
   }, 60_000);
 
   it("convergence-gate + close/markCascade lifecycle + unpinCurrentTurnAgent via thread_turn_agent_idx", async () => {
