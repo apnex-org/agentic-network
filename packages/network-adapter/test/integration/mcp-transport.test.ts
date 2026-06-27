@@ -73,6 +73,7 @@ describe("McpTransport — L4 wire surface", () => {
       expect(m.wireState).toBe("connected");
       expect(m.totalReconnects).toBe(0);
       expect(m.requestsInFlight).toBe(0);
+      expect(m.requestsQueued).toBe(0); // bug-171: idle wire has an empty slot queue
       expect(t.getSessionId()).toBeTruthy();
     } finally {
       await t.close();
