@@ -2,13 +2,14 @@
  * observability.ts — pure helpers for shim observability formalization.
  *
  * Mission-66 W1+W2 commit 4 (per Design §2.2 + ADR-031 §3, §5; spec
- * `docs/specs/shim-observability-events.md` §3 + §5).
+ * `docs/specs/shim-observability-events.md` §3 + §5). idea-355 SLICE-1
+ * single-home: hoisted from the claude shim so any host's file-logger can
+ * redact + level-filter through one implementation (it can't drift).
  *
- * Extracted from `shim.ts` so tests can import without triggering the
- * module-init `loadConfig()` side effect (which calls `process.exit(1)`
- * if Hub credentials are absent — fine for runtime, fatal for unit tests).
+ * Pure functions: tests import them without triggering a shim's module-init
+ * `loadConfig()` side effect.
  */
-import type { LogFields } from "@apnex/network-adapter";
+import type { LogFields } from "./logger.js";
 
 // ── Redaction discipline (ADR-031 §5) ────────────────────────────────
 //
@@ -53,9 +54,9 @@ export function parseLogLevel(raw: string | undefined): LogLevel {
 
 /**
  * Decides whether an event with optional `level` field should be emitted
- * given the configured threshold. Pure function for unit-test
- * tractability; the shim runtime binds threshold via the
- * `OIS_SHIM_LOG_LEVEL` env var read at module init.
+ * given the configured threshold. Pure function for unit-test tractability;
+ * the shim runtime binds threshold via the `OIS_SHIM_LOG_LEVEL` env var read
+ * at module init.
  */
 export function shouldEmitLevel(
   eventLevel: string | undefined,

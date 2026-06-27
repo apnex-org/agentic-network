@@ -170,7 +170,8 @@ function appendText(line: string): void {
 // mission-66 commit 4: redaction + log-level helpers extracted to
 // `./observability.ts` for unit-test tractability (shim.ts module init
 // has process.exit(1) side effect via loadConfig()).
-import { redactFields, parseLogLevel, shouldEmitLevel, type LogLevel } from "./observability.js";
+// idea-355 SLICE-1: observability helpers hoisted to the kernel.
+import { redactFields, parseLogLevel, shouldEmitLevel, type LogLevel } from "@apnex/network-adapter";
 const SHIM_LOG_LEVEL: LogLevel = parseLogLevel(process.env.OIS_SHIM_LOG_LEVEL);
 
 function appendEvent(event: string, fields: LogFields, message?: string): void {

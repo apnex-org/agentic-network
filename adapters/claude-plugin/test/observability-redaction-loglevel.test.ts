@@ -17,7 +17,7 @@ import {
   shouldEmitLevel,
   parseLogLevel,
   LOG_LEVELS,
-} from "../src/observability.js";
+} from "@apnex/network-adapter";
 
 describe("Mission-66 commit 4 — redaction discipline (ADR-031 §5)", () => {
   it("redacts token + secret keys (case-insensitive) to <redacted>", () => {
