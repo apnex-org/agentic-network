@@ -29,7 +29,7 @@ Confirmed via thread-712 (greg, independent raw-prod MCP session) + thread-713 (
 
 Treat tool-surface delivery as a **declared-vs-applied reconcile** — the exact pattern the storage substrate's SchemaDef-reconciler already uses. Desired-state = the Hub's tool surface, versioned by `toolSurfaceRevision`; applied-state = the host's enumerated tools. MCP's `notifications/tools/list_changed` is the watch/notify primitive (the LISTEN/NOTIFY analog); the Hub already advertises `tools.listChanged: true`. The probe-friendly cache stays — it just stops being load-bearing for correctness.
 
-Three layers, in priority order:
+Three layers. **L3 (the Hub source-of-truth) is already in place — the new work is L1 + L2 (adapter-side reconcile)**, in priority order:
 
 ### L1 — Primary: reconcile on `identityReady` (event-driven; no poll, no restart)
 The shim already resolves an `identityReady` lifecycle event. On that event the live revision is knowable. Compare the served/cached revision against the live revision; **on drift, emit `notifications/tools/list_changed` to the host**, which re-calls `tools/list` and receives the live surface. Covers the redeploy-then-reconnect case that caused bug-180 — without any manual cache-delete.
@@ -37,8 +37,10 @@ The shim already resolves an `identityReady` lifecycle event. On that event the 
 ### L2 — Backstop: revision-poll on the existing PollBackstop heartbeat
 Reuse the existing heartbeat timer to periodically resolve the live `toolSurfaceRevision`; on drift, trigger the same `list_changed`. Covers the one case L1 misses: a redeploy **while a session stays connected** (no reconnect, so no fresh `identityReady`).
 
-### L3 — Source-of-truth (Hub-side): deterministic revision
-Make `toolSurfaceRevision` a **deterministic hash of the registered tool set** (names + a version/shape discriminator), so any add/remove bumps it automatically with zero manual bookkeeping. This is the missing piece that makes L1/L2 fire: the revision stayed `db48a16…` through the #361 deploy precisely because nothing bumped it.
+### L3 — Source-of-truth (Hub-side): deterministic revision — ALREADY IN PLACE (no change in WI-2)
+`toolSurfaceRevision` is **already** a deterministic hash of the registered tool set — `computeToolSurfaceRevision` (`hub/src/policy/tool-surface-revision.ts`) sha256s `{name, description, schema, tier}` per tool, sorted (key-order-independent), since bug-114 (#249); wired at boot (`index.ts`) and served on `/health` (`hub-networking.ts`). It works correctly: the #361 deploy that grew the surface 68→83 **did** bump the live Hub revision `db48a16…→f96c6bd…`. This is the source-of-truth that L1/L2 reconcile against — not a missing piece.
+
+**Correction (vs the first draft of this doc, caught by greg at WI-2 build):** the revision that stayed `db48…` was the **adapter's *cached*** revision, never re-fetched — because the host serves the on-disk cache at the startup probe and the `/health` revision fetch loses that race. The defect is therefore **purely adapter-side**; no Hub change is in WI-2's scope. (The first draft conflated the Hub revision with the adapter's cached revision.)
 
 ### Retain (do not change)
 - The on-disk cache + the pre-identity probe-serving path (latency).
@@ -47,18 +49,18 @@ Make `toolSurfaceRevision` a **deterministic hash of the registered tool set** (
 ## 4. Acceptance criteria (evidence-shaped — drive WI-3 verify)
 
 - **AC1 (the core proof):** With an agent already running, a Hub redeploy that changes the surface causes that agent to re-enumerate and expose the new verbs **within one heartbeat interval, with no manual cache-delete and no restart.** Evidence: before/after `tools/list` capture across a surface-changing redeploy on a connected claude-plugin session.
-- **AC2:** `toolSurfaceRevision` changes iff the registered tool set changes — adding/removing a tool bumps it; an identical set yields an identical hash. Evidence: unit test.
+- **AC2:** `toolSurfaceRevision` changes iff the registered tool set changes — adding/removing a tool bumps it; an identical set yields an identical hash. **Already satisfied** by `hub/test/tool-surface-revision.test.ts` (add/remove/description/schema/tier-flip all bump; key-order-independent; deterministic). Evidence: cite the existing test (extend only if a gap is found) — no new Hub code.
 - **AC3:** The `identityReady` reconcile detects a stale-vs-live revision delta (db48→f96 class) and emits `list_changed`. Evidence: unit/integration test.
 - **AC4 (no latency regression):** A pre-identity probe is still served from cache without a blocking network fetch. Evidence: existing `dispatcher-list-tools-cache.test.ts` extended; probe-path timing assertion.
 - **AC5 (no regression):** Break-glass still works; a cold start with no cache live-fetches the full surface.
 
 ## 5. Test plan
-- Unit: revision-hash determinism (AC2); `isCacheValid` no longer fail-open on unknown-vs-known-drift (AC3).
+- Unit: revision-hash determinism (AC2) is **pre-existing** (`tool-surface-revision.test.ts`); the new unit work is `isCacheValid` no longer fail-open on unknown-vs-known-drift (AC3).
 - Integration: simulate a surface-changing redeploy against a connected proxy → assert `list_changed` emitted + re-enumeration (AC1); probe-path latency preserved (AC4).
 - Extend `dispatcher-list-tools-cache.test.ts` rather than add a parallel harness.
 
 ## 6. Rollout & the bootstrap caveat
-- **Hub change** (L3) ships via `deploy-hub.yml` → watchtower roll (per repo deploy norm).
+- **No Hub change** — L3 (`computeToolSurfaceRevision`) is already in place; the fix is adapter-only.
 - **Adapter change** (L1/L2) bumps the `@apnex/claude-plugin` proxy version; agents must update to the fixed adapter + restart **once** to get onto it (chicken-and-egg: the live-refresh can't deliver the fix that enables live-refresh). After that one-time hop, no future surface change needs break-glass.
 - Reversible: revision-hash + list_changed are additive; the cache + break-glass remain as fallback.
 
