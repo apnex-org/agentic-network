@@ -214,4 +214,57 @@ describe("bug-100 — runtime watch-loop reconnects after a LISTEN drop", () => 
 
     await reconciler.close();
   });
+
+  it("work-41 (steve work-43): reconnects after a CLEAN (non-error, non-abort) iterator END — the generator RETURNS, not throws", async () => {
+    // The other reconnect tests + the live-pg pg_terminate test all exercise the
+    // THROW/error path (runtimeWatchSession's CATCH branch). But the work-41 fix's
+    // PRIMARY path is a clean RETURN: the substrate watch's `ended` flag (set on a
+    // non-abort LISTEN 'end' OR 'error') makes the generator `return`, NOT throw —
+    // so the for-await ends WITHOUT throwing and runtimeWatchSession hits the
+    // non-catch branch `return aborted ? "abort" : "reconnect"`. This pins that
+    // branch directly at the reconciler level: a session whose generator CLEANLY
+    // RETURNS (non-abort) must drive runtimeLoop to RECONNECT (not stop).
+    let watchCalls = 0;
+    const mockSubstrate = {
+      list: vi.fn(async () => ({ items: [], snapshotRevision: "0" })),
+      watch: vi.fn((_kind: string, opts: { signal: AbortSignal; sinceRevision?: string }) => {
+        watchCalls++;
+        const attempt = watchCalls;
+        return (async function* () {
+          if (attempt === 1) {
+            // Deliver an event, then RETURN normally — NO throw, NO abort. This is
+            // the clean non-abort iterator end (the work-41 ended-flag path).
+            yield { op: "delete" as const, kind: "SchemaDef", id: "schemadef-clean-end", resourceVersion: "5" };
+            return;
+          }
+          // Session 2 (the reconnect): stay open until aborted.
+          await new Promise<void>((resolve) => {
+            if (opts.signal.aborted) return resolve();
+            opts.signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+        })();
+      }),
+    } as unknown as HubStorageSubstrate;
+
+    const reconciler = createSchemaReconciler(mockSubstrate, "postgres://fake:5432/db", {
+      initialSchemas: [],
+      reconnectInitialBackoffMs: 5,
+      reconnectMaxBackoffMs: 5,
+      log: () => {},
+      warn: () => {},
+    });
+
+    await reconciler.start();
+
+    // The clean iterator-END (attempt 1) must trigger a RECONNECT (attempt 2),
+    // not a permanent stop. If runtimeWatchSession returned "abort" (or otherwise
+    // failed to reconnect) on a clean non-abort end, watchCalls would stay 1 and
+    // this waitFor would time out.
+    await vi.waitFor(
+      () => { expect(watchCalls).toBeGreaterThanOrEqual(2); },
+      { timeout: 2000, interval: 10 },
+    );
+
+    await reconciler.close();
+  });
 });
