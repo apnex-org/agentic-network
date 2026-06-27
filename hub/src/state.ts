@@ -138,6 +138,13 @@ export interface AgentAdvisoryTags {
   // Preserved for back-compat; rename to `proxyVersion` deferred (AG-8 in
   // M-Build-Identity-AdvisoryTag Design v1.0).
   adapterVersion?: string;     // e.g., "0.1.4" (claude-plugin package.json version)
+  // idea-355 SLICE-3 / bug-183 "true-half" (report-both): intent-aligned
+  // version surfaces that disambiguate the mislabeled `adapterVersion` above.
+  // shimVersion = clientMetadata.proxyVersion (the SHIM / plugin layer);
+  // sdkVersion  = clientMetadata.sdkVersion  (the KERNEL / network-adapter).
+  // ADDITIVE — adapterVersion is preserved for back-compat until AG-8 retire.
+  sdkVersion?: string;         // e.g., "@apnex/network-adapter@0.1.2"
+  shimVersion?: string;        // e.g., "0.1.4"
   // M-Build-Identity-AdvisoryTag (idea-256): build-identity projections
   // from clientMetadata. Intent-aligned naming: proxy* = claude-plugin
   // shim layer; sdk* = network-adapter package.

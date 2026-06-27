@@ -25,13 +25,20 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-echo "[release-opencode] 1/3 clean prior bundle (dist/ is gitignored)"
+echo "[release-opencode] 1/5 version-bump gate (idea-355 SLICE-3 / bug-182 fork-4 ship-path assert)"
+# opencode ships via the esbuild bundle (not npm pack), so the --assert gate
+# the 6 wired packages get in their `prepack` hook lives HERE on the ship path.
+# Stamp-only `npm run bundle` (prebuild + bundle-opencode.js) never asserts — so
+# dev/CI bundling can't fail; the release gate runs once, here, before publish.
+( cd "$REPO_ROOT/adapters/opencode-plugin" && node "$REPO_ROOT/scripts/build/write-build-info.js" --assert )
+
+echo "[release-opencode] 2/5 clean prior bundle (dist/ is gitignored)"
 rm -rf adapters/opencode-plugin/dist
 
-echo "[release-opencode] 2/3 esbuild self-contained bundle (from @apnex SRC — sidesteps the circular tsc dep-build)"
+echo "[release-opencode] 3/5 esbuild self-contained bundle (from @apnex SRC — sidesteps the circular tsc dep-build)"
 npm run bundle -w @apnex/opencode-plugin
 
-echo "[release-opencode] 3/4 verify self-containment (zero @apnex imports)"
+echo "[release-opencode] 4/5 verify self-containment (zero @apnex imports)"
 OUT="$REPO_ROOT/adapters/opencode-plugin/dist/shim.js"
 [ -f "$OUT" ] || { echo "[release-opencode] ERROR: no bundle emitted at $OUT" >&2; exit 1; }
 if grep -qE "from[ ]*[\"']@apnex/" "$OUT"; then
@@ -39,7 +46,7 @@ if grep -qE "from[ ]*[\"']@apnex/" "$OUT"; then
   exit 1
 fi
 
-echo "[release-opencode] 4/4 verify export surface = HubPlugin ONLY (OpenCode 1.3.x: every export must be a plugin fn, thread-667)"
+echo "[release-opencode] 5/5 verify export surface = HubPlugin ONLY (OpenCode 1.3.x: every export must be a plugin fn, thread-667)"
 # esbuild emits the export block multi-line (export {\n  HubPlugin\n};) — capture the whole block.
 EXPORTS="$(sed -n '/^export[ ]*{/,/};/p' "$OUT" | tr '\n' ' ')"
 echo "$EXPORTS" | grep -q "HubPlugin" || { echo "[release-opencode] ERROR: bundle does not export HubPlugin." >&2; exit 1; }

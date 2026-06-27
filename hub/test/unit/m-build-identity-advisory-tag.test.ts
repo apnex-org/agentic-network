@@ -152,6 +152,69 @@ describe("M-Build-Identity-AdvisoryTag — deriveAdvisoryTags projection", () =>
     expect(result.advisoryTags.sdkCommitSha).toBe("2222222");
   });
 
+  it("report-both (idea-355 SLICE-3 / bug-183): emits sdkVersion + shimVersion from clientMetadata", async () => {
+    // The legacy `adapterVersion` field is mislabeled — it carries the SHIM
+    // version (clientMetadata.proxyVersion), NOT the SDK. The report-both fix
+    // ADDITIVELY surfaces both versions under intent-aligned keys while leaving
+    // adapterVersion untouched (back-compat; AG-8 retire is a later slice).
+    const result = await reg.registerAgent(
+      "sess-1",
+      "engineer",
+      // BASE_CLIENT: proxyVersion "0.1.4", sdkVersion "@apnex/network-adapter@0.1.2"
+      payload("agent-report-both"),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // sdkVersion = clientMetadata.sdkVersion (the KERNEL / network-adapter)
+    expect(result.advisoryTags.sdkVersion).toBe("@apnex/network-adapter@0.1.2");
+    // shimVersion = clientMetadata.proxyVersion (the SHIM / plugin)
+    expect(result.advisoryTags.shimVersion).toBe("0.1.4");
+    // Legacy adapterVersion preserved, still mirrors proxyVersion (the SHIM).
+    expect(result.advisoryTags.adapterVersion).toBe("0.1.4");
+  });
+
+  it("report-both: absent clientMetadata.{sdk,proxy}Version → no spurious sdk/shim keys", async () => {
+    const result = await reg.registerAgent(
+      "sess-1",
+      "engineer",
+      // Strip both version fields from the client metadata.
+      {
+        name: "agent-report-both-absent",
+        role: "engineer",
+        clientMetadata: {
+          clientName: "claude-code",
+          clientVersion: "0.1.0",
+          proxyName: "@apnex/claude-plugin",
+          proxyVersion: "",
+          transport: "stdio-mcp-proxy",
+        },
+        advisoryTags: { llmModel: "claude-opus-4-7" },
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect("sdkVersion" in result.advisoryTags).toBe(false);
+    expect("shimVersion" in result.advisoryTags).toBe(false);
+  });
+
+  it("report-both: caller-explicit sdk/shim version fields are preserved", async () => {
+    const explicit: RegisterAgentPayload = {
+      name: "agent-report-both-explicit",
+      role: "engineer",
+      clientMetadata: { ...BASE_CLIENT },
+      advisoryTags: {
+        llmModel: "claude-opus-4-7",
+        sdkVersion: "@apnex/network-adapter@9.9.9",
+        shimVersion: "9.9.9",
+      },
+    };
+    const result = await reg.registerAgent("sess-1", "engineer", explicit);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.advisoryTags.sdkVersion).toBe("@apnex/network-adapter@9.9.9");
+    expect(result.advisoryTags.shimVersion).toBe("9.9.9");
+  });
+
   it("supports the 'unknown' fallback shape from non-git extracted-tarball consumers", async () => {
     // When prepack runs without git context (npm-installed consumer rebuilding
     // from source), build-info.json fields fall back to "unknown" / false.
