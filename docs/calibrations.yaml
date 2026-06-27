@@ -3069,6 +3069,72 @@ calibrations:
       - tele-3
       - tele-4
 
+  - id: 87
+    class: methodology
+    title: "Version-bump co-commits with the FINAL src PR of a ship — splitting the bump from its source change false-fires the ship-path version-gate (frozen-version / src-ahead-of-version)"
+    origin: autonomous-stint-3 (idea-355 opencode redeploy)
+    surfaced_at: autonomous-stint-3 2026-06-27 — the opencode bundle ship fired the write-build-info --assert version-gate 3x across PRs #376/#377/#378; first a FROZEN version (src advanced, the stamped version did not), then SRC-AHEAD-OF-VERSION after a partial bump landed before the final src PR; resolved only when the bump co-committed with the last src change before publish
+    status: open
+    closure_mechanism: |
+      Pattern signature: a ship whose artifact carries a stamped version
+      (esbuild bundle, npm package) splits the version-BUMP commit from the
+      FINAL source-change commit of the ship. The ship-path version-gate
+      (release-opencode-plugin.sh step 1 write-build-info --assert / the
+      wired packages' prepack hook) then false-fires on the transient
+      mismatch — either FROZEN-version (src advanced, stamp did not) or
+      SRC-AHEAD-OF-VERSION (a partial bump landed before the last src PR).
+      The gate is correct (tele-7 fail-loud); the churn is self-inflicted by
+      commit ordering.
+
+      Discipline: the version-bump co-commits with the FINAL src PR of a ship
+      (the last change before publish), never as a separate earlier/later
+      commit. NEVER bypass the gate to "unstick" a mismatch — fix the
+      ordering. Corollary to the never-bypass-the-ship-path-gate axiom.
+      OPEN until folded into the ship/release discipline
+      (release-opencode-plugin.sh header + multi-agent-pr-workflow.md
+      ship-path subsection).
+    cross_refs:
+      - autonomous-stint-3 (idea-355 adapter-substrate consolidation ship)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-011 version-gate-3x)
+      - scripts/build/release-opencode-plugin.sh (step 1 ship-path version-gate)
+      - "PRs #376 / #377 / #378 (the three gate-fires)"
+    tele_alignment:
+      - tele-2
+      - tele-7
+
+  - id: 88
+    class: methodology
+    title: "Re-introduction guard scan-scope must match the DEFECT-CLASS scope — a guard scoped to the originally-patched subset leaves the defect live in unscanned siblings (false-green partial verification)"
+    origin: autonomous-stint-3 (bug-178)
+    surfaced_at: autonomous-stint-3 2026-06-27 — bug-178's first fix (#381) patched 19 testcontainer test files + added a re-introduction guard scanning only 2 directories, while ~23 further test files outside those dirs still constructed raw `new Pool`; the guard reported green over a subset of its own defect class (caught + swept via work-25/#384, which broadened the guard to recursive hub/src + hub/test)
+    status: open
+    closure_mechanism: |
+      Pattern signature: a fix adds a re-introduction guard
+      (lint/grep/CI-assert) to stop a defect class recurring, but the guard's
+      SCAN-SCOPE is drawn around the files the fix happened to touch rather
+      than around the full DEFECT-CLASS surface. The guard then certifies
+      green while the same defect persists in unscanned siblings — a
+      "mostly-verified" state (tele-8 anti-pattern) presenting as a silent
+      false-green (tele-7).
+
+      Discipline: when adding a re-introduction guard, define its scan-scope
+      from the DEFECT CLASS ("every test that should use the shared fixture",
+      "every consumer of the relocated field"), not from the patched subset;
+      the guard must fail on a planted violation ANYWHERE in that class, not
+      only in the originally-fixed files. Pairs with #81 (premature
+      structural-closure from partial verification) + the stint
+      ground-truth-the-full-surface discipline.
+      OPEN until folded into the engineer-runtime ship-verify discipline
+      (re-introduction-guard scoping checklist).
+    cross_refs:
+      - autonomous-stint-3 (bug-178 testcontainer raw-Pool re-introduction guard)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (scan-scope lesson)
+      - "PRs #381 (under-scoped guard) / #384 (scope broadened to the class)"
+      - "#81 (premature structural-closure from partial verification — sibling)"
+    tele_alignment:
+      - tele-8
+      - tele-7
+
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
 #   title                       string; human-readable pattern name
