@@ -126,6 +126,18 @@ export interface PollBackstopOptions {
    * cleanly disables the timer (start() skips heartbeat scheduling).
    */
   heartbeatEnabled?: boolean;
+
+  /**
+   * bug-180 L2 — optional hook fired once per heartbeat cycle, BEFORE the
+   * `transport_heartbeat` call and independent of its success or the agent's
+   * connection state. Reuses the heartbeat cadence as the tool-surface
+   * revision-poll backstop: the host wires the ToolSurfaceReconciler here so a
+   * Hub redeploy that changes the surface WHILE a session stays connected is
+   * caught within one heartbeat interval (the case L1's identityReady
+   * reconcile misses — no reconnect, so no fresh identityReady). Default no-op;
+   * a throw is caught + logged so it never disturbs the heartbeat loop.
+   */
+  onHeartbeatTick?: () => void | Promise<void>;
 }
 
 interface CursorFile {
@@ -238,13 +250,14 @@ function parseListMessagesResult(raw: unknown): ListMessagesBody | null {
  */
 export class PollBackstop {
   private readonly opts: Required<
-    Omit<PollBackstopOptions, "cursorFile" | "heartbeatIntervalMs" | "heartbeatEnabled" | "firstTimerEnabled" | "onPolledMessage">
+    Omit<PollBackstopOptions, "cursorFile" | "heartbeatIntervalMs" | "heartbeatEnabled" | "firstTimerEnabled" | "onPolledMessage" | "onHeartbeatTick">
   > & {
     cursorFile?: string;
     heartbeatIntervalMs: number;
     heartbeatEnabled: boolean;
     firstTimerEnabled: boolean;
     onPolledMessage: (event: AgentEvent) => void;
+    onHeartbeatTick: () => void | Promise<void>;
   };
   private timer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -283,6 +296,7 @@ export class PollBackstop {
       cursorFile: opts.cursorFile,
       log: opts.log ?? (() => {}),
       onPolledMessage: opts.onPolledMessage ?? (() => {}),
+      onHeartbeatTick: opts.onHeartbeatTick ?? (() => {}),
       heartbeatIntervalMs,
       heartbeatEnabled,
       firstTimerEnabled,
@@ -447,6 +461,20 @@ export class PollBackstop {
     if (this.heartbeatInFlight) return;
     this.heartbeatInFlight = true;
     try {
+      // bug-180 L2 — tool-surface revision-poll backstop on the heartbeat
+      // cadence. Fired BEFORE the streaming gate + the heartbeat call:
+      // /health is fetched over plain HTTP (independent of the agent
+      // transport) and `list_changed` reaches the host MCP transport even
+      // during a Hub-transport blip, so an in-life redeploy is caught within
+      // one heartbeat interval regardless of agent state. Best-effort.
+      try {
+        await this.opts.onHeartbeatTick();
+      } catch (err) {
+        this.opts.log(
+          `[poll-backstop] onHeartbeatTick threw (non-fatal): ${(err as Error)?.message ?? String(err)}`,
+        );
+      }
+
       const agent = getAgent();
       if (!agent || agent.state !== "streaming") return;
       try {

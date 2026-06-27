@@ -17,6 +17,7 @@ import {
   createSharedDispatcher,
   isCacheValid,
   CATALOG_SCHEMA_VERSION,
+  ToolSurfaceReconciler,
   type CachedCatalog,
   type McpAgentClient,
   type SharedDispatcherOptions,
@@ -208,6 +209,36 @@ describe("dispatcher cache fallback — ListTools", () => {
     expect(agent.listTools).not.toHaveBeenCalled();
   });
 
+  // bug-180 AC4 — the live-refresh fix must NOT regress probe-path latency:
+  // a pre-identity probe still serves from the on-disk cache with zero Hub
+  // round-trips. A regression that fell through to the live path would both
+  // call agent.listTools AND blow the timing budget (the live fetch is
+  // deliberately made slow here so the assertion is dispositive).
+  it("AC4: pre-identity probe serves from cache with no blocking Hub fetch (latency preserved)", async () => {
+    const agent = fakeAgent();
+    (agent.listTools as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise((r) => setTimeout(() => r(LIVE_CATALOG), 200)),
+    );
+
+    const { handler } = makeListToolsHandler({
+      getAgent: () => agent,
+      proxyVersion: "test-1.0.0",
+      getCachedCatalog: () => CACHED,
+      getIsIdentityReady: () => false,            // probe scenario
+      getCurrentToolSurfaceRevision: () => null,  // /health in flight
+      isCacheValid,
+      persistCatalog: vi.fn(),
+    });
+
+    const start = performance.now();
+    const result = await handler({ method: "tools/list", params: {} });
+    const elapsed = performance.now() - start;
+
+    expect(result).toEqual({ tools: CACHED_CATALOG });
+    expect(agent.listTools).not.toHaveBeenCalled(); // zero Hub round-trips
+    expect(elapsed).toBeLessThan(50);               // probe returns fast (< slow live fetch)
+  });
+
   it("no-cache-callbacks: ListTools falls through to live fetch only", async () => {
     const agent = fakeAgent();
     (agent.listTools as ReturnType<typeof vi.fn>).mockResolvedValue(LIVE_CATALOG);
@@ -222,5 +253,136 @@ describe("dispatcher cache fallback — ListTools", () => {
     const result = await handler({ method: "tools/list", params: {} });
     expect(result).toEqual({ tools: LIVE_CATALOG });
     expect(agent.listTools).toHaveBeenCalledOnce();
+  });
+});
+
+// bug-180 — tool-surface live-refresh reconciler (L1 identityReady + L2
+// PollBackstop-heartbeat triggers share one reconcile()). The shim injects the
+// /health fetch, the on-disk-cache read, and the list_changed emit; this suite
+// pins the reconcile DECISION + applied-state baseline machinery.
+const REV_STALE = "db48a16707617c0f"; // the cached (stale) revision in bug-180
+const REV_LIVE = "f96c6bd56a1a0f32"; // the live Hub revision after #361
+const REV_NEXT = "aaaa0000bbbb1111"; // a subsequent in-life redeploy
+
+describe("ToolSurfaceReconciler — bug-180 L1/L2 revision reconcile", () => {
+  it("AC3: emits list_changed on cached-vs-live drift (db48→f96) and advances the baseline", async () => {
+    const emit = vi.fn();
+    const reconciler = new ToolSurfaceReconciler({
+      fetchLiveRevision: vi.fn().mockResolvedValue(REV_LIVE),
+      readServedRevision: () => REV_STALE, // pre-identity probe served the stale cache
+      emitListChanged: emit,
+    });
+
+    const out = await reconciler.reconcile("identityReady");
+
+    expect(out).toEqual({ emitted: true, live: REV_LIVE });
+    expect(emit).toHaveBeenCalledOnce();
+    expect(reconciler.getAppliedRevision()).toBe(REV_LIVE);
+  });
+
+  it("does NOT emit when the served revision already matches live (no drift)", async () => {
+    const emit = vi.fn();
+    const reconciler = new ToolSurfaceReconciler({
+      fetchLiveRevision: vi.fn().mockResolvedValue(REV_LIVE),
+      readServedRevision: () => REV_LIVE,
+      emitListChanged: emit,
+    });
+
+    const out = await reconciler.reconcile();
+
+    expect(out.emitted).toBe(false);
+    expect(emit).not.toHaveBeenCalled();
+    expect(reconciler.getAppliedRevision()).toBe(REV_LIVE);
+  });
+
+  it("does NOT emit when the live revision is unknown (fetch failed) — cache trusted, no baseline set", async () => {
+    const emit = vi.fn();
+    const reconciler = new ToolSurfaceReconciler({
+      fetchLiveRevision: vi.fn().mockResolvedValue(null),
+      readServedRevision: () => REV_STALE,
+      emitListChanged: emit,
+    });
+
+    const out = await reconciler.reconcile();
+
+    expect(out).toEqual({ emitted: false, live: null });
+    expect(emit).not.toHaveBeenCalled();
+    // Unknown-live pass establishes no baseline — the next successful pass seeds it.
+    expect(reconciler.getAppliedRevision()).toBeNull();
+  });
+
+  it("L2: catches an in-life redeploy after a clean baseline (no emit, then emit on change)", async () => {
+    const emit = vi.fn();
+    const fetchLiveRevision = vi
+      .fn()
+      .mockResolvedValueOnce(REV_LIVE) // first heartbeat: matches the served baseline
+      .mockResolvedValueOnce(REV_NEXT); // redeploy → surface changed
+    const reconciler = new ToolSurfaceReconciler({
+      fetchLiveRevision,
+      readServedRevision: () => REV_LIVE, // host already on live (post-L1 / fresh start)
+      emitListChanged: emit,
+    });
+
+    const first = await reconciler.reconcile("heartbeat");
+    expect(first.emitted).toBe(false);
+    expect(emit).not.toHaveBeenCalled();
+
+    const second = await reconciler.reconcile("heartbeat");
+    expect(second).toEqual({ emitted: true, live: REV_NEXT });
+    expect(emit).toHaveBeenCalledOnce();
+    expect(reconciler.getAppliedRevision()).toBe(REV_NEXT);
+  });
+
+  it("baseline seeds from the on-disk cache even when L2 (heartbeat) races ahead of L1 — order-independent", async () => {
+    const emit = vi.fn();
+    const reconciler = new ToolSurfaceReconciler({
+      fetchLiveRevision: vi.fn().mockResolvedValue(REV_LIVE),
+      readServedRevision: () => REV_STALE,
+      emitListChanged: emit,
+    });
+
+    // The heartbeat fires before identityReady — still detects db48→f96.
+    const out = await reconciler.reconcile("heartbeat");
+
+    expect(out.emitted).toBe(true);
+    expect(emit).toHaveBeenCalledOnce();
+    expect(reconciler.getAppliedRevision()).toBe(REV_LIVE);
+  });
+
+  it("fresh install (no on-disk cache): baselines off live, no emit; later drift emits exactly once", async () => {
+    const emit = vi.fn();
+    const fetchLiveRevision = vi
+      .fn()
+      .mockResolvedValueOnce(REV_LIVE)
+      .mockResolvedValueOnce(REV_LIVE)
+      .mockResolvedValueOnce(REV_NEXT);
+    const reconciler = new ToolSurfaceReconciler({
+      fetchLiveRevision,
+      readServedRevision: () => null, // fresh install bootstrapped live directly
+      emitListChanged: emit,
+    });
+
+    expect((await reconciler.reconcile()).emitted).toBe(false); // baseline = live
+    expect(reconciler.getAppliedRevision()).toBe(REV_LIVE);
+    expect((await reconciler.reconcile()).emitted).toBe(false); // unchanged
+    expect((await reconciler.reconcile()).emitted).toBe(true); // redeploy
+    expect(emit).toHaveBeenCalledOnce();
+  });
+
+  it("emitListChanged throwing is swallowed (best-effort) and the baseline still advances", async () => {
+    const reconciler = new ToolSurfaceReconciler({
+      fetchLiveRevision: vi.fn().mockResolvedValue(REV_LIVE),
+      readServedRevision: () => REV_STALE,
+      emitListChanged: () => {
+        throw new Error("host transport closed");
+      },
+    });
+
+    const out = await reconciler.reconcile();
+
+    expect(out.emitted).toBe(true);
+    // Baseline advances despite the emit throwing — a transient emit failure
+    // must not wedge the reconciler into re-emitting every tick.
+    expect(reconciler.getAppliedRevision()).toBe(REV_LIVE);
   });
 });

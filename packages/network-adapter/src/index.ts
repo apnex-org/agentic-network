@@ -115,6 +115,12 @@ export type {
   CachedCatalog,
 } from "./tool-manager/tool-catalog-cache.js";
 
+export { ToolSurfaceReconciler } from "./tool-manager/tool-surface-reconciler.js";
+export type {
+  ToolSurfaceReconcilerDeps,
+  ReconcileOutcome,
+} from "./tool-manager/tool-surface-reconciler.js";
+
 // ── Cross-cutting primitives (root) ─────────────────────────────────
 
 export { HubReturnedError, isErrorEnvelope } from "./hub-error.js";

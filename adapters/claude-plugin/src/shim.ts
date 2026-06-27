@@ -19,6 +19,7 @@ import {
   isCacheValid,
   readCache,
   writeCache,
+  ToolSurfaceReconciler,
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,
@@ -424,6 +425,10 @@ async function main(): Promise<void> {
   // flows through whenever it's captured from Claude Code.
   let dispatcherRef: SharedDispatcher | null = null;
   let mcpServer: Server | null = null;
+  // bug-180 — tool-surface live-refresh reconciler. Assigned once mcpServer
+  // exists (post-createMcpServer); referenced lazily by the identityReady (L1)
+  // trigger + the PollBackstop heartbeat (L2) closure.
+  let reconciler: ToolSurfaceReconciler | null = null;
   const getClientInfo = () =>
     dispatcherRef ? dispatcherRef.getClientInfo() : { name: "unknown", version: "0.0.0" };
 
@@ -499,33 +504,47 @@ async function main(): Promise<void> {
   // diagnostic only — no longer load-bearing for cache correctness.
   let cachedToolSurfaceRevision: string | null = null;
   const healthUrl = config.hubUrl.replace(/\/mcp(\/.*)?$/, "/health");
-  (async () => {
+
+  // bug-114 + bug-180 — resolve the Hub's live tool-surface revision from
+  // /health. Side-effect: updates the in-memory `cachedToolSurfaceRevision`
+  // (the probe-path invalidation key consumed by getCurrentToolSurfaceRevision
+  // + persistCatalog). Returns the live revision, or null when the fetch fails
+  // or the Hub doesn't report the field — the bug-180 reconciler treats null
+  // as "unknown, trust the cache" and never emits a spurious list_changed.
+  // Plain HTTP, independent of the Hub MCP transport.
+  const fetchLiveToolSurfaceRevision = async (): Promise<string | null> => {
     try {
       const res = await fetch(healthUrl);
-      if (res.ok) {
-        const json = (await res.json()) as {
-          version?: unknown;
-          toolSurfaceRevision?: unknown;
-        };
-        if (typeof json.version === "string") {
-          log(`[Cache] Hub version: ${json.version}`);
-        }
-        if (
-          typeof json.toolSurfaceRevision === "string" &&
-          json.toolSurfaceRevision !== ""
-        ) {
-          cachedToolSurfaceRevision = json.toolSurfaceRevision;
-          log(`[Cache] Tool-surface revision resolved: ${cachedToolSurfaceRevision}`);
-        } else {
-          log(`[Cache] /health returned no toolSurfaceRevision field — cache invalidation will trust existing cache`);
-        }
-      } else {
+      if (!res.ok) {
         log(`[Cache] /health fetch returned status ${res.status} — cache invalidation will trust existing cache`);
+        return null;
       }
+      const json = (await res.json()) as {
+        version?: unknown;
+        toolSurfaceRevision?: unknown;
+      };
+      if (typeof json.version === "string") {
+        log(`[Cache] Hub version: ${json.version}`);
+      }
+      if (
+        typeof json.toolSurfaceRevision === "string" &&
+        json.toolSurfaceRevision !== ""
+      ) {
+        cachedToolSurfaceRevision = json.toolSurfaceRevision;
+        log(`[Cache] Tool-surface revision resolved: ${cachedToolSurfaceRevision}`);
+        return cachedToolSurfaceRevision;
+      }
+      log(`[Cache] /health returned no toolSurfaceRevision field — cache invalidation will trust existing cache`);
+      return null;
     } catch (err) {
       log(`[Cache] /health fetch failed (non-fatal): ${(err as Error).message ?? err}`);
+      return null;
     }
-  })();
+  };
+
+  // Warm the probe-path invalidation key once at startup in the background;
+  // the reconciler awaits a definitive fetch at its own L1/L2 trigger points.
+  void fetchLiveToolSurfaceRevision();
 
   agent = new McpAgentClient(
     {
@@ -688,6 +707,14 @@ async function main(): Promise<void> {
       role: config.role,
       firstTimerEnabled: true,
       log,
+      // bug-180 L2 — revision-poll backstop on the heartbeat cadence. Lazy
+      // reference: `reconciler` is assigned once mcpServer exists (below);
+      // the first heartbeat tick fires ≥1 interval after start(), so it is
+      // always populated by the time this runs. Catches a redeploy WHILE the
+      // session stays connected (no reconnect → no fresh identityReady).
+      onHeartbeatTick: async () => {
+        await reconciler?.reconcile("heartbeat");
+      },
     },
   });
   dispatcherRef = dispatcher;
@@ -703,6 +730,32 @@ async function main(): Promise<void> {
   mcpServer = dispatcher.createMcpServer();
   await mcpServer.connect(transport);
   log("MCP stdio server ready — Claude Code can call initialize/listTools/callTool");
+
+  // bug-180 — tool-surface live-refresh reconciler. Now that mcpServer exists
+  // we can emit notifications/tools/list_changed on drift. The reconciler
+  // baselines off the on-disk cache (what the pre-identity probe served) and
+  // emits when the live /health revision diverges from it.
+  const liveReconciler = new ToolSurfaceReconciler({
+    fetchLiveRevision: fetchLiveToolSurfaceRevision,
+    readServedRevision: () => readCache(WORK_DIR, log)?.toolSurfaceRevision ?? null,
+    emitListChanged: () => {
+      void mcpServer?.sendToolListChanged();
+      log("[ToolSurface] notifications/tools/list_changed emitted — host will re-enumerate");
+    },
+    log,
+  });
+  reconciler = liveReconciler;
+
+  // bug-180 L1 (primary) — reconcile on identityReady. Once identity resolves
+  // the live revision is fetchable + the dispatcher serves the live surface
+  // (probe-cache path is skipped), so re-enumeration after the emit lands the
+  // current tool set. Covers the redeploy-then-reconnect case that caused
+  // bug-180 — no manual cache-delete, no restart. identityReadyResolved is set
+  // on an earlier-registered .then, so the dispatcher already serves live by
+  // the time the host re-calls tools/list.
+  identityReady
+    .then(() => liveReconciler.reconcile("identityReady"))
+    .catch(() => { /* identityReady rejection handled by main()'s catch */ });
 
   try {
     await agent.start();
