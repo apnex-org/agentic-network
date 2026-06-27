@@ -22,7 +22,7 @@ import type {
   DrainedPendingAction,
   SessionState,
   SessionReconnectReason,
-} from "@apnex/network-adapter";
+} from "./adapter-events.js";
 
 import type { Message } from "./message.js";
 import { SeenIdCache, type SeenIdCacheOptions } from "./seen-id-cache.js";

@@ -7,6 +7,16 @@
  * with bounded seen-id LRU dedup for the push+poll race.
  */
 
+// bug-160 — the Message-union payload contract (relocated from network-adapter to
+// break the L2↔L4 source cycle; @apnex/network-adapter re-exports these so its
+// consumers are unaffected).
+export type {
+  AgentEvent,
+  SessionState,
+  SessionReconnectReason,
+  DrainedPendingAction,
+} from "./adapter-events.js";
+
 export type {
   Message,
   MessageKind,
