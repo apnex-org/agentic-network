@@ -186,9 +186,16 @@ async function createMessage(
         : callerRole === "verifier"
           ? "verifier" // mission-93 bug-169: verifier's notes/messages must attribute to verifier, not silently architect
           : "architect"; // architect is the default fallback for system-callers
+  // bug-193 — DON'T swallow lookup errors. The old `.catch(()=>null)` collapsed
+  // BOTH "no agent for this session" (legitimately null) AND "the registry read
+  // THREW" (a substrate/infra fault) into the same anonymous-${role} default →
+  // a transient fault silently mis-attributed the message to anonymous instead
+  // of its real (registered) author + buried the fault. A genuine miss still
+  // returns null → defaults (system-callers / unmapped session); a THROWN lookup
+  // now propagates (fail-loud) so attribution integrity + the infra fault surface.
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(
     ctx.sessionId,
-  ).catch(() => null);
+  );
   const authorAgentId: string =
     agent?.id ?? `anonymous-${authorRole}`;
 
@@ -407,9 +414,12 @@ async function resolveCallerAgentId(ctx: IPolicyContext): Promise<string> {
         : callerRole === "verifier"
           ? "verifier" // mission-93 bug-169: verifier attribution
           : "architect";
+  // bug-193 — don't swallow lookup errors (see createMessage above): a genuine
+  // miss returns null → defaults; a THROWN registry read propagates (fail-loud)
+  // rather than silently mis-attributing claimedBy to anonymous-${role}.
   const agent = await (ctx.stores.engineerRegistry as any).getAgentForSession?.(
     ctx.sessionId,
-  ).catch(() => null);
+  );
   return agent?.id ?? `anonymous-${fallbackRole}`;
 }
 
