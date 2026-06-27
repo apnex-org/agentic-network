@@ -150,6 +150,27 @@ The `kind=note` response loop (peer's note → claim → ack → reply-note, 2-3
 
 ---
 
+## Section H — Stint-3 idea-355 dogfood-3 (FR-31, 2026-06-27)
+
+### FR-31 — PR merge/approval workflow is one-size-fits-all; doesn't fit the scenario (Director-flagged 2026-06-27)
+Every PR this dogfood-3 stint (#369 SLICE-0, #370 calibration-governance, #371 SLICE-1-part-1) hit the same multi-step merge cycle: **BEHIND → `gh api` update-branch (retains approval; a local rebase+push dismisses it) → ~3min CI re-run → merge.** Compounding factors:
+- Repo **requires up-to-date-before-merge** + main advances as each PR lands → every later PR goes BEHIND → forced update-branch + re-CI. Multi-PR missions pay this per-PR.
+- **auto-merge is DISABLED** (`enablePullRequestAutoMerge` not allowed) → no merge-when-ready; manual `--watch` + merge each time.
+- **`--admin` does NOT override** — blocked by the BEHIND-state "required check expected" interaction (the up-to-date requirement re-requires the checks). Validates memory `feedback_pr_approvals_peer_to_peer`.
+- **Author can't self-approve** → the architect's own PRs (e.g. #370, docs-only governance) need a peer (greg) cross-approval round-trip.
+- No passive **CI-green / merge-ready signal** → architect sets a manual `gh pr checks --watch` per merge (the merge-leg analog of FR-23; the idea-357 gap).
+
+**Director framing (2026-06-27):** *"consider merge workflows and approves that make sense for each scenario."* The friction is a uniform merge/approval policy where the scenario varies. Design distinct policies per scenario:
+- **Docs/yaml-only governance** (calibrations, CLAUDE.md, design docs): low-risk non-code — relax up-to-date / lighter approval / architect-mergeable.
+- **Code PRs** (adapter/kernel/hub): keep up-to-date + peer-verify + full CI.
+- **Dogfood-increment PRs** (stacked on one branch): merge-queue / batch to avoid per-increment BEHIND-churn.
+- **Author-can't-self-approve**: a defined cross-approver matrix (or a governance-PR exemption path).
+- **High-churn main**: a GitHub **merge-queue** (or enabling auto-merge) eliminates the update-branch + re-CI thrash.
+
+**Disposition:** COUNCIL + idea-357 (the CI-green/merge-ready event is the same gap). Candidate outputs: enable auto-merge or a merge-queue; per-path branch-protection policy; a cross-approval matrix. Refs: idea-357, FR-23 (operator-bottleneck class). Surfaced live across #369/#370/#371; Director-flagged "add to backlog."
+
+---
+
 ## Triage summary
 
 | Disposition | Frictions |
@@ -169,7 +190,7 @@ Per Director direction (2026-06-22): *"adversarially convene the real council wh
 
 - **Vehicle:** an adversarial multi-agent panel (the CDACC dual-altitude pattern — `docs/methodology/cdacc-dual-altitude-conformance-council.md` — or a Workflow adversarial panel), NOT a solo architect pass. The whole point is independent perspectives stress-testing each friction + the proposed fixes.
 - **Charge:** for each `COUNCIL` friction — is the proposed fix right, or does it paper over a deeper model flaw? + the pattern-observation hypothesis (which frictions does C1/C2/D-3 dissolve vs which are intrinsic?). + surface frictions this v1 missed (a completeness critic).
-- **Output:** ratified fixes (→ ideas/missions/calibrations) + a sharper autonomous-stint operating model. Calibration filings stay Director-direct/bilateral.
+- **Output:** ratified fixes (→ ideas/missions/calibrations) + a sharper autonomous-stint operating model. Calibration filings are architect-fileable as of 2026-06-27 (PR #370) — council-output calibrations file directly (evidence-anchored + peer-verified) with the Director curating, NOT Director-direct-gated.
 
 **Status (2026-06-22, post-C1-R2-arc-seal):** the build-lull trigger has ARRIVED (keystone + hardening + RBAC all sealed), and the backlog was refreshed to FR-20 + positive patterns (Section F). **Director-deferred** — *"We will not proceed with council now."* The council remains a STANDING convene-on-Director-signal action.
 
@@ -185,3 +206,5 @@ Updated 2026-06-22 (post-C1-R2-arc-seal): +Section F (FR-15..19 + positive patte
 Updated 2026-06-27 (C1-adoption go-live): +FR-21 (no agent-self-service tool-surface refresh — manual `/reload-plugins` per session; idea-121-alleviated) +FR-22 (Hub-restart → event-bridge backlog replay storm), both Director-flagged during the `create_work` on-ramp deploy + 3-agent resurface.
 
 Updated 2026-06-27 (post-dogfood-2, pre-compaction handover): +Section G (FR-23..FR-30) — **FR-23 OPERATOR-AS-LIFECYCLE-BOTTLENECK is the Director-emphasized headline** (manual restarts/hops/deploys/nudges all stint) + dogfood-2 & adapter-hygiene frictions (forked adapter, adapterVersion-mis-report, deprecated-tool, block_work-not-durable-park, AC1-needs-deploy, async-thread-race, adapter/shim terminology). Refs idea-353/354/355, bug-182/183/184/185. Next-arc focus SET (Director): consolidate the substrate via **idea-355**.
+
+Updated 2026-06-27 (stint-3, idea-355 dogfood-3 in flight): +Section H (FR-31) — PR merge/approval workflow is one-size-fits-all (every PR: BEHIND→update-branch→re-CI→merge; auto-merge disabled; `--admin` no-override; author-can't-self-approve; no CI-green/merge-ready signal). Director-flagged: design scenario-appropriate merge workflows + approval policies. Refs idea-357 (event/merge-ready signal), FR-23 (operator-bottleneck class). Calibration filing-gate relaxed this stint (architect-fileable, Director-curates; PR #370) — so council-output calibrations are no longer Director-direct-only.
