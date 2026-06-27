@@ -37,6 +37,16 @@ export interface SchemaReconcilerOptions {
 
   /** AbortSignal for runtime watch loop; reconciler boot path is not abortable (one-shot). */
   signal?: AbortSignal;
+
+  /**
+   * bug-100 — runtime watch-loop reconnect backoff (ms). After a NON-abort
+   * watch failure (e.g. a transient postgres LISTEN drop), the loop reconnects
+   * with exponential backoff (initial → ×2 → max) instead of silently losing
+   * the runtime watch. Injectable so tests drive reconnect deterministically
+   * with a tiny delay. Defaults: 1000 → 30000.
+   */
+  reconnectInitialBackoffMs?: number;
+  reconnectMaxBackoffMs?: number;
 }
 
 /**
@@ -61,6 +71,11 @@ export class SchemaReconciler {
   private readonly pool: pg.Pool;
   private readonly log: (msg: string) => void;
   private readonly warn: (msg: string, err?: unknown) => void;
+  // bug-100 — runtime watch-loop resilience: reconnect backoff + liveness stamp.
+  private readonly reconnectInitialBackoffMs: number;
+  private readonly reconnectMaxBackoffMs: number;
+  /** ISO timestamp of the last runtime-watch event processed — liveness signal. */
+  private lastWatchHealthyAt: string | null = null;
   /**
    * Internal AbortController for runtime-loop cancellation. Chains to opts.signal
    * if provided (caller-side abort triggers internal abort); close() also triggers
@@ -122,6 +137,8 @@ export class SchemaReconciler {
     attachPgErrorHandler(this.pool, "SchemaReconciler pool");
     this.log = opts.log ?? ((m) => console.log(`[SchemaReconciler] ${m}`));
     this.warn = opts.warn ?? ((m, err) => console.warn(`[SchemaReconciler] ${m}`, err ?? ""));
+    this.reconnectInitialBackoffMs = opts.reconnectInitialBackoffMs ?? 1000;
+    this.reconnectMaxBackoffMs = opts.reconnectMaxBackoffMs ?? 30_000;
     this.internalAbort = new AbortController();
     if (opts.signal) {
       if (opts.signal.aborted) {
@@ -581,8 +598,34 @@ export class SchemaReconciler {
    * indexes on put/delete events. Cancelled via opts.signal.
    */
   private async runtimeLoop(): Promise<void> {
+    // bug-100 — reconnect-with-exponential-backoff. A transient watch failure
+    // (e.g. a postgres LISTEN drop) must NOT silently lose the runtime SchemaDef
+    // watch. Re-enter substrate.watch on any non-abort session end (throw OR a
+    // normal iterator end), backing off between attempts; the backoff resets
+    // once the watch delivers an event again. Exits cleanly only on abort.
+    let backoffMs = this.reconnectInitialBackoffMs;
+    while (!this.internalAbort.signal.aborted) {
+      const result = await this.runtimeWatchSession(() => { backoffMs = this.reconnectInitialBackoffMs; });
+      if (result === "abort") break;
+      this.log(`runtime — reconnecting watch in ${backoffMs}ms`);
+      if (await this.abortableDelay(backoffMs)) break;
+      backoffMs = Math.min(backoffMs * 2, this.reconnectMaxBackoffMs);
+    }
+    this.log(`runtime — watch loop exited (aborted=${this.internalAbort.signal.aborted})`);
+  }
+
+  /**
+   * One watch subscription session: for-await over substrate.watch until it ends
+   * (abort → "abort", the clean shutdown path) or throws / self-terminates
+   * (→ "reconnect"; the caller backs off + reconnects). Stamps lastWatchHealthyAt
+   * + invokes onHealthy (backoff reset) on each delivered event.
+   */
+  private async runtimeWatchSession(onHealthy: () => void): Promise<"abort" | "reconnect"> {
     try {
       for await (const event of this.substrate.watch<Record<string, unknown>>("SchemaDef", { signal: this.internalAbort.signal })) {
+        // Watch is delivering → healthy.
+        this.lastWatchHealthyAt = new Date().toISOString();
+        onHealthy();
         if (event.op === "put" && event.entity) {
           // mission-90 W1: rows are envelope-shaped post boot-put fix — decode
           // back to the runtime SchemaDef (described kind at metadata.name)
@@ -634,14 +677,45 @@ export class SchemaReconciler {
           this.warn(`runtime — SchemaDef deleted for id=${event.id}; orphan indexes NOT cleaned (manual cleanup needed)`);
         }
       }
+      // for-await ended WITHOUT throwing — on abort this is the clean shutdown
+      // (substrate.watch ends its LISTEN client on the signal); otherwise the
+      // iterator self-terminated (e.g. the LISTEN connection closed) → reconnect.
+      return this.internalAbort.signal.aborted ? "abort" : "reconnect";
     } catch (err) {
-      // Watch terminated unexpectedly (signal aborted OR substrate-side error)
+      // Watch threw (e.g. a transient postgres LISTEN drop). Abort → clean exit;
+      // otherwise signal the caller to back off + reconnect.
       if (this.internalAbort.signal.aborted) {
         this.log(`runtime — watch loop aborted via signal`);
-      } else {
-        this.warn(`runtime — watch loop terminated unexpectedly`, err);
+        return "abort";
       }
+      this.warn(`runtime — watch session terminated unexpectedly`, err);
+      return "reconnect";
     }
+  }
+
+  /**
+   * Resolve after `ms`, or immediately when internalAbort fires. Returns true if
+   * the wait was cut short by an abort (caller should exit), false on a normal
+   * timeout — keeps the reconnect backoff from blocking close().
+   */
+  private abortableDelay(ms: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (this.internalAbort.signal.aborted) return resolve(true);
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        this.internalAbort.signal.removeEventListener("abort", onAbort);
+        resolve(false);
+      }, ms);
+      this.internalAbort.signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  /** bug-100 — last time the runtime watch processed an event (observability). */
+  getLastWatchHealthyAt(): string | null {
+    return this.lastWatchHealthyAt;
   }
 
   /**
