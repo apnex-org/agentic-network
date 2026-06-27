@@ -47,6 +47,8 @@ TPS_SWAP_APPLIED=0
 _tps_cleanup_state() {
   if [[ $TPS_SWAP_APPLIED -eq 1 && -n "$TPS_BACKUP_DIR" && -d "$TPS_BACKUP_DIR" ]]; then
     [[ -f "$TPS_BACKUP_DIR/package.json" ]] && mv -f "$TPS_BACKUP_DIR/package.json" "$TPS_TARGET_DIR/package.json"
+    # bug-142 — restore the lockfile too (only when it was backed up).
+    [[ -f "$TPS_BACKUP_DIR/package-lock.json" ]] && mv -f "$TPS_BACKUP_DIR/package-lock.json" "$TPS_TARGET_DIR/package-lock.json"
   fi
   if [[ ${#TPS_STAGED_TARBALLS[@]} -gt 0 ]]; then
     local tarball
@@ -85,6 +87,10 @@ swap_workspace_deps_to_tarballs() {
 
   TPS_BACKUP_DIR=$(mktemp -d -t transient-swap-XXXXXX)
   cp "$target_dir/package.json" "$TPS_BACKUP_DIR/package.json"
+  # bug-142 — `npm pack` rewrites package-lock.json to match the swapped `file:`
+  # refs, so back it up too; otherwise a failed prepack leaves the lockfile
+  # swapped (the trap restored package.json only). Not every target has a lockfile.
+  [[ -f "$target_dir/package-lock.json" ]] && cp "$target_dir/package-lock.json" "$TPS_BACKUP_DIR/package-lock.json"
   TPS_SWAP_APPLIED=1
 
   local entry pkg_name pkg_source pkg_dir tarball_name
@@ -102,7 +108,13 @@ swap_workspace_deps_to_tarballs() {
     # Pre-install package devDeps so the `prepare` hook (which runs `tsc`)
     # can succeed during npm pack. Idempotent on populated node_modules.
     ( cd "$pkg_dir" && npm install --no-audit --no-fund --silent )
-    tarball_name=$( cd "$pkg_dir" && npm pack --pack-destination "$target_dir" --silent )
+    # idea-355 SLICE-3 (decision B): this is an INTERNAL vendor-pack of sovereign
+    # SOURCE into the hub image (traced by the hub's own git-sha), NOT a registry
+    # ship — so scope the bug-182 version-bump assert OUT of it. OIS_SKIP_VERSION_ASSERT
+    # skips ONLY the assert's FAIL check; `prepare`/tsc + the build-info stamp still
+    # run, so dist stays intact (do NOT use --ignore-scripts here). The real
+    # consumer-publish paths leave this unset and still gate.
+    tarball_name=$( cd "$pkg_dir" && OIS_SKIP_VERSION_ASSERT=1 npm pack --pack-destination "$target_dir" --silent )
     if [[ -z "$tarball_name" || ! -f "$target_dir/$tarball_name" ]]; then
       echo "[transient-swap] ERROR: npm pack did not produce a tarball for $pkg_name." >&2
       return 1

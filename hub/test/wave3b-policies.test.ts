@@ -3218,6 +3218,22 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     expect(bug.surfacedBy).toBe("unit-test");
   });
 
+  it("bug-118 — create_bug persists sourceThreadId + sourceMissionId lineage (no orphan in the graph)", async () => {
+    // Pre-bug-118 the create_bug tool was blind to lineage → a bug reported from
+    // a thread/mission context was an orphan (sourceThreadId/linkedMissionId null).
+    const r = await router.handle("create_bug", {
+      title: "Lineage bug",
+      description: "surfaced from a thread + mission context",
+      sourceThreadId: "thread-77",
+      sourceMissionId: "mission-9",
+    }, ctx);
+    expect(r.isError).toBeUndefined();
+    const { bugId } = JSON.parse(r.content[0].text);
+    const bug = JSON.parse((await router.handle("get_bug", { bugId }, ctx)).content[0].text);
+    expect(bug.sourceThreadId).toBe("thread-77");
+    expect(bug.linkedMissionId).toBe("mission-9");
+  });
+
   it("list_bugs filters by status + severity + class + tags match-any", async () => {
     await router.handle("create_bug", { title: "A", description: "a", severity: "critical", class: "drift", tags: ["hub"] }, ctx);
     await router.handle("create_bug", { title: "B", description: "b", severity: "minor", class: "race", tags: ["engineer"] }, ctx);

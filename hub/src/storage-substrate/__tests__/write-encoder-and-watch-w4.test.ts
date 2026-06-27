@@ -18,6 +18,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { createTestPool } from "./_pg-test-pool.js";
 import {
   createPostgresStorageSubstrate,
   createMemoryStorageSubstrate,
@@ -112,7 +113,7 @@ describe("W4 write-encoder + watch envelope-awareness", () => {
       container = await new PostgreSqlContainer("postgres:15-alpine")
         .withUsername("hub").withPassword("hub").withDatabase("hub").start();
       connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-      pool = new Pool({ connectionString: connStr });
+      pool = createTestPool(connStr, "write-encoder-and-watch-w4");
       for (const f of MIGRATION_FILES) await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
       substrate = createPostgresStorageSubstrate(connStr);
       reconciler = createSchemaReconciler(substrate, connStr, { initialSchemas: ALL_SCHEMAS, log: () => {}, warn: () => {} });
@@ -165,6 +166,121 @@ describe("W4 write-encoder + watch envelope-awareness", () => {
       await done.catch(() => {});
       expect(seen).toContain("w4-sched-match");
       expect(seen).not.toContain("w4-sched-miss");
+    }, OP_TIMEOUT);
+
+    it("bug-187: a write committed in the LISTEN→replay window is delivered EXACTLY once (gap-free + dedup)", async () => {
+      // Seed a baseline so the watch has a sinceRevision floor; its NOTIFY fires
+      // BEFORE the watch's LISTEN, so the baseline is itself never replayed.
+      const base = await substrate.put("Bug", { id: "b187-base", title: "t", severity: "minor", class: "c", status: "open" });
+
+      // Plant a racing write INSIDE the (now-closed) LISTEN→replay window via the
+      // test seam: it commits AFTER LISTEN (its NOTIFY is buffered live) AND
+      // BEFORE the replay SELECT (the SELECT also sees it) → the overlap. The fix
+      // must surface it EXACTLY once — not zero (the old SELECT-before-LISTEN
+      // order would miss it: the lost-NOTIFY gap, bug-187) and not twice
+      // (subscribe-before-replay WITHOUT the resource_version dedup would dupe it).
+      (substrate as unknown as { _watchTestHookAfterListen?: () => Promise<void> })._watchTestHookAfterListen =
+        async () => {
+          await substrate.put("Bug", { id: "b187-race", title: "r", severity: "minor", class: "c", status: "open" });
+        };
+
+      const ac = new AbortController();
+      const seen: Array<{ id: string; op: string }> = [];
+      const done = (async () => {
+        for await (const ev of substrate.watch<{ id: string }>("Bug", { sinceRevision: base.resourceVersion, signal: ac.signal })) {
+          seen.push({ id: ev.id, op: ev.op });
+        }
+      })();
+
+      // Allow the watch to start, fire the seam (race write), run replay + the
+      // live drain — plus slack for a (wrong) duplicate to surface before assert.
+      await new Promise((r) => setTimeout(r, 800));
+      ac.abort();
+      await done.catch(() => {});
+
+      const raceDeliveries = seen.filter((e) => e.id === "b187-race");
+      expect(raceDeliveries).toHaveLength(1); // exactly once: gap-free AND no dupe
+    }, OP_TIMEOUT);
+
+    it("work-41: two writes to the SAME row in the LISTEN→replay overlap deliver ONCE at the latest rv, monotonic (no [4,2] regression)", async () => {
+      // steve audit-4533 finding 1: the exact-rv-Set dedup leaked the STALE older
+      // NOTIFY AFTER the replay yielded the latest → out-of-order + cursor
+      // regression (his [4,2] probe). The monotonic cursor must skip the stale rv.
+      // Seed a baseline floor, then write the SAME id TWICE inside the overlap (rv
+      // R2 then R3). Replay sees only the latest existing state (R3); both NOTIFYs
+      // buffer. Assert: id delivered EXACTLY once, AT R3 (not the stale R2), and the
+      // full delivered rv sequence is strictly increasing (never regresses).
+      const base = await substrate.put("Bug", { id: "w41-base", title: "t", severity: "minor", class: "c", status: "open" });
+      let r2 = "";
+      let r3 = "";
+      (substrate as unknown as { _watchTestHookAfterListen?: () => Promise<void> })._watchTestHookAfterListen =
+        async () => {
+          r2 = (await substrate.put("Bug", { id: "w41-multi", title: "v2", severity: "minor", class: "c", status: "open" })).resourceVersion;
+          r3 = (await substrate.put("Bug", { id: "w41-multi", title: "v3", severity: "minor", class: "c", status: "open" })).resourceVersion;
+        };
+
+      const ac = new AbortController();
+      const seen: Array<{ id: string; rv: string }> = [];
+      const done = (async () => {
+        for await (const ev of substrate.watch<{ id: string }>("Bug", { sinceRevision: base.resourceVersion, signal: ac.signal })) {
+          seen.push({ id: ev.id, rv: ev.resourceVersion });
+        }
+      })();
+      await new Promise((r) => setTimeout(r, 800));
+      ac.abort();
+      await done.catch(() => {});
+
+      const multi = seen.filter((e) => e.id === "w41-multi");
+      expect(multi).toHaveLength(1);                       // exactly once (no stale dup)
+      expect(multi[0]!.rv).toBe(r3);                       // at the LATEST rv...
+      expect(seen.some((e) => e.rv === r2)).toBe(false);   // ...the stale R2 NEVER delivered
+      // Monotonic: the delivered rv sequence strictly increases — no regression.
+      const rvs = seen.map((e) => BigInt(e.rv));
+      for (let i = 1; i < rvs.length; i++) expect(rvs[i]! > rvs[i - 1]!).toBe(true);
+    }, OP_TIMEOUT);
+
+    it("work-41 (#4b): a server-terminated LISTEN backend SETTLES the watch — the generator TERMINATES (→ reconnect), not hangs (real-pg)", async () => {
+      // steve audit-4533 finding 2 — the faithful-harness fix: the MOCK modeled a
+      // generator that ends/throws on termination; real pg does NOT (the SDK only
+      // fires 'end'/'error'). Kill the watch's LISTEN backend from another
+      // connection; the 'end'/'error' handler must SETTLE the iterator so the
+      // for-await ENDS (→ runtimeWatchSession returns "reconnect"). Pre-fix the
+      // loop re-parks on ready() forever → the generator hangs → the race below
+      // times out to false. We target ONLY this watch's backend (pid-diff) so the
+      // beforeAll reconciler's own SchemaDef LISTEN is spared.
+      const listenPids = async (): Promise<number[]> => {
+        const r = await pool.query<{ pid: number }>(
+          `SELECT pid FROM pg_stat_activity WHERE query = 'LISTEN entities_change' AND pid <> pg_backend_pid()`,
+        );
+        return r.rows.map((row) => row.pid);
+      };
+      const before = new Set(await listenPids());
+
+      const ac = new AbortController();
+      let terminated = false;
+      const loop = (async () => {
+        for await (const _ev of substrate.watch<{ id: string }>("Bug", { signal: ac.signal })) {
+          /* drain */
+        }
+        terminated = true; // the for-await ENDED (generator returned) — not hung
+      })();
+
+      // Let this watch's LISTEN establish, then terminate ONLY its backend.
+      await new Promise((r) => setTimeout(r, 600));
+      const mine = (await listenPids()).filter((pid) => !before.has(pid));
+      expect(mine.length).toBeGreaterThanOrEqual(1); // sanity: this watch's LISTEN is up
+      for (const pid of mine) {
+        await pool.query(`SELECT pg_terminate_backend($1)`, [pid]);
+      }
+
+      // The generator must terminate within a bounded window (pre-fix: hangs).
+      const settled = await Promise.race([
+        loop.then(() => true),
+        new Promise<boolean>((r) => setTimeout(() => r(false), 6000)),
+      ]);
+      expect(settled).toBe(true);
+      expect(terminated).toBe(true);
+      ac.abort(); // no-op cleanup (already terminated)
     }, OP_TIMEOUT);
 
     it("bug-150+W4: normalizeThreadShape reads relocated fields envelope-native (messages/participants/routingMode survive)", async () => {

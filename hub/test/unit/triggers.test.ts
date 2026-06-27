@@ -14,7 +14,7 @@
  * unit tests here exercise the trigger runner directly).
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
@@ -25,7 +25,10 @@ import {
 } from "../../src/policy/downstream-actors.js";
 import type { IPolicyContext } from "../../src/policy/types.js";
 
-function makeStubCtx(messageStore: MessageRepository): IPolicyContext {
+function makeStubCtx(
+  messageStore: MessageRepository,
+  dispatch: IPolicyContext["dispatch"] = async () => {},
+): IPolicyContext {
   return {
     stores: {
       message: messageStore,
@@ -34,7 +37,7 @@ function makeStubCtx(messageStore: MessageRepository): IPolicyContext {
       increment: () => {},
     } as IPolicyContext["metrics"],
     emit: async () => {},
-    dispatch: async () => {},
+    dispatch,
     sessionId: "test-session",
     clientIp: "127.0.0.1",
     role: "system",
@@ -189,6 +192,33 @@ describe("runTriggers — emission semantics", () => {
     expect(payload.missionId).toBe("m-1");
     expect(payload.transition).toBe("proposed→active");
     expect(payload.directive).toMatch(/draft task plan|claim first task/);
+  });
+
+  it("bug-192: a fired push-immediate trigger LIVE-PUSHES via ctx.dispatch (not just createMessage)", async () => {
+    // The gap: runTriggers called createMessage directly, bypassing the SSE push
+    // → delivery:"push-immediate" was inert → a poll-less (opencode) recipient
+    // never saw the Message live (compounds bug-189). The emitAndPush helper must
+    // now fire message_arrived for the created Message, scoped to its target.
+    const messageStore = new MessageRepository(createMemoryStorageSubstrate());
+    const dispatch = vi.fn(async () => {});
+    const ctx = makeStubCtx(messageStore, dispatch);
+
+    const result = await runTriggers(
+      "mission",
+      "proposed",
+      "active",
+      { id: "m-1", title: "Test mission" },
+      ctx,
+    );
+    expect(result.fired).toBe(1);
+
+    // THE FIX: a live push happened — exactly once, for message_arrived, scoped
+    // to the trigger's target. Pre-fix dispatch was never called.
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const [event, data, selector] = dispatch.mock.calls[0]!;
+    expect(event).toBe("message_arrived");
+    expect((data as { message: { kind: string } }).message.kind).toBe("note");
+    expect(selector).toEqual({ roles: ["engineer"] });
   });
 
   it("mission active→completed fires director-targeted note", async () => {

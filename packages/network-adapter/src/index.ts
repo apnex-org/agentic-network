@@ -22,22 +22,34 @@ export type {
   AgentClientConfig,
   AgentClientCallbacks,
   AgentClientMetrics,
-  AgentEvent,
   AgentHandshakeConfig,
+} from "./kernel/agent-client.js";
+
+// bug-160 — the Message-union payload contract (AgentEvent / SessionState /
+// SessionReconnectReason / DrainedPendingAction) was relocated DOWN to
+// @apnex/message-router to break the L2↔L4 source cycle; re-exported here so
+// consumers importing them from @apnex/network-adapter are unaffected.
+export type {
+  AgentEvent,
   SessionState,
   SessionReconnectReason,
-} from "./kernel/agent-client.js";
+  DrainedPendingAction,
+} from "@apnex/message-router";
 
 export type {
   HubEventType,
   HubEvent,
   EventDisposition,
+  DrainedActionReconstruction,
 } from "./kernel/event-router.js";
 
 export {
   classifyEvent,
   parseHubEvent,
   createDedupFilter,
+  isPulseEvent,
+  PULSE_KINDS,
+  reconstructDrainedAction,
 } from "./kernel/event-router.js";
 
 // idea-251 D-prime Phase 2: instance.ts deleted. Identity now flows from
@@ -51,6 +63,7 @@ export {
   buildHandshakePayload,
   performHandshake,
   makeStdioFatalHalt,
+  readRequiredAgentName,
 } from "./kernel/handshake.js";
 export type {
   HandshakeClientMetadata,
@@ -63,12 +76,35 @@ export type {
   HandshakeResult,
 } from "./kernel/handshake.js";
 
+export { parseLabels, loadConfig } from "./kernel/adapter-config.js";
+export type { HubConfig, LoadConfigOptions } from "./kernel/adapter-config.js";
+
+export {
+  readPackageVersion,
+  readBuildInfo,
+  UNKNOWN_BUILD_INFO,
+} from "./kernel/build-identity.js";
+export type { BuildInfo } from "./kernel/build-identity.js";
+
+export {
+  REDACT_KEYS,
+  redactFields,
+  LOG_LEVELS,
+  parseLogLevel,
+  shouldEmitLevel,
+} from "./observability.js";
+export type { LogLevel } from "./observability.js";
+
+export { createFileLogger } from "./file-logger.js";
+export type { FileLogger, FileLoggerOptions } from "./file-logger.js";
+
 export { performStateSync } from "./kernel/state-sync.js";
-export type { StateSyncContext, DrainedPendingAction } from "./kernel/state-sync.js";
+export type { StateSyncContext } from "./kernel/state-sync.js";
 
 export {
   PollBackstop,
   defaultCursorFile,
+  resolveRole,
   readCursor,
   writeCursor,
 } from "./kernel/poll-backstop.js";
@@ -121,6 +157,12 @@ export type {
   ReconcileOutcome,
 } from "./tool-manager/tool-surface-reconciler.js";
 
+// idea-355 SLICE-1T — the Hub /health toolSurfaceRevision fetcher, hoisted from
+// the shims so both share ONE network mechanism (pure; the cache side-effect
+// stays shim-side).
+export { makeFetchLiveToolSurfaceRevision } from "./tool-manager/health-revision.js";
+export type { FetchLiveToolSurfaceRevisionOptions } from "./tool-manager/health-revision.js";
+
 // idea-353 — queue wake/stall reconciliation primitives.
 export { ClaimableDigestTracker } from "./tool-manager/claimable-digest-tracker.js";
 export type {
@@ -143,7 +185,7 @@ export {
 } from "./prompt-format.js";
 export type { PromptFormatConfig } from "./prompt-format.js";
 
-export { appendNotification } from "./notification-log.js";
+export { appendNotification, buildPendingTaskNotification } from "./notification-log.js";
 export type {
   NotificationLogEntry,
   NotificationLogOptions,

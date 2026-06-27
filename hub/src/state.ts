@@ -85,24 +85,6 @@ export interface EntityProvenance {
   agentId: string;
 }
 
-/**
- * Projected view of an M18 Agent for the `get_engineer_status` tool.
- * `sessionId` is an alias for `currentSessionId` preserved so task-policy
- * can match `engStatus.engineers.find(e => e.sessionId === sid)` against the
- * caller's live MCP session without knowing the M18 field name.
- */
-export interface EngineerStatusEntry {
-  agentId: string;
-  sessionId: string | null;
-  status: "online" | "offline";
-  sessionEpoch: number;
-  clientMetadata: AgentClientMetadata;
-  advisoryTags: AgentAdvisoryTags;
-  labels: AgentLabels;
-  firstSeenAt: string;
-  lastSeenAt: string;
-}
-
 // ── M18: Agent as First-Class Entity ─────────────────────────────────
 // Design from thread-79. Decouples stable identity (globalInstanceId)
 // from authentication (token) and role (token claim).
@@ -131,13 +113,16 @@ export interface AgentAdvisoryTags {
   // All fields are best-effort, launch-time-only, subject to drift.
   // DO NOT build routing logic on these.
   llmModel?: string;           // e.g., "claude-opus-4-6"
-  // mission-66 #40 closure: adapter version surfaced via advisoryTags
-  // (canonical projection derived Hub-side from clientMetadata.proxyVersion).
-  // LEGACY QUIRK: this field actually carries clientMetadata.proxyVersion
-  // (claude-plugin shim version), NOT the network-adapter SDK version.
-  // Preserved for back-compat; rename to `proxyVersion` deferred (AG-8 in
-  // M-Build-Identity-AdvisoryTag Design v1.0).
-  adapterVersion?: string;     // e.g., "0.1.4" (claude-plugin package.json version)
+  // idea-355 SLICE-3 report-both + SLICE-4 AG-8 RETIRE: the intent-aligned
+  // version surfaces. The old mislabeled `adapterVersion` (it carried
+  // clientMetadata.proxyVersion — the SHIM, not the SDK; the bug-183 lie) was
+  // RETIRED in SLICE-4; shimVersion is its exact-value replacement.
+  //   shimVersion = clientMetadata.proxyVersion (the SHIM / plugin layer);
+  //   sdkVersion  = clientMetadata.sdkVersion  (the KERNEL / network-adapter).
+  // (The DIFFERENT top-level Agent.adapterVersion = the kernel version is
+  // unrelated and untouched.)
+  sdkVersion?: string;         // e.g., "@apnex/network-adapter@0.1.2"
+  shimVersion?: string;        // e.g., "0.1.4"
   // M-Build-Identity-AdvisoryTag (idea-256): build-identity projections
   // from clientMetadata. Intent-aligned naming: proxy* = claude-plugin
   // shim layer; sdk* = network-adapter package.
@@ -1261,10 +1246,6 @@ export interface IEngineerRegistry {
   /** Bare role-set used by the legacy register_role path and auto-register in task-policy. */
   setSessionRole(sessionId: string, role: SessionRole): void;
   getRole(sessionId: string): SessionRole;
-  getStatusSummary(): Promise<{
-    connected: number;
-    engineers: EngineerStatusEntry[];
-  }>;
   // M18: Agent entity operations.
   registerAgent(sessionId: string, tokenRole: AgentRole, payload: RegisterAgentPayload, address?: string): Promise<RegisterAgentResult>;
   /**

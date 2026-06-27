@@ -12,6 +12,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   McpAgentClient,
   appendNotification,
+  buildPendingTaskNotification,
+  readRequiredAgentName,
+  loadConfig,
+  readPackageVersion,
+  readBuildInfo,
+  UNKNOWN_BUILD_INFO,
   buildPromptText,
   makeStdioFatalHalt,
   createSharedDispatcher,
@@ -20,8 +26,7 @@ import {
   readCache,
   writeCache,
   ToolSurfaceReconciler,
-  ClaimableDigestTracker,
-  WorkLeaseTracker,
+  makeFetchLiveToolSurfaceRevision,
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,
@@ -34,7 +39,7 @@ import {
   type LogFields,
 } from "@apnex/network-adapter";
 import { CognitivePipeline } from "@apnex/cognitive-layer";
-import { readFileSync, existsSync, appendFileSync, statSync, renameSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -47,72 +52,20 @@ import {
 
 // ── Configuration ───────────────────────────────────────────────────
 
-interface HubConfig {
-  hubUrl: string;
-  hubToken: string;
-  role: string;
-  /**
-   * Mission-19 routing labels. Stamped onto the Agent entity via the
-   * enriched register_role handshake; scoped dispatches (tasks, threads,
-   * etc.) filter by these. Read from adapter-config.json `labels` field or
-   * the `OIS_HUB_LABELS` env var (JSON-encoded). Omit for broadcast.
-   */
-  labels?: Record<string, string>;
+// idea-355 SLICE-1 single-home: HubConfig + parseLabels + loadConfig hoisted to
+// the kernel (@apnex/network-adapter). The shim injects its host specifics (the
+// WORK_DIR/cwd directory + the console.error warn sink) and keeps only the
+// last-mile credential abort (claude can process.exit; opencode can't).
+const config = loadConfig({
+  directory: process.env.WORK_DIR || process.cwd(),
+  warn: (m) => console.error(m),
+});
+if (!config.hubUrl || !config.hubToken) {
+  console.error(
+    "ERROR: Hub credentials not found. Checked .ois/adapter-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars",
+  );
+  process.exit(1);
 }
-
-function parseLabels(raw: string | undefined, source: string): Record<string, string> | undefined {
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const out: Record<string, string> = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === "string") out[k] = v;
-      }
-      return Object.keys(out).length > 0 ? out : undefined;
-    }
-  } catch (err) {
-    console.error(`WARNING: Failed to parse labels from ${source}: ${err}`);
-  }
-  return undefined;
-}
-
-function loadConfig(): HubConfig {
-  const workDir = process.env.WORK_DIR || process.cwd();
-  const configPath = resolve(workDir, ".ois", "adapter-config.json");
-
-  let fileConfig: Partial<HubConfig> = {};
-  if (existsSync(configPath)) {
-    try {
-      const raw = JSON.parse(readFileSync(configPath, "utf-8"));
-      fileConfig = {
-        hubUrl: raw.hubUrl,
-        hubToken: raw.hubToken,
-        role: raw.role,
-        labels: raw.labels,
-      };
-    } catch (err) {
-      console.error(`WARNING: Failed to parse ${configPath}: ${err}`);
-    }
-  }
-
-  const hubUrl = process.env.OIS_HUB_URL || fileConfig.hubUrl || "";
-  const hubToken = process.env.OIS_HUB_TOKEN || fileConfig.hubToken || "";
-  const role = process.env.OIS_HUB_ROLE || fileConfig.role || "engineer";
-  const labels =
-    parseLabels(process.env.OIS_HUB_LABELS, "OIS_HUB_LABELS env var") ?? fileConfig.labels;
-
-  if (!hubUrl || !hubToken) {
-    console.error(
-      "ERROR: Hub credentials not found. Checked .ois/adapter-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars",
-    );
-    process.exit(1);
-  }
-
-  return { hubUrl, hubToken, role, labels };
-}
-
-const config = loadConfig();
 const WORK_DIR = process.env.WORK_DIR || process.cwd();
 const LOG_FILE = join(WORK_DIR, ".ois", "claude-notifications.log");
 const SHUTDOWN_TIMEOUT_MS = 3000;
@@ -122,20 +75,15 @@ const SHUTDOWN_TIMEOUT_MS = 3000;
 // @apnex/network-adapter/package.json. Pre-mission-66 these were
 // hardcoded ("1.2.0" + "@apnex/network-adapter@2.1.0") and drifted
 // from the npm package.json values (0.1.4 + 0.1.2 respectively).
-// Hub-side canonical projection (agent-repository.ts deriveAdvisoryTags)
-// surfaces these via advisoryTags.adapterVersion to all consumers.
+// Hub-side canonical projection (deriveAdvisoryTags) surfaces these via
+// advisoryTags.sdkVersion (kernel) + shimVersion (this plugin) to all
+// consumers (idea-355 SLICE-4 retired the old mislabeled adapterVersion key).
 const __shimDir = dirname(fileURLToPath(import.meta.url));
 const __require = createRequire(import.meta.url);
 
-function readPackageVersion(pkgJsonPath: string, fallback: string): string {
-  try {
-    const raw = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
-    return typeof raw.version === "string" ? raw.version : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
+// readPackageVersion / readBuildInfo / BuildInfo hoisted to the kernel
+// (@apnex/network-adapter) in idea-355 SLICE-1. The shim keeps only its
+// host-specific path resolution + the derived version/build-info constants.
 const CLAUDE_PLUGIN_PKG_VERSION = readPackageVersion(
   resolve(__shimDir, "..", "package.json"),
   "unknown",
@@ -156,34 +104,6 @@ const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
 // via the existing mission-66 #40 wire-pattern (clientMetadata propagation
 // → Hub deriveAdvisoryTags projection → AgentAdvisoryTags). Surfaces in
 // get-agents as SHIM_COMMIT + ADAPTER_COMMIT columns.
-interface BuildInfo {
-  commitSha: string;
-  dirty: boolean;
-  buildTime: string | null;
-  branch: string;
-}
-
-const UNKNOWN_BUILD_INFO: BuildInfo = {
-  commitSha: "unknown",
-  dirty: false,
-  buildTime: null,
-  branch: "unknown",
-};
-
-function readBuildInfo(buildInfoPath: string): BuildInfo {
-  try {
-    const raw = JSON.parse(readFileSync(buildInfoPath, "utf-8"));
-    return {
-      commitSha: typeof raw.commitSha === "string" ? raw.commitSha : "unknown",
-      dirty: !!raw.dirty,
-      buildTime: typeof raw.buildTime === "string" ? raw.buildTime : null,
-      branch: typeof raw.branch === "string" ? raw.branch : "unknown",
-    };
-  } catch {
-    return UNKNOWN_BUILD_INFO;
-  }
-}
-
 const PROXY_BUILD_INFO = readBuildInfo(resolve(__shimDir, "build-info.json"));
 const SDK_BUILD_INFO = (() => {
   try {
@@ -214,109 +134,33 @@ const SHIM_LOG_FILE = process.env.OIS_SHIM_LOG_FILE || join(WORK_DIR, ".ois", "s
 const SHIM_EVENTS_FILE = process.env.OIS_SHIM_EVENTS_FILE || join(WORK_DIR, ".ois", "shim-events.ndjson");
 const SHIM_LOG_ROTATE_BYTES = Number(process.env.OIS_SHIM_LOG_ROTATE_BYTES) || 10 * 1024 * 1024;
 
-function ensureDir(path: string): void {
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-  } catch {
-    /* best-effort */
-  }
-}
-
-function rotateIfNeeded(file: string): void {
-  try {
-    const stat = statSync(file);
-    if (stat.size > SHIM_LOG_ROTATE_BYTES) {
-      const rotated = `${file}.${Date.now()}`;
-      renameSync(file, rotated);
-    }
-  } catch {
-    /* file doesn't exist yet, that's fine */
-  }
-}
-
-ensureDir(SHIM_LOG_FILE);
-ensureDir(SHIM_EVENTS_FILE);
-rotateIfNeeded(SHIM_LOG_FILE);
-rotateIfNeeded(SHIM_EVENTS_FILE);
-
-function appendText(line: string): void {
-  try {
-    appendFileSync(SHIM_LOG_FILE, line);
-  } catch {
-    /* best-effort — never disturb the call loop */
-  }
-}
-
-// mission-66 commit 4: redaction + log-level helpers extracted to
-// `./observability.ts` for unit-test tractability (shim.ts module init
-// has process.exit(1) side effect via loadConfig()).
-import { redactFields, parseLogLevel, shouldEmitLevel, type LogLevel } from "./observability.js";
+// mission-66 commit 4: redaction + log-level helpers extracted for unit-test
+// tractability (shim.ts module init has a process.exit(1) side effect via
+// loadConfig()). idea-355 SLICE-1: the file-backed logger (NDJSON + text +
+// stderr fan-out, rotation, redaction, level-filter) is hoisted to the kernel
+// `createFileLogger`. The shim injects only its file paths + format choices.
+import { parseLogLevel, createFileLogger, type LogLevel } from "@apnex/network-adapter";
 const SHIM_LOG_LEVEL: LogLevel = parseLogLevel(process.env.OIS_SHIM_LOG_LEVEL);
 
-function appendEvent(event: string, fields: LogFields, message?: string): void {
-  // mission-66 commit 4: OIS_SHIM_LOG_LEVEL filter (ADR-031 §3). Events
-  // tagged with `fields.level` below the configured threshold are
-  // suppressed (no-op). Events without `level` always emit (default INFO).
-  if (!shouldEmitLevel(fields.level as string | undefined, SHIM_LOG_LEVEL)) {
-    return;
-  }
-  const line = JSON.stringify({
-    ts: new Date().toISOString(),
-    event,
-    fields: redactFields(fields),
-    message: message ?? null,
-    pid: process.pid,
-  }) + "\n";
-  try {
-    appendFileSync(SHIM_EVENTS_FILE, line);
-  } catch {
-    /* best-effort */
-  }
-}
+const __fileLog = createFileLogger({
+  textFile: SHIM_LOG_FILE,
+  eventsFile: SHIM_EVENTS_FILE,
+  rotateBytes: SHIM_LOG_ROTATE_BYTES,
+  mirrorToStderr: true,
+  logLevel: SHIM_LOG_LEVEL,
+  pid: process.pid,
+  bound: { pid: process.pid, role: config.role },
+});
 
-// ── Logging (stderr + file) ─────────────────────────────────────────
-
+// Standalone text + structured-event sinks. Function declarations (not const)
+// preserve hoisting for the many call sites that precede this definition.
 function log(msg: string): void {
-  const ts = new Date().toISOString().replace("T", " ").replace("Z", "");
-  const line = `[${ts}] ${msg}\n`;
-  process.stderr.write(line);
-  appendText(line);
+  __fileLog.log(msg);
 }
-
-// FileBackedLogger — concrete ILogger that fans out to:
-//   1. NDJSON events file (every .log call, structured fields preserved)
-//   2. text log file + stderr (rendered friendly form)
-// Bound fields apply to every emission via `child()` for scoped loggers
-// (per-session, per-reconnect, etc.).
-class FileBackedLogger implements ILogger {
-  constructor(private readonly bound: LogFields = {}) {}
-
-  log(event: string, fields?: LogFields, message?: string): void {
-    const merged: LogFields = { ...this.bound, ...(fields ?? {}) };
-    appendEvent(event, merged, message);
-    if (message) {
-      log(`[${event}] ${message}`);
-    } else {
-      const fieldsStr = renderFields(merged);
-      log(fieldsStr ? `[${event}]${fieldsStr}` : `[${event}]`);
-    }
-  }
-
-  child(fields: LogFields): ILogger {
-    return new FileBackedLogger({ ...this.bound, ...fields });
-  }
+function appendEvent(event: string, fields: LogFields, message?: string): void {
+  __fileLog.appendEvent(event, fields, message);
 }
-
-function renderFields(fields: LogFields): string {
-  const parts: string[] = [];
-  for (const k of Object.keys(fields)) {
-    const v = fields[k];
-    parts.push(` ${k}=${Array.isArray(v) ? `[${v.join(",")}]` : String(v)}`);
-  }
-  return parts.join("");
-}
-
-const eventsLogger: ILogger = new FileBackedLogger({ pid: process.pid, role: config.role });
+const eventsLogger: ILogger = __fileLog.logger;
 
 // ── Render-surface: Claude `<channel>` notification injection ───────
 //
@@ -405,15 +249,11 @@ async function main(): Promise<void> {
     sdkBranch: SDK_BUILD_INFO.branch,
   });
 
-  // idea-251 D-prime Phase 2: identity from OIS_AGENT_NAME env. REQUIRED;
-  // loud-error if absent so misconfiguration is visible at startup rather
-  // than producing a silent identity collision on the Hub side.
-  const agentName = process.env.OIS_AGENT_NAME?.trim();
-  if (!agentName) {
-    log("[Handshake] FATAL: OIS_AGENT_NAME env var required (idea-251 D-prime). Set in ~/.config/apnex-agents/{name}.env. Aborting.");
-    process.exit(2);
-  }
-  log(`[Handshake] OIS_AGENT_NAME=${agentName}`);
+  // idea-251 D-prime Phase 2 identity (hoisted to the kernel in idea-355
+  // SLICE-1). The shim keeps only its host-specific abort: claude can
+  // process.exit on misconfiguration.
+  const agentName = readRequiredAgentName(log);
+  if (!agentName) process.exit(2);
 
   const fatalHalt = makeStdioFatalHalt(log);
 
@@ -431,12 +271,9 @@ async function main(): Promise<void> {
   // exists (post-createMcpServer); referenced lazily by the identityReady (L1)
   // trigger + the PollBackstop heartbeat (L2) closure.
   let reconciler: ToolSurfaceReconciler | null = null;
-  // idea-353 — queue wake/stall reconciliation state. The digest tracker holds
-  // the W1 level-trigger/de-dup baseline; the lease tracker holds the W2 held-
-  // lease map (fed by the dispatcher's onToolCallResult observer). Both assigned
-  // once mcpServer exists; referenced lazily by the heartbeat tick + observer.
-  let claimableDigest: ClaimableDigestTracker | null = null;
-  let workLeases: WorkLeaseTracker | null = null;
+  // idea-355 §4.3 — the queue wake/stall reconcile (trackers + reconcile body +
+  // the W2 observer) is now kernel-internal in the dispatcher; the shim wires
+  // none of it. This shim keeps only its host-coupled bug-180 live-refresh.
   const getClientInfo = () =>
     dispatcherRef ? dispatcherRef.getClientInfo() : { name: "unknown", version: "0.0.0" };
 
@@ -511,43 +348,24 @@ async function main(): Promise<void> {
   // tool-catalog-cache.isCacheValid). The `version` field is logged as a
   // diagnostic only — no longer load-bearing for cache correctness.
   let cachedToolSurfaceRevision: string | null = null;
-  const healthUrl = config.hubUrl.replace(/\/mcp(\/.*)?$/, "/health");
 
   // bug-114 + bug-180 — resolve the Hub's live tool-surface revision from
-  // /health. Side-effect: updates the in-memory `cachedToolSurfaceRevision`
-  // (the probe-path invalidation key consumed by getCurrentToolSurfaceRevision
-  // + persistCatalog). Returns the live revision, or null when the fetch fails
-  // or the Hub doesn't report the field — the bug-180 reconciler treats null
-  // as "unknown, trust the cache" and never emits a spurious list_changed.
-  // Plain HTTP, independent of the Hub MCP transport.
+  // /health. The network mechanism (URL derivation + fetch + field extraction)
+  // is single-homed in the kernel `makeFetchLiveToolSurfaceRevision` (idea-355
+  // SLICE-1T); this shim wrapper keeps ONLY its host side-effect: updating the
+  // in-memory `cachedToolSurfaceRevision` (the probe-path invalidation key
+  // consumed by getCurrentToolSurfaceRevision + persistCatalog) on a non-null
+  // result. Returns the live revision, or null when the fetch fails or the Hub
+  // doesn't report the field — the bug-180 reconciler treats null as "unknown,
+  // trust the cache" and never emits a spurious list_changed.
+  const __fetchLiveRev = makeFetchLiveToolSurfaceRevision({
+    hubUrl: config.hubUrl,
+    log,
+  });
   const fetchLiveToolSurfaceRevision = async (): Promise<string | null> => {
-    try {
-      const res = await fetch(healthUrl);
-      if (!res.ok) {
-        log(`[Cache] /health fetch returned status ${res.status} — cache invalidation will trust existing cache`);
-        return null;
-      }
-      const json = (await res.json()) as {
-        version?: unknown;
-        toolSurfaceRevision?: unknown;
-      };
-      if (typeof json.version === "string") {
-        log(`[Cache] Hub version: ${json.version}`);
-      }
-      if (
-        typeof json.toolSurfaceRevision === "string" &&
-        json.toolSurfaceRevision !== ""
-      ) {
-        cachedToolSurfaceRevision = json.toolSurfaceRevision;
-        log(`[Cache] Tool-surface revision resolved: ${cachedToolSurfaceRevision}`);
-        return cachedToolSurfaceRevision;
-      }
-      log(`[Cache] /health returned no toolSurfaceRevision field — cache invalidation will trust existing cache`);
-      return null;
-    } catch (err) {
-      log(`[Cache] /health fetch failed (non-fatal): ${(err as Error).message ?? err}`);
-      return null;
-    }
+    const rev = await __fetchLiveRev();
+    if (rev !== null) cachedToolSurfaceRevision = rev;
+    return rev;
   };
 
   // Warm the probe-path invalidation key once at startup in the background;
@@ -606,10 +424,10 @@ async function main(): Promise<void> {
           }
         },
         onPendingTask: (task) => {
-          appendNotification(
-            { event: "task_issued", data: task, action: "Pick up with get_task" },
-            { logPath: LOG_FILE, mirror: (block) => process.stderr.write(block) },
-          );
+          appendNotification(buildPendingTaskNotification(task), {
+            logPath: LOG_FILE,
+            mirror: (block) => process.stderr.write(block),
+          });
         },
         onPendingActionItem: (item) => {
           if (dispatcherRef) {
@@ -711,25 +529,21 @@ async function main(): Promise<void> {
     // notifications missed while the adapter was disconnected. SSE inline
     // delivers only to a connected recipient; offline → the note is lost
     // without this poll. `role` (config.role) is the poll's targetRole filter.
-    // idea-353 W2 — observe this agent's own work-verb tool-call results so the
-    // outbound stall-prompt can track held leases locally (no Hub round-trip).
-    // Lazy `workLeases` ref (assigned once mcpServer exists, below).
-    onToolCallResult: (method, args, result) => {
-      workLeases?.observe(method, args, result, Date.now());
-    },
+    // idea-355 §4.3 — the idea-353 W2 lease observer is now kernel-internal in
+    // the dispatcher (onToolCallResult site), so this shim no longer wires it.
     pollBackstop: {
       role: config.role,
       firstTimerEnabled: true,
       log,
-      // bug-180 L2 — revision-poll backstop on the heartbeat cadence. Lazy
-      // reference: `reconciler` is assigned once mcpServer exists (below);
-      // the first heartbeat tick fires ≥1 interval after start(), so it is
-      // always populated by the time this runs. Catches a redeploy WHILE the
-      // session stays connected (no reconnect → no fresh identityReady).
-      // idea-353 — the same tick also drives the queue wake/stall reconcile.
+      // bug-180 L2 — tool-surface revision-poll backstop on the heartbeat
+      // cadence. The kernel drives this host hook off the tick (idea-355 §4.3,
+      // isolated in its own try/catch) ALONGSIDE the now-kernel-internal queue
+      // wake/stall reconcile — so the shim provides only the host-coupled
+      // live-refresh (mcpServer.sendToolListChanged), not the wake/stall wiring.
+      // Lazy `reconciler` ref (assigned once mcpServer exists, below); the first
+      // tick fires ≥1 interval after start() so it is always populated.
       onHeartbeatTick: async () => {
         await reconciler?.reconcile("heartbeat");
-        await runWakeStallReconcile();
       },
     },
   });
@@ -762,74 +576,12 @@ async function main(): Promise<void> {
   });
   reconciler = liveReconciler;
 
-  // idea-353 — queue wake/stall reconciliation trackers. Created once mcpServer
-  // exists so the heartbeat tick can emit notifications. The lease tracker is
-  // fed by the dispatcher's onToolCallResult observer wired above.
-  claimableDigest = new ClaimableDigestTracker();
-  workLeases = new WorkLeaseTracker();
-
-  // idea-353 — the heartbeat-cadence wake/stall reconcile (W1 inbound digest +
-  // W2 outbound stall-prompt + W3 emit-only status seam). Hoisted; invoked from
-  // the PollBackstop onHeartbeatTick wired above (alongside the bug-180 L2
-  // revision reconcile). Gated on a live streaming agent + an existing mcpServer.
-  async function runWakeStallReconcile(): Promise<void> {
-    const a = agent;
-    if (!a || a.state !== "streaming" || !mcpServer) return;
-    const idle = dispatcherRef?.isIdle() ?? true;
-    const nowMs = Date.now();
-    let claimableCount = 0;
-
-    // W1 — inbound claimable digest. Read the CALLER-CLAIMABLE set via the
-    // stable list_ready_work contract with scopeToCaller (idea-353 WI-2.1 /
-    // audit-4265: the Hub applies claim_work's FULL predicate — deps + role +
-    // WIP-cap + quarantine — so the digest count never over-reports what this
-    // agent can actually claim; AC5 strict parity). On a failed read, skip the
-    // tracker entirely so a transient empty/aborted read cannot manufacture a
-    // false 0→N replay (AC3).
-    try {
-      const raw = await a.call("list_ready_work", { role: config.role, scopeToCaller: true }, { internal: true });
-      const items = (raw as { items?: Array<{ id?: unknown }> } | null)?.items;
-      if (Array.isArray(items)) {
-        const claimableIds = items
-          .map((i) => i?.id)
-          .filter((id): id is string => typeof id === "string");
-        claimableCount = claimableIds.length;
-        const decision = claimableDigest?.reconcile({ claimableIds, isIdle: idle });
-        if (decision?.emit) {
-          const event: AgentEvent = {
-            event: "work_claimable_digest",
-            data: { role: config.role, count: decision.count, newCount: decision.newCount },
-          };
-          pushChannelNotification(mcpServer, event, "actionable", log);
-          log(`[idea-353] inbound digest emitted — ${decision.count} claimable (${decision.newCount} new) for ${config.role}`);
-        }
-      }
-    } catch (err) {
-      log(`[idea-353] list_ready_work tick failed (non-fatal): ${(err as Error)?.message ?? err}`);
-    }
-
-    // W2 — outbound stall-prompt. Idle-gated: never pester a visibly-progressing
-    // holder (an in-flight CallTool = active progress). A held lease past ~60%
-    // of its window without a renew gets ONE renew/block/abandon nudge.
-    if (idle && workLeases) {
-      for (const due of workLeases.dueForStallPrompt(nowMs)) {
-        const event: AgentEvent = {
-          event: "work_lease_stall",
-          data: { workId: due.workId, msUntilExpiry: due.msUntilExpiry },
-        };
-        pushChannelNotification(mcpServer, event, "actionable", log);
-        workLeases.markPrompted(due.workId);
-        log(`[idea-353] outbound stall-prompt emitted — ${due.workId} (~${Math.round(due.msUntilExpiry / 60000)}m left)`);
-      }
-    }
-
-    // W3 — emit-only Agent.status idle/stall telemetry seam. Thin + non-gating
-    // (DEFER rich taxonomy + the D-3/C2 binding per DR-S2-027): a structured
-    // status line a future D-3 gauge / C2 supervisor binds to.
-    const heldLeases = workLeases?.size() ?? 0;
-    const statusState = !idle ? "working" : heldLeases > 0 ? "holding" : "idle";
-    log(`[idea-353][agent-status] state=${statusState} idle=${idle} claimable=${claimableCount} heldLeases=${heldLeases}`);
-  }
+  // idea-355 §4.3 — the queue wake/stall reconcile (W1 inbound digest + W2
+  // outbound stall-prompt + W3 status seam) + its trackers + the W2 lease
+  // observer are now kernel-internal in the dispatcher, driven off the same
+  // heartbeat tick as the bug-180 live-refresh below. The shim wires none of it;
+  // the kernel emits through notificationHooks.onActionableEvent → this shim's
+  // pushChannelNotification, so the surface is unchanged.
 
   // bug-180 L1 (primary) — reconcile on identityReady. Once identity resolves
   // the live revision is fetchable + the dispatcher serves the live surface

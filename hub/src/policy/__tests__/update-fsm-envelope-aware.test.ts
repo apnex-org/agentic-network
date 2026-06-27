@@ -12,10 +12,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { createTestPool } from "../../storage-substrate/__tests__/_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import pg from "pg";
 import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
@@ -23,9 +23,6 @@ import {
   type HubStorageSubstrate,
   type SchemaReconciler,
 } from "../../storage-substrate/index.js";
-
-const { Pool } = pg;
-
 describe("update_* FSM envelope-aware (bug-137 closure)", () => {
   let pgContainer: StartedPostgreSqlContainer | undefined;
   let pgConnStr: string | undefined;
@@ -47,7 +44,7 @@ describe("update_* FSM envelope-aware (bug-137 closure)", () => {
       .start();
     pgConnStr = `postgres://hub:hub@${pgContainer.getHost()}:${pgContainer.getPort()}/hub`;
 
-    const pool = new Pool({ connectionString: pgConnStr });
+    const pool = createTestPool(pgConnStr, "update-fsm-envelope-aware");
     for (const f of MIGRATION_FILES) {
       const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
       await pool.query(sql);
@@ -80,7 +77,7 @@ describe("update_* FSM envelope-aware (bug-137 closure)", () => {
 
   beforeEach(async () => {
     if (!pgConnStr) throw new Error("connection unavailable");
-    const pool = new Pool({ connectionString: pgConnStr });
+    const pool = createTestPool(pgConnStr, "update-fsm-envelope-aware");
     try {
       await pool.query(`DELETE FROM entities WHERE kind IN ('Bug', 'Mission', 'Idea', 'Turn')`);
     } finally {

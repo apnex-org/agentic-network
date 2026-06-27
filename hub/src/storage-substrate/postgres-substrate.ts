@@ -337,10 +337,28 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   // ── Watch / change-notification (per Design §2.4 LISTEN/NOTIFY) ───────────
 
   /**
+   * bug-187 TEST SEAM (test-only; undefined in production). Awaited inside
+   * watch() AFTER LISTEN is registered but BEFORE the replay SELECT, so a test
+   * can deterministically commit a write into the (now-closed) LISTEN→replay
+   * window and prove it surfaces EXACTLY once (gap-free replay + overlap dedup).
+   * Cleared after firing once so it cannot perturb later watches.
+   */
+  public _watchTestHookAfterListen?: () => Promise<void>;
+
+  /**
    * Returns AsyncIterable<ChangeEvent>. Implements list-then-watch backfill
    * per OQ5 disposition: caller does substrate.list() → captures snapshotRevision
    * → substrate.watch({ sinceRevision }). Substrate replays events strictly
    * newer than that revision; no missed-events window.
+   *
+   * bug-187 — subscribe-before-replay. The dedicated LISTEN client is connected
+   * and LISTENing (buffering notifications) BEFORE the replay SELECT runs. The
+   * OLD order (replay SELECT, THEN LISTEN) had a race: a write committing in the
+   * SELECT→LISTEN window fired NOTIFY with no listener AND was absent from the
+   * replay (it committed after the SELECT snapshot) → silently missed. Now the
+   * overlap (a write visible to BOTH the buffered NOTIFY stream and the replay
+   * SELECT) is de-duplicated by resource_version so it surfaces exactly once.
+   * Mirrors MemoryHubStorageSubstrate's subscribe-before-replay, plus dedup.
    *
    * Uses a dedicated pg.Client for LISTEN (postgres protocol requires LISTEN
    * on its own connection; not shared via pool).
@@ -348,28 +366,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   async *watch<T = unknown>(kind: string, opts: WatchOptions = {}): AsyncIterable<ChangeEvent<T>> {
     const { filter, sinceRevision, signal } = opts;
 
-    // Step 1: replay events from sinceRevision (if provided) via SELECT
-    if (sinceRevision) {
-      const r = await this.pool.query<{ kind: string; id: string; data: T; resource_version: string }>(
-        `SELECT kind, id, data, resource_version FROM entities
-         WHERE kind = $1 AND resource_version > $2
-         ORDER BY resource_version ASC`,
-        [kind, sinceRevision],
-      );
-      for (const row of r.rows) {
-        if (signal?.aborted) return;
-        if (filter && !matchesFilter(row.data as Record<string, unknown>, filter, (k) => this.translateKey(kind, k))) continue;
-        yield {
-          op: "put",
-          kind: row.kind,
-          id: row.id,
-          entity: row.data,
-          resourceVersion: String(row.resource_version),
-        };
-      }
-    }
-
-    // Step 2: LISTEN on entities_change channel; yield notifications matching kind+filter
+    // bug-187 Step 0: connect the dedicated LISTEN client FIRST (before replay).
     const client = new Client({ connectionString: (this.pool as unknown as { options: { connectionString: string } }).options.connectionString });
     // bug-110 — the dedicated LISTEN connection needs its own 'error' handler;
     // a backend error mid-watch would otherwise crash the process uncaught.
@@ -389,31 +386,86 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     }
 
     try {
-      await client.query(`LISTEN entities_change`);
-
-      // pg Client emits 'notification' events; we adapt to async-iterable
+      // pg Client emits 'notification' events; we buffer them. The handler is
+      // attached BEFORE the LISTEN command so a NOTIFY arriving the instant LISTEN
+      // takes effect cannot slip past an unattached handler.
       const notifications: pg.Notification[] = [];
       let resolve: (() => void) | null = null;
       const ready = () => new Promise<void>((r) => { resolve = r; });
-
-      client.on("notification", (n) => {
-        notifications.push(n);
+      const wake = () => {
         if (resolve) {
           const r = resolve;
           resolve = null;
           r();
         }
-      });
+      };
+      // bug-100 work-41 (#4b real-pg): a LISTEN backend the SERVER terminates
+      // (e.g. 57P01 admin-shutdown) must SETTLE this iterator so the consumer's
+      // for-await ENDS → runtimeWatchSession returns "reconnect" → runtimeLoop
+      // reconnects. The mock modeled generator-throw-on-end; real pg does NOT (the
+      // SDK just fires 'end'/'error'). So mark `ended` on either + wake the parked
+      // ready(); the live loop drains any buffered events then returns. Without
+      // this the loop re-parks on ready() FOREVER (no more events) → the watch
+      // never terminates → no reconnect (steve's audit-4533 finding 2).
+      let ended = false;
+      client.on("notification", (n) => { notifications.push(n); wake(); });
+      // 'end'/'error' settle the iterator (non-abort termination → reconnect).
+      // (attachPgErrorHandler also listens on 'error' to prevent an uncaught
+      // crash; this second listener is additive — it just records + wakes.)
+      client.on("end", () => { ended = true; wake(); });
+      client.on("error", () => { ended = true; wake(); });
 
-      // 'end' event resolves the ready() wait so the abort path returns cleanly
-      client.on("end", () => {
-        if (resolve) {
-          const r = resolve;
-          resolve = null;
-          r();
+      await client.query(`LISTEN entities_change`);
+
+      // bug-187 TEST SEAM — fires once, here in the (now-closed) LISTEN→replay
+      // window so a test can commit a racing write and assert exactly-once
+      // delivery. Undefined / no-op in production.
+      if (this._watchTestHookAfterListen) {
+        const hook = this._watchTestHookAfterListen;
+        this._watchTestHookAfterListen = undefined;
+        await hook();
+      }
+
+      // bug-187/work-41 Step 1 (AFTER LISTEN): replay events strictly newer than
+      // sinceRevision via SELECT, tracking a MONOTONIC `cursor` = the max rv
+      // yielded. The live drain then skips any event with rv <= cursor.
+      //
+      // The earlier exact-rv-Set dedup was WRONG (steve's audit-4533 finding 1):
+      // when the SAME row is written twice in the LISTEN→replay overlap (rv 2 then
+      // rv 4), the replay SELECT yields only the LATEST row state (rv4), but BOTH
+      // NOTIFYs are buffered live — the set skipped only the exact rv4, so the
+      // STALE rv2 leaked through AFTER rv4 → out-of-order delivery + the consumer
+      // cursor REGRESSED 4→2 (his [4,2] probe). The monotonic cursor skips rv2
+      // (≤4): in-order, no-regression, exactly-once. (Trade-off: an interleaved
+      // delete whose rv ≤ a replayed put's rv is skipped — but the replay snapshot
+      // already reflects that row's absence, delivering it would itself be
+      // out-of-order, and the SchemaReconciler delete path is best-effort by
+      // design. Acyclic correctness > a best-effort delete event.)
+      let cursor = sinceRevision ? BigInt(sinceRevision) : 0n;
+      if (sinceRevision) {
+        const r = await this.pool.query<{ kind: string; id: string; data: T; resource_version: string }>(
+          `SELECT kind, id, data, resource_version FROM entities
+           WHERE kind = $1 AND resource_version > $2
+           ORDER BY resource_version ASC`,
+          [kind, sinceRevision],
+        );
+        for (const row of r.rows) {
+          if (signal?.aborted) return;
+          const rv = BigInt(row.resource_version);
+          if (rv > cursor) cursor = rv;
+          if (filter && !matchesFilter(row.data as Record<string, unknown>, filter, (k) => this.translateKey(kind, k))) continue;
+          yield {
+            op: "put",
+            kind: row.kind,
+            id: row.id,
+            entity: row.data,
+            resourceVersion: String(row.resource_version),
+          };
         }
-      });
+      }
 
+      // bug-187/work-41 Step 2: live loop. Yield buffered notifications, skipping
+      // any with rv <= the monotonic cursor (overlap dedup + no-regression).
       while (true) {
         if (signal?.aborted) return;
 
@@ -428,6 +480,11 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
             continue;
           }
           if (payload.kind !== kind) continue;
+          // work-41 monotonic dedup: already-surfaced or stale (rv ≤ cursor) → skip;
+          // the cursor only advances, so a stale buffered NOTIFY can't regress it.
+          const rv = BigInt(payload.resource_version);
+          if (rv <= cursor) continue;
+          cursor = rv;
 
           let entity: T | undefined;
           if (payload.op === "put") {
@@ -450,6 +507,12 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
           };
         }
         if (signal?.aborted) return;
+        // bug-100 work-41 (#4b): the LISTEN backend ended/errored (non-abort) —
+        // all buffered events are now drained, so terminate the generator. The
+        // consumer's for-await ends → runtimeWatchSession returns "reconnect" →
+        // runtimeLoop reconnects with backoff. (Abort is handled by the guards
+        // above; this is the SERVER-side termination path.)
+        if (ended) return;
         await ready();
       }
     } finally {

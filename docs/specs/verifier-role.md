@@ -53,7 +53,7 @@ Explicitly **NOT** pushed to the verifier:
 To audit anything, the verifier needs to *see* everything — but via **pull**, not push. The verifier has **architect-equivalent read visibility** across the full read surface:
 - `get_*` (thread / mission / proposal / review / task / bug / idea / tele / turn / document / clarification)
 - `list_*` (missions / threads / proposals / reviews / tasks / bugs / ideas / tele / audit_entries / documents)
-- `get_metrics`, `list_audit_entries`, `get_engineer_status`
+- `get_metrics`, `list_audit_entries`, `get_agents`
 
 This is the asymmetry that makes the role work: **broad READ, narrow PUSH.** The verifier can reach into any entity it chooses to audit, but nothing floods it unbidden.
 

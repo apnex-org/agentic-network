@@ -138,7 +138,9 @@ async function createTask(args: Record<string, unknown>, ctx: IPolicyContext): P
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify({ taskId, status: resultStatus, sourceThreadClosed: !!sourceThreadId }),
+        // bug-2: report the ACTUAL created status — submitDirective creates
+        // 'pending' (not 'blocked') when all deps are already completed.
+        text: JSON.stringify({ taskId, status: spawnedTask?.status ?? resultStatus, sourceThreadClosed: !!sourceThreadId }),
       },
     ],
   };
