@@ -214,6 +214,18 @@ function deriveAdvisoryTags(
   if (base.adapterVersion === undefined && clientMetadata?.proxyVersion) {
     base.adapterVersion = clientMetadata.proxyVersion;
   }
+  // idea-355 SLICE-3 / bug-183 "true-half" (report-both, fork 2 ADDITIVE):
+  // the legacy `adapterVersion` above is mislabeled — it carries the SHIM
+  // (proxyVersion), not the SDK. Surface BOTH versions under intent-aligned
+  // keys without touching adapterVersion (the AG-8 retire is a later slice):
+  //   sdkVersion  = clientMetadata.sdkVersion  (the KERNEL / network-adapter)
+  //   shimVersion = clientMetadata.proxyVersion (the SHIM / plugin)
+  if (base.sdkVersion === undefined && clientMetadata?.sdkVersion) {
+    base.sdkVersion = clientMetadata.sdkVersion;
+  }
+  if (base.shimVersion === undefined && clientMetadata?.proxyVersion) {
+    base.shimVersion = clientMetadata.proxyVersion;
+  }
   if (base.proxyCommitSha === undefined && clientMetadata?.proxyCommitSha) {
     base.proxyCommitSha = clientMetadata.proxyCommitSha;
   }

@@ -27,6 +27,8 @@ import {
   readRequiredAgentName,
   loadConfig,
   readPackageVersion,
+  UNKNOWN_BUILD_INFO,
+  type BuildInfo,
   createFileLogger,
   buildPromptText,
   buildToastMessage,
@@ -63,10 +65,12 @@ import { createRequire } from "module";
 // Mirror the mission-66 #40 fix the claude shim already carries — read the REAL
 // versions from package.json instead of the drifted "4.3.0" / "2.1.0" literals.
 // PROXY_VERSION = opencode-plugin/package.json; SDK_VERSION = the @apnex/network-adapter
-// package.json. In the esbuild self-contained bundle the kernel is inlined (no
-// resolvable package.json on disk) → SDK_VERSION falls back to "unknown" — honest,
-// NOT the old phantom; the real bundled-kernel version lands in SLICE-3's build-info
-// version scheme. (claude ships node_modules so its resolve hits the real 0.1.4.)
+// package.json. SLICE-3 (fork 3) closed the bundle gap: in the esbuild
+// self-contained bundle the kernel is inlined FROM SOURCE (no resolvable
+// package.json on disk), so SDK_VERSION now falls back to the bundle's own
+// version (ONE build) instead of the old "@apnex/network-adapter@unknown", and
+// the precise build identity is the inlined git sha in {PROXY,SDK}_BUILD_INFO
+// below. (claude ships node_modules so its resolve hits the real 0.1.4.)
 const __shimDir = dirname(fileURLToPath(import.meta.url));
 const __require = createRequire(import.meta.url);
 
@@ -78,13 +82,39 @@ const OPENCODE_PLUGIN_PKG_VERSION = readPackageVersion(
 );
 const NETWORK_ADAPTER_PKG_VERSION = (() => {
   try {
-    return readPackageVersion(__require.resolve("@apnex/network-adapter/package.json"), "unknown");
+    return readPackageVersion(
+      __require.resolve("@apnex/network-adapter/package.json"),
+      OPENCODE_PLUGIN_PKG_VERSION,
+    );
   } catch {
-    return "unknown";
+    // idea-355 SLICE-3 (fork 3): in the esbuild self-contained bundle the
+    // kernel is inlined FROM SOURCE — there is no resolvable
+    // @apnex/network-adapter/package.json on disk. It is ONE build, so the
+    // bundle's own version IS the kernel's effective version (the inlined git
+    // sha in SDK_BUILD_INFO carries the precise identity). Report the bundle
+    // version instead of the old "@apnex/network-adapter@unknown" phantom.
+    return OPENCODE_PLUGIN_PKG_VERSION;
   }
 })();
 const PROXY_VERSION = OPENCODE_PLUGIN_PKG_VERSION;
 const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
+
+// idea-355 SLICE-3 (fork 3, single-sha): build-identity for the OpenCode
+// bundle. Unlike the claude shim — which ships node_modules + an adjacent
+// dist/build-info.json and reads them at runtime via readBuildInfo — opencode
+// bundles via esbuild: the kernel is inlined FROM SOURCE, there is no
+// node_modules and no adjacent build-info.json at runtime. So the build
+// identity is INLINED at bundle time via esbuild `define`
+// (__OPENCODE_BUILD_INFO__, see scripts/build/bundle-opencode.js), read here
+// behind a typeof-guard that falls back to UNKNOWN_BUILD_INFO on the dev/test
+// (tsx/vitest) paths where the define is absent. It is ONE build, so the SAME
+// sha/dirty stamps BOTH the shim (PROXY) and the kernel (SDK) — honest, not a
+// fidelity loss. NO runtime disk read.
+declare const __OPENCODE_BUILD_INFO__: BuildInfo | undefined;
+const BUNDLE_BUILD_INFO: BuildInfo =
+  typeof __OPENCODE_BUILD_INFO__ !== "undefined" ? __OPENCODE_BUILD_INFO__ : UNKNOWN_BUILD_INFO;
+const PROXY_BUILD_INFO = BUNDLE_BUILD_INFO;
+const SDK_BUILD_INFO = BUNDLE_BUILD_INFO;
 
 let diagLogPath = "";
 let notificationLogPath = "";
@@ -393,6 +423,15 @@ async function connectToHub(agentName: string): Promise<void> {
         proxyVersion: PROXY_VERSION,
         transport: "bun-serve-proxy",
         sdkVersion: SDK_VERSION,
+        // idea-355 SLICE-3 (fork 3, single-sha): build-identity flows via
+        // clientMetadata → Hub deriveAdvisoryTags → AgentAdvisoryTags (the same
+        // wire-pattern the claude shim uses). It is ONE inlined bundle, so the
+        // SAME sha/dirty stamps both PROXY and SDK. handshake.ts spreads these
+        // ONLY when defined — set all four together.
+        proxyCommitSha: PROXY_BUILD_INFO.commitSha,
+        proxyDirty: PROXY_BUILD_INFO.dirty,
+        sdkCommitSha: SDK_BUILD_INFO.commitSha,
+        sdkDirty: SDK_BUILD_INFO.dirty,
         getClientInfo: () => ({
           name: "opencode",
           version: process.env.OPENCODE_VERSION ?? "unknown",
