@@ -32,12 +32,16 @@ export type {
   HubEventType,
   HubEvent,
   EventDisposition,
+  DrainedActionReconstruction,
 } from "./kernel/event-router.js";
 
 export {
   classifyEvent,
   parseHubEvent,
   createDedupFilter,
+  isPulseEvent,
+  PULSE_KINDS,
+  reconstructDrainedAction,
 } from "./kernel/event-router.js";
 
 // idea-251 D-prime Phase 2: instance.ts deleted. Identity now flows from
