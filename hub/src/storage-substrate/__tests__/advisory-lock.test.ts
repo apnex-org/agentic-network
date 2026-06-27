@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } from "vitest";
+import { createTestPool } from "./_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -304,9 +305,7 @@ describe("withAdvisoryLock — postgres substrate (real pg_advisory_lock)", () =
       .withDatabase("hub")
       .start();
     pgConnStr = `postgres://hub:hub@${pgContainer.getHost()}:${pgContainer.getPort()}/hub`;
-
-    const { Pool } = (await import("pg")).default;
-    const pool = new Pool({ connectionString: pgConnStr });
+    const pool = createTestPool(pgConnStr, "advisory-lock");
     for (const f of MIGRATION_FILES) {
       const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
       await pool.query(sql);

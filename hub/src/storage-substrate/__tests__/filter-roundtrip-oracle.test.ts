@@ -25,6 +25,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { createTestPool } from "./_pg-test-pool.js";
 import { createPostgresStorageSubstrate, createSchemaReconciler, ALL_SCHEMAS } from "../index.js";
 import { SUBSTRATE_FILTERABLE_KEYS, EXCLUDED_FILTERABLE_KEYS, ARRAY_FILTERABLE_KEYS } from "../conformance/filterable-keys.js";
 
@@ -69,7 +70,7 @@ describe("C3-R4a renameMap-governor — filter value-round-trip oracle (real-pg,
       .withDatabase("hub")
       .start();
     const connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-    pool = new Pool({ connectionString: connStr });
+    pool = createTestPool(connStr, "filter-roundtrip-oracle");
     for (const f of MIGRATION_FILES) {
       await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
     }

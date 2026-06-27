@@ -23,6 +23,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { createTestPool } from "./_pg-test-pool.js";
 import { createPostgresStorageSubstrate, createSchemaReconciler, ALL_SCHEMAS } from "../index.js";
 import type { SchemaDef, RenameMap } from "../types.js";
 import { isEnvelopeShape } from "../migrations/v2-envelope/shared/envelope.js";
@@ -321,7 +322,7 @@ describe("W1.2-W1.5 reconciler contract (testcontainers postgres)", () => {
       .withDatabase("hub")
       .start();
     connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-    pool = new Pool({ connectionString: connStr });
+    pool = createTestPool(connStr, "renamemap-contract-w1");
     for (const f of MIGRATION_FILES) {
       await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
     }

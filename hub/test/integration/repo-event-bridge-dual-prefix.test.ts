@@ -37,6 +37,7 @@
  */
 
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { createTestPool } from "../../src/storage-substrate/__tests__/_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -66,9 +67,7 @@ beforeAll(async () => {
     .withDatabase("hub")
     .start();
   connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-
-  const { Pool } = (await import("pg")).default;
-  const pool = new Pool({ connectionString: connStr });
+  const pool = createTestPool(connStr, "repo-event-bridge-dual-prefix");
   for (const f of MIGRATION_FILES) {
     const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
     await pool.query(sql);
