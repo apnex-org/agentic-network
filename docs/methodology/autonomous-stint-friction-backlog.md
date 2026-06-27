@@ -111,6 +111,37 @@ After a Hub tool-registration change (deploying `create_work` + `get_work`), con
 ### FR-22 — Hub-restart → event-bridge backlog replay storm (Director-flagged 2026-06-27)
 When the Hub container rolls (watchtower deploy), the repo-event-bridge reconnects and **replays/re-projects its PR-event backlog to all connected sessions at once** — the `create_work` deploy roll delivered the whole stint's PR-events (#349–361) as a burst of stale bilateral notifications. Benign (drain came back empty; nothing escalating) but real noise that can mask a genuinely-actionable event + costs attention to triage. The `RepoEventBridgeCursor`/`RepoEventBridgeDedupe` infra exists but evidently doesn't suppress the restart-reconnect replay. → **Direction:** cursor/dedupe should not re-deliver already-projected events on reconnect, OR mark restart-replay notifications as visibly historical. → **FIX-NOW-small / IDEA**; relates bug-177 (read-lag/projection family), FR-15, FR-21 (both Hub-restart-reconnect-surface issues).
 
+## Section G — Stint-2 C1-adoption GO-LIVE + dogfood-2 + adapter-hygiene (FR-23..FR-30, 2026-06-27)
+
+### FR-23 — OPERATOR-AS-LIFECYCLE-BOTTLENECK (HEADLINE — Director-emphasized for council)
+This stint, **every agent-lifecycle + prod-write action routed through the Director as manual operator.** The org cannot self-drive (tele-13) while a human is the restart/deploy/wake operator. Facets:
+- **Adapter hop = manual client restart.** Loading new proxy/adapter CODE needs a full Claude Code exit+relaunch (a stdio code-swap can't hot-reload; the bug-180 "bootstrap caveat" — the live-refresh can't deliver the fix that enables live-refresh). Director-executed for lily+greg this stint.
+- **Plugin update = manual build+stage.** No consumer/producer auto-refresh subscription; the operator hand-stages the marketplace dir + installs (→ idea-354). The `update-claude-plugin.sh` one-command script (#365) compressed this but still requires the operator to run it + restart.
+- **Hub deploys = Director-coordinated** prod-write (each watchtower roll).
+- **Queue handoffs = manual nudges.** Every dogfood handoff needed a thread-nudge until idea-353 shipped — and STILL does for opencode/Steve (forked adapter, → idea-355).
+→ The dominant friction class + the strongest signal for the **C2/D-2 supervisor arc** (agent lifecycle restartable/upgradable from outside the LLM) + idea-353/354/355. **Council charge:** which operator actions are intrinsically human (genuine hard-lines) vs mechanizable by C2/D-2?
+
+### FR-24 — Forked shared-adapter → kernel features don't reach all hosts (→ idea-355)
+The "shared" `@apnex/network-adapter` is on two divergent version lines (claude `0.1.4` vs opencode `2.1.0`) + suspected code drift. idea-353's wake/stall (kernel code) reached claude only; opencode/Steve stays wake-gapped. Violates tele-3 (one shared kernel). → **idea-355** (deep shim/adapter audit + converge to one kernel + thin shims); cluster bug-182/183/184. **This is the now-prioritized consolidation focus.**
+
+### FR-25 — adapterVersion telemetry mis-reports the shim, not the kernel (→ bug-183)
+`get_agents` `advisoryTags.adapterVersion` == the proxy/SHIM version, not `@apnex/network-adapter` (the kernel) → it MASKED the kernel drift (FR-24). tele-1/tele-4 (sovereign-state-transparency) violation. → bug-183.
+
+### FR-26 — Deprecated tool still live + reached-for (→ bug-184)
+`get_engineer_status` (deprecated long ago; superseded by `get_agents`, mission-63/ADR-028) is still exposed + was used repeatedly this stint before the Director's correction. A deprecated-but-live tool invites drift. → bug-184. (Same class as FR-4.)
+
+### FR-27 — block_work is not a durable park; blocked items still lease-reaped (→ bug-185)
+The idea-353 W2 stall-prompt routed greg to `block_work` on work-5 (parking on an external trigger), but block RETAINED the lease clock → the sweeper reaped the blocked item back to `ready` + the idle-digest false-re-fired. No durable "armed/waiting-on-external" state. → bug-185 (idea-353 queue-semantics). **Council:** does the queue FSM need a park state outside the lease regime, or should the sweeper skip `blocked`?
+
+### FR-28 — AC1 prod-smoke needs a deliberate surface-changing deploy
+bug-180's literal AC1 proof (work-5) can't be captured without an actual Hub tool-set change — no cheap way to manufacture a surface change for a smoke. Forced a choice between a gratuitous deploy (Route B) and an indeterminate wait (Route A, chosen — riding the next natural change). Test-affordance gap; relates tele-9 (prove-it-in-prod). → minor.
+
+### FR-29 — Async-thread coordination can cross (decision vs reply race)
+greg's "B is the right call" reply crossed my Route-A steer in flight (he was answering my earlier lean-B; the Director had since picked A). Resolved cleanly (he'd deferred to the Director's pick), but the async thread model lets a reply + a superseding decision race. Coordination-ergonomics; relates FR-15/FR-18. **Council:** does queue-native coordination (vs threads) reduce this class?
+
+### FR-30 — Terminology drift (adapter vs shim) caused a mis-diagnosis
+I initially conflated "adapter" (shared kernel) with "shim" (per-host bridge), framing Steve's wake-gap as "missing shim wiring" when the root was kernel-version drift (FR-24). The Director's terminology correction fixed it + is now an operating axiom ("thin shim / shared kernel"). Clarity/comms friction — precise shared vocabulary is load-bearing for correct diagnosis. → DOCUMENT (now in roadmap axioms + [[reference_get_agents_not_engineer_status]]).
+
 ### (reinforces FR-3) note round-trip overhead recurred heavily
 The `kind=note` response loop (peer's note → claim → ack → reply-note, 2-3 calls each, "silent" delivery that doesn't wake the peer) was the dominant engineer↔architect channel this arc. Another data point that note is a heavyweight, ambiguous response channel vs a thread turn.
 
@@ -152,3 +183,5 @@ Opened 2026-06-22 (stint-2) at Director direction after the FR-1 pulse false-esc
 Updated 2026-06-22 (post-C1-R2-arc-seal): +Section F (FR-15..19 + positive patterns) from the keystone/hardening/RBAC arc-execution; council-trigger lull arrived but Director-deferred ("We will not proceed with council now").
 
 Updated 2026-06-27 (C1-adoption go-live): +FR-21 (no agent-self-service tool-surface refresh — manual `/reload-plugins` per session; idea-121-alleviated) +FR-22 (Hub-restart → event-bridge backlog replay storm), both Director-flagged during the `create_work` on-ramp deploy + 3-agent resurface.
+
+Updated 2026-06-27 (post-dogfood-2, pre-compaction handover): +Section G (FR-23..FR-30) — **FR-23 OPERATOR-AS-LIFECYCLE-BOTTLENECK is the Director-emphasized headline** (manual restarts/hops/deploys/nudges all stint) + dogfood-2 & adapter-hygiene frictions (forked adapter, adapterVersion-mis-report, deprecated-tool, block_work-not-durable-park, AC1-needs-deploy, async-thread-race, adapter/shim terminology). Refs idea-353/354/355, bug-182/183/184/185. Next-arc focus SET (Director): consolidate the substrate via **idea-355**.
