@@ -121,6 +121,15 @@ export type {
   ReconcileOutcome,
 } from "./tool-manager/tool-surface-reconciler.js";
 
+// idea-353 — queue wake/stall reconciliation primitives.
+export { ClaimableDigestTracker } from "./tool-manager/claimable-digest-tracker.js";
+export type {
+  ClaimableDigestInput,
+  ClaimableDigestDecision,
+} from "./tool-manager/claimable-digest-tracker.js";
+export { WorkLeaseTracker } from "./tool-manager/work-lease-tracker.js";
+export type { StallPrompt } from "./tool-manager/work-lease-tracker.js";
+
 // ── Cross-cutting primitives (root) ─────────────────────────────────
 
 export { HubReturnedError, isErrorEnvelope } from "./hub-error.js";

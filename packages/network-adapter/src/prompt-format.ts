@@ -45,6 +45,10 @@ export function getActionText(
       return `Read with get_review(taskId="${data.taskId}")`;
     case "proposal_decided":
       return "Review decision and act if needed";
+    case "work_claimable_digest":
+      return "Claimable work available — list_ready_work then claim_work";
+    case "work_lease_stall":
+      return `Held work ${data.workId ?? ""} nearing lease expiry — renew_lease / block_work / abandon_work`;
     default:
       return "Review and act as needed";
   }
@@ -269,6 +273,39 @@ function renderMessageArrived(data: Record<string, unknown>, cfg: PromptFormatCo
   );
 }
 
+function renderWorkClaimableDigest(data: Record<string, unknown>, cfg: PromptFormatConfig): string {
+  // idea-353 W1 — inbound idle-wake digest. Surfaced ONLY on an upward edge
+  // (0→N or a new claimable item) WHILE the agent is idle; the level-trigger
+  // de-dup means a steady N>0 / re-tick / Hub-restart does not re-fire.
+  const p = cfg.toolPrefix;
+  const role = (data.role as string) || "your";
+  const count = typeof data.count === "number" ? data.count : 0;
+  const newCount = typeof data.newCount === "number" ? data.newCount : count;
+  const noun = count === 1 ? "item" : "items";
+  const newClause = newCount > 0 && newCount < count ? ` (${newCount} new)` : "";
+  return (
+    `[Hub] ${count} ${noun} now claimable for the ${role} role${newClause}. ` +
+    `Call ${p}list_ready_work to view, then ${p}claim_work to pick one up. ` +
+    `(Idle-wake digest: surfaced because you are idle and newly-claimable work appeared.)`
+  );
+}
+
+function renderWorkLeaseStall(data: Record<string, unknown>, cfg: PromptFormatConfig): string {
+  // idea-353 W2 — outbound stall-prompt: the gentle first rung below the
+  // lease-TTL → sweeper → poison → thrash ladder. Fires once per lease window
+  // when a held lease crosses ~60% of its life without a renew; renewing
+  // reopens the window + clears this prompt.
+  const p = cfg.toolPrefix;
+  const workId = (data.workId as string) || "(unknown)";
+  const msUntilExpiry = typeof data.msUntilExpiry === "number" ? data.msUntilExpiry : 0;
+  const mins = Math.max(0, Math.round(msUntilExpiry / 60000));
+  return (
+    `[Hub] Your held work ${workId} is approaching lease expiry (~${mins}m left) without a recent renew. ` +
+    `Before the sweeper reaps it: ${p}renew_lease (still working), ${p}block_work (blocked on something), ` +
+    `or ${p}abandon_work (giving it up). Renewing clears this prompt.`
+  );
+}
+
 // ── Registry ────────────────────────────────────────────────────────────
 
 const RENDER_REGISTRY: Map<string, RenderTemplate> = new Map([
@@ -281,6 +318,8 @@ const RENDER_REGISTRY: Map<string, RenderTemplate> = new Map([
   ["review_completed", renderReviewCompleted],
   ["revision_required", renderRevisionRequired],
   ["proposal_decided", renderProposalDecided],
+  ["work_claimable_digest", renderWorkClaimableDigest],
+  ["work_lease_stall", renderWorkLeaseStall],
 ]);
 
 function defaultTemplate(event: string, _data: Record<string, unknown>, _cfg: PromptFormatConfig): string {
@@ -322,6 +361,10 @@ export function buildToastMessage(
       const cause = (data.cause as string) || "unknown";
       return `Agent ${id} state-changed (${cause})`;
     }
+    case "work_claimable_digest":
+      return `${data.count ?? 0} work item(s) claimable for ${data.role ?? "your role"}`;
+    case "work_lease_stall":
+      return `Lease expiring: ${data.workId ?? "held work"}`;
     default:
       return `Hub: ${event}`;
   }

@@ -130,8 +130,12 @@ export interface IWorkItemStore {
 
   /** The list_ready_work projection: ready items claimable by `role` (empty
    *  roleEligibility = any-role, OR'd in). truncation-HONEST — `truncated` flags a
-   *  capped scan (never a silent cap). `role` undefined = all ready items. */
-  listReadyForRole(role: string | undefined, limit: number): Promise<{ items: WorkItem[]; truncated: boolean }>;
+   *  capped scan (never a silent cap). `role` undefined = all ready items.
+   *  idea-353 WI-2.1 (AC5 parity): when `agentId` is supplied (the agent-scoped
+   *  caller-claimable projection), also applies the per-agent WIP-cap so a maxed
+   *  caller's projection is empty — count == claim_work's predicate. `agentId`
+   *  omitted = the unchanged non-agent-scoped role view (D-1 R1 no-touch seam). */
+  listReadyForRole(role: string | undefined, limit: number, agentId?: string): Promise<{ items: WorkItem[]; truncated: boolean }>;
 
   // ── Claim / lease / FSM verbs (C1-R2 sub-PR-3) ────────────────────────────
   // Each returns the updated WorkItem on success, null if `workId` is absent.

@@ -86,11 +86,27 @@ async function listReadyWork(args: Record<string, unknown>, ctx: IPolicyContext)
   // A "system" caller with no explicit role lists ALL ready items (no role filter).
   const role = (args.role as string | undefined) ?? (caller.role !== "system" ? caller.role : undefined);
   const limit = Math.min(MAX_LIST_LIMIT, (args.limit as number | undefined) ?? DEFAULT_LIST_LIMIT);
+  const truncationNote = (truncated: boolean) =>
+    truncated ? { truncationNote: `ready-scan hit the ${MAX_LIST_LIMIT}-row cap — result is INCOMPLETE; refine by role or treat as a backlog-pressure signal` } : {};
+
+  // idea-353 WI-2.1 (AC5 strict parity / audit-4265): opt-in agent-scoped projection.
+  // The claimable DIGEST must count only what THIS caller can actually claim, so it
+  // applies the FULL claim_work predicate — deps + role (substrate) + WIP-cap
+  // (substrate, via the agent-scoped listReadyForRole) + quarantine (HERE, the same
+  // gate + store claimWork uses). A WIP-capped or quarantined caller gets count 0,
+  // so the digest cannot over-report. Default (flag absent) preserves the
+  // non-agent-scoped role view + the D-1 R1 no-touch seam — unchanged.
+  if (args.scopeToCaller === true) {
+    const agent = await ctx.stores.engineerRegistry.getAgent(caller.agentId);
+    if (agent?.quarantined) {
+      return ok({ items: [], count: 0, role: role ?? null, truncated: false, scopedToCaller: true });
+    }
+    const { items, truncated } = await store.listReadyForRole(role, limit, caller.agentId);
+    return ok({ items, count: items.length, role: role ?? null, truncated, scopedToCaller: true, ...truncationNote(truncated) });
+  }
+
   const { items, truncated } = await store.listReadyForRole(role, limit);
-  return ok({
-    items, count: items.length, role: role ?? null, truncated,
-    ...(truncated ? { truncationNote: `ready-scan hit the ${MAX_LIST_LIMIT}-row cap — result is INCOMPLETE; refine by role or treat as a backlog-pressure signal` } : {}),
-  });
+  return ok({ items, count: items.length, role: role ?? null, truncated, ...truncationNote(truncated) });
 }
 
 async function startWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
@@ -329,10 +345,11 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_ready_work",
-    "[Any] List ready WorkItems claimable by a role (empty roleEligibility = any-role, OR'd in). Defaults to the caller's role; pass `role` to view another queue. truncation-HONEST: a capped scan sets `truncated` + a note (never a silent cap).",
+    "[Any] List ready WorkItems claimable by a role (empty roleEligibility = any-role, OR'd in). Defaults to the caller's role; pass `role` to view another queue. Pass `scopeToCaller:true` for the CALLER-CLAIMABLE projection — applies claim_work's FULL eligibility predicate (deps + role + WIP-cap + quarantine), so the count never over-reports what you can actually claim (the idea-353 digest source). truncation-HONEST: a capped scan sets `truncated` + a note (never a silent cap).",
     {
       role: z.string().optional().describe("Role to project for (default: the caller's role)"),
       limit: z.number().int().positive().max(MAX_LIST_LIMIT).optional().describe(`Max items (default ${DEFAULT_LIST_LIMIT}, cap ${MAX_LIST_LIMIT})`),
+      scopeToCaller: z.boolean().optional().describe("When true, project only items the CALLER can actually claim (full claim_work predicate incl. WIP-cap + quarantine); a maxed/quarantined caller gets count 0. Default false = the non-agent-scoped role view."),
     },
     listReadyWork,
   );

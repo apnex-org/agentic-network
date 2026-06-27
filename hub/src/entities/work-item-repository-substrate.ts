@@ -346,14 +346,45 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * surfaces that. A complete server-side role projection (a role-index or an is-empty
    * operator) is a later optimization; the loud flag keeps v1 honest.
    */
-  async listReadyForRole(role: string | undefined, limit: number): Promise<{ items: WorkItem[]; truncated: boolean }> {
+  async listReadyForRole(role: string | undefined, limit: number, agentId?: string): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    // idea-353 WI-2.1 (AC5 strict parity / audit-4265): the AGENT-SCOPED projection
+    // (agentId supplied — used by the claimable digest) must count only what THIS
+    // caller can actually claim, so it mirrors claim_work's per-agent WIP-cap. A
+    // maxed caller can claim NOTHING → short-circuit to empty (count 0) BEFORE the
+    // scan, so count == claim_work's full predicate. (Quarantine is the policy
+    // layer's parity gate, where claim_work checks it too.) The non-agent-scoped
+    // path (agentId omitted) is unchanged — the stable role view + D-1 R1 no-touch seam.
+    if (agentId !== undefined) {
+      const cap = wipCap(role);
+      if ((await this.inFlightCount(agentId, cap)) >= cap) {
+        return { items: [], truncated: false };
+      }
+    }
     const { items } = await this.substrate.list<WorkItem>(KIND, { filter: { status: "ready" }, limit: READY_SCAN_CAP });
     const truncated = items.length >= READY_SCAN_CAP;
     const ready = items.map(cloneWorkItem);
     const eligible = role
       ? ready.filter((w) => w.roleEligibility.length === 0 || w.roleEligibility.includes(role))
       : ready;
-    return { items: eligible.slice(0, Math.max(0, limit)), truncated };
+    // bug-181 (idea-353 fold): the `ready` phase + role-eligibility alone is NOT
+    // claimability. claimWorkItem is the AUTHORITY and re-checks dependency-readiness
+    // fail-CLOSED (lines ~392-401): an item whose dependsOn are not all `done` rejects
+    // at claim. The projection MUST apply the SAME deps gate or it LIES — an
+    // eligible-role item with unmet deps lists as `ready`, then a claim hits
+    // ClaimRejected (the bug-181 eligible-role-deps-unmet leak; manufactures the exact
+    // silent-friction idea-353 exists to kill, tele-7). Single source of truth = the
+    // unmetDependencies check claimWorkItem uses. Async per-item (mirrors the in-memory
+    // OR-in cost note above); only items WITH deps pay the resolve, and we stop once
+    // `limit` claimable items are collected so the scan cost stays bounded.
+    const claimable: WorkItem[] = [];
+    const cap = Math.max(0, limit);
+    for (const w of eligible) {
+      if (claimable.length >= cap) break;
+      if (w.dependsOn.length === 0 || (await this.unmetDependencies(w.dependsOn)).length === 0) {
+        claimable.push(w);
+      }
+    }
+    return { items: claimable, truncated };
   }
 
   // ── Claim / lease / FSM verbs (C1-R2 sub-PR-3a) ───────────────────────────
@@ -373,15 +404,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       agentId,
       async () => {
         const cap = wipCap(role);
-        // Count this agent's in-flight items under the lock. status→status.phase via
-        // renameMap; status.lease.holder is the bucket-prefixed dotted path (option c).
-        // limit=cap suffices to detect >=cap (we only need the boundary, not the total).
-        const inFlightFilter: Filter = {
-          status: { $in: [...WIP_PHASES] },
-          "status.lease.holder": agentId,
-        };
-        const { items: inFlight } = await this.substrate.list<WorkItem>(KIND, { filter: inFlightFilter, limit: cap });
-        if (inFlight.length >= cap) throw new WipCapExceeded(agentId, inFlight.length, cap);
+        // Count this agent's in-flight items under the lock (single-sourced via
+        // inFlightCount, shared with the agent-scoped listReadyForRole projection so
+        // the claimable digest's count == this exact WIP-cap predicate — idea-353
+        // WI-2.1 / audit-4265). limit=cap suffices to detect >=cap (boundary, not total).
+        const inFlight = await this.inFlightCount(agentId, cap);
+        if (inFlight >= cap) throw new WipCapExceeded(agentId, inFlight, cap);
 
         // audit-4085 #1: claim_work is the AUTHORITY — re-enforce role-eligibility +
         // dependency-readiness fail-closed (a direct claim-by-ID bypasses list_ready_work;
@@ -639,6 +667,19 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const a = await this.substrate.get<Record<string, unknown>>("Agent", agentId);
     if (!a) return null;
     return ((a.spec as { role?: string } | undefined)?.role) ?? null;
+  }
+
+  /** Count this agent's in-flight (lease-held WIP-phase) items, scanning at most
+   *  `cap` rows — we only need the >=cap boundary, not the full total. The single
+   *  source of the WIP-cap predicate, shared by claimWorkItem (the claim authority)
+   *  and the agent-scoped listReadyForRole projection (idea-353 WI-2.1 / audit-4265),
+   *  so the claimable digest cannot over-report relative to claim_work. */
+  private async inFlightCount(agentId: string, cap: number): Promise<number> {
+    const { items } = await this.substrate.list<WorkItem>(KIND, {
+      filter: { status: { $in: [...WIP_PHASES] }, "status.lease.holder": agentId },
+      limit: cap,
+    });
+    return items.length;
   }
 
   /** Resolve each dependency's phase; return the ids NOT in phase=done (audit-4085 #1).
