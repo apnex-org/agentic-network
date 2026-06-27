@@ -540,7 +540,13 @@ export class PulseSweeper {
     result: PulseSweepResult,
   ): Promise<void> {
     const ctx = this.contextProvider.forSweeper();
-    const agents: Agent[] = await ctx.stores.engineerRegistry.listAgents();
+    // bug-176 — defense-in-depth: a context whose stores omit engineerRegistry
+    // (a partial test/dev rig) would otherwise throw `Cannot read properties of
+    // undefined (reading 'listAgents')` on every tick. Production always wires it
+    // (index.ts); guard so a misconfigured rig degrades to a clean no-op pass.
+    const registry = ctx.stores.engineerRegistry;
+    if (!registry) return;
+    const agents: Agent[] = await registry.listAgents();
     const eligible = agents.filter((a) => a.pulseConfig?.enabled === true);
     if (eligible.length === 0) return;
 
