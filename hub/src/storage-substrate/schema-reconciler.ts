@@ -658,7 +658,16 @@ export class SchemaReconciler {
         // skip-reconcile guard / processing), so a reconnect replays strictly
         // after the last event we actually saw. Re-processing on overlap is
         // idempotent (the specCache guard + status-write converge).
-        this.lastSeenResourceVersion = event.resourceVersion;
+        // work-41 (steve audit-4533 finding 1): MONOTONIC — only advance, never
+        // regress. The primitive now delivers in-order, but guard defensively so a
+        // stale/out-of-order event can never move the reconnect cursor BACKWARDS
+        // (which would re-replay + duplicate). Cursor = max(cursor, event.rv).
+        if (
+          this.lastSeenResourceVersion === undefined ||
+          BigInt(event.resourceVersion) > BigInt(this.lastSeenResourceVersion)
+        ) {
+          this.lastSeenResourceVersion = event.resourceVersion;
+        }
         if (event.op === "put" && event.entity) {
           // mission-90 W1: rows are envelope-shaped post boot-put fix — decode
           // back to the runtime SchemaDef (described kind at metadata.name)

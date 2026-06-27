@@ -399,9 +399,21 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
           r();
         }
       };
+      // bug-100 work-41 (#4b real-pg): a LISTEN backend the SERVER terminates
+      // (e.g. 57P01 admin-shutdown) must SETTLE this iterator so the consumer's
+      // for-await ENDS → runtimeWatchSession returns "reconnect" → runtimeLoop
+      // reconnects. The mock modeled generator-throw-on-end; real pg does NOT (the
+      // SDK just fires 'end'/'error'). So mark `ended` on either + wake the parked
+      // ready(); the live loop drains any buffered events then returns. Without
+      // this the loop re-parks on ready() FOREVER (no more events) → the watch
+      // never terminates → no reconnect (steve's audit-4533 finding 2).
+      let ended = false;
       client.on("notification", (n) => { notifications.push(n); wake(); });
-      // 'end' event resolves the ready() wait so the abort path returns cleanly
-      client.on("end", () => wake());
+      // 'end'/'error' settle the iterator (non-abort termination → reconnect).
+      // (attachPgErrorHandler also listens on 'error' to prevent an uncaught
+      // crash; this second listener is additive — it just records + wakes.)
+      client.on("end", () => { ended = true; wake(); });
+      client.on("error", () => { ended = true; wake(); });
 
       await client.query(`LISTEN entities_change`);
 
@@ -414,14 +426,22 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
         await hook();
       }
 
-      // bug-187 Step 1 (now AFTER LISTEN): replay events strictly newer than
-      // sinceRevision via SELECT. Record each replayed resource_version so the
-      // live drain can dedup the overlap (a write committed between LISTEN and
-      // this SELECT appears in BOTH streams). resource_version is a unique
-      // monotonic sequence, so an exact-set match is precise — and (unlike a
-      // max-rv watermark) it never drops an interleaved delete, whose rv is
-      // never in the replay set. Bounded by the replay size.
-      const replayedRvs = new Set<string>();
+      // bug-187/work-41 Step 1 (AFTER LISTEN): replay events strictly newer than
+      // sinceRevision via SELECT, tracking a MONOTONIC `cursor` = the max rv
+      // yielded. The live drain then skips any event with rv <= cursor.
+      //
+      // The earlier exact-rv-Set dedup was WRONG (steve's audit-4533 finding 1):
+      // when the SAME row is written twice in the LISTEN→replay overlap (rv 2 then
+      // rv 4), the replay SELECT yields only the LATEST row state (rv4), but BOTH
+      // NOTIFYs are buffered live — the set skipped only the exact rv4, so the
+      // STALE rv2 leaked through AFTER rv4 → out-of-order delivery + the consumer
+      // cursor REGRESSED 4→2 (his [4,2] probe). The monotonic cursor skips rv2
+      // (≤4): in-order, no-regression, exactly-once. (Trade-off: an interleaved
+      // delete whose rv ≤ a replayed put's rv is skipped — but the replay snapshot
+      // already reflects that row's absence, delivering it would itself be
+      // out-of-order, and the SchemaReconciler delete path is best-effort by
+      // design. Acyclic correctness > a best-effort delete event.)
+      let cursor = sinceRevision ? BigInt(sinceRevision) : 0n;
       if (sinceRevision) {
         const r = await this.pool.query<{ kind: string; id: string; data: T; resource_version: string }>(
           `SELECT kind, id, data, resource_version FROM entities
@@ -431,7 +451,8 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
         );
         for (const row of r.rows) {
           if (signal?.aborted) return;
-          replayedRvs.add(String(row.resource_version));
+          const rv = BigInt(row.resource_version);
+          if (rv > cursor) cursor = rv;
           if (filter && !matchesFilter(row.data as Record<string, unknown>, filter, (k) => this.translateKey(kind, k))) continue;
           yield {
             op: "put",
@@ -443,8 +464,8 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
         }
       }
 
-      // bug-187 Step 2: live loop. Yield buffered notifications, skipping any
-      // whose resource_version the replay already surfaced (overlap dedup).
+      // bug-187/work-41 Step 2: live loop. Yield buffered notifications, skipping
+      // any with rv <= the monotonic cursor (overlap dedup + no-regression).
       while (true) {
         if (signal?.aborted) return;
 
@@ -459,8 +480,11 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
             continue;
           }
           if (payload.kind !== kind) continue;
-          // bug-187 overlap dedup: this exact change already came through replay.
-          if (replayedRvs.has(String(payload.resource_version))) continue;
+          // work-41 monotonic dedup: already-surfaced or stale (rv ≤ cursor) → skip;
+          // the cursor only advances, so a stale buffered NOTIFY can't regress it.
+          const rv = BigInt(payload.resource_version);
+          if (rv <= cursor) continue;
+          cursor = rv;
 
           let entity: T | undefined;
           if (payload.op === "put") {
@@ -483,6 +507,12 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
           };
         }
         if (signal?.aborted) return;
+        // bug-100 work-41 (#4b): the LISTEN backend ended/errored (non-abort) —
+        // all buffered events are now drained, so terminate the generator. The
+        // consumer's for-await ends → runtimeWatchSession returns "reconnect" →
+        // runtimeLoop reconnects with backoff. (Abort is handled by the guards
+        // above; this is the SERVER-side termination path.)
+        if (ended) return;
         await ready();
       }
     } finally {
