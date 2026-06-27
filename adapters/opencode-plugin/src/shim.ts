@@ -309,8 +309,16 @@ const coalescer = new NotificationCoalescer({
 // reconciler was built is still notified on the next drift. Module-level so the
 // production reconciler closure and the harness test exercise the SAME path.
 function emitToolListChanged(): void {
-  for (const server of activeProxyServers) void server.sendToolListChanged();
-  void showToast("Hub tools updated — re-enumerating");
+  for (const server of activeProxyServers) {
+    // F1 (review): per-server isolation the deleted syncTools had — a mid-close
+    // session's sendToolListChanged rejects, and an unhandled rejection is
+    // process-fatal under Bun. Catch + log; never let one dead session take the
+    // others (or the process) down.
+    void server
+      .sendToolListChanged()
+      .catch((err) => log(`[ToolSurface] sendToolListChanged failed (non-fatal): ${err}`));
+  }
+  void showToast("Hub tools updated — re-enumerating", "success");
 }
 
 // idea-355 SLICE-1T — build the kernel ToolSurfaceReconciler for opencode.
@@ -773,6 +781,13 @@ export const _testOnly = {
   // owns opencode's tool-surface (seed-no-emit + multi-server drift fan-out)
   // without a live Hub or Bun.
   buildToolSurfaceReconciler,
+  // F2 (review): set the MODULE reconciler the PRODUCTION triggers use
+  // (pollBackstop.onHeartbeatTick + handleConnectionStateChange→streaming), so a
+  // test can pin that the production heartbeat wiring actually drives reconcile →
+  // emit (the L2-silently-disabled seam that would waste steve's one-shot restart).
+  setReconciler: (r: ToolSurfaceReconciler | null) => {
+    reconciler = r;
+  },
   pushProxyServer: (s: Server) => activeProxyServers.push(s),
   clearProxyServers: () => {
     activeProxyServers.length = 0;

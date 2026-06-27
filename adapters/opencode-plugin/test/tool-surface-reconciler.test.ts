@@ -31,6 +31,7 @@ function fakeServer(): FakeServer {
 describe("opencode tool-surface — kernel ToolSurfaceReconciler ownership (idea-355 SLICE-1T)", () => {
   beforeEach(() => {
     _testOnly.clearProxyServers();
+    _testOnly.setReconciler(null); // reset module reconciler between tests
     // Fake sdkClient so the toast path (showToast) is observable rather than a
     // no-op early-return — the fan-out over servers is the primary proof; the
     // toast is the host-unique shim UX layered on top.
@@ -97,6 +98,47 @@ describe("opencode tool-surface — kernel ToolSurfaceReconciler ownership (idea
     // Toast raised (flush the showToast microtask first — emit fires it via void).
     await Promise.resolve();
     expect(showToast).toHaveBeenCalledTimes(1);
+  });
+
+  it("PRODUCTION L2: the pollBackstop onHeartbeatTick drives the MODULE reconciler → emits on drift (pins the silently-disabled seam)", async () => {
+    // F2 (review): the prior 3 tests call buildToolSurfaceReconciler().reconcile()
+    // directly — they do NOT exercise the production TRIGGER wiring. This drives
+    // the real dispatcher.pollBackstop heartbeat tick (the L2 backstop that fires
+    // reconcile WITHOUT a reconnect), through the MODULE `reconciler` the shim's
+    // onHeartbeatTick reads — so a silently-disabled heartbeat hook (which would
+    // miss an in-life redeploy and waste steve's one-shot restart) fails here.
+    const s1 = fakeServer();
+    const s2 = fakeServer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    _testOnly.pushProxyServer(s1 as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    _testOnly.pushProxyServer(s2 as any);
+
+    let live = "rev-A";
+    // Install the reconciler the PRODUCTION onHeartbeatTick will read (module ref).
+    _testOnly.setReconciler(
+      _testOnly.buildToolSurfaceReconciler("https://hub/mcp", async () => live),
+    );
+
+    // A streaming agent so the heartbeat tick runs (transport_heartbeat + the
+    // kernel wake/stall list_ready_work both no-op benignly).
+    const fakeAgent = {
+      state: "streaming",
+      getMetrics: () => ({ agentId: "agent-x" }),
+      call: vi.fn(async (m: string) => (m === "list_ready_work" ? { items: [] } : "ok")),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+
+    // Tick 1 through the PRODUCTION pollBackstop heartbeat → onHeartbeatTick →
+    // reconcile("heartbeat") → SEED (appliedRevision=rev-A, no emit).
+    await _testOnly.dispatcher.pollBackstop!.tickHeartbeat(() => fakeAgent);
+    expect(s1.sendToolListChanged).not.toHaveBeenCalled();
+
+    // Drift, then a second production heartbeat tick → reconcile → emit.
+    live = "rev-B";
+    await _testOnly.dispatcher.pollBackstop!.tickHeartbeat(() => fakeAgent);
+    expect(s1.sendToolListChanged).toHaveBeenCalledTimes(1);
+    expect(s2.sendToolListChanged).toHaveBeenCalledTimes(1);
   });
 
   it("fetch-failure (live=null) no-ops — never a spurious emit", async () => {

@@ -25,7 +25,6 @@ function fakeAgent(overrides: Partial<McpAgentClient> = {}): McpAgentClient {
   return {
     call: vi.fn().mockResolvedValue("ok"),
     listTools: vi.fn().mockResolvedValue([]),
-    getTransport: vi.fn().mockReturnValue({ listToolsRaw: vi.fn().mockResolvedValue([]) }),
     setCallbacks: vi.fn(),
     start: vi.fn(),
     stop: vi.fn(),
