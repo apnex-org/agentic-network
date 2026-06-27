@@ -22,11 +22,19 @@ export type {
   AgentClientConfig,
   AgentClientCallbacks,
   AgentClientMetrics,
-  AgentEvent,
   AgentHandshakeConfig,
+} from "./kernel/agent-client.js";
+
+// bug-160 — the Message-union payload contract (AgentEvent / SessionState /
+// SessionReconnectReason / DrainedPendingAction) was relocated DOWN to
+// @apnex/message-router to break the L2↔L4 source cycle; re-exported here so
+// consumers importing them from @apnex/network-adapter are unaffected.
+export type {
+  AgentEvent,
   SessionState,
   SessionReconnectReason,
-} from "./kernel/agent-client.js";
+  DrainedPendingAction,
+} from "@apnex/message-router";
 
 export type {
   HubEventType,
@@ -91,7 +99,7 @@ export { createFileLogger } from "./file-logger.js";
 export type { FileLogger, FileLoggerOptions } from "./file-logger.js";
 
 export { performStateSync } from "./kernel/state-sync.js";
-export type { StateSyncContext, DrainedPendingAction } from "./kernel/state-sync.js";
+export type { StateSyncContext } from "./kernel/state-sync.js";
 
 export {
   PollBackstop,
