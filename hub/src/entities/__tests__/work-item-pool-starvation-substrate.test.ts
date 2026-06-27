@@ -14,6 +14,7 @@
  * revert to a too-small max deadlocks→times-out→fails this, so it stays a real guard).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createTestPool } from "../../storage-substrate/__tests__/_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -40,7 +41,7 @@ describe("WorkItem pool-starvation regression guard (real-pg)", () => {
     container = await new PostgreSqlContainer("postgres:15-alpine")
       .withUsername("hub").withPassword("hub").withDatabase("hub").start();
     connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-    pool = new Pool({ connectionString: connStr });
+    pool = createTestPool(connStr, "work-item-pool-starvation-substrate");
     for (const f of MIGRATION_FILES) await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
     healthy = createPostgresStorageSubstrate(connStr); // default max=25 (the fix)
     reconciler = createSchemaReconciler(healthy, connStr, { initialSchemas: ALL_SCHEMAS });
@@ -69,7 +70,7 @@ describe("WorkItem pool-starvation regression guard (real-pg)", () => {
     // the inner list/CAS need another, so at N>=max every connection is a pinned holder and
     // the next acquire starves. Here we pin all `max` connections directly + show the next
     // acquire blocks, then FULLY-AWAIT cleanup (release held → drain the pending → end).
-    const starved = new Pool({ connectionString: connStr, max: 10 });
+    const starved = createTestPool({ connectionString: connStr, max: 10 }, "work-item-pool-starvation-substrate");
     try {
       const held: PoolClient[] = [];
       for (let i = 0; i < 10; i++) held.push(await starved.connect()); // pin all 10

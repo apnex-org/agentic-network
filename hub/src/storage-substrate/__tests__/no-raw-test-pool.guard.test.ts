@@ -17,12 +17,16 @@ import { fileURLToPath } from "node:url";
 
 const SELF = fileURLToPath(import.meta.url);
 const HERE = resolve(SELF, "..");
+const HUB_ROOT = resolve(HERE, "../../.."); // hub/  (from hub/src/storage-substrate/__tests__)
 
-// Dirs that contain testcontainer-backed substrate tests creating pg pools.
-const SCAN_DIRS = [
-  HERE, // hub/src/storage-substrate/__tests__ (recursive — incl. conformance/)
-  resolve(HERE, "../../../test/integration"), // hub/test/integration
-];
+// bug-178 completion (work-25): scan the WHOLE test tree, not a hand-listed set
+// of dirs. A guard whose scan-scope is NARROWER than the defect-class scope
+// gives false-green confidence — the partial #381 guard scanned only the 2
+// migrated dirs while ~23 other testcontainer test files still held raw pools,
+// so it passed while the flake class was wide open (the same false-confidence
+// class as a vacuous test). Scanning hub/src + hub/test recursively means ANY
+// raw `new Pool(` in ANY test — current or future, in any dir — fails here.
+const SCAN_DIRS = [resolve(HUB_ROOT, "src"), resolve(HUB_ROOT, "test")];
 
 function listTestFiles(dir: string): string[] {
   let out: string[] = [];
