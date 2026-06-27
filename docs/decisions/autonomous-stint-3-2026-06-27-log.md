@@ -59,3 +59,13 @@ greg's branch audit (thread-728, converged) settled the vehicle with two correct
 - PHASE-2: idea-355 mission = SLICE-0 (version-fix) + SLICE-1 remaining generic-infra hoists + runWakeStallReconcile/tick-drive/live-refresh kernel-drive + SLICE-2 (single redeploy) + SLICE-3 (versioning/bug-182 + idea-256 wire) + SLICE-4 (tooling: bug-184 + sweep). Architect writes the design on `agent-lily/idea-355-design` (parallel with greg's rebase), proposes + preflights, seeds dogfood-3.
 
 **Provenance:** thread-728 (converged implementation_ready 2026-06-27).
+
+## DR-S3-005 — PHASE-1 COMPLETE: both parked missions landed zero-loss
+- **mission-92 CLOSED** — PR #367 squash-merged `a165d64` (Step-1/2a/2b/2c dedup + opencode esbuild release pipeline). Rebase clean (1 trivial `index.ts` barrel vs #362/#363); cross-approved per-delta; all CI green incl hub vitest.
+- **mission-93 CLOSED** — PR #368 squash-merged `8568678` (verifier cutover hardening: register_role **fail-loud** replacing the silent engineer/offline degrade that masked Steve's cutover for an hour + verifier in classifyEvent; bug-161 R1 terminal session flush + bounded queue cap 50). Clean cherry-pick onto main-with-#367; cross-approved; CI green.
+- **Code-only, NO redeploy** — both batch into idea-355 SLICE-2's single opencode republish (per DR-S3-004). steve stays on the old 4.3.0 bundle (no regression).
+- 19 commits of built-but-stranded work (parked 7 days by the C1 pivot) landed inside one coordinated architect+engineer pass.
+
+**Next:** idea-355 construction-design audit opened (thread-729) — greg audits design v0.1 (`docs/designs/idea-355-adapter-substrate-consolidation-design.md`; 5 load-bearing Qs Q2–Q6, Q1 resolved by the clean landing) → fold → propose the mission (M-Adapter-Substrate-Consolidation) + preflight → seed dogfood-3 WorkItems (WI-0..WI-4). Memory refreshed to `project_autonomous_stint_3_state.md` (compaction-safe).
+
+**Provenance:** PR #367/#368 merged; mission-92/93 status=completed; thread-729 (open).
