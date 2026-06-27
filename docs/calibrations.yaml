@@ -3025,6 +3025,50 @@ calibrations:
       - tele-2
       - tele-5
 
+  - id: 86
+    class: methodology
+    title: "Deferred divergence becomes drift — close a bounded asymmetry NOW ('clean symmetry') over deferring as a follow-on"
+    origin: mission-95-design
+    surfaced_at: thread-729-round4
+    status: closed-folded
+    closure_mechanism: |
+      idea-355 SLICE-1T (converge the opencode shim's bespoke tool-surface
+      sync onto the shared kernel ToolSurfaceReconciler). The architect
+      recommended DEFER — treat it as a parity-not-dedup follow-on to "keep
+      MEDIUM" — over-estimating it as a from-scratch behavioral migration.
+      Director steered "fold slice — clean symmetry" (override). greg's
+      construction refinement then showed it was a cheap DELETE, not a
+      migration: SLICE-1's kernel-driven live-refresh + SLICE-2's redeploy
+      hand opencode the kernel reconciler path for free, so the bespoke
+      computeToolHash+syncTools is simply removed (delete-in-bundle).
+
+      Pattern signature: inside a consolidation/refactor/multi-host arc, a
+      KNOWN asymmetry/divergence is deferred ("fold it later") on
+      scope-minimization grounds; the deferral plants a future drift surface —
+      the same pathology class the arc itself is fixing (the M18 scar: a fix
+      landing in one host/shim drifts because it was not propagated).
+
+      Discipline: default to closing a BOUNDED divergence now; pressure-test
+      the REAL cost before deferring (frequently cheap once adjacent work
+      lands — the "migration" was a delete); reserve defer for genuine
+      scope/risk blowups (e.g. routing ALL emits through message-router → L),
+      not minimalism-vs-tidiness. Counter-bias to the architect's reflexive
+      scope-minimization. Codified in feedback memories
+      feedback_close_divergence_over_defer + feedback_capture_valuable_steers.
+      First calibration architect-filed under the relaxed filing model
+      (Director-curates-not-gates; see CLAUDE.md Calibration ledger discipline
+      + this PR).
+    pattern_membership:
+      - deferred-divergence-becomes-drift
+    cross_refs:
+      - docs/designs/idea-355-adapter-substrate-consolidation-design.md §4.4 + §10
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-004/006)
+      - feedback_close_divergence_over_defer.md
+      - feedback_capture_valuable_steers.md
+    tele_alignment:
+      - tele-3
+      - tele-4
+
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
 #   title                       string; human-readable pattern name
@@ -3173,3 +3217,27 @@ patterns:
     surfaced_by_calibrations:
       - 42
     methodology_doc_subsection: "docs/methodology/multi-agent-pr-workflow.md#post-event-narration-aest-utc-date-conflation-discipline"
+
+  - id: deferred-divergence-becomes-drift
+    title: "Deferred divergence becomes drift"
+    origin: mission-95-design
+    description: |
+      Architectural-pathology pattern. Inside a consolidation / refactor /
+      multi-host arc, deferring the closure of a KNOWN asymmetry or divergence
+      ("we'll fold it later") on scope-minimization grounds plants a future
+      drift surface — the un-propagated change drifts across hosts/components.
+      This is the M18-scar class generalized (a fix landing in one shim/host
+      and not propagated drifts; idea-355 exists to undo exactly this).
+
+      Diagnostic signature:
+      1. A consolidation arc surfaces a bounded adjacent asymmetry/divergence.
+      2. It is recommended for DEFER on scope-min ("keep the mission small"),
+         often framed as more expensive than it is (a "migration" that is
+         actually a delete once adjacent work lands).
+      3. Deferring leaves a live divergence surface = the next drift incident.
+
+      Counter-discipline: default to closing a bounded divergence NOW
+      ("clean symmetry"); pressure-test the real cost first; defer only on a
+      genuine scope/risk blowup.
+    surfaced_by_calibrations:
+      - 86
