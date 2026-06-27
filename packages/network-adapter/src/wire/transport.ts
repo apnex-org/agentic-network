@@ -105,6 +105,19 @@ export interface TransportConfig {
   reconnectDelay?: number;
 
   /**
+   * bug-171: maximum concurrent in-flight `request()` calls over the single
+   * shared wire. Excess callers QUEUE (FIFO) for a slot rather than all firing
+   * at once — a broad parallel read burst (e.g. a verifier conformance sweep)
+   * could otherwise overwhelm the one connection and drop the whole transport
+   * (`-32000 Connection closed`), stranding the session behind reconnect
+   * backoff. Queued calls still complete; only their start is paced. Normal
+   * single-agent flow (1–3 concurrent) never reaches the cap, so it is
+   * invisible there. Defaults to `OIS_ADAPTER_MAX_INFLIGHT` env var (parsed as
+   * integer), falling back to 8. Floored at 1.
+   */
+  maxInFlight?: number;
+
+  /**
    * Logger injection. Preferred is `ILogger`; the string variant is a
    * Phase-2 migration aid so existing string-logger call sites can
    * wire up a transport without being rewritten first.
@@ -137,6 +150,12 @@ export interface TransportMetrics {
   readonly lastReconnectCause?: WireReconnectCause;
   readonly lastKeepaliveAt?: number; // epoch ms
   readonly requestsInFlight: number;
+  /**
+   * bug-171: callers currently parked waiting for an in-flight slot (the
+   * concurrency cap is saturated). 0 in normal flow; a sustained positive
+   * value is the observable signal of a request burst being paced.
+   */
+  readonly requestsQueued: number;
 }
 
 export interface ITransport {

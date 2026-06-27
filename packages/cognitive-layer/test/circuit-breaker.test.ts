@@ -86,6 +86,37 @@ describe("CircuitBreaker — CLOSED state", () => {
     });
   });
 
+  // bug-171: a dropped MCP wire surfaces as "Connection closed" / JSON-RPC
+  // -32000. These must classify as transport faults so a burst-induced wire
+  // drop trips the breaker into fail-fast backpressure (instead of the error
+  // slipping through as an app error and the caller hammering reconnect).
+  it.each([
+    "MCP error -32000: Connection closed",
+    "Connection closed",
+    "Error -32000",
+  ])("classifies %j as a transport fault and trips after threshold", async (msg) => {
+    const clock = makeClock();
+    const cb = new CircuitBreaker({
+      failureThreshold: 3,
+      observationWindowMs: 10_000,
+      cooldownMs: 5_000,
+      now: clock.read,
+    });
+
+    for (let i = 0; i < 3; i++) {
+      await expect(
+        cb.onToolCall(ctx(), async () => { throw new Error(msg); }),
+      ).rejects.toThrow();
+      clock.state.now += 100;
+    }
+
+    expect(cb.getScopeStatus("sess-A")).toBe("OPEN");
+    // INV-COG-6: once OPEN, the next call fails fast as HubUnavailableError.
+    await expect(
+      cb.onToolCall(ctx(), async () => "should-not-run"),
+    ).rejects.toBeInstanceOf(HubUnavailableError);
+  });
+
   it("stale failures outside the rolling window are evicted", async () => {
     const clock = makeClock();
     const cb = new CircuitBreaker({

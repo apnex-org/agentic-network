@@ -28,7 +28,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from "no
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { PollBackstop, readCursor, writeCursor } from "../../src/index.js";
+import { PollBackstop, readCursor, writeCursor, resolveRole } from "../../src/index.js";
 import type { IAgentClient } from "../../src/index.js";
 
 // ── Test helpers ─────────────────────────────────────────────────────
@@ -442,5 +442,77 @@ describe("PollBackstop — cadence + lifecycle", () => {
 
     // Only one underlying list_messages call despite 3 concurrent ticks.
     expect(callCount).toBe(1);
+  });
+});
+
+// ── bug-173: role resolves at USE-time (string OR () => string) ───────
+//
+// The opencode shim builds its dispatcher (+ pollBackstop) at MODULE-INIT,
+// before loadConfig runs, so a literal-string role would freeze whatever the
+// env default was at construction — a config-file-only `role: "verifier"`
+// (no OIS_HUB_ROLE) would silently poll as "engineer". The fix lets `role` be
+// a `() => string` thunk resolved on every tick; this block proves the
+// configured role reaches the `list_messages` target.role filter.
+describe("PollBackstop — bug-173 use-time role resolution", () => {
+  let tmpDir: string;
+  let cursorFile: string;
+
+  beforeEach(() => {
+    tmpDir = newTempDir();
+    cursorFile = join(tmpDir, "cursor.json");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("resolveRole: a plain string is returned as-is; a thunk is invoked", () => {
+    expect(resolveRole("engineer")).toBe("engineer");
+    expect(resolveRole(() => "verifier")).toBe("verifier");
+  });
+
+  it("a `() => string` role reaches list_messages target.role (config-file-only verifier)", async () => {
+    const callImpl = vi.fn().mockReturnValue(listMessagesResult([]));
+    const agent = fakeStreamingAgent(callImpl);
+    // The thunk models the opencode shim's `() => currentRole`, where
+    // currentRole was set from config.role AFTER the dispatcher was built.
+    const bs = new PollBackstop({
+      role: () => "verifier",
+      cursorFile,
+      onPolledMessage: vi.fn(),
+    });
+
+    await bs.tick(() => agent);
+
+    expect(callImpl).toHaveBeenCalledWith("list_messages", {
+      targetRole: "verifier",
+      status: "new",
+    });
+  });
+
+  it("resolves PER TICK, not frozen at construction (the module-init bug class)", async () => {
+    const callImpl = vi.fn().mockReturnValue(listMessagesResult([]));
+    const agent = fakeStreamingAgent(callImpl);
+    // currentRole flips between ticks — proves the role is read at use-time,
+    // not captured when PollBackstop was constructed.
+    let currentRole = "engineer";
+    const bs = new PollBackstop({
+      role: () => currentRole,
+      cursorFile,
+      onPolledMessage: vi.fn(),
+    });
+
+    await bs.tick(() => agent);
+    expect(callImpl).toHaveBeenNthCalledWith(1, "list_messages", {
+      targetRole: "engineer",
+      status: "new",
+    });
+
+    currentRole = "verifier";
+    await bs.tick(() => agent);
+    expect(callImpl).toHaveBeenNthCalledWith(2, "list_messages", {
+      targetRole: "verifier",
+      status: "new",
+    });
   });
 });

@@ -126,6 +126,13 @@ function defaultIsTransportFault(err: unknown): boolean {
     "service unavailable",
     "service_unavailable",
     "hub unavailable",
+    // bug-171: a dropped MCP wire surfaces as "Connection closed" / JSON-RPC
+    // -32000. Counting it as a transport fault lets the breaker trip into
+    // fail-fast HubUnavailableError after a burst-induced drop — clean
+    // backpressure that preserves the LLM round budget instead of hammering
+    // through reconnect backoff.
+    "connection closed",
+    "-32000",
   ];
   return markers.some((m) => msg.includes(m));
 }
