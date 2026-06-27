@@ -40,7 +40,7 @@ import {
   type LogFields,
 } from "@apnex/network-adapter";
 import { CognitivePipeline } from "@apnex/cognitive-layer";
-import { readFileSync, existsSync, appendFileSync, statSync, renameSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -134,110 +134,33 @@ const SHIM_LOG_FILE = process.env.OIS_SHIM_LOG_FILE || join(WORK_DIR, ".ois", "s
 const SHIM_EVENTS_FILE = process.env.OIS_SHIM_EVENTS_FILE || join(WORK_DIR, ".ois", "shim-events.ndjson");
 const SHIM_LOG_ROTATE_BYTES = Number(process.env.OIS_SHIM_LOG_ROTATE_BYTES) || 10 * 1024 * 1024;
 
-function ensureDir(path: string): void {
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-  } catch {
-    /* best-effort */
-  }
-}
-
-function rotateIfNeeded(file: string): void {
-  try {
-    const stat = statSync(file);
-    if (stat.size > SHIM_LOG_ROTATE_BYTES) {
-      const rotated = `${file}.${Date.now()}`;
-      renameSync(file, rotated);
-    }
-  } catch {
-    /* file doesn't exist yet, that's fine */
-  }
-}
-
-ensureDir(SHIM_LOG_FILE);
-ensureDir(SHIM_EVENTS_FILE);
-rotateIfNeeded(SHIM_LOG_FILE);
-rotateIfNeeded(SHIM_EVENTS_FILE);
-
-function appendText(line: string): void {
-  try {
-    appendFileSync(SHIM_LOG_FILE, line);
-  } catch {
-    /* best-effort — never disturb the call loop */
-  }
-}
-
-// mission-66 commit 4: redaction + log-level helpers extracted to
-// `./observability.ts` for unit-test tractability (shim.ts module init
-// has process.exit(1) side effect via loadConfig()).
-// idea-355 SLICE-1: observability helpers hoisted to the kernel.
-import { redactFields, parseLogLevel, shouldEmitLevel, type LogLevel } from "@apnex/network-adapter";
+// mission-66 commit 4: redaction + log-level helpers extracted for unit-test
+// tractability (shim.ts module init has a process.exit(1) side effect via
+// loadConfig()). idea-355 SLICE-1: the file-backed logger (NDJSON + text +
+// stderr fan-out, rotation, redaction, level-filter) is hoisted to the kernel
+// `createFileLogger`. The shim injects only its file paths + format choices.
+import { parseLogLevel, createFileLogger, type LogLevel } from "@apnex/network-adapter";
 const SHIM_LOG_LEVEL: LogLevel = parseLogLevel(process.env.OIS_SHIM_LOG_LEVEL);
 
-function appendEvent(event: string, fields: LogFields, message?: string): void {
-  // mission-66 commit 4: OIS_SHIM_LOG_LEVEL filter (ADR-031 §3). Events
-  // tagged with `fields.level` below the configured threshold are
-  // suppressed (no-op). Events without `level` always emit (default INFO).
-  if (!shouldEmitLevel(fields.level as string | undefined, SHIM_LOG_LEVEL)) {
-    return;
-  }
-  const line = JSON.stringify({
-    ts: new Date().toISOString(),
-    event,
-    fields: redactFields(fields),
-    message: message ?? null,
-    pid: process.pid,
-  }) + "\n";
-  try {
-    appendFileSync(SHIM_EVENTS_FILE, line);
-  } catch {
-    /* best-effort */
-  }
-}
+const __fileLog = createFileLogger({
+  textFile: SHIM_LOG_FILE,
+  eventsFile: SHIM_EVENTS_FILE,
+  rotateBytes: SHIM_LOG_ROTATE_BYTES,
+  mirrorToStderr: true,
+  logLevel: SHIM_LOG_LEVEL,
+  pid: process.pid,
+  bound: { pid: process.pid, role: config.role },
+});
 
-// ── Logging (stderr + file) ─────────────────────────────────────────
-
+// Standalone text + structured-event sinks. Function declarations (not const)
+// preserve hoisting for the many call sites that precede this definition.
 function log(msg: string): void {
-  const ts = new Date().toISOString().replace("T", " ").replace("Z", "");
-  const line = `[${ts}] ${msg}\n`;
-  process.stderr.write(line);
-  appendText(line);
+  __fileLog.log(msg);
 }
-
-// FileBackedLogger — concrete ILogger that fans out to:
-//   1. NDJSON events file (every .log call, structured fields preserved)
-//   2. text log file + stderr (rendered friendly form)
-// Bound fields apply to every emission via `child()` for scoped loggers
-// (per-session, per-reconnect, etc.).
-class FileBackedLogger implements ILogger {
-  constructor(private readonly bound: LogFields = {}) {}
-
-  log(event: string, fields?: LogFields, message?: string): void {
-    const merged: LogFields = { ...this.bound, ...(fields ?? {}) };
-    appendEvent(event, merged, message);
-    if (message) {
-      log(`[${event}] ${message}`);
-    } else {
-      const fieldsStr = renderFields(merged);
-      log(fieldsStr ? `[${event}]${fieldsStr}` : `[${event}]`);
-    }
-  }
-
-  child(fields: LogFields): ILogger {
-    return new FileBackedLogger({ ...this.bound, ...fields });
-  }
+function appendEvent(event: string, fields: LogFields, message?: string): void {
+  __fileLog.appendEvent(event, fields, message);
 }
-
-function renderFields(fields: LogFields): string {
-  const parts: string[] = [];
-  for (const k of Object.keys(fields)) {
-    const v = fields[k];
-    parts.push(` ${k}=${Array.isArray(v) ? `[${v.join(",")}]` : String(v)}`);
-  }
-  return parts.join("");
-}
-
-const eventsLogger: ILogger = new FileBackedLogger({ pid: process.pid, role: config.role });
+const eventsLogger: ILogger = __fileLog.logger;
 
 // ── Render-surface: Claude `<channel>` notification injection ───────
 //

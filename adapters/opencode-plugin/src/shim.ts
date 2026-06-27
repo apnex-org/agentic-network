@@ -27,6 +27,7 @@ import {
   readRequiredAgentName,
   loadConfig,
   readPackageVersion,
+  createFileLogger,
   buildPromptText,
   buildToastMessage,
   createSharedDispatcher,
@@ -35,6 +36,7 @@ import {
   isPulseEvent,
   reconstructDrainedAction,
   type HubConfig,
+  type FileLogger,
   type AgentEvent,
   type SessionState,
   type SessionReconnectReason,
@@ -46,7 +48,7 @@ import { CognitivePipeline } from "@apnex/cognitive-layer";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { readFileSync, appendFileSync, mkdirSync } from "fs";
+import { readFileSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
@@ -83,6 +85,10 @@ const RATE_LIMIT_MS = 30_000;
 
 let diagLogPath = "";
 let notificationLogPath = "";
+// idea-355 SLICE-1: the file-backed text logger is hoisted to the kernel
+// `createFileLogger`. null until initLogger() runs (preserves the pre-init
+// no-op semantics); opencode keeps the TUI clean (no stderr mirror).
+let __fileLog: FileLogger | null = null;
 let hubAdapter: McpAgentClient | null = null;
 let proxyPort = 0;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -143,21 +149,17 @@ const dispatcher = createSharedDispatcher({
 function initLogger(directory: string): void {
   diagLogPath = join(directory, ".ois", "hub-plugin.log");
   notificationLogPath = join(directory, ".ois", "hub-plugin-notifications.log");
-  try {
-    mkdirSync(dirname(diagLogPath), { recursive: true });
-  } catch {
-    /* directory exists */
-  }
+  // Simple text-append (no NDJSON / no rotation / no stderr — the TUI must
+  // stay clean); the kernel factory does the ensureDir + best-effort append.
+  // Line format kept verbatim (`<raw ISO> <msg>`) so logs are byte-identical.
+  __fileLog = createFileLogger({
+    textFile: diagLogPath,
+    formatLine: (m) => `${new Date().toISOString()} ${m}\n`,
+  });
 }
 
 function log(msg: string): void {
-  if (!diagLogPath) return;
-  const line = `${new Date().toISOString()} ${msg}\n`;
-  try {
-    appendFileSync(diagLogPath, line);
-  } catch {
-    /* silently fail — don't pollute TUI */
-  }
+  __fileLog?.log(msg);
 }
 
 // ── Configuration ───────────────────────────────────────────────────

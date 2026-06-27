@@ -87,6 +87,9 @@ export {
 } from "./observability.js";
 export type { LogLevel } from "./observability.js";
 
+export { createFileLogger } from "./file-logger.js";
+export type { FileLogger, FileLoggerOptions } from "./file-logger.js";
+
 export { performStateSync } from "./kernel/state-sync.js";
 export type { StateSyncContext, DrainedPendingAction } from "./kernel/state-sync.js";
 
