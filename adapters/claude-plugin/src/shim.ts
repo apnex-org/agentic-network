@@ -74,8 +74,9 @@ const SHUTDOWN_TIMEOUT_MS = 3000;
 // @apnex/network-adapter/package.json. Pre-mission-66 these were
 // hardcoded ("1.2.0" + "@apnex/network-adapter@2.1.0") and drifted
 // from the npm package.json values (0.1.4 + 0.1.2 respectively).
-// Hub-side canonical projection (agent-repository.ts deriveAdvisoryTags)
-// surfaces these via advisoryTags.adapterVersion to all consumers.
+// Hub-side canonical projection (deriveAdvisoryTags) surfaces these via
+// advisoryTags.sdkVersion (kernel) + shimVersion (this plugin) to all
+// consumers (idea-355 SLICE-4 retired the old mislabeled adapterVersion key).
 const __shimDir = dirname(fileURLToPath(import.meta.url));
 const __require = createRequire(import.meta.url);
 

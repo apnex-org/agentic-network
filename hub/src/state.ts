@@ -113,18 +113,14 @@ export interface AgentAdvisoryTags {
   // All fields are best-effort, launch-time-only, subject to drift.
   // DO NOT build routing logic on these.
   llmModel?: string;           // e.g., "claude-opus-4-6"
-  // mission-66 #40 closure: adapter version surfaced via advisoryTags
-  // (canonical projection derived Hub-side from clientMetadata.proxyVersion).
-  // LEGACY QUIRK: this field actually carries clientMetadata.proxyVersion
-  // (claude-plugin shim version), NOT the network-adapter SDK version.
-  // Preserved for back-compat; rename to `proxyVersion` deferred (AG-8 in
-  // M-Build-Identity-AdvisoryTag Design v1.0).
-  adapterVersion?: string;     // e.g., "0.1.4" (claude-plugin package.json version)
-  // idea-355 SLICE-3 / bug-183 "true-half" (report-both): intent-aligned
-  // version surfaces that disambiguate the mislabeled `adapterVersion` above.
-  // shimVersion = clientMetadata.proxyVersion (the SHIM / plugin layer);
-  // sdkVersion  = clientMetadata.sdkVersion  (the KERNEL / network-adapter).
-  // ADDITIVE — adapterVersion is preserved for back-compat until AG-8 retire.
+  // idea-355 SLICE-3 report-both + SLICE-4 AG-8 RETIRE: the intent-aligned
+  // version surfaces. The old mislabeled `adapterVersion` (it carried
+  // clientMetadata.proxyVersion — the SHIM, not the SDK; the bug-183 lie) was
+  // RETIRED in SLICE-4; shimVersion is its exact-value replacement.
+  //   shimVersion = clientMetadata.proxyVersion (the SHIM / plugin layer);
+  //   sdkVersion  = clientMetadata.sdkVersion  (the KERNEL / network-adapter).
+  // (The DIFFERENT top-level Agent.adapterVersion = the kernel version is
+  // unrelated and untouched.)
   sdkVersion?: string;         // e.g., "@apnex/network-adapter@0.1.2"
   shimVersion?: string;        // e.g., "0.1.4"
   // M-Build-Identity-AdvisoryTag (idea-256): build-identity projections

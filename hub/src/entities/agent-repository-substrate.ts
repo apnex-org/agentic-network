@@ -210,15 +210,16 @@ function deriveAdvisoryTags(
   clientMetadata: AgentClientMetadata | undefined | null,
 ): AgentAdvisoryTags {
   const base: AgentAdvisoryTags = { ...(incoming ?? {}) };
-  if (base.adapterVersion === undefined && clientMetadata?.proxyVersion) {
-    base.adapterVersion = clientMetadata.proxyVersion;
-  }
-  // idea-355 SLICE-3 / bug-183 "true-half" (report-both, fork 2 ADDITIVE):
-  // the legacy `adapterVersion` above is mislabeled — it carries the SHIM
-  // (proxyVersion), not the SDK. Surface BOTH versions under intent-aligned
-  // keys without touching adapterVersion (the AG-8 retire is a later slice):
+  // idea-355 SLICE-4 / bug-183 (AG-8 retire): the legacy advisoryTags.adapterVersion
+  // was mislabeled — it carried the SHIM (proxyVersion), not the adapter/SDK —
+  // so SLICE-3's report-both added the honest sdkVersion + shimVersion keys, and
+  // SLICE-4 now RETIRES the adapterVersion write entirely (shimVersion carries the
+  // identical value, so it was a redundant mislabeled duplicate). The intent-
+  // aligned keys are the canonical advisory surface:
   //   sdkVersion  = clientMetadata.sdkVersion  (the KERNEL / network-adapter)
   //   shimVersion = clientMetadata.proxyVersion (the SHIM / plugin)
+  // NOTE: the DIFFERENT top-level Agent.adapterVersion (= the kernel/sdkVersion,
+  // decoded elsewhere) is unrelated and is NOT touched.
   if (base.sdkVersion === undefined && clientMetadata?.sdkVersion) {
     base.sdkVersion = clientMetadata.sdkVersion;
   }
