@@ -81,17 +81,17 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
     const eng = await repo.createWorkItem({ type: "bug", roleEligibility: ["engineer", "verifier"] });
     const arch = await repo.createWorkItem({ type: "review", roleEligibility: ["architect"] });
 
-    const ready = await repo.listWorkItems({ status: "ready" });
+    const { items: ready } = await repo.listWorkItems({ status: "ready" });
     const readyIds = new Set(ready.map((w) => w.id));
     expect(readyIds.has(eng.id)).toBe(true);
     expect(readyIds.has(arch.id)).toBe(true);
 
-    const forEngineer = await repo.listWorkItems({ role: "engineer" });
+    const { items: forEngineer } = await repo.listWorkItems({ role: "engineer" });
     const engIds = new Set(forEngineer.map((w) => w.id));
     expect(engIds.has(eng.id)).toBe(true);   // roleEligibility CONTAINS "engineer"
     expect(engIds.has(arch.id)).toBe(false); // architect-only — excluded
 
-    const forArchitect = await repo.listWorkItems({ role: "architect" });
+    const { items: forArchitect } = await repo.listWorkItems({ role: "architect" });
     expect(new Set(forArchitect.map((w) => w.id)).has(arch.id)).toBe(true);
   }, OP_TIMEOUT);
 
@@ -106,7 +106,7 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
     const got = await repo.getWorkItem(w.id);
     expect(got!.roleEligibility).toEqual([]);
     // $contains over an empty array never matches → never surfaces in a role projection.
-    const forEng = await repo.listWorkItems({ role: "engineer" });
+    const { items: forEng } = await repo.listWorkItems({ role: "engineer" });
     expect(new Set(forEng.map((x) => x.id)).has(w.id)).toBe(false);
   }, OP_TIMEOUT);
 
@@ -189,12 +189,12 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
       createdAt: "2026-06-22T00:00:00.000Z", updatedAt: "2026-06-22T00:00:00.000Z",
     });
     const readyEng = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"] });
-    const readyEngineers = await repo.listWorkItems({ status: "ready", role: "engineer" });
+    const { items: readyEngineers } = await repo.listWorkItems({ status: "ready", role: "engineer" });
     const ids = new Set(readyEngineers.map((x) => x.id));
     expect(ids.has(readyEng.id)).toBe(true);        // ready AND engineer → included
     expect(ids.has("work-edge-done")).toBe(false);  // engineer but DONE → AND excludes
     // and it DOES surface when the status leg matches:
-    const doneEng = await repo.listWorkItems({ status: "done", role: "engineer" });
+    const { items: doneEng } = await repo.listWorkItems({ status: "done", role: "engineer" });
     expect(new Set(doneEng.map((x) => x.id)).has("work-edge-done")).toBe(true);
   }, OP_TIMEOUT);
 
@@ -266,5 +266,45 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
 
     // A DIFFERENT, under-cap caller → the agent-scoped projection DOES include it.
     expect(new Set((await repo.listReadyForRole(ROLE, 500, FRESH)).items.map((w) => w.id)).has(target.id)).toBe(true);
+  }, OP_TIMEOUT);
+
+  it("list_work backing: listWorkItems filters by holder + returns the lease COLUMN; observability surfaces NON-ready items (stint-4 R1 / idea-357-pt3)", async () => {
+    const ROLE = "engineer";
+    const HOLDER = "agent-listwork-holder";
+    // A leased item: claim it so it carries a real lease {holder, expiresAt, ...} on a real-pg row.
+    const leased = await repo.createWorkItem({ type: "task", roleEligibility: [ROLE] });
+    expect((await repo.claimWorkItem(leased.id, HOLDER, ROLE))?.status).toBe("claimed");
+    // An unleased ready item for the same role (lease === null).
+    const unleased = await repo.createWorkItem({ type: "task", roleEligibility: [ROLE] });
+    // A DIFFERENT holder's item — must NOT match the holder filter.
+    const otherHeld = await repo.createWorkItem({ type: "task", roleEligibility: [ROLE] });
+    expect((await repo.claimWorkItem(otherHeld.id, "agent-other", ROLE))?.status).toBe("claimed");
+
+    // HOLDER filter → ONLY the item HOLDER leases (equality on the indexed status.lease.holder path).
+    const byHolder = await repo.listWorkItems({ holder: HOLDER });
+    const holderIds = new Set(byHolder.items.map((w) => w.id));
+    expect(holderIds.has(leased.id)).toBe(true);     // held by HOLDER → matched
+    expect(holderIds.has(unleased.id)).toBe(false);  // no lease → not matched
+    expect(holderIds.has(otherHeld.id)).toBe(false); // different holder → not matched
+    expect(byHolder.truncated).toBe(false);
+
+    // The lease is a first-class COLUMN on the returned flat item (real-pg envelope decode):
+    // holder + expiry are visible so the controller sees lease state at a glance (tele-4).
+    const leasedRow = byHolder.items.find((w) => w.id === leased.id)!;
+    expect(leasedRow.lease).not.toBeNull();
+    expect(leasedRow.lease!.holder).toBe(HOLDER);
+    expect(typeof leasedRow.lease!.expiresAt).toBe("string"); // lease expiry/state visible
+    expect(leasedRow.status).toBe("claimed");
+
+    // Observability (UNFILTERED by claim-readiness): a status filter surfaces NON-ready
+    // items (claimed) — list_work shows ALL matching items, unlike list_ready_work.
+    const claimed = await repo.listWorkItems({ status: "claimed" });
+    const claimedIds = new Set(claimed.items.map((w) => w.id));
+    expect(claimedIds.has(leased.id)).toBe(true);
+    expect(claimedIds.has(otherHeld.id)).toBe(true);
+    expect(claimedIds.has(unleased.id)).toBe(false); // still `ready`, not `claimed`
+    // An unleased item carries a null lease column (round-trips through the envelope).
+    const stillReady = await repo.listWorkItems({ status: "ready" });
+    expect(stillReady.items.find((w) => w.id === unleased.id)!.lease).toBeNull();
   }, OP_TIMEOUT);
 });

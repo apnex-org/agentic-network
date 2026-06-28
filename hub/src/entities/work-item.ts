@@ -124,9 +124,14 @@ export interface IWorkItemStore {
   getWorkItem(workId: string): Promise<WorkItem | null>;
 
   /** List work-items, optionally filtered by phase and/or role-eligibility
-   *  ($contains array-membership) — the storage read the list_ready_work verb
-   *  (sub-PR-3) projects over. */
-  listWorkItems(filter?: { status?: WorkItemPhase; role?: string }): Promise<WorkItem[]>;
+   *  ($contains array-membership) and/or current lease-holder (agentId) — the
+   *  storage read the list_ready_work verb (sub-PR-3) projects over AND the
+   *  list_work org-state-snapshot verb (stint-4 R1, idea-357-pt3) queries. Returns
+   *  flat items (lease decoded as a first-class column) + `truncated` — the
+   *  500-row scan-cap honesty flag (tele-4: never a silent cap). UNFILTERED by
+   *  claim-readiness: this is the observability surface (shows ALL matching items
+   *  incl. dependency-blocked); the deps/WIP readiness gate is list_ready_work's job. */
+  listWorkItems(filter?: { status?: WorkItemPhase; role?: string; holder?: string }): Promise<{ items: WorkItem[]; truncated: boolean }>;
 
   /** The list_ready_work projection: ready items claimable by `role` (empty
    *  roleEligibility = any-role, OR'd in). truncation-HONEST — `truncated` flags a

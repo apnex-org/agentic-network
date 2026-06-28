@@ -79,8 +79,8 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("registers all 11 tools (create_work + get_work on-ramp + the 9 lifecycle verbs)", () => {
-    for (const t of ["create_work", "get_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
+  it("registers all 12 tools (create_work + get_work + list_work snapshot + the 9 lifecycle verbs)", () => {
+    for (const t of ["create_work", "get_work", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
   });
@@ -197,6 +197,37 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     const r = await router.handle("list_ready_work", {}, ctxFor(stub, "engineer"));
     expect(body(r).scopedToCaller).toBeUndefined();
     expect(stub.calls[0].args[2]).toBeUndefined(); // role-view only, no agent scoping
+  });
+
+  it("list_work: org-state snapshot — returns FLAT items incl. the lease column, paginated, filters AND'd through to the store (stint-4 R1 / idea-357-pt3)", async () => {
+    const held = sampleItem({ id: "work-held", status: "claimed" }); // sampleItem carries a lease
+    const blocked = sampleItem({ id: "work-blocked", status: "blocked" });
+    const stub = makeStub({ listWorkItems: () => ({ items: [held, blocked], truncated: false }) });
+    const r = await router.handle("list_work", { status: "blocked", role: "engineer", holder: "anonymous-engineer" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBeFalsy();
+    const b = body(r);
+    // observability: NON-ready items returned (claimed + blocked), each with its lease COLUMN
+    expect((b.items as WorkItem[]).map((w) => w.id)).toEqual(["work-held", "work-blocked"]);
+    expect((b.items as WorkItem[])[0].lease).not.toBeNull();
+    expect((b.items as WorkItem[])[0].lease!.holder).toBe("anonymous-engineer");
+    expect(b.total).toBe(2);
+    expect(b.truncated).toBe(false);
+    // the three filters are AND'd through to the store verbatim (status/role/holder)
+    expect(stub.calls[0].method).toBe("listWorkItems");
+    expect(stub.calls[0].args[0]).toEqual({ status: "blocked", role: "engineer", holder: "anonymous-engineer" });
+  });
+
+  it("list_work: surfaces truncation HONESTLY — a capped scan sets truncated + a note, never silent (tele-4)", async () => {
+    const stub = makeStub({ listWorkItems: () => ({ items: [sampleItem()], truncated: true }) });
+    const b = body(await router.handle("list_work", {}, ctxFor(stub, "engineer")));
+    expect(b.truncated).toBe(true);
+    expect(b.truncationNote).toMatch(/INCOMPLETE/);
+  });
+
+  it("list_work: a missing workItem store → not_wired (graceful, parity with the other verbs)", async () => {
+    const r = await router.handle("list_work", {}, ctxFor(undefined, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("not_wired");
   });
 });
 

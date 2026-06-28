@@ -16,7 +16,7 @@ import { z } from "zod";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { PolicyRouter } from "./router.js";
 import { resolveCreatedBy } from "./caller-identity.js";
-import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT } from "./list-filters.js";
+import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import {
   TransitionRejected,
   ClaimRejected,
@@ -31,6 +31,7 @@ import type {
   EvidenceRequirement,
   WorkItemType,
   WorkItemPriority,
+  WorkItemPhase,
 } from "../entities/work-item.js";
 
 function ok(obj: unknown): PolicyResult {
@@ -280,6 +281,28 @@ async function getWork(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   return w ? ok({ workItem: w }) : notFound(args.workId as string);
 }
 
+async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  // The org-state snapshot (stint-4 R1 / idea-357-pt3): ALL matching items, NOT a claimable
+  // projection. Lease + dependency-blocked state are COLUMNS, not filters — the deps/WIP
+  // readiness gate is list_ready_work's job (bug-181); list_work is the observability surface
+  // (shows blocked/leased/done items too). Filters AND across status/role/holder. The lease
+  // column rides on each flat item (holder/expiry/state) — the get_work shape, for many.
+  const { items, truncated } = await store.listWorkItems({
+    status: args.status as WorkItemPhase | undefined,
+    role: args.role as string | undefined,
+    holder: args.holder as string | undefined,
+  });
+  const page = paginate(items, args);
+  // truncation-HONEST (tele-4): `truncated` = the 500-row substrate scan was capped (there
+  // may be MORE matches we never saw) — distinct from pagination (limit/offset over what we DID see).
+  const truncationNote = truncated
+    ? { truncationNote: `the WorkItem scan hit the ${MAX_LIST_LIMIT}-row cap — result is INCOMPLETE; narrow by status/role/holder (or treat as a backlog-pressure signal)` }
+    : {};
+  return ok({ ...page, truncated, ...truncationNote });
+}
+
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
 const EVIDENCE_KIND = z.enum(["commit", "pr", "audit", "review", "test-run", "doc", "freeform"]);
@@ -299,6 +322,10 @@ const blockedOnSchema = z.object({
 
 const WORK_TYPE = z.enum(["task", "bug", "review", "verifier-gate", "freeform"]);
 const WORK_PRIORITY = z.enum(["critical", "high", "normal", "low"]);
+// Canonical phase set = WorkItemPhase (entities/work-item.ts) — mirrored here for the
+// list_work filter schema (same local duplication pattern as WORK_TYPE/WORK_PRIORITY +
+// the all-schemas storage-validation copy). Keep in sync with WorkItemPhase.
+const WORK_PHASE = z.enum(["ready", "claimed", "in_progress", "blocked", "review", "done", "abandoned"]);
 const evidenceRequirementSchema = z.object({
   id: z.string().min(1).describe("Author-supplied requirement id — complete_work binds evidence to it by requirementId (unique within the item)"),
   kind: EVIDENCE_KIND,
@@ -352,6 +379,18 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       scopeToCaller: z.boolean().optional().describe("When true, project only items the CALLER can actually claim (full claim_work predicate incl. WIP-cap + quarantine); a maxed/quarantined caller gets count 0. Default false = the non-agent-scoped role view."),
     },
     listReadyWork,
+  );
+
+  router.register(
+    "list_work",
+    "[Any] Query WorkItems by status/role/holder — the org-state SNAPSHOT (the controller's ground-truth view, today hand-stitched from list_ready_work × roles × get_work). Returns FLAT items incl. the LEASE column (holder / expiry / state) for observability, UNFILTERED by claim-readiness: shows ALL matching items incl. dependency-blocked + leased + done (lease/blocked are COLUMNS, not filters — the deps/WIP readiness gate is list_ready_work's job, bug-181). Filters AND across status/role/holder. Paginated (limit/offset); truncation-HONEST — a 500-row scan-cap sets `truncated` + a note, never a silent cap (tele-4). idea-357-pt3.",
+    {
+      status: WORK_PHASE.optional().describe("Filter by FSM phase (ready|claimed|in_progress|blocked|review|done|abandoned)"),
+      role: z.string().optional().describe("Filter by role-eligibility ($contains membership; empty-eligibility 'any-role' items won't match a specific role)"),
+      holder: z.string().optional().describe("Filter by current lease holder (agentId) — items this agent holds a lease on"),
+      ...LIST_PAGINATION_SCHEMA,
+    },
+    listWork,
   );
 
   router.register(

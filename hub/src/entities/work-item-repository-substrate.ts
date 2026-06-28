@@ -315,21 +315,33 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   }
 
   /**
-   * List work-items, optionally filtered by phase and/or role-eligibility. The
-   * role filter is `$contains` array-membership over spec.roleEligibility (the
-   * C1-R2 operator + GIN index). Filter built inline (local var) so the C3-R4
-   * call-site scanner resolves the keys (status / roleEligibility) directly — no
-   * helper/spread → no dynamic-site annotation.
+   * List work-items, optionally filtered by phase, role-eligibility, and/or current
+   * lease-holder. The role filter is `$contains` array-membership over
+   * spec.roleEligibility (the C1-R2 operator + GIN index); the holder filter is
+   * equality on the indexed envelope path `status.lease.holder` (the same path +
+   * GIN index inFlightCount/listExpiredLeaseItems use). Filter built inline (local
+   * var) with literal keys so the C3-R4 call-site scanner resolves them directly —
+   * no helper/spread → no dynamic-site annotation.
+   *
+   * This is BOTH the storage read the list_ready_work projection sits on AND the
+   * backing read for the list_work org-state-snapshot verb (stint-4 R1, idea-357-pt3):
+   * it returns FLAT items (lease decoded by cloneWorkItem = the first-class lease
+   * column) UNFILTERED by claim-readiness — list_work is the observability surface
+   * (shows ALL matching items incl. dependency-blocked); the deps/WIP readiness gate
+   * is list_ready_work's job only. truncation-HONEST (tele-4): `truncated` flags a
+   * scan that hit LIST_CAP — the repo owns LIST_CAP so the honesty signal is sourced
+   * here, never inferred at the policy layer from a coincidental length==cap.
    */
-  async listWorkItems(filter?: { status?: WorkItemPhase; role?: string }): Promise<WorkItem[]> {
+  async listWorkItems(filter?: { status?: WorkItemPhase; role?: string; holder?: string }): Promise<{ items: WorkItem[]; truncated: boolean }> {
     const substrateFilter: Filter = {};
     if (filter?.status) substrateFilter.status = filter.status;
     if (filter?.role) substrateFilter.roleEligibility = { $contains: filter.role };
+    if (filter?.holder) substrateFilter["status.lease.holder"] = filter.holder;
     const { items } = await this.substrate.list<WorkItem>(KIND, {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
       limit: LIST_CAP,
     });
-    return items.map(cloneWorkItem);
+    return { items: items.map(cloneWorkItem), truncated: items.length >= LIST_CAP };
   }
 
   /**
