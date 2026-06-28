@@ -444,5 +444,62 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
     it("a non-existent id → null", async () => {
       expect(await repo.getLegalMoves("work-ghost-lm", { agentId: "a", role: "engineer" })).toBeNull();
     }, OP_TIMEOUT);
+
+    // ── work-96: affordance-fidelity hardening — legal<=>verb cross-checks + WIP-cap + branches ──
+    // The agreement-pin (cal #96) for the PARALLEL-literal predicates: legal_moves.legal(verb) MUST
+    // match the verb's ACTUAL succeed/reject, so a guard-phase change can't create a lying affordance.
+    it("legal<=>verb: start — legal_moves agrees with the real start outcome (claimed→legal+succeeds; in_progress→illegal+rejects)", async () => {
+      const c = await claim("agent-xc-start");
+      expect(moveOf((await repo.getLegalMoves(c.id, { agentId: "agent-xc-start", role: "engineer" }))!, "start").legal).toBe(true);
+      await expect(repo.startWork(c.id, "agent-xc-start", c.token)).resolves.toBeTruthy();            // verb agrees: succeeds
+      expect(moveOf((await repo.getLegalMoves(c.id, { agentId: "agent-xc-start", role: "engineer" }))!, "start").legal).toBe(false); // now in_progress
+      await expect(repo.startWork(c.id, "agent-xc-start", c.token)).rejects.toThrow(/start requires claimed/); // verb agrees: rejects
+    }, OP_TIMEOUT);
+
+    it("legal<=>verb: block — in_progress→legal+succeeds; claimed→illegal+rejects", async () => {
+      const c = await claim("agent-xc-block");
+      expect(moveOf((await repo.getLegalMoves(c.id, { agentId: "agent-xc-block", role: "engineer" }))!, "block").legal).toBe(false); // claimed
+      await expect(repo.blockWork(c.id, "agent-xc-block", c.token, BLOCK)).rejects.toThrow(/block requires in_progress/);
+      await repo.startWork(c.id, "agent-xc-block", c.token);
+      expect(moveOf((await repo.getLegalMoves(c.id, { agentId: "agent-xc-block", role: "engineer" }))!, "block").legal).toBe(true); // in_progress
+      await expect(repo.blockWork(c.id, "agent-xc-block", c.token, BLOCK)).resolves.toBeTruthy();
+    }, OP_TIMEOUT);
+
+    it("legal<=>verb: resume — blocked→legal+succeeds; in_progress→illegal+rejects (pins resume.legal, sub-3 unexercised)", async () => {
+      const c = await claim("agent-xc-resume");
+      await repo.startWork(c.id, "agent-xc-resume", c.token);
+      expect(moveOf((await repo.getLegalMoves(c.id, { agentId: "agent-xc-resume", role: "engineer" }))!, "resume").legal).toBe(false); // in_progress
+      await expect(repo.resumeWork(c.id, "agent-xc-resume", c.token)).rejects.toThrow(/resume requires blocked/);
+      await repo.blockWork(c.id, "agent-xc-resume", c.token, BLOCK);
+      expect(moveOf((await repo.getLegalMoves(c.id, { agentId: "agent-xc-resume", role: "engineer" }))!, "resume").legal).toBe(true); // blocked
+      await expect(repo.resumeWork(c.id, "agent-xc-resume", c.token)).resolves.toBeTruthy();
+    }, OP_TIMEOUT);
+
+    it("WIP-cap modeled (work-96): a MAXED caller's claim.legal=false — not optimistic", async () => {
+      const agent = "agent-xc-cap";
+      for (let i = 0; i < WIP_CAP; i++) { const w = await ready(); await repo.claimWorkItem(w.id, agent); } // fill to cap
+      const target = await ready();
+      const claimMove = moveOf((await repo.getLegalMoves(target.id, { agentId: agent, role: "engineer" }))!, "claim");
+      expect(claimMove.legal).toBe(false);                 // not optimistic — the WIP-cap is reflected
+      expect(claimMove.reason).toMatch(/WIP cap/);
+      // verb agrees: claim_work actually rejects for the maxed agent
+      await expect(repo.claimWorkItem(target.id, agent)).rejects.toBeInstanceOf(WipCapExceeded);
+    }, OP_TIMEOUT);
+
+    it("abandon creator-override (sub-3 unexercised branch): the CREATOR who is NOT the holder can abandon", async () => {
+      const w = await repo.createWorkItem({ type: "task", roleEligibility: [], createdBy: { agentId: "agent-xc-creator", role: "engineer" } });
+      await repo.claimWorkItem(w.id, "agent-xc-other"); // a DIFFERENT agent holds it
+      const lm = (await repo.getLegalMoves(w.id, { agentId: "agent-xc-creator", role: "engineer" }))!;
+      expect(lm.isHolder).toBe(false);
+      expect(moveOf(lm, "abandon").legal).toBe(true);      // creator-override (isCreator && !isHolder)
+      expect(moveOf(lm, "start").legal).toBe(false);       // but NOT the holder-only verbs
+    }, OP_TIMEOUT);
+
+    it("claim 'requires ready' reason (sub-3 unexercised branch): a non-ready item → claim illegal with the phase reason", async () => {
+      const c = await claim("agent-xc-nr"); // claimed, not ready
+      const claimMove = moveOf((await repo.getLegalMoves(c.id, { agentId: "agent-xc-other2", role: "engineer" }))!, "claim");
+      expect(claimMove.legal).toBe(false);
+      expect(claimMove.reason).toMatch(/claim requires ready/);
+    }, OP_TIMEOUT);
   });
 });
