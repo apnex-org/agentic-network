@@ -228,4 +228,55 @@ describe("WorkItem state-timers (real-pg)", () => {
     // exact identity: the only timestamps used are the transition stamps, so sum === span (ms).
     expect(sum).toBe(wallClock);
   }, OP_TIMEOUT);
+
+  // gap-1 (carried from #427 verify): the sum-identity beyond the straight ready→in_progress→done.
+  const sumB = (d: { ready: number; claimed: number; in_progress: number; blocked: number; review: number }) =>
+    d.ready + d.claimed + d.in_progress + d.blocked + d.review;
+
+  it("SUM-IDENTITY (gap-1): holds for a REVIEWED node (in_progress→review→done)", async () => {
+    // a verifier Agent so the review evidence resolves to verifier-role (audit-4103 #2)
+    await pool.query("INSERT INTO entities(kind,id,data) VALUES('Agent',$1,$2) ON CONFLICT (kind,id) DO NOTHING",
+      ["verifier-gap1", JSON.stringify({ apiVersion: "core.ois/v1", kind: "Agent", id: "verifier-gap1", metadata: {}, spec: { role: "verifier" }, status: { phase: "online" } })]);
+    const reqs: EvidenceRequirement[] = [{ id: "code", kind: "commit" }, { id: "rev", kind: "review" }];
+    const w = await mk({ evidenceRequirements: reqs });
+    const a = agentOf(w.id);
+    const c = await repo.claimWorkItem(w.id, a, "engineer");
+    await sleep(GAP);
+    await repo.startWork(w.id, a, c!.lease!.token);
+    await sleep(GAP);
+    const parked = await repo.completeWork(w.id, a, c!.lease!.token,
+      [{ requirementId: "code", kind: "commit", ref: "abc", producedAt: new Date().toISOString() }]); // → review (in_progress accrues)
+    expect(parked!.status).toBe("review");
+    await sleep(GAP);
+    const done = await repo.completeWork(w.id, a, c!.lease!.token,
+      [{ requirementId: "rev", kind: "review", ref: "note", producedBy: "verifier-gap1", producedAt: new Date().toISOString() }]); // review→done (review accrues)
+    expect(done!.status).toBe("done");
+    expect(done!.stateDurations.review).toBeGreaterThan(0); // the verifier-wait dwell was captured
+    expect(sumB(done!.stateDurations)).toBe(Date.parse(done!.updatedAt) - Date.parse(done!.createdAt));
+  }, OP_TIMEOUT);
+
+  it("SUM-IDENTITY (gap-1): holds for a REQUEUED node (ready re-entry via release→re-claim)", async () => {
+    // Requeue tested via RELEASE (a real-time ready re-entry). The sweeper requeue needs a FUTURE
+    // nowISO (lease TTL = 15min, unwaitable in-test) which would inflate the entity timestamps + break
+    // the entity-timestamp identity; the sweeper's per-bucket accrual is separately pinned ("SWEEPER
+    // requeue accrues"). The telescoping across a ready re-entry is identical either way.
+    const w = await mk();
+    const a = agentOf(w.id);
+    await sleep(GAP);
+    const c1 = await repo.claimWorkItem(w.id, a, "engineer"); // ready stint 1
+    await sleep(GAP);
+    await repo.startWork(w.id, a, c1!.lease!.token);
+    await sleep(GAP);
+    await repo.releaseWork(w.id, a, c1!.lease!.token); // → ready (requeue)
+    await sleep(GAP);
+    const c2 = await repo.claimWorkItem(w.id, a, "engineer"); // ready stint 2 (re-accumulates)
+    await sleep(GAP);
+    await repo.startWork(w.id, a, c2!.lease!.token);
+    await sleep(GAP);
+    const done = await repo.completeWork(w.id, a, c2!.lease!.token,
+      [{ requirementId: "none", kind: "freeform", producedAt: new Date().toISOString(), note: "done" }]);
+    expect(done!.status).toBe("done");
+    expect(done!.stateDurations.ready).toBeGreaterThanOrEqual(2 * FLOOR); // two ready stints summed
+    expect(sumB(done!.stateDurations)).toBe(Date.parse(done!.updatedAt) - Date.parse(done!.createdAt));
+  }, OP_TIMEOUT);
 });
