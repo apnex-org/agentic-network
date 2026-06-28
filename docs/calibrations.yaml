@@ -3595,6 +3595,103 @@ calibrations:
     tele_alignment:
       - tele-3
       - tele-2
+  - id: 98
+    class: methodology
+    title: 'VERIFIER-OFFLINE STANDING CONTRACT — when no verifier-agent is online, architect-spawned adversarial-verify
+      sub-agents are the verification surface: every load-bearing invariant is still mutation-pinned and
+      non-vacuity enforced. On verifier-sub-agent stall/failure the architect self-completes the verify
+      (for a directly-runnable change) or re-spawns — a hung verifier must never block a clean PR.'
+    origin: stint-5
+    surfaced_at: 'stint-5 — #418..#424 architect-spawned adversarial-verify train; #424 sub-agent watchdog-stall
+      + architect self-complete'
+    status: closed-structurally
+    closure_mechanism: 'Established + proven across #418-#424 (the stint-5 S2/S3 PR train, steve offline):
+      the architect-spawned adversarial-verify sub-agent ran each load-bearing PR with every invariant mutation-pinned,
+      and non-vacuity caught a real gap each time. Stall-handoff demonstrated #424: the sub-agent watchdog-stalled
+      (600s no-progress) mid-run after confirming the hardest claims, and the architect self-completed the
+      verification (legit separation-of-duties on an engineer-authored, directly-runnable CLI).'
+    cross_refs:
+    - '#83'
+    - '#96'
+  - id: 99
+    class: methodology
+    title: A DOGFOOD THAT CANNOT COMPLETE STILL PAYS IF IT SURFACES THE BLOCKER — a blocked live-dogfood
+      attempt still returns value via the root-cause it finds and the escape-hatch it forces; and do NOT
+      claim a live-surface dogfood on a stale host (an already-running session's MCP traffic is not a deployment
+      dogfood).
+    origin: stint-5
+    surfaced_at: stint-5 work-87/work-95 — the seed_blueprint live-dogfood attempt was blocked by bug-203
+      (claude-code host does not re-enumerate tools on tools/list_changed) but surfaced that root-cause
+      + forced the /mcp-direct apply-blueprint.sh escape-hatch; the validation+guardrail leg remained the
+      banked dogfood signal.
+    status: open
+    cross_refs:
+    - '#91'
+    - '#3'
+    - '#34'
+    - '#76'
+  - id: 100
+    class: methodology
+    title: 'RESPECT THE PERMISSION GUARD — ROUTE TO OWNER, DEFER TO AUTHORIZATION — when a classifier/permission
+      guard blocks an action, respect the guard rather than routing around it: recommend the action to its
+      OWNER (who performs their own), and defer authorization-gated actions to the authorizer. Do not seek
+      a bypass.'
+    origin: stint-5
+    surfaced_at: 'stint-5 — the bulk-PR-close classifier block: the architect respected it -> recommend-close
+      + owner-close (greg self-closed his own 334/336) + Director-auth-defer for the rest, rather than routing
+      around the guard.'
+    status: open
+  - id: 101
+    class: methodology
+    title: SCHEMA-DERIVED PARITY GUARDS NEED A FIELD-COMPLETE REFERENCE FIXTURE — a registration/parity-completeness
+      guard is only non-vacuous if its reference (full) fixture contains EVERY field in the class it guards;
+      an omitted field can be silently stripped from the real schema and the guard stays green (the fixture-vacuity
+      sub-class of non-vacuity).
+    origin: stint-5
+    surfaced_at: 'stint-5 #417 GATE-417 — the #416 parity guard''s full fixture omitted completionDependsOn,
+      so stripping it from the registered schema stayed green; fixed by making the fixture field-complete
+      + a get_work includeCompletionProgress parity guard, mutation-proven.'
+    status: open
+    cross_refs:
+    - '#96'
+    - '#88'
+  - id: 102
+    class: methodology
+    title: A SEPARATOR/CHARSET INVARIANT NEEDS A COLLISION-FORMABLE PIN — to prove a separator or charset
+      constraint prevents ID collisions, the test must CONSTRUCT the collision the invariant forbids (e.g.
+      assert f(a-b,c) == f(a,b-c) when dashes are allowed inside segments), not merely reject a malformed
+      input; a generic bad-input reject does not pin the collision-safety property.
+    origin: stint-5
+    surfaced_at: 'stint-5 #418 GATE-418 — the BLUEPRINT_ID_TOKEN no-dash invariant was not collision-pinned
+      (the bad-id test tripped on a space or punctuation char, not the dash); fixed by exporting blueprintNodeId
+      + a collision-formable test plus a dash-rejection belt, mutation-proven.'
+    status: open
+    cross_refs:
+    - '#96'
+  - id: 103
+    class: methodology
+    title: PROACTIVE PRE-VERDICT FORK-SURFACING IS A VERIFICATION-COLLABORATION DISCIPLINE — surface a trust-critical
+      interpretation fork (especially one a self-driving signal depends on) to the verifier/architect as
+      a DECISION before the verdict, not buried in a PR body; it converges with the adversarial-verify and
+      prevents wrong verdicts + wasted cycles. Bank the positive, not only the failure.
+    origin: stint-5
+    surfaced_at: 'stint-5 #420/#422/#424 — pre-verdict fork disclosures converging with the architect adversarial-verify'
+    status: closed-structurally
+    closure_mechanism: 'Working discipline, demonstrated 3x this stint, each converging with the architect
+      adversarial-verify before the verdict: #420 claim-2 (the parallel-impl projection<->gate parity disclosure),
+      #422 claim-1 (the legal_moves shared-vs-parallel-predicate mix), #424 (the no-dangling-vs-symmetry
+      cross-link fork — surfaced as a decision; full symmetry would have RED''d validate on the real ledger).
+      The surfacer + the verifier independently reach the same call (two-sided convergence accounting).'
+    pattern_membership:
+    - two-sided-convergence-accounting
+    cross_refs:
+    - '#96'
+
+
+
+
+
+
 
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
