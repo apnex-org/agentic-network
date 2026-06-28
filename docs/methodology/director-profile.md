@@ -47,6 +47,16 @@ Observed shape (autonomous-stint-3, ~9h fully-autonomous solo arc, "see you tomo
 
 ---
 
+## Stint-4 deltas (2026-06-28 — "Bank-the-Base")
+
+Three new revealed signals, all consistent with and sharpening the v1.0 profile:
+
+- **Delegates OWNERSHIP of operational layers, not just tasks.** Mid-stint the Director corrected an under-read ("I approved gcloud/ssh" → *"Hold up — I meant that you — Lily — **own** infra"* → *"you can drive missions on infra, greg can assist"*) and granted prod gcloud + SSH. The lean: the architect **owns** an operational layer end-to-end (infra: VM / deploy pipeline / watchtower / hardening), the Director is **not** the operator, and the Director engages at gate-points. Don't punt an owned-layer fix to the Director or assume the Director owns it. Generalizes #1 "minimize operator touches" from *fewer touches* to *the architect absorbs the operator role outright*. (See `feedback_lily_owns_infra_and_prod_access.md`; ties FR-23 operator-as-lifecycle-bottleneck → the architect IS the operator now.)
+- **"Invests in the machine" escalates to PROCESS-FORMALIZATION altitude.** v1.0 #6 was building the driver-anchor (one mechanism). Stint-4 the Director directed formalizing + mechanizing the **entire stint lifecycle** — *"formalise this stint lifecycle / operational process, and mechanise the workflow for Lily to operate. Much in the same way we mechanise and formalise the Arc / Mission process."* The Director now directs building the **operating system for the autonomous role itself**, explicitly analogized to the Arc/Mission formalization. → M-Stint-Lifecycle (idea-380), staked as the stint-5 FOCUS. This is the highest-altitude expression of "build the loop that does the work."
+- **Delegates the META-PROCESS design + flips the close-out RACI to Lily-guides / Director-ratifies.** *"continue driving closure, review and retrospective… learn from previous stints and improve on that close out process. **You are to guide the Director.**"* The Director hands the close-out *method* (not just the content) to the architect and inverts the usual gate posture: the architect leads the process design + walkthrough, the Director ratifies. The right response is to LEAD (bring a structured walkthrough with a small number of crisp ratification decisions), not to ask permission step-by-step. (Stint-4 close-out method captured in `docs/methodology/autonomous-stint-close-out-protocol.md`.)
+
+---
+
 ## How to use (and not use)
 
 - **DO** use a lean to settle a genuine tie after tele-ranking; record that you did so.
@@ -59,4 +69,5 @@ Observed shape (autonomous-stint-3, ~9h fully-autonomous solo arc, "see you tomo
 ## Provenance
 
 - v1.0 derived at autonomous-stint-3 retrospective (2026-06-27) from the stint's decision record (`docs/decisions/autonomous-stint-3-2026-06-27-log.md`) + the retro synthesis route_map (`director-profile-stint3` RECORD action; "Director mode" + "Director deploy-posture" routing-index rows).
+- Stint-4 deltas added at the autonomous-stint-4 retrospective (2026-06-28; `docs/reviews/autonomous-stint-4-retrospective.md` §Verification Log gap #3): infra-ownership delegation, process-formalization-altitude "invests in the machine," and the close-out-RACI flip (Lily-guides / Director-ratifies).
 - Cross-refs: `docs/calibrations.yaml` #85 (ground-truth-over-assumption), #86 (defer-bias counter); `docs/methodology/autonomous-stint-operating-model.md` §6 (deploy autonomy boundary); CLAUDE.md "Calibration ledger discipline" (Director-curates-not-gates relaxation).
