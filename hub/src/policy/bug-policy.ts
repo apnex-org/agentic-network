@@ -105,7 +105,13 @@ async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
     totalPreFilter = (await ctx.stores.bug.listBugs()).items.length;
   }
   const page = paginate(filtered, args);
-  const queryUnmatched = hasFilter && page.count === 0 && totalPreFilter > 0;
+  // bug-200 (steve's #410 gate): _ois_query_unmatched asserts "valid filter,
+  // DEFINITIVELY zero matches in the collection." But the tags filter is applied
+  // client-side over the (possibly truncated) scan window — if the scan hit the
+  // 500 cap, a zero-result is NOT definitive (tag matches may exist beyond the
+  // window). Suppress the sentinel when truncated to avoid false certainty; the
+  // `truncated` flag stays in the response so the caller knows it's incomplete.
+  const queryUnmatched = hasFilter && page.count === 0 && totalPreFilter > 0 && !truncated;
   return {
     content: [{
       type: "text" as const,

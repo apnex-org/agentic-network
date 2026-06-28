@@ -3345,6 +3345,22 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     expect(parsed.truncationNote).toContain("500");
   });
 
+  it("bug-200 (steve #410 gate) — SUPPRESSES _ois_query_unmatched when truncated (no false certainty on a capped tag-filtered scan)", async () => {
+    // The tags filter ran client-side over a TRUNCATED window: 0 matches in the
+    // first 500 is NOT definitive (matches may exist beyond the cap). The store
+    // returns empty+truncated for the tag-filtered call, non-empty+truncated for
+    // the unfiltered recount → pre-fix this emitted _ois_query_unmatched (false
+    // certainty); the fix must suppress it while keeping truncated:true honest.
+    ctx.stores.bug.listBugs = (async (filter?: any) => {
+      if (filter?.tags) return { items: [], truncated: true };
+      return { items: [{ id: "bug-x", tags: [] } as any], truncated: true };
+    }) as any;
+    const parsed = JSON.parse((await router.handle("list_bugs", { tags: ["nonexistent"] }, ctx)).content[0].text);
+    expect(parsed.count).toBe(0);
+    expect(parsed.truncated).toBe(true);                 // honest: the scan was incomplete
+    expect(parsed._ois_query_unmatched).toBeUndefined(); // NOT a false-certain "definitely none"
+  });
+
   // ── bug-201: update_bug additive-tag mode (reuses mergeTags from #409) ──
   it("bug-201 — update_bug addTags unions onto existing tags WITHOUT clobbering", async () => {
     const { bugId } = JSON.parse((await router.handle("create_bug", { title: "T", description: "d", tags: ["existing-a", "existing-b"] }, ctx)).content[0].text);
