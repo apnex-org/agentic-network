@@ -22,11 +22,18 @@ never bare existence. (Live example: bug-181 recorded 9ec45ee[branch, squashed a
 
 Usage:
   reconcile.py --bugs-file bugs.json [--main main] [--home-repo apnex/agentic-network]
-               [--apply-out backfill.json] [--json]
+               [--apply-out backfill.json] [--apply] [--json]
 
 Read the bug-list with the existing psql tool, then reconcile:
   scripts/local/get-entities.sh --kind Bug > bugs.json   # (operator: psql read)
   scripts/reconciliation/reconcile.py --bugs-file bugs.json --apply-out backfill.json
+
+`--apply` (idea-379) EMITS the SAFE additive apply-SET — single-candidate fixCommits
+backfills ONLY — as JSON for an MCP agent to execute via update_bug. reconcile.py still
+NEVER writes to the Hub (Option A, tele-3); the status-change buckets stay report-only and
+can never enter the set (build_apply_set guard, mutation-tested). The MCP agent is the
+proper Hub-write executor (the Director-gated prod write goes through an agent + update_bug,
+never a CLI growing write powers).
 
 Disposition buckets (per bug):
   external                     repo != home-repo (out of this repo's reconciliation; idea-361)
@@ -152,6 +159,69 @@ def reconcile(
     return {"dispositions": dispositions, "byBucket": dict(by_bucket), "applyArtifact": apply_artifact}
 
 
+# ── Safe additive apply-set (idea-379 / work-84) ───────────────────────────────────
+# The ONE safe auto-applicable mutation is the ADDITIVE fixCommits backfill on a resolved
+# bug with a single merge-base-verified squash candidate (the applyArtifact). build_apply_set
+# emits the VALIDATED, additive-ONLY apply-set for an MCP agent (work-77) to execute via
+# update_bug. reconcile.py stays a PURE read-only git-forensic CLI (Option A, tele-3): it
+# EMITS the plan, it does NOT write to the Hub — the Director-gated prod write goes through
+# an agent + update_bug, never a CLI growing write powers.
+#
+# THE LOAD-BEARING GUARD: the set is built ONLY from single-candidate needs-backfill bugs.
+# The status-change buckets (claims-fixed-but-not-in-main, fixed-but-still-open) can NEVER
+# enter it — a sha in main is not proof a bug is fixed, and the re-open/resolve FSM is
+# idea-375's, never a reconcile heuristic. The applier receives (bugId, fixCommits) ONLY —
+# additive, structurally unable to touch status. dry_run (default) builds the set without
+# dispatching to the applier.
+
+# The status-change buckets — surfaced as report-only; NEVER auto-applied.
+STATUS_CHANGE_BUCKETS = ("claims-fixed-but-not-in-main", "fixed-but-still-open")
+
+# An applier performs the additive backfill for one bug. Injected so the executor (an MCP
+# agent in work-77) or a test mock is pluggable + the safety logic is testable without a Hub.
+Applier = Callable[[str, list], None]
+
+
+def build_apply_set(result: dict, applier: "Applier | None" = None, dry_run: bool = True) -> dict:
+    """Build (and, if not dry_run, dispatch to `applier`) the SAFE additive apply-set.
+
+    Only single-candidate needs-backfill bugs are ever included; the status-change buckets
+    are surfaced as report-only counts and NEVER dispatched. Returns a summary; the apply-set
+    is the executable plan for an MCP agent (work-77) to run update_bug(bugId, fixCommits) on.
+    """
+    by_bucket = result["byBucket"]
+    # Defense-in-depth ELIGIBILITY MAP (steve GATE-415): {bug -> its ONE derived candidate}
+    # for needs-backfill rows with EXACTLY ONE candidate. A MULTI-candidate needs-backfill
+    # bug is AMBIGUOUS (report-only) and must NEVER be auto-applied — even if a malformed
+    # applyArtifact picks one of its shas (the chosen sha could be the wrong fix). And a
+    # status-change-bucket bug isn't in this map at all. The earlier "(in needs-backfill) +
+    # (len==1)" check was too loose: it admitted a multi-candidate bug whose forged artifact
+    # entry happened to carry one sha.
+    eligible = {
+        d["bug"]: d["candidates"]
+        for d in by_bucket.get("needs-backfill", [])
+        if len(d.get("candidates") or []) == 1
+    }
+    apply_set: list = []
+    for entry in result.get("applyArtifact", []):
+        bug_id = entry["bugId"]
+        fix = entry.get("fixCommits") or []
+        # GUARD: the bug must be a SINGLE-candidate needs-backfill bug AND the artifact's
+        # fixCommits must EXACTLY match its one derived candidate. Excludes multi-candidate
+        # bugs (ambiguous), forged/mismatched shas, and every non-needs-backfill bucket.
+        if bug_id not in eligible or fix != eligible[bug_id]:
+            continue
+        apply_set.append({"bugId": bug_id, "fixCommits": fix})
+        if not dry_run and applier is not None:
+            applier(bug_id, fix)  # fixCommits-ONLY — structurally cannot change status
+    return {
+        "dryRun": dry_run,
+        "applySet": apply_set,        # the validated, executable safe-additive backfill set
+        "applyCount": len(apply_set),
+        "reportOnly": {b: len(by_bucket.get(b, [])) for b in STATUS_CHANGE_BUCKETS},
+    }
+
+
 # ── Real git oracles (the I/O shell around the pure engine) ────────────────────────
 
 def git_is_ancestor(repo_root: Path, main: str) -> Callable[[str], bool]:
@@ -241,6 +311,11 @@ def main() -> None:
                    help=f"Home repo slug; bugs with repo != this are 'external' (default: {HOME_REPO_DEFAULT})")
     p.add_argument("--apply-out", type=Path,
                    help="Write the apply-ready empty-fixCommits backfill artifact (JSON) here for `update_bug`")
+    p.add_argument("--apply", action="store_true",
+                   help="Emit the SAFE additive apply-SET — single-candidate fixCommits backfills ONLY — for an "
+                        "MCP agent (work-77) to execute via update_bug. reconcile.py never writes to the Hub "
+                        "itself (Option A, tele-3); the status-change buckets are report-only and can never enter "
+                        "the set. Default (omitted) = the read-only report preview.")
     p.add_argument("--json", action="store_true", help="Emit the full result as JSON instead of the text report")
     args = p.parse_args()
 
@@ -255,6 +330,12 @@ def main() -> None:
 
     if args.apply_out:
         args.apply_out.write_text(json.dumps(result["applyArtifact"], indent=2))
+
+    if args.apply:
+        # Option B (architect-ratified): reconcile.py EMITS the validated safe apply-set;
+        # it does NOT write to the Hub. An MCP agent (work-77) executes update_bug on it.
+        print(json.dumps(build_apply_set(result), indent=2))
+        return
 
     if args.json:
         print(json.dumps(result, indent=2))
