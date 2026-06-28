@@ -154,7 +154,37 @@ class ReconcileFaithfulTest(unittest.TestCase):
         self.assertNotIn("bug-trap", [e["bugId"] for e in apply["applySet"]])  # guard excluded it from the set
         self.assertNotIn("bug-trap", calls)                                    # and NEVER dispatched
         self.assertEqual(calls, ["bug-needsbackfill"])                         # only the genuine safe-additive
-        # MUTATION: drop the `bug_id not in backfill_bugs` guard → bug-trap dispatches → this test fails.
+        # MUTATION: drop the `bug_id not in eligible` guard → bug-trap dispatches → this test fails.
+
+    def test_MUTATION_multi_candidate_with_forged_single_sha_artifact_is_EXCLUDED(self):
+        # steve GATE-415: a MULTI-candidate needs-backfill bug is AMBIGUOUS (report-only).
+        # A malformed applyArtifact picking ONE of its shas must NOT be auto-applied — the
+        # chosen sha could be the wrong fix. The eligibility map (single-candidate ONLY) +
+        # exact-match guard excludes it. (The old "(in needs-backfill)+(len==1)" guard let it through.)
+        _commit(self.fx.repo, "m1.txt", "x", "fix for bug-multi (PR#X)")
+        sha_m1 = _commit(self.fx.repo, "m1b.txt", "x2", "fix for bug-multi (PR#Xb)")
+        result = reconcile.reconcile([{"id": "bug-multi", "status": "resolved", "fixCommits": []}],
+                                     self.is_ancestor, self.find_fix)
+        # bug-multi has 2 candidates → needs-backfill but NOT apply-ready (excluded from the set)
+        self.assertEqual(reconcile.build_apply_set(result)["applyCount"], 0)
+        # MALFORMED artifact: inject a single-sha entry for the multi-candidate bug
+        result["applyArtifact"].append({"bugId": "bug-multi", "fixCommits": [sha_m1]})
+        calls = []
+        apply = reconcile.build_apply_set(result, applier=lambda b, f: calls.append(b), dry_run=False)
+        self.assertNotIn("bug-multi", [e["bugId"] for e in apply["applySet"]])  # ambiguous → excluded
+        self.assertEqual(calls, [])                                             # NEVER dispatched
+
+    def test_forged_mismatched_sha_for_single_candidate_is_EXCLUDED(self):
+        # Exact-match guard: a single-candidate bug whose artifact fixCommits != its derived
+        # candidate (a forged/stale sha) is excluded — only the verified squash sha applies.
+        result = reconcile.reconcile([{"id": "bug-needsbackfill", "status": "resolved", "fixCommits": []}],
+                                     self.is_ancestor, self.find_fix)
+        self.assertEqual(reconcile.build_apply_set(result)["applyCount"], 1)  # legit single-candidate applies
+        result["applyArtifact"] = [{"bugId": "bug-needsbackfill", "fixCommits": ["deadbeef" * 5]}]  # forged sha
+        calls = []
+        apply = reconcile.build_apply_set(result, applier=lambda b, f: calls.append(b), dry_run=False)
+        self.assertEqual(apply["applyCount"], 0)  # mismatched sha → excluded
+        self.assertEqual(calls, [])
 
     def _envelope_bug(self, bug_id, phase, fix_commits=None, repo=None):
         """A real substrate-shaped Bug row (mission-90 envelope), matching get-entities.sh

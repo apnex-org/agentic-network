@@ -190,15 +190,26 @@ def build_apply_set(result: dict, applier: "Applier | None" = None, dry_run: boo
     is the executable plan for an MCP agent (work-77) to run update_bug(bugId, fixCommits) on.
     """
     by_bucket = result["byBucket"]
-    # Defense-in-depth: re-derive the eligible set from the bucket, don't trust the artifact
-    # blindly — a status-bucket bug must never reach the applier even via an artifact bug.
-    backfill_bugs = {d["bug"] for d in by_bucket.get("needs-backfill", [])}
+    # Defense-in-depth ELIGIBILITY MAP (steve GATE-415): {bug -> its ONE derived candidate}
+    # for needs-backfill rows with EXACTLY ONE candidate. A MULTI-candidate needs-backfill
+    # bug is AMBIGUOUS (report-only) and must NEVER be auto-applied — even if a malformed
+    # applyArtifact picks one of its shas (the chosen sha could be the wrong fix). And a
+    # status-change-bucket bug isn't in this map at all. The earlier "(in needs-backfill) +
+    # (len==1)" check was too loose: it admitted a multi-candidate bug whose forged artifact
+    # entry happened to carry one sha.
+    eligible = {
+        d["bug"]: d["candidates"]
+        for d in by_bucket.get("needs-backfill", [])
+        if len(d.get("candidates") or []) == 1
+    }
     apply_set: list = []
     for entry in result.get("applyArtifact", []):
         bug_id = entry["bugId"]
         fix = entry.get("fixCommits") or []
-        # GUARD: only a single-candidate needs-backfill bug, with exactly one squash sha.
-        if bug_id not in backfill_bugs or len(fix) != 1:
+        # GUARD: the bug must be a SINGLE-candidate needs-backfill bug AND the artifact's
+        # fixCommits must EXACTLY match its one derived candidate. Excludes multi-candidate
+        # bugs (ambiguous), forged/mismatched shas, and every non-needs-backfill bucket.
+        if bug_id not in eligible or fix != eligible[bug_id]:
             continue
         apply_set.append({"bugId": bug_id, "fixCommits": fix})
         if not dry_run and applier is not None:
