@@ -36,7 +36,7 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
   return {
     calls,
     createWorkItem: m("createWorkItem"), createBlueprintNode: m("createBlueprintNode"), deleteWorkItem: m("deleteWorkItem"),
-    getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), entityExists: m("entityExists"),
+    getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), getLegalMoves: m("getLegalMoves"), entityExists: m("entityExists"),
     listWorkItems: m("listWorkItems"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
@@ -80,8 +80,8 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("registers all 14 tools (create_work + seed_blueprint + get_work + get_current_stint + list_work snapshot + the 9 lifecycle verbs)", () => {
-    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_stint", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
+  it("registers all 15 tools (create_work + seed_blueprint + get_work + get_current_stint + legal_moves + list_work snapshot + the 9 lifecycle verbs)", () => {
+    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_stint", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
   });
@@ -678,6 +678,29 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
   it("get_current_stint: a non-existent arc → not_found", async () => {
     const stub = makeStub({ getStintProjection: () => null });
     const r = await router.handle("get_current_stint", { workId: "ghost" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("not_found");
+  });
+
+  // ── work-94 (cold-start spine, sub-slice 3): legal_moves ──
+  it("legal_moves: returns the caller's legal moves under `legalMoves` (pass-through)", async () => {
+    const lm = { workId: "work-1", status: "in_progress", isHolder: true, gateMet: true, moves: [{ verb: "complete", legal: true }] };
+    const stub = makeStub({ getLegalMoves: () => lm });
+    const r = await router.handle("legal_moves", { workId: "work-1" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBeFalsy();
+    expect(body(r).legalMoves).toMatchObject({ workId: "work-1", isHolder: true, gateMet: true });
+  });
+
+  it("legal_moves: threads the SPOOF-PROOF caller (agentId + role) from the session into the projection", async () => {
+    const stub = makeStub({ getLegalMoves: () => ({ workId: "w", status: "ready", isHolder: false, gateMet: true, moves: [] }) });
+    await router.handle("legal_moves", { workId: "w" }, ctxFor(stub, "engineer"));
+    const call = stub.calls.find((c) => c.method === "getLegalMoves")!;
+    expect((call.args[1] as { agentId: string; role: string })).toMatchObject({ agentId: "anonymous-engineer", role: "engineer" });
+  });
+
+  it("legal_moves: a non-existent id → not_found", async () => {
+    const stub = makeStub({ getLegalMoves: () => null });
+    const r = await router.handle("legal_moves", { workId: "ghost" }, ctxFor(stub, "engineer"));
     expect(r.isError).toBe(true);
     expect(body(r).errorKind).toBe("not_found");
   });
