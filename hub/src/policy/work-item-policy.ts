@@ -29,6 +29,7 @@ import type {
   WorkItemBlockedOn,
   EvidenceItem,
   EvidenceRequirement,
+  WorkItemReference,
   WorkItemType,
   WorkItemPriority,
   WorkItemPhase,
@@ -231,6 +232,61 @@ async function clearWorkQuarantine(args: Record<string, unknown>, ctx: IPolicyCo
 //     ABOUT entity X", not a claim-gate, so a dangling targetRef is not a trap; cross-kind
 //     create-time resolution belongs in the D-1 / idea-121 uniform resolver, not here.
 
+// ── work-86 (idea-380): the node-contract validation (references + runbook) ──────────
+// The node-contract = dependsOn(when) + references(consume) + evidenceRequirements(produce).
+
+/** A node is a blueprint/cold-start node — and so REQUIRES a runbook — when it's a gate
+ *  (type=verifier-gate) OR it consumes references[]. The SINGLE predicate + call-site: the
+ *  seed_blueprint expander slice can later swap in a first-class discriminator without
+ *  touching the createWork call-site. (No nodeKind enum yet — thin/non-platform.) */
+function nodeRequiresRunbook(item: { type?: WorkItemType; references?: WorkItemReference[] }): boolean {
+  return item.type === "verifier-gate" || (item.references?.length ?? 0) > 0;
+}
+
+// A PINNED immutable git ref — a 40-hex commit sha, optionally :path. The Hub is git-LESS
+// (it cannot dereference), so for a required git ref it can only REQUIRE a pinned/immutable
+// locator (reject a mutable branch/tag); resolution stays the agent's/CI's job. FR-36 at the
+// reference layer (pinned-head-SHA realized for node inputs).
+const PINNED_GIT_REF = /^[0-9a-f]{40}(:.+)?$/;
+
+// semantic ref-kind → SchemaDef kind, for storage=entity existence checks (the substrate is kind-cased).
+const SEMANTIC_KIND_TO_SCHEMA: Record<string, string> = {
+  bug: "Bug", idea: "Idea", mission: "Mission", task: "Task", tele: "Tele",
+  proposal: "Proposal", thread: "Thread", workitem: "WorkItem", "work-item": "WorkItem",
+  document: "Document", doc: "Document", audit: "Audit", agent: "Agent", turn: "Turn",
+};
+
+/** Fail-closed-validate a REQUIRED reference resolves at seed-time. Returns the reason it
+ *  can't resolve, or null when resolvable. (Only required:true refs are validated — advisory
+ *  refs are stored opaquely, like targetRef.) */
+async function validateRequiredReference(
+  ref: WorkItemReference,
+  store: { entityExists(kind: string, id: string): Promise<boolean> },
+  ctx: IPolicyContext,
+): Promise<string | null> {
+  switch (ref.storage) {
+    case "inline":
+      return ref.ref && ref.ref.trim() !== "" ? null
+        : `required inline reference (kind=${ref.kind}) carries no inline content`;
+    case "git":
+      return PINNED_GIT_REF.test(ref.ref) ? null
+        : `required git reference (kind=${ref.kind}) must be a PINNED 40-hex commit sha[:path], not a mutable branch/tag: "${ref.ref}" (the Hub is git-less + cannot dereference — resolution is the agent's/CI's job)`;
+    case "hub-doc": {
+      if (!ctx.stores.document) return `cannot verify required hub-doc reference "${ref.ref}": the Document store is not wired`;
+      const doc = await ctx.stores.document.get(ref.ref);
+      return doc ? null : `required hub-doc reference path does not resolve: "${ref.ref}"`;
+    }
+    case "entity": {
+      const schemaKind = SEMANTIC_KIND_TO_SCHEMA[ref.kind.toLowerCase()];
+      if (!schemaKind) return `required entity reference has an unverifiable kind "${ref.kind}" — cannot confirm existence at seed-time (fail-closed)`;
+      return (await store.entityExists(schemaKind, ref.ref)) ? null
+        : `required entity reference does not resolve: ${schemaKind} "${ref.ref}"`;
+    }
+    default:
+      return `required reference has an unknown storage "${(ref as { storage?: string }).storage}"`;
+  }
+}
+
 async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
@@ -255,6 +311,22 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
     if (!dep) return err("unresolvable_ref", `dependsOn references a non-existent WorkItem: ${depId}`);
   }
 
+  // work-86 (idea-380): the node-contract — runbook + references as first-class spec fields.
+  const runbook = args.runbook as string | undefined;
+  const references = (args.references as WorkItemReference[] | undefined) ?? [];
+  // Fail-closed: a blueprint/gate node MUST carry a runbook (the cold-start instruction the
+  // claimant executes) — a process-naive agent needs it; reject at authoring, never silent.
+  if (nodeRequiresRunbook({ type: args.type as WorkItemType, references }) && !(runbook && runbook.trim() !== "")) {
+    return err("missing_runbook", "a blueprint/gate node (type=verifier-gate or carrying references[]) requires a non-empty runbook — the just-in-time cold-start instruction the claimant executes");
+  }
+  // Fail-closed: a REQUIRED reference that can't resolve at seed-time is a cold-start trap
+  // (the claimant can't find its input) — reject at authoring, the dangling-dependsOn posture.
+  for (const ref of references) {
+    if (!ref.required) continue;
+    const problem = await validateRequiredReference(ref, store, ctx);
+    if (problem) return err("unresolvable_ref", problem);
+  }
+
   try {
     const w = await store.createWorkItem({
       type: args.type as WorkItemType,
@@ -262,6 +334,8 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
       roleEligibility,
       dependsOn,
       evidenceRequirements,
+      runbook,
+      references,
       targetRef: (args.targetRef as { kind: string; id: string } | null | undefined) ?? null,
       payload: args.payload,
       createdBy: caller,
@@ -338,6 +412,15 @@ const targetRefSchema = z.object({
   id: z.string().min(1),
 }).strict();
 
+// work-86 (idea-380): a typed node REFERENCE the node consumes (the references(consume) leg).
+const referenceSchema = z.object({
+  kind: z.string().min(1).describe("semantic kind: doc | bug | idea | mission | workitem | calibration | ..."),
+  ref: z.string().min(1).describe("the locator: inline content | pinned sha[:path] | doc path | entity id"),
+  storage: z.enum(["inline", "git", "hub-doc", "entity"]).describe("where it lives + how seed-time validation resolves it"),
+  mode: z.enum(["read", "triangulate-against"]).describe("how the claimant uses it"),
+  required: z.boolean().describe("required:true → create_work fail-closed-validates resolvability at seed-time"),
+}).strict();
+
 // ── Registration ──────────────────────────────────────────────────────────────
 
 export function registerWorkItemPolicy(router: PolicyRouter): void {
@@ -350,6 +433,8 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       priority: WORK_PRIORITY.optional().describe("Priority (default: normal)"),
       dependsOn: z.array(z.string()).optional().describe("WorkItem ids that must complete before this is claimable; each must already exist (dangling → rejected)"),
       evidenceRequirements: z.array(evidenceRequirementSchema).optional().describe("Anti-gameability evidence contract enforced by complete_work"),
+      runbook: z.string().optional().describe("work-86: the cold-start instruction the claimant executes. REQUIRED for a blueprint/gate node (type=verifier-gate or carrying references[]); a process-naive agent learns the task from it (no prior context)."),
+      references: z.array(referenceSchema).optional().describe("work-86: typed inputs the node CONSUMES (the references(consume) leg of the node-contract). A required:true reference is fail-closed-validated to resolve at seed-time (inline content present | pinned git sha | hub-doc exists | entity exists) — a dangling required input is a cold-start trap, rejected at authoring."),
       targetRef: targetRefSchema.nullable().optional().describe("Pointer to the entity this work is about ({kind,id}); opaque/advisory at create"),
       payload: z.unknown().optional().describe("Freeform work payload (e.g. the task brief)"),
     },

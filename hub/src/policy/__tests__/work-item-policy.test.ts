@@ -35,7 +35,7 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
   };
   return {
     calls,
-    createWorkItem: m("createWorkItem"), getWorkItem: m("getWorkItem"),
+    createWorkItem: m("createWorkItem"), getWorkItem: m("getWorkItem"), entityExists: m("entityExists"),
     listWorkItems: m("listWorkItems"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
@@ -368,6 +368,118 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
     expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(false);
   });
 
+  // ── create_work: the node-contract (runbook + references) — work-86 (idea-380) ──
+  it("create_work: a gate node (type=verifier-gate) WITHOUT a runbook is REJECTED (missing_runbook)", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", { type: "verifier-gate" }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("missing_runbook");
+    expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(false);
+  });
+
+  it("create_work: a node CARRYING references[] but no runbook is REJECTED (missing_runbook)", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", {
+      type: "task", references: [{ kind: "doc", ref: "the brief", storage: "inline", mode: "read", required: false }],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("missing_runbook");
+  });
+
+  it("create_work: a plain node (no gate, no references) does NOT require a runbook → created", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", { type: "task" }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(true);
+  });
+
+  it("create_work: a required GIT reference that is a mutable branch (not a pinned sha) is REJECTED (FR-36; Hub is git-less)", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", {
+      type: "task", runbook: "do the thing",
+      references: [{ kind: "doc", ref: "main", storage: "git", mode: "read", required: true }],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("unresolvable_ref");
+    expect(body(r).error).toMatch(/PINNED/);
+    expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(false);
+  });
+
+  it("create_work: a required GIT reference that is a pinned 40-hex sha → created (threaded through)", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const sha = "a".repeat(40);
+    const r = await router.handle("create_work", {
+      type: "task", runbook: "do the thing",
+      references: [{ kind: "doc", ref: sha, storage: "git", mode: "read", required: true }],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    const passed = createArg(stub.calls)!;
+    expect(passed.runbook).toBe("do the thing");
+    expect(passed.references).toMatchObject([{ ref: sha, storage: "git" }]);
+  });
+
+  it("create_work: a required ENTITY reference that does NOT exist is REJECTED (entityExists=false; kind normalized bug→Bug)", async () => {
+    const stub = makeStub({ entityExists: () => false, createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", {
+      type: "task", runbook: "x",
+      references: [{ kind: "bug", ref: "bug-999", storage: "entity", mode: "read", required: true }],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("unresolvable_ref");
+    expect(stub.calls.some((c) => c.method === "entityExists" && c.args[0] === "Bug" && c.args[1] === "bug-999")).toBe(true);
+  });
+
+  it("create_work: a required ENTITY reference that EXISTS → created", async () => {
+    const stub = makeStub({ entityExists: () => true, createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", {
+      type: "task", runbook: "x",
+      references: [{ kind: "idea", ref: "idea-380", storage: "entity", mode: "read", required: true }],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    expect(stub.calls.some((c) => c.method === "entityExists" && c.args[0] === "Idea")).toBe(true);
+  });
+
+  it("create_work: a required ENTITY reference with an UNKNOWN kind is REJECTED (fail-closed, unverifiable)", async () => {
+    const stub = makeStub({ entityExists: () => true, createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", {
+      type: "task", runbook: "x",
+      references: [{ kind: "frobnicator", ref: "x", storage: "entity", mode: "read", required: true }],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("unresolvable_ref");
+    expect(body(r).error).toMatch(/unverifiable kind/);
+    expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(false);
+  });
+
+  it("create_work: an ADVISORY (required:false) unresolvable reference is NOT validated → created", async () => {
+    const stub = makeStub({ entityExists: () => false, createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", {
+      type: "task", runbook: "x",
+      references: [{ kind: "bug", ref: "bug-ghost", storage: "entity", mode: "read", required: false }],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();                                          // only required:true refs are validated
+    expect(stub.calls.some((c) => c.method === "entityExists")).toBe(false); // never even checked
+  });
+
+  it("create_work: a required HUB-DOC reference is existence-checked via the Document store", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const ctx = ctxFor(stub, "architect");
+    (ctx.stores as unknown as { document: unknown }).document = {
+      get: async (p: string) => (p === "docs/exists.md" ? { path: p } : null),
+    };
+    const miss = await router.handle("create_work", {
+      type: "task", runbook: "x",
+      references: [{ kind: "doc", ref: "docs/missing.md", storage: "hub-doc", mode: "read", required: true }],
+    }, ctx);
+    expect(miss.isError).toBe(true);
+    expect(body(miss).errorKind).toBe("unresolvable_ref");
+    const okR = await router.handle("create_work", {
+      type: "task", runbook: "x",
+      references: [{ kind: "doc", ref: "docs/exists.md", storage: "hub-doc", mode: "read", required: true }],
+    }, ctx);
+    expect(okR.isError).toBeFalsy();
+  });
+
   it("create_work: a missing workItem store → not_wired", async () => {
     const r = await router.handle("create_work", { type: "task" }, ctxFor(undefined, "architect"));
     expect(r.isError).toBe(true);
@@ -380,6 +492,38 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
     const schema = z.object(reg.schema);
     expect(schema.safeParse({ type: "bogus" }).success).toBe(false);
     expect(schema.safeParse({ type: "verifier-gate" }).success).toBe(true);
+  });
+
+  // GATE-416 (architect steer): CLASS-SCOPED schema↔handler parity guard. create_work is a
+  // hot/evolving surface (work-86 added runbook/references; more node-contract fields are likely),
+  // so guard the whole "registered schema drifts from the handler → the MCP boundary silently
+  // drops a declared field" class — not whack-a-mole per field. A FULLY-POPULATED input parsed
+  // through the REAL registered schema must keep EVERY key (Zod z.object strips undeclared keys
+  // by default → a key in the input but missing from the parse is an undeclared-field bug; my
+  // work-86 edit dropped targetRef this way).
+  it("create_work: a fully-populated input survives the MCP boundary parse with NO field stripped (schema↔handler parity)", () => {
+    const reg = router.getToolRegistration("create_work")!;
+    const full = {
+      type: "verifier-gate" as const,
+      roleEligibility: ["engineer"],
+      priority: "high" as const,
+      dependsOn: ["work-1"],
+      evidenceRequirements: [{ id: "r1", kind: "pr" as const }],
+      runbook: "do it",
+      references: [{ kind: "doc", ref: "x", storage: "inline" as const, mode: "read" as const, required: false }],
+      targetRef: { kind: "Bug", id: "bug-1" },
+      payload: { brief: "b" },
+    };
+    const parsed = z.object(reg.schema).safeParse(full);
+    expect(parsed.success).toBe(true);
+    expect(Object.keys((parsed as { data: Record<string, unknown> }).data).sort()).toEqual(Object.keys(full).sort());
+  });
+
+  it("create_work: targetRef is threaded through to createWorkItem (handler regression)", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", { type: "task", targetRef: { kind: "Bug", id: "bug-1" } }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    expect(createArg(stub.calls)!.targetRef).toMatchObject({ kind: "Bug", id: "bug-1" });
   });
 
   // ── get_work [Any] — pins the create=[Architect]→deny / get=[Any]→allow asymmetry ──
