@@ -108,7 +108,8 @@ const Bug: SchemaDef = {
   // W2 finding-A: severity/class (substrate-side filters, bug-repo:128-129) relocate to spec.
   // (Cascade-keys sourceThreadId/sourceActionId/sourceIdeaId are DELIBERATELY excluded —
   // repo dual-path envelope-first dotted query + W1 null-pin; see oracle exclusion set.)
-  renameMap: { status: "status.phase", severity: "spec.severity", class: "spec.class", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId", sourceIdeaId: "metadata.sourceIdeaId" },
+  // idea-364: `repo` (repo-scope slug for the ledger-reconciliation pass) relocates to spec.
+  renameMap: { status: "status.phase", severity: "spec.severity", class: "spec.class", repo: "spec.repo", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId", sourceIdeaId: "metadata.sourceIdeaId" },
 };
 
 const Counter: SchemaDef = {

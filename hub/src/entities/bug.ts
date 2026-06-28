@@ -51,6 +51,12 @@ export interface Bug {
   linkedMissionId: string | null;
   fixCommits: string[];
   fixRevision: string | null;
+  /** idea-364 (R2 ledger-reconciliation): the repo this bug belongs to (slug,
+   *  e.g. "apnex/missioncraft"). null = the home repo (apnex/agentic-network) /
+   *  unclassified. Lets the reconciliation pass scope git-ancestry checks to the
+   *  right repo + separate external cross-repo bugs from in-repo ones so they stop
+   *  accreting (the idea-361 class). */
+  repo: string | null;
   /** Discovery channel — itw-smoke | unit-test | prod-audit |
    *  integration-test | code-review | llm-self-review. Free text v1.
    *  Per thread-225 ratification, `surfacedBy` stays distinct from
@@ -93,6 +99,8 @@ export interface IBugStore {
       // carries thread/action via `backlink`). sourceMissionId → linkedMissionId.
       sourceThreadId?: string;
       sourceMissionId?: string;
+      // idea-364 — repo-scope classification at create (null/absent = home repo).
+      repo?: string;
     }
   ): Promise<Bug>;
 
@@ -122,6 +130,7 @@ export interface IBugStore {
       linkedMissionId: string | null;
       fixCommits: string[];
       fixRevision: string | null;
+      repo: string | null;
     }>
   ): Promise<Bug | null>;
 
