@@ -289,6 +289,44 @@ async function validateRequiredReference(
   }
 }
 
+// work-87 (seed_blueprint, F2): the #416 per-node INTRINSIC validation — the node-contract
+// checks that are about the NODE itself (evidence-id uniqueness + runbook requirement +
+// required-reference resolution), NOT the dependency graph. ONE source of truth shared by
+// create_work AND the seed_blueprint expander (anti-drift): the graph-level dependsOn/
+// completionDependsOn checks DIFFER by caller — create_work existence-checks them against the
+// STORE (targets pre-exist); the expander validates them against the TEMPLATE's localId set +
+// the union cycle-check — so those stay at the call-site. Returns the first failure or null.
+async function validateNodeIntrinsics(
+  node: { type?: WorkItemType; evidenceRequirements?: EvidenceRequirement[]; runbook?: string; references?: WorkItemReference[] },
+  store: { entityExists(kind: string, id: string): Promise<boolean> },
+  ctx: IPolicyContext,
+): Promise<{ errorKind: string; message: string } | null> {
+  const evidenceRequirements = node.evidenceRequirements ?? [];
+  // Fail-closed: a duplicate requirement id makes complete_work's bind-by-requirementId
+  // ambiguous (and could weaken no-double-count) — reject, never coerce.
+  const reqIds = evidenceRequirements.map((r) => r.id);
+  const dupId = reqIds.find((id, i) => reqIds.indexOf(id) !== i);
+  if (dupId !== undefined) {
+    return { errorKind: "invalid_evidence_requirements", message: `duplicate evidenceRequirement id "${dupId}" — requirement ids must be unique within a WorkItem (complete_work binds by requirementId)` };
+  }
+  // work-86 (idea-380): the node-contract — runbook + references as first-class spec fields.
+  const references = node.references ?? [];
+  const runbook = node.runbook;
+  // Fail-closed: a blueprint/gate node MUST carry a runbook (the cold-start instruction the
+  // claimant executes) — a process-naive agent needs it; reject at authoring, never silent.
+  if (nodeRequiresRunbook({ type: node.type, references }) && !(runbook && runbook.trim() !== "")) {
+    return { errorKind: "missing_runbook", message: "a blueprint/gate node (type=verifier-gate or carrying references[]) requires a non-empty runbook — the just-in-time cold-start instruction the claimant executes" };
+  }
+  // Fail-closed: a REQUIRED reference that can't resolve at seed-time is a cold-start trap
+  // (the claimant can't find its input) — reject at authoring, the dangling-dependsOn posture.
+  for (const ref of references) {
+    if (!ref.required) continue;
+    const problem = await validateRequiredReference(ref, store, ctx);
+    if (problem) return { errorKind: "unresolvable_ref", message: problem };
+  }
+  return null;
+}
+
 async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
@@ -298,14 +336,13 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
   const dependsOn = (args.dependsOn as string[] | undefined) ?? [];
   const completionDependsOn = (args.completionDependsOn as string[] | undefined) ?? [];
   const evidenceRequirements = (args.evidenceRequirements as EvidenceRequirement[] | undefined) ?? [];
+  const runbook = args.runbook as string | undefined;
+  const references = (args.references as WorkItemReference[] | undefined) ?? [];
 
-  // Fail-closed: a duplicate requirement id makes complete_work's bind-by-requirementId
-  // ambiguous (and could weaken no-double-count) — reject, never coerce.
-  const reqIds = evidenceRequirements.map((r) => r.id);
-  const dupId = reqIds.find((id, i) => reqIds.indexOf(id) !== i);
-  if (dupId !== undefined) {
-    return err("invalid_evidence_requirements", `duplicate evidenceRequirement id "${dupId}" — requirement ids must be unique within a WorkItem (complete_work binds by requirementId)`);
-  }
+  // The #416 per-node intrinsic validation (evidence-dup + runbook + required-refs) — shared
+  // with the seed_blueprint expander (F2, one source of truth).
+  const intrinsic = await validateNodeIntrinsics({ type: args.type as WorkItemType, evidenceRequirements, runbook, references }, store, ctx);
+  if (intrinsic) return err(intrinsic.errorKind, intrinsic.message);
 
   // Fail-closed: a dangling dependsOn is a permanently-unclaimable item (claim-time
   // dependency-readiness never resolves) — reject at authoring rather than silently store it.
@@ -326,22 +363,6 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
     if (!dep) return err("unresolvable_ref", `completionDependsOn references a non-existent WorkItem: ${depId}`);
   }
 
-  // work-86 (idea-380): the node-contract — runbook + references as first-class spec fields.
-  const runbook = args.runbook as string | undefined;
-  const references = (args.references as WorkItemReference[] | undefined) ?? [];
-  // Fail-closed: a blueprint/gate node MUST carry a runbook (the cold-start instruction the
-  // claimant executes) — a process-naive agent needs it; reject at authoring, never silent.
-  if (nodeRequiresRunbook({ type: args.type as WorkItemType, references }) && !(runbook && runbook.trim() !== "")) {
-    return err("missing_runbook", "a blueprint/gate node (type=verifier-gate or carrying references[]) requires a non-empty runbook — the just-in-time cold-start instruction the claimant executes");
-  }
-  // Fail-closed: a REQUIRED reference that can't resolve at seed-time is a cold-start trap
-  // (the claimant can't find its input) — reject at authoring, the dangling-dependsOn posture.
-  for (const ref of references) {
-    if (!ref.required) continue;
-    const problem = await validateRequiredReference(ref, store, ctx);
-    if (problem) return err("unresolvable_ref", problem);
-  }
-
   try {
     const w = await store.createWorkItem({
       type: args.type as WorkItemType,
@@ -358,6 +379,204 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
     });
     return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
+}
+
+// ── work-87 (seed_blueprint): the declarative WorkItem-graph expander ────────────────
+// A FINITE DAG expander (NOT a workflow platform — no loops/conditionals/streaming): takes a
+// declarative blueprint (nodes[] with localId-keyed dependsOn + completionDependsOn) and
+// materializes it onto the queue. VALIDATE-WHOLE-GRAPH-FIRST + a deterministic run-key =
+// all-or-nothing WITHOUT a transaction (the substrate has none): any VALIDATION failure creates
+// ZERO; a post-validation INFRA failure mid-create is rolled back by a compensating-delete of
+// THIS run's creates (loud trail) AND recoverable by idempotent re-run (node id =
+// work-bp-{runId}-{localId}, so createOnly dedups — kubectl-apply semantics).
+
+/** Blueprint node-cap (finite-DAG safety, design §0.5 T1). Generous; a blueprint is a council/
+ *  close-out graph, not a platform. */
+const MAX_BLUEPRINT_NODES = 100;
+
+/** localId + runId charset — alphanumeric + underscore ONLY (NO dash), so the composite id
+ *  `work-bp-{runId}-{localId}` uses dash as its SOLE separator and is collision-free. */
+const BLUEPRINT_ID_TOKEN = /^[A-Za-z0-9_]+$/;
+
+/** The deterministic per-node WorkItem id — the idempotency key (createOnly dedups a re-run).
+ *  Exported for the collision-safety proof: dash is the SOLE separator, so it is ONLY
+ *  collision-free while runId+localId exclude dash (BLUEPRINT_ID_TOKEN) — else
+ *  blueprintNodeId('a-b','c') === blueprintNodeId('a','b-c'). */
+export function blueprintNodeId(runId: string, localId: string): string {
+  return `work-bp-${runId}-${localId}`;
+}
+
+interface BlueprintNode {
+  localId: string;
+  label?: string;
+  type: WorkItemType;
+  priority?: WorkItemPriority;
+  roleEligibility?: string[];
+  dependsOn?: string[];
+  completionDependsOn?: string[];
+  references?: WorkItemReference[];
+  evidenceRequirements?: EvidenceRequirement[];
+  runbook?: string;
+  targetRef?: { kind: string; id: string } | null;
+  payload?: unknown;
+}
+
+/** F3: Kahn topological sort over the UNION of dependsOn + completionDependsOn edges. Both
+ *  edges impose the SAME create-ordering — a node references its targets' minted ids at create,
+ *  so every target must precede its source — so one union sort gives the creation order for both
+ *  AND the cycle-check spans the union (a cross-edge cycle is uncreatable). Returns the localIds
+ *  in creation order (targets first), or null if the union graph has a cycle (incl. a self-loop).
+ *  Precondition: every edge target is a known localId (the dangling-check runs first). */
+function unionTopoSort(nodes: BlueprintNode[]): string[] | null {
+  const ids = nodes.map((n) => n.localId);
+  const inDegree = new Map<string, number>(ids.map((id) => [id, 0]));
+  const dependents = new Map<string, string[]>(ids.map((id) => [id, []])); // target -> sources depending on it
+  for (const n of nodes) {
+    // a target listed on BOTH edges counts ONCE toward ordering (Set dedup)
+    const targets = new Set([...(n.dependsOn ?? []), ...(n.completionDependsOn ?? [])]);
+    for (const t of targets) {
+      inDegree.set(n.localId, (inDegree.get(n.localId) ?? 0) + 1); // n depends on t
+      dependents.get(t)!.push(n.localId);
+    }
+  }
+  const queue = ids.filter((id) => (inDegree.get(id) ?? 0) === 0);
+  const order: string[] = [];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    order.push(id);
+    for (const dep of dependents.get(id) ?? []) {
+      const d = (inDegree.get(dep) ?? 0) - 1;
+      inDegree.set(dep, d);
+      if (d === 0) queue.push(dep);
+    }
+  }
+  return order.length === ids.length ? order : null; // fewer than all => a cycle remains
+}
+
+async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const caller = await resolveCreatedBy(ctx);
+
+  const runId = args.runId as string;
+  const nodes = (args.nodes as BlueprintNode[] | undefined) ?? [];
+  const dryRun = args.dryRun === true;
+
+  // ── Validate the WHOLE graph fail-closed BEFORE creating anything (all-or-nothing) ──
+  // 0) run-key + non-empty + node-cap (F5; finite-DAG safety, design §0.5 T1)
+  if (!runId || !BLUEPRINT_ID_TOKEN.test(runId)) {
+    return err("invalid_blueprint", `runId must be non-empty alphanumeric/underscore (it keys the deterministic node ids work-bp-{runId}-{localId})`);
+  }
+  if (nodes.length === 0) return err("invalid_blueprint", "blueprint has no nodes");
+  if (nodes.length > MAX_BLUEPRINT_NODES) {
+    return err("invalid_blueprint", `blueprint has ${nodes.length} nodes (cap ${MAX_BLUEPRINT_NODES}) — seed_blueprint is a finite DAG expander, not a platform`);
+  }
+
+  // 1) localId integrity: present + charset + UNIQUE (it keys the deterministic id + the graph)
+  const localIds = nodes.map((n) => n.localId);
+  for (const lid of localIds) {
+    if (!lid || !BLUEPRINT_ID_TOKEN.test(lid)) {
+      return err("invalid_blueprint", `localId "${lid}" must be non-empty alphanumeric/underscore`);
+    }
+  }
+  const dupLocal = localIds.find((id, i) => localIds.indexOf(id) !== i);
+  if (dupLocal !== undefined) return err("invalid_blueprint", `duplicate localId "${dupLocal}" — localIds must be unique within a blueprint`);
+  const idSet = new Set(localIds);
+
+  // 2) dangling check across BOTH edges — every edge target must be a known localId
+  for (const n of nodes) {
+    for (const dep of n.dependsOn ?? []) {
+      if (!idSet.has(dep)) return err("unresolvable_ref", `node "${n.localId}" dependsOn unknown localId "${dep}"`);
+    }
+    for (const dep of n.completionDependsOn ?? []) {
+      if (!idSet.has(dep)) return err("unresolvable_ref", `node "${n.localId}" completionDependsOn unknown localId "${dep}"`);
+    }
+  }
+
+  // 3) cycle check via the union topo-sort (also yields the creation order, F4)
+  const order = unionTopoSort(nodes);
+  if (order === null) {
+    return err("cycle_detected", "blueprint has a dependency cycle across the dependsOn+completionDependsOn union — a finite DAG is required");
+  }
+
+  // 4) per-node #416 intrinsic validation (evidence-dup + runbook + required-refs) — ALL upfront
+  for (const n of nodes) {
+    const intrinsic = await validateNodeIntrinsics(n, store, ctx);
+    if (intrinsic) return err(intrinsic.errorKind, `node "${n.localId}": ${intrinsic.message}`);
+  }
+
+  // The deterministic localId -> work-id map (derivable purely from runId+localId; identical for
+  // the dry-run preview AND the real expansion).
+  const localToWork = new Map<string, string>(localIds.map((lid) => [lid, blueprintNodeId(runId, lid)]));
+  const byLocalId = new Map(nodes.map((n) => [n.localId, n]));
+
+  // 5) DRY-RUN: validation passed — return the PLAN (create-order + the would-be work-ids) and
+  //    create ZERO (design §0.5 T1: dry-run required — a true preview + ids for pre-create cleanup).
+  if (dryRun) {
+    return ok({
+      dryRun: true,
+      valid: true,
+      runId,
+      nodeCount: nodes.length,
+      creationOrder: order,
+      localIdToWorkId: Object.fromEntries(localToWork),
+    });
+  }
+
+  // 6) EXPAND in topo order (targets-first) via the deterministic-id createOnly. Translate both
+  //    edges' localIds -> deterministic work-ids. Track THIS invocation's NEW creates for the
+  //    compensating-delete (created:true only — prior-run nodes are left for re-run-completion).
+  const createdThisRun: string[] = [];
+  let reusedCount = 0;
+  try {
+    for (const localId of order) {
+      const n = byLocalId.get(localId)!;
+      const { created } = await store.createBlueprintNode({
+        id: localToWork.get(localId)!,
+        blueprintRunId: runId,
+        type: n.type,
+        priority: n.priority,
+        roleEligibility: n.roleEligibility ?? [],
+        dependsOn: (n.dependsOn ?? []).map((l) => localToWork.get(l)!),
+        completionDependsOn: (n.completionDependsOn ?? []).map((l) => localToWork.get(l)!),
+        evidenceRequirements: n.evidenceRequirements,
+        runbook: n.runbook,
+        references: n.references,
+        targetRef: n.targetRef ?? null,
+        payload: n.payload,
+        createdBy: caller,
+      });
+      if (created) createdThisRun.push(localToWork.get(localId)!);
+      else reusedCount++;
+    }
+  } catch (e) {
+    // F1a fast-path rollback: compensating-delete THIS run's NEW creates (leaving any prior-run
+    // nodes intact for re-run-completion). The error ALWAYS lists the trail — even if a delete
+    // itself fails (those ids may be orphans needing manual cleanup); the run-key makes the
+    // partial completable-by-re-run regardless.
+    const rollbackFailures: string[] = [];
+    for (const id of createdThisRun) {
+      try { await store.deleteWorkItem(id); } catch { rollbackFailures.push(id); }
+    }
+    return { content: [{ type: "text" as const, text: JSON.stringify({
+      errorKind: "expansion_failed",
+      error: "seed_blueprint expansion failed mid-create after whole-graph validation passed (infra fault); rolled back this run's creates via compensating-delete",
+      cause: e instanceof Error ? e.message : String(e),
+      runId,
+      createdAndRolledBack: createdThisRun,
+      rollbackFailures, // non-empty => possible ORPHANS (manual cleanup); re-running the same runId also completes/cleans
+    }) }], isError: true };
+  }
+
+  // 7) return the expanded graph: localId -> deterministic work-id + the wired order
+  return ok({
+    runId,
+    nodeCount: nodes.length,
+    created: createdThisRun, // newly minted THIS invocation
+    reused: reusedCount,     // already present from a prior run (idempotent re-run)
+    creationOrder: order,
+    localIdToWorkId: Object.fromEntries(localToWork),
+  });
 }
 
 async function getWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
@@ -445,6 +664,24 @@ const referenceSchema = z.object({
   required: z.boolean().describe("required:true → create_work fail-closed-validates resolvability at seed-time"),
 }).strict();
 
+// work-87 (seed_blueprint): a declarative blueprint node. localId-keyed (template-internal);
+// dependsOn/completionDependsOn reference OTHER localIds in the same blueprint (NOT real work-ids
+// — the expander translates them to the minted ids). Mirrors the WorkItem node-contract.
+const blueprintNodeSchema = z.object({
+  localId: z.string().min(1).describe("Template-internal node key (alphanumeric/underscore); UNIQUE within the blueprint; referenced by other nodes' dependsOn/completionDependsOn."),
+  label: z.string().optional().describe("Human label (advisory)"),
+  type: WORK_TYPE.describe("WorkItem type"),
+  priority: WORK_PRIORITY.optional().describe("Priority (default: normal)"),
+  roleEligibility: z.array(z.string()).optional().describe("Roles that may claim; empty/omitted = any role"),
+  dependsOn: z.array(z.string()).optional().describe("localIds of nodes that must complete before this is claimable (START-gate); each must be another localId in this blueprint"),
+  completionDependsOn: z.array(z.string()).optional().describe("localIds whose completion gates this node's complete_work (COMPLETION-gate / arc-node); each must be another localId in this blueprint"),
+  references: z.array(referenceSchema).optional().describe("Typed inputs the node consumes (#416); a required:true ref is resolvability-validated at seed-time"),
+  evidenceRequirements: z.array(evidenceRequirementSchema).optional().describe("Anti-gameability evidence contract enforced by complete_work; requirement ids unique within the node"),
+  runbook: z.string().optional().describe("Cold-start instruction; REQUIRED for a gate node (type=verifier-gate) or one carrying references[]"),
+  targetRef: targetRefSchema.nullable().optional().describe("Pointer to the entity this node is about ({kind,id}); opaque/advisory"),
+  payload: z.unknown().optional().describe("Freeform node payload (e.g. the brief)"),
+}).strict();
+
 // ── Registration ──────────────────────────────────────────────────────────────
 
 export function registerWorkItemPolicy(router: PolicyRouter): void {
@@ -464,6 +701,17 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       payload: z.unknown().optional().describe("Freeform work payload (e.g. the task brief)"),
     },
     createWork,
+  );
+
+  router.register(
+    "seed_blueprint",
+    "[Architect] Expand a declarative blueprint (a WorkItem-graph template) onto the queue — the seed_blueprint primitive (idea-380 S2). A FINITE DAG expander (NOT a workflow platform): nodes[] keyed by localId, dependsOn + completionDependsOn referencing OTHER localIds. VALIDATES THE WHOLE GRAPH fail-closed BEFORE creating anything (dup/dangling localId; cycle across BOTH edges; per-node #416 runbook+required-refs; node-cap) → any validation failure creates ZERO. Deterministic + idempotent (kubectl-apply): each node id = work-bp-{runId}-{localId}, created via createOnly, so re-running the same runId+blueprint never double-creates AND completes a crash-partial. dryRun:true validates + returns the planned create-order + would-be work-ids, creating ZERO. A mid-create infra fault compensating-deletes THIS run's creates + returns a loud id-trail.",
+    {
+      runId: z.string().min(1).describe("Deterministic run-key (alphanumeric/underscore) — keys the per-node ids work-bp-{runId}-{localId}; re-running the same runId+blueprint is idempotent (no double-create)."),
+      nodes: z.array(blueprintNodeSchema).describe("The blueprint nodes (≥1, ≤cap). Each localId-keyed; dependsOn/completionDependsOn reference other localIds in the SAME blueprint."),
+      dryRun: z.boolean().optional().describe("When true: validate the whole graph + return the planned create-order + would-be work-ids, creating ZERO WorkItems (a true preview)."),
+    },
+    seedBlueprint,
   );
 
   router.register(

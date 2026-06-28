@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { z } from "zod";
 import { PolicyRouter } from "../router.js";
-import { registerWorkItemPolicy } from "../work-item-policy.js";
+import { registerWorkItemPolicy, blueprintNodeId } from "../work-item-policy.js";
 import { createTestContext, type TestPolicyContext } from "../test-utils.js";
 import {
   TransitionRejected,
@@ -35,7 +35,8 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
   };
   return {
     calls,
-    createWorkItem: m("createWorkItem"), getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), entityExists: m("entityExists"),
+    createWorkItem: m("createWorkItem"), createBlueprintNode: m("createBlueprintNode"), deleteWorkItem: m("deleteWorkItem"),
+    getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), entityExists: m("entityExists"),
     listWorkItems: m("listWorkItems"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
@@ -79,8 +80,8 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("registers all 12 tools (create_work + get_work + list_work snapshot + the 9 lifecycle verbs)", () => {
-    for (const t of ["create_work", "get_work", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
+  it("registers all 13 tools (create_work + seed_blueprint + get_work + list_work snapshot + the 9 lifecycle verbs)", () => {
+    for (const t of ["create_work", "seed_blueprint", "get_work", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
   });
@@ -621,5 +622,202 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
     expect(r.isError).toBe(true);
     expect(body(r).errorKind).toBe("not_found");
     expect(stub.calls.some((c) => c.method === "getCompletionProgress")).toBe(false);
+  });
+});
+
+// ── work-87: seed_blueprint expander — validation guardrails + dry-run + topo orchestration ──
+describe("work-item-policy seed_blueprint expander (work-87)", () => {
+  let router: PolicyRouter;
+  beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
+
+  // a stub whose createBlueprintNode records the call + echoes the requested id (created:true);
+  // entityExists→true so required refs resolve unless a test overrides it.
+  const expandStub = (overrides: Record<string, unknown> = {}) => makeStub({
+    createBlueprintNode: (input: unknown) => ({ item: sampleItem({ id: (input as { id: string }).id, status: "ready", lease: null }), created: true }),
+    entityExists: async () => true,
+    ...overrides,
+  });
+  const node = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ localId: "n1", type: "task", ...over });
+  const bpCalls = (calls: Call[]) => calls.filter((c) => c.method === "createBlueprintNode").map((c) => c.args[0] as Record<string, unknown>);
+
+  it("registers seed_blueprint", () => {
+    expect(router.getToolRegistration("seed_blueprint")).toBeDefined();
+  });
+
+  it("RBAC: an ENGINEER is denied at the [Architect] gate (no nodes created)", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node()] }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(bpCalls(stub.calls).length).toBe(0);
+  });
+
+  it("invalid runId (non-charset) → reject, zero created", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", { runId: "bad id!", nodes: [node()] }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("invalid_blueprint");
+    expect(bpCalls(stub.calls).length).toBe(0);
+  });
+
+  // COLLISION-SAFETY (steve GATE-418): the no-DASH invariant on runId+localId is what keeps the
+  // composite id work-bp-{runId}-{localId} collision-free (dash = the SOLE separator). Pin it on
+  // the dash SPECIFICALLY — a generic "bad id!" reject does NOT, because it trips on the space/!
+  // even if dashes were allowed. e.g. without the rule: runId 'a-b'+localId 'c' AND runId 'a'+
+  // localId 'b-c' BOTH map to work-bp-a-b-c (a real collision). Mutation: widen BLUEPRINT_ID_TOKEN
+  // to allow '-' → both router.handle calls below stop rejecting → this test reds.
+  // The collision is REAL + FORMABLE: dash is the sole id separator, so two DISTINCT (runId,
+  // localId) pairs collapse to the SAME deterministic id once a dash is allowed. This is the WHY
+  // behind the no-dash guard (a static demonstration — it documents the hazard the guard closes).
+  it("collision-safety: a dash makes work-bp-{runId}-{localId} AMBIGUOUS — ('a-b','c') and ('a','b-c') map to the SAME id", () => {
+    expect(blueprintNodeId("a-b", "c")).toBe(blueprintNodeId("a", "b-c")); // both → work-bp-a-b-c
+  });
+
+  // The GUARD that closes it, mutation-pinned: a DASH in runId OR localId is rejected. Widening
+  // BLUEPRINT_ID_TOKEN to allow '-' stops these rejections → this test reds (proving the guard is
+  // load-bearing, not vacuous — steve GATE-418; the #416/#417/#418 invariant-without-a-proof class).
+  it("collision-safety: a DASH in runId OR localId is rejected at the boundary (the no-dash guard)", async () => {
+    const stub = expandStub();
+    expect(body(await router.handle("seed_blueprint", { runId: "a-b", nodes: [node({ localId: "c" })] }, ctxFor(stub, "architect"))).errorKind).toBe("invalid_blueprint"); // would-be collision pair A
+    expect(body(await router.handle("seed_blueprint", { runId: "a", nodes: [node({ localId: "b-c" })] }, ctxFor(stub, "architect"))).errorKind).toBe("invalid_blueprint"); // would-be collision pair B
+    expect(bpCalls(stub.calls).length).toBe(0); // neither colliding pair ever reaches a create
+  });
+
+  it("empty nodes → reject", async () => {
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [] }, ctxFor(expandStub(), "architect"));
+    expect(body(r).errorKind).toBe("invalid_blueprint");
+  });
+
+  it("node-cap exceeded → reject, zero created", async () => {
+    const stub = expandStub();
+    const many = Array.from({ length: 101 }, (_, i) => ({ localId: `n${i}`, type: "task" }));
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: many }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("invalid_blueprint");
+    expect(String(body(r).error)).toMatch(/cap/);
+    expect(bpCalls(stub.calls).length).toBe(0);
+  });
+
+  it("duplicate localId → reject, zero created", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node({ localId: "a" }), node({ localId: "a" })] }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("invalid_blueprint");
+    expect(bpCalls(stub.calls).length).toBe(0);
+  });
+
+  it("dangling dependsOn (unknown localId) → reject, zero created", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node({ localId: "a", dependsOn: ["ghost"] })] }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("unresolvable_ref");
+    expect(bpCalls(stub.calls).length).toBe(0);
+  });
+
+  it("dangling completionDependsOn (unknown localId) → reject", async () => {
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node({ localId: "a", completionDependsOn: ["ghost"] })] }, ctxFor(expandStub(), "architect"));
+    expect(body(r).errorKind).toBe("unresolvable_ref");
+  });
+
+  it("cycle (dependsOn) → reject, zero created", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node({ localId: "a", dependsOn: ["b"] }), node({ localId: "b", dependsOn: ["a"] })] }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("cycle_detected");
+    expect(bpCalls(stub.calls).length).toBe(0);
+  });
+
+  it("cycle across the UNION (dependsOn + completionDependsOn mixed) → reject", async () => {
+    // a --dependsOn--> b ; b --completionDependsOn--> a  => a cross-edge union cycle
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node({ localId: "a", dependsOn: ["b"] }), node({ localId: "b", completionDependsOn: ["a"] })] }, ctxFor(expandStub(), "architect"));
+    expect(body(r).errorKind).toBe("cycle_detected");
+  });
+
+  it("self-loop → reject (cycle)", async () => {
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node({ localId: "a", dependsOn: ["a"] })] }, ctxFor(expandStub(), "architect"));
+    expect(body(r).errorKind).toBe("cycle_detected");
+  });
+
+  it("per-node #416: a verifier-gate node WITHOUT a runbook → reject (missing_runbook), zero created", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node({ localId: "g", type: "verifier-gate" })] }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("missing_runbook");
+    expect(bpCalls(stub.calls).length).toBe(0);
+  });
+
+  it("per-node #416: an unresolvable required ENTITY reference → reject, zero created", async () => {
+    const stub = makeStub({
+      createBlueprintNode: (input: unknown) => ({ item: sampleItem({ id: (input as { id: string }).id }), created: true }),
+      entityExists: async () => false, // the required ref does not resolve
+    });
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node({ localId: "a", runbook: "do", references: [{ kind: "bug", ref: "bug-9", storage: "entity", mode: "read", required: true }] })] }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("unresolvable_ref");
+    expect(bpCalls(stub.calls).length).toBe(0);
+  });
+
+  it("dry-run: validates + returns the PLAN (order + deterministic ids), creates ZERO", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", { runId: "run1", dryRun: true, nodes: [node({ localId: "child" }), node({ localId: "arc", completionDependsOn: ["child"] })] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    const b = body(r);
+    expect(b.dryRun).toBe(true);
+    expect(b.localIdToWorkId).toEqual({ child: "work-bp-run1-child", arc: "work-bp-run1-arc" });
+    const o = b.creationOrder as string[];
+    expect(o.indexOf("child")).toBeLessThan(o.indexOf("arc")); // target (child) before source (arc)
+    expect(bpCalls(stub.calls).length).toBe(0); // ZERO created
+  });
+
+  it("happy-path: creates in topo order, translates BOTH edges' localIds → deterministic work-ids", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", {
+      runId: "run2",
+      nodes: [
+        node({ localId: "leaf" }),
+        node({ localId: "arc", completionDependsOn: ["leaf"] }),
+        node({ localId: "after", dependsOn: ["arc"] }),
+      ],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    const b = body(r);
+    expect(b.localIdToWorkId).toEqual({ leaf: "work-bp-run2-leaf", arc: "work-bp-run2-arc", after: "work-bp-run2-after" });
+    const calls = bpCalls(stub.calls);
+    expect(calls.length).toBe(3);
+    const order = calls.map((c) => c.id as string);
+    expect(order.indexOf("work-bp-run2-leaf")).toBeLessThan(order.indexOf("work-bp-run2-arc"));  // arc completionDependsOn leaf
+    expect(order.indexOf("work-bp-run2-arc")).toBeLessThan(order.indexOf("work-bp-run2-after")); // after dependsOn arc
+    const arcCall = calls.find((c) => c.id === "work-bp-run2-arc")!;
+    expect(arcCall.completionDependsOn).toEqual(["work-bp-run2-leaf"]); // translated localId → work-id
+    expect(arcCall.blueprintRunId).toBe("run2");                        // run-key stamped
+    const afterCall = calls.find((c) => c.id === "work-bp-run2-after")!;
+    expect(afterCall.dependsOn).toEqual(["work-bp-run2-arc"]);          // translated localId → work-id
+  });
+
+  it("mid-create infra failure → compensating-delete THIS run's creates + loud id-trail (zero orphans)", async () => {
+    let n = 0;
+    const deleted: string[] = [];
+    const stub = makeStub({
+      createBlueprintNode: (input: unknown) => {
+        n++;
+        if (n === 2) throw new Error("substrate boom"); // the 2nd create fails (post-validation infra fault)
+        return { item: sampleItem({ id: (input as { id: string }).id }), created: true };
+      },
+      deleteWorkItem: (id: unknown) => { deleted.push(id as string); return undefined; },
+      entityExists: async () => true,
+    });
+    // 3 independent nodes → topo order = [a,b,c]; a created, b throws → a is rolled back
+    const r = await router.handle("seed_blueprint", { runId: "rollback", nodes: [node({ localId: "a" }), node({ localId: "b" }), node({ localId: "c" })] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    const b = body(r);
+    expect(b.errorKind).toBe("expansion_failed");
+    expect(b.createdAndRolledBack).toEqual(["work-bp-rollback-a"]); // only 'a' minted before the boom
+    expect(deleted).toEqual(["work-bp-rollback-a"]);                // compensating-delete ran on it
+    expect(b.rollbackFailures).toEqual([]);                         // no orphans
+  });
+
+  it("idempotent re-run: when every node already exists (createOnly conflict) → reused:N, created:[], no error", async () => {
+    const stub = makeStub({
+      createBlueprintNode: (input: unknown) => ({ item: sampleItem({ id: (input as { id: string }).id }), created: false }), // all pre-existing
+      entityExists: async () => true,
+    });
+    const r = await router.handle("seed_blueprint", { runId: "rerun", nodes: [node({ localId: "a" }), node({ localId: "b", dependsOn: ["a"] })] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    const b = body(r);
+    expect(b.created).toEqual([]);
+    expect(b.reused).toBe(2);
+    expect(b.localIdToWorkId).toEqual({ a: "work-bp-rerun-a", b: "work-bp-rerun-b" });
   });
 });
