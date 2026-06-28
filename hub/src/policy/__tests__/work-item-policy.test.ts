@@ -538,12 +538,24 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
       roleEligibility: ["engineer"],
       priority: "high" as const,
       dependsOn: ["work-1"],
+      completionDependsOn: ["work-2"], // work-88 (arc-node): a NEW node-contract field MUST be in `full` or the class-scoped guard doesn't actually parse it (steve GATE-417)
       evidenceRequirements: [{ id: "r1", kind: "pr" as const }],
       runbook: "do it",
       references: [{ kind: "doc", ref: "x", storage: "inline" as const, mode: "read" as const, required: false }],
       targetRef: { kind: "Bug", id: "bug-1" },
       payload: { brief: "b" },
     };
+    const parsed = z.object(reg.schema).safeParse(full);
+    expect(parsed.success).toBe(true);
+    expect(Object.keys((parsed as { data: Record<string, unknown> }).data).sort()).toEqual(Object.keys(full).sort());
+  });
+
+  // work-88 (arc-node): the SAME MCP-boundary class for the OTHER field this slice added —
+  // get_work.includeCompletionProgress. A registered-schema parse must KEEP it (else the opt-in
+  // k/N projection silently never fires through the real adapter, the same drop-class as above).
+  it("get_work: includeCompletionProgress survives the registered MCP-boundary parse (schema↔handler parity)", () => {
+    const reg = router.getToolRegistration("get_work")!;
+    const full = { workId: "work-1", includeCompletionProgress: true };
     const parsed = z.object(reg.schema).safeParse(full);
     expect(parsed.success).toBe(true);
     expect(Object.keys((parsed as { data: Record<string, unknown> }).data).sort()).toEqual(Object.keys(full).sort());
