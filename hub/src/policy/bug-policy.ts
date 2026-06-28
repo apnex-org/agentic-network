@@ -13,7 +13,7 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult, FsmTransitionTable } from "./types.js";
 import { isValidTransition } from "./types.js";
 import type { BugStatus, BugSeverity, Bug } from "../entities/bug.js";
-import { LIST_PAGINATION_SCHEMA, LIST_COMPACT_SCHEMA, paginate, unsetIfEmpty } from "./list-filters.js";
+import { LIST_PAGINATION_SCHEMA, LIST_COMPACT_SCHEMA, paginate, unsetIfEmpty, mergeTags } from "./list-filters.js";
 import { dispatchBugReported, dispatchBugStatusChanged } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
 import { phaseFromEntity } from "../entities/shape-helpers.js";
@@ -94,14 +94,15 @@ async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
   const classFilter = unsetIfEmpty(args.class as string | undefined);
   const tags = unsetIfEmpty(args.tags as string[] | undefined);
   const hasFilter = status != null || severity != null || classFilter != null || (tags != null && tags.length > 0);
-  const filtered = await ctx.stores.bug.listBugs({ status, severity, class: classFilter, tags });
+  // bug-200: listBugs now returns { items, truncated } (was a silently-capped Bug[]).
+  const { items: filtered, truncated } = await ctx.stores.bug.listBugs({ status, severity, class: classFilter, tags });
   // CP2 C5 (task-307): detect "valid filter with zero matches" to fire
   // the _ois_query_unmatched sentinel. Pre-filter count comes from an
   // unfiltered list call ONLY when the filtered result is empty — cheap
   // on the empty path, no cost on the happy path.
   let totalPreFilter = filtered.length;
   if (hasFilter && filtered.length === 0) {
-    totalPreFilter = (await ctx.stores.bug.listBugs()).length;
+    totalPreFilter = (await ctx.stores.bug.listBugs()).items.length;
   }
   const page = paginate(filtered, args);
   const queryUnmatched = hasFilter && page.count === 0 && totalPreFilter > 0;
@@ -115,6 +116,9 @@ async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
         offset: page.offset,
         limit: page.limit,
         ...(args.compact === true ? { compact: true } : {}),
+        // bug-200: never a silent under-report — flag a scan that hit the 500 cap so
+        // `total` is read as a floor, not the truth (mirror list_ready_work's truncated).
+        ...(truncated ? { truncated: true, truncationNote: "bug scan hit the 500-row cap; total is a floor, not exact — narrow with filters." } : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],
@@ -147,6 +151,9 @@ async function updateBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   const fixCommits = args.fixCommits as string[] | undefined;
   const fixRevision = args.fixRevision as string | null | undefined;
   const repo = args.repo as string | null | undefined;
+  // bug-201: additive-tag mode — union onto the existing tags instead of clobbering
+  // (the same footgun fixed for update_idea; reuses the shared mergeTags primitive).
+  const addTags = unsetIfEmpty(args.addTags as string[] | undefined) as string[] | undefined;
 
   // FSM guard on status transitions. mission-89 Phase 4 (bug-137 closure):
   // envelope-shape Bug entity has status as {phase, ...} not string; use
@@ -179,6 +186,15 @@ async function updateBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   if (severity !== undefined) updates.severity = severity;
   if (classHint !== undefined) updates.class = classHint;
   if (tags !== undefined) updates.tags = tags;
+  if (addTags && addTags.length > 0) {
+    // Read-merge-write: union addTags onto the current tags (or onto the `tags`
+    // replacement if both are present). mergeTags dedupes + drops empties.
+    const current = await ctx.stores.bug.getBug(bugId);
+    if (!current) {
+      return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Bug not found: ${bugId}` }) }], isError: true };
+    }
+    updates.tags = mergeTags((updates.tags as string[] | undefined) ?? current.tags, addTags);
+  }
   if (description !== undefined) updates.description = description;
   if (linkedTaskIds !== undefined) updates.linkedTaskIds = linkedTaskIds;
   if (linkedMissionId !== undefined) updates.linkedMissionId = linkedMissionId;
@@ -228,7 +244,7 @@ export function registerBugPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_bugs",
-    "[Any] List bugs with optional filters (status, severity, class, tags match-any) + pagination. Pass compact:true for the scannable bulk-survey projection (omits description/fixRevision) — use it instead of many per-bug get_bug calls.",
+    "[Any] List bugs with optional filters (status, severity, class, tags match-any) + pagination. Pass compact:true for the scannable bulk-survey projection (omits description/fixRevision) — use it instead of many per-bug get_bug calls. Honors `limit` up to 500 (bug-200 — was silently capping page+total at 100); if the scan hits the 500 cap, returns `truncated:true` so `total` is read as a floor, never a silent under-report.",
     {
       status: z.enum(["open", "investigating", "resolved", "wontfix"]).optional(),
       severity: z.enum(["critical", "major", "minor"]).optional(),
@@ -249,13 +265,14 @@ export function registerBugPolicy(router: PolicyRouter): void {
 
   router.register(
     "update_bug",
-    "[Any] Update a bug. Status transitions enforced by BUG_FSM (open → investigating → resolved | wontfix; walk-back investigating → open permitted). Other fields (severity, class, tags, description, linkedTaskIds, linkedMissionId, fixCommits, fixRevision, repo) are freely editable.",
+    "[Any] Update a bug. Status transitions enforced by BUG_FSM (open → investigating → resolved | wontfix; walk-back investigating → open permitted). Other fields (severity, class, tags, description, linkedTaskIds, linkedMissionId, fixCommits, fixRevision, repo) are freely editable. Use `addTags` for additive (union, no-clobber) tag stamping — e.g. a triage/reconciliation pass adding a classification tag without wiping existing ones; `tags` replaces the whole set.",
     {
       bugId: z.string().describe("The bug ID to update"),
       status: z.enum(["open", "investigating", "resolved", "wontfix"]).optional(),
       severity: z.enum(["critical", "major", "minor"]).optional(),
       class: z.string().nullable().optional(),
-      tags: z.array(z.string()).optional(),
+      tags: z.array(z.string()).optional().describe("REPLACE the whole tag set. For incremental stamping use `addTags` instead (replace clobbers prior tags)."),
+      addTags: z.array(z.string()).optional().describe("ADDITIVE (bug-201): union these tags onto the bug's existing tags (no clobber, deduped). If both `tags` and `addTags` are given, tags replaces then addTags unions onto it."),
       description: z.string().optional(),
       linkedTaskIds: z.array(z.string()).optional().describe("Task IDs that track fix work"),
       linkedMissionId: z.string().nullable().optional().describe("Parent mission if applicable"),
