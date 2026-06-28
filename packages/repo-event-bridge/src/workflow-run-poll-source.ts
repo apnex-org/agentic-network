@@ -26,6 +26,7 @@ import {
   type FetchResult,
   type Logger,
 } from "./base-poll-source.js";
+import type { MessageSink } from "./sink.js";
 
 void DEFAULT_CADENCE_SECONDS; // (kept importable; cadence default applied in the base)
 
@@ -59,6 +60,10 @@ export interface WorkflowRunPollSourceOptions {
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly now?: () => number;
   readonly logger?: Logger;
+  /** work-44/bug-190 (A): the delivery sink (the poll loop emits inline). */
+  readonly sink: MessageSink;
+  /** Bounded emit retries before declaring persistent delivery failure. Default 3. */
+  readonly emitRetries?: number;
 }
 
 interface WorkflowRunRepoState extends BaseRepoState {
@@ -120,22 +125,23 @@ export class WorkflowRunPollSource extends BasePollSource<
     return {
       kind: "events",
       candidates: result.workflow_runs,
-      commit: async (fresh) => {
-        await this.markFreshSeen(repoId, state, fresh.map((r) => String(r.id)));
+      // bug-190 (A): cursor-write ONLY (markSeen of the delivered events is in the base, gated on
+      // delivery). The base calls this ONLY when every fresh event delivered.
+      advanceCursor: async () => {
         // Advance to the latest updated_at in the batch (server returns newest-first; max-reduce
         // defensively over ALL runs, not just fresh).
         const maxUpdatedAt = result.workflow_runs.reduce<string>(
           (acc, r) => (r.updated_at && r.updated_at > acc ? r.updated_at : acc),
           state.cursorIsoTime,
         );
-        await this.advanceCursor(repoId, state, maxUpdatedAt);
+        await this.advanceCursorTo(repoId, state, maxUpdatedAt);
       },
     };
   }
 
   /** Timestamp cursor-write: stash the iso-time in `lastEventId` (CursorStore doesn't interpret
    *  it). No-op when the time didn't advance. */
-  private async advanceCursor(
+  private async advanceCursorTo(
     repoId: string,
     state: WorkflowRunRepoState,
     nextIsoTime: string | null,

@@ -121,6 +121,7 @@ jobs:
         package:
           - packages/cognitive-layer
           - packages/network-adapter
+          - packages/repo-event-bridge
           - adapters/claude-plugin
           - adapters/opencode-plugin
     name: vitest (${{ matrix.package }})
@@ -147,6 +148,7 @@ jobs:
             --workspace=@apnex/cognitive-layer \
             --workspace=@apnex/message-router \
             --workspace=@apnex/network-adapter \
+            --workspace=@apnex/storage-provider \
             --workspace=@apnex/claude-plugin \
             --workspace=@apnex/opencode-plugin
       # The sovereign packages must be built (dist/) before a cell's
@@ -156,12 +158,14 @@ jobs:
       # Step 0.5.
       - name: Build sovereign packages (topological)
         run: |
-          rm -rf packages/cognitive-layer/dist packages/network-adapter/dist packages/message-router/dist
+          rm -rf packages/cognitive-layer/dist packages/network-adapter/dist packages/message-router/dist packages/storage-provider/dist
           ( cd packages/cognitive-layer && npm run build )
           ( cd packages/network-adapter && npm run build ) || true
           ( cd packages/message-router && npm run build )
           rm -rf packages/network-adapter/dist
           ( cd packages/network-adapter && npm run build )
+          # work-44: the repo-event-bridge cell's tests import @apnex/storage-provider (-> dist).
+          ( cd packages/storage-provider && npm run build )
       - name: Test
         working-directory: ${{ matrix.package }}
         run: npm test

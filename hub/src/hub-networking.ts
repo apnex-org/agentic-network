@@ -176,6 +176,10 @@ export interface HubNetworkingConfig {
    */
   gitSha?: string;
   builtAt?: string;
+  /** work-44/bug-190 (d): lazy getter for the repo-event-bridge health snapshot (the bridge is
+   *  created after HubNetworking in index.ts). Surfaced on /health so a poll-healthy-but-delivery-
+   *  failing bridge is loud in production (closes the "bridge.health() has zero prod consumers"). */
+  repoEventBridgeHealth?: () => unknown;
 }
 
 /** Factory function type for creating MCP servers with tools registered */
@@ -296,6 +300,7 @@ export class HubNetworking {
       // so local dev / tests (no build-info) report "" on /health.
       gitSha: config.gitSha ?? "",
       builtAt: config.builtAt ?? "",
+      repoEventBridgeHealth: config.repoEventBridgeHealth ?? (() => undefined),
     };
 
     this.log = this.config.quiet
@@ -899,6 +904,10 @@ export class HubNetworking {
         builtAt: this.config.builtAt ?? "",
         activeSessions: this.transports.size,
         sseStreams: this.sseActiveCount,
+        // work-44/bug-190 (d): the repo-event-bridge poll+deliver health — surfaces deliveryFailing
+        // + lastSuccessfulDelivery so a poll-healthy-but-delivery-failing bridge is NOT dark. null
+        // when the bridge isn't wired (local dev / tests).
+        repoEventBridge: this.config.repoEventBridgeHealth?.() ?? null,
       });
     });
 

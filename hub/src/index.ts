@@ -450,6 +450,10 @@ const hub = new HubNetworking(
     toolSurfaceRevision,
     gitSha: BUILD_INFO.gitSha,
     builtAt: BUILD_INFO.builtAt,
+    // work-44/bug-190 (d): lazy getter — repoEventBridge is created further below; the closure
+    // reads its health at /health-request time so deliveryFailing/lastSuccessfulDelivery surface
+    // in production (closes the "bridge.health() has zero prod consumers" gap).
+    repoEventBridgeHealth: () => repoEventBridge?.health(),
   },
   // M-Session-Claim-Separation (mission-40) T2: thread audit store through
   // for SSE-subscribe auto-claim hook to emit agent_session_implicit_claim
