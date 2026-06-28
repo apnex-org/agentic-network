@@ -112,6 +112,24 @@ export class EvidencePredicateFailed extends Error {
   }
 }
 
+/** work-88 (arc-node): thrown by completeWork when a node's COMPLETION-gate is unmet —
+ *  i.e. some WorkItem in its completionDependsOn is not yet `done`. Carries the k/N
+ *  progress + the pending child ids so the policy layer surfaces a precise
+ *  "completion gate: k/N downstream done" (GATE ONLY — the arc-holder still completes;
+ *  this is never an auto-complete). Distinct from EvidencePredicateFailed: it gates the
+ *  subtree-finalised precondition, which is checked BEFORE the evidence predicate. */
+export class CompletionGateRejected extends Error {
+  constructor(
+    public readonly done: number,
+    public readonly total: number,
+    public readonly pending: string[],
+    reason: string,
+  ) {
+    super(`completion gate rejected: ${reason}`);
+    this.name = "CompletionGateRejected";
+  }
+}
+
 /** Thrown by claimWorkItem when the agent is role-INELIGIBLE for the item, or the item's
  *  dependencies are not all done (audit-4085 #1). Distinct from TransitionRejected (a
  *  phase-conflict) — this is a claim PRECONDITION failure (role / dependency), so the
@@ -256,6 +274,7 @@ function cloneWorkItem(w: WorkItem): WorkItem {
   const flat = decodeEnvelopeToFlat(w as unknown as Record<string, unknown>, "WorkItem") as Record<string, unknown>;
   flat.roleEligibility = (flat.roleEligibility as string[] | undefined) ?? [];
   flat.dependsOn = (flat.dependsOn as string[] | undefined) ?? [];
+  flat.completionDependsOn = (flat.completionDependsOn as string[] | undefined) ?? [];  // work-88: the COMPLETION-gate edge, spec-partitioned, decoded by decodeEnvelopeToFlat
   flat.evidenceRequirements = (flat.evidenceRequirements as EvidenceRequirement[] | undefined) ?? [];
   flat.references = (flat.references as unknown[] | undefined) ?? [];  // work-86: spec-partitioned, decoded by decodeEnvelopeToFlat
   flat.evidence = (flat.evidence as unknown[] | undefined) ?? [];
@@ -277,6 +296,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     priority?: WorkItemPriority;
     roleEligibility: string[];
     dependsOn?: string[];
+    completionDependsOn?: string[];
     evidenceRequirements?: EvidenceRequirement[];
     runbook?: string;
     references?: WorkItemReference[];
@@ -293,6 +313,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       priority: input.priority ?? "normal",
       roleEligibility: input.roleEligibility,
       dependsOn: input.dependsOn ?? [],
+      completionDependsOn: input.completionDependsOn ?? [],
       evidenceRequirements: input.evidenceRequirements ?? [],
       runbook: input.runbook,
       references: input.references ?? [],
@@ -318,6 +339,33 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   async getWorkItem(workId: string): Promise<WorkItem | null> {
     const w = await this.substrate.get<WorkItem>(KIND, workId);
     return w ? cloneWorkItem(w) : null;
+  }
+
+  /**
+   * work-88 (arc-node): the k/N COMPLETION-gate progress over a node's DIRECT
+   * completionDependsOn children. `done` = children at phase=done; `pending` = the
+   * not-yet-done ids; a VANISHED or non-`done` (incl. abandoned) child counts pending
+   * (fail-CLOSED — the same posture the gate enforces). Per-child point-gets: the
+   * envelope-safe canonical read (an id-`$in` batch over the JSONB `data->>'id'` path is
+   * unverified on envelope rows — cal #90 silent-miss risk — so deferred as a perf
+   * follow-up; the direct-children fan-out is small). ONE source of truth — the
+   * complete_work gate AND the get_work projection both call this.
+   */
+  private async computeCompletionProgress(completionDependsOn: string[]): Promise<{ done: number; total: number; pending: string[] }> {
+    const pending: string[] = [];
+    for (const childId of completionDependsOn) {
+      const child = await this.substrate.get<WorkItem>(KIND, childId);
+      if (!child || cloneWorkItem(child).status !== "done") pending.push(childId);
+    }
+    return { done: completionDependsOn.length - pending.length, total: completionDependsOn.length, pending };
+  }
+
+  /** The opt-in get_work projection (FR — feeds the cold-start get_current_stint). Reads
+   *  the arc fresh, then projects its completion-gate progress. null if the arc is gone. */
+  async getCompletionProgress(workId: string): Promise<{ done: number; total: number; pending: string[] } | null> {
+    const w = await this.getWorkItem(workId);
+    if (!w) return null;
+    return this.computeCompletionProgress(w.completionDependsOn);
   }
 
   // work-86 (idea-380): generic substrate existence check for a storage=entity reference.
@@ -496,7 +544,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   /** Heartbeat-extend the lease without changing phase (crash-gap vs slow-progress
    *  stays orthogonal to state). Legal in any lease-held phase. */
   async renewLease(workId: string, agentId: string, leaseToken: string): Promise<WorkItem | null> {
-    return this.tryCasUpdate(workId, (w) => {
+    const renewed = await this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "renew");
       if (!LEASE_HELD_PHASES.includes(w.status)) throw new TransitionRejected(`renew requires a held lease, was ${w.status}`);
       const now = new Date();
@@ -509,6 +557,102 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       }
       const lease: WorkItemLease = {
         ...(w.lease as WorkItemLease),
+        heartbeatAt: nowISO,
+        expiresAt: new Date(now.getTime() + LEASE_TTL_MS).toISOString(),
+      };
+      return { ...w, lease, updatedAt: nowISO };
+    });
+    // work-88 (arc-node): the subtree-coupled transitive-heartbeat. A renew is an
+    // "active descendant" signal — propagate it UP every ancestor arc that brackets this
+    // node (lists it, transitively, in completionDependsOn), keeping their leases fresh so
+    // the unchanged sweeper + stall-warning naturally skip an arc whose subtree is active
+    // (F3: the bump IS the relaxation — no sweeper change). Best-effort + isolated (F2): a
+    // propagation failure NEVER fails the renew. Only runs after the node actually renewed.
+    if (renewed) await this.propagateHeartbeatToAncestors(workId);
+    return renewed;
+  }
+
+  /**
+   * work-88 (arc-node): walk UP the reverse-completionDependsOn edges from `startId`,
+   * bumping every ancestor arc's heartbeat so its lease does not tick while the subtree is
+   * active. Transitive: child → parent arc → grand-arc → … The traversal continues through
+   * EVERY ancestor found (even an unheld/ready intermediate relays the active-subtree
+   * signal up to a held grand-arc); only HELD + not-already-expired nodes are actually
+   * bumped (tryBumpAncestorHeartbeat). A `visited` set bounds it (the union graph is
+   * acyclic-by-construction — work-87's expander validates the whole-graph DFS — but the
+   * belt is cheap). Best-effort (F2): a failed reverse-lookup or bump is logged + skipped,
+   * never propagated to the caller's renew.
+   */
+  private async propagateHeartbeatToAncestors(startId: string): Promise<void> {
+    const visited = new Set<string>([startId]);
+    let frontier = [startId];
+    while (frontier.length > 0) {
+      const nextFrontier: string[] = [];
+      for (const nodeId of frontier) {
+        let parents: WorkItem[];
+        try {
+          parents = await this.parentsAwaitingCompletion(nodeId);
+        } catch (e) {
+          console.warn(`[WorkItemRepositorySubstrate] heartbeat-propagation: reverse-ancestor lookup failed for ${nodeId}: ${String(e)}`);
+          continue; // F2 best-effort — a lookup gap must not fail the renew
+        }
+        for (const parent of parents) {
+          if (visited.has(parent.id)) continue; // acyclic-by-construction belt
+          visited.add(parent.id);
+          nextFrontier.push(parent.id); // relay the signal up regardless of whether we bump THIS node
+          try {
+            await this.tryBumpAncestorHeartbeat(parent.id);
+          } catch (e) {
+            console.warn(`[WorkItemRepositorySubstrate] heartbeat-propagation: ancestor bump failed for ${parent.id}: ${String(e)}`);
+            // F2 best-effort — keep propagating to the rest of the chain
+          }
+        }
+      }
+      frontier = nextFrontier;
+    }
+  }
+
+  /**
+   * work-88 (arc-node): the GIN-backed reverse-ancestor lookup — WorkItems that list
+   * `childId` in their completionDependsOn (the arc-nodes bracketing this child). $contains
+   * (@>) over spec.completionDependsOn, index-backed (workitem_spec_completiondependson_gin_idx)
+   * — NOT an in-memory scan over a list (cal #90 silent-miss past the 500-cap). One node is
+   * realistically in ≤1 arc's completionDependsOn, so the cap is never approached; the
+   * truncation log is a pure honesty belt (tele-4).
+   */
+  private async parentsAwaitingCompletion(childId: string): Promise<WorkItem[]> {
+    const { items } = await this.substrate.list<WorkItem>(KIND, {
+      filter: { completionDependsOn: { $contains: childId } },
+      limit: READY_SCAN_CAP,
+    });
+    if (items.length >= READY_SCAN_CAP) {
+      console.warn(`[WorkItemRepositorySubstrate] heartbeat-propagation: reverse-ancestor scan for ${childId} hit the ${READY_SCAN_CAP} cap — ancestors beyond it were NOT bumped (implausible fan-out; surfaced rather than silently dropped)`);
+    }
+    return items.map(cloneWorkItem);
+  }
+
+  /**
+   * work-88 (arc-node): bump ONE ancestor arc's heartbeat (the subtree-active signal),
+   * extending expiresAt/heartbeatAt WITHOUT changing phase or holder. THE airtight
+   * invariant (mirrors renewLease's own audit-4103 guard): NEVER bump an ALREADY-EXPIRED
+   * lease — that would resurrect a dead arc the sweeper is about to reap, breaking
+   * expireLease as the SOLE expiry authority (F3). A node with no lease (ready/unclaimed
+   * intermediate) is skipped too. A cheap pre-read avoids a no-op CAS write in the common
+   * skip case; the guard is RE-CHECKED on the fresh row inside the CAS (TOCTOU-safe — a
+   * lease that lapses between the pre-read and the CAS is still not resurrected).
+   */
+  private async tryBumpAncestorHeartbeat(arcId: string): Promise<void> {
+    const pre = await this.getWorkItem(arcId);
+    if (!pre?.lease) return; // nothing held to keep alive
+    if (pre.lease.expiresAt < new Date().toISOString()) return; // already-expired → sweeper's; never resurrect
+    await this.tryCasUpdate(arcId, (w) => {
+      const now = new Date();
+      const nowISO = now.toISOString();
+      // Re-check on the FRESH row — the airtight already-expired guard (a lease that lapsed
+      // between the pre-read and here must NOT be bumped); return unchanged to skip.
+      if (!w.lease || w.lease.expiresAt < nowISO) return w;
+      const lease: WorkItemLease = {
+        ...w.lease,
         heartbeatAt: nowISO,
         expiresAt: new Date(now.getTime() + LEASE_TTL_MS).toISOString(),
       };
@@ -565,6 +709,29 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     this.assertLease(item, agentId, leaseToken, "complete");
     if (!COMPLETABLE_PHASES.includes(item.status)) {
       throw new TransitionRejected(`complete requires in_progress or review, was ${item.status}`);
+    }
+    // work-88 (arc-node): the COMPLETION-gate. An arc/umbrella node (completionDependsOn
+    // non-empty) is completable ONLY once EVERY downstream child is `done`. GATE ONLY — the
+    // arc-holder still does + submits the close-out; we never auto-complete the arc. Runs
+    // BEFORE the evidence predicate (a half-finished subtree shouldn't even reach evidence
+    // eval). Only DIRECT children are checked: transitivity emerges from each child's OWN
+    // gate (B can't be `done` until C is), so the recursion brackets the whole subtree.
+    // This pre-read verdict is stable across the CAS: completionDependsOn is immutable spec
+    // and `done` is TERMINAL (monotonic) — a child can only move toward done, never back —
+    // so no TOCTOU admits a premature close (the only race re-runs as a retryable reject).
+    // A vanished child can never reach `done` → fail-CLOSED (blocks). `abandoned` ≠ `done`
+    // → an abandoned child also blocks (an arc must not close over unfinished work — the
+    // A8 one-enforced-close integrity posture; the arc-holder re-queues it to proceed).
+    if (item.completionDependsOn.length > 0) {
+      const prog = await this.computeCompletionProgress(item.completionDependsOn);
+      if (prog.pending.length > 0) {
+        throw new CompletionGateRejected(
+          prog.done,
+          prog.total,
+          prog.pending,
+          `${prog.done}/${prog.total} downstream done — not completable until all are done (pending: ${prog.pending.join(", ")})`,
+        );
+      }
     }
     // fail-fast the sync predicate + collect the async checks.
     const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.lease);

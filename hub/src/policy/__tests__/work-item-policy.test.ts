@@ -35,7 +35,7 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
   };
   return {
     calls,
-    createWorkItem: m("createWorkItem"), getWorkItem: m("getWorkItem"), entityExists: m("entityExists"),
+    createWorkItem: m("createWorkItem"), getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), entityExists: m("entityExists"),
     listWorkItems: m("listWorkItems"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
@@ -44,7 +44,7 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
 }
 
 const sampleItem = (over: Partial<WorkItem> = {}): WorkItem => ({
-  id: "work-1", type: "task", priority: "normal", roleEligibility: [], dependsOn: [],
+  id: "work-1", type: "task", priority: "normal", roleEligibility: [], dependsOn: [], completionDependsOn: [],
   evidenceRequirements: [], targetRef: null, status: "claimed",
   lease: { holder: "anonymous-engineer", token: "tok-abc", claimedAt: "t", expiresAt: "t", heartbeatAt: "t" },
   evidence: [], blockedOn: null, leaseExpiryCount: 0, createdAt: "t", updatedAt: "t", ...over,
@@ -357,6 +357,36 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
     expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(true);
   });
 
+  // ── work-88 (arc-node): the COMPLETION-gate edge — completionDependsOn ──
+  it("create_work: a dangling completionDependsOn is REJECTED (unresolvable_ref — completion-gate could never close)", async () => {
+    const stub = makeStub({
+      getWorkItem: (id: unknown) => (id === "work-real" ? readyItem({ id: "work-real" }) : null),
+      createWorkItem: () => readyItem(),
+    });
+    const r = await router.handle("create_work", { type: "task", completionDependsOn: ["work-real", "work-ghost"] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("unresolvable_ref");
+    expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(false); // never created
+  });
+
+  it("create_work: an existing completionDependsOn passes the existence-check + is THREADED to createWorkItem (the arc-node spec field)", async () => {
+    const stub = makeStub({ getWorkItem: () => readyItem({ id: "work-leaf" }), createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", { type: "task", completionDependsOn: ["work-leaf"] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    const created = stub.calls.find((c) => c.method === "createWorkItem");
+    expect(created).toBeDefined();
+    // Mutation-proof: the field is not just accepted — it reaches the store as the arc's gate.
+    expect((created!.args[0] as { completionDependsOn?: string[] }).completionDependsOn).toEqual(["work-leaf"]);
+  });
+
+  it("create_work: completionDependsOn defaults to [] when omitted (a leaf node — today's behavior)", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", { type: "task" }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    const created = stub.calls.find((c) => c.method === "createWorkItem");
+    expect((created!.args[0] as { completionDependsOn?: string[] }).completionDependsOn).toEqual([]);
+  });
+
   it("create_work: duplicate evidenceRequirement ids are REJECTED (bind integrity)", async () => {
     const stub = makeStub({ createWorkItem: () => readyItem() });
     const r = await router.handle("create_work", {
@@ -554,5 +584,30 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
     const r = await router.handle("get_work", { workId: "ghost" }, ctxFor(stub, "engineer"));
     expect(r.isError).toBe(true);
     expect(body(r).errorKind).toBe("not_found");
+  });
+
+  // ── work-88 (arc-node): the opt-in k/N completion-gate projection ──
+  it("get_work: WITHOUT includeCompletionProgress → no projection (the common read pays no fan-out)", async () => {
+    const stub = makeStub({ getWorkItem: () => readyItem({ id: "work-arc" }), getCompletionProgress: () => ({ done: 1, total: 2, pending: ["work-x"] }) });
+    const r = await router.handle("get_work", { workId: "work-arc" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBeFalsy();
+    expect(body(r).completionProgress).toBeUndefined();
+    expect(stub.calls.some((c) => c.method === "getCompletionProgress")).toBe(false); // never computed
+  });
+
+  it("get_work: WITH includeCompletionProgress:true → attaches the {done,total,pending} projection", async () => {
+    const stub = makeStub({ getWorkItem: () => readyItem({ id: "work-arc" }), getCompletionProgress: () => ({ done: 1, total: 2, pending: ["work-x"] }) });
+    const r = await router.handle("get_work", { workId: "work-arc", includeCompletionProgress: true }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBeFalsy();
+    expect(body(r).completionProgress).toEqual({ done: 1, total: 2, pending: ["work-x"] });
+    expect(stub.calls.some((c) => c.method === "getCompletionProgress")).toBe(true);
+  });
+
+  it("get_work: not_found short-circuits BEFORE the projection (a ghost id never fans out)", async () => {
+    const stub = makeStub({ getWorkItem: () => null, getCompletionProgress: () => ({ done: 0, total: 0, pending: [] }) });
+    const r = await router.handle("get_work", { workId: "ghost", includeCompletionProgress: true }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("not_found");
+    expect(stub.calls.some((c) => c.method === "getCompletionProgress")).toBe(false);
   });
 });

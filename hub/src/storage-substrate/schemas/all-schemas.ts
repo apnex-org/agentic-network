@@ -651,15 +651,24 @@ const WorkItem: SchemaDef = {
     { name: "workitem_status_lease_expiresat_idx", fields: ["status.lease.expiresAt"] },
     // C1-R2: GIN index backing the $contains (@>) array-membership on roleEligibility.
     { name: "workitem_spec_roleeligibility_gin_idx", fields: ["spec.roleEligibility"], type: "gin" },
+    // work-88 (arc-node): GIN index backing the reverse-ancestor lookup over the
+    // COMPLETION-gate edge — "which parents name <child> in completionDependsOn?".
+    // An in-memory scan past the 500-cap is a silent-miss (cal #90); this $contains
+    // (@>) membership stays index-backed instead.
+    { name: "workitem_spec_completiondependson_gin_idx", fields: ["spec.completionDependsOn"], type: "gin" },
   ],
   watchable: true,
   indexOwnershipPattern: "^workitem_",
   // status→status.phase; the status sub-objects (lease/evidence/blockedOn/
   // leaseExpiryCount) route to status; the FILTERABLE spec fields (priority/type/
-  // roleEligibility) route to spec. dependsOn/evidenceRequirements/targetRef/payload
-  // are unfiltered → default-partition to spec (no entry needed). The two HOT lease
-  // sub-fields (holder, expiresAt) filter via the bucket-prefixed dotted path
-  // (status.lease.*) — NO renameMap alias (option (c), thread-694; governor-sanctioned).
+  // roleEligibility/completionDependsOn) route to spec. dependsOn/evidenceRequirements/
+  // targetRef/payload are unfiltered → default-partition to spec (no entry needed). The
+  // two HOT lease sub-fields (holder, expiresAt) filter via the bucket-prefixed dotted
+  // path (status.lease.*) — NO renameMap alias (option (c), thread-694; governor-sanctioned).
+  // work-88 (arc-node): completionDependsOn is FILTERABLE — the renewLease transitive-
+  // heartbeat reverse-ancestor lookup ($contains over spec.completionDependsOn, backed by
+  // workitem_spec_completiondependson_gin_idx) — so it needs the explicit spec alias (an
+  // unmapped filter field is a loud FilterTranslationGapError on a partitioned kind).
   renameMap: {
     status: "status.phase",
     lease: "status.lease",
@@ -669,6 +678,7 @@ const WorkItem: SchemaDef = {
     priority: "spec.priority",
     type: "spec.type",
     roleEligibility: "spec.roleEligibility",
+    completionDependsOn: "spec.completionDependsOn",
   },
 };
 

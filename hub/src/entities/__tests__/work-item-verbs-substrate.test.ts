@@ -262,4 +262,89 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
     });
     await expect(repo.renewLease("work-renew-expired", "agent-re", "tok-re")).rejects.toThrow(/already expired/);
   }, OP_TIMEOUT);
+
+  // ── work-88 (arc-node): the subtree-coupled transitive-heartbeat ────────────────
+  // A renew on a node propagates UP the ancestor chain (every arc that lists it,
+  // transitively, in completionDependsOn), bumping their leases — so an arc does NOT
+  // tick toward expiry while ANY descendant is actively renewing (regardless of holder).
+  // The unchanged sweeper + stall-warning naturally relax because expiresAt stays fresh
+  // (F3: the bump IS the relaxation). THE airtight invariant: a renew NEVER resurrects an
+  // already-expired ancestor (no zombie; expireLease stays the sole expiry authority).
+  describe("transitive-heartbeat (arc-node nested lease)", () => {
+    const FROZEN = "2026-06-01T00:00:00.000Z";
+    /** put an arc-node with a CONTROLLED lease — the only clean way to pin expiresAt for
+     *  the heartbeat assertions. status=in_progress, held by `holder`. */
+    async function putArc(id: string, completionDependsOn: string[], lease: { holder: string; token: string; expiresAt: string }): Promise<void> {
+      await substrate.put("WorkItem", {
+        id, type: "task", priority: "normal", roleEligibility: [], dependsOn: [], completionDependsOn,
+        evidenceRequirements: [], targetRef: null, status: "in_progress",
+        lease: { holder: lease.holder, token: lease.token, claimedAt: FROZEN, expiresAt: lease.expiresAt, heartbeatAt: FROZEN },
+        evidence: [], blockedOn: null, leaseExpiryCount: 0, createdAt: FROZEN, updatedAt: FROZEN,
+      });
+    }
+    const soon = () => new Date(Date.now() + 60_000).toISOString(); // a live arc ~about to lapse (+60s)
+
+    it("child-renew bumps the DIRECT parent arc — fork-A: ANY holder (arc held by a different agent)", async () => {
+      const child = await claim("agent-leaf-1");                              // child: live lease + token
+      await putArc("work-arc-1", [child.id], { holder: "agent-arc-1", token: "tok-arc-1", expiresAt: soon() });
+      const before = await repo.getWorkItem("work-arc-1");
+      const renewed = await repo.renewLease(child.id, "agent-leaf-1", child.token); // renew the CHILD
+      expect(renewed).not.toBeNull();                                         // F2: the renew itself succeeds
+      const after = await repo.getWorkItem("work-arc-1");
+      const childAfter = await repo.getWorkItem(child.id);
+      expect(after!.lease!.expiresAt > before!.lease!.expiresAt).toBe(true);  // arc pushed FORWARD (kept alive)
+      // bumped to the SAME fresh full TTL the child got (subtree-coupled) — not hardcoding the TTL const
+      expect(Math.abs(new Date(after!.lease!.expiresAt).getTime() - new Date(childAfter!.lease!.expiresAt).getTime())).toBeLessThan(5000);
+      // a HEARTBEAT, not a re-claim: holder + token + phase unchanged
+      expect(after!.lease!.holder).toBe("agent-arc-1");
+      expect(after!.lease!.token).toBe("tok-arc-1");
+      expect(after!.status).toBe("in_progress");
+    }, OP_TIMEOUT);
+
+    it("child-renew bumps ancestors TRANSITIVELY (leaf → parent arc → grand-arc)", async () => {
+      const leaf = await claim("agent-leaf-2");
+      await putArc("work-arc-2", [leaf.id], { holder: "agent-arc-2", token: "tok-arc-2", expiresAt: soon() });
+      await putArc("work-grandarc-2", ["work-arc-2"], { holder: "agent-grand-2", token: "tok-grand-2", expiresAt: soon() });
+      const beforeArc = await repo.getWorkItem("work-arc-2");
+      const beforeGrand = await repo.getWorkItem("work-grandarc-2");
+      await repo.renewLease(leaf.id, "agent-leaf-2", leaf.token);
+      expect((await repo.getWorkItem("work-arc-2"))!.lease!.expiresAt > beforeArc!.lease!.expiresAt).toBe(true);          // direct parent
+      expect((await repo.getWorkItem("work-grandarc-2"))!.lease!.expiresAt > beforeGrand!.lease!.expiresAt).toBe(true);  // grandparent (transitive)
+    }, OP_TIMEOUT);
+
+    it("child-renew bumps ALL parent arcs that bracket it (the GIN reverse-lookup returns every parent)", async () => {
+      const child = await claim("agent-leaf-3");
+      await putArc("work-arc-3a", [child.id], { holder: "agent-3a", token: "tok-3a", expiresAt: soon() });
+      await putArc("work-arc-3b", [child.id], { holder: "agent-3b", token: "tok-3b", expiresAt: soon() });
+      const before3a = await repo.getWorkItem("work-arc-3a");
+      const before3b = await repo.getWorkItem("work-arc-3b");
+      await repo.renewLease(child.id, "agent-leaf-3", child.token);
+      expect((await repo.getWorkItem("work-arc-3a"))!.lease!.expiresAt > before3a!.lease!.expiresAt).toBe(true);
+      expect((await repo.getWorkItem("work-arc-3b"))!.lease!.expiresAt > before3b!.lease!.expiresAt).toBe(true);
+    }, OP_TIMEOUT);
+
+    it("AIRTIGHT: a child-renew does NOT resurrect an ALREADY-EXPIRED ancestor (no zombie; expireLease stays sole authority)", async () => {
+      const child = await claim("agent-leaf-4");
+      const dead = "2020-01-01T00:05:00.000Z"; // long past
+      await putArc("work-arc-dead", [child.id], { holder: "agent-dead", token: "tok-dead", expiresAt: dead });
+      await repo.renewLease(child.id, "agent-leaf-4", child.token);
+      const arc = await repo.getWorkItem("work-arc-dead");
+      expect(arc!.lease!.expiresAt).toBe(dead); // UNCHANGED — the already-expired guard held
+    }, OP_TIMEOUT);
+
+    it("a QUIET subtree does NOT keep the arc alive — an expired arc with no descendant-renew is reaped by expireLease (F3)", async () => {
+      const child = await claim("agent-leaf-5"); // a held child, but we NEVER renew it (quiet subtree)
+      await putArc("work-arc-quiet", [child.id], { holder: "agent-quiet", token: "tok-quiet", expiresAt: "2020-01-01T00:05:00.000Z" });
+      const verdict = await repo.expireLease("work-arc-quiet", new Date().toISOString(), 3); // sweeper unchanged
+      expect(verdict).toBe("requeued");
+      expect((await repo.getWorkItem("work-arc-quiet"))!.status).toBe("ready");
+    }, OP_TIMEOUT);
+
+    it("regression: a leaf with NO parent arc renews normally (propagation is a no-op, never fails the renew)", async () => {
+      const leaf = await claim("agent-leaf-6");
+      const renewed = await repo.renewLease(leaf.id, "agent-leaf-6", leaf.token);
+      expect(renewed!.status).toBe("claimed");
+      expect(renewed!.lease!.holder).toBe("agent-leaf-6");
+    }, OP_TIMEOUT);
+  });
 });

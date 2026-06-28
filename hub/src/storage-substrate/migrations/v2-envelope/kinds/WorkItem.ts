@@ -29,9 +29,11 @@ export function createWorkItemMigrationModule(schema: SchemaDef): KindMigrationM
     },
     partition: {
       metadata: ["createdAt", "createdBy", "updatedAt"],
-      // spec = declared intent (incl. the K8s arrays roleEligibility/dependsOn +
-      // the evidenceRequirements/targetRef objects + the freeform payload).
-      spec: ["type", "priority", "roleEligibility", "dependsOn", "evidenceRequirements", "targetRef", "payload"],
+      // spec = declared intent (incl. the K8s arrays roleEligibility/dependsOn/
+      // completionDependsOn + the evidenceRequirements/targetRef objects + the freeform
+      // payload). work-88: completionDependsOn explicit (it backs a GIN index — don't rely
+      // on default-routing for an indexed field).
+      spec: ["type", "priority", "roleEligibility", "dependsOn", "completionDependsOn", "evidenceRequirements", "targetRef", "payload"],
       // status = lifecycle (phase via the rename above; lease = sole claim
       // authority; evidence accumulates; blockedOn + the per-item poison counter).
       status: ["lease", "evidence", "blockedOn", "leaseExpiryCount"],

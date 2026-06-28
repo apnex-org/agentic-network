@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { Pool } from "pg";
 import { createPostgresStorageSubstrate, createSchemaReconciler, ALL_SCHEMAS, buildEnvelopeWriteEncoder } from "../../storage-substrate/index.js";
 import { SubstrateCounter } from "../substrate-counter.js";
-import { WorkItemRepositorySubstrate, TransitionRejected, EvidencePredicateFailed } from "../work-item-repository-substrate.js";
+import { WorkItemRepositorySubstrate, TransitionRejected, EvidencePredicateFailed, CompletionGateRejected } from "../work-item-repository-substrate.js";
 import type { EvidenceRequirement, EvidenceItem } from "../work-item.js";
 
 const SETUP_TIMEOUT = 90_000;
@@ -234,4 +234,115 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     ]);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
+
+  // ── work-88 (arc-node): the complete_work COMPLETION-gate ───────────────────────
+  // An arc/umbrella node (completionDependsOn non-empty) is claimable immediately
+  // (dependsOn:[]) but completable only once EVERY downstream child is `done`. GATE
+  // ONLY — the arc-holder still submits the close-out; never an auto-complete.
+  describe("completionDependsOn gate (arc-node)", () => {
+    /** create → claim → start → complete-to-done a leaf child; returns its id. */
+    async function doneChild(agent: string): Promise<string> {
+      const w = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+      const c = await repo.claimWorkItem(w.id, agent);
+      await repo.startWork(w.id, agent, c!.lease!.token);
+      await repo.completeWork(w.id, agent, c!.lease!.token, [ev({ requirementId: "x", kind: "freeform" })]);
+      return w.id;
+    }
+    /** create an arc (completionDependsOn) → claim → start; returns id + token. */
+    async function startedArc(completionDependsOn: string[], agent: string) {
+      const w = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn });
+      const c = await repo.claimWorkItem(w.id, agent);
+      await repo.startWork(w.id, agent, c!.lease!.token);
+      return { id: w.id, token: c!.lease!.token };
+    }
+
+    it("unmet gate: a not-yet-done child → CompletionGateRejected (0/1); row unchanged (atomic)", async () => {
+      const notDone = (await repo.createWorkItem({ type: "task", roleEligibility: [] })).id;
+      const arc = await startedArc([notDone], "agent-arc-a");
+      let caught: unknown;
+      try { await repo.completeWork(arc.id, "agent-arc-a", arc.token, [ev({ requirementId: "x", kind: "freeform" })]); }
+      catch (e) { caught = e; }
+      expect(caught).toBeInstanceOf(CompletionGateRejected);
+      expect(caught).toMatchObject({ done: 0, total: 1, pending: [notDone] });
+      // atomic: the arc is still in_progress with NO evidence stored.
+      const after = await repo.getWorkItem(arc.id);
+      expect(after!.status).toBe("in_progress");
+      expect(after!.evidence).toEqual([]);
+    }, OP_TIMEOUT);
+
+    it("partial k/N: 2 children, 1 done → reject carrying done=1/total=2 + the pending child", async () => {
+      const done1 = await doneChild("agent-arc-b1");
+      const notDone = (await repo.createWorkItem({ type: "task", roleEligibility: [] })).id;
+      const arc = await startedArc([done1, notDone], "agent-arc-b2");
+      let caught: unknown;
+      try { await repo.completeWork(arc.id, "agent-arc-b2", arc.token, [ev({ requirementId: "x", kind: "freeform" })]); }
+      catch (e) { caught = e; }
+      expect(caught).toBeInstanceOf(CompletionGateRejected);
+      expect(caught).toMatchObject({ done: 1, total: 2, pending: [notDone] });
+    }, OP_TIMEOUT);
+
+    it("gate met: ALL children done → the arc completes (the gate opens; holder completes, never auto)", async () => {
+      const c1 = await doneChild("agent-arc-c1");
+      const c2 = await doneChild("agent-arc-c2");
+      const arc = await startedArc([c1, c2], "agent-arc-c3");
+      const done = await repo.completeWork(arc.id, "agent-arc-c3", arc.token, [ev({ requirementId: "x", kind: "freeform" })]);
+      expect(done!.status).toBe("done");
+    }, OP_TIMEOUT);
+
+    it("ordering (F6): an unmet gate rejects BEFORE the evidence predicate — pass NO evidence, error is the GATE", async () => {
+      const notDone = (await repo.createWorkItem({ type: "task", roleEligibility: [] })).id;
+      const w = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [notDone], evidenceRequirements: [{ id: "r1", kind: "commit" }] });
+      const c = await repo.claimWorkItem(w.id, "agent-arc-d");
+      await repo.startWork(w.id, "agent-arc-d", c!.lease!.token);
+      // Both the gate AND the (unsatisfied) evidence predicate would fail — assert it's the GATE.
+      await expect(repo.completeWork(w.id, "agent-arc-d", c!.lease!.token, []))
+        .rejects.toThrow(/completion gate.*0\/1 downstream done/);
+    }, OP_TIMEOUT);
+
+    it("fail-closed: a VANISHED (never-existent) child blocks — it can never reach done", async () => {
+      const arc = await startedArc(["work-ghost-99999"], "agent-arc-e");
+      await expect(repo.completeWork(arc.id, "agent-arc-e", arc.token, [ev({ requirementId: "x", kind: "freeform" })]))
+        .rejects.toThrow(/completion gate.*work-ghost-99999/);
+    }, OP_TIMEOUT);
+
+    it("fail-closed: an ABANDONED child blocks (abandoned ≠ done — an arc must not close over unfinished work)", async () => {
+      const w = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+      const c = await repo.claimWorkItem(w.id, "agent-arc-f");
+      await repo.abandonWork(w.id, "agent-arc-f", { leaseToken: c!.lease!.token });
+      expect((await repo.getWorkItem(w.id))!.status).toBe("abandoned");
+      const arc = await startedArc([w.id], "agent-arc-f2");
+      await expect(repo.completeWork(arc.id, "agent-arc-f2", arc.token, [ev({ requirementId: "x", kind: "freeform" })]))
+        .rejects.toThrow(/completion gate/);
+    }, OP_TIMEOUT);
+
+    it("leaf regression: an empty completionDependsOn node is unaffected — the gate is a no-op", async () => {
+      const arc = await startedArc([], "agent-arc-g");
+      const done = await repo.completeWork(arc.id, "agent-arc-g", arc.token, [ev({ requirementId: "x", kind: "freeform" })]);
+      expect(done!.status).toBe("done");
+    }, OP_TIMEOUT);
+
+    // ── the k/N progress PROJECTION (get_work feed; the same per-child read the gate uses) ──
+    it("getCompletionProgress: a half-done arc → {done:1,total:2,pending:[notDone]}", async () => {
+      const done1 = await doneChild("agent-prog-a1");
+      const notDone = (await repo.createWorkItem({ type: "task", roleEligibility: [] })).id;
+      const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [done1, notDone] });
+      expect(await repo.getCompletionProgress(arc.id)).toEqual({ done: 1, total: 2, pending: [notDone] });
+    }, OP_TIMEOUT);
+
+    it("getCompletionProgress: all children done → {done:2,total:2,pending:[]}", async () => {
+      const c1 = await doneChild("agent-prog-b1");
+      const c2 = await doneChild("agent-prog-b2");
+      const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [c1, c2] });
+      expect(await repo.getCompletionProgress(arc.id)).toEqual({ done: 2, total: 2, pending: [] });
+    }, OP_TIMEOUT);
+
+    it("getCompletionProgress: a leaf (no completionDependsOn) → {done:0,total:0,pending:[]}", async () => {
+      const leaf = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+      expect(await repo.getCompletionProgress(leaf.id)).toEqual({ done: 0, total: 0, pending: [] });
+    }, OP_TIMEOUT);
+
+    it("getCompletionProgress: a non-existent work-item → null", async () => {
+      expect(await repo.getCompletionProgress("work-ghost-00000")).toBeNull();
+    }, OP_TIMEOUT);
+  });
 });
