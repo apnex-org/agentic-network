@@ -65,6 +65,25 @@ export function omitEmptyValues(obj: Record<string, unknown>): Record<string, un
   return out;
 }
 
+/** General additive-tag merge (idea-363 / work-59). Union `addTags` onto an
+ *  existing tag list, preserving order (existing first, then new) and dropping
+ *  duplicates + empty strings. The reusable primitive behind update_idea's
+ *  `addTags` mode — pairs with the update_bug tag-REPLACE-clobber sibling
+ *  (the same clobber footgun: a bare `tags = newTags` wipes prior tags, so an
+ *  additive stamp — e.g. a triage pass adding `audit:value:high` — must
+ *  read-merge-write). Pass a fresh `base` (e.g. an explicit `tags` replacement)
+ *  to union onto that instead of the current set. */
+export function mergeTags(existing: readonly string[] | undefined, addTags: readonly string[] | undefined): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of [...(existing ?? []), ...(addTags ?? [])]) {
+    if (typeof t !== "string" || t === "" || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
 export function applyLabelFilter<T extends { labels?: Record<string, string> }>(
   items: T[],
   labels?: Record<string, string>,
