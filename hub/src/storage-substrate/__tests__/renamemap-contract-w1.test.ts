@@ -88,7 +88,7 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   // (lease/evidence objects, roleEligibility array). The W1.1b sentinel-probe is
   // placement-based (value-type-agnostic) so all entries validate here; only the
   // W6 equality-shadow step carves out the object/array entries (see that test).
-  WorkItem: { status: "status.phase", lease: "status.lease", evidence: "status.evidence", blockedOn: "status.blockedOn", leaseExpiryCount: "status.leaseExpiryCount", priority: "spec.priority", type: "spec.type", roleEligibility: "spec.roleEligibility", completionDependsOn: "spec.completionDependsOn" },
+  WorkItem: { status: "status.phase", lease: "status.lease", evidence: "status.evidence", blockedOn: "status.blockedOn", leaseExpiryCount: "status.leaseExpiryCount", enteredCurrentStateAt: "status.enteredCurrentStateAt", stateDurations: "status.stateDurations", priority: "spec.priority", type: "spec.type", roleEligibility: "spec.roleEligibility", completionDependsOn: "spec.completionDependsOn" },
   Message: {
     kind: "metadata.messageKind",
     status: "status.phase",

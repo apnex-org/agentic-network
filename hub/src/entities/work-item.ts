@@ -34,6 +34,10 @@ export interface StintChild {
   id: string;
   status: WorkItemPhase | "missing";
   leaseHolder: string | null;
+  /** idea-384 Part A (work-98): per-state wall-clock (ms) for this child — the per-node
+   *  duration surface on get_current_stint. Zeroed for a `missing` child. (PART B's
+   *  recursive subtree rollup is Arc-A slice 2.) */
+  stateDurations: StateDurations;
 }
 export interface StintProjection {
   arcId: string;
@@ -157,6 +161,22 @@ export interface WorkItemReference {
   required: boolean;   // required:true → create_work fail-closed-validates resolvability at seed-time
 }
 
+/** idea-384 Part A (work-98) — per-FSM-state wall-clock accumulation. One bucket per
+ *  NON-TERMINAL dwell state (terminal done/abandoned never dwell, so no bucket — cal #101
+ *  the bucket-set covers every dwell state, incl `review` = verifier-wait latency). Units =
+ *  MILLISECONDS accumulated across the node's whole life (requeues RE-ACCUMULATE). The
+ *  sum-identity holds for a node born under the timer: sum(buckets) === createdAt→completedAt. */
+export interface StateDurations {
+  ready: number;
+  claimed: number;
+  in_progress: number;
+  blocked: number;
+  review: number;
+}
+export const DEFAULT_STATE_DURATIONS: StateDurations = Object.freeze({
+  ready: 0, claimed: 0, in_progress: 0, blocked: 0, review: 0,
+});
+
 export interface WorkItem {
   id: string;
   // spec (intent)
@@ -195,6 +215,13 @@ export interface WorkItem {
   /** Per-ITEM poison counter — incremented on each lease-expiry re-queue; at the
    *  cap the sweeper terminal-abandons the item (distinct from per-AGENT thrash). */
   leaseExpiryCount: number;
+  /** idea-384 Part A (work-98): the timestamp this item ENTERED its current `status` —
+   *  re-stamped on every FSM transition. status-partitioned. The accrual basis: on exit,
+   *  (now - enteredCurrentStateAt) accumulates into the EXITING state's stateDurations bucket. */
+  enteredCurrentStateAt: string;
+  /** idea-384 Part A (work-98): accumulated wall-clock MS per dwell state (cumulative across
+   *  the node's life incl requeues). status-partitioned. Non-filterable. */
+  stateDurations: StateDurations;
   // metadata / provenance
   createdBy?: EntityProvenance;
   createdAt: string;

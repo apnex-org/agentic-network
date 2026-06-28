@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import type {
   WorkItem,
   WorkItemPhase,
+  StateDurations,
   WorkItemType,
   WorkItemPriority,
   WorkItemLease,
@@ -35,6 +36,7 @@ import type {
   WorkItemVerb,
   IWorkItemStore,
 } from "./work-item.js";
+import { DEFAULT_STATE_DURATIONS } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
 import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
@@ -296,7 +298,39 @@ function cloneWorkItem(w: WorkItem): WorkItem {
   flat.targetRef = flat.targetRef ?? null;
   flat.blockedOn = flat.blockedOn ?? null;
   flat.leaseExpiryCount = (flat.leaseExpiryCount as number | undefined) ?? 0;
+  // work-98 (idea-384 Part A): per-state timers. Migration-default enteredCurrentStateAt to
+  // updatedAt (the last-transition stamp = the best proxy for when a pre-existing item entered
+  // its current state); buckets default to zero (pre-timer historical dwell is not retro-captured,
+  // so the sum-identity is asserted only on nodes born under the timer).
+  flat.enteredCurrentStateAt = (flat.enteredCurrentStateAt as string | undefined) ?? (flat.updatedAt as string);
+  flat.stateDurations = (flat.stateDurations as StateDurations | undefined) ?? { ...DEFAULT_STATE_DURATIONS };
   return flat as unknown as WorkItem;
+}
+
+/**
+ * idea-384 Part A (work-98) — the SINGLE shared state-timer accrual. Computes the wall-clock
+ * spent in the EXITING state (w.status, since w.enteredCurrentStateAt) and accumulates it into
+ * that state's bucket, then re-stamps enteredCurrentStateAt = nowISO. EVERY FSM transition spreads
+ * this (claim/start/block/resume/complete/release/abandon + the sweeper requeue) so no site can
+ * drift (cal #96 — ONE symbol, not 10 copies; the verify drops it from a single site to red one
+ * bucket's test). Terminal exits (→done/abandoned) still accrue the final dwell so the sum-identity
+ * closes (sum(buckets) === createdAt→completedAt). Clamps negative elapsed (clock skew) to 0.
+ * Requeues RE-ACCUMULATE: a node re-entering ready ADDS the new ready-dwell onto the prior total.
+ */
+export function accrueExitingState(
+  w: Pick<WorkItem, "status" | "enteredCurrentStateAt" | "stateDurations" | "updatedAt">,
+  nowISO: string,
+): { stateDurations: StateDurations; enteredCurrentStateAt: string } {
+  const enteredMs = Date.parse(w.enteredCurrentStateAt ?? w.updatedAt);
+  const elapsed = Math.max(0, Date.parse(nowISO) - enteredMs);
+  const durations: StateDurations = { ...DEFAULT_STATE_DURATIONS, ...w.stateDurations };
+  // The exiting status is always a non-terminal DWELL state (a transition only leaves a dwell
+  // state; terminal done/abandoned are never the FROM-state). Guard defensively so a non-bucket
+  // status is a no-op accrual, never a throw mid-CAS.
+  if (Object.prototype.hasOwnProperty.call(durations, w.status)) {
+    (durations as unknown as Record<string, number>)[w.status] += elapsed;
+  }
+  return { stateDurations: durations, enteredCurrentStateAt: nowISO };
 }
 
 export class WorkItemRepositorySubstrate implements IWorkItemStore {
@@ -338,6 +372,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       evidence: [],
       blockedOn: null,
       leaseExpiryCount: 0,
+      // work-98 (idea-384 Part A): birth-stamp the timer — entered `ready` at createdAt, zero buckets.
+      enteredCurrentStateAt: now,
+      stateDurations: { ...DEFAULT_STATE_DURATIONS },
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -384,6 +421,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       evidence: [],
       blockedOn: null,
       leaseExpiryCount: 0,
+      // work-98 (idea-384 Part A): birth-stamp the timer — entered `ready` at createdAt, zero buckets.
+      enteredCurrentStateAt: now,
+      stateDurations: { ...DEFAULT_STATE_DURATIONS },
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -462,10 +502,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     for (const childId of arc.completionDependsOn) {
       const child = await this.substrate.get<WorkItem>(KIND, childId);
       if (!child) {
-        children.push({ id: childId, status: "missing", leaseHolder: null });
+        children.push({ id: childId, status: "missing", leaseHolder: null, stateDurations: { ...DEFAULT_STATE_DURATIONS } });
       } else {
         const flat = cloneWorkItem(child);
-        children.push({ id: childId, status: flat.status, leaseHolder: flat.lease?.holder ?? null });
+        children.push({ id: childId, status: flat.status, leaseHolder: flat.lease?.holder ?? null, stateDurations: flat.stateDurations });
       }
     }
     const countOf = (s: string) => children.filter((c) => c.status === s).length;
@@ -723,7 +763,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
             expiresAt: new Date(now.getTime() + LEASE_TTL_MS).toISOString(),
             heartbeatAt: nowISO,
           };
-          return { ...w, status: "claimed", lease, updatedAt: nowISO };
+          return { ...w, status: "claimed", lease, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
         });
       },
       { timeoutMs: CLAIM_LOCK_TIMEOUT_MS },
@@ -734,7 +774,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "start");
       if (w.status !== "claimed") throw new TransitionRejected(`start requires claimed, was ${w.status}`);
-      return { ...w, status: "in_progress", updatedAt: new Date().toISOString() };
+      const nowISO = new Date().toISOString();
+      return { ...w, status: "in_progress", ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 
@@ -742,7 +783,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "block");
       if (w.status !== "in_progress") throw new TransitionRejected(`block requires in_progress, was ${w.status}`);
-      return { ...w, status: "blocked", blockedOn, updatedAt: new Date().toISOString() };
+      const nowISO = new Date().toISOString();
+      return { ...w, status: "blocked", blockedOn, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 
@@ -750,7 +792,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "resume");
       if (w.status !== "blocked") throw new TransitionRejected(`resume requires blocked, was ${w.status}`);
-      return { ...w, status: "in_progress", blockedOn: null, updatedAt: new Date().toISOString() };
+      const nowISO = new Date().toISOString();
+      return { ...w, status: "in_progress", blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 
@@ -880,7 +923,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "release");
       if (!RELEASABLE_PHASES.includes(w.status)) throw new TransitionRejected(`release requires an active claim, was ${w.status}`);
-      return { ...w, status: "ready", lease: null, blockedOn: null, updatedAt: new Date().toISOString() };
+      const nowISO = new Date().toISOString();
+      return { ...w, status: "ready", lease: null, blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 
@@ -897,7 +941,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         throw new TransitionRejected(`abandon requires the lease-holder (with matching token) or the creator, not ${agentId}`);
       }
       if (!RELEASABLE_PHASES.includes(w.status)) throw new TransitionRejected(`abandon requires an active claim, was ${w.status}`);
-      return { ...w, status: "abandoned", lease: null, blockedOn: null, updatedAt: new Date().toISOString() };
+      const nowISO = new Date().toISOString();
+      return { ...w, status: "abandoned", lease: null, blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 
@@ -988,7 +1033,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!COMPLETABLE_PHASES.includes(w.status)) throw new TransitionRejected(`complete requires in_progress or review, was ${w.status}`);
       const merged = mergeEvidence(w.evidence, evidence);
       const { nextPhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease);
-      return { ...w, status: nextPhase, evidence: merged, updatedAt: new Date().toISOString() };
+      const nowISO = new Date().toISOString();
+      return { ...w, status: nextPhase, evidence: merged, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 
@@ -1032,9 +1078,13 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const poisonEligible = POISON_ELIGIBLE_PHASES.includes(w.status);
       const nextCount = poisonEligible ? w.leaseExpiryCount + 1 : w.leaseExpiryCount;
       const poisoned = poisonEligible && nextCount >= poisonCap;
+      // work-98 (idea-384 Part A): accrue the EXITING lease-held state's dwell before the sweep.
+      // On requeue→ready the node re-enters ready (re-stamped here), so its next ready-dwell
+      // RE-ACCUMULATES onto the prior ready total — a thrashing node shows its time in `ready`.
+      const accrued = accrueExitingState(w, nowISO);
       const next: WorkItem = poisoned
-        ? { ...w, status: "abandoned", lease: null, blockedOn: null, leaseExpiryCount: nextCount, updatedAt: nowISO }
-        : { ...w, status: "ready", lease: null, blockedOn: null, leaseExpiryCount: nextCount, updatedAt: nowISO };
+        ? { ...w, status: "abandoned", lease: null, blockedOn: null, leaseExpiryCount: nextCount, ...accrued, updatedAt: nowISO }
+        : { ...w, status: "ready", lease: null, blockedOn: null, leaseExpiryCount: nextCount, ...accrued, updatedAt: nowISO };
       const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
       if (result.ok) return poisoned ? "abandoned" : "requeued";
       // revision-mismatch → re-read + re-check (a concurrent renew may now make it not-expired)

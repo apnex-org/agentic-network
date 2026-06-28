@@ -675,6 +675,10 @@ const WorkItem: SchemaDef = {
     evidence: "status.evidence",
     blockedOn: "status.blockedOn",
     leaseExpiryCount: "status.leaseExpiryCount",
+    // idea-384 Part A (work-98): per-FSM-state wall-clock timers — status (lifecycle),
+    // non-filterable (no index; surfaced on get_work/get_current_stint, not queried).
+    enteredCurrentStateAt: "status.enteredCurrentStateAt",
+    stateDurations: "status.stateDurations",
     priority: "spec.priority",
     type: "spec.type",
     roleEligibility: "spec.roleEligibility",
