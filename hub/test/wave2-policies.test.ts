@@ -432,6 +432,10 @@ describe("MissionPolicy", () => {
     expect(m.description).toBeUndefined();   // long-text OMITTED
     expect(m.tasks).toBeUndefined();         // heavy virtual array NOT inlined
     expect(m.plannedTasks).toBeUndefined();  // per-task directive bodies OMITTED
+    // steve's #406 catch: an unclassified mission's optional missionClass must be PRESENT
+    // as null (NOT undefined-dropped by JSON.stringify) → consistent compact row shape.
+    expect(Object.prototype.hasOwnProperty.call(m, "missionClass")).toBe(true);
+    expect(m.missionClass).toBeNull();
     // full mode preserves description
     const full = JSON.parse((await router.handle("list_missions", {}, ctx)).content[0].text);
     expect(full.missions[0].description).toBe("a long mission description body");

@@ -121,7 +121,7 @@ function projectIdeaCompact(i: Idea) {
   return {
     id: i.id,
     textPreview: text.length > 140 ? text.slice(0, 140) + "…" : text,
-    status: i.status, missionId: i.missionId, tags: i.tags, updatedAt: i.updatedAt,
+    status: i.status, missionId: i.missionId ?? null, tags: i.tags, updatedAt: i.updatedAt,
   };
 }
 

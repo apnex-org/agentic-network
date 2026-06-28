@@ -65,7 +65,7 @@ async function listAuditEntries(args: Record<string, unknown>, ctx: IPolicyConte
       text: JSON.stringify({
         // bug-196 compact: drop `details` (the only free-text body); keep the scannable header.
         entries: args.compact === true
-          ? page.items.map((e) => ({ id: e.id, timestamp: e.timestamp, actor: e.actor, action: e.action, relatedEntity: e.relatedEntity }))
+          ? page.items.map((e) => ({ id: e.id, timestamp: e.timestamp, actor: e.actor, action: e.action, relatedEntity: e.relatedEntity ?? null }))
           : page.items,
         count: page.count,
         total: page.total,
