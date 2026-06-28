@@ -624,6 +624,16 @@ async function getCurrentStint(args: Record<string, unknown>, ctx: IPolicyContex
   return stint ? ok({ stint }) : notFound(args.workId as string);
 }
 
+// work-94 (cold-start spine): the "what can I do from here" projection — the legal FSM moves
+// for the SPOOF-PROOF caller (resolved from the session, not args) given the item's state.
+async function legalMoves(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const caller = await resolveCreatedBy(ctx);
+  const moves = await store.getLegalMoves(args.workId as string, { agentId: caller.agentId, role: caller.role });
+  return moves ? ok({ legalMoves: moves }) : notFound(args.workId as string);
+}
+
 async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
@@ -757,6 +767,15 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       workId: z.string().describe("The arc-node WorkItem id to project (any item id)"),
     },
     getCurrentStint,
+  );
+
+  router.register(
+    "legal_moves",
+    "[Any] THE COLD-START 'what can I do from here' SURFACE (work-94 spine): the legal FSM transition verbs for an item given its state/lease/gates, FROM YOUR seat (the spoof-proof session caller). Each verb carries `legal` + (when illegal) a non-dark `reason` — so a process-naive agent knows its affordances AND why the rest are unavailable. Caller-aware (the lease-bound verbs — start/block/resume/complete/release/abandon/renew — require you to be the lease-holder; abandon also allows the creator) + gate-aware (an arc with an unmet completion-gate → complete is NOT legal; a leaf → complete IS). claim is legal from `ready` when role-eligible + dependency-met (WIP-cap + quarantine are re-checked at claim-time).",
+    {
+      workId: z.string().describe("The WorkItem id to compute the caller's legal moves for"),
+    },
+    legalMoves,
   );
 
   router.register(

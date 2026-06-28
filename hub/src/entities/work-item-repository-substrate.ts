@@ -30,6 +30,9 @@ import type {
   ReadyEmptyReason,
   StintProjection,
   StintChild,
+  LegalMoves,
+  LegalMove,
+  WorkItemVerb,
   IWorkItemStore,
 } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
@@ -476,14 +479,80 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return {
       arcId: arc.id,
       arcStatus: arc.status,
-      // pending = NOT done — agrees with computeCompletionProgress by construction (the gate's k/N).
+      // pending = NOT done. This k/N is PARALLEL-COMPUTED from the per-child read above (NOT a
+      // call to computeCompletionProgress) — it is PARITY-ASSERTED against the gate by a test
+      // (getStintProjection.completion deepEquals getCompletionProgress), which reds if the two
+      // parallel definitions ever drift (work-94 sub-3; the agreement-pin calibration).
       completion: { done, total, pending: children.filter((c) => c.status !== "done").map((c) => c.id) },
-      gateOpen: total > 0 && done === total, // complete_work would pass the completion-gate
+      // tracks the ARC completion-gate (children>0): would complete_work pass it. A LEAF (children=0)
+      // has NO completion-gate — it completes freely — so gateOpen:false there means "no arc-gate",
+      // NOT "blocked". gateOpen:true ⇒ a completable arc whose subtree is finalised (one-enforced-close).
+      gateOpen: total > 0 && done === total,
       inFlight: statusCounts.claimed + statusCounts.in_progress + statusCounts.review,
       blocked: statusCounts.blocked,
       statusCounts,
       children,
     };
+  }
+
+  /**
+   * work-94 (cold-start spine): the legal FSM transition verbs for the caller given the item's
+   * state/lease/gates — the "what can I do from here" surface. Each verb carries legal + (when
+   * illegal) a NON-DARK reason. Caller-aware: the lease-bound verbs (start/block/resume/complete/
+   * release/abandon/renew) require the caller to be the holder (abandon also allows the creator).
+   * Gate-aware: complete on a COMPLETABLE arc is legal only when the completion-gate is met (all
+   * completionDependsOn children done); a leaf has no gate (gateMet=true). The phase/holder/gate
+   * predicates MIRROR the repo's own transition guards (single source of truth — the same
+   * COMPLETABLE/RELEASABLE/LEASE_HELD phase sets the verbs enforce). null if the id is absent.
+   */
+  async getLegalMoves(workId: string, caller: { agentId: string; role?: string }): Promise<LegalMoves | null> {
+    const w = await this.getWorkItem(workId);
+    if (!w) return null;
+    const status = w.status;
+    const isHolder = !!w.lease && w.lease.holder === caller.agentId;
+    const isCreator = w.createdBy?.agentId === caller.agentId;
+    const notHolder = "the caller is not the lease-holder";
+
+    // Gate-aware complete: a COMPLETABLE arc needs all completionDependsOn children done; a leaf
+    // (no children) has no completion-gate → gateMet true (the same predicate the gate enforces).
+    let gateMet = true;
+    if (COMPLETABLE_PHASES.includes(status) && w.completionDependsOn.length > 0) {
+      gateMet = (await this.computeCompletionProgress(w.completionDependsOn)).pending.length === 0;
+    }
+
+    const moves: LegalMove[] = [];
+    const add = (verb: WorkItemVerb, legal: boolean, reason?: string) =>
+      moves.push(legal ? { verb, legal } : { verb, legal, reason: reason ?? "" });
+
+    // claim: ready + role-eligible + dependency-met (WIP-cap + quarantine are re-checked at
+    // claim-time by the policy/repo — runtime caller-state, not structural).
+    if (status !== "ready") {
+      add("claim", false, `claim requires ready, was ${status}`);
+    } else {
+      const roleOk = w.roleEligibility.length === 0 || (!!caller.role && w.roleEligibility.includes(caller.role));
+      if (!roleOk) {
+        add("claim", false, `role ${caller.role ?? "(none)"} is not in roleEligibility [${w.roleEligibility.join(", ")}]`);
+      } else {
+        const unmet = await this.unmetDependencies(w.dependsOn);
+        if (unmet.length > 0) add("claim", false, `dependencies not done: ${unmet.join(", ")}`);
+        else add("claim", true);
+      }
+    }
+
+    // lease-bound verbs (holder-gated; phase sets mirror the verb guards).
+    add("start", isHolder && status === "claimed", !isHolder ? notHolder : `start requires claimed, was ${status}`);
+    add("block", isHolder && status === "in_progress", !isHolder ? notHolder : `block requires in_progress, was ${status}`);
+    add("resume", isHolder && status === "blocked", !isHolder ? notHolder : `resume requires blocked, was ${status}`);
+    add("renew", isHolder && LEASE_HELD_PHASES.includes(status), !isHolder ? notHolder : `renew requires a held lease, was ${status}`);
+    add("release", isHolder && RELEASABLE_PHASES.includes(status), !isHolder ? notHolder : `release requires an active claim, was ${status}`);
+    // abandon: the holder OR the creator (override authority), from a RELEASABLE phase.
+    add("abandon", (isHolder || isCreator) && RELEASABLE_PHASES.includes(status),
+      !(isHolder || isCreator) ? "the caller is neither the lease-holder nor the creator" : `abandon requires an active claim, was ${status}`);
+    // complete: holder + COMPLETABLE + the completion-gate met.
+    add("complete", isHolder && COMPLETABLE_PHASES.includes(status) && gateMet,
+      !isHolder ? notHolder : !COMPLETABLE_PHASES.includes(status) ? `complete requires in_progress or review, was ${status}` : "completion-gate unmet — downstream completionDependsOn children are not all done");
+
+    return { workId: w.id, status, isHolder, gateMet, moves };
   }
 
   // work-86 (idea-380): generic substrate existence check for a storage=entity reference.

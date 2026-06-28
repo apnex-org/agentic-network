@@ -371,6 +371,30 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       expect(vanished.leaseHolder).toBeNull();
       const ipChild = p.children.find((c) => c.id === wIp.id)!;
       expect(ipChild.leaseHolder).toBe("agent-sp-ip");                  // lease holder surfaced
+      expect(p.arcStatus).toBe("ready");                               // sub-3 fold-in #5: arcStatus passthrough pinned
+      // sub-3 fold-in #1 (the agreement-pin): the projection's k/N is PARALLEL-computed but
+      // PARITY-asserted against the work-88 gate's getCompletionProgress — reds if the two drift.
+      expect(p.completion).toEqual(await repo.getCompletionProgress(arc.id));
+    }, OP_TIMEOUT);
+
+    it("getStintProjection: inFlight counts claimed + in_progress + review (not just in_progress) — sub-3 fold-in #4", async () => {
+      const wClaimed = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+      await repo.claimWorkItem(wClaimed.id, "agent-sp-cl");                              // claimed (lease held, not started)
+      const wIp = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+      const ipc = await repo.claimWorkItem(wIp.id, "agent-sp-ip2");
+      await repo.startWork(wIp.id, "agent-sp-ip2", ipc!.lease!.token);                   // in_progress
+      // a review child: a code-req satisfied while the review-req stays UNMET parks it in review.
+      const wRev = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements: [{ id: "code", kind: "commit" }, { id: "rev", kind: "review" }] });
+      const rc = await repo.claimWorkItem(wRev.id, "agent-sp-rev");
+      await repo.startWork(wRev.id, "agent-sp-rev", rc!.lease!.token);
+      await repo.completeWork(wRev.id, "agent-sp-rev", rc!.lease!.token, [ev({ requirementId: "code", kind: "commit", ref: "x" })]); // code satisfied, review unmet → parks in review
+      expect((await repo.getWorkItem(wRev.id))!.status).toBe("review");
+
+      const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [wClaimed.id, wIp.id, wRev.id] });
+      const p = (await repo.getStintProjection(arc.id))!;
+      expect(p.statusCounts).toMatchObject({ claimed: 1, in_progress: 1, review: 1 });
+      expect(p.inFlight).toBe(3);                                       // ALL three lease-held phases, not just in_progress
+      expect(p.blocked).toBe(0);
     }, OP_TIMEOUT);
 
     it("getStintProjection: all children done → gateOpen true; a leaf → total:0/gateOpen:false; a non-existent arc → null", async () => {

@@ -39,7 +39,9 @@ export interface StintProjection {
   arcId: string;
   arcStatus: WorkItemPhase;
   completion: { done: number; total: number; pending: string[] };
-  /** total>0 && done===total — complete_work would pass the completion-gate (the one-enforced-close surface). */
+  /** tracks the ARC completion-gate (children>0): `total>0 && done===total` — complete_work would
+   *  pass it (the one-enforced-close surface). A LEAF (children=0) has NO completion-gate (completes
+   *  freely), so gateOpen:false there means "no arc-gate to be open", NOT "blocked". */
   gateOpen: boolean;
   /** children actively held (claimed + in_progress + review). */
   inFlight: number;
@@ -48,6 +50,29 @@ export interface StintProjection {
   /** counts per WorkItemPhase (+ `missing`). */
   statusCounts: Record<string, number>;
   children: StintChild[];
+}
+
+/** work-94 (cold-start spine, sub-slice 3): the legal FSM transition verbs for an item given
+ *  its state/lease/gates, FROM THE CALLER'S seat — the cold-agent "what can I do from here"
+ *  surface. Each verb carries `legal` + (when illegal) a non-dark `reason`, so a process-naive
+ *  agent learns the affordances AND why the others are unavailable. Caller-aware (holder vs not)
+ *  + gate-aware (an arc with an unmet completion-gate → complete is NOT legal; a leaf → it is). */
+export type WorkItemVerb =
+  | "claim" | "start" | "block" | "resume" | "complete" | "release" | "abandon" | "renew";
+export interface LegalMove {
+  verb: WorkItemVerb;
+  legal: boolean;
+  /** present when legal:false — WHY this verb is unavailable from the caller's seat. */
+  reason?: string;
+}
+export interface LegalMoves {
+  workId: string;
+  status: WorkItemPhase;
+  /** the caller holds this item's lease (gates the lease-bound verbs). */
+  isHolder: boolean;
+  /** for a COMPLETABLE arc: are all completionDependsOn children done (the completion-gate met)? true for a leaf. */
+  gateMet: boolean;
+  moves: LegalMove[];
 }
 
 /** Evidence kind taxonomy (shared by requirement + supplied evidence). OIS-INTERNAL
@@ -239,6 +264,12 @@ export interface IWorkItemStore {
    *  surface. k/N completion progress + per-child status + in-flight/blocked rollups + the
    *  gate-open flag, over ANY arc-node. Returns null if the arc id does not exist. */
   getStintProjection(workId: string): Promise<StintProjection | null>;
+
+  /** work-94 (cold-start spine): the legal FSM transition verbs for the caller given the
+   *  item's state/lease/gates — the "what can I do from here" surface. Caller-aware (holder
+   *  vs not) + gate-aware (an arc with an unmet completion-gate → complete is not legal).
+   *  Returns null if the item id does not exist. */
+  getLegalMoves(workId: string, caller: { agentId: string; role?: string }): Promise<LegalMoves | null>;
 
   /** work-86 (idea-380): generic substrate existence check for a storage=entity reference
    *  at create_work-time — generalizes the WorkItem-only dangling-dependsOn existence check

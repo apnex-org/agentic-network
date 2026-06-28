@@ -380,4 +380,69 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
       await repo.deleteWorkItem("work-bp-never-existed");
     }, OP_TIMEOUT);
   });
+
+  // ── work-94 (cold-start spine, sub-slice 3): getLegalMoves (the "what can I do from here" surface) ──
+  describe("getLegalMoves (caller + gate aware)", () => {
+    const moveOf = (lm: { moves: Array<{ verb: string; legal: boolean; reason?: string }> }, verb: string) => lm.moves.find((m) => m.verb === verb)!;
+
+    it("ready item: claim is legal (any-role + no deps); lease-bound verbs are illegal (no holder)", async () => {
+      const w = await ready();
+      const lm = (await repo.getLegalMoves(w.id, { agentId: "agent-lm1", role: "engineer" }))!;
+      expect(lm.status).toBe("ready");
+      expect(lm.isHolder).toBe(false);
+      expect(moveOf(lm, "claim").legal).toBe(true);
+      expect(moveOf(lm, "start").legal).toBe(false);   // not claimed + not holder
+      expect(moveOf(lm, "complete").legal).toBe(false);
+    });
+
+    it("claim legality: a role-gated item rejects an ineligible role; an unmet dependency rejects claim (non-dark reasons)", async () => {
+      const gated = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"] });
+      const claimV = moveOf((await repo.getLegalMoves(gated.id, { agentId: "agent-v", role: "verifier" }))!, "claim");
+      expect(claimV.legal).toBe(false);
+      expect(claimV.reason).toMatch(/roleEligibility/);
+      const dep = await repo.createWorkItem({ type: "task", roleEligibility: [] }); // never completed
+      const dependent = await repo.createWorkItem({ type: "task", roleEligibility: [], dependsOn: [dep.id] });
+      const claimD = moveOf((await repo.getLegalMoves(dependent.id, { agentId: "agent-d", role: "engineer" }))!, "claim");
+      expect(claimD.legal).toBe(false);
+      expect(claimD.reason).toMatch(/dependencies not done/);
+    });
+
+    it("claimed item: the HOLDER can start/release/abandon/renew; a NON-holder cannot (caller-aware)", async () => {
+      const c = await claim("agent-lm-holder");
+      const held = (await repo.getLegalMoves(c.id, { agentId: "agent-lm-holder", role: "engineer" }))!;
+      expect(held.isHolder).toBe(true);
+      expect(moveOf(held, "start").legal).toBe(true);
+      expect(moveOf(held, "renew").legal).toBe(true);
+      expect(moveOf(held, "release").legal).toBe(true);
+      expect(moveOf(held, "abandon").legal).toBe(true);
+      expect(moveOf(held, "complete").legal).toBe(false); // claimed not completable
+      const other = (await repo.getLegalMoves(c.id, { agentId: "agent-other", role: "engineer" }))!;
+      expect(other.isHolder).toBe(false);
+      expect(moveOf(other, "start").legal).toBe(false);
+      expect(moveOf(other, "start").reason).toMatch(/not the lease-holder/);
+    });
+
+    it("in_progress ARC: complete is legal ONLY when the completion-gate is met (gate-aware); a leaf completes freely", async () => {
+      const child = (await repo.createWorkItem({ type: "task", roleEligibility: [] })).id; // not done
+      const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [child] });
+      const ac = await repo.claimWorkItem(arc.id, "agent-lm-arc");
+      await repo.startWork(arc.id, "agent-lm-arc", ac!.lease!.token); // in_progress, gate unmet
+      const unmet = (await repo.getLegalMoves(arc.id, { agentId: "agent-lm-arc", role: "engineer" }))!;
+      expect(unmet.gateMet).toBe(false);
+      expect(moveOf(unmet, "complete").legal).toBe(false);
+      expect(moveOf(unmet, "complete").reason).toMatch(/completion-gate unmet/);
+      expect(moveOf(unmet, "block").legal).toBe(true); // in_progress holder can block
+
+      const leaf = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+      const lc = await repo.claimWorkItem(leaf.id, "agent-lm-leaf");
+      await repo.startWork(leaf.id, "agent-lm-leaf", lc!.lease!.token);
+      const leafLm = (await repo.getLegalMoves(leaf.id, { agentId: "agent-lm-leaf", role: "engineer" }))!;
+      expect(leafLm.gateMet).toBe(true);
+      expect(moveOf(leafLm, "complete").legal).toBe(true); // leaf has no gate → completable (evidence supplied at call)
+    });
+
+    it("a non-existent id → null", async () => {
+      expect(await repo.getLegalMoves("work-ghost-lm", { agentId: "a", role: "engineer" })).toBeNull();
+    }, OP_TIMEOUT);
+  });
 });
