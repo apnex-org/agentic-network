@@ -494,6 +494,25 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
     expect(schema.safeParse({ type: "verifier-gate" }).success).toBe(true);
   });
 
+  // GATE-416 regression: work-86 must ADD runbook/references ALONGSIDE targetRef, never replace
+  // it — else the MCP/Zod boundary strips targetRef before the handler (which still reads it) can store it.
+  it("create_work: targetRef stays in the registered schema (NOT stripped at the boundary) alongside runbook/references", () => {
+    const reg = router.getToolRegistration("create_work")!;
+    const schema = z.object(reg.schema);
+    const parsed = schema.safeParse({ type: "task", targetRef: { kind: "Task", id: "task-1" }, runbook: "x" });
+    expect(parsed.success).toBe(true);
+    expect((parsed as { data: Record<string, unknown> }).data.targetRef).toMatchObject({ kind: "Task", id: "task-1" });
+    // and the node-contract fields parse on the same schema
+    expect((parsed as { data: Record<string, unknown> }).data.runbook).toBe("x");
+  });
+
+  it("create_work: targetRef is threaded through to createWorkItem (handler regression)", async () => {
+    const stub = makeStub({ createWorkItem: () => readyItem() });
+    const r = await router.handle("create_work", { type: "task", targetRef: { kind: "Bug", id: "bug-1" } }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    expect(createArg(stub.calls)!.targetRef).toMatchObject({ kind: "Bug", id: "bug-1" });
+  });
+
   // ── get_work [Any] — pins the create=[Architect]→deny / get=[Any]→allow asymmetry ──
   it("get_work: an ENGINEER can read by id ([Any] reachable — the asymmetry vs create)", async () => {
     const stub = makeStub({ getWorkItem: () => readyItem({ id: "work-3" }) });

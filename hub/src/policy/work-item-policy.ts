@@ -435,6 +435,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       evidenceRequirements: z.array(evidenceRequirementSchema).optional().describe("Anti-gameability evidence contract enforced by complete_work"),
       runbook: z.string().optional().describe("work-86: the cold-start instruction the claimant executes. REQUIRED for a blueprint/gate node (type=verifier-gate or carrying references[]); a process-naive agent learns the task from it (no prior context)."),
       references: z.array(referenceSchema).optional().describe("work-86: typed inputs the node CONSUMES (the references(consume) leg of the node-contract). A required:true reference is fail-closed-validated to resolve at seed-time (inline content present | pinned git sha | hub-doc exists | entity exists) — a dangling required input is a cold-start trap, rejected at authoring."),
+      targetRef: targetRefSchema.nullable().optional().describe("Pointer to the entity this work is about ({kind,id}); opaque/advisory at create"),
       payload: z.unknown().optional().describe("Freeform work payload (e.g. the task brief)"),
     },
     createWork,
