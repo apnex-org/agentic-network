@@ -26,6 +26,7 @@ import type {
   EvidenceRequirement,
   EvidenceItem,
   EvidenceKind,
+  WorkItemReference,
   IWorkItemStore,
 } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
@@ -256,6 +257,7 @@ function cloneWorkItem(w: WorkItem): WorkItem {
   flat.roleEligibility = (flat.roleEligibility as string[] | undefined) ?? [];
   flat.dependsOn = (flat.dependsOn as string[] | undefined) ?? [];
   flat.evidenceRequirements = (flat.evidenceRequirements as EvidenceRequirement[] | undefined) ?? [];
+  flat.references = (flat.references as unknown[] | undefined) ?? [];  // work-86: spec-partitioned, decoded by decodeEnvelopeToFlat
   flat.evidence = (flat.evidence as unknown[] | undefined) ?? [];
   flat.lease = flat.lease ?? null;
   flat.targetRef = flat.targetRef ?? null;
@@ -276,6 +278,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     roleEligibility: string[];
     dependsOn?: string[];
     evidenceRequirements?: EvidenceRequirement[];
+    runbook?: string;
+    references?: WorkItemReference[];
     targetRef?: { kind: string; id: string } | null;
     payload?: unknown;
     createdBy?: EntityProvenance;
@@ -290,6 +294,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       roleEligibility: input.roleEligibility,
       dependsOn: input.dependsOn ?? [],
       evidenceRequirements: input.evidenceRequirements ?? [],
+      runbook: input.runbook,
+      references: input.references ?? [],
       targetRef: input.targetRef ?? null,
       payload: input.payload,
       status: "ready",
@@ -312,6 +318,14 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   async getWorkItem(workId: string): Promise<WorkItem | null> {
     const w = await this.substrate.get<WorkItem>(KIND, workId);
     return w ? cloneWorkItem(w) : null;
+  }
+
+  // work-86 (idea-380): generic substrate existence check for a storage=entity reference.
+  // `kind` is the SchemaDef kind (the policy normalizes the semantic ref-kind first). The
+  // store holds the substrate handle; the policy layer has no raw substrate access. This
+  // generalizes the WorkItem-only dangling-dependsOn existence check.
+  async entityExists(kind: string, id: string): Promise<boolean> {
+    return (await this.substrate.get(kind, id)) !== null;
   }
 
   /**

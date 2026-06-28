@@ -80,6 +80,28 @@ export interface WorkItemBlockedOn {
   reason: string;
 }
 
+/** A node REFERENCE (idea-380 / work-86) — a typed pointer the node CONSUMES at execution.
+ *  The `references(consume)` leg of the node-contract: dependsOn(when) + references(consume)
+ *  + evidenceRequirements(produce). The cold-start + triangulation foundation the
+ *  seed_blueprint expander builds on. `storage` says where it lives + how create_work
+ *  validates resolvability at seed-time:
+ *    inline   — content carried in `ref` (self-contained; present == resolvable)
+ *    git      — a PINNED immutable sha[:path]; the Hub is git-less so it cannot dereference,
+ *               only REQUIRE a pinned ref (reject a mutable branch/tag) — FR-36 at the
+ *               reference layer; actual git-resolution stays the agent's/CI's job
+ *    hub-doc  — a Hub Document path (existence-checked via the Document store)
+ *    entity   — a {kind} entity id (existence-checked via entityExists)
+ *  `mode` = how the claimant uses it (read | triangulate-against). */
+export type ReferenceStorage = "inline" | "git" | "hub-doc" | "entity";
+export type ReferenceMode = "read" | "triangulate-against";
+export interface WorkItemReference {
+  kind: string;        // semantic kind: doc | bug | idea | mission | workitem | calibration | ...
+  ref: string;         // the locator: inline content | pinned sha[:path] | doc path | entity id
+  storage: ReferenceStorage;
+  mode: ReferenceMode;
+  required: boolean;   // required:true → create_work fail-closed-validates resolvability at seed-time
+}
+
 export interface WorkItem {
   id: string;
   // spec (intent)
@@ -88,6 +110,11 @@ export interface WorkItem {
   roleEligibility: string[];
   dependsOn: string[];
   evidenceRequirements: EvidenceRequirement[];
+  /** idea-380 / work-86 — the node-contract: a cold-start `runbook` (the just-in-time
+   *  instruction the claimant executes) + typed `references` it consumes. Both are SPEC
+   *  (intent), default-partitioned to spec in the envelope (no renameMap entry). */
+  runbook?: string;
+  references?: WorkItemReference[];
   targetRef: { kind: string; id: string } | null;
   payload?: unknown;
   // status (lifecycle)
@@ -116,12 +143,19 @@ export interface IWorkItemStore {
     roleEligibility: string[];
     dependsOn?: string[];
     evidenceRequirements?: EvidenceRequirement[];
+    runbook?: string;
+    references?: WorkItemReference[];
     targetRef?: { kind: string; id: string } | null;
     payload?: unknown;
     createdBy?: EntityProvenance;
   }): Promise<WorkItem>;
 
   getWorkItem(workId: string): Promise<WorkItem | null>;
+
+  /** work-86 (idea-380): generic substrate existence check for a storage=entity reference
+   *  at create_work-time — generalizes the WorkItem-only dangling-dependsOn existence check
+   *  (the store holds the substrate handle; the policy layer has no raw substrate access). */
+  entityExists(kind: string, id: string): Promise<boolean>;
 
   /** List work-items, optionally filtered by phase and/or role-eligibility
    *  ($contains array-membership) and/or current lease-holder (agentId) — the
