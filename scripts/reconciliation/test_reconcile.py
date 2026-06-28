@@ -113,6 +113,47 @@ class ReconcileFaithfulTest(unittest.TestCase):
         result = reconcile.reconcile(bugs, self.is_ancestor, self.find_fix)
         self.assertEqual(result["applyArtifact"], [{"bugId": "bug-needsbackfill", "fixCommits": [self.fx.main_sha2]}])
 
+    def _envelope_bug(self, bug_id, phase, fix_commits=None, repo=None):
+        """A real substrate-shaped Bug row (mission-90 envelope), matching get-entities.sh
+        --format=json: status.{phase,fixCommits,...}, spec.{...,repo} — ground-truthed
+        against migrations/v2-envelope/__tests__/kinds/Bug.test.ts."""
+        spec = {"title": "t", "description": "d", "severity": "minor", "class": None}
+        if repo is not None:
+            spec["repo"] = repo
+        return {
+            "apiVersion": "ois.io/v1", "kind": "Bug", "id": bug_id,
+            "metadata": {"labels": {}, "surfacedBy": "prod-audit", "sourceIdeaId": None},
+            "spec": spec,
+            "status": {"phase": phase, "fixCommits": fix_commits or [],
+                       "fixRevision": None, "linkedTaskIds": [], "linkedMissionId": None},
+        }
+
+    def test_ENVELOPE_shape_classifies_correctly_steve_catch(self):
+        # steve's catch: real substrate rows are ENVELOPE-shaped (status.phase,
+        # status.fixCommits, spec.repo). Reading flat top-level off them mis-classified
+        # EVERY real resolved bug as actionable-open — the classifier must decode the envelope.
+        env_clean = self._envelope_bug("bug-env-clean", "resolved", [self.fx.squash_sha])
+        self.assertEqual(self._bucket(env_clean)["bucket"], "confirmed-resolved")  # NOT actionable-open
+        self.assertEqual(self._bucket(self._envelope_bug("bug-needsbackfill", "resolved", []))["bucket"], "needs-backfill")
+        self.assertEqual(self._bucket(self._envelope_bug("bug-env-trap", "resolved", [self.fx.branch_sha]))["bucket"], "claims-fixed-but-not-in-main")
+        self.assertEqual(self._bucket(self._envelope_bug("bug-env-open", "open", []))["bucket"], "actionable-open")
+        self.assertEqual(self._bucket(self._envelope_bug("bug-env-ext", "open", [], repo="apnex/missioncraft"))["bucket"], "external")
+        # PARITY: the SAME data in FLAT shape classifies the SAME way (shape-agnostic decode).
+        flat_clean = {"id": "bug-flat-clean", "status": "resolved", "fixCommits": [self.fx.squash_sha]}
+        self.assertEqual(self._bucket(flat_clean)["bucket"], self._bucket(env_clean)["bucket"])
+
+    def test_EXACT_bug_id_match_not_substring_steve_catch(self):
+        # steve's catch: `--grep <bug_id>` is a SUBSTRING match → 'bug-18' matches 'bug-180'.
+        # Since single-candidate needs-backfill is APPLY-READY, a substring match emits a
+        # WRONG backfill sha. The exact-token grep must return ONLY the matching bug.
+        sha_18 = _commit(self.fx.repo, "f18.txt", "x", "fix for bug-18 (PR#A)")
+        sha_180 = _commit(self.fx.repo, "f180.txt", "y", "fix for bug-180 (PR#B)")
+        self.assertEqual(self.find_fix("bug-18"), [sha_18])    # NOT [sha_180, sha_18] (substring would include bug-180)
+        self.assertEqual(self.find_fix("bug-180"), [sha_180])  # bug-180 exact
+        # end-to-end: needs-backfill for bug-18 derives ONLY sha_18 (the apply-ready sha is correct)
+        d = self._bucket({"id": "bug-18", "status": "resolved", "fixCommits": []})
+        self.assertEqual(d["candidates"], [sha_18])
+
     def test_MUTATION_cat_file_existence_oracle_MISCLASSIFIES_the_trap(self):
         # THE proof that the detector needs ancestry, not existence. Swap the real
         # merge-base oracle for a bare `cat-file -e` existence check: the squashed-away

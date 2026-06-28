@@ -61,6 +61,34 @@ def _resolve_repo_root() -> Path:
 
 # ── The engine (pure — the oracles are injected so it is faithfully testable) ──────
 
+def _flatten(bug: dict) -> dict:
+    """Normalize a Bug row to the flat fields the classifier needs, REGARDLESS of shape.
+    Real substrate rows (get-entities.sh / psql --format=json emit the raw `data`
+    envelope) are ENVELOPE-shaped per mission-90: `status` is a {phase, fixCommits,
+    fixRevision, ...} bucket and `repo` lives at `spec.repo` (the Bug renameMap). Flat
+    fixtures / bare arrays carry top-level `status` (a string) + `fixCommits` + `repo`.
+    The discriminator is whether `status` is a dict (envelope) vs a string (flat) —
+    mirrors the Hub's own decode boundary (shape-helpers `phaseFromEntity`). `id` is
+    top-level in both. (Reading flat top-level off an envelope row was steve's catch:
+    every real resolved bug mis-classified as actionable-open.)"""
+    status = bug.get("status")
+    if isinstance(status, dict):  # ENVELOPE shape — status.{phase,fixCommits,...} + spec.repo
+        spec = bug.get("spec") if isinstance(bug.get("spec"), dict) else {}
+        return {
+            "id": bug.get("id"),
+            "status": status.get("phase"),
+            "fixCommits": status.get("fixCommits") or [],
+            "repo": spec.get("repo"),
+        }
+    # FLAT shape — status is the phase string directly; repo/fixCommits top-level.
+    return {
+        "id": bug.get("id"),
+        "status": status,
+        "fixCommits": bug.get("fixCommits") or [],
+        "repo": bug.get("repo"),
+    }
+
+
 def classify(
     bug: dict,
     is_ancestor: Callable[[str], bool],
@@ -70,14 +98,16 @@ def classify(
     """Classify ONE bug into a disposition bucket. PURE: all git-truth enters via the
     two injected oracles, so a faithful real-git fixture (not a merge-base mock) drives
     the test (cal #79/#82). `is_ancestor(sha)` = sha is an ancestor of main (the squash-
-    safe check). `find_fix_shas(bug_id)` = main commits referencing the bug (backfill)."""
-    bug_id = bug.get("id")
-    repo = bug.get("repo")
+    safe check). `find_fix_shas(bug_id)` = main commits referencing the bug (backfill).
+    Shape-agnostic: decodes envelope→flat FIRST (real substrate rows are envelope-shaped)."""
+    flat = _flatten(bug)
+    bug_id = flat["id"]
+    repo = flat["repo"]
     if repo and repo != home_repo:
         return {"bug": bug_id, "bucket": "external", "repo": repo}
 
-    status = bug.get("status")
-    fix = bug.get("fixCommits") or []
+    status = flat["status"]
+    fix = flat["fixCommits"]
 
     if status == "wontfix":
         return {"bug": bug_id, "bucket": "closed-wontfix"}
@@ -142,8 +172,13 @@ def git_find_fix_shas(repo_root: Path, main: str) -> Callable[[str], list[str]]:
         # Commits ON MAIN whose message references the bug id (e.g. a squash like
         # "... bug-181 (DF2 WI-2)"). Restricted to `main` → results are ancestors of
         # main by construction (merge-base-verified for free).
+        # EXACT-TOKEN match, NOT substring (steve's catch): a bare `--grep bug-18`
+        # also matches `bug-180` → a WRONG, apply-ready backfill sha. The extended
+        # regex pins a leading boundary (start-of-line / non-alphanumeric) + a trailing
+        # boundary (non-digit / end-of-line) so `bug-18` does NOT match `bug-180`/`bug-181`.
+        pattern = r"(^|[^0-9A-Za-z])" + bug_id + r"([^0-9]|$)"
         r = subprocess.run(
-            ["git", "-C", str(repo_root), "log", main, "--grep", bug_id, "--format=%H"],
+            ["git", "-C", str(repo_root), "log", main, "-E", "--grep", pattern, "--format=%H"],
             capture_output=True, text=True,
         )
         if r.returncode != 0:
