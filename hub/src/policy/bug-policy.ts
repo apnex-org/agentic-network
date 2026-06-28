@@ -44,6 +44,7 @@ async function createBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   // already carries this via a backlink; the create_bug tool path was blind).
   const sourceThreadId = args.sourceThreadId as string | undefined;
   const sourceMissionId = args.sourceMissionId as string | undefined;
+  const repo = args.repo as string | undefined;
 
   const createdBy = await resolveCreatedBy(ctx);
   const bug = await ctx.stores.bug.createBug(title, description, severity, {
@@ -54,6 +55,7 @@ async function createBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
     createdBy,
     sourceThreadId,
     sourceMissionId,
+    repo,
   });
 
   // Uses the shared helper so the cascade path (cascade-actions/
@@ -129,6 +131,7 @@ async function updateBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   const linkedMissionId = args.linkedMissionId as string | null | undefined;
   const fixCommits = args.fixCommits as string[] | undefined;
   const fixRevision = args.fixRevision as string | null | undefined;
+  const repo = args.repo as string | null | undefined;
 
   // FSM guard on status transitions. mission-89 Phase 4 (bug-137 closure):
   // envelope-shape Bug entity has status as {phase, ...} not string; use
@@ -166,6 +169,7 @@ async function updateBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   if (linkedMissionId !== undefined) updates.linkedMissionId = linkedMissionId;
   if (fixCommits !== undefined) updates.fixCommits = fixCommits;
   if (fixRevision !== undefined) updates.fixRevision = fixRevision;
+  if (repo !== undefined) updates.repo = repo;
 
   const bug = await ctx.stores.bug.updateBug(bugId, updates);
   if (!bug) {
@@ -202,6 +206,7 @@ export function registerBugPolicy(router: PolicyRouter): void {
       sourceIdeaId: z.string().optional().describe("For bugs migrated from bug-tagged Ideas — links back to the source idea"),
       sourceThreadId: z.string().optional().describe("Lineage (bug-118): the thread this bug was surfaced from — links the bug into the thread's lineage graph"),
       sourceMissionId: z.string().optional().describe("Lineage (bug-118): the mission this bug relates to — sets the bug's linkedMissionId"),
+      repo: z.string().optional().describe("Repo-scope (idea-364): the repo slug this bug belongs to (e.g. apnex/missioncraft); omit = the home repo. Lets the ledger-reconciliation pass scope git-ancestry checks + separate external cross-repo bugs"),
     },
     createBug,
   );
@@ -228,7 +233,7 @@ export function registerBugPolicy(router: PolicyRouter): void {
 
   router.register(
     "update_bug",
-    "[Any] Update a bug. Status transitions enforced by BUG_FSM (open → investigating → resolved | wontfix; walk-back investigating → open permitted). Other fields (severity, class, tags, description, linkedTaskIds, linkedMissionId, fixCommits, fixRevision) are freely editable.",
+    "[Any] Update a bug. Status transitions enforced by BUG_FSM (open → investigating → resolved | wontfix; walk-back investigating → open permitted). Other fields (severity, class, tags, description, linkedTaskIds, linkedMissionId, fixCommits, fixRevision, repo) are freely editable.",
     {
       bugId: z.string().describe("The bug ID to update"),
       status: z.enum(["open", "investigating", "resolved", "wontfix"]).optional(),
@@ -240,6 +245,7 @@ export function registerBugPolicy(router: PolicyRouter): void {
       linkedMissionId: z.string().nullable().optional().describe("Parent mission if applicable"),
       fixCommits: z.array(z.string()).optional().describe("Commit SHAs that closed this bug"),
       fixRevision: z.string().nullable().optional().describe("Deployment revision where the fix landed"),
+      repo: z.string().nullable().optional().describe("Repo-scope (idea-364): the repo slug this bug belongs to (e.g. apnex/missioncraft); null = the home repo. Reclassify cross-repo bugs so they stop accreting in the home-repo reconciliation"),
     },
     updateBug,
   );

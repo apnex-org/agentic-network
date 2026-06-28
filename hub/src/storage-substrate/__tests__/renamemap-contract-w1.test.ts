@@ -82,7 +82,7 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   // sentinel-probe (W1.1b).
   Agent: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint", thrashCount: "status.thrashCount", quarantined: "status.quarantined" },
   Audit: { timestamp: "metadata.createdAt", actor: "metadata.actor" },
-  Bug: { status: "status.phase", severity: "spec.severity", class: "spec.class", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId", sourceIdeaId: "metadata.sourceIdeaId" },
+  Bug: { status: "status.phase", severity: "spec.severity", class: "spec.class", repo: "spec.repo", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId", sourceIdeaId: "metadata.sourceIdeaId" },
   Idea: { status: "status.phase", missionId: "status.missionId", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
   // C1-R2 (mission-94): the first kind with OBJECT/ARRAY renameMap entries
   // (lease/evidence objects, roleEligibility array). The W1.1b sentinel-probe is

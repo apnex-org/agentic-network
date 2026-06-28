@@ -112,4 +112,29 @@ describe("BugRepositorySubstrate (W4 Option Y sibling-pattern)", () => {
     const noBug = await repo.updateBug("bug-99", { status: "wontfix" });
     expect(noBug).toBeNull();
   }, 30_000);
+
+  it("idea-364: repo-scope field round-trips through the envelope (create / update / default-null) [real-pg]", async () => {
+    const counter = new SubstrateCounter(substrate);
+    const repo = new BugRepositorySubstrate(substrate, counter);
+
+    // create WITH repo → relocates to spec.repo + decodes back on read (real-pg envelope round-trip)
+    const external = await repo.createBug("External bug", "lives in missioncraft", "minor", { repo: "apnex/missioncraft" });
+    expect(external.repo).toBe("apnex/missioncraft");
+    expect((await repo.getBug(external.id))?.repo).toBe("apnex/missioncraft");
+
+    // create WITHOUT repo → defaults null (home repo / unclassified)
+    const inRepo = await repo.createBug("In-repo bug", "lives here", "minor");
+    expect(inRepo.repo).toBeNull();
+    expect((await repo.getBug(inRepo.id))?.repo).toBeNull();
+
+    // update RECLASSIFIES repo (a cross-repo bug stops accreting in the home reconciliation)
+    const reclassified = await repo.updateBug(inRepo.id, { repo: "apnex/missioncraft" });
+    expect(reclassified?.repo).toBe("apnex/missioncraft");
+    expect((await repo.getBug(inRepo.id))?.repo).toBe("apnex/missioncraft");
+
+    // update can clear it back to null (home repo)
+    const cleared = await repo.updateBug(inRepo.id, { repo: null });
+    expect(cleared?.repo).toBeNull();
+    expect((await repo.getBug(inRepo.id))?.repo).toBeNull();
+  }, 30_000);
 });

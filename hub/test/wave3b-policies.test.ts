@@ -3234,6 +3234,27 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     expect(bug.linkedMissionId).toBe("mission-9");
   });
 
+  it("idea-364 — create_bug + update_bug persist the repo-scope field (round-trips through get_bug)", async () => {
+    // create WITH repo → classified at creation
+    const r = await router.handle("create_bug", {
+      title: "Cross-repo bug",
+      description: "lives in missioncraft",
+      repo: "apnex/missioncraft",
+    }, ctx);
+    expect(r.isError).toBeUndefined();
+    const { bugId } = JSON.parse(r.content[0].text);
+    expect(JSON.parse((await router.handle("get_bug", { bugId }, ctx)).content[0].text).repo).toBe("apnex/missioncraft");
+
+    // create WITHOUT repo → null (home repo / unclassified)
+    const r2 = await router.handle("create_bug", { title: "Home bug", description: "here" }, ctx);
+    const { bugId: bugId2 } = JSON.parse(r2.content[0].text);
+    expect(JSON.parse((await router.handle("get_bug", { bugId: bugId2 }, ctx)).content[0].text).repo).toBeNull();
+
+    // update_bug RECLASSIFIES repo (so a cross-repo bug stops accreting in the home reconciliation)
+    await router.handle("update_bug", { bugId: bugId2, repo: "apnex/missioncraft" }, ctx);
+    expect(JSON.parse((await router.handle("get_bug", { bugId: bugId2 }, ctx)).content[0].text).repo).toBe("apnex/missioncraft");
+  });
+
   it("list_bugs filters by status + severity + class + tags match-any", async () => {
     await router.handle("create_bug", { title: "A", description: "a", severity: "critical", class: "drift", tags: ["hub"] }, ctx);
     await router.handle("create_bug", { title: "B", description: "b", severity: "minor", class: "race", tags: ["engineer"] }, ctx);
