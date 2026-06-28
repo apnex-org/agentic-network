@@ -10,7 +10,7 @@
 ## 1. What ships in CODE (this branch)
 
 - **`merge_group:` trigger** added to the three REQUIRED CI workflows (`test.yml`, `no-engineer-id.yml`, `secret-scan.yml`). A required status check that does NOT run on `merge_group` stalls the queue forever (it waits for a check that never reports). These now run on both the PR and the queued group.
-- **`concurrency: cancel-in-progress`** on `deploy-hub.yml` already landed (#413) — so a queue-merged batch produces ONE VM roll, not per-merge churn.
+- **`concurrency: cancel-in-progress`** — on `deploy-hub.yml` already landed (#413; group `deploy-hub`) so a queue-merged batch produces ONE VM roll. ALSO added to the 3 CI workflows (group `${{ github.workflow }}-${{ github.ref }}`, `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`) — cancels a superseded PR CI run on re-push (saves cycles) but is **pull_request-only**: a `merge_group`/`push` run is never cancelled (a cancelled queued-group check would eject the PR from the queue).
 - **CODEOWNERS** (`.github/CODEOWNERS`) — the per-path ownership/cross-approve matrix is already comprehensive (architect-owned / engineer-owned / shared-co-author). No change needed; it becomes load-bearing once "require review from Code Owners" is enabled (admin, below).
 
 ## 2. Cross-approve matrix (the FR-31 gate-vs-merge split)
