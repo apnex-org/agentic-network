@@ -28,6 +28,8 @@ import type {
   EvidenceKind,
   WorkItemReference,
   ReadyEmptyReason,
+  StintProjection,
+  StintChild,
   IWorkItemStore,
 } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
@@ -79,6 +81,14 @@ const DEFAULT_WIP_CAP = 3;
 const WIP_CAP_BY_ROLE: Readonly<Record<string, number>> = {};
 function wipCap(role?: string): number {
   return (role && WIP_CAP_BY_ROLE[role]) || DEFAULT_WIP_CAP;
+}
+
+/** work-94 (cold-start spine, non-dark digest): the reason for an empty post-WIP-cap ready
+ *  scan — `no_claimable_ready` (nothing ready+role-eligible+deps-met) when none survived, else
+ *  none. Extracted PURE so the constant is value-pinned by a unit test (the shared-testcontainer
+ *  sibling-leak makes the integration path not deterministically empty — work-94 sub-2 nit). */
+export function readyScanEmptyReason(claimableCount: number): ReadyEmptyReason | undefined {
+  return claimableCount === 0 ? "no_claimable_ready" : undefined;
 }
 
 /** FSM-gate rejection (per-repo-local sentinel; the established repo pattern). Thrown
@@ -434,6 +444,48 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.computeCompletionProgress(w.completionDependsOn);
   }
 
+  /**
+   * work-94 (cold-start spine, get_current_stint): the "where are we" projection over an
+   * arc-node's DIRECT completionDependsOn subtree. Per-child point-gets (the same envelope-safe
+   * read computeCompletionProgress uses; a vanished child surfaces as `missing`, never hidden),
+   * rolled up into k/N + status-counts + in-flight/blocked + the gate-open flag. DIRECT children
+   * only (F-B; whole-subtree recursion is a follow-on). Works for ANY arc-node. null if the arc
+   * id does not exist.
+   */
+  async getStintProjection(workId: string): Promise<StintProjection | null> {
+    const arc = await this.getWorkItem(workId);
+    if (!arc) return null;
+    const children: StintChild[] = [];
+    for (const childId of arc.completionDependsOn) {
+      const child = await this.substrate.get<WorkItem>(KIND, childId);
+      if (!child) {
+        children.push({ id: childId, status: "missing", leaseHolder: null });
+      } else {
+        const flat = cloneWorkItem(child);
+        children.push({ id: childId, status: flat.status, leaseHolder: flat.lease?.holder ?? null });
+      }
+    }
+    const countOf = (s: string) => children.filter((c) => c.status === s).length;
+    const total = children.length;
+    const done = countOf("done");
+    const statusCounts: Record<string, number> = {
+      ready: countOf("ready"), claimed: countOf("claimed"), in_progress: countOf("in_progress"),
+      blocked: countOf("blocked"), review: countOf("review"), done, abandoned: countOf("abandoned"),
+      missing: countOf("missing"),
+    };
+    return {
+      arcId: arc.id,
+      arcStatus: arc.status,
+      // pending = NOT done — agrees with computeCompletionProgress by construction (the gate's k/N).
+      completion: { done, total, pending: children.filter((c) => c.status !== "done").map((c) => c.id) },
+      gateOpen: total > 0 && done === total, // complete_work would pass the completion-gate
+      inFlight: statusCounts.claimed + statusCounts.in_progress + statusCounts.review,
+      blocked: statusCounts.blocked,
+      statusCounts,
+      children,
+    };
+  }
+
   // work-86 (idea-380): generic substrate existence check for a storage=entity reference.
   // `kind` is the SchemaDef kind (the policy normalizes the semantic ref-kind first). The
   // store holds the substrate handle; the policy layer has no raw substrate access. This
@@ -529,7 +581,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // work-94 (non-dark digest): an empty scan is NOT dark — distinguish "nothing claimable
     // for your role right now" from the wip_capped short-circuit above. (A finer split —
     // ready-but-deps-unmet vs none-ready-at-all — is a deferred refinement.)
-    return { items: claimable, truncated, emptyReason: claimable.length === 0 ? "no_claimable_ready" : undefined };
+    return { items: claimable, truncated, emptyReason: readyScanEmptyReason(claimable.length) };
   }
 
   // ── Claim / lease / FSM verbs (C1-R2 sub-PR-3a) ───────────────────────────

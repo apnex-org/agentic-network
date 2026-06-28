@@ -616,6 +616,14 @@ async function getWork(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   return ok({ workItem: w });
 }
 
+// work-94 (cold-start spine): the "where are we" projection over an arc-node's subtree.
+async function getCurrentStint(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const stint = await store.getStintProjection(args.workId as string);
+  return stint ? ok({ stint }) : notFound(args.workId as string);
+}
+
 async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
@@ -740,6 +748,15 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       includeCompletionProgress: z.boolean().optional().describe("work-88 (arc-node): when true, also compute the k/N COMPLETION-gate progress — {done,total,pending} over completionDependsOn (children at phase=done). Opt-in: off by default so a plain read pays no per-child fan-out."),
     },
     getWork,
+  );
+
+  router.register(
+    "get_current_stint",
+    "[Any] THE COLD-START 'where are we' SURFACE (work-94 spine): project an arc-node's subtree — k/N completion-gate progress (done/total/pending) + per-child status + in-flight/blocked rollups + whether the completion-gate is OPEN (gateOpen = would complete_work pass). Works for ANY arc-node (an arc = a WorkItem carrying completionDependsOn children; the stint arc-node is the first consumer). The one-enforced-close surface — a process-naive agent sees the whole arc's state with NO prior context. A leaf (no children) projects total:0/gateOpen:false; a vanished child surfaces as status 'missing', never hidden.",
+    {
+      workId: z.string().describe("The arc-node WorkItem id to project (any item id)"),
+    },
+    getCurrentStint,
   );
 
   router.register(

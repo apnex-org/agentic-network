@@ -25,6 +25,31 @@ export type WorkItemPhase =
  *  (listReadyForRole knows which); `quarantined` is policy-set (its own claim gate). */
 export type ReadyEmptyReason = "wip_capped" | "no_claimable_ready" | "quarantined";
 
+/** work-94 (cold-start spine, get_current_stint): the "where are we" projection over any
+ *  arc-node's DIRECT completionDependsOn subtree (the stint arc-node is the first consumer).
+ *  k/N completion-gate progress + per-child status + in-flight/blocked rollups + gate-open
+ *  (would complete_work pass). DIRECT children only (F-B; recursion is a follow-on). A
+ *  vanished child id surfaces as `missing`, never hidden. */
+export interface StintChild {
+  id: string;
+  status: WorkItemPhase | "missing";
+  leaseHolder: string | null;
+}
+export interface StintProjection {
+  arcId: string;
+  arcStatus: WorkItemPhase;
+  completion: { done: number; total: number; pending: string[] };
+  /** total>0 && done===total — complete_work would pass the completion-gate (the one-enforced-close surface). */
+  gateOpen: boolean;
+  /** children actively held (claimed + in_progress + review). */
+  inFlight: number;
+  /** children blocked. */
+  blocked: number;
+  /** counts per WorkItemPhase (+ `missing`). */
+  statusCounts: Record<string, number>;
+  children: StintChild[];
+}
+
 /** Evidence kind taxonomy (shared by requirement + supplied evidence). OIS-INTERNAL
  *  kinds (audit/review) are existence-checked when refResolvable; external kinds
  *  (commit/pr/test-run/doc) are format-validated only, never existence-checked. */
@@ -209,6 +234,11 @@ export interface IWorkItemStore {
    *  source of truth). Opt-in surface for get_work (feeds the cold-start get_current_stint).
    *  Returns null if the work-item itself does not exist. */
   getCompletionProgress(workId: string): Promise<{ done: number; total: number; pending: string[] } | null>;
+
+  /** work-94 (cold-start spine): project an arc-node's DIRECT subtree — the "where are we"
+   *  surface. k/N completion progress + per-child status + in-flight/blocked rollups + the
+   *  gate-open flag, over ANY arc-node. Returns null if the arc id does not exist. */
+  getStintProjection(workId: string): Promise<StintProjection | null>;
 
   /** work-86 (idea-380): generic substrate existence check for a storage=entity reference
    *  at create_work-time — generalizes the WorkItem-only dangling-dependsOn existence check

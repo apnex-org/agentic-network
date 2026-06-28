@@ -344,5 +344,45 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     it("getCompletionProgress: a non-existent work-item → null", async () => {
       expect(await repo.getCompletionProgress("work-ghost-00000")).toBeNull();
     }, OP_TIMEOUT);
+
+    // ── work-94 (cold-start spine, sub-slice 2): getStintProjection (the "where are we" surface) ──
+    it("getStintProjection: projects the direct subtree — k/N + per-child status + inFlight/blocked + missing + lease-holder", async () => {
+      const cDone = await doneChild("agent-sp-done");
+      const cReady = (await repo.createWorkItem({ type: "task", roleEligibility: [] })).id;
+      const wIp = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+      const ip = await repo.claimWorkItem(wIp.id, "agent-sp-ip");
+      await repo.startWork(wIp.id, "agent-sp-ip", ip!.lease!.token);                 // in_progress
+      const wB = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+      const bc = await repo.claimWorkItem(wB.id, "agent-sp-b");
+      await repo.startWork(wB.id, "agent-sp-b", bc!.lease!.token);
+      await repo.blockWork(wB.id, "agent-sp-b", bc!.lease!.token, { blockerKind: "external", reason: "waiting" }); // blocked
+      const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [cDone, cReady, wIp.id, wB.id, "work-vanished-sp"] });
+
+      const p = (await repo.getStintProjection(arc.id))!;
+      expect(p.arcId).toBe(arc.id);
+      expect(p.completion).toMatchObject({ done: 1, total: 5 });        // only cDone is done
+      expect(p.completion.pending).toEqual(expect.arrayContaining([cReady, wIp.id, wB.id, "work-vanished-sp"]));
+      expect(p.gateOpen).toBe(false);                                   // not all done
+      expect(p.inFlight).toBe(1);                                       // wIp (in_progress); blocked excluded
+      expect(p.blocked).toBe(1);                                        // wB
+      expect(p.statusCounts).toMatchObject({ done: 1, ready: 1, in_progress: 1, blocked: 1, missing: 1 });
+      const vanished = p.children.find((c) => c.id === "work-vanished-sp")!;
+      expect(vanished.status).toBe("missing");                          // surfaced, not hidden
+      expect(vanished.leaseHolder).toBeNull();
+      const ipChild = p.children.find((c) => c.id === wIp.id)!;
+      expect(ipChild.leaseHolder).toBe("agent-sp-ip");                  // lease holder surfaced
+    }, OP_TIMEOUT);
+
+    it("getStintProjection: all children done → gateOpen true; a leaf → total:0/gateOpen:false; a non-existent arc → null", async () => {
+      const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [await doneChild("agent-sp-g1"), await doneChild("agent-sp-g2")] });
+      const p = (await repo.getStintProjection(arc.id))!;
+      expect(p.completion).toMatchObject({ done: 2, total: 2 });
+      expect(p.gateOpen).toBe(true);                                    // all done → the completion-gate would pass
+      const leaf = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+      const lp = (await repo.getStintProjection(leaf.id))!;
+      expect(lp.completion.total).toBe(0);
+      expect(lp.gateOpen).toBe(false);                                  // empty arc: gate not vacuously "open"
+      expect(await repo.getStintProjection("work-ghost-sp")).toBeNull();
+    }, OP_TIMEOUT);
   });
 });
