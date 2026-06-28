@@ -34,7 +34,23 @@ import type {
   WorkItemType,
   WorkItemPriority,
   WorkItemPhase,
+  ReadyEmptyReason,
 } from "../entities/work-item.js";
+
+// ── work-94 (cold-start spine): the NON-DARK empty-digest reasons ────────────────────
+// An empty caller-scoped claimable digest must explain ITSELF — never a silent/dark zero (a
+// cold agent must know whether it's blocked (quarantine), maxed (WIP cap), or simply has no
+// work, so it knows the next move). Codes are set by listReadyForRole (wip_capped /
+// no_claimable_ready) + the policy quarantine gate (quarantined).
+const EMPTY_REASON_MESSAGE: Record<ReadyEmptyReason, string> = {
+  wip_capped: "you hold the maximum in-flight items (WIP cap) — complete_work or release_work on one to free a claim slot",
+  no_claimable_ready: "no WorkItem is claimable by your role right now (none that is ready AND role-eligible AND dependency-met)",
+  quarantined: "you are claim-thrash quarantined — an admin clear_work_quarantine is required before you can claim again",
+};
+/** Spread the non-dark empty-reason fields when the digest is empty (no-op when claimable). */
+function emptyDigestFields(reason: ReadyEmptyReason | undefined): Record<string, unknown> {
+  return reason ? { emptyReason: reason, emptyReasonMessage: EMPTY_REASON_MESSAGE[reason] } : {};
+}
 
 function ok(obj: unknown): PolicyResult {
   return { content: [{ type: "text" as const, text: JSON.stringify(obj, null, 2) }] };
@@ -103,14 +119,16 @@ async function listReadyWork(args: Record<string, unknown>, ctx: IPolicyContext)
   if (args.scopeToCaller === true) {
     const agent = await ctx.stores.engineerRegistry.getAgent(caller.agentId);
     if (agent?.quarantined) {
-      return ok({ items: [], count: 0, role: role ?? null, truncated: false, scopedToCaller: true });
+      // work-94 (non-dark digest): a quarantined caller's empty digest says WHY, not a dark zero.
+      return ok({ items: [], count: 0, role: role ?? null, truncated: false, scopedToCaller: true, ...emptyDigestFields("quarantined") });
     }
-    const { items, truncated } = await store.listReadyForRole(role, limit, caller.agentId);
-    return ok({ items, count: items.length, role: role ?? null, truncated, scopedToCaller: true, ...truncationNote(truncated) });
+    const { items, truncated, emptyReason } = await store.listReadyForRole(role, limit, caller.agentId);
+    // work-94: an empty scoped digest carries the non-dark reason (wip_capped / no_claimable_ready).
+    return ok({ items, count: items.length, role: role ?? null, truncated, scopedToCaller: true, ...truncationNote(truncated), ...emptyDigestFields(emptyReason) });
   }
 
-  const { items, truncated } = await store.listReadyForRole(role, limit);
-  return ok({ items, count: items.length, role: role ?? null, truncated, ...truncationNote(truncated) });
+  const { items, truncated, emptyReason } = await store.listReadyForRole(role, limit);
+  return ok({ items, count: items.length, role: role ?? null, truncated, ...truncationNote(truncated), ...emptyDigestFields(emptyReason) });
 }
 
 async function startWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
@@ -733,7 +751,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_ready_work",
-    "[Any] List ready WorkItems claimable by a role (empty roleEligibility = any-role, OR'd in). Defaults to the caller's role; pass `role` to view another queue. Pass `scopeToCaller:true` for the CALLER-CLAIMABLE projection — applies claim_work's FULL eligibility predicate (deps + role + WIP-cap + quarantine), so the count never over-reports what you can actually claim (the idea-353 digest source). truncation-HONEST: a capped scan sets `truncated` + a note (never a silent cap).",
+    "[Any] THE COLD-START 'what do I do next' SURFACE (work-94 spine): the next WorkItem(s) you can claim, each already carrying its node-contract — runbook (the just-in-time how-to) + references (the inputs to read) — so a process-naive agent is self-sufficient with NO prior context. Lists ready WorkItems claimable by a role (empty roleEligibility = any-role, OR'd in); defaults to the caller's role, pass `role` to view another queue. Pass `scopeToCaller:true` for the CALLER-CLAIMABLE projection — applies claim_work's FULL eligibility predicate (deps + role + WIP-cap + quarantine), so the count never over-reports what you can actually claim (the idea-353 re-engagement digest). NON-DARK: an empty result carries `emptyReason` + `emptyReasonMessage` (wip_capped | no_claimable_ready | quarantined) — never a silent zero, so you always know the next move. truncation-HONEST: a capped scan sets `truncated` + a note (never a silent cap).",
     {
       role: z.string().optional().describe("Role to project for (default: the caller's role)"),
       limit: z.number().int().positive().max(MAX_LIST_LIMIT).optional().describe(`Max items (default ${DEFAULT_LIST_LIMIT}, cap ${MAX_LIST_LIMIT})`),

@@ -20,6 +20,11 @@ export type WorkItemPriority = "critical" | "high" | "normal" | "low";
 export type WorkItemPhase =
   | "ready" | "claimed" | "in_progress" | "blocked" | "review" | "done" | "abandoned";
 
+/** work-94 (cold-start spine, non-dark digest): WHY a caller-scoped claimable digest is
+ *  empty — never a DARK (silent) zero. `wip_capped` + `no_claimable_ready` are repo-set
+ *  (listReadyForRole knows which); `quarantined` is policy-set (its own claim gate). */
+export type ReadyEmptyReason = "wip_capped" | "no_claimable_ready" | "quarantined";
+
 /** Evidence kind taxonomy (shared by requirement + supplied evidence). OIS-INTERNAL
  *  kinds (audit/review) are existence-checked when refResolvable; external kinds
  *  (commit/pr/test-run/doc) are format-validated only, never existence-checked. */
@@ -227,7 +232,7 @@ export interface IWorkItemStore {
    *  caller-claimable projection), also applies the per-agent WIP-cap so a maxed
    *  caller's projection is empty — count == claim_work's predicate. `agentId`
    *  omitted = the unchanged non-agent-scoped role view (D-1 R1 no-touch seam). */
-  listReadyForRole(role: string | undefined, limit: number, agentId?: string): Promise<{ items: WorkItem[]; truncated: boolean }>;
+  listReadyForRole(role: string | undefined, limit: number, agentId?: string): Promise<{ items: WorkItem[]; truncated: boolean; emptyReason?: ReadyEmptyReason }>;
 
   // ── Claim / lease / FSM verbs (C1-R2 sub-PR-3) ────────────────────────────
   // Each returns the updated WorkItem on success, null if `workId` is absent.
