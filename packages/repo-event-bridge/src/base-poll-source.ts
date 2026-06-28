@@ -4,18 +4,22 @@
  * PollSource (/events, ETag-conditional) and WorkflowRunPollSource (/actions/runs,
  * timestamp-window + pagination + LRU) are STRATEGY-different but share the entire
  * lifecycle: scope-validated start, per-repo poll loops with the same auth/rate/transient
- * backoff classification, the bounded async-iterator queue, health, budget logging, and the
+ * backoff classification, inline sink delivery, health, budget logging, and the
  * pollOnce SKELETON (fetch → classify → mark-success → dedupe → EMIT → COMMIT).
  *
  * This base extracts that shared ~240 lines as a template method. The source-specific parts
  * are abstract hooks: `fetchEvents` (the GH call + empty-semantics + a per-source commit
  * closure), `idOf`, `translate`, `hydrateCursor`, `createState`. The EMIT-loop + the
- * COMMIT-ORDER (emit fresh, THEN commit the cursor) live HERE in the base — so the bug-190
- * (A) coupling (PR-2: emit-via-sink-inline + advance-cursor-only-on-delivery) lands in ONE
+ * COMMIT-ORDER (emit fresh, THEN advance the cursor) live HERE in the base — so the bug-190
+ * (A) coupling (emit-via-sink-inline + advance-cursor-only-on-delivery) lives in ONE
  * place instead of both sources.
  *
- * PR-1 is BEHAVIOR-PRESERVING: the two sources keep the current two-loop (push-to-queue +
- * external drainer) model unchanged; the existing source test-suites stay green = the gate.
+ * bug-190 (A): the poll loop IS the delivery loop — pollOnce emits each fresh event INLINE via
+ * the injected sink (bounded retry), markSeen's only the DELIVERED ids, and advances the cursor
+ * ONLY when every fresh event delivered. A persistent emit failure leaves the cursor un-advanced
+ * so the next poll re-fetches + re-emits (auto-recovery; the poll cadence is the supervision). The
+ * separate drainer + bounded queue are eliminated BY CONSTRUCTION — a delivery failure can no
+ * longer be silently dropped between two loops.
  */
 
 import {

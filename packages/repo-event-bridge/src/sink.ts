@@ -11,9 +11,9 @@
  *
  * Why a stub at T1: the contract is the load-bearing artifact —
  * downstream T3 work composes any concrete `create_message` caller
- * against this surface, and T2 (PollSource) can wire its iterator
- * straight into a stub for end-to-end fixture replay without
- * standing up Hub transport.
+ * against this surface, and a poll source can wire a stub sink
+ * straight in for end-to-end fixture replay without standing up
+ * Hub transport.
  *
  * The stub deliberately avoids importing `@apnex/network-adapter` or
  * any MCP-transport surface — keeping the package dep graph minimal

@@ -1,20 +1,22 @@
 /**
  * EventSource — sovereign-package contract for repo-event ingestion.
  *
- * Mission-52 T1. Per thread-312 round-2 ratification, the contract is
- * an async-iterator pattern: implementations expose a `[Symbol.async-
- * Iterator]()` that yields `RepoEvent` values, plus lifecycle controls
- * (`start`/`stop`) and an operator self-service `health()` probe. This
- * shape composes naturally with backpressure (consumers pull at their
- * own rate) and with modern Node ergonomics (`for await...of`).
+ * Mission-52 T1; coupled to inline-sink delivery at work-44/bug-190 (A).
+ * The contract is lifecycle controls (`start`/`stop`) plus an operator
+ * self-service `health()` probe. `start()` begins upstream observation
+ * AND inline delivery to the injected `MessageSink` — the poll loop IS
+ * the delivery loop, with the cursor advancing only after delivery (no
+ * separate drainer, no queue between source and sink, so a delivery
+ * failure can't be silently dropped). `stop()` halts it; `health()`
+ * reports poll + delivery state.
  *
  * Capability flags advertise the source's transport posture so the Hub
  * can pick a source per environment (poll for dev/CI; webhook for
  * prod) and so operators can reason about latency + dedupe guarantees
  * without inspecting impl internals.
  *
- * Translator output is a `RepoEvent`; sink consumers receive these via
- * the iterator. The translator itself lives in `./translator.ts`.
+ * Translator output is a `RepoEvent`; a source emits these to its sink
+ * inside the poll cycle. The translator itself lives in `./translator.ts`.
  */
 
 // ── Capabilities ─────────────────────────────────────────────────────
@@ -86,7 +88,7 @@ export interface EventSourceHealth {
 // ── Repo event ────────────────────────────────────────────────────────
 
 /**
- * The unit yielded by an EventSource iterator. Translator-shaped: a
+ * The unit a source emits to its sink. Translator-shaped: a
  * `kind`/`subkind`/`payload` envelope ready for sink consumption. See
  * `./translator.ts` for the canonical subkind taxonomy.
  *

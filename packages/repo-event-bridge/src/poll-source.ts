@@ -8,9 +8,9 @@
  * Strategy: ETag-conditional polling — `If-None-Match`; a 304 is "not-modified".
  * Per-event dedupe via the CursorStore LRU on `event.id`.
  *
- * work-44/bug-190 PR-1: the lifecycle (scope-validated start, per-repo poll loops,
- * auth/rate/transient backoff, the async-iterator queue, health, budget logging) +
- * the pollOnce skeleton (fetch → classify → dedupe → emit → commit) now live in
+ * work-44/bug-190: the lifecycle (scope-validated start, per-repo poll loops,
+ * auth/rate/transient backoff, inline sink delivery, health, budget logging) +
+ * the pollOnce skeleton (fetch → classify → dedupe → emit → advance-cursor) now live in
  * BasePollSource; this class supplies only the ETag-strategy hooks. The constants +
  * Logger/PollOutcome types are re-exported here for back-compat.
  */

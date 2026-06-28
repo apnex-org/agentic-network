@@ -8,7 +8,7 @@ Sovereign-package #5, sibling to `@apnex/network-adapter`, `@apnex/cognitive-lay
 
 Three pure surfaces. Implementations and runtime wiring are layered on top in subsequent tasks (T2 PollSource, T3 Hub integration, T4 WebhookSource design).
 
-### EventSource — async-iterator pluggability
+### EventSource — inline-sink pluggability
 
 ```ts
 interface EventSource {
@@ -16,9 +16,10 @@ interface EventSource {
   start(): Promise<void>;
   stop(): Promise<void>;
   health(): EventSourceHealth;
-  [Symbol.asyncIterator](): AsyncIterator<RepoEvent>;
 }
 ```
+
+`start()` begins upstream observation AND inline delivery to the injected `MessageSink` — the poll loop IS the delivery loop (work-44/bug-190 (A)). A source emits each fresh event via the sink inside its poll cycle and advances its cursor ONLY after delivery; there is no separate drainer and no queue between source and sink, so a delivery failure can't be silently dropped. `stop()` halts the loop; `health()` reports poll + delivery state.
 
 | Field | Meaning |
 |---|---|
@@ -36,7 +37,9 @@ Production-grade sources MUST advertise `dedupe: true` and `persistedCursor: tru
 interface EventSourceHealth {
   paused: boolean;
   pausedReason?: 'rate-limit' | 'network' | 'auth-failure';
-  lastSuccessfulPoll: string;  // ISO-8601
+  lastSuccessfulPoll: string;        // ISO-8601 — last upstream observation
+  lastSuccessfulDelivery?: string;   // ISO-8601 — last fully-delivered poll cycle (work-44/bug-190 d)
+  deliveryFailing?: boolean;         // sink delivery persistently failing; surfaced on /health
 }
 ```
 
