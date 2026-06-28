@@ -36,7 +36,7 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
   return {
     calls,
     createWorkItem: m("createWorkItem"), createBlueprintNode: m("createBlueprintNode"), deleteWorkItem: m("deleteWorkItem"),
-    getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), entityExists: m("entityExists"),
+    getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), entityExists: m("entityExists"),
     listWorkItems: m("listWorkItems"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
@@ -80,8 +80,8 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("registers all 13 tools (create_work + seed_blueprint + get_work + list_work snapshot + the 9 lifecycle verbs)", () => {
-    for (const t of ["create_work", "seed_blueprint", "get_work", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
+  it("registers all 14 tools (create_work + seed_blueprint + get_work + get_current_stint + list_work snapshot + the 9 lifecycle verbs)", () => {
+    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_stint", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
   });
@@ -664,6 +664,22 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
     expect(r.isError).toBe(true);
     expect(body(r).errorKind).toBe("not_found");
     expect(stub.calls.some((c) => c.method === "getCompletionProgress")).toBe(false);
+  });
+
+  // ── work-94 (cold-start spine, sub-slice 2): get_current_stint ──
+  it("get_current_stint: returns the arc projection under `stint` (pass-through)", async () => {
+    const proj = { arcId: "work-arc", arcStatus: "in_progress", completion: { done: 1, total: 2, pending: ["c2"] }, gateOpen: false, inFlight: 1, blocked: 0, statusCounts: { done: 1, in_progress: 1 }, children: [] };
+    const stub = makeStub({ getStintProjection: () => proj });
+    const r = await router.handle("get_current_stint", { workId: "work-arc" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBeFalsy();
+    expect(body(r).stint).toMatchObject({ arcId: "work-arc", gateOpen: false, completion: { done: 1, total: 2 } });
+  });
+
+  it("get_current_stint: a non-existent arc → not_found", async () => {
+    const stub = makeStub({ getStintProjection: () => null });
+    const r = await router.handle("get_current_stint", { workId: "ghost" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("not_found");
   });
 });
 
