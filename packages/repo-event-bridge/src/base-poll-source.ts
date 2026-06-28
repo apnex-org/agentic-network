@@ -84,9 +84,10 @@ export interface BaseRepoState {
  *  - `no-events`: nothing to emit (PollSource 304 → "not-modified"; WorkflowRunPollSource
  *    empty-runs → "ok"). FAITHFUL: a `no-events` result does NOT run filterUnseen (matches
  *    each source's early-return), so the dedupe token is untouched.
- *  - `events`: candidates to dedupe + emit, plus a `commit` closure that captures the fetch
- *    result and performs the source-specific markSeen + cursor-write AFTER emit (the order the
- *    (A) coupling will gate on delivery in PR-2).
+ *  - `events`: candidates to dedupe + emit, plus an `advanceCursor` closure (cursor-write only)
+ *    that captures the fetch result. bug-190 (A): the base emits each fresh event to the sink,
+ *    markSeen's the DELIVERED ones, and calls `advanceCursor` ONLY when EVERY fresh event delivered
+ *    — a persistent delivery failure leaves the cursor un-advanced so the next poll re-emits.
  */
 export type FetchResult<TRaw> =
   | { kind: "no-events"; outcome: "not-modified" | "ok" }
