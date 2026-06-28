@@ -36,6 +36,14 @@ import { SubstrateCounter } from "./substrate-counter.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Bug";
+
+// bug-200: listBugs previously passed NO limit → substrate defaulted to 100,
+// silently capping BOTH the page AND the `total` (reported 100 with 198 real
+// bugs, no truncation flag — a tele-4 fail-loud violation). Honor the substrate
+// max (500) + return a truncation-honest flag, mirroring listWorkItems /
+// list_ready_work. The sibling list-all methods (listMissions/listTasks/
+// listIdeas/listEntries) already pass limit:500 — listBugs was the lone outlier.
+const LIST_CAP = 500;
 const MAX_CAS_RETRIES = 50;
 
 function cloneBug(bug: Bug): Bug {
@@ -138,7 +146,7 @@ export class BugRepositorySubstrate implements IBugStore {
     severity?: BugSeverity;
     class?: string;
     tags?: string[];
-  }): Promise<Bug[]> {
+  }): Promise<{ items: Bug[]; truncated: boolean }> {
     // Substrate-API list with filter. tags is array-contains semantics; substrate
     // FilterValue doesn't directly support array-contains, so we filter
     // tags client-side post-list (same as existing repository pattern).
@@ -149,11 +157,17 @@ export class BugRepositorySubstrate implements IBugStore {
 
     const { items } = await this.substrate.list<Bug>(KIND, {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
+      limit: LIST_CAP, // bug-200: honor the substrate max (was defaulting to 100)
     });
+
+    // bug-200: truncation-honest — the raw substrate scan hit the cap. Measured
+    // BEFORE the client-side tags filter (matches beyond the scan window may exist),
+    // so the flag reflects "more bugs than the scan saw", never a silent under-report.
+    const truncated = items.length >= LIST_CAP;
 
     // mission-90 W8: decode FIRST (cloneBug derives the flat `tags` array from the
     // metadata.labels map), then filter on it.
-    return items
+    const decoded = items
       .map(cloneBug)
       .filter(bug => {
         if (filter?.tags && filter.tags.length > 0) {
@@ -162,6 +176,7 @@ export class BugRepositorySubstrate implements IBugStore {
         }
         return true;
       });
+    return { items: decoded, truncated };
   }
 
   async updateBug(

@@ -102,10 +102,11 @@ describe("BugRepositorySubstrate (W4 Option Y sibling-pattern)", () => {
     expect(refetched?.status).toBe("resolved");
 
     // List by filter
-    const openBugs = await repo.listBugs({ status: "open" });
+    const { items: openBugs, truncated: openTrunc } = await repo.listBugs({ status: "open" });
     expect(openBugs).toHaveLength(2);  // bug-2 + bug-3
+    expect(openTrunc).toBe(false);     // bug-200: well under the 500 cap
 
-    const featureBugs = await repo.listBugs({ class: "missing-feature" });
+    const { items: featureBugs } = await repo.listBugs({ class: "missing-feature" });
     expect(featureBugs).toHaveLength(2);  // bug-1 + bug-3
 
     // updateBug on absent returns null

@@ -106,12 +106,14 @@ export interface IBugStore {
 
   getBug(bugId: string): Promise<Bug | null>;
 
+  // bug-200: returns a truncation-honest envelope — `truncated` flags a substrate
+  // scan that hit the 500 cap (was silently capping page+total at 100).
   listBugs(filter?: {
     status?: BugStatus;
     severity?: BugSeverity;
     class?: string;
     tags?: string[];
-  }): Promise<Bug[]>;
+  }): Promise<{ items: Bug[]; truncated: boolean }>;
 
   /**
    * Update a bug. Status transitions enforced by the policy layer
