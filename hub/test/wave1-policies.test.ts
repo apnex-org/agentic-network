@@ -227,6 +227,21 @@ describe("AuditPolicy", () => {
     expect(parsed.count).toBeGreaterThanOrEqual(1);
   });
 
+  it("bug-196 — list_audit_entries compact:true omits the details body", async () => {
+    await router.handle("create_audit_entry", { action: "compact_test", details: "a long details body that bulk surveys do not need", relatedEntity: "task-9" }, ctx);
+    const compact = JSON.parse((await router.handle("list_audit_entries", { compact: true }, ctx)).content[0].text);
+    expect(compact.compact).toBe(true);
+    const e = compact.entries[0];
+    expect(e.action).toBe("compact_test");
+    expect(e.actor).toBeDefined();
+    expect(e.timestamp).toBeDefined();
+    expect(e.relatedEntity).toBe("task-9");
+    expect(e.details).toBeUndefined();   // the only long-text body OMITTED
+    // full mode preserves details
+    const full = JSON.parse((await router.handle("list_audit_entries", {}, ctx)).content[0].text);
+    expect(full.entries[0].details).toBe("a long details body that bulk surveys do not need");
+  });
+
   it("list_audit_entries supports limit", async () => {
     for (let i = 0; i < 5; i++) {
       await router.handle("create_audit_entry", {

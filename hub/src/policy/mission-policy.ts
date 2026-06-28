@@ -30,6 +30,7 @@ import {
 } from "../entities/index.js";
 import {
   LIST_PAGINATION_SCHEMA,
+  LIST_COMPACT_SCHEMA,
   paginate,
   buildQueryFilterSchema,
   buildQuerySortSchema,
@@ -533,6 +534,18 @@ const MISSION_ACCESSORS: FieldAccessors<Mission> = {
 const MISSION_FILTER_SCHEMA = buildQueryFilterSchema(MISSION_FILTERABLE_FIELDS);
 const MISSION_SORT_SCHEMA = buildQuerySortSchema(MISSION_SORTABLE_FIELDS);
 
+/** bug-196: compact scannable projection. Mission is the heaviest entity — collapse the
+ *  virtual `tasks`/`ideas` ID-arrays to COUNTS + OMIT description / sourceThreadSummary /
+ *  plannedTasks (per-task directive bodies) / pulses (prompt strings). */
+function projectMissionCompact(m: Mission) {
+  return {
+    id: m.id, title: m.title, status: m.status, missionClass: m.missionClass,
+    tasksCount: Array.isArray(m.tasks) ? m.tasks.length : 0,
+    ideasCount: Array.isArray(m.ideas) ? m.ideas.length : 0,
+    updatedAt: m.updatedAt,
+  };
+}
+
 async function listMissions(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   let missions = await ctx.stores.mission.listMissions();
   const totalPreFilter = missions.length;
@@ -563,11 +576,12 @@ async function listMissions(args: Record<string, unknown>, ctx: IPolicyContext):
     content: [{
       type: "text" as const,
       text: JSON.stringify({
-        missions: page.items,
+        missions: args.compact === true ? page.items.map(projectMissionCompact) : page.items,
         count: page.count,
         total: page.total,
         offset: page.offset,
         limit: page.limit,
+        ...(args.compact === true ? { compact: true } : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],
@@ -709,6 +723,7 @@ export function registerMissionPolicy(router: PolicyRouter): void {
       status: z.enum(["proposed", "active", "completed", "abandoned"]).optional()
         .describe("DEPRECATED: use `filter: { status: ... }`. Preserved for backwards compat; `filter.status` wins when both present."),
       ...LIST_PAGINATION_SCHEMA,
+      ...LIST_COMPACT_SCHEMA,
     },
     listMissions,
   );

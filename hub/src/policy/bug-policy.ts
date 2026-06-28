@@ -12,8 +12,8 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult, FsmTransitionTable } from "./types.js";
 import { isValidTransition } from "./types.js";
-import type { BugStatus, BugSeverity } from "../entities/bug.js";
-import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
+import type { BugStatus, BugSeverity, Bug } from "../entities/bug.js";
+import { LIST_PAGINATION_SCHEMA, LIST_COMPACT_SCHEMA, paginate } from "./list-filters.js";
 import { dispatchBugReported, dispatchBugStatusChanged } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
 import { phaseFromEntity } from "../entities/shape-helpers.js";
@@ -74,6 +74,15 @@ async function createBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   };
 }
 
+/** bug-196: compact scannable projection — lily's fixed field-set; OMITS description /
+ *  fixRevision / sourceThreadSummary / lineage so a bulk ledger survey is small. */
+function projectBugCompact(b: Bug) {
+  return {
+    id: b.id, title: b.title, status: b.status, severity: b.severity,
+    class: b.class, tags: b.tags, fixCommits: b.fixCommits, repo: b.repo, updatedAt: b.updatedAt,
+  };
+}
+
 async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const status = args.status as BugStatus | undefined;
   const severity = args.severity as BugSeverity | undefined;
@@ -95,11 +104,12 @@ async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
     content: [{
       type: "text" as const,
       text: JSON.stringify({
-        bugs: page.items,
+        bugs: args.compact === true ? page.items.map(projectBugCompact) : page.items,
         count: page.count,
         total: page.total,
         offset: page.offset,
         limit: page.limit,
+        ...(args.compact === true ? { compact: true } : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],
@@ -213,13 +223,14 @@ export function registerBugPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_bugs",
-    "[Any] List bugs with optional filters (status, severity, class, tags match-any) + pagination.",
+    "[Any] List bugs with optional filters (status, severity, class, tags match-any) + pagination. Pass compact:true for the scannable bulk-survey projection (omits description/fixRevision) — use it instead of many per-bug get_bug calls.",
     {
       status: z.enum(["open", "investigating", "resolved", "wontfix"]).optional(),
       severity: z.enum(["critical", "major", "minor"]).optional(),
       class: z.string().optional().describe("Filter by exact class match"),
       tags: z.array(z.string()).optional().describe("Match-any tag filter"),
       ...LIST_PAGINATION_SCHEMA,
+      ...LIST_COMPACT_SCHEMA,
     },
     listBugs,
   );

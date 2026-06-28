@@ -22,6 +22,16 @@ export const LIST_PAGINATION_SCHEMA = {
     .describe("Skip the first N entries for pagination (default 0)."),
 };
 
+/** Compact-projection flag — spread into a `list_*` registration whose handler maps
+ *  each item through a per-entity compact projection. bug-196: fat list payloads pushed
+ *  agents to many per-item get_* calls (steve surveying the ledger), overrunning the
+ *  concurrency=1 proxy = the 2026-06-28 429 storm. Compact = the scannable bulk-survey
+ *  shape; full objects remain available (omit/false). */
+export const LIST_COMPACT_SCHEMA = {
+  compact: z.boolean().optional()
+    .describe("Return a COMPACT scannable projection per item (id + key fields; OMITS long-text bodies — description/text/details/fixRevision). Use for bulk ledger surveys to avoid per-item get_* calls. Full objects when omitted/false."),
+};
+
 /** Label-match-all filter — use on entities with `labels: Record<string, string>`. */
 export const LIST_LABELS_SCHEMA = {
   labels: z.record(z.string(), z.string()).optional()
