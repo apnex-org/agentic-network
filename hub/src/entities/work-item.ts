@@ -54,6 +54,18 @@ export interface StintProjection {
   /** counts per WorkItemPhase (+ `missing`). */
   statusCounts: Record<string, number>;
   children: StintChild[];
+  /** idea-384 Part B (work-99): the arc SUBTREE effort profile — per-state ms summed over the
+   *  UNIQUE reachable LEAVES of the completionDependsOn DAG. Leaves-only-BY-CONSTRUCTION (an
+   *  intermediate's own span is NEVER added; rollup(node)=isLeaf? own : SUM(children.rollup));
+   *  a DAG-shared leaf is counted ONCE (visited-set dedup). SEPARATE from the arc's own span. */
+  rolledUpDurations: StateDurations;
+  /** idea-384 Part B: the arc's OWN active wall-clock (ms) = its own claimed+in_progress+blocked+
+   *  review buckets (EXCLUDES ready queue-wait). Derived from the arc's own stateDurations — robust
+   *  to the lease (claimedAt) being cleared on terminal transitions; kept SEPARATE from the rollup. */
+  ownActiveMs: number;
+  /** idea-384 Part B: parallelism/utilization = rolledUpDurations.in_progress / ownActiveMs.
+   *  >1 ⇒ subtree concurrency achieved; <1 ⇒ serial/idle gaps. null when ownActiveMs=0. */
+  parallelism: number | null;
 }
 
 /** work-94 (cold-start spine, sub-slice 3): the legal FSM transition verbs for an item given

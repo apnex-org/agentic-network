@@ -516,6 +516,13 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       blocked: countOf("blocked"), review: countOf("review"), done, abandoned: countOf("abandoned"),
       missing: countOf("missing"),
     };
+    // work-99 (idea-384 Part B): the recursive SUBTREE rollup (leaves-only, DAG-deduped) + the
+    // arc's OWN active span + the parallelism factor. ownActiveMs EXCLUDES ready (queue-wait) so
+    // parallelism measures concurrency vs the ACTIVE span, not vs total-elapsed; null when there
+    // is no active span (no div-by-zero — honest null).
+    const rolledUpDurations = await this.rollupLeafDurations(arc.id);
+    const ownActiveMs = arc.stateDurations.claimed + arc.stateDurations.in_progress + arc.stateDurations.blocked + arc.stateDurations.review;
+    const parallelism = ownActiveMs > 0 ? rolledUpDurations.in_progress / ownActiveMs : null;
     return {
       arcId: arc.id,
       arcStatus: arc.status,
@@ -532,7 +539,44 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       blocked: statusCounts.blocked,
       statusCounts,
       children,
+      rolledUpDurations,
+      ownActiveMs,
+      parallelism,
     };
+  }
+
+  /**
+   * work-99 (idea-384 Part B): app-side recursive rollup of the completionDependsOn SUBTREE's
+   * per-state timers, summed over the UNIQUE reachable LEAVES (empty completionDependsOn).
+   * Option-B app-side walk (NOT a raw CTE — the substrate exposes no raw-query seam, and a raw
+   * CTE reading status.stateDurations/spec.completionDependsOn from JSONB would bypass the
+   * envelope decode-to-flat membrane = the bug-137/138 class; cal #85 — idea-384's prose said
+   * WITH RECURSIVE but ground-truth has no such seam). Envelope-SAFE via cloneWorkItem. The
+   * memoized visited-set gives DAG-dedup (a leaf shared across parents counted ONCE) AND
+   * termination (work-87's whole-graph acyclic guarantee + the visited guard). LEAVES-ONLY
+   * BY CONSTRUCTION: an intermediate recurses into its children and NEVER adds its own span;
+   * only a leaf contributes its ownStateDurations. A vanished node is skipped (never mis-summed).
+   * On-read, bounded by the subtree size (a stint ~6 children) — the getStintProjection
+   * parallel-computed discipline (not a maintained rollup → no write-amp/drift).
+   */
+  private async rollupLeafDurations(arcId: string): Promise<StateDurations> {
+    const acc: StateDurations = { ...DEFAULT_STATE_DURATIONS };
+    const keys = Object.keys(DEFAULT_STATE_DURATIONS) as (keyof StateDurations)[];
+    const visited = new Set<string>();
+    const walk = async (id: string): Promise<void> => {
+      if (visited.has(id)) return; // DAG-dedup + cycle-guard (an already-summed node is idempotent)
+      visited.add(id);
+      const node = await this.substrate.get<WorkItem>(KIND, id);
+      if (!node) return; // vanished — skip; never silently mis-attribute
+      const flat = cloneWorkItem(node);
+      if (flat.completionDependsOn.length === 0) {
+        for (const k of keys) acc[k] += flat.stateDurations[k]; // LEAF — contribute its own span
+      } else {
+        for (const childId of flat.completionDependsOn) await walk(childId); // intermediate — recurse; own span NOT added
+      }
+    };
+    await walk(arcId);
+    return acc;
   }
 
   /**
