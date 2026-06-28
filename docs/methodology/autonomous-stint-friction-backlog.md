@@ -225,6 +225,32 @@ This lands the **VERIFIER half of FR-20** (multi-party friction intake — frict
 
 ---
 
+## Section J — Stint-4 "Bank-the-Base" retrospective harvest (FR-35..FR-39, 2026-06-28)
+
+*Frictions surfaced by the stint-4 retro (parallel-harvest + adversarial completeness-critic + tri-seat intake). FR-20 was re-discharged tri-seat for this stint (thread-738 greg + thread-739 steve). See `docs/reviews/autonomous-stint-4-retrospective.md` §5a/§7 for the folded first-person intakes.*
+
+### FR-35 — Merge-churn (stacked-PR + require-up-to-date + dismiss-stale-reviews + async-crossing)
+**Evidence (stint-4):** the code-heavy stint ran the BEHIND→update-branch→re-CI→re-approve loop many times; stacked PRs + branch-protection (require-up-to-date + dismiss-stale-reviews) + async message-crossing compounded it. **3rd+ stint recurrence** (= FR-6 + FR-31). Engineer (greg) concurs from the build seat.
+**Disposition:** COUNCIL-or-FIX-NOW → enable GitHub **merge-queue / auto-merge** (collapses N cycles into one; removes the BEHIND-thrash) — the not-yet-shipped code-PR half of FR-31. Pairs with the cross-approval matrix for the dismiss-stale leg; async-crossing = FR-29 class.
+
+### FR-36 — Stale-checkout gating (verifier verdict against a checkout not at the PR head SHA)
+**Evidence (stint-4):** steve gated #410 against a local scratch checkout that had not advanced to the PR head SHA → certified non-merge-candidate code; the re-gate corrected it. Verifier (steve) concurs + adds the **WorkItem-before-PR-verdict ordering** sub-friction (a WorkItem appearing after a PR review forces a duplicate review artifact). Sibling of FR-15 (read-projection lag), but the verifier's working TREE is the stale surface.
+**Disposition:** FIX-NOW (op-model §5) → the **SHA-pinned verifier preflight**: `git fetch` → assert local `HEAD == headRefOid` → inspect CI/merge state → run positive probe + one negative/mutation probe → post verdict AFTER the WorkItem claim (single fresh artifact, stale re-gate mechanically detectable). Calibration candidate **GATE-THE-HEAD-SHA** on recurrence (first occurrence → workflow-fix, not yet a calibration).
+
+### FR-37 — Tool-catalog staleness recurs (a just-shipped verb is uninvocable from the session that shipped it)
+**Evidence (stint-4):** bug-199/bug-180 — `get_backlog_health` + `update_bug repo` deployed but uncallable from the architect's running session (stale on-disk per-tool inputSchema). Engineer (greg): the sharpest engineer friction — *"I ship a verb I then can't call from the seat that built it."* **3rd recurrence AND post-structural-fix-MERGE** (= FR-21 + cal #91; the #362/ade10cf fix is merged but smoke-PENDING). tele-5 perceptual-parity violation on an observability-FOCUS stint.
+**Disposition:** COUNCIL/IDEA — high priority (directly undercuts the observability FOCUS) → make the #362 invalidation path DEFAULT (block first ListTools on a /health revision-check OR emit `notifications/tools/list_changed` on revision-drift); extend the work-5 AC1 smoke to assert schema-level refresh, not only new-verb appearance. Single-home consolidation (mission-95) kills the adjacent stale-kernel family. Escalated cal **#91**.
+
+### FR-38 — Lease-expiry-race on an active anchor item (backstop WORKED)
+**Evidence (stint-4):** work-45 (the stint-driver anchor) lease expired once mid-work despite per-turn renews → requeue → idea-353 digest re-wake → clean re-claim (`leaseExpiryCount=1`), zero manual intervention. Same lease-regime-doesn't-fit-long-work CLASS as FR-27, now on an active anchor.
+**Disposition:** ACCEPT-leaning (backstop worked, low-priority) → auto-renew/heartbeat the lease during active anchor work (`renew_lease` exists — wire to active progress), OR an anchor-class longer lease. Candidate IDEA if `leaseExpiryCount` climbs.
+
+### FR-39 — Work-item lifecycle opacity (claim→start→complete invisible until completion bites)
+**Evidence (stint-4, engineer seat — greg):** held work-59 in `claimed`, renewed it ~90 min, then `complete_work` REJECTED ("requires in_progress, was claimed") — had to `start_work` first. The stall-prompt only ever offers renew/block/abandon; it never surfaces "you haven't started this." The claim→start→complete transition is invisible until completion fails on it. Sibling of FR-37's perceptual-parity class, on the WorkItem FSM rather than the tool surface.
+**Disposition:** FIX-NOW (small adapter/Hub change) → auto-`start_work` on first `renew_lease` of a `claimed` item, OR surface the claim→start gap in the stall prompt (offer `start` alongside renew/block/abandon).
+
+---
+
 ## Triage summary
 
 | Disposition | Frictions |
@@ -266,3 +292,5 @@ Updated 2026-06-27 (stint-3, idea-355 dogfood-3 in flight): +Section H (FR-31) �
 Updated 2026-06-28 (stint-3 retrospective harvest): +Section I (FR-32 verifier-can't-run-tests + greg's copy-from-template / 57P01-pre-warn / docker-check handoff detail; FR-33 thread round-cap on operational handshakes [thread-709 10/10]; FR-34 banked-only-calibrations are a cross-stint loss vector → "banked for retro" becomes a tracked stint-close obligation) + CONCRETIZED FR-31 (docs-only merge fast-path: `docs/**`-confined diffs skip the BEHIND→update-branch→re-CI formality) + **ENGINEER-INTAKE (greg)** discharging the engineer half of FR-20 (3 first-person frictions — pre-gate path-completeness, claim-time scoping under-count [cal #88 sizing corollary], trust-critical AC-fork surfacing latency — plus the mutation-proof + real-substrate-before-gate amplify). **VERIFIER (steve) first-person intake remains PENDING** — FR-20 stays open until it lands.
 
 Updated 2026-06-28 (stint-3 retrospective harvest, cont.): +**VERIFIER-INTAKE (steve)** discharging the verifier half of FR-20 (3 first-person frictions — scratch-clone bootstrap noise [sharpens FR-32], advisory-vs-release-critical gate-boundary ambiguity [NEW], oracle-before-artifact ordering [NEW] — plus the real-substrate adversarial-probe amplify, bilateral with greg, that caught both #385 gaps the mock suite missed). With architect + engineer + verifier all in, **FR-20 is now FULLY DISCHARGED**.
+
+Updated 2026-06-28 (stint-4 "Bank-the-Base" retrospective harvest): +Section J (FR-35 merge-churn [3rd+ recurrence → merge-queue/auto-merge]; FR-36 stale-checkout-gating + WorkItem-before-PR-verdict ordering → SHA-pinned verifier preflight; FR-37 tool-catalog-staleness recurrence-after-merge → cal #91 escalation + make #362 invalidation default; FR-38 lease-expiry-race on the active anchor [backstop worked]; FR-39 work-item-lifecycle-opacity claim→start→complete). FR-20 re-discharged TRI-SEAT for stint-4 (thread-738 greg + thread-739 steve). Calibration fold (FR-34 obligation discharged): new #92 emit-null-not-omit / #93 squash-sha-reconciliation / #94 truncation-honesty-as-list-contract + amended #79/#82 (faithful-to-input-shape generalization) / #88 (fix-time-same-handler-sweep third face) / #91 (bug-199 recurrence-after-merge). Refs idea-377/378/379/380, bug-195..201.

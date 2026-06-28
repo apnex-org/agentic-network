@@ -2855,9 +2855,24 @@ calibrations:
       argument to MECHANIZE it into a guard — ties to #88 (re-introduction-
       guard scan-scope) + idea-356 (calibration write-verb/validate +
       auto-surface). tele-8 + tele-7.
+
+      GENERALIZATION (autonomous-stint-4, idea-378 / #403): the false-green
+      class extends beyond TEST-fixture shape to PRODUCTION-INPUT shape. A
+      data-processing / reconciliation tool that validates only that its
+      MECHANISM executes — without validating against the REAL production INPUT
+      shape — false-greens the same way a non-faithful harness does. #403's
+      reconcile.py executed cleanly but mis-classified envelope rows
+      (resolved->open) because it read the storage shape, not the decoded-flat
+      shape (verifier catch #2 — the CLI built to FIX the stale ledger would
+      have silently mis-curated it). Discipline: "faithful-to-input-SHAPE" —
+      any production-data-processing tool is validated against a sample of the
+      REAL production input, not a synthetic/assumed shape. See idea-378.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion; status=completed 2026-06-20)
+      - idea-378 (faithful-to-input-shape; the production-data-processing generalization — autonomous-stint-4)
+      - "PR #403 (reconcile.py envelope-misclassification; verifier catch #2 — autonomous-stint-4)"
+      - docs/reviews/autonomous-stint-4-retrospective.md §5 (verifier catch #2) + §6
       - "#19 (schema-rename-without-state-migration; retired; this is the mission-scale manifestation)"
       - "#82 (faithful-harness-as-exposure; the fix mechanism)"
       - "#84 (silent-degrade try/catch; the compounding prod-side mechanism)"
@@ -2968,10 +2983,20 @@ calibrations:
       real-pg-only seams caught only by steve's real-pg probing). The
       recurrence is the strongest argument to MECHANIZE harness-fidelity into a
       guard (ties to #88 + idea-356). See #79 for the full recurrence note.
+
+      GENERALIZATION (autonomous-stint-4, idea-378 / #403): harness-fidelity
+      generalizes to INPUT-fidelity. The highest-leverage validation for ANY
+      production-data-processing tool (not just a shape-migration test suite) is
+      to run it against the REAL production input shape, not a synthetic one.
+      #403's reconcile.py passed on assumed shape and mis-classified real
+      envelope rows; the fix was to decode-to-flat the real input (the
+      faithful-to-input-shape discipline). See #79's stint-4 generalization +
+      idea-378.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion)
-      - "#79 (false-green-at-scale; the failure mode this fixes; carries the autonomous-stint-3 recurrence note)"
+      - "#79 (false-green-at-scale; the failure mode this fixes; carries the autonomous-stint-3 recurrence note + stint-4 generalization)"
+      - idea-378 (faithful-to-input-shape generalization — autonomous-stint-4)
       - "#88 (re-introduction-guard scan-scope; the mechanization target)"
       - bug-159 (workflow-tooling bug a faithful unit harness still missed; live-co-drive complement)
       - bug-178 (~42 testcontainer raw-Pool files; the recurrence — autonomous-stint-3)
@@ -3206,6 +3231,20 @@ calibrations:
       sibling that shares the pathology), not the surfacing symbol, before
       committing to an estimate. So #88 is now TWO faces of one discipline:
       scope-to-the-class for re-introduction GUARDS AND for CLAIM-TIME SIZING.
+
+      THIRD FACE (autonomous-stint-4, bug-200 / #410 — verifier catch #5,
+      engineer-amplified): FIX-TIME adjacent-signal-in-the-same-handler. When
+      you fix a class defect (silent-truncation / misleading-certainty), sweep
+      EVERY adjacent signal in the handler your fix touches — not just the one
+      that surfaced. #410 fixed the listBugs count-lie (added `truncated`) but
+      the SIBLING `_ois_query_unmatched` sentinel in the same path still
+      asserted "definitively none" over the now-known-truncated scan (steve's
+      catch). Engineer (greg): "fix the class includes the path your own fix
+      sits next to." So #88 is now THREE faces of one scope-to-the-class
+      discipline: re-introduction GUARDS · CLAIM-TIME SIZING · FIX-TIME
+      adjacent-signal-in-same-handler. The positive design-contract peer is #94
+      (truncation-honesty-as-list-contract — don't emit unguarded certainty in
+      the first place).
     cross_refs:
       - autonomous-stint-3 (bug-178 testcontainer raw-Pool re-introduction guard)
       - docs/decisions/autonomous-stint-3-2026-06-27-log.md (scan-scope lesson + claim-time sizing corollary)
@@ -3213,9 +3252,13 @@ calibrations:
       - "bug-178 / bug-190 (claim-time under-sizing from symbol-scoped grep)"
       - "#81 (premature structural-closure from partial verification — sibling)"
       - "#90 (silent-failure-in-fire-and-forget-async-seam; the class bug-190 belongs to)"
+      - "bug-200 / PR #410 (fix-time adjacent-signal third face — autonomous-stint-4, verifier catch #5)"
+      - "#94 (truncation-honesty-as-list-contract; the positive design-contract peer)"
+      - docs/reviews/autonomous-stint-4-retrospective.md §6
     tele_alignment:
       - tele-8
       - tele-7
+      - tele-4
 
   - id: 89
     class: methodology
@@ -3310,14 +3353,146 @@ calibrations:
       (mission-95) is the structural kill for the adjacent stale-kernel family
       (bug-182/183/186). OPEN until the reconciler invalidation path is the
       default and the manual cache-delete + restart recipe is retired.
+
+      RECURRENCE (autonomous-stint-4, bug-199): RECURRED one stint after the
+      structural fix MERGED — as a NEW FACET. bug-180's primary evidence was a
+      whole stale VERB-SET (68->83 tools); bug-199 is the SCHEMA-GRANULARITY
+      facet: a new FIELD (update_bug `repo`, get_backlog_health) on the live
+      surface, invisible to the architect's running session whose on-disk
+      catalog held the pre-#402 per-tool inputSchema. Precision (ground-truthed
+      at stint-4 close): the #362/ade10cf structural fix is MERGED but
+      smoke-PENDING (bug-180 status=investigating, work-5 AC1 unrun) — so this
+      is "fix-merged-but-not-yet-verified AND already recurred as a new facet,"
+      NOT "fix shipped but recurred." The recurrence-after-merge is the
+      strongest signal the invalidation path is not yet the DEFAULT. Engineer
+      seat (greg) named it the sharpest engineer friction: "I ship a verb I
+      then can't call from the seat that built it." Rider: extend the work-5
+      AC1 smoke to assert schema-level refresh (a changed inputSchema on an
+      existing tool propagates), not only new-verb appearance. tele-5
+      (perceptual-parity) violation surfaced on an observability-FOCUS stint.
     cross_refs:
       - autonomous-stint-3 (bug-180 stale tool-catalog cache)
       - docs/decisions/autonomous-stint-3-2026-06-27-log.md
       - bug-180 (stale tool-surface cache on redeploy)
       - "PR #362 (kernel ToolSurfaceReconciler structural fix)"
+      - bug-199 (schema-granularity facet — autonomous-stint-4 recurrence-after-merge)
+      - docs/reviews/autonomous-stint-4-retrospective.md §6 + FR-37
     tele_alignment:
       - tele-4
       - tele-13
+      - tele-5
+
+  - id: 92
+    class: substrate
+    title: "EMIT-NULL-NOT-OMIT in projections — a projection must emit an explicit null for an absent field, never omit the key; JSON.stringify drops undefined, producing a shape-inconsistent key-set that breaks downstream field-access silently"
+    origin: autonomous-stint-4 (bug-198 fix / #407)
+    surfaced_at: autonomous-stint-4 2026-06-28 — verifier (steve) catch #4 on #407; the list_bugs compact projection dropped missionClass when undefined (vs emitting null), so a consumer reading the key on a class-less bug hits a missing key rather than a null
+    status: open
+    closure_mechanism: |
+      Pattern signature: a compact/list projection conditionally includes a
+      field only when present, so the serialized object's key-SET varies row to
+      row. A downstream consumer that reads obj.field gets undefined for two
+      DIFFERENT reasons (field genuinely null vs key omitted) and cannot
+      distinguish them; with JSON.stringify the undefined value is dropped on
+      the wire, so even an explicit `field: undefined` vanishes. The honest
+      shape is a STABLE key-set: emit `field: null` for an absent optional.
+
+      Discipline: projection encoders emit every declared optional as an
+      explicit null when absent, never by omission. This is the read-side peer
+      of the storage-side RETIRED #19 (schema-rename without state migration)
+      and of the faithful-shape family (#79/#82) — shape-consistency across the
+      membrane, now at the PROJECTION boundary. Peer-verified by steve's catch.
+      OPEN until folded into a projection-encoder lint / the list-filter
+      compact-projection helper enforces null-fill.
+    closure_pr: 410
+    pattern_membership: []
+    cross_refs:
+      - autonomous-stint-4 (bug-198 / #407 list_bugs compact projection)
+      - "#19 (schema-rename-without-state-migration; storage-side ancestor, retired)"
+      - "#79 / #82 (faithful-shape family; this is the projection-boundary peer)"
+      - "PR #407 (filter-optionality + compact projection)"
+      - docs/reviews/autonomous-stint-4-retrospective.md §5 (verifier catch #4) + §6
+    tele_alignment:
+      - tele-4
+      - tele-5
+
+  - id: 93
+    class: methodology
+    title: "SQUASH-SHA RECONCILIATION — reconcile fix-SHAs against main-ancestry (git merge-base --is-ancestor) and record the SQUASH commit SHA, not the branch SHA; substring-matching a SHA is a trap (a branch SHA never appears in a squash-merged main history)"
+    origin: autonomous-stint-4 (idea-364 reconcile.py / #403)
+    surfaced_at: autonomous-stint-4 2026-06-28 — verifier (steve) catch #3 on #403 (substring-backfill would stamp wrong fixCommits) + the R2 curation (6 squash-sha corrections bug-24/93/167/168/169/170; bug-181 branch 9ec45ee squashed to real fix 5c64f58); cross-validated vs steve's independent hand-audit
+    status: open
+    closure_mechanism: |
+      Pattern signature: under squash-merge, a PR's branch commit SHAs do NOT
+      appear in main's history — main carries a single new squash SHA. So any
+      ledger that records a branch SHA as the fixCommit, or that verifies a fix
+      by substring-matching a SHA against a commit list, is structurally wrong:
+      the branch SHA is never an ancestor of main, and a substring match is a
+      false-attribution trap (a short SHA can substring-collide).
+
+      Discipline: (1) determine fix-presence with `git merge-base --is-ancestor
+      <sha> origin/main` (exact, squash-safe), not substring; (2) RECORD the
+      squash SHA (via `gh pr view <n> --json mergeCommit`), not the branch SHA;
+      (3) reconcile the Bug ledger's fixCommits against main-ancestry, not
+      against branch state. Mechanized in reconcile.py (idea-364): merge-base
+      ancestry check + squash-sha recording + 3 disposition buckets, auto-
+      backfilling only the safe additive bucket. Cross-validated vs an
+      independent hand-audit (the divergence there was a list_bugs scan-cap,
+      bug-200, not a logic gap — which itself validated mechanized > by-hand).
+      OPEN until reconcile.py --apply (idea-379) makes stint-open reconciliation
+      zero-touch on the safe bucket.
+    closure_pr: 403
+    pattern_membership: []
+    cross_refs:
+      - autonomous-stint-4 (idea-364 reconcile.py)
+      - "PR #403 (git-aware reconcile CLI) / #408 (cross-validation)"
+      - idea-364 (M-Ledger-Reconciliation) / idea-379 (reconcile.py --apply)
+      - "bug-181 (branch 9ec45ee squashed to real fix 5c64f58)"
+      - docs/audits/work-50-reconcile-cross-validation.md
+      - docs/reviews/autonomous-stint-4-retrospective.md §6
+    tele_alignment:
+      - tele-1
+      - tele-4
+
+  - id: 94
+    class: substrate
+    title: "TRUNCATION-HONESTY-AS-LIST-CONTRACT — any bulk-list/aggregate that can hit a scan-cap MUST emit a `truncated` flag, and ANY certainty derived from a capped scan (count, total, 'zero matches', 'definitively none') is a lie unless guarded by it"
+    origin: autonomous-stint-4 (bug-200 / #410)
+    surfaced_at: autonomous-stint-4 2026-06-28 — engineer (greg) intake + verifier (steve) catch #5; listBugs returned total:100 (lied vs psql:198) with no flag, and the `_ois_query_unmatched` sentinel asserted "definitively none" over a TRUNCATED scan
+    status: open
+    closure_mechanism: |
+      Pattern signature: a list/aggregate handler caps its scan (page limit,
+      result cap) but reports derived certainty — a total count, a "zero
+      matches" sentinel, an aggregate — as if the scan were complete. The
+      report is a tele-4 silent-failure: a confident answer over an incomplete
+      read. The honest primitive (list_ready_work) already carries `truncated`;
+      the list_bugs family did not, so a 100-cap presented as the whole ledger
+      and a no-match sentinel presented as authoritative.
+
+      Discipline (the LIST CONTRACT): (1) every capped bulk-list emits
+      `truncated:true` when the cap is hit; (2) any certainty derived from the
+      scan (count/total/no-match sentinel) is INVALID unless the scan was
+      complete — guard it on !truncated; (3) for an accurate aggregate over a
+      cap-limited substrate, query PER-PARTITION (each partition < cap) and sum
+      rather than one capped list (the PER-STATUS-ACCURATE-AGGREGATE corollary —
+      get_backlog_health queries per-status to get an honest funnel total
+      despite the single-list cap). This is the positive design-contract peer
+      of #88 (fix-time-same-handler-sweep): #88 says sweep every certainty
+      signal in a handler you fix; #94 says don't emit unguarded certainty in
+      the first place. Peer-surfaced (greg engineer intake) + steve catch #5.
+      OPEN until the list-projection helper enforces truncated-fill + the
+      no-match sentinel is guarded across the list_* family.
+    closure_pr: 410
+    pattern_membership: []
+    cross_refs:
+      - autonomous-stint-4 (bug-200 listBugs scan-cap + bug-201-adjacent _ois_query_unmatched)
+      - "PR #410 (scan-cap honesty + truncated flag) / #409 (get_backlog_health per-status aggregate)"
+      - "#88 (fix-time-same-handler-sweep; the fix-scope peer)"
+      - list_ready_work (the honest-primitive precedent that already carries truncated)
+      - docs/reviews/autonomous-stint-4-retrospective.md §6 (incl. PER-STATUS-ACCURATE-AGGREGATE corollary)
+    tele_alignment:
+      - tele-4
+      - tele-1
 
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
