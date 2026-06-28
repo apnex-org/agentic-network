@@ -347,4 +347,37 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
       expect(renewed!.lease!.holder).toBe("agent-leaf-6");
     }, OP_TIMEOUT);
   });
+
+  // ── work-87 (seed_blueprint): the createBlueprintNode createOnly-dedup idempotency primitive ──
+  describe("createBlueprintNode (deterministic-id createOnly + run-key)", () => {
+    it("createOnly dedup: first call created:true; a re-run created:false reusing the SAME node; arc wiring round-trips", async () => {
+      const leafId = "work-bp-itest-leaf";
+      const arcId = "work-bp-itest-arc";
+      const leaf1 = await repo.createBlueprintNode({ id: leafId, blueprintRunId: "itest", type: "task", roleEligibility: [] });
+      expect(leaf1.created).toBe(true);
+      expect(leaf1.item.id).toBe(leafId);
+      expect(leaf1.item.blueprintRunId).toBe("itest");           // run-key stamped + round-trips
+      const arc1 = await repo.createBlueprintNode({ id: arcId, blueprintRunId: "itest", type: "task", roleEligibility: [], completionDependsOn: [leafId] });
+      expect(arc1.created).toBe(true);
+      expect(arc1.item.completionDependsOn).toEqual([leafId]);   // arc-node edge round-trips (envelope decode)
+
+      // RE-RUN the same ids → createOnly conflict → created:false, the existing node reused (no double-create)
+      const leaf2 = await repo.createBlueprintNode({ id: leafId, blueprintRunId: "itest", type: "task", roleEligibility: [] });
+      expect(leaf2.created).toBe(false);
+      expect(leaf2.item.id).toBe(leafId);
+      const arc2 = await repo.createBlueprintNode({ id: arcId, blueprintRunId: "itest", type: "task", roleEligibility: [], completionDependsOn: [leafId] });
+      expect(arc2.created).toBe(false);
+      expect(arc2.item.completionDependsOn).toEqual([leafId]);   // the existing arc, reused
+    }, OP_TIMEOUT);
+
+    it("deleteWorkItem removes a blueprint node (the compensating-delete primitive) + is idempotent on a missing id", async () => {
+      const id = "work-bp-del-1";
+      await repo.createBlueprintNode({ id, blueprintRunId: "del", type: "task", roleEligibility: [] });
+      expect(await repo.getWorkItem(id)).not.toBeNull();
+      await repo.deleteWorkItem(id);
+      expect(await repo.getWorkItem(id)).toBeNull();
+      await repo.deleteWorkItem(id);                  // idempotent — a missing id is a no-op, no throw
+      await repo.deleteWorkItem("work-bp-never-existed");
+    }, OP_TIMEOUT);
+  });
 });

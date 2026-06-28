@@ -124,6 +124,14 @@ export interface WorkItem {
   references?: WorkItemReference[];
   targetRef: { kind: string; id: string } | null;
   payload?: unknown;
+  /** work-87 (seed_blueprint): the deterministic run-key stamped on every node a
+   *  seed_blueprint invocation materialized. Provenance/lineage of the blueprint expansion
+   *  (which run produced this node) + the basis for the idempotent re-run: the node's id is
+   *  derived as `work-bp-{blueprintRunId}-{localId}`, so createOnly dedups a re-run by id.
+   *  Absent on ad-hoc create_work nodes. Spec (intent), default-partitioned. Not filterable
+   *  in work-87 (idempotency rides the deterministic id, not a query) — cleanup-by-runId
+   *  query is a deferred follow-on. */
+  blueprintRunId?: string;
   // status (lifecycle)
   status: WorkItemPhase;
   lease: WorkItemLease | null;
@@ -157,6 +165,35 @@ export interface IWorkItemStore {
     payload?: unknown;
     createdBy?: EntityProvenance;
   }): Promise<WorkItem>;
+
+  /** work-87 (seed_blueprint): create ONE blueprint node at a DETERMINISTIC id (the run-key
+   *  derivation `work-bp-{blueprintRunId}-{localId}`) via createOnly — the idempotency
+   *  primitive. Returns `{item, created}`: created:true when this invocation minted it;
+   *  created:false when a PRIOR run of the same blueprintRunId already created it (createOnly
+   *  conflict → the existing node is fetched + reused, NO double-create). dependsOn/
+   *  completionDependsOn arrive pre-translated to real work-ids. No counter, no advisory lock
+   *  (the deterministic id IS the dedup key). */
+  createBlueprintNode(input: {
+    id: string;
+    blueprintRunId: string;
+    type: WorkItemType;
+    priority?: WorkItemPriority;
+    roleEligibility: string[];
+    dependsOn?: string[];
+    completionDependsOn?: string[];
+    evidenceRequirements?: EvidenceRequirement[];
+    runbook?: string;
+    references?: WorkItemReference[];
+    targetRef?: { kind: string; id: string } | null;
+    payload?: unknown;
+    createdBy?: EntityProvenance;
+  }): Promise<{ item: WorkItem; created: boolean }>;
+
+  /** work-87 (seed_blueprint): hard-delete a WorkItem by id. INTERNAL — the
+   *  seed_blueprint expander's compensating-delete (F1a best-effort rollback) of items it
+   *  JUST minted when a mid-expansion infra-failure breaks all-or-nothing; NOT an MCP verb.
+   *  Idempotent: deleting an absent id is a no-op (so a partial rollback can be retried). */
+  deleteWorkItem(workId: string): Promise<void>;
 
   getWorkItem(workId: string): Promise<WorkItem | null>;
 

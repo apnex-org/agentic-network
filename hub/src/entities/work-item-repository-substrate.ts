@@ -336,6 +336,71 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return cloneWorkItem(w);
   }
 
+  async createBlueprintNode(input: {
+    id: string;
+    blueprintRunId: string;
+    type: WorkItemType;
+    priority?: WorkItemPriority;
+    roleEligibility: string[];
+    dependsOn?: string[];
+    completionDependsOn?: string[];
+    evidenceRequirements?: EvidenceRequirement[];
+    runbook?: string;
+    references?: WorkItemReference[];
+    targetRef?: { kind: string; id: string } | null;
+    payload?: unknown;
+    createdBy?: EntityProvenance;
+  }): Promise<{ item: WorkItem; created: boolean }> {
+    const now = new Date().toISOString();
+    const w: WorkItem = {
+      id: input.id,
+      type: input.type,
+      priority: input.priority ?? "normal",
+      roleEligibility: input.roleEligibility,
+      dependsOn: input.dependsOn ?? [],
+      completionDependsOn: input.completionDependsOn ?? [],
+      evidenceRequirements: input.evidenceRequirements ?? [],
+      runbook: input.runbook,
+      references: input.references ?? [],
+      targetRef: input.targetRef ?? null,
+      payload: input.payload,
+      blueprintRunId: input.blueprintRunId,
+      status: "ready",
+      lease: null,
+      evidence: [],
+      blockedOn: null,
+      leaseExpiryCount: 0,
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+    // The DETERMINISTIC-id createOnly IS the idempotency primitive (kubectl-apply semantics):
+    // a re-run of the same blueprintRunId hits the same ids → createOnly conflicts → we reuse
+    // the existing node instead of double-creating. No counter, no advisory lock.
+    const result = await this.substrate.createOnly(KIND, w);
+    if (result.ok) {
+      console.log(`[WorkItemRepositorySubstrate] blueprint node created: ${input.id} (run=${input.blueprintRunId})`);
+      return { item: cloneWorkItem(w), created: true };
+    }
+    // conflict: "existing" — a prior invocation of this runId already minted this node.
+    // Fetch + reuse it (created:false) so the expander wires the SAME id, no double-create.
+    const existing = await this.getWorkItem(input.id);
+    if (!existing) {
+      // createOnly said "existing" yet get() is null — a delete raced in between; surface as a
+      // transient fault (the expander's all-or-nothing + idempotent re-run recovers).
+      throw new Error(`[WorkItemRepositorySubstrate] createBlueprintNode: createOnly conflict on ${input.id} but get() returned null (raced delete?)`);
+    }
+    return { item: existing, created: false };
+  }
+
+  /** work-87 (seed_blueprint): hard-delete by id (substrate.delete is idempotent — a missing
+   *  id is a no-op). INTERNAL: the expander's compensating-delete of freshly-minted items on a
+   *  mid-expansion infra-failure. Not MCP-exposed; only called on ids the expander just minted
+   *  (status=ready, unleased, unknown to any other caller), so no claim/lease race. */
+  async deleteWorkItem(workId: string): Promise<void> {
+    await this.substrate.delete(KIND, workId);
+  }
+
   async getWorkItem(workId: string): Promise<WorkItem | null> {
     const w = await this.substrate.get<WorkItem>(KIND, workId);
     return w ? cloneWorkItem(w) : null;
