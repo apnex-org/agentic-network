@@ -37,6 +37,7 @@ import type {
   EventSourceHealth,
   RepoEvent,
 } from "./event-source.js";
+import type { MessageSink } from "./sink.js";
 
 // ── Shared constants ──────────────────────────────────────────────────
 
@@ -48,6 +49,11 @@ export const DEFAULT_CADENCE_SECONDS = 30;
 export const DEFAULT_BUDGET_FRACTION = 0.8;
 /** Backoff schedule (seconds) for generic transient failures. */
 const TRANSIENT_BACKOFF_S = [1, 2, 5, 10, 30] as const;
+/** Bounded emit-retry attempts before a delivery is declared persistently-failed (work-44 (A)). */
+const DEFAULT_EMIT_RETRIES = 3;
+/** Per-attempt backoff (ms) for sink-emit retries — short + bounded (the outer poll cadence is the
+ *  supervision; a persistent delivery stall surfaces via deliveryFailing + leaves the cursor). */
+const EMIT_RETRY_BACKOFF_MS = [200, 500, 1000] as const;
 
 // ── Shared types ──────────────────────────────────────────────────────
 
@@ -84,7 +90,7 @@ export interface BaseRepoState {
  */
 export type FetchResult<TRaw> =
   | { kind: "no-events"; outcome: "not-modified" | "ok" }
-  | { kind: "events"; candidates: TRaw[]; commit: (fresh: TRaw[]) => Promise<void> };
+  | { kind: "events"; candidates: TRaw[]; advanceCursor: () => Promise<void> };
 
 export interface BasePollSourceConfig {
   readonly repos: readonly string[];
@@ -99,6 +105,11 @@ export interface BasePollSourceConfig {
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly now?: () => number;
   readonly logger?: Logger;
+  /** work-44/bug-190 (A): the delivery sink. The poll loop emits each fresh event INLINE via this
+   *  sink, and the cursor advances ONLY after delivery (no separate drainer). */
+  readonly sink: MessageSink;
+  /** Bounded emit retries before a delivery is declared persistently-failed. Default 3. */
+  readonly emitRetries?: number;
   /** Distinct CursorStore path-prefix (WorkflowRunPollSource namespaces its cursors away
    *  from the /events PollSource). Defaults to the CursorStore default. */
   readonly cursorPathPrefix?: string;
@@ -128,8 +139,8 @@ export abstract class BasePollSource<TRaw, TState extends BaseRepoState>
   protected readonly logger: Logger;
 
   protected readonly state = new Map<string, TState>();
-  private readonly queue: RepoEvent[] = [];
-  private readonly waiters: Array<(value: IteratorResult<RepoEvent>) => void> = [];
+  private readonly sink: MessageSink;
+  private readonly emitRetries: number;
 
   private started = false;
   protected stopped = false;
@@ -149,6 +160,8 @@ export abstract class BasePollSource<TRaw, TState extends BaseRepoState>
     this.sleep = config.sleep ?? defaultSleep;
     this.now = config.now ?? Date.now;
     this.logger = config.logger ?? defaultLogger();
+    this.sink = config.sink;
+    this.emitRetries = config.emitRetries ?? DEFAULT_EMIT_RETRIES;
 
     this.client = new GhApiClient({
       token: config.token,
@@ -226,33 +239,10 @@ export abstract class BasePollSource<TRaw, TState extends BaseRepoState>
     this.stopped = true;
     this.abort?.abort();
     await Promise.allSettled(this.loops);
-    while (this.waiters.length > 0) {
-      const waiter = this.waiters.shift();
-      waiter?.({ value: undefined as never, done: true });
-    }
   }
 
   health(): EventSourceHealth {
     return this.healthSnapshot;
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<RepoEvent> {
-    return {
-      next: (): Promise<IteratorResult<RepoEvent>> => {
-        if (this.queue.length > 0) {
-          return Promise.resolve({ value: this.queue.shift()!, done: false });
-        }
-        if (this.stopped) {
-          return Promise.resolve({ value: undefined as never, done: true });
-        }
-        return new Promise((resolve) => {
-          this.waiters.push(resolve);
-        });
-      },
-      return: (): Promise<IteratorResult<RepoEvent>> => {
-        return Promise.resolve({ value: undefined as never, done: true });
-      },
-    };
   }
 
   // ── Template poll cycle (shared skeleton; hooks for the strategy bits) ──
@@ -291,16 +281,37 @@ export abstract class BasePollSource<TRaw, TState extends BaseRepoState>
     const unseenSet = new Set(unseen);
     const fresh = fetched.candidates.filter((c) => unseenSet.has(this.idOf(c)));
 
-    let emitted = 0;
+    // bug-190 (A): emit each fresh event INLINE via the sink (bounded retry), tracking which
+    // DELIVERED. markSeen the delivered (so a re-fetch dedups them); advance the cursor ONLY if
+    // EVERY fresh event delivered — a persistent emit failure leaves the cursor UN-advanced, so the
+    // next poll re-fetches (stale If-None-Match -> 200 not 304) + re-emits only the undelivered
+    // (filterUnseen drops the already-markSeen delivered). No queue, no separate drainer -> a
+    // delivery failure can no longer be silently dropped between two loops.
+    const delivered: TRaw[] = [];
+    let allDelivered = true;
     for (const raw of fresh) {
-      this.push(this.translate(raw, repoId));
-      emitted++;
+      try {
+        await this.deliver(this.translate(raw, repoId));
+        delivered.push(raw);
+      } catch {
+        // Persistent (post-retry) delivery failure — stop this cycle; the cursor stays un-advanced.
+        allDelivered = false;
+        break;
+      }
     }
 
-    // COMMIT-ORDER: emit THEN advance the cursor (the order bug-190 (A) gates on delivery).
-    await fetched.commit(fresh);
+    await this.markFreshSeen(repoId, state, delivered.map((d) => this.idOf(d)));
 
-    return { emitted, outcome: "ok" };
+    if (allDelivered) {
+      // Includes the all-deduped/empty-200 case (fresh=[] -> allDelivered=true) — the cursor STILL
+      // advances, so the next poll sends a fresh If-None-Match (M4: the re-fetch-storm guard).
+      await fetched.advanceCursor();
+      this.markDeliveryHealthy();
+    } else {
+      this.markDeliveryFailing();
+    }
+
+    return { emitted: delivered.length, outcome: "ok" };
   }
 
   /** Uniform auth/rate/transient classification shared by both sources' fetch hooks. */
@@ -396,14 +407,47 @@ export abstract class BasePollSource<TRaw, TState extends BaseRepoState>
     }
   }
 
-  protected push(event: RepoEvent): void {
-    if (this.stopped) return;
-    const waiter = this.waiters.shift();
-    if (waiter) {
-      waiter({ value: event, done: false });
-    } else {
-      this.queue.push(event);
+  /**
+   * bug-190 (A): deliver one event to the sink with a bounded retry. Resolves once delivered;
+   * THROWS after the retries are exhausted (a persistent delivery failure) — pollOnce treats that
+   * as "not delivered" and leaves the cursor un-advanced for auto-recovery. Aborts early when the
+   * source is stopping.
+   */
+  private async deliver(event: RepoEvent): Promise<void> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= this.emitRetries; attempt++) {
+      if (this.stopped) throw new Error("source stopped during delivery");
+      try {
+        await this.sink.emit(event);
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < this.emitRetries) {
+          const backoff =
+            EMIT_RETRY_BACKOFF_MS[Math.min(attempt, EMIT_RETRY_BACKOFF_MS.length - 1)];
+          await this.sleepUnlessStopped(backoff);
+        }
+      }
     }
+    throw lastErr;
+  }
+
+  /** bug-190 (d): a fully-delivered poll cycle — clear deliveryFailing + stamp the time. */
+  private markDeliveryHealthy(): void {
+    this.setHealth({
+      deliveryFailing: false,
+      lastSuccessfulDelivery: new Date(this.now()).toISOString(),
+    });
+  }
+
+  /** bug-190 (d): a fresh event could not be delivered after the bounded retry — the loud signal
+   *  `/health` surfaces (the cursor is left un-advanced; the next poll re-fetches + re-emits). */
+  private markDeliveryFailing(): void {
+    this.setHealth({ deliveryFailing: true });
+    this.logger.error(
+      `${this.logPrefix} sink delivery FAILING after ${this.emitRetries} retries; ` +
+        `cursor left un-advanced for re-emit (deliveryFailing=true)`,
+    );
   }
 
   protected setHealth(next: Partial<EventSourceHealth>): void {

@@ -72,6 +72,15 @@ export interface EventSourceHealth {
   readonly pausedReason?: "rate-limit" | "network" | "auth-failure";
   /** ISO-8601 of the most recent successful upstream observation. */
   readonly lastSuccessfulPoll: string;
+  /** work-44/bug-190 (d): ISO-8601 of the most recent fully-DELIVERED poll cycle (every fresh
+   *  event emitted to the sink). The DELIVERY half of health — distinct from `lastSuccessfulPoll`
+   *  (observing upstream) — so a poll-healthy-but-delivery-failing bridge is no longer dark. */
+  readonly lastSuccessfulDelivery?: string;
+  /** work-44/bug-190 (d): true when sink delivery is PERSISTENTLY failing (a fresh event could not
+   *  be emitted after the bounded retry; the cursor was left un-advanced for auto-recovery). The
+   *  loud signal `/health` surfaces so an operator intervenes BEFORE the GH event window ages out.
+   *  Cleared on the next fully-delivered cycle. */
+  readonly deliveryFailing?: boolean;
 }
 
 // ── Repo event ────────────────────────────────────────────────────────
@@ -93,24 +102,21 @@ export interface RepoEvent {
 // ── EventSource contract ──────────────────────────────────────────────
 
 /**
- * The contract every event source implements. `start()` enables
- * upstream observation (begin polling, register webhook handler);
- * `stop()` halts it. The async-iterator yields `RepoEvent`s as they
- * arrive. The iterator MAY be infinite — consumers choose when to
- * stop iterating.
+ * The contract every event source implements. `start()` enables upstream observation (begin
+ * polling) AND inline delivery to the injected sink — the poll loop IS the delivery loop
+ * (work-44/bug-190 (A): the separate drainer + bounded queue are eliminated by construction, so a
+ * delivery failure can no longer be silently dropped between two loops). `stop()` halts it.
+ * `health()` reports poll + delivery state.
  *
  * Lifecycle:
  *   - Construction MUST NOT begin upstream observation.
  *   - `start()` MUST be idempotent (safe to call when already started).
- *   - `stop()` MUST be idempotent and MUST cause the active iterator
- *     to terminate cleanly.
- *   - `health()` MAY be called at any lifecycle stage, including
- *     before `start()` and after `stop()`.
+ *   - `stop()` MUST be idempotent and MUST halt the poll/deliver loops cleanly.
+ *   - `health()` MAY be called at any lifecycle stage, including before `start()` and after `stop()`.
  */
 export interface EventSource {
   readonly capabilities: EventSourceCapabilities;
   start(): Promise<void>;
   stop(): Promise<void>;
   health(): EventSourceHealth;
-  [Symbol.asyncIterator](): AsyncIterator<RepoEvent>;
 }

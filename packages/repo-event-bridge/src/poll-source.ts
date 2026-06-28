@@ -25,6 +25,7 @@ import {
   type FetchResult,
   type Logger,
 } from "./base-poll-source.js";
+import type { MessageSink } from "./sink.js";
 
 // Re-export the shared constants + types from their new home (back-compat: WorkflowRunPollSource
 // + the test-suites import these from "./poll-source.js").
@@ -60,6 +61,10 @@ export interface PollSourceOptions {
   readonly now?: () => number;
   /** Logger. Defaults to console. */
   readonly logger?: Logger;
+  /** work-44/bug-190 (A): the delivery sink (the poll loop emits inline). */
+  readonly sink: MessageSink;
+  /** Bounded emit retries before declaring persistent delivery failure. Default 3. */
+  readonly emitRetries?: number;
 }
 
 interface PollRepoState extends BaseRepoState {
@@ -103,14 +108,14 @@ export class PollSource extends BasePollSource<GhEventEnvelope, PollRepoState> {
     return {
       kind: "events",
       candidates: result.events,
-      commit: async (fresh) => {
-        await this.markFreshSeen(repoId, state, fresh.map((e) => e.id));
+      // bug-190 (A): cursor-write ONLY (markSeen of the delivered events is done in the base, gated
+      // on delivery). The base calls this ONLY when every fresh event delivered — incl the
+      // all-deduped/empty-200 case (M4: the etag advances so the next If-None-Match is fresh).
+      advanceCursor: async () => {
         if (result.etag && result.etag !== state.cursorEtag) {
           const nextCursor = {
             etag: result.etag,
-            lastEventId:
-              fresh[fresh.length - 1]?.id ??
-              result.events[result.events.length - 1]?.id,
+            lastEventId: result.events[result.events.length - 1]?.id,
             updatedAt: new Date(this.now()).toISOString(),
           };
           try {
