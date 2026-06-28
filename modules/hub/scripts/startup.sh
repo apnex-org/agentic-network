@@ -118,10 +118,84 @@ if ! docker inspect ois-hub-prod >/dev/null 2>&1; then
     "$HUB_IMAGE"
 fi
 
+# ── Watchtower Artifact Registry auth (bug-107) ───────────────────────
+# DRIFT FIX: line 47's docker-credential-gcr configures the docker CLI, but
+# watchtower pulls images ITSELF (its own registry client, not the CLI) so it
+# needs its OWN creds. The working mechanism (a SA-token minted into a
+# watchtower-mounted config.json on a timer) was hand-added to the live VM during
+# the 2026-06-21 bug-107 diagnosis and never codified → lost on any VM recreate.
+# This codifies it, HARDENED: (a) the timer fires every 10min — well under the
+# ~60min SA-token TTL, closing the 30-min-timer-vs-TTL race that recurred; (b)
+# refresh.sh is FAIL-LOUD (set -euo pipefail + explicit empty-token guard + atomic
+# write) so a mint/write failure marks the systemd unit failed instead of silently
+# serving a stale token until watchtower 401s on the next pull (the bug-107
+# silent-failure; tele-4). NOTE: the race-free structural alternative (watchtower
+# using the docker-credential-gcr HELPER per-pull) is recommended as the follow-on
+# — see the work-55 recommendation; this hardened-static is the durable floor.
+WT_CREDS=/var/lib/docker-creds
+mkdir -p "$WT_CREDS"
+
+cat > "$WT_CREDS/refresh.sh" <<'REFRESH'
+#!/bin/bash
+# refresh.sh — mint a fresh Artifact Registry access token into watchtower's
+# docker config (bug-107). FAIL-LOUD: any failure exits non-zero + logs, so a
+# stalled refresh surfaces (systemd marks the unit failed) rather than silently
+# serving a stale token. Runs via `/bin/bash` (COS /var is noexec).
+set -euo pipefail
+META='http://metadata.google.internal/computeMetadata/v1/instance'
+TOKEN="$(curl -sf -H 'Metadata-Flavor: Google' "$META/service-accounts/default/token" \
+  | tr ',' '\n' | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')"
+if [ -z "${TOKEN:-}" ]; then
+  echo "[wt-token-refresh] FATAL: empty AR access token from metadata" >&2
+  exit 1
+fi
+# AR accepts the oauth2 SA token as the password for user 'oauth2accesstoken'.
+AUTH="$(printf 'oauth2accesstoken:%s' "$TOKEN" | base64 -w0)"
+TMP="$(mktemp)"
+cat > "$TMP" <<JSON
+{ "auths": { "australia-southeast1-docker.pkg.dev": { "auth": "${AUTH}" } } }
+JSON
+mv "$TMP" /var/lib/docker-creds/config.json
+echo "[wt-token-refresh] $(date -u +%FT%TZ) refreshed AR token for watchtower"
+REFRESH
+chmod +x "$WT_CREDS/refresh.sh"
+
+cat > /etc/systemd/system/refresh-docker-token.service <<'UNIT'
+[Unit]
+Description=Refresh Artifact Registry token for watchtower (bug-107)
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+# COS mounts /var noexec → systemd cannot execve() the script; invoke via
+# /bin/bash (reads it as data), mirroring hub-backup.service.
+ExecStart=/bin/bash /var/lib/docker-creds/refresh.sh
+UNIT
+
+cat > /etc/systemd/system/refresh-docker-token.timer <<'UNIT'
+[Unit]
+Description=Refresh watchtower AR token every 10 minutes (< the ~60min SA-token TTL)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now refresh-docker-token.timer
+# Mint the FIRST token now (fail-loud) so watchtower's first pull has creds.
+/bin/bash "$WT_CREDS/refresh.sh"
+
 if ! docker inspect watchtower-prod >/dev/null 2>&1; then
   echo "[hub-startup] starting watchtower"
   docker run -d --name watchtower-prod --restart unless-stopped --network hub-net \
     -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /var/lib/docker-creds:/config \
     "$WATCHTOWER_IMAGE" --interval "${WATCHTOWER_INTERVAL}" --label-enable
 fi
 
