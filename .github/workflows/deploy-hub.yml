@@ -9,6 +9,16 @@ on:
       - 'scripts/local/build-hub.sh'
   workflow_dispatch:
 
+# bug-195 (1): coalesce a rapid multi-PR hub/** batch into ONE build+roll. Without
+# this, every hub/** push to main fired its own build+push → the watchtower rolled
+# the VM per-PR (observed: ~7 rolls for one 7-PR batch). cancel-in-progress cancels a
+# superseded in-flight build so only the FINAL cumulative main state builds + rolls.
+# Pairs with the S1 merge-queue: a queue-merged batch produces a single VM roll, not
+# per-merge churn. Safe because each build is a full build of main@sha — the last wins.
+concurrency:
+  group: deploy-hub
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,6 +32,10 @@ jobs:
       CI: 'true'
     steps:
       - uses: actions/checkout@v4
+        with:
+          # bug-195 (2): full history so the roll-confirm gate can do the
+          # gitSha>=expected ancestry check against a superseding deploy.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -78,21 +92,34 @@ jobs:
             echo "::warning title=roll-confirm disabled::HUB_HEALTH_URL override is empty — roll-confirm gate intentionally skipped."
             exit 0
           fi
-          echo "Roll-confirm: polling ${HEALTH_URL} for gitSha == ${EXPECTED_SHA}"
+          echo "Roll-confirm: polling ${HEALTH_URL} for gitSha >= ${EXPECTED_SHA} (this commit OR a superseding deploy)"
           echo "  budget ${TIMEOUT_S}s, every ${POLL_S}s; built digest ${BUILT_DIGEST:-<unknown>}"
+          # bug-195 (2): fetch main so a SUPERSEDING prod sha (a newer commit that
+          # already rolled — e.g. via the concurrency-cancel coalesce, or a faster
+          # follow-on deploy) can be ancestry-checked instead of false-failing the gate.
+          git fetch --quiet origin main 2>/dev/null || true
           deadline=$(( SECONDS + TIMEOUT_S ))
           last="<none>"
           while [ "${SECONDS}" -lt "${deadline}" ]; do
             body=$(curl -fsS -m 10 "${HEALTH_URL}" 2>/dev/null || true)
             got=$(printf '%s' "${body}" | jq -r '.gitSha // ""' 2>/dev/null || true)
             [ -n "${got}" ] && last="${got}"
-            if [ "${got}" = "${EXPECTED_SHA}" ]; then
+            # ACCEPT if prod is exactly this commit, OR a superseding deploy that has
+            # this commit as an ancestor (gitSha>=expected). A newer roll that already
+            # contains this commit is success, not failure (the stint-3/4 false-fail).
+            # A genuine stall (prod still at an OLDER sha) is NOT an ancestor → keeps
+            # polling → real alarm preserved (bug-107 token-race stays loud).
+            if [ "${got}" = "${EXPECTED_SHA}" ] || { [ -n "${got}" ] && git merge-base --is-ancestor "${EXPECTED_SHA}" "${got}" 2>/dev/null; }; then
               built=$(printf '%s' "${body}" | jq -r '.builtAt // ""' 2>/dev/null || true)
-              echo "Roll confirmed: /health gitSha == ${EXPECTED_SHA} (builtAt=${built}) after ~${SECONDS}s"
+              if [ "${got}" = "${EXPECTED_SHA}" ]; then
+                echo "Roll confirmed: /health gitSha == ${EXPECTED_SHA} (builtAt=${built}) after ~${SECONDS}s"
+              else
+                echo "Roll confirmed (superseding deploy): prod gitSha ${got} is a descendant of ${EXPECTED_SHA} (builtAt=${built}) after ~${SECONDS}s"
+              fi
               exit 0
             fi
             echo "  ...not yet rolled (gitSha=${got:-<unreachable>}); sleeping ${POLL_S}s"
             sleep "${POLL_S}"
           done
-          echo "::error title=roll-confirm FAILED::prod /health did not report gitSha == ${EXPECTED_SHA} within ${TIMEOUT_S}s (last seen: ${last}). Image built+pushed (digest ${BUILT_DIGEST:-<unknown>}) but did NOT roll — suspect a watchtower stall (bug-107 token-race). No auto-revert (R1 is alarm-only)."
+          echo "::error title=roll-confirm FAILED::prod /health did not report gitSha >= ${EXPECTED_SHA} (this commit or a superseding deploy) within ${TIMEOUT_S}s (last seen: ${last}). Image built+pushed (digest ${BUILT_DIGEST:-<unknown>}) but did NOT roll — suspect a watchtower stall (bug-107 token-race; VM-side real-fix is Director-gated). No auto-revert (R1 is alarm-only)."
           exit 1
