@@ -35,8 +35,9 @@ export function createWorkItemMigrationModule(schema: SchemaDef): KindMigrationM
       // on default-routing for an indexed field).
       spec: ["type", "priority", "roleEligibility", "dependsOn", "completionDependsOn", "evidenceRequirements", "targetRef", "payload"],
       // status = lifecycle (phase via the rename above; lease = sole claim
-      // authority; evidence accumulates; blockedOn + the per-item poison counter).
-      status: ["lease", "evidence", "blockedOn", "leaseExpiryCount"],
+      // authority; evidence accumulates; blockedOn + the per-item poison counter;
+      // work-98 idea-384 Part A: the per-FSM-state wall-clock timers).
+      status: ["lease", "evidence", "blockedOn", "leaseExpiryCount", "enteredCurrentStateAt", "stateDurations"],
     },
   };
 

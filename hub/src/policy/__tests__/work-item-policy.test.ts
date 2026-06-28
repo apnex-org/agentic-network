@@ -48,7 +48,9 @@ const sampleItem = (over: Partial<WorkItem> = {}): WorkItem => ({
   id: "work-1", type: "task", priority: "normal", roleEligibility: [], dependsOn: [], completionDependsOn: [],
   evidenceRequirements: [], targetRef: null, status: "claimed",
   lease: { holder: "anonymous-engineer", token: "tok-abc", claimedAt: "t", expiresAt: "t", heartbeatAt: "t" },
-  evidence: [], blockedOn: null, leaseExpiryCount: 0, createdAt: "t", updatedAt: "t", ...over,
+  evidence: [], blockedOn: null, leaseExpiryCount: 0,
+  enteredCurrentStateAt: "t", stateDurations: { ready: 0, claimed: 0, in_progress: 0, blocked: 0, review: 0 },
+  createdAt: "t", updatedAt: "t", ...over,
 });
 
 function ctxFor(store: IWorkItemStore | undefined, role = "engineer", registry?: unknown): TestPolicyContext {
