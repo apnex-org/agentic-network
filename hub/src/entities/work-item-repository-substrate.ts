@@ -524,8 +524,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const add = (verb: WorkItemVerb, legal: boolean, reason?: string) =>
       moves.push(legal ? { verb, legal } : { verb, legal, reason: reason ?? "" });
 
-    // claim: ready + role-eligible + dependency-met (WIP-cap + quarantine are re-checked at
-    // claim-time by the policy/repo — runtime caller-state, not structural).
+    // claim: ready + role-eligible + dependency-met + NOT at the per-agent WIP cap. work-96:
+    // the WIP-cap is now MODELED (legal_moves has the caller agentId, so an inFlightCount keeps
+    // claim.legal from being optimistic for a maxed caller — the same predicate claimWorkItem
+    // enforces under the advisory lock). DISCLOSED residual: QUARANTINE is the ONE claim gate
+    // legal_moves does NOT reflect — it lives in the policy-layer engineerRegistry the repo store
+    // cannot see; a quarantined caller would see claim.legal=true but claim_work rejects. Low
+    // blast: quarantine is a rare admin-set state + the policy's list_ready_work(scopeToCaller)
+    // discovery path already excludes a quarantined caller, so legal_moves is rarely reached for a
+    // claimable item by one (a future policy-layer overlay could fold quarantine in).
     if (status !== "ready") {
       add("claim", false, `claim requires ready, was ${status}`);
     } else {
@@ -534,8 +541,16 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         add("claim", false, `role ${caller.role ?? "(none)"} is not in roleEligibility [${w.roleEligibility.join(", ")}]`);
       } else {
         const unmet = await this.unmetDependencies(w.dependsOn);
-        if (unmet.length > 0) add("claim", false, `dependencies not done: ${unmet.join(", ")}`);
-        else add("claim", true);
+        if (unmet.length > 0) {
+          add("claim", false, `dependencies not done: ${unmet.join(", ")}`);
+        } else {
+          const cap = wipCap(caller.role);
+          if ((await this.inFlightCount(caller.agentId, cap)) >= cap) {
+            add("claim", false, `you hold the maximum in-flight items (WIP cap ${cap}) — complete_work or release_work on one to free a claim slot`);
+          } else {
+            add("claim", true);
+          }
+        }
       }
     }
 
@@ -543,6 +558,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     add("start", isHolder && status === "claimed", !isHolder ? notHolder : `start requires claimed, was ${status}`);
     add("block", isHolder && status === "in_progress", !isHolder ? notHolder : `block requires in_progress, was ${status}`);
     add("resume", isHolder && status === "blocked", !isHolder ? notHolder : `resume requires blocked, was ${status}`);
+    // renew. DISCLOSED divergence (work-96): legal_moves reports renew.legal=true for a holder in
+    // a lease-held phase even when the lease has ALREADY EXPIRED (expiresAt < now) but not yet been
+    // swept — whereas renewLease throws on an already-expired lease (audit-4103, it's the sweeper's
+    // to re-queue). A narrow race (the window between expiry and the sweeper tick); legal_moves
+    // intentionally does NOT do the time-comparison here (it would couple the affordance to a clock
+    // read), so a cold agent may try renew and get the "already expired" reject. Acceptable + now disclosed.
     add("renew", isHolder && LEASE_HELD_PHASES.includes(status), !isHolder ? notHolder : `renew requires a held lease, was ${status}`);
     add("release", isHolder && RELEASABLE_PHASES.includes(status), !isHolder ? notHolder : `release requires an active claim, was ${status}`);
     // abandon: the holder OR the creator (override authority), from a RELEASABLE phase.
