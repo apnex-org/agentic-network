@@ -240,6 +240,13 @@ describe("AuditPolicy", () => {
     // full mode preserves details
     const full = JSON.parse((await router.handle("list_audit_entries", {}, ctx)).content[0].text);
     expect(full.entries[0].details).toBe("a long details body that bulk surveys do not need");
+    // steve's #406 catch: an entry WITHOUT relatedEntity must have it PRESENT as null
+    // (NOT undefined-dropped by JSON.stringify) → consistent compact row shape.
+    await router.handle("create_audit_entry", { action: "no_related", details: "y" }, ctx);
+    const e2 = JSON.parse((await router.handle("list_audit_entries", { compact: true }, ctx)).content[0].text).entries[0];
+    expect(e2.action).toBe("no_related");
+    expect(Object.prototype.hasOwnProperty.call(e2, "relatedEntity")).toBe(true);
+    expect(e2.relatedEntity).toBeNull();
   });
 
   it("list_audit_entries supports limit", async () => {

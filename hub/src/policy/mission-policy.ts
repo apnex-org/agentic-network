@@ -541,7 +541,7 @@ const MISSION_SORT_SCHEMA = buildQuerySortSchema(MISSION_SORTABLE_FIELDS);
  *  plannedTasks (per-task directive bodies) / pulses (prompt strings). */
 function projectMissionCompact(m: Mission) {
   return {
-    id: m.id, title: m.title, status: m.status, missionClass: m.missionClass,
+    id: m.id, title: m.title, status: m.status, missionClass: m.missionClass ?? null,
     tasksCount: Array.isArray(m.tasks) ? m.tasks.length : 0,
     ideasCount: Array.isArray(m.ideas) ? m.ideas.length : 0,
     updatedAt: m.updatedAt,

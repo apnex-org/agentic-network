@@ -75,11 +75,14 @@ async function createBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 }
 
 /** bug-196: compact scannable projection — lily's fixed field-set; OMITS description /
- *  fixRevision / sourceThreadSummary / lineage so a bulk ledger survey is small. */
+ *  fixRevision / sourceThreadSummary / lineage so a bulk ledger survey is small. Optionals
+ *  are coalesced to null (not undefined) so every compact row has a CONSISTENT key-set —
+ *  JSON.stringify drops undefined, which would make rows shape-inconsistent for consumers
+ *  (steve's #406 catch). class/repo are already string|null; ?? null is belt-and-suspenders. */
 function projectBugCompact(b: Bug) {
   return {
     id: b.id, title: b.title, status: b.status, severity: b.severity,
-    class: b.class, tags: b.tags, fixCommits: b.fixCommits, repo: b.repo, updatedAt: b.updatedAt,
+    class: b.class ?? null, tags: b.tags, fixCommits: b.fixCommits, repo: b.repo ?? null, updatedAt: b.updatedAt,
   };
 }
 
