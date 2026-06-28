@@ -8,7 +8,7 @@
 import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
-import { LIST_PAGINATION_SCHEMA, MAX_LIST_LIMIT, DEFAULT_LIST_LIMIT, paginate } from "./list-filters.js";
+import { LIST_PAGINATION_SCHEMA, LIST_COMPACT_SCHEMA, MAX_LIST_LIMIT, DEFAULT_LIST_LIMIT, paginate } from "./list-filters.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -63,11 +63,15 @@ async function listAuditEntries(args: Record<string, unknown>, ctx: IPolicyConte
     content: [{
       type: "text" as const,
       text: JSON.stringify({
-        entries: page.items,
+        // bug-196 compact: drop `details` (the only free-text body); keep the scannable header.
+        entries: args.compact === true
+          ? page.items.map((e) => ({ id: e.id, timestamp: e.timestamp, actor: e.actor, action: e.action, relatedEntity: e.relatedEntity ?? null }))
+          : page.items,
         count: page.count,
         total: page.total,
         offset: page.offset,
         limit: page.limit,
+        ...(args.compact === true ? { compact: true } : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],
@@ -90,10 +94,11 @@ export function registerAuditPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_audit_entries",
-    "[Any] List audit entries with optional actor filter and pagination. Returns most recent first.",
+    "[Any] List audit entries with optional actor filter and pagination. Returns most recent first. Pass compact:true for the scannable projection (omits the `details` body).",
     {
       actor: z.enum(["architect", "engineer", "verifier", "hub"]).optional().describe("Filter by actor (optional). 'verifier' surfaces the verifier's logged verdicts (mission-93)."),
       ...LIST_PAGINATION_SCHEMA,
+      ...LIST_COMPACT_SCHEMA,
     },
     listAuditEntries,
   );

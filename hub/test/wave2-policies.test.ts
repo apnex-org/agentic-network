@@ -95,6 +95,28 @@ describe("IdeaPolicy", () => {
     expect(parsed.count).toBe(0);
   });
 
+  it("bug-196 — list_ideas compact:true returns text→textPreview projection (omits the full body)", async () => {
+    await router.handle("create_idea", { text: "A".repeat(200) + " trailing body", tags: ["t1"] }, ctx);
+    const compact = JSON.parse((await router.handle("list_ideas", { compact: true }, ctx)).content[0].text);
+    expect(compact.compact).toBe(true);
+    const i = compact.ideas[0];
+    expect(Object.keys(i).sort()).toEqual(["id", "missionId", "status", "tags", "textPreview", "updatedAt"]);
+    expect(i.text).toBeUndefined();                       // full body OMITTED
+    expect(i.textPreview.length).toBeLessThanOrEqual(141); // truncated (140 + ellipsis)
+    // full mode preserves the body
+    const full = JSON.parse((await router.handle("list_ideas", {}, ctx)).content[0].text);
+    expect(full.ideas[0].text).toContain("trailing body");
+  });
+
+  it("bug-198 — list_ideas drops empty filter values (adapter empty-optional → UNSET, not a false zero)", async () => {
+    await router.handle("create_idea", { text: "an open idea" }, ctx);
+    // an empty value in the structured filter (opencode serializes UNSET as "") must be
+    // dropped, not AND'd to zero matches.
+    const parsed = JSON.parse((await router.handle("list_ideas", { filter: { missionId: "" } }, ctx)).content[0].text);
+    expect(parsed._ois_query_unmatched).toBeUndefined();
+    expect(parsed.count).toBeGreaterThanOrEqual(1);
+  });
+
   // ── Phase C (task-306): createdBy.* nested paths ─────────────────
   describe("list_ideas — M-QueryShape Phase C (task-306)", () => {
     async function seedWithCreatedBy(): Promise<void> {
@@ -406,6 +428,26 @@ describe("MissionPolicy", () => {
     const result = await router.handle("list_missions", { status: "active" }, ctx);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.count).toBe(0); // newly created missions are "proposed"
+  });
+
+  it("bug-196 — list_missions compact:true collapses virtual arrays to counts + omits description", async () => {
+    await router.handle("create_mission", { title: "M-compact", description: "a long mission description body" }, ctx);
+    const compact = JSON.parse((await router.handle("list_missions", { compact: true }, ctx)).content[0].text);
+    expect(compact.compact).toBe(true);
+    const m = compact.missions[0];
+    expect(m.title).toBe("M-compact");
+    expect(m.tasksCount).toBe(0);            // virtual `tasks` array → count
+    expect(m.ideasCount).toBe(0);            // virtual `ideas` array → count
+    expect(m.description).toBeUndefined();   // long-text OMITTED
+    expect(m.tasks).toBeUndefined();         // heavy virtual array NOT inlined
+    expect(m.plannedTasks).toBeUndefined();  // per-task directive bodies OMITTED
+    // steve's #406 catch: an unclassified mission's optional missionClass must be PRESENT
+    // as null (NOT undefined-dropped by JSON.stringify) → consistent compact row shape.
+    expect(Object.prototype.hasOwnProperty.call(m, "missionClass")).toBe(true);
+    expect(m.missionClass).toBeNull();
+    // full mode preserves description
+    const full = JSON.parse((await router.handle("list_missions", {}, ctx)).content[0].text);
+    expect(full.missions[0].description).toBe("a long mission description body");
   });
 
   // ── Phase C (task-306): createdBy.* nested paths on list_missions ──

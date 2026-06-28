@@ -13,8 +13,11 @@ import type { FsmTransitionTable } from "./types.js";
 import type { Idea, IdeaStatus } from "../entities/index.js";
 import {
   LIST_PAGINATION_SCHEMA,
+  LIST_COMPACT_SCHEMA,
   LIST_TAGS_SCHEMA,
   applyTagFilter,
+  unsetIfEmpty,
+  omitEmptyValues,
   paginate,
   buildQueryFilterSchema,
   buildQuerySortSchema,
@@ -112,6 +115,18 @@ const IDEA_ACCESSORS: FieldAccessors<Idea> = {
 const IDEA_FILTER_SCHEMA = buildQueryFilterSchema(IDEA_FILTERABLE_FIELDS);
 const IDEA_SORT_SCHEMA = buildQuerySortSchema(IDEA_SORTABLE_FIELDS);
 
+/** bug-196: compact scannable projection. Idea has no `title` — `text` IS the body, so
+ *  expose a truncated `textPreview` as the scannable label + OMIT the full text +
+ *  sourceThreadSummary. */
+function projectIdeaCompact(i: Idea) {
+  const text = typeof i.text === "string" ? i.text : "";
+  return {
+    id: i.id,
+    textPreview: text.length > 140 ? text.slice(0, 140) + "…" : text,
+    status: i.status, missionId: i.missionId ?? null, tags: i.tags, updatedAt: i.updatedAt,
+  };
+}
+
 async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   let ideas = await ctx.stores.idea.listIdeas();
   const totalPreFilter = ideas.length;
@@ -121,9 +136,11 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 
   // Backwards-compat: legacy scalar `status` arg subsumed by the new
   // `filter.status` field. filter.status wins when both are present.
-  const legacyStatus = typeof args.status === "string" ? (args.status as IdeaStatus) : undefined;
+  // bug-198: empty-string legacy status + any empty values in the `filter` object are
+  // adapter-serialized UNSETs (opencode) — drop them, don't AND them to zero matches.
+  const legacyStatus = unsetIfEmpty(typeof args.status === "string" ? args.status : undefined) as IdeaStatus | undefined;
   const filterArgRaw = args.filter as Record<string, unknown> | undefined;
-  const effectiveFilter: Record<string, unknown> = { ...(filterArgRaw ?? {}) };
+  const effectiveFilter: Record<string, unknown> = omitEmptyValues({ ...(filterArgRaw ?? {}) });
   if (legacyStatus && effectiveFilter.status === undefined) {
     effectiveFilter.status = legacyStatus;
   }
@@ -145,11 +162,12 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
     content: [{
       type: "text" as const,
       text: JSON.stringify({
-        ideas: page.items,
+        ideas: args.compact === true ? page.items.map(projectIdeaCompact) : page.items,
         count: page.count,
         total: page.total,
         offset: page.offset,
         limit: page.limit,
+        ...(args.compact === true ? { compact: true } : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],
@@ -279,6 +297,7 @@ export function registerIdeaPolicy(router: PolicyRouter): void {
         .describe("DEPRECATED: use `filter: { status: ... }`. Preserved for backwards compat; `filter.status` wins when both present."),
       ...LIST_TAGS_SCHEMA,
       ...LIST_PAGINATION_SCHEMA,
+      ...LIST_COMPACT_SCHEMA,
     },
     listIdeas,
   );

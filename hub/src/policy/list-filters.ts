@@ -22,6 +22,16 @@ export const LIST_PAGINATION_SCHEMA = {
     .describe("Skip the first N entries for pagination (default 0)."),
 };
 
+/** Compact-projection flag — spread into a `list_*` registration whose handler maps
+ *  each item through a per-entity compact projection. bug-196: fat list payloads pushed
+ *  agents to many per-item get_* calls (steve surveying the ledger), overrunning the
+ *  concurrency=1 proxy = the 2026-06-28 429 storm. Compact = the scannable bulk-survey
+ *  shape; full objects remain available (omit/false). */
+export const LIST_COMPACT_SCHEMA = {
+  compact: z.boolean().optional()
+    .describe("Return a COMPACT scannable projection per item (id + key fields; OMITS long-text bodies — description/text/details/fixRevision). Use for bulk ledger surveys to avoid per-item get_* calls. Full objects when omitted/false."),
+};
+
 /** Label-match-all filter — use on entities with `labels: Record<string, string>`. */
 export const LIST_LABELS_SCHEMA = {
   labels: z.record(z.string(), z.string()).optional()
@@ -33,6 +43,27 @@ export const LIST_TAGS_SCHEMA = {
   tags: z.array(z.string()).optional()
     .describe("Match-any tag filter: only entries whose tags include at least one of the provided tags."),
 };
+
+/** bug-198: some adapters (opencode) serialize an UNSET optional as "" / [] / null
+ *  instead of omitting it. Treat those as UNSET — NOT an exact-empty filter that ANDs
+ *  to zero matches. (The get_bug-overrun root: list_bugs(status=resolved) with severity/
+ *  class/tags unset returned _ois_query_unmatched from opencode but worked from claude.) */
+export function unsetIfEmpty<T>(v: T | undefined | null): T | undefined {
+  if (v === undefined || v === null || (v as unknown) === "") return undefined;
+  if (Array.isArray(v) && v.length === 0) return undefined;
+  return v;
+}
+
+/** Drop empty-string / empty-array / null / undefined values from a filter object
+ *  (bug-198), so an adapter-serialized empty optional inside a `filter` object doesn't
+ *  AND to zero either. */
+export function omitEmptyValues(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (unsetIfEmpty(v) !== undefined) out[k] = v;
+  }
+  return out;
+}
 
 export function applyLabelFilter<T extends { labels?: Record<string, string> }>(
   items: T[],

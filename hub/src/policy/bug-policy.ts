@@ -12,8 +12,8 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult, FsmTransitionTable } from "./types.js";
 import { isValidTransition } from "./types.js";
-import type { BugStatus, BugSeverity } from "../entities/bug.js";
-import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
+import type { BugStatus, BugSeverity, Bug } from "../entities/bug.js";
+import { LIST_PAGINATION_SCHEMA, LIST_COMPACT_SCHEMA, paginate, unsetIfEmpty } from "./list-filters.js";
 import { dispatchBugReported, dispatchBugStatusChanged } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
 import { phaseFromEntity } from "../entities/shape-helpers.js";
@@ -74,11 +74,25 @@ async function createBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   };
 }
 
+/** bug-196: compact scannable projection — lily's fixed field-set; OMITS description /
+ *  fixRevision / sourceThreadSummary / lineage so a bulk ledger survey is small. Optionals
+ *  are coalesced to null (not undefined) so every compact row has a CONSISTENT key-set —
+ *  JSON.stringify drops undefined, which would make rows shape-inconsistent for consumers
+ *  (steve's #406 catch). class/repo are already string|null; ?? null is belt-and-suspenders. */
+function projectBugCompact(b: Bug) {
+  return {
+    id: b.id, title: b.title, status: b.status, severity: b.severity,
+    class: b.class ?? null, tags: b.tags, fixCommits: b.fixCommits, repo: b.repo ?? null, updatedAt: b.updatedAt,
+  };
+}
+
 async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  const status = args.status as BugStatus | undefined;
-  const severity = args.severity as BugSeverity | undefined;
-  const classFilter = args.class as string | undefined;
-  const tags = args.tags as string[] | undefined;
+  // bug-198: treat adapter-serialized empty optionals ("" / []) as UNSET, not an
+  // exact-empty filter that ANDs to zero (the get_bug-overrun root from opencode).
+  const status = unsetIfEmpty(args.status as BugStatus | undefined);
+  const severity = unsetIfEmpty(args.severity as BugSeverity | undefined);
+  const classFilter = unsetIfEmpty(args.class as string | undefined);
+  const tags = unsetIfEmpty(args.tags as string[] | undefined);
   const hasFilter = status != null || severity != null || classFilter != null || (tags != null && tags.length > 0);
   const filtered = await ctx.stores.bug.listBugs({ status, severity, class: classFilter, tags });
   // CP2 C5 (task-307): detect "valid filter with zero matches" to fire
@@ -95,11 +109,12 @@ async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
     content: [{
       type: "text" as const,
       text: JSON.stringify({
-        bugs: page.items,
+        bugs: args.compact === true ? page.items.map(projectBugCompact) : page.items,
         count: page.count,
         total: page.total,
         offset: page.offset,
         limit: page.limit,
+        ...(args.compact === true ? { compact: true } : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],
@@ -213,13 +228,14 @@ export function registerBugPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_bugs",
-    "[Any] List bugs with optional filters (status, severity, class, tags match-any) + pagination.",
+    "[Any] List bugs with optional filters (status, severity, class, tags match-any) + pagination. Pass compact:true for the scannable bulk-survey projection (omits description/fixRevision) — use it instead of many per-bug get_bug calls.",
     {
       status: z.enum(["open", "investigating", "resolved", "wontfix"]).optional(),
       severity: z.enum(["critical", "major", "minor"]).optional(),
       class: z.string().optional().describe("Filter by exact class match"),
       tags: z.array(z.string()).optional().describe("Match-any tag filter"),
       ...LIST_PAGINATION_SCHEMA,
+      ...LIST_COMPACT_SCHEMA,
     },
     listBugs,
   );
