@@ -1368,7 +1368,7 @@ calibrations:
       - tele-12
 
   - id: 60
-    class: process
+    class: substrate
     title: "Hub MCP tool-addition audit-pattern — hardcoded `router.size` test assertion lags tool-additions; structural elimination via dynamic-count assertion (idea-231 = closure mechanism (b))"
     origin: mission-69-W0
     surfaced_at: bug-45-PR-155 + post-mission-69-close-2026-05-02
@@ -1590,8 +1590,14 @@ calibrations:
     title: "Deferred-runtime-gate-becomes-silent-defect-surface — Phase 6 verification §6.4 deferral pattern produces post-substrate runtime-gap bugs (24 canonical instances + thread-510 v1.x 8-round cycle empirical scale-validation 2026-05-09 = 93 findings under comprehensive-sweep across substantive-reshape envelope; audit-rubric maturation arc empirically validated 2026-05-08; comprehensive-sweep methodology empirically locked at n=6 baseline thread-509 + scale-validated at n=93 thread-510)"
     origin: post-mission-76-bug-49-cycle
     surfaced_at: bug-49 (2026-05-05) → bug-50 → bug-51 (mission-76); bug-52 → bug-53 → bug-54 → bug-55 → bug-56 (mission-225 + post-bug-55 cascade); 8 additional instances 2026-05-07 → 2026-05-08 across substrate-feature missions M-SSE-Filter-List-Adapter + M-Deployment-Hygiene + M-Build-Identity + M-GitHub-Releases-Plugin; +2 evening 2026-05-08 (bug-57 broadcast enqueue gap + bug-58 cross-user broadcast tenant-isolation); +6 evening 2026-05-08 (M-Branchcraft-V1 thread-509 7-round audit cycle; n=6 architect-spec-level-recall-misses-substrate-coupling instances across both library-API + runtime-platform substrate-currency dimensions); +93 findings 2026-05-09 (M-Missioncraft-V1 thread-510 v1.x 8-round audit cycle; pattern-decay R1=24 → R2=15 → R3=14 → R4=14 → R5=11 → R6=10 → R7=5 → R8=0 ratify-clean tracking thread-509 6-9 round prediction range cleanly; substantive-reshape envelope landed v1.0 RATIFIED → v1.8 BILATERAL RATIFIED at SHA 226aa46 via 6 Director-direct architectural refinements; comprehensive-sweep methodology scale-validated)
-    status: open (methodology-promotion empirically very overdue; architect-Director ratification pending strategic-review gate-point)
+    status: open
     closure_mechanism: |
+      STATUS NOTE: methodology-promotion is empirically very overdue;
+      architect-Director ratification remains pending a strategic-review
+      gate-point (~7 weeks as of autonomous-stint-3; flagged as the #62
+      promotion bottleneck — candidate for the relaxed architect-driven
+      promotion path per stint-3 director-decision D8).
+
       Architectural-pathology pattern. When mission Phase 6 preflight verification
       gate §6.4 "runtime verification" is DEFERRED to post-Phase-9-closing-audit
       (or beyond), substrate that ships unit-test-green has zero runtime-path
@@ -2839,13 +2845,27 @@ calibrations:
       fail-loud / anomaly-monitor over silent-degrade (see #84).
       Folded into retro §2.2 + §3.3; mission-scale manifestation of RETIRED
       #19 (schema-rename without state migration).
+
+      RECURRENCE (autonomous-stint-3): the false-green / faithful-harness class
+      RECURRED one stint after naming — bug-178 (~42 testcontainer files used a
+      raw `new Pool` instead of the shared faithful fixture) + PR #385 where a
+      mock harness GREEN-LIT two real-pg-only seams (a non-monotonic cursor +
+      an iterator-settle hang) caught only by steve's real-pg probing
+      (#385 9a7d552). A named pattern recurring AFTER naming is the strongest
+      argument to MECHANIZE it into a guard — ties to #88 (re-introduction-
+      guard scan-scope) + idea-356 (calibration write-verb/validate +
+      auto-surface). tele-8 + tele-7.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion; status=completed 2026-06-20)
       - "#19 (schema-rename-without-state-migration; retired; this is the mission-scale manifestation)"
       - "#82 (faithful-harness-as-exposure; the fix mechanism)"
       - "#84 (silent-degrade try/catch; the compounding prod-side mechanism)"
+      - "#88 (re-introduction-guard scan-scope; the mechanization target for this recurring class)"
       - bug-138 (envelope-blind reads; the masked defect class)
+      - bug-178 (~42 testcontainer raw-Pool files; the recurrence — autonomous-stint-3)
+      - "PR #385 (mock harness hid two real-pg-only seams; 9a7d552 — autonomous-stint-3)"
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (false-green recurrence)
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §2.2 + §3.3
     tele_alignment:
       - tele-7
@@ -2869,11 +2889,26 @@ calibrations:
       shape. bug-138 eliminated across BOTH surfaces.
       Folded into retro §3.2; CLAUDE.md envelope-substrate STRICT +
       decode-to-flat section.
+
+      EXTENSION (autonomous-stint-3, bug-188): the dual-surface is actually a
+      TRI-SURFACE — sort/ordering is a THIRD envelope read-path surface
+      alongside filter + decode. Same envelope-blindness class, new surface:
+      bug-188 (listThreads ordered/limited at the storage layer dropped the
+      newest rows because the ORDER BY operated on an envelope column, not the
+      decoded flat field — an unordered LIMIT 500 silently truncated newest
+      rows). filter + decode + SORT are ALL envelope read-path surfaces that
+      must derive from the same renameMap. The ORDER BY updatedAt band-aid
+      (bug-177-OBS1) must NOT be mistaken for class-closure — the class closes
+      only when sort, like filter and decode, is renameMap-derived across every
+      kind. surfaced_at bug-177 -> bug-188 (DR-S3-012/013); tele-1 + tele-7.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion)
       - bug-138 (the dual-surface silent-failure class)
       - bug-158 (list_missions envelope-blindness; filter-side residual exposed by the strict cutover)
+      - bug-188 (listThreads unordered LIMIT 500 drops newest rows; the SORT/ordering third surface — autonomous-stint-3)
+      - bug-177 (OBS1 ORDER BY updatedAt band-aid; NOT class-closure)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-012/013 tri-surface extension)
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §3.2
     tele_alignment:
       - tele-1
@@ -2926,11 +2961,21 @@ calibrations:
       the deep audit testcontainer could not, because the testcontainer
       seeds claimable tasks directly and bypasses the login-label dispatch).
       Folded into retro §2.2 + §5.
+
+      RECURRENCE (autonomous-stint-3): the faithful-harness class RECURRED one
+      stint after naming — bug-178 (~42 testcontainer files on raw `new Pool`
+      vs the shared faithful fixture) + PR #385 (a mock harness hid two
+      real-pg-only seams caught only by steve's real-pg probing). The
+      recurrence is the strongest argument to MECHANIZE harness-fidelity into a
+      guard (ties to #88 + idea-356). See #79 for the full recurrence note.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion)
-      - "#79 (false-green-at-scale; the failure mode this fixes)"
+      - "#79 (false-green-at-scale; the failure mode this fixes; carries the autonomous-stint-3 recurrence note)"
+      - "#88 (re-introduction-guard scan-scope; the mechanization target)"
       - bug-159 (workflow-tooling bug a faithful unit harness still missed; live-co-drive complement)
+      - bug-178 (~42 testcontainer raw-Pool files; the recurrence — autonomous-stint-3)
+      - "PR #385 (mock harness hid two real-pg-only seams — autonomous-stint-3)"
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §2.2 + §5
     tele_alignment:
       - tele-9
@@ -3014,16 +3059,38 @@ calibrations:
       NOT duplicated here; this entry captures the METHODOLOGY meta-lesson.
       Folded into retro §4 candidate 9; runbook B.3 + Design §4 corrected in
       PR #324.
+
+      GENERALIZATION (autonomous-stint-3): the deploy-only meta-lesson is one
+      instance of a broader axiom — GROUND-TRUTH-OVER-ASSUMPTION: verify from
+      code/prod, not from narrative or a carried mental model, before relying
+      on state. Surfaced across FOUR surfaces this stint:
+      (1) LEDGER — reconcile-first; the bug ledger was ~52% stale and seeding /
+          strategic-review ran on stale data (near-miss 3-4x duplicate rebuild).
+      (2) DEPLOY — /health before declaring a blocker; a phantom
+          watchtower-stall mental model (prod was already current) shaped the
+          back-half + spawned a moot CRITICAL Director gate.
+      (3) BUILD-STATE — sync-before-irreversible-coordination; the SLICE-1T
+          design ERROR (assumed delete-in-bundle; syncTools was the SOLE
+          load-bearing mechanism) was caught by the DR-S3-009 sync-gate, not by
+          assumption — a divergent bundle was nearly shipped.
+      (4) AUDIT-FINDINGS — engineer code-truth before filing; ~43% of LLM-
+          auditor findings were over-calls, filtered only by ground-truthing
+          each against the code.
+      Same class as sync-before-irreversible-coordination. tele-1 + tele-4.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion)
       - bug-140 (watchtower auto-deploy; the Design-side fact)
+      - autonomous-stint-3 (4-surface generalization — ledger / deploy / build-state / audit-findings)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-009 sync-gate; phantom-watchtower; reconcile-first)
       - docs/operator/envelope-substrate-cutover-runbook.md B.3 (corrected in PR #324)
       - docs/designs/m-envelope-substrate-completion-design.md §4 (corrected in PR #324)
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §4 candidate 9
     tele_alignment:
       - tele-2
       - tele-5
+      - tele-1
+      - tele-4
 
   - id: 86
     class: methodology
@@ -3126,14 +3193,131 @@ calibrations:
       ground-truth-the-full-surface discipline.
       OPEN until folded into the engineer-runtime ship-verify discipline
       (re-introduction-guard scoping checklist).
+
+      CLAIM-TIME SIZING COROLLARY (autonomous-stint-3, greg's intake): the
+      same scope-to-the-class discipline applies at CLAIM-TIME, not only at
+      guard-time. A scoping grep scoped to the SURFACING SYMBOL (the one file /
+      one identifier that surfaced the defect) under-counts the defect-class
+      blast-radius and therefore MIS-SIZES the work at claim-time — a "2-file"
+      fix is really a ~42-file class. Recurring this stint: W4 (the bug-178
+      raw-Pool sweep was sized off the surfacing dirs, not the class) +
+      bug-178 + bug-190 (the surfacing symbol under-counted the seam class).
+      Discipline: when sizing a claim, grep for the DEFECT CLASS (every
+      sibling that shares the pathology), not the surfacing symbol, before
+      committing to an estimate. So #88 is now TWO faces of one discipline:
+      scope-to-the-class for re-introduction GUARDS AND for CLAIM-TIME SIZING.
     cross_refs:
       - autonomous-stint-3 (bug-178 testcontainer raw-Pool re-introduction guard)
-      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (scan-scope lesson)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (scan-scope lesson + claim-time sizing corollary)
       - "PRs #381 (under-scoped guard) / #384 (scope broadened to the class)"
+      - "bug-178 / bug-190 (claim-time under-sizing from symbol-scoped grep)"
       - "#81 (premature structural-closure from partial verification — sibling)"
+      - "#90 (silent-failure-in-fire-and-forget-async-seam; the class bug-190 belongs to)"
     tele_alignment:
       - tele-8
       - tele-7
+
+  - id: 89
+    class: methodology
+    title: "NEVER bypass the ship-path gate — the CI-green + up-to-date + version-assert gate is never bypassed to unstick a mismatch; fix the ordering/state instead (parent axiom that #87 + the no-admin backplane deploy-train both instantiate)"
+    origin: autonomous-stint-3 (deploy-train + version-gate-3x)
+    surfaced_at: autonomous-stint-3 2026-06-27 — DR-S3-013 (7-PR backplane merge-train landed CI-gated, riskiest PR last, no --admin) + DR-S3-007 + the cal #87 version-gate-3x corollary; the gate fired correctly under pressure all stint and was never bypassed
+    status: open
+    closure_mechanism: |
+      Pattern signature: a ship-path gate (CI-green + branch up-to-date +
+      version-assert) blocks a merge/publish on a transient mismatch, and the
+      tempting "fix" is to bypass it (--admin merge, skip the assert) to
+      unstick the pipeline. Bypassing converts a loud, correct gate into a
+      silent integrity hole.
+
+      Discipline: the ship-path gate is NEVER bypassed to unstick a mismatch —
+      fix the ordering/state that tripped it instead (rebase to up-to-date,
+      co-commit the version bump, wait for green). This is the PARENT axiom
+      that #87 (version-bump co-commits with the FINAL src PR) and the
+      backplane deploy-train (CI-gated, riskiest-last, no --admin) both
+      instantiate. Held under pressure all stint: the version-gate fired 3x
+      and was never bypassed; the 7-PR backplane batch landed via a CI-gated
+      merge-train with the riskiest PR last and no --admin.
+      OPEN until folded into the ship/release discipline
+      (multi-agent-pr-workflow.md ship-path subsection).
+    cross_refs:
+      - autonomous-stint-3 (deploy-train + version-gate-3x)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-013 backplane merge-train + DR-S3-007)
+      - "#87 (version-bump-co-commits; an instantiation of this axiom)"
+      - "#88 (re-introduction-guard scan-scope; sibling ship-verify discipline)"
+    tele_alignment:
+      - tele-7
+      - tele-9
+
+  - id: 90
+    class: substrate
+    title: "SILENT-FAILURE in fire-and-forget async seams — a tele-7 defect class where work is enqueued/emitted/polled without supervised delivery so failures go dark; per-site fixes RE-EMERGE, only shared helpers + a class-scoped audit hold"
+    origin: autonomous-stint-3 (idea-362 / work-40 audit)
+    surfaced_at: autonomous-stint-3 2026-06-27 — idea-362 / work-40 tele-7 class-audit surfaced one debt class across bug-190/191/192/193/194 + bug-176; peer-verified (steve work-40 + greg work-42)
+    status: open
+    closure_mechanism: |
+      Pattern signature: a fire-and-forget async seam advances/reports success
+      without confirming the downstream effect actually happened — failures go
+      dark. Sub-patterns observed this stint:
+      - cursor-advances-on-enqueue-not-delivery (bug-190 — drainer fails dark)
+      - unsupervised-fire-and-forget-poller — no in-flight latch / no
+        restart-backoff / unbounded queue (bug-190/191)
+      - emit-without-dispatch — createMessage bypasses SSE-push so
+        push-immediate is inert -> silent-miss for poll-less recipients
+        (bug-192/194; closed for pulses in mission-60/61, RE-EMERGED in
+        triggers/notifications)
+      - catch-and-swallow-infra-fault (bug-193)
+      - consumerless-health-surface — health() reports healthy while
+        delivering nothing (bug-190; observability theatre)
+
+      Closure: per-site fixes RE-EMERGE (mission-60/61 -> bug-192;
+      audit-4103 -> bug-191) — point-fixes do not hold. Only shared helpers
+      (emitAndPush) + a class-scoped audit checklist close the class. THE
+      stint's biggest structural-debt finding. OPEN until the emitAndPush
+      class-sweep (bug-194) + the collapse-to-one-loop redesign
+      (bug-190 / work-44) land and the class-audit checklist is folded into
+      engineer-runtime.
+    cross_refs:
+      - autonomous-stint-3 (idea-362 / work-40 tele-7 class-audit)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md
+      - bug-190 (cursor-advances-on-enqueue + consumerless-health + collapse-to-one-loop)
+      - bug-191 (unsupervised poller / watchdog latch)
+      - "bug-192 / bug-194 (emit-without-dispatch; emitAndPush class-sweep)"
+      - bug-193 (catch-and-swallow-infra-fault)
+      - bug-176 (swallowed-error-as-flake)
+      - "#88 (re-introduction-guard scan-scope — the same class-scope discipline)"
+    tele_alignment:
+      - tele-7
+      - tele-8
+
+  - id: 91
+    class: substrate
+    title: "REDEPLOY does not invalidate a running host's tool-surface cache — a tool-catalog change shipped via redeploy leaves an already-running host advertising the stale on-disk cache; /reload-plugins reuses the same proxy and is insufficient, only cache-delete + FULL restart recovers"
+    origin: autonomous-stint-3 (bug-180)
+    surfaced_at: autonomous-stint-3 2026-06-27 — bug-180; after the #361 onramp deploy added the 11 C1 work-queue verbs, both claude-plugin proxies kept advertising the stale catalog and blocked the C1 dogfood go-live; peer-verified (greg thread-712 + steve thread-713)
+    status: open
+    closure_mechanism: |
+      Pattern signature: a surface / tool-catalog change delivered via REDEPLOY
+      does NOT invalidate an already-running host's on-disk cache
+      ($WORK_DIR/.ois/tool-catalog.json, trusted-stale-on-unknown-revision).
+      /reload-plugins reconnects the SAME proxy process and is empirically
+      insufficient; only cache-delete + a FULL client restart per worktree
+      recovers. Blocked the C1 dogfood go-live this stint.
+
+      Structural fix: block the first ListTools on a /health revision check OR
+      emit notifications/tools/list_changed on revision-drift (kernel
+      ToolSurfaceReconciler, #362, shipped). Single-home consolidation
+      (mission-95) is the structural kill for the adjacent stale-kernel family
+      (bug-182/183/186). OPEN until the reconciler invalidation path is the
+      default and the manual cache-delete + restart recipe is retired.
+    cross_refs:
+      - autonomous-stint-3 (bug-180 stale tool-catalog cache)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md
+      - bug-180 (stale tool-surface cache on redeploy)
+      - "PR #362 (kernel ToolSurfaceReconciler structural fix)"
+    tele_alignment:
+      - tele-4
+      - tele-13
 
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
