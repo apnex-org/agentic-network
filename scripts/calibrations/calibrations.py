@@ -191,7 +191,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 # ── Phase-2 WRITE surface (work-97 / idea-356 part 1) ───────────────────────────
 # Schema enums + required fields (Design §2.1). The write-verb mechanizes the manual
 # yaml-edit filing path, eliminating the #421 footguns: ID-race, '#'-comment-truncation
-# of plain scalars, schema-drift, and broken/asymmetric cross-links.
+# of plain scalars, schema-drift, and broken (dangling) cross-links.
 CLASS_ENUM = ("substrate", "methodology")
 STATUS_ENUM = ("open", "closed-structurally", "closed-folded", "retired", "superseded")
 CAL_REQUIRED = ("id", "class", "title", "origin", "status")
@@ -339,8 +339,8 @@ def cmd_add(args: argparse.Namespace) -> None:
     lines[insert_at:insert_at] = [block if block.endswith("\n") else block + "\n", "\n"]
     path.write_text("".join(lines))
 
-    # Post-write: re-validate the whole ledger (catches a cross-link asymmetry the new entry
-    # introduced — e.g. a pattern_membership whose pattern doesn't list this id back).
+    # Post-write: re-validate the whole ledger (catches a DANGLING cross-link the new entry
+    # introduced — e.g. a pattern_membership referencing a pattern that doesn't exist).
     post = _validate_doc(_load())
     if post:
         print(f"calibration #{new_id} WRITTEN, but the ledger now has {len(post)} violation(s) — fix before commit:")
@@ -380,7 +380,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("--surfaced-at", dest="surfaced_at", help="thread-NNN-roundN / audit ref (optional)")
     p_add.add_argument("--closure-mechanism", dest="closure_mechanism", help="closure narrative; REQUIRED if status != open")
     p_add.add_argument("--closure-pr", dest="closure_pr", type=int, help="PR # delivering closure (optional)")
-    p_add.add_argument("--pattern-membership", dest="pattern_membership", action="append", metavar="SLUG", help="pattern id (slug); repeatable — the referenced pattern must list this id back (validate enforces)")
+    p_add.add_argument("--pattern-membership", dest="pattern_membership", action="append", metavar="SLUG", help="pattern id (slug); repeatable — the referenced pattern must EXIST (validate enforces no-dangling; the pattern need NOT list this id back — membership is a superset of the surfaced_by originators)")
     p_add.add_argument("--cross-ref", dest="cross_ref", action="append", metavar="REF", help="memory-doc path / entity ref; repeatable")
     p_add.add_argument("--tele", dest="tele", action="append", metavar="TELE", help="tele id (e.g. tele-3); repeatable")
     p_add.set_defaults(func=cmd_add)
