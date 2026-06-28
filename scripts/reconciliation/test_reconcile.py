@@ -113,6 +113,49 @@ class ReconcileFaithfulTest(unittest.TestCase):
         result = reconcile.reconcile(bugs, self.is_ancestor, self.find_fix)
         self.assertEqual(result["applyArtifact"], [{"bugId": "bug-needsbackfill", "fixCommits": [self.fx.main_sha2]}])
 
+    # ── build_apply_set (idea-379 / work-84) — the safe additive apply-set + its guard ──
+
+    def _mixed_result(self):
+        """A result with ONE safe-additive bug + BOTH status-change buckets (report-only)."""
+        bugs = [
+            {"id": "bug-needsbackfill", "status": "resolved", "fixCommits": []},               # → needs-backfill (apply-ready)
+            {"id": "bug-trap", "status": "resolved", "fixCommits": [self.fx.branch_sha]},       # → claims-fixed-but-not-in-main
+            {"id": "bug-staleopen", "status": "open", "fixCommits": [self.fx.main_sha2]},       # → fixed-but-still-open
+        ]
+        return reconcile.reconcile(bugs, self.is_ancestor, self.find_fix)
+
+    def test_apply_set_contains_only_safe_additive_status_buckets_report_only(self):
+        apply = reconcile.build_apply_set(self._mixed_result())
+        self.assertEqual(apply["applySet"], [{"bugId": "bug-needsbackfill", "fixCommits": [self.fx.main_sha2]}])
+        self.assertEqual(apply["applyCount"], 1)
+        # the two status-change buckets are surfaced as report-only, NEVER in the set
+        self.assertEqual(apply["reportOnly"], {"claims-fixed-but-not-in-main": 1, "fixed-but-still-open": 1})
+
+    def test_apply_set_dry_run_default_does_NOT_dispatch_to_applier(self):
+        calls = []
+        apply = reconcile.build_apply_set(self._mixed_result(), applier=lambda b, f: calls.append(b))  # dry_run defaults True
+        self.assertEqual(calls, [])                       # dry-run dispatches nothing
+        self.assertEqual(apply["dryRun"], True)
+        self.assertEqual(apply["applyCount"], 1)          # but the set is still built (preview)
+
+    def test_apply_dispatches_ONLY_the_safe_additive_bug(self):
+        calls = []
+        reconcile.build_apply_set(self._mixed_result(), applier=lambda b, f: calls.append((b, f)), dry_run=False)
+        self.assertEqual(calls, [("bug-needsbackfill", [self.fx.main_sha2])])  # only the safe-additive; no status-bucket bug
+
+    def test_MUTATION_status_bucket_bug_injected_into_artifact_is_GUARD_EXCLUDED(self):
+        # THE load-bearing guard: even if a status-change-bucket bug leaks into applyArtifact
+        # (a future bug in artifact construction), build_apply_set must re-derive eligibility
+        # from the needs-backfill bucket and EXCLUDE it — never dispatch a status-change.
+        result = self._mixed_result()
+        result["applyArtifact"].append({"bugId": "bug-trap", "fixCommits": [self.fx.branch_sha]})  # claims-fixed → injected
+        calls = []
+        apply = reconcile.build_apply_set(result, applier=lambda b, f: calls.append(b), dry_run=False)
+        self.assertNotIn("bug-trap", [e["bugId"] for e in apply["applySet"]])  # guard excluded it from the set
+        self.assertNotIn("bug-trap", calls)                                    # and NEVER dispatched
+        self.assertEqual(calls, ["bug-needsbackfill"])                         # only the genuine safe-additive
+        # MUTATION: drop the `bug_id not in backfill_bugs` guard → bug-trap dispatches → this test fails.
+
     def _envelope_bug(self, bug_id, phase, fix_commits=None, repo=None):
         """A real substrate-shaped Bug row (mission-90 envelope), matching get-entities.sh
         --format=json: status.{phase,fixCommits,...}, spec.{...,repo} — ground-truthed
