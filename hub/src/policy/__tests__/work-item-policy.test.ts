@@ -494,16 +494,29 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
     expect(schema.safeParse({ type: "verifier-gate" }).success).toBe(true);
   });
 
-  // GATE-416 regression: work-86 must ADD runbook/references ALONGSIDE targetRef, never replace
-  // it — else the MCP/Zod boundary strips targetRef before the handler (which still reads it) can store it.
-  it("create_work: targetRef stays in the registered schema (NOT stripped at the boundary) alongside runbook/references", () => {
+  // GATE-416 (architect steer): CLASS-SCOPED schema↔handler parity guard. create_work is a
+  // hot/evolving surface (work-86 added runbook/references; more node-contract fields are likely),
+  // so guard the whole "registered schema drifts from the handler → the MCP boundary silently
+  // drops a declared field" class — not whack-a-mole per field. A FULLY-POPULATED input parsed
+  // through the REAL registered schema must keep EVERY key (Zod z.object strips undeclared keys
+  // by default → a key in the input but missing from the parse is an undeclared-field bug; my
+  // work-86 edit dropped targetRef this way).
+  it("create_work: a fully-populated input survives the MCP boundary parse with NO field stripped (schema↔handler parity)", () => {
     const reg = router.getToolRegistration("create_work")!;
-    const schema = z.object(reg.schema);
-    const parsed = schema.safeParse({ type: "task", targetRef: { kind: "Task", id: "task-1" }, runbook: "x" });
+    const full = {
+      type: "verifier-gate" as const,
+      roleEligibility: ["engineer"],
+      priority: "high" as const,
+      dependsOn: ["work-1"],
+      evidenceRequirements: [{ id: "r1", kind: "pr" as const }],
+      runbook: "do it",
+      references: [{ kind: "doc", ref: "x", storage: "inline" as const, mode: "read" as const, required: false }],
+      targetRef: { kind: "Bug", id: "bug-1" },
+      payload: { brief: "b" },
+    };
+    const parsed = z.object(reg.schema).safeParse(full);
     expect(parsed.success).toBe(true);
-    expect((parsed as { data: Record<string, unknown> }).data.targetRef).toMatchObject({ kind: "Task", id: "task-1" });
-    // and the node-contract fields parse on the same schema
-    expect((parsed as { data: Record<string, unknown> }).data.runbook).toBe("x");
+    expect(Object.keys((parsed as { data: Record<string, unknown> }).data).sort()).toEqual(Object.keys(full).sort());
   });
 
   it("create_work: targetRef is threaded through to createWorkItem (handler regression)", async () => {
