@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { PolicyRouter } from "../src/policy/router.js";
-import { registerIdeaPolicy } from "../src/policy/idea-policy.js";
+import { registerIdeaPolicy, computeBacklogHealth } from "../src/policy/idea-policy.js";
 import { registerMissionPolicy } from "../src/policy/mission-policy.js";
 import { registerTurnPolicy } from "../src/policy/turn-policy.js";
 import { createTestContext } from "../src/policy/test-utils.js";
@@ -269,6 +269,88 @@ describe("IdeaPolicy", () => {
     expect(updated.text).toBe("Revised wording");
   });
 
+  // ── update_idea addTags — additive-tag mode (idea-363 / work-59) ──
+  describe("update_idea — addTags additive mode (idea-363)", () => {
+    const tagsOf = async (ideaId: string) =>
+      JSON.parse((await router.handle("get_idea", { ideaId }, ctx)).content[0].text).tags;
+
+    it("unions addTags onto existing tags WITHOUT clobbering them", async () => {
+      const c = await router.handle("create_idea", { text: "stamp me", tags: ["existing-a", "existing-b"] }, ctx);
+      const { ideaId } = JSON.parse(c.content[0].text);
+      const r = await router.handle("update_idea", { ideaId, addTags: ["audit:value:high"] }, ctx);
+      expect(r.isError).toBeUndefined();
+      // anti-regression (the clobber footgun): a replace would yield ["audit:value:high"] only.
+      expect(await tagsOf(ideaId)).toEqual(["existing-a", "existing-b", "audit:value:high"]);
+    });
+
+    it("dedupes when addTags overlaps the existing set", async () => {
+      const c = await router.handle("create_idea", { text: "dedupe", tags: ["x", "y"] }, ctx);
+      const { ideaId } = JSON.parse(c.content[0].text);
+      await router.handle("update_idea", { ideaId, addTags: ["y", "z"] }, ctx);
+      expect(await tagsOf(ideaId)).toEqual(["x", "y", "z"]);
+    });
+
+    it("with both tags+addTags: tags replaces, then addTags unions onto it", async () => {
+      const c = await router.handle("create_idea", { text: "both", tags: ["old"] }, ctx);
+      const { ideaId } = JSON.parse(c.content[0].text);
+      await router.handle("update_idea", { ideaId, tags: ["fresh"], addTags: ["extra"] }, ctx);
+      expect(await tagsOf(ideaId)).toEqual(["fresh", "extra"]); // 'old' replaced out
+    });
+
+    it("seeds tags on a tagless idea", async () => {
+      const c = await router.handle("create_idea", { text: "no tags" }, ctx);
+      const { ideaId } = JSON.parse(c.content[0].text);
+      await router.handle("update_idea", { ideaId, addTags: ["audit:effort:low"] }, ctx);
+      expect(await tagsOf(ideaId)).toEqual(["audit:effort:low"]);
+    });
+
+    it("empty addTags is a no-op (does not wipe existing tags)", async () => {
+      const c = await router.handle("create_idea", { text: "keep", tags: ["keep-me"] }, ctx);
+      const { ideaId } = JSON.parse(c.content[0].text);
+      await router.handle("update_idea", { ideaId, addTags: [] }, ctx);
+      expect(await tagsOf(ideaId)).toEqual(["keep-me"]);
+    });
+
+    it("addTags on a non-existent idea returns isError", async () => {
+      const r = await router.handle("update_idea", { ideaId: "idea-nope", addTags: ["x"] }, ctx);
+      expect(r.isError).toBe(true);
+    });
+  });
+
+  // ── get_backlog_health — idea-363 router integration ──────────────
+  describe("get_backlog_health (idea-363)", () => {
+    it("registers the tool", () => {
+      expect(router.has("get_backlog_health")).toBe(true);
+    });
+
+    it("returns funnel + stuck readout over real ideas (asOf in the future = triaged idea stuck)", async () => {
+      await router.handle("create_idea", { text: "open one" }, ctx);
+      await router.handle("create_idea", { text: "open two" }, ctx);
+      const t1 = JSON.parse((await router.handle("create_idea", { text: "triaged stuck" }, ctx)).content[0].text).ideaId;
+      await router.handle("update_idea", { ideaId: t1, status: "triaged" }, ctx);
+      const i1 = JSON.parse((await router.handle("create_idea", { text: "incorporate me" }, ctx)).content[0].text).ideaId;
+      await router.handle("update_idea", { ideaId: i1, status: "incorporated" }, ctx);
+
+      const future = new Date(Date.now() + 60 * 86400000).toISOString();
+      const res = await router.handle("get_backlog_health", { asOf: future }, ctx);
+      expect(res.isError).toBeUndefined();
+      const h = JSON.parse(res.content[0].text);
+      expect(h.funnel).toEqual({ open: 2, triaged: 1, dismissed: 0, incorporated: 1, total: 4 });
+      expect(h.stuckInTriage.count).toBe(1);
+      expect(h.stuckInTriage.ideaIds).toContain(t1);
+      expect(h.incorporation).toEqual({ inFlight: 3, incorporated: 1, ratio: 3 });
+      expect(h.truncated).toBe(false);
+      expect(h.asOf).toBe(future);
+    });
+
+    it("a just-created triaged idea is NOT stuck at asOf=now", async () => {
+      const t1 = JSON.parse((await router.handle("create_idea", { text: "fresh triaged" }, ctx)).content[0].text).ideaId;
+      await router.handle("update_idea", { ideaId: t1, status: "triaged" }, ctx);
+      const h = JSON.parse((await router.handle("get_backlog_health", {}, ctx)).content[0].text);
+      expect(h.stuckInTriage.count).toBe(0);
+    });
+  });
+
   // ── Engineer RBAC (idea-49 / -52) ────────────────────────────────
   describe("Engineer role RBAC", () => {
     const asEngineer = (c: IPolicyContext) => {
@@ -356,6 +438,69 @@ describe("IdeaPolicy", () => {
 });
 
 // ── Mission Policy ──────────────────────────────────────────────────
+
+// ── computeBacklogHealth — idea-363 pure logic (truncation + age buckets
+//    are testable without 500 real ideas) ────────────────────────────────
+describe("computeBacklogHealth (idea-363 pure logic)", () => {
+  const T0 = Date.parse("2026-01-01T00:00:00Z");
+  const ago = (days: number) => new Date(T0 - days * 86400000).toISOString();
+  const mk = (id: string, daysOld: number, missionId: string | null = null): any =>
+    ({ id, createdAt: ago(daysOld), missionId, tags: [], status: "open" });
+  const empty = { open: [], triaged: [], dismissed: [], incorporated: [] };
+
+  it("funnel counts each status bucket + total", () => {
+    const h = computeBacklogHealth({
+      open: [mk("idea-1", 1), mk("idea-2", 2)],
+      triaged: [mk("idea-3", 1)],
+      dismissed: [mk("idea-4", 1)],
+      incorporated: [mk("idea-5", 1), mk("idea-6", 1), mk("idea-7", 1)],
+    }, { asOfMs: T0, staleWeeks: 3 });
+    expect(h.funnel).toEqual({ open: 2, triaged: 1, dismissed: 1, incorporated: 3, total: 7 });
+  });
+
+  it("open age histogram buckets by createdAt vs asOf", () => {
+    const h = computeBacklogHealth({
+      ...empty,
+      open: [mk("a", 3), mk("b", 14), mk("c", 45), mk("d", 120)], // <1w | 1-4w | 1-3mo | >3mo
+    }, { asOfMs: T0, staleWeeks: 3 });
+    expect(h.openAgeHistogram).toEqual({ lt1w: 1, "1to4w": 1, "1to3mo": 1, gt3mo: 1 });
+    expect(h.oldestOpenAgeDays).toBe(120);
+  });
+
+  it("stuckInTriage = triaged + no mission + age>staleWeeks (excludes linked + young)", () => {
+    const h = computeBacklogHealth({
+      ...empty,
+      triaged: [mk("stuck", 30), mk("young", 5), mk("linked", 30, "mission-9")],
+    }, { asOfMs: T0, staleWeeks: 3 });
+    expect(h.stuckInTriage.count).toBe(1);
+    expect(h.stuckInTriage.ideaIds).toEqual(["stuck"]);
+    expect(h.stuckInTriage.staleWeeks).toBe(3);
+  });
+
+  it("staleWeeks param shifts the stuck threshold", () => {
+    const triaged = [mk("t", 10)]; // 10 days old
+    expect(computeBacklogHealth({ ...empty, triaged }, { asOfMs: T0, staleWeeks: 1 }).stuckInTriage.count).toBe(1); // 10>7
+    expect(computeBacklogHealth({ ...empty, triaged }, { asOfMs: T0, staleWeeks: 3 }).stuckInTriage.count).toBe(0); // 10<21
+  });
+
+  it("incorporation ratio = inFlight:incorporated; null when none incorporated", () => {
+    const h = computeBacklogHealth({
+      ...empty,
+      open: [mk("a", 1), mk("b", 1)], triaged: [mk("c", 1)], incorporated: [mk("d", 1)],
+    }, { asOfMs: T0, staleWeeks: 3 });
+    expect(h.incorporation).toEqual({ inFlight: 3, incorporated: 1, ratio: 3 });
+    const h2 = computeBacklogHealth({ ...empty, open: [mk("a", 1)] }, { asOfMs: T0, staleWeeks: 3 });
+    expect(h2.incorporation.ratio).toBeNull();
+  });
+
+  it("truncation-honest: flags buckets that hit the cap (else truncated:false)", () => {
+    const h = computeBacklogHealth(empty, { asOfMs: T0, staleWeeks: 3, truncatedStatuses: ["open"] });
+    expect(h.truncated).toBe(true);
+    expect(h.truncatedStatuses).toEqual(["open"]);
+    expect(h.truncationNote).toContain("500");
+    expect(computeBacklogHealth(empty, { asOfMs: T0, staleWeeks: 3 }).truncated).toBe(false);
+  });
+});
 
 describe("MissionPolicy", () => {
   let router: PolicyRouter;
