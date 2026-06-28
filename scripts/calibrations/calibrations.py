@@ -16,6 +16,7 @@ repo). Phase 1 is read-only; write authority defers to Phase 2+ per ADR-030.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -24,6 +25,11 @@ import yaml
 
 
 def _resolve_ledger_path() -> Path:
+    # CALIBRATIONS_LEDGER overrides the path (tests point at a temp ledger so `add`/`validate`
+    # never touch the real docs/calibrations.yaml).
+    override = os.environ.get("CALIBRATIONS_LEDGER")
+    if override:
+        return Path(override)
     here = Path(__file__).resolve()
     repo_root = here.parents[2]
     return repo_root / "docs" / "calibrations.yaml"
@@ -182,6 +188,168 @@ def cmd_status(args: argparse.Namespace) -> None:
             print(f"  {p['id']:<60} ({len(members)} member{'s' if len(members) != 1 else ''})")
 
 
+# ── Phase-2 WRITE surface (work-97 / idea-356 part 1) ───────────────────────────
+# Schema enums + required fields (Design §2.1). The write-verb mechanizes the manual
+# yaml-edit filing path, eliminating the #421 footguns: ID-race, '#'-comment-truncation
+# of plain scalars, schema-drift, and broken/asymmetric cross-links.
+CLASS_ENUM = ("substrate", "methodology")
+STATUS_ENUM = ("open", "closed-structurally", "closed-folded", "retired", "superseded")
+CAL_REQUIRED = ("id", "class", "title", "origin", "status")
+PATTERN_REQUIRED = ("id", "title", "origin", "description", "surfaced_by_calibrations")
+
+
+def _next_id(doc: dict) -> int:
+    """Mechanical monotonic id = max numeric calibration id + 1 (over retired/superseded gaps)."""
+    ids = [c.get("id") for c in (doc.get("calibrations") or []) if isinstance(c.get("id"), int)]
+    return (max(ids) + 1) if ids else 1
+
+
+def _validate_calibration(c: dict) -> list[str]:
+    """Per-entry schema checks (shared by `validate` + `add`'s pre-write gate)."""
+    errs: list[str] = []
+    cid = c.get("id")
+    tag = f"calibration #{cid}"
+    for f in CAL_REQUIRED:
+        if c.get(f) in (None, ""):
+            errs.append(f"{tag}: missing required field '{f}'")
+    if not isinstance(cid, int):
+        errs.append(f"{tag}: id must be an integer")
+    if c.get("class") not in CLASS_ENUM:
+        errs.append(f"{tag}: class={c.get('class')!r} not in {list(CLASS_ENUM)}")
+    if c.get("status") not in STATUS_ENUM:
+        errs.append(f"{tag}: status={c.get('status')!r} not in {list(STATUS_ENUM)}")
+    elif c.get("status") != "open" and not c.get("closure_mechanism"):
+        errs.append(f"{tag}: closure_mechanism is REQUIRED when status != open (status={c.get('status')})")
+    return errs
+
+
+def _validate_doc(doc: dict) -> list[str]:
+    """Whole-ledger validation: schema per entry + unique ids + BIDIRECTIONAL cross-link
+    consistency (calibration.pattern_membership[slug] <-> pattern.surfaced_by_calibrations[id])
+    with no dangling refs. Returns the list of violations (empty = valid)."""
+    errs: list[str] = []
+    calibs = doc.get("calibrations") or []
+    patterns = doc.get("patterns") or []
+
+    seen_ids: set = set()
+    for c in calibs:
+        errs.extend(_validate_calibration(c))
+        cid = c.get("id")
+        if isinstance(cid, int):
+            if cid in seen_ids:
+                errs.append(f"DUPLICATE calibration id {cid}")
+            seen_ids.add(cid)
+
+    seen_pat: set = set()
+    for p in patterns:
+        pid = p.get("id")
+        tag = f"pattern {pid!r}"
+        for f in PATTERN_REQUIRED:
+            if p.get(f) in (None, "", []):
+                errs.append(f"{tag}: missing/empty required field '{f}'")
+        if pid in seen_pat:
+            errs.append(f"DUPLICATE pattern id {pid!r}")
+        seen_pat.add(pid)
+
+    # Cross-link discipline (Design §2.1): NO DANGLING refs in BOTH directions — every
+    # calibration.pattern_membership[slug] resolves to an existing pattern, and every
+    # pattern.surfaced_by_calibrations[id] resolves to an existing calibration. (NOT full
+    # symmetry: pattern_membership = ALL member cals ⊋ surfaced_by_calibrations = the
+    # ORIGINATING cals, so a member-not-originator is a legitimate state — symmetry would
+    # false-flag it; the current ledger has 5 such. work-97 / surfaced to architect.)
+    pat_ids = {p.get("id") for p in patterns}
+    cal_ids = {c.get("id") for c in calibs}
+    for c in calibs:
+        for slug in c.get("pattern_membership") or []:
+            if slug not in pat_ids:
+                errs.append(f"calibration #{c.get('id')}: pattern_membership references unknown pattern {slug!r}")
+    for p in patterns:
+        for cid in p.get("surfaced_by_calibrations") or []:
+            if cid not in cal_ids:
+                errs.append(f"pattern {p.get('id')!r}: surfaced_by_calibrations references unknown calibration #{cid}")
+    return errs
+
+
+def cmd_validate(args: argparse.Namespace) -> None:
+    doc = _load()
+    errs = _validate_doc(doc)
+    if errs:
+        print(f"INVALID — {len(errs)} violation(s):")
+        for e in errs:
+            print(f"  - {e}")
+        sys.exit(1)
+    calibs = doc.get("calibrations") or []
+    patterns = doc.get("patterns") or []
+    print(f"VALID — {len(calibs)} calibrations, {len(patterns)} patterns; next id {_next_id(doc)}; cross-links resolve (no dangling refs).")
+
+
+def _emit_calibration_block(entry: dict) -> str:
+    """Emit ONE calibration entry as a YAML list item via the real emitter (safe_dump) — so
+    scalars containing '#' are quoted STRUCTURALLY (no comment-truncation), then indent 2 to
+    match calibrations[]. Appended to the file (comments preserved) rather than re-dumping the
+    whole doc (PyYAML would strip the header/schema comments)."""
+    raw = yaml.safe_dump([entry], default_flow_style=False, sort_keys=False, allow_unicode=True, width=100)
+    return "".join(("  " + ln) if ln.strip() else ln for ln in raw.splitlines(keepends=True))
+
+
+def cmd_add(args: argparse.Namespace) -> None:
+    path = _resolve_ledger_path()
+    doc = _load()
+    # Pre-write gate: never append onto an already-broken ledger.
+    pre = _validate_doc(doc)
+    if pre:
+        print(f"REFUSING to add — the ledger is already INVALID ({len(pre)} violation(s)); fix it first:")
+        for e in pre:
+            print(f"  - {e}")
+        sys.exit(1)
+
+    new_id = _next_id(doc)
+    entry: dict = {"id": new_id, "class": args.cls, "title": args.title, "origin": args.origin}
+    if args.surfaced_at:
+        entry["surfaced_at"] = args.surfaced_at
+    entry["status"] = args.status
+    if args.closure_mechanism:
+        entry["closure_mechanism"] = args.closure_mechanism
+    if args.closure_pr:
+        entry["closure_pr"] = args.closure_pr
+    if args.pattern_membership:
+        entry["pattern_membership"] = list(args.pattern_membership)
+    if args.cross_ref:
+        entry["cross_refs"] = list(args.cross_ref)
+    if args.tele:
+        entry["tele_alignment"] = list(args.tele)
+
+    ent_errs = _validate_calibration(entry)
+    if ent_errs:
+        print("INVALID entry — not written:")
+        for e in ent_errs:
+            print(f"  - {e}")
+        sys.exit(1)
+
+    block = _emit_calibration_block(entry)
+    lines = path.read_text().splitlines(keepends=True)
+    pat_idx = next((i for i, ln in enumerate(lines) if ln.startswith("patterns:")), None)
+    if pat_idx is None:
+        sys.exit("could not locate the patterns[] boundary in the ledger")
+    # insert at the start of the contiguous comment/blank block that precedes `patterns:` —
+    # so the new entry lands at the END of calibrations[], before the patterns-section comment.
+    insert_at = pat_idx
+    while insert_at > 0 and (lines[insert_at - 1].lstrip().startswith("#") or not lines[insert_at - 1].strip()):
+        insert_at -= 1
+    lines[insert_at:insert_at] = [block if block.endswith("\n") else block + "\n", "\n"]
+    path.write_text("".join(lines))
+
+    # Post-write: re-validate the whole ledger (catches a cross-link asymmetry the new entry
+    # introduced — e.g. a pattern_membership whose pattern doesn't list this id back).
+    post = _validate_doc(_load())
+    if post:
+        print(f"calibration #{new_id} WRITTEN, but the ledger now has {len(post)} violation(s) — fix before commit:")
+        for e in post:
+            print(f"  - {e}")
+        sys.exit(2)
+    print(f"Filed calibration #{new_id} ({args.cls}, {args.status}). Ledger re-validated VALID.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="calibrations", description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -199,6 +367,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_status = sub.add_parser("status", help="aggregate cross-mission counts + tele-aligned slices")
     p_status.set_defaults(func=cmd_status)
+
+    # ── Phase-2 WRITE surface (work-97 / idea-356 part 1) ──
+    p_validate = sub.add_parser("validate", help="validate the whole ledger (schema + unique ids + bidirectional cross-links); exit non-zero on violation (CI-usable)")
+    p_validate.set_defaults(func=cmd_validate)
+
+    p_add = sub.add_parser("add", help="file a calibration: mechanical monotonic id + yaml-safe emit + schema-validate + re-validate")
+    p_add.add_argument("--class", dest="cls", required=True, help="substrate | methodology")
+    p_add.add_argument("--title", required=True, help="concise human-readable summary")
+    p_add.add_argument("--origin", required=True, help="mission-X-WN (or similar)")
+    p_add.add_argument("--status", required=True, help="open | closed-structurally | closed-folded | retired | superseded")
+    p_add.add_argument("--surfaced-at", dest="surfaced_at", help="thread-NNN-roundN / audit ref (optional)")
+    p_add.add_argument("--closure-mechanism", dest="closure_mechanism", help="closure narrative; REQUIRED if status != open")
+    p_add.add_argument("--closure-pr", dest="closure_pr", type=int, help="PR # delivering closure (optional)")
+    p_add.add_argument("--pattern-membership", dest="pattern_membership", action="append", metavar="SLUG", help="pattern id (slug); repeatable — the referenced pattern must list this id back (validate enforces)")
+    p_add.add_argument("--cross-ref", dest="cross_ref", action="append", metavar="REF", help="memory-doc path / entity ref; repeatable")
+    p_add.add_argument("--tele", dest="tele", action="append", metavar="TELE", help="tele id (e.g. tele-3); repeatable")
+    p_add.set_defaults(func=cmd_add)
 
     return p
 
