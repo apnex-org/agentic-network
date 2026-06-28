@@ -21,13 +21,9 @@ The **live agenda for the next adversarial inter-stint council** — analogous t
 
 4. **FOCUS ranking** — forward-investment-rank the candidate arcs/ideas (the (B) framework, idea-370) → ratify the next-stint FOCUS.
 
-## B. Candidate items for the NEXT council (the `council-agenda` tag)
+## B. Candidate items — QUERY the Hub (do NOT hand-list here)
 
-- **idea-369** stint-report schema (formalize + first full run).
-- **idea-370** (B) forward-investment framework — refine: the score's place in tele-ranking; the Bug/Idea/Friction→rung bridge; validate the 4 autonomous-native edges (dogfoodProves / observability-multiplier / Director-attention / staking-decay) in use.
-- **idea-372** stint **activity-TYPE taxonomy** — the classification spine (ties instruments §2 + deliverable-taxonomy §4 + stint-report origin-mechanism); define ~12 TYPEs trackable vs tele + telemetry.
-- **idea-373** **inter-stint-council as a standing ritual** — codify the lifecycle phase (retro → council → ratify-FOCUS → seed → run), the seat-set, the cadence, and *this agenda* as its standing input.
-- **idea-371** arc-lifecycle mechanization — review the revival trigger (banked; stake when concepts proven ≥3 stints).
+Candidate items are **Idea entities tagged `council-agenda` / `next-council`** — query them live: `list_ideas` (tag=`council-agenda`). They are **deliberately not duplicated here**: the Hub is the sovereign, queryable state-backplane (tele-1); a hand-maintained list would drift from the live tags. This file holds only the standing *process* (§A) + obligations (§C), not the candidate inventory. *(To add a council candidate: tag the Idea `council-agenda` — it surfaces in the query automatically.)*
 
 ## C. Standing obligations (carry until cleared)
 
