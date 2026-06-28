@@ -109,6 +109,13 @@ export interface WorkItem {
   priority: WorkItemPriority;
   roleEligibility: string[];
   dependsOn: string[];
+  /** work-88 (idea-380): the COMPLETION-gate edge (parent→child). complete_work is rejected
+   *  until every completionDependsOn WorkItem is `done` — the mechanized "claim now, complete
+   *  only when the subtree is finalised" arc-node. Sibling to dependsOn (the CLAIM-gate,
+   *  child→parent). [] for a leaf (today's behavior); populated for an arc/umbrella node.
+   *  Spec-partitioned + GIN-indexed for the reverse-ancestor lookup (the transitive heartbeat).
+   *  Targets are immutable + must pre-exist at create (forward-refs live in work-87's expander). */
+  completionDependsOn: string[];
   evidenceRequirements: EvidenceRequirement[];
   /** idea-380 / work-86 — the node-contract: a cold-start `runbook` (the just-in-time
    *  instruction the claimant executes) + typed `references` it consumes. Both are SPEC
@@ -142,6 +149,7 @@ export interface IWorkItemStore {
     priority?: WorkItemPriority;
     roleEligibility: string[];
     dependsOn?: string[];
+    completionDependsOn?: string[];
     evidenceRequirements?: EvidenceRequirement[];
     runbook?: string;
     references?: WorkItemReference[];
@@ -151,6 +159,14 @@ export interface IWorkItemStore {
   }): Promise<WorkItem>;
 
   getWorkItem(workId: string): Promise<WorkItem | null>;
+
+  /** work-88 (arc-node): the k/N COMPLETION-gate progress projection over a node's DIRECT
+   *  completionDependsOn children — `{done, total, pending}` (done = children at phase=done;
+   *  pending = the not-yet-done ids; a vanished/abandoned child counts pending, fail-closed).
+   *  Reuses the SAME envelope-safe per-child read the complete_work gate enforces with (one
+   *  source of truth). Opt-in surface for get_work (feeds the cold-start get_current_stint).
+   *  Returns null if the work-item itself does not exist. */
+  getCompletionProgress(workId: string): Promise<{ done: number; total: number; pending: string[] } | null>;
 
   /** work-86 (idea-380): generic substrate existence check for a storage=entity reference
    *  at create_work-time — generalizes the WorkItem-only dangling-dependsOn existence check

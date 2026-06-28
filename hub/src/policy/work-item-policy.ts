@@ -22,6 +22,7 @@ import {
   ClaimRejected,
   WipCapExceeded,
   EvidencePredicateFailed,
+  CompletionGateRejected,
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
 import type {
@@ -51,6 +52,7 @@ function mapVerbError(e: unknown): PolicyResult {
   if (e instanceof WipCapExceeded) return err("wip_cap_exceeded", e.message);
   if (e instanceof ClaimRejected) return err("claim_rejected", e.message);
   if (e instanceof EvidencePredicateFailed) return err("evidence_predicate_failed", e.message);
+  if (e instanceof CompletionGateRejected) return err("completion_gate_unmet", e.message);
   if (e instanceof LockAcquisitionTimeoutError) return err("lock_timeout", e.message);
   if (e instanceof TransitionRejected) return err("transition_rejected", e.message);
   throw e;
@@ -294,6 +296,7 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
 
   const roleEligibility = (args.roleEligibility as string[] | undefined) ?? [];
   const dependsOn = (args.dependsOn as string[] | undefined) ?? [];
+  const completionDependsOn = (args.completionDependsOn as string[] | undefined) ?? [];
   const evidenceRequirements = (args.evidenceRequirements as EvidenceRequirement[] | undefined) ?? [];
 
   // Fail-closed: a duplicate requirement id makes complete_work's bind-by-requirementId
@@ -309,6 +312,18 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
   for (const depId of dependsOn) {
     const dep = await store.getWorkItem(depId);
     if (!dep) return err("unresolvable_ref", `dependsOn references a non-existent WorkItem: ${depId}`);
+  }
+
+  // work-88 (arc-node): the COMPLETION-gate edge. Fail-closed existence-check — a dangling
+  // completionDependsOn is a completion-gate that can NEVER close (the arc-holder would be
+  // permanently blocked at complete_work) — reject at authoring, the dependsOn posture.
+  // This existence-loop IS the single-node cycle-validation: a freshly-created node has no
+  // incoming edges (nothing references it yet), so as long as its targets pre-exist the graph
+  // stays acyclic-by-construction (F5). The whole-graph cross-edge DFS lives in the work-87
+  // expander, where a batch of forward-referencing nodes is materialized atomically.
+  for (const depId of completionDependsOn) {
+    const dep = await store.getWorkItem(depId);
+    if (!dep) return err("unresolvable_ref", `completionDependsOn references a non-existent WorkItem: ${depId}`);
   }
 
   // work-86 (idea-380): the node-contract — runbook + references as first-class spec fields.
@@ -333,6 +348,7 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
       priority: args.priority as WorkItemPriority | undefined,
       roleEligibility,
       dependsOn,
+      completionDependsOn,
       evidenceRequirements,
       runbook,
       references,
@@ -348,11 +364,19 @@ async function getWork(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
   const w = await store.getWorkItem(args.workId as string);
+  if (!w) return notFound(args.workId as string);
   // A read: return the full item (incl. lease, for the org-state snapshot's observability),
   // but do NOT hoist leaseToken to the top level — that hoist is a claim-affordance for the
   // HOLDER and is misleading on a read (a non-holder who reads the token still can't use it;
   // every lease-bound verb also fences on holder===caller.agentId).
-  return w ? ok({ workItem: w }) : notFound(args.workId as string);
+  // work-88 (arc-node): opt-in k/N completion-gate projection — surfaces how much of an
+  // arc's subtree is finalised (feeds the cold-start get_current_stint). Off by default so
+  // the common point-read pays no per-child fan-out; only computed when explicitly asked.
+  if (args.includeCompletionProgress === true) {
+    const completionProgress = await store.getCompletionProgress(args.workId as string);
+    return ok({ workItem: w, completionProgress });
+  }
+  return ok({ workItem: w });
 }
 
 async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
@@ -432,6 +456,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       roleEligibility: z.array(z.string()).optional().describe("Roles that may claim; empty/omitted = any role"),
       priority: WORK_PRIORITY.optional().describe("Priority (default: normal)"),
       dependsOn: z.array(z.string()).optional().describe("WorkItem ids that must complete before this is claimable; each must already exist (dangling → rejected)"),
+      completionDependsOn: z.array(z.string()).optional().describe("work-88 (arc-node): WorkItem ids whose completion GATES this node's complete_work (the COMPLETION-gate edge, distinct from the dependsOn START-gate). Empty = a leaf (today's behavior); populated = an arc/umbrella node claimable immediately but completable only when ALL listed children are done. Each must already exist (dangling → rejected)."),
       evidenceRequirements: z.array(evidenceRequirementSchema).optional().describe("Anti-gameability evidence contract enforced by complete_work"),
       runbook: z.string().optional().describe("work-86: the cold-start instruction the claimant executes. REQUIRED for a blueprint/gate node (type=verifier-gate or carrying references[]); a process-naive agent learns the task from it (no prior context)."),
       references: z.array(referenceSchema).optional().describe("work-86: typed inputs the node CONSUMES (the references(consume) leg of the node-contract). A required:true reference is fail-closed-validated to resolve at seed-time (inline content present | pinned git sha | hub-doc exists | entity exists) — a dangling required input is a cold-start trap, rejected at authoring."),
@@ -443,8 +468,11 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "get_work",
-    "[Any] Read a WorkItem by id (any phase — incl. non-ready items the org-state snapshot wants). Returns the flat item (incl. lease, for observability) or not_found.",
-    { workId: z.string().describe("The WorkItem id to read") },
+    "[Any] Read a WorkItem by id (any phase — incl. non-ready items the org-state snapshot wants). Returns the flat item (incl. lease, for observability) or not_found. Pass includeCompletionProgress:true for the arc-node k/N completion-gate projection ({done,total,pending} over the item's completionDependsOn children — feeds the cold-start get_current_stint).",
+    {
+      workId: z.string().describe("The WorkItem id to read"),
+      includeCompletionProgress: z.boolean().optional().describe("work-88 (arc-node): when true, also compute the k/N COMPLETION-gate progress — {done,total,pending} over completionDependsOn (children at phase=done). Opt-in: off by default so a plain read pays no per-child fan-out."),
+    },
     getWork,
   );
 
