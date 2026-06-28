@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { z } from "zod";
 import { PolicyRouter } from "../router.js";
-import { registerWorkItemPolicy } from "../work-item-policy.js";
+import { registerWorkItemPolicy, blueprintNodeId } from "../work-item-policy.js";
 import { createTestContext, type TestPolicyContext } from "../test-utils.js";
 import {
   TransitionRejected,
@@ -656,6 +656,29 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     const r = await router.handle("seed_blueprint", { runId: "bad id!", nodes: [node()] }, ctxFor(stub, "architect"));
     expect(body(r).errorKind).toBe("invalid_blueprint");
     expect(bpCalls(stub.calls).length).toBe(0);
+  });
+
+  // COLLISION-SAFETY (steve GATE-418): the no-DASH invariant on runId+localId is what keeps the
+  // composite id work-bp-{runId}-{localId} collision-free (dash = the SOLE separator). Pin it on
+  // the dash SPECIFICALLY — a generic "bad id!" reject does NOT, because it trips on the space/!
+  // even if dashes were allowed. e.g. without the rule: runId 'a-b'+localId 'c' AND runId 'a'+
+  // localId 'b-c' BOTH map to work-bp-a-b-c (a real collision). Mutation: widen BLUEPRINT_ID_TOKEN
+  // to allow '-' → both router.handle calls below stop rejecting → this test reds.
+  // The collision is REAL + FORMABLE: dash is the sole id separator, so two DISTINCT (runId,
+  // localId) pairs collapse to the SAME deterministic id once a dash is allowed. This is the WHY
+  // behind the no-dash guard (a static demonstration — it documents the hazard the guard closes).
+  it("collision-safety: a dash makes work-bp-{runId}-{localId} AMBIGUOUS — ('a-b','c') and ('a','b-c') map to the SAME id", () => {
+    expect(blueprintNodeId("a-b", "c")).toBe(blueprintNodeId("a", "b-c")); // both → work-bp-a-b-c
+  });
+
+  // The GUARD that closes it, mutation-pinned: a DASH in runId OR localId is rejected. Widening
+  // BLUEPRINT_ID_TOKEN to allow '-' stops these rejections → this test reds (proving the guard is
+  // load-bearing, not vacuous — steve GATE-418; the #416/#417/#418 invariant-without-a-proof class).
+  it("collision-safety: a DASH in runId OR localId is rejected at the boundary (the no-dash guard)", async () => {
+    const stub = expandStub();
+    expect(body(await router.handle("seed_blueprint", { runId: "a-b", nodes: [node({ localId: "c" })] }, ctxFor(stub, "architect"))).errorKind).toBe("invalid_blueprint"); // would-be collision pair A
+    expect(body(await router.handle("seed_blueprint", { runId: "a", nodes: [node({ localId: "b-c" })] }, ctxFor(stub, "architect"))).errorKind).toBe("invalid_blueprint"); // would-be collision pair B
+    expect(bpCalls(stub.calls).length).toBe(0); // neither colliding pair ever reaches a create
   });
 
   it("empty nodes → reject", async () => {

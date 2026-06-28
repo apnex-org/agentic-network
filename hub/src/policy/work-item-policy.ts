@@ -398,8 +398,11 @@ const MAX_BLUEPRINT_NODES = 100;
  *  `work-bp-{runId}-{localId}` uses dash as its SOLE separator and is collision-free. */
 const BLUEPRINT_ID_TOKEN = /^[A-Za-z0-9_]+$/;
 
-/** The deterministic per-node WorkItem id — the idempotency key (createOnly dedups a re-run). */
-function blueprintNodeId(runId: string, localId: string): string {
+/** The deterministic per-node WorkItem id — the idempotency key (createOnly dedups a re-run).
+ *  Exported for the collision-safety proof: dash is the SOLE separator, so it is ONLY
+ *  collision-free while runId+localId exclude dash (BLUEPRINT_ID_TOKEN) — else
+ *  blueprintNodeId('a-b','c') === blueprintNodeId('a','b-c'). */
+export function blueprintNodeId(runId: string, localId: string): string {
   return `work-bp-${runId}-${localId}`;
 }
 
