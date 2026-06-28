@@ -52,6 +52,8 @@ function cloneBug(bug: Bug): Bug {
   }
   flat.linkedTaskIds = (flat.linkedTaskIds as string[] | undefined) ?? [];
   flat.fixCommits = (flat.fixCommits as string[] | undefined) ?? [];
+  // idea-364: repo defaults null on bugs predating the field (envelope had no spec.repo).
+  flat.repo = (flat.repo as string | null | undefined) ?? null;
   return flat as unknown as Bug;
 }
 
@@ -78,6 +80,8 @@ export class BugRepositorySubstrate implements IBugStore {
       // lineage graph. linkedMissionId is set from sourceMissionId.
       sourceThreadId?: string;
       sourceMissionId?: string;
+      // idea-364 — repo-scope classification at create (null/absent = home repo).
+      repo?: string;
     } = {},
   ): Promise<Bug> {
     const num = await this.counter.next("bugCounter");
@@ -99,6 +103,7 @@ export class BugRepositorySubstrate implements IBugStore {
       linkedMissionId: options.sourceMissionId ?? null,
       fixCommits: [],
       fixRevision: null,
+      repo: options.repo ?? null,
       surfacedBy: options.surfacedBy ?? null,
       createdBy: options.createdBy,
       createdAt: now,
@@ -171,6 +176,7 @@ export class BugRepositorySubstrate implements IBugStore {
       linkedMissionId: string | null;
       fixCommits: string[];
       fixRevision: string | null;
+      repo: string | null;
     }>,
   ): Promise<Bug | null> {
     try {
@@ -184,6 +190,7 @@ export class BugRepositorySubstrate implements IBugStore {
         if (updates.linkedMissionId !== undefined) bug.linkedMissionId = updates.linkedMissionId;
         if (updates.fixCommits !== undefined) bug.fixCommits = [...updates.fixCommits];
         if (updates.fixRevision !== undefined) bug.fixRevision = updates.fixRevision;
+        if (updates.repo !== undefined) bug.repo = updates.repo;
         bug.updatedAt = new Date().toISOString();
         return bug;
       });
