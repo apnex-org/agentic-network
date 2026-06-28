@@ -108,6 +108,15 @@ describe("IdeaPolicy", () => {
     expect(full.ideas[0].text).toContain("trailing body");
   });
 
+  it("bug-198 — list_ideas drops empty filter values (adapter empty-optional → UNSET, not a false zero)", async () => {
+    await router.handle("create_idea", { text: "an open idea" }, ctx);
+    // an empty value in the structured filter (opencode serializes UNSET as "") must be
+    // dropped, not AND'd to zero matches.
+    const parsed = JSON.parse((await router.handle("list_ideas", { filter: { missionId: "" } }, ctx)).content[0].text);
+    expect(parsed._ois_query_unmatched).toBeUndefined();
+    expect(parsed.count).toBeGreaterThanOrEqual(1);
+  });
+
   // ── Phase C (task-306): createdBy.* nested paths ─────────────────
   describe("list_ideas — M-QueryShape Phase C (task-306)", () => {
     async function seedWithCreatedBy(): Promise<void> {

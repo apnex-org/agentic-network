@@ -16,6 +16,8 @@ import {
   LIST_COMPACT_SCHEMA,
   LIST_TAGS_SCHEMA,
   applyTagFilter,
+  unsetIfEmpty,
+  omitEmptyValues,
   paginate,
   buildQueryFilterSchema,
   buildQuerySortSchema,
@@ -134,9 +136,11 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 
   // Backwards-compat: legacy scalar `status` arg subsumed by the new
   // `filter.status` field. filter.status wins when both are present.
-  const legacyStatus = typeof args.status === "string" ? (args.status as IdeaStatus) : undefined;
+  // bug-198: empty-string legacy status + any empty values in the `filter` object are
+  // adapter-serialized UNSETs (opencode) — drop them, don't AND them to zero matches.
+  const legacyStatus = unsetIfEmpty(typeof args.status === "string" ? args.status : undefined) as IdeaStatus | undefined;
   const filterArgRaw = args.filter as Record<string, unknown> | undefined;
-  const effectiveFilter: Record<string, unknown> = { ...(filterArgRaw ?? {}) };
+  const effectiveFilter: Record<string, unknown> = omitEmptyValues({ ...(filterArgRaw ?? {}) });
   if (legacyStatus && effectiveFilter.status === undefined) {
     effectiveFilter.status = legacyStatus;
   }

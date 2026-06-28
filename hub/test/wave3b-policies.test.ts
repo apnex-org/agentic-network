@@ -3296,6 +3296,17 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     expect(full.compact).toBeUndefined();
   });
 
+  it("bug-198 — list_bugs treats EMPTY optional filters (class:'', tags:[]) as UNSET (no false _ois_query_unmatched)", async () => {
+    const r = await router.handle("create_bug", { title: "R", description: "d", severity: "major" }, ctx);
+    const { bugId } = JSON.parse(r.content[0].text);
+    await router.handle("update_bug", { bugId, status: "resolved" }, ctx);
+    // opencode serializes UNSET optionals as "" / [] (vs claude omitting) — they must NOT
+    // AND to an exact-empty match (the acute get_bug-overrun root: steve couldn't list at all).
+    const parsed = JSON.parse((await router.handle("list_bugs", { status: "resolved", class: "", tags: [] }, ctx)).content[0].text);
+    expect(parsed._ois_query_unmatched).toBeUndefined();         // NOT a false unmatched
+    expect(parsed.bugs.some((b: any) => b.id === bugId)).toBe(true); // the resolved bug IS returned
+  });
+
   // ── CP2 C5 (task-307): _ois_query_unmatched sentinel ────────────
   it("list_bugs fires _ois_query_unmatched when filter yields zero on non-empty collection", async () => {
     await router.handle("create_bug", { title: "A", description: "a", severity: "critical" }, ctx);

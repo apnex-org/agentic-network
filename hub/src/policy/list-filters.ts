@@ -44,6 +44,27 @@ export const LIST_TAGS_SCHEMA = {
     .describe("Match-any tag filter: only entries whose tags include at least one of the provided tags."),
 };
 
+/** bug-198: some adapters (opencode) serialize an UNSET optional as "" / [] / null
+ *  instead of omitting it. Treat those as UNSET — NOT an exact-empty filter that ANDs
+ *  to zero matches. (The get_bug-overrun root: list_bugs(status=resolved) with severity/
+ *  class/tags unset returned _ois_query_unmatched from opencode but worked from claude.) */
+export function unsetIfEmpty<T>(v: T | undefined | null): T | undefined {
+  if (v === undefined || v === null || (v as unknown) === "") return undefined;
+  if (Array.isArray(v) && v.length === 0) return undefined;
+  return v;
+}
+
+/** Drop empty-string / empty-array / null / undefined values from a filter object
+ *  (bug-198), so an adapter-serialized empty optional inside a `filter` object doesn't
+ *  AND to zero either. */
+export function omitEmptyValues(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (unsetIfEmpty(v) !== undefined) out[k] = v;
+  }
+  return out;
+}
+
 export function applyLabelFilter<T extends { labels?: Record<string, string> }>(
   items: T[],
   labels?: Record<string, string>,
