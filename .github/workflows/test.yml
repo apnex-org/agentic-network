@@ -24,6 +24,19 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # S1 merge-queue (idea-380): run on the queue's ephemeral merge_group so this
+  # REQUIRED check reports on the queued batch. A required status check that does
+  # NOT trigger on merge_group stalls the queue forever (it waits for a check that
+  # never runs). Pairs with branch-protection require-merge-queue + the per-path
+  # CODEOWNERS cross-approve matrix (architect approve = merge-gate; verifier = check).
+  merge_group:
+
+# S1 (idea-380): cancel a superseded PR CI run on re-push (saves CI cycles — a
+# velocity win). pull_request-ONLY — never cancel a merge_group or push run (a
+# cancelled queued-group check would eject the PR from the merge queue).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ── Required code-correctness gate ───────────────────────────────────
