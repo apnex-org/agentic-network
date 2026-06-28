@@ -21,7 +21,7 @@ The single biggest drain was a **phantom**: a wrong watchtower-stall mental mode
 | Mission closed | mission-95 (M-Adapter-Substrate-Consolidation) — idea-355, end-to-end across claude+opencode lineages |
 | Ideas generated | 14 (idea-349…362), from 5 mechanisms; **1 incorporated** (idea-355) |
 | Bugs filed | ~10 (bug-187…195) |
-| Calibrations filed | 4 (#85/#86/#87/#88) + **3 banked-not-filed** (#89, #80-sort, #79/#82-recurrence) — *loss-risk, see Open Decisions* |
+| Calibrations filed | 4 (#85/#86/#87/#88) + **3 banked-not-filed** (#89, #80-sort, #79/#82-recurrence) — *loss-risk, see Open Decisions* (the 3 banked, PLUS #90/#91, were subsequently FILED in PR #399 — "banked" was the stint-close state, now resolved) |
 | Self-drive backstop | fired + self-recovered **2×** live (work-19 leaseExpiryCount=2) |
 | Coordination pings | **0** (queue self-wake across both lineages) |
 | Operator deliverables | #364 (0.1.9 dogfood-2 hop) + #365 (`update-claude-plugin.sh` — partial fix for idea-354/FR-23) |
@@ -92,7 +92,12 @@ This retro discharges the FR-20 multi-seat-intake obligation (one-sided intake i
 
   **FR-32 handoff detail (for the verifier's real-substrate harness):** (a) copy-from-template `hub/src/storage-substrate/__tests__/write-encoder-and-watch-w4.test.ts` (real `PostgreSqlContainer` + `substrate.watch` e2e — not greenfield); (b) pre-warn the 57P01 teardown flake ("terminating connection due to administrator command" at container shutdown = ignore + re-run, NOT a real failure); (c) confirm a working docker daemon on steve's seat first.
 
-- **VERIFIER (steve):** PENDING; to be folded before the council convenes.
+- **VERIFIER (steve) — FR-20 first-person intake (folded to 3 frictions + amplify):**
+  1. **Scratch-clone test-env bootstrap noise.** The verifier's scratch clone needed manual fiddling to even run a focused suite — root-vs-hub lockfiles, workspace prepare scripts, missing `tsc`, `npm ci --ignore-scripts` before a focused Vitest run. *Fix:* a canonical verifier-bootstrap command or a prewarmed scratch image (sharpens FR-32 — not just deps/docker, but a one-shot bring-up).
+  2. **ADVISORY-vs-RELEASE-CRITICAL boundary ambiguity.** Gates were nominally advisory but practically gated batch-readiness; steve had to infer when to stop at an "advisory concern" vs keep proving. *Fix (NEW):* an explicit "advisory but release-decision-critical" label + an expected proof-bar per gate.
+  3. **ORACLE-before-artifact ordering.** Some acceptance criteria only became crisp after the artifact existed + failed. *Fix (NEW):* negative-controls / mutation-hints for the exact branches, specified earlier → fewer re-gate loops, especially on mock-vs-real fidelity gaps. (Verifier complement to greg's pre-gate path-enumeration.)
+
+  **Amplify (bilateral with greg):** faithful real-substrate adversarial probes in clean scratch clones — carried the prior bug-oracle forward + wrote small temp real-pg tests against the actual failure mode, catching BOTH #385 gaps the mock suite missed.
 
 ---
 
@@ -183,8 +188,8 @@ This retro discharges the FR-20 multi-seat-intake obligation (one-sided intake i
 | Director deploy-posture (gate backplane only) | director-profile + op-model §6 | TO RECORD |
 | idea-356/357/358/359/360/361/362 | Idea entities | filed (verify existence) |
 | bug-185/187/188/189/190/191/192/193/194/195 | Bug entities | filed (#190/194 await fresh effort) |
-| Engineer + verifier first-person frictions | friction-backlog FR-20 | **NOT YET COLLECTED** |
-| Deferred adversarial council | friction-backlog FR-20 | **DISPOSITION OWED** |
+| Engineer + verifier first-person frictions | friction-backlog FR-20 | **COLLECTED — greg + steve folded; FR-20 DISCHARGED** |
+| Deferred adversarial council | docs/reviews/autonomous-stint-3-next-stint-council-plan.md | **DISCHARGED — convened + ratified** |
 | CDACC run-672bd0f drift-map + PING-DIRECTOR | standing obligation | **OPEN** |
 | tele-0 staleness (still says 1-10) | vision-synthesis | OPEN |
 

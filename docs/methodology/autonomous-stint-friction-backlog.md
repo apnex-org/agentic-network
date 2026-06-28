@@ -175,7 +175,7 @@ Every PR this dogfood-3 stint (#369 SLICE-0, #370 calibration-governance, #371 S
 
 ## Section I — Stint-3 retrospective harvest (FR-32..FR-34 + multi-seat intake, 2026-06-28)
 
-*Frictions surfaced by the zero-loss stint-3 retro harvest, plus the first discharge of FR-20's multi-party intake (engineer half). Verifier (steve) first-person intake is **PENDING** — FR-20 stays open until both non-architect seats are in.*
+*Frictions surfaced by the zero-loss stint-3 retro harvest, plus the discharge of FR-20's multi-party intake. Both non-architect seats are now in (engineer + verifier first-person intakes below) — **FR-20 is FULLY DISCHARGED**.*
 
 ### FR-32 — Verifier worktree cannot run the test suite (deps/testcontainers/docker absent)
 **Evidence (stint-3):** steve's scratch-clone has no installed deps, no testcontainers, and no docker daemon → adversarial depth on the highest-blast-radius substrate fixes (work-33/36/43; bug-100/187 gap-free SchemaDef watch across reconnect) was limited to **code-inspection + CI-trust** — he could not run the real-pg gap test locally. The cost is concrete: #385's MOCK harness hid two real-pg-only seams (non-monotonic cursor + iterator-settle hang) caught only by steve's real-pg probing; without a runnable substrate harness on the verifier's seat, that probing isn't repeatable round-to-round.
@@ -193,8 +193,8 @@ Every PR this dogfood-3 stint (#369 SLICE-0, #370 calibration-governance, #371 S
 **Evidence (stint-3):** the relaxed (manual yaml-edit) calibration model has no write-verb and no banked-tracker, so "banked for retro" lived only as a DR note + a pending task — three round-2 calibrations (#89 never-bypass-ship-path / #80-sort tri-surface extension / #79-82 faithful-harness recurrence) were the **highest loss-risk on the calibration surface** this stint. A banked entry that isn't tracked as an obligation silently drops across the stint boundary (the same loss class recurs cross-stint).
 **Disposition:** FIX-NOW (process rule) → **any calibration "banked for retro" becomes a TRACKED stint-close obligation**: it lands on the stint-close checklist and the round-2 calibration PR MUST merge before the stint is declared closed. Stint-3 obligation: #89 / #80-sort / #79-82. Mechanization → idea-356 (write-verb + validate + banked-guard makes "banked" a tracked entity, not a convention).
 
-### ENGINEER-INTAKE (greg) — FR-20 first-person frictions (engineer half; verifier/steve intake PENDING)
-This discharges the **ENGINEER half of FR-20** (multi-party friction intake — friction looks different from each seat). The **VERIFIER (steve) first-person intake is PENDING**; FR-20 stays open until it lands (one-sided intake is the exact defect FR-20 was filed to prevent).
+### ENGINEER-INTAKE (greg) — FR-20 first-person frictions (engineer half; verifier/steve half in VERIFIER-INTAKE below)
+This discharges the **ENGINEER half of FR-20** (multi-party friction intake — friction looks different from each seat). The **VERIFIER (steve) first-person intake** has since landed (see VERIFIER-INTAKE below) — **FR-20 is now FULLY DISCHARGED** (one-sided intake is the exact defect FR-20 was filed to prevent).
 
 **greg's 3 lived frictions:**
 
@@ -207,6 +207,21 @@ This discharges the **ENGINEER half of FR-20** (multi-party friction intake — 
 **greg's AMPLIFY (top productivity):** **mutation-proof every test** (prove non-vacuous) + **real-substrate testcontainers locally, BEFORE the gate** → makes the verifier's green rounds FAST + trustable; converted the marquee watch fix from "I think" to "I proved it." Front-loads cost into provable confidence instead of round-trips. (Pairs with the retro's P4/P11 amplify lessons + FR-32 — the verifier needs the same local real-substrate harness greg used.)
 
 **Disposition:** friction 1 → DOCUMENT (engineer pre-gate path-enumeration discipline; calibration candidate); friction 2 → calibration **#88 CLAIM-TIME SIZING corollary** (recurring → mechanize the value-bar); friction 3 → DOCUMENT (explicit decision-flag-before-ship; same silent-channel class as FR-3); AMPLIFY → operating-model §5 (mutation-verify + real-substrate-before-gate as standard).
+
+### VERIFIER-INTAKE (steve) — FR-20 first-person frictions (verifier half — FR-20 now FULLY DISCHARGED)
+This lands the **VERIFIER half of FR-20** (multi-party friction intake — friction looks different from each seat). With architect (F1–F12 in the retro) + engineer (above) + verifier (here) all in, **FR-20 is now FULLY DISCHARGED** — all three non-trivial seats have surfaced their lived frictions.
+
+**steve's 3 lived frictions:**
+
+1. **SCRATCH-CLONE TEST-ENV BOOTSTRAP NOISE.** the verifier's scratch clone needed manual fiddling to even run a focused suite — root-vs-hub lockfiles, workspace prepare scripts, missing `tsc`, `npm ci --ignore-scripts` before a focused Vitest run. **Fix:** a canonical verifier-bootstrap command or a prewarmed scratch image. **SHARPENS FR-32** — the gap is not just absent deps/docker, but the lack of a one-shot bring-up.
+
+2. **ADVISORY-vs-RELEASE-CRITICAL BOUNDARY AMBIGUITY (NEW).** gates were nominally *advisory* but practically *gated batch-readiness* → steve had to infer when to stop at an "advisory concern" vs keep proving. **Fix:** an explicit **"advisory but release-decision-critical"** label + an expected **proof-bar** per gate, so the verifier knows the depth a given gate demands.
+
+3. **ORACLE-before-ARTIFACT ORDERING (NEW).** some acceptance criteria only became crisp **after** the artifact existed + failed → re-gate loops, especially on **mock-vs-real fidelity gaps**. **Fix:** negative-controls / mutation-hints for the exact branches, **specified earlier**, fewer re-gate loops. (Verifier complement to greg's pre-gate path-enumeration — the engineer enumerates paths before the gate; the architect/spec supplies the oracle for those paths before the gate.)
+
+**steve's AMPLIFY (bilateral with greg):** **faithful real-substrate adversarial probes in clean scratch clones** — carried the prior bug-oracle forward + wrote small temp real-pg tests against the actual failure mode, catching **BOTH #385 gaps the mock suite missed**. (Bilateral with greg's mutation-proof + real-substrate-before-gate amplify — the same real-substrate discipline pays off on both the build and the verify seat; both route to operating-model §5 + FR-32.)
+
+**Disposition:** friction 1 → **FR-32** (sharpened — canonical verifier-bootstrap command / prewarmed image, not just deps+docker); friction 2 → DOCUMENT + design input (gate-label taxonomy: advisory / advisory-release-critical / release-blocking + per-gate proof-bar; council/operating-model candidate); friction 3 → DOCUMENT (oracle-before-artifact: spec supplies negative-controls/mutation-hints up front; pairs with greg's pre-gate path-enumeration); AMPLIFY → operating-model §5 (real-substrate adversarial probes as the verifier standard, bilateral with the engineer's pre-gate real-substrate discipline).
 
 ---
 
@@ -249,3 +264,5 @@ Updated 2026-06-27 (post-dogfood-2, pre-compaction handover): +Section G (FR-23.
 Updated 2026-06-27 (stint-3, idea-355 dogfood-3 in flight): +Section H (FR-31) — PR merge/approval workflow is one-size-fits-all (every PR: BEHIND→update-branch→re-CI→merge; auto-merge disabled; `--admin` no-override; author-can't-self-approve; no CI-green/merge-ready signal). Director-flagged: design scenario-appropriate merge workflows + approval policies. Refs idea-357 (event/merge-ready signal), FR-23 (operator-bottleneck class). Calibration filing-gate relaxed this stint (architect-fileable, Director-curates; PR #370) — so council-output calibrations are no longer Director-direct-only.
 
 Updated 2026-06-28 (stint-3 retrospective harvest): +Section I (FR-32 verifier-can't-run-tests + greg's copy-from-template / 57P01-pre-warn / docker-check handoff detail; FR-33 thread round-cap on operational handshakes [thread-709 10/10]; FR-34 banked-only-calibrations are a cross-stint loss vector → "banked for retro" becomes a tracked stint-close obligation) + CONCRETIZED FR-31 (docs-only merge fast-path: `docs/**`-confined diffs skip the BEHIND→update-branch→re-CI formality) + **ENGINEER-INTAKE (greg)** discharging the engineer half of FR-20 (3 first-person frictions — pre-gate path-completeness, claim-time scoping under-count [cal #88 sizing corollary], trust-critical AC-fork surfacing latency — plus the mutation-proof + real-substrate-before-gate amplify). **VERIFIER (steve) first-person intake remains PENDING** — FR-20 stays open until it lands.
+
+Updated 2026-06-28 (stint-3 retrospective harvest, cont.): +**VERIFIER-INTAKE (steve)** discharging the verifier half of FR-20 (3 first-person frictions — scratch-clone bootstrap noise [sharpens FR-32], advisory-vs-release-critical gate-boundary ambiguity [NEW], oracle-before-artifact ordering [NEW] — plus the real-substrate adversarial-probe amplify, bilateral with greg, that caught both #385 gaps the mock suite missed). With architect + engineer + verifier all in, **FR-20 is now FULLY DISCHARGED**.
