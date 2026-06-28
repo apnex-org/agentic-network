@@ -27,6 +27,7 @@ import type {
   EvidenceItem,
   EvidenceKind,
   WorkItemReference,
+  ReadyEmptyReason,
   IWorkItemStore,
 } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
@@ -485,7 +486,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * surfaces that. A complete server-side role projection (a role-index or an is-empty
    * operator) is a later optimization; the loud flag keeps v1 honest.
    */
-  async listReadyForRole(role: string | undefined, limit: number, agentId?: string): Promise<{ items: WorkItem[]; truncated: boolean }> {
+  async listReadyForRole(role: string | undefined, limit: number, agentId?: string): Promise<{ items: WorkItem[]; truncated: boolean; emptyReason?: ReadyEmptyReason }> {
     // idea-353 WI-2.1 (AC5 strict parity / audit-4265): the AGENT-SCOPED projection
     // (agentId supplied — used by the claimable digest) must count only what THIS
     // caller can actually claim, so it mirrors claim_work's per-agent WIP-cap. A
@@ -496,7 +497,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     if (agentId !== undefined) {
       const cap = wipCap(role);
       if ((await this.inFlightCount(agentId, cap)) >= cap) {
-        return { items: [], truncated: false };
+        // work-94 (cold-start spine, non-dark digest): an empty digest is never DARK — the
+        // caller is maxed, so tell them WHY (free a slot), not a silent zero.
+        return { items: [], truncated: false, emptyReason: "wip_capped" };
       }
     }
     const { items } = await this.substrate.list<WorkItem>(KIND, { filter: { status: "ready" }, limit: READY_SCAN_CAP });
@@ -523,7 +526,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         claimable.push(w);
       }
     }
-    return { items: claimable, truncated };
+    // work-94 (non-dark digest): an empty scan is NOT dark — distinguish "nothing claimable
+    // for your role right now" from the wip_capped short-circuit above. (A finer split —
+    // ready-but-deps-unmet vs none-ready-at-all — is a deferred refinement.)
+    return { items: claimable, truncated, emptyReason: claimable.length === 0 ? "no_claimable_ready" : undefined };
   }
 
   // ── Claim / lease / FSM verbs (C1-R2 sub-PR-3a) ───────────────────────────

@@ -142,4 +142,28 @@ describe("WorkItem claim_work authority enforcement (real-pg)", () => {
       await holder;
     }
   }, OP_TIMEOUT);
+
+  // ── work-94 (cold-start spine): the non-dark emptyReason on the agent-scoped projection ──
+  describe("listReadyForRole non-dark emptyReason", () => {
+    const CAP = 3; // DEFAULT_WIP_CAP
+
+    it("wip_capped: a MAXED agent's scoped projection short-circuits empty WITH emptyReason=wip_capped", async () => {
+      const agent = "agent-ncr-cap";
+      for (let i = 0; i < CAP; i++) {
+        const w = await repo.createWorkItem({ type: "task", roleEligibility: [] });
+        await repo.claimWorkItem(w.id, agent); // fills the agent's in-flight count to the cap
+      }
+      const res = await repo.listReadyForRole("engineer", 50, agent);
+      expect(res.items).toEqual([]);             // short-circuited before the scan (AC5 parity)
+      expect(res.emptyReason).toBe("wip_capped"); // non-dark: says WHY, not a silent zero
+    }, OP_TIMEOUT);
+
+    it("non-empty: a not-capped agent with claimable work gets items + NO emptyReason", async () => {
+      const agent = "agent-ncr-fresh";
+      await repo.createWorkItem({ type: "task", roleEligibility: [] }); // a claimable any-role ready item
+      const res = await repo.listReadyForRole("engineer", 50, agent);
+      expect(res.items.length).toBeGreaterThan(0);
+      expect(res.emptyReason).toBeUndefined();    // a non-empty digest is not annotated
+    }, OP_TIMEOUT);
+  });
 });

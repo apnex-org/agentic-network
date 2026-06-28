@@ -193,6 +193,48 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     expect(stub.calls.length).toBe(0); // short-circuited BEFORE the projection, like the claim gate
   });
 
+  // ── work-94 (cold-start spine): the NON-DARK empty digest ──
+  it("list_ready_work NON-DARK: a QUARANTINED caller's empty digest carries emptyReason=quarantined + a message", async () => {
+    const stub = makeStub({ listReadyForRole: () => ({ items: [], truncated: false }) });
+    const reg = stubRegistry({ getAgent: async () => ({ quarantined: true }) });
+    const b = body(await router.handle("list_ready_work", { scopeToCaller: true }, ctxFor(stub, "engineer", reg)));
+    expect(b.count).toBe(0);
+    expect(b.emptyReason).toBe("quarantined");
+    expect(String(b.emptyReasonMessage)).toMatch(/clear_work_quarantine/);
+  });
+
+  it("list_ready_work NON-DARK: a WIP-capped empty digest carries emptyReason=wip_capped (passed through from the projection)", async () => {
+    const stub = makeStub({ listReadyForRole: () => ({ items: [], truncated: false, emptyReason: "wip_capped" }) });
+    const reg = stubRegistry({ getAgent: async () => ({ quarantined: false }) });
+    const b = body(await router.handle("list_ready_work", { scopeToCaller: true }, ctxFor(stub, "engineer", reg)));
+    expect(b.count).toBe(0);
+    expect(b.emptyReason).toBe("wip_capped");
+    expect(String(b.emptyReasonMessage)).toMatch(/WIP cap/);
+  });
+
+  it("list_ready_work NON-DARK: no claimable work carries emptyReason=no_claimable_ready", async () => {
+    const stub = makeStub({ listReadyForRole: () => ({ items: [], truncated: false, emptyReason: "no_claimable_ready" }) });
+    const reg = stubRegistry({ getAgent: async () => ({ quarantined: false }) });
+    const b = body(await router.handle("list_ready_work", { scopeToCaller: true }, ctxFor(stub, "engineer", reg)));
+    expect(b.emptyReason).toBe("no_claimable_ready");
+    expect(String(b.emptyReasonMessage)).toMatch(/claimable by your role/);
+  });
+
+  it("list_ready_work: a NON-empty digest carries NO emptyReason (only an empty digest is non-dark-annotated)", async () => {
+    const stub = makeStub({ listReadyForRole: () => ({ items: [sampleItem({ status: "ready" })], truncated: false }) });
+    const reg = stubRegistry({ getAgent: async () => ({ quarantined: false }) });
+    const b = body(await router.handle("list_ready_work", { scopeToCaller: true }, ctxFor(stub, "engineer", reg)));
+    expect(b.count).toBe(1);
+    expect(b.emptyReason).toBeUndefined();
+    expect(b.emptyReasonMessage).toBeUndefined();
+  });
+
+  it("list_ready_work non-scoped NON-DARK: an empty role view carries emptyReason=no_claimable_ready", async () => {
+    const stub = makeStub({ listReadyForRole: () => ({ items: [], truncated: false, emptyReason: "no_claimable_ready" }) });
+    const b = body(await router.handle("list_ready_work", {}, ctxFor(stub, "engineer")));
+    expect(b.emptyReason).toBe("no_claimable_ready");
+  });
+
   it("list_ready_work default (non-scoped): does NOT thread agentId — the role view + D-1 R1 seam preserved", async () => {
     const stub = makeStub({ listReadyForRole: () => ({ items: [], truncated: false }) });
     const r = await router.handle("list_ready_work", {}, ctxFor(stub, "engineer"));
