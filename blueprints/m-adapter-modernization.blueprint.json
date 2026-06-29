@@ -1,0 +1,121 @@
+{
+  "_meta": {
+    "name": "m-adapter-modernization",
+    "version": "1.0",
+    "description": "The claude-pilot build arc (P1a->P1e + cross-lineage acceptance) from the RATIFIED adapter Design v1.0 (docs/designs/m-adapter-modernization-design.md, §9). Containerise the claude harness: fat-kernel/thin-shim, EMBEDDED topology, 4-actor resilience, JSON-manifest+ENV, docker-compose, reproducibility-first.",
+    "template": true,
+    "status": "SAVED — NOT SEEDED (Director pause 2026-06-29: 'we will not begin the adapter graph just yet'). Seed only on explicit Manifest go-ahead.",
+    "parameters": {
+      "RUN_ID": "unique run id, e.g. m-adapter-modernization_pilot_<date> (substituted into runId + the work-bp-<RUN_ID>-* cross-node refs)",
+      "DESIGN_SHA": "40-hex sha to pin docs/designs/m-adapter-modernization-design.md (the authority) at seed-time"
+    },
+    "usage": "TEMPLATE + SAVED-NOT-SEEDED. To install later: substitute ${...} + pin DESIGN_SHA, then seed_blueprint({runId, nodes, dryRun:true}) to fail-closed-validate, then seed for real. This file is the design's 'proposed mission work-graph' captured per the Director pause — it creates ZERO live work-items until seeded.",
+    "notes": [
+      "SEQUENCING is reproducibility-FIRST (Design §9): P1a (image) is the first shippable milestone — you cannot chaos-validate a build you cannot guarantee-deploy. P1b (manifest) is a parallel refactor. P1c/P1d depend on a deployable image. P1e integrates. pilot_accept (verifier) certifies.",
+      "Claude pilot is SAME-LINEAGE — pilot_accept certifies the §9 falsifiable acceptance criteria. The opencode Phase-2 drop-in is a SEPARATE arc that adds the R3 Cross-Lineage Runtime Acceptance Gate (Design §11) — NOT in this pilot blueprint.",
+      "work-102 (steve's cross-lineage conformance re-run of Design v1.0) folds in at/ before pilot_accept.",
+      "Defers per Design §10/§11: opencode auth-parity + LLM-auth-scale (Phase-2), telemetry (idea-343), reference-resolver (idea-397), axiom-import (idea-396), ratify mechanization (idea-388)."
+    ]
+  },
+  "runId": "${RUN_ID}",
+  "nodes": [
+    {
+      "localId": "p1a_repro_image",
+      "label": "P1a — reproducible + provenance-guaranteed image FIRST (incl. diagnose-first gate)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": [],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "design-doc", "ref": "${DESIGN_SHA}:docs/designs/m-adapter-modernization-design.md", "storage": "git", "mode": "read", "required": true }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_wedge_diagnosed", "kind": "doc", "description": "Diagnose-first/provenance-confirm GATE (Design §8): confirm what code was ACTUALLY deployed during the historical wedge — a gate, not a byproduct." },
+        { "id": "ev_repro_digest", "kind": "test-run", "description": "Byte-reproducibility digest-equality TEST: same git SHA -> same image digest (source-bake at SHA + npm ci + digest-pinned bases + SOURCE_DATE_EPOCH/layer-mtime normalization). A falsifiable test, not a claim." }
+      ],
+      "runbook": "You are the engineer. Design §8/§9 P1a — the FIRST milestone (reproducibility-first; you cannot chaos-validate a build you cannot guarantee-deploy). STEPS: (1) DIAGNOSE-FIRST gate: confirm the historically-deployed code during the wedge (provenance), recording ev_wedge_diagnosed. (2) Build the reproducible image: bake from monorepo source at a git SHA (workspace @apnex/*:'*' resolves in-tree, no caret), npm ci for external deps, digest-pin bases, add SOURCE_DATE_EPOCH + layer-mtime/file-ordering normalization + reproducible node-gyp. (3) Prove ev_repro_digest: same SHA -> same image digest (a true digest-equality test). Deploy/record the immutable :sha, never :latest. complete_work: ev_wedge_diagnosed + ev_repro_digest."
+    },
+    {
+      "localId": "p1b_extract_manifest",
+      "label": "P1b — extract the JSON manifest + capability-matrix (parallel refactor)",
+      "type": "task",
+      "priority": "normal",
+      "roleEligibility": ["engineer"],
+      "dependsOn": [],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "design-doc", "ref": "${DESIGN_SHA}:docs/designs/m-adapter-modernization-design.md", "storage": "git", "mode": "read", "required": true }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_manifest", "kind": "pr", "description": "The hardcoded-TS shim config extracted to a schema-validated JSON manifest + a 3-valued capability-matrix (yes/partial/no + REASON + per-capability unevenness). Per-agent values stay ENV. (Design §3, the #1 shim-audit gap.)" }
+      ],
+      "runbook": "You are the engineer. Design §3/§9 P1b — a parallelizable refactor (no dependency). GOAL: move the per-harness config from hardcoded TS (the #1 shim-audit gap) to a schema-validated JSON manifest + a 3-valued capability-matrix (yes/partial/no + REASON + per-capability unevenness). Keep per-agent values in ENV. complete_work: ev_manifest."
+    },
+    {
+      "localId": "p1c_liveness_chaos",
+      "label": "P1c — build L1.5 liveness self-watchdog + chaos-validate the wedge edge",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": ["p1a_repro_image"],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "design-doc", "ref": "${DESIGN_SHA}:docs/designs/m-adapter-modernization-design.md", "storage": "git", "mode": "read", "required": true }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_chaos_passed", "kind": "test-run", "description": "Chaos matrix passes (Design §4/§9 P1c): the named keepalives-flowing-but-session-dead edge (kill Hub session server-side while SSE keepalive flows) + a restart-mid-long-cognitive-node case; assert auto-recovery (L1.5 probe-fail -> PID-1 self-exit -> L2 restart -> re-handshake -> re-claim) with ZERO manual intervention; one criterion tied to the lived incident." }
+      ],
+      "runbook": "You are the engineer. Design §4/§9 P1c (needs the deployable image from P1a). GOAL: build the L1.5 liveness self-watchdog (app-level session-validity probe INDEPENDENT of transport keepalive -> on fail, deliberately self-exit PID-1 so L2 restarts) AND chaos-validate it. STEPS: (1) Implement the watchdog + the EMBEDDED-topology exit-propagation seam (in-process kernel self-exit -> container/PID-1 exit so docker-L2 fires — the conformance-flagged seam to nail). (2) Chaos matrix: the keepalives-flowing-but-session-dead edge + restart-mid-long-cognitive-node; assert zero-manual-intervention auto-recovery; anchor one criterion to the lived incident. complete_work: ev_chaos_passed."
+    },
+    {
+      "localId": "p1d_injection_ack",
+      "label": "P1d — injection consumption-ACK / ordered queue (the riskiest net-new)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": ["p1a_repro_image"],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "design-doc", "ref": "${DESIGN_SHA}:docs/designs/m-adapter-modernization-design.md", "storage": "git", "mode": "read", "required": true }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_injection_ack", "kind": "test-run", "description": "A message injected during a Hub-channel drop is delivered EXACTLY-ONCE + acked after reconnect (no loss, no dup). Per-harness: claude one-way MCP notification = best-effort + backstop chain (PollBackstop dedup-aware re-delivery + ack_message + L3); opencode awaitable promptAsync = exactly-once. Disambiguate Hub-leg-ack (uniform) from last-hop-consumption-ack (per-harness). (Design §9 P1d.)" }
+      ],
+      "runbook": "You are the engineer. Design §9 P1d — the riskiest net-new item (needs the deployable image from P1a). GOAL: the injection consumption-ACK + ordered delivery queue. Test: a message injected during a Hub-channel drop is delivered exactly-once + acked after reconnect (no loss/dup). DISAMBIGUATE the two acks: the Hub-leg ack/retry/ordering (kernel<->Hub, UNIFORM — what delivers survive-blips-by-construction) vs the last-hop consumption-ack (per-harness: claude one-way notification = best-effort + backstop chain; opencode awaitable = exactly-once). complete_work: ev_injection_ack."
+    },
+    {
+      "localId": "p1e_containerise",
+      "label": "P1e — containerise on docker-compose (integrates P1a-P1d)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": ["p1a_repro_image", "p1b_extract_manifest", "p1c_liveness_chaos", "p1d_injection_ack"],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "design-doc", "ref": "${DESIGN_SHA}:docs/designs/m-adapter-modernization-design.md", "storage": "git", "mode": "read", "required": true }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_containerised", "kind": "test-run", "description": "docker-compose stands up the claude harness container: EMBEDDED PID-1 thin supervisor; L2 restart-policy; host-side worktree mounted-in (NO in-container worktree); headless-auth run-gate PASSES (CLAUDE_CODE_OAUTH_TOKEN file-mounted, no keychain/TUI prompt); the auth-expiry rotation runbook present (5th resilience concern). (Design §2/§5/§6/§9 P1e.)" }
+      ],
+      "runbook": "You are the engineer. Design §9 P1e — integrate P1a-P1d into the containerised harness (needs all four). GOAL: docker-compose stands up the claude container. STEPS: EMBEDDED topology (PID-1 thin supervisor -> launch CLI -> CLI spawns kernel-shim); L2 docker restart-policy + the safe-update contract (manual-first); host-side worktree mounted-in (FORBID in-container worktree); the headless-auth run-gate (CLAUDE_CODE_OAUTH_TOKEN as a file-mounted secret — NOT env; no keychain/TUI prompt); the auth-expiry monitor+rotation runbook. complete_work: ev_containerised."
+    },
+    {
+      "localId": "pilot_accept",
+      "label": "Verifier-gate: certify the pilot acceptance criteria (+ fold steve's cross-lineage re-run, work-102)",
+      "type": "verifier-gate",
+      "priority": "high",
+      "roleEligibility": ["verifier"],
+      "dependsOn": ["p1e_containerise"],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "design-doc", "ref": "${DESIGN_SHA}:docs/designs/m-adapter-modernization-design.md", "storage": "git", "mode": "read", "required": true },
+        { "kind": "workitem", "ref": "work-102", "storage": "entity", "mode": "read", "required": false }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_pilot_verdict", "kind": "audit", "description": "Verifier audit VALID/INVALID: ALL Design §9 falsifiable acceptance criteria pass (repro-digest-equality, wedge-diagnosed, chaos incl. keepalives-flowing edge + restart-mid-long-node, injection exactly-once+ack, headless-auth-no-prompt, host-side-worktree). Folds steve's cross-lineage Design re-run (work-102). producedBy MUST resolve to a registered role=verifier Agent.", "refResolvable": true }
+      ],
+      "runbook": "You are the verifier (steve, cross-lineage). The claude pilot is SAME-LINEAGE, so this gate certifies the §9 falsifiable acceptance criteria (NOT the opencode R3 cross-lineage runtime gate — that is the separate Phase-2 arc). STEPS: (1) Independently confirm EVERY §9 acceptance test passed: repro digest-equality, wedge diagnosed, chaos (keepalives-flowing-but-session-dead + restart-mid-long-node) auto-recovers zero-manual, injection exactly-once+ack, headless-auth no keychain/TUI, host-side worktree. (2) Fold your cross-lineage Design v1.0 conformance re-run (work-102). (3) Emit ev_pilot_verdict VALID/INVALID; INVALID -> bounce to the failing P-node. complete_work: ev_pilot_verdict (audit; producedBy=your verifier agentId)."
+    }
+  ]
+}
