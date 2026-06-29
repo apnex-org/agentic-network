@@ -118,6 +118,8 @@ Two hard corollaries:
 
 14 source families, each pulled `status:any` with an independent `COUNT(*)` cross-check (catches silent MCP pagination-truncation → forces psql fallback). Candidate kinds (get per-candidate analysis): live Ideas, Bugs, umbrella-Ideas (Initiative proxies), and **reverse-gap Teles** (teles with zero live serving candidate, synthesised as "propose-an-Initiative" rows). Everything else is **signal context**.
 
+**Coverage contract (two-tier; run-finding 2026-06-29, audit-5088).** Fail-closed / zero-shortfall applies to **CANDIDATE families only** — {Ideas, Bugs, reverse-gap Teles} — the complete missed-candidate surface; bounded + psql-cheap, so exhaustive-by-construction stays hard here. **CONTEXT families** (documents, audit_entries history-slice, missions, proposals, work, metrics, agents, threads, clarifications, calibrations, friction-backlog, roadmap, reviews) are **exhaustive-best-effort with retrieval-method + any limit explicitly documented in the manifest; non-fatal** — they inform scoring but *cannot hide a candidate*. Strict-all-family fail-closed was un-satisfiable by design (audit_entries is a ~5000-entry backbone the SR only slices; documents is a moving target the run itself grows) — a gate that can never pass is a deadlock, not a firewall. Capture is pinned at the reconcile anchor so the run's own added docs are excluded.
+
 | Family | Sources | Role |
 |---|---|---|
 | **Entities** | `list_ideas`, `list_bugs`, `list_missions` (terminal-ledger = ground truth), `list_tele`, `list_proposals`, `list_documents` + `docs/reviews/` | candidates + readiness + prior-run continuity |
@@ -142,9 +144,9 @@ The pack carries **only the left column** (neutral); the council assigns the rig
 
 ### 3.4 The pack artifact + the 7 neutrality guarantees
 
-Output: `docs/reviews/<date>-sr-evidence-pack.md` (human) + `.json` (machine sidecar; **`storage:entity` advisory ref** to downstream nodes per C1). Structure §0 provenance header · §1 coverage manifest (per-source expected `COUNT(*)` vs captured vs method; **ANY shortfall → FAIL CLOSED**) · §2 candidate universe (id-sorted, signals only, no rank) · §3 signal context · §4 history slice · §5 neutrality attestation.
+Output: `docs/reviews/<date>-sr-evidence-pack.md` (human) + `.json` (machine sidecar; **`storage:entity` advisory ref** to downstream nodes per C1). Structure §0 provenance header · §1 coverage manifest (per-source expected `COUNT(*)` vs captured vs method; **ANY CANDIDATE-family shortfall → FAIL CLOSED**; CONTEXT families exhaustive-best-effort + documented per the §3.2 two-tier contract) · §2 candidate universe (id-sorted, signals only, no rank) · §3 signal context · §4 history slice · §5 neutrality attestation.
 
-The 7 guarantees, each mechanically checked at `pack_gate`: (1) deterministic assembly, (2) exhaustive-by-construction (manifest fails closed on shortfall), (3) provenance per item (`source_verb`/`query_params`/`captured_at`/`retrieval_method`/`result_count`/`expected_count`/`version_anchor`), (4) stable value-blind `(kind,id)` ordering, (5) signal/judgement separation (no rank), (6) transparent inclusion predicate, (7) reconciliation-gated (stamps the recon anchor).
+The 7 guarantees, each mechanically checked at `pack_gate`: (1) deterministic assembly, (2) exhaustive-by-construction (manifest fails closed on any CANDIDATE-family shortfall; CONTEXT families best-effort + documented per §3.2), (3) provenance per item (`source_verb`/`query_params`/`captured_at`/`retrieval_method`/`result_count`/`expected_count`/`version_anchor`), (4) stable value-blind `(kind,id)` ordering, (5) signal/judgement separation (no rank), (6) transparent inclusion predicate, (7) reconciliation-gated (stamps the recon anchor).
 
 **Substrate-gap honesty:** lineage/in-degree use a **fixed, versioned tag+body parser** today (deterministic ⇒ still neutral), interface-compatible with idea-151's future `lineage()` verb; §0 stamps the derivation method+version.
 
