@@ -1,0 +1,42 @@
+# Secret-safe + lean build context for the P1a reproducible adapter image.
+# Copied into the build context root as `.dockerignore` by repro-build-test.sh.
+#
+# The context is already a `git archive <SHA>` (tracked files only -> no .git, no
+# untracked creds), but this is defense-in-depth per scion-avoid[10] / the cred-free
+# pillar-2 acceptance line: NOTHING secret rides into a layer, even if the Dockerfile
+# COPYs broadly.
+
+# ── secret/cred surface (load-bearing) ──
+.git
+.gitignore
+.ois
+**/.ois
+**/*.env
+**/*.pem
+**/*.key
+**/*.crt
+**/*secret*
+**/*credential*
+**/id_rsa*
+**/.npmrc
+
+# ── regenerated-at-build (must NOT ride in; tsc/npm ci recreate deterministically) ──
+**/node_modules
+**/dist
+**/*.tgz
+**/coverage
+**/*.log
+
+# ── irrelevant-to-adapter subtrees (lean context; only packages/ + adapters/ + root
+#    manifests + scripts/build are needed) ──
+hub
+modules
+deploy
+docs
+agents
+blueprints
+skills
+local-state
+undefined
+.github
+**/.terraform
