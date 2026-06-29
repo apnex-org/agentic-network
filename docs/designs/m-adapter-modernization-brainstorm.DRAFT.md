@@ -24,6 +24,14 @@
 - **(iii) distribution + migration** — the npm-pinned model + how we move off directory-source without disruption.
 - **framing Q:** is idea-391 (CLI→Hub REST) in-scope for this, or do we design resilience *around* the MCP host-limit and treat 391 separately?
 
+## Decision log
+- **2026-06-29 (Director) — tool-surface-resilience is solved at the HARNESS layer (containerisation + restarts), NOT the adapter (no hot-reload, no idea-391 on the critical path).** Mechanism: a tool-surface change → restart the containerised harness → the STARTUP-bootstrap path (which DOES honor the live surface — the path that worked today; bug-203 only blocks the *mid-session* re-enumerate) re-enumerates fresh. Containerisation makes the restart cheap/clean/reproducible + auto-fresh caches (no stale `.ois/tool-catalog.json` / plugin-cache → the manual clear+restart dance becomes automatic).
+  - **Clean separation of concerns:** ADAPTER (priority 1) owns CONNECTION-resilience ONLY (auto-reconnect/self-heal on a live session); HARNESS-container (priority 2) owns TOOL-SURFACE-resilience (restart re-bootstraps) + reproducibility + cache-cleanliness.
+  - **Harness-containerisation = triple win:** (1) tool-surface re-bootstrap, (2) cache-cleanliness (fresh container = clean slate), (3) provenance-purity (reproducible image kills `sdkDirty`).
+  - **idea-391 (CLI→Hub REST) DE-SCOPED** from tool-surface-resilience → separate/optional track, not a dependency.
+  - **Dependency: harness-restarts ⟂ cold-pickup quality.** A restart drops in-session context → the agent re-hydrates from durable state (memory-anchor pattern). VALIDATED this session: the SR run survived 2 restarts + a Hub-disconnect via cold-pickup. The restart-strategy rests on this substrate (already solid).
+  - **Adapter resilience scope NARROWS to connection-resilience** → simpler adapter design (no hot-reload).
+
 ## Related entities
 mission-64 (M-Adapter-Streamline; `update-adapter.sh`, the npm-model) · bug-203 (host won't re-enumerate tool-surface) · idea-392 (live auto-refresh / no-stale-caches / opencode-parity) · idea-391 (system CLI→Hub REST) · idea-390 (agent⟂project separation) · bug-184 (version-honesty) · candidate_A (the SR adapter summit) · `@apnex` npm namespace.
 
