@@ -117,6 +117,21 @@ export {
 } from "./kernel/session-claim.js";
 export type { ClaimSessionParsed } from "./kernel/session-claim.js";
 
+// ── L1.5 liveness watchdog + the kernel->supervisor exit-propagation seam
+//    (M-Adapter-Modernization P1c, Design §4). The watchdog detects the
+//    keepalives-flowing-but-session-dead wedge via a proactive session probe;
+//    on a bounded failure budget it emits the wedged-restart sentinel (the
+//    signal P1e's PID-1 supervisor consumes) and the shim self-exits.
+export { LivenessWatchdog } from "./kernel/liveness-watchdog.js";
+export type { LivenessWatchdogOptions } from "./kernel/liveness-watchdog.js";
+export {
+  emitLivenessLostSignal,
+  resolveSentinelPath,
+  WEDGED_RESTART_EXIT_CODE,
+  DEFAULT_LIVENESS_SENTINEL,
+} from "./kernel/liveness-signal.js";
+export type { LivenessLostSignalPayload } from "./kernel/liveness-signal.js";
+
 // ── Layer 1c: tool-manager (Initialize/ListTools/CallTool factory) ──
 //
 // The MCP protocol tool-manager per Design v1.2 §4 naming discipline
