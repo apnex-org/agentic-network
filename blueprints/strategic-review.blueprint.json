@@ -6,7 +6,9 @@
       "label": "Reconcile the live backlog (the only valid SR input)",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["engineer"],
+      "roleEligibility": [
+        "engineer"
+      ],
       "dependsOn": [],
       "completionDependsOn": [],
       "references": [
@@ -39,8 +41,12 @@
       "label": "Assemble the neutral, exhaustive evidence pack",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["engineer"],
-      "dependsOn": ["reconcile_anchor"],
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "reconcile_anchor"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -117,8 +123,12 @@
       "label": "Verifier-gate: certify the evidence pack's 7 neutrality guarantees",
       "type": "verifier-gate",
       "priority": "high",
-      "roleEligibility": ["verifier"],
-      "dependsOn": ["assemble_pack"],
+      "roleEligibility": [
+        "verifier"
+      ],
+      "dependsOn": [
+        "assemble_pack"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -151,8 +161,12 @@
       "label": "Cluster the universe into 5-8 sealed summit candidates (blinded)",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["engineer"],
-      "dependsOn": ["pack_gate"],
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "pack_gate"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -201,8 +215,12 @@
       "label": "Architect scores ITS OWN 3 dimensions (D1-D3) native lens, SEALED, D-3-blinded",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["architect"],
-      "dependsOn": ["seal_candidates"],
+      "roleEligibility": [
+        "architect"
+      ],
+      "dependsOn": [
+        "seal_candidates"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -241,8 +259,12 @@
       "label": "Engineer scores ITS OWN 3 dimensions (D4-D6) native lens, SEALED",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["engineer"],
-      "dependsOn": ["seal_candidates"],
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "seal_candidates"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -281,8 +303,12 @@
       "label": "Verifier scores ITS OWN 3 dimensions (D7-D9) native lens, SEALED",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["verifier"],
-      "dependsOn": ["seal_candidates"],
+      "roleEligibility": [
+        "verifier"
+      ],
+      "dependsOn": [
+        "seal_candidates"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -321,8 +347,14 @@
       "label": "Architect: reveal sealed scores, RED-TEAM candidate_K, revise own D1-D3",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["architect"],
-      "dependsOn": ["score_arch", "score_eng", "score_ver"],
+      "roleEligibility": [
+        "architect"
+      ],
+      "dependsOn": [
+        "score_arch",
+        "score_eng",
+        "score_ver"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -361,8 +393,14 @@
       "label": "Engineer: scope-realism red-team architect D1-D3, STEELMAN candidate_K + blind D1 cross-check, revise own D4-D6",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["engineer"],
-      "dependsOn": ["score_arch", "score_eng", "score_ver"],
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "score_arch",
+        "score_eng",
+        "score_ver"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -401,8 +439,14 @@
       "label": "Verifier: risk red-team engineer D4-D6 + architect D3, revise own D7-D9",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["verifier"],
-      "dependsOn": ["score_arch", "score_eng", "score_ver"],
+      "roleEligibility": [
+        "verifier"
+      ],
+      "dependsOn": [
+        "score_arch",
+        "score_eng",
+        "score_ver"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -441,9 +485,15 @@
       "label": "Engineer adjudicates: mechanical recompute of the composite + ranked slate + stint-6 plan (architect EXCLUDED)",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["engineer"],
-      "dependsOn": [],
-      "completionDependsOn": ["deliberate_arch", "deliberate_eng", "deliberate_ver"],
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "deliberate_arch",
+        "deliberate_eng",
+        "deliberate_ver"
+      ],
+      "completionDependsOn": [],
       "references": [
         {
           "kind": "design-doc",
@@ -510,9 +560,15 @@
       "label": "Verifier independently re-derives the composite + co-signs (the 2nd producing node; architect EXCLUDED)",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["verifier"],
-      "dependsOn": [],
-      "completionDependsOn": ["deliberate_arch", "deliberate_eng", "deliberate_ver"],
+      "roleEligibility": [
+        "verifier"
+      ],
+      "dependsOn": [
+        "deliberate_arch",
+        "deliberate_eng",
+        "deliberate_ver"
+      ],
+      "completionDependsOn": [],
       "references": [
         {
           "kind": "design-doc",
@@ -569,8 +625,13 @@
       "label": "Verifier-gate: independent re-derive + VALID/INVALID verdict (Director-dark scan, pinned head-SHA)",
       "type": "verifier-gate",
       "priority": "high",
-      "roleEligibility": ["verifier"],
-      "dependsOn": ["adjudicate_eng", "adjudicate_ver"],
+      "roleEligibility": [
+        "verifier"
+      ],
+      "dependsOn": [
+        "adjudicate_eng",
+        "adjudicate_ver"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -638,8 +699,13 @@
       "label": "Non-architect packages the §0-§11 artifact + opens the PR + routes triage",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["engineer", "verifier"],
-      "dependsOn": ["verify_ranking"],
+      "roleEligibility": [
+        "engineer",
+        "verifier"
+      ],
+      "dependsOn": [
+        "verify_ranking"
+      ],
       "completionDependsOn": [],
       "references": [
         {
@@ -697,8 +763,12 @@
       "label": "Director-queue node (idea-388): Director reviews the whole slate, gates the #1 FOCUS (arc-root)",
       "type": "task",
       "priority": "high",
-      "roleEligibility": ["director"],
-      "dependsOn": ["surface"],
+      "roleEligibility": [
+        "director"
+      ],
+      "dependsOn": [
+        "surface"
+      ],
       "completionDependsOn": [
         "reconcile_anchor",
         "assemble_pack",
