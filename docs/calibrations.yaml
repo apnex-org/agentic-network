@@ -3596,6 +3596,63 @@ calibrations:
       - tele-3
       - tele-2
 
+  - id: 98
+    class: methodology
+    title: "Self-applying-methodology / dogfood-the-gate before adoption — a new gate or methodology proves its value by being run on ITSELF + its first product before it becomes standard, and the producer ACCEPTS the findings (acceptance-not-rejection is the integrity test)"
+    origin: autonomous-stint-6 (design-process v1.0 + adapter Design v1.0, 2026-06-29)
+    surfaced_at: workflow w2v97jvwm (methodology self-review) + w6e5e0dqp (adapter design_redteam) + wrv6hgwzc (conformance addendum)
+    status: closed-folded
+    closure_mechanism: |
+      The Design-Process methodology v1.0 was run through its OWN design_redteam gate
+      (workflow w2v97jvwm) before ratify, and the M-Adapter-Modernization Design was run
+      through the full process as its first product. Each gate caught a real flaw the
+      producer structurally could not self-catch: the methodology self-review found an
+      anti-spin hole (the architect adjudicating critiques of its own design) -> folded the
+      verify_reconcile independence node; the adapter design_redteam found the live-but-
+      wedged-no-actor hole + the boot-topology contradiction; the conformance pass caught a
+      §5 auth-expiry factual error. In every case the architect ACCEPTED the finding (0
+      rejects) rather than rationalizing it away — acceptance is the integrity test (a gate
+      whose author rejects its findings is theatre). The discipline: validate a new
+      gate/methodology by self-application + first-product-application BEFORE adoption.
+      Folded into design-process.md v1.0 (the methodology mandates its own design_redteam +
+      verify_reconcile; the §10/§13 disposition ledgers record the accepts). Distinct from
+      #83 (the WHEN to deploy a deep-audit) and the review-loop-as-calibration-surface
+      pattern (reviews surface cals); this is "the gate must survive its own gate."
+    cross_refs:
+      - docs/methodology/design-process.md
+      - "#83 (deep-adversarial-audit value at gates — sibling)"
+      - "pattern: review-loop-as-calibration-surface (sibling)"
+      - project_design_process_and_adapter_2026_06_29
+    tele_alignment:
+      - tele-8
+      - tele-10
+      - tele-4
+
+  - id: 99
+    class: methodology
+    title: "Spec -> review -> blueprint sequencing — author the SPEC, adversarially review it + fold fixes, THEN encode the executable (blueprint/JSON); building the executable on an unverified spec forces a rewrite when review fixes land"
+    origin: autonomous-stint-6 (design-process methodology, 2026-06-29)
+    surfaced_at: design-process v0.1 -> review w2v97jvwm -> v1.0 -> blueprint JSON
+    status: closed-folded
+    closure_mechanism: |
+      During the Design-Process formalisation the methodology SPEC (design-process.md) was
+      authored first, run through its own adversarial review (w2v97jvwm), folded to v1.0, and
+      ONLY THEN encoded as the executable blueprint JSON (design-process.blueprint.json) —
+      deliberately, so the review's must-fixes (the verify_reconcile node, the gate-vs-veto
+      semantics, the invalid director-decision-node encoding) did not force a JSON rewrite.
+      The discipline: for any artifact with a spec + an executable form, sequence
+      spec -> adversarial-review -> fold -> encode-executable; never build the executable on
+      an unverified spec. Folded into design-process.md §11 (the blueprint JSON is authored
+      from the verified spec) and practiced on both the design-process + adapter blueprints.
+    cross_refs:
+      - docs/methodology/design-process.md
+      - blueprints/design-process.blueprint.json
+      - "#98 (self-applying-methodology — sibling from the same arc)"
+      - project_design_process_and_adapter_2026_06_29
+    tele_alignment:
+      - tele-8
+      - tele-2
+
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
 #   title                       string; human-readable pattern name
