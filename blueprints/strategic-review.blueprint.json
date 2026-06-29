@@ -1,0 +1,752 @@
+{
+  "runId": "stint6_strategic_review_20260629",
+  "nodes": [
+    {
+      "localId": "reconcile_anchor",
+      "label": "Reconcile the live backlog (the only valid SR input)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": [],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "methodology-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/methodology/ledger-reconciliation.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "methodology-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/methodology/strategic-review.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_recon_ledger",
+          "kind": "doc",
+          "description": "A clean, reconciled live backlog produced by the 5-step ledger-reconciliation process with a terminal-ledger BACKWARD cross-ref (walk completed missions for incorporated-not-flipped; never scan the open ledger). Records the reconciliation anchor (timestamp + HEAD sha) that every downstream query stamps."
+        }
+      ],
+      "runbook": "You are the engineer. This is the FIRST node of the autonomous strategic-review run; nothing precedes it. GOAL: produce a clean, reconciled live backlog so the evidence pack is assembled over ground truth, not noise (FM-5: a stale backlog is not a valid SR input). STEPS: (1) Read docs/methodology/ledger-reconciliation.md (pinned ref above) and execute its full 5-step status-reconciliation process across Ideas/Bugs/Missions/Teles/Proposals. (2) Apply the terminal-ledger BACKWARD cross-ref: walk COMPLETED missions for work that was incorporated but whose source Idea/Bug was never flipped to a terminal status; never scan the open ledger forward. (3) Read docs/methodology/strategic-review.md for the SR-input expectations. (4) Stamp a reconciliation anchor = {wall-clock timestamp, repo HEAD sha} — every downstream gather query will be run 'status:any' at this anchor for byte-stable reproducibility. PRODUCE evidence requirement 'ev_recon_ledger': a doc capturing the reconciled backlog + every status flip you made + the stamped anchor. Do NOT rank, cluster, or filter candidates here; reconciliation is intake-neutral. Complete the node with complete_work, binding your doc artifact to requirementId ev_recon_ledger."
+    },
+    {
+      "localId": "assemble_pack",
+      "label": "Assemble the neutral, exhaustive evidence pack",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": ["reconcile_anchor"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "methodology-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/methodology/strategic-review.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "calibration-ledger",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/calibrations.yaml",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "friction-backlog",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/methodology/autonomous-stint-friction-backlog.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "roadmap-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/roadmap.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "tele-glossary",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/methodology/tele-glossary.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-reconcile_anchor",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_evidence_pack",
+          "kind": "doc",
+          "description": "docs/reviews/<date>-sr-evidence-pack.md (+.json sidecar): the FULL id-sorted unclustered candidate universe with the 6 mechanical signals per item, plus signal-context and history slices. Signal != judgement: NO rank, NO clustering, NO top-candidates."
+        },
+        {
+          "id": "ev_coverage_manifest",
+          "kind": "doc",
+          "description": "Per-source expected COUNT(*) vs captured vs retrieval-method for all 14 source families; ANY shortfall = FAIL CLOSED (exhaustive-by-construction). Includes per-item provenance (source_verb/query_params/captured_at/retrieval_method/result_count/expected_count/version_anchor)."
+        },
+        {
+          "id": "ev_neutrality_attest",
+          "kind": "freeform",
+          "description": "Attestation that assembly was deterministic, exhaustive, reconciliation-gated at the anchor, and that no agent/Director selected what went in — the 7 neutrality guarantees self-checked."
+        }
+      ],
+      "runbook": "You are the engineer. This node compresses EVIDENCE's 7-node hydration sub-graph into one sequential pass (minimal-valid fold). GOAL: a pure, reproducible function of substrate-state at the reconciliation anchor (no Director steer = FULL coverage; the manual 'since last SR' scope-filter is REJECTED as a steer — keep it only as a per-item annotation). STEPS: (1) Read design §3 (the evidence layer) in the pinned design doc for the exact 14 source families, the 6 mechanical signals, and the pack structure §0-§5. (2) Run EVERY source 'status:any' at the reconcile anchor with an independent COUNT(*) cross-check (catches silent MCP pagination truncation -> psql fallback): Entities (list_ideas/list_bugs/list_missions/list_tele/list_proposals/list_documents + docs/reviews/), Work/metrics (list_work/list_ready_work/get_current_stint, get_metrics reconstructed from list_audit_entries, get_agents NOT get_engineer_status), Friction/pathology (calibrations.py list/status, the friction backlog FR-N + dispositions, list_threads for thread-density/round-count-near-limit, open Clarifications), Roadmap/history (docs/roadmap.md arcs, per-rung stake timestamps, list_audit_entries history backbone, prior SR/recon docs). (3) Compute the 6 mechanical signals (tele-fit, forward-investment/in-degree, staking-decay pressure, readiness, risk, value/pain) for EVERY candidate using the fixed versioned tag+body parser; stamp the derivation method+version. (4) Emit the pack id-sorted, unclustered, NO RANK. PRODUCE ev_evidence_pack (doc), ev_coverage_manifest (doc; fail-closed on any COUNT shortfall), ev_neutrality_attest (freeform). Do NOT cluster or pick summits — that is seal_candidates' job. Bind each artifact to its requirementId at complete_work."
+    },
+    {
+      "localId": "pack_gate",
+      "label": "Verifier-gate: certify the evidence pack's 7 neutrality guarantees",
+      "type": "verifier-gate",
+      "priority": "high",
+      "roleEligibility": ["verifier"],
+      "dependsOn": ["assemble_pack"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-assemble_pack",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_pack_verified",
+          "kind": "review",
+          "description": "A verifier-authored review verdict (producedBy MUST resolve to a registered role=verifier Agent) that the pack passes all 7 neutrality guarantees and the coverage manifest has zero shortfall. PASS opens the gate; any failure fails closed.",
+          "refResolvable": true
+        }
+      ],
+      "runbook": "You are the verifier (steve). This is a VERIFIER-GATE: only a registered role=verifier Agent can complete it (architect-spawned sub-agents do NOT qualify). GOAL: independently certify the evidence pack is neutral and exhaustive BEFORE any scoring begins. STEPS: (1) Read design §3.4 (the 7 neutrality guarantees) in the pinned design doc. (2) Read the assemble_pack outputs (ev_evidence_pack, ev_coverage_manifest, ev_neutrality_attest) via get_work on the advisory entity ref above. (3) Mechanically check each guarantee: deterministic assembly; exhaustive-by-construction (manifest fails closed on ANY COUNT shortfall — re-resolve a sample of expected vs captured counts from ground truth, never narrative recall); per-item provenance present; stable value-blind (kind,id) ordering; signal/judgement separation (NO rank/cluster present); transparent inclusion predicate; reconciliation-gated (anchor stamped). (4) If ALL pass, complete the node with a REVIEW-kind evidence item bound to ev_pack_verified, with producedBy = your registered verifier agentId (refResolvable). If ANY fail, do NOT pass the gate — record the failing guarantee and bounce back to assemble_pack."
+    },
+    {
+      "localId": "seal_candidates",
+      "label": "Cluster the universe into 5-8 sealed summit candidates (blinded)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": ["pack_gate"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "methodology-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/methodology/strategic-review.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-assemble_pack",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_candidate_slate",
+          "kind": "doc",
+          "description": "5-8 summit candidates, each a SYMMETRIC record {candidate_id, value_evidence[], readiness_evidence[], tele_alignment[], cost_estimate, source_class}. NO recommended/default/baseline/anchor field. Every known standing prior (architect D-3/observability-PUSH = candidate_K, any Director lean, any seat prior) appears as a neutral candidate_*."
+        },
+        {
+          "id": "ev_provenance_sidecar",
+          "kind": "doc",
+          "description": "The SEALED de-blinding key mapping candidate_* -> 'this is X's standing prior'. Invisible during deliberation; recoverable at audit only. This is the soft-blinding sidecar (N1)."
+        },
+        {
+          "id": "ev_seal_hash",
+          "kind": "freeform",
+          "description": "A frozen-set hash over the candidate slate = the reveal line. Freezes the candidate set BEFORE any scoring (FM-10: prevents post-hoc set manipulation)."
+        }
+      ],
+      "runbook": "You are the engineer. GOAL: perform the council's FIRST judgement act — cluster the full id-sorted universe into 5-8 summit candidates — and SEAL it so the set cannot be retro-edited (FM-10). STEPS: (1) Read strategic-review.md sub-step-4 (FOLD/COMPOSE/DEFER/EXCLUDE clustering) and design §6.1 A1/A2 + §1 C5. (2) From the verified evidence pack (advisory ref above), cluster the universe into 5-8 summit candidates. (3) Write EACH candidate as a SYMMETRIC record {candidate_id, value_evidence[], readiness_evidence[], tele_alignment[], cost_estimate, source_class}. CRITICAL: there is NO 'recommended'/'default'/'baseline'/'anchor' field — anchoring (FM-1) must have no slot to live in. (4) BLINDING (R-D5 = blind ALL known priors): enter EVERY known standing prior as a neutral candidate_* — the architect's D-3/observability-PUSH prior becomes candidate_K, plus any Director-held lean or other seat's prior; do NOT label which is whose. (5) Put the authorship mapping ONLY into the sealed provenance sidecar (ev_provenance_sidecar) — invisible during deliberation, recoverable at audit. (6) Compute a frozen-set hash over the slate = ev_seal_hash (the reveal line). PRODUCE ev_candidate_slate (doc), ev_provenance_sidecar (doc), ev_seal_hash (freeform). NOTE: blinding here is SOFT (no Hub primitive hides authorship) — the construction-level guard is the symmetric schema + the no-anchor-slot rule; deliberate_eng does a blind D1 cross-check."
+    },
+    {
+      "localId": "score_arch",
+      "label": "Architect scores ITS OWN 3 dimensions (D1-D3) native lens, SEALED, D-3-blinded",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["architect"],
+      "dependsOn": ["seal_candidates"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "tele-glossary",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/methodology/tele-glossary.md",
+          "storage": "git",
+          "mode": "triangulate-against",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-seal_candidates",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_score_arch",
+          "kind": "doc",
+          "description": "Per-candidate scores for D1 tele-fit (w3), D2 strategic-leverage/composition (w2), D3 stake-clock-pressure (w2), each 1-5 with a bound rationale + a mode:triangulate-against ref (a tele/axiom/entity the score is grounded in). SEALED — does not read any other seat's scores."
+        }
+      ],
+      "runbook": "You are the architect (lily). You score ONLY your 3 of the 9 dimensions, from YOUR native lens: D1 tele-fit (weight 3), D2 strategic-leverage/composition (weight 2), D3 stake-clock-pressure (weight 2). You may NOT score D4-D9 (other seats own them). STEPS: (1) Read design §4.2 (the rubric anchors for D1/D2/D3) and §4.5 (tie-break) in the pinned design doc. (2) Read the sealed candidate slate (advisory ref). (3) Score each candidate 1-5 on D1/D2/D3 using the 5/3/1 anchors; EACH score MUST carry a bound rationale AND a mode:triangulate-against ref to the specific tele/axiom/entity it is grounded in (a score with no triangulation ref is invalid — cal #85 ground-truth). BLINDING (load-bearing): you cannot see candidate authorship; score D1-D3 on the EVIDENCE ALONE and do NOT privilege candidate_K (the D-3/observability-PUSH prior). Your standing prior gets exactly ONE row's worth of weight on its own merits — no thumb on the scale. (4) This is a SEALED score: do NOT read score_eng or score_ver; seal-before-reveal (B4) is what lets the clash be genuine. PRODUCE ev_score_arch (doc) bound at complete_work."
+    },
+    {
+      "localId": "score_eng",
+      "label": "Engineer scores ITS OWN 3 dimensions (D4-D6) native lens, SEALED",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": ["seal_candidates"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "script",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:skills/survey/scripts/check-skip-criteria.sh",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-seal_candidates",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_score_eng",
+          "kind": "doc",
+          "description": "Per-candidate scores for D4 readiness/concreteness (w3), D5 right-sizing/sliceability (w2), D6 dependency-clarity (w2), each 1-5 with a bound rationale + a mode:triangulate-against ref (Design/Proposal/dep entity). SEALED."
+        }
+      ],
+      "runbook": "You are the engineer (greg). You score ONLY your 3 of the 9 dimensions, from YOUR native lens: D4 readiness/concreteness (weight 3), D5 right-sizing/sliceability (weight 2), D6 dependency-clarity (weight 2). You may NOT score D1-D3 or D7-D9. STEPS: (1) Read design §4.2 anchors for D4/D5/D6. (2) Read the sealed candidate slate (advisory ref). (3) For readiness use check-skip-criteria.sh (the 5 skip-criteria) + 'has a Design?' + 'deps landed vs blocked on idea-121/151/126'. (4) Score each candidate 1-5 with a bound rationale AND a triangulate-against ref to the concrete Design/Proposal/dependency entity grounding it. (5) SEALED: do NOT read score_arch or score_ver. PRODUCE ev_score_eng (doc) at complete_work."
+    },
+    {
+      "localId": "score_ver",
+      "label": "Verifier scores ITS OWN 3 dimensions (D7-D9) native lens, SEALED",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["verifier"],
+      "dependsOn": ["seal_candidates"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "calibration-ledger",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/calibrations.yaml",
+          "storage": "git",
+          "mode": "triangulate-against",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-seal_candidates",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_score_ver",
+          "kind": "doc",
+          "description": "Per-candidate scores for D7 reversibility/blast-radius (w3), D8 verification-cost/testability (w2), D9 risk-of-NOT-doing (w2), each 1-5 with a bound rationale + a mode:triangulate-against ref (named-pathology/fault/calibration). SEALED."
+        }
+      ],
+      "runbook": "You are the verifier (steve). You score ONLY your 3 of the 9 dimensions, from YOUR native lens: D7 reversibility/blast-radius (weight 3), D8 verification-cost/testability (weight 2), D9 risk-of-NOT-doing — the defect mirror of D1 (weight 2). You may NOT score D1-D6. STEPS: (1) Read design §4.2 anchors for D7/D8/D9. (2) Read the sealed candidate slate (advisory ref). (3) For risk, use substrate-dep count, blast-radius proxy, reversibility flag, named-pathology membership (triangulate against docs/calibrations.yaml). For D9 ask: does the candidate's ABSENCE keep a fault-class live? (4) Score each candidate 1-5 with a bound rationale AND a triangulate-against ref to the specific fault/calibration/pathology grounding it. (5) SEALED: do NOT read score_arch or score_eng. PRODUCE ev_score_ver (doc) at complete_work."
+    },
+    {
+      "localId": "deliberate_arch",
+      "label": "Architect: reveal sealed scores, RED-TEAM candidate_K, revise own D1-D3",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["architect"],
+      "dependsOn": ["score_arch", "score_eng", "score_ver"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-score_eng",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-score_ver",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_deliberate_arch",
+          "kind": "doc",
+          "description": "Clash+rescore in one node (minimal-valid fold): >=1 cell-bound challenge to verifier D7-D9, the briefed RED-TEAM of candidate_K, then final D1-D3 where each challenged cell is held(+defense) or revised(+delta). Records a convergence move-or-attempt (B5)."
+        }
+      ],
+      "runbook": "You are the architect (lily). This node merges CLASH + RESCORE for your dimensions (minimal-valid fold; the seal-before-REVEAL ordering is preserved because all three score_* nodes sealed before you read them, but clash-then-rescore is one transition here — N5). STEPS: (1) Read design §4.4 (manufactured clash) + §6.2 B3/B4/B5. (2) Now reveal and read the other seats' sealed scores (score_eng, score_ver advisory refs). (3) ASSIGNED ADVERSARIAL BRIEF: you are briefed to RED-TEAM candidate_K — your OWN standing D-3/observability-PUSH prior. Attack it: where is its tele-fit overclaimed, where does it not compose, where is the stake-clock pressure softer than it looks? Produce >=1 cell-bound challenge. Also red-team the verifier's D7-D9 cells from your strategic-leverage lens. (4) RESCORE your D1-D3: for each of your cells that was challenged (by you self-attacking candidate_K, or by deliberate_eng's scope-realism red-team that targets you), either HOLD it with a NEW-evidence defense or REVISE it with a recorded delta. (5) Record at least one convergence move OR an explicit adversary_attempted+rebuttal (zero-movement is flagged LOW-CONTEST downstream). PRODUCE ev_deliberate_arch (doc). You do NOT compute the composite or the ranked slate — that is adjudicate_eng/adjudicate_ver (you are EXCLUDED from adjudication)."
+    },
+    {
+      "localId": "deliberate_eng",
+      "label": "Engineer: scope-realism red-team architect D1-D3, STEELMAN candidate_K + blind D1 cross-check, revise own D4-D6",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": ["score_arch", "score_eng", "score_ver"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-score_arch",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-score_ver",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_deliberate_eng",
+          "kind": "doc",
+          "description": "Clash+rescore in one node: scope-realism red-team of architect D1-D3 + the briefed STEELMAN of candidate_K + an INDEPENDENT blind re-score of D1 tele-fit (the N1 non-architect cross-check on the prior-laden dimension), then final D4-D6 with each challenged cell held(+defense) or revised(+delta). Records a convergence move-or-attempt."
+        }
+      ],
+      "runbook": "You are the engineer (greg). This node merges CLASH + RESCORE for your dimensions and carries the BLINDING cross-check that keeps the architect's prior honest. STEPS: (1) Read design §4.4 + §6.1 A2 (N1: blinding is soft, so a NON-ARCHITECT re-scores the prior-laden dimension as the construction-level guard). (2) Reveal and read score_arch + score_ver (advisory refs). (3) ASSIGNED ADVERSARIAL BRIEF: STEELMAN candidate_K (argue the best honest case FOR the architect's D-3/observability prior, so it must beat a defended peer rather than win by the architect's championing) AND scope-realism red-team the architect's D1-D3 (is the claimed tele-fit/leverage actually buildable+sliceable, or empire-shaped?). (4) BLIND CROSS-CHECK (N1): independently re-score D1 tele-fit for every candidate WITHOUT reading the architect's D1 rationale first — then diff against ev_score_arch. A large divergence on candidate_K is a red flag the architect privileged its prior; record it for verify_ranking. (5) RESCORE your D4-D6: hold-with-defense or revise-with-delta each challenged cell. (6) Record a convergence move-or-attempt. PRODUCE ev_deliberate_eng (doc)."
+    },
+    {
+      "localId": "deliberate_ver",
+      "label": "Verifier: risk red-team engineer D4-D6 + architect D3, revise own D7-D9",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["verifier"],
+      "dependsOn": ["score_arch", "score_eng", "score_ver"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-score_arch",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-score_eng",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_deliberate_ver",
+          "kind": "doc",
+          "description": "Clash+rescore in one node: risk red-team of engineer D4-D6 and architect D3, then final D7-D9 with each challenged cell held(+defense) or revised(+delta). Records a convergence move-or-attempt."
+        }
+      ],
+      "runbook": "You are the verifier (steve). This node merges CLASH + RESCORE for your dimensions. STEPS: (1) Read design §4.4 + §6.2. (2) Reveal and read score_arch + score_eng (advisory refs). (3) ASSIGNED ADVERSARIAL BRIEF: risk red-team the engineer's D4-D6 (does 'ready' hide a blast-radius or an irreversible migration? is the slice actually safe?) AND red-team the architect's D3 stake-clock-pressure (is the decay-cost real or a manufactured urgency?). Produce >=1 cell-bound challenge. (4) RESCORE your D7-D9: hold-with-defense or revise-with-delta each challenged cell. (5) Record a convergence move-or-attempt. PRODUCE ev_deliberate_ver (doc). NOTE: you ALSO hold adjudicate_ver and verify_ranking later (single-verifier roster, §5.1.1) — keep this deliberation seat's reasoning separate from your adjudication/verification seats."
+    },
+    {
+      "localId": "adjudicate_eng",
+      "label": "Engineer adjudicates: mechanical recompute of the composite + ranked slate + stint-6 plan (architect EXCLUDED)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": [],
+      "completionDependsOn": ["deliberate_arch", "deliberate_eng", "deliberate_ver"],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "script",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:skills/survey/scripts/check-skip-criteria.sh",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-deliberate_arch",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-deliberate_eng",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-deliberate_ver",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_ranked_slate",
+          "kind": "doc",
+          "description": "The defensible total order: one row per candidate (descending Composite), the 9 sub-scores, synthesized rationale, tele-fit/readiness/risk narratives, clash-movement note, disposition hint. Composite = (sum_d weight_d*score_d)/105*100; tie-break ladder D3>D4>D7>lowest-variance>lower-id, logging which rung resolved each near-tie (eps=3)."
+        },
+        {
+          "id": "ev_stint6_plan",
+          "kind": "doc",
+          "description": "rank-#1 = single FOCUS (one stake to convert) + leanest-slice + composing floor + anti-goals + bounded commitments/deferrals (owner+rationale+revivalTrigger) + the Survey-dogfood hook (names the summit's lead Idea for the stint-6 Survey; candidate idea-343)."
+        },
+        {
+          "id": "ev_recompute_hash",
+          "kind": "freeform",
+          "description": "A hash over the recomputed composite + final-scorecard so the order is reproducible-from-scorecard. adjudicate_ver MUST independently re-derive a matching hash."
+        },
+        {
+          "id": "ev_movement_count",
+          "kind": "freeform",
+          "description": "The clash-movement-count across all deliberations; zero movement => flag LOW-CONTEST (re-run or carry a noted confidence-risk). The rubber-stamp detector."
+        }
+      ],
+      "runbook": "You are the engineer (greg) and you are the PRIMARY ADJUDICATOR. The ARCHITECT IS STRUCTURALLY EXCLUDED from adjudication (B1/FM-2) — this node's roleEligibility is [engineer] only. Adjudication is MECHANICAL, not a fresh judgement: you recompute, you do not re-rank by taste. This is an ARC node: claimable early but completable ONLY once all three deliberate_* nodes are done (completionDependsOn). STEPS: (1) Read design §4.2 (composite formula), §4.5 (tie-break ladder), §4.4 (movement-count). (2) Read the three final scorecards from deliberate_arch/eng/ver (advisory refs). (3) Compute Composite(c) = (sum over d of weight_d * score_{c,d}) / 105 * 100 for every candidate; sort descending. (4) Resolve near-ties (within eps=3 points) via the ladder: D3 stake-clock > D4 readiness > D7 reversibility > lowest cross-lens variance > lower candidate-id; LOG which rung resolved each tie. (5) Build the ranked slate (one row/candidate, 9 sub-scores, synthesized rationale, narratives, clash-movement note, disposition hint via check-skip-criteria.sh exit route) and the stint-6 plan (FOCUS + leanest-slice + composing floor + anti-goals + bounded deferrals + Survey-dogfood hook). (6) Emit ev_recompute_hash (the reproducibility anchor) and ev_movement_count (zero => LOW-CONTEST flag). PRODUCE ev_ranked_slate (doc), ev_stint6_plan (doc), ev_recompute_hash (freeform), ev_movement_count (freeform). This is OUTCOME (what the org ranked) — sealed here, before any Director sees it."
+    },
+    {
+      "localId": "adjudicate_ver",
+      "label": "Verifier independently re-derives the composite + co-signs (the 2nd producing node; architect EXCLUDED)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["verifier"],
+      "dependsOn": [],
+      "completionDependsOn": ["deliberate_arch", "deliberate_eng", "deliberate_ver"],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-deliberate_arch",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-deliberate_eng",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-deliberate_ver",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-adjudicate_eng",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_recompute_hash_ver",
+          "kind": "freeform",
+          "description": "An INDEPENDENT re-derivation of the composite + final-scorecard hash; MUST match adjudicate_eng's ev_recompute_hash. A mismatch fails the integrity floor and is surfaced to verify_ranking."
+        },
+        {
+          "id": "ev_adjudicate_cosign",
+          "kind": "doc",
+          "description": "The verifier-seat's structural co-sign of the OUTCOME — the 2nd producing NODE across the engineer+verifier seats (B2/FM-2, the >=2-producing-nodes floor). Notes any divergence from the engineer's recompute."
+        }
+      ],
+      "runbook": "You are the verifier (steve). The ARCHITECT IS STRUCTURALLY EXCLUDED here too (roleEligibility [verifier] only). You are the SECOND producing node of the OUTCOME — this is what makes the multi-agent floor structural (>=2 producing NODES across the engineer+verifier seats, NOT >=2 producers on one node; G1/B2). This is an ARC node (completionDependsOn the three deliberate_* nodes). STEPS: (1) Read design §4.2 (composite) + §6.2 B2 + §5.1.1 (roster caveat). (2) Read the three deliberate scorecards (advisory refs) and adjudicate_eng's ranked slate. (3) INDEPENDENTLY recompute Composite(c) = (sum weight_d*score_{c,d})/105*100 for every candidate from the sealed final scores — do NOT copy the engineer's arithmetic; re-derive it. (4) Emit ev_recompute_hash_ver; it MUST match adjudicate_eng's ev_recompute_hash. (5) Co-sign the OUTCOME, noting ANY divergence. PRODUCE ev_recompute_hash_ver (freeform) + ev_adjudicate_cosign (doc). Keep this seat distinct from your verify_ranking seat (you hold both under the 1-verifier roster)."
+    },
+    {
+      "localId": "verify_ranking",
+      "label": "Verifier-gate: independent re-derive + VALID/INVALID verdict (Director-dark scan, pinned head-SHA)",
+      "type": "verifier-gate",
+      "priority": "high",
+      "roleEligibility": ["verifier"],
+      "dependsOn": ["adjudicate_eng", "adjudicate_ver"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "calibration-ledger",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/calibrations.yaml",
+          "storage": "git",
+          "mode": "triangulate-against",
+          "required": true
+        },
+        {
+          "kind": "tele-glossary",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/methodology/tele-glossary.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-adjudicate_eng",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-adjudicate_ver",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-assemble_pack",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-seal_candidates",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_verify_verdict",
+          "kind": "review",
+          "description": "A verifier-authored review (producedBy MUST resolve to a registered role=verifier Agent) carrying the single VALID/INVALID verdict + the §6.6 checklist + the pinned head-SHA. INVALID still ships the artifact, marked INVALID with the failing invariant named.",
+          "refResolvable": true
+        }
+      ],
+      "runbook": "You are the verifier (steve). VERIFIER-GATE: only a registered role=verifier Agent can complete it. You INDEPENDENTLY RE-DERIVE — you do NOT review-approve (FM-11). NOTE: under the 1-verifier roster you also held adjudicate_ver; a 2nd registered verifier would fully separate these seats (§5.1.1) — keep them mentally distinct. STEPS (design §6.3 C1-C4 + §6.7): (1) VALUE: for the top pick + runner-up, re-resolve EVERY cited value_evidence ref from ground truth (get_idea/get_bug/get_tele/get_metrics/psql — never narrative recall); a claim whose evidence does not re-resolve FAILS the gate. (2) READINESS as a SEPARATE axis from value (FM-7): deps resolved, scope concrete, check-skip-criteria.sh exit-route; 'top actionable' = max-value among the READY set. (3) Every rank binds >=1 RESOLVED ref and every triangulate-against ref is ADDRESSED (FM-6). (4) INTEGRITY backstop (C4) — re-check ALL run-validity invariants: blinding present; >=4 independent sources; >=2 producing NODES across engineer+verifier seats (adjudicate_eng + adjudicate_ver both produced; ev_recompute_hash_ver matches ev_recompute_hash); >=1 adversary assigned AND a clash move-or-attempt recorded (ev_movement_count > 0 else LOW-CONTEST); Hub-channel Director-dark held over [run-seed/reconcile_anchor, verdict] — scan list_messages/list_threads from the reconcile anchor (NOT seal-ts; pre-seal contamination is highest-leverage) through now for ANY Director message into the run; a hit flips to INVALID. Scope the claim to Hub-channel darkness; director-chat is deprecated so there is no live side-channel (out-of-band gap acknowledged). (5) Emit a SINGLE VALID/INVALID verdict (VALID iff every invariant holds and recompute-hash matches the published order) plus the value/readiness/completeness verdict, stamped with the pinned head-SHA. Complete with a REVIEW-kind evidence item bound to ev_verify_verdict, producedBy = your registered verifier agentId (refResolvable). INVALID does NOT block the artifact — it ships marked INVALID with the failing invariant named."
+    },
+    {
+      "localId": "surface",
+      "label": "Non-architect packages the §0-§11 artifact + opens the PR + routes triage",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer", "verifier"],
+      "dependsOn": ["verify_ranking"],
+      "completionDependsOn": [],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "methodology-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/methodology/strategic-review.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "script",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:skills/survey/scripts/check-skip-criteria.sh",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-adjudicate_eng",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-verify_ranking",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_sr_artifact",
+          "kind": "doc",
+          "description": "docs/reviews/<date>-sr-stint6.md: §0 Integrity Attestation (the verify_ranking checklist + VALID/INVALID) + §1-§11 incl. the Ranking-rationale table (rank -> candidate -> value-evidence refs -> readiness verdict -> served tele/axiom -> adversarial-verify verdict; each cell links a RESOLVED entity)."
+        },
+        {
+          "id": "ev_sr_pr",
+          "kind": "pr",
+          "description": "The PR that lands the artifact AND applies the per-candidate triage routes (skip-to-Survey / triage-thread / queue / dismiss) via the check-skip-criteria.sh exit-code routing."
+        }
+      ],
+      "runbook": "You are a NON-ARCHITECT (engineer OR verifier — roleEligibility [engineer, verifier]; the architect is removed to kill any packaging-spin vector, R-D2). GOAL: package the deliverable and route triage; you do NOT alter the ranking — adjudicate sealed it. STEPS (design §6.5 E2): (1) Read the ranked slate + stint-6 plan (adjudicate_eng) and the verdict (verify_ranking) via the advisory refs. (2) Write docs/reviews/<date>-sr-stint6.md with §0 Integrity Attestation (paste the verify_ranking checklist + VALID/INVALID verdict verbatim) and §1-§11 incl. the Ranking-rationale table where every cell links a RESOLVED entity (rank -> candidate -> value-evidence refs -> readiness verdict -> served tele/axiom -> adversarial-verify verdict). (3) Apply per-candidate triage routes using check-skip-criteria.sh exit codes (skip-to-Survey / triage-thread / queue / dismiss). (4) Open the PR landing the artifact + the triage routes. PRODUCE ev_sr_artifact (doc) + ev_sr_pr (pr). If the verdict was INVALID, ship anyway, clearly marked INVALID with the failing invariant named."
+    },
+    {
+      "localId": "director_ratify",
+      "label": "Director-queue node (idea-388): Director reviews the whole slate, gates the #1 FOCUS (arc-root)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["director"],
+      "dependsOn": ["surface"],
+      "completionDependsOn": [
+        "reconcile_anchor",
+        "assemble_pack",
+        "pack_gate",
+        "seal_candidates",
+        "score_arch",
+        "score_eng",
+        "score_ver",
+        "deliberate_arch",
+        "deliberate_eng",
+        "deliberate_ver",
+        "adjudicate_eng",
+        "adjudicate_ver",
+        "verify_ranking",
+        "surface"
+      ],
+      "references": [
+        {
+          "kind": "design-doc",
+          "ref": "2f89016427f4aed50b50c8f71859165d95e53b2d:docs/designs/m-autonomous-strategic-review-design.DRAFT.md",
+          "storage": "git",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-surface",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        },
+        {
+          "kind": "workitem",
+          "ref": "work-bp-stint6_strategic_review_20260629-verify_ranking",
+          "storage": "entity",
+          "mode": "read",
+          "required": false
+        }
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "ev_director_ratify",
+          "kind": "audit",
+          "description": "An audit entry recording ONE of three discrete dispositions: ratify-as-is (OUTCOME=ACCEPTED, org self-determined) | reject-with-recorded-reason (re-run; reason = next-run input) | accept-with-Director-amendment (recorded as a distinct DIRECTOR-OVERRIDE layer: 'org determined X; Director overrode to Y'). Director reviews the WHOLE slate, gates the #1 FOCUS.",
+          "refResolvable": true
+        }
+      ],
+      "runbook": "This is the DIRECTOR-QUEUE node (roleEligibility [director]) — the director-work-queue (idea-388) in its FIRST live use (R-D1), and the ARC-ROOT (completionDependsOn the whole 14-node upstream graph; get_current_stint on this node projects the whole-run k/N). It is the SINGLE terminal Director gate — the Director is structurally ABSENT from intake/council/verify (D1). FOR NOW: director-chat is deprecated, so the Director has no direct interface yet → the ARCHITECT PROXY-SURFACES this item and walks the Director through it (R-D1); a real Director interface is future work (idea-390/ACP). STEPS: (1) Read the surfaced artifact (ev_sr_artifact, via surface advisory ref) — the WHOLE ranked slate, in context, plus the §0 VALID/INVALID attestation (verify_ranking). (2) Review the whole slate so deferrals/queue routes are seen in context; the BINDING decision is the #1 FOCUS (R-D4). (3) Record EXACTLY ONE of three dispositions (D4/R-D6): ratify-as-is → OUTCOME=ACCEPTED, the org determined direction without Director steer; reject-with-recorded-reason → the run re-runs with the reason as next-run input (NOT an edit of this one); accept-with-Director-amendment → ALLOWED-BUT-LOGGED as a distinct DIRECTOR-OVERRIDE layer ('org determined X; Director overrode to Y') so the test stays VALID and separable. PRODUCE ev_director_ratify (audit; refResolvable) capturing the chosen disposition. The guard is honest labeling — override is never forbidden, only logged."
+    }
+  ]
+}
