@@ -18,7 +18,9 @@ This directory holds **reusable `seed_blueprint` templates**: declarative WorkIt
 ## The library (dark-run Phase-1 distillation)
 | Template | Purpose | Status |
 |---|---|---|
-| `autonomous-strategic-review` (ASR) | autonomous agent-self-determined next-stint priority ranking (idea-389) | **first resident** — landing here once the idea-389 run is seeded + proven |
+| `autonomous-strategic-review` (ASR) | autonomous agent-self-determined next-stint priority ranking (idea-389) | **resident — SEEDED + PROVEN** (stint-6 run; Director-ratified idea-388) |
+| `design-process` | Phase-4 Design as a 6-node 3-agent work-graph (design_draft → feasibility∥redteam → reconcile → verify_reconcile → ratify) | **resident — v1.0 RATIFIED** (`docs/methodology/design-process.md`) |
+| `m-adapter-modernization` | the claude-pilot build arc (P1a→P1e + verifier accept) from the ratified adapter Design v1.0 | **SAVED — not seeded** (Director pause 2026-06-29) |
 | `council` | POSITION × role-lens → CLASH → ADJUDICATE (the stint-5 design-council shape) | planned |
 | `survey` | Director-intent / autonomous survey → Design | planned |
 | `design-session` | diverse positions → integrate → adversarial critique | planned |

@@ -1,6 +1,6 @@
 # M-Adapter-Modernization — Brainstorm (DRAFT, accumulating)
 
-**Status:** brainstorm-in-progress (Director priority, post-stint-6-SR, 2026-06-29). Multi-session "figure it out" BEFORE a formal Idea→Design. **Scope: Adapters FIRST, then Agent harnesses. Hub + Transport-protocol PARKED.**
+**Status:** ⚠ **SUPERSEDED 2026-06-29 by `docs/designs/m-adapter-modernization-design.md` (Design v1.0, RATIFIED).** This brainstorm is now the **decision-provenance log** — the `design_draft` input of the first Design-Process run; full per-decision rationale lives here, but the live, authoritative design is **Design v1.0**. *(Originally: brainstorm-in-progress, Director priority, post-stint-6-SR. Scope: Adapters FIRST, then Agent harnesses; Hub + Transport-protocol PARKED.)*
 
 **Origin:** the stint-6 strategic-review under-represented infra/deployment (candidate_A = the adapter membrane; deployment/containerisation never summited = a backlog gap). Director prioritized adapter-modernization directly. Live pain this session: the proxy *wedged* (Hub-session dropped, no auto-reconnect → manual kill+restart) + bug-203 tool-surface staleness + directory-source provenance-impurity (`sdkDirty`).
 
