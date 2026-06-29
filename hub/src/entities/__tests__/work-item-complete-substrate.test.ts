@@ -70,10 +70,20 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     await pool.query("INSERT INTO entities(kind,id,data) VALUES('Agent',$1,$2) ON CONFLICT (kind,id) DO NOTHING",
       [id, JSON.stringify({ apiVersion: "core.ois/v1", kind: "Agent", id, metadata: {}, spec: { role }, status: { phase: "online" } })]);
   }
-  /** Insert a raw envelope Audit with a given relatedEntity (Audit.relatedEntity → spec.relatedEntity). */
-  async function mkAudit(id: string, relatedEntity: string): Promise<void> {
+  /** Insert a raw envelope Audit with a given relatedEntity (Audit.relatedEntity → spec.relatedEntity)
+   *  and optional Hub-stamped actor (Audit.actor → metadata.actor; bug-204 verifier-gate authorship). */
+  async function mkAudit(id: string, relatedEntity: string, actor?: string): Promise<void> {
     await pool.query("INSERT INTO entities(kind,id,data) VALUES('Audit',$1,$2) ON CONFLICT (kind,id) DO NOTHING",
-      [id, JSON.stringify({ apiVersion: "core.ois/v1", kind: "Audit", id, metadata: {}, spec: { action: "x", details: "y", relatedEntity }, status: {} })]);
+      [id, JSON.stringify({ apiVersion: "core.ois/v1", kind: "Audit", id, metadata: actor ? { actor } : {}, spec: { action: "x", details: "y", relatedEntity }, status: {} })]);
+  }
+  /** create → claim → start a VERIFIER-GATE node (type=verifier-gate, targetRef:null — the
+   *  self-anchored shape pack_gate/verify_ranking carry); returns ids + token (bug-204). */
+  async function startedGate(reqs: EvidenceRequirement[], agent: string) {
+    const w = await repo.createWorkItem({ type: "verifier-gate", roleEligibility: [], evidenceRequirements: reqs });
+    const claimed = await repo.claimWorkItem(w.id, agent);
+    const token = claimed!.lease!.token;
+    await repo.startWork(w.id, agent, token);
+    return { id: w.id, token };
   }
   /** Drive an any-role WorkItem to phase=done (for verifier-gate fixtures). */
   async function driveDone(id: string, agent: string): Promise<void> {
@@ -162,6 +172,49 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     await pool.query("UPDATE entities SET data = jsonb_set(data, '{spec,relatedEntity}', to_jsonb($2::text)) WHERE kind='Audit' AND id=$1", ["audit-rel", w.id]);
     const done = await repo.completeWork(w.id, "agent-au", w.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-rel" })]);
     expect(done!.status).toBe("done");
+  }, OP_TIMEOUT);
+
+  // ── bug-204 / audit-5093: verifier-gate pass-evidence = the verifier's audit-verdict ──────
+  // A verifier-gate is SELF-ANCHORED (targetRef:null) — there is NO verifier-mintable Review, so
+  // its pass-evidence is a VERIFIER-authored kind:audit. On a verifier-gate ONLY: an audit binding
+  // satisfies the requirement (incl. an already-seeded kind:review one — back-compat), the
+  // targetRef-RELATE check is waived, and the audit MUST be actor=verifier (author-anchor).
+
+  it("bug-204: verifier-gate (targetRef:null) — already-seeded kind:review req SATISFIED by a verifier-authored audit (relate waived) → done", async () => {
+    await mkAudit("audit-vg-rev", "unrelated-entity", "verifier"); // relatedEntity does NOT relate; relate is waived for verifier-gates
+    const g = await startedGate([{ id: "ev_pack_verified", kind: "review", refResolvable: true }], "agent-vg-r");
+    const done = await repo.completeWork(g.id, "agent-vg-r", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-rev" })]);
+    expect(done!.status).toBe("done");
+  }, OP_TIMEOUT);
+
+  it("bug-204: verifier-gate — kind:audit req (forward template) SATISFIED by a verifier-authored audit → done", async () => {
+    await mkAudit("audit-vg-aud", "unrelated-entity", "verifier");
+    const g = await startedGate([{ id: "ev_pack_verified", kind: "audit", refResolvable: true }], "agent-vg-a");
+    const done = await repo.completeWork(g.id, "agent-vg-a", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-aud" })]);
+    expect(done!.status).toBe("done");
+  }, OP_TIMEOUT);
+
+  it("bug-204 anti-gameability (mutation-proof of the author-anchor): a verifier-gate audit authored by a NON-verifier (engineer) → fail", async () => {
+    await mkAudit("audit-vg-eng", "unrelated-entity", "engineer"); // worker self-close attempt
+    const g = await startedGate([{ id: "ev_pack_verified", kind: "review", refResolvable: true }], "agent-vg-e");
+    await expect(repo.completeWork(g.id, "agent-vg-e", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-eng" })]))
+      .rejects.toThrow(/was not authored by a verifier/);
+    // an actorless audit (no metadata.actor) also fails closed
+    await mkAudit("audit-vg-none", "unrelated-entity");
+    await expect(repo.completeWork(g.id, "agent-vg-e", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-none" })]))
+      .rejects.toThrow(/was not authored by a verifier/);
+  }, OP_TIMEOUT);
+
+  it("bug-204 GUARD-NARROWNESS (steve's ask: normal-task binding UNCHANGED): a NON-gate task with a kind:audit req + an UNRELATED verifier audit → still fails RELATE (waiver is verifier-gate-scoped)", async () => {
+    await mkAudit("audit-nt-unrel", "work-elsewhere", "verifier"); // verifier-authored but unrelated
+    const reqs: EvidenceRequirement[] = [{ id: "a1", kind: "audit", refResolvable: true }];
+    const w = await started(reqs, "agent-nt"); // type:"task" — NOT a verifier-gate
+    await expect(repo.completeWork(w.id, "agent-nt", w.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-nt-unrel" })]))
+      .rejects.toThrow(/does not RELATE/);
+    // and a normal task still REJECTS an audit bound to a non-audit requirement (kind-relaxation is gate-scoped)
+    const wc = await started([{ id: "r1", kind: "commit", refResolvable: true }], "agent-nt2");
+    await expect(repo.completeWork(wc.id, "agent-nt2", wc.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-nt-unrel" })]))
+      .rejects.toThrow(/evidence kind mismatch/);
   }, OP_TIMEOUT);
 
   it("#4 refResolvable external (commit): malformed (empty) ref → fail; well-formed nonexistent ref → pass (format-only)", async () => {

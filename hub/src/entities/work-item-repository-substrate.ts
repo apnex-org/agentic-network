@@ -227,6 +227,7 @@ function evaluateEvidence(
   requirements: EvidenceRequirement[],
   evidence: EvidenceItem[],
   lease: WorkItemLease | null,
+  isVerifierGate: boolean,
 ): { nextPhase: WorkItemPhase; refsToResolve: RefToResolve[]; verifierChecks: VerifierCheck[] } {
   const claimedAt = lease?.claimedAt ?? null;
   const refsToResolve: RefToResolve[] = [];
@@ -250,10 +251,16 @@ function evaluateEvidence(
       if (req.kind === "review") { reviewDeferred = true; continue; }
       throw new EvidencePredicateFailed(`requirement '${req.id}' (${req.kind}) has no bound evidence`);
     }
-    // #2 kind-match
-    const kindMatched = boundById.filter((e) => e.kind === req.kind);
+    // #2 kind-match. bug-204/audit-5093: a verifier-gate's pass-evidence is the verifier's
+    // durable verdict = a kind:audit ref (create_audit_entry; create_review is architect-only +
+    // task-report-bound — there is NO verifier-mintable Review entity). So on a verifier-gate
+    // ONLY, an audit binding ALSO satisfies a requirement — including an already-seeded kind:review
+    // one (back-compat for live blueprints) and the kind:audit template going forward. Guarded
+    // narrow: every NON-verifier-gate requirement stays strict exact-kind-match (anti-gameability
+    // intact everywhere else — a worker still can't audit-bind a normal commit/review requirement).
+    const kindMatched = boundById.filter((e) => e.kind === req.kind || (isVerifierGate && e.kind === "audit"));
     if (kindMatched.length === 0) {
-      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence kind mismatch (expected ${req.kind}, bound entries: ${boundById.map((e) => e.kind).join(", ")})`);
+      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence kind mismatch (expected ${req.kind}${isVerifierGate ? " or audit (verifier-gate verdict)" : ""}, bound entries: ${boundById.map((e) => e.kind).join(", ")})`);
     }
     // #3 freshness
     const fresh = kindMatched.filter((e) => req.allowPreClaim || (claimedAt != null && producedAtOnOrAfter(e.producedAt, claimedAt)));
@@ -1035,8 +1042,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         );
       }
     }
+    // bug-204/audit-5093: a verifier-gate is SELF-ANCHORED (it carries targetRef:null) — its
+    // pass-evidence is the verifier's own verdict-audit, not a targetRef-related artifact. The
+    // flag narrows the kind-relaxation (above) + the relate-waiver (below) to verifier-gates ONLY.
+    const isVerifierGate = item.type === "verifier-gate";
     // fail-fast the sync predicate + collect the async checks.
-    const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.lease);
+    const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.lease, isVerifierGate);
     // #4 + audit-4103 #1: each OIS-internal ref must RESOLVE *and* RELATE to this work-item
     // or its targetRef (existence-AND-relevance — closes the existence-theatre where any
     // org-wide entity, incl. the item's own id, satisfied existence-only).
@@ -1045,8 +1056,25 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!e) {
         throw new EvidencePredicateFailed(`requirement '${r.requirementId}' refResolvable evidence ref ${r.kind}/${r.id} does not resolve`);
       }
-      if (!this.refRelatesToWork(r.evidenceKind, e, item)) {
+      // bug-204/audit-5093: a verifier-gate is SELF-ANCHORED by gate identity + verifier
+      // authorship (it has targetRef:null — the targetRef RELATE model doesn't apply). For a
+      // verifier-gate audit-verdict we WAIVE the relate check and replace it with the
+      // author-anchor below. Guarded NARROW: every other binding (incl. a normal-task audit ref)
+      // still must RELATE to the work or its targetRef — existence-theatre stays closed.
+      const verifierGateAudit = isVerifierGate && r.evidenceKind === "audit";
+      if (!verifierGateAudit && !this.refRelatesToWork(r.evidenceKind, e, item)) {
         throw new EvidencePredicateFailed(`requirement '${r.requirementId}' evidence ref ${r.kind}/${r.id} does not RELATE to this work-item (${item.id}) or its targetRef — existence alone is insufficient`);
+      }
+      // bug-204/audit-5093 (anti-gameability — REPLACES the waived relate check, not removes it):
+      // a verifier-gate verdict-audit MUST be VERIFIER-authored. Trust the Audit's Hub-stamped
+      // actor (metadata.actor, derived server-side from the registered session role — a worker
+      // can't forge it; sibling of the createdBy.role trust basis below). A worker self-closing
+      // a verifier-gate with their own audit (actor=engineer/architect) is rejected here.
+      if (verifierGateAudit) {
+        const auditActor = (e.metadata as { actor?: string } | undefined)?.actor;
+        if (auditActor !== "verifier") {
+          throw new EvidencePredicateFailed(`requirement '${r.requirementId}' verifier-gate pass-evidence audit ${r.id} was not authored by a verifier (actor=${auditActor ?? "unknown"}) — only a verifier's own verdict can close a verifier-gate`);
+        }
       }
       // audit-4120 #2 (non-spoofable v1): a refResolvable REVIEW gate must be VERIFIER-
       // CREATED — trust the gate WorkItem's Hub-stamped createdBy, NEVER the caller's
@@ -1076,7 +1104,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       this.assertLease(w, agentId, leaseToken, "complete");
       if (!COMPLETABLE_PHASES.includes(w.status)) throw new TransitionRejected(`complete requires in_progress or review, was ${w.status}`);
       const merged = mergeEvidence(w.evidence, evidence);
-      const { nextPhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease);
+      const { nextPhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease, w.type === "verifier-gate");
       const nowISO = new Date().toISOString();
       return { ...w, status: nextPhase, evidence: merged, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
