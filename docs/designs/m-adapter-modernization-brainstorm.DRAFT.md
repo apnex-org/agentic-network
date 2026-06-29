@@ -32,6 +32,15 @@
   - **Dependency: harness-restarts ⟂ cold-pickup quality.** A restart drops in-session context → the agent re-hydrates from durable state (memory-anchor pattern). VALIDATED this session: the SR run survived 2 restarts + a Hub-disconnect via cold-pickup. The restart-strategy rests on this substrate (already solid).
   - **Adapter resilience scope NARROWS to connection-resilience** → simpler adapter design (no hot-reload).
 
+- **2026-06-29 (Director) — direction: CONTAINERISATION; claude-code CLI FIRST.** Containerisation SUBSUMES the distribution/update option-axes — the harness IMAGE becomes the single unit for distribution + update + tool-surface-refresh + reproducibility + cache-reset; **npm is just the SOURCE baked in.** So the big forks (npm vs marketplace vs dir-source; reinstall vs rebuild vs hot-reload) are RESOLVED by the container direction; only narrow instance-decisions remain.
+  - **PLAN — design-for-both, build-claude-first:**
+    - UP-FRONT DESIGN (generalizable spine, designed for BOTH harnesses so opencode is a drop-in — protects maximal-shared-core): kernel/shim split + npm packaging + a UNIFORM register-SPI + the image spec.
+    - PHASE 1 — claude-code CLI container PILOT (worst-pain harness: bug-203 + the wedge). Acceptance: auto-reconnect (no silent wedge) · restart re-bootstraps tool-surface · reproducible image (no `sdkDirty`) · version-honest.
+    - PHASE 2 — opencode drop-in (2nd thin shim over the same kernel + register-SPI) → PROVES uniformity + shared-core.
+    - PHASE 3 — automate (CI publish npm + build image; watchtower-pull + restart).
+  - **Narrow remaining decisions (claude-first):** (i) claude's register mechanism in-image (the (a)/(b), scoped to claude); (ii) image contents (claude-code + adapter + git + creds + repo-access); (iii) ephemerality model (disposable container; state via Hub+git+memory cold-pickup — PROVEN this session); (iv) update-trigger (watchtower-pull vs CI-push vs manual-first).
+  - **METHODOLOGY:** graduate this brainstorm → a formal Idea (anchors the infra backlog-gap the SR flagged) + a Design (this doc), claude-code pilot = first mission-slice.
+
 ## Related entities
 mission-64 (M-Adapter-Streamline; `update-adapter.sh`, the npm-model) · bug-203 (host won't re-enumerate tool-surface) · idea-392 (live auto-refresh / no-stale-caches / opencode-parity) · idea-391 (system CLI→Hub REST) · idea-390 (agent⟂project separation) · bug-184 (version-honesty) · candidate_A (the SR adapter summit) · `@apnex` npm namespace.
 
