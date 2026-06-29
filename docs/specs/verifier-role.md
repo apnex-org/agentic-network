@@ -21,7 +21,7 @@ The verifier is **orthogonal** to the other three: it does not intend, specify, 
 
 **Two load-bearing invariants:**
 
-1. **Advisory, not gating.** The verifier surfaces independent evidence; it does **not** hold a veto. The Director decides (tele-13 authority-non-delegation). A verifier verdict is an input to a gate, never the gate itself. This keeps the verifier from becoming a bottleneck or an unaccountable authority.
+1. **Advisory, not gating.** The verifier surfaces independent evidence; it does **not** hold a veto. The Director decides (tele-13 authority-non-delegation). A verifier verdict is an input to a gate, never the gate itself. This keeps the verifier from becoming a bottleneck or an unaccountable authority. **(Clarified 2026-06-29, `design-process.md` §12):** "never the gate itself" = never the *decision* gate. The verifier MAY own a *process-certification* gate that fail-closes on **integrity** (was the process honest/complete?) — never on the **decision** — as the ASR (`pack_gate` / `verify_ranking`) and `design-process.md` (`verify_reconcile`) already do. Process-gate ✔ / decision-gate ✘.
 2. **Refute-not-produce, by construction.** The verifier defaults to *checking*, not *building*. It has no produce surface (no `create_mission` / `create_task` / `propose_mission` / `create_proposal`). A party that produces what it later verifies is conflicted; removing the produce surface makes the independence structural rather than a matter of discipline.
 
 ---

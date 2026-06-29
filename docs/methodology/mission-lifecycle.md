@@ -33,6 +33,8 @@
 
 A mission moves through 10 macro-phases from Concept → Retrospective. Each phase has a defined entry condition + exit signal + binding artifact.
 
+> **⚠ Phase 4 (Design) SUPERSEDED by `docs/methodology/design-process.md` (v1.0 RATIFIED 2026-06-29):** the bilateral architect+engineer thread+doc Design is replaced by a 6-node work-graph blueprint — design_draft[arch] → feasibility_audit[eng] ∥ design_redteam[verifier] → reconcile[arch] → verify_reconcile[verifier-gate] → ratify[director]. The Phase-4 rows in §1.5 / §1.5.1 / §1.5.2 below are superseded for Phase 4; see that doc as canonical.
+
 ```
 Phase 1  — Concept           Director / agent surfaces a workflow concept
 Phase 2  — Idea              Filed via `create_idea`; status: open → triaged
@@ -109,7 +111,7 @@ Standard RACI semantics: **R**esponsible (does the work) / **A**ccountable (fina
 - **Pulse-driven coordination** (§4) does NOT change RACI; pulses are structured-mediation channels, not role-shifts.
 - **Bypass cases**: Survey bypass per `idea-survey.md` §8 still preserves RACI; spawned-Idea linkage MANDATORY for traceability.
 - **First-canonical-execution missions** may have higher Director engagement (active-collaborator mode per §5.2); does not violate RACI as long as architect holds the gate on routine mechanics per §5.1 categorised-concerns table.
-- **Verifier (the VERIFY leg)** is an advisory cross-cutting role, **not** a per-phase R/A holder; it engages **C** at verification points per §1.5.2 + `docs/specs/verifier-role.md`. It never holds R or A; the Director stays Accountable at every gate.
+- **Verifier (the VERIFY leg)** is an advisory cross-cutting role, **not** a per-phase R/A holder; it engages **C** at verification points per §1.5.2 + `docs/specs/verifier-role.md`. It never holds R or A; the Director stays Accountable at every gate. **(Phase-4 exception, `design-process.md` v1.0):** in the Design blueprint the verifier OWNS `design_redteam` (a producing node) + `verify_reconcile` (a process-integrity gate) — still never the *design decision* (the Director ratifies). "Never R/A" holds for the *decision*; the verifier owns process-certification nodes/gates (as in the ASR).
 
 ### §1.5.1 Engineer-runtime decision-moment routing (calibration #57 codification)
 
@@ -154,7 +156,7 @@ Standard RACI semantics: **R**esponsible (does the work) / **A**ccountable (fina
 
 | Verification point | Verifier |
 |---|---|
-| Phase 4 Design | C — adversarial red-team before ratification (on request) |
+| Phase 4 Design | ⚠ SUPERSEDED by `design-process.md` v1.0 — verifier OWNS `design_redteam` (mandatory producing node, not on-request) + `verify_reconcile` (process-gate); still no design veto |
 | Phase 6 Preflight | C — independent check of structural-elimination claims (calibration-#83 discipline) |
 | Phase 7 Release-gate | C — independent pre-ship verification; advisory to the Director's status=active ratification |
 | Phase 8 Execution | C — convergence red-team; drift / normative audit (CDACC altitudes) |
