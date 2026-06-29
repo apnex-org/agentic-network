@@ -1,0 +1,132 @@
+{
+  "_meta": {
+    "name": "design-process",
+    "version": "1.0",
+    "description": "Phase 4 Design as a 6-node, 3-agent work-graph (clones the ASR shape). Canonical spec: docs/methodology/design-process.md v1.0 (RATIFIED 2026-06-29).",
+    "template": true,
+    "parameters": {
+      "RUN_ID": "unique run id, e.g. m-foo-design_20260701 (substituted into runId + the cross-node work-bp-<RUN_ID>-* entity refs)",
+      "METHODOLOGY_SHA": "40-hex sha to pin docs/methodology/design-process.md at seed-time",
+      "CALS_SHA": "40-hex sha to pin docs/calibrations.yaml at seed-time (the calibration-ledger conformance frame)",
+      "INTENT_ENVELOPE_REF": "<sha>:path — the Survey doc (Survey path) OR the brainstorm+decision-log (bypass path) feeding design_draft"
+    },
+    "usage": "This is a TEMPLATE. Substitute every ${...} param + pin real 40-hex shas, THEN seed_blueprint({runId, nodes, dryRun:true}) to fail-closed-validate (dup/dangling localId, cycles, runbook+required-refs) before creating. NOT directly seedable with placeholders (a ${...} git ref fails ref-resolution by design — that is the reminder to fill params).",
+    "encoding-notes": [
+      "Node types are task | verifier-gate ONLY. There is NO 'director-decision-node' type — node 6 (ratify) is type:task + roleEligibility:[director] (the bug-205 terminal: not substrate-closable until idea-388; closed via the interim delegated-disposition Audit, design-process §6).",
+      "The two parallel legs (feasibility_audit, design_redteam) both dependsOn design_draft and each carry a runbook 'do NOT read the other leg' clause — blinding is soft (no Hub primitive enforces it), so independence (§7) is runbook-constructed.",
+      "design_redteam verdict is an INPUT (non-vetoing); verify_reconcile is the only verifier-owned GATE (process-integrity, not design-veto); ratify is the only DECISION gate (§12).",
+      "axioms frame = Hub list_tele at runtime (the 1:1 axiom proxy) until idea-396 imports the agnostic axioms local; reference-resolver = idea-397 (interim: prose-pointers + manual-fetch).",
+      "Verifier nodes (design_redteam, verify_reconcile) require a registered role=verifier Agent (steve, cross-lineage); architect-local sub-agents are a PROXY only (no cross-lineage decorrelation)."
+    ]
+  },
+  "runId": "${RUN_ID}",
+  "nodes": [
+    {
+      "localId": "design_draft",
+      "label": "Author Design v0.1 + the proposed mission work-graph + declare the reference-set",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["architect"],
+      "dependsOn": [],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "methodology-doc", "ref": "${METHODOLOGY_SHA}:docs/methodology/design-process.md", "storage": "git", "mode": "read", "required": true },
+        { "kind": "doc", "ref": "${INTENT_ENVELOPE_REF}", "storage": "git", "mode": "read", "required": true }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_design_v01", "kind": "doc", "description": "Design v0.1 at docs/designs/<mission>-design.md + the proposed mission work-graph (wave plan) + the declared per-design reference-set (standing: axioms/calibration-ledger; per-design: north-star pillars, prior-art)." },
+        { "id": "ev_intent_attest", "kind": "freeform", "description": "Entry-input attestation (design-process §3 node 1): names the intent-envelope artifact (validated Survey doc OR brainstorm+decision-log) + a one-line attestation that idea-survey.md §8 bypass criteria held (clear/complete scope, Director-anchored, no major ambiguity), OR that a Survey ran." }
+      ],
+      "runbook": "You are the architect. FIRST node of a Design run (design-process.md §3 node 1). GOAL: from the attested intent envelope, author Design v0.1 + the proposed mission work-graph + DECLARE the reference-set design_redteam will score against. STEPS: (1) Read design-process.md (pinned). (2) Read the intent envelope (${INTENT_ENVELOPE_REF}). (3) Attest the entry-input (ev_intent_attest): name the envelope + confirm idea-survey §8 bypass criteria held (or that a Survey ran). (4) Author Design v0.1 (architecture + decisions + the proposed mission work-graph/wave-plan) at docs/designs/<mission>-design.md. (5) DECLARE the per-design reference-set: standing {axioms (list_tele 1:1 proxy), calibration-ledger docs/calibrations.yaml} + per-design {north-star pillars, prior-art comparable if any}. complete_work binding ev_design_v01 + ev_intent_attest."
+    },
+    {
+      "localId": "feasibility_audit",
+      "label": "Engineer feasibility audit — scope-realism / build-feasibility / ground-truth (BLIND to design_redteam)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["engineer"],
+      "dependsOn": ["design_draft"],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "methodology-doc", "ref": "${METHODOLOGY_SHA}:docs/methodology/design-process.md", "storage": "git", "mode": "read", "required": true },
+        { "kind": "workitem", "ref": "work-bp-${RUN_ID}-design_draft", "storage": "entity", "mode": "read", "required": false }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_feasibility", "kind": "doc", "description": "Feasibility findings (scope-realism, build-feasibility, hidden-coupling, GROUND-TRUTH: does the design match the actual code? — the shim-audit pattern) + a scope-realism verdict." }
+      ],
+      "runbook": "You are the engineer. design-process §3 node 2 — the BUILD-feasibility leg, run IN PARALLEL with + BLIND TO design_redteam (§7). GOAL: stress the design against the territory. STEPS: (1) Read Design v0.1 (design_draft output). (2) Check scope-realism, build-feasibility, hidden-coupling, and GROUND-TRUTH (does the design match what is actually in the code?). (3) Emit ev_feasibility: findings + a scope-realism verdict. INDEPENDENCE (§7): read ONLY Design v0.1; do NOT read the design_redteam node's output; reveal at reconcile. complete_work binding ev_feasibility."
+    },
+    {
+      "localId": "design_redteam",
+      "label": "Verifier red-team — adversarial refute + conformance matrix (BLIND to feasibility_audit)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["verifier"],
+      "dependsOn": ["design_draft"],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "methodology-doc", "ref": "${METHODOLOGY_SHA}:docs/methodology/design-process.md", "storage": "git", "mode": "read", "required": true },
+        { "kind": "calibration-ledger", "ref": "${CALS_SHA}:docs/calibrations.yaml", "storage": "git", "mode": "triangulate-against", "required": true },
+        { "kind": "workitem", "ref": "work-bp-${RUN_ID}-design_draft", "storage": "entity", "mode": "read", "required": false }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_redteam", "kind": "audit", "description": "Verifier audit-kind verdict: adversarial findings (contradictions / unstated assumptions / gaps / risks / scope) + a verdict ready|ready-with-fixes|not-ready (§12). producedBy MUST resolve to a registered role=verifier Agent (bug-204).", "refResolvable": true },
+        { "id": "ev_conformance_matrix", "kind": "doc", "description": "The §4 conformance matrix (design x frame -> pass/flag/violate + evidence) across ALL declared frames {axioms/teles, calibration-ledger, pillars, prior-art} + a frame-coverage attestation (one row per declared frame incl. explicit checked/no-violation rows; calibration-ledger checked at <sha>)." }
+      ],
+      "runbook": "You are the verifier (steve, cross-lineage; an architect-local sub-agent is a PROXY only). design-process §3 node 3 — the REFUTE leg, run IN PARALLEL with + BLIND TO feasibility_audit (§7). Your verdict is an INPUT (non-vetoing); the only verifier GATE is verify_reconcile (§12). STEPS: (1) Read Design v0.1 (design_draft output). (2) ADVERSARIAL refute: contradictions / unstated assumptions / gaps / risks / scope. (3) CONFORMANCE MATRIX (§4): score the design against EVERY declared frame — axioms (list_tele, 1:1 proxy), calibration-ledger (docs/calibrations.yaml named pathologies: 'have we made this mistake before?'), the north-star pillars, prior-art — one row per item (pass/flag/violate + evidence) + a frame-coverage attestation. (4) Emit a verdict ready|ready-with-fixes|not-ready. INDEPENDENCE (§7): read ONLY Design v0.1; do NOT read feasibility_audit's output. REFUTE-NOT-PRODUCE. complete_work: ev_redteam (audit; producedBy=your verifier agentId) + ev_conformance_matrix (doc)."
+    },
+    {
+      "localId": "reconcile",
+      "label": "Architect reconcile -> Design v1.0 + disposition ledger",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["architect"],
+      "dependsOn": ["feasibility_audit", "design_redteam"],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "methodology-doc", "ref": "${METHODOLOGY_SHA}:docs/methodology/design-process.md", "storage": "git", "mode": "read", "required": true },
+        { "kind": "workitem", "ref": "work-bp-${RUN_ID}-feasibility_audit", "storage": "entity", "mode": "read", "required": false },
+        { "kind": "workitem", "ref": "work-bp-${RUN_ID}-design_redteam", "storage": "entity", "mode": "read", "required": false }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_design_v1", "kind": "doc", "description": "Design v1.0 — folds the accepted feasibility + red-team findings (incl. any conformance-matrix violate)." },
+        { "id": "ev_disposition_ledger", "kind": "doc", "description": "Disposition ledger: accept|reject|defer per finding (every violate/critical/major carries a rationale verify_reconcile must accept — anti-silent-drop). FM-6: re-resolve every cited conformance ref from ground truth. Apply the §5 feasibility-vs-redteam conflict rule (unresolved -> escalate to ratify as an explicit decision item)." }
+      ],
+      "runbook": "You are the architect. design-process §3 node 4. GOAL: fold both audit legs into Design v1.0 + an auditable disposition ledger. STEPS: (1) Read feasibility_audit + design_redteam outputs (now revealed). (2) FM-6: re-resolve every cited conformance ref from ground truth (a violate cannot be dispositioned away against an unresolvable citation). (3) Disposition EVERY finding accept|reject|defer; for any violate/critical/major record a rationale verify_reconcile will accept. (4) Apply the §5 conflict rule (feasibility vs red-team: state which lens precedes + why; unresolved -> escalate to ratify). (5) Produce Design v1.0. complete_work: ev_design_v1 + ev_disposition_ledger."
+    },
+    {
+      "localId": "verify_reconcile",
+      "label": "Verifier-gate: certify the disposition ledger (the independence floor; process-integrity, not design-veto)",
+      "type": "verifier-gate",
+      "priority": "high",
+      "roleEligibility": ["verifier"],
+      "dependsOn": ["reconcile"],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "methodology-doc", "ref": "${METHODOLOGY_SHA}:docs/methodology/design-process.md", "storage": "git", "mode": "read", "required": true },
+        { "kind": "workitem", "ref": "work-bp-${RUN_ID}-reconcile", "storage": "entity", "mode": "read", "required": false }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_reconcile_verified", "kind": "audit", "description": "Verifier audit VALID/INVALID: confirms every violate/critical/major feasibility+redteam finding was accepted-and-folded OR rejected/deferred with a rationale the verifier accepts. INVALID -> bounce to reconcile (revision bound: 2 cycles, then escalate to ratify, §12). producedBy MUST resolve to a registered role=verifier Agent.", "refResolvable": true }
+      ],
+      "runbook": "You are the verifier. design-process §3 node 5 — the INDEPENDENCE FLOOR. This is a PROCESS-integrity gate, NOT a design veto (§12): you did NOT produce the design, so you certify the reconcile's HONESTY. STEPS: (1) Read the disposition ledger + Design v1.0 (reconcile output) + the upstream findings (feasibility + red-team). (2) For EVERY violate/critical/major finding: confirm it was accepted-and-folded into v1.0 OR rejected/deferred with a rationale you ACCEPT. (3) If a finding was silently dropped, or rejected on a rationale you reject -> verdict INVALID, bounce to reconcile (2-cycle bound, then escalate to ratify). If all honest -> VALID. complete_work: ev_reconcile_verified (audit VALID/INVALID; producedBy=your verifier agentId)."
+    },
+    {
+      "localId": "ratify",
+      "label": "Director ratify (the only DECISION gate)",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["director"],
+      "dependsOn": ["verify_reconcile"],
+      "completionDependsOn": [],
+      "references": [
+        { "kind": "methodology-doc", "ref": "${METHODOLOGY_SHA}:docs/methodology/design-process.md", "storage": "git", "mode": "read", "required": true },
+        { "kind": "workitem", "ref": "work-bp-${RUN_ID}-reconcile", "storage": "entity", "mode": "read", "required": false }
+      ],
+      "evidenceRequirements": [
+        { "id": "ev_director_ratify", "kind": "freeform", "description": "Director ratify/redirect decision on Design v1.0. INTERIM (bug-205, until idea-388): the [director] node is NOT substrate-closable -> the disposition is recorded via a create_audit_entry (delegated-disposition); Director-dark runs route the ratify-Audit through the VERIFIER not the architect (§6)." }
+      ],
+      "runbook": "You are the Director (or the interim delegated-disposition path). design-process §3 node 6 — the ONLY decision gate (tele-13 authority-non-delegation). STEPS: (1) Read Design v1.0 + the disposition ledger + the verify_reconcile VALID verdict. (2) Ratify or redirect. ON RATIFY -> Phase 5 Manifest (create_mission with the proposed work-graph). INTERIM (bug-205): this [director] node cannot be substrate-closed until idea-388 -> record the ratify via create_audit_entry (delegated-disposition); in Director-dark runs the VERIFIER (not the architect) authors that Audit so the loop does not close on the producer (§6)."
+    }
+  ]
+}
