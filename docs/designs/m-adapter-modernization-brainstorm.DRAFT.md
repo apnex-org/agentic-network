@@ -41,6 +41,20 @@
   - **Narrow remaining decisions (claude-first):** (i) claude's register mechanism in-image (the (a)/(b), scoped to claude); (ii) image contents (claude-code + adapter + git + creds + repo-access); (iii) ephemerality model (disposable container; state via Hub+git+memory cold-pickup — PROVEN this session); (iv) update-trigger (watchtower-pull vs CI-push vs manual-first).
   - **METHODOLOGY:** graduate this brainstorm → a formal Idea (anchors the infra backlog-gap the SR flagged) + a Design (this doc), claude-code pilot = first mission-slice.
 
+## Prior art — GoogleCloudPlatform/scion (Director-provided, 2026-06-29) — INSPIRATION not verbatim
+SCION = experimental multi-agent orchestration testbed for "deep agents" (Claude Code / Gemini CLI / …): **container-per-agent + own git-worktree + own credentials**; runs local / VM / k8s; "less is more" — agents *invoke a CLI tool* + coordinate via NL (group/direct messaging + shared workspace); telemetry from messages + file-access. (scion = "a shoot cut for grafting" — apt.)
+- **Differentiator confirmed (Director's hypothesis):** scion coordination is PULL (agent-invoked CLI tool); NO first-class network that PUSHES/injects messages into the harness. OUR core = the Hub *pushes* coordination into the live session. **FRAME: graft scion's container-deployment shell onto our push-injection coordination core.**
+- **ADOPT (deployment shell):** container-per-agent + worktree + creds · off-the-shelf-harness wrapping · ENV/config-driven boot · multi-runtime (local/VM/k8s) · message/file telemetry.
+- **ADAPT:** their agent-invoked coordination CLI → our pushed message-injection (kept alive + resilient in-container by the adapter-kernel, P1).
+- **AVOID:** their "less-is-more / models freely coordinate" philosophy — we keep structured roles/RACI/work-queue-FSM/gates/teles.
+- **NEXT:** deep-read scion internals (Dockerfile/entrypoint · config+creds+worktree injection · server/runtime + restart handling · tmux/session mechanics) → concrete adopt/adapt/avoid vs our open instance-decisions.
+
+## Image model (Director, 2026-06-29)
+- **Single image per harness-TYPE** (`@apnex/claude-harness`, later `@apnex/opencode-harness`); per-AGENT (lily/greg/…) = pure ENV injection (identity/role · Hub URL+token · git creds · worktree/branch · model/quota) — NOT separate images. Reproducible + uniform + scalable (spin an agent = run the image with ENV).
+- **Entrypoint script** does the uniform boot: register (register-SPI) → establish Hub connection (kernel) → start tmux → launch the CLI.
+- **tmux** for the detached / re-attachable / observable long-running session (adopt from scion).
+- **Message-injection (our differentiator) must survive IN the container + be resilient** → the adapter-kernel (P1 connection-resilience) keeps the pushed Hub→harness channel alive inside the containerised, tmux'd CLI. P1 (kernel) ⟂ P2 (container) interlock.
+
 ## Related entities
 mission-64 (M-Adapter-Streamline; `update-adapter.sh`, the npm-model) · bug-203 (host won't re-enumerate tool-surface) · idea-392 (live auto-refresh / no-stale-caches / opencode-parity) · idea-391 (system CLI→Hub REST) · idea-390 (agent⟂project separation) · bug-184 (version-honesty) · candidate_A (the SR adapter summit) · `@apnex` npm namespace.
 
