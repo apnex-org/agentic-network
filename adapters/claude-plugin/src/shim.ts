@@ -30,6 +30,8 @@ import {
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,
+  LivenessWatchdog,
+  emitLivenessLostSignal,
   type AgentEvent,
   type DrainedPendingAction,
   type HandshakeResponse,
@@ -183,6 +185,9 @@ let agent: McpAgentClient | null = null;
 // timers cleanly (the inner main() dispatcherRef is function-scoped and
 // not visible here).
 let shutdownPollBackstop: (() => void) | null = null;
+// L1.5 liveness watchdog stop-callback (set in main() when the watchdog is
+// enabled; called by shutdown() to release its probe timer cleanly).
+let shutdownLivenessWatchdog: (() => void) | null = null;
 let shuttingDown = false;
 
 async function shutdown(reason?: "signal_term" | "signal_int" | "internal_error"): Promise<void> {
@@ -204,6 +209,7 @@ async function shutdown(reason?: "signal_term" | "signal_int" | "internal_error"
     // tickHeartbeat doesn't race with agent.stop() / try to call against
     // a torn-down stream.
     shutdownPollBackstop?.();
+    shutdownLivenessWatchdog?.();
     if (agent) await agent.stop();
   } catch (err) {
     log(`Shutdown error: ${err}`);
@@ -612,6 +618,58 @@ async function main(): Promise<void> {
     dispatcher.pollBackstop?.start(() => agent);
     // bug-53: register stop-callback so shutdown() can clean up timers.
     shutdownPollBackstop = () => dispatcher.pollBackstop?.stop();
+
+    // ── L1.5 liveness self-watchdog (M-Adapter-Modernization P1c, Design §4) ──
+    //
+    // Closes the keepalives-flowing-but-session-dead wedge: a PROACTIVE periodic
+    // session-validity probe (a real session-requiring call, INDEPENDENT of the
+    // transport keepalive). The probe surfaces an otherwise-idle dead session ->
+    // L1's session_invalid->reconnect heals it when recoverable; only on a bounded
+    // budget of SUSTAINED failures (L1 could not recover) does the watchdog emit the
+    // wedged-restart sentinel + self-exit -> P1e's PID-1 supervisor consumes the
+    // sentinel -> container-exit -> docker-L2 restart -> fresh re-handshake/re-claim.
+    //
+    // DEFAULT-OFF (opt-in OIS_LIVENESS_WATCHDOG_ENABLED=1). RATIONALE (fail-safe): a
+    // self-exit WITHOUT P1e's supervisor would kill the adapter with NO container
+    // restart — worse than the wedge (a wedged adapter at least holds its session).
+    // Enable only once P1e's supervisor + container can consume the sentinel.
+    if (process.env.OIS_LIVENESS_WATCHDOG_ENABLED === "1") {
+      const probeIntervalMs = Number(process.env.OIS_LIVENESS_PROBE_INTERVAL_MS) || 60_000;
+      const failureBudget = Number(process.env.OIS_LIVENESS_FAILURE_BUDGET) || 3;
+      const probeMethod = process.env.OIS_LIVENESS_PROBE_METHOD || "get_agents";
+      const watchdog = new LivenessWatchdog({
+        probeIntervalMs,
+        failureBudget,
+        log,
+        probe: async () => {
+          const a = agent;
+          if (!a) return false;
+          try {
+            await a.call(probeMethod, {});
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        onLivenessLost: (info) => {
+          emitLivenessLostSignal({
+            consecutiveFailures: info.consecutiveFailures,
+            lastError: info.lastError,
+            log,
+          });
+          log("[LivenessWatchdog] session wedged + unrecoverable — self-exiting; PID-1 supervisor restarts the container");
+          // The shim's exit code is swallowed by the CLI (grandchild); the sentinel
+          // is the out-of-band signal P1e's supervisor consumes. Exit to die so the
+          // supervisor's restart fires.
+          process.exit(1);
+        },
+      });
+      watchdog.start();
+      shutdownLivenessWatchdog = () => watchdog.stop();
+      log(`[LivenessWatchdog] ENABLED — probe '${probeMethod}' every ${probeIntervalMs}ms, budget ${failureBudget}`);
+    } else {
+      log("[LivenessWatchdog] disabled (default; set OIS_LIVENESS_WATCHDOG_ENABLED=1 once the P1e PID-1 supervisor is in place)");
+    }
   } catch (err) {
     rejectIdentityReady(err);
     rejectSessionReady(err);
