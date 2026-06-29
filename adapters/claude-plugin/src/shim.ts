@@ -32,6 +32,8 @@ import {
   formatSessionClaimedLogLine,
   LivenessWatchdog,
   emitLivenessLostSignal,
+  loadHarnessManifest,
+  serverCapabilitiesFromManifest,
   type AgentEvent,
   type DrainedPendingAction,
   type HandshakeResponse,
@@ -99,6 +101,15 @@ const NETWORK_ADAPTER_PKG_VERSION = (() => {
 })();
 const PROXY_VERSION = CLAUDE_PLUGIN_PKG_VERSION;
 const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
+
+// M-Adapter-Modernization P1b: the per-harness STANDARD config (proxyName /
+// transport / serverName / tool-prefix / injection-mechanism / the 3-valued
+// capability-matrix / auth-order / env-template) is single-homed as a schema-
+// validated, versioned JSON manifest at the plugin root. Loaded fail-closed —
+// a missing/malformed manifest must NOT boot a mis-shaped adapter. Per-agent
+// INSTANCE values stay in ENV (the manifest carries only var NAMES, so it can
+// never hold a raw secret).
+const MANIFEST = loadHarnessManifest(resolve(__shimDir, "..", "agent-adapter.manifest.json"));
 
 // M-Build-Identity-AdvisoryTag (idea-256): code-identity source-of-truth.
 // Each package's prepack hook (scripts/build/write-build-info.js) writes
@@ -387,9 +398,9 @@ async function main(): Promise<void> {
         // idea-251 D-prime Phase 2: name IS identity (was globalInstanceId).
         // agentName loaded + validated at top of bootstrap; never undefined here.
         name: agentName,
-        proxyName: "@apnex/claude-plugin",
+        proxyName: MANIFEST.proxyName,
         proxyVersion: PROXY_VERSION,
-        transport: "stdio-mcp-proxy",
+        transport: MANIFEST.transport,
         sdkVersion: SDK_VERSION,
         // M-Build-Identity-AdvisoryTag (idea-256): build-identity flows
         // via clientMetadata → Hub deriveAdvisoryTags → AgentAdvisoryTags.
@@ -489,8 +500,8 @@ async function main(): Promise<void> {
   const dispatcher = createSharedDispatcher({
     getAgent: () => agent,
     proxyVersion: PROXY_VERSION,
-    serverName: "proxy",
-    serverCapabilities: { tools: {}, experimental: { "claude/channel": {} } },
+    serverName: MANIFEST.serverName,
+    serverCapabilities: serverCapabilitiesFromManifest(MANIFEST),
     log,
     listToolsGate: syncReady,
     callToolGate: sessionReady,
@@ -511,7 +522,7 @@ async function main(): Promise<void> {
     },
     notificationHooks: {
       onActionableEvent: (event) => {
-        appendActionableLog(event, buildPromptText(event.event, event.data, { toolPrefix: "mcp__plugin_agent-adapter_proxy__" }));
+        appendActionableLog(event, buildPromptText(event.event, event.data, { toolPrefix: MANIFEST.toolPrefix }));
         // Mission-57 W3: pulse Messages downgrade level from "actionable"
         // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
         // noise reduction during high-activity sub-PR cascades).
@@ -523,7 +534,7 @@ async function main(): Promise<void> {
       onInformationalEvent: (event) => {
         // Informational events log only — `<channel>` push would otherwise
         // wake the LLM. Diagnostic-only routing.
-        appendActionableLog(event, `[INFO] ${buildPromptText(event.event, event.data, { toolPrefix: "mcp__plugin_agent-adapter_proxy__" })}`);
+        appendActionableLog(event, `[INFO] ${buildPromptText(event.event, event.data, { toolPrefix: MANIFEST.toolPrefix })}`);
       },
     },
     // bug-53: opt into pollBackstop heartbeat-second-timer so transport_heartbeat

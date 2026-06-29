@@ -132,6 +132,18 @@ export {
 } from "./kernel/liveness-signal.js";
 export type { LivenessLostSignalPayload } from "./kernel/liveness-signal.js";
 
+// ── Harness manifest (M-Adapter-Modernization P1b) — the per-harness STANDARD
+//    config as a schema-validated, VERSIONED artifact. The claude shim is the
+//    first conformant instance; opencode/Phase-2 slot in as a second manifest
+//    against this SAME schema (not a parallel hand-rolled shape). Per-agent
+//    INSTANCE values stay in ENV — the manifest carries only env var NAMES.
+export {
+  parseHarnessManifest,
+  loadHarnessManifest,
+  serverCapabilitiesFromManifest,
+} from "./kernel/harness-manifest.js";
+export type { HarnessManifest, HarnessCapability } from "./kernel/harness-manifest.js";
+
 // ── Layer 1c: tool-manager (Initialize/ListTools/CallTool factory) ──
 //
 // The MCP protocol tool-manager per Design v1.2 §4 naming discipline
