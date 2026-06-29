@@ -47,7 +47,49 @@ SCION = experimental multi-agent orchestration testbed for "deep agents" (Claude
 - **ADOPT (deployment shell):** container-per-agent + worktree + creds · off-the-shelf-harness wrapping · ENV/config-driven boot · multi-runtime (local/VM/k8s) · message/file telemetry.
 - **ADAPT:** their agent-invoked coordination CLI → our pushed message-injection (kept alive + resilient in-container by the adapter-kernel, P1).
 - **AVOID:** their "less-is-more / models freely coordinate" philosophy — we keep structured roles/RACI/work-queue-FSM/gates/teles.
-- **NEXT:** deep-read scion internals (Dockerfile/entrypoint · config+creds+worktree injection · server/runtime + restart handling · tmux/session mechanics) → concrete adopt/adapt/avoid vs our open instance-decisions.
+- **DEEP-READ DONE (8-agent audit w2bjaeug5, 2026-06-29)** → next section. Full structured findings archived at `docs/designs/m-adapter-modernization-scion-audit.json` (headline/adopt/adapt/avoid/per-decision/divergences/open-questions). Decision-areas keyed D-img/D-boot/D-run/D-tmux/D-plugin/D-creds/D-coord.
+
+## scion deep-audit — adopt / adapt / avoid (w2bjaeug5, 2026-06-29) — INSPIRATION not verbatim
+8-agent seed-blueprint audit of scion internals (916k tokens; 7 area-auditors + synthesizer). Full JSON: `m-adapter-modernization-scion-audit.json`. The load-bearing distillation:
+
+### The two biggest results
+1. **STRONGEST VALIDATION — scion's 3-tier image cascade IS our fat-kernel/thin-shim in Docker layers.** OS+toolchain base (rarely changes) → org layer that multi-stage-BAKES the shared binary + sets a **PID-1 ENTRYPOINT** → a *tiny* per-harness leaf that only installs ONE agent CLI + sets CMD (their gemini leaf = 14 lines; claude leaf = a single `npm install`). One image per harness-TYPE; per-agent diffs (UID/creds/worktree) injected at **runtime, never baked**. This is our agreed architecture, already proven in someone else's Docker layers. **Map our layers straight onto it.**
+2. **HIGHEST-VALUE NEGATIVE RESULT — scion BUILT then RIPPED OUT go-plugin RPC harness plugins.** Their verdict (`.design/decoupled-harness-implementation.md`): *"provisioning is a scripting problem, not a systems programming problem"* — go-plugin is "heavyweight… overkill for file-writing provisioning logic." Maps 1:1 to our shim decision: **our per-harness shim must be a declarative manifest + thin module, NEVER process-isolation RPC.** A wrong path we now skip for free.
+
+### The four divergences that CONFIRM our differentiators (scion does the opposite of each pillar)
+- **Kernel-owned injection (pillar-1):** scion injection is HOST-EXTERNAL — the orchestrator execs `tmux send-keys` into the live pane per message, **NO consumption ack**, papered with "300ms double-Enter to ensure input is accepted" + 2s debounce (`manager.go:316-321`). Coordination liveness is coupled to orchestrator exec-access → a blip wedges delivery, nothing self-heals. **OUR kernel-in-container owns injection with a real submit/ack + ordered queue → pushed messages survive blips by construction.** Net-new; nothing to reuse.
+- **In-system self-heal (pure-resilience):** scion has NONE — k8s `RestartPolicyNever` (`k8s_runtime.go:1240`), no Restart verb (restart = Delete+Run by orchestrator code), heartbeat **reports-only**. **We put resilience INTO the system: kernel self-restart and/or native supervision + lease-expiry reclaim.**
+- **Pin-everything reproducibility (no-drift):** scion has the right STRUCTURE (dual-tag :latest + :sha, immutable :sha as BASE_IMAGE, ldflags-stamp, multi-stage, content-hashed bundles) but **floats nearly everything to `latest` — claude has NO pin at all.** A rebuild of the same git SHA can yield different binaries. **Adopt the structure, then PIN EVERY dep + digest-pin bases.**
+- **Structured-hook telemetry (not screen-scraping):** scion's telemetry is genuinely strong and reusable — a thin data-driven per-harness **dialect** (YAML event-name + dotted-path) → ONE OTEL `gen_ai.*` pipeline + baked-in field-redaction + file-touch swarm signal. **A new harness = a dialect file, not pipeline code.** (This is our shim/kernel split applied to observability.) Observe via hook-events, **never screen-scrape** the pane.
+
+### ADOPT wholesale (proven, maps clean)
+- **tmux model** — mandatory uniform detached session across all runtimes; fixed name; two-window (agent+shell); `new-session -d` then attach; attach/exec ALWAYS as session-owner; harness-exit-to-file wrapper + pane-exited→kill-session teardown; capture-pane as a *snapshot only*; SPDY-API PTY (no kubectl in-image). Treat tmux as **non-durable** (dies with the container; persist in volume/Hub).
+- **Narrow Runtime seam** — ~12-verb interface + one config struct + factory(autodetect)+null-object + ALL shared logic in one helper, each backend a thin wrapper.
+- **Thin-wrapper-over-declarative-manifest** per-harness adapter + a typed **3-valued capability matrix** (yes/partial/no + reason) so callers gate gracefully (harnesses genuinely differ — e.g. Claude has no model-end hook; OpenCode downgrades the system prompt into AGENTS.md).
+- **ENV-injection as the single config contract** (identical across backends); **FAIL-CLOSED boot** (ValidateAuth before launch — serves no-silent-wedge).
+- **Harness-agnostic 4-stage cred pipeline** (gather→overlay→resolve→fail-closed-validate) as a shared-kernel resolver; **token-from-FILE not env** (0600 atomic rename, env var deleted) + kernel-owned proactive refresh → long session survives cred churn with no restart.
+- **Defense-by-ABSENCE isolation** (UID==host-UID makes chmod worthless); content-addressed config + MANDATORY hash verify; secret materialization at entrypoint (write 0600 BEFORE any process runs).
+- **Build provenance** ldflags-stamp (kernel version+SHA self-reported by the running container); dual-tag + immutable-:sha-as-BASE_IMAGE; secret-safe `.dockerignore`; pre-chowned runtime dirs; lean minimal base.
+
+### ADAPT (right shape, our ownership)
+- **INVERT the baked-vs-mounted boundary:** scion bakes the CLI but *mounts* the provisioner (redeploy-without-rebuild). **We BAKE the @apnex kernel** (npm-as-source baked, so push-injection survival never depends on a runtime fetch); only per-agent ENV/creds external; update = rebuild + restart.
+- **Centralize the pre-start provision contract in the KERNEL** (one impl) instead of N per-harness Python scripts; keep the "pre-start hook prepares native config + selects auth + fails closed" shape, but the shim is a JS/TS module/manifest.
+- **Message-injection mechanics** (keep bracketed-paste so TUIs don't eat chars; harness-specific interrupt key) but **our kernel owns delivery** with explicit submit/ack — replacing the external exec + blind-timer debounce.
+- **Heartbeat → kernel self-reporting inside a self-healing loop** (detect wedge → reconnect/restart); adopt the **sticky liveness FSM** (waiting_for_input/completed resist clobber by trailing tool events) to fix our known **false-idle reads**.
+- **Per-agent worktree over a shared base .git** — but ALWAYS create host-side then mount (NEVER in-container: `--relative-paths` path-identity corruption); refcounted sharer registry for last-sharer teardown.
+- **NET-NEW option:** since we HAVE a push channel, consider PULLING creds over it — eliminates the env-blob inspect/`/proc` exposure window scion accepts.
+
+### AVOID (their explicit mistakes / anti-pillar choices)
+- Floating `latest`/unpinned deps (the no-drift hole). · go-plugin/RPC for the adapter. · Compiling per-harness-varying logic into the shared binary (the **"dialect trap"** — forced kernel+image rebuild per new harness). · The whole scion coordination shape (pull + host-external no-ack injection + screen-scraping + closed 5-value status enum as the entire semantic surface — semantics live in the LLM's head). · One-shot pods + report-only heartbeat. · Exposing a half-built host-type (their CloudRunRuntime is an unimplemented stub). · Gratuitous per-runtime duplication (their podman = "duplicate from Docker"). · Live in-container file mutation as the update path. · Ephemeral state that doesn't survive restart (their Hub SQLite on /tmp — our postgres substrate already avoids this).
+
+### Open design questions surfaced by the audit (next brainstorm fuel)
+1. **Resilience authority (D-run):** self-heal in the kernel, platform-native (k8s/systemd/watchtower), or both layered — and how does it interact with our lease-expiry stall-detector so the two don't fight?
+2. **Cross-harness target scope (D-plugin):** claude-only first, or claude+opencode+gemini+codex? Decides whether we need the full dialect + capability-matrix machinery now or can defer.
+3. **Shim form/language (D-plugin):** declarative manifest ONLY, or manifest + a thin JS/TS adapter module loaded by the kernel? How much in data vs code?
+4. **Secret transport (D-creds/D-coord):** PULL creds over the live push channel vs file-mount vs staged-env-blob?
+5. **Tool-surface ↔ push relationship (D-plugin/D-coord):** is our tool surface an MCP server the kernel hosts, and how does push-injection relate to the harness MCP/tool plumbing without colliding with TUI input?
+6. **Runtime target set + sequencing (D-run):** minimum viable FULLY-implemented host-type set (local + VM first?); commit to k8s/cloudrun later?
+7. **Observability transport (D-tmux/D-coord):** ride telemetry on the same reconnecting channel as push-coordination, or keep them separate? (Our own memory warns against piggybacking coordination on a lossy pipeline.)
 
 ## Image model (Director, 2026-06-29)
 - **Single image per harness-TYPE** (`@apnex/claude-harness`, later `@apnex/opencode-harness`); per-AGENT (lily/greg/…) = pure ENV injection (identity/role · Hub URL+token · git creds · worktree/branch · model/quota) — NOT separate images. Reproducible + uniform + scalable (spin an agent = run the image with ENV).
