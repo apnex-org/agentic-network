@@ -1,0 +1,51 @@
+# Reproducible build of the P1a claude-harness adapter image on Google Cloud Build.
+# Provenance: idea-398 -> Design v1.0 (66a8f721) §8/§9. Director-direct.
+#
+# Reproducibility levers (Design §8, full image-digest tier on buildkit >=0.11):
+#   - pinned modern buildx (>=0.18) installed in-step -> guarantees rewrite-timestamp
+#     support regardless of the preinstalled CLI version.
+#   - docker-container driver -> modern buildkit (moby/buildkit:buildx-stable-1).
+#   - SOURCE_DATE_EPOCH + --output ...,rewrite-timestamp=true -> normalizes layer
+#     mtimes AND the image-config `created` field -> same SHA => same image digest.
+#   - --provenance=false --sbom=false -> drop BuildKit's default attestations, whose
+#     per-build timestamps/metadata would otherwise make the index digest vary.
+#
+# Pushes ${_IMAGE}:${_TAG} (an immutable :<sha>-derived tag, NEVER :latest). Build +
+# push only; NO Cloud Run / VM deploy (that is P1e + a separate prod-deploy auth).
+substitutions:
+  _SHA: 'unknown'
+  _EPOCH: '0'
+  _BRANCH: 'main'
+  _CONTROLS: 'on'
+  _IMAGE: 'australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/claude-adapter'
+  _TAG: 'p1a'
+  _BUILDX_VER: 'v0.18.0'
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        echo "=== install pinned buildx ${_BUILDX_VER} ==="
+        mkdir -p ~/.docker/cli-plugins
+        curl -fsSL "https://github.com/docker/buildx/releases/download/${_BUILDX_VER}/buildx-${_BUILDX_VER}.linux-amd64" \
+          -o ~/.docker/cli-plugins/docker-buildx
+        chmod +x ~/.docker/cli-plugins/docker-buildx
+        docker buildx version
+        echo "=== modern buildkit via docker-container driver ==="
+        docker buildx create --name repro --driver docker-container --use
+        docker buildx inspect --bootstrap | grep -iE 'name|driver|buildkit|status' || true
+        echo "=== reproducible build (SOURCE_DATE_EPOCH=${_EPOCH}, controls=${_CONTROLS}) ==="
+        export SOURCE_DATE_EPOCH="${_EPOCH}"
+        docker buildx build \
+          --build-arg SOURCE_DATE_EPOCH="${_EPOCH}" \
+          --build-arg GIT_SHA="${_SHA}" \
+          --build-arg GIT_BRANCH="${_BRANCH}" \
+          --build-arg REPRO_CONTROLS="${_CONTROLS}" \
+          --provenance=false --sbom=false \
+          --output "type=image,name=${_IMAGE}:${_TAG},push=true,rewrite-timestamp=true" \
+          .
+        echo "BUILD-PUSHED ${_IMAGE}:${_TAG}"
+options:
+  logging: CLOUD_LOGGING_ONLY
