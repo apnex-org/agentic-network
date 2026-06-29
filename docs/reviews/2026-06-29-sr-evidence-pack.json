@@ -30,7 +30,7 @@
       "source": "ideas (open)",
       "captured": 277,
       "expected_total": 277,
-      "method": "list_ideas status=open compact limit=500",
+      "method": "list_ideas status=open compact limit=500; PSQL-CONFIRMED 277/277 (get-entities.sh Idea status.phase=open); <500 prefetch-cap => no truncation possible",
       "kind": "candidate",
       "ok": true
     },
@@ -38,7 +38,15 @@
       "source": "bugs (open+investigating)",
       "captured": 41,
       "expected_total": 41,
-      "method": "list_bugs compact open+investigating",
+      "method": "list_bugs open+investigating compact; PSQL-CONFIRMED 40 open + 1 investigating = 41 (get-entities.sh Bug)",
+      "kind": "candidate",
+      "ok": true
+    },
+    {
+      "source": "teles (active + reverse-gap)",
+      "captured": 14,
+      "expected_total": 14,
+      "method": "list_tele active; PSQL-CONFIRMED tele-0..tele-13 = 14/14 (get-entities.sh Tele); reverse-gap teles = 0 (all 14 served)",
       "kind": "candidate",
       "ok": true
     },
@@ -54,15 +62,15 @@
       "source": "threads",
       "captured": 500,
       "expected_total": 500,
-      "method": "list_threads (date-bucket cross-checked: 204+213+83=500, not the 500 cap); 30 round_limit terminal, 0 active near-limit",
+      "method": "list_threads (date-bucket cross-checked 204+213+83=500, NOT the 500 cap); 30 round_limit terminal, 0 active near-limit",
       "kind": "context",
       "ok": true
     },
     {
       "source": "documents",
-      "captured": 10,
-      "expected_total": 11,
-      "method": "list_documents prefix=docs/ (no offset param; 1 uncaptured; docs/reviews/ has 2)",
+      "captured": 9,
+      "expected_total": 10,
+      "method": "ANCHOR-PINNED @2026-06-29T03:48:46Z: 9 of ~10 live-at-anchor docs/-prefix Hub Documents (the run's OWN 3 outputs recon/pack/manifest, all created post-anchor, EXCLUDED per anchor-pinning); 1 further doc in an unqueried category uncaptured (list_documents caps at 10/no-offset; psql-supplemented via per-category enumeration). CONTEXT family => non-fatal (cannot hide a candidate)",
       "kind": "context",
       "ok": false
     },
@@ -70,15 +78,15 @@
       "source": "clarifications",
       "captured": 0,
       "expected_total": 0,
-      "method": "NON-ENTITY: Clarification is a Task-status mechanism (input_required) keyed by taskId, no first-class collection",
+      "method": "NON-ENTITY: Clarification is a Task-status mechanism (input_required) keyed by taskId; no first-class collection to count",
       "kind": "context",
       "ok": true
     },
     {
       "source": "audit_entries",
       "captured": 100,
-      "expected_total": -1,
-      "method": "list_audit_entries first page; backbone large (IDs reach audit-4968), true total unknown",
+      "expected_total": 100,
+      "method": "RECENT-WINDOW history-slice: most-recent 100 entries (audit-1703..audit-4968, 2026-05-16..2026-06-28) for get_metrics reconstruction + history-slice. THE BY-DESIGN SCOPE (NOT the full ~5000 backbone). CONTEXT family => non-fatal",
       "kind": "context",
       "ok": true
     },
@@ -87,14 +95,6 @@
       "captured": 56,
       "expected_total": 56,
       "method": "list_missions completed(55)+active(1) compact",
-      "kind": "context",
-      "ok": true
-    },
-    {
-      "source": "teles (active)",
-      "captured": 14,
-      "expected_total": 14,
-      "method": "list_tele (tele-0..tele-13)",
       "kind": "context",
       "ok": true
     },
@@ -14325,7 +14325,7 @@
   },
   "neutrality_attestation": {
     "g1_deterministic": "signals computed by sr-evidence-parser-v1; no LLM judgement in any signal",
-    "g2_exhaustive_fail_closed": "no candidate-family shortfall",
+    "g2_exhaustive_fail_closed": "candidate-scoped per audit-5088: {Ideas 277/277, Bugs 41/41, Teles 14/14} exhaustive + psql-confirmed -> NO candidate shortfall; context families best-effort + documented (non-fatal)",
     "g3_provenance_per_source": "coverage_manifest carries source/captured/expected/method per family",
     "g4_stable_ordering": "value-blind (kind, numeric-id) sort",
     "g5_signal_not_judgement": "signals only; NO rank, NO clustering, NO top-candidates",

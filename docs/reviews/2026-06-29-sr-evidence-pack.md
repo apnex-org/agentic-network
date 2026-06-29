@@ -8,23 +8,23 @@
 | Reconciliation anchor | `2026-06-29T03:48:46Z` @ HEAD `3cff84e` |
 | Candidates | 318 (277 ideas + 41 bugs) |
 | Derivation | fixed versioned tag+body parser (deterministic); in-degree = tag+body id-reference scan; staking-decay = updatedAt-age proxy; tele-fit/value from audit:* tags where present else raw-tag fallback |
-| Fail-closed | NO — candidate families exhaustive |
+| Fail-closed (candidate-scoped, audit-5088) | NO — candidate families {Ideas, Bugs, Teles} exhaustive + psql-confirmed (277/41/14) |
 
 **Signal != judgement.** This pack carries only the 6 mechanical signals, id-sorted, with NO rank, NO clustering, NO summit-pick (reserved for seal_candidates + the council).
 
-## §1 Coverage manifest (per-source COUNT(*) vs captured; ANY candidate shortfall => FAIL CLOSED)
+## §1 Coverage manifest (per-source COUNT(*) vs captured; candidate-shortfall => FAIL CLOSED per audit-5088; context families = best-effort + documented, non-fatal)
 
 | Source | Captured | Expected | Method | Kind | OK |
 |---|---|---|---|---|---|
-| ideas (open) | 277 | 277 | list_ideas status=open compact limit=500 | candidate | ok |
-| bugs (open+investigating) | 41 | 41 | list_bugs compact open+investigating | candidate | ok |
+| ideas (open) | 277 | 277 | list_ideas status=open compact limit=500; PSQL-CONFIRMED 277/277 (get-entities.sh Idea status.phase=open); <500 prefetch-cap => no truncation possible | candidate | ok |
+| bugs (open+investigating) | 41 | 41 | list_bugs open+investigating compact; PSQL-CONFIRMED 40 open + 1 investigating = 41 (get-entities.sh Bug) | candidate | ok |
+| teles (active + reverse-gap) | 14 | 14 | list_tele active; PSQL-CONFIRMED tele-0..tele-13 = 14/14 (get-entities.sh Tele); reverse-gap teles = 0 (all 14 served) | candidate | ok |
 | work_items | 116 | 116 | list_work status:any (88 done/23 ready/3 abandoned/1 claimed/1 in_progress) | context | ok |
-| threads | 500 | 500 | list_threads (date-bucket cross-checked: 204+213+83=500, not the 500 cap); 30 round_limit terminal, 0 active near-limit | context | ok |
-| documents | 10 | 11 | list_documents prefix=docs/ (no offset param; 1 uncaptured; docs/reviews/ has 2) | context | **SHORTFALL** |
-| clarifications | 0 | 0 | NON-ENTITY: Clarification is a Task-status mechanism (input_required) keyed by taskId, no first-class collection | context | ok |
-| audit_entries | 100 | -1 | list_audit_entries first page; backbone large (IDs reach audit-4968), true total unknown | context | ok |
+| threads | 500 | 500 | list_threads (date-bucket cross-checked 204+213+83=500, NOT the 500 cap); 30 round_limit terminal, 0 active near-limit | context | ok |
+| documents | 9 | 10 | ANCHOR-PINNED @2026-06-29T03:48:46Z: 9 of ~10 live-at-anchor docs/-prefix Hub Documents (the run's OWN 3 outputs recon/pack/manifest, all created post-anchor, EXCLUDED per anchor-pinning); 1 further doc in an unqueried category uncaptured (list_documents caps at 10/no-offset; psql-supplemented via per-category enumeration). CONTEXT family => non-fatal (cannot hide a candidate) | context | **SHORTFALL** |
+| clarifications | 0 | 0 | NON-ENTITY: Clarification is a Task-status mechanism (input_required) keyed by taskId; no first-class collection to count | context | ok |
+| audit_entries | 100 | 100 | RECENT-WINDOW history-slice: most-recent 100 entries (audit-1703..audit-4968, 2026-05-16..2026-06-28) for get_metrics reconstruction + history-slice. THE BY-DESIGN SCOPE (NOT the full ~5000 backbone). CONTEXT family => non-fatal | context | ok |
 | missions (all status) | 56 | 56 | list_missions completed(55)+active(1) compact | context | ok |
-| teles (active) | 14 | 14 | list_tele (tele-0..tele-13) | context | ok |
 | proposals | 33 | 33 | list_proposals | context | ok |
 
 ## §2 Candidate universe (id-sorted; signals only; NO RANK)
@@ -361,13 +361,13 @@ Legend: NS=north-star tele touch · *K*=keystone (in-degree>=5) · ROT=rot>90d �
 ## §4 History slice
 
 - Reconciliation anchor doc: `docs/reviews/2026-06-29-ledger-reconciliation-stint6-sr.md` (277 ideas / 41+1 bugs live; bug-190/195 flipped resolved).
-- audit-entry history backbone: {"captured": 100, "total": -1, "method": "list_audit_entries first page; backbone large (IDs reach audit-4968), true total unknown"}
+- audit-entry history backbone: {"captured": 100, "total": 100, "method": "RECENT-WINDOW history-slice: most-recent 100 entries (audit-1703..audit-4968, 2026-05-16..2026-06-28) for get_metrics reconstruction + history-slice. THE BY-DESIGN SCOPE (NOT the full ~5000 backbone). CONTEXT family => non-fatal"}
 - Prior SR/recon docs loaded for de-dup-of-prior-decisions (no prior SR run; this is the first autonomous SR).
 
 ## §5 Neutrality attestation (7 guarantees)
 
 - **g1_deterministic:** signals computed by sr-evidence-parser-v1; no LLM judgement in any signal
-- **g2_exhaustive_fail_closed:** no candidate-family shortfall
+- **g2_exhaustive_fail_closed:** candidate-scoped per audit-5088: {Ideas 277/277, Bugs 41/41, Teles 14/14} exhaustive + psql-confirmed -> NO candidate shortfall; context families best-effort + documented (non-fatal)
 - **g3_provenance_per_source:** coverage_manifest carries source/captured/expected/method per family
 - **g4_stable_ordering:** value-blind (kind, numeric-id) sort
 - **g5_signal_not_judgement:** signals only; NO rank, NO clustering, NO top-candidates
