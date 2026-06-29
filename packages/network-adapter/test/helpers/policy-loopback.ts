@@ -17,7 +17,7 @@
  * `PolicyRouter`.
  */
 
-import { PolicyRouter, registerTaskPolicy, registerSystemPolicy, registerTelePolicy, registerAuditPolicy, registerSessionPolicy, registerIdeaPolicy, registerMissionPolicy, registerTurnPolicy, registerClarificationPolicy, registerReviewPolicy, registerProposalPolicy, registerThreadPolicy } from "../../../../hub/src/policy/index.js";
+import { PolicyRouter, registerTaskPolicy, registerSystemPolicy, registerTelePolicy, registerAuditPolicy, registerSessionPolicy, registerIdeaPolicy, registerMissionPolicy, registerTurnPolicy, registerClarificationPolicy, registerReviewPolicy, registerProposalPolicy, registerThreadPolicy, registerMessagePolicy } from "../../../../hub/src/policy/index.js";
 import type { AllStores, IPolicyContext } from "../../../../hub/src/policy/types.js";
 import type { Selector } from "../../../../hub/src/state.js";
 // bug-109 PR-4b — PolicyLoopbackHub repaired against the post-mission-83
@@ -229,6 +229,10 @@ export class PolicyLoopbackHub implements ILoopbackHub {
     registerReviewPolicy(router);
     registerProposalPolicy(router);
     registerThreadPolicy(router);
+    // P1d: the sovereign Message surface (create_message/list_messages/
+    // claim_message/ack_message) over the real MessageRepositorySubstrate — so the
+    // faithful PollBackstop catch-up + ack path is exercisable end-to-end (cal #82).
+    registerMessagePolicy(router);
     return router;
   }
 }
