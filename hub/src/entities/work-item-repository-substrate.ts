@@ -1056,21 +1056,23 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!e) {
         throw new EvidencePredicateFailed(`requirement '${r.requirementId}' refResolvable evidence ref ${r.kind}/${r.id} does not resolve`);
       }
-      // bug-204/audit-5093: a verifier-gate is SELF-ANCHORED by gate identity + verifier
-      // authorship (it has targetRef:null — the targetRef RELATE model doesn't apply). For a
-      // verifier-gate audit-verdict we WAIVE the relate check and replace it with the
-      // author-anchor below. Guarded NARROW: every other binding (incl. a normal-task audit ref)
-      // still must RELATE to the work or its targetRef — existence-theatre stays closed.
-      const verifierGateAudit = isVerifierGate && r.evidenceKind === "audit";
-      if (!verifierGateAudit && !this.refRelatesToWork(r.evidenceKind, e, item)) {
+      // relate check UNCHANGED — existence-theatre stays closed (audit-4103 #1). For an audit ref
+      // refRelatesToWork requires relatedEntity ∈ {workId, targetRef.id}; a verifier-gate carries
+      // targetRef:null, so its verdict-audit must have relatedEntity === the GATE id — i.e. be
+      // specifically ABOUT this gate, NOT merely any org-wide verifier audit. (lily spec-validation
+      // refinement, audit-5093: do NOT blanket-waive relate for verifier-gates — waive + actor-only
+      // would let any verifier audit satisfy any gate, reopening exactly what audit-4103 #1 closed.)
+      if (!this.refRelatesToWork(r.evidenceKind, e, item)) {
         throw new EvidencePredicateFailed(`requirement '${r.requirementId}' evidence ref ${r.kind}/${r.id} does not RELATE to this work-item (${item.id}) or its targetRef — existence alone is insufficient`);
       }
-      // bug-204/audit-5093 (anti-gameability — REPLACES the waived relate check, not removes it):
-      // a verifier-gate verdict-audit MUST be VERIFIER-authored. Trust the Audit's Hub-stamped
-      // actor (metadata.actor, derived server-side from the registered session role — a worker
-      // can't forge it; sibling of the createdBy.role trust basis below). A worker self-closing
-      // a verifier-gate with their own audit (actor=engineer/architect) is rejected here.
-      if (verifierGateAudit) {
+      // bug-204/audit-5093 net-new AUTHOR-ANCHOR: a verifier-gate verdict-audit must ALSO be
+      // VERIFIER-authored. relate (above) proves the audit is ABOUT this gate; this proves a
+      // VERIFIER issued it. Trust the Audit's Hub-stamped actor (metadata.actor, derived
+      // server-side from the registered session role, audit-policy.ts — a worker can't forge it;
+      // producedBy is caller-supplied/forgeable + AuditEntry carries no producedBy field). A
+      // worker self-closing a verifier-gate with its own audit (actor=engineer) is rejected here.
+      // Together: the verdict must be verifier-authored AND specifically about THIS gate.
+      if (isVerifierGate && r.evidenceKind === "audit") {
         const auditActor = (e.metadata as { actor?: string } | undefined)?.actor;
         if (auditActor !== "verifier") {
           throw new EvidencePredicateFailed(`requirement '${r.requirementId}' verifier-gate pass-evidence audit ${r.id} was not authored by a verifier (actor=${auditActor ?? "unknown"}) — only a verifier's own verdict can close a verifier-gate`);

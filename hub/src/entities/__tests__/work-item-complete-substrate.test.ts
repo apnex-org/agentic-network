@@ -175,46 +175,56 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
   }, OP_TIMEOUT);
 
   // ── bug-204 / audit-5093: verifier-gate pass-evidence = the verifier's audit-verdict ──────
-  // A verifier-gate is SELF-ANCHORED (targetRef:null) — there is NO verifier-mintable Review, so
-  // its pass-evidence is a VERIFIER-authored kind:audit. On a verifier-gate ONLY: an audit binding
-  // satisfies the requirement (incl. an already-seeded kind:review one — back-compat), the
-  // targetRef-RELATE check is waived, and the audit MUST be actor=verifier (author-anchor).
+  // A verifier-gate (targetRef:null) has NO verifier-mintable Review, so its pass-evidence is a
+  // kind:audit verdict. On a verifier-gate ONLY: (a) an audit binding satisfies the requirement
+  // (incl. an already-seeded kind:review one — back-compat); (b) the audit must RELATE — its
+  // relatedEntity === the GATE id (NOT waived: audit-4103 #1 existence-theatre stays closed); AND
+  // (c) the audit must be actor=verifier (author-anchor). Verifier-authored AND about THIS gate.
 
-  it("bug-204: verifier-gate (targetRef:null) — already-seeded kind:review req SATISFIED by a verifier-authored audit (relate waived) → done", async () => {
-    await mkAudit("audit-vg-rev", "unrelated-entity", "verifier"); // relatedEntity does NOT relate; relate is waived for verifier-gates
-    const g = await startedGate([{ id: "ev_pack_verified", kind: "review", refResolvable: true }], "agent-vg-r");
-    const done = await repo.completeWork(g.id, "agent-vg-r", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-rev" })]);
-    expect(done!.status).toBe("done");
-  }, OP_TIMEOUT);
-
-  it("bug-204: verifier-gate — kind:audit req (forward template) SATISFIED by a verifier-authored audit → done", async () => {
-    await mkAudit("audit-vg-aud", "unrelated-entity", "verifier");
+  it("bug-204 (i) verifier-gate kind:audit req + verifier audit RELATED to the gate → done", async () => {
     const g = await startedGate([{ id: "ev_pack_verified", kind: "audit", refResolvable: true }], "agent-vg-a");
+    await mkAudit("audit-vg-aud", g.id, "verifier"); // relatedEntity === the gate id
     const done = await repo.completeWork(g.id, "agent-vg-a", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-aud" })]);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
-  it("bug-204 anti-gameability (mutation-proof of the author-anchor): a verifier-gate audit authored by a NON-verifier (engineer) → fail", async () => {
-    await mkAudit("audit-vg-eng", "unrelated-entity", "engineer"); // worker self-close attempt
+  it("bug-204 (ii) back-compat: already-seeded kind:review req SATISFIED by a gate-related verifier audit → done", async () => {
+    const g = await startedGate([{ id: "ev_pack_verified", kind: "review", refResolvable: true }], "agent-vg-r");
+    await mkAudit("audit-vg-rev", g.id, "verifier");
+    const done = await repo.completeWork(g.id, "agent-vg-r", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-rev" })]);
+    expect(done!.status).toBe("done");
+  }, OP_TIMEOUT);
+
+  it("bug-204 (iii) author-anchor (mutation-proof): a gate-related audit authored by a NON-verifier (engineer) → fail; actorless → fail", async () => {
     const g = await startedGate([{ id: "ev_pack_verified", kind: "review", refResolvable: true }], "agent-vg-e");
+    await mkAudit("audit-vg-eng", g.id, "engineer"); // related to the gate, but a worker self-close
     await expect(repo.completeWork(g.id, "agent-vg-e", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-eng" })]))
       .rejects.toThrow(/was not authored by a verifier/);
-    // an actorless audit (no metadata.actor) also fails closed
-    await mkAudit("audit-vg-none", "unrelated-entity");
+    await mkAudit("audit-vg-none", g.id); // related, but no metadata.actor → fail closed
     await expect(repo.completeWork(g.id, "agent-vg-e", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-none" })]))
       .rejects.toThrow(/was not authored by a verifier/);
   }, OP_TIMEOUT);
 
-  it("bug-204 GUARD-NARROWNESS (steve's ask: normal-task binding UNCHANGED): a NON-gate task with a kind:audit req + an UNRELATED verifier audit → still fails RELATE (waiver is verifier-gate-scoped)", async () => {
-    await mkAudit("audit-nt-unrel", "work-elsewhere", "verifier"); // verifier-authored but unrelated
-    const reqs: EvidenceRequirement[] = [{ id: "a1", kind: "audit", refResolvable: true }];
-    const w = await started(reqs, "agent-nt"); // type:"task" — NOT a verifier-gate
-    await expect(repo.completeWork(w.id, "agent-nt", w.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-nt-unrel" })]))
+  it("bug-204 (v) existence-theatre (mutation-proof relate is NOT waived): a verifier audit NOT about this gate → does NOT bind", async () => {
+    const g = await startedGate([{ id: "ev_pack_verified", kind: "audit", refResolvable: true }], "agent-vg-x");
+    await mkAudit("audit-vg-elsewhere", "some-other-entity", "verifier"); // verifier-authored but about a DIFFERENT entity
+    await expect(repo.completeWork(g.id, "agent-vg-x", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-elsewhere" })]))
       .rejects.toThrow(/does not RELATE/);
-    // and a normal task still REJECTS an audit bound to a non-audit requirement (kind-relaxation is gate-scoped)
-    const wc = await started([{ id: "r1", kind: "commit", refResolvable: true }], "agent-nt2");
-    await expect(repo.completeWork(wc.id, "agent-nt2", wc.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-nt-unrel" })]))
+  }, OP_TIMEOUT);
+
+  it("bug-204 (iv) GUARD-NARROWNESS (steve's ask — normal-task binding UNCHANGED): a NON-gate task with the SAME setup STILL fails", async () => {
+    // (a) the kind-relaxation is verifier-gate-scoped: a TASK with a kind:review req + a gate-related
+    //     verifier audit still fails kind-match (an audit does NOT satisfy a review req off a gate).
+    const wr = await started([{ id: "r1", kind: "review", refResolvable: true }], "agent-nt-r");
+    await mkAudit("audit-nt-rel", wr.id, "verifier"); // related to the task + verifier-authored
+    await expect(repo.completeWork(wr.id, "agent-nt-r", wr.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-nt-rel" })]))
       .rejects.toThrow(/evidence kind mismatch/);
+    // (b) a TASK's kind:audit req still enforces RELATE for an UNRELATED verifier audit (relate path
+    //     is shared + unchanged — proves the verifier-gate refinement didn't loosen normal tasks).
+    const wa = await started([{ id: "a1", kind: "audit", refResolvable: true }], "agent-nt-a");
+    await mkAudit("audit-nt-unrel", "work-elsewhere", "verifier");
+    await expect(repo.completeWork(wa.id, "agent-nt-a", wa.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-nt-unrel" })]))
+      .rejects.toThrow(/does not RELATE/);
   }, OP_TIMEOUT);
 
   it("#4 refResolvable external (commit): malformed (empty) ref → fail; well-formed nonexistent ref → pass (format-only)", async () => {
