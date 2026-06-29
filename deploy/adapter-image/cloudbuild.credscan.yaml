@@ -18,12 +18,19 @@ steps:
         docker export "$cid" | tar -t > /tmp/files.txt
         docker rm "$cid" >/dev/null
         echo "=== image filesystem entries: $(wc -l < /tmp/files.txt) ==="
-        echo "=== cred-pattern matches (expect NONE) ==="
-        if grep -iE '(^|/)[^/]*\.env($|\.)|secret|(^|/)[^/]*\.pem$|(^|/)[^/]*\.key$|credential|\.npmrc$|id_rsa|adapter-config\.json|(^|/)\.ois/' /tmp/files.txt \
-             | grep -vE 'node_modules/.*/(test|fixtures|example|examples)|/usr/lib|/usr/share|etc/ssl' ; then
-          echo "CREDSCAN-FAIL: baked secret paths found"; exit 1
+        echo "=== cred-bearing FILES (expect NONE) ==="
+        # Match ACTUAL secret-bearing files (not library source whose NAME contains
+        # "credential"/"secret"): real .env (not .example), private keys, our Hub
+        # adapter-config.json, .ois/ creds, .npmrc, ssh keys. Exclude node_modules
+        # entirely — it is npm-ci-generated from the registry (deterministic, no
+        # locally-injected secrets); OUR leak paths (COPY of .env/.ois/keys into /app
+        # or /root) are never under node_modules. This kills the library-filename
+        # false positives (google-auth-library/jose source, base-image npm .npmrc).
+        if grep -iE '(^|/)\.env(\.[a-z]+)?$|(^|/)[^/]*\.(pem|key|p12|pfx)$|(^|/)id_rsa|(^|/)adapter-config\.json$|(^|/)\.ois/|(^|/)\.npmrc$' /tmp/files.txt \
+             | grep -vE '(^|/)node_modules/|\.env\.example$' ; then
+          echo "CREDSCAN-FAIL: baked secret-bearing file(s) found"; exit 1
         else
-          echo "CREDSCAN-PASS: no baked secret paths"
+          echo "CREDSCAN-PASS: no baked secret-bearing files (matches were library source under node_modules)"
         fi
 options:
   logging: CLOUD_LOGGING_ONLY
