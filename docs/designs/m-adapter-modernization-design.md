@@ -1,6 +1,6 @@
 # M-Adapter-Modernization — Design v1.0
 
-**Status:** Design v1.0 (reconciled 2026-06-29, architect lily; conformance-addendum `wrv6hgwzc` **FOLDED** — conformant-with-flags, 0 violate, 11 flags dispositioned §10b). **First canonical execution of the ratified Design-Process** (`design-process.md` v1.0). Pending: `verify_reconcile` (**cross-lineage steve re-run recommended**, §11) → Director **ratify**.
+**Status:** Design **v1.0 RATIFIED** (Director, 2026-06-29 — option-a: ratify-on-proxy; conformance-addendum `wrv6hgwzc` folded, conformant-with-flags, 0 violate, §10b). First canonical execution of `design-process.md` v1.0. **Next: Manifest (create_mission) → the claude-pilot (P1a→P1e).** Follow-on (tracked): steve cross-lineage re-run of the conformance matrix + `verify_reconcile` (decorrelate the same-lineage proxy) — runs on the pilot P1a at latest.
 **Provenance (design-process nodes):** `design_draft` = `m-adapter-modernization-brainstorm.DRAFT.md` (the converged decision-log) · `feasibility_audit` = `m-adapter-modernization-shim-audit.md` · `design_redteam` = adversarial review `w6e5e0dqp` (15/32 confirmed; this doc folds them). This doc = the `reconcile` artifact.
 **Supersedes:** the brainstorm DRAFT (now the decision-provenance log; full per-decision rationale lives there).
 
