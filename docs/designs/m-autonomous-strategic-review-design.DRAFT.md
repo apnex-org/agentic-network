@@ -1,11 +1,27 @@
-# M-Autonomous-Strategic-Review — Integrated Design (DRAFT)
+# M-Autonomous-Strategic-Review — Integrated Design (v2)
 
 **Idea:** idea-389 — Autonomous System-Driven Strategic/Roadmap Review
 **Directive:** Director, 2026-06-29 — *agent-self-determined next-stint priority ranking, ZERO Director steer; dogfoods `seed_blueprint` + the survey system.*
 **Author:** lily (architect)
-**Status:** DRAFT (working-tree integration of 4 component designs: EVIDENCE / RANKING / BLUEPRINT / INTEGRITY)
+**Status:** v2 (GATE-1 fold, 2026-06-29) — working-tree integration of 4 component designs (EVIDENCE / RANKING / BLUEPRINT / INTEGRITY), with the 4 GATE-1 gating corrections + the Director's open-Q resolutions folded into the body. The v1 adversarial Critique is preserved verbatim as **Appendix B** (the record of what v2 fixed).
 **Seed-time HEAD sha (git-pin anchor):** `00f97c6ab36757a921055fa206bed1de6a4212f1`
 **Grounded against:** `hub/src/entities/work-item.ts` (node contract), `hub/src/policy/work-item-policy.ts` (`seedBlueprint` + `validateNodeIntrinsics`), `docs/methodology/strategic-review.md` v2.0, `docs/methodology/ledger-reconciliation.md` v1.1, `docs/designs/m-stint-lifecycle-design.md` §0.5/§0.6 (council pattern), `docs/methodology/cdacc-dual-altitude-conformance-council.md` (seal-reveal), `skills/survey/` (skill template).
+
+---
+
+## v2 fold (GATE-1, 2026-06-29)
+
+v2 folds the **4 GATE-1 gating corrections** (from the v1 adversarial Critique, now **Appendix B**) + the **Director's 7 open-Q resolutions** (now §9) into the body. The v1 Critique is preserved verbatim as the record of what was fixed.
+
+**4 gating corrections:**
+- **G1 — multi-agent = multi-NODE.** POSITION = 3 per-agent nodes (`score_arch`/`score_eng`/`score_ver`); ADJUDICATE split into `adjudicate_eng` + `adjudicate_ver`. The integrity floor is restated as **"≥2 producing NODES across the engineer+verifier seats"**; every "solo-completion physically impossible / mechanically enforced" claim that wasn't node-structural is removed (the shipped `complete_work` is single-lease-holder and checks `producedBy` only for review-kind evidence).
+- **G2 — live-verifier precondition + roster cardinality.** New **Phase 0** precondition: greg (engineer) + steve (verifier) online **and registered as role-Agents** before seeding — verifier-gates need a registered `role=verifier` Agent; architect-spawned verify sub-agents do NOT qualify.
+- **G3 — seed-path / bug-203 named + resolved.** claude-code does not re-enumerate tools on `notifications/tools/list_changed`; the unblock = a rebuilt-adapter swap (root cause CONFIRMED = the deployed build was 11 commits behind, missing the tool-surface reconciler #375; greg rebuilt + staged it) + a **coordinated client restart** (takes lily + greg down together) → lily seeds. `get_next` is removed (not a registered Hub verb); the three real blueprint verbs are `seed_blueprint` / `get_current_stint` / `legal_moves`.
+- **G4 — Director-dark honestly scoped.** Scan window starts at run-seed/`reconcile_anchor` (catches pre-seal candidate-set contamination); the claim is scoped to **Hub-channel** darkness with the out-of-band gap acknowledged; director-chat's deprecation means there is no live Director side-channel to contaminate (a point in the design's favor).
+
+**Director resolutions (§9):** R-D1 director-queue node (idea-388) + architect-proxy-for-now · R-D2 non-architect packages the artifact · R-D3 minimal-valid first (now 15 nodes) · R-D4 Director gates the #1 FOCUS, reviews the whole slate · R-D5 blind ALL known priors · R-D6 override allowed-but-logged · R-D7 skill packaging deferred to dogfood #2.
+
+**Non-gating folds:** N1 (blinding is soft, not a Hub mechanism) · N2 (`storage:git` refs are format-validated only) · N3 (the total order is reproducible, not objective; ε near-tie non-transitivity) · N4 (Threads + Clarifications added as friction families) · N5 (the minimal-valid trades the clash↔rescore ordering, not the scoring split).
 
 ---
 
@@ -18,7 +34,7 @@ Four component designs each solved one face of the autonomous SR:
 | **EVIDENCE** | the input/hydration layer | the neutral, exhaustive, provenance-stamped **evidence pack** + the 6 mechanical signals + signal≠judgement |
 | **RANKING** | the deliberation engine | the **defensible total order**: 9 dimensions partitioned 3/3/3, scored 1–5, recomputable composite + tie-break ladder |
 | **BLUEPRINT** | the runnable substrate | the **`seed_blueprint` node-contract realisation** + the load-bearing `required:false`-for-siblings rule + git-pinned refs |
-| **INTEGRITY** | the validity guards | the **VALID / OUTCOME / ACCEPTED separation** + blinding + seal-before-clash + Director-dark + the FM→defense table |
+| **INTEGRITY** | the validity guards | the **VALID / OUTCOME / ACCEPTED separation** + blinding + seal-before-clash + Hub-channel Director-dark + the FM→defense table |
 
 This document fuses them into **one buildable graph** and resolves every conflict between them explicitly (§1). It is self-contained: a process-naive agent can build and run the SR from this doc + the cited substrate.
 
@@ -40,7 +56,7 @@ EVIDENCE used `storage:hub-doc` for the methodology docs. But those are repo fil
 RANKING scores each dimension with its **native** owning role (architect scores tele-fit; engineer scores buildability; verifier scores risk). BLUEPRINT assigns each seat a **cross** lens (architect argues the verifier-risk lens). These are not rivals — they belong to different *phases*. **Resolution:** **native lens at POSITION** (best-informed scoring + the 3/3/3 composite math), **cross-assigned adversarial lens at CLASH** (manufactured contradiction + the architect briefed to red-team their own prior). BLUEPRINT's "architect on the verifier-risk lens" is folded into the **clash layer**, not the scoring layer. You want the architect's expertise *producing* the tele-fit score and the architect's fresh-eyes/self-skepticism *attacking* the slate.
 
 **C4 — Who adjudicates: architect-led (BLUEPRINT) vs architect-excluded (INTEGRITY).**
-BLUEPRINT has `[architect]` produce `rank`. INTEGRITY forbids the architect from adjudication (the confirmation-laundering hole that silently invalidates the self-determination test). **Resolution (INTEGRITY wins — it is load-bearing for the test):** `adjudicate` is `roleEligibility:[engineer, verifier]` with **≥2 distinct non-architect `producedBy`**. Adjudication is *mechanical* anyway (recompute the composite from sealed scores), so excluding the architect costs nothing and closes FM-2. The architect's only roles are: authoring the blueprint (meta-guard, §5 A4), scoring native dimensions D1–D3, being briefed to red-team `candidate_K` at clash, and packaging the sealed result (`surface`).
+BLUEPRINT has `[architect]` produce `rank`. INTEGRITY forbids the architect from adjudication (the confirmation-laundering hole that silently invalidates the self-determination test). **Resolution (INTEGRITY wins — it is load-bearing for the test; G1-corrected to multi-NODE):** adjudication is **two separate non-architect nodes** — `adjudicate_eng` (`roleEligibility:[engineer]`) + `adjudicate_ver` (`roleEligibility:[verifier]`) — NOT one `[engineer, verifier]` node asserting "≥2 distinct `producedBy`" (the shipped `complete_work` is single-lease-holder and checks `producedBy` only for review-kind evidence, never a distinct-count — so that assertion is paper; G1). Adjudication is *mechanical* (recompute the composite from sealed scores; the verifier node independently re-derives and co-signs), so excluding the architect costs nothing and closes FM-2 **structurally at the node level**. The architect's only roles are: authoring the blueprint (meta-guard, §6.1 A4), scoring native dimensions D1–D3, being briefed to red-team `candidate_K` at clash, and **proxy-surfacing the Director-queue item** (R-D1 — note `surface` itself moves off the architect, R-D2).
 
 **C5 — Candidate space: full universe (EVIDENCE) vs 5–8 summits (RANKING).**
 No real conflict — they are different layers. **Resolution:** the **evidence pack is the full, id-sorted, unclustered universe** (clustering IS interpretation → reserved for the council, per EVIDENCE). The **`seal_candidates` node clusters** the full universe into **5–8 summit candidates** (RANKING's SR sub-step-4 FOLD/COMPOSES/DEFER/EXCLUDE) — that clustering is the council's first judgement act and is itself sealed.
@@ -49,7 +65,7 @@ No real conflict — they are different layers. **Resolution:** the **evidence p
 **Resolution:** the **canonical** graph uses EVIDENCE's rigorous hydration sub-graph (reconcile + 4 parallel gathers + assemble + gate) because the formal coverage-manifest + neutrality-attestation is the whole neutrality story. BLUEPRINT's single `gather` is accepted only as a **compression of the hydration sub-graph** in the leaner first-dogfood realisation (§4.3).
 
 **C7 — Graph size: BLUEPRINT's 8-node shape.**
-BLUEPRINT's clean 8-node JSON is fully validated and runnable — but it **sacrifices integrity splits** (no separate seal/blind node; architect produces `rank`; one combined clash). For *this* directive — a *self-determination validity test* — those splits are load-bearing, not optional. **Resolution:** BLUEPRINT's 8-node shape is **NOT a valid realisation of idea-389** (it cannot pass the §5 validity verdict). The runnable graph is the **13-node minimal-valid** shape (§4.3), which compresses only the integrity-*neutral* parts (hydration fan-out, clash/rescore merge) and keeps every integrity-*critical* split. BLUEPRINT's node-contract mechanics (ids, pins, runbook-required, verifier-gate, dryRun) are reused verbatim.
+BLUEPRINT's clean 8-node JSON is fully validated and runnable — but it **sacrifices integrity splits** (no separate seal/blind node; architect produces `rank`; one combined clash). For *this* directive — a *self-determination validity test* — those splits are load-bearing, not optional. **Resolution:** BLUEPRINT's 8-node shape is **NOT a valid realisation of idea-389** (it cannot pass the §5 validity verdict). The runnable graph is the **minimal-valid** shape (§4.3 — **15 nodes after the v2 folds**, up from the v1 13-node sketch), which compresses only the integrity-*neutral* parts (hydration fan-out, clash/rescore merge) and keeps the integrity-*critical* scoring + adjudicate + verify splits (it does trade the clash↔rescore *ordering* — N5). BLUEPRINT's node-contract mechanics (ids, pins, runbook-required, verifier-gate, dryRun) are reused verbatim.
 
 **C8 — Reconcile role.** EVIDENCE leaves it architect-adjacent; BLUEPRINT puts reconcile inside an `[architect]` gather; INTEGRITY makes it `[engineer]`. **Resolution:** reconcile + all gathers are mechanical and must be **architect-free** (intake neutrality) → `[engineer]`. The architect first appears at `score_arch`.
 
@@ -70,7 +86,7 @@ The deliverable is **not just a ranking** — it is a ranking plus a **VALID/INV
 ### 2.2 The three things kept mechanically separate (INTEGRITY frame)
 
 1. **VALID** — was the run admissible as a test? (the integrity invariants held) → emitted by `verify_ranking`.
-2. **OUTCOME** — what the org actually ranked → sealed at `adjudicate`.
+2. **OUTCOME** — what the org actually ranked → sealed at `adjudicate_eng` (+ `adjudicate_ver` co-sign).
 3. **ACCEPTED** — what the Director did with it (ratify / reject / override) → recorded at `director_ratify`.
 A run that conflates these is invalid. The whole graph is the machinery that keeps them apart and auditable.
 
@@ -106,7 +122,7 @@ Two hard corollaries:
 |---|---|---|
 | **Entities** | `list_ideas`, `list_bugs`, `list_missions` (terminal-ledger = ground truth), `list_tele`, `list_proposals`, `list_documents` + `docs/reviews/` | candidates + readiness + prior-run continuity |
 | **Work/metrics** | `list_work`/`list_ready_work`/`get_current_stint`, `get_metrics` (volatile) **reconstructed from `list_audit_entries`** (durable, survives a watchtower roll), `get_agents` (NOT `get_engineer_status`, bug-184) | live-state + Arc-A signal + agent-health |
-| **Friction/pathology** | `scripts/calibrations/calibrations.py list/status` (30 open), `docs/methodology/autonomous-stint-friction-backlog.md` (FR-N + dispositions) | friction/pathology signal |
+| **Friction/pathology** | `scripts/calibrations/calibrations.py list/status` (30 open), `docs/methodology/autonomous-stint-friction-backlog.md` (FR-N + dispositions), **`list_threads`** (thread-density + round-count-near-limit, per strategic-review.md sub-step 5), **open `Clarification`s** (first-class kind — N4) | friction/pathology signal |
 | **Roadmap/history** | `docs/roadmap.md` (arcs C1–C4, D-1/2/3, banked vs staked), per-rung stake timestamps (DR-ledger / banking-PR sha), `list_audit_entries` (THE history backbone), prior SR/recon docs | summit candidate space + staking-decay clock + de-dup of prior decisions |
 
 **Three durable history anchors:** audit-derived FSM timers (survive a roll), terminal-ledger **backward** cross-ref (walk *completed* missions for incorporated-not-flipped, never scan the open ledger), prior-run continuity (load every prior deferral + anti-goal to prevent re-litigation).
@@ -165,23 +181,23 @@ Composite(c) = ( Σ_d  weight_d · score_{c,d} ) / 105 × 100        # 0–100, 
 
 Every score carries a **bound rationale + a `mode:triangulate-against` reference** (a score is invalid unless it cites the tele/axiom/fault/entity it is grounded in — mechanises the §0.6 triangulation discipline + cal #85 ground-truth).
 
-### 4.3 The graph shape (canonical 21-node; minimal-valid 13-node runnable)
+### 4.3 The graph shape (canonical 22-node; minimal-valid 15-node runnable — v2 recount)
 
 The deliberation runs **native scoring → cross-assigned clash → rescore → mechanical adjudication → independent verify**, sealed CDACC-style so seat 2 can't echo seat 1.
 
-**Canonical graph (21 nodes, full rigor):** see §4 node table below. Hydration fan-out (7) + seal (1) + 3 score + 3 clash + 3 rescore + adjudicate + verify + surface + director_ratify.
+**Canonical graph (22 nodes, full rigor):** see §5.1 node table below. Hydration fan-out (7) + seal (1) + 3 score + 3 clash + 3 rescore + **2 adjudicate (`adjudicate_eng`+`adjudicate_ver`, G1)** + verify + surface + director_ratify.
 
-**Minimal-valid first-dogfood graph (13 nodes, runnable now):** compresses only the integrity-*neutral* parts:
+**Minimal-valid first-dogfood graph (15 nodes after the v2 folds — runnable now; the v1 sketch was 13):** compresses only the integrity-*neutral* parts:
 - hydration fan-out A2–A6 → a single `assemble_pack` (one engineer runs the gathers sequentially) — keeps `reconcile_anchor` + `pack_gate`;
-- the 3 `clash_*` + 3 `rescore_*` → 3 `deliberate_*` (each role reads the revealed sealed scores, red-teams its cross-target, and revises its own cells in one node — seal-before-reveal preserved; only the clash-then-rescore *ordering* rigor is traded);
-- `surface` + `director_ratify` → one `surface` arc-root that records the Director-ratify audit as evidence.
-The **integrity-critical splits are retained**: `seal_candidates`, the native 3/3/3 scoring split (`score_arch`/`score_eng`/`score_ver`), the non-architect `adjudicate`, the independent `verify_ranking`. This is why BLUEPRINT's 8-node shape is rejected for idea-389 (C7) — it compresses *through* those splits.
+- the 3 `clash_*` + 3 `rescore_*` → 3 `deliberate_*` (each role reads the revealed sealed scores, red-teams its cross-target, and revises its own cells in one node).
+The **integrity-critical splits are retained**: `seal_candidates`, the native 3/3/3 scoring split (`score_arch`/`score_eng`/`score_ver`), the **two non-architect adjudicate nodes** (`adjudicate_eng`+`adjudicate_ver`, G1), the independent `verify_ranking`, and the **discrete `director_ratify` director-queue node** (R-D1 — no longer folded into `surface`; `surface` is its own non-architect node, R-D2).
+**N5 honesty — what the fold DOES trade:** collapsing `clash_*`+`rescore_*` into one `deliberate_*` puts the cross-assigned adversary attack AND the rescore in the **same single lease-holder's node**, so the clash↔rescore *ordering* separation (B4) is partly traded — seal-before-*reveal* is preserved (each `score_*` seals before any `deliberate_*` reads it), but clash-then-rescore is not a separate transition. The minimal-valid keeps the **scoring** split and the **adjudicate/verify** splits, NOT the clash↔rescore separation. This is why BLUEPRINT's 8-node shape is still rejected for idea-389 (C7) — it compresses *through* the scoring + adjudicate splits too.
 
 ### 4.4 Clash → convergence (manufactured, not hoped-for)
 
 Clash is **assigned** via the participant-brief mechanism (`payload:{participant, assigned_position, assigned_lens, rationale}`): each clash node is briefed to argue against another seat's bias. The binding rule for *this* test: **the architect is briefed to RED-TEAM `candidate_K` (their own D-3 prior); a non-architect is briefed to STEELMAN it.** If D-3 survives the architect attacking it and a peer defending it → strong validity signal; if it wins because the architect championed it → the matrix forbade that configuration.
 
-Convergence is **on the per-cell scores, not on "what's #1"**: in rescore each challenged cell is either **revised** (movement) or **defended with new evidence** (reinforcement); the total order falls out mechanically. **Rubber-stamp detector:** `adjudicate` emits a **clash-movement-count**; zero movement across all clashes ⇒ flag `LOW-CONTEST` (re-run or carry a noted confidence-risk).
+Convergence is **on the per-cell scores, not on "what's #1"**: in rescore each challenged cell is either **revised** (movement) or **defended with new evidence** (reinforcement); the total order falls out mechanically. **Rubber-stamp detector:** `adjudicate_eng` emits a **clash-movement-count**; zero movement across all clashes ⇒ flag `LOW-CONTEST` (re-run or carry a noted confidence-risk).
 
 ### 4.5 Tie-break ladder (ε = 3 points on the 0–100 scale; first three are one-per-lens)
 
@@ -190,7 +206,9 @@ Convergence is **on the per-cell scores, not on "what's #1"**: in rescore each c
 3. **D7 reversibility** (verifier) — safer-to-ship first.
 4. **Lowest cross-lens score-variance** — a candidate all three find decent beats a polarised gamble at equal mean.
 5. **Lower candidate-id** — deterministic final break (the order is total + reproducible, never a coin-flip).
-`adjudicate` logs which rung resolved each near-tie.
+`adjudicate_eng` logs which rung resolved each near-tie.
+
+**N3 honesty — "defensible" = reproducible, not objective.** The composite (`Σ weight·score /105`) is a weighted sum of **single-seat ordinal 1–5 judgements** treated as cardinal; the order is recomputable-from-scorecard (so the pen-holder can't inject preference), but the inputs are one-seat opinions (the doc's own signal≠judgement). Also the ε=3 "near-tie" test applied *pairwise* can be **non-transitive** across a 3-candidate chain — the `lower-id` final rung still guarantees a well-defined total order, but this is determinism, not metric objectivity. State the convention rather than claim objectivity.
 
 ### 4.6 Output — the ranked slate + stint-6 plan
 
@@ -200,7 +218,9 @@ Convergence is **on the per-cell scores, not on "what's #1"**: in rescore each c
 
 ## 5. The seed_blueprint graph (BLUEPRINT contract + INTEGRITY guard graph, fused)
 
-`runId: sr_run_2026_06_29` (alphanumeric/underscore only — no dash, so `work-bp-{runId}-{localId}` keeps dash as its sole separator; `BLUEPRINT_ID_TOKEN` satisfied). **Canonical = 21 nodes; minimal-valid = 13 nodes; both ≤ `MAX_BLUEPRINT_NODES=100`.**
+`runId: sr_run_2026_06_29` (alphanumeric/underscore only — no dash, so `work-bp-{runId}-{localId}` keeps dash as its sole separator; `BLUEPRINT_ID_TOKEN` satisfied). **Canonical = 22 nodes; minimal-valid = 15 nodes; both ≤ `MAX_BLUEPRINT_NODES=100`.**
+
+**Precondition (live roster — G2):** greg (engineer) + steve (verifier) MUST be online and **registered as their role-Agents** before seeding — the verifier-gates (`pack_gate`, `verify_ranking`) and the per-seat nodes resolve to *registered* role-Agents; architect-spawned verify sub-agents are NOT registered `role=verifier` Agents and cannot complete verifier-gates, so a missing/offline verifier **stalls the graph at `pack_gate`** (the first verifier-gate). See §7 Phase 0 + the §5.1.1 roster caveat.
 
 ### 5.1 Canonical node table
 
@@ -225,25 +245,31 @@ Static refs are all `storage:git`, sha `00f97c6…`, `required:true` (seed-time 
 | `rescore_arch` | task | architect | [clash_eng, clash_ver] | — | `ev_rescore_arch`·doc (final D1–D3, each challenged cell held(+defense) \| revised(+delta)) |
 | `rescore_eng` | task | engineer | [clash_ver] | — | `ev_rescore_eng`·doc (final D4–D6) |
 | `rescore_ver` | task | verifier | [clash_arch] | — | `ev_rescore_ver`·doc (final D7–D9) |
-| `adjudicate` | task | **[engineer, verifier]** (NOT architect) | — | **[rescore_arch, rescore_eng, rescore_ver]** | `ev_ranked_slate`·doc, `ev_stint6_plan`·doc, `ev_recompute_hash`·freeform, `ev_movement_count`·freeform — **≥2 distinct non-architect `producedBy`** |
-| `verify_ranking` | **verifier-gate** | verifier (**≠ adjudicator**) | adjudicate | — | `ev_verify_verdict`·review (refResolvable, producedBy=verifier; VALID/INVALID + checklist; pinned head-SHA) |
-| `surface` | task | architect | verify_ranking | — | `ev_sr_artifact`·doc (§0–§11 incl. integrity attestation + rationale table), `ev_sr_pr`·pr (lands artifact + applies triage routes) |
-| `director_ratify` | task | architect-records (see Q-D1) | surface | **[all 19 upstream]** (ARC-ROOT) | `ev_director_ratify`·audit (refResolvable; three dispositions) |
+| `adjudicate_eng` | task | **engineer** (NOT architect) | — | **[rescore_arch, rescore_eng, rescore_ver]** | `ev_ranked_slate`·doc, `ev_stint6_plan`·doc, `ev_recompute_hash`·freeform, `ev_movement_count`·freeform (mechanical recompute of the composite from sealed scores) |
+| `adjudicate_ver` | task | **verifier** (NOT architect) | — | **[rescore_arch, rescore_eng, rescore_ver]** | `ev_recompute_hash_ver`·freeform (**independent** re-derivation; MUST match `ev_recompute_hash`), `ev_adjudicate_cosign`·doc — the verifier-seat's structural contribution to OUTCOME (the 2nd producing NODE, G1) |
+| `verify_ranking` | **verifier-gate** | verifier (**≠ adjudicator** — single-verifier caveat §5.1.1) | [adjudicate_eng, adjudicate_ver] | — | `ev_verify_verdict`·review (refResolvable, producedBy=verifier; VALID/INVALID + checklist; pinned head-SHA) |
+| `surface` | task | **[engineer, verifier]** (non-architect — R-D2) | verify_ranking | — | `ev_sr_artifact`·doc (§0–§11 incl. integrity attestation + rationale table), `ev_sr_pr`·pr (lands artifact + applies triage routes) |
+| `director_ratify` | task | **[director]** (director-queue node, idea-388; architect proxy-surfaces for now — R-D1) | surface | **[all 21 upstream]** (ARC-ROOT) | `ev_director_ratify`·audit (refResolvable; three dispositions) |
 
 **Arc-root = `director_ratify`** (`completionDependsOn` the whole graph) → `get_current_stint(work-bp-sr_run_2026_06_29-director_ratify)` projects whole-run k/N.
+
+### 5.1.1 Roster-cardinality caveat (G2)
+The standing roster is **one agent per role** — lily (architect) / greg (engineer) / steve (verifier). Two consequences the run must own honestly:
+- **`verify_ranking` ≠ adjudicator (FM-11) holds across the engineer-vs-verifier *seat* split, not within the verifier seat.** With a single verifier, steve holds **both** `adjudicate_ver` and `verify_ranking`. The structural **≥2-producing-nodes** floor is still met (`adjudicate_eng` [greg, the primary adjudicator that produces the slate] + `adjudicate_ver` [steve]); standing up a **2nd registered `role=verifier` Agent** fully separates `adjudicate_ver` from `verify_ranking` — noted as the structural-strengthening follow-on.
+- **Verifier-gates require a LIVE, registered verifier.** `pack_gate` + `verify_ranking` resolve their `review` evidence to a registered `role=verifier` Agent (the predicate reads the registry role); architect-spawned verify sub-agents are NOT registered and **cannot** complete them. steve MUST be online for the whole run (Phase 0). The stint-5 retro recorded steve offline for that whole stint with architect-spawned sub-agents covering verification — that exact condition must NOT hold at seed-time, or the graph stalls at `pack_gate`.
 
 ### 5.2 The load-bearing resolvability rule (why it validates at seed-time)
 
 `seedBlueprint` validates the whole graph **before** creating any node. Therefore:
-- **Static external artifacts** (methodology docs, calibrations, friction-backlog, roadmap, the council design, tele-glossary, check-skip-criteria.sh) → `storage:git`, `required:true`, pinned `00f97c6…` → fail-closed resolvable at seed-time.
+- **Static external artifacts** (methodology docs, calibrations, friction-backlog, roadmap, the council design, tele-glossary, check-skip-criteria.sh) → `storage:git`, `required:true`, pinned `00f97c6…`. **Caveat (N2):** a `storage:git` ref is **format-validated only** (`PINNED_GIT_REF` regex) — the Hub is git-less and **cannot confirm the path exists at that sha**, so a wrong `00f97c6…:docs/wrong/path.md` would still pass the seed. (`entity`/`hub-doc`/`inline` refs ARE existence-checked; `git` refs are not — so "fail-closed resolvable at seed-time" is true only for those, not for git.) Path-correctness is a build-time author responsibility, re-checked at `verify_ranking`.
 - **Sibling outputs** (pack→seal, seal→scores, scores→clash, …) → `storage:entity`, **`required:false`** (advisory) — they don't exist at validation time, so a `required:true` entity ref would fail the seed. Freshness+existence is carried by `dependsOn`/`completionDependsOn`. *This is C1, applied to every edge.*
 - `mode:triangulate-against` on the council/tele/calibration refs = the rigor contract (each decision maps to a tele-N + the named fault it defends).
 
-### 5.3 Seed-time conformance (all guardrails satisfied — canonical 21-node)
-- runId + all 21 localIds are alphanumeric/underscore (`BLUEPRINT_ID_TOKEN`); no dash.
-- localId uniqueness; node-cap 21 ≤ 100.
+### 5.3 Seed-time conformance (all guardrails satisfied — canonical 22-node)
+- runId + all 22 localIds are alphanumeric/underscore (`BLUEPRINT_ID_TOKEN`); no dash.
+- localId uniqueness; node-cap 22 ≤ 100.
 - Dangling-edge check spans the `dependsOn`+`completionDependsOn` union — every target is a declared localId.
-- Cycle-free: union topo-sort yields `reconcile_anchor → gather_* → assemble_pack → pack_gate → seal_candidates → score_* → clash_* → rescore_* → adjudicate → verify_ranking → surface → director_ratify`; nothing depends on `director_ratify` ⇒ acyclic.
+- Cycle-free: union topo-sort yields `reconcile_anchor → gather_* → assemble_pack → pack_gate → seal_candidates → score_* → clash_* → rescore_* → {adjudicate_eng, adjudicate_ver} → verify_ranking → surface → director_ratify`; nothing depends on `director_ratify` ⇒ acyclic.
 - `runbook` present on every node (all carry `references[]`; `pack_gate`/`verify_ranking` are verifier-gates) → `nodeRequiresRunbook` satisfied.
 - Every `required:true` ref is a 40-hex `sha:path` to a confirmed-present repo file; every inter-node ref is `required:false`.
 - Evidence-requirement ids unique within each node.
@@ -255,13 +281,13 @@ Static refs are all `storage:git`, sha `00f97c6…`, `required:true` (seed-time 
 
 ### 6.1 Neutral prep — the architect's prior is ONE input, not privileged
 - **A1 Symmetric candidate schema** — every candidate (incl. D-3) is `{candidate_id, value_evidence[], readiness_evidence[], tele_alignment[], cost_estimate, source_class}`. **No `recommended`/`default`/`baseline` field** → anchoring (FM-1) has no slot to live in.
-- **A2 Provenance blinding (load-bearing)** — the architect-prior enters as `candidate_K`; "this is the architect's standing D-3 recommendation" goes **only to a sealed provenance sidecar** (`ev_provenance_sidecar`), invisible during deliberation, recoverable at audit. Seats rank `candidate_K` on its evidence, not its authorship.
+- **A2 Provenance blinding (load-bearing; R-D5 = blind ALL known priors, not just D-3)** — **every known standing prior** enters as a neutral `candidate_*`: the architect's D-3/observability-PUSH (`candidate_K`) **and any Director-held lean or other seat's standing prior**. The "this is X's standing recommendation" mapping goes **only to a sealed provenance sidecar** (`ev_provenance_sidecar`), invisible during deliberation, recoverable at audit. Seats rank each candidate on its evidence, not its authorship. **Honesty (N1): blinding is SOFT** — there is no Hub primitive that hides authorship; it relies on agents not reading the sealed sidecar, and an LLM architect who authored the enumeration can infer `candidate_K` and then scores exactly D1–D3 (where the prior lives). Mitigation: a **non-architect re-scores tele-fit (D1) blind** as a cross-check; state plainly that blinding is a discipline, not a construction-guarantee.
 - **A3 ≥4 independent ground-truth sources** — roadmap arcs, the 30 open calibrations, the FR-N friction backlog, reverse-gap teles, open ideas/bugs (exhaustive). The architect cannot quietly narrow the field to where their prior wins — the field is mechanically enumerated from sources the architect doesn't own.
 - **A4 Meta-guard (the experiment designer cannot rig the experiment)** — `seedBlueprint` is architect-only, so the architect authors the graph (a contamination vector). Two defenses: (a) seed with `dryRun:true` first (validate + planned creation-order + would-be ids, **zero creates**), and (b) a **non-architect peer certifies the dryRun structure** before the real seed (symmetric schema present, blinding present, ≥4 sources, ≥1 adversary/candidate, architect on red-team). `verify_ranking` re-checks these structurally post-hoc as a backstop.
 
 ### 6.2 Genuine multi-agent contribution (not architect rubber-stamp)
-- **B1** architect excluded from `adjudicate` (roleEligibility allow-list; omission excludes).
-- **B2** two-producer floor — `adjudicate` requires **≥2 evidence bindings with distinct `producedBy`, neither the architect** (`complete_work` coverage-by-binding makes solo-completion physically impossible — the G3 tri-seat kill reused).
+- **B1** architect excluded from **both** adjudicate nodes (`adjudicate_eng`/`adjudicate_ver` roleEligibility allow-lists; omission excludes).
+- **B2 (≥2 producing NODES, not ≥2 producers-on-one-node — G1 fix)** — genuine multi-agent contribution is enforced **structurally at the node/role-eligibility level**, never asserted inside one node's evidence array. The shipped `complete_work` is **single-lease-holder** and checks `producedBy` **only for `review`-kind evidence** (never a distinct-count, never a non-architect constraint) — so the v1 claim that "≥2 distinct `producedBy` on one `adjudicate` node makes solo-completion physically impossible" is **FALSE against the contract** and is deleted (the "G3 tri-seat kill" had no enforcing mechanism in the repo). Instead: POSITION = **3 separate per-agent nodes** (`score_arch`/`score_eng`/`score_ver`) and ADJUDICATE = **2 separate non-architect nodes** (`adjudicate_eng` [engineer] + `adjudicate_ver` [verifier]). The integrity floor is **"≥2 producing NODES across the engineer+verifier seats"** — met by `adjudicate_eng`+`adjudicate_ver` (and reinforced by `score_eng`/`score_ver`, `clash_eng`/`clash_ver`). No "mechanically/structurally enforced" claim survives that isn't node-structural.
 - **B3** assigned-position briefs manufacture clash (§4.4): architect red-teams `candidate_K`, a non-architect steelmans it.
 - **B4** seal-before-clash — each `score_*` seals before any `clash_*` reveals others (CDACC fan-out-seal-then-reveal); convergence-by-anchoring (FM-8) structurally prevented.
 - **B5** clash must record motion — `clash_*` require a convergence record (≥1 move OR explicit `adversary_attempted + rebuttal`); "converged with zero clash" is flagged by `verify_ranking` as convergence theater.
@@ -271,16 +297,16 @@ The verifier **independently re-derives — does not review-approve** (FM-11):
 - **C1** top pick + runner-up: re-resolve every cited `value_evidence` ref from ground truth (`get_idea`/`get_bug`/`get_tele`/`get_metrics`/psql — never narrative recall, per the CLAUDE.md ledger mandate); a value claim whose evidence doesn't re-resolve fails the gate.
 - **C2** readiness is a **separate axis from value** (FM-7): deps resolved, scope concrete, `check-skip-criteria.sh` exit-route; the reported "top actionable" = max-value among the *ready* set.
 - **C3** every rank binds ≥1 *resolved* ref + every `triangulate-against` ref is *addressed* (FM-6).
-- **C4 integrity backstop** — re-check the run-validity invariants (blinding; ≥4 sources; ≥2 non-architect producers; ≥1 adversary + clash recorded; Director-dark held) → a single **VALID/INVALID** verdict alongside the value/readiness/completeness verdict.
+- **C4 integrity backstop** — re-check the run-validity invariants (blinding; ≥4 sources; **≥2 producing nodes across the engineer+verifier seats**; ≥1 adversary + clash recorded; **Hub-channel** Director-dark held over [run-seed, verdict]) → a single **VALID/INVALID** verdict alongside the value/readiness/completeness verdict.
 
 ### 6.4 Director reviews without contaminating
-- **D1** one Director node, **terminal only** (`director_ratify`, completionDependsOn the whole graph) — structurally absent from intake, council, verify.
-- **D2** sealed output, post-seal review — the ranking is committed/timestamped (`ev_seal_hash` chains to `adjudicate`) before the Director sees it; the Director cannot retro-edit the org's determination (FM-10/12).
-- **D3 Director-dark mechanically verified** — `verify_ranking` scans `list_messages`/`list_threads` over the run window (seal-ts → verdict-ts) for any Director message into the run; a mid-run Director steer flips the verdict to **INVALID** (re-run). The "without Director steer" premise is an *enforced invariant*, not a hope.
-- **D4 three discrete dispositions** (preserves Director authority + audit honesty):
+- **D1** one Director node, **terminal only** (`director_ratify`, a `roleEligibility:[director]` director-queue node — idea-388, R-D1 — completionDependsOn the whole graph) — structurally absent from intake, council, verify.
+- **D2** sealed output, post-seal review — the ranking is committed/timestamped (`ev_seal_hash` chains to `adjudicate_eng`) before the Director sees it; the Director cannot retro-edit the org's determination (FM-10/12).
+- **D3 Hub-channel Director-dark mechanically verified (honestly scoped — G4 fix)** — `verify_ranking` scans `list_messages`/`list_threads` over the run window **starting at `reconcile_anchor`/run-seed** (NOT seal-ts — the highest-leverage contamination is *pre-seal*: *which* candidates survive into the 5–8-summit cut at `seal_candidates` is set before the seal) through verdict-ts, for any Director message into the run; a mid-run Hub-channel Director steer flips the verdict to **INVALID** (re-run). **Honest scope:** this verifies *Hub-channel* darkness only. The Director historically steered via **director-chat**, which is **now DEPRECATED/unavailable** — so (a) there is no active Director side-channel to contaminate the run (a point in the design's favor), but (b) the scan cannot prove out-of-band darkness; the claim is scoped to "no Hub-channel Director steer detected over [run-seed, verdict]" with the out-of-band gap acknowledged. Re-wire a chat/ACP transcript into the scan if/when a Director interface returns (idea-390).
+- **D4 three discrete dispositions** (preserves Director authority + audit honesty). **Scope (R-D4):** the Director reviews the **WHOLE ranked slate** (so deferrals/queue routes are seen in context) and **gates the #1 FOCUS** (the binding decision):
   - **ratify-as-is** → OUTCOME = ACCEPTED (org determined direction).
   - **reject-with-recorded-reason** → re-run (reason logged as input to the next run, not an edit of this one).
-  - **accept-with-Director-amendment** → allowed but recorded as a **distinct DIRECTOR-OVERRIDE layer** ("org determined X; Director overrode to Y") — the test stays clean (we measured what the org chose *and* what the Director changed, separably). The guard is honest labeling, never forbidding override.
+  - **accept-with-Director-amendment (R-D6: allowed-but-logged, never forbidden)** → recorded as a **distinct DIRECTOR-OVERRIDE layer** ("org determined X; Director overrode to Y") — the test stays clean (we measured what the org chose *and* what the Director changed, separably). The guard is honest labeling, never forbidding override.
 
 ### 6.5 Auditability (ground-truth, no prose memory)
 - **E1** the run graph IS the provenance — every node records `references` consumed + `evidenceRequirements` produced (by `requirementId`, `producedBy`, timestamp, lease); `dependsOn`/`completionDependsOn` make the order immutable + replayable (idempotent createOnly).
@@ -292,8 +318,8 @@ The verifier **independently re-derives — does not review-approve** (FM-11):
 | # | Invalidating failure | Defense |
 |---|---|---|
 | FM-1 | architect-prior anchoring | A1 symmetric schema (no anchor slot) + A2 blinding |
-| FM-2 | architect rubber-stamp / seat-capture | B1 architect excluded from `adjudicate` + B2 ≥2 non-architect producers |
-| FM-3 | Director steer leak | D1 single terminal Director node + D3 mechanical Director-dark scan → INVALID |
+| FM-2 | architect rubber-stamp / seat-capture | B1 architect excluded from BOTH adjudicate nodes + B2 **≥2 producing NODES across the engineer+verifier seats** (`adjudicate_eng`+`adjudicate_ver`; node-structural, not ≥2-producers-on-one-node — G1) |
+| FM-3 | Director steer leak | D1 single terminal Director-queue node + D3 **Hub-channel** Director-dark scan over **[run-seed, verdict]** → INVALID (out-of-band gap acknowledged; director-chat deprecated ⇒ no live side-channel — G4) |
 | FM-4 | evidence fabrication / hallucinated cross-ref | seed-time `required`-ref resolvability + C1 verifier re-resolves from ground truth |
 | FM-5 | stale/noisy backlog | `reconcile_anchor` precedes intake; clean backlog is the only valid SR input |
 | FM-6 | untraceable ranking | C3 every rank binds a resolved ref + addresses triangulate-against + E2 rationale table |
@@ -301,16 +327,20 @@ The verifier **independently re-derives — does not review-approve** (FM-11):
 | FM-8 | convergence theater | B3 ≥1 adversary/candidate + B4 seal-before-clash + B5 must record a move-or-attempt |
 | FM-9 | single-input candidate collapse | A3 ≥4 independent exhaustive sources; prior is one row in the union |
 | FM-10 | post-hoc rationalization | `seal_candidates` freezes+hashes the set before ranking; ordering enforced by dependsOn |
-| FM-11 | adversary = author | `verify_ranking` ≠ adjudicator + re-derive (not approve) + pinned head-SHA |
+| FM-11 | adversary = author | `verify_ranking` ≠ adjudicator + re-derive (not approve) + pinned head-SHA — *strict* verify≠adjudicator needs a 2nd registered verifier-Agent; under the 1-verifier roster steve holds both `adjudicate_ver` + `verify_ranking` (acknowledged roster caveat, §5.1.1) |
 | FM-12 | Director-ratify becomes Director-author | D2 sealed output + D4 override = distinct layer |
 | FM-13 | architect rigs the experiment design | A4 dryRun preview + non-architect peer-cert + C4 post-hoc structural re-check |
 
 ### 6.7 The validity verdict (acceptance)
-The run is **VALID** (test-admissible) iff `verify_ranking` PASSes ALL of: provenance blinded; ≥4 independent sources; ≥2 distinct non-architect producers on `adjudicate`; ≥1 adversary assigned **and** a clash move-or-attempt recorded; Director-dark held seal→verdict; every rank binds a resolved ref with its triangulate-against addressed; top-actionable = max-value among the ready set; recompute-hash matches the published order. Any miss → **INVALID** (the artifact still ships, marked INVALID with the failing invariant named). A **VALID + ratify-as-is** outcome = *the org determined direction without Director steer*; a **VALID + override** outcome = honestly logged as *org-determined-then-Director-amended*.
+The run is **VALID** (test-admissible) iff `verify_ranking` PASSes ALL of: provenance blinded; ≥4 independent sources; **≥2 producing NODES across the engineer+verifier seats** (`adjudicate_eng`+`adjudicate_ver`); ≥1 adversary assigned **and** a clash move-or-attempt recorded; **Hub-channel** Director-dark held over **[run-seed, verdict]** (out-of-band gap acknowledged); every rank binds a resolved ref with its triangulate-against addressed; top-actionable = max-value among the ready set; recompute-hash matches the published order (and `ev_recompute_hash_ver` matches `ev_recompute_hash`). Any miss → **INVALID** (the artifact still ships, marked INVALID with the failing invariant named). A **VALID + ratify-as-is** outcome = *the org determined direction without Director steer*; a **VALID + override** outcome = honestly logged as *org-determined-then-Director-amended*.
 
 ---
 
-## 7. Lifecycle (prep → adapter-realise → run → Director-gate)
+## 7. Lifecycle (precondition → prep → seed-channel-unblock → run → Director-gate)
+
+**Phase 0 — PRECONDITION (live roster + seed channel — G2/G3).**
+0a. **Live roster:** `get_agents` confirms **greg (engineer) + steve (verifier) online AND registered as their role-Agents**. The verifier-gates (`pack_gate`, `verify_ranking`) and the per-seat score/clash/rescore/adjudicate nodes resolve to *registered* role-Agents; architect-spawned verify sub-agents are NOT registered `role=verifier` Agents and cannot complete verifier-gates → a missing/offline verifier **stalls the graph at `pack_gate`**. The stint-5 retro recorded steve offline for that whole stint — that exact condition must NOT hold at seed-time.
+0b. **Seed channel unblocked** per Phase 2 (bug-203 restart) — without it, lily cannot reach `seed_blueprint`.
 
 **Phase 1 — PREP (architect).**
 1. Confirm a **fresh ledger reconciliation** exists (or schedule `reconcile_anchor` as the graph's first node).
@@ -318,16 +348,21 @@ The run is **VALID** (test-admissible) iff `verify_ranking` PASSes ALL of: prove
 3. `seed_blueprint(dryRun:true)` → validate the whole graph; returns `creationOrder` + the `localIdToWorkId` map; **zero creates**.
 4. **Hand the dryRun output + spec to a non-architect peer for structural certification** (A4): symmetric schema, blinding present, ≥4 sources, ≥1 adversary/candidate, architect-on-red-team, native 3/3/3 split, non-architect adjudicate. *No real seed until this signs off.*
 
-**Phase 2 — ADAPTER-REALISE.**
-The `seed_blueprint` / `get_current_stint` / arc-node verbs ship in the Hub but must be exposed through the **`@apnex/network-adapter`** the agents run. Rebuild + redeploy the adapter so the verbs are callable, then re-confirm via a live `seed_blueprint(dryRun:true)` round-trip. (This is the gating dependency for *running* — the design is buildable against the shipped Hub contract today; the adapter surface is the realise step.)
+**Phase 2 — SEED-CHANNEL UNBLOCK (adapter-swap + coordinated client restart — G3).**
+Two real, independent faults gate seeding — name **both**:
+- **Adapter (RESOLVED operationally):** the deployed `@apnex/network-adapter` build was **11 commits behind** and missing the **tool-surface reconciler (#375)** — so `seed_blueprint` / `get_current_stint` / `legal_moves` were not in the adapter's exposed surface. Root cause CONFIRMED; greg **rebuilt** the adapter and **staged it adjacent** for a turnkey swap.
+- **Host (bug-203):** the **claude-code** host (which lily runs — and `seed_blueprint` is **[Architect]-only**, so only lily can seed) does **NOT** re-enumerate tools on `notifications/tools/list_changed`. So even after the adapter is swapped, a *running* claude-code session stays stale on the new verbs — hot-reload is insufficient. **bug-203 is why a full client RESTART (not hot-reload) is required.**
+- **Correction of the v1 framing:** v1 said "the rebuild misattributes a host bug to the adapter." That is wrong — **both were real**: the adapter genuinely lacked the reconciler #375 AND bug-203 (host) is the reason a full restart is mandatory.
+- **The unblock = a turnkey adapter-swap + a COORDINATED CLIENT RESTART** — the only reliable path. It takes **lily + greg down together** (a deliberate, announced window; it collides with the never-idle mandate, so it is a *planned interrupt*, not drift). **After the restart, lily (architect) re-confirms `seed_blueprint`/`get_current_stint`/`legal_moves` are enumerable, then seeds the blueprint.**
+- **Cold-start re-engagement** after the restart uses the **claimable-digest (idea-353) + `list_ready_work`/`get_work`** — NOT `get_next` (not a registered Hub verb; removed from this design). The three confirmed-registered blueprint verbs are **`seed_blueprint` / `get_current_stint` / `legal_moves`**.
 
 **Phase 3 — RUN (autonomous, Director-dark).**
 5. `seed_blueprint(dryRun:false)` → materialises the WorkItems at `work-bp-sr_run_2026_06_29-*`; any validation failure creates ZERO; a mid-create infra fault compensating-deletes this run's creates with a loud id-trail; re-running the same runId is idempotent (createOnly).
-6. The org self-hydrates: engineer claims the hydration chain; the three role-pinned scorers self-claim via `list_ready_work` → `get_work` → `claim_work`/`complete_work`; clash/rescore/adjudicate/verify follow the DAG. `get_current_stint(work-bp-sr_run_2026_06_29-director_ratify)` is the live whole-run k/N. **No Director, no architect-adjudication, in this phase.**
+6. The org self-hydrates: engineer claims the hydration chain; the three role-pinned scorers self-claim via `list_ready_work` → `get_work` → `claim_work`/`complete_work`; clash/rescore/**adjudicate_eng+adjudicate_ver**/verify follow the DAG. `get_current_stint(work-bp-sr_run_2026_06_29-director_ratify)` is the live whole-run k/N. **No Director, no architect-adjudication, in this phase.** The Hub-channel Director-dark scan (D3) covers **[run-seed, verdict]**; director-chat's deprecation means there is no live Director side-channel to contaminate this phase (out-of-band gap acknowledged).
 
 **Phase 4 — DIRECTOR-GATE (terminal).**
-7. `surface` commits the §0–§11 artifact + opens the PR + routes triage. `verify_ranking` has already emitted VALID/INVALID.
-8. `director_ratify`: the Director reads the sealed artifact and records one of the three dispositions (D4). On ratify-as-is, the run closes as *org-self-determined*; override is logged as a distinct layer; reject re-runs with the reason as next-run input.
+7. `surface` (**NON-architect** — R-D2) commits the §0–§11 artifact + opens the PR + routes triage. `verify_ranking` has already emitted VALID/INVALID.
+8. `director_ratify` is a **Director-eligible WorkItem** (`roleEligibility:[director]`) = the **director-work-queue (idea-388) in its FIRST live use** (R-D1). **BUT** director-chat is deprecated ⇒ the Director has **no direct interface yet** ⇒ **for now the architect PROXY-surfaces** the queue item and walks the Director through it (the durable director-queue node is spec'd; a real Director interface is future work — idea-390 / ACP rework). The Director reviews the **WHOLE ranked slate** and **gates the #1 FOCUS** (R-D4), recording one of the three dispositions (D4). On ratify-as-is the run closes as *org-self-determined*; override is logged as a distinct DIRECTOR-OVERRIDE layer (R-D6); reject re-runs with the reason as next-run input.
 
 ---
 
@@ -335,39 +370,49 @@ The `seed_blueprint` / `get_current_stint` / arc-node verbs ship in the Hub but 
 
 1. **Verify the contract** (done in this design): `seed_blueprint` validates-whole-graph-before-create (`work-item-policy.ts` step 4 < step 6); `nodeRequiresRunbook` = verifier-gate ∨ references>0; `PINNED_GIT_REF` = 40-hex `sha[:path]`; `MAX_BLUEPRINT_NODES=100`; `BLUEPRINT_ID_TOKEN=/^[A-Za-z0-9_]+$/`; review-evidence `producedBy` must resolve to a `role=verifier` Agent.
 2. **Pin static refs** to the seed-time HEAD `00f97c6…` — `SR=…:docs/methodology/strategic-review.md`, `RECON=…:docs/methodology/ledger-reconciliation.md`, `SURVEY=…:docs/methodology/idea-survey.md`, `CALIB=…:docs/calibrations.yaml`, `FRICTION=…:docs/methodology/autonomous-stint-friction-backlog.md`, `ROADMAP=…:docs/roadmap.md`, `COUNCIL=…:docs/designs/m-stint-lifecycle-design.md`, `TELE=…:docs/methodology/tele-glossary.md`, `SKIPCRIT=…:skills/survey/scripts/check-skip-criteria.sh`.
-3. **Assemble the payload** from the §5.1 table (canonical 21-node, or the 13-node minimal-valid per §4.3). All sibling refs `storage:entity, required:false`; all static refs `storage:git, required:true`; `runbook` on every node.
+3. **Assemble the payload** from the §5.1 table (canonical 22-node, or the **15-node minimal-valid** per §4.3 — R-D3 runs minimal-valid first). All sibling refs `storage:entity, required:false`; all static refs `storage:git, required:true`; `runbook` on every node.
 4. **`seed_blueprint(dryRun:true)`** → confirm `creationOrder` + ids; **peer-certify** (A4).
-5. **Adapter-realise** (Phase 2) if the verbs aren't yet exposed.
+5. **Seed-channel unblock** (Phase 2, G3): swap the rebuilt adapter (+#375 reconciler) + a **coordinated client restart** (bug-203 — lily+greg down together) → lily re-confirms `seed_blueprint`/`get_current_stint`/`legal_moves` are enumerable → seed. (Re-engage via claimable-digest + `list_ready_work`/`get_work`; no `get_next`.)
 6. **`seed_blueprint(dryRun:false)`** → run; monitor via `get_current_stint(...-director_ratify)`.
-7. **Skill packaging is deferred** to the 2nd dogfood (C9): `skills/strategic-review/sr-init.sh` (assert reconcile, run ≥4-source enumeration, blind+seal, emit+`dryRun`-validate the spec) + `skills/strategic-review/sr-validate.sh` (schema-validate the artifact §0 + §1–§11 and mechanically check the §6.6 invariants → VALID/INVALID), modeled on `skills/survey/`. Reused as-is: `check-skip-criteria.sh`, `calibrations.py`, `get-entities.sh` + psql-cookbook.
+7. **Skill packaging is deferred** to the 2nd dogfood (C9, R-D7): `skills/strategic-review/sr-init.sh` (assert reconcile, run ≥4-source enumeration, blind+seal, emit+`dryRun`-validate the spec) + `skills/strategic-review/sr-validate.sh` (schema-validate the artifact §0 + §1–§11 and mechanically check the §6.6 invariants → VALID/INVALID), modeled on `skills/survey/`. Reused as-is: `check-skip-criteria.sh`, `calibrations.py`, `get-entities.sh` + psql-cookbook.
 
 ---
 
-## 9. Open questions for the Director
+## 9. Resolutions (Director-decided 2026-06-29)
 
-- **Q-D1 — Director-gate mechanism.** Default has the architect *record* the Director's ratification audit on `director_ratify` (operationally realistic — the Director needn't run an adapter). Alternative: a genuinely Director-eligible work node. The Director-dark scan (D3) keeps either honest. **Which do you want?**
-- **Q-D2 — Architect packaging the final artifact.** `surface` is `[architect]` (packages a *sealed, adjudicated, verified* result). If even packaging-spin is a concern, `surface` can move to a non-architect. **Acceptable as architect, or move it?**
-- **Q-D3 — Canonical (21-node) vs minimal-valid (13-node) for the first run.** The 13-node retains every integrity invariant and is leaner; the 21-node adds hydration-fan-out parallelism + true clash-then-rescore ordering. **Run the 13-node first and graduate, or go straight to canonical?**
-- **Q-D4 — Scope of "self-determined."** The slate ranks *summits*; the rank-#1 becomes the stint-6 FOCUS. Is the Director ratifying **only the #1 FOCUS**, or the **whole ordered slate** (so deferrals/queue routes are also ratified)?
-- **Q-D5 — `candidate_K` membership.** The architect's standing prior is the D-3/observability-PUSH. Should *any* other standing prior (e.g. a Director-held lean) likewise enter blinded as a `candidate_*`, or is D-3 the only one to neutralise?
-- **Q-D6 — Override semantics.** D4 logs an override as a distinct DIRECTOR-OVERRIDE layer (test stays VALID). Confirm you want override *recorded-and-honoured* rather than *forbidden* (preserves your authority; keeps the measurement clean).
-- **Q-D7 — Dogfood count.** This is dogfood #2–#3 of `seed_blueprint` (after the stint-lifecycle council). The `skills/strategic-review/` public skill ships only after 2 successful blueprint dogfoods (T1). Confirm the skill is **deferred**, not part of this run.
+All v1 open questions are resolved; the decisions are folded into §5.1, §6, §7.
+
+- **R-D1 — Director-gate mechanism (was Q-D1).** The verdict + ranked slate land as a **Director-eligible WorkItem** (`roleEligibility:[director]`) — the **director-work-queue (idea-388), in its FIRST live use**. BUT director-chat is **deprecated** ⇒ the Director has **no direct interface yet** ⇒ **for now the architect PROXY-surfaces** the queue item and walks the Director through it. BOTH are spec'd: the **durable director-queue node** (`director_ratify`) AND **architect-proxy-surfacing-for-now**. New director-interface tools are future work (idea-390 / ACP rework).
+- **R-D2 — Final-artifact packaging (was Q-D2).** A **NON-architect** packages the final artifact: `surface` → `roleEligibility:[engineer, verifier]` (removes any packaging-spin vector).
+- **R-D3 — Graph shape for the first run (was Q-D3).** Run the **minimal-valid** graph first, then graduate to canonical. After the v2 folds the minimal-valid is **15 nodes** (up from the v1 13-node sketch: `adjudicate` split into `adjudicate_eng`+`adjudicate_ver` per G1, and `director_ratify` restored as a discrete director-queue node per R-D1).
+- **R-D4 — Ratify scope (was Q-D4).** The Director reviews the **WHOLE ranked slate** and **gates the #1 FOCUS** (deferrals/queue routes seen in context; the binding decision is the FOCUS).
+- **R-D5 — Blinding scope (was Q-D5).** Blind **ALL known standing priors**, not just the architect's D-3 — any Director-held lean or other seat's prior also enters as a neutral `candidate_*` (§6.1 A2).
+- **R-D6 — Override semantics (was Q-D6).** Override is **allowed-but-logged** as a distinct **DIRECTOR-OVERRIDE** layer (the test stays VALID; "org determined X; Director overrode to Y" recorded separably) — recorded-and-honoured, never forbidden.
+- **R-D7 — Skill packaging (was Q-D7).** The `skills/strategic-review/` public skill is **DEFERRED to the 2nd dogfood** (T1 "no public contract until 2 dogfoods"); this run ships the blueprint-as-data only.
+
+### 9.1 The 4 GATE-1 gating corrections folded (from Appendix B)
+- **G1 — multi-agent = multi-NODE.** POSITION = 3 per-agent nodes (`score_arch`/`score_eng`/`score_ver`); ADJUDICATE = 2 non-architect nodes (`adjudicate_eng`+`adjudicate_ver`). Floor restated as **≥2 producing NODES across the engineer+verifier seats**; every non-node-structural "solo-completion impossible / mechanically enforced" claim deleted (§1 C4, §6.2 B2, §6.6 FM-2, §6.7).
+- **G2 — live-verifier precondition + roster cardinality.** Explicit Phase 0 precondition: greg + steve online **and registered** before seeding; verifier-gates need a registered `role=verifier` Agent (architect-spawned verify sub-agents do NOT qualify). Floor redefined per G1 (§5, §5.1.1, §7 Phase 0).
+- **G3 — seed-path / bug-203.** Named: claude-code does not re-enumerate tools on `notifications/tools/list_changed`. Seed channel RESOLVED operationally — rebuilt adapter (root cause: deployed build 11 commits behind, missing reconciler #375; greg staged it) + **coordinated client restart** (the only reliable unblock; lily+greg down together) → lily seeds. `get_next` removed (not a registered verb); the three real blueprint verbs are `seed_blueprint`/`get_current_stint`/`legal_moves` (§7 Phase 2).
+- **G4 — Director-dark honestly scoped.** Scan window starts at run-seed/`reconcile_anchor` (catches pre-seal candidate-set contamination); claim scoped to **Hub-channel** darkness with the out-of-band gap acknowledged; director-chat deprecation ⇒ no live side-channel to contaminate (a point in the design's favor) (§6.4 D3, §6.6 FM-3, §6.7).
 
 ---
 
-## Appendix — provenance of each section
+## Appendix A — provenance of each section
 
 | Section | Primary source component | Key adaptations |
 |---|---|---|
 | §3 evidence layer | EVIDENCE | C1 (sibling refs→required:false), C2 (git not hub-doc), C5/C6 (full universe; council clusters) |
-| §4 ranking engine | RANKING | C3 (cross-lens→clash), C4 (non-architect adjudicate), C7 (13-node minimal-valid) |
+| §4 ranking engine | RANKING | C3 (cross-lens→clash), C4 (2 non-architect adjudicate nodes — G1), C7 (15-node minimal-valid) |
 | §5 graph + contract | BLUEPRINT | extended with seal/blind/verify/ratify nodes; `required:false` rule applied universally |
 | §6 integrity guards | INTEGRITY | mapped onto the fused graph; axes (value/ready/risk) reconciled to the native 3/3/3 lenses |
-| §1 conflict resolution, §2 intent, §7–§9 lifecycle/build/questions | this integration | — |
+| §1 conflict resolution, §2 intent, §7–§9 lifecycle/build/resolutions | this integration | — |
 
 ---
 
-## Critique (adversarial, ground-truthed 2026-06-29 — lily)
+## Appendix B — v1 Critique (adversarial, ground-truthed 2026-06-29 — lily) — the record of what v2 fixed
+
+> **PRESERVED VERBATIM as the v2 audit trail.** All four gating items (G1–G4) and all five non-gating items (N1–N5) below are folded into the v2 body (see the §"v2 fold" changelog near the top + §9.1). This appendix is retained unedited as the ground-truthed record of the v1 state.
 
 **Verdict: NEEDS WORK.** The contract reading is unusually accurate and the integrity *intent* is the strongest part of the doc — but four of its load-bearing integrity guarantees are asserted as **mechanically enforced** when the shipped `complete_work` / lease / agent-registry contract does **not** enforce them, and the run-path is **not real** for the seeding agent. These are gating because idea-389's whole deliverable is a *VALID/INVALID self-determination verdict* — a guard that is documentary-only invalidates the very thing the run is supposed to certify.
 
