@@ -18,7 +18,7 @@ This directory holds **reusable `seed_blueprint` templates**: declarative WorkIt
 ## The library (dark-run Phase-1 distillation)
 | Template | Purpose | Status |
 |---|---|---|
-| `strategic-review` | autonomous agent-self-determined next-stint priority ranking (idea-389) | **first resident** — landing here once the idea-389 run is seeded + proven |
+| `autonomous-strategic-review` (ASR) | autonomous agent-self-determined next-stint priority ranking (idea-389) | **first resident** — landing here once the idea-389 run is seeded + proven |
 | `council` | POSITION × role-lens → CLASH → ADJUDICATE (the stint-5 design-council shape) | planned |
 | `survey` | Director-intent / autonomous survey → Design | planned |
 | `design-session` | diverse positions → integrate → adversarial critique | planned |
