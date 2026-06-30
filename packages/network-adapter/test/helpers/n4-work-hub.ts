@@ -179,6 +179,9 @@ export interface N4TestHubOptions {
   bindAddress?: string;
   sessionTtl?: number;
   quiet?: boolean;
+  /** SSE keepalive cadence (ms). Default 10_000 — short enough to outrun the shim's
+   *  sse_watchdog so the long-lived engineer session survives to the self-wake heartbeat. */
+  keepaliveInterval?: number;
 }
 
 /** Assemble the full network-servable n4 test-Hub: HubNetworking with a createServer
@@ -212,7 +215,11 @@ export function createN4TestHub(options: N4TestHubOptions = {}): N4TestHub {
   const config: HubNetworkingConfig = {
     port: options.port ?? 0,
     apiToken: "",
-    keepaliveInterval: 30_000,
+    // Prod-faithful 30s (matches hub/src/index.ts:443 + the agent's 60s firstKeepaliveDeadline
+    // / 90s sseKeepaliveTimeout). The n4 render-receipt SSE-drop is a delivery gap (the standalone
+    // must actually push the keepalive over the live SSE stream), NOT a cadence problem — fix the
+    // delivery, do NOT shorten below prod (that would test a non-prod config; architect directive).
+    keepaliveInterval: options.keepaliveInterval ?? 30_000,
     sessionTtl: options.sessionTtl ?? 3_600_000, // 1h — never reap the long-lived engineer session
     reaperInterval: 60_000,
     orphanTtl: 3_600_000,

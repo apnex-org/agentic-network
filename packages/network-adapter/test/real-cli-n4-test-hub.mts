@@ -25,11 +25,15 @@ import { createN4TestHub, seedSelfTestWorkItem } from "./helpers/n4-work-hub.js"
 const MCP_PORT = Number(process.env.MCP_PORT) || 8080;
 const CONTROL_PORT = Number(process.env.CONTROL_PORT) || 8090;
 const BIND = process.env.BIND || "0.0.0.0";
+// KEEPALIVE_MS — defaults to the prod-faithful 30_000 (see helpers/n4-work-hub.ts). Overridable
+// ONLY for diagnosing the direct-localhost SSE-warmth gap (prod runs behind the Cloud Run nginx
+// proxy that keeps the socket warm; a direct connection may need a warmer keepalive). Not for prod.
+const KEEPALIVE_MS = process.env.KEEPALIVE_MS ? Number(process.env.KEEPALIVE_MS) : undefined;
 // The container write-surface for the seeded self-test (n2 sandbox: /work is the only
 // host write-mount). Overridable so a local Seam-1 run can target a throwaway dir.
 const PROOF_PATH = process.env.SEEDED_PROOF_PATH || "/work/n4-proof.txt";
 
-const th = createN4TestHub({ port: MCP_PORT, bindAddress: BIND, quiet: false });
+const th = createN4TestHub({ port: MCP_PORT, bindAddress: BIND, quiet: false, keepaliveInterval: KEEPALIVE_MS });
 await th.start();
 console.log(`[n4-hub] MCP up: ${th.url} (bind ${BIND}:${MCP_PORT}) — FULL work-policy surface via bindRouterToMcp`);
 
