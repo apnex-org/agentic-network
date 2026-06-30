@@ -3742,6 +3742,108 @@ calibrations:
       - tele-7
       - tele-8
       - tele-4
+  - id: 105
+    class: methodology
+    title: 'Self-stall vs peer-stall vs channel-drop vs peer-busy — DO NOT CONFLATE — an agent observing
+      ''the other side is silent'' cannot distinguish (a) I am hung (no self-recovery) from (b) the channel
+      dropped (the message never arrived) from (c) the peer is hung (no peer-recovery) from (d) the peer
+      is alive-but-slow (legitimate work in flight). Collapsing these four modes into ''stuck'' fires the
+      WRONG recovery (a self-retry on a hung-self never reaches the loop; a channel re-issue on a hung-peer
+      adds backlog; a watchdog-kill on alive-but-slow destroys good work). Disambiguating PROBE FIRST —
+      a liveness/recency signal that costs the peer ~nothing but witnesses which mode is live — is the precondition
+      to firing any recovery. Sibling to #104 (localize-before-fix) on the diagnosis-before-action axis.'
+    origin: autonomous-stint-6 (real-CLI-harness arc, idea-405, 2026-06-30)
+    surfaced_at: real-CLI-harness n6 verifier session — opencode in-flight HANG with no self-recovery (bug-208)
+      collided with delivery-resilience role-blind-spot (bug-207), creating apparent mutual-silence that
+      looked alternately like self-stall / peer-stall / channel-drop / peer-busy across three repeat episodes;
+      idea-408 (cross-agent peer-stall detection — mutual-silence bridge) names the absent disambiguation
+      surface
+    status: open
+    closure_mechanism: 'STATUS NOTE: freshly named (2026-06-30). Architect-filed solo (methodology). Pairs
+      with #106 (recovery-net selector-blind-spot) + #107 (faithful-chaos-test) as the three diagnostic-discipline
+      cals from idea-405. MECHANIZATION candidate: a peer-liveness probe (lightweight, cheap, witnesses
+      mode) gated BEFORE every recovery-firing decision; idea-408 §3 specifies four mechanism options. CLOSURE:
+      when the disambiguation surface ships AND the recovery-firing sites consume it.'
+    cross_refs:
+    - '#104 (localize-before-fix — diagnosis-before-action sibling)'
+    - bug-207 (delivery-resilience role-blind-spot — channel-drop instance)
+    - bug-208 (opencode in-flight HANG — self-stall instance with no self-recovery)
+    - idea-408 (cross-agent peer-stall detection — mutual-silence bridge, the missing disambiguator)
+    - idea-405 (M-Real-CLI-Harness — origin arc)
+    tele_alignment:
+    - tele-7
+    - tele-8
+  - id: 106
+    class: substrate
+    title: 'RECOVERY-NET SELECTOR-BLIND-SPOT — a recovery / catch-up / replay / dedup net scoped to ONE
+      selector axis (e.g. targetRole) structurally CANNOT recover entities targeted by an unwatched selector
+      axis (e.g. agentId-only with no role). The hole has the exact shape of the un-watched selector. Cure:
+      scope the recovery net by the UNION of all targeting axes (OR, not AND, across selectors), with a
+      per-selector cursor + a periodic cursor-less reconcile sweep over the un-rendered set. A retry / replay
+      / poll that QUERIES by only a subset of the dispatch''s targeting axes is a silent data-loss / coordination-loss
+      class; the corollary is that a net''s COVERAGE is bounded above by the union of selectors it queries
+      — never trust a recovery net you have not characterised against the FULL targeting taxonomy.'
+    origin: autonomous-stint-6 (real-CLI-harness arc, idea-405, 2026-06-30)
+    surfaced_at: bug-207 verified root-cause (wf_937299bf 3-lens code analysis + steve cross-lineage opencode
+      probe audit-5406) — both adapter recovery nets (poll-backstop + W1b SSE-replay) scope inbox by targetRole
+      only; agent-direct messages with no role field stay status=new forever (206 stuck back to 2026-04-27);
+      decisive live-proven during arc when a greg→lily ping silently dropped for 23min mid-build
+    status: open
+    closure_mechanism: 'STATUS NOTE: freshly named (2026-06-30). Substrate-class — instantiated in bug-207.
+      Director-prioritized ''go after soon'' (post-arc); fix WorkItem to be seeded for greg with the 7-item
+      must-verify checklist on bug-207. CLOSES STRUCTURALLY when (a) both recovery nets adopt OR((target.role==myRole),(target.agentId==myAgentId));
+      (b) cursor-advance is decoupled from ''returned-by-poll'' (only RENDERED messages advance the cursor
+      — prevents the 206-message backlog trap); (c) a regression test exists that DISPATCHES an agent-direct
+      (no role) message + asserts the poll/replay recovers it. The OR-fix is necessary but not sufficient
+      — the cursor-advance-without-render trap is independent and must also be closed.'
+    cross_refs:
+    - bug-207 (delivery-resilience role-blind-spot — primary instance)
+    - work-108 (steve cross-lineage opencode probe — confirms substrate-wide, audit-5406)
+    - '#90 (silent-failure in fire-and-forget async seams — kin class)'
+    - '#94 (truncation-honesty — sibling on the bulk-query honesty axis)'
+    - idea-405 (M-Real-CLI-Harness — origin arc)
+    tele_alignment:
+    - tele-7
+    - tele-4
+  - id: 107
+    class: methodology
+    title: 'FAITHFUL-CHAOS-TEST — a recovery layer''s test MUST model the failure-shape the layer EXISTS
+      for, NOT a synthetic disturbance tuned to TRIGGER the layer''s detector — proving the detector fires
+      is NOT proving the recovery works. Tuning chaos intensity to beat the detector is a tele-7 false-green:
+      the test proves only that ''if the detector ever fires, the recovery runs'', leaving the real-world
+      failure mode (the one the layer was built to recover) un-rehearsed. Faithful chaos = inject the LITERAL
+      failure-shape (a real wedge, a real lapse, a real network partition), then let the detector observe
+      it on its OWN terms. Cure: name the failure-shape the layer EXISTS for; inject IT; allow the detector
+      latency it would have in the wild. Sibling to #79/#82 (faithful-harness — make the substrate faithful
+      so bugs are VISIBLE) and #104 (localize-before-fix — reproduce at the faithful layer); this is the
+      recovery-layer-specific corollary — the recovery must be exercised against the faithful failure, not
+      a detector-trigger.'
+    origin: autonomous-stint-6 (real-CLI-harness arc, idea-405, 2026-06-30)
+    surfaced_at: n5 container sentinel design + e2e — the (b) reject-handshake wedge was chosen as the FAITHFUL
+      failure-shape (real adapter wedge, not a synthetic heartbeat-skip), letting the 3-level sentinel (L1
+      in-process / L1.5 watchdog 2-consecutive-fail / L2 docker restart-policy) prove recovery against the
+      failure it EXISTS for; the design explicitly named + rejected the unfaithful alternative (force a
+      sentinel-file write or fake-heartbeat-miss) which would have proven only the supervisor exits, not
+      that an actually-wedged adapter recovers
+    status: open
+    closure_mechanism: 'STATUS NOTE: freshly named (2026-06-30). Architect-filed solo (methodology). Bank-the-positive:
+      the discipline was PRACTICED in this arc (n5 chose the faithful (b) wedge over an unfaithful synthetic
+      detector-trigger) and the recovery thesis was certified end-to-end (audit-5511, n6 VALID). MECHANIZATION
+      candidate: a pre-test checklist (what failure-shape does this layer EXIST for? am I injecting THAT,
+      or a detector-trigger?) folded into the verifier''s adversarial-verify gate. CLOSURE: when the discipline
+      appears in the verifier-role / debugging-discipline methodology subsection alongside #79/#82/#104.'
+    cross_refs:
+    - '#79 (false-green-at-scale via unfaithful fixtures — visibility-axis sibling)'
+    - '#82 (faithful-harness-as-exposure — visibility-axis sibling)'
+    - '#104 (localize-before-fix / reproduce-at-the-lowest-faithful-layer — diagnosis-side sibling)'
+    - '#96 (agreement-pin every load-bearing invariant — non-vacuity kin)'
+    - idea-405 (M-Real-CLI-Harness — origin arc; n5 the practiced instance)
+    tele_alignment:
+    - tele-7
+    - tele-8
+
+
+
 
 
 
