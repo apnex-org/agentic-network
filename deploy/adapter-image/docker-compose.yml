@@ -1,0 +1,56 @@
+# Claude-harness adapter container — EMBEDDED topology (M-Adapter-Modernization P1e, Design §2/§5/§6/§9).
+#
+# AUTHORED in P1e-1 (work-103, env-independent). The LIVE stand-up + the real docker-L2
+# restart e2e are P1e-2 (runtime-bound, on the architect-provisioned surface). docker-compose
+# FIRST; k8s later (§6, scion CloudRunRuntime cautionary tale).
+name: apnex-claude-adapter
+services:
+  claude-adapter:
+    # The dep-pruned, reproducible P1a image with the PID-1 supervisor baked as ENTRYPOINT.
+    # Pin the IMMUTABLE :<sha> (never :latest) — §6 record/deploy the :sha as reference-of-record;
+    # rollback = re-point ADAPTER_TAG to the prior :sha.
+    image: ${ADAPTER_IMAGE:-australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/claude-adapter}:${ADAPTER_TAG:?set to the immutable :sha image tag}
+    # EMBEDDED: PID-1 thin supervisor (baked entrypoint) -> launches the CLI -> CLI spawns the
+    # kernel-shim. The supervisor CONSUMES P1c's wedged-restart sentinel -> exit 75 -> L2 restart.
+    # `command` = the host CLI launch; P1e-2 wires the real claude-code headless invocation.
+    command: ["claude"]
+    # L2 restart-policy (§6): on-failure so the wedged-restart (exit 75) RESTARTS, but a clean
+    # exit-0 (SIGTERM stop / safe-update) does NOT loop. Manual-first pilot default (no watchtower
+    # auto-pull yet — manual `docker compose pull && up -d` is the update path).
+    restart: on-failure
+    environment:
+      # carry-b (config-half): ENABLE the L1.5 watchdog now that the supervisor exists to consume
+      # its signal. (Default-off in the shim until here — a self-exit without a supervisor is a
+      # kill-switch with no restarter.) The drives-restart VALIDATION is P1e-2.
+      OIS_LIVENESS_WATCHDOG_ENABLED: "1"
+      OIS_LIVENESS_SENTINEL: /run/adapter-wedged
+      OIS_HUB_URL: ${OIS_HUB_URL:?}
+      OIS_AGENT_NAME: ${OIS_AGENT_NAME:?}
+      WORK_DIR: /work
+      # ⚠ NO OIS_HUB_TOKEN / CLAUDE_CODE_OAUTH_TOKEN here — file-mounted secrets (§5), NOT env,
+      #   to close the /proc exposure window (scion avoid[10]).
+    secrets:
+      - hub_token
+      - claude_oauth_token
+    volumes:
+      # §9: host-side worktree mounted-in. FORBID in-container worktree creation (the
+      # `--relative-paths` path-identity hazard; isolation-by-absence; scion avoid[9]).
+      - type: bind
+        source: ${HOST_WORKTREE:?set to the HOST-created git worktree dir}
+        target: /work
+      # /run = tmpfs so the wedged-restart sentinel is fresh per boot (a restarted container
+      # starts un-wedged; the supervisor also clears a stale sentinel at startup).
+      - type: tmpfs
+        target: /run
+    working_dir: /work
+    # §6 graceful stop: SIGTERM -> the supervisor quiesces the child (bounded grace) -> clean exit 0.
+    stop_signal: SIGTERM
+    stop_grace_period: 15s
+    # §6 boot-smoke health-gate: P1e-2 wires the real liveness probe (a Hub session round-trip)
+    # before adoption; left unset here (authoring slice).
+secrets:
+  # §5 file-mounted secrets — construct-once-on-host, runtime-injected, NEVER baked (cred-free image).
+  hub_token:
+    file: ${HOST_SECRETS_DIR:?set to the host secrets dir}/hub_token
+  claude_oauth_token:
+    file: ${HOST_SECRETS_DIR:?}/claude_oauth_token
