@@ -299,4 +299,19 @@ Schema changes follow the mission-lifecycle pattern: bump methodology version (`
 
 ---
 
-*Methodology v1.0; ratified 2026-04-26 by Director post idea-206 first canonical execution + post-codification refinement. §15 schema enrichment added 2026-05-02 by mission-69 per AG-9 carve-out (semantic methodology unchanged). Architect: lily.*
+## §16 The Survey as a first-class blueprint (respondent-parameterized; agent-to-agent generalized)
+
+**Provenance:** 2026-06-30, Director-directed. The Survey methodology (§1–§15, semantically unchanged) is now ALSO expressed as a seedable work-graph: **`blueprints/survey.blueprint.json`**.
+
+**Respondent-parameterized.** The blueprint generalizes the Survey from "Director-intent elicitation" to a structured-input-elicitation **PRIMITIVE**: the respondent is a parameter (`RESPONDENT_ROLE`), not hard-coded. The **Director is one application**; **agent-to-agent** (an engineer / verifier / architect respondent) is the generalized case. The **surveyor** (poses + interprets + synthesizes; default `architect`) and the **respondent** (picks) are decoupled roles. The output `{PURPOSE}` is parameterized too — a Design's `design_draft` intent-envelope (the original Survey path, composing with `design-process.md` §8) OR an agent-to-agent decision/plan.
+
+**Shape (5 nodes; faithful to the adaptive 2 rounds — R2 is authored AFTER R1's answers + interpretation, so the rounds are separate nodes):**
+`draft_round1` [surveyor] → `answer_round1` [respondent] → `interpret_r1_draft_r2` [surveyor] → `answer_round2` [respondent] → `synthesize_envelope` [surveyor]. The node runbooks cite this doc (§3 / §4 / §5 / §9 / §15) as the format authority; the envelope artifact conforms to the §15 schema.
+
+**Completability nuance (bug-205 family):** with `RESPONDENT_ROLE=director`, the answer-nodes are `[director]`-only and **strand** until **idea-388** (the Director-work-queue) makes a `[director]` node substrate-completable. With an **agent** respondent, a live agent claims+answers → **completable today**. So the agent-to-agent generalization is the cleanly-seedable path now; the Director application rides on idea-388.
+
+**Relationship to the Survey Skill:** the Skill (mission-69, `validate-envelope.sh`) remains the per-step authoring + finalize-gate helper; the blueprint is the WORK-GRAPH orchestration (nodes + role-handoffs). They compose — `synthesize_envelope` may run `validate-envelope.sh` as its finalize check.
+
+---
+
+*Methodology v1.0; ratified 2026-04-26 by Director post idea-206 first canonical execution + post-codification refinement. §15 schema enrichment added 2026-05-02 by mission-69 per AG-9 carve-out (semantic methodology unchanged). §16 blueprint expression added 2026-06-30 (respondent-parameterized; methodology semantics unchanged). Architect: lily.*

@@ -1,0 +1,106 @@
+{
+  "_meta": {
+    "name": "survey",
+    "description": "The Idea-Survey as a first-class, RESPONDENT-PARAMETERIZED work-graph. Structured 3+3 orthogonal pick-list intent-elicitation (per docs/methodology/idea-survey.md) across two ADAPTIVE rounds (Round 2 is authored after Round 1's answers + interpretation). The RESPONDENT is a PARAMETER, not hard-coded: the Director is ONE application; agent-to-agent (an engineer/verifier/architect respondent) is the generalized case. Produces the composite intent-envelope a downstream consumer uses (a Design's design_draft intent-envelope on the Survey path, OR a peer decision/plan for an agent-to-agent survey).",
+    "version": "v1.0-DRAFT (2026-06-30, respondent-parameterized; clones the design-process blueprint pattern)",
+    "methodology": "docs/methodology/idea-survey.md (the 3+3 format authority; §3 R1, §4 R2, §5 output, §9 solve-the-matrix discipline, §15 envelope schema)",
+    "params": {
+      "RUN_ID": "deterministic run-key (work-bp-{RUN_ID}-{localId})",
+      "RESPONDENT_ROLE": "the role that ANSWERS the picks. Default 'director' (the original Director-intent application). Any role for agent-to-agent: 'engineer' | 'verifier' | 'architect'. THE refinement (Director 2026-06-30: 'director is merely one application').",
+      "SURVEYOR_ROLE": "the role that poses + interprets + synthesizes. Default 'architect'.",
+      "METHODOLOGY_SHA": "<40-hex>:docs/methodology/idea-survey.md (pinned format authority)",
+      "SURVEY_SUBJECT_REF": "what is being surveyed — the idea/topic/decision (entity id or pinned doc).",
+      "PURPOSE": "what the synthesized envelope feeds — e.g. 'a Design (design_draft intent-envelope, Survey path)' | 'an agent-to-agent decision' | 'a plan'."
+    },
+    "phases": [
+      { "title": "Round 1", "detail": "surveyor drafts 3 orthogonal Qs -> respondent picks" },
+      { "title": "Round 2", "detail": "surveyor interprets R1 + drafts adaptive 3 Qs -> respondent picks" },
+      { "title": "Synthesize", "detail": "surveyor folds picks -> the composite intent-envelope" }
+    ],
+    "respondent_note": "When RESPONDENT_ROLE='director', the answer_round1 + answer_round2 nodes are [director]-ONLY nodes and STRAND until idea-388 (the Director-work-queue) makes a [director] node substrate-completable (bug-205 / idea-402 family). When RESPONDENT_ROLE is an AGENT role (engineer/verifier/architect), a LIVE agent claims+answers -> completable TODAY. So the agent-to-agent generalization is the cleanly-seedable path now; the Director application rides on idea-388."
+  },
+  "runId": "{RUN_ID}",
+  "nodes": [
+    {
+      "localId": "draft_round1",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["{SURVEYOR_ROLE}"],
+      "label": "Round 1 — surveyor drafts 3 orthogonal pick-list questions",
+      "dependsOn": [],
+      "targetRef": { "kind": "idea", "id": "{SURVEY_SUBJECT_REF}" },
+      "references": [
+        { "kind": "doc", "ref": "{METHODOLOGY_SHA}", "storage": "git", "mode": "read", "required": true },
+        { "kind": "idea", "ref": "{SURVEY_SUBJECT_REF}", "storage": "entity", "mode": "read", "required": false }
+      ],
+      "runbook": "You are the SURVEYOR ({SURVEYOR_ROLE}). Round 1 of the Idea-Survey (idea-survey.md §3 + §9 pre-anchor, @ {METHODOLOGY_SHA}). On the subject {SURVEY_SUBJECT_REF}: pre-anchor (review the subject + the relevant axioms/tele), then propose 3 ORTHOGONAL questions that anchor the respondent's high-level intent (Round 1 = WHY / WHO / HOW-cadence; avoid co-correlated axes), each with 3-4 pick-list answers (prefer composable/orthogonal per §6 so multi-pick is natural). Write a per-question self-justification (the axis each discriminates). complete_work: ev_r1_questions.",
+      "evidenceRequirements": [
+        { "id": "ev_r1_questions", "kind": "doc", "description": "The 3 orthogonal Round-1 questions (each with 3-4 pick-list answers) + the surveyor's per-question self-justification (the axis each discriminates). Per idea-survey.md §3 Step 1." }
+      ]
+    },
+    {
+      "localId": "answer_round1",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["{RESPONDENT_ROLE}"],
+      "label": "Round 1 — RESPONDENT picks (Director is one application; agent-to-agent generalized)",
+      "dependsOn": ["draft_round1"],
+      "targetRef": { "kind": "idea", "id": "{SURVEY_SUBJECT_REF}" },
+      "references": [
+        { "kind": "workitem", "ref": "work-bp-{RUN_ID}-draft_round1", "storage": "entity", "mode": "read", "required": false }
+      ],
+      "runbook": "You are the RESPONDENT ({RESPONDENT_ROLE} — the Director is ONE application; an agent-respondent is the generalized case). Read the 3 Round-1 questions (draft_round1's ev_r1_questions). PICK your answer(s) per question — MULTI-PICK is supported (pick A+C if both genuinely apply); a contradictory multi-pick on a mutually-exclusive question is a SIGNAL of a satisfiable-constraint intent, NOT an error (§6/§7). Optionally add a brief rationale or an 'other: X' override (rare; signals the pick-list was incomplete). complete_work: ev_r1_picks. (NOTE: if you are the DIRECTOR, this [director]-only node strands until idea-388 makes it substrate-completable — bug-205 family; an AGENT respondent claims+completes today.)",
+      "evidenceRequirements": [
+        { "id": "ev_r1_picks", "kind": "freeform", "description": "The respondent's Round-1 picks (per-question; multi-pick allowed) + any rationale / 'other' overrides. Per idea-survey.md §3 Step 2." }
+      ]
+    },
+    {
+      "localId": "interpret_r1_draft_r2",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["{SURVEYOR_ROLE}"],
+      "label": "Round 1 interpret (solve-the-matrix) + Round 2 adaptive question design",
+      "dependsOn": ["answer_round1"],
+      "targetRef": { "kind": "idea", "id": "{SURVEY_SUBJECT_REF}" },
+      "references": [
+        { "kind": "doc", "ref": "{METHODOLOGY_SHA}", "storage": "git", "mode": "read", "required": true }
+      ],
+      "runbook": "You are the SURVEYOR ({SURVEYOR_ROLE}). Per idea-survey.md §3 Step 3-4 + §4 + §9: (1) capture the R1 AGGREGATE response surface (1-2 sentence composite read); (2) the PER-QUESTION INTERPRETATION LOOP — for each R1 Q, a 1-2 paragraph interpretation citing the subject + the axiom/tele-mapping + the aggregate surface (the 'solve the matrix' step), with the anti-drift + cross-question-coherence checks; (3) DESIGN the 3 Round-2 questions (§4 architect's-choice: refine deeper / clarify ambiguity / anchor a new dimension / mix — for maximum degrees-of-freedom), same orthogonality + pick-list discipline. complete_work: ev_r1_interp_r2_questions.",
+      "evidenceRequirements": [
+        { "id": "ev_r1_interp_r2_questions", "kind": "doc", "description": "The R1 aggregate read + the per-question R1 interpretations (with tele-mapping + aggregate-context citations) + the 3 adaptive Round-2 questions. Per idea-survey.md §3 Step 3-4 + §4." }
+      ]
+    },
+    {
+      "localId": "answer_round2",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["{RESPONDENT_ROLE}"],
+      "label": "Round 2 — RESPONDENT picks",
+      "dependsOn": ["interpret_r1_draft_r2"],
+      "targetRef": { "kind": "idea", "id": "{SURVEY_SUBJECT_REF}" },
+      "references": [
+        { "kind": "workitem", "ref": "work-bp-{RUN_ID}-interpret_r1_draft_r2", "storage": "entity", "mode": "read", "required": false }
+      ],
+      "runbook": "You are the RESPONDENT ({RESPONDENT_ROLE}). Read the 3 Round-2 questions (interpret_r1_draft_r2's ev_r1_interp_r2_questions). PICK per question (multi-pick rules per §6/§7, same as R1). complete_work: ev_r2_picks. (Same [director]-strands-until-idea-388 note as answer_round1.)",
+      "evidenceRequirements": [
+        { "id": "ev_r2_picks", "kind": "freeform", "description": "The respondent's Round-2 picks (per-question; multi-pick allowed) + any rationale. Per idea-survey.md §4 Step 2." }
+      ]
+    },
+    {
+      "localId": "synthesize_envelope",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": ["{SURVEYOR_ROLE}"],
+      "label": "Synthesize — the composite intent-envelope for {PURPOSE}",
+      "dependsOn": ["answer_round2"],
+      "targetRef": { "kind": "idea", "id": "{SURVEY_SUBJECT_REF}" },
+      "references": [
+        { "kind": "doc", "ref": "{METHODOLOGY_SHA}", "storage": "git", "mode": "read", "required": true }
+      ],
+      "runbook": "You are the SURVEYOR ({SURVEYOR_ROLE}). Per idea-survey.md §4 Step 4 + §5 + §15: (1) the per-question R2 interpretation loop (cite subject + R1 picks/interps + R2 aggregate + tele); (2) the COMPOSITE INTENT ENVELOPE — the 'solved matrix', the aggregate read for the downstream consumer; (3) carry any contradictory-multi-pick forward as constraints-to-satisfy (§7); (4) write the survey artifact docs/surveys/<subject>-survey.md per the §15 schema (frontmatter + the per-question prose sections); if Skill-mediated, run validate-envelope.sh as the finalize-gate. The envelope FEEDS {PURPOSE} (e.g. a Design's design_draft intent-envelope on the Survey path; OR an agent-to-agent decision/plan). complete_work: ev_intent_envelope.",
+      "evidenceRequirements": [
+        { "id": "ev_intent_envelope", "kind": "doc", "description": "The composite intent-envelope (the idea-survey.md §15-schema survey artifact at docs/surveys/<subject>-survey.md): all 6 picks + 6 interpretations + the composite read + any contradictory-constraint carry-forwards + the calibration data point. The input the downstream {PURPOSE} consumes." }
+      ]
+    }
+  ]
+}
