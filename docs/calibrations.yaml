@@ -3687,6 +3687,62 @@ calibrations:
     cross_refs:
     - '#96'
 
+  - id: 104
+    class: methodology
+    title: "Localize-before-fix / reproduce-at-the-lowest-faithful-layer — a fault's attribution is a HYPOTHESIS until reproduced at a faithful layer; the reproduction may DISPROVE the bug, relocate it, or kill a phantom option. Reproduce BEFORE you attribute, answer a stakeholder, or build a fix (the cheapest fix is the one you never build). Sibling to #79/#82 on the false-ATTRIBUTION / phantom-fix axis (vs their false-GREEN axis)."
+    origin: autonomous-stint-6 (real-CLI-harness arc, idea-405, 2026-06-30)
+    surfaced_at: "real-CLI-harness n4 render-receipt + no-quota SSE-probe (2026-06-30) — THREE desk/inference-level attributions refuted by faithful-layer reproduction within a single arc"
+    status: open
+    closure_mechanism: |
+      STATUS NOTE: freshly named (2026-06-30). Candidate to FOLD into a debugging-
+      discipline methodology subsection and/or MECHANIZE as a pre-fix checklist
+      ("reproduced at a faithful layer? attribution confirmed, not assumed?") at a
+      future gate-point. Architect-filed solo (methodology class, working-discipline).
+
+      Working-discipline pattern. A fault's ATTRIBUTION (which component is broken,
+      whether the bug is even real) is a HYPOTHESIS until reproduced at the lowest
+      faithful layer that can isolate it. Desk-reasoning, a stub-test, or an inference
+      can confidently point at the wrong place — or at a bug that does not exist.
+      Reproduce FIRST, then attribute / answer / fix.
+
+      THREE refutations in one arc (idea-405 real-CLI-harness, 2026-06-30):
+      1. RELOCATED a fault. The "drop --dangerously-load-development-channels" (n2)
+         determination — reasoned from a capability-less STUB that never reached the
+         second gate — was refuted by a LOCAL render-receipt: a plain .mcp.json does
+         NOT render the claude/channel (TWO gates — the shim's capability AND the
+         server's membership in the session's --channels list; the stub only ever
+         tested gate 1). The flag is REQUIRED, not droppable. Caught before it baked
+         into the container build (and before a wrong stakeholder answer shipped).
+      2. KILLED a phantom option. The desk-hope that a NON-dangerous `--channels proxy`
+         flag exists was refuted by trying it — it does not exist (hangs boot). The
+         render requires the dangerous flag regardless of form.
+      3. DISPROVED a bug entirely (the gem). The inference "the test-Hub needs an
+         SSE-warmth keepalive fix" was refuted by a no-quota raw-SDK probe
+         (StreamableHTTPClientTransport, no nested CLI): the test-Hub SSE delivers
+         fine (45s alive, keepalive at 30s). There was NO bug to fix — the 17s drop
+         traced to a non-faithful agent tweak (liveness watchdog disabled), not the
+         Hub. A fix was about to be BUILT for a phantom.
+
+      The discipline: before attributing a fault to a component, answering a
+      stakeholder, or building a fix — reproduce it at the lowest faithful layer that
+      can isolate it. Corollary (cost-of-being-wrong): the cheapest place to be wrong
+      is a local / no-quota reproduction, NOT a downstream build, a stakeholder
+      commitment, or a baked artifact. Distinct from #79/#82 (faithful-harness — make
+      the substrate faithful so bugs are VISIBLE / no false-green); this is the
+      complementary diagnosis-side discipline — reproduce faithfully so attribution
+      is CORRECT / no phantom-fix.
+    cross_refs:
+      - "#79 (false-green-at-scale via unfaithful fixtures — sibling, the visibility axis)"
+      - "#82 (faithful-harness-as-exposure — sibling, the visibility axis)"
+      - "#98 (self-applying-methodology / dogfood-the-gate — empirical-over-assertion kin)"
+      - idea-405 (M-Real-CLI-Harness — origin arc)
+      - idea-406 (thin-container channels path — a deferred investigation this discipline scoped)
+      - project_adapter_pilot_executed_2026_06_30
+    tele_alignment:
+      - tele-7
+      - tele-8
+      - tele-4
+
 
 
 
