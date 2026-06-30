@@ -27,6 +27,16 @@ steps:
           ]).then(() => { console.log("BOOTSMOKE-MODULES-OK"); })
             .catch((e) => { console.error("BOOTSMOKE-FAIL", e && e.code, e && e.message); process.exit(1); });
         '
+        # FEATURE-PRESENCE (the b057685 stale-base guard): a stale pre-#436 base passes the
+        # module-graph load yet LACKS the feature-under-test. Assert the watchdog wiring is baked
+        # into the shim AND the kernel ships the liveness module — verify presence, don't assume
+        # the base. (Generalize per feature as the pilot adds them.)
+        docker run --rm --entrypoint sh "${_IMAGE}:${_TAG}" -c '
+          grep -q LivenessWatchdog /app/adapters/claude-plugin/dist/shim.js \
+            && find /app/node_modules/@apnex/network-adapter -name "liveness-*.js" | grep -q . \
+            || { echo "FEATURE-MISSING: pre-#436 stale base (no LivenessWatchdog in the baked shim)"; exit 1; }
+        '
+        echo "FEATURE-PRESENT: watchdog wiring + kernel liveness module baked (post-#436 base)"
         echo "BOOTSMOKE-PASS: pruned image runtime module graph loads (no dep removed that the adapter needs)"
 options:
   logging: CLOUD_LOGGING_ONLY

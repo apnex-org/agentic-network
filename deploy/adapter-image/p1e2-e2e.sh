@@ -78,6 +78,14 @@ compose() { docker compose -f "$BASE_COMPOSE" -f "$E2E_COMPOSE" "$@"; }
 clogs()   { docker logs "$E2E_CONTAINER_NAME" 2>&1; }
 restart_count() { docker inspect -f '{{.RestartCount}}' "$E2E_CONTAINER_NAME" 2>/dev/null || echo "ERR"; }
 
+# Stale-base guard (the b057685 miss): the image-under-test MUST contain the L1.5 watchdog
+# wiring in its baked shim — else it's a pre-#436 base, the watchdog never wires, and the whole
+# e2e is vacuous (REPRO/CREDSCAN/BOOTSMOKE pass on stale code; only this presence-check catches it).
+assert_watchdog_in_image() {
+  docker run --rm --entrypoint sh "${ADAPTER_IMAGE}:${ADAPTER_TAG}" -c \
+    'grep -q LivenessWatchdog /app/adapters/claude-plugin/dist/shim.js'
+}
+
 # Read the exit-code + sentinel contract FROM THE BAKED IMAGE (drift-proof). The
 # supervisor's auto-run is import.meta-guarded, so importing it only reads exports.
 extract_contract() {
@@ -204,6 +212,11 @@ run() {
   sentinel="$(echo "$contract" | sed -n 's/.*"sentinel":"\([^"]*\)".*/\1/p')"
   [ -n "$expect_exit" ] && [ -n "$sentinel" ] || die "contract parse failed: $contract"
   pass "contract from image: exit-code=${expect_exit} sentinel=${sentinel} (NOT re-literal'd here)"
+
+  # Stale-base guard (the b057685 miss): the image MUST contain the watchdog wiring, else the
+  # whole e2e is vacuous (the watchdog never wires). Verify the FEATURE is present, don't assume.
+  assert_watchdog_in_image || die "image-under-test ${ADAPTER_TAG} is PRE-WATCHDOG (no LivenessWatchdog in /app/adapters/claude-plugin/dist/shim.js) — rebuild at a post-#436 main base"
+  pass "image-under-test contains the L1.5 watchdog wiring (not a stale pre-#436 base)"
 
   # 2) stand up the EMBEDDED stack
   log "compose up (base + e2e override) against test-Hub ${OIS_HUB_URL}"
