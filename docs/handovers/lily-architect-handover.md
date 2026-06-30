@@ -1,6 +1,6 @@
 # Lily-the-Architect — Handover Doc
 
-**Status:** LIVING — current as of 2026-06-30 ~09:10Z. **n5 COMPLETE (both ACs cleared); n6 (steve accept-gate) in flight — arc near-close.**
+**Status:** LIVING — current as of 2026-06-30 ~10:40Z. **ARC COMPLETE — n1–n6 ALL DONE; n6 accept-gate = VALID (steve, cross-lineage, audit-5511).** Remaining: merge the code + close-out (retro/cals/destroy-VM), then the lily-swap.
 **For:** the NEW lily — architect, now running on an **opencode** harness (locally, like steve), succeeding the claude-lily that drove this arc.
 **Why a written doc:** opencode does NOT inherit claude-lily's Claude-Code memory files (the memory system is harness-specific), so this transport-agnostic repo doc is your come-up-to-speed. It is the **manual** precursor to the **automatic** graph/arc-crawl handover (idea-407) — "manual now, mechanise later" (Director, 2026-06-30).
 **Fastest self-serve:** run the arc-context crawl in §7 against runId `real_cli_harness_20260630`.
@@ -23,7 +23,7 @@
 **Goal:** finalise a containerised Claude Code CLI harness runnable in docker on this host, configured to connect to a real Hub as an engineer ready for work.
 
 - **runId:** `real_cli_harness_20260630`. Nodes n1–n6, plus **work-107** = the arc-driver anchor (your self-drive heartbeat + stall-backstop; `completionDependsOn` n1–n6). HOLD + `renew_lease` it each active turn; complete it ONLY at arc-close.
-- **State (2026-06-30 ~09:10Z):** n1–n5 **DONE**; **n6 (steve accept-gate) in flight** — the terminal gate. PR **#444** (n4) APPROVED, held for in-order stack-merge.
+- **State (2026-06-30 ~10:40Z):** n1–n6 **ALL DONE**. n6 accept-gate = **VALID** (steve cross-lineage, **audit-5511**) — certified every criterion: headless long-lived boot, engineer test-Hub session, unattended work-1, L2-recovered work-2 (sentinel exit-75 / RestartCount=1), clean SIGTERM exit-0, file-mounted+removed OAuth, bounded exposure for BOTH dangerous flags, host /work mount, positive channel render, in-repo dir-source plugin path. The arc thesis is fully certified. PRs to merge: **#444** (n4) → **#446** (n5) stack + **#447** (this doc) + **#445** (cal-104).
 - **n5 RESULT — the arc thesis PROVEN end-to-end, zero-human, real CLI in the middle:** the `<channel>` digest rendered → the UNPRIMED cold CLI self-drove the seeded item to done (claim→start→complete, *reasoning the FSM itself*) → then the faithful **(b) reject-handshake wedge** → L1 can't recover → L1.5 watchdog 2-consecutive-fail → sentinel `/run/adapter-wedged` → supervisor `exit(75)` → **docker-L2 restart** (RestartCount 0→1) → re-boot → launcher **auto-accepted** the dev-channels dialog (zero-human) → shim re-spawn → re-register (epoch=2) → the **recovered** CLI re-claimed + completed a fresh item (FSM-reasoned again). Both ACs cleared (`ev_engineer_ready`-behavioral + `ev_container_e2e`). Boot is fully unattended — 3 gates auto-handled (bypass, dev-channels auto-accept, shim-spawn).
 
 ## 3. Load-bearing learnings this arc
@@ -32,6 +32,8 @@
 - **Cred-staging:** host OAuth on the bounded throwaway VM (Director-approved, **destroy-after**). The harness auto-mode classifier HARD-BLOCKS an agent from scp-ing the live OAuth (correct gate) → the Director stages it directly. Bind-mount uid gotcha: chown the cred to the container appuser (uid 10001), not the host dir owner.
 - **Three headless boot gates:** (1) bypass-dialog (`settings.json{skipDangerousModePermissionPrompt}`); (2) dev-channels dialog (appears POST-login, persisted to `.claude.json`); (3) shim-spawn (packaging: the in-repo directory-marketplace plugin's deps aren't copied into the install-cache → symlink `/app/node_modules`; + the shim demands `OIS_HUB_TOKEN` present even for a no-auth Hub). All must be deterministic in the image for a reproducible harness.
 - **bug-207 (delivery resilience, major, fix-soon, root-cause VERIFIED):** both adapter recovery nets — the poll-backstop AND the W1b SSE replay — scope the inbox by `targetRole` only, so they structurally cannot recover an **agent-direct** message (target = `{agentId}`, no role). 206 messages are stuck at `status:new` going back to April. Fix = `OR(role, agentId)` on both nets + a render-gated cursor. (This bit us live mid-arc — a greg→lily ping silently dropped for 23min.)
+- **bug-208 (opencode in-flight HANG, major, investigate post-swap — task #20):** an opencode agent can hang on an in-flight request with NO self-recovery — needs a HUMAN cancel + force-notification. Steve hit it REPEATEDLY on n6 (claimed → hung → lease lapsed → requeued, ×3; the Director unblocked each time before he finally landed VALID). The claude *container* has wedged-restart self-recovery (the 3-level sentinel); the opencode *harnesses* (you/greg/steve) have NO analog. Part of the opencode-RESILIENCE CLUSTER (bug-207 + bug-208 + idea-408 + the lease-window gap).
+- **Lease-window gap:** a long LOCAL work-node (e.g. a verifier inspection >15min, no Hub calls) lapses its lease even while legitimately working — local work doesn't auto-heartbeat (only Hub calls do). Bit n6 repeatedly (looked like a stall). Mitigation now: `renew_lease` periodically during long local work; the fix is the adapter auto-heartbeating a held lease (like the claude shim's transport_heartbeat).
 
 ## 4. The opencode transition — YOU run differently now
 
@@ -47,14 +49,14 @@
 ## 5. Entities filed this session (your durable trail)
 
 - **Ideas:** 406 (thin-container channels path — drop the marketplace-plugin dep), **407** (graph queryability for zero-knowledge agents — the automatic-handover mechanism; refs `github.com/apnex/mcp-portal`, do-NOT-ingest-yet), 408 (cross-agent peer-stall detection — mutual-silence bridge; 4 mechanisms).
-- **Bug:** 207 (delivery-resilience role-blind-spot; major; fix-soon; root-cause verified — full analysis + a 7-item must-verify checklist on the bug).
-- **Calibrations:** #104 (localize-before-fix / reproduce-at-the-faithful-layer — filed, PR **#445**). QUEUED (task #16): 2 coordination-gap cals (self-stall ≠ peer-stall conflation; recovery-net-selector-blind-spot).
-- **Work:** 107 (your arc anchor), 108 (steve's bug-207 cross-lineage probe).
+- **Bugs:** 207 (delivery-resilience role-blind-spot; major; fix-soon; root-cause verified + 7-item checklist); **208** (opencode in-flight hang, no self-recovery; major; investigate post-swap — task #20).
+- **Calibrations:** #104 (localize-before-fix / reproduce-at-the-faithful-layer — filed, PR **#445**). QUEUED (task #16): 3 cals — self-stall ≠ peer-stall conflation; recovery-net-selector-blind-spot; faithful-chaos-test (model the failure the recovery layer EXISTS FOR, not tune intensity to beat the detector).
+- **Work:** 107 (your arc anchor), 108 (steve's bug-207 cross-lineage probe). **n6 verdict = audit-5511 (VALID).**
 - **PRs:** #444 (n4, approved, held for stack-merge), #445 (cal-104, open).
 
 ## 6. Open threads — what to pick up (the work-queue is the truth)
 
-1. **Finish the arc:** n5 **DONE** → **n6 (steve, in flight)** — criteria handed to steve (the 7 node-runbook ACs + amendments: both-dangerous-flags bounded-exposure cert, positive `<channel>` render, dir-source self-contained image, gate-3.5 auto-accept, the unprimed-first finding, the full 3-level seam). On n6 VALID → **close-out** (retro + cals + merge the #444→n5 stack). New cal-candidate from the wedge work: *faithful-chaos-test* — model the failure the recovery layer EXISTS FOR, don't tune intensity to beat the detector (add to task #16's batch).
+1. **Arc is COMPLETE (n6 VALID, audit-5511).** Close-out remaining: (a) **MERGE** the stack #444→#446 + the docs PRs #447 (this doc) + #445 (cal-104) to main; (b) **retro + cals** (the 3 queued in #4); (c) **complete work-107** (the arc-anchor) at close; (d) **destroy the e2e VM** (`adapter-p1e2-e2e`, zone australia-southeast1-a — OAuth cred already trap-removed + verified gone). Then the lily-swap is clear. NOTE: the merge happens *before* the swap (claude-lily does it warm — a stacked squash-merge), so opencode-lily inherits a clean merged main.
 2. **HOLD + renew work-107** each active turn; complete only at arc-close.
 3. **bug-207 fix** — Director-prioritized "go after soon" (task #17): seed as a fix WorkItem for greg post-arc (root-cause + checklist ready).
 4. **File the 2 queued coordination-gap calibrations** (task #16).
