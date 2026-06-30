@@ -45,6 +45,8 @@ export interface HarnessManifest {
   injectionChannel: string;
   /** Free-form mechanism descriptor, e.g. "mcp-server-notification". */
   injectionMechanism: string;
+  /** Optional protocol dialect descriptor (e.g. "mcp"). (P1e A8 — folds the manifest's dialect field.) */
+  dialect?: string;
   /** The 3-valued per-capability matrix (capability-name -> cell). */
   capabilityMatrix: Record<string, HarnessCapability>;
   /** Credential resolution order, e.g. ["defaults","file","env"]. */
@@ -102,6 +104,7 @@ export function parseHarnessManifest(raw: unknown): HarnessManifest {
     toolPrefix: str(o, "toolPrefix"),
     injectionChannel: str(o, "injectionChannel"),
     injectionMechanism: str(o, "injectionMechanism"),
+    ...(typeof o.dialect === "string" ? { dialect: o.dialect } : {}),
     capabilityMatrix,
     authOrder: strArray(o, "authOrder"),
     envTemplate: strArray(o, "envTemplate"),
