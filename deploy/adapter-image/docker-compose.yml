@@ -42,11 +42,14 @@ services:
       - type: bind
         source: ${HOST_WORKTREE:?set to the HOST-created git worktree dir}
         target: /work
-      # /run = tmpfs so the wedged-restart sentinel is fresh per boot (a restarted container
-      # starts un-wedged; the supervisor also clears a stale sentinel at startup).
-      - type: tmpfs
-        target: /run
     working_dir: /work
+    # /run as tmpfs (fresh per boot; the supervisor clears any stale sentinel at startup). mode=1777
+    # (world-writable + sticky, like /tmp) is REQUIRED: the container runs as the non-root appuser, and
+    # the kernel writes the wedged-restart sentinel /run/adapter-wedged. A root-owned/0755 /run -> EACCES
+    # -> the sentinel->PID-1->exit-75 seam BREAKS (load-bearing in the grandchild/real-CLI topology, where
+    # the sentinel is the ONLY exit-propagation path). The e2e caught this; production MUST mount /run writable.
+    tmpfs:
+      - /run:mode=1777
     # §6 graceful stop: SIGTERM -> the supervisor quiesces the child (bounded grace) -> clean exit 0.
     stop_signal: SIGTERM
     stop_grace_period: 15s
