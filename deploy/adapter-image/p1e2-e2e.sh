@@ -57,6 +57,7 @@ RESTART_TIMEOUT="${RESTART_TIMEOUT:-60}"               # s from inject to Restar
 RECLAIM_TIMEOUT="${RECLAIM_TIMEOUT:-60}"               # s for the fresh container to re-handshake
 RESULTS_DIR="${RESULTS_DIR:-${SCRIPT_DIR}/.p1e2-e2e-results}"
 KEEP_UP="${KEEP_UP:-0}"                                # 1 = skip teardown (debugging)
+CONTROL_URL="${CONTROL_URL:-http://localhost:8090}"   # the standalone test-Hub control port (host-published)
 export E2E_CONTAINER_NAME
 
 # Seam log markers (the adapter + supervisor emit these to stderr -> docker logs).
@@ -183,10 +184,13 @@ run() {
   [ -n "${OIS_AGENT_NAME:-}" ] || die "OIS_AGENT_NAME required"
   [ -n "${HOST_WORKTREE:-}" ] || die "HOST_WORKTREE required (host-created git worktree)"
   [ -n "${HOST_SECRETS_DIR:-}" ] || die "HOST_SECRETS_DIR required (hub_token + claude_oauth_token files)"
-  # FAIL-CLOSED: refuse to run without a real injection mechanism, so we can never
-  # false-green by skipping the wedge.
+  # Default inject (PATH 2-prime) = POST the standalone test-Hub's /wedge: it evicts the
+  # adapter's session from the real transports map (probe 400s) WITHOUT closing the SSE.
+  # Override INJECT_CMD for a different mechanism, or MANUAL_INJECT=1 to pause for an
+  # interactive evict. The M_PROBE_FAIL assertion below is the fail-closed guard: if the
+  # wedge didn't take (probe never failed), the run dies — it can't false-green.
   if [ -z "${INJECT_CMD:-}" ] && [ "${MANUAL_INJECT:-0}" != "1" ]; then
-    die "no wedge injection: set INJECT_CMD='<server-side session-evict>' or MANUAL_INJECT=1 (fail-closed — see README §Injection)"
+    INJECT_CMD="curl -fsS -X POST ${CONTROL_URL}/wedge"
   fi
   export ADAPTER_IMAGE ADAPTER_TAG
   mkdir -p "$RESULTS_DIR"

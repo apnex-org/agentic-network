@@ -29,3 +29,16 @@ The seeded `ev_containerised` text also names the real-`claude-code`-CLI headles
 ## State
 - selfcheck GREEN locally (YAML valid; seam preserved; fast-fire applied; watchdog not re-disabled). Deep `docker compose config` merge-check defers to the VM (this host = docker 20.10.3, no compose v2; VM = 29.6.1).
 - **PENDING the live run (architect-on-VM):** ping "ready to run" → architect boots VM + runs `p1e2-e2e.sh run` (iterate the real-evict together) → captures evidence → on green I `complete_work` P1e-2 with `ev_containerised` → steve's `pilot_accept`.
+
+## Update 2026-06-30 — PATH 2-prime + two faithfulness corrections (architect-aligned)
+
+The architect rejected adding ANY session-evict capability to the prod Hub binary (safety-before-leverage — no destructive prod control-plane surface for a test). Final inject path = **PATH 2-prime**: run the network-servable `TestHub` (wraps the REAL `HubNetworking` over memory stores) as a STANDALONE container on the VM with a thin control server — the destructive route lives in TEST code, ZERO prod-Hub change. The bash harness stays as-is (armor preserved).
+
+**Two faithfulness corrections caught while building (each would have made the e2e vacuous — cal #82):**
+1. **destroySession is WRONG** — `cleanupSession` does `await transport.close()` (hub-networking.ts:812) → the SSE drops → the adapter's **L1** transport-watchdog reconnects → tests L1, not L1.5.
+2. **tool-handler throw is WRONG** — a handler `throw` returns an MCP **isError result** (the call RESOLVES) → the watchdog probe (`await call(); return true`) returns `true` → never fires.
+The faithful wedge = **`evictAllTransports`** (clear the real `transports` map ONLY): the probe POST 400s/rejects WHILE `sendKeepalive`/SSE stay up (keepalive-independence confirmed — `sendKeepalive` checks `sseActive` not `transports`, hub-networking.ts:422-442) → only L1.5 escalates. Mutation-proven (`p1e2-wedge-inject.test.ts`: skip the `clear()` → `sessionCount.toBe(0)` goes RED).
+
+**New/changed:** `test-hub.ts` (+`bindAddress` option, +`evictAllTransports`), `wedge-inject.ts` (`sustainedWedge` — evict every 50ms for a TTL, race-free vs reconnect), `p1e2-standalone-hub.mts` (entrypoint + control `/wedge`+`/health`), `build-p1e2-test-hub.sh` (esbuild → self-contained `.mjs`, `createRequire` banner; **bundles + boots clean — smoke-verified** `/health`+`/wedge`), `docker-compose.e2e.yml` (external `p1e2-net` + `OIS_HUB_URL` + `OIS_LIVENESS_PROBE_METHOD=get_task`). Full network-adapter suite **269/269**; tsc clean. The bundle is delivered to the VM via GCS (regenerable; not committed).
+
+**§5 secret-bridge:** the e2e uses `.ois`-config token-delivery (architect files the `/run/secrets`→shim bridge as a production-boot follow-on, bundled with the **(B) real-CLI** carry). `pilot_accept` certifies (A) with both carried.

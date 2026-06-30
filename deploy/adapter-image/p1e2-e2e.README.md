@@ -1,110 +1,117 @@
 # P1e-2 — LIVE docker-L2 restart e2e harness
 
-**M-Adapter-Modernization Design §4/§9.** The runtime-bound complement to P1c (which
-proved the wedged-restart signal is **emitted** in-process) and P1e-1's
-`supervisor-seam.test.ts` (which proved it is **consumed**, env-independent). P1e-2
-proves the **whole loop runs in a real container against a real Hub, zero-manual**:
+**M-Adapter-Modernization Design §4/§9.** The runtime-bound complement to P1c (signal
+**emitted**, in-process chaos test) and P1e-1's `supervisor-seam.test.ts` (signal **consumed**,
+env-independent). P1e-2 proves the **whole loop runs in a real container against a real Hub,
+zero-manual**:
 
 ```
-compose-up (watchdog ENABLED, file-mounted secrets, restart=on-failure)
-  -> agent handshakes + session live
-  -> INJECT the wedge SERVER-SIDE  (keepalives-flowing-but-session-dead)
-  -> the REAL L1.5 session-probe fails  (the detection path P1c built)
-  -> watchdog budget exhausted -> LIVENESS LOST -> /run/adapter-wedged written
+compose-up (watchdog ENABLED, restart=on-failure)
+  -> adapter handshakes + session live  (probe = get_task)
+  -> INJECT the silent wedge  (evict the session from transports; SSE stays up)
+  -> the REAL L1.5 session-probe 400s/rejects  (the detection path P1c built)
+  -> watchdog budget exhausts -> LIVENESS LOST -> /run/adapter-wedged written
   -> PID-1 supervisor consumes the sentinel -> SIGTERM child -> exit 75
   -> docker restart-policy (on-failure) fires -> RestartCount increments
-  -> a FRESH container re-handshakes + re-claims  (recovery, not just a loop)
+  -> a FRESH container re-handshakes  (recovery, not a loop)
 ```
 
-This is the **carry-a** (real docker-L2 restart) + **carry-b** (the watchdog *drives* the
-restart) acceptance for the pilot.
+= **carry-a** (real docker-L2 restart) + **carry-b** (the watchdog *drives* the restart).
+
+## Why a standalone test-Hub (PATH 2-prime)
+
+The wedge needs a REAL Hub session to kill server-side — but we will **not** add a destructive
+session-evict capability to the prod Hub binary for a test (safety-before-leverage). So the e2e
+runs the **standalone test-Hub**: `TestHub` (which wraps the **real** `HubNetworking` over memory
+stores) bundled to a self-contained `.mjs` and run as its own container. The destructive
+evict route lives in **TEST code**, never prod. Zero prod-Hub change.
+
+### The wedge is the SILENT one — and that took two corrections
+
+| Mechanism | Result | Verdict |
+|-----------|--------|---------|
+| `destroySession` | `cleanupSession` does `transport.close()` -> SSE drops -> adapter's **L1** transport-watchdog reconnects | ✗ tests L1, not L1.5 |
+| tool-handler `throw` (injectToolError) | comes back as an MCP **isError result** -> `call()` RESOLVES -> probe returns `true` | ✗ never fires |
+| **`evictAllTransports`** (clear the `transports` map only) | next POST 400s (`transports.has` false) -> probe **rejects**; SSE + `sendKeepalive` untouched | ✓ silent wedge, L1.5 fires |
+
+Proven by `packages/network-adapter/test/integration/p1e2-wedge-inject.test.ts` (mutation-proof:
+skip the `clear()` and `sessionCount.toBe(0)` goes RED).
 
 ## Files
 
 | File | Role |
 |------|------|
-| `docker-compose.yml` | P1e-1 base — EMBEDDED topology, watchdog-on, file-mounted secrets, `restart: on-failure`, host-worktree mount, `/run` tmpfs |
-| `docker-compose.e2e.yml` | e2e **override** — fast-fire watchdog/supervisor *timing only* (the condition + seam are unchanged) + a stable `container_name` |
-| `p1e2-e2e.sh` | the orchestrator — `selfcheck` (in-repo, CI-runnable) + `run` (the live e2e) |
+| `docker-compose.yml` | P1e-1 base — EMBEDDED topology, watchdog-on, `restart: on-failure`, host-worktree mount, `/run` tmpfs |
+| `docker-compose.e2e.yml` | e2e **override** — joins external `p1e2-net`, points `OIS_HUB_URL` at the test-Hub, `OIS_LIVENESS_PROBE_METHOD=get_task`, fast-fire timing |
+| `p1e2-e2e.sh` | orchestrator — `selfcheck` (in-repo) + `run` (live). Default inject = `POST $CONTROL_URL/wedge` |
+| `build-p1e2-test-hub.sh` | esbuild the standalone test-Hub -> a self-contained `.mjs` (runs on plain node:22) |
+| `packages/network-adapter/test/p1e2-standalone-hub.mts` | the standalone entrypoint (TestHub + control server: `POST /wedge`, `GET /health`) |
+| `packages/network-adapter/test/helpers/wedge-inject.ts` | `sustainedWedge` — evict every 50ms for a TTL (race-free vs reconnect) |
 
 ## Run it (on the VM)
 
-```bash
-OIS_HUB_URL=http://test-hub:8080/mcp \
-ADAPTER_TAG=<the immutable :sha image-under-test> \
-OIS_AGENT_NAME=p1e2-probe \
-HOST_WORKTREE=/path/to/host-created/worktree \
-HOST_SECRETS_DIR=/path/to/secrets-dir \   # holds hub_token + claude_oauth_token files
-INJECT_CMD='<server-side session-evict against the TEST Hub>' \
-  ./p1e2-e2e.sh run
-```
+The VM has docker + git but NO node/npm/tsx and NO repo. So:
 
-The drift-proof bit: the harness reads the **exit-code + sentinel from the baked image**
-(`supervisor.mjs`'s exported `SUPERVISOR_EXIT_CODE` / `SUPERVISOR_SENTINEL_DEFAULT`,
-import-guarded so reading the export has no side effect) — it never re-literals `75` or
-`/run/adapter-wedged`. If the kernel/supervisor contract ever changes, the harness picks
-it up from the image under test, exactly like the seam-test parity assertion.
+1. **Build + deliver the bundle** (off-VM, where node + repo exist):
+   ```bash
+   deploy/adapter-image/build-p1e2-test-hub.sh   # -> deploy/adapter-image/p1e2-test-hub.mjs
+   ```
+   Deliver it to the VM (e.g. `gsutil cp` to a bucket, then `gsutil cp` down on the VM).
+2. **Network + test-Hub** (on the VM):
+   ```bash
+   docker network create p1e2-net
+   docker run -d --name p1e2-test-hub --network p1e2-net -p 8090:8090 \
+     -e BIND=0.0.0.0 -e MCP_PORT=8080 -e CONTROL_PORT=8090 \
+     -v $PWD/p1e2-test-hub.mjs:/app/th.mjs node:22-alpine node /app/th.mjs
+   curl -s localhost:8090/health   # {"ok":true,...}
+   ```
+   (MCP 8080 stays on the network for the adapter; control 8090 is published to the host.)
+3. **Adapter config** — the shim reads `hubToken` + `hubUrl` from `$HOST_WORKTREE/.ois/adapter-config.json`
+   (the §5 carry — see below). The test-Hub ignores the token (`apiToken=""`), so any non-empty
+   value works:
+   ```json
+   { "hubToken": "test", "hubUrl": "http://p1e2-test-hub:8080/mcp" }
+   ```
+   `HOST_SECRETS_DIR` still needs `hub_token` + `claude_oauth_token` files (the base compose mounts
+   them); dummy files are fine — they are unused this run.
+4. **Run the e2e**:
+   ```bash
+   ADAPTER_TAG=p1e-prune-b057685-a OIS_AGENT_NAME=p1e2-probe \
+   HOST_WORKTREE=<dir> HOST_SECRETS_DIR=<dir> CONTROL_URL=http://localhost:8090 \
+     ./p1e2-e2e.sh run
+   ```
 
 ### `selfcheck` (no VM)
 
 ```bash
 ./p1e2-e2e.sh selfcheck
 ```
+Validates harness syntax, both compose files, and (with compose v2) that the merge keeps the seam
+(watchdog enabled, `on-failure`, fast-fire). Off-VM it falls back to file-direct checks.
 
-Validates: harness syntax, both compose files present, base+override **merge + parse**,
-and that the merge did **not** weaken the seam (watchdog still ENABLED, restart still
-`on-failure`, fast-fire tuning applied). Runnable in CI / off-VM.
+## §Injection (the silent wedge)
 
-## §Injection — the faithfulness crux (confirm together on the run session)
-
-**The CONDITION is fixed + non-negotiable:** *keepalives-flowing-but-session-dead* — the
-Hub session is dead **server-side** while the transport's SSE keepalive **still flows**
-(the lived wedge; the watchdog's whole reason-for-being). The injection must drive the
-watchdog's **real app-level session-validity probe** (`agent.call(get_agents, {})`) to
-fail — the same detection path P1c built.
-
-**FORBIDDEN (test-theater — the harness cannot use these):** container-kill, network-cut,
-SIGKILL-the-child. They bypass the watchdog entirely (transport health looks *fine* in the
-true wedge). The harness is **fail-closed**: with neither `INJECT_CMD` nor
-`MANUAL_INJECT=1` it refuses to run, so it can never false-green by skipping the wedge.
-And it asserts the *real probe failed* (`session probe FAILED` in the logs) before
-accepting the restart — a restart from any other cause fails the run.
-
-**Mechanism candidates (the one thing to nail at the VM, test-Hub ONLY, never prod):**
-1. **Test-Hub session-evict affordance** — a test-only verb/endpoint that drops the
-   agent's server-side session state while leaving the SSE stream up. *Truest wedge;
-   preferred.* (Mirrors P1c's `TestHub.destroySession(sid)` + `sendKeepalive()`.)
-2. **Substrate session-row delete** — if the test-Hub persists sessions, delete/expire the
-   agent's session row directly (psql), transport untouched.
-3. **Last resort only** (call out EXPLICITLY in the evidence if used): kernel-probe
-   fault-injection. This tests the **restart leg, NOT the detection** — so we try the real
-   evict first, together, and only fall back if the real evict proves intractable.
-
-Pass the chosen mechanism as `INJECT_CMD='...'`, or use `MANUAL_INJECT=1` to pause for an
-interactive evict (the harness prints the exact required condition, then waits for ENTER).
+The default inject is `POST $CONTROL_URL/wedge` -> the standalone runs `sustainedWedge`: evict the
+session from the real `transports` map every 50ms for `WEDGE_TTL_MS` (default 10s) WITHOUT closing
+the SSE. So each get_task probe 400s/rejects -> the L1.5 budget exhausts -> sentinel -> exit 75 ->
+restart; the TTL then lifts so the post-restart fresh container re-handshakes. The harness's
+`M_PROBE_FAIL` assertion is the **fail-closed guard**: if the wedge never produced a probe failure,
+the run dies — it can't false-green. (Naive inducers — container-kill / network-cut / SIGKILL — are
+test-theater: they bypass the watchdog's reason-for-being and are not used.)
 
 ## Evidence captured (feeds `ev_containerised`)
 
-Written to `.p1e2-e2e-results/p1e2-e2e-<stamp>.txt`: the image ref, the contract read from
-the image, the **RestartCount delta** (carry-a), the injection used, and the **seam log
-lines** (`probe FAILED` / `LIVENESS LOST` / `sentinel written` / supervisor child-terminate
-/ re-handshake) (carry-b).
+`.p1e2-e2e-results/p1e2-e2e-<stamp>.txt`: the image ref, the contract read from the image, the
+**RestartCount delta** (carry-a), and the **seam log lines** (`probe FAILED` / `LIVENESS LOST` /
+sentinel-write / supervisor child-terminate / re-handshake) (carry-b).
 
-## ⚠ Scope fork to confirm with the architect before the live run
+## ⚠ Scope carries (explicit, not silently narrowed) — `pilot_accept` certifies (A) with these called out
 
-The seeded `ev_containerised` text also names the **headless-auth run-gate for the real
-`claude-code` CLI** (`CLAUDE_CODE_OAUTH_TOKEN` file-mounted, no keychain/TUI prompt). The
-base compose runs the **shim directly** as the supervisor's child (P1e-1), and the
-architect's runtime scoping of P1e-2 has consistently been the **resilience loop** above.
-Two readings:
-
-- **(A) shim-as-child, resilience-focused** (what this harness validates): proves the
-  EMBEDDED supervisor topology + L2 restart + re-claim + file-mounted **Hub** token, no
-  TUI. The real-CLI headless-auth run-gate becomes a separate follow-on slice.
-- **(B) real-`claude-code`-CLI child**: additionally swaps `command` to launch the real
-  CLI headless with the file-mounted `CLAUDE_CODE_OAUTH_TOKEN` — a bigger lift (the CLI
-  binary must be in the image; the OAuth file-mount run-gate proven).
-
-This harness delivers (A) — the substance the architect and engineer scoped together — and
-flags (B) for an explicit accept/defer decision on the run session, rather than silently
-narrowing the evidence.
+- **(B) real-`claude-code`-CLI headless-auth run-gate** — the base compose runs the **shim** as the
+  supervisor's child; the real-CLI headless boot (`CLAUDE_CODE_OAUTH_TOKEN` file-mounted, no TUI) is
+  a separate slice. This harness validates **(A) shim-as-child resilience**. The architect probes
+  (B)'s real cost on the VM (close-divergence): small -> close here; bigger -> explicit follow-on.
+- **§5 file-mounted secret -> shim bridge** — `loadConfig` (adapter-config.ts:89/105) reads
+  `.ois` + `OIS_HUB_TOKEN` env only, NOT `/run/secrets`. This run uses `.ois`-config token-delivery
+  (step 3); it does NOT validate the `/run/secrets`->shim bridge. That bridge (loadConfig reads
+  `OIS_HUB_TOKEN_FILE` / `/run/secrets`, file-over-env) is a named production-boot follow-on.
