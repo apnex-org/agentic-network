@@ -32,6 +32,14 @@ const KEEPALIVE_MS = process.env.KEEPALIVE_MS ? Number(process.env.KEEPALIVE_MS)
 // The container write-surface for the seeded self-test (n2 sandbox: /work is the only
 // host write-mount). Overridable so a local Seam-1 run can target a throwaway dir.
 const PROOF_PATH = process.env.SEEDED_PROOF_PATH || "/work/n4-proof.txt";
+// n5 chaos: how long the silent-wedge sustains (evict every 50ms) — long enough to outlast the
+// container's L1.5 reconnect attempts so the probe stays failed -> sentinel -> supervisor exit-75.
+const WEDGE_TTL_MS = Number(process.env.WEDGE_TTL_MS) || 12_000;
+// Eviction cadence during a wedge. Default 50ms (P1e-2). n5 finding: 50ms leaves gaps the agent's
+// 2s liveness-probe slips through + the kernel L1 reconnect recovers between failures, so the
+// watchdog never hits its 2-consecutive-failure budget → no sentinel → no L2. A tighter cadence
+// (e.g. 5ms) closes the gap so the wedge DEFEATS L1 and drives the L1.5→sentinel→L2 path.
+const WEDGE_INTERVAL_MS = Number(process.env.WEDGE_INTERVAL_MS) || 50;
 
 const th = createN4TestHub({ port: MCP_PORT, bindAddress: BIND, quiet: false, keepaliveInterval: KEEPALIVE_MS });
 await th.start();
@@ -57,6 +65,29 @@ const control = http.createServer((req, res) => {
         evidenceCount: item?.evidence?.length ?? 0,
         evidence: item?.evidence ?? [],
       }));
+    } else if (req.method === "POST" && req.url === "/wedge") {
+      // n5 chaos (b) — model an L1-UNRECOVERABLE session (architect steer; the faithful L2 test):
+      // setWedged(true) makes every tool call THROW for the TTL, so the shim's L1 reconnect handshake
+      // (register_role/claim_session) FAILS AND every get_task liveness-probe FAILS -> 2 CONSECUTIVE
+      // failures (no recovery to reset the watchdog counter) -> /run/adapter-wedged -> supervisor
+      // exit(75) -> docker-L2 restart -> fresh container re-boots + re-handshakes (zero-human, dialog
+      // auto-accepted). Evict the current transports too (immediate drop). Keepalives (SSE) untouched
+      // = the keepalives-flowing-but-session-DEAD edge L1.5 exists for. (Not (a) eviction-density —
+      // that games the probe timing, an unfaithful test, cal #79/#82.)
+      const evicted = th.evictAllTransports();
+      th.setWedged(true);
+      const iv = setInterval(() => th.evictAllTransports(), WEDGE_INTERVAL_MS);
+      setTimeout(() => { clearInterval(iv); th.setWedged(false); }, WEDGE_TTL_MS);
+      console.log(`[n5-hub] WEDGE (b): REJECTING tool-calls + handshake for ${WEDGE_TTL_MS}ms (evicted ${evicted}; SSE untouched — L1-unrecoverable)`);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ wedged: true, evicted, ttlMs: WEDGE_TTL_MS, mode: "reject-handshake-and-probe" }));
+    } else if (req.method === "POST" && req.url === "/reseed") {
+      // n5 chaos re-claim: seed a FRESH ready item so the L2-recovered CLI has work to re-claim
+      // (the original seed is already done from the first self-drive).
+      const id = await seedSelfTestWorkItem(th.workItem, PROOF_PATH);
+      console.log(`[n5-hub] RESEED: fresh ready engineer item ${id}`);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ reseeded: id }));
     } else {
       res.writeHead(404);
       res.end("not found");

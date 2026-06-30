@@ -1,0 +1,73 @@
+# M-Real-CLI-Harness n5 — the real-CLI EMBEDDED harness compose (TEST e2e on the VM).
+#
+# Self-contained (NOT layered over the pilot compose): the pilot's child was the shim + its secrets
+# model differs. Here: supervisor (baked ENTRYPOINT) -> /app/real-cli-launch.sh (CMD) -> tmux ->
+# real claude (plugin path) -> shim GRANDCHILD. Bounded sandbox (n2) + dialog-free boot + the
+# in-repo marketplace (n5 image) + L1.5 watchdog fast-fire (P1e-2 chaos) + the test-Hub-with-work.
+#
+#   docker network create real-cli-net   # the architect/orchestrator pre-creates it + runs the
+#                                          # standalone test-Hub-with-work on it (name real-cli-test-hub)
+#   docker compose -f docker-compose.real-cli.yml up -d
+name: apnex-real-cli
+services:
+  real-cli:
+    image: ${ADAPTER_IMAGE:-australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/claude-adapter-realcli}:${ADAPTER_TAG:?set to the n5 image tag}
+    container_name: ${E2E_CONTAINER_NAME:-apnex-real-cli-e2e}
+    # The supervisor (baked ENTRYPOINT) runs THIS as its child: the real-CLI launcher (tmux+claude).
+    command: ["/app/real-cli-launch.sh"]
+    # L2 restart-policy: on-failure so the wedged-restart (supervisor exit 75) RESTARTS, but a clean
+    # SIGTERM stop (exit 0) does NOT loop.
+    restart: on-failure
+    # ── n2 bounded-sandbox (the security boundary for the two dangerous flags; n6 certs) ──
+    user: "10001:10001"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 1024
+    # NB: read_only root is RELAXED vs the n2 shim spec — the FULL claude CLI writes beyond
+    # CLAUDE_CONFIG_DIR (cache/logs/sessions); the bound is held by cap_drop + no-new-privileges +
+    # no-docker-socket + network-scoping + non-root + /work-only host-write. n6 certs the real exposure.
+    networks:
+      - real-cli-net
+    environment:
+      OIS_HUB_URL: ${OIS_HUB_URL:-http://real-cli-test-hub:8080/mcp}
+      OIS_AGENT_NAME: ${OIS_AGENT_NAME:-gregcontainer}
+      OIS_HUB_ROLE: engineer
+      # The shim's credential-check requires OIS_HUB_TOKEN PRESENT + non-empty (even though the
+      # test-Hub-with-work runs apiToken="" / no auth). A dummy token satisfies the check; the
+      # test-Hub does not validate it. (n5 finding: empty/missing -> "Hub credentials not found".)
+      OIS_HUB_TOKEN: ${OIS_HUB_TOKEN:-n5-test-hub-no-auth-dummy}
+      OIS_EAGER_SESSION_CLAIM: "1"
+      WORK_DIR: /work
+      CLAUDE_CONFIG_DIR: /home/appuser/.claude
+      # L1.5 watchdog ON (the supervisor consumes its sentinel); fast-fire for the chaos e2e. The
+      # test-Hub-with-work serves the FULL surface, so get_task is a real session round-trip.
+      OIS_LIVENESS_WATCHDOG_ENABLED: "1"
+      OIS_LIVENESS_SENTINEL: /run/adapter-wedged
+      OIS_LIVENESS_PROBE_METHOD: ${OIS_LIVENESS_PROBE_METHOD:-get_task}
+      OIS_LIVENESS_PROBE_INTERVAL_MS: ${OIS_LIVENESS_PROBE_INTERVAL_MS:-2000}
+      OIS_LIVENESS_FAILURE_BUDGET: ${OIS_LIVENESS_FAILURE_BUDGET:-2}
+      OIS_SUPERVISOR_POLL_MS: ${OIS_SUPERVISOR_POLL_MS:-250}
+      OIS_SUPERVISOR_GRACE_MS: ${OIS_SUPERVISOR_GRACE_MS:-1500}
+    volumes:
+      # §9: host worktree (the ONLY host write-surface for project files + the persisted evidence).
+      - type: bind
+        source: ${HOST_WORKTREE:?set to the host-created /work worktree dir}
+        target: /work
+      # CLAUDE_CONFIG_DIR — host DIR mount (n2/n3 atomic-rename-safe): holds the n3 preseed + the
+      # in-repo marketplace registration (known_marketplaces.json -> /app/adapters/claude-plugin) +
+      # the §5 .credentials.json (OAuth; file-mounted, NEVER baked). The orchestrator stages it
+      # (real-cli-bootstrap.cjs + cp the creds). Shadows the image's baked fallback config.
+      - type: bind
+        source: "${HOST_CLAUDE_CONFIG_DIR:?host dir with preseed + known_marketplaces + .credentials.json}"
+        target: /home/appuser/.claude
+    tmpfs:
+      - /run:mode=1777        # the wedged-restart sentinel (non-root appuser writes it)
+      - /tmp:mode=1777        # claude scratch
+    working_dir: /work
+    stop_signal: SIGTERM
+    stop_grace_period: 15s
+networks:
+  # The orchestrator pre-creates this + runs the standalone test-Hub-with-work on it
+  # (name real-cli-test-hub, the n4 real-cli-n4-test-hub.mjs bundle + the wedge control endpoint).
+  real-cli-net:
+    external: true

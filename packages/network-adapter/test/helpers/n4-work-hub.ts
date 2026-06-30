@@ -172,6 +172,18 @@ export interface N4TestHub {
   start: () => Promise<void>;
   stop: () => Promise<void>;
   readonly url: string;
+  /** n5 SILENT-wedge (P1e-2 parity): evict ALL sessions from HubNetworking's in-memory
+   *  `transports` map WITHOUT closing the SSE — the next session-requiring POST (the L1.5 probe)
+   *  400s while keepalives keep flowing, the keepalives-flowing-but-session-dead wedge that
+   *  escalates via L1.5 -> sentinel -> supervisor exit-75. Returns the count evicted. */
+  evictAllTransports: () => number;
+  /** n5 chaos (b) — model an L1-UNRECOVERABLE session: while wedged, the policy ctxFactory THROWS
+   *  on EVERY tool call, so the shim's L1 reconnect handshake (register_role/claim_session) FAILS
+   *  AND every get_task liveness-probe FAILS — no intervening recovery to reset the watchdog
+   *  counter -> 2 consecutive failures -> sentinel -> exit-75 -> L2. Keepalives (SSE) stay untouched:
+   *  the exact keepalives-flowing-but-session-DEAD edge L1.5 exists for (vs (a) tuning eviction
+   *  density to beat the probe timing, which games the detector — unfaithful, cal #79/#82). */
+  setWedged: (on: boolean) => void;
 }
 
 export interface N4TestHubOptions {
@@ -189,6 +201,9 @@ export interface N4TestHubOptions {
 export function createN4TestHub(options: N4TestHubOptions = {}): N4TestHub {
   const { stores, engineerRegistry, audit, message, workItem } = buildN4Stores();
   const router = buildN4Router();
+  // n5 chaos (b): while true, the ctxFactory throws on every tool call → the shim's reconnect
+  // handshake + every liveness-probe fail → L1 cannot recover → the watchdog reaches its budget → L2.
+  let wedged = false;
 
   const createServer: CreateMcpServerFn = (getSessionId, getClientIp, notifyEvent, dispatchEvent) => {
     const server = new McpServer(
@@ -196,6 +211,9 @@ export function createN4TestHub(options: N4TestHubOptions = {}): N4TestHub {
       { capabilities: { logging: {} } },
     );
     const ctxFactory = (): IPolicyContext => {
+      if (wedged) {
+        throw new Error("session wedged — n5 L1-unrecoverable chaos (b): tool calls + reconnect handshake rejected; keepalives untouched");
+      }
       const sessionId = getSessionId();
       return {
         stores,
@@ -236,5 +254,12 @@ export function createN4TestHub(options: N4TestHubOptions = {}): N4TestHub {
     start: () => hub.start(),
     stop: () => hub.stop(),
     get url() { return hub.url; },
+    evictAllTransports: () => {
+      const transports = (hub as unknown as { transports: Map<string, unknown> }).transports;
+      const n = transports.size;
+      transports.clear();
+      return n;
+    },
+    setWedged: (on: boolean) => { wedged = on; },
   };
 }
