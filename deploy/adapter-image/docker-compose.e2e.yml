@@ -1,0 +1,33 @@
+# P1e-2 e2e OVERRIDE — fast-fire watchdog + supervisor tuning for the LIVE docker-L2
+# restart e2e (M-Adapter-Modernization P1e-2, Design §4/§9).
+#
+# Layered OVER the P1e-1 base compose (never replaces it):
+#   docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d
+#
+# WHY: the prod watchdog cadence is 60s x 3 failures (~3min wedge->sentinel) — too slow
+# for an interactive e2e. This override shrinks ONLY THE TIMING (probe-interval x
+# failure-budget + the supervisor sentinel-poll/grace) so the
+#   wedge -> probe-fails -> LIVENESS-LOST -> sentinel -> supervisor exit-75 -> docker restart
+# loop completes in ~seconds. The CONDITION (keepalives-flowing-but-session-dead) and the
+# SEAM are UNCHANGED — only how fast the real detection path runs. The probe stays the REAL
+# session-requiring round-trip (get_agents); this is fast-fire, NOT a shortcut.
+#
+# Everything is env-overridable; these are the e2e DEFAULTS (the orchestrator p1e2-e2e.sh
+# can export tighter/looser values per run).
+name: apnex-claude-adapter
+services:
+  claude-adapter:
+    # Stable name so the orchestrator can `docker inspect`/`logs` it deterministically.
+    container_name: ${E2E_CONTAINER_NAME:-apnex-claude-adapter-e2e}
+    environment:
+      # Fast-fire the L1.5 watchdog: a REAL session probe every 2s, escalate after 2
+      # consecutive failures (~4s wedge->sentinel). PROBE_METHOD stays the real
+      # session-requiring Hub round-trip — the faithful detection path P1c built, NOT a
+      # transport-keepalive check and NOT a fault-injected probe.
+      OIS_LIVENESS_PROBE_INTERVAL_MS: ${OIS_LIVENESS_PROBE_INTERVAL_MS:-2000}
+      OIS_LIVENESS_FAILURE_BUDGET: ${OIS_LIVENESS_FAILURE_BUDGET:-2}
+      OIS_LIVENESS_PROBE_METHOD: ${OIS_LIVENESS_PROBE_METHOD:-get_agents}
+      # Fast sentinel CONSUMPTION: PID-1 supervisor polls the sentinel every 250ms with a
+      # short child-quiesce grace, so exit-75 fires promptly once the sentinel lands.
+      OIS_SUPERVISOR_POLL_MS: ${OIS_SUPERVISOR_POLL_MS:-250}
+      OIS_SUPERVISOR_GRACE_MS: ${OIS_SUPERVISOR_GRACE_MS:-1500}
