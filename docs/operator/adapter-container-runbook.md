@@ -32,6 +32,7 @@ printf '%s' "<hub-token>"  > "$HOST_SECRETS_DIR/hub_token"          && chmod 600
 ## §6 — Runtime + safe-update contract
 
 - **L2 = docker restart-policy** (`restart: on-failure`): the wedged-restart **exit 75** (the supervisor consuming P1c's sentinel) RESTARTS; a clean **exit 0** (SIGTERM stop) does NOT loop.
+- **`/run` MUST be writable by the non-root runtime user** (the container runs as `appuser`, uid 10001): the kernel writes the wedged-restart sentinel `/run/adapter-wedged`, and a root-owned/0755 `/run` → `EACCES` → the sentinel→PID-1→exit-75 seam silently breaks. (In shim-as-child the shim's exit-1 still restarts; but in the **grandchild/real-CLI** topology the sentinel is the ONLY exit-propagation path, so an EACCES there breaks production's restart.) Mount `/run` tmpfs **`mode=1777`** — compose: `tmpfs: ["/run:mode=1777"]`; k8s: an `emptyDir{medium: Memory}` with the right `fsGroup`/`defaultMode`. Caught + verified by the P1e-2 live e2e.
 - **Quiesce/drain:** `docker stop` / SIGTERM → the supervisor SIGTERMs the child with a bounded grace (`stop_grace_period: 15s`) → the child finishes its turn / checkpoints → clean exit 0.
 - **Staggered/rolling restart:** do NOT restart all same-harness agents on one `:latest` digest at once. Update one at a time: `docker compose pull && docker compose up -d <one service>`; confirm healthy before the next.
 - **Boot-smoke health-gate:** before adoption, a fresh container must pass a real liveness probe (a Hub session round-trip), not just "process up". (P1e-2 wires the real probe.)

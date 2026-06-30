@@ -1,0 +1,53 @@
+# Work-trace — M-Adapter-Modernization P1e-2 (`p1e_containerise`)
+
+**Node:** `work-bp-m_adapter_modernization_pilot_20260629-p1e_containerise` (engineer-eligible).
+**Evidence:** `ev_containerised` (test-run). **Branch:** `agent-greg/adapter-p1e2-e2e` off `origin/main` @023c231 (P1e-1 merged via #439).
+**Provenance:** idea-398 → Design v1.0 (seeded node pins @66a8f721; build to the @36fd8a2 amendment). Stacked semantics: the final pilot node; `pilot_accept` (steve) depends on it.
+
+## What P1e-2 is (vs the env-independent halves already merged)
+P1c proved the wedged-restart signal is **emitted** (in-process chaos test). P1e-1's `supervisor-seam.test.ts` proved it is **consumed** (env-independent process test). **P1e-2 = the runtime-bound complement:** the WHOLE loop in a real container against a real Hub, zero-manual — carry-a (real docker-L2 restart) + carry-b (the watchdog *drives* the restart).
+
+## Authoring model (architect-refined)
+Authored **OFF-VM** (the harness is VM-portable by construction — every host/Hub specific is an env param); the architect runs it **ON the VM** (boot → run → capture → stop/delete) only for the run session, so no idle-VM cost. Gate-1 (#439 merge) verified independently (mergeCommit 023c231, supervisor.mjs + prune-node-modules.cjs on origin/main); gate-2 (runtime) architect-confirmed GO (VM proven + parked).
+
+## Deliverables
+- `deploy/adapter-image/docker-compose.e2e.yml` — e2e **override** (layered over the P1e-1 base). Fast-fires ONLY the timing: `OIS_LIVENESS_PROBE_INTERVAL_MS=2000` × `OIS_LIVENESS_FAILURE_BUDGET=2` (~4s wedge→sentinel) + supervisor `POLL_MS=250`/`GRACE_MS=1500` + a stable `container_name`. The CONDITION + the seam are unchanged; `OIS_LIVENESS_PROBE_METHOD` stays the real `get_agents` round-trip.
+- `deploy/adapter-image/p1e2-e2e.sh` — the orchestrator. `selfcheck` (in-repo/CI-runnable, no live Hub) + `run` (the live e2e). Key properties:
+  - **Drift-proof contract:** reads exit-code + sentinel from the BAKED image (`supervisor.mjs`'s exported `SUPERVISOR_EXIT_CODE`/`SUPERVISOR_SENTINEL_DEFAULT`, import-guarded) — never re-literals `75`/`/run/adapter-wedged` (the seam-test-parity analog).
+  - **Fail-closed injection:** refuses to run without `INJECT_CMD` or `MANUAL_INJECT=1` — can never false-green by skipping the wedge.
+  - **Faithful-detection assertion:** requires `session probe FAILED` in the logs BEFORE accepting the restart — a restart from any non-wedge cause fails the run.
+  - **Non-vacuous recovery guard:** asserts RestartCount STRICTLY increments (restart fired) AND a fresh re-handshake AFTER the restart (recovery, not a crash-loop) — both, or RED.
+  - Evidence capture: RestartCount delta + the seam log lines.
+- `deploy/adapter-image/p1e2-e2e.README.md` — how the architect runs it on the VM, the injection candidates + faithfulness bar, the evidence model, and the scope fork (below).
+
+## Faithfulness bar (architect-set, non-negotiable; cal #81 / cal #82)
+The injection's CONDITION is fixed: **keepalives-flowing-but-session-dead** — session dead server-side, SSE keepalive still flowing — driving the watchdog's REAL app-level session-validity probe to fail (the detection path P1c built). FORBIDDEN (test-theater): container-kill / network-cut / SIGKILL-child — they bypass the watchdog's reason-for-being. **The one item to confirm together at the VM:** the exact server-side session-evict mechanism (test-Hub session-evict-keeping-transport-up = preferred; substrate session-row delete = candidate; kernel-probe fault-injection = last-resort, tests the restart-leg not the detection, call out explicitly). Kept pluggable as `INJECT_CMD` so the harness shape is stable regardless of which we land on.
+
+## ⚠ Scope fork surfaced to the architect (pre-live-run)
+The seeded `ev_containerised` text also names the real-`claude-code`-CLI headless-auth run-gate (`CLAUDE_CODE_OAUTH_TOKEN` file-mounted, no TUI). The base compose runs the **shim** as the supervisor's child, and the architect's runtime scoping has been the resilience loop. This harness delivers **(A) shim-as-child, resilience-focused**; flagged **(B) real-CLI child** for an explicit accept/defer decision on the run session, rather than silently narrowing the evidence.
+
+## State
+- selfcheck GREEN locally (YAML valid; seam preserved; fast-fire applied; watchdog not re-disabled). Deep `docker compose config` merge-check defers to the VM (this host = docker 20.10.3, no compose v2; VM = 29.6.1).
+- **PENDING the live run (architect-on-VM):** ping "ready to run" → architect boots VM + runs `p1e2-e2e.sh run` (iterate the real-evict together) → captures evidence → on green I `complete_work` P1e-2 with `ev_containerised` → steve's `pilot_accept`.
+
+## Update 2026-06-30 — PATH 2-prime + two faithfulness corrections (architect-aligned)
+
+The architect rejected adding ANY session-evict capability to the prod Hub binary (safety-before-leverage — no destructive prod control-plane surface for a test). Final inject path = **PATH 2-prime**: run the network-servable `TestHub` (wraps the REAL `HubNetworking` over memory stores) as a STANDALONE container on the VM with a thin control server — the destructive route lives in TEST code, ZERO prod-Hub change. The bash harness stays as-is (armor preserved).
+
+**Two faithfulness corrections caught while building (each would have made the e2e vacuous — cal #82):**
+1. **destroySession is WRONG** — `cleanupSession` does `await transport.close()` (hub-networking.ts:812) → the SSE drops → the adapter's **L1** transport-watchdog reconnects → tests L1, not L1.5.
+2. **tool-handler throw is WRONG** — a handler `throw` returns an MCP **isError result** (the call RESOLVES) → the watchdog probe (`await call(); return true`) returns `true` → never fires.
+The faithful wedge = **`evictAllTransports`** (clear the real `transports` map ONLY): the probe POST 400s/rejects WHILE `sendKeepalive`/SSE stay up (keepalive-independence confirmed — `sendKeepalive` checks `sseActive` not `transports`, hub-networking.ts:422-442) → only L1.5 escalates. Mutation-proven (`p1e2-wedge-inject.test.ts`: skip the `clear()` → `sessionCount.toBe(0)` goes RED).
+
+**New/changed:** `test-hub.ts` (+`bindAddress` option, +`evictAllTransports`), `wedge-inject.ts` (`sustainedWedge` — evict every 50ms for a TTL, race-free vs reconnect), `p1e2-standalone-hub.mts` (entrypoint + control `/wedge`+`/health`), `build-p1e2-test-hub.sh` (esbuild → self-contained `.mjs`, `createRequire` banner; **bundles + boots clean — smoke-verified** `/health`+`/wedge`), `docker-compose.e2e.yml` (external `p1e2-net` + `OIS_HUB_URL` + `OIS_LIVENESS_PROBE_METHOD=get_task`). Full network-adapter suite **269/269**; tsc clean. The bundle is delivered to the VM via GCS (regenerable; not committed).
+
+**§5 secret-bridge:** the e2e uses `.ois`-config token-delivery (architect files the `/run/secrets`→shim bridge as a production-boot follow-on, bundled with the **(B) real-CLI** carry). `pilot_accept` certifies (A) with both carried.
+
+## Update 2026-06-30 (live run debug) — stale-base image + guard fixes
+
+The live run surfaced three issues (each handled cleanly by the supervisor — incidental carry-a sanity):
+1. **Compose command** — relative shim path vs `working_dir:/work` → MODULE_NOT_FOUND. Fixed: absolute `/app/...` in the base compose.
+2. **STALE-BASE IMAGE (the load-bearing catch).** `p1e-prune-b057685-a` was built at `b057685` = a P1a-era SHA **pre-#436** (the watchdog merge). The baked kernel+shim were pre-watchdog (the supervisor was current — Dockerfile-COPY'd from build context). REPRO/CREDSCAN/BOOTSMOKE were mechanism-valid but content-blind; **only the live e2e caught it** (the watchdog never wired — zero log lines; a unit test against current source would have stayed green). Fixed: rebuilt at origin/main HEAD **023c231** (post-watchdog) → **`p1e-prune-023c231-a`** (digest `sha256:44efacdb…`); shim `LivenessWatchdog` count=8; FEATURE-PRESENT + BOOTSMOKE-PASS. **Build-provenance lesson (calibration, architect co-ratifies at pilot close):** the artifact-under-test must CONTAIN the code-under-test — verify presence, don't assume the base.
+3. **Guards added (the miss earns):** `p1e2-e2e.sh` asserts the image-under-test contains the watchdog wiring (grep the baked shim) before running; `cloudbuild.bootsmoke.yaml` adds the same feature-presence so a stale base FAILS the prune verify. The bootsmoke's kernel-module check needed `find -L` (the `@apnex/network-adapter` workspace symlink → `packages/network-adapter`) — a transient false-negative in my own guard, fixed; the harness's grep-the-shim guard was correct (no symlink).
+
+**Dist note:** `adapters/claude-plugin/dist` is NOT committed (gitignored); the Docker build rebuilds it via `tsc` (`npm run build --workspace`, dep-ordered). So the image reflects src — the b057685 issue was the BASE SHA, not committed-dist staleness.
