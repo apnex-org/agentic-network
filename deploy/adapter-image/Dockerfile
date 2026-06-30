@@ -65,6 +65,16 @@ RUN if [ "$REPRO_CONTROLS" = "on" ]; then \
       echo "[stamp] REPRO_CONTROLS=off -> skipping deterministic stamp (non-vacuity mutation)"; \
     fi
 
+# Dep-prune (P1e carry-c): deterministic SUBTRACTION from the P1a-proven node_modules.
+# keep-set = the transitive --omit=dev closure of @apnex/network-adapter + @apnex/claude-plugin
+# (both roots -> the kernel's transitives are covered); set-based rm (ordering-independent) so the
+# prune is deterministic (same SHA -> lockfile-pinned tree -> same closure -> same pruned tree ->
+# same digest). Drops other-workspace + dev bloat (google-auth-library/@google-cloud/gaxios/...) ->
+# smaller AND cred-free-stronger. SUBTRACTS from the proven tree; never rebuilds it (preserves P1a
+# reproducibility — a fresh install would re-open it).
+COPY _p1a-prune.cjs /tmp/prune.cjs
+RUN node /tmp/prune.cjs
+
 # ── runtime stage ───────────────────────────────────────────────────────
 FROM ${NODE_BASE} AS runtime
 ARG SOURCE_DATE_EPOCH
@@ -79,6 +89,10 @@ COPY --from=builder /build/package.json /build/package-lock.json ./
 COPY --from=builder /build/node_modules ./node_modules
 COPY --from=builder /build/packages ./packages
 COPY --from=builder /build/adapters ./adapters
+# P1e: bake the PID-1 thin supervisor (the EMBEDDED entrypoint; consumes P1c's wedged-restart
+# sentinel). Self-contained (no kernel import). Copied before the mtime-normalize below so it
+# is deterministic in the digest.
+COPY _p1a-supervisor.mjs ./supervisor.mjs
 
 # Normalize app-tree mtimes to SOURCE_DATE_EPOCH (belt-and-suspenders alongside
 # buildkit rewrite-timestamp; also makes a content/rootfs digest deterministic if
@@ -90,7 +104,9 @@ RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin appuser \
  && chown -R appuser:appuser /app
 USER appuser
 
-# P1a proves the build is reproducible + provenance-guaranteed. The PID-1 supervisor
-# + claude CLI + tmux (Design §2 EMBEDDED) are P1e's concern; this entrypoint runs
-# the stdio MCP kernel-shim directly as the minimal real artifact.
-ENTRYPOINT ["node", "adapters/claude-plugin/dist/shim.js"]
+# P1e EMBEDDED topology: the PID-1 thin supervisor is the entrypoint. It launches the CMD (the
+# child: the kernel-shim by default; P1e-2's compose swaps it to the real claude CLI) and CONSUMES
+# P1c's wedged-restart sentinel -> exit 75 -> docker-L2 restart. (P1a's minimal shim-direct
+# entrypoint is now wrapped by the supervisor.)
+ENTRYPOINT ["node", "/app/supervisor.mjs"]
+CMD ["node", "adapters/claude-plugin/dist/shim.js"]

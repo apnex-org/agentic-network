@@ -20,6 +20,8 @@ cp "$TOOLDIR/Dockerfile"                          "$CTX/Dockerfile"
 cp "$TOOLDIR/dockerignore.template"               "$CTX/.dockerignore"
 cp "$TOOLDIR/dockerignore.template"               "$CTX/.gcloudignore"
 cp "$TOOLDIR/write-build-info-deterministic.cjs"  "$CTX/_p1a-stamp.cjs"
+cp "$TOOLDIR/prune-node-modules.cjs"              "$CTX/_p1a-prune.cjs"
+cp "$TOOLDIR/supervisor.mjs"                       "$CTX/_p1a-supervisor.mjs"
 cp "$TOOLDIR/cloudbuild.yaml"                      "$CTX/cloudbuild.yaml"
 
 echo "[p1a-build] SHA=$SHORT ($FULL) EPOCH=$EPOCH TAG=$TAG CONTROLS=$CONTROLS" >&2
