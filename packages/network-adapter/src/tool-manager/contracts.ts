@@ -30,7 +30,14 @@
 export interface ToolDescriptor {
   name: string;
   description?: string;
-  inputSchema: Record<string, unknown>;
+  // `unknown` + index signature to be bit-perfect with the kernel/cognitive
+  // `Tool` shape (`inputSchema?: unknown; [key: string]: unknown`) so
+  // `McpAgentClient.listTools()` structurally satisfies `IToolDispatchAgent`
+  // WITHOUT the class changing (A3 Semantic Bit-Masking — the contract mirrors
+  // the existing surface, it does not impose a stricter one). Bindings that
+  // need a concrete JSON-Schema narrow the field at their own boundary.
+  inputSchema?: unknown;
+  [key: string]: unknown;
 }
 
 /**

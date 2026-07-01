@@ -23,13 +23,20 @@ import type {
 // If McpAgentClient stops satisfying IToolDispatchAgent, this assignment
 // fails to type-check and the build breaks. `satisfies`-style guard via a
 // typed function parameter (no runtime instance needed).
-function _assertMcpAgentClientIsToolDispatchAgent(
-  agent: McpAgentClient,
-): IToolDispatchAgent {
-  return agent; // ← errors at compile time if the class drifts from the contract
+// Two forms, because they catch DIFFERENT drift (Slice B lesson: the direct
+// assignment passed while the thunk covariance did NOT — the
+// `getAgent: () => Agent | null` shape is how the dispatch context actually
+// consumes the agent, so we must assert THAT shape too).
+function _assertDirectAssignable(agent: McpAgentClient): IToolDispatchAgent {
+  return agent;
 }
-// Reference the guard so unused-var lint stays quiet without changing behavior.
-void _assertMcpAgentClientIsToolDispatchAgent;
+function _assertThunkAssignable(
+  getAgent: () => McpAgentClient | null,
+): () => IToolDispatchAgent | null {
+  return getAgent;
+}
+void _assertDirectAssignable;
+void _assertThunkAssignable;
 
 // ── Shape sanity (documentation-as-test for the neutral descriptors) ──
 describe("tool-manager contracts (Slice A)", () => {
