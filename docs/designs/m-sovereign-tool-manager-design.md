@@ -385,7 +385,16 @@ Success-signal §6.1 ("no `@modelcontextprotocol/sdk` dependency") is met at the
 a separate package boundary. Re-earning the package requires the §8 debt to be
 resolved first (see §9.4 item 5).
 
-### 9.3 Deferred — carried debt introduced/retained by A–C (tracked, non-blocking)
+> **Status update (2026-07-01): Slice D SHIPPED.** `adapters/pi-plugin/` is live
+> (facade-clean native binding; 5/5 shim tests; core 272/272 held). Two additive
+> core seams landed for the native binding (commit `a6196d3`): `externalIdle` +
+> `sharedWorkLeases` on `createSharedDispatcher`, and `SharedDispatcher.workLeases`
+> exposed; `runToolDispatch` + `ToolDispatchContext` facade-exported. The
+> deferred-items list below is now the **committed backlog** (Director directive
+> 2026-07-01: *all* deferred items are wanted eventually — these are NOT YAGNI
+> "revisit only on demand" items; they are scheduled work awaiting sequencing).
+
+### 9.3 COMMITTED BACKLOG — carried debt from A–D (scheduled, non-blocking)
 
 1. **`orchestrator/dispatcher.ts` is still an 880-LOC god-object.** Slice C
    *named* it honestly (`orchestrator/`) but did **not** crack it open.
@@ -406,20 +415,44 @@ resolved first (see §9.4 item 5).
    **Deferred**: assemble a concrete `ToolManager` implementing `IToolManager`,
    returning neutral `ToolDispatchResult`; bindings format to host shape. This is
    what retires item 2 and makes success-signal §6.3 grep-clean.
-4. **Success-signal §6.2/§6.3 not yet fully realized.** Only the MCP binding
-   routes through the extracted authority today; claude/opencode still consume via
-   `createSharedDispatcher`. Full realization ("all three hosts terminate in ONE
-   dispatch/listTools") lands with Slice D (pi) + the fold-in of claude/opencode.
+4. **Success-signal §6.2/§6.3 not yet fully realized.** pi (native) AND the MCP
+   CallTool handler now both route through `runToolDispatch`; claude/opencode
+   *inherit* it via that handler but have not been re-grafted/verified against the
+   agnostic contract, and still carry facade drift. Full realization ("all hosts
+   terminate in ONE dispatch/listTools, grep-clean") lands with the fold-in.
 
-### 9.4 Deferred — larger, out of the A–D critical path
+#### New Slice-D deferrals (added 2026-07-01)
+
+9. **No live e2e for pi.** Shim tests are unit-level (fake `IToolDispatchAgent`,
+   no live Hub, no pi runtime). A pi-in-the-loop smoke test (connect → seed →
+   tool call → wake) is committed but unwritten. Highest-value next validation.
+10. **The native-binding core seam is untested in core.** `externalIdle` +
+    `sharedWorkLeases` (commit `a6196d3`) are additive and MCP-path-safe, but no
+    core test pins that a native host's idle drives the wake/stall gate or that an
+    injected `workLeases` reaches the reconcile. Add a `dispatcher-native-binding`
+    test alongside `dispatcher-idle-gate`.
+11. **NotificationCoalescer NOT reused by pi** (as-built answer to design §5 open
+    question). pi uses its native `sendUserMessage` delivery modes (idle→turn,
+    streaming→followUp) instead of the coalescer's bounded-flush pacing. Thinner,
+    but skips proven flood-protection. Revisit if pi shows notification flooding;
+    if reused, the coalescer's session-activity input must accept pi's idle probe.
+12. **pi build-identity is hardcoded `UNKNOWN_BUILD_INFO`.** `write-build-info.js`
+    runs at prebuild and emits `dist/build-info.json`, but `shim.ts` does not read
+    it back (unlike claude's `readBuildInfo`). So pi's handshake reports UNKNOWN
+    sha/dirty — a phantom-version risk on `get_agents` (bug-183 class). Wire the
+    runtime read of the emitted build-info.
+
+### 9.4 COMMITTED BACKLOG — larger, cross-cutting
 
 5. **§8 Hub work-protocol coupling** — unresolved by design (this mission only
    ISOLATED it in `dispatch/tool-call-policy.ts`). Resolving it (options §8.1–3)
    is the precondition for a genuinely generic, publishable `@apnex/tool-manager`.
    Separate cross-cutting Hub+adapter mission; file to workgraph once pi is live.
-6. **Fold claude + opencode onto the new design** — deferred per mission scope
-   ("focus is pi now"). Cheap fold-in path: point both shims' bindings at the
-   extracted authority. Do after Slice D proves the shape end-to-end.
+6. **Fold claude + opencode onto the new design** — pi (Slice D) has now proved
+   the shape end-to-end, so this is unblocked. Zero-knowledge-complete plan +
+   learnings + per-shim change-list: **`docs/designs/m-claude-opencode-foldin-design.md`**.
+   Covers: reroute the facade drift (§8 note), verify both against the agnostic
+   contract, adopt any pi-proven tidy. Regression parity is the gate.
 7. **Drop the `as any` / narrow `ToolDescriptor`** — `ToolDescriptor.inputSchema`
    is permissive (`unknown` + index sig) to mirror the kernel `Tool` so
    `McpAgentClient` conforms unchanged. Revisit only if the contract should become
@@ -436,7 +469,12 @@ resolved first (see §9.4 item 5).
   authoritative correction. Left in place as design-history (A4), not rewritten.
 
 ### 9.6 Next active step
-**Slice D — pi native binding** (`adapters/pi-plugin/`): the payoff. Consumes the
-transport-neutral `runToolDispatch` authority directly (pi has no MCP client), via
-`tool-bridge.ts` (native `pi.registerTool` → dispatch) + `wake.ts` (wake/stall
-render). Facade-only imports. Tracked in `m-pi-plugin-adapter-design.md`.
+**Slice D — pi native binding — SHIPPED (2026-07-01).** `adapters/pi-plugin/` live.
+
+The next active steps are drawn from the committed backlog above, in rough
+priority order:
+1. **pi live e2e** (item 9) — highest-value validation.
+2. **native-binding core test** (item 10) — pin the `externalIdle`/`sharedWorkLeases` seam.
+3. **claude/opencode fold-in** (item 6) — `m-claude-opencode-foldin-design.md`.
+4. Then the deeper items: `IToolManager` class + neutral result (items 2,3),
+   orchestrator split (item 1), §8 Hub-coupling (item 5).
