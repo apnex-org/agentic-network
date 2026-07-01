@@ -153,6 +153,17 @@ export type { HarnessManifest, HarnessCapability } from "./kernel/harness-manife
 // ("tool-manager" or "Message-router") in new code; avoid bare
 // "dispatcher".
 
+// M-Tool-Manager-Internal-Sovereign-Module Slice A: the agnostic tool-manager
+// contract surface. Additive — the dispatch authority (Slice B) + bindings
+// depend on these interfaces, never on the concrete kernel classes.
+export type {
+  ToolDescriptor,
+  ToolDispatchCallOptions,
+  ToolDispatchResult,
+  IToolDispatchAgent,
+  IToolManager,
+} from "./tool-manager/contracts.js";
+
 export {
   createSharedDispatcher,
   pendingKey,
