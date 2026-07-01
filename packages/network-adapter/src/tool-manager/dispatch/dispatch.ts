@@ -30,8 +30,8 @@
  *         before ascending — regression parity is the gate).
  */
 
-import type { IToolDispatchAgent } from "./contracts.js";
-import { WorkLeaseTracker } from "./work-lease-tracker.js";
+import type { IToolDispatchAgent } from "../contracts.js";
+import { WorkLeaseTracker } from "../work-protocol/work-lease-tracker.js";
 import { injectQueueItemId, TOOL_CALL_SIGNAL_SKIP } from "./tool-call-policy.js";
 
 /**

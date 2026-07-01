@@ -164,18 +164,20 @@ export type {
   IToolManager,
 } from "./tool-manager/contracts.js";
 
+// Slice C: dispatcher is the orchestrator (binding assembly); dispatch authority
+// + OIS policy live under dispatch/; cache/reconcile/health under catalog/.
 export {
   createSharedDispatcher,
   pendingKey,
   injectQueueItemId,
   assertHostWiringComplete,
-} from "./tool-manager/dispatcher.js";
+} from "./tool-manager/orchestrator/dispatcher.js";
 export type {
   DispatcherClientInfo,
   DispatcherNotificationHooks,
   SharedDispatcherOptions,
   SharedDispatcher,
-} from "./tool-manager/dispatcher.js";
+} from "./tool-manager/orchestrator/dispatcher.js";
 
 export {
   CATALOG_SCHEMA_VERSION,
@@ -183,32 +185,32 @@ export {
   readCache,
   writeCache,
   isCacheValid,
-} from "./tool-manager/tool-catalog-cache.js";
+} from "./tool-manager/catalog/tool-catalog-cache.js";
 export type {
   ToolCatalog,
   CachedCatalog,
-} from "./tool-manager/tool-catalog-cache.js";
+} from "./tool-manager/catalog/tool-catalog-cache.js";
 
-export { ToolSurfaceReconciler } from "./tool-manager/tool-surface-reconciler.js";
+export { ToolSurfaceReconciler } from "./tool-manager/catalog/tool-surface-reconciler.js";
 export type {
   ToolSurfaceReconcilerDeps,
   ReconcileOutcome,
-} from "./tool-manager/tool-surface-reconciler.js";
+} from "./tool-manager/catalog/tool-surface-reconciler.js";
 
 // idea-355 SLICE-1T — the Hub /health toolSurfaceRevision fetcher, hoisted from
 // the shims so both share ONE network mechanism (pure; the cache side-effect
 // stays shim-side).
-export { makeFetchLiveToolSurfaceRevision } from "./tool-manager/health-revision.js";
-export type { FetchLiveToolSurfaceRevisionOptions } from "./tool-manager/health-revision.js";
+export { makeFetchLiveToolSurfaceRevision } from "./tool-manager/catalog/health-revision.js";
+export type { FetchLiveToolSurfaceRevisionOptions } from "./tool-manager/catalog/health-revision.js";
 
 // idea-353 — queue wake/stall reconciliation primitives.
-export { ClaimableDigestTracker } from "./tool-manager/claimable-digest-tracker.js";
+export { ClaimableDigestTracker } from "./tool-manager/work-protocol/claimable-digest-tracker.js";
 export type {
   ClaimableDigestInput,
   ClaimableDigestDecision,
-} from "./tool-manager/claimable-digest-tracker.js";
-export { WorkLeaseTracker } from "./tool-manager/work-lease-tracker.js";
-export type { StallPrompt } from "./tool-manager/work-lease-tracker.js";
+} from "./tool-manager/work-protocol/claimable-digest-tracker.js";
+export { WorkLeaseTracker } from "./tool-manager/work-protocol/work-lease-tracker.js";
+export type { StallPrompt } from "./tool-manager/work-protocol/work-lease-tracker.js";
 
 // ── Cross-cutting primitives (root) ─────────────────────────────────
 

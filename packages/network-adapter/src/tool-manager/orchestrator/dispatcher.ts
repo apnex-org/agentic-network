@@ -33,19 +33,19 @@ import type {
   AgentEvent,
   SessionState,
   SessionReconnectReason,
-} from "../kernel/agent-client.js";
-import type { McpAgentClient } from "../kernel/mcp-agent-client.js";
-import { PollBackstop, resolveRole, type PollBackstopOptions } from "../kernel/poll-backstop.js";
-import type { DrainedPendingAction } from "../kernel/state-sync.js";
-import type { CachedCatalog } from "./tool-catalog-cache.js";
-import { ClaimableDigestTracker } from "./claimable-digest-tracker.js";
-import { WorkLeaseTracker } from "./work-lease-tracker.js";
+} from "../../kernel/agent-client.js";
+import type { McpAgentClient } from "../../kernel/mcp-agent-client.js";
+import { PollBackstop, resolveRole, type PollBackstopOptions } from "../../kernel/poll-backstop.js";
+import type { DrainedPendingAction } from "../../kernel/state-sync.js";
+import type { CachedCatalog } from "../catalog/tool-catalog-cache.js";
+import { ClaimableDigestTracker } from "../work-protocol/claimable-digest-tracker.js";
+import { WorkLeaseTracker } from "../work-protocol/work-lease-tracker.js";
 import {
   TOOL_CALL_SIGNAL_SKIP,
   pendingKey,
   injectQueueItemId,
-} from "./tool-call-policy.js";
-import { runToolDispatch, type ToolDispatchContext } from "./dispatch.js";
+} from "../dispatch/tool-call-policy.js";
+import { runToolDispatch, type ToolDispatchContext } from "../dispatch/dispatch.js";
 
 export interface DispatcherClientInfo {
   name: string;

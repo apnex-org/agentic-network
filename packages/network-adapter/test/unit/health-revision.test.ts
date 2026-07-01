@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { makeFetchLiveToolSurfaceRevision } from "../../src/tool-manager/health-revision.js";
+import { makeFetchLiveToolSurfaceRevision } from "../../src/tool-manager/catalog/health-revision.js";
 
 function jsonResponse(body: unknown, init?: { ok?: boolean; status?: number }): Response {
   return {
