@@ -1,0 +1,32 @@
+{
+  "name": "@apnex/pi-plugin",
+  "version": "0.1.0",
+  "description": "pi host extension — Universal Agent Adapter for the OIS agentic network (architect peer; reference implementation of the sovereign tool-manager + native-binding architecture)",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "files": [
+    "dist/",
+    "src/",
+    "tsconfig.json",
+    "QUICKSTART.md"
+  ],
+  "scripts": {
+    "prebuild": "node ../../scripts/build/write-build-info.js",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@apnex/network-adapter": "*",
+    "typebox": "^1.1.38"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.3",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4"
+  }
+}

@@ -2,7 +2,7 @@
 title: Network Adapter Architecture — L4/L7 Split
 status: canonical reference
 version: "@apnex/network-adapter@0.1.4"
-updated: 2026-06-27
+updated: 2026-07-01
 ---
 
 # Network Adapter Architecture
@@ -136,13 +136,33 @@ packages/network-adapter/
 │   │   ├── poll-backstop.ts        — SSE-gap poll backstop
 │   │   └── session-claim.ts        — explicit claim_session orchestration
 │   │
-│   ├── tool-manager/         — tool-surface lifecycle
-│   │   ├── dispatcher.ts                 — tool dispatch + idle gating
-│   │   ├── tool-surface-reconciler.ts    — live tool-surface refresh
-│   │   ├── tool-catalog-cache.ts         — cached tool catalog
-│   │   ├── claimable-digest-tracker.ts   — claimable-work digest tracking
-│   │   └── work-lease-tracker.ts         — work-lease bookkeeping
+│   ├── tool-manager/         — tool CATALOG + tool DISPATCH (internal sovereign module)
+│   │   ├── contracts.ts                   — agnostic surface: IToolDispatchAgent,
+│   │   │                                    ToolDescriptor, ToolDispatchResult, IToolManager
+│   │   ├── dispatch/                      — the per-call DISPATCH authority
+│   │   │   ├── dispatch.ts                  — runToolDispatch (signal-FSM wrap,
+│   │   │   │                                  queueItemId inject, idle-gate, lease observe,
+│   │   │   │                                  error normalize) — transport-neutral
+│   │   │   └── tool-call-policy.ts          — pure OIS policy: TOOL_CALL_SIGNAL_SKIP,
+│   │   │                                      pendingKey, injectQueueItemId (§8 debt, isolated)
+│   │   ├── catalog/                       — tool-surface lifecycle
+│   │   │   ├── tool-catalog-cache.ts        — cached tool catalog
+│   │   │   ├── tool-surface-reconciler.ts   — live tool-surface refresh
+│   │   │   └── health-revision.ts           — /health toolSurfaceRevision fetcher
+│   │   ├── work-protocol/                 — idea-353 wake/stall primitives
+│   │   │   ├── work-lease-tracker.ts        — work-lease bookkeeping
+│   │   │   └── claimable-digest-tracker.ts  — claimable-work digest tracking
+│   │   └── orchestrator/                  — the binding-assembly shell
+│   │       └── dispatcher.ts                — createSharedDispatcher: MCP Server
+│   │                                          factory + pollBackstop + wake/stall
+│   │                                          reconcile + notification routing
 │   │
+│   #  M-Tool-Manager decomposition (2026-07-01): the CallTool handler BODY was
+│   #  extracted to dispatch/dispatch.ts (runToolDispatch) so a NATIVE host
+│   #  binding (pi) shares the SAME per-call behavior as the MCP CallTool handler
+│   #  without an MCP server. "One dispatch authority; many last-mile bindings."
+│   #  See docs/designs/m-sovereign-tool-manager-design.md.
+│
 │   ├── observability.ts      — adapter observability surface
 │   ├── hub-error.ts          — HubError taxonomy
 │   ├── file-logger.ts        — FileBackedLogger
@@ -437,13 +457,24 @@ two-layer split exists specifically so that shims talk to L7 only.
 
 ## 8. Shims today
 
-Three shims consume `@apnex/network-adapter@0.1.4`.
+Four shims consume `@apnex/network-adapter`. Three use the **MCP binding** (host
+is an MCP client → proxy CallTool → `agent.call`); pi uses the **native binding**
+(host has no MCP client → `pi.registerTool().execute` → `runToolDispatch`).
 
-| Shim                                              | Transport host   | Manual sync | Notes                                                                                                 |
-| ------------------------------------------------- | ---------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
-| `adapters/claude-plugin/src/shim.ts` + `dispatcher.ts` | stdio MCP server | no  | Split into `shim.ts` (stdio + config) and `dispatcher.ts` (MCP server + CallTool handler + pendingActionMap). Shipped as `plugin:agent-adapter:proxy`. |
-| `adapters/opencode-plugin/src/shim.ts` + `dispatcher.ts` | Bun.serve proxy  | no   | Split into `shim.ts` (Bun.serve, OpenCode SDK, notification queue) and `dispatcher.ts` (MCP Server factory + fetchHandler + pendingActionMap). Parallels claude-plugin. |
-| `agents/vertex-cloudrun/src/hub-adapter.ts`       | Express (Cloud Run) | **yes**  | Preserves public `HubAdapter` class surface (`onSync`/`completeSync`). Passes `manualSync: true`.     |
+| Shim                                              | Binding  | Transport host   | Manual sync | Notes                                                                                                 |
+| ------------------------------------------------- | -------- | ---------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
+| `adapters/claude-plugin/src/shim.ts` + `dispatcher.ts` | MCP | stdio MCP server | no  | Split into `shim.ts` (stdio + config) and `dispatcher.ts` (MCP server + CallTool handler + pendingActionMap). Shipped as `plugin:agent-adapter:proxy`. |
+| `adapters/opencode-plugin/src/shim.ts` + `dispatcher.ts` | MCP | Bun.serve proxy  | no   | Split into `shim.ts` (Bun.serve, OpenCode SDK, notification queue) and `dispatcher.ts` (MCP Server factory + fetchHandler + pendingActionMap). Parallels claude-plugin. |
+| `adapters/pi-plugin/src/{index,shim,tool-bridge,wake}.ts` | **native** | none (pi extension) | no | **Reference implementation** of the corrected architecture. NO MCP proxy: `tool-bridge.ts` registers Hub tools natively; each `execute` routes through the shared `runToolDispatch`. Facade-clean (imports `@apnex/network-adapter` only). Default role: architect. See `docs/designs/m-pi-plugin-adapter-design.md`. |
+| `agents/vertex-cloudrun/src/hub-adapter.ts`       | MCP | Express (Cloud Run) | **yes**  | Preserves public `HubAdapter` class surface (`onSync`/`completeSync`). Passes `manualSync: true`.     |
+
+> **Facade drift (tracked debt, 2026-07-01):** claude + opencode `package.json`
+> list `@apnex/cognitive-layer` + `@apnex/message-router` as DIRECT deps, and
+> import them directly in `shim.ts` — violating the facade rule (§2: "no adapter
+> behavior in a per-host shim"; a shim depends on `@apnex/network-adapter` ONLY,
+> which re-exports what it needs). pi is facade-clean from day one. Rerouting the
+> two MCP shims through the facade is part of the fold-in mission:
+> `docs/designs/m-claude-opencode-foldin-design.md`.
 
 Each shim does its own host-specific bootstrap (how to discover URL +
 token, how to format toasts, how to persist `globalInstanceId`) and
@@ -478,15 +509,73 @@ decision, the fetcher, and both trigger points are shared kernel code.
 
 ## 9. Adding a new shim
 
-The checklist:
+First decide the **binding kind**, because it dictates the tool path:
 
-1. **Pin the tarball.** Add `"@apnex/network-adapter": "file:./ois-network-adapter-0.1.4.tgz"` (or newer) to your `package.json`. Don't float it.
-2. **Bootstrap identity.** Call `loadOrCreateGlobalInstanceId()` once per process with a host-appropriate path (e.g. `~/.ois/<host>-instance.json`). Persist the result across restarts.
-3. **Build callbacks.** Implement `AgentClientCallbacks` — only the handlers you actually need. Shims that don't prompt LLMs can omit `onActionableEvent`.
-4. **Construct.** `new McpAgentClient({role, handshake, logger}, {transportConfig})`. Pass the full enriched handshake unless you genuinely don't care about the M18 identity (Architect is the only such case, and it's grandfathered).
-5. **Start / stop.** `await agent.start()` on boot, `await agent.stop()` on shutdown. Don't swallow exceptions from `start()` — fatal handshake codes need to halt the process.
-6. **Tool surface.** If the host needs full MCP tool schemas, use `(agent.getTransport() as McpTransport).listToolsRaw()`. If not, `agent.listMethods()` returns the flat string list and is cheaper.
-7. **Don't instantiate `McpTransport` yourself.** If you find yourself wanting to, you're probably pushing session concerns into the wire — stop and re-read § 2.2.
+- **MCP binding** — the host is (or embeds) an MCP client and consumes tools over
+  MCP (claude stdio, opencode Bun.serve, vertex Express). The shim stands up an
+  MCP `Server` via `dispatcher.createMcpServer()`; tool calls flow host → MCP
+  CallTool handler → `runToolDispatch` → `agent.call`. You get the per-call
+  behavior for free because it lives in the handler body.
+- **native binding** — the host has NO MCP client and registers tools through its
+  own API (pi's `pi.registerTool`). There is NO MCP server. The shim renders the
+  catalog into the host's tool shape and each `execute` calls `runToolDispatch`
+  DIRECTLY. **This is the path where you must not re-implement dispatch behavior**
+  — route through `runToolDispatch` or you inherit M18 drift (see §9.2).
+
+### 9.1 Shared checklist (both bindings)
+
+1. **Depend on the facade ONLY.** `"@apnex/network-adapter": "*"` (workspace) or a
+   pinned tarball. Do NOT add `@apnex/cognitive-layer` or `@apnex/message-router`
+   as direct deps — the facade re-exports what a shim needs (`CognitivePipeline`,
+   `NotificationCoalescer`, all prompt/notification helpers). A shim importing
+   anything else in the `@apnex/*` graph is facade drift (§2; §8 note).
+2. **Bootstrap identity.** `readRequiredAgentName()` (name IS identity, idea-251)
+   + `loadOrCreateGlobalInstanceId()` with a host path (`~/.ois/<host>-instance.json`).
+3. **Load config.** `loadConfig({ directory, defaults, warn, readAutoPrompt })`.
+   Set `config.role` (default per host; pi defaults `architect`).
+4. **Construct the dispatcher.** `createSharedDispatcher({...})` — supply
+   `getAgent`, `notificationHooks` (your wake render), and `pollBackstop` (role
+   thunk + `onHeartbeatTick` → `reconciler.reconcile("heartbeat")`).
+5. **Construct the agent.** `new McpAgentClient({role, handshake, logger}, {transportConfig, cognitive})`.
+   Pass the full enriched M18 handshake (`proxyName`, `transport` tag, `sdkVersion`,
+   build-identity, `getClientInfo`). Wire `agent.setCallbacks(dispatcher.callbacks)`.
+6. **Start / stop.** `await agent.start()` on session start; on shutdown
+   `pollBackstop.stop()` + `await agent.stop()`. Don't swallow `start()` fatals.
+7. **Wire the tool-surface reconciler.** `ToolSurfaceReconciler` off the two
+   triggers (L1 identityReady seed, L2 heartbeat). `readServedRevision` is the
+   documented per-shim divergence (§8.1): `() => null` if no persistent cache.
+8. **assertHostWiringComplete(dispatcher, log)** after `start()` (bug-53 gate).
+9. **Don't instantiate `McpTransport` yourself** (§2.2).
+
+### 9.2 MCP binding — additional steps
+
+- Stand up the host's MCP transport; obtain a `Server` per session via
+  `dispatcher.createMcpServer()`.
+- Tool schemas: `agent.listTools()` returns the tier-filtered, cognitively-
+  enriched catalog the LLM should see. The CallTool handler already routes
+  through `runToolDispatch` — you write NO dispatch logic.
+
+### 9.3 Native binding — additional steps (pi is the reference)
+
+- **Facade-export needed:** `runToolDispatch`, `ToolDispatchContext`.
+- **Build a `ToolDispatchContext`** from the dispatcher's shared state:
+  `pendingActionMap` + `workLeases` (both exposed on `SharedDispatcher`), a `log`,
+  and `getAgent`. Native tool calls bypass the MCP handler, so:
+  - supply `createSharedDispatcher({ externalIdle: () => host.isIdle() })` — the
+    wake/stall reconcile gates on the HOST's native idle, not the (always-zero)
+    internal `activeCallCount`.
+  - supply `sharedWorkLeases` OR build the context's `workLeases` from
+    `dispatcher.workLeases`, so lease observations reach the reconcile.
+  - `onCallStart/onCallEnd` are typically no-ops (native idle is authoritative).
+- **Render the catalog** into the host tool shape (pi: JSON-Schema → typebox via
+  `Type.Unsafe`, adopting the Hub schema verbatim). This render is SHIM-side; do
+  not add a host-flavored type to core (Speculative Surface — A3). Promote to a
+  neutral core helper only when a 2nd native host needs it.
+- **`execute` MUST call `runToolDispatch(ctx, name, args)`** and render its result
+  into the host result shape. Never re-implement signal-FSM / queueItemId /
+  lease-observe in `execute` — that is the exact M18 drift the extraction prevents
+  (proven by a test: a native `execute` emits `signal_working_started/completed`
+  with zero shim code).
 
 ## 10. Versioning
 

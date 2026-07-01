@@ -153,18 +153,42 @@ export type { HarnessManifest, HarnessCapability } from "./kernel/harness-manife
 // ("tool-manager" or "Message-router") in new code; avoid bare
 // "dispatcher".
 
+// M-Tool-Manager-Internal-Sovereign-Module Slice A: the agnostic tool-manager
+// contract surface. Additive — the dispatch authority (Slice B) + bindings
+// depend on these interfaces, never on the concrete kernel classes.
+export type {
+  ToolDescriptor,
+  ToolDispatchCallOptions,
+  ToolDispatchResult,
+  IToolDispatchAgent,
+  IToolManager,
+} from "./tool-manager/contracts.js";
+
+// Slice D (pi): the transport-neutral dispatch authority + its dependency
+// context, exported through the facade so a NATIVE host binding (pi's
+// tool-bridge) consumes the SAME per-call behavior wrapper the MCP CallTool
+// handler uses — without importing an MCP server. This is the concrete payoff of
+// the Slice-B extraction: one dispatch authority, many last-mile bindings.
+export { runToolDispatch } from "./tool-manager/dispatch/dispatch.js";
+export type {
+  ToolDispatchContext,
+  McpToolCallResult,
+} from "./tool-manager/dispatch/dispatch.js";
+
+// Slice C: dispatcher is the orchestrator (binding assembly); dispatch authority
+// + OIS policy live under dispatch/; cache/reconcile/health under catalog/.
 export {
   createSharedDispatcher,
   pendingKey,
   injectQueueItemId,
   assertHostWiringComplete,
-} from "./tool-manager/dispatcher.js";
+} from "./tool-manager/orchestrator/dispatcher.js";
 export type {
   DispatcherClientInfo,
   DispatcherNotificationHooks,
   SharedDispatcherOptions,
   SharedDispatcher,
-} from "./tool-manager/dispatcher.js";
+} from "./tool-manager/orchestrator/dispatcher.js";
 
 export {
   CATALOG_SCHEMA_VERSION,
@@ -172,32 +196,32 @@ export {
   readCache,
   writeCache,
   isCacheValid,
-} from "./tool-manager/tool-catalog-cache.js";
+} from "./tool-manager/catalog/tool-catalog-cache.js";
 export type {
   ToolCatalog,
   CachedCatalog,
-} from "./tool-manager/tool-catalog-cache.js";
+} from "./tool-manager/catalog/tool-catalog-cache.js";
 
-export { ToolSurfaceReconciler } from "./tool-manager/tool-surface-reconciler.js";
+export { ToolSurfaceReconciler } from "./tool-manager/catalog/tool-surface-reconciler.js";
 export type {
   ToolSurfaceReconcilerDeps,
   ReconcileOutcome,
-} from "./tool-manager/tool-surface-reconciler.js";
+} from "./tool-manager/catalog/tool-surface-reconciler.js";
 
 // idea-355 SLICE-1T — the Hub /health toolSurfaceRevision fetcher, hoisted from
 // the shims so both share ONE network mechanism (pure; the cache side-effect
 // stays shim-side).
-export { makeFetchLiveToolSurfaceRevision } from "./tool-manager/health-revision.js";
-export type { FetchLiveToolSurfaceRevisionOptions } from "./tool-manager/health-revision.js";
+export { makeFetchLiveToolSurfaceRevision } from "./tool-manager/catalog/health-revision.js";
+export type { FetchLiveToolSurfaceRevisionOptions } from "./tool-manager/catalog/health-revision.js";
 
 // idea-353 — queue wake/stall reconciliation primitives.
-export { ClaimableDigestTracker } from "./tool-manager/claimable-digest-tracker.js";
+export { ClaimableDigestTracker } from "./tool-manager/work-protocol/claimable-digest-tracker.js";
 export type {
   ClaimableDigestInput,
   ClaimableDigestDecision,
-} from "./tool-manager/claimable-digest-tracker.js";
-export { WorkLeaseTracker } from "./tool-manager/work-lease-tracker.js";
-export type { StallPrompt } from "./tool-manager/work-lease-tracker.js";
+} from "./tool-manager/work-protocol/claimable-digest-tracker.js";
+export { WorkLeaseTracker } from "./tool-manager/work-protocol/work-lease-tracker.js";
+export type { StallPrompt } from "./tool-manager/work-protocol/work-lease-tracker.js";
 
 // ── Cross-cutting primitives (root) ─────────────────────────────────
 

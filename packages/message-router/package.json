@@ -17,9 +17,6 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "peerDependencies": {
-    "@apnex/network-adapter": "*"
-  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0",
