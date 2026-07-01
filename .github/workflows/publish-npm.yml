@@ -59,16 +59,25 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           scope: '@apnex'
 
-      # Scoped install — the closed set of @apnex/* the family needs (mirrors
-      # test.yml). --ignore-scripts: repo-event-bridge/storage-provider carry
-      # prepare:tsc hooks that would fire before their deps exist.
+      # Scoped install — MUST mirror test.yml's proven-working list exactly.
+      # --ignore-scripts: repo-event-bridge/storage-provider carry prepare:tsc
+      # hooks that would fire before their deps exist (calibration #62). The
+      # list must include storage-provider (+ opencode) even though they are
+      # NOT published here: npm only symlinks NAMED workspaces, and the
+      # network-adapter ↔ message-router cyclic tsc build needs every @apnex/*
+      # workspace linked to resolve its module graph. Omitting storage-provider
+      # broke the cyclic build in CI (dry-run run #28554852955: network-adapter
+      # tsc "Cannot find module '@apnex/message-router'"). The publish step
+      # still ships only the explicit list in publish-packages.sh.
       - name: Install workspaces (scoped)
         run: |
           npm install --no-audit --no-fund --ignore-scripts \
             --workspace=@apnex/cognitive-layer \
             --workspace=@apnex/message-router \
             --workspace=@apnex/network-adapter \
+            --workspace=@apnex/storage-provider \
             --workspace=@apnex/claude-plugin \
+            --workspace=@apnex/opencode-plugin \
             --workspace=@apnex/pi-plugin
 
       # Sovereign packages must have dist/ before publish (main → dist/index.js)
