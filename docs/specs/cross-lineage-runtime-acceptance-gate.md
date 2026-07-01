@@ -1,6 +1,6 @@
 # Cross-Lineage Runtime Acceptance Gate (R3 contract)
 
-**Status:** v0.1 DRAFT · **Author:** lily (architect) · **Date:** 2026-06-21
+**Status:** v0.2 DRAFT (v0.2: + invariants E/F/G/H from the verifier cross-check, idea-338) · **Author:** lily (architect) · **Date:** 2026-06-21
 **Origin:** mission-92 dedup optimality audit §6 (the wrong-success-metric finding) + R3 (idea-333). The companion calibration (R5) is the *methodology*; this doc is the *mechanism* — the contract a harness proves.
 **Relationship to construction:** this spec defines the CONTRACT (the invariants that must be proven). It does NOT prescribe the harness CONSTRUCTION — fan-out shape, fixtures, runtime-driver are the engineer's sovereign design (tele-3). The self-test (§5) measures construction quality so that sovereignty is safe.
 **Tele anchor:** tele-8/tele-9 (gated recursive integrity + chaos/deployment-validated integrity) extended across a lineage boundary; tele-4 (zero-loss / no silent failure — a silent-degrade is a tele-4 breach); tele-2 (isomorphic spec — contract must equal lived reality); tele-6 (frictionless cross-lineage collaboration).
@@ -42,6 +42,18 @@ Each invariant is anchored to a real defect it would have caught — the gate is
 ### D — Read fidelity
 - **D1** The role's contracted READ surface works across every entity kind it is granted (for a verifier: broad read). Flag any kind that errors / 403s / returns falsely-empty.
 
+### E — Attribution-on-write *(added v0.2, verifier cross-check idea-338)*
+- **E1** An entity a role creates is stamped with THAT role's identity (createdBy / authorRole = the actual caller role + agentId), never silently coerced to system/architect/engineer. *(bug-169 create_message — FIXED; bug-168 create_idea still stamps createdBy=system/hub-system — open.)*
+
+### F — Directed-resource discovery
+- **F1** A role can DISCOVER its own directed resources via the list/query surface — e.g. `list_threads` by `recipientAgentId` / `currentTurnAgentId` surfaces a verifier-directed active thread, not only get-by-known-ID. *(bug-170 — participants[]+delivery fixed; the list_threads filter still misses verifier-directed threads.)*
+
+### G — Read-bounded backpressure
+- **G1** A broad/large read by the role applies bounded per-call backpressure (pagination/limits) and never disconnects or rate-limits the transport out from under the session. *(bug-171.)*
+
+### H — Write-scope determinism
+- **H1** Every write/mutation surface has a DETERMINISTIC, contract-stated authorization for the role (cleanly allowed or denied — no ambiguity). *(bug-172 update_bug verifier mutation authority is ambiguous.)*
+
 ## 4. Evidence tiers
 
 - **Dispositive:** the relevant invariant reproduced against the **real consumer runtime** — the live cross-lineage host (v1) or a containerised equivalent of it (durable). For B/C invariants this means the actual OpenCode/Bun render + the live Hub policy path, not in-process mocks.
@@ -60,7 +72,8 @@ The harness MUST include a self-test: seed a KNOWN break for at least one invari
 ## 7. v1 vs durable
 
 - **v1 (now):** Steve-as-live-leg + this contract run as a cutover/republish checklist. Every current invariant maps to a filed bug (161/163/164/165 + Rung-0 + R1), so v1 is "prove each of these against Steve's host before the next cutover".
-- **Durable:** an automated runtime harness (OpenCode/Bun in CI) that proves A–D + self-test on every bundle republish — so the gate runs without a human in the loop. Likely its own mission (idea-333 → Design).
+- **Durable:** an automated runtime harness (OpenCode/Bun in CI) that proves A–H + self-test on every bundle republish — so the gate runs without a human in the loop. Likely its own mission (idea-333 → Design).
+- **Harness requirements (verifier ask, idea-338):** the harness MUST run against ≥1 **real non-Claude host** (OpenCode/Bun) — that is the entire point of the contract — and it MUST retain **regression fixtures for every bug a cutover surfaced** (esp. bug-168 + bug-170 after greg's Hub-tail fixes) so a verified close can never silently regress.
 
 ---
 
