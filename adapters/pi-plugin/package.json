@@ -5,6 +5,14 @@
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "dist/index.js"
+    ]
+  },
   "files": [
     "dist/",
     "src/",
@@ -19,14 +27,18 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@apnex/network-adapter": "*",
-    "typebox": "^1.1.38"
+    "@apnex/network-adapter": "*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.3",
     "@types/node": "^22.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
+    "typebox": "^1.1.38",
     "vitest": "^4.1.4"
   }
 }
