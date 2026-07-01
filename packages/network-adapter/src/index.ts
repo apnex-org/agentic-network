@@ -164,6 +164,17 @@ export type {
   IToolManager,
 } from "./tool-manager/contracts.js";
 
+// Slice D (pi): the transport-neutral dispatch authority + its dependency
+// context, exported through the facade so a NATIVE host binding (pi's
+// tool-bridge) consumes the SAME per-call behavior wrapper the MCP CallTool
+// handler uses — without importing an MCP server. This is the concrete payoff of
+// the Slice-B extraction: one dispatch authority, many last-mile bindings.
+export { runToolDispatch } from "./tool-manager/dispatch/dispatch.js";
+export type {
+  ToolDispatchContext,
+  McpToolCallResult,
+} from "./tool-manager/dispatch/dispatch.js";
+
 // Slice C: dispatcher is the orchestrator (binding assembly); dispatch authority
 // + OIS policy live under dispatch/; cache/reconcile/health under catalog/.
 export {

@@ -208,6 +208,26 @@ export interface SharedDispatcherOptions {
    * Omit to disable polling (push-only mode).
    */
   pollBackstop?: Omit<PollBackstopOptions, "onPolledMessage">;
+
+  /**
+   * Slice D (pi native binding) — external idle probe. A NATIVE host (pi) drives
+   * tool calls through `runToolDispatch` directly, NOT through this dispatcher's
+   * MCP `CallTool` handler, so the internal `activeCallCount` never sees them.
+   * Supply the host's own idle signal (e.g. pi's `ctx.isIdle()`) and the
+   * wake/stall reconcile gates on THAT instead of the (always-zero) internal
+   * counter. When omitted, the internal `activeCallCount` is authoritative
+   * (MCP hosts — unchanged).
+   */
+  externalIdle?: () => boolean;
+
+  /**
+   * Slice D (pi native binding) — shared WorkLeaseTracker. A native host's
+   * `ToolDispatchContext.workLeases` must be the SAME tracker the reconcile
+   * reads for stall-prompts. Inject it here so the native binding's
+   * `workLeases.observe(...)` populates the tracker the heartbeat tick consumes.
+   * When omitted, the dispatcher constructs its own (MCP hosts — unchanged).
+   */
+  sharedWorkLeases?: WorkLeaseTracker;
 }
 
 export interface SharedDispatcher {
@@ -268,6 +288,14 @@ export interface SharedDispatcher {
   getActiveCallCount: () => number;
   /** idea-353 W1 idle-gate convenience: `getActiveCallCount() === 0`. */
   isIdle: () => boolean;
+
+  /**
+   * Slice D (pi native binding) — the WorkLeaseTracker the reconcile reads. A
+   * native host builds its `ToolDispatchContext.workLeases` from THIS instance
+   * so its `runToolDispatch` lease observations feed the stall-prompt path.
+   * (Same object as `opts.sharedWorkLeases` when injected.)
+   */
+  workLeases: WorkLeaseTracker;
 }
 
 // M-Tool-Manager Slice B: the pure OIS tool-call policy helpers
@@ -458,7 +486,9 @@ export function createSharedDispatcher(
   // persist ACROSS ticks — the level-triggered, ID-keyed dedup state must survive
   // tick-to-tick or every tick re-emits (digest spam).
   const claimableDigest = new ClaimableDigestTracker();
-  const workLeases = new WorkLeaseTracker();
+  // Slice D: use the injected tracker when a native binding shares one (so its
+  // runToolDispatch observations land where the reconcile reads); else own it.
+  const workLeases = opts.sharedWorkLeases ?? new WorkLeaseTracker();
   let wakeStallInFlight = false;
 
   // The reconcile body. Drives W1 (inbound claimable digest), W2 (outbound
@@ -488,7 +518,10 @@ export function createSharedDispatcher(
 
     wakeStallInFlight = true;
     try {
-      const idle = activeCallCount === 0;
+      // Slice D: a native host (pi) supplies its own idle probe because its tool
+      // calls bypass this dispatcher's CallTool handler (so activeCallCount is
+      // always 0 for it). MCP hosts leave externalIdle undefined → counter wins.
+      const idle = opts.externalIdle ? opts.externalIdle() : activeCallCount === 0;
       const nowMs = Date.now();
       let claimableCount = 0;
 
@@ -834,6 +867,7 @@ export function createSharedDispatcher(
     ackMessage,
     getActiveCallCount: () => activeCallCount,
     isIdle: () => activeCallCount === 0,
+    workLeases,
   };
 }
 
