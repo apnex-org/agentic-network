@@ -33,6 +33,7 @@ import {
   loadConfig,
   readRequiredAgentName,
   readPackageVersion,
+  readBuildInfo,
   createFileLogger,
   appendNotification,
   buildPendingTaskNotification,
@@ -58,11 +59,11 @@ const PI_PLUGIN_PKG_VERSION = readPackageVersion(
   "unknown",
 );
 let NETWORK_ADAPTER_PKG_VERSION = PI_PLUGIN_PKG_VERSION;
+const { createRequire } = await import("node:module");
+const __require = createRequire(import.meta.url);
 try {
-  const { createRequire } = await import("node:module");
-  const req = createRequire(import.meta.url);
   NETWORK_ADAPTER_PKG_VERSION = readPackageVersion(
-    req.resolve("@apnex/network-adapter/package.json"),
+    __require.resolve("@apnex/network-adapter/package.json"),
     PI_PLUGIN_PKG_VERSION,
   );
 } catch {
@@ -70,10 +71,23 @@ try {
 }
 const PROXY_VERSION = PI_PLUGIN_PKG_VERSION;
 const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
-// pi ships node_modules-resolvable deps; build-identity via write-build-info.js
-// (prebuild) if present, else UNKNOWN. Kept simple — no bundle inlining (pi is
-// jiti/tsx-loaded from source or dist).
-const BUILD_INFO: BuildInfo = UNKNOWN_BUILD_INFO;
+// Build identity: write-build-info.js (prebuild) emits dist/build-info.json for
+// BOTH this shim and @apnex/network-adapter. Read the shim's for proxy* and the
+// resolvable kernel's for sdk* (mirrors the claude-plugin pattern). Falls back
+// to UNKNOWN on the dev/tsx path where no dist/build-info.json exists — keeps the
+// handshake honest (no phantom sha; bug-183 class). __shimDir = dist/ at runtime.
+const PROXY_BUILD_INFO: BuildInfo = readBuildInfo(
+  resolve(__shimDir, "build-info.json"),
+);
+const SDK_BUILD_INFO: BuildInfo = (() => {
+  try {
+    return readBuildInfo(
+      __require.resolve("@apnex/network-adapter/dist/build-info.json"),
+    );
+  } catch {
+    return UNKNOWN_BUILD_INFO;
+  }
+})();
 
 // ── Module state ─────────────────────────────────────────────────────
 let __fileLog: FileLogger | null = null;
@@ -197,10 +211,10 @@ async function connectAndSeed(
         proxyVersion: PROXY_VERSION,
         transport: "pi-native",
         sdkVersion: SDK_VERSION,
-        proxyCommitSha: BUILD_INFO.commitSha,
-        proxyDirty: BUILD_INFO.dirty,
-        sdkCommitSha: BUILD_INFO.commitSha,
-        sdkDirty: BUILD_INFO.dirty,
+        proxyCommitSha: PROXY_BUILD_INFO.commitSha,
+        proxyDirty: PROXY_BUILD_INFO.dirty,
+        sdkCommitSha: SDK_BUILD_INFO.commitSha,
+        sdkDirty: SDK_BUILD_INFO.dirty,
         getClientInfo: () => ({
           name: "pi",
           version: process.env.PI_VERSION ?? "unknown",

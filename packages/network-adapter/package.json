@@ -1,6 +1,6 @@
 {
   "name": "@apnex/network-adapter",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Universal MCP Network Adapter — L4/L7 transport for OIS agentic network",
   "type": "module",
   "main": "dist/index.js",

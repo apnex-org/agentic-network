@@ -124,6 +124,7 @@ jobs:
           - packages/repo-event-bridge
           - adapters/claude-plugin
           - adapters/opencode-plugin
+          - adapters/pi-plugin
     name: vitest (${{ matrix.package }})
     steps:
       - uses: actions/checkout@v4
@@ -150,7 +151,8 @@ jobs:
             --workspace=@apnex/network-adapter \
             --workspace=@apnex/storage-provider \
             --workspace=@apnex/claude-plugin \
-            --workspace=@apnex/opencode-plugin
+            --workspace=@apnex/opencode-plugin \
+            --workspace=@apnex/pi-plugin
       # The sovereign packages must be built (dist/) before a cell's
       # vitest can resolve `@apnex/*` (main → dist/index.js).
       # network-adapter ↔ message-router form an import cycle, broken via

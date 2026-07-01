@@ -42,14 +42,21 @@ cd "$REPO_ROOT"
 #   2. message-router   (peerDep on @apnex/network-adapter; type-only via import type)
 #   3. network-adapter  (deps on cognitive-layer + message-router)
 #   4. claude-plugin    (deps on cognitive-layer + message-router + network-adapter)
+#   5. pi-plugin        (deps on network-adapter; M-Shim-Distribution) — after net-adapter
 #
-# storage-provider + repo-event-bridge: workspace-only (private; not published)
-# opencode-plugin: stub-only (private; not published this mission)
+# storage-provider + repo-event-bridge: workspace-only (not for the registry)
+# opencode-plugin: still on the github: channel — its npm cutover is deferred to
+#   the claude/opencode refactor mission (m-shim-distribution-design.md §7).
+# NOTE: these are NOT marked `private:true`, so a blanket `npm publish --workspaces`
+#   would wrongly attempt them — that is exactly why this script publishes an
+#   EXPLICIT list (+ hoists version-rewrite, which `npm publish --workspace=X`
+#   skips per calibration #35).
 PACKAGES=(
   "@apnex/cognitive-layer"
   "@apnex/message-router"
   "@apnex/network-adapter"
   "@apnex/claude-plugin"
+  "@apnex/pi-plugin"
 )
 
 # Pre-flight: verify NPM_TOKEN sourced (skip in dry-run; npm publish --dry-run doesn't auth)
