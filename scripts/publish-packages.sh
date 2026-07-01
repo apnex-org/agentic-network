@@ -67,10 +67,15 @@ if [ -z "$DRY_RUN" ] && [ -z "${NPM_TOKEN:-}" ]; then
   exit 1
 fi
 
-# Pre-flight: verify .npmrc exists at repo root or claude-plugin dir
+# Pre-flight: verify a usable .npmrc exists. Local publishes keep one at the
+# repo root (or claude-plugin dir). In CI, actions/setup-node (with registry-url)
+# writes an .npmrc wired to NODE_AUTH_TOKEN and points npm at it via
+# NPM_CONFIG_USERCONFIG — so honour that path too, otherwise the real (non-dry)
+# publish false-fails the preflight even though `npm publish` IS authenticated
+# (observed: publish run #28555177746).
 NPMRC_FOUND=""
-for npmrc in "$REPO_ROOT/.npmrc" "$REPO_ROOT/adapters/claude-plugin/.npmrc"; do
-  if [ -f "$npmrc" ]; then
+for npmrc in "${NPM_CONFIG_USERCONFIG:-}" "$REPO_ROOT/.npmrc" "$REPO_ROOT/adapters/claude-plugin/.npmrc" "${HOME:-}/.npmrc"; do
+  if [ -n "$npmrc" ] && [ -f "$npmrc" ]; then
     NPMRC_FOUND="$npmrc"
     break
   fi
