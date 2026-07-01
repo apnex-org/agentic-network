@@ -3851,6 +3851,65 @@ calibrations:
 
 
 
+  - id: 86
+    class: methodology
+    title: "COMMIT-REVEAL must hash the EXACT published bytes, not a transient in-memory string — content-hash the artifact you will publish (write-to-disk then sha256(file)) / pin the reveal as a git-blob at commit; a re-serialization between hash-input and published-output silently voids the seal while leaving independence intact"
+    origin: cdacc-run-1 (run-672bd0f)
+    surfaced_at: CDACC run-1 (run-672bd0f) spec-altitude seal 2026-06-20 — the spec reveal failed the holder's verifyReveal — committed 0ed94c62 ≠ computeCommitment(verdictVector,nonce)=6db1dc28 ≠ sha256(reveal-file)=2163eee8 — because the reveal hashed a transient in-memory trim of the verdict-vector, then published a slightly-different trim; the exact committed preimage was never persisted and proved unrecoverable (saved V / native fan-out result / whole-object / whole-file / all field-projections exhausted)
+    status: open
+    closure_mechanism: |
+      Pattern signature: a commit-reveal (or any content-hash) scheme hashes
+      an EPHEMERAL in-memory value at commit time, then re-derives or
+      re-serializes the artifact for publication; the two byte-strings differ,
+      so the published reveal does not open its own commitment. The
+      independence the seal protects can still hold by an independent
+      mechanism (run-1: git-timestamps proved no-peek both directions —
+      Director-ruled provenance-acceptance, path b), but the cryptographic
+      BINDING is void. Discipline: hash the EXACT bytes you will publish —
+      write the (lean) artifact to disk, sha256(file), commit that; or pin the
+      reveal as a git-blob at commit time. Promote the git-timestamp
+      PROVENANCE seal to a first-class independence mechanism alongside the
+      cryptographic one. OPEN until the hash-then-publish fix ships to
+      scripts/cdacc/holder/gate-logic.js + the fan-out scripts (run-2
+      hardening).
+    cross_refs:
+      - cdacc-run-1 (run-672bd0f)
+      - docs/cdacc/run-672bd0f/drift-map.md §1.1 + §7.1
+      - docs/methodology/cdacc-dual-altitude-conformance-council.md (commit-reveal seal)
+      - thread-664 (council; Director-ruled provenance acceptance)
+    tele_alignment:
+      - tele-8
+      - tele-1
+
+  - id: 87
+    class: methodology
+    title: "PRECISION-TRUSTWORTHY is not COMPLETE — an audit/conformance instrument that resists over-claim (clean precision) is NOT thereby trustworthy on coverage: absence of a flag is not conformance evidence until recall is independently measured (canary plants BOTH sides). Trust the flags, never the silence"
+    origin: cdacc-run-1 (run-672bd0f)
+    surfaced_at: CDACC run-1 (run-672bd0f) canary scorecard 2026-06-20 — both altitudes scored 0/27 over-claims (precision clean = the dispositive trust number) but the code fan-out found 0/6 reproduced-real planted drifts (all in surfaces it never swept — boot-path substrate.list-raw reapers, repo filter renameMap gaps, CAS read-modify-write-off-raw-envelope) and the spec-real plant set was n=1 → recall broken/unfalsifiable
+    status: open
+    closure_mechanism: |
+      Pattern signature: an instrument (or a green test-suite, or a review
+      pass) demonstrates it does not FALSELY flag (precision) and the observer
+      over-reads that as "the surface is clean." But recall — does it flag the
+      REAL defects that exist? — is a SEPARATE measurement requiring
+      planted-ground-truth (canary). Run-1 proved precision sound and recall
+      blind; the trust contract is therefore asymmetric — trust the FLAGS,
+      never the SILENCE. Closure = run-2 with (a) recall-surface expansion
+      (boot-path sweeps + every filter key vs SUBSTRATE_FILTERABLE_KEYS /
+      renameMap + CAS decode-before-transform) and (b) a richer spec-real
+      plant set (n>=3-4, both altitudes); gate the instrument on recall from
+      run-2 (diagnostic-only at run-1). Sibling of #79 (faithful-harness) +
+      #83 (deep-adversarial-audit) as the precision/recall disciplines of
+      verification.
+    cross_refs:
+      - cdacc-run-1 (run-672bd0f)
+      - docs/cdacc/run-672bd0f/drift-map.md §2 + §7.2 + §7.3
+      - "#79 (false-green-at-scale; the precision/fidelity sibling)"
+      - "#83 (deep-adversarial-audit; the recall-discipline sibling)"
+    tele_alignment:
+      - tele-8
+      - tele-9
+
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
 #   title                       string; human-readable pattern name
