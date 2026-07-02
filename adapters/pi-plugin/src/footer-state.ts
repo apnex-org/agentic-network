@@ -26,6 +26,44 @@ import type { SessionState } from "@apnex/network-adapter";
 export const LLM_ERROR_WINDOW_MS = 5 * 60_000;
 
 /**
+ * Freshness SLO for the PULL-fed cells (peers + authoritative S4) — spec §6.
+ * A pull result older than this renders stale-marked (spec §9): the data is not
+ * red-alerted and never masquerades as fresh (tele-1). >60s OR one failed refresh
+ * → stale-notice (§6 SLO).
+ */
+export const PULL_STALE_AFTER_MS = 60_000;
+
+/**
+ * A single peer's health, projected from get_agents livenessState (spec §8).
+ * `down` = anything not `online` (degraded/unresponsive/offline) — the
+ * exception-biased peers cell names it; `online` peers collapse to a dot count.
+ */
+export interface PeerHealth {
+  name: string;
+  livenessState: string;
+  down: boolean;
+}
+
+/**
+ * The PULL-fed swarm view (spec §8 peers + §10/§11 authoritative S4), written
+ * ONLY by the Tier-C heartbeat poll (footer-poll.ts), read ONLY by render. Null
+ * before the first successful poll = honest cold-start unknown (renders `?` under
+ * the §7 honesty cascade, never a fabricated `◉◉◉` / zero).
+ */
+export interface SwarmPull {
+  /** env=prod peers (catch #2 filtered), most-recent projection. */
+  peers: PeerHealth[];
+  /**
+   * Authoritative role-scoped S4 count (spec §10/§11/§12 catch#1) — sums ONLY
+   * the caller's role-scoped actionable surface, NEVER totalPending. Retires the
+   * push-only ~tilde approximation once present.
+   */
+  s4Authoritative: number;
+  /** Epoch-ms of this successful pull (freshness clock; drives stale-marking). */
+  fetchedAtMs: number;
+}
+
+/**
  * Live footer state — mutated ONLY by push-event observers, read ONLY by render.
  * All fields have honest "unknown" defaults so a cold footer never fabricates.
  */
@@ -61,6 +99,14 @@ export interface FooterState {
    * today (spec §5a / catch #3).
    */
   llmErrorTimestamps: number[];
+
+  /**
+   * PULL-fed swarm view (peers + authoritative S4) — slice (b). Null until the
+   * first successful Tier-C poll. When present + fresh, the authoritative S4
+   * count RETIRES the push-only ~tilde (render prefers swarm.s4Authoritative over
+   * s4ApproxCount). Written only by observeSwarmPull; read only by render.
+   */
+  swarm: SwarmPull | null;
 }
 
 /** Fresh state with honest unknowns. */
@@ -73,6 +119,7 @@ export function createFooterState(name = "", role = ""): FooterState {
     hubLastChangeMs: null,
     s4ApproxCount: 0,
     llmErrorTimestamps: [],
+    swarm: null,
   };
 }
 
@@ -128,4 +175,30 @@ export function rollOffLlmErrors(s: FooterState, nowMs: number): void {
 export function llmErrorCount(s: FooterState, nowMs: number): number {
   rollOffLlmErrors(s, nowMs);
   return s.llmErrorTimestamps.length;
+}
+
+// ── PULL observer (slice b — the ONLY writer of s.swarm) ─────────────
+
+/**
+ * Tier-C heartbeat poll → record the fresh swarm view (spec §8 peers + §10/§11
+ * authoritative S4). Observation only (read tools: get_agents + role-scoped
+ * actionable reads); never mutates the Hub (gate 8). Replaces the whole SwarmPull
+ * atomically so render never sees a half-updated view.
+ */
+export function observeSwarmPull(
+  s: FooterState,
+  peers: PeerHealth[],
+  s4Authoritative: number,
+  nowMs: number,
+): void {
+  s.swarm = { peers, s4Authoritative, fetchedAtMs: nowMs };
+}
+
+/**
+ * Is the pulled swarm view fresh enough to trust as authoritative (spec §6 SLO)?
+ * A stale (or absent) pull must NOT present as nominal — render falls back to the
+ * honesty cascade (peers stale-marked; S4 reverts to the ~tilde approx or `?`).
+ */
+export function isSwarmFresh(s: FooterState, nowMs: number): boolean {
+  return s.swarm !== null && nowMs - s.swarm.fetchedAtMs <= PULL_STALE_AFTER_MS;
 }
