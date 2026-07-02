@@ -156,4 +156,17 @@ export class WorkLeaseTracker {
   size(): number {
     return this.leases.size;
   }
+
+  /**
+   * Read-only snapshot of currently-held leases (mission-99 footer work cell).
+   * Returns a fresh array of plain `{ workId, expiresAtMs }` — the footer reads
+   * this locally (NO Hub poll; the agent's own lease is held client-side post-
+   * claim, spec §4). Ordered most-recently-opened first so a single-cell footer
+   * shows the freshest lease. Pure read — never mutates tracker state.
+   */
+  snapshot(): ReadonlyArray<{ workId: string; expiresAtMs: number }> {
+    return [...this.leases.values()]
+      .sort((a, b) => b.windowStartMs - a.windowStartMs)
+      .map((l) => ({ workId: l.workId, expiresAtMs: l.expiresAtMs }));
+  }
 }
