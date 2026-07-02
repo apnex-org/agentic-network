@@ -57,6 +57,40 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const MIN_HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_BACKOFF_MS = 5_000;
 
+/**
+ * mission-99 slice (c) / F2 — ±20% per-agent jitter fraction on the periodic
+ * timers (spec docs/designs/m-swarm-footer/ratified-spec.md §6 anti-stampede).
+ *
+ * WHY: every fleet agent's poll + heartbeat timers otherwise fire on the SAME
+ * fixed cadence. If a shared trigger aligns their phases (a fleet-wide restart,
+ * a Hub redeploy that reconnects everyone at once), fixed `setInterval` produces
+ * a SYNCHRONIZED poll burst — N agents hammering the Hub on the same tick. A
+ * per-fire ±20% jitter desynchronizes the phases so the load spreads across the
+ * window instead of spiking. The AVERAGE cadence is preserved (jitter is
+ * symmetric about 1.0), so the mission-75 TTL margin + the anti-pattern cadence
+ * guard both still hold.
+ *
+ * Implemented by rescheduling each cycle with a freshly-jittered delay (a self-
+ * rescheduling setTimeout loop) rather than a fixed setInterval — so the jitter
+ * is re-rolled every fire, not frozen at start.
+ */
+export const JITTER_FRACTION = 0.2; // ±20%
+
+/**
+ * Apply ±`fraction` symmetric jitter to `baseMs`. `rand` is an injectable
+ * [0,1) source (default Math.random) for deterministic tests. Result is
+ * clamped to ≥ 1ms so a timer always makes forward progress.
+ */
+export function jitter(
+  baseMs: number,
+  fraction = JITTER_FRACTION,
+  rand: () => number = Math.random,
+): number {
+  // rand() ∈ [0,1) → factor ∈ [1-fraction, 1+fraction).
+  const factor = 1 + (rand() * 2 - 1) * fraction;
+  return Math.max(1, Math.round(baseMs * factor));
+}
+
 export interface PollBackstopOptions {
   /**
    * Role this adapter polls for (e.g. "engineer", "architect"). Becomes
@@ -147,6 +181,14 @@ export interface PollBackstopOptions {
    * a throw is caught + logged so it never disturbs the heartbeat loop.
    */
   onHeartbeatTick?: () => void | Promise<void>;
+
+  /**
+   * mission-99 slice (c) / F2 — injectable [0,1) RNG for the ±20% per-agent
+   * timer jitter (spec §6 anti-stampede). Defaults to Math.random. Tests inject
+   * a deterministic source to assert desynchronization under a multi-agent fake
+   * clock (spec §14 gate 7). Production leaves it unset.
+   */
+  random?: () => number;
 }
 
 interface CursorFile {
@@ -272,7 +314,7 @@ function parseListMessagesResult(raw: unknown): ListMessagesBody | null {
  */
 export class PollBackstop {
   private readonly opts: Required<
-    Omit<PollBackstopOptions, "cursorFile" | "heartbeatIntervalMs" | "heartbeatEnabled" | "firstTimerEnabled" | "onPolledMessage" | "onHeartbeatTick">
+    Omit<PollBackstopOptions, "cursorFile" | "heartbeatIntervalMs" | "heartbeatEnabled" | "firstTimerEnabled" | "onPolledMessage" | "onHeartbeatTick" | "random">
   > & {
     cursorFile?: string;
     heartbeatIntervalMs: number;
@@ -280,9 +322,14 @@ export class PollBackstop {
     firstTimerEnabled: boolean;
     onPolledMessage: (event: AgentEvent) => void;
     onHeartbeatTick: () => void | Promise<void>;
+    random: () => number;
   };
   private timer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  // mission-99 F2: self-rescheduling loops set these true so a late-returning
+  // tick doesn't re-arm after stop() (the stop-race guard for setTimeout loops).
+  private pollRunning = false;
+  private heartbeatRunning = false;
   private resolvedCursorFile: string | null = null;
   private inFlight = false;
   private heartbeatInFlight = false;
@@ -332,7 +379,18 @@ export class PollBackstop {
       heartbeatIntervalMs,
       heartbeatEnabled,
       firstTimerEnabled,
+      random: opts.random ?? Math.random,
     };
+  }
+
+  /** Next poll delay with ±20% jitter (mission-99 F2, spec §6). */
+  private nextPollDelayMs(): number {
+    return jitter(this.opts.cadenceSeconds * 1000, JITTER_FRACTION, this.opts.random);
+  }
+
+  /** Next heartbeat delay with ±20% jitter (mission-99 F2, spec §6). */
+  private nextHeartbeatDelayMs(): number {
+    return jitter(this.opts.heartbeatIntervalMs, JITTER_FRACTION, this.opts.random);
   }
 
   /** Start the periodic poll + heartbeat (if enabled). Idempotent. */
@@ -341,40 +399,63 @@ export class PollBackstop {
     // bug-53: previously checked only `this.timer`; under heartbeat-only
     // mode (firstTimerEnabled=false) timer is null but heartbeatTimer may
     // be set — guard against duplicate-start re-scheduling the heartbeat.
-    if (this.timer || this.heartbeatTimer) return;
-    const cadenceMs = this.opts.cadenceSeconds * 1000;
+    if (this.pollRunning || this.heartbeatRunning) return;
     this.opts.log(
-      `[poll-backstop] starting (role=${this.currentRole}, cadenceS=${this.opts.firstTimerEnabled ? this.opts.cadenceSeconds : "disabled"}, heartbeatMs=${this.opts.heartbeatEnabled ? this.opts.heartbeatIntervalMs : "disabled"})`,
+      `[poll-backstop] starting (role=${this.currentRole}, cadenceS=${this.opts.firstTimerEnabled ? this.opts.cadenceSeconds : "disabled"}, heartbeatMs=${this.opts.heartbeatEnabled ? this.opts.heartbeatIntervalMs : "disabled"}, jitter=±${JITTER_FRACTION * 100}%)`,
     );
+    // mission-99 F2: self-rescheduling setTimeout loops (NOT setInterval) so each
+    // cycle re-rolls a fresh ±20% jitter (spec §6 anti-stampede). The average
+    // cadence is preserved; the phases desynchronize across the fleet so a
+    // synchronized restart/reconnect does not produce a poll BURST on one tick.
+    //
     // bug-53: skip first-timer scheduling when firstTimerEnabled === false
-    // (heartbeat-only hosts; current shim/opencode adapters use SSE for
-    // inline message delivery; first-timer Pull-mode wiring deferred).
+    // (heartbeat-only hosts use SSE for inline message delivery).
     if (this.opts.firstTimerEnabled) {
-      this.timer = setInterval(() => {
-        // Fire-and-forget; tick() handles its own errors.
-        void this.tick(getAgent);
-      }, cadenceMs);
-      if (this.timer.unref) this.timer.unref();
+      this.pollRunning = true;
+      this.schedulePoll(getAgent);
     }
-    // mission-75 v1.0 §3.3 — second timer for transport_heartbeat. Only
-    // started when heartbeatEnabled === true (TRANSPORT_HEARTBEAT_ENABLED
-    // env-disable path; tests opt-out).
+    // mission-75 v1.0 §3.3 — transport_heartbeat loop. Only started when
+    // heartbeatEnabled === true (TRANSPORT_HEARTBEAT_ENABLED env-disable path).
     if (this.opts.heartbeatEnabled) {
-      this.heartbeatTimer = setInterval(() => {
-        void this.tickHeartbeat(getAgent);
-      }, this.opts.heartbeatIntervalMs);
-      if (this.heartbeatTimer.unref) this.heartbeatTimer.unref();
+      this.heartbeatRunning = true;
+      this.scheduleHeartbeat(getAgent);
     }
+  }
+
+  /** Arm the next jittered poll tick (mission-99 F2 self-rescheduling loop). */
+  private schedulePoll(getAgent: () => IAgentClient | null): void {
+    if (!this.pollRunning) return;
+    this.timer = setTimeout(() => {
+      // Fire-and-forget; tick() handles its own errors. Reschedule AFTER the
+      // tick settles so a slow tick doesn't overlap its successor.
+      void this.tick(getAgent).finally(() => this.schedulePoll(getAgent));
+    }, this.nextPollDelayMs());
+    if (this.timer.unref) this.timer.unref();
+  }
+
+  /** Arm the next jittered heartbeat tick (mission-99 F2 self-rescheduling loop). */
+  private scheduleHeartbeat(getAgent: () => IAgentClient | null): void {
+    if (!this.heartbeatRunning) return;
+    this.heartbeatTimer = setTimeout(() => {
+      void this.tickHeartbeat(getAgent).finally(() =>
+        this.scheduleHeartbeat(getAgent),
+      );
+    }, this.nextHeartbeatDelayMs());
+    if (this.heartbeatTimer.unref) this.heartbeatTimer.unref();
   }
 
   /** Stop the periodic poll + heartbeat. Idempotent. */
   stop(): void {
+    // Clear the running flags FIRST so an in-flight tick's .finally() reschedule
+    // is a no-op (the stop-race guard for the self-rescheduling loops).
+    this.pollRunning = false;
+    this.heartbeatRunning = false;
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
     if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
+      clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
     this.opts.log("[poll-backstop] stopped");
