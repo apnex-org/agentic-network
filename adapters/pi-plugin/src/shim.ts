@@ -188,15 +188,7 @@ async function connectAndSeed(
   if (footer) {
     pi.on("message_end", (event) => {
       try {
-        const msg = (event as { message?: { stopReason?: string; errorMessage?: string } })
-          .message;
-        const sr = msg?.stopReason;
-        // pi core treats any stopReason other than stop/toolUse/aborted, or an
-        // errorMessage, as an error surface (mirrors core's own detection).
-        const isError =
-          (sr !== undefined && sr !== "stop" && sr !== "toolUse" && sr !== "aborted") ||
-          !!msg?.errorMessage;
-        if (isError) footer?.onLlmError();
+        if (isLlmErrorMessageEnd(event)) footer?.onLlmError();
       } catch {
         /* never disturb the turn loop */
       }
@@ -350,6 +342,25 @@ async function seedToolSurface(
 
 // ── Lifecycle entrypoints (called from index.ts factory) ─────────────
 
+/**
+ * spec §5a: classify a pi `message_end` event as an llm ERROR for the footer's
+ * coarse tally. DELIBERATELY NARROW — counts ONLY stopReason === "error".
+ *
+ * Non-error terminals (stop / toolUse / aborted / length / any other value) are
+ * NOT errors and must NOT increment (steve gate: over-reporting non-error
+ * states corrupts the llm-health signal). An `errorMessage` WITHOUT an error
+ * stopReason is likewise NOT counted — the tally is a coarse error-STATE signal
+ * keyed on the single extension-visible error discriminator (catch #3 /
+ * audit-6237: the auto_retry / willRetry signals are not on the extension
+ * surface).
+ *
+ * Pure + total (never throws) so the turn-loop hook can call it directly.
+ */
+export function isLlmErrorMessageEnd(event: unknown): boolean {
+  const msg = (event as { message?: { stopReason?: unknown } } | null | undefined)?.message;
+  return msg?.stopReason === "error";
+}
+
 export async function startSession(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -417,6 +428,7 @@ export async function shutdownSession(): Promise<void> {
 
 // Test-only surface.
 export const _testOnly = {
+  isLlmErrorMessageEnd,
   getHubAdapter: () => hubAdapter,
   getDispatcher: () => dispatcher,
   buildDispatchContext,

@@ -92,17 +92,23 @@ export function installFooter(opts: InstallFooterOpts): FooterController | null 
       };
       return {
         invalidate() {},
-        render(): string[] {
+        // gate 2: pi passes the available terminal width; each returned line's
+        // VISIBLE width MUST be ≤ width (docs/tui.md §Custom Footer). renderFooter
+        // ANSI-safe truncates both lines to width, preserving fixed height.
+        render(width: number): string[] {
           // PURE (gate 1): only local accessors + the pushed state. No Hub calls.
-          const [line1, line2] = renderFooter(theme as FooterTheme, {
-            state,
-            contextUsage: ctx.getContextUsage(),
-            gitBranch: null, // reserved (identity uses name·role; branch is fast-follow)
-            leases: leases.snapshot(),
-            nowMs: now(),
-          });
-          // Width-truncation is applied by the caller-side helper if needed; the
-          // renderer already budgets to 2 lines. Return exactly 2 (fixed height).
+          const [line1, line2] = renderFooter(
+            theme as FooterTheme,
+            {
+              state,
+              contextUsage: ctx.getContextUsage(),
+              gitBranch: null, // reserved (identity uses name·role; branch is fast-follow)
+              leases: leases.snapshot(),
+              nowMs: now(),
+            },
+            width,
+          );
+          // Exactly 2 lines (fixed height, spec §3), each ≤ width (gate 2).
           return [line1, line2];
         },
       };

@@ -17,7 +17,12 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { renderFooter, type FooterTheme } from "../src/footer.js";
+import {
+  renderFooter,
+  visibleWidth,
+  truncateToWidth,
+  type FooterTheme,
+} from "../src/footer.js";
 import {
   createFooterState,
   observeHubState,
@@ -28,6 +33,7 @@ import {
   type FooterState,
 } from "../src/footer-state.js";
 import { installFooter } from "../src/footer-install.js";
+import { isLlmErrorMessageEnd } from "../src/shim.js";
 import type { SessionState } from "@apnex/network-adapter";
 
 // A theme that STRIPS color (plain text) — lets us assert on the raw glyph+value,
@@ -37,7 +43,18 @@ const plainTheme: FooterTheme = { fg: (_k, s) => s };
 // A theme that TAGS color, so we can assert a cell is amber/red when it must be.
 const taggedTheme: FooterTheme = { fg: (k, s) => `<${k}>${s}</${k}>` };
 
+// A theme that emits REAL ANSI SGR escapes, so the width matrix proves the
+// truncation measures VISIBLE columns (not raw bytes) — the gate-2 hard point.
+const ansiTheme: FooterTheme = {
+  fg: (k, s) => {
+    const code = k === "error" ? 31 : k === "warning" ? 33 : k === "nominal" ? 32 : 90;
+    return `\x1b[${code}m${s}\x1b[0m`;
+  },
+};
+
 const T0 = 1_000_000_000_000;
+
+const WIDTH_MATRIX = [120, 100, 80, 64, 50] as const;
 
 function baseInputs(state: FooterState, over: Partial<Parameters<typeof renderFooter>[1]> = {}) {
   return {
@@ -79,6 +96,81 @@ describe("renderFooter — fixed height + structure (gate 2/3)", () => {
     expect(l1).toContain("llm");
     expect(l2).toContain("work");
     expect(l2).toContain("hub");
+  });
+});
+
+describe("ANSI-safe width helpers (gate 2)", () => {
+  it("visibleWidth ignores SGR escapes (measures display columns)", () => {
+    expect(visibleWidth("abc")).toBe(3);
+    expect(visibleWidth("\x1b[31mabc\x1b[0m")).toBe(3);
+    expect(visibleWidth("\x1b[90mx\x1b[0m\x1b[33my\x1b[0m")).toBe(2);
+    expect(visibleWidth("")).toBe(0);
+  });
+
+  it("truncateToWidth caps VISIBLE width (never raw byte length)", () => {
+    const colored = "\x1b[31mHELLO WORLD\x1b[0m"; // 11 visible, ~19 bytes
+    const out = truncateToWidth(colored, 5);
+    expect(visibleWidth(out)).toBeLessThanOrEqual(5);
+    expect(out).toContain("\u2026"); // ellipsis marks truncation
+  });
+
+  it("in-budget strings are returned unchanged; width≤0 → empty", () => {
+    expect(truncateToWidth("short", 20)).toBe("short");
+    expect(truncateToWidth("anything", 0)).toBe("");
+    expect(truncateToWidth("anything", -5)).toBe("");
+  });
+
+  it("truncation never leaks SGR state past the line (emits a reset)", () => {
+    const out = truncateToWidth("\x1b[31mAAAAAAAAAA\x1b[0m", 4);
+    expect(out.endsWith("\x1b[0m")).toBe(true); // trailing reset present
+  });
+});
+
+describe("renderFooter — width matrix (gate 2): every line ≤ width at 120/100/80/64/50", () => {
+  // A DELIBERATELY WIDE state: long id, live+freshness, ctx error, llm errors,
+  // needs-you count — the worst-case nominal that must still fit each column.
+  function wideInputs() {
+    const s = createFooterState("greg", "engineer");
+    observeHubState(s, "streaming", T0);
+    observeLlmError(s, T0);
+    observeLlmError(s, T0);
+    observeLlmError(s, T0);
+    observePendingActionItem(s);
+    observePendingActionItem(s);
+    return {
+      state: s,
+      contextUsage: { tokens: 184_000, contextWindow: 200_000, percent: 92 },
+      gitBranch: null,
+      leases: [{ workId: "work-bp-swarmfooterimpl1-spine", expiresAtMs: T0 + 9 * 60_000 + 15_000 }],
+      nowMs: T0 + 45_000,
+    };
+  }
+
+  for (const theme of [
+    ["plain", plainTheme] as const,
+    ["ansi", ansiTheme] as const,
+  ]) {
+    const [label, th] = theme;
+    it.each(WIDTH_MATRIX)(`${label} theme @ width %i — both lines fit`, (width) => {
+      const inp = wideInputs();
+      const [l1, l2] = renderFooter(th, inp, width);
+      expect(visibleWidth(l1)).toBeLessThanOrEqual(width);
+      expect(visibleWidth(l2)).toBeLessThanOrEqual(width);
+      // fixed height preserved even under truncation.
+      expect([l1, l2]).toHaveLength(2);
+    });
+  }
+
+  it("at a generous width (120) the wide state is NOT truncated (no ellipsis)", () => {
+    const [l1, l2] = renderFooter(plainTheme, wideInputs(), 120);
+    // The nominal 2-line footer fits comfortably in 120 (tele-12 budget).
+    expect(l1).not.toContain("\u2026");
+    expect(l2).not.toContain("\u2026");
+  });
+
+  it("omitting width → raw render (no truncation) for content assertions", () => {
+    const [l1] = renderFooter(plainTheme, wideInputs());
+    expect(l1).not.toContain("\u2026");
   });
 });
 
@@ -222,6 +314,33 @@ describe("llm cell — coarse tally, rolling window, decay (§5a)", () => {
   });
 });
 
+describe("llm error classification — ONLY stopReason==='error' (§5a, steve gate)", () => {
+  it("stopReason === 'error' → counted", () => {
+    expect(isLlmErrorMessageEnd({ message: { stopReason: "error" } })).toBe(true);
+  });
+
+  it.each(["stop", "toolUse", "aborted", "length", "maxTokens", "pause", "endTurn", "unknown"])(
+    "non-error stopReason '%s' → NOT counted (no over-report)",
+    (sr) => {
+      expect(isLlmErrorMessageEnd({ message: { stopReason: sr } })).toBe(false);
+    },
+  );
+
+  it("errorMessage WITHOUT an error stopReason → NOT counted", () => {
+    // The old impl over-reported this; the tally is keyed on stopReason only.
+    expect(isLlmErrorMessageEnd({ message: { stopReason: "stop", errorMessage: "boom" } })).toBe(false);
+    expect(isLlmErrorMessageEnd({ message: { errorMessage: "boom" } })).toBe(false);
+  });
+
+  it("missing message / missing stopReason / malformed → NOT counted (total, never throws)", () => {
+    expect(isLlmErrorMessageEnd({ message: {} })).toBe(false);
+    expect(isLlmErrorMessageEnd({})).toBe(false);
+    expect(isLlmErrorMessageEnd(null)).toBe(false);
+    expect(isLlmErrorMessageEnd(undefined)).toBe(false);
+    expect(isLlmErrorMessageEnd("garbage")).toBe(false);
+  });
+});
+
 describe("work cell — client-side lease (§4)", () => {
   it("no lease → dim `idle`", () => {
     const s = createFooterState("greg", "engineer");
@@ -284,7 +403,7 @@ describe("installFooter — TUI-only guard + read-only + no-timer (gates 0/8/9)"
   it("gate 1/8: the render factory reads only local accessors — NO Hub/mutating calls", () => {
     // Capture the factory pi is handed, invoke its render across a width matrix,
     // and assert getContextUsage/snapshot are the ONLY external reads (no Hub).
-    let factory: ((tui: unknown, theme: unknown) => { render: () => string[] }) | null = null;
+    let factory: ((tui: unknown, theme: unknown) => { render: (w: number) => string[] }) | null = null;
     const getContextUsage = vi.fn(() => ({ tokens: 1000, contextWindow: 2000, percent: 50 }));
     const snapshot = vi.fn(() => []);
     const ctx = {
@@ -296,11 +415,13 @@ describe("installFooter — TUI-only guard + read-only + no-timer (gates 0/8/9)"
     expect(ctrl).not.toBeNull();
     expect(factory).not.toBeNull();
     const tui = { requestRender: vi.fn() };
-    const comp = factory!(tui, plainTheme);
-    for (const width of [120, 100, 80, 64, 50]) {
-      void width;
-      const lines = comp.render();
+    const comp = factory!(tui, ansiTheme);
+    // gate 2: pass the REAL width to render(width) and prove each line fits.
+    for (const width of WIDTH_MATRIX) {
+      const lines = comp.render(width);
       expect(lines).toHaveLength(2);
+      expect(visibleWidth(lines[0])).toBeLessThanOrEqual(width);
+      expect(visibleWidth(lines[1])).toBeLessThanOrEqual(width);
     }
     // Only local reads happened — no network/hub client is even in scope.
     expect(getContextUsage).toHaveBeenCalled();
