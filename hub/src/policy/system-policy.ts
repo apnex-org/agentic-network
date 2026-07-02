@@ -236,7 +236,7 @@ export function registerSystemPolicy(router: PolicyRouter): void {
 
   router.register(
     "get_metrics",
-    "[Architect] Read-only snapshot of in-memory observability counters (Phase 2d CP1 taxonomy). " +
+    "[Architect|Verifier] Read-only snapshot of in-memory observability counters (Phase 2d CP1 taxonomy). " +
     "Default (no `bucket`) returns a compact `snapshot` object mapping every counter name to its integer count. " +
     "Pass `bucket: 'name'` to additionally get `recentDetails` (ring-buffer up to 32 entries per bucket) for that specific counter. " +
     "Counter taxonomy (CP1): `inv_th<N>.shadow_breach`, `inv_th25.near_miss`, `convergence_gate.rejected`, `convergence_gate.authority_rejected`, `create_thread.routing_mode_rejected`, `cascade_fail.{depth_exhausted,unknown_spec,execute_threw,dispatch_failed,audit_failed}`, `cascade.idempotent_skip`, `cascade.idempotent_update_skip`. " +

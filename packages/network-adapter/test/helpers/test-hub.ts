@@ -54,6 +54,11 @@ export interface TestHubOptions {
   orphanTtl?: number;
   autoStartTimers?: boolean;
   quiet?: boolean;
+  /**
+   * Bind address for the HTTP listener. Default 127.0.0.1 (test-local). The P1e-2
+   * standalone test-Hub passes 0.0.0.0 so a docker container can reach it on the VM.
+   */
+  bindAddress?: string;
   /** Production policies to attach. Default: [registerSessionPolicy]. */
   policies?: PolicyRegistrationFn[];
 }
@@ -361,7 +366,7 @@ export class TestHub {
       orphanTtl: options.orphanTtl ?? 60_000,
       autoStartTimers: options.autoStartTimers ?? false,
       quiet: options.quiet ?? true,
-      bindAddress: "127.0.0.1",
+      bindAddress: options.bindAddress ?? "127.0.0.1",
     };
 
     // HubNetworking signature (mission-56 W5): the legacy notificationStore
@@ -435,5 +440,23 @@ export class TestHub {
 
   clearToolErrors(): void {
     this.errorQueue.length = 0;
+  }
+
+  /**
+   * P1e-2 SILENT wedge — evict ALL sessions from the REAL HubNetworking `transports` map
+   * WITHOUT closing the SSE. The adapter's next session-requiring POST (get_task) then 400s
+   * (`transports.has(sessionId)` is false at hub-networking.ts:930) so its watchdog probe
+   * REJECTS, WHILE `sendKeepalive` keeps flowing (it iterates `servers` + `sseActive`, which
+   * we leave intact) — the keepalives-flowing-but-session-dead wedge that escalates via L1.5,
+   * NOT L1. (destroySession is WRONG here: it `await transport.close()`s -> the adapter's L1
+   * transport-watchdog detects the drop, testing the wrong layer.) Reaches a private field —
+   * TEST-only; p1e2-wedge-inject.test.ts asserts the eviction so a `transports` rename fails
+   * loudly. Returns the count evicted.
+   */
+  evictAllTransports(): number {
+    const transports = (this.hub as unknown as { transports: Map<string, unknown> }).transports;
+    const n = transports.size;
+    transports.clear();
+    return n;
   }
 }

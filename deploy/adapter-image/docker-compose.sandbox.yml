@@ -1,0 +1,50 @@
+# M-Real-CLI-Harness n2 — container-sandbox EXPOSURE-HARDENING override.
+#
+# Director decision (2026-06-30): the container sandbox IS the security boundary for the
+# unattended `--dangerously-skip-permissions` CLI (not an in-CLI allowlist). This layer BOUNDS
+# what the CLI can REACH. Layered over the real-CLI compose (n5 integrates the full image):
+#   docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d
+# With the channels-flag dropped (n2 determination), the ONLY remaining "dangerous" flag is
+# --dangerously-skip-permissions, and THIS spec is what bounds it. n6 certifies the bound is real.
+name: apnex-claude-adapter
+services:
+  claude-adapter:
+    # CAPS/PRIVILEGES: non-root, drop ALL Linux caps (add none), no privilege escalation.
+    user: "10001:10001"            # appuser (pilot); never root
+    cap_drop: ["ALL"]
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true                # read-only root FS — only the explicit writable mounts below
+    pids_limit: 512                # bound fork-bombs
+    # NO docker socket is ever mounted; privileged is never set. (Absence-by-default; do not add.)
+    # NETWORK: scoped to the test-Hub only (n4 is test-Hub-first) via a user-defined bridge — no
+    # broad egress. The architect creates `real-cli-net` like the pilot's p1e2-net.
+    networks:
+      - real-cli-net
+    # The ONLY writable surfaces (everything else is read-only root):
+    tmpfs:
+      - "/run:mode=1777"           # the wedged-restart sentinel tmpfs (pilot)
+      - "/tmp:mode=1777"           # claude scratch
+    volumes:
+      # /work — the host worktree: the ONLY host WRITE-surface for project files (rw, §9).
+      - type: bind
+        source: ${HOST_WORKTREE:?set to the host-created git worktree}
+        target: /work
+      # CLAUDE_CONFIG_DIR — host-mounted RW DIRECTORY (NOT a single-file bind): holds the n3
+      # pre-seed .claude.json + the §5 .credentials.json (the secret; file-mounted, NEVER baked,
+      # NOT env). claude reads AND writes here. CRITICAL (n3 + the read-only-root interaction):
+      # the OAuth refresh-token rotates ~hourly and claude persists it via write-temp+ATOMIC-RENAME
+      # — a SINGLE-FILE .credentials.json bind would break the rename (cross-mount), so the whole
+      # CLAUDE_CONFIG_DIR is a writable DIR mount. The refresh lands here -> persists to the host ->
+      # survives the supervisor's container restarts -> the long-lived engineer does NOT auth-expire.
+      - type: bind
+        source: ${HOST_CLAUDE_CONFIG_DIR:?host dir holding the pre-seed .claude.json + .credentials.json}
+        target: /home/appuser/.claude
+    secrets:
+      - hub_token                  # §5 read-only file-mounted (the Hub bearer; nothing in env)
+networks:
+  real-cli-net:
+    external: true
+secrets:
+  hub_token:
+    file: ${HOST_SECRETS_DIR:?set to the host secrets dir}/hub_token

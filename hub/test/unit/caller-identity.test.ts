@@ -18,7 +18,7 @@ describe("resolveCreatedBy", () => {
   });
 
   it("returns anonymous-<role> placeholder when role is set but no agent record exists", async () => {
-    const ctx = createTestContext();
+    const ctx = createTestContext(undefined, { skipRoleRegister: true }); // exercise the ctx.role fallback (unregistered session)
     ctx.role = "engineer";
     // No registerAgent call — session has role from ctx but no Agent record.
     const prov = await resolveCreatedBy(ctx);
@@ -26,21 +26,21 @@ describe("resolveCreatedBy", () => {
   });
 
   it("returns {role: system, agentId: hub-system} when ctx has no role (Hub-internal)", async () => {
-    const ctx = createTestContext();
+    const ctx = createTestContext(undefined, { skipRoleRegister: true });
     ctx.role = "unknown";
     const prov = await resolveCreatedBy(ctx);
     expect(prov).toEqual(HUB_SYSTEM_PROVENANCE);
   });
 
   it("returns system fallback when ctx.role is empty string", async () => {
-    const ctx = createTestContext();
+    const ctx = createTestContext(undefined, { skipRoleRegister: true });
     ctx.role = "";
     const prov = await resolveCreatedBy(ctx);
     expect(prov).toEqual(HUB_SYSTEM_PROVENANCE);
   });
 
   it("swallows registry errors — returns role-only placeholder instead of throwing", async () => {
-    const ctx = createTestContext();
+    const ctx = createTestContext(undefined, { skipRoleRegister: true });
     ctx.role = "engineer";
     // Monkey-patch registry to throw.
     (ctx.stores.engineerRegistry as any).getAgentForSession = async () => {
@@ -55,7 +55,7 @@ describe("resolveCreatedBy", () => {
   });
 
   it("propagates ctx.role verbatim (no enum lock)", async () => {
-    const ctx = createTestContext();
+    const ctx = createTestContext(undefined, { skipRoleRegister: true });
     ctx.role = "director"; // not in the default test fixture
     const prov = await resolveCreatedBy(ctx);
     expect(prov.role).toBe("director");

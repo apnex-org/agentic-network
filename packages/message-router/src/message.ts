@@ -16,7 +16,7 @@ import type {
   DrainedPendingAction,
   SessionState,
   SessionReconnectReason,
-} from "@apnex/network-adapter";
+} from "./adapter-events.js";
 
 export type MessageKind =
   | "notification.actionable"

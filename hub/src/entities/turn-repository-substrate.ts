@@ -34,7 +34,7 @@ const MAX_CAS_RETRIES = 50;
  * handled by the generic flatten.
  */
 function decodeTurn(raw: Turn): Turn {
-  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>) as Record<string, unknown>;
+  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>, "Turn") as Record<string, unknown>;
   const rawName = (raw as { metadata?: { name?: unknown } }).metadata?.name;
   if (rawName !== undefined) flat.title = rawName;
   return flat as unknown as Turn;

@@ -7,7 +7,7 @@
 
 export type TaskStatus = "pending" | "working" | "blocked" | "input_required" | "in_review" | "completed" | "failed" | "escalated" | "cancelled";
 
-export type SessionRole = "engineer" | "architect" | "director" | "unknown";
+export type SessionRole = "engineer" | "architect" | "director" | "verifier" | "unknown";
 
 export interface Task {
   id: string;
@@ -85,24 +85,6 @@ export interface EntityProvenance {
   agentId: string;
 }
 
-/**
- * Projected view of an M18 Agent for the `get_engineer_status` tool.
- * `sessionId` is an alias for `currentSessionId` preserved so task-policy
- * can match `engStatus.engineers.find(e => e.sessionId === sid)` against the
- * caller's live MCP session without knowing the M18 field name.
- */
-export interface EngineerStatusEntry {
-  agentId: string;
-  sessionId: string | null;
-  status: "online" | "offline";
-  sessionEpoch: number;
-  clientMetadata: AgentClientMetadata;
-  advisoryTags: AgentAdvisoryTags;
-  labels: AgentLabels;
-  firstSeenAt: string;
-  lastSeenAt: string;
-}
-
 // ── M18: Agent as First-Class Entity ─────────────────────────────────
 // Design from thread-79. Decouples stable identity (globalInstanceId)
 // from authentication (token) and role (token claim).
@@ -131,13 +113,16 @@ export interface AgentAdvisoryTags {
   // All fields are best-effort, launch-time-only, subject to drift.
   // DO NOT build routing logic on these.
   llmModel?: string;           // e.g., "claude-opus-4-6"
-  // mission-66 #40 closure: adapter version surfaced via advisoryTags
-  // (canonical projection derived Hub-side from clientMetadata.proxyVersion).
-  // LEGACY QUIRK: this field actually carries clientMetadata.proxyVersion
-  // (claude-plugin shim version), NOT the network-adapter SDK version.
-  // Preserved for back-compat; rename to `proxyVersion` deferred (AG-8 in
-  // M-Build-Identity-AdvisoryTag Design v1.0).
-  adapterVersion?: string;     // e.g., "0.1.4" (claude-plugin package.json version)
+  // idea-355 SLICE-3 report-both + SLICE-4 AG-8 RETIRE: the intent-aligned
+  // version surfaces. The old mislabeled `adapterVersion` (it carried
+  // clientMetadata.proxyVersion — the SHIM, not the SDK; the bug-183 lie) was
+  // RETIRED in SLICE-4; shimVersion is its exact-value replacement.
+  //   shimVersion = clientMetadata.proxyVersion (the SHIM / plugin layer);
+  //   sdkVersion  = clientMetadata.sdkVersion  (the KERNEL / network-adapter).
+  // (The DIFFERENT top-level Agent.adapterVersion = the kernel version is
+  // unrelated and untouched.)
+  sdkVersion?: string;         // e.g., "@apnex/network-adapter@0.1.2"
+  shimVersion?: string;        // e.g., "0.1.4"
   // M-Build-Identity-AdvisoryTag (idea-256): build-identity projections
   // from clientMetadata. Intent-aligned naming: proxy* = claude-plugin
   // shim layer; sdk* = network-adapter package.
@@ -148,7 +133,7 @@ export interface AgentAdvisoryTags {
   [key: string]: unknown;
 }
 
-export type AgentRole = "engineer" | "architect" | "director";
+export type AgentRole = "engineer" | "architect" | "director" | "verifier";
 export type AgentStatus = "online" | "offline";
 
 // Mission-19: routing metadata. Keys/values are caller-supplied strings.
@@ -368,6 +353,14 @@ export interface Agent {
   // suppression when agent on any active mission per Design §3.4 M3 fold).
   livenessConfig?: AgentLivenessConfig;
   pulseConfig?: AgentPulseConfig;
+
+  // ── C1-R2 (mission-94) — WorkItem claim-thrash quarantine (status bucket) ──
+  // Consecutive claim→lease-expire-WITHOUT-evidence count; reset to 0 on a successful
+  // complete_work (progress). At the cap → `quarantined`. The C1→C2 supervisor seam.
+  thrashCount: number;
+  // Locked out of claim_work once thrashCount hits the cap (the wedged-agent signal the
+  // C2 supervisor reads). R2: cleared only by the manual clear verb (C2 auto-recovery deferred).
+  quarantined: boolean;
 }
 
 export interface RegisterAgentPayload {
@@ -598,7 +591,10 @@ export interface ThreadContext {
 }
 
 export type ThreadIntent = "decision_needed" | "agreement_pending" | "director_input" | "implementation_ready" | null;
-export type ThreadAuthor = "engineer" | "architect";
+// mission-93: verifier is a thread turn-holder so it can reply to directed
+// verification threads (the turn-check is currentTurn===author; a verifier
+// recipient must therefore be a valid currentTurn role). See verifier-role.md §2.3.
+export type ThreadAuthor = "engineer" | "architect" | "verifier";
 export type SemanticIntent =
   | "seek_rigorous_critique"
   | "seek_approval"
@@ -626,8 +622,9 @@ export interface ThreadMessage {
 // ── Mission-21 Threads 2.0 ──────────────────────────────────────────
 
 /** Participant roles. Director reserved for future (idea-84) — Phase 1
- * populates only engineer and architect from Agent role resolution. */
-export type ParticipantRole = "engineer" | "architect" | "director";
+ * populates only engineer and architect from Agent role resolution.
+ * Verifier (mission-93) participates in verification threads. */
+export type ParticipantRole = "engineer" | "architect" | "director" | "verifier";
 
 export interface ThreadParticipant {
   role: ParticipantRole;
@@ -1018,7 +1015,7 @@ export interface Thread {
 export interface AuditEntry {
   id: string;
   timestamp: string;
-  actor: "architect" | "engineer" | "hub";
+  actor: "architect" | "engineer" | "verifier" | "hub";
   action: string;
   details: string;
   relatedEntity: string | null; // e.g., "task-24", "prop-7", "thread-3"
@@ -1114,7 +1111,7 @@ export interface IThreadStore {
   openThread(title: string, message: string, author: ThreadAuthor, options?: OpenThreadOptions): Promise<Thread>;
   replyToThread(threadId: string, message: string, author: ThreadAuthor, options?: ReplyToThreadOptions): Promise<Thread | null>;
   getThread(threadId: string): Promise<Thread | null>;
-  listThreads(status?: ThreadStatus): Promise<Thread[]>;
+  listThreads(status?: ThreadStatus, equalityFilter?: Record<string, string>): Promise<Thread[]>;
   closeThread(threadId: string): Promise<boolean>;
   /**
    * Mission-24 Phase 2 (ADR-014, M24-T6): participant-initiated exit
@@ -1249,10 +1246,6 @@ export interface IEngineerRegistry {
   /** Bare role-set used by the legacy register_role path and auto-register in task-policy. */
   setSessionRole(sessionId: string, role: SessionRole): void;
   getRole(sessionId: string): SessionRole;
-  getStatusSummary(): Promise<{
-    connected: number;
-    engineers: EngineerStatusEntry[];
-  }>;
   // M18: Agent entity operations.
   registerAgent(sessionId: string, tokenRole: AgentRole, payload: RegisterAgentPayload, address?: string): Promise<RegisterAgentResult>;
   /**
@@ -1291,6 +1284,18 @@ export interface IEngineerRegistry {
   getAgent(agentId: string): Promise<Agent | null>;
   /** Mission-19: resolve the Agent bound to an SSE session (null if none). */
   getAgentForSession(sessionId: string): Promise<Agent | null>;
+  // ── C1-R2 (mission-94) — WorkItem claim-thrash quarantine ──
+  /** Increment the agent's claim-thrash counter (a lease expired without evidence);
+   *  quarantines at `quarantineCap`. CAS-retry so increments aren't lost. Returns the
+   *  new {thrashCount, quarantined} (null if the agent is absent). */
+  recordWorkItemThrash(agentId: string, quarantineCap: number): Promise<{ thrashCount: number; quarantined: boolean } | null>;
+  /** Reset the thrash counter to 0 on demonstrated progress (a successful complete_work).
+   *  Returns the PRIOR thrashCount (0 if no-op) so the caller can audit a non-noop reset.
+   *  Does NOT clear `quarantined` (that is the manual clear path). */
+  resetWorkItemThrash(agentId: string): Promise<number>;
+  /** Manual quarantine escape (R2 interim; architect/director-authorized at the policy
+   *  layer): clear `quarantined` + reset the thrash counter. C2 auto-recovery deferred. */
+  clearWorkItemQuarantine(agentId: string): Promise<void>;
   listAgents(): Promise<Agent[]>;
   /** Mission-19: return non-archived, online agents matching the selector (role ∧ matchLabels equality). */
   selectAgents(selector: Selector): Promise<Agent[]>;

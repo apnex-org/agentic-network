@@ -30,6 +30,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { Pool } from "pg";
+import { createTestPool } from "./_pg-test-pool.js";
 import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
@@ -123,7 +124,7 @@ describe("W6-prep shadow-read parity harness (§3.3 renameMap-translation correc
     container = await new PostgreSqlContainer("postgres:15-alpine")
       .withUsername("hub").withPassword("hub").withDatabase("hub").start();
     connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-    pool = new Pool({ connectionString: connStr });
+    pool = createTestPool(connStr, "shadow-read-parity-w6");
     for (const f of MIGRATION_FILES) await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
     substrate = createPostgresStorageSubstrate(connStr);
     reconciler = createSchemaReconciler(substrate, connStr, { initialSchemas: ALL_SCHEMAS, log: () => {}, warn: () => {} });

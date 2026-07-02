@@ -132,7 +132,7 @@ describe("ClarificationPolicy", () => {
     }, clarCtx);
 
     // Check before answer (as engineer)
-    const beforeCtx = createTestContext({ stores: ctx.stores, sessionId: "test-eng-session" });
+    const beforeCtx = createTestContext({ role: "engineer", stores: ctx.stores, sessionId: "test-eng-session" });
     const before = await router.handle("get_clarification", { taskId }, beforeCtx);
     const beforeParsed = JSON.parse(before.content[0].text);
     expect(beforeParsed.question).toBe("How many retries?");
@@ -146,7 +146,7 @@ describe("ClarificationPolicy", () => {
     }, resolveCtx);
 
     // Check after answer (as engineer)
-    const afterCtx = createTestContext({ stores: ctx.stores, sessionId: "test-eng-session" });
+    const afterCtx = createTestContext({ role: "engineer", stores: ctx.stores, sessionId: "test-eng-session" });
     const after = await router.handle("get_clarification", { taskId }, afterCtx);
     const afterParsed = JSON.parse(after.content[0].text);
     expect(afterParsed.answered).toBe(true);

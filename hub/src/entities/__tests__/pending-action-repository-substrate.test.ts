@@ -11,10 +11,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { createTestPool } from "../../storage-substrate/__tests__/_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import pg from "pg";
 import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
@@ -24,9 +24,6 @@ import {
 } from "../../storage-substrate/index.js";
 import { PendingActionRepositorySubstrate } from "../pending-action-repository-substrate.js";
 import { SubstrateCounter } from "../substrate-counter.js";
-
-const { Pool } = pg;
-
 let container: StartedPostgreSqlContainer;
 let substrate: HubStorageSubstrate;
 let reconciler: SchemaReconciler;
@@ -47,7 +44,7 @@ beforeAll(async () => {
     .start();
   connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
 
-  const pool = new Pool({ connectionString: connStr });
+  const pool = createTestPool(connStr, "pending-action-repository-substrate");
   for (const f of MIGRATION_FILES) {
     const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
     await pool.query(sql);
@@ -72,7 +69,7 @@ afterAll(async () => {
 }, 30_000);
 
 beforeEach(async () => {
-  const pool = new Pool({ connectionString: connStr });
+  const pool = createTestPool(connStr, "pending-action-repository-substrate");
   try {
     await pool.query(`DELETE FROM entities WHERE kind IN ($1, $2)`, ["PendingAction", "Counter"]);
   } finally {

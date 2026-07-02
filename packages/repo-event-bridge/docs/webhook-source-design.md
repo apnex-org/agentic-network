@@ -26,7 +26,7 @@ T1's `EventSource` interface declaration (PR #52 / `906f6bf`) IS the proof of so
 | `dedupe` | `true` | `true` |
 | `persistedCursor` | `true` | `true` |
 
-Same async-iterator semantics. Same `start()` / `stop()` / `health()` surface. Same `RepoEvent` envelope shape. The translator (`translateGhEvent`, mission-52 T1) and sink (`CreateMessageSink`, mission-52 T1+T3) are reused unchanged — `WebhookSource` produces the same envelope shape on the same iterator surface, so downstream code (drainer + Hub `create_message` invoker + MessageRepository) is untouched.
+Same inline-sink delivery semantics — like `PollSource`, `WebhookSource` emits each `RepoEvent` inline to the injected sink (work-44/bug-190 (A): the EventSource contract couples delivery into the source; there is no separate drainer or queue between source and sink, so a delivery failure can't be silently dropped). Same `start()` / `stop()` / `health()` surface. Same `RepoEvent` envelope shape. The translator (`translateGhEvent`, mission-52 T1) and sink (`CreateMessageSink`, mission-52 T1+T3) are reused unchanged — `WebhookSource` emits the same envelope shape through the same sink, so downstream code (the Hub `create_message` invoker + MessageRepository) is untouched.
 
 This is the load-bearing invariant. The translator is a pure function; both sources feed it the same GH event-shape JSON; the resulting `RepoEvent` stream is indistinguishable.
 
@@ -86,7 +86,7 @@ receiving → translating → sinking → ack
 
 - `receiving`: HTTP request received; signature verified; raw body parsed as JSON.
 - `translating`: parsed body wrapped into the GH events-API shape (`{type: <X-GitHub-Event header>, payload: <body>}`) and fed through `translateGhEvent`. Note: webhook delivery shape places `repository` directly under the body, while the events-API shape places it under `payload.repository`. The translator's existing `extractRepo` helper already handles both — no translator changes required.
-- `sinking`: emit through the same `CreateMessageSink`-backed drainer that PollSource uses. Sink is shared infrastructure.
+- `sinking`: emit inline through the same `CreateMessageSink` that PollSource emits to (the emit is awaited before the `ack` step). Sink is shared infrastructure.
 - `ack`: respond to GitHub with 200. Triggers GH delivery success state; no retry.
 
 ### Failure modes
@@ -97,7 +97,7 @@ receiving → translating → sinking → ack
 | Body unparsable | 400 | No retry |
 | Translator returns `subkind: unknown` | 200 | Success — Hub logs the unknown event type for later taxonomy expansion (same path as PollSource) |
 | Sink failure (e.g., `create_message` returned `isError`) | 500 | GH retries with exp-backoff up to 8 times — caller-side idempotency (the dedupe LRU + Hub message-side idempotency) makes retries safe |
-| Receiver overload (queue full; not yet specified) | 503 | GH retries — per backpressure design below |
+| Receiver overloaded (in-flight admission limit hit; not yet specified) | 503 | GH retries — per backpressure design below |
 
 Critical: NEVER 500 on payload-not-translatable. Translator's `unknown` fallback exists precisely so unfamiliar event types don't trigger retry storms — log + 200 + treat as a forward-compat signal.
 
@@ -138,9 +138,9 @@ For the brief overlap window where in-flight retries may still carry signatures 
 
 GH bursts deliveries during heavy activity (e.g., a force-push touching 200 commits triggers ~200 `commit-pushed` events in seconds). Receiver design must absorb burst without dropping events:
 
-- Drainer-side queue is bounded (in-memory; size tunable via env var). When full, receiver returns 503 → GH retries with exp-backoff. Backpressure propagates upstream cleanly.
-- Sink throughput is the load-bearing rate limit. If `create_message` MCP verb can sustain N/s and burst exceeds, queue fills, 503-then-retry kicks in.
-- Alternative (post-MVP): persistent receiver queue (StorageProvider-backed). Decouples receiver lifetime from sink throughput. Premature for v1.
+- The receiver awaits each request's inline sink emit and bounds in-flight requests (limit tunable via env var). When the limit is hit it returns 503 → GH retries with exp-backoff. This is admission control, not accept-then-async-drain: every accepted delivery confirms sink success before its 200, so a shed delivery is retried by GH, never silently dropped (consistent with work-44/bug-190 (A)).
+- Sink throughput is the load-bearing rate limit. If the `create_message` MCP verb sustains N/s and burst exceeds it, the in-flight limit fills and 503-then-retry kicks in.
+- Alternative (post-MVP): a durable receiver spool (StorageProvider-backed) that persists each delivery before acking GH — durable accept-before-deliver, not the eliminated in-memory fire-and-forget. Decouples receiver lifetime from sink throughput; premature for v1.
 
 ### Replay / failure recovery
 
@@ -148,7 +148,7 @@ GH auto-retries on 5xx (up to 8 attempts; exp-backoff). Design must be idempoten
 
 - Dedupe LRU rejects re-delivery of same `X-GitHub-Delivery` UUID (catches mid-retry duplicates).
 - Sink `create_message` is non-idempotent at the Hub Message-store level (every call creates a new Message). The CreateMessageSink stub from T1 doesn't add dedupe; the Hub's downstream consumers should expect duplicates if the receiver acks late + GH retries land before the dedupe LRU update.
-- Practical mitigation: only ACK (200) to GH AFTER the sink commit succeeds. The drainer is awaited before response is sent. This is the inverse of PollSource's "fire-and-forget into the iterator" pattern; webhook receivers must synchronously confirm sink success before responding.
+- Practical mitigation: only ACK (200) to GH AFTER the sink emit succeeds. The emit is awaited before the response is sent. This mirrors PollSource's inline-sink discipline (work-44/bug-190 (A): the poll cursor advances only after delivery succeeds) — both sources gate progress on confirmed sink delivery rather than firing and forgetting.
 
 ## Mode-parity invariant
 
@@ -168,7 +168,7 @@ T1's fixture was authored to be source-agnostic; T2's PollSource conformance sui
 
 - **PollSource (T2 / PR #53 / `2fc554d`)** — sibling EventSource implementation. Differs in transport (poll vs. webhook), latency (periodic vs. realtime), mode (pull vs. push). Same translator + sink. This doc's design re-uses the dedupe + state-machine + failure-isolation patterns; only the front-end (HTTP receiver vs. GH API client) differs.
 - **mission-52 W1 EventSource contract (PR #52 / `906f6bf`)** — universal interface that both sources implement. The capability flag matrix above describes both implementations against this contract.
-- **mission-52 T3 Hub integration (PR #54 / `614211a`)** — Hub-side composition pattern (RepoEventBridge class + drainer + in-process invoker via PolicyRouter). WebhookSource integration follows the same pattern: a single `RepoEventBridge` wraps either source; downstream is unchanged.
+- **mission-52 T3 Hub integration (PR #54 / `614211a`)** — Hub-side composition pattern (RepoEventBridge class + in-process invoker via PolicyRouter; the separate drainer was removed at work-44/bug-190 (A)). WebhookSource integration follows the same pattern: a single `RepoEventBridge` wraps either source; downstream is unchanged.
 - **GitHub Webhooks documentation** — https://docs.github.com/en/webhooks/webhook-events-and-payloads
 - **GitHub Apps documentation** — https://docs.github.com/en/apps/creating-github-apps
 - **idea-191** — source idea ratifying repo-event ingestion as a sovereign capability.
@@ -181,4 +181,4 @@ T1's fixture was authored to be source-agnostic; T2's PollSource conformance sui
 - **Subkind taxonomy expansion.** v1 taxonomy from T1 (8 subkinds) is the floor. Expansion lands in the implementing mission only if a new event type warrants — `unknown` fallback handles novel types until then.
 - **Mode-parity conformance test.** Gates on real `WebhookSource` existing. Captured as an invariant in the design; un-test-enforced until the implementing mission ships.
 - **Per-repo webhook secret support.** v1 uses a single shared secret across all repos delivering to this Hub. Per-repo secrets land later if the security model demands.
-- **Persistent receiver queue.** v1 uses in-memory drainer queue with 503-backpressure on overrun. Persistent queue (StorageProvider-backed) is post-MVP enhancement.
+- **Persistent receiver spool.** v1 awaits the inline sink emit per request with 503 admission-control on overload (no in-memory async-drain buffer). A durable receiver spool (StorageProvider-backed) is a post-MVP enhancement.

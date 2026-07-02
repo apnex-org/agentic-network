@@ -29,13 +29,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createTestPool } from "./_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import pg from "pg";
-
-const { Pool } = pg;
-
 let container: StartedPostgreSqlContainer;
 let connStr: string;
 
@@ -60,7 +57,7 @@ afterAll(async () => {
 }, 30_000);
 
 async function applyMigration(file: string): Promise<void> {
-  const pool = new Pool({ connectionString: connStr });
+  const pool = createTestPool(connStr, "restart-safety");
   try {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf-8");
     await pool.query(sql);
@@ -70,7 +67,7 @@ async function applyMigration(file: string): Promise<void> {
 }
 
 async function dropEverything(): Promise<void> {
-  const pool = new Pool({ connectionString: connStr });
+  const pool = createTestPool(connStr, "restart-safety");
   try {
     // Clean slate; mimics a fresh-postgres state. Order matters for FK-safety.
     await pool.query(`DROP TRIGGER IF EXISTS entities_notify_trg ON entities`);
@@ -90,7 +87,7 @@ async function getSchemaState(): Promise<{
   hasCheckConstraint: boolean;
   indexCount: number;
 }> {
-  const pool = new Pool({ connectionString: connStr });
+  const pool = createTestPool(connStr, "restart-safety");
   try {
     const table = await pool.query(
       `SELECT 1 FROM information_schema.tables WHERE table_name = 'entities'`,
@@ -212,7 +209,7 @@ describe("Restart-safety verification (W1.6; per Design v1.2 §2.3)", () => {
     for (const f of MIGRATION_FILES) await applyMigration(f);
 
     // Insert some data
-    const pool = new Pool({ connectionString: connStr });
+    const pool = createTestPool(connStr, "restart-safety");
     try {
       await pool.query(
         `INSERT INTO entities (kind, id, data) VALUES ($1, $2, $3)`,
@@ -226,7 +223,7 @@ describe("Restart-safety verification (W1.6; per Design v1.2 §2.3)", () => {
     for (const f of MIGRATION_FILES) await applyMigration(f);
 
     // Verify data still present
-    const pool2 = new Pool({ connectionString: connStr });
+    const pool2 = createTestPool(connStr, "restart-safety");
     try {
       const r = await pool2.query<{ data: { v: number } }>(
         `SELECT data FROM entities WHERE kind = $1 AND id = $2`,
@@ -243,7 +240,7 @@ describe("Restart-safety verification (W1.6; per Design v1.2 §2.3)", () => {
     await dropEverything();
     for (const f of MIGRATION_FILES) await applyMigration(f);
 
-    const pool = new Pool({ connectionString: connStr });
+    const pool = createTestPool(connStr, "restart-safety");
     try {
       // Insert 3 rows; resource_version should be monotonic
       const rvs: number[] = [];

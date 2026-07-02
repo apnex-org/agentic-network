@@ -14,16 +14,32 @@
  */
 
 import type { Plugin } from "@opencode-ai/plugin";
+// Type-only (esbuild drops it → zero bundle impact; the SDK client is provided
+// by the host at runtime). The v2 Event discriminated union types the plugin
+// event handler so session-event property access is compile-checked (the fence
+// that catches the 0.4.x-drift class — thread-669/bug-161).
+import type { Event } from "@opencode-ai/sdk";
 import {
   McpAgentClient,
-  McpTransport,
   appendNotification,
+  buildPendingTaskNotification,
+  readRequiredAgentName,
+  loadConfig,
+  readPackageVersion,
+  UNKNOWN_BUILD_INFO,
+  type BuildInfo,
+  createFileLogger,
   buildPromptText,
   buildToastMessage,
   createSharedDispatcher,
   assertHostWiringComplete,
   getActionText,
-  type AgentClientCallbacks,
+  isPulseEvent,
+  reconstructDrainedAction,
+  ToolSurfaceReconciler,
+  makeFetchLiveToolSurfaceRevision,
+  type HubConfig,
+  type FileLogger,
   type AgentEvent,
   type SessionState,
   type SessionReconnectReason,
@@ -31,30 +47,114 @@ import {
   type SharedDispatcher,
   type TelemetryEvent,
 } from "@apnex/network-adapter";
+import {
+  NotificationCoalescer,
+  type CoalescedNotification,
+} from "@apnex/message-router";
 import { CognitivePipeline } from "@apnex/cognitive-layer";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { readFileSync, appendFileSync, mkdirSync } from "fs";
-import { join, dirname } from "path";
+import { readFileSync } from "fs";
+import { join, dirname, resolve } from "path";
+import { fileURLToPath } from "url";
+import { createRequire } from "module";
 
 // ── Module state ─────────────────────────────────────────────────────
 
-const PROXY_VERSION = "4.3.0";
-const SDK_VERSION = "@apnex/network-adapter@2.1.0";
-const RATE_LIMIT_MS = 30_000;
+// idea-355 SLICE-0 / bug-183 reported-half: kill the hardcoded version phantom.
+// Mirror the mission-66 #40 fix the claude shim already carries — read the REAL
+// versions from package.json instead of the drifted "4.3.0" / "2.1.0" literals.
+// PROXY_VERSION = opencode-plugin/package.json; SDK_VERSION = the @apnex/network-adapter
+// package.json. SLICE-3 (fork 3) closed the bundle gap: in the esbuild
+// self-contained bundle the kernel is inlined FROM SOURCE (no resolvable
+// package.json on disk), so SDK_VERSION now falls back to the bundle's own
+// version (ONE build) instead of the old "@apnex/network-adapter@unknown", and
+// the precise build identity is the inlined git sha in {PROXY,SDK}_BUILD_INFO
+// below. (claude ships node_modules so its resolve hits the real 0.1.4.)
+const __shimDir = dirname(fileURLToPath(import.meta.url));
+const __require = createRequire(import.meta.url);
+
+// readPackageVersion hoisted to the kernel (@apnex/network-adapter) in idea-355
+// SLICE-1. The shim keeps its host-specific path resolution + version constants.
+const OPENCODE_PLUGIN_PKG_VERSION = readPackageVersion(
+  resolve(__shimDir, "..", "package.json"),
+  "unknown",
+);
+// idea-355 SLICE-3 follow-up (bug-183 opencode close): the kernel version is
+// INLINED at bundle time via esbuild `define` (__NETWORK_ADAPTER_VERSION__, see
+// scripts/build/bundle-opencode.js), read here behind a typeof-guard. It is the
+// SOURCE-OF-TRUTH kernel version (@apnex/network-adapter's package.json at build
+// time), so sdkVersion reports the REAL kernel — matching the claude shim on the
+// SAME kernel — not a false skew. The PRIOR catch-fallback returned the SHIM's
+// own version, which made the self-contained bundle report sdkVersion==shimVersion:
+// a phantom kernel-drift signal on get_agents (steve @shim-version vs claude @kernel)
+// = exactly the phantom-version class (bug-183) the consolidation exists to kill.
+// On the dev/test (tsx/vitest) path the define is absent (typeof "undefined", no
+// throw) → resolve the kernel package.json off node_modules (the workspace symlink),
+// falling back to the shim version only if even that fails.
+declare const __NETWORK_ADAPTER_VERSION__: string | undefined;
+const NETWORK_ADAPTER_PKG_VERSION =
+  typeof __NETWORK_ADAPTER_VERSION__ !== "undefined"
+    ? __NETWORK_ADAPTER_VERSION__
+    : (() => {
+        try {
+          return readPackageVersion(
+            __require.resolve("@apnex/network-adapter/package.json"),
+            OPENCODE_PLUGIN_PKG_VERSION,
+          );
+        } catch {
+          return OPENCODE_PLUGIN_PKG_VERSION;
+        }
+      })();
+const PROXY_VERSION = OPENCODE_PLUGIN_PKG_VERSION;
+const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
+
+// idea-355 SLICE-3 (fork 3, single-sha): build-identity for the OpenCode
+// bundle. Unlike the claude shim — which ships node_modules + an adjacent
+// dist/build-info.json and reads them at runtime via readBuildInfo — opencode
+// bundles via esbuild: the kernel is inlined FROM SOURCE, there is no
+// node_modules and no adjacent build-info.json at runtime. So the build
+// identity is INLINED at bundle time via esbuild `define`
+// (__OPENCODE_BUILD_INFO__, see scripts/build/bundle-opencode.js), read here
+// behind a typeof-guard that falls back to UNKNOWN_BUILD_INFO on the dev/test
+// (tsx/vitest) paths where the define is absent. It is ONE build, so the SAME
+// sha/dirty stamps BOTH the shim (PROXY) and the kernel (SDK) — honest, not a
+// fidelity loss. NO runtime disk read.
+declare const __OPENCODE_BUILD_INFO__: BuildInfo | undefined;
+const BUNDLE_BUILD_INFO: BuildInfo =
+  typeof __OPENCODE_BUILD_INFO__ !== "undefined" ? __OPENCODE_BUILD_INFO__ : UNKNOWN_BUILD_INFO;
+const PROXY_BUILD_INFO = BUNDLE_BUILD_INFO;
+const SDK_BUILD_INFO = BUNDLE_BUILD_INFO;
 
 let diagLogPath = "";
 let notificationLogPath = "";
+// idea-355 SLICE-1: the file-backed text logger is hoisted to the kernel
+// `createFileLogger`. null until initLogger() runs (preserves the pre-init
+// no-op semantics); opencode keeps the TUI clean (no stderr mirror).
+let __fileLog: FileLogger | null = null;
 let hubAdapter: McpAgentClient | null = null;
 let proxyPort = 0;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let sdkClient: any = null;
 let currentSessionId: string | null = null;
-let sessionActive = false;
 let config: HubConfig;
-let lastPromptTime = 0;
-let lastToolHash = "";
+// bug-173 — the dispatcher (and its pollBackstop) is constructed at MODULE-INIT,
+// BEFORE loadConfig runs, so the poll/wake-stall role filter cannot read
+// config.role at construction. This module `let` seeds from the env default
+// (backward-compat) and is RE-pointed to the resolved config.role inside
+// connectToHub; pollBackstop.role is a `() => currentRole` thunk (the kernel
+// resolves it at use-time) so the catch-up poll + idea-353 reconcile track the
+// CONFIGURED role (e.g. a config-file-only "verifier"), not the frozen
+// module-init env default. (Claude's shim builds its dispatcher at runtime with
+// config.role already known, so it passes a plain string and needs no thunk.)
+let currentRole = process.env.OIS_HUB_ROLE ?? "engineer";
+// idea-355 SLICE-1T — opencode's tool-surface is now owned by the kernel
+// ToolSurfaceReconciler (replacing the local computeToolHash/syncTools hash
+// loop). Lazy: constructed in connectToHub once config.hubUrl is known (the
+// dispatcher is built at module-init before config exists), then driven by the
+// L1 identityReady trigger + the L2 heartbeat tick. null until then.
+let reconciler: ToolSurfaceReconciler | null = null;
 const activeProxyServers: Server[] = [];
 
 // Shared MCP-boundary dispatcher. Layer-1c factory; see Design v1.2.
@@ -64,19 +164,52 @@ const activeProxyServers: Server[] = [];
 // bug-103: firstTimerEnabled re-enabled — the list_messages Pull-mode first-timer
 // is the catch-up path that recovers role-targeted kind:note notifications
 // missed while the adapter was disconnected. `role` (the poll's targetRole
-// filter) is resolved from OIS_HUB_ROLE at module-init — the config object
-// loads later inside HubPlugin — so the env var is now load-bearing for the
-// catch-up query, not just log lines.
+// filter) is the use-time `() => currentRole` thunk (bug-173) — the config
+// object loads later inside HubPlugin, so the thunk reads config.role
+// post-connect rather than freezing the module-init env default.
 const dispatcher = createSharedDispatcher({
   getAgent: () => hubAdapter,
   proxyVersion: PROXY_VERSION,
   serverName: "hub-proxy",
   serverCapabilities: { tools: {}, logging: {} },
   log: (m) => log(m),
+  // M-OpenCode-Shim-Sovereign-Dedup Step-2 (idea-331): bind the OpenCode
+  // host surface through the shared DispatcherNotificationHooks seam (the
+  // same one Claude uses). This routes the wake THROUGH router.route(), so
+  // the MessageRouter/SeenIdCache push+poll dedup gates it — closing the
+  // prior bypass where buildPluginCallbacks surfaced OUTSIDE the router
+  // (duplicate deliveries that compounded the flood). buildPluginCallbacks
+  // is DELETED; the agent is wired via setCallbacks(dispatcher.callbacks).
+  //
+  // INVARIANT (path (b)): the dispatcher is constructed here at MODULE-INIT
+  // (before config/sdkClient/sessionActive exist), but these hooks FIRE only
+  // after connect — so they safely read module `let` state at invocation-time.
+  // Do NOT construct the dispatcher, or fire any hook, before connect.
+  // DEFER (2nd-OpenCode-class-host): Claude builds its dispatcher at RUNTIME
+  // in main(); OpenCode's module-init construction is itself drift. Align the
+  // construction lifecycle when a 2nd such host arrives — co-bucketed with the
+  // rate-limit/prompt-queue coalescing generalization. Not silently accepted.
+  notificationHooks: {
+    onActionableEvent: surfaceActionableEvent,
+    onInformationalEvent: surfaceInformationalEvent,
+    onStateChange: handleConnectionStateChange,
+  },
   pollBackstop: {
-    role: process.env.OIS_HUB_ROLE ?? "engineer",
+    // bug-173 — use-time role resolver. config.role is unknown at this
+    // module-init construction; the kernel invokes the thunk on each
+    // poll/reconcile, by which point connectToHub has set `currentRole`.
+    role: () => currentRole,
     firstTimerEnabled: true,
     log: (m) => log(m),
+    // idea-355 SLICE-1T / bug-180 L2 — tool-surface revision-poll backstop on
+    // the heartbeat cadence. Catches a Hub redeploy that changes the surface
+    // WHILE a session stays connected (the case L1's identityReady misses — no
+    // reconnect, so no fresh identityReady). Lazy `reconciler` ref (assigned in
+    // connectToHub once config.hubUrl is known); the first tick fires ≥1
+    // interval after start() so it is always populated.
+    onHeartbeatTick: async () => {
+      await reconciler?.reconcile("heartbeat");
+    },
   },
 });
 
@@ -85,133 +218,35 @@ const dispatcher = createSharedDispatcher({
 function initLogger(directory: string): void {
   diagLogPath = join(directory, ".ois", "hub-plugin.log");
   notificationLogPath = join(directory, ".ois", "hub-plugin-notifications.log");
-  try {
-    mkdirSync(dirname(diagLogPath), { recursive: true });
-  } catch {
-    /* directory exists */
-  }
+  // Simple text-append (no NDJSON / no rotation / no stderr — the TUI must
+  // stay clean); the kernel factory does the ensureDir + best-effort append.
+  // Line format kept verbatim (`<raw ISO> <msg>`) so logs are byte-identical.
+  __fileLog = createFileLogger({
+    textFile: diagLogPath,
+    formatLine: (m) => `${new Date().toISOString()} ${m}\n`,
+  });
 }
 
 function log(msg: string): void {
-  if (!diagLogPath) return;
-  const line = `${new Date().toISOString()} ${msg}\n`;
-  try {
-    appendFileSync(diagLogPath, line);
-  } catch {
-    /* silently fail — don't pollute TUI */
-  }
+  __fileLog?.log(msg);
 }
 
 // ── Configuration ───────────────────────────────────────────────────
 
-interface HubConfig {
-  hubUrl: string;
-  hubToken: string;
-  autoPrompt: boolean;
-  role: string;
-  /**
-   * Mission-19 routing labels. Stamped onto the Agent entity via the
-   * enriched register_role handshake; scoped dispatches filter by these.
-   * From adapter-config.json `labels` field or OIS_HUB_LABELS env var (JSON).
-   */
-  labels?: Record<string, string>;
-}
+// idea-355 SLICE-1 single-home: HubConfig + parseLabels + loadConfig hoisted to
+// the kernel (@apnex/network-adapter). The shim injects its host specifics — the
+// relay hubUrl default, autoPrompt:true, the log() warn sink, readAutoPrompt — at
+// the loadConfig call site below. OpenCode keeps no credential abort (can't kill
+// the TUI; it surfaces missing creds via the handshake-fail path).
 
-function parseLabels(raw: string | undefined, source: string): Record<string, string> | undefined {
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const out: Record<string, string> = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === "string") out[k] = v;
-      }
-      return Object.keys(out).length > 0 ? out : undefined;
-    }
-  } catch (err) {
-    log(`WARNING: Failed to parse labels from ${source}: ${err}`);
-  }
-  return undefined;
-}
-
-function loadConfig(directory: string): HubConfig {
-  let cfg: HubConfig = {
-    hubUrl: "https://mcp-relay-hub-5muxctm3ta-ts.a.run.app/mcp",
-    hubToken: "",
-    autoPrompt: true,
-    role: "engineer",
-  };
-  try {
-    const configPath = join(directory, ".ois", "adapter-config.json");
-    const raw = readFileSync(configPath, "utf-8");
-    cfg = { ...cfg, ...JSON.parse(raw) };
-  } catch {
-    /* no config file — use defaults */
-  }
-  if (process.env.OIS_HUB_URL) cfg.hubUrl = process.env.OIS_HUB_URL;
-  if (process.env.OIS_HUB_TOKEN) cfg.hubToken = process.env.OIS_HUB_TOKEN;
-  if (process.env.OIS_HUB_ROLE) cfg.role = process.env.OIS_HUB_ROLE;
-  if (process.env.HUB_PLUGIN_AUTO_PROMPT)
-    cfg.autoPrompt = process.env.HUB_PLUGIN_AUTO_PROMPT.toLowerCase() !== "false";
-  const envLabels = parseLabels(process.env.OIS_HUB_LABELS, "OIS_HUB_LABELS env var");
-  if (envLabels) cfg.labels = envLabels;
-  return cfg;
-}
-
-// ── Rate-limited prompt queue ────────────────────────────────────────
-
-interface QueuedNotification {
-  level: "actionable" | "informational";
-  message: string;
-  promptText: string;
-}
-
-const notificationQueue: QueuedNotification[] = [];
-const deferredBacklog: QueuedNotification[] = [];
-
-function isRateLimited(): boolean {
-  return Date.now() - lastPromptTime < RATE_LIMIT_MS;
-}
-
-function buildBacklogSuffix(): string {
-  if (deferredBacklog.length === 0) return "";
-  const lines = [
-    "",
-    `--- Deferred Backlog (${deferredBacklog.length} event${deferredBacklog.length > 1 ? "s" : ""}) ---`,
-    "The following actionable events arrived while you were busy and were deferred.",
-    "Please review and address them after your current task:",
-  ];
-  for (let i = 0; i < deferredBacklog.length; i++) {
-    lines.push(`${i + 1}. ${deferredBacklog[i].promptText}`);
-  }
-  return lines.join("\n");
-}
-
-function drainBacklog(): string {
-  const suffix = buildBacklogSuffix();
-  deferredBacklog.length = 0;
-  return suffix;
-}
-
-async function flushBacklog(): Promise<void> {
-  if (deferredBacklog.length === 0) return;
-  if (!config.autoPrompt) {
-    deferredBacklog.length = 0;
-    return;
-  }
-  const lines = ["You have deferred Hub events that need attention:"];
-  for (let i = 0; i < deferredBacklog.length; i++) {
-    lines.push(`${i + 1}. ${deferredBacklog[i].promptText}`);
-  }
-  lines.push("\nPlease review and address these items.");
-  deferredBacklog.length = 0;
-
-  if (!isRateLimited()) {
-    await promptLLM(lines.join("\n"));
-  } else {
-    await injectContext(lines.join("\n"));
-  }
-}
+// ── Notification coalescing (delivery pacing) ────────────────────────
+//
+// idea-355 SLICE-1 single-home: the rate-limit / prompt-queue / deferred-
+// backlog machinery (bug-161 + R1 bounded-fallback) is hoisted to the L2
+// `NotificationCoalescer` in @apnex/message-router. The shim keeps only its
+// last-mile render bindings (promptLLM / injectContext / showToast, below) and
+// feeds session-activity from its own session-event stream. The coalescer is
+// constructed once those bindings are defined (see below).
 
 // ── OpenCode SDK integration ─────────────────────────────────────────
 
@@ -227,7 +262,8 @@ async function showToast(message: string, variant: string = "info"): Promise<voi
 async function promptLLM(text: string): Promise<void> {
   if (!sdkClient || !currentSessionId) return;
   try {
-    lastPromptTime = Date.now();
+    // The rate-limit clock is stamped by the coalescer (which owns the pacing
+    // decision); this binding is now purely the SDK promptAsync last mile.
     await sdkClient.session.promptAsync({
       path: { id: currentSessionId },
       body: { parts: [{ type: "text", text }] },
@@ -243,9 +279,17 @@ async function injectContext(text: string): Promise<void> {
     await sdkClient.session.promptAsync({
       path: { id: currentSessionId },
       body: {
+        // SDK drift (thread-669): v2 SessionPromptData.system is a system-PROMPT
+        // string, not a boolean "this is a system message" flag. The old `system: true`
+        // was a type mismatch (boolean where string expected). `noReply: true` already
+        // gives the silent/informational path (no assistant turn).
         noReply: true,
-        system: true,
-        parts: [{ type: "text", text: `[Hub Notification] ${text}` }],
+        // thread-671: buildPromptText already emits "[Hub] …"; only add the
+        // "[Hub Notification]" wrapper when the text isn't already Hub-prefixed,
+        // to avoid the "[Hub Notification] [Hub] …" double-prefix.
+        parts: [
+          { type: "text", text: text.startsWith("[Hub") ? text : `[Hub Notification] ${text}` },
+        ],
       },
     });
   } catch (err) {
@@ -253,194 +297,146 @@ async function injectContext(text: string): Promise<void> {
   }
 }
 
-async function processNotification(n: QueuedNotification): Promise<void> {
-  await showToast(n.message);
-  if (!config.autoPrompt) return;
-
-  if (n.level === "actionable") {
-    if (isRateLimited()) {
-      deferredBacklog.push(n);
-      await showToast("Rate limited: queued for follow-up", "warning");
-    } else {
-      const backlog = drainBacklog();
-      await promptLLM(n.promptText + backlog);
-    }
-  } else {
-    await injectContext(n.promptText);
-  }
-}
-
-async function flushQueue(): Promise<void> {
-  if (notificationQueue.length === 0) return;
-  const items = notificationQueue.splice(0);
-  if (items.length === 1) {
-    await processNotification(items[0]);
-    return;
-  }
-  for (const item of items) await showToast(item.message);
-  if (!config.autoPrompt) return;
-
-  const lines = ["While you were working, the following Hub events occurred:"];
-  for (let i = 0; i < items.length; i++) {
-    lines.push(`${i + 1}. ${items[i].promptText}`);
-  }
-  const hasActionable = items.some((i) => i.level === "actionable");
-  if (hasActionable) {
-    lines.push("\nPlease address the actionable items above.");
-    if (!isRateLimited()) {
-      const backlog = drainBacklog();
-      await promptLLM(lines.join("\n") + backlog);
-    } else {
-      for (const item of items) {
-        if (item.level === "actionable") deferredBacklog.push(item);
-      }
-      await showToast("Rate limited: queued for follow-up", "warning");
-    }
-  } else {
-    await injectContext(lines.join("\n"));
-  }
-}
+// The L2 delivery pacer. Render bindings are the shim's last mile; session
+// activity is fed from handleSessionEvent; `autoPrompt` is read live off the
+// runtime config (assigned at plugin init, before any notification fires).
+const coalescer = new NotificationCoalescer({
+  io: {
+    promptLLM,
+    injectContext,
+    showToast,
+    autoPrompt: () => !!config.autoPrompt,
+  },
+});
 
 // ── Tool discovery sync ──────────────────────────────────────────────
+//
+// idea-355 SLICE-1T — the local computeToolHash + syncTools hash loop is
+// DELETED; opencode's tool-surface is now owned by the kernel
+// ToolSurfaceReconciler (bug-180 / FR-21), the same primitive the claude shim
+// uses. The reconciler is constructed in connectToHub and driven by:
+//   - L1 (seed/primary): handleConnectionStateChange on `state === "streaming"`
+//     → reconciler.reconcile("identityReady");
+//   - L2 (backstop): the pollBackstop heartbeat tick → reconcile("heartbeat").
+// On applied-vs-live /health revision drift the reconciler fans
+// `sendToolListChanged()` over activeProxyServers + raises the opencode toast.
+// See the SHIM-BOUNDARY note in docs/network/00-network-adapter-architecture.md:
+// opencode has NO persistent tool-catalog cache, so its reconciler uses
+// readServedRevision=() => null — the seed pass baselines appliedRevision from
+// live and does NOT emit; the L2 heartbeat covers mid-session redeploys.
 
-function computeToolHash(tools: unknown[]): string {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sorted = [...tools].sort((a: any, b: any) => (a.name || "").localeCompare(b.name || ""));
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const canonical = sorted.map((t: any) => `${t.name}:${JSON.stringify(t.inputSchema || {})}`).join("|");
-  let hash = 0;
-  for (let i = 0; i < canonical.length; i++) {
-    hash = ((hash << 5) - hash + canonical.charCodeAt(i)) | 0;
+// idea-355 SLICE-1T — the tool-surface drift emit: fan `sendToolListChanged`
+// over the LIVE activeProxyServers array (the exact fan-out the old syncTools
+// did at ~310-317) + raise the opencode toast (host-unique shim UX). Iterating
+// the live array — not a snapshot — means a session that initializes AFTER the
+// reconciler was built is still notified on the next drift. Module-level so the
+// production reconciler closure and the harness test exercise the SAME path.
+function emitToolListChanged(): void {
+  for (const server of activeProxyServers) {
+    // F1 (review): per-server isolation the deleted syncTools had — a mid-close
+    // session's sendToolListChanged rejects, and an unhandled rejection is
+    // process-fatal under Bun. Catch + log; never let one dead session take the
+    // others (or the process) down.
+    void server
+      .sendToolListChanged()
+      .catch((err) => log(`[ToolSurface] sendToolListChanged failed (non-fatal): ${err}`));
   }
-  return hash.toString(36);
+  void showToast("Hub tools updated — re-enumerating", "success");
 }
 
-async function syncTools(): Promise<void> {
-  if (!hubAdapter) return;
-  const s = hubAdapter.state;
-  if (s !== "streaming" && s !== "synchronizing") return;
-
-  try {
-    const transport = hubAdapter.getTransport() as McpTransport;
-    const tools = await transport.listToolsRaw();
-    const newHash = computeToolHash(tools);
-    const isFirstSync = lastToolHash === "";
-
-    if (isFirstSync) {
-      lastToolHash = newHash;
-      log(`[ToolSync] Initial tool hash: ${newHash} (${tools.length} tools)`);
-    } else if (newHash === lastToolHash) {
-      log(`[ToolSync] Tools unchanged (hash: ${newHash})`);
-      return;
-    } else {
-      log(`[ToolSync] Tools changed! Old: ${lastToolHash}, New: ${newHash} (${tools.length} tools)`);
-      lastToolHash = newHash;
-    }
-
-    for (const server of activeProxyServers) {
-      try {
-        await server.sendToolListChanged();
-        log(`[ToolSync] Sent tools/list_changed to proxy server`);
-      } catch (err) {
-        log(`[ToolSync] Failed to send tools/list_changed: ${err}`);
-      }
-    }
-
-    await showToast(
-      isFirstSync ? "Hub connected — tools available" : "Hub tools updated following reconnection",
-      "success",
-    );
-    log(`[ToolSync] Tool sync complete — OpenCode notified`);
-  } catch (err) {
-    log(`[ToolSync] Failed to sync tools: ${err}`);
-  }
+// idea-355 SLICE-1T — build the kernel ToolSurfaceReconciler for opencode.
+// `fetchLiveRevision` defaults to the hoisted /health fetcher; the harness test
+// injects a fake to drive seed-vs-drift deterministically. readServedRevision
+// is the deliberate SHIM-BOUNDARY divergence (() => null — opencode has no
+// persistent tool-catalog cache; claude reads its on-disk cache here): the seed
+// pass baselines appliedRevision from live WITHOUT emitting, the L2 heartbeat
+// catches mid-session redeploys.
+function buildToolSurfaceReconciler(
+  hubUrl: string,
+  fetchLiveRevision: () => Promise<string | null> = makeFetchLiveToolSurfaceRevision({
+    hubUrl,
+    log,
+  }),
+): ToolSurfaceReconciler {
+  return new ToolSurfaceReconciler({
+    fetchLiveRevision,
+    readServedRevision: () => null,
+    emitListChanged: emitToolListChanged,
+    log,
+  });
 }
 
-// ── Mission-57 W3: pulse-event detection helper ─────────────────────
+// Mission-57 W3 pulse detection: `isPulseEvent` is now imported from
+// `@apnex/network-adapter` (event-router). M-OpenCode-Shim-Sovereign-Dedup
+// (idea-331) hoisted it to core — it was a verbatim mirror of the claude
+// shim's copy; both shims now share the one core impl. Detected pulses
+// downgrade their notification level "actionable" → "informational".
+
+// ── Notification surface hooks (OpenCode last-mile) ──────────────────
 //
-// Mirrors `claude-plugin/src/source-attribute.ts:isPulseEvent`. Inlined
-// here (vs imported) because opencode-plugin doesn't share helpers with
-// claude-plugin; the function is small + has no other dependencies.
-// Pulse Messages arrive via `message_arrived` events with payload
-// containing `pulseKind: "status_check" | "missed_threshold_escalation"`
-// (per Hub-side PulseSweeper W2 wire format in Design v1.0 §4 + §5).
-//
-// Render-side effect: detected pulses downgrade level from "actionable"
-// to "informational" (S3 noise mitigation per Design v1.0 §4) so they
-// don't wake the LLM during high-activity sub-PR cascades.
+// M-OpenCode-Shim-Sovereign-Dedup Step-2 (idea-331): the OpenCode host's
+// DispatcherNotificationHooks implementations, passed into createSharedDispatcher
+// (above) so the wake routes THROUGH router.route() — the MessageRouter's
+// SeenIdCache push+poll dedup gates it. This replaces the deleted
+// buildPluginCallbacks, which surfaced OUTSIDE the router (the dedup bypass).
+// The dispatcher's onActionableEvent does the pendingActionMap capture +
+// router.route BEFORE invoking these hooks, so they do surfacing ONLY (no
+// dispatcher.callbacks self-call). See the path-(b) invariant at the
+// createSharedDispatcher call site: these fire post-connect and read module
+// `let` state at invocation-time.
 
-const PULSE_KINDS_SET: ReadonlySet<string> = new Set([
-  "status_check",
-  "missed_threshold_escalation",
-]);
-
-function isPulseEvent(eventType: string, eventData: Record<string, unknown>): boolean {
-  if (eventType !== "message_arrived" || !eventData) return false;
-  const message = eventData.message as { payload?: unknown } | undefined;
-  const payload = message?.payload as { pulseKind?: unknown } | undefined;
-  return typeof payload?.pulseKind === "string" && PULSE_KINDS_SET.has(payload.pulseKind);
-}
-
-// ── Plugin Callbacks ─────────────────────────────────────────────────
-//
-// Composes the shared dispatcher's pendingActionMap-population callback
-// with OpenCode-specific notification/prompt/toast handling. Exported
-// for the shim.e2e test to drive synthetic events in isolation.
-
-export function buildPluginCallbacks(): AgentClientCallbacks {
-  return {
-    onActionableEvent: (event: AgentEvent) => {
-      // Shared dispatcher's pendingActionMap population (ADR-017 Phase 1.1).
-      dispatcher.callbacks.onActionableEvent?.(event);
-
-      const action = getActionText(event.event, event.data);
-      // Mission-57 W3: pulse Messages downgrade level from "actionable"
-      // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
-      // noise reduction during high-activity sub-PR cascades). Mirrors
-      // claude-plugin's `isPulseEvent` discrimination on
-      // `event.event === "message_arrived"` + `payload.pulseKind ∈
-      // {status_check, missed_threshold_escalation}`.
-      const isPulse = isPulseEvent(event.event, event.data);
-      const actionLabel = isPulse ? `[PULSE] ${action}` : action;
-      appendNotification(
-        { event: event.event, data: event.data, action: actionLabel },
-        { logPath: notificationLogPath },
-      );
-      const message = buildToastMessage(event.event, event.data);
-      const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
-      const notification: QueuedNotification = {
-        level: isPulse ? "informational" : "actionable",
-        message,
-        promptText,
-      };
-      if (sessionActive) {
-        notificationQueue.push(notification);
-      } else {
-        processNotification(notification);
-      }
-    },
-    onInformationalEvent: (event: AgentEvent) => {
-      const action = getActionText(event.event, event.data);
-      appendNotification(
-        { event: event.event, data: event.data, action: `[INFO] ${action}` },
-        { logPath: notificationLogPath },
-      );
-      const message = buildToastMessage(event.event, event.data);
-      const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
-      const notification: QueuedNotification = { level: "informational", message, promptText };
-      if (sessionActive) {
-        notificationQueue.push(notification);
-      } else {
-        processNotification(notification);
-      }
-    },
-    onStateChange: (state: SessionState, prev: SessionState, reason?: SessionReconnectReason) => {
-      log(`Connection: ${prev} → ${state}${reason ? ` (${reason})` : ""}`);
-      if (state === "streaming") {
-        syncTools();
-      }
-    },
+function surfaceActionableEvent(event: AgentEvent): void {
+  const action = getActionText(event.event, event.data);
+  // Mission-57 W3: pulse Messages downgrade level from "actionable"
+  // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
+  // noise reduction during high-activity sub-PR cascades).
+  const isPulse = isPulseEvent(event.event, event.data);
+  const actionLabel = isPulse ? `[PULSE] ${action}` : action;
+  appendNotification(
+    { event: event.event, data: event.data, action: actionLabel },
+    { logPath: notificationLogPath },
+  );
+  const message = buildToastMessage(event.event, event.data);
+  const promptText = buildPromptText(event.event, event.data, { toolPrefix: "architect-hub_" });
+  const notification: CoalescedNotification = {
+    level: isPulse ? "informational" : "actionable",
+    message,
+    promptText,
   };
+  // Live SSE path: bounded-flush cap engaged (R1 — a never-idling session
+  // can't wedge the queue).
+  void coalescer.enqueue(notification);
+}
+
+function surfaceInformationalEvent(event: AgentEvent): void {
+  // M-OpenCode-Shim-Sovereign-Dedup Step-1 (idea-331): informational events
+  // are LOG-ONLY — matching the Claude shim's already-correct disposition
+  // (claude shim.ts:672-676). The core (event-router) classifies these as
+  // informational precisely so they DON'T wake/surface; the prior toast +
+  // injectContext here was the OpenCode-only divergence that flooded the TUI
+  // and burned the session context window (tele-12). Diagnostic log only —
+  // no toast, no inject.
+  const action = getActionText(event.event, event.data);
+  appendNotification(
+    { event: event.event, data: event.data, action: `[INFO] ${action}` },
+    { logPath: notificationLogPath },
+  );
+}
+
+function handleConnectionStateChange(
+  state: SessionState,
+  prev: SessionState,
+  reason?: SessionReconnectReason,
+): void {
+  log(`Connection: ${prev} → ${state}${reason ? ` (${reason})` : ""}`);
+  if (state === "streaming") {
+    // idea-355 SLICE-1T / bug-180 L1 (primary + seed). Once identity resolves
+    // the live /health revision is fetchable + the dispatcher serves the live
+    // surface. With readServedRevision=() => null the FIRST pass seeds
+    // appliedRevision from live and does NOT emit (no spurious list_changed);
+    // a later in-life redeploy then drifts applied→live and fans the emit.
+    void reconciler?.reconcile("identityReady");
+  }
 }
 
 // ── Connect to Hub ───────────────────────────────────────────────────
@@ -458,6 +454,13 @@ async function connectToHub(agentName: string): Promise<void> {
     log(`Labels: ${JSON.stringify(config.labels)}`);
   }
 
+  // bug-173 — re-point the poll/wake-stall role filter from the module-init env
+  // default to the RESOLVED config.role (honors a config-file-only role, not just
+  // OIS_HUB_ROLE). pollBackstop.role is the `() => currentRole` thunk above, so
+  // this assignment propagates without re-constructing the dispatcher.
+  currentRole = config.role;
+  log(`[bug-173] poll-backstop role bound to config.role="${config.role}"`);
+
   const pendingActionItemHandler = dispatcher.makePendingActionItemHandler();
 
   hubAdapter = new McpAgentClient(
@@ -472,6 +475,15 @@ async function connectToHub(agentName: string): Promise<void> {
         proxyVersion: PROXY_VERSION,
         transport: "bun-serve-proxy",
         sdkVersion: SDK_VERSION,
+        // idea-355 SLICE-3 (fork 3, single-sha): build-identity flows via
+        // clientMetadata → Hub deriveAdvisoryTags → AgentAdvisoryTags (the same
+        // wire-pattern the claude shim uses). It is ONE inlined bundle, so the
+        // SAME sha/dirty stamps both PROXY and SDK. handshake.ts spreads these
+        // ONLY when defined — set all four together.
+        proxyCommitSha: PROXY_BUILD_INFO.commitSha,
+        proxyDirty: PROXY_BUILD_INFO.dirty,
+        sdkCommitSha: SDK_BUILD_INFO.commitSha,
+        sdkDirty: SDK_BUILD_INFO.dirty,
         getClientInfo: () => ({
           name: "opencode",
           version: process.env.OPENCODE_VERSION ?? "unknown",
@@ -479,41 +491,31 @@ async function connectToHub(agentName: string): Promise<void> {
         llmModel: process.env.HUB_LLM_MODEL,
         onFatalHalt,
         onPendingTask: (task) => {
-          appendNotification(
-            { event: "task_issued", data: task, action: "Pick up with get_task" },
-            { logPath: notificationLogPath },
-          );
+          appendNotification(buildPendingTaskNotification(task), {
+            logPath: notificationLogPath,
+          });
         },
         onPendingActionItem: (item) => {
           pendingActionItemHandler(item);
-          const actionHint =
-            item.dispatchType === "thread_message"
-              ? `Reply with create_thread_reply to thread ${item.entityRef}`
-              : `Owed: ${item.dispatchType} on ${item.entityRef}`;
+          // M-Sovereign-Dedup (idea-331): the reconstruction (event/data +
+          // actionHint + pulse-aware level) is the core helper shared with the
+          // claude shim; the WAKE below stays opencode-specific (route a
+          // notification through the same coalescer the live SSE path uses —
+          // the bug-108 fix). capFlush:false preserves this path's original
+          // no-bounded-cap behavior (the drain is a finite batch, not a stream).
+          const { agentEvent, actionHint, level } = reconstructDrainedAction(item);
           appendNotification(
-            { event: item.dispatchType, data: item.payload, action: actionHint },
+            { event: agentEvent.event, data: agentEvent.data, action: actionHint },
             { logPath: notificationLogPath },
           );
-          // bug-108: a reconnect-drained pending action arrived while the
-          // wire was down — it must WAKE the session, not only log. Mirror
-          // onActionableEvent's surface path: build a QueuedNotification and
-          // route it through the same notificationQueue / processNotification
-          // wake. The drained payload IS the original dispatchPayload (hub
-          // thread-policy.ts enqueues `payload: dispatchPayload`), so
-          // {event,data} reconstructs the live SSE AgentEvent.
-          const isPulse = isPulseEvent(item.dispatchType, item.payload);
-          const notification: QueuedNotification = {
-            level: isPulse ? "informational" : "actionable",
-            message: buildToastMessage(item.dispatchType, item.payload),
-            promptText: buildPromptText(item.dispatchType, item.payload, {
+          const notification: CoalescedNotification = {
+            level,
+            message: buildToastMessage(agentEvent.event, agentEvent.data),
+            promptText: buildPromptText(agentEvent.event, agentEvent.data, {
               toolPrefix: "architect-hub_",
             }),
           };
-          if (sessionActive) {
-            notificationQueue.push(notification);
-          } else {
-            processNotification(notification);
-          }
+          void coalescer.enqueue(notification, { capFlush: false });
         },
       },
     },
@@ -532,7 +534,20 @@ async function connectToHub(agentName: string): Promise<void> {
       }),
     },
   );
-  hubAdapter.setCallbacks(buildPluginCallbacks());
+  // M-OpenCode-Shim-Sovereign-Dedup Step-2 (idea-331): wire the agent directly
+  // to the dispatcher's callbacks (the Claude pattern, claude shim.ts:695). The
+  // dispatcher routes events through router.route() → its SeenIdCache dedup →
+  // the notificationHooks bag (surfaceActionableEvent / surfaceInformationalEvent
+  // / handleConnectionStateChange) supplied at construction. Replaces the deleted
+  // buildPluginCallbacks wrapper + its router-bypassing surface path.
+  hubAdapter.setCallbacks(dispatcher.callbacks);
+
+  // idea-355 SLICE-1T / bug-180 — construct the kernel tool-surface reconciler
+  // now that config.hubUrl is known (the dispatcher is built at module-init,
+  // before config exists — so the reconciler is built here, claude-style lazy
+  // ref). It MUST exist before hubAdapter.start() so the streaming state-change
+  // (which fires the L1 seed reconcile) finds it populated.
+  reconciler = buildToolSurfaceReconciler(config.hubUrl);
 
   await hubAdapter.start();
   log("Connected to remote Hub via McpAgentClient");
@@ -615,7 +630,7 @@ async function startProxyServer(): Promise<number> {
 
   // Bun is only available inside the OpenCode runtime. Use a runtime
   // probe so TypeScript doesn't complain and so tests importing this
-  // module for buildPluginCallbacks don't require Bun.
+  // module (e.g. makeOpenCodeFetchHandler) don't require Bun.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const bunRuntime = (globalThis as any).Bun;
   if (!bunRuntime) {
@@ -637,16 +652,69 @@ async function startProxyServer(): Promise<number> {
 // ── Plugin Export ────────────────────────────────────────────────────
 // CRITICAL: No awaits during init. Everything deferred to background.
 
+// ── Session-event handling (de-any + bug-161) ───────────────────────
+//
+// Extracted from the HubPlugin event hook so it's unit-testable and typed
+// against the v2 @opencode-ai/sdk Event discriminated union (dropping the old
+// `event: any`). Typing it surfaced two 0.4.x drifts the cast had hidden:
+//   • session.created/updated carry the session at `properties.info` (a Session
+//     object); the old `|| properties.id` legacy fallback is invalid on the v2
+//     type (and dead at runtime) — dropped (thread-669).
+//   • bug-161: v2 `SessionStatus` is an OBJECT {type:"idle"|"retry"|"busy"}, not
+//     a 0.4.x status string. The old `status === "idle"|"running"|"streaming"|…`
+//     string compares were always-false in v2 → sessionActive NEVER went true →
+//     the notificationQueue never engaged (notifications surfaced mid-stream).
+//     Map status.type: "idle" → inactive (flush); "busy"/"retry" → active.
+async function handleSessionEvent(event: Event): Promise<void> {
+  switch (event.type) {
+    case "session.created":
+    case "session.updated":
+      currentSessionId = event.properties.info.id;
+      break;
+    case "session.status": {
+      // idle → inactive (the coalescer flushes its buffer); busy/retry → active.
+      await coalescer.setSessionActive(event.properties.status.type !== "idle");
+      break;
+    }
+    case "session.idle":
+      await coalescer.setSessionActive(false);
+      if (hubAdapter && !hubAdapter.isConnected) {
+        try {
+          await hubAdapter.start();
+        } catch {
+          /* will retry on next idle */
+        }
+      }
+      break;
+    case "session.error":
+    case "session.deleted":
+      // R1 (bug-161 completion): a session that ENDS via error/deletion (NOT a
+      // clean idle) must still flush its buffered notifications — otherwise it
+      // stays "active" and the queue is stranded (the exact gap that shipped
+      // silently with bug-161). setSessionActive(false) mirrors the idle flush;
+      // skip the idle-only reconnect (an errored/deleted session isn't a cue).
+      await coalescer.setSessionActive(false);
+      break;
+  }
+}
+
 export const HubPlugin: Plugin = async (ctx) => {
-  // SDK drift: older PluginInput had `directory` directly; current SDK
-  // exposes it via `ctx.app.path.cwd`. Fall back for forward compat.
+  // SDK drift: @opencode-ai/plugin 1.3.x exposes `directory: string` directly on
+  // PluginInput (preferred); 0.4.x exposed it via `app.path.cwd` (removed in 1.3.x).
+  // Cast both optional shapes to any so the fallback type-builds clean against
+  // EITHER SDK (1.3.x has no `app` on PluginInput → would error TS2339 otherwise).
   const workDir =
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (ctx as any).directory ?? ctx.app?.path?.cwd ?? process.cwd();
+    (ctx as any).directory ?? (ctx as any).app?.path?.cwd ?? process.cwd();
   initLogger(workDir);
   log(`mission-55 cleanup — shared MCP-boundary dispatcher (${SDK_VERSION})`);
 
-  config = loadConfig(workDir);
+  config = loadConfig({
+    directory: workDir,
+    defaults: { hubUrl: "https://mcp-relay-hub-5muxctm3ta-ts.a.run.app/mcp", autoPrompt: true },
+    warn: log,
+    readAutoPrompt: true,
+  });
   log(`Auto-prompt: ${config.autoPrompt ? "enabled" : "DISABLED"}`);
 
   sdkClient = ctx.client;
@@ -670,15 +738,11 @@ export const HubPlugin: Plugin = async (ctx) => {
         log(`Session list failed: ${err}`);
       }
 
-      // 2. idea-251 D-prime Phase 2: identity from OIS_AGENT_NAME env. REQUIRED;
-      // log + abort connect-flow if absent (OpenCode plugin can't process.exit;
-      // operator sees the loud-error in plugin log).
-      const agentName = process.env.OIS_AGENT_NAME?.trim();
-      if (!agentName) {
-        log("[Handshake] FATAL: OIS_AGENT_NAME env var required (idea-251 D-prime). Set in ~/.config/apnex-agents/{name}.env. Plugin inert until restart.");
-        return;
-      }
-      log(`[Handshake] OIS_AGENT_NAME=${agentName}`);
+      // 2. idea-251 D-prime Phase 2 identity (hoisted to the kernel in idea-355
+      // SLICE-1). The shim keeps only its host-specific abort: OpenCode can't
+      // process.exit, so it returns — plugin inert until restart.
+      const agentName = readRequiredAgentName(log);
+      if (!agentName) return;
 
       // 3. Connect to remote Hub
       try {
@@ -717,39 +781,8 @@ export const HubPlugin: Plugin = async (ctx) => {
   }, 3000);
 
   return {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    event: async ({ event }: { event: any }) => {
-      switch (event.type) {
-        case "session.created":
-          currentSessionId = event.properties?.id || currentSessionId;
-          break;
-        case "session.updated":
-          if (event.properties?.id) currentSessionId = event.properties.id;
-          break;
-        case "session.status": {
-          const status = event.properties?.status;
-          if (status === "idle" || status === "completed") {
-            sessionActive = false;
-            if (notificationQueue.length > 0) await flushQueue();
-            else if (deferredBacklog.length > 0) await flushBacklog();
-          } else if (status === "running" || status === "pending" || status === "streaming") {
-            sessionActive = true;
-          }
-          break;
-        }
-        case "session.idle":
-          sessionActive = false;
-          if (notificationQueue.length > 0) await flushQueue();
-          else if (deferredBacklog.length > 0) await flushBacklog();
-          if (hubAdapter && !hubAdapter.isConnected) {
-            try {
-              await hubAdapter.start();
-            } catch {
-              /* will retry on next idle */
-            }
-          }
-          break;
-      }
+    event: async ({ event }: { event: Event }) => {
+      await handleSessionEvent(event);
     },
   };
 };
@@ -759,8 +792,37 @@ export const HubPlugin: Plugin = async (ctx) => {
 export const _testOnly = {
   dispatcher,
   makeOpenCodeFetchHandler,
+  handleSessionEvent,
+  getSessionActive: () => coalescer.getSessionActive(),
+  // Sync test-setup: the coalescer sets its session-active field synchronously
+  // (before any flush await), so an empty-queue setup observes it immediately.
+  setSessionActive: (v: boolean) => {
+    void coalescer.setSessionActive(v);
+  },
+  getCurrentSessionId: () => currentSessionId,
   getHubAdapter: () => hubAdapter,
   setHubAdapter: (agent: McpAgentClient | null) => {
     hubAdapter = agent;
+  },
+  // idea-355 SLICE-1T — tool-surface reconciler harness hooks. Build a
+  // reconciler over the SAME production emitListChanged/readServedRevision wiring
+  // with an injectable fetchLiveRevision, and manipulate the live
+  // activeProxyServers array, so the test can prove the kernel reconciler now
+  // owns opencode's tool-surface (seed-no-emit + multi-server drift fan-out)
+  // without a live Hub or Bun.
+  buildToolSurfaceReconciler,
+  // F2 (review): set the MODULE reconciler the PRODUCTION triggers use
+  // (pollBackstop.onHeartbeatTick + handleConnectionStateChange→streaming), so a
+  // test can pin that the production heartbeat wiring actually drives reconcile →
+  // emit (the L2-silently-disabled seam that would waste steve's one-shot restart).
+  setReconciler: (r: ToolSurfaceReconciler | null) => {
+    reconciler = r;
+  },
+  pushProxyServer: (s: Server) => activeProxyServers.push(s),
+  clearProxyServers: () => {
+    activeProxyServers.length = 0;
+  },
+  setSdkClient: (c: unknown) => {
+    sdkClient = c;
   },
 };

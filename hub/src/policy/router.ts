@@ -9,7 +9,7 @@
 import type { ZodType } from "zod";
 import type { IPolicyContext, PolicyHandler, PolicyResult, DomainEvent } from "./types.js";
 
-type Role = "architect" | "engineer" | "director" | "any";
+type Role = "architect" | "engineer" | "director" | "verifier" | "any";
 export type RoleSet = ReadonlySet<Role>;
 
 /**
@@ -52,7 +52,7 @@ interface RegisteredTool {
 /**
  * Parse the role tag(s) from a tool description.
  * Looks for `[Role]` or `[Role1|Role2|...]` at the start. Known role
- * tokens: Architect, Engineer, Director, Any (case-insensitive).
+ * tokens: Architect, Engineer, Director, Verifier, Any (case-insensitive).
  * Missing or unrecognised tokens fall back to { "any" }.
  */
 function parseRoleTag(description: string): RoleSet {
@@ -61,7 +61,13 @@ function parseRoleTag(description: string): RoleSet {
   const roles = new Set<Role>();
   for (const token of m[1].split("|")) {
     const t = token.trim().toLowerCase();
-    if (t === "architect" || t === "engineer" || t === "director" || t === "any") {
+    if (
+      t === "architect" ||
+      t === "engineer" ||
+      t === "director" ||
+      t === "verifier" ||
+      t === "any"
+    ) {
       roles.add(t);
     }
   }
@@ -134,22 +140,22 @@ export class PolicyRouter {
       };
     }
 
-    // RBAC enforcement: resolve caller's role and check against the
-    // tool's permitted role set. The "any" sentinel bypasses the check.
-    // Unknown callers (pre-register_role) also bypass — parity with the
-    // prior behaviour. Composite tags like [Architect|Director] let
-    // admin-shared tools declare their audience declaratively without
-    // inline handler checks.
+    // RBAC enforcement (bug-175): MEMBERSHIP gate — a role-gated tool admits the caller
+    // ONLY if its role-set contains "any" (open) OR the caller's resolved role. An UNKNOWN
+    // (pre-register_role) caller is NOT a member of any specific role-set → DENIED for
+    // role-gated tools (the prior `&& callerRole !== "unknown"` clause was a fail-OPEN hole:
+    // an unregistered caller bypassed every [Architect]/[Engineer]/… gate). Adapters
+    // register the role at the handshake before any tool call, so a legitimate caller is
+    // never unknown here; a genuinely-unknown caller must register_role ([Any]) first.
+    // Composite tags like [Architect|Director] are first-class via the role-set.
     const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
-    if (!tool.roles.has("any") && callerRole !== "unknown") {
-      if (!tool.roles.has(callerRole as Role)) {
-        const permittedList = Array.from(tool.roles).join("|");
-        this.log(`[RBAC] Rejected ${toolName}: requires [${permittedList}], caller is [${callerRole}]`);
-        return {
-          content: [{ type: "text", text: JSON.stringify({ error: `Authorization denied: tool '${toolName}' requires role '${permittedList}', but caller is '${callerRole}'` }) }],
-          isError: true,
-        };
-      }
+    if (!tool.roles.has("any") && !tool.roles.has(callerRole as Role)) {
+      const permittedList = Array.from(tool.roles).join("|");
+      this.log(`[RBAC] Rejected ${toolName}: requires [${permittedList}], caller is [${callerRole}]`);
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: `Authorization denied: tool '${toolName}' requires role '${permittedList}', but caller is '${callerRole}'` }) }],
+        isError: true,
+      };
     }
 
     // ── M-Session-Claim-Separation (mission-40) T2: first-tools/call auto-claim ──

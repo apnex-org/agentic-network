@@ -27,6 +27,8 @@ import type {
   FilterValue,
   FieldTranslator,
 } from "./types.js";
+import { translateKeyOrThrow } from "./filter-translation-error.js";
+import { assertKnownFilterOps, hasImplementedFilterOp } from "./types.js";
 
 const { Pool, Client } = pg;
 
@@ -40,17 +42,31 @@ export type WriteEncoder = (kind: string, entity: unknown) => unknown;
  *   - setFieldTranslator (W2): READ-side bare-key → envelope-path translation.
  *   - setWriteEncoder (W4): WRITE-side bare → envelope encoding at put/createOnly/
  *     putIfMatch (idea-324 close-all-bare-writers). Symmetric declarative authorities.
+ *   - setPartitionedKindCheck (C3-R4b): the known-partitioned-kind oracle that arms
+ *     FilterTranslationGapError at the filter-translate path.
  */
 export interface PostgresSubstrate extends HubStorageSubstrate {
   setFieldTranslator(translator: FieldTranslator | null): void;
   setWriteEncoder(encoder: WriteEncoder | null): void;
+  setPartitionedKindCheck(check: ((kind: string) => boolean) | null): void;
+}
+
+/** Per-instance pool tuning (C1-R2 audit-4103). Both fall back to env / defaults when
+ *  omitted — existing callers pass connStr only (unchanged). Lets tests parametrize the
+ *  pool to assert the starvation regression guard. */
+export interface PostgresSubstrateOptions {
+  /** node-pg pool max connections (default env POSTGRES_POOL_MAX ?? 25, floor 2). */
+  max?: number;
+  /** ms a query waits for a free connection before erroring (default env
+   *  POSTGRES_CONNECTION_TIMEOUT_MS, else undefined = wait indefinitely — prod unchanged). */
+  connectionTimeoutMillis?: number;
 }
 
 /**
  * Factory — returns a PostgresSubstrate backed by a postgres connection-pool.
  */
-export function createPostgresStorageSubstrate(connectionString: string): PostgresSubstrate {
-  return new PostgresStorageSubstrate(connectionString);
+export function createPostgresStorageSubstrate(connectionString: string, opts?: PostgresSubstrateOptions): PostgresSubstrate {
+  return new PostgresStorageSubstrate(connectionString, opts);
 }
 
 class PostgresStorageSubstrate implements PostgresSubstrate {
@@ -65,6 +81,14 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   private fieldTranslator: FieldTranslator | null = null;
 
   /**
+   * C3-R4b (piece 1): "is this a known envelope-partitioned kind?" oracle,
+   * late-bound via setPartitionedKindCheck at Hub boot (→ reconciler.hasTranslations).
+   * Gates FilterTranslationGapError: a null translation is a GAP only for a known
+   * partitioned kind. null until wired (tests/dev) → the gap-throw is inert.
+   */
+  private partitionedKindCheck: ((kind: string) => boolean) | null = null;
+
+  /**
    * mission-90 W4 (idea-324): write-side envelope encoder, late-bound via
    * setWriteEncoder at Hub boot. Routes every put/createOnly/putIfMatch through
    * the single shape-authority (migration-module migrateOne) so ALL writes land
@@ -74,8 +98,23 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    */
   private writeEncoder: WriteEncoder | null = null;
 
-  constructor(connectionString: string) {
-    this.pool = new Pool({ connectionString });
+  constructor(connectionString: string, opts?: PostgresSubstrateOptions) {
+    // C1-R2 audit-4103 (construction HIGH): pool-starvation fix. withAdvisoryLock pins ONE
+    // connection for the lock session while the inner list/CAS each need ANOTHER from the
+    // pool — so each concurrent distinct-agent claim transiently needs ~2 connections. At
+    // the pg default max=10 this DEADLOCKS at >=10 concurrent distinct claimers (the
+    // lock-holders pin all 10 → the inner ops can't acquire → hang). Set an explicit max
+    // sized for expected concurrency (env POSTGRES_POOL_MAX, default 25 — Steve's audit-4120
+    // headroom formula 2·expected + reserve for ~10 distinct claimers, leaving room for the
+    // schema/token/watch/sweeper/non-claim traffic that also draws on the pool). The
+    // structural fix (inner ops reusing the pinned connection → 1-per-claim) is the
+    // wide-adoption follow-on. connectionTimeoutMillis (opt/env) makes a starved query
+    // fail-fast+loud instead of hanging — undefined by default (prod unchanged), settable
+    // per-instance (the regression guard uses it).
+    const max = Math.max(2, opts?.max ?? Number(process.env.POSTGRES_POOL_MAX ?? 25));
+    const connectionTimeoutMillis = opts?.connectionTimeoutMillis
+      ?? (process.env.POSTGRES_CONNECTION_TIMEOUT_MS ? Number(process.env.POSTGRES_CONNECTION_TIMEOUT_MS) : undefined);
+    this.pool = new Pool({ connectionString, max, ...(connectionTimeoutMillis ? { connectionTimeoutMillis } : {}) });
     // bug-110 — without an 'error' listener an idle-connection backend error
     // is an uncaught exception that crashes the process (pg contract).
     attachPgErrorHandler(this.pool, "PostgresStorageSubstrate pool");
@@ -87,6 +126,16 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    */
   setFieldTranslator(translator: FieldTranslator | null): void {
     this.fieldTranslator = translator;
+  }
+
+  /**
+   * C3-R4b (piece 1): inject the known-partitioned-kind oracle
+   * (→ reconciler.hasTranslations). Wired in production (index.ts) after
+   * reconciler.start(); arms FilterTranslationGapError on the filter-translate
+   * path. A null arg clears it (gap-throw inert — tests/dev).
+   */
+  setPartitionedKindCheck(check: ((kind: string) => boolean) | null): void {
+    this.partitionedKindCheck = check;
   }
 
   /**
@@ -112,7 +161,17 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    * standalone). Inert until setFieldTranslator is wired (tests/dev = no-op).
    */
   private translateKey(kind: string, bareKey: string): string {
-    return this.fieldTranslator?.(kind, bareKey) ?? bareKey;
+    if (!this.fieldTranslator) return bareKey; // inert until wired (tests/dev)
+    // C3-R4b (piece 1): fail-loud at filter-translate when a known partitioned
+    // kind's domain key has no renameMap entry (the silent-miss gap, bug-138/
+    // bug-170). Arms only when the partitioned-kind oracle is ALSO wired
+    // (production); otherwise the bare key passes through, exactly as before.
+    return translateKeyOrThrow(
+      kind,
+      bareKey,
+      (k, b) => this.fieldTranslator!(k, b),
+      (k) => this.partitionedKindCheck?.(k) ?? false,
+    );
   }
 
   // ── Schema management (W2 reconciler integration; stubbed at W1) ──────────
@@ -278,10 +337,28 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   // ── Watch / change-notification (per Design §2.4 LISTEN/NOTIFY) ───────────
 
   /**
+   * bug-187 TEST SEAM (test-only; undefined in production). Awaited inside
+   * watch() AFTER LISTEN is registered but BEFORE the replay SELECT, so a test
+   * can deterministically commit a write into the (now-closed) LISTEN→replay
+   * window and prove it surfaces EXACTLY once (gap-free replay + overlap dedup).
+   * Cleared after firing once so it cannot perturb later watches.
+   */
+  public _watchTestHookAfterListen?: () => Promise<void>;
+
+  /**
    * Returns AsyncIterable<ChangeEvent>. Implements list-then-watch backfill
    * per OQ5 disposition: caller does substrate.list() → captures snapshotRevision
    * → substrate.watch({ sinceRevision }). Substrate replays events strictly
    * newer than that revision; no missed-events window.
+   *
+   * bug-187 — subscribe-before-replay. The dedicated LISTEN client is connected
+   * and LISTENing (buffering notifications) BEFORE the replay SELECT runs. The
+   * OLD order (replay SELECT, THEN LISTEN) had a race: a write committing in the
+   * SELECT→LISTEN window fired NOTIFY with no listener AND was absent from the
+   * replay (it committed after the SELECT snapshot) → silently missed. Now the
+   * overlap (a write visible to BOTH the buffered NOTIFY stream and the replay
+   * SELECT) is de-duplicated by resource_version so it surfaces exactly once.
+   * Mirrors MemoryHubStorageSubstrate's subscribe-before-replay, plus dedup.
    *
    * Uses a dedicated pg.Client for LISTEN (postgres protocol requires LISTEN
    * on its own connection; not shared via pool).
@@ -289,28 +366,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   async *watch<T = unknown>(kind: string, opts: WatchOptions = {}): AsyncIterable<ChangeEvent<T>> {
     const { filter, sinceRevision, signal } = opts;
 
-    // Step 1: replay events from sinceRevision (if provided) via SELECT
-    if (sinceRevision) {
-      const r = await this.pool.query<{ kind: string; id: string; data: T; resource_version: string }>(
-        `SELECT kind, id, data, resource_version FROM entities
-         WHERE kind = $1 AND resource_version > $2
-         ORDER BY resource_version ASC`,
-        [kind, sinceRevision],
-      );
-      for (const row of r.rows) {
-        if (signal?.aborted) return;
-        if (filter && !matchesFilter(row.data as Record<string, unknown>, filter, (k) => this.translateKey(kind, k))) continue;
-        yield {
-          op: "put",
-          kind: row.kind,
-          id: row.id,
-          entity: row.data,
-          resourceVersion: String(row.resource_version),
-        };
-      }
-    }
-
-    // Step 2: LISTEN on entities_change channel; yield notifications matching kind+filter
+    // bug-187 Step 0: connect the dedicated LISTEN client FIRST (before replay).
     const client = new Client({ connectionString: (this.pool as unknown as { options: { connectionString: string } }).options.connectionString });
     // bug-110 — the dedicated LISTEN connection needs its own 'error' handler;
     // a backend error mid-watch would otherwise crash the process uncaught.
@@ -330,31 +386,86 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     }
 
     try {
-      await client.query(`LISTEN entities_change`);
-
-      // pg Client emits 'notification' events; we adapt to async-iterable
+      // pg Client emits 'notification' events; we buffer them. The handler is
+      // attached BEFORE the LISTEN command so a NOTIFY arriving the instant LISTEN
+      // takes effect cannot slip past an unattached handler.
       const notifications: pg.Notification[] = [];
       let resolve: (() => void) | null = null;
       const ready = () => new Promise<void>((r) => { resolve = r; });
-
-      client.on("notification", (n) => {
-        notifications.push(n);
+      const wake = () => {
         if (resolve) {
           const r = resolve;
           resolve = null;
           r();
         }
-      });
+      };
+      // bug-100 work-41 (#4b real-pg): a LISTEN backend the SERVER terminates
+      // (e.g. 57P01 admin-shutdown) must SETTLE this iterator so the consumer's
+      // for-await ENDS → runtimeWatchSession returns "reconnect" → runtimeLoop
+      // reconnects. The mock modeled generator-throw-on-end; real pg does NOT (the
+      // SDK just fires 'end'/'error'). So mark `ended` on either + wake the parked
+      // ready(); the live loop drains any buffered events then returns. Without
+      // this the loop re-parks on ready() FOREVER (no more events) → the watch
+      // never terminates → no reconnect (steve's audit-4533 finding 2).
+      let ended = false;
+      client.on("notification", (n) => { notifications.push(n); wake(); });
+      // 'end'/'error' settle the iterator (non-abort termination → reconnect).
+      // (attachPgErrorHandler also listens on 'error' to prevent an uncaught
+      // crash; this second listener is additive — it just records + wakes.)
+      client.on("end", () => { ended = true; wake(); });
+      client.on("error", () => { ended = true; wake(); });
 
-      // 'end' event resolves the ready() wait so the abort path returns cleanly
-      client.on("end", () => {
-        if (resolve) {
-          const r = resolve;
-          resolve = null;
-          r();
+      await client.query(`LISTEN entities_change`);
+
+      // bug-187 TEST SEAM — fires once, here in the (now-closed) LISTEN→replay
+      // window so a test can commit a racing write and assert exactly-once
+      // delivery. Undefined / no-op in production.
+      if (this._watchTestHookAfterListen) {
+        const hook = this._watchTestHookAfterListen;
+        this._watchTestHookAfterListen = undefined;
+        await hook();
+      }
+
+      // bug-187/work-41 Step 1 (AFTER LISTEN): replay events strictly newer than
+      // sinceRevision via SELECT, tracking a MONOTONIC `cursor` = the max rv
+      // yielded. The live drain then skips any event with rv <= cursor.
+      //
+      // The earlier exact-rv-Set dedup was WRONG (steve's audit-4533 finding 1):
+      // when the SAME row is written twice in the LISTEN→replay overlap (rv 2 then
+      // rv 4), the replay SELECT yields only the LATEST row state (rv4), but BOTH
+      // NOTIFYs are buffered live — the set skipped only the exact rv4, so the
+      // STALE rv2 leaked through AFTER rv4 → out-of-order delivery + the consumer
+      // cursor REGRESSED 4→2 (his [4,2] probe). The monotonic cursor skips rv2
+      // (≤4): in-order, no-regression, exactly-once. (Trade-off: an interleaved
+      // delete whose rv ≤ a replayed put's rv is skipped — but the replay snapshot
+      // already reflects that row's absence, delivering it would itself be
+      // out-of-order, and the SchemaReconciler delete path is best-effort by
+      // design. Acyclic correctness > a best-effort delete event.)
+      let cursor = sinceRevision ? BigInt(sinceRevision) : 0n;
+      if (sinceRevision) {
+        const r = await this.pool.query<{ kind: string; id: string; data: T; resource_version: string }>(
+          `SELECT kind, id, data, resource_version FROM entities
+           WHERE kind = $1 AND resource_version > $2
+           ORDER BY resource_version ASC`,
+          [kind, sinceRevision],
+        );
+        for (const row of r.rows) {
+          if (signal?.aborted) return;
+          const rv = BigInt(row.resource_version);
+          if (rv > cursor) cursor = rv;
+          if (filter && !matchesFilter(row.data as Record<string, unknown>, filter, (k) => this.translateKey(kind, k))) continue;
+          yield {
+            op: "put",
+            kind: row.kind,
+            id: row.id,
+            entity: row.data,
+            resourceVersion: String(row.resource_version),
+          };
         }
-      });
+      }
 
+      // bug-187/work-41 Step 2: live loop. Yield buffered notifications, skipping
+      // any with rv <= the monotonic cursor (overlap dedup + no-regression).
       while (true) {
         if (signal?.aborted) return;
 
@@ -369,6 +480,11 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
             continue;
           }
           if (payload.kind !== kind) continue;
+          // work-41 monotonic dedup: already-surfaced or stale (rv ≤ cursor) → skip;
+          // the cursor only advances, so a stale buffered NOTIFY can't regress it.
+          const rv = BigInt(payload.resource_version);
+          if (rv <= cursor) continue;
+          cursor = rv;
 
           let entity: T | undefined;
           if (payload.op === "put") {
@@ -391,6 +507,12 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
           };
         }
         if (signal?.aborted) return;
+        // bug-100 work-41 (#4b): the LISTEN backend ended/errored (non-abort) —
+        // all buffered events are now drained, so terminate the generator. The
+        // consumer's for-await ends → runtimeWatchSession returns "reconnect" →
+        // runtimeLoop reconnects with backoff. (Abort is handled by the guards
+        // above; this is the SERVER-side termination path.)
+        if (ended) return;
         await ready();
       }
     } finally {
@@ -534,6 +656,18 @@ function translateFilterClause(
       return { sql: `${fieldSql} = ANY($${paramIndex})`, nextParamIndex: paramIndex + 1 };
     }
 
+    // $contains (C1-R2): JSONB array-membership — the stored ARRAY at `field`
+    // CONTAINS the scalar (the inverse of $in). JSON-extract (`#>`, not text `#>>`)
+    // + the `@>` containment operator; the param is the JSON-encoded scalar.
+    // GIN-indexable (jsonb_path_ops) — see schema-reconciler buildCreateIndexSQL.
+    if (
+      "$contains" in v &&
+      (typeof v.$contains === "string" || typeof v.$contains === "number" || typeof v.$contains === "boolean")
+    ) {
+      params.push(JSON.stringify(v.$contains));
+      return { sql: `${jsonbFieldJson(field)} @> $${paramIndex}::jsonb`, nextParamIndex: paramIndex + 1 };
+    }
+
     // Range operators — all may co-exist on same field (e.g. {$gt: 5, $lt: 10})
     const parts: string[] = [];
     let p = paramIndex;
@@ -563,6 +697,21 @@ function jsonbField(dottedPath: string): string {
     return `data->>'${parts[0]}'`;
   }
   return `data#>>'{${parts.join(",")}}'`;
+}
+
+/**
+ * JSON-extract variant of jsonbField — returns jsonb (`->`/`#>`), NOT text
+ * (`->>`/`#>>`). Used by the `$contains` (`@>`) array-membership operator (C1-R2),
+ * where the LHS must be jsonb for the containment comparison.
+ *   "roleEligibility"      → "data->'roleEligibility'"
+ *   "spec.roleEligibility" → "data#>'{spec,roleEligibility}'"
+ */
+function jsonbFieldJson(dottedPath: string): string {
+  const parts = dottedPath.split(".");
+  if (parts.length === 1) {
+    return `data->'${parts[0]}'`;
+  }
+  return `data#>'{${parts.join(",")}}'`;
 }
 
 /**
@@ -603,7 +752,21 @@ function matchesFilter(entity: Record<string, unknown>, filter: Filter, translat
     }
     if (typeof value === "object" && value !== null) {
       const op = value as Record<string, unknown>;
+      // C1-R2 (audit-4054): FAIL-LOUD — an operator validated upstream but not
+      // implemented here is a silent-no-op (returns the row anyway), the exact
+      // watch/list parity hole. Throw on any unknown operator (kills the CLASS,
+      // tele-4), so a new FilterValue operator can never silently pass the watch.
+      assertKnownFilterOps(op, rawField);
+      // FAIL-CLOSED backstop (audit-4070): a predicate with NO implemented operator
+      // (forbidden-only / empty) is UNEVALUABLE → match NOTHING, never fall through
+      // to the `return true` tail (the fail-OPEN hole). Parity with policy matchField.
+      if (!hasImplementedFilterOp(op)) return false;
       if ("$in" in op && Array.isArray(op.$in) && !op.$in.map(String).includes(String(v))) return false;
+      // C1-R2: $contains = TYPED array-membership (SameValueZero; [3] does NOT
+      // match "3") — parity with the typed JSONB `@>` in translateFilterClause.
+      if ("$contains" in op && op.$contains !== undefined) {
+        if (!Array.isArray(v) || !v.includes(op.$contains)) return false;
+      }
       if ("$gt" in op && op.$gt !== undefined && !(numericCmp(v) > numericCmp(op.$gt))) return false;
       if ("$lt" in op && op.$lt !== undefined && !(numericCmp(v) < numericCmp(op.$lt))) return false;
       if ("$gte" in op && op.$gte !== undefined && !(numericCmp(v) >= numericCmp(op.$gte))) return false;

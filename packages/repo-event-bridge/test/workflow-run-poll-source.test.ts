@@ -15,6 +15,7 @@ import { describe, it, expect } from "vitest";
 import { MemoryStorageProvider } from "@apnex/storage-provider";
 import { WorkflowRunPollSource } from "../src/workflow-run-poll-source.js";
 import type { Logger } from "../src/poll-source.js";
+import type { MessageSink } from "../src/sink.js";
 
 interface MockResponse {
   status: number;
@@ -39,6 +40,12 @@ function silentLogger(): Logger {
     warn: () => {},
     error: () => {},
   };
+}
+
+/** A no-op succeeding sink — delivery always succeeds (these tests assert pollOnce.emitted, not
+ *  sink content; the failure-injection + cursor-gating coverage lives in the coupling test). */
+function okSink(): MessageSink {
+  return { async emit() {} };
 }
 
 function defaultScopesResponse(): MockResponse {
@@ -102,6 +109,7 @@ describe("WorkflowRunPollSource pollOnce — cold-start", () => {
       fetch: fetchImpl,
       logger: silentLogger(),
       now: () => Date.parse("2026-05-08T00:35:00Z"),
+      sink: okSink(),
     });
     await source.start();
     const result = await source.pollOnce("apnex-org/agentic-network");
@@ -131,6 +139,7 @@ describe("WorkflowRunPollSource pollOnce — cold-start", () => {
       fetch: fetchImpl,
       logger: silentLogger(),
       now: () => Date.parse("2026-05-08T00:35:00Z"),
+      sink: okSink(),
     });
     await source.start();
     const r1 = await source.pollOnce("r/r");
@@ -159,6 +168,7 @@ describe("WorkflowRunPollSource pollOnce — cold-start", () => {
       fetch: fetchImpl,
       logger: silentLogger(),
       now: () => Date.parse("2026-05-08T00:35:00Z"),
+      sink: okSink(),
     });
     await source.start();
     const result = await source.pollOnce("r/r");
@@ -187,6 +197,7 @@ describe("WorkflowRunPollSource pollOnce — auth-failure terminal path", () => 
       fetch: fetchImpl,
       logger: silentLogger(),
       now: () => Date.parse("2026-05-08T00:35:00Z"),
+      sink: okSink(),
     });
     await source.start();
     const result = await source.pollOnce("r/r");
@@ -217,6 +228,7 @@ describe("WorkflowRunPollSource — query-param shape (F4 + F5 folds)", () => {
       fetch: fetchImpl,
       logger: silentLogger(),
       now: () => Date.parse("2026-05-08T00:35:00Z"),
+      sink: okSink(),
     });
     await source.start();
     await source.pollOnce("r/r");

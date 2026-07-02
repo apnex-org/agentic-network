@@ -25,6 +25,12 @@ resource "google_cloud_run_v2_service" "hub_api" {
       max_instance_count = var.proxy_max_instances
     }
 
+    # bug-197: one instance multiplexes many long-lived MCP SSE streams + request
+    # bursts. Was the implicit concurrency=1 (forced by cpu<1), where each SSE
+    # stream ate a whole instance → a multi-agent survey burst 429'd the org.
+    # Requires proxy_cpu>=1. Live-applied on revision hub-api-00002-5td 2026-06-28.
+    max_instance_request_concurrency = var.proxy_concurrency
+
     # Direct VPC Egress — Cloud Run reaches the internal-only VM via the
     # hub VPC. PRIVATE_RANGES_ONLY keeps public traffic on standard egress
     # (no VPC connector resource / cost).

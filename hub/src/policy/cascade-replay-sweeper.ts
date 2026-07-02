@@ -38,14 +38,18 @@
  */
 
 import type { IPolicyContext } from "./types.js";
-import type { IThreadStore, Thread, StagedAction } from "../state.js";
+import type { IThreadStore, Thread, StagedAction, IAuditStore } from "../state.js";
 import { runCascade } from "./cascade.js";
+import { escalateBareEnvelope } from "./bare-envelope-escalation.js";
 
 export interface CascadeReplaySweeperOptions {
   metrics?: IPolicyContext["metrics"];
+  /** C3-R4b piece 2: durable queryable sink for 0-bare-violation audit entries. */
+  audit?: IAuditStore;
   logger?: {
     log: (msg: string) => void;
     warn: (msg: string, err?: unknown) => void;
+    error?: (msg: string, err?: unknown) => void;
   };
 }
 
@@ -53,6 +57,8 @@ export interface CascadeReplayResult {
   scanned: number;
   replayed: number;
   errors: number;
+  /** C3-R4b piece 2: threads terminal-quarantined on a structural 0-bare defect. */
+  quarantined: number;
 }
 
 export interface CascadeReplayContextProvider {
@@ -61,7 +67,12 @@ export interface CascadeReplayContextProvider {
 
 export class CascadeReplaySweeper {
   private readonly metrics: IPolicyContext["metrics"] | undefined;
-  private readonly logger: { log: (m: string) => void; warn: (m: string, err?: unknown) => void };
+  private readonly audit: IAuditStore | undefined;
+  private readonly logger: {
+    log: (m: string) => void;
+    warn: (m: string, err?: unknown) => void;
+    error: (m: string, err?: unknown) => void;
+  };
 
   constructor(
     private readonly threadStore: IThreadStore,
@@ -69,37 +80,90 @@ export class CascadeReplaySweeper {
     options: CascadeReplaySweeperOptions = {},
   ) {
     this.metrics = options.metrics;
-    this.logger = options.logger ?? {
-      log: (m) => console.log(`[CascadeReplaySweeper] ${m}`),
-      warn: (m, err) =>
-        console.warn(`[CascadeReplaySweeper] ${m}`, err ?? ""),
+    this.audit = options.audit;
+    this.logger = {
+      log: options.logger?.log ?? ((m) => console.log(`[CascadeReplaySweeper] ${m}`)),
+      warn: options.logger?.warn ?? ((m, err) => console.warn(`[CascadeReplaySweeper] ${m}`, err ?? "")),
+      error: options.logger?.error ?? ((m, err) => console.error(`[CascadeReplaySweeper] ${m}`, err ?? "")),
     };
+  }
+
+  /** C3-R4b piece 2: deps for the shared 0-bare escalation (durable audit +
+   *  best-effort per-process metric + ERROR logger). */
+  private escalationDeps(ctx: IPolicyContext) {
+    return { audit: this.audit, metrics: ctx.metrics, logger: this.logger };
   }
 
   /**
    * Run a single sweep pass synchronously. Use on Hub startup, before
    * serving traffic. Returns counts for telemetry / test assertions.
    * Per-thread errors are isolated; one thread's failed replay does
-   * NOT abort the remaining threads.
+   * NOT abort the remaining threads. A STRUCTURAL bare-envelope defect is
+   * terminal-quarantined (not retried) + escalated loud/queryable (cal-84).
    */
   async fullSweep(): Promise<CascadeReplayResult> {
     const result: CascadeReplayResult = {
       scanned: 0,
       replayed: 0,
       errors: 0,
+      quarantined: 0,
     };
 
-    const pendingThreads = await this.threadStore.listCascadePending();
+    const ctx = this.contextProvider.forSweeper();
+
+    let pendingThreads: Thread[];
+    try {
+      pendingThreads = await this.threadStore.listCascadePending();
+    } catch (listErr) {
+      // C3-R4b piece 2: a structural bare-envelope in the THREAD-list decode
+      // throws mid-list (the offending thread can't be isolated per-item here).
+      // Escalate LOUD + queryable and skip THIS sweep cycle — Hub still serves
+      // (the index.ts startup wrap is a further backstop). NOT a silent swallow.
+      if (
+        await escalateBareEnvelope(
+          listErr,
+          { sweeper: "cascade-replay (cascadePending list)", entityRef: "(thread list)" },
+          this.escalationDeps(ctx),
+        )
+      ) {
+        result.quarantined += 1;
+        return result;
+      }
+      throw listErr;
+    }
     result.scanned = pendingThreads.length;
     if (result.scanned === 0) return result;
-
-    const ctx = this.contextProvider.forSweeper();
 
     for (const thread of pendingThreads) {
       try {
         await this.replayThread(thread, ctx);
         result.replayed += 1;
       } catch (err) {
+        // C3-R4b piece 2: a STRUCTURAL bare-envelope (a spawned entity reached
+        // replay still enveloped) is a PERMANENT defect — escalate loud +
+        // queryable, then TERMINAL-QUARANTINE (markCascadeFailed → status
+        // cascade_failed, which listCascadePending excludes) so it is NOT
+        // re-dispatched, and CONTINUE so the other valid threads still replay.
+        // This kills cal-84's silent-infinite-retry (do NOT preserve-the-marker).
+        if (
+          await escalateBareEnvelope(
+            err,
+            { sweeper: "cascade-replay", entityRef: thread.id },
+            this.escalationDeps(ctx),
+          )
+        ) {
+          result.quarantined += 1;
+          try {
+            await this.threadStore.markCascadeFailed(thread.id);
+          } catch (quarErr) {
+            this.logger.warn(
+              `quarantine (markCascadeFailed) failed for thread ${thread.id}; it may re-list next startup:`,
+              quarErr,
+            );
+          }
+          continue;
+        }
+        // Existing TRANSIENT per-thread isolation — preserve marker for retry.
         result.errors += 1;
         this.metrics?.increment("cascade_replay.thread_error", {
           threadId: thread.id,
@@ -115,12 +179,13 @@ export class CascadeReplaySweeper {
     }
 
     this.logger.log(
-      `replay complete: scanned=${result.scanned} replayed=${result.replayed} errors=${result.errors}`,
+      `replay complete: scanned=${result.scanned} replayed=${result.replayed} errors=${result.errors} quarantined=${result.quarantined}`,
     );
     this.metrics?.increment("cascade_replay.sweep", {
       scanned: result.scanned,
       replayed: result.replayed,
       errors: result.errors,
+      quarantined: result.quarantined,
     });
     return result;
   }

@@ -1368,7 +1368,7 @@ calibrations:
       - tele-12
 
   - id: 60
-    class: process
+    class: substrate
     title: "Hub MCP tool-addition audit-pattern — hardcoded `router.size` test assertion lags tool-additions; structural elimination via dynamic-count assertion (idea-231 = closure mechanism (b))"
     origin: mission-69-W0
     surfaced_at: bug-45-PR-155 + post-mission-69-close-2026-05-02
@@ -1590,8 +1590,14 @@ calibrations:
     title: "Deferred-runtime-gate-becomes-silent-defect-surface — Phase 6 verification §6.4 deferral pattern produces post-substrate runtime-gap bugs (24 canonical instances + thread-510 v1.x 8-round cycle empirical scale-validation 2026-05-09 = 93 findings under comprehensive-sweep across substantive-reshape envelope; audit-rubric maturation arc empirically validated 2026-05-08; comprehensive-sweep methodology empirically locked at n=6 baseline thread-509 + scale-validated at n=93 thread-510)"
     origin: post-mission-76-bug-49-cycle
     surfaced_at: bug-49 (2026-05-05) → bug-50 → bug-51 (mission-76); bug-52 → bug-53 → bug-54 → bug-55 → bug-56 (mission-225 + post-bug-55 cascade); 8 additional instances 2026-05-07 → 2026-05-08 across substrate-feature missions M-SSE-Filter-List-Adapter + M-Deployment-Hygiene + M-Build-Identity + M-GitHub-Releases-Plugin; +2 evening 2026-05-08 (bug-57 broadcast enqueue gap + bug-58 cross-user broadcast tenant-isolation); +6 evening 2026-05-08 (M-Branchcraft-V1 thread-509 7-round audit cycle; n=6 architect-spec-level-recall-misses-substrate-coupling instances across both library-API + runtime-platform substrate-currency dimensions); +93 findings 2026-05-09 (M-Missioncraft-V1 thread-510 v1.x 8-round audit cycle; pattern-decay R1=24 → R2=15 → R3=14 → R4=14 → R5=11 → R6=10 → R7=5 → R8=0 ratify-clean tracking thread-509 6-9 round prediction range cleanly; substantive-reshape envelope landed v1.0 RATIFIED → v1.8 BILATERAL RATIFIED at SHA 226aa46 via 6 Director-direct architectural refinements; comprehensive-sweep methodology scale-validated)
-    status: open (methodology-promotion empirically very overdue; architect-Director ratification pending strategic-review gate-point)
+    status: open
     closure_mechanism: |
+      STATUS NOTE: methodology-promotion is empirically very overdue;
+      architect-Director ratification remains pending a strategic-review
+      gate-point (~7 weeks as of autonomous-stint-3; flagged as the #62
+      promotion bottleneck — candidate for the relaxed architect-driven
+      promotion path per stint-3 director-decision D8).
+
       Architectural-pathology pattern. When mission Phase 6 preflight verification
       gate §6.4 "runtime verification" is DEFERRED to post-Phase-9-closing-audit
       (or beyond), substrate that ships unit-test-green has zero runtime-path
@@ -2839,13 +2845,42 @@ calibrations:
       fail-loud / anomaly-monitor over silent-degrade (see #84).
       Folded into retro §2.2 + §3.3; mission-scale manifestation of RETIRED
       #19 (schema-rename without state migration).
+
+      RECURRENCE (autonomous-stint-3): the false-green / faithful-harness class
+      RECURRED one stint after naming — bug-178 (~42 testcontainer files used a
+      raw `new Pool` instead of the shared faithful fixture) + PR #385 where a
+      mock harness GREEN-LIT two real-pg-only seams (a non-monotonic cursor +
+      an iterator-settle hang) caught only by steve's real-pg probing
+      (#385 9a7d552). A named pattern recurring AFTER naming is the strongest
+      argument to MECHANIZE it into a guard — ties to #88 (re-introduction-
+      guard scan-scope) + idea-356 (calibration write-verb/validate +
+      auto-surface). tele-8 + tele-7.
+
+      GENERALIZATION (autonomous-stint-4, idea-378 / #403): the false-green
+      class extends beyond TEST-fixture shape to PRODUCTION-INPUT shape. A
+      data-processing / reconciliation tool that validates only that its
+      MECHANISM executes — without validating against the REAL production INPUT
+      shape — false-greens the same way a non-faithful harness does. #403's
+      reconcile.py executed cleanly but mis-classified envelope rows
+      (resolved->open) because it read the storage shape, not the decoded-flat
+      shape (verifier catch #2 — the CLI built to FIX the stale ledger would
+      have silently mis-curated it). Discipline: "faithful-to-input-SHAPE" —
+      any production-data-processing tool is validated against a sample of the
+      REAL production input, not a synthetic/assumed shape. See idea-378.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion; status=completed 2026-06-20)
+      - idea-378 (faithful-to-input-shape; the production-data-processing generalization — autonomous-stint-4)
+      - "PR #403 (reconcile.py envelope-misclassification; verifier catch #2 — autonomous-stint-4)"
+      - docs/reviews/autonomous-stint-4-retrospective.md §5 (verifier catch #2) + §6
       - "#19 (schema-rename-without-state-migration; retired; this is the mission-scale manifestation)"
       - "#82 (faithful-harness-as-exposure; the fix mechanism)"
       - "#84 (silent-degrade try/catch; the compounding prod-side mechanism)"
+      - "#88 (re-introduction-guard scan-scope; the mechanization target for this recurring class)"
       - bug-138 (envelope-blind reads; the masked defect class)
+      - bug-178 (~42 testcontainer raw-Pool files; the recurrence — autonomous-stint-3)
+      - "PR #385 (mock harness hid two real-pg-only seams; 9a7d552 — autonomous-stint-3)"
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (false-green recurrence)
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §2.2 + §3.3
     tele_alignment:
       - tele-7
@@ -2869,11 +2904,26 @@ calibrations:
       shape. bug-138 eliminated across BOTH surfaces.
       Folded into retro §3.2; CLAUDE.md envelope-substrate STRICT +
       decode-to-flat section.
+
+      EXTENSION (autonomous-stint-3, bug-188): the dual-surface is actually a
+      TRI-SURFACE — sort/ordering is a THIRD envelope read-path surface
+      alongside filter + decode. Same envelope-blindness class, new surface:
+      bug-188 (listThreads ordered/limited at the storage layer dropped the
+      newest rows because the ORDER BY operated on an envelope column, not the
+      decoded flat field — an unordered LIMIT 500 silently truncated newest
+      rows). filter + decode + SORT are ALL envelope read-path surfaces that
+      must derive from the same renameMap. The ORDER BY updatedAt band-aid
+      (bug-177-OBS1) must NOT be mistaken for class-closure — the class closes
+      only when sort, like filter and decode, is renameMap-derived across every
+      kind. surfaced_at bug-177 -> bug-188 (DR-S3-012/013); tele-1 + tele-7.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion)
       - bug-138 (the dual-surface silent-failure class)
       - bug-158 (list_missions envelope-blindness; filter-side residual exposed by the strict cutover)
+      - bug-188 (listThreads unordered LIMIT 500 drops newest rows; the SORT/ordering third surface — autonomous-stint-3)
+      - bug-177 (OBS1 ORDER BY updatedAt band-aid; NOT class-closure)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-012/013 tri-surface extension)
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §3.2
     tele_alignment:
       - tele-1
@@ -2926,11 +2976,31 @@ calibrations:
       the deep audit testcontainer could not, because the testcontainer
       seeds claimable tasks directly and bypasses the login-label dispatch).
       Folded into retro §2.2 + §5.
+
+      RECURRENCE (autonomous-stint-3): the faithful-harness class RECURRED one
+      stint after naming — bug-178 (~42 testcontainer files on raw `new Pool`
+      vs the shared faithful fixture) + PR #385 (a mock harness hid two
+      real-pg-only seams caught only by steve's real-pg probing). The
+      recurrence is the strongest argument to MECHANIZE harness-fidelity into a
+      guard (ties to #88 + idea-356). See #79 for the full recurrence note.
+
+      GENERALIZATION (autonomous-stint-4, idea-378 / #403): harness-fidelity
+      generalizes to INPUT-fidelity. The highest-leverage validation for ANY
+      production-data-processing tool (not just a shape-migration test suite) is
+      to run it against the REAL production input shape, not a synthetic one.
+      #403's reconcile.py passed on assumed shape and mis-classified real
+      envelope rows; the fix was to decode-to-flat the real input (the
+      faithful-to-input-shape discipline). See #79's stint-4 generalization +
+      idea-378.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion)
-      - "#79 (false-green-at-scale; the failure mode this fixes)"
+      - "#79 (false-green-at-scale; the failure mode this fixes; carries the autonomous-stint-3 recurrence note + stint-4 generalization)"
+      - idea-378 (faithful-to-input-shape generalization — autonomous-stint-4)
+      - "#88 (re-introduction-guard scan-scope; the mechanization target)"
       - bug-159 (workflow-tooling bug a faithful unit harness still missed; live-co-drive complement)
+      - bug-178 (~42 testcontainer raw-Pool files; the recurrence — autonomous-stint-3)
+      - "PR #385 (mock harness hid two real-pg-only seams — autonomous-stint-3)"
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §2.2 + §5
     tele_alignment:
       - tele-9
@@ -3014,16 +3084,772 @@ calibrations:
       NOT duplicated here; this entry captures the METHODOLOGY meta-lesson.
       Folded into retro §4 candidate 9; runbook B.3 + Design §4 corrected in
       PR #324.
+
+      GENERALIZATION (autonomous-stint-3): the deploy-only meta-lesson is one
+      instance of a broader axiom — GROUND-TRUTH-OVER-ASSUMPTION: verify from
+      code/prod, not from narrative or a carried mental model, before relying
+      on state. Surfaced across FOUR surfaces this stint:
+      (1) LEDGER — reconcile-first; the bug ledger was ~52% stale and seeding /
+          strategic-review ran on stale data (near-miss 3-4x duplicate rebuild).
+      (2) DEPLOY — /health before declaring a blocker; a phantom
+          watchtower-stall mental model (prod was already current) shaped the
+          back-half + spawned a moot CRITICAL Director gate.
+      (3) BUILD-STATE — sync-before-irreversible-coordination; the SLICE-1T
+          design ERROR (assumed delete-in-bundle; syncTools was the SOLE
+          load-bearing mechanism) was caught by the DR-S3-009 sync-gate, not by
+          assumption — a divergent bundle was nearly shipped.
+      (4) AUDIT-FINDINGS — engineer code-truth before filing; ~43% of LLM-
+          auditor findings were over-calls, filtered only by ground-truthing
+          each against the code.
+      Same class as sync-before-irreversible-coordination. tele-1 + tele-4.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion)
       - bug-140 (watchtower auto-deploy; the Design-side fact)
+      - autonomous-stint-3 (4-surface generalization — ledger / deploy / build-state / audit-findings)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-009 sync-gate; phantom-watchtower; reconcile-first)
       - docs/operator/envelope-substrate-cutover-runbook.md B.3 (corrected in PR #324)
       - docs/designs/m-envelope-substrate-completion-design.md §4 (corrected in PR #324)
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §4 candidate 9
     tele_alignment:
       - tele-2
       - tele-5
+      - tele-1
+      - tele-4
+
+  - id: 86
+    class: methodology
+    title: "Deferred divergence becomes drift — close a bounded asymmetry NOW ('clean symmetry') over deferring as a follow-on"
+    origin: mission-95-design
+    surfaced_at: thread-729-round4
+    status: closed-folded
+    closure_mechanism: |
+      idea-355 SLICE-1T (converge the opencode shim's bespoke tool-surface
+      sync onto the shared kernel ToolSurfaceReconciler). The architect
+      recommended DEFER — treat it as a parity-not-dedup follow-on to "keep
+      MEDIUM" — over-estimating it as a from-scratch behavioral migration.
+      Director steered "fold slice — clean symmetry" (override). greg's
+      construction refinement then showed it was a cheap DELETE, not a
+      migration: SLICE-1's kernel-driven live-refresh + SLICE-2's redeploy
+      hand opencode the kernel reconciler path for free, so the bespoke
+      computeToolHash+syncTools is simply removed (delete-in-bundle).
+
+      Pattern signature: inside a consolidation/refactor/multi-host arc, a
+      KNOWN asymmetry/divergence is deferred ("fold it later") on
+      scope-minimization grounds; the deferral plants a future drift surface —
+      the same pathology class the arc itself is fixing (the M18 scar: a fix
+      landing in one host/shim drifts because it was not propagated).
+
+      Discipline: default to closing a BOUNDED divergence now; pressure-test
+      the REAL cost before deferring (frequently cheap once adjacent work
+      lands — the "migration" was a delete); reserve defer for genuine
+      scope/risk blowups (e.g. routing ALL emits through message-router → L),
+      not minimalism-vs-tidiness. Counter-bias to the architect's reflexive
+      scope-minimization. Codified in feedback memories
+      feedback_close_divergence_over_defer + feedback_capture_valuable_steers.
+      First calibration architect-filed under the relaxed filing model
+      (Director-curates-not-gates; see CLAUDE.md Calibration ledger discipline
+      + this PR).
+    pattern_membership:
+      - deferred-divergence-becomes-drift
+    cross_refs:
+      - docs/designs/idea-355-adapter-substrate-consolidation-design.md §4.4 + §10
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-004/006)
+      - feedback_close_divergence_over_defer.md
+      - feedback_capture_valuable_steers.md
+    tele_alignment:
+      - tele-3
+      - tele-4
+
+  - id: 87
+    class: methodology
+    title: "Version-bump co-commits with the FINAL src PR of a ship — splitting the bump from its source change false-fires the ship-path version-gate (frozen-version / src-ahead-of-version)"
+    origin: autonomous-stint-3 (idea-355 opencode redeploy)
+    surfaced_at: autonomous-stint-3 2026-06-27 — the opencode bundle ship fired the write-build-info --assert version-gate 3x across PRs #376/#377/#378; first a FROZEN version (src advanced, the stamped version did not), then SRC-AHEAD-OF-VERSION after a partial bump landed before the final src PR; resolved only when the bump co-committed with the last src change before publish
+    status: open
+    closure_mechanism: |
+      Pattern signature: a ship whose artifact carries a stamped version
+      (esbuild bundle, npm package) splits the version-BUMP commit from the
+      FINAL source-change commit of the ship. The ship-path version-gate
+      (release-opencode-plugin.sh step 1 write-build-info --assert / the
+      wired packages' prepack hook) then false-fires on the transient
+      mismatch — either FROZEN-version (src advanced, stamp did not) or
+      SRC-AHEAD-OF-VERSION (a partial bump landed before the last src PR).
+      The gate is correct (tele-7 fail-loud); the churn is self-inflicted by
+      commit ordering.
+
+      Discipline: the version-bump co-commits with the FINAL src PR of a ship
+      (the last change before publish), never as a separate earlier/later
+      commit. NEVER bypass the gate to "unstick" a mismatch — fix the
+      ordering. Corollary to the never-bypass-the-ship-path-gate axiom.
+      OPEN until folded into the ship/release discipline
+      (release-opencode-plugin.sh header + multi-agent-pr-workflow.md
+      ship-path subsection).
+    cross_refs:
+      - autonomous-stint-3 (idea-355 adapter-substrate consolidation ship)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-011 version-gate-3x)
+      - scripts/build/release-opencode-plugin.sh (step 1 ship-path version-gate)
+      - "PRs #376 / #377 / #378 (the three gate-fires)"
+    tele_alignment:
+      - tele-2
+      - tele-7
+
+  - id: 88
+    class: methodology
+    title: "Re-introduction guard scan-scope must match the DEFECT-CLASS scope — a guard scoped to the originally-patched subset leaves the defect live in unscanned siblings (false-green partial verification)"
+    origin: autonomous-stint-3 (bug-178)
+    surfaced_at: autonomous-stint-3 2026-06-27 — bug-178's first fix (#381) patched 19 testcontainer test files + added a re-introduction guard scanning only 2 directories, while ~23 further test files outside those dirs still constructed raw `new Pool`; the guard reported green over a subset of its own defect class (caught + swept via work-25/#384, which broadened the guard to recursive hub/src + hub/test)
+    status: open
+    closure_mechanism: |
+      Pattern signature: a fix adds a re-introduction guard
+      (lint/grep/CI-assert) to stop a defect class recurring, but the guard's
+      SCAN-SCOPE is drawn around the files the fix happened to touch rather
+      than around the full DEFECT-CLASS surface. The guard then certifies
+      green while the same defect persists in unscanned siblings — a
+      "mostly-verified" state (tele-8 anti-pattern) presenting as a silent
+      false-green (tele-7).
+
+      Discipline: when adding a re-introduction guard, define its scan-scope
+      from the DEFECT CLASS ("every test that should use the shared fixture",
+      "every consumer of the relocated field"), not from the patched subset;
+      the guard must fail on a planted violation ANYWHERE in that class, not
+      only in the originally-fixed files. Pairs with #81 (premature
+      structural-closure from partial verification) + the stint
+      ground-truth-the-full-surface discipline.
+      OPEN until folded into the engineer-runtime ship-verify discipline
+      (re-introduction-guard scoping checklist).
+
+      CLAIM-TIME SIZING COROLLARY (autonomous-stint-3, greg's intake): the
+      same scope-to-the-class discipline applies at CLAIM-TIME, not only at
+      guard-time. A scoping grep scoped to the SURFACING SYMBOL (the one file /
+      one identifier that surfaced the defect) under-counts the defect-class
+      blast-radius and therefore MIS-SIZES the work at claim-time — a "2-file"
+      fix is really a ~42-file class. Recurring this stint: W4 (the bug-178
+      raw-Pool sweep was sized off the surfacing dirs, not the class) +
+      bug-178 + bug-190 (the surfacing symbol under-counted the seam class).
+      Discipline: when sizing a claim, grep for the DEFECT CLASS (every
+      sibling that shares the pathology), not the surfacing symbol, before
+      committing to an estimate. So #88 is now TWO faces of one discipline:
+      scope-to-the-class for re-introduction GUARDS AND for CLAIM-TIME SIZING.
+
+      THIRD FACE (autonomous-stint-4, bug-200 / #410 — verifier catch #5,
+      engineer-amplified): FIX-TIME adjacent-signal-in-the-same-handler. When
+      you fix a class defect (silent-truncation / misleading-certainty), sweep
+      EVERY adjacent signal in the handler your fix touches — not just the one
+      that surfaced. #410 fixed the listBugs count-lie (added `truncated`) but
+      the SIBLING `_ois_query_unmatched` sentinel in the same path still
+      asserted "definitively none" over the now-known-truncated scan (steve's
+      catch). Engineer (greg): "fix the class includes the path your own fix
+      sits next to." So #88 is now THREE faces of one scope-to-the-class
+      discipline: re-introduction GUARDS · CLAIM-TIME SIZING · FIX-TIME
+      adjacent-signal-in-same-handler. The positive design-contract peer is #94
+      (truncation-honesty-as-list-contract — don't emit unguarded certainty in
+      the first place).
+    cross_refs:
+      - autonomous-stint-3 (bug-178 testcontainer raw-Pool re-introduction guard)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (scan-scope lesson + claim-time sizing corollary)
+      - "PRs #381 (under-scoped guard) / #384 (scope broadened to the class)"
+      - "bug-178 / bug-190 (claim-time under-sizing from symbol-scoped grep)"
+      - "#81 (premature structural-closure from partial verification — sibling)"
+      - "#90 (silent-failure-in-fire-and-forget-async-seam; the class bug-190 belongs to)"
+      - "bug-200 / PR #410 (fix-time adjacent-signal third face — autonomous-stint-4, verifier catch #5)"
+      - "#94 (truncation-honesty-as-list-contract; the positive design-contract peer)"
+      - docs/reviews/autonomous-stint-4-retrospective.md §6
+    tele_alignment:
+      - tele-8
+      - tele-7
+      - tele-4
+
+  - id: 89
+    class: methodology
+    title: "NEVER bypass the ship-path gate — the CI-green + up-to-date + version-assert gate is never bypassed to unstick a mismatch; fix the ordering/state instead (parent axiom that #87 + the no-admin backplane deploy-train both instantiate)"
+    origin: autonomous-stint-3 (deploy-train + version-gate-3x)
+    surfaced_at: autonomous-stint-3 2026-06-27 — DR-S3-013 (7-PR backplane merge-train landed CI-gated, riskiest PR last, no --admin) + DR-S3-007 + the cal #87 version-gate-3x corollary; the gate fired correctly under pressure all stint and was never bypassed
+    status: open
+    closure_mechanism: |
+      Pattern signature: a ship-path gate (CI-green + branch up-to-date +
+      version-assert) blocks a merge/publish on a transient mismatch, and the
+      tempting "fix" is to bypass it (--admin merge, skip the assert) to
+      unstick the pipeline. Bypassing converts a loud, correct gate into a
+      silent integrity hole.
+
+      Discipline: the ship-path gate is NEVER bypassed to unstick a mismatch —
+      fix the ordering/state that tripped it instead (rebase to up-to-date,
+      co-commit the version bump, wait for green). This is the PARENT axiom
+      that #87 (version-bump co-commits with the FINAL src PR) and the
+      backplane deploy-train (CI-gated, riskiest-last, no --admin) both
+      instantiate. Held under pressure all stint: the version-gate fired 3x
+      and was never bypassed; the 7-PR backplane batch landed via a CI-gated
+      merge-train with the riskiest PR last and no --admin.
+      OPEN until folded into the ship/release discipline
+      (multi-agent-pr-workflow.md ship-path subsection).
+    cross_refs:
+      - autonomous-stint-3 (deploy-train + version-gate-3x)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-013 backplane merge-train + DR-S3-007)
+      - "#87 (version-bump-co-commits; an instantiation of this axiom)"
+      - "#88 (re-introduction-guard scan-scope; sibling ship-verify discipline)"
+    tele_alignment:
+      - tele-7
+      - tele-9
+
+  - id: 90
+    class: substrate
+    title: "SILENT-FAILURE in fire-and-forget async seams — a tele-7 defect class where work is enqueued/emitted/polled without supervised delivery so failures go dark; per-site fixes RE-EMERGE, only shared helpers + a class-scoped audit hold"
+    origin: autonomous-stint-3 (idea-362 / work-40 audit)
+    surfaced_at: autonomous-stint-3 2026-06-27 — idea-362 / work-40 tele-7 class-audit surfaced one debt class across bug-190/191/192/193/194 + bug-176; peer-verified (steve work-40 + greg work-42)
+    status: open
+    closure_mechanism: |
+      Pattern signature: a fire-and-forget async seam advances/reports success
+      without confirming the downstream effect actually happened — failures go
+      dark. Sub-patterns observed this stint:
+      - cursor-advances-on-enqueue-not-delivery (bug-190 — drainer fails dark)
+      - unsupervised-fire-and-forget-poller — no in-flight latch / no
+        restart-backoff / unbounded queue (bug-190/191)
+      - emit-without-dispatch — createMessage bypasses SSE-push so
+        push-immediate is inert -> silent-miss for poll-less recipients
+        (bug-192/194; closed for pulses in mission-60/61, RE-EMERGED in
+        triggers/notifications)
+      - catch-and-swallow-infra-fault (bug-193)
+      - consumerless-health-surface — health() reports healthy while
+        delivering nothing (bug-190; observability theatre)
+
+      Closure: per-site fixes RE-EMERGE (mission-60/61 -> bug-192;
+      audit-4103 -> bug-191) — point-fixes do not hold. Only shared helpers
+      (emitAndPush) + a class-scoped audit checklist close the class. THE
+      stint's biggest structural-debt finding. OPEN until the emitAndPush
+      class-sweep (bug-194) + the collapse-to-one-loop redesign
+      (bug-190 / work-44) land and the class-audit checklist is folded into
+      engineer-runtime.
+    cross_refs:
+      - autonomous-stint-3 (idea-362 / work-40 tele-7 class-audit)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md
+      - bug-190 (cursor-advances-on-enqueue + consumerless-health + collapse-to-one-loop)
+      - bug-191 (unsupervised poller / watchdog latch)
+      - "bug-192 / bug-194 (emit-without-dispatch; emitAndPush class-sweep)"
+      - bug-193 (catch-and-swallow-infra-fault)
+      - bug-176 (swallowed-error-as-flake)
+      - "#88 (re-introduction-guard scan-scope — the same class-scope discipline)"
+    tele_alignment:
+      - tele-7
+      - tele-8
+
+  - id: 91
+    class: substrate
+    title: "REDEPLOY does not invalidate a running host's tool-surface cache — a tool-catalog change shipped via redeploy leaves an already-running host advertising the stale on-disk cache; /reload-plugins reuses the same proxy and is insufficient, only cache-delete + FULL restart recovers"
+    origin: autonomous-stint-3 (bug-180)
+    surfaced_at: autonomous-stint-3 2026-06-27 — bug-180; after the #361 onramp deploy added the 11 C1 work-queue verbs, both claude-plugin proxies kept advertising the stale catalog and blocked the C1 dogfood go-live; peer-verified (greg thread-712 + steve thread-713)
+    status: open
+    closure_mechanism: |
+      Pattern signature: a surface / tool-catalog change delivered via REDEPLOY
+      does NOT invalidate an already-running host's on-disk cache
+      ($WORK_DIR/.ois/tool-catalog.json, trusted-stale-on-unknown-revision).
+      /reload-plugins reconnects the SAME proxy process and is empirically
+      insufficient; only cache-delete + a FULL client restart per worktree
+      recovers. Blocked the C1 dogfood go-live this stint.
+
+      Structural fix: block the first ListTools on a /health revision check OR
+      emit notifications/tools/list_changed on revision-drift (kernel
+      ToolSurfaceReconciler, #362, shipped). Single-home consolidation
+      (mission-95) is the structural kill for the adjacent stale-kernel family
+      (bug-182/183/186). OPEN until the reconciler invalidation path is the
+      default and the manual cache-delete + restart recipe is retired.
+
+      RECURRENCE (autonomous-stint-4, bug-199): RECURRED one stint after the
+      structural fix MERGED — as a NEW FACET. bug-180's primary evidence was a
+      whole stale VERB-SET (68->83 tools); bug-199 is the SCHEMA-GRANULARITY
+      facet: a new FIELD (update_bug `repo`, get_backlog_health) on the live
+      surface, invisible to the architect's running session whose on-disk
+      catalog held the pre-#402 per-tool inputSchema. Precision (ground-truthed
+      at stint-4 close): the #362/ade10cf structural fix is MERGED but
+      smoke-PENDING (bug-180 status=investigating, work-5 AC1 unrun) — so this
+      is "fix-merged-but-not-yet-verified AND already recurred as a new facet,"
+      NOT "fix shipped but recurred." The recurrence-after-merge is the
+      strongest signal the invalidation path is not yet the DEFAULT. Engineer
+      seat (greg) named it the sharpest engineer friction: "I ship a verb I
+      then can't call from the seat that built it." Rider: extend the work-5
+      AC1 smoke to assert schema-level refresh (a changed inputSchema on an
+      existing tool propagates), not only new-verb appearance. tele-5
+      (perceptual-parity) violation surfaced on an observability-FOCUS stint.
+    cross_refs:
+      - autonomous-stint-3 (bug-180 stale tool-catalog cache)
+      - docs/decisions/autonomous-stint-3-2026-06-27-log.md
+      - bug-180 (stale tool-surface cache on redeploy)
+      - "PR #362 (kernel ToolSurfaceReconciler structural fix)"
+      - bug-199 (schema-granularity facet — autonomous-stint-4 recurrence-after-merge)
+      - docs/reviews/autonomous-stint-4-retrospective.md §6 + FR-37
+    tele_alignment:
+      - tele-4
+      - tele-13
+      - tele-5
+
+  - id: 92
+    class: substrate
+    title: "EMIT-NULL-NOT-OMIT in projections — a projection must emit an explicit null for an absent field, never omit the key; JSON.stringify drops undefined, producing a shape-inconsistent key-set that breaks downstream field-access silently"
+    origin: autonomous-stint-4 (bug-198 fix / #407)
+    surfaced_at: autonomous-stint-4 2026-06-28 — verifier (steve) catch #4 on #407; the list_bugs compact projection dropped missionClass when undefined (vs emitting null), so a consumer reading the key on a class-less bug hits a missing key rather than a null
+    status: open
+    closure_mechanism: |
+      Pattern signature: a compact/list projection conditionally includes a
+      field only when present, so the serialized object's key-SET varies row to
+      row. A downstream consumer that reads obj.field gets undefined for two
+      DIFFERENT reasons (field genuinely null vs key omitted) and cannot
+      distinguish them; with JSON.stringify the undefined value is dropped on
+      the wire, so even an explicit `field: undefined` vanishes. The honest
+      shape is a STABLE key-set: emit `field: null` for an absent optional.
+
+      Discipline: projection encoders emit every declared optional as an
+      explicit null when absent, never by omission. This is the read-side peer
+      of the storage-side RETIRED #19 (schema-rename without state migration)
+      and of the faithful-shape family (#79/#82) — shape-consistency across the
+      membrane, now at the PROJECTION boundary. Peer-verified by steve's catch.
+      OPEN until folded into a projection-encoder lint / the list-filter
+      compact-projection helper enforces null-fill.
+    closure_pr: 410
+    pattern_membership: []
+    cross_refs:
+      - autonomous-stint-4 (bug-198 / #407 list_bugs compact projection)
+      - "#19 (schema-rename-without-state-migration; storage-side ancestor, retired)"
+      - "#79 / #82 (faithful-shape family; this is the projection-boundary peer)"
+      - "PR #407 (filter-optionality + compact projection)"
+      - docs/reviews/autonomous-stint-4-retrospective.md §5 (verifier catch #4) + §6
+    tele_alignment:
+      - tele-4
+      - tele-5
+
+  - id: 93
+    class: methodology
+    title: "SQUASH-SHA RECONCILIATION — reconcile fix-SHAs against main-ancestry (git merge-base --is-ancestor) and record the SQUASH commit SHA, not the branch SHA; substring-matching a SHA is a trap (a branch SHA never appears in a squash-merged main history)"
+    origin: autonomous-stint-4 (idea-364 reconcile.py / #403)
+    surfaced_at: autonomous-stint-4 2026-06-28 — verifier (steve) catch #3 on #403 (substring-backfill would stamp wrong fixCommits) + the R2 curation (6 squash-sha corrections bug-24/93/167/168/169/170; bug-181 branch 9ec45ee squashed to real fix 5c64f58); cross-validated vs steve's independent hand-audit
+    status: open
+    closure_mechanism: |
+      Pattern signature: under squash-merge, a PR's branch commit SHAs do NOT
+      appear in main's history — main carries a single new squash SHA. So any
+      ledger that records a branch SHA as the fixCommit, or that verifies a fix
+      by substring-matching a SHA against a commit list, is structurally wrong:
+      the branch SHA is never an ancestor of main, and a substring match is a
+      false-attribution trap (a short SHA can substring-collide).
+
+      Discipline: (1) determine fix-presence with `git merge-base --is-ancestor
+      <sha> origin/main` (exact, squash-safe), not substring; (2) RECORD the
+      squash SHA (via `gh pr view <n> --json mergeCommit`), not the branch SHA;
+      (3) reconcile the Bug ledger's fixCommits against main-ancestry, not
+      against branch state. Mechanized in reconcile.py (idea-364): merge-base
+      ancestry check + squash-sha recording + 3 disposition buckets, auto-
+      backfilling only the safe additive bucket. Cross-validated vs an
+      independent hand-audit (the divergence there was a list_bugs scan-cap,
+      bug-200, not a logic gap — which itself validated mechanized > by-hand).
+      OPEN until reconcile.py --apply (idea-379) makes stint-open reconciliation
+      zero-touch on the safe bucket.
+    closure_pr: 403
+    pattern_membership: []
+    cross_refs:
+      - autonomous-stint-4 (idea-364 reconcile.py)
+      - "PR #403 (git-aware reconcile CLI) / #408 (cross-validation)"
+      - idea-364 (M-Ledger-Reconciliation) / idea-379 (reconcile.py --apply)
+      - "bug-181 (branch 9ec45ee squashed to real fix 5c64f58)"
+      - docs/audits/work-50-reconcile-cross-validation.md
+      - docs/reviews/autonomous-stint-4-retrospective.md §6
+    tele_alignment:
+      - tele-1
+      - tele-4
+
+  - id: 94
+    class: substrate
+    title: "TRUNCATION-HONESTY-AS-LIST-CONTRACT — any bulk-list/aggregate that can hit a scan-cap MUST emit a `truncated` flag, and ANY certainty derived from a capped scan (count, total, 'zero matches', 'definitively none') is a lie unless guarded by it"
+    origin: autonomous-stint-4 (bug-200 / #410)
+    surfaced_at: autonomous-stint-4 2026-06-28 — engineer (greg) intake + verifier (steve) catch #5; listBugs returned total:100 (lied vs psql:198) with no flag, and the `_ois_query_unmatched` sentinel asserted "definitively none" over a TRUNCATED scan
+    status: open
+    closure_mechanism: |
+      Pattern signature: a list/aggregate handler caps its scan (page limit,
+      result cap) but reports derived certainty — a total count, a "zero
+      matches" sentinel, an aggregate — as if the scan were complete. The
+      report is a tele-4 silent-failure: a confident answer over an incomplete
+      read. The honest primitive (list_ready_work) already carries `truncated`;
+      the list_bugs family did not, so a 100-cap presented as the whole ledger
+      and a no-match sentinel presented as authoritative.
+
+      Discipline (the LIST CONTRACT): (1) every capped bulk-list emits
+      `truncated:true` when the cap is hit; (2) any certainty derived from the
+      scan (count/total/no-match sentinel) is INVALID unless the scan was
+      complete — guard it on !truncated; (3) for an accurate aggregate over a
+      cap-limited substrate, query PER-PARTITION (each partition < cap) and sum
+      rather than one capped list (the PER-STATUS-ACCURATE-AGGREGATE corollary —
+      get_backlog_health queries per-status to get an honest funnel total
+      despite the single-list cap). This is the positive design-contract peer
+      of #88 (fix-time-same-handler-sweep): #88 says sweep every certainty
+      signal in a handler you fix; #94 says don't emit unguarded certainty in
+      the first place. Peer-surfaced (greg engineer intake) + steve catch #5.
+      OPEN until the list-projection helper enforces truncated-fill + the
+      no-match sentinel is guarded across the list_* family.
+    closure_pr: 410
+    pattern_membership: []
+    cross_refs:
+      - autonomous-stint-4 (bug-200 listBugs scan-cap + bug-201-adjacent _ois_query_unmatched)
+      - "PR #410 (scan-cap honesty + truncated flag) / #409 (get_backlog_health per-status aggregate)"
+      - "#88 (fix-time-same-handler-sweep; the fix-scope peer)"
+      - list_ready_work (the honest-primitive precedent that already carries truncated)
+      - docs/reviews/autonomous-stint-4-retrospective.md §6 (incl. PER-STATUS-ACCURATE-AGGREGATE corollary)
+    tele_alignment:
+      - tele-4
+      - tele-1
+
+  - id: 95
+    class: methodology
+    title: "Cross-lineage cutover without a runtime acceptance gate — same-lineage suite-green is not a completeness signal for a cross-lineage deliverable (mission-92)"
+    origin: mission-92
+    surfaced_at: "mission-92 dedup optimality audit 2026-06-21 (PR #339) + thread-676 (Steve verifier cross-check); rescued from PR #342 (stale colliding id #88) during stint-5 PR-backlog triage 2026-06-29"
+    status: closed-folded
+    closure_mechanism: |
+      mission-92 graded an OpenCode-shim deliverable on a code-tidiness metric
+      (line-count / delegation-to-core) while the real risk surface for a bundle a
+      CROSS-LINEAGE peer (Steve, GPT-5.5/OpenCode) runs is behavioural-contract
+      fidelity against a real non-Claude runtime. The test process was confined to the
+      adapter subsystem + a SAME-LINEAGE harness, so behavioural-contract defects
+      against the consumer's real runtime stayed invisible until the consumer cut over
+      live. Evidence: bug-161 (notification queue-gate dead-on-arrival ~2 months in
+      prod — object-vs-string SessionStatus compare) + the verifier-cutover cluster
+      (bug-164 poll-backstop role-drift; bug-165 verifier finding-channel write-only;
+      Rung-0 verifier thread-reply; the assertIdentity role-change boundary) — all on
+      the behavioural/cross-lineage axis a green same-lineage suite cannot see
+      (the Claude suite was green; the OpenCode runtime was never exercised).
+      Disposition: any adapter-only mission shipping a bundle a cross-lineage peer
+      consumes REQUIRES a system-level (hub + adapter + real-runtime) acceptance gate
+      proving the behavioural contract BEFORE the consumer cuts over. Folded into the
+      R3 Cross-Lineage Runtime Acceptance Gate contract
+      (docs/specs/cross-lineage-runtime-acceptance-gate.md; v1 = verifier as the live
+      cross-lineage leg). Durable harness (OpenCode/Bun-in-CI) tracked as idea-333 —
+      the follow-on that flips the pattern from contract-defined to
+      structurally-enforced.
+    closure_pr: 340
+    pattern_membership:
+      - cross-lineage-cutover-without-runtime-acceptance-gate
+    cross_refs:
+      - docs/audits/mission-92-opencode-shim-dedup-audit.md
+      - docs/specs/cross-lineage-runtime-acceptance-gate.md
+      - idea-333
+      - bug-161
+      - bug-164
+      - bug-165
+    tele_alignment:
+      - tele-8
+      - tele-9
+      - tele-4
+
+  - id: 96
+    class: methodology
+    title: "AGREEMENT-PIN every load-bearing invariant — a test must FAIL when its target breaks (non-vacuity); an invariant held 'true by construction' across PARALLEL code paths must be pinned by an explicit agreement assertion, never trusted to stay equal"
+    origin: stint-5 (mission-96)
+    surfaced_at: "stint-5 cold-start-spine adversarial-verify 2026-06-28/29 (idea-380 S2): PRs #416/#417/#418 each drew a verifier CHANGES_REQUESTED for a load-bearing invariant not mutation-pinned (targetRef-drop / completionDependsOn-parity / dash-exclusion-collision); #419 the no_claimable_ready literal value-unpinned; #420 getStintProjection re-implements k/N as a parallel path to computeCompletionProgress (the gate) — provably equal for all current inputs but NOT pinned"
+    status: closed-structurally
+    closure_mechanism: |
+      Two-part discipline, both proven during the stint-5 cold-start-spine builds:
+      (a) NON-VACUITY — a passing test is not evidence until you confirm it FAILS when
+      its target breaks. The architect-spawned adversarial-verify model now mutates each
+      claimed invariant in an isolated worktree, confirms the specific test goes RED,
+      then reverts (M1..Mn per PR). A test green-when-broken is vacuous.
+      (b) AGREEMENT-PIN for "by construction" claims — when an invariant is asserted to
+      hold "by construction" across two code paths (e.g. a projection that re-implements
+      a count the enforcement gate also computes), that is usually a PARALLEL
+      re-implementation, not a shared predicate: provably-equal-today but a latent drift
+      surface (change one definition, the other silently lags). Pin it with an explicit
+      agreement assertion (deepEquals between the two paths for the same input) that reds
+      the instant they diverge — strictly stronger than the prose claim, and cheaper than
+      forcing a shared hot-path helper. Recurrence across #416-#420 shows per-PR vigilance
+      is insufficient; this is the standing verify contract. An unpinned parallel-agreement
+      IS a deferred divergence (see the deferred-divergence-becomes-drift pattern).
+    cross_refs:
+      - "#79 (false-green-at-scale; the precision/fidelity sibling)"
+      - "#83 (deep-adversarial-audit; the recall sibling)"
+      - "#88 (re-introduction guard scan-scope; the coverage-completeness sibling)"
+      - "PRs #416 / #417 / #418 / #419 / #420 (idea-380 S2 cold-start spine)"
+      - deferred-divergence-becomes-drift (pattern)
+    tele_alignment:
+      - tele-7
+      - tele-8
+
+  - id: 97
+    class: methodology
+    title: "RECONCILE ancestry must be checked against a FRESH upstream main — a stale local main ref silently inverts git merge-base --is-ancestor, producing wrong dispositions + wrong auto-backfills (corollary to #93)"
+    origin: stint-5 (mission-96)
+    surfaced_at: "stint-5 S0-RECON 2026-06-28 (work-77): reconcile.py run against the default --main main on a worktree whose local main was 90 commits stale produced 37 FALSE claims-fixed-but-not-in-main (e.g. 5c64f58/bug-181, which IS an ancestor of origin/main) + 2 WRONG single-candidate auto-backfills (bug-2, bug-100); re-run vs origin/main collapsed those to 2 + 0"
+    status: closed-folded
+    closure_mechanism: |
+      Calibration #93 established that fix-SHA reconciliation must use
+      git merge-base --is-ancestor against main (not substring/existence). This
+      corollary: that check is only valid against a FRESH upstream main. Under the
+      per-PR-branch model a worktree's local `main` ref is routinely stale (here 90
+      commits behind), so the ancestry check returns false for shas that ARE on the
+      real main — silently inverting every disposition that depends on it (false
+      squash-traps) and emitting wrong apply-ready backfills. The discipline: git fetch
+      + reconcile against the upstream tracking ref (origin/main), and treat any
+      certainty derived from a possibly-stale ref as unsound (ground-truth-over-
+      assumption, #85). Mechanical fix to scripts/reconciliation/reconcile.py
+      (fetch-first / default --main to origin/<main> / warn-if-behind) tracked as
+      bug-202.
+    cross_refs:
+      - "#93 (squash-sha reconciliation; the parent discipline)"
+      - "#85 (reconcile-contradictory-docs-against-ground-truth-first)"
+      - bug-202
+      - scripts/reconciliation/reconcile.py
+    tele_alignment:
+      - tele-3
+      - tele-2
+  - id: 98
+    class: methodology
+    title: 'VERIFIER-OFFLINE STANDING CONTRACT — when no verifier-agent is online, architect-spawned adversarial-verify
+      sub-agents are the verification surface: every load-bearing invariant is still mutation-pinned and
+      non-vacuity enforced. On verifier-sub-agent stall/failure the architect self-completes the verify
+      (for a directly-runnable change) or re-spawns — a hung verifier must never block a clean PR.'
+    origin: stint-5
+    surfaced_at: 'stint-5 — #418..#424 architect-spawned adversarial-verify train; #424 sub-agent watchdog-stall
+      + architect self-complete'
+    status: closed-structurally
+    closure_mechanism: 'Established + proven across #418-#424 (the stint-5 S2/S3 PR train, steve offline):
+      the architect-spawned adversarial-verify sub-agent ran each load-bearing PR with every invariant mutation-pinned,
+      and non-vacuity caught a real gap each time. Stall-handoff demonstrated #424: the sub-agent watchdog-stalled
+      (600s no-progress) mid-run after confirming the hardest claims, and the architect self-completed the
+      verification (legit separation-of-duties on an engineer-authored, directly-runnable CLI).'
+    cross_refs:
+    - '#83'
+    - '#96'
+  - id: 99
+    class: methodology
+    title: A DOGFOOD THAT CANNOT COMPLETE STILL PAYS IF IT SURFACES THE BLOCKER — a blocked live-dogfood
+      attempt still returns value via the root-cause it finds and the escape-hatch it forces; and do NOT
+      claim a live-surface dogfood on a stale host (an already-running session's MCP traffic is not a deployment
+      dogfood).
+    origin: stint-5
+    surfaced_at: stint-5 work-87/work-95 — the seed_blueprint live-dogfood attempt was blocked by bug-203
+      (claude-code host does not re-enumerate tools on tools/list_changed) but surfaced that root-cause
+      + forced the /mcp-direct apply-blueprint.sh escape-hatch; the validation+guardrail leg remained the
+      banked dogfood signal.
+    status: open
+    cross_refs:
+    - '#91'
+    - '#3'
+    - '#34'
+    - '#76'
+  - id: 100
+    class: methodology
+    title: 'RESPECT THE PERMISSION GUARD — ROUTE TO OWNER, DEFER TO AUTHORIZATION — when a classifier/permission
+      guard blocks an action, respect the guard rather than routing around it: recommend the action to its
+      OWNER (who performs their own), and defer authorization-gated actions to the authorizer. Do not seek
+      a bypass.'
+    origin: stint-5
+    surfaced_at: 'stint-5 — the bulk-PR-close classifier block: the architect respected it -> recommend-close
+      + owner-close (greg self-closed his own 334/336) + Director-auth-defer for the rest, rather than routing
+      around the guard.'
+    status: open
+  - id: 101
+    class: methodology
+    title: SCHEMA-DERIVED PARITY GUARDS NEED A FIELD-COMPLETE REFERENCE FIXTURE — a registration/parity-completeness
+      guard is only non-vacuous if its reference (full) fixture contains EVERY field in the class it guards;
+      an omitted field can be silently stripped from the real schema and the guard stays green (the fixture-vacuity
+      sub-class of non-vacuity).
+    origin: stint-5
+    surfaced_at: 'stint-5 #417 GATE-417 — the #416 parity guard''s full fixture omitted completionDependsOn,
+      so stripping it from the registered schema stayed green; fixed by making the fixture field-complete
+      + a get_work includeCompletionProgress parity guard, mutation-proven.'
+    status: open
+    cross_refs:
+    - '#96'
+    - '#88'
+  - id: 102
+    class: methodology
+    title: A SEPARATOR/CHARSET INVARIANT NEEDS A COLLISION-FORMABLE PIN — to prove a separator or charset
+      constraint prevents ID collisions, the test must CONSTRUCT the collision the invariant forbids (e.g.
+      assert f(a-b,c) == f(a,b-c) when dashes are allowed inside segments), not merely reject a malformed
+      input; a generic bad-input reject does not pin the collision-safety property.
+    origin: stint-5
+    surfaced_at: 'stint-5 #418 GATE-418 — the BLUEPRINT_ID_TOKEN no-dash invariant was not collision-pinned
+      (the bad-id test tripped on a space or punctuation char, not the dash); fixed by exporting blueprintNodeId
+      + a collision-formable test plus a dash-rejection belt, mutation-proven.'
+    status: open
+    cross_refs:
+    - '#96'
+  - id: 103
+    class: methodology
+    title: PROACTIVE PRE-VERDICT FORK-SURFACING IS A VERIFICATION-COLLABORATION DISCIPLINE — surface a trust-critical
+      interpretation fork (especially one a self-driving signal depends on) to the verifier/architect as
+      a DECISION before the verdict, not buried in a PR body; it converges with the adversarial-verify and
+      prevents wrong verdicts + wasted cycles. Bank the positive, not only the failure.
+    origin: stint-5
+    surfaced_at: 'stint-5 #420/#422/#424 — pre-verdict fork disclosures converging with the architect adversarial-verify'
+    status: closed-structurally
+    closure_mechanism: 'Working discipline, demonstrated 3x this stint, each converging with the architect
+      adversarial-verify before the verdict: #420 claim-2 (the parallel-impl projection<->gate parity disclosure),
+      #422 claim-1 (the legal_moves shared-vs-parallel-predicate mix), #424 (the no-dangling-vs-symmetry
+      cross-link fork — surfaced as a decision; full symmetry would have RED''d validate on the real ledger).
+      The surfacer + the verifier independently reach the same call (two-sided convergence accounting).'
+    pattern_membership:
+    - two-sided-convergence-accounting
+    cross_refs:
+    - '#96'
+
+  - id: 104
+    class: methodology
+    title: "Localize-before-fix / reproduce-at-the-lowest-faithful-layer — a fault's attribution is a HYPOTHESIS until reproduced at a faithful layer; the reproduction may DISPROVE the bug, relocate it, or kill a phantom option. Reproduce BEFORE you attribute, answer a stakeholder, or build a fix (the cheapest fix is the one you never build). Sibling to #79/#82 on the false-ATTRIBUTION / phantom-fix axis (vs their false-GREEN axis)."
+    origin: autonomous-stint-6 (real-CLI-harness arc, idea-405, 2026-06-30)
+    surfaced_at: "real-CLI-harness n4 render-receipt + no-quota SSE-probe (2026-06-30) — THREE desk/inference-level attributions refuted by faithful-layer reproduction within a single arc"
+    status: open
+    closure_mechanism: |
+      STATUS NOTE: freshly named (2026-06-30). Candidate to FOLD into a debugging-
+      discipline methodology subsection and/or MECHANIZE as a pre-fix checklist
+      ("reproduced at a faithful layer? attribution confirmed, not assumed?") at a
+      future gate-point. Architect-filed solo (methodology class, working-discipline).
+
+      Working-discipline pattern. A fault's ATTRIBUTION (which component is broken,
+      whether the bug is even real) is a HYPOTHESIS until reproduced at the lowest
+      faithful layer that can isolate it. Desk-reasoning, a stub-test, or an inference
+      can confidently point at the wrong place — or at a bug that does not exist.
+      Reproduce FIRST, then attribute / answer / fix.
+
+      THREE refutations in one arc (idea-405 real-CLI-harness, 2026-06-30):
+      1. RELOCATED a fault. The "drop --dangerously-load-development-channels" (n2)
+         determination — reasoned from a capability-less STUB that never reached the
+         second gate — was refuted by a LOCAL render-receipt: a plain .mcp.json does
+         NOT render the claude/channel (TWO gates — the shim's capability AND the
+         server's membership in the session's --channels list; the stub only ever
+         tested gate 1). The flag is REQUIRED, not droppable. Caught before it baked
+         into the container build (and before a wrong stakeholder answer shipped).
+      2. KILLED a phantom option. The desk-hope that a NON-dangerous `--channels proxy`
+         flag exists was refuted by trying it — it does not exist (hangs boot). The
+         render requires the dangerous flag regardless of form.
+      3. DISPROVED a bug entirely (the gem). The inference "the test-Hub needs an
+         SSE-warmth keepalive fix" was refuted by a no-quota raw-SDK probe
+         (StreamableHTTPClientTransport, no nested CLI): the test-Hub SSE delivers
+         fine (45s alive, keepalive at 30s). There was NO bug to fix — the 17s drop
+         traced to a non-faithful agent tweak (liveness watchdog disabled), not the
+         Hub. A fix was about to be BUILT for a phantom.
+
+      The discipline: before attributing a fault to a component, answering a
+      stakeholder, or building a fix — reproduce it at the lowest faithful layer that
+      can isolate it. Corollary (cost-of-being-wrong): the cheapest place to be wrong
+      is a local / no-quota reproduction, NOT a downstream build, a stakeholder
+      commitment, or a baked artifact. Distinct from #79/#82 (faithful-harness — make
+      the substrate faithful so bugs are VISIBLE / no false-green); this is the
+      complementary diagnosis-side discipline — reproduce faithfully so attribution
+      is CORRECT / no phantom-fix.
+    cross_refs:
+      - "#79 (false-green-at-scale via unfaithful fixtures — sibling, the visibility axis)"
+      - "#82 (faithful-harness-as-exposure — sibling, the visibility axis)"
+      - "#98 (self-applying-methodology / dogfood-the-gate — empirical-over-assertion kin)"
+      - idea-405 (M-Real-CLI-Harness — origin arc)
+      - idea-406 (thin-container channels path — a deferred investigation this discipline scoped)
+      - project_adapter_pilot_executed_2026_06_30
+    tele_alignment:
+      - tele-7
+      - tele-8
+      - tele-4
+  - id: 105
+    class: methodology
+    title: 'Self-stall vs peer-stall vs channel-drop vs peer-busy — DO NOT CONFLATE — an agent observing
+      ''the other side is silent'' cannot distinguish (a) I am hung (no self-recovery) from (b) the channel
+      dropped (the message never arrived) from (c) the peer is hung (no peer-recovery) from (d) the peer
+      is alive-but-slow (legitimate work in flight). Collapsing these four modes into ''stuck'' fires the
+      WRONG recovery (a self-retry on a hung-self never reaches the loop; a channel re-issue on a hung-peer
+      adds backlog; a watchdog-kill on alive-but-slow destroys good work). Disambiguating PROBE FIRST —
+      a liveness/recency signal that costs the peer ~nothing but witnesses which mode is live — is the precondition
+      to firing any recovery. Sibling to #104 (localize-before-fix) on the diagnosis-before-action axis.'
+    origin: autonomous-stint-6 (real-CLI-harness arc, idea-405, 2026-06-30)
+    surfaced_at: real-CLI-harness n6 verifier session — opencode in-flight HANG with no self-recovery (bug-208)
+      collided with delivery-resilience role-blind-spot (bug-207), creating apparent mutual-silence that
+      looked alternately like self-stall / peer-stall / channel-drop / peer-busy across three repeat episodes;
+      idea-408 (cross-agent peer-stall detection — mutual-silence bridge) names the absent disambiguation
+      surface
+    status: open
+    closure_mechanism: 'STATUS NOTE: freshly named (2026-06-30). Architect-filed solo (methodology). Pairs
+      with #106 (recovery-net selector-blind-spot) + #107 (faithful-chaos-test) as the three diagnostic-discipline
+      cals from idea-405. MECHANIZATION candidate: a peer-liveness probe (lightweight, cheap, witnesses
+      mode) gated BEFORE every recovery-firing decision; idea-408 §3 specifies four mechanism options. CLOSURE:
+      when the disambiguation surface ships AND the recovery-firing sites consume it.'
+    cross_refs:
+    - '#104 (localize-before-fix — diagnosis-before-action sibling)'
+    - bug-207 (delivery-resilience role-blind-spot — channel-drop instance)
+    - bug-208 (opencode in-flight HANG — self-stall instance with no self-recovery)
+    - idea-408 (cross-agent peer-stall detection — mutual-silence bridge, the missing disambiguator)
+    - idea-405 (M-Real-CLI-Harness — origin arc)
+    tele_alignment:
+    - tele-7
+    - tele-8
+  - id: 106
+    class: substrate
+    title: 'RECOVERY-NET SELECTOR-BLIND-SPOT — a recovery / catch-up / replay / dedup net scoped to ONE
+      selector axis (e.g. targetRole) structurally CANNOT recover entities targeted by an unwatched selector
+      axis (e.g. agentId-only with no role). The hole has the exact shape of the un-watched selector. Cure:
+      scope the recovery net by the UNION of all targeting axes (OR, not AND, across selectors), with a
+      per-selector cursor + a periodic cursor-less reconcile sweep over the un-rendered set. A retry / replay
+      / poll that QUERIES by only a subset of the dispatch''s targeting axes is a silent data-loss / coordination-loss
+      class; the corollary is that a net''s COVERAGE is bounded above by the union of selectors it queries
+      — never trust a recovery net you have not characterised against the FULL targeting taxonomy.'
+    origin: autonomous-stint-6 (real-CLI-harness arc, idea-405, 2026-06-30)
+    surfaced_at: bug-207 verified root-cause (wf_937299bf 3-lens code analysis + steve cross-lineage opencode
+      probe audit-5406) — both adapter recovery nets (poll-backstop + W1b SSE-replay) scope inbox by targetRole
+      only; agent-direct messages with no role field stay status=new forever (206 stuck back to 2026-04-27);
+      decisive live-proven during arc when a greg→lily ping silently dropped for 23min mid-build
+    status: open
+    closure_mechanism: 'STATUS NOTE: freshly named (2026-06-30). Substrate-class — instantiated in bug-207.
+      Director-prioritized ''go after soon'' (post-arc); fix WorkItem to be seeded for greg with the 7-item
+      must-verify checklist on bug-207. CLOSES STRUCTURALLY when (a) both recovery nets adopt OR((target.role==myRole),(target.agentId==myAgentId));
+      (b) cursor-advance is decoupled from ''returned-by-poll'' (only RENDERED messages advance the cursor
+      — prevents the 206-message backlog trap); (c) a regression test exists that DISPATCHES an agent-direct
+      (no role) message + asserts the poll/replay recovers it. The OR-fix is necessary but not sufficient
+      — the cursor-advance-without-render trap is independent and must also be closed.'
+    cross_refs:
+    - bug-207 (delivery-resilience role-blind-spot — primary instance)
+    - work-108 (steve cross-lineage opencode probe — confirms substrate-wide, audit-5406)
+    - '#90 (silent-failure in fire-and-forget async seams — kin class)'
+    - '#94 (truncation-honesty — sibling on the bulk-query honesty axis)'
+    - idea-405 (M-Real-CLI-Harness — origin arc)
+    tele_alignment:
+    - tele-7
+    - tele-4
+  - id: 107
+    class: methodology
+    title: 'FAITHFUL-CHAOS-TEST — a recovery layer''s test MUST model the failure-shape the layer EXISTS
+      for, NOT a synthetic disturbance tuned to TRIGGER the layer''s detector — proving the detector fires
+      is NOT proving the recovery works. Tuning chaos intensity to beat the detector is a tele-7 false-green:
+      the test proves only that ''if the detector ever fires, the recovery runs'', leaving the real-world
+      failure mode (the one the layer was built to recover) un-rehearsed. Faithful chaos = inject the LITERAL
+      failure-shape (a real wedge, a real lapse, a real network partition), then let the detector observe
+      it on its OWN terms. Cure: name the failure-shape the layer EXISTS for; inject IT; allow the detector
+      latency it would have in the wild. Sibling to #79/#82 (faithful-harness — make the substrate faithful
+      so bugs are VISIBLE) and #104 (localize-before-fix — reproduce at the faithful layer); this is the
+      recovery-layer-specific corollary — the recovery must be exercised against the faithful failure, not
+      a detector-trigger.'
+    origin: autonomous-stint-6 (real-CLI-harness arc, idea-405, 2026-06-30)
+    surfaced_at: n5 container sentinel design + e2e — the (b) reject-handshake wedge was chosen as the FAITHFUL
+      failure-shape (real adapter wedge, not a synthetic heartbeat-skip), letting the 3-level sentinel (L1
+      in-process / L1.5 watchdog 2-consecutive-fail / L2 docker restart-policy) prove recovery against the
+      failure it EXISTS for; the design explicitly named + rejected the unfaithful alternative (force a
+      sentinel-file write or fake-heartbeat-miss) which would have proven only the supervisor exits, not
+      that an actually-wedged adapter recovers
+    status: open
+    closure_mechanism: 'STATUS NOTE: freshly named (2026-06-30). Architect-filed solo (methodology). Bank-the-positive:
+      the discipline was PRACTICED in this arc (n5 chose the faithful (b) wedge over an unfaithful synthetic
+      detector-trigger) and the recovery thesis was certified end-to-end (audit-5511, n6 VALID). MECHANIZATION
+      candidate: a pre-test checklist (what failure-shape does this layer EXIST for? am I injecting THAT,
+      or a detector-trigger?) folded into the verifier''s adversarial-verify gate. CLOSURE: when the discipline
+      appears in the verifier-role / debugging-discipline methodology subsection alongside #79/#82/#104.'
+    cross_refs:
+    - '#79 (false-green-at-scale via unfaithful fixtures — visibility-axis sibling)'
+    - '#82 (faithful-harness-as-exposure — visibility-axis sibling)'
+    - '#104 (localize-before-fix / reproduce-at-the-lowest-faithful-layer — diagnosis-side sibling)'
+    - '#96 (agreement-pin every load-bearing invariant — non-vacuity kin)'
+    - idea-405 (M-Real-CLI-Harness — origin arc; n5 the practiced instance)
+    tele_alignment:
+    - tele-7
+    - tele-8
+
+
+
+
+
+
+
+
+
 
 # patterns[] — per-entry schema:
 #   id                          string slug; stable kebab-case
@@ -3173,3 +3999,63 @@ patterns:
     surfaced_by_calibrations:
       - 42
     methodology_doc_subsection: "docs/methodology/multi-agent-pr-workflow.md#post-event-narration-aest-utc-date-conflation-discipline"
+
+  - id: deferred-divergence-becomes-drift
+    title: "Deferred divergence becomes drift"
+    origin: mission-95-design
+    description: |
+      Architectural-pathology pattern. Inside a consolidation / refactor /
+      multi-host arc, deferring the closure of a KNOWN asymmetry or divergence
+      ("we'll fold it later") on scope-minimization grounds plants a future
+      drift surface — the un-propagated change drifts across hosts/components.
+      This is the M18-scar class generalized (a fix landing in one shim/host
+      and not propagated drifts; idea-355 exists to undo exactly this).
+
+      Diagnostic signature:
+      1. A consolidation arc surfaces a bounded adjacent asymmetry/divergence.
+      2. It is recommended for DEFER on scope-min ("keep the mission small"),
+         often framed as more expensive than it is (a "migration" that is
+         actually a delete once adjacent work lands).
+      3. Deferring leaves a live divergence surface = the next drift incident.
+
+      Counter-discipline: default to closing a bounded divergence NOW
+      ("clean symmetry"); pressure-test the real cost first; defer only on a
+      genuine scope/risk blowup.
+    surfaced_by_calibrations:
+      - 86
+
+  - id: cross-lineage-cutover-without-runtime-acceptance-gate
+    title: "Cross-lineage cutover without a runtime acceptance gate"
+    origin: mission-92
+    description: |
+      Architectural-pathology pattern. An adapter/shim mission optimised for STRUCTURAL
+      metrics (line-count, delegation-to-core) ships a distribution bundle that a
+      CROSS-LINEAGE consumer runs (different model + harness — e.g. the
+      @apnex/opencode-hub-plugin bundle a GPT-5.5/OpenCode peer consumes), but the
+      mission's test process is confined to its own subsystem + a SAME-LINEAGE harness.
+      Behavioural-contract defects against the consumer's real runtime — and the
+      cross-membrane interactions the consumer triggers — stay invisible until the
+      consumer cuts over live. A green same-lineage suite is NOT a completeness signal
+      for a cross-lineage deliverable.
+
+      Diagnostic signature:
+      1. The deliverable is a bundle/artifact a cross-lineage peer (other model/harness)
+         runs, not just the authoring lineage.
+      2. Success was graded on a structural/code metric (line-count, delegation,
+         "N/N tests green") rather than behavioural-contract fidelity against the
+         consumer's real runtime.
+      3. The passing suite is the AUTHORING lineage's (here: the Claude suite); the
+         consumer's runtime (OpenCode/Bun) is exercised by no test.
+      4. Defects surface only at live cutover (here: bug-161 dead queue-gate; the
+         verifier participation/identity cluster — bug-164/bug-165 + thread-reply +
+         the role-change boundary).
+
+      Forward-discipline: any adapter-only mission shipping a bundle a cross-lineage
+      peer consumes REQUIRES a system-level (hub + adapter + real-runtime) acceptance
+      gate proving the handshake / surfacing / participation / read invariants against
+      the consumer's real runtime BEFORE the consumer cuts over (the R3 Cross-Lineage
+      Runtime Acceptance Gate). Same-lineage suite-green gates regressions; it does not
+      satisfy this gate.
+    surfaced_by_calibrations:
+      - 95
+    methodology_doc_subsection: "docs/specs/cross-lineage-runtime-acceptance-gate.md"

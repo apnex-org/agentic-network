@@ -44,6 +44,7 @@ import {
 } from "./storage-substrate/index.js";
 import { applyMigrations } from "./storage-substrate/migration-runner.js";
 import { TokenStore } from "./storage-substrate/token-store.js";
+import { armBareEnvelopeDetector } from "./storage-substrate/bare-envelope-error.js";
 import { SubstrateCounter } from "./entities/substrate-counter.js";
 import { AgentRepositorySubstrate } from "./entities/agent-repository-substrate.js";
 import { AuditRepositorySubstrate } from "./entities/audit-repository-substrate.js";
@@ -57,6 +58,7 @@ import { TaskRepositorySubstrate } from "./entities/task-repository-substrate.js
 import { TeleRepositorySubstrate } from "./entities/tele-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "./entities/thread-repository-substrate.js";
 import { TurnRepositorySubstrate } from "./entities/turn-repository-substrate.js";
+import { WorkItemRepositorySubstrate } from "./entities/work-item-repository-substrate.js";
 import { DocumentRepository } from "./storage-substrate/new-repositories.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy, computeToolSurfaceRevision } from "./policy/index.js";
@@ -77,6 +79,7 @@ import { registerProposalPolicy } from "./policy/proposal-policy.js";
 import { registerThreadPolicy } from "./policy/thread-policy.js";
 import { registerMessagePolicy } from "./policy/message-policy.js";
 import { registerBugPolicy } from "./policy/bug-policy.js";
+import { registerWorkItemPolicy } from "./policy/work-item-policy.js";
 import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
 import { registerTransportHeartbeatPolicy } from "./handlers/transport-heartbeat-handler.js";
 import { Watchdog } from "./policy/watchdog.js";
@@ -84,6 +87,7 @@ import { MessageProjectionSweeper } from "./policy/message-projection-sweeper.js
 import { ScheduledMessageSweeper } from "./policy/scheduled-message-sweeper.js";
 import { CascadeReplaySweeper } from "./policy/cascade-replay-sweeper.js";
 import { PulseSweeper } from "./policy/pulse-sweeper.js";
+import { WorkItemLeaseSweeper } from "./policy/work-item-lease-sweeper.js";
 import {
   RepoEventBridge,
   createPolicyRouterInvoker,
@@ -179,6 +183,18 @@ console.log(`[Hub] substrate reconciler settled (${ALL_SCHEMAS.length} SchemaDef
 // WITH W6 (never standalone) per the cutover discipline — the batched-deploy
 // ordering IS the guard (no runtime migration-state check by design).
 substrate.setFieldTranslator((kind, bareKey) => reconciler.getFieldTranslation(kind, bareKey));
+// C3-R4b (piece 1): arm FilterTranslationGapError — a filter/sort on a known
+// envelope-partitioned kind's domain field with NO renameMap entry now fails LOUD
+// at filter-translate, rather than silently mis-pathing the JSONB query (the
+// bug-138/bug-170 silent-filter-miss class). Inert without this wiring (tests/dev).
+substrate.setPartitionedKindCheck((kind) => reconciler.hasTranslations(kind));
+// C3-R4b (piece 2): arm the 0-bare detector — the DECODE-side twin of piece 1.
+// A row that reaches a consumer STILL enveloped (a skipped/broken decode, never a
+// legit row post-W8-STRICT) now fails LOUD at the repo decode-to-flat boundary
+// (BareEnvelopeError), instead of silently degrading then poll-recovering (cal-84).
+// Same oracle as piece 1 (reconciler.hasTranslations) → armed only for known
+// partitioned kinds; inert without this wiring (tests/dev/ad-hoc kinds).
+armBareEnvelopeDetector((kind) => reconciler.hasTranslations(kind));
 
 // Mission-47 W1-W7 + Mission-49 W8-W9: instantiate StorageProvider-backed
 // repositories. Counter is shared-by-design across all repositories —
@@ -211,7 +227,9 @@ missionStore = new MissionRepositorySubstrate(substrate!, substrateCounter, task
 turnStore = new TurnRepositorySubstrate(substrate!, substrateCounter, missionStore, taskStore);
 // mission-84 W6: DocumentRepository (substrate-backed; W2.4 stub now production)
 const documentStore = new DocumentRepository(substrate!);
-console.log("[Hub] substrate-mode repositories instantiated (12 substrate-versions + Document store)");
+// C1-R2 (mission-94): WorkItem work-queue store (claim/lease/FSM verbs + complete_work).
+const workItemStore = new WorkItemRepositorySubstrate(substrate!, substrateCounter);
+console.log("[Hub] substrate-mode repositories instantiated (13 substrate-versions + Document store)");
 
 // ── Aggregate Store Object ────────────────────────────────────────────
 const allStores: AllStores = {
@@ -228,6 +246,7 @@ const allStores: AllStores = {
   pendingAction: pendingActionStore,
   message: messageStore,
   document: documentStore,
+  workItem: workItemStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────
@@ -253,6 +272,10 @@ registerReviewPolicy(policyRouter);
 registerProposalPolicy(policyRouter);
 registerThreadPolicy(policyRouter);
 registerBugPolicy(policyRouter);
+// C1-R2 (mission-94): WorkItem work-queue verbs (claim_work / list_ready_work / start /
+// block / resume / renew / release / abandon / complete_work). idea-121 finalizes the
+// tool surface; the keystone is dormant-until-assembled on the integration branch.
+registerWorkItemPolicy(policyRouter);
 registerPendingActionPolicy(policyRouter);
 // mission-75 v1.0 §3.3 — adapter-internal periodic transport-liveness
 // signal; tier="adapter-internal" excludes it from shim's LLM tool catalogue.
@@ -282,6 +305,28 @@ const HUB_VERSION: string = (() => {
     return "0.0.0";
   }
 })();
+
+// C3-R1 M-Roll-Signal (idea-340) — deploy-truth bank. scripts/local/build-hub.sh
+// stamps hub/build-info.json {gitSha, builtAt} into the image (the Dockerfile
+// COPYs it to /app); /health reports it so an external observer (the
+// deploy-hub.yml roll-confirm step) can prove the new image actually rolled,
+// closing the bug-107/DR-011 silent-deploy class. Read once at boot via the
+// same ../build-info.json resolution as HUB_VERSION (dist/index.js → /app).
+// Graceful empty-fallback when the file is absent (local dev / tests) —
+// mirrors the bug-114 toolSurfaceRevision "" fallback; never crashes boot.
+const BUILD_INFO: { gitSha: string; builtAt: string } = (() => {
+  try {
+    const biPath = join(dirname(fileURLToPath(import.meta.url)), "..", "build-info.json");
+    const bi = JSON.parse(readFileSync(biPath, "utf8")) as { gitSha?: unknown; builtAt?: unknown };
+    return {
+      gitSha: typeof bi.gitSha === "string" ? bi.gitSha : "",
+      builtAt: typeof bi.builtAt === "string" ? bi.builtAt : "",
+    };
+  } catch {
+    return { gitSha: "", builtAt: "" };
+  }
+})();
+console.log(`[Hub] build-info: gitSha=${BUILD_INFO.gitSha || "(none)"} builtAt=${BUILD_INFO.builtAt || "(none)"}`);
 
 // ADR-017: start the comms-reliability watchdog. Stateless scanner over
 // the pending-actions queue; enforces deadlines + escalation ladder. The
@@ -403,6 +448,12 @@ const hub = new HubNetworking(
     quiet: false,
     version: HUB_VERSION,
     toolSurfaceRevision,
+    gitSha: BUILD_INFO.gitSha,
+    builtAt: BUILD_INFO.builtAt,
+    // work-44/bug-190 (d): lazy getter — repoEventBridge is created further below; the closure
+    // reads its health at /health-request time so deliveryFailing/lastSuccessfulDelivery surface
+    // in production (closes the "bridge.health() has zero prod consumers" gap).
+    repoEventBridgeHealth: () => repoEventBridge?.health(),
   },
   // M-Session-Claim-Separation (mission-40) T2: thread audit store through
   // for SSE-subscribe auto-claim hook to emit agent_session_implicit_claim
@@ -701,7 +752,8 @@ const messageProjectionSweeper = new MessageProjectionSweeper(
   // mission-83 W5.4 cutover); the 74% CPU pressure that motivated PR #203 was
   // structurally eliminated. Sweeper continues to poll (substrate-watch
   // subscription is W8/W9 architectural-future-leverage; v1 keeps polling).
-  { intervalMs: 5000 },
+  // C3-R4b piece 2: audit = durable queryable 0-bare-violation sink.
+  { intervalMs: 5000, audit: auditStore, metrics: createMetricsCounter() },
 );
 
 // Mission-51 W4: scheduled-message sweeper. Polls every 1s for
@@ -752,6 +804,32 @@ const cascadeReplaySweeper = new CascadeReplaySweeper(
       internalEvents: [],
     } as unknown as import("./policy/types.js").IPolicyContext),
   },
+  // C3-R4b piece 2: durable queryable sink for 0-bare-violation audit entries.
+  { audit: auditStore },
+);
+
+// C1-R2 (mission-94) sub-PR-4a: WorkItem lease-expiry sweeper. Periodic tick (well
+// under LEASE_TTL_MS 15min) re-queues a crashed/wedged holder's lapsed lease to ready
+// (leaseExpiryCount++) and POISON-ABANDONS an item that has lapsed poisonCap (3) times.
+// Inherits the cal-84 bare-row escalation (audit + metric). Cadence configurable.
+const WORKITEM_LEASE_SWEEP_INTERVAL_MS = Number(process.env.OIS_WORKITEM_LEASE_SWEEP_INTERVAL_MS ?? 60_000);
+const workItemLeaseSweeper = new WorkItemLeaseSweeper(
+  workItemStore,
+  {
+    forSweeper: () => ({
+      stores: allStores,
+      metrics: createMetricsCounter(),
+      emit: async () => {},
+      dispatch: async () => {},
+      sessionId: "workitem-lease-sweeper",
+      clientIp: "127.0.0.1",
+      role: "system",
+      internalEvents: [],
+    } as unknown as import("./policy/types.js").IPolicyContext),
+  },
+  // 4b-ii: agentStore drives the per-AGENT thrash-quarantine (claim→expire-without-
+  // evidence → increment holder's counter; quarantine at thrashCap=3, the C2 seam).
+  { audit: auditStore, agentStore: engineerRegistry, thrashCap: 3 },
 );
 
 // Mission-57 W2: PulseSweeper — single-instance recurring sweeper that
@@ -897,6 +975,17 @@ startupSequence().then(async () => {
   } catch (err) {
     console.warn("[Hub] Startup cascade-replay sweep failed; Hub still starts:", err);
   }
+  // C1-R2 sub-PR-4a: WorkItem lease-expiry sweep — startup pass (catches leases that
+  // lapsed during a Hub-down window) then periodic ticking.
+  try {
+    const swept = await workItemLeaseSweeper.fullSweep(new Date().toISOString());
+    if (swept.requeued > 0 || swept.abandoned > 0 || swept.errors > 0 || swept.quarantined > 0) {
+      console.log(`[Hub] Startup WorkItem lease sweep: scanned=${swept.scanned} requeued=${swept.requeued} abandoned=${swept.abandoned} skipped=${swept.skipped} errors=${swept.errors} quarantined=${swept.quarantined}`);
+    }
+  } catch (err) {
+    console.warn("[Hub] Startup WorkItem lease sweep failed; sweeper still starts:", err);
+  }
+  workItemLeaseSweeper.start(WORKITEM_LEASE_SWEEP_INTERVAL_MS);
   // Mission-52 T3: start repo-event-bridge if configured. PAT failures
   // are caught inside .start() — Hub continues with bridge in `failed`
   // state per directive (no Hub-crash on under-scoped tokens).
