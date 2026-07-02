@@ -1,0 +1,35 @@
+{
+  "manifestVersion": 1,
+  "harness": "claude",
+  "proxyName": "@apnex/claude-plugin",
+  "transport": "stdio-mcp-proxy",
+  "serverName": "proxy",
+  "toolPrefix": "mcp__plugin_agent-adapter_proxy__",
+  "injectionChannel": "claude/channel",
+  "injectionMechanism": "mcp-server-notification",
+  "dialect": "mcp",
+  "capabilityMatrix": {
+    "consumption-ack": {
+      "value": "partial",
+      "reason": "claude's one-way notifications/claude/channel has NO native consumption confirm; backstop chain = PollBackstop dedup-aware re-delivery + claim_message + ack_message-on-action + L3 -> at-least-once-with-dedup at the channel, NOT exactly-once-at-the-LLM (P1d). (opencode awaitable session.promptAsync = yes.)"
+    },
+    "tools-list-changed-honored": {
+      "value": "no",
+      "reason": "claude-code 2.1.195 does NOT act on mid-session notifications/tools/list_changed (bug-203, host/upstream limitation, not adapter-fixable); the adapter emits correctly. Workaround = clear .ois tool-catalog + plugin cache + restart at the harness-container layer. (opencode honors it = yes.)"
+    },
+    "notification-coalescer": {
+      "value": "no",
+      "reason": "claude wires notification hooks directly with no coalescer. (opencode paces via NotificationCoalescer = yes.)"
+    }
+  },
+  "authOrder": ["defaults", "file", "env"],
+  "envTemplate": [
+    "OIS_HUB_URL",
+    "OIS_HUB_TOKEN",
+    "OIS_HUB_ROLE",
+    "OIS_HUB_LABELS",
+    "OIS_AGENT_NAME",
+    "WORK_DIR",
+    "HUB_LLM_MODEL"
+  ]
+}

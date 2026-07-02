@@ -66,7 +66,7 @@ const LIST_PREFETCH_CAP = 500;
  * status→phase and flattens metadata (messageKind / threadId / sequenceInThread / …).
  */
 function decodeMessage(raw: Message): Message {
-  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>) as Record<string, unknown>;
+  const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>, "Message") as Record<string, unknown>;
   if (flat.messageKind !== undefined) {
     flat.kind = flat.messageKind;
     delete flat.messageKind;

@@ -7,6 +7,10 @@
  * (Push-to-LLM for the Plugin, Sandwich pattern for the Architect).
  */
 
+// Type-only import (erased at runtime → no value-level circular dep;
+// state-sync.ts does not import event-router). Used by reconstructDrainedAction.
+import type { DrainedPendingAction } from "./state-sync.js";
+
 // ── Event Types ──────────────────────────────────────────────────────
 
 /** All known Hub event types */
@@ -132,17 +136,86 @@ const ARCHITECT_INFORMATIONAL: ReadonlySet<string> = new Set([
  */
 export function classifyEvent(
   event: string,
-  role: "engineer" | "architect"
+  role: "engineer" | "architect" | "verifier"
 ): EventDisposition {
   if (role === "engineer") {
     if (ENGINEER_ACTIONABLE.has(event)) return "actionable";
     if (ENGINEER_INFORMATIONAL.has(event)) return "informational";
     return "unhandled";
-  } else {
-    if (ARCHITECT_ACTIONABLE.has(event)) return "actionable";
-    if (ARCHITECT_INFORMATIONAL.has(event)) return "informational";
-    return "unhandled";
   }
+  // architect + verifier (mission-93): the verifier's directed-wake surface
+  // ≈ the architect's (thread_message / review_requested / pulse / directed
+  // notifications per verifier-role.md §2.1), so it shares the architect
+  // classification set rather than mis-falling through an engineer path.
+  if (ARCHITECT_ACTIONABLE.has(event)) return "actionable";
+  if (ARCHITECT_INFORMATIONAL.has(event)) return "informational";
+  return "unhandled";
+}
+
+// ── Pulse detection (M-OpenCode-Shim-Sovereign-Dedup, idea-331) ──────
+//
+// Hoisted to core from the two shims (claude-plugin/src/source-attribute.ts
+// + the opencode shim's inlined mirror — its own comment admitted the dup).
+// Sibling to classifyEvent: both shims call isPulseEvent to downgrade a
+// pulse Message's notification level from "actionable" to "informational"
+// (Mission-57 W3 / Design v1.0 §4 — S3 noise reduction during high-activity
+// sub-PR cascades). `eventData` is OPTIONAL (Claude's signature) so the one
+// core impl serves both shims behavior-preservingly.
+
+/** Pulse-kind discriminators that route to informational level (Mission-57 W3). */
+export const PULSE_KINDS: ReadonlySet<string> = new Set([
+  "status_check",
+  "missed_threshold_escalation",
+]);
+
+/**
+ * Detect whether an event is a pulse Message (status_check or
+ * missed_threshold_escalation): a `message_arrived` event whose
+ * `data.message.payload.pulseKind` ∈ PULSE_KINDS.
+ */
+export function isPulseEvent(
+  eventType: string,
+  eventData?: Record<string, unknown>,
+): boolean {
+  if (eventType !== "message_arrived" || !eventData) return false;
+  const message = eventData.message as { payload?: unknown } | undefined;
+  const payload = message?.payload as { pulseKind?: unknown } | undefined;
+  return typeof payload?.pulseKind === "string" && PULSE_KINDS.has(payload.pulseKind);
+}
+
+// ── bug-108 reconnect-drained reconstruction (M-Sovereign-Dedup, idea-331) ──
+//
+// Hoisted to core from both shims (claude-plugin surfacePendingActionItem +
+// the opencode shim's onPendingActionItem). RECONSTRUCTION ONLY — the WAKE
+// stays host-specific (claude → pushChannelNotification; opencode → the
+// QueuedNotification queue/processNotification). A drained pending action is a
+// notification that arrived while the wire was down; its `payload` IS the
+// original dispatchPayload (hub thread-policy.ts enqueues `payload:
+// dispatchPayload`), so {event: dispatchType, data: payload} reconstructs the
+// live SSE AgentEvent. The returned `agentEvent` is a plain {event,data} —
+// structurally an AgentEvent (optional fields omitted) — so this stays a
+// type-only dependency on DrainedPendingAction and avoids a value-level
+// event-router↔agent-client circular import.
+
+export interface DrainedActionReconstruction {
+  /** {event,data} — structurally an AgentEvent for the host wake to consume. */
+  agentEvent: { event: string; data: Record<string, unknown> };
+  /** Diagnostic-log action hint (identical across both shims). */
+  actionHint: string;
+  /** Notification level — pulse Messages downgrade to informational. */
+  level: "actionable" | "informational";
+}
+
+export function reconstructDrainedAction(item: DrainedPendingAction): DrainedActionReconstruction {
+  const agentEvent = { event: item.dispatchType, data: item.payload };
+  const actionHint =
+    item.dispatchType === "thread_message"
+      ? `Reply with create_thread_reply to thread ${item.entityRef}`
+      : `Owed: ${item.dispatchType} on ${item.entityRef}`;
+  const level: "actionable" | "informational" = isPulseEvent(agentEvent.event, agentEvent.data)
+    ? "informational"
+    : "actionable";
+  return { agentEvent, actionHint, level };
 }
 
 // ── Event Parsing ────────────────────────────────────────────────────

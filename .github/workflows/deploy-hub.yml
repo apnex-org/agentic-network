@@ -9,6 +9,16 @@ on:
       - 'scripts/local/build-hub.sh'
   workflow_dispatch:
 
+# bug-195 (1): coalesce a rapid multi-PR hub/** batch into ONE build+roll. Without
+# this, every hub/** push to main fired its own build+push → the watchtower rolled
+# the VM per-PR (observed: ~7 rolls for one 7-PR batch). cancel-in-progress cancels a
+# superseded in-flight build so only the FINAL cumulative main state builds + rolls.
+# Pairs with the S1 merge-queue: a queue-merged batch produces a single VM roll, not
+# per-merge churn. Safe because each build is a full build of main@sha — the last wins.
+concurrency:
+  group: deploy-hub
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,6 +32,10 @@ jobs:
       CI: 'true'
     steps:
       - uses: actions/checkout@v4
+        with:
+          # bug-195 (2): full history so the roll-confirm gate can do the
+          # gitSha>=expected ancestry check against a superseding deploy.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -37,7 +51,75 @@ jobs:
         run: ./scripts/local/build-hub.sh
 
       - name: Log image digest
+        id: digest
         run: |
-          gcloud artifacts docker images describe \
+          BUILT_DIGEST=$(gcloud artifacts docker images describe \
             australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/hub:latest \
-            --format='value(image_summary.digest)'
+            --format='value(image_summary.digest)')
+          echo "built_digest=$BUILT_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Built image digest: $BUILT_DIGEST"
+
+      # C3-R1 M-Roll-Signal (idea-340) — same-day deploy-truth bank.
+      # The image is built+pushed above; watchtower (--interval 300) on the
+      # prod VM auto-pulls + rolls it. This step is the OBSERVER: it runs on
+      # the GitHub runner (NOT the Hub) so it survives the restart, and polls
+      # the public /health (Cloud Run nginx ingress -> VM Hub) until the
+      # rolled image reports gitSha == this commit. It ALARMS LOUD on timeout
+      # (red X + notification) and does NOT auto-revert — auto-rollback is R3,
+      # behind the Director governance-batch. A timeout means the image built
+      # but did NOT roll: suspect a watchtower stall (bug-107 token-race).
+      #
+      # Self-sufficient: HEALTH_URL DEFAULTS to the known public prod endpoint, so
+      # the gate fires with ZERO manual setup — no "forgot to arm the var"
+      # silent-skip failure mode (on-C3-thesis). All knobs are optional overrides:
+      #   vars.HUB_HEALTH_URL          — public /health URL override (default: the
+      #                                  prod Cloud Run endpoint below; env-portability)
+      #   vars.ROLL_CONFIRM_TIMEOUT_S  — overall budget  (default 600)
+      #   vars.ROLL_CONFIRM_POLL_S     — poll cadence    (default 15)
+      - name: Confirm roll (poll /health gitSha == github.sha)
+        env:
+          HEALTH_URL: ${{ vars.HUB_HEALTH_URL || 'https://hub-api-5muxctm3ta-ts.a.run.app/health' }}
+          EXPECTED_SHA: ${{ github.sha }}
+          TIMEOUT_S: ${{ vars.ROLL_CONFIRM_TIMEOUT_S || '600' }}
+          POLL_S: ${{ vars.ROLL_CONFIRM_POLL_S || '15' }}
+          BUILT_DIGEST: ${{ steps.digest.outputs.built_digest }}
+        run: |
+          set -uo pipefail
+          # Defensive escape-hatch only: HEALTH_URL defaults to the prod endpoint
+          # above, so this fires solely if an operator sets the override to empty
+          # to intentionally disable the gate.
+          if [ -z "${HEALTH_URL}" ]; then
+            echo "::warning title=roll-confirm disabled::HUB_HEALTH_URL override is empty — roll-confirm gate intentionally skipped."
+            exit 0
+          fi
+          echo "Roll-confirm: polling ${HEALTH_URL} for gitSha >= ${EXPECTED_SHA} (this commit OR a superseding deploy)"
+          echo "  budget ${TIMEOUT_S}s, every ${POLL_S}s; built digest ${BUILT_DIGEST:-<unknown>}"
+          # bug-195 (2): fetch main so a SUPERSEDING prod sha (a newer commit that
+          # already rolled — e.g. via the concurrency-cancel coalesce, or a faster
+          # follow-on deploy) can be ancestry-checked instead of false-failing the gate.
+          git fetch --quiet origin main 2>/dev/null || true
+          deadline=$(( SECONDS + TIMEOUT_S ))
+          last="<none>"
+          while [ "${SECONDS}" -lt "${deadline}" ]; do
+            body=$(curl -fsS -m 10 "${HEALTH_URL}" 2>/dev/null || true)
+            got=$(printf '%s' "${body}" | jq -r '.gitSha // ""' 2>/dev/null || true)
+            [ -n "${got}" ] && last="${got}"
+            # ACCEPT if prod is exactly this commit, OR a superseding deploy that has
+            # this commit as an ancestor (gitSha>=expected). A newer roll that already
+            # contains this commit is success, not failure (the stint-3/4 false-fail).
+            # A genuine stall (prod still at an OLDER sha) is NOT an ancestor → keeps
+            # polling → real alarm preserved (bug-107 token-race stays loud).
+            if [ "${got}" = "${EXPECTED_SHA}" ] || { [ -n "${got}" ] && git merge-base --is-ancestor "${EXPECTED_SHA}" "${got}" 2>/dev/null; }; then
+              built=$(printf '%s' "${body}" | jq -r '.builtAt // ""' 2>/dev/null || true)
+              if [ "${got}" = "${EXPECTED_SHA}" ]; then
+                echo "Roll confirmed: /health gitSha == ${EXPECTED_SHA} (builtAt=${built}) after ~${SECONDS}s"
+              else
+                echo "Roll confirmed (superseding deploy): prod gitSha ${got} is a descendant of ${EXPECTED_SHA} (builtAt=${built}) after ~${SECONDS}s"
+              fi
+              exit 0
+            fi
+            echo "  ...not yet rolled (gitSha=${got:-<unreachable>}); sleeping ${POLL_S}s"
+            sleep "${POLL_S}"
+          done
+          echo "::error title=roll-confirm FAILED::prod /health did not report gitSha >= ${EXPECTED_SHA} (this commit or a superseding deploy) within ${TIMEOUT_S}s (last seen: ${last}). Image built+pushed (digest ${BUILT_DIGEST:-<unknown>}) but did NOT roll — suspect a watchtower stall (bug-107 token-race; VM-side real-fix is Director-gated). No auto-revert (R1 is alarm-only)."
+          exit 1

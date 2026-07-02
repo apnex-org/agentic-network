@@ -64,8 +64,23 @@ export class Watchdog {
 
   start(): void {
     if (this.interval) return;
+    // bug-191 (audit-4103 idiom): in-flight latch — a tick slower than the
+    // interval must NOT overlap itself. Without it, two ticks process the SAME
+    // expired pending-action → attemptCount 0→1→2 in one window (the CAS
+    // serializes the writes but RE-APPLIES the increment — not idempotent) →
+    // premature agent demotion / spurious CRITICAL Director escalation /
+    // duplicate audits + wakes. `if(this.interval)return` guards double-START
+    // only; this skips a tick while the prior one is still running. Matches the
+    // shipped fix on work-item-lease-sweeper + message-projection-sweeper.
+    // (The wake fetch having no timeout — which makes a slow tick reachable —
+    // is a separate hardening; the latch makes overlap harmless regardless.)
+    let inFlight = false;
     this.interval = setInterval(() => {
-      this.tick().catch((err) => this.log(`[Watchdog] tick error: ${err?.message ?? err}`));
+      if (inFlight) { this.log("[Watchdog] skipping tick — previous still in flight"); return; }
+      inFlight = true;
+      this.tick()
+        .catch((err) => this.log(`[Watchdog] tick error: ${err?.message ?? err}`))
+        .finally(() => { inFlight = false; });
     }, this.tickIntervalMs);
   }
 

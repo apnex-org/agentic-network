@@ -1,0 +1,44 @@
+# P1e dep-prune BOOT-SMOKE (the architect's caveat iv): after the prune, the shim's runtime
+# MODULE GRAPH must still load — a pruned-away runtime dep breaks at runtime, not build-time, so
+# digest-equality + cred-scan alone are not enough. Override the supervisor entrypoint with node
+# and dynamic-import the kernel + the MCP SDK (the runtime closure); a missing dep throws
+# MODULE_NOT_FOUND -> the build FAILS. Submit: gcloud builds submit --no-source --config this
+#   --substitutions _TAG=<the pruned image tag>
+substitutions:
+  _IMAGE: 'australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/claude-adapter'
+  _TAG: 'p1a'
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        docker pull "${_IMAGE}:${_TAG}"
+        # --entrypoint node overrides the baked supervisor; -w /app so @apnex/* + @modelcontextprotocol
+        # resolve from /app/node_modules. Dynamic import (the kernel is ESM).
+        docker run --rm --entrypoint node -w /app "${_IMAGE}:${_TAG}" -e '
+          Promise.all([
+            import("@apnex/network-adapter"),
+            import("@apnex/message-router"),
+            import("@apnex/cognitive-layer"),
+            import("@modelcontextprotocol/sdk/server/index.js"),
+            import("@modelcontextprotocol/sdk/server/stdio.js"),
+          ]).then(() => { console.log("BOOTSMOKE-MODULES-OK"); })
+            .catch((e) => { console.error("BOOTSMOKE-FAIL", e && e.code, e && e.message); process.exit(1); });
+        '
+        # FEATURE-PRESENCE (the b057685 stale-base guard): a stale pre-#436 base passes the
+        # module-graph load yet LACKS the feature-under-test. Assert the watchdog wiring is baked
+        # into the shim AND the kernel ships the liveness module — verify presence, don't assume
+        # the base. (Generalize per feature as the pilot adds them.)
+        # find -L follows the @apnex/network-adapter WORKSPACE SYMLINK (-> packages/network-adapter);
+        # plain find would not descend it (a false-negative).
+        docker run --rm --entrypoint sh "${_IMAGE}:${_TAG}" -c '
+          grep -q LivenessWatchdog /app/adapters/claude-plugin/dist/shim.js \
+            && find -L /app/node_modules/@apnex/network-adapter/dist -name "liveness-*.js" 2>/dev/null | grep -q . \
+            || { echo "FEATURE-MISSING: pre-#436 stale base (watchdog wiring or kernel module absent)"; exit 1; }
+        '
+        echo "FEATURE-PRESENT: watchdog wiring + kernel liveness module baked (post-#436 base)"
+        echo "BOOTSMOKE-PASS: pruned image runtime module graph loads (no dep removed that the adapter needs)"
+options:
+  logging: CLOUD_LOGGING_ONLY

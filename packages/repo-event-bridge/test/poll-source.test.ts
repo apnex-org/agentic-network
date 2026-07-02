@@ -23,6 +23,8 @@ import {
 } from "../src/poll-source.js";
 import { PatScopeError, GhApiAuthError } from "../src/gh-api-client.js";
 import type { CursorStoreOptions } from "../src/cursor-store.js";
+import type { MessageSink } from "../src/sink.js";
+import type { RepoEvent } from "../src/event-source.js";
 
 // ── Test harness ──────────────────────────────────────────────────────
 
@@ -90,6 +92,29 @@ function blockingSleep(_ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/** A recording sink: captures every delivered RepoEvent. `failTimes` makes the FIRST N emit
+ *  attempts throw before succeeding (for the failure-injection tests). */
+function recordingSink(opts: { failTimes?: number } = {}): {
+  sink: MessageSink;
+  emitted: RepoEvent[];
+  attempts: () => number;
+} {
+  const emitted: RepoEvent[] = [];
+  let attempts = 0;
+  let remainingFails = opts.failTimes ?? 0;
+  const sink: MessageSink = {
+    async emit(event: RepoEvent) {
+      attempts++;
+      if (remainingFails > 0) {
+        remainingFails--;
+        throw new Error("sink emit failed (injected)");
+      }
+      emitted.push(event);
+    },
+  };
+  return { sink, emitted, attempts: () => attempts };
+}
+
 function newSource(
   overrides: Partial<PollSourceOptions> = {},
 ): {
@@ -97,18 +122,21 @@ function newSource(
   storage: CursorStoreOptions["storage"];
   logger: Logger;
   loggerLines: { level: string; msg: string }[];
+  emitted: RepoEvent[];
 } {
   const storage = new MemoryStorageProvider();
   const { logger, lines } = captureLogger();
+  const rec = recordingSink();
   const source = new PollSource({
     repos: ["owner/example"],
     token: "ghp_test",
     storage,
     logger,
     sleep: blockingSleep,
+    sink: rec.sink,
     ...overrides,
   });
-  return { source, storage, logger, loggerLines: lines };
+  return { source, storage, logger, loggerLines: lines, emitted: rec.emitted };
 }
 
 // ── Construction + capabilities ──────────────────────────────────────
@@ -287,7 +315,7 @@ describe("PollSource — pollOnce: cursor advance + emit", () => {
     await source.stop();
   });
 
-  it("pollOnce emits translated RepoEvents into the iterator", async () => {
+  it("pollOnce delivers translated RepoEvents INLINE to the sink (bug-190 A)", async () => {
     const fetchImpl = makeFetch((url) => {
       if (url.endsWith("/user")) return defaultScopesResponse();
       return {
@@ -303,19 +331,18 @@ describe("PollSource — pollOnce: cursor advance + emit", () => {
         ],
       };
     });
-    const { source } = newSource({ fetch: fetchImpl });
-    await source.start();
+    const { source, emitted } = newSource({ fetch: fetchImpl });
+    // No start() — drive pollOnce directly so the background poll loop doesn't race the sink
+    // assertion (it would also deliver the same event before markSeen dedups it).
     await source.pollOnce("owner/example");
 
-    // Drain one event from the iterator.
-    const it = source[Symbol.asyncIterator]();
-    const result = await it.next();
-    expect(result.done).toBe(false);
-    expect(result.value).toMatchObject({
+    // The fresh event was delivered INLINE to the sink — no iterator (the poll loop IS the
+    // delivery loop).
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({
       kind: "repo-event",
       subkind: "pr-opened",
     });
-    await source.stop();
   });
 
   it("pollOnce 304 (notModified) → emits nothing; outcome=not-modified", async () => {
@@ -447,6 +474,7 @@ describe("PollSource — persistence (eats own dogfood)", () => {
       logger,
       sleep: blockingSleep,
       fetch: fetchImpl,
+      sink: recordingSink().sink,
     });
     await first.start();
     const r1 = await first.pollOnce("owner/example");
@@ -462,6 +490,7 @@ describe("PollSource — persistence (eats own dogfood)", () => {
       logger,
       sleep: blockingSleep,
       fetch: fetchImpl,
+      sink: recordingSink().sink,
     });
     await second.start();
     const r2 = await second.pollOnce("owner/example");
@@ -506,10 +535,11 @@ describe("PollSource — persistence (eats own dogfood)", () => {
       logger,
       sleep: blockingSleep,
       fetch: fetchImpl,
+      sink: recordingSink().sink,
     });
-    await first.start();
+    // No start() on the first source — drive pollOnce directly so the cursor write is deterministic
+    // (the background poll loop would otherwise race the manual pollOnce for the single event).
     await first.pollOnce("owner/example");
-    await first.stop();
 
     const second = new PollSource({
       repos: ["owner/example"],
@@ -518,6 +548,7 @@ describe("PollSource — persistence (eats own dogfood)", () => {
       logger,
       sleep: blockingSleep,
       fetch: fetchImpl,
+      sink: recordingSink().sink,
     });
     await second.start();
     await second.pollOnce("owner/example");
@@ -556,44 +587,6 @@ describe("PollSource — health() snapshot", () => {
   });
 });
 
-// ── Iterator semantics ───────────────────────────────────────────────
-
-describe("PollSource — iterator semantics", () => {
-  it("stop() terminates the iterator with done=true", async () => {
-    const fetchImpl = makeFetch((url) => {
-      if (url.endsWith("/user")) return defaultScopesResponse();
-      return emptyEventsResponse();
-    });
-    const { source } = newSource({ fetch: fetchImpl });
-    await source.start();
-
-    const it = source[Symbol.asyncIterator]();
-    const nextPromise = it.next();
-    await source.stop();
-    const result = await nextPromise;
-    expect(result.done).toBe(true);
-  });
-
-  it("buffered events drain before stop terminates iterator", async () => {
-    const fetchImpl = makeFetch((url) => {
-      if (url.endsWith("/user")) return defaultScopesResponse();
-      return {
-        status: 200,
-        headers: { etag: 'W/"v1"' },
-        body: [
-          { id: "e1", type: "PushEvent", payload: {}, created_at: "t" },
-          { id: "e2", type: "PushEvent", payload: {}, created_at: "t" },
-        ],
-      };
-    });
-    const { source } = newSource({ fetch: fetchImpl });
-    await source.start();
-    await source.pollOnce("owner/example");
-    const it = source[Symbol.asyncIterator]();
-    const a = await it.next();
-    const b = await it.next();
-    expect(a.done).toBe(false);
-    expect(b.done).toBe(false);
-    await source.stop();
-  });
-});
+// (bug-190 (A): the async-iterator + buffered queue are removed — delivery is INLINE to the sink.
+//  The old "iterator semantics" tests no longer apply; sink-delivery + the failure-injection /
+//  cursor-gated-on-delivery coverage lives in poll-deliver-coupling.test.ts.)

@@ -2,7 +2,7 @@
  * Unit tests for the Mission-56 W2.2 MessageRouter integration in the
  * tool-manager dispatcher (Layer 1c).
  *
- * Layer:    L1c (network-adapter/src/tool-manager/dispatcher.ts)
+ * Layer:    L1c (network-adapter/src/tool-manager/orchestrator/dispatcher.ts)
  * Scope:    `createSharedDispatcher` now routes every classified event
  *           through `@apnex/message-router` so Layer-2 dedup + kind→hook
  *           mapping live in one place. The host's `notificationHooks`

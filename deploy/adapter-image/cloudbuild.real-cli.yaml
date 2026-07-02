@@ -1,0 +1,21 @@
+# n5 real-CLI EMBEDDED harness image build (TEST image). Plain docker build + push — digest
+# reproducibility is NOT this test image's bar (the prod adapter image keeps that, via cloudbuild.yaml).
+# Pushes ${_IMAGE}:${_TAG}. Build + push ONLY; the VM e2e run is separate (parked-VM, architect-gated).
+substitutions:
+  _IMAGE: 'australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/claude-adapter-realcli'
+  _TAG: 'n5'
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        echo "=== n5 real-CLI image build (${_IMAGE}:${_TAG}) ==="
+        docker build -f Dockerfile -t "${_IMAGE}:${_TAG}" .
+        docker push "${_IMAGE}:${_TAG}"
+        echo "BUILD-PUSHED ${_IMAGE}:${_TAG}"
+timeout: '2400s'
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'

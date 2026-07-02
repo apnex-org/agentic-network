@@ -41,9 +41,10 @@
  * INV-TH26 audit-recoverability stance.
  */
 
-import type { IThreadStore, Thread } from "../state.js";
+import type { IThreadStore, Thread, IAuditStore } from "../state.js";
 import type { IPolicyContext } from "./types.js";
 import type { IMessageStore } from "../entities/index.js";
+import { escalateBareEnvelope } from "./bare-envelope-escalation.js";
 
 const DEFAULT_INTERVAL_MS = 5000;
 const PROJECTION_NAMESPACE = "thread-message";
@@ -56,12 +57,15 @@ export interface MessageProjectionSweeperOptions {
    * If absent, sweeper still runs but doesn't emit metrics.
    */
   metrics?: IPolicyContext["metrics"];
+  /** C3-R4b piece 2: durable queryable sink for 0-bare-violation audit entries. */
+  audit?: IAuditStore;
   /**
    * Optional logger. Defaults to console; tests can pass a no-op.
    */
   logger?: {
     log: (msg: string) => void;
     warn: (msg: string, err?: unknown) => void;
+    error?: (msg: string, err?: unknown) => void;
   };
 }
 
@@ -70,13 +74,20 @@ export interface SweepResult {
   threadsProjected: number;
   messagesProjected: number;
   errors: number;
+  /** C3-R4b piece 2: threads escalated on a structural 0-bare defect. */
+  quarantined: number;
 }
 
 export class MessageProjectionSweeper {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly intervalMs: number;
   private readonly metrics: IPolicyContext["metrics"] | undefined;
-  private readonly logger: { log: (m: string) => void; warn: (m: string, err?: unknown) => void };
+  private readonly audit: IAuditStore | undefined;
+  private readonly logger: {
+    log: (m: string) => void;
+    warn: (m: string, err?: unknown) => void;
+    error: (m: string, err?: unknown) => void;
+  };
 
   constructor(
     private readonly threadStore: IThreadStore,
@@ -85,11 +96,18 @@ export class MessageProjectionSweeper {
   ) {
     this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     this.metrics = options.metrics;
-    this.logger = options.logger ?? {
-      log: (m) => console.log(`[MessageProjectionSweeper] ${m}`),
-      warn: (m, err) =>
-        console.warn(`[MessageProjectionSweeper] ${m}`, err ?? ""),
+    this.audit = options.audit;
+    this.logger = {
+      log: options.logger?.log ?? ((m) => console.log(`[MessageProjectionSweeper] ${m}`)),
+      warn: options.logger?.warn ?? ((m, err) => console.warn(`[MessageProjectionSweeper] ${m}`, err ?? "")),
+      error: options.logger?.error ?? ((m, err) => console.error(`[MessageProjectionSweeper] ${m}`, err ?? "")),
     };
+  }
+
+  /** C3-R4b piece 2: deps for the shared 0-bare escalation (durable audit +
+   *  best-effort per-process metric + ERROR logger). */
+  private escalationDeps() {
+    return { audit: this.audit, metrics: this.metrics, logger: this.logger };
   }
 
   /**
@@ -103,12 +121,31 @@ export class MessageProjectionSweeper {
       threadsProjected: 0,
       messagesProjected: 0,
       errors: 0,
+      quarantined: 0,
     };
 
     // listThreads returns scalar-only threads (no message[] hydration).
     // Per-thread sweep calls getThread(id) to hydrate messages from
     // the per-file storage layout (threads/<id>/messages/<seq>.json).
-    const threadScalars = await this.threadStore.listThreads();
+    let threadScalars: Thread[];
+    try {
+      threadScalars = await this.threadStore.listThreads();
+    } catch (listErr) {
+      // C3-R4b piece 2: a structural bare-envelope in the thread-list decode
+      // throws mid-list. Escalate loud + queryable and skip THIS sweep cycle
+      // (the timer + startup wrap continue; Hub keeps serving). NOT silent.
+      if (
+        await escalateBareEnvelope(
+          listErr,
+          { sweeper: "message-projection (thread list)", entityRef: "(thread list)" },
+          this.escalationDeps(),
+        )
+      ) {
+        result.quarantined += 1;
+        return result;
+      }
+      throw listErr;
+    }
     result.threadsScanned = threadScalars.length;
 
     for (const scalar of threadScalars) {
@@ -127,6 +164,23 @@ export class MessageProjectionSweeper {
           result.messagesProjected += projected;
         }
       } catch (err) {
+        // C3-R4b piece 2: a STRUCTURAL bare-envelope (the thread or a projected
+        // message decoded still enveloped) is PERMANENT — escalate loud + queryable.
+        // NOTE: unlike cascade/scheduled, the offending entity here is often the
+        // THREAD being processed, whose marker-write would itself decode→throw —
+        // so a CAS-terminal-quarantine is not reliably possible; we escalate (loud
+        // + queryable, no longer the SILENT degrade that is cal-84's sin) and
+        // CONTINUE for the other threads.
+        if (
+          await escalateBareEnvelope(
+            err,
+            { sweeper: "message-projection", entityRef: scalar.id },
+            this.escalationDeps(),
+          )
+        ) {
+          result.quarantined += 1;
+          continue;
+        }
         result.errors += 1;
         this.metrics?.increment("message_projection_sweeper.thread_error", {
           threadId: scalar.id,
@@ -139,10 +193,10 @@ export class MessageProjectionSweeper {
       }
     }
 
-    if (result.messagesProjected > 0 || result.errors > 0) {
+    if (result.messagesProjected > 0 || result.errors > 0 || result.quarantined > 0) {
       this.logger.log(
         `sweep complete: scanned=${result.threadsScanned} projected=${result.threadsProjected} ` +
-          `messages=${result.messagesProjected} errors=${result.errors}`,
+          `messages=${result.messagesProjected} errors=${result.errors} quarantined=${result.quarantined}`,
       );
     }
     this.metrics?.increment("message_projection_sweeper.tick", {
@@ -150,6 +204,7 @@ export class MessageProjectionSweeper {
       threadsProjected: result.threadsProjected,
       messagesProjected: result.messagesProjected,
       errors: result.errors,
+      quarantined: result.quarantined,
     });
     return result;
   }

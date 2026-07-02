@@ -203,8 +203,8 @@ describe("M-Session-Claim-Separation T2 — first-tools/call auto-claim hook", (
     expect(before?.currentSessionId).toBeNull();
     expect(before?.sessionEpoch).toBe(0);
 
-    // Call any non-register_role/claim_session tool. get_engineer_status is "Any" role.
-    await router.handle("get_engineer_status", {}, ctx);
+    // Call any non-register_role/claim_session tool. get_agents is "Any" role.
+    await router.handle("get_agents", {}, ctx);
 
     // Agent should now be claimed by this session.
     const after = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
@@ -215,7 +215,7 @@ describe("M-Session-Claim-Separation T2 — first-tools/call auto-claim hook", (
     const implicit = audits.filter((a) => a.action === "agent_session_implicit_claim");
     expect(implicit.length).toBe(1);
     expect(implicit[0].details).toMatch(/trigger=first_tool_call/);
-    expect(implicit[0].details).toMatch(/originatingTool=get_engineer_status/);
+    expect(implicit[0].details).toMatch(/originatingTool=get_agents/);
   });
 
   it("explicit claim_session does NOT trigger first-tools/call auto-claim (skip-list honored)", async () => {
@@ -229,9 +229,9 @@ describe("M-Session-Claim-Separation T2 — first-tools/call auto-claim hook", (
 
   it("subsequent tool calls after auto-claim do NOT trigger another auto-claim", async () => {
     await router.handle("register_role", ENGINEER_HANDSHAKE, ctx);
-    await router.handle("get_engineer_status", {}, ctx);   // triggers auto-claim
-    await router.handle("get_engineer_status", {}, ctx);   // should NOT re-trigger
-    await router.handle("get_engineer_status", {}, ctx);   // should NOT re-trigger
+    await router.handle("get_agents", {}, ctx);   // triggers auto-claim
+    await router.handle("get_agents", {}, ctx);   // should NOT re-trigger
+    await router.handle("get_agents", {}, ctx);   // should NOT re-trigger
     const audits = await snapshotAudits(ctx);
     expect(audits.filter((a) => a.action === "agent_session_implicit_claim").length).toBe(1);
   });
@@ -239,14 +239,14 @@ describe("M-Session-Claim-Separation T2 — first-tools/call auto-claim hook", (
   it("register_role twice + tool call: only one auto-claim fires", async () => {
     await router.handle("register_role", ENGINEER_HANDSHAKE, ctx);
     await router.handle("register_role", ENGINEER_HANDSHAKE, ctx);
-    await router.handle("get_engineer_status", {}, ctx);
+    await router.handle("get_agents", {}, ctx);
     const audits = await snapshotAudits(ctx);
     expect(audits.filter((a) => a.action === "agent_session_implicit_claim").length).toBe(1);
   });
 
   it("tool call WITHOUT prior register_role does not trigger auto-claim (no identity to claim)", async () => {
-    // Caller never registered identity. get_engineer_status is "Any" role so it can run.
-    await router.handle("get_engineer_status", {}, ctx);
+    // Caller never registered identity. get_agents is "Any" role so it can run.
+    await router.handle("get_agents", {}, ctx);
     const audits = await snapshotAudits(ctx);
     expect(audits.filter((a) => a.action === "agent_session_implicit_claim").length).toBe(0);
     expect(audits.filter((a) => a.action === "agent_session_claimed").length).toBe(0);

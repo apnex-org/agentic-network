@@ -32,6 +32,7 @@ import type { Agent } from "../state.js";
 import { encodeEnvelope, isEnvelopeShape, type EnvelopeShape } from "../storage-substrate/migrations/v2-envelope/shared/envelope.js";
 import type { MigrationSchemaRef } from "../storage-substrate/migrations/v2-envelope/kinds/_contract.js";
 import type { Filter, SchemaDef } from "../storage-substrate/types.js";
+import { assertDecodedFlat } from "../storage-substrate/bare-envelope-error.js";
 
 // Minimal SchemaDef stub — encodeEnvelope only uses schema.kind from this.
 const AGENT_SCHEMA_STUB: SchemaDef = {
@@ -84,6 +85,10 @@ const AGENT_SCHEMA_REF: MigrationSchemaRef = {
       "restartCount",
       "recentErrors",
       "restartHistoryMs",
+      // C1-R2 (mission-94): WorkItem claim-thrash quarantine. MUST stay byte-for-byte
+      // with migrations/v2-envelope/kinds/Agent.ts partition.status.
+      "thrashCount",
+      "quarantined",
     ],
   },
 };
@@ -99,11 +104,19 @@ export function agentToEnvelope(agent: Agent): EnvelopeShape {
 
 /**
  * Decode an envelope-shape Agent row into legacy-flat Agent. READ-PATH
- * graceful-degrade (mission-90 W8 lens-2): a non-envelope row returns as-is
- * rather than crashing the read — a single stray bare row must never take down
- * an agent list/get. (Bare-row DETECTION is the separate 0-bare anomaly-monitor
- * follow-on, not a read-path throw.) All Agent writes go through agentToEnvelope,
- * so this passthrough is dead in practice post-cutover.
+ * graceful-degrade for BAD DATA (mission-90 W8 lens-2): a non-envelope row
+ * returns as-is rather than crashing the read — a single stray malformed row
+ * must never take down an agent list/get. All Agent writes go through
+ * agentToEnvelope, so this passthrough is dead in practice post-cutover.
+ *
+ * SUPERSEDED for the SKIPPED/BROKEN-DECODE case (C3-R4b piece 2; cal-84 +
+ * thread-689 — REFINES, not flips, the W8 framing): both returns now run the
+ * production-armed 0-bare integrity assert (assertDecodedFlat, "Agent"). The
+ * passthrough is the real escape-hatch — if a row that isEnvelopeShape rejected
+ * is nonetheless a fully-intact envelope (apiVersion + spec + status.phase), that
+ * inconsistency is a code defect and throws BareEnvelopeError. Inert unless armed
+ * (tests/standalone) and never trips on a genuinely malformed row (narrow
+ * signature → bad data still passes through).
  *
  * Reverses W11 partition: hoists `metadata.fingerprint`/`metadata.archived`
  * → top-level; `spec.{role,labels,...}` → top-level; `status.phase` → top-
@@ -112,8 +125,9 @@ export function agentToEnvelope(agent: Agent): EnvelopeShape {
  */
 export function envelopeToAgent(maybeEnvelope: unknown): Agent {
   if (!isEnvelopeShape(maybeEnvelope)) {
-    // Read-path graceful-degrade — return as-is (never crash a read).
-    return maybeEnvelope as Agent;
+    // Read-path graceful-degrade for bad data — pass through. C3-R4b piece 2:
+    // armed-only 0-bare assert catches a full envelope that isEnvelopeShape missed.
+    return assertDecodedFlat(maybeEnvelope as Agent, "Agent");
   }
   const env = maybeEnvelope;
   const meta = env.metadata;
@@ -165,8 +179,11 @@ export function envelopeToAgent(maybeEnvelope: unknown): Agent {
     restartCount: status.restartCount,
     recentErrors: status.recentErrors,
     restartHistoryMs: status.restartHistoryMs,
+    // C1-R2 (mission-94): WorkItem claim-thrash quarantine (status bucket → flat).
+    thrashCount: status.thrashCount,
+    quarantined: status.quarantined,
   };
-  return out as unknown as Agent;
+  return assertDecodedFlat(out as unknown as Agent, "Agent");
 }
 
 /**

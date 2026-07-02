@@ -164,6 +164,22 @@ export interface HubNetworkingConfig {
    * router-derived revision).
    */
   toolSurfaceRevision?: string;
+  /**
+   * C3-R1 M-Roll-Signal (idea-340) — deploy-truth fields reported by
+   * `/health`. `gitSha` = the exact source commit the running image was
+   * built from; `builtAt` = build timestamp (UTC ISO8601). Sourced from
+   * build-info.json stamped into the image by build-hub.sh + read at boot
+   * (hub/src/index.ts). Default empty — local dev / tests with no
+   * build-info report "" (the deploy-hub.yml roll-confirm reads "" as
+   * not-yet-rolled). NOT load-bearing for cache correctness (that is the
+   * ETag); these are the deploy-truth observability surface.
+   */
+  gitSha?: string;
+  builtAt?: string;
+  /** work-44/bug-190 (d): lazy getter for the repo-event-bridge health snapshot (the bridge is
+   *  created after HubNetworking in index.ts). Surfaced on /health so a poll-healthy-but-delivery-
+   *  failing bridge is loud in production (closes the "bridge.health() has zero prod consumers"). */
+  repoEventBridgeHealth?: () => unknown;
 }
 
 /** Factory function type for creating MCP servers with tools registered */
@@ -280,6 +296,11 @@ export class HubNetworking {
       bindAddress: config.bindAddress ?? "0.0.0.0",
       version: config.version ?? "1.0.0",
       toolSurfaceRevision: config.toolSurfaceRevision ?? "",
+      // C3-R1 M-Roll-Signal (idea-340) — deploy-truth fields; default empty
+      // so local dev / tests (no build-info) report "" on /health.
+      gitSha: config.gitSha ?? "",
+      builtAt: config.builtAt ?? "",
+      repoEventBridgeHealth: config.repoEventBridgeHealth ?? (() => undefined),
     };
 
     this.log = this.config.quiet
@@ -874,8 +895,19 @@ export class HubNetworking {
         // tool-catalog cache off this (the `version` field is no longer
         // load-bearing for cache correctness).
         toolSurfaceRevision: this.config.toolSurfaceRevision,
+        // C3-R1 M-Roll-Signal (idea-340) — deploy-truth: the exact source
+        // the running image was built from. The deploy-hub.yml roll-confirm
+        // step polls gitSha == github.sha to prove the new image rolled
+        // (closes the bug-107/DR-011 silent-deploy class). ADDED alongside
+        // the ETag, not a replacement — both are served.
+        gitSha: this.config.gitSha ?? "",
+        builtAt: this.config.builtAt ?? "",
         activeSessions: this.transports.size,
         sseStreams: this.sseActiveCount,
+        // work-44/bug-190 (d): the repo-event-bridge poll+deliver health — surfaces deliveryFailing
+        // + lastSuccessfulDelivery so a poll-healthy-but-delivery-failing bridge is NOT dark. null
+        // when the bridge isn't wired (local dev / tests).
+        repoEventBridge: this.config.repoEventBridgeHealth?.() ?? null,
       });
     });
 

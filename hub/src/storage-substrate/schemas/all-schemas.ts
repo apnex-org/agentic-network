@@ -27,7 +27,7 @@ const Agent: SchemaDef = {
   fields: [
     { name: "id", type: "string", required: true },
     { name: "fingerprint", type: "string", required: true },
-    { name: "role", type: "string", required: true, enum: ["engineer", "architect", "director", "unknown"] },
+    { name: "role", type: "string", required: true, enum: ["engineer", "architect", "director", "verifier", "unknown"] },
     { name: "labels", type: "object", required: false },
     { name: "lastSeenAt", type: "string", required: false },
     { name: "lastHeartbeatAt", type: "string", required: false },
@@ -50,7 +50,11 @@ const Agent: SchemaDef = {
   // placement by the W1 sentinel-probe oracle (renamemap-contract-w1.test.ts). W2
   // added the partition-relocated FILTERABLE keys per the call-site sweep (finding A).
   // `fingerprint` (substrate-side assertIdentity lookup) → metadata.fingerprint.
-  renameMap: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint" },
+  // C1-R2 (mission-94): thrashCount/quarantined relocate into status.* (claim-thrash
+  // quarantine). NOT list-filtered, but declared here per the dual-source discipline
+  // (idea-346) so the W1 sentinel-probe verifies their encoder placement (the
+  // WorkItem-seeding-bug class) — mirrored in migrations/v2-envelope/kinds/Agent.ts.
+  renameMap: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint", thrashCount: "status.thrashCount", quarantined: "status.quarantined" },
 };
 
 const Audit: SchemaDef = {
@@ -68,7 +72,7 @@ const Audit: SchemaDef = {
   fields: [
     { name: "id", type: "string", required: true },
     { name: "timestamp", type: "string", required: true },
-    { name: "actor", type: "string", required: true, enum: ["architect", "engineer", "hub"] },
+    { name: "actor", type: "string", required: true, enum: ["architect", "engineer", "verifier", "hub"] },
     { name: "action", type: "string", required: true },
     { name: "details", type: "string", required: true },
     { name: "relatedEntity", type: "string", required: false },
@@ -104,7 +108,8 @@ const Bug: SchemaDef = {
   // W2 finding-A: severity/class (substrate-side filters, bug-repo:128-129) relocate to spec.
   // (Cascade-keys sourceThreadId/sourceActionId/sourceIdeaId are DELIBERATELY excluded —
   // repo dual-path envelope-first dotted query + W1 null-pin; see oracle exclusion set.)
-  renameMap: { status: "status.phase", severity: "spec.severity", class: "spec.class" },
+  // idea-364: `repo` (repo-scope slug for the ledger-reconciliation pass) relocates to spec.
+  renameMap: { status: "status.phase", severity: "spec.severity", class: "spec.class", repo: "spec.repo", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId", sourceIdeaId: "metadata.sourceIdeaId" },
 };
 
 const Counter: SchemaDef = {
@@ -142,7 +147,7 @@ const Idea: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^idea_",
-  renameMap: { status: "status.phase", missionId: "status.missionId" },
+  renameMap: { status: "status.phase", missionId: "status.missionId", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
 };
 
 const Message: SchemaDef = {
@@ -213,7 +218,7 @@ const Mission: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^mission_",
-  renameMap: { status: "status.phase" },
+  renameMap: { status: "status.phase", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
 };
 
 const PendingAction: SchemaDef = {
@@ -276,7 +281,7 @@ const Proposal: SchemaDef = {
   ],
   watchable: true,
   indexOwnershipPattern: "^proposal_",
-  renameMap: { status: "status.phase" },
+  renameMap: { status: "status.phase", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
 };
 
 const Task: SchemaDef = {
@@ -311,7 +316,7 @@ const Task: SchemaDef = {
   // (findByIdempotencyKey, task-repo:177) with NO repo dual-path — bare → null on
   // envelope rows post-W6 → idempotency dedup silently breaks → duplicate task
   // creation. Relocates to metadata.idempotencyKey. (Cascade-keys excluded — see oracle.)
-  renameMap: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt" },
+  renameMap: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
 };
 
 const Tele: SchemaDef = {
@@ -377,7 +382,12 @@ const Thread: SchemaDef = {
   indexOwnershipPattern: "^thread_(?!hist_)",
   // W2 finding-A: substrate-side filters cascadePending→status.cascadePending,
   // currentTurnAgentId→status.currentTurnAgentId (thread-repo + cascade-sweeper).
-  renameMap: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId" },
+  // mission-93 bug-170: recipientAgentId→spec.recipientAgentId — the Thread.ts
+  // partition relocates it to spec (Thread.test.ts:81) but the finding-A sweep
+  // missed the renameMap entry, so substrate-side filter-translate mis-pathed it
+  // to top-level → directed-thread discovery by recipientAgentId returned zero
+  // (read still worked via normalizeThreadShape's flat-spread, masking the gap).
+  renameMap: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId", recipientAgentId: "spec.recipientAgentId" },
 };
 
 const Turn: SchemaDef = {
@@ -624,6 +634,58 @@ const MigrationCursor: SchemaDef = {
   watchable: false,  // bookkeeping-only; no consumer needs change-events
 };
 
+// ─── C1-R2 (mission-94): the WorkItem work-queue kind (kind #26) ─────────────
+// Reference-only claimable work-item; born under the live C3-R4 governor.
+const WorkItem: SchemaDef = {
+  kind: "WorkItem",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "type", type: "string", required: false, enum: ["task", "bug", "review", "verifier-gate", "freeform"] },
+    { name: "priority", type: "string", required: false, enum: ["critical", "high", "normal", "low"] },
+    { name: "status", type: "string", required: false, enum: ["ready", "claimed", "in_progress", "blocked", "review", "done", "abandoned"] },
+  ],
+  indexes: [
+    { name: "workitem_status_phase_idx", fields: ["status.phase"] },
+    { name: "workitem_status_lease_holder_idx", fields: ["status.lease.holder"] },
+    { name: "workitem_status_lease_expiresat_idx", fields: ["status.lease.expiresAt"] },
+    // C1-R2: GIN index backing the $contains (@>) array-membership on roleEligibility.
+    { name: "workitem_spec_roleeligibility_gin_idx", fields: ["spec.roleEligibility"], type: "gin" },
+    // work-88 (arc-node): GIN index backing the reverse-ancestor lookup over the
+    // COMPLETION-gate edge — "which parents name <child> in completionDependsOn?".
+    // An in-memory scan past the 500-cap is a silent-miss (cal #90); this $contains
+    // (@>) membership stays index-backed instead.
+    { name: "workitem_spec_completiondependson_gin_idx", fields: ["spec.completionDependsOn"], type: "gin" },
+  ],
+  watchable: true,
+  indexOwnershipPattern: "^workitem_",
+  // status→status.phase; the status sub-objects (lease/evidence/blockedOn/
+  // leaseExpiryCount) route to status; the FILTERABLE spec fields (priority/type/
+  // roleEligibility/completionDependsOn) route to spec. dependsOn/evidenceRequirements/
+  // targetRef/payload are unfiltered → default-partition to spec (no entry needed). The
+  // two HOT lease sub-fields (holder, expiresAt) filter via the bucket-prefixed dotted
+  // path (status.lease.*) — NO renameMap alias (option (c), thread-694; governor-sanctioned).
+  // work-88 (arc-node): completionDependsOn is FILTERABLE — the renewLease transitive-
+  // heartbeat reverse-ancestor lookup ($contains over spec.completionDependsOn, backed by
+  // workitem_spec_completiondependson_gin_idx) — so it needs the explicit spec alias (an
+  // unmapped filter field is a loud FilterTranslationGapError on a partitioned kind).
+  renameMap: {
+    status: "status.phase",
+    lease: "status.lease",
+    evidence: "status.evidence",
+    blockedOn: "status.blockedOn",
+    leaseExpiryCount: "status.leaseExpiryCount",
+    // idea-384 Part A (work-98): per-FSM-state wall-clock timers — status (lifecycle),
+    // non-filterable (no index; surfaced on get_work/get_current_stint, not queried).
+    enteredCurrentStateAt: "status.enteredCurrentStateAt",
+    stateDurations: "status.stateDurations",
+    priority: "spec.priority",
+    type: "spec.type",
+    roleEligibility: "spec.roleEligibility",
+    completionDependsOn: "spec.completionDependsOn",
+  },
+};
+
 // ─── Export all 23 SchemaDef entries ───────────────────────────────────────
 
 /**
@@ -672,4 +734,7 @@ export const ALL_SCHEMAS: SchemaDef[] = [
 
   // 1 NEW mission-88 W0 (migration-progress checkpoint for v2-envelope cutover)
   MigrationCursor,
+
+  // 1 NEW C1-R2 mission-94 (the claimable work-queue keystone kind)
+  WorkItem,
 ];

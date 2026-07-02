@@ -69,7 +69,7 @@ describe("ScheduledMessageSweeper.sweep — fire-at-time", () => {
   it("returns zero-counts when there are no scheduled-pending messages", async () => {
     const { sweeper } = await makeFixture();
     const result = await sweeper.sweep();
-    expect(result).toEqual({ scanned: 0, fired: 0, cancelled: 0, errors: 0 });
+    expect(result).toEqual({ scanned: 0, fired: 0, cancelled: 0, errors: 0, quarantined: 0 });
   });
 
   it("fires a scheduled-pending message whose fireAt has been reached", async () => {

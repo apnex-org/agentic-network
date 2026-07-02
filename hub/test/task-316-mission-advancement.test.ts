@@ -43,6 +43,14 @@ function parse(result: { content: { text: string }[] }): Record<string, unknown>
   return JSON.parse(result.content[0].text);
 }
 
+// bug-175: create_report is [Engineer]; route it through an engineer session sharing the
+// base ctx's stores (the closed RBAC fail-open no longer lets one architect ctx call it).
+// create_task / create_review stay [Architect] on the base ctx, which also captures their
+// dispatched events asserted by the tests.
+function reportAsEng(router: PolicyRouter, base: TestPolicyContext, args: Record<string, unknown>) {
+  return router.handle("create_report", args, createTestContext({ stores: base.stores, role: "engineer" }));
+}
+
 describe("task-316: Mission.plannedTasks schema", () => {
   let router: PolicyRouter;
   let ctx: TestPolicyContext;
@@ -199,7 +207,7 @@ describe("task-316: Review decision enum — revision_required alias", () => {
     await router.handle("create_task", { title: "T", description: "D" }, ctx);
     // Internal mutation (test-pattern): bypass FSM to pre-stage "working"
     await (ctx.stores.task as TaskRepository).__debugSetTask("task-1", { status: "working" });
-    await router.handle("create_report", { taskId: "task-1", report: "R", summary: "S" }, ctx);
+    await reportAsEng(router, ctx, { taskId: "task-1", report: "R", summary: "S" });
   });
 
   it("accepts canonical 'revision_required' enum value", async () => {
@@ -275,7 +283,7 @@ describe("task-316: 4-cell review-outcome cascade matrix", () => {
     const latest = tasks[tasks.length - 1];
     // Internal mutation (test-pattern): bypass FSM to pre-stage "working"
     await (ctx.stores.task as TaskRepository).__debugSetTask(latest.id, { status: "working" });
-    await router.handle("create_report", { taskId: latest.id, report: "r", summary: "s" }, ctx);
+    await reportAsEng(router, ctx, { taskId: latest.id, report: "r", summary: "s" });
     return latest.id;
   }
 
@@ -295,7 +303,7 @@ describe("task-316: 4-cell review-outcome cascade matrix", () => {
     await ctx.stores.mission.markPlannedTaskIssued(missionId, slot.sequence, taskId);
     // Internal mutation (test-pattern): bypass FSM to pre-stage "working"
     await (ctx.stores.task as TaskRepository).__debugSetTask(taskId, { status: "working" });
-    await router.handle("create_report", { taskId, report: "r", summary: "s" }, ctx);
+    await reportAsEng(router, ctx, { taskId, report: "r", summary: "s" });
     return taskId;
   }
 
@@ -448,7 +456,7 @@ describe("task-316: multi-task mission traversal (end-to-end)", () => {
     await ctx.stores.mission.markPlannedTaskIssued(missionId, 1, firstTaskId);
     // Internal mutation (test-pattern): bypass FSM to pre-stage "working"
     await (ctx.stores.task as TaskRepository).__debugSetTask(firstTaskId, { status: "working" });
-    await router.handle("create_report", { taskId: firstTaskId, report: "r", summary: "s" }, ctx);
+    await reportAsEng(router, ctx, { taskId: firstTaskId, report: "r", summary: "s" });
 
     // Approve → cascade should spawn Step B
     await router.handle("create_review", { taskId: firstTaskId, assessment: "ok", decision: "approved" }, ctx);
@@ -460,7 +468,7 @@ describe("task-316: multi-task mission traversal (end-to-end)", () => {
     // Step B: report + approve → cascade spawns Step C
     // Internal mutation (test-pattern): bypass FSM to pre-stage "working"
     await (ctx.stores.task as TaskRepository).__debugSetTask(stepBTaskId, { status: "working" });
-    await router.handle("create_report", { taskId: stepBTaskId, report: "r", summary: "s" }, ctx);
+    await reportAsEng(router, ctx, { taskId: stepBTaskId, report: "r", summary: "s" });
     await router.handle("create_review", { taskId: stepBTaskId, assessment: "ok", decision: "approved" }, ctx);
     const missionAfterB = await ctx.stores.mission.getMission(missionId);
     const slotC = missionAfterB?.plannedTasks?.find((p) => p.sequence === 3);
@@ -470,7 +478,7 @@ describe("task-316: multi-task mission traversal (end-to-end)", () => {
     // Step C: last task — approve, ensure no further spawn + no error
     // Internal mutation (test-pattern): bypass FSM to pre-stage "working"
     await (ctx.stores.task as TaskRepository).__debugSetTask(stepCTaskId, { status: "working" });
-    await router.handle("create_report", { taskId: stepCTaskId, report: "r", summary: "s" }, ctx);
+    await reportAsEng(router, ctx, { taskId: stepCTaskId, report: "r", summary: "s" });
     await router.handle("create_review", { taskId: stepCTaskId, assessment: "ok", decision: "approved" }, ctx);
 
     const missionFinal = await ctx.stores.mission.getMission(missionId);
@@ -509,7 +517,7 @@ describe("task-316: revision-required remediation loop", () => {
     await ctx.stores.mission.markPlannedTaskIssued(missionId, 1, taskAId);
     // Internal mutation (test-pattern): bypass FSM to pre-stage "working"
     await (ctx.stores.task as TaskRepository).__debugSetTask(taskAId, { status: "working" });
-    await router.handle("create_report", { taskId: taskAId, report: "v1", summary: "s1" }, ctx);
+    await reportAsEng(router, ctx, { taskId: taskAId, report: "v1", summary: "s1" });
 
     // First review: revision_required → task back to working, plannedTask[1] stays `issued`
     await router.handle("create_review", {
@@ -526,7 +534,7 @@ describe("task-316: revision-required remediation loop", () => {
     expect(missionDuring?.plannedTasks?.[1].status).toBe("unissued"); // NOT advanced
 
     // Engineer revises report → submitReport replaces on same taskId (FSM-2)
-    await router.handle("create_report", { taskId: taskAId, report: "v2", summary: "s2-revised" }, ctx);
+    await reportAsEng(router, ctx, { taskId: taskAId, report: "v2", summary: "s2-revised" });
     tA = await ctx.stores.task.getTask(taskAId);
     expect(tA?.status).toBe("in_review");
     expect(tA?.reportSummary).toBe("s2-revised");
@@ -567,7 +575,7 @@ describe("task-316: cascade_failed robustness", () => {
     await ctx.stores.mission.markPlannedTaskIssued(missionId, 1, taskAId);
     // Internal mutation (test-pattern): bypass FSM to pre-stage "working"
     await (ctx.stores.task as TaskRepository).__debugSetTask(taskAId, { status: "working" });
-    await router.handle("create_report", { taskId: taskAId, report: "r", summary: "s" }, ctx);
+    await reportAsEng(router, ctx, { taskId: taskAId, report: "r", summary: "s" });
 
     // Inject a failure: stub submitDirective to throw on the cascade's
     // second call. The first call already happened above (setting up
@@ -616,7 +624,7 @@ describe("task-316: cascade_failed robustness", () => {
     const taskAId = await ctx.stores.task.submitDirective("d", missionId, undefined, "A", "d");
     // Internal mutation (test-pattern): bypass FSM to pre-stage "working"
     await (ctx.stores.task as TaskRepository).__debugSetTask(taskAId, { status: "working" });
-    await router.handle("create_report", { taskId: taskAId, report: "r", summary: "s" }, ctx);
+    await reportAsEng(router, ctx, { taskId: taskAId, report: "r", summary: "s" });
 
     const result = await router.handle("create_review", {
       taskId: taskAId,

@@ -21,11 +21,26 @@
  *  - `decodeEnvelopeToFlat` — the generic renameMap+partition reverse the repos
  *    apply on the read boundary.
  *
- * READ-PATH graceful-degrade (W8 review lens-2): a stray/malformed row returns a
- * safe default (null), NEVER a throw — a single bad row must not crash a
- * list/read. Bare-row DETECTION is the separate 0-bare anomaly-monitor follow-on
- * (loud, out-of-band), not a read-path concern.
+ * READ-PATH graceful-degrade for BAD DATA (W8 review lens-2): a stray/malformed/
+ * corrupt row returns a safe default (null) — a single bad DATA row must not
+ * crash a list/read.
+ *
+ * SUPERSEDED for the SKIPPED/BROKEN-DECODE case (C3-R4b piece 2; cal-84 +
+ * thread-689 — REFINES, does not flip, the W8 framing): W8 originally scoped the
+ * 0-bare detector as a separate out-of-band anomaly-monitor and made the read
+ * path never-throw. Post-W8-STRICT a fully-intact UNDECODED envelope above the
+ * membrane is ALWAYS a code defect (a decode was skipped or a decoder regressed),
+ * never a legitimate row — so it is now an IN-BAND fail-loud throw
+ * (BareEnvelopeError; storage-substrate/bare-envelope-error.ts) via the OPTIONAL
+ * `kind` arg to decodeEnvelopeToFlat + the bespoke normalizers. The distinction
+ * that preserves W8's good property: the NARROW co-present signature
+ * (apiVersion + spec-object + status-{phase}-object) fires ONLY on the
+ * code-defect case; a genuinely malformed/corrupt row does NOT match it and
+ * still graceful-degrades to null (bad data). The throw is production-armed-only
+ * (armBareEnvelopeDetector, wired in index.ts) — inert in tests/standalone.
  */
+
+import { assertDecodedFlat } from "../storage-substrate/bare-envelope-error.js";
 
 /**
  * Coerce the FSM phase string from an entity. Reads `status.phase` (envelope
@@ -76,8 +91,15 @@ export function phaseFromEntity(entity: unknown): string | null {
  * all-schemas renameMaps), and strips the envelope artifacts (bucket objects +
  * apiVersion / kind / phase). Reserved top-level fields (id, name) preserved.
  *
- * Graceful-degrade: a non-object input returns as-is; a bare (already legacy-flat)
- * row has no buckets → passes through unchanged. Never throws.
+ * Graceful-degrade for BAD DATA: a non-object input returns as-is; a malformed/
+ * corrupt row passes through unchanged (does NOT match the narrow full-envelope
+ * signature → never throws on bad data).
+ *
+ * INTEGRITY ASSERT (C3-R4b piece 2): pass the entity `kind` to arm the
+ * production-only 0-bare detector — if the decoded result is STILL a full
+ * envelope (a skipped/broken decode, never a legit row post-W8-STRICT) it throws
+ * BareEnvelopeError. Omit `kind` (or run unarmed, e.g. tests) → pure pass-through,
+ * identical to the pre-R4b behavior.
  *
  * NOTE (layering): Agent/Thread/Tele keep their BESPOKE normalizers — extra
  * leaf-renames (agent firstSeenAt↔metadata.createdAt) or extra domain logic
@@ -87,7 +109,7 @@ export function phaseFromEntity(entity: unknown): string | null {
  * (cloneIdea/cloneBug — the cluster-1 array↔map asymmetry the generic flatten
  * can't reverse).
  */
-export function decodeEnvelopeToFlat<T>(raw: T): T {
+export function decodeEnvelopeToFlat<T>(raw: T, kind?: string): T {
   if (raw === null || raw === undefined || typeof raw !== "object") {
     return raw;
   }
@@ -126,5 +148,7 @@ export function decodeEnvelopeToFlat<T>(raw: T): T {
   // so it doesn't leak onto the decoded shape. (Only consumer of annotations is the
   // encode path; nothing above the membrane reads flat.annotations.)
   delete flat.annotations;
-  return flat as T;
+  // C3-R4b piece 2: armed-only 0-bare integrity assert at the decode boundary
+  // (inert unless `kind` given AND the detector is armed in production).
+  return kind !== undefined ? assertDecodedFlat(flat as T, kind) : (flat as T);
 }

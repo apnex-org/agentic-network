@@ -27,7 +27,9 @@ describe("ProposalPolicy", () => {
   beforeEach(async () => {
     router = new PolicyRouter(noop);
     registerProposalPolicy(router);
-    ctx = createTestContext();
+    // bug-175: proposals are engineer-initiated ([Engineer] create/close, [Engineer|Verifier]
+    // get); the full-lifecycle review uses its own architect reviewCtx.
+    ctx = createTestContext({ role: "engineer" });
   });
 
   it("registers all proposal tools", () => {
@@ -3216,6 +3218,43 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     expect(bug.surfacedBy).toBe("unit-test");
   });
 
+  it("bug-118 — create_bug persists sourceThreadId + sourceMissionId lineage (no orphan in the graph)", async () => {
+    // Pre-bug-118 the create_bug tool was blind to lineage → a bug reported from
+    // a thread/mission context was an orphan (sourceThreadId/linkedMissionId null).
+    const r = await router.handle("create_bug", {
+      title: "Lineage bug",
+      description: "surfaced from a thread + mission context",
+      sourceThreadId: "thread-77",
+      sourceMissionId: "mission-9",
+    }, ctx);
+    expect(r.isError).toBeUndefined();
+    const { bugId } = JSON.parse(r.content[0].text);
+    const bug = JSON.parse((await router.handle("get_bug", { bugId }, ctx)).content[0].text);
+    expect(bug.sourceThreadId).toBe("thread-77");
+    expect(bug.linkedMissionId).toBe("mission-9");
+  });
+
+  it("idea-364 — create_bug + update_bug persist the repo-scope field (round-trips through get_bug)", async () => {
+    // create WITH repo → classified at creation
+    const r = await router.handle("create_bug", {
+      title: "Cross-repo bug",
+      description: "lives in missioncraft",
+      repo: "apnex/missioncraft",
+    }, ctx);
+    expect(r.isError).toBeUndefined();
+    const { bugId } = JSON.parse(r.content[0].text);
+    expect(JSON.parse((await router.handle("get_bug", { bugId }, ctx)).content[0].text).repo).toBe("apnex/missioncraft");
+
+    // create WITHOUT repo → null (home repo / unclassified)
+    const r2 = await router.handle("create_bug", { title: "Home bug", description: "here" }, ctx);
+    const { bugId: bugId2 } = JSON.parse(r2.content[0].text);
+    expect(JSON.parse((await router.handle("get_bug", { bugId: bugId2 }, ctx)).content[0].text).repo).toBeNull();
+
+    // update_bug RECLASSIFIES repo (so a cross-repo bug stops accreting in the home reconciliation)
+    await router.handle("update_bug", { bugId: bugId2, repo: "apnex/missioncraft" }, ctx);
+    expect(JSON.parse((await router.handle("get_bug", { bugId: bugId2 }, ctx)).content[0].text).repo).toBe("apnex/missioncraft");
+  });
+
   it("list_bugs filters by status + severity + class + tags match-any", async () => {
     await router.handle("create_bug", { title: "A", description: "a", severity: "critical", class: "drift", tags: ["hub"] }, ctx);
     await router.handle("create_bug", { title: "B", description: "b", severity: "minor", class: "race", tags: ["engineer"] }, ctx);
@@ -3234,6 +3273,40 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     expect(byTags.total).toBe(2);
   });
 
+  it("bug-196 — list_bugs compact:true returns the scannable projection (omits description/fixRevision); full mode preserved", async () => {
+    const r = await router.handle("create_bug", { title: "Fat bug", description: "a very long reproduction body...", severity: "major", class: "drift", tags: ["hub"], repo: "apnex/missioncraft" }, ctx);
+    const { bugId } = JSON.parse(r.content[0].text);
+    await router.handle("update_bug", { bugId, status: "resolved", fixCommits: ["abc123"], fixRevision: "rev-9" }, ctx);
+
+    // compact → EXACTLY lily's scannable field-set, NO long-text
+    const compact = JSON.parse((await router.handle("list_bugs", { compact: true }, ctx)).content[0].text);
+    expect(compact.compact).toBe(true);
+    const b = compact.bugs.find((x: any) => x.id === bugId);
+    expect(Object.keys(b).sort()).toEqual(["class", "fixCommits", "id", "repo", "severity", "status", "tags", "title", "updatedAt"]);
+    expect(b.description).toBeUndefined();   // long-text body OMITTED (the 429-storm fix)
+    expect(b.fixRevision).toBeUndefined();   // OMITTED
+    expect(b.repo).toBe("apnex/missioncraft");
+    expect(b.fixCommits).toEqual(["abc123"]);
+
+    // full mode (no compact) preserves the fat object
+    const full = JSON.parse((await router.handle("list_bugs", {}, ctx)).content[0].text);
+    const bf = full.bugs.find((x: any) => x.id === bugId);
+    expect(bf.description).toBe("a very long reproduction body...");
+    expect(bf.fixRevision).toBe("rev-9");
+    expect(full.compact).toBeUndefined();
+  });
+
+  it("bug-198 — list_bugs treats EMPTY optional filters (class:'', tags:[]) as UNSET (no false _ois_query_unmatched)", async () => {
+    const r = await router.handle("create_bug", { title: "R", description: "d", severity: "major" }, ctx);
+    const { bugId } = JSON.parse(r.content[0].text);
+    await router.handle("update_bug", { bugId, status: "resolved" }, ctx);
+    // opencode serializes UNSET optionals as "" / [] (vs claude omitting) — they must NOT
+    // AND to an exact-empty match (the acute get_bug-overrun root: steve couldn't list at all).
+    const parsed = JSON.parse((await router.handle("list_bugs", { status: "resolved", class: "", tags: [] }, ctx)).content[0].text);
+    expect(parsed._ois_query_unmatched).toBeUndefined();         // NOT a false unmatched
+    expect(parsed.bugs.some((b: any) => b.id === bugId)).toBe(true); // the resolved bug IS returned
+  });
+
   // ── CP2 C5 (task-307): _ois_query_unmatched sentinel ────────────
   it("list_bugs fires _ois_query_unmatched when filter yields zero on non-empty collection", async () => {
     await router.handle("create_bug", { title: "A", description: "a", severity: "critical" }, ctx);
@@ -3249,6 +3322,80 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.count).toBe(1);
     expect(parsed._ois_query_unmatched).toBeUndefined();
+  });
+
+  // ── bug-200: list_bugs scan-cap honesty ──────────────────────────
+  it("bug-200 — list_bugs honors limit beyond 100 + total is accurate (was silently capped at 100)", async () => {
+    // 101 bugs distinguishes the fix: pre-fix the repo passed no limit → substrate
+    // defaulted to 100 → page+total both capped at 100. Post-fix it passes limit:500.
+    for (let i = 0; i < 101; i++) {
+      await router.handle("create_bug", { title: `B${i}`, description: "d" }, ctx);
+    }
+    const parsed = JSON.parse((await router.handle("list_bugs", { limit: 200 }, ctx)).content[0].text);
+    expect(parsed.total).toBe(101); // the count no longer LIES at 100
+    expect(parsed.count).toBe(101); // and the page returns all of them
+    expect(parsed.truncated).toBeUndefined(); // 101 < 500 → not truncated
+  }, 30_000);
+
+  it("bug-200 — list_bugs surfaces truncated:true when the scan hits the cap (no silent under-report)", async () => {
+    // Stub the store to simulate a scan that hit the 500 cap.
+    ctx.stores.bug.listBugs = (async () => ({ items: [{ id: "bug-stub", tags: [] } as any], truncated: true })) as any;
+    const parsed = JSON.parse((await router.handle("list_bugs", {}, ctx)).content[0].text);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.truncationNote).toContain("500");
+  });
+
+  it("bug-200 (steve #410 gate) — SUPPRESSES _ois_query_unmatched when truncated (no false certainty on a capped tag-filtered scan)", async () => {
+    // The tags filter ran client-side over a TRUNCATED window: 0 matches in the
+    // first 500 is NOT definitive (matches may exist beyond the cap). The store
+    // returns empty+truncated for the tag-filtered call, non-empty+truncated for
+    // the unfiltered recount → pre-fix this emitted _ois_query_unmatched (false
+    // certainty); the fix must suppress it while keeping truncated:true honest.
+    ctx.stores.bug.listBugs = (async (filter?: any) => {
+      if (filter?.tags) return { items: [], truncated: true };
+      return { items: [{ id: "bug-x", tags: [] } as any], truncated: true };
+    }) as any;
+    const parsed = JSON.parse((await router.handle("list_bugs", { tags: ["nonexistent"] }, ctx)).content[0].text);
+    expect(parsed.count).toBe(0);
+    expect(parsed.truncated).toBe(true);                 // honest: the scan was incomplete
+    expect(parsed._ois_query_unmatched).toBeUndefined(); // NOT a false-certain "definitely none"
+  });
+
+  // ── bug-201: update_bug additive-tag mode (reuses mergeTags from #409) ──
+  it("bug-201 — update_bug addTags unions onto existing tags WITHOUT clobbering", async () => {
+    const { bugId } = JSON.parse((await router.handle("create_bug", { title: "T", description: "d", tags: ["existing-a", "existing-b"] }, ctx)).content[0].text);
+    const r = await router.handle("update_bug", { bugId, addTags: ["audit:repo:missioncraft"] }, ctx);
+    expect(r.isError).toBeUndefined();
+    const bug = JSON.parse((await router.handle("get_bug", { bugId }, ctx)).content[0].text);
+    // anti-regression (the clobber footgun): a replace would yield only the new tag.
+    expect(bug.tags).toEqual(["existing-a", "existing-b", "audit:repo:missioncraft"]);
+  });
+
+  it("bug-201 — update_bug addTags dedupes overlap", async () => {
+    const { bugId } = JSON.parse((await router.handle("create_bug", { title: "T", description: "d", tags: ["x", "y"] }, ctx)).content[0].text);
+    await router.handle("update_bug", { bugId, addTags: ["y", "z"] }, ctx);
+    const bug = JSON.parse((await router.handle("get_bug", { bugId }, ctx)).content[0].text);
+    expect(bug.tags).toEqual(["x", "y", "z"]);
+  });
+
+  it("bug-201 — update_bug with both tags+addTags: tags replaces then addTags unions", async () => {
+    const { bugId } = JSON.parse((await router.handle("create_bug", { title: "T", description: "d", tags: ["old"] }, ctx)).content[0].text);
+    await router.handle("update_bug", { bugId, tags: ["fresh"], addTags: ["extra"] }, ctx);
+    const bug = JSON.parse((await router.handle("get_bug", { bugId }, ctx)).content[0].text);
+    expect(bug.tags).toEqual(["fresh", "extra"]); // 'old' replaced out
+  });
+
+  it("bug-201 — update_bug addTags is event-silent (no bug_status_changed without a status change)", async () => {
+    const { bugId } = JSON.parse((await router.handle("create_bug", { title: "T", description: "d", tags: ["a"] }, ctx)).content[0].text);
+    (ctx as any).emittedEvents.length = 0;
+    await router.handle("update_bug", { bugId, addTags: ["b"] }, ctx);
+    const evt = (ctx as any).emittedEvents.find((e: any) => e.event === "bug_status_changed");
+    expect(evt).toBeUndefined();
+  });
+
+  it("bug-201 — update_bug addTags on a non-existent bug returns isError", async () => {
+    const r = await router.handle("update_bug", { bugId: "bug-nope", addTags: ["x"] }, ctx);
+    expect(r.isError).toBe(true);
   });
 
   it("update_bug transitions open → investigating → resolved; fires bug_status_changed", async () => {
@@ -3363,7 +3510,7 @@ describe("Cascade: create_bug (Phase 2 validation)", () => {
       "Engineer + architect agreed this is a bug.",
     );
 
-    const bugs = await archCtx.stores.bug.listBugs();
+    const { items: bugs } = await archCtx.stores.bug.listBugs();
     const spawned = bugs.find((b) => b.sourceThreadId === threadId);
     expect(spawned).toBeDefined();
     expect(spawned!.title).toBe("Cascade-spawned bug");
@@ -3399,7 +3546,7 @@ describe("Cascade: create_bug (Phase 2 validation)", () => {
 
     const result = await runCascade(archCtx, thread!, [action as any], "Spawn once.");
     expect(result.report[0].status).toBe("skipped_idempotent");
-    const bugs = await archCtx.stores.bug.listBugs();
+    const { items: bugs } = await archCtx.stores.bug.listBugs();
     expect(bugs.filter((b) => b.sourceThreadId === threadId)).toHaveLength(1);
   });
 
@@ -3409,7 +3556,7 @@ describe("Cascade: create_bug (Phase 2 validation)", () => {
       { title: "No sev", description: "d" }, // severity omitted
       "Default severity test.",
     );
-    const bugs = await archCtx.stores.bug.listBugs();
+    const { items: bugs } = await archCtx.stores.bug.listBugs();
     const spawned = bugs.find((b) => b.sourceThreadId === threadId);
     expect(spawned!.severity).toBe("minor");
   });

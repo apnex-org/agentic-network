@@ -50,3 +50,4 @@ raw-notes.txt
 
 # Per-worktree .npmrc (env-var ref to NPM_TOKEN; never commit auth)
 .npmrc
+__pycache__/

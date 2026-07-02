@@ -15,10 +15,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createTestPool } from "./_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import pg from "pg";
 import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
@@ -31,9 +31,6 @@ import {
   ThreadHistoryEntryRepository,
 } from "../index.js";
 import type { HubStorageSubstrate, SchemaDef } from "../index.js";
-
-const { Pool } = pg;
-
 /**
  * mission-90 W1: SchemaDef rows are stored ENVELOPE-shaped (boot-put fix —
  * described kind at metadata.name, schema config under spec). Tests that read
@@ -64,7 +61,7 @@ beforeAll(async () => {
     .start();
   connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
 
-  const pool = new Pool({ connectionString: connStr });
+  const pool = createTestPool(connStr, "reconciler-and-repositories");
   for (const f of MIGRATION_FILES) {
     const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
     await pool.query(sql);
@@ -100,7 +97,7 @@ describe("Reconciler", () => {
     expect(kinds).toEqual(expect.arrayContaining(["SchemaDef", "Bug", "Idea", "Message"]));
 
     // Verify per-kind indexes exist in pg_indexes catalog
-    const pool = new Pool({ connectionString: connStr });
+    const pool = createTestPool(connStr, "reconciler-and-repositories");
     try {
       const r = await pool.query<{ indexname: string }>(
         `SELECT indexname FROM pg_indexes WHERE tablename = 'entities'`,
@@ -369,7 +366,7 @@ describe("Full substrate-readiness (ALL 20 SchemaDefs)", () => {
     expect(items.length).toBeGreaterThanOrEqual(20);
 
     // Verify expected indexes exist in postgres (count > base 2 + 20-kind worth)
-    const pool = new Pool({ connectionString: connStr });
+    const pool = createTestPool(connStr, "reconciler-and-repositories");
     try {
       const r = await pool.query<{ count: string }>(
         `SELECT COUNT(*)::text AS count FROM pg_indexes WHERE tablename = 'entities'`,

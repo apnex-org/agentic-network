@@ -276,6 +276,7 @@ export class LoopbackTransport implements ITransport {
       consecutiveReconnects: this.consecutiveReconnects,
       lastReconnectCause: this.lastReconnectCause,
       requestsInFlight: this.requestsInFlight,
+      requestsQueued: 0,
     };
   }
 

@@ -1,0 +1,110 @@
+name: publish-npm
+
+# M-Shim-Distribution Phase 3 — automate the @apnex/* npm family publish.
+#
+# The npm family (ADR-029) was published MANUALLY (source greg.env → run
+# publish-packages.sh) — a step-skip + staleness risk (calibrations #25/#39;
+# registry drifted behind local). This workflow makes publish CI-triggered.
+#
+# Trigger: a tag `npm-v*` (deliberately DISTINCT from claude's tarball `v*` in
+# release-plugin.yml — that is a Claude-Code-plugin artifact, a different
+# channel). Per-package versions live in each package.json; the tag string only
+# gates the run. Also dispatchable manually.
+#
+# Safe publish path: scripts/publish-packages.sh publishes an EXPLICIT package
+# list in topological order and HOISTS the version-rewrite (* → ^X.Y.Z) with a
+# trap-revert. This avoids two traps: (a) `npm publish --workspaces` would
+# attempt private/non-registry workspaces (opencode/storage-provider/
+# repo-event-bridge are not private:true); (b) `npm publish --workspace=X` skips
+# root's prepublishOnly rewrite (calibration #35) and would ship `*` deps.
+#
+# Auth: setup-node writes a project .npmrc wired to NODE_AUTH_TOKEN; the script's
+# .npmrc preflight is satisfied by that file, and NPM_TOKEN (repo secret) drives
+# both the auth-token and the script's own preflight.
+
+on:
+  push:
+    tags:
+      - 'npm-v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry-run (no actual publish)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the version-bump --assert gate (prepack) does a git
+          # ancestry check (versionCommit vs latest src/ commit).
+          fetch-depth: 0
+
+      # registry-url makes setup-node write a project .npmrc that reads
+      # NODE_AUTH_TOKEN — satisfies publish-packages.sh's .npmrc preflight AND
+      # authenticates `npm publish`.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@apnex'
+
+      # Scoped install — MUST mirror test.yml's proven-working list exactly.
+      # --ignore-scripts: repo-event-bridge/storage-provider carry prepare:tsc
+      # hooks that would fire before their deps exist (calibration #62). The
+      # list must include storage-provider (+ opencode) even though they are
+      # NOT published here: npm only symlinks NAMED workspaces, and the
+      # network-adapter ↔ message-router cyclic tsc build needs every @apnex/*
+      # workspace linked to resolve its module graph. Omitting storage-provider
+      # broke the cyclic build in CI (dry-run run #28554852955: network-adapter
+      # tsc "Cannot find module '@apnex/message-router'"). The publish step
+      # still ships only the explicit list in publish-packages.sh.
+      - name: Install workspaces (scoped)
+        run: |
+          npm install --no-audit --no-fund --ignore-scripts \
+            --workspace=@apnex/cognitive-layer \
+            --workspace=@apnex/message-router \
+            --workspace=@apnex/network-adapter \
+            --workspace=@apnex/storage-provider \
+            --workspace=@apnex/claude-plugin \
+            --workspace=@apnex/opencode-plugin \
+            --workspace=@apnex/pi-plugin
+
+      # Sovereign packages must have dist/ before publish (main → dist/index.js)
+      # + build-info.json for build-identity. network-adapter ↔ message-router
+      # cycle broken via the multi-pass build (per test.yml / prepack-claude).
+      - name: Build family (topological)
+        run: |
+          rm -rf packages/cognitive-layer/dist packages/network-adapter/dist packages/message-router/dist
+          ( cd packages/cognitive-layer && npm run build )
+          ( cd packages/network-adapter && npm run build ) || true
+          ( cd packages/message-router && npm run build )
+          rm -rf packages/network-adapter/dist
+          ( cd packages/network-adapter && npm run build )
+          ( cd adapters/claude-plugin && npm run build )
+          ( cd adapters/pi-plugin && npm run build )
+
+      # Publish (or dry-run). The script gates on prepack --assert (version bump),
+      # hoists version-rewrite, publishes topologically, and trap-reverts deps.
+      - name: Publish @apnex/* family
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "→ dry-run publish"
+            bash scripts/publish-packages.sh --dry-run
+          else
+            echo "→ REAL publish (tag ${GITHUB_REF#refs/tags/})"
+            bash scripts/publish-packages.sh
+          fi

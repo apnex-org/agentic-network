@@ -13,8 +13,12 @@ import type { FsmTransitionTable } from "./types.js";
 import type { Idea, IdeaStatus } from "../entities/index.js";
 import {
   LIST_PAGINATION_SCHEMA,
+  LIST_COMPACT_SCHEMA,
   LIST_TAGS_SCHEMA,
   applyTagFilter,
+  mergeTags,
+  unsetIfEmpty,
+  omitEmptyValues,
   paginate,
   buildQueryFilterSchema,
   buildQuerySortSchema,
@@ -112,6 +116,18 @@ const IDEA_ACCESSORS: FieldAccessors<Idea> = {
 const IDEA_FILTER_SCHEMA = buildQueryFilterSchema(IDEA_FILTERABLE_FIELDS);
 const IDEA_SORT_SCHEMA = buildQuerySortSchema(IDEA_SORTABLE_FIELDS);
 
+/** bug-196: compact scannable projection. Idea has no `title` — `text` IS the body, so
+ *  expose a truncated `textPreview` as the scannable label + OMIT the full text +
+ *  sourceThreadSummary. */
+function projectIdeaCompact(i: Idea) {
+  const text = typeof i.text === "string" ? i.text : "";
+  return {
+    id: i.id,
+    textPreview: text.length > 140 ? text.slice(0, 140) + "…" : text,
+    status: i.status, missionId: i.missionId ?? null, tags: i.tags, updatedAt: i.updatedAt,
+  };
+}
+
 async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   let ideas = await ctx.stores.idea.listIdeas();
   const totalPreFilter = ideas.length;
@@ -121,9 +137,11 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
 
   // Backwards-compat: legacy scalar `status` arg subsumed by the new
   // `filter.status` field. filter.status wins when both are present.
-  const legacyStatus = typeof args.status === "string" ? (args.status as IdeaStatus) : undefined;
+  // bug-198: empty-string legacy status + any empty values in the `filter` object are
+  // adapter-serialized UNSETs (opencode) — drop them, don't AND them to zero matches.
+  const legacyStatus = unsetIfEmpty(typeof args.status === "string" ? args.status : undefined) as IdeaStatus | undefined;
   const filterArgRaw = args.filter as Record<string, unknown> | undefined;
-  const effectiveFilter: Record<string, unknown> = { ...(filterArgRaw ?? {}) };
+  const effectiveFilter: Record<string, unknown> = omitEmptyValues({ ...(filterArgRaw ?? {}) });
   if (legacyStatus && effectiveFilter.status === undefined) {
     effectiveFilter.status = legacyStatus;
   }
@@ -145,11 +163,12 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
     content: [{
       type: "text" as const,
       text: JSON.stringify({
-        ideas: page.items,
+        ideas: args.compact === true ? page.items.map(projectIdeaCompact) : page.items,
         count: page.count,
         total: page.total,
         offset: page.offset,
         limit: page.limit,
+        ...(args.compact === true ? { compact: true } : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],
@@ -161,6 +180,10 @@ async function updateIdea(args: Record<string, unknown>, ctx: IPolicyContext): P
   const status = args.status as IdeaStatus | undefined;
   const missionId = args.missionId as string | undefined;
   const tags = args.tags as string[] | undefined;
+  // idea-363 (work-59): additive-tag mode — union onto the existing tags instead
+  // of clobbering them. The post-stint triage pass stamps audit:* tags on
+  // already-tagged ideas, so a replace-only surface would wipe prior tags.
+  const addTags = unsetIfEmpty(args.addTags as string[] | undefined) as string[] | undefined;
   const text = args.text as string | undefined;
 
   // Engineer gate: tool is [Any] so Engineers can edit text / tags and
@@ -190,6 +213,15 @@ async function updateIdea(args: Record<string, unknown>, ctx: IPolicyContext): P
     if (!status) updates.status = "incorporated";
   }
   if (tags) updates.tags = tags;
+  if (addTags && addTags.length > 0) {
+    // Read-merge-write: union addTags onto the current tags (or onto the
+    // `tags` replacement if both are present). mergeTags dedupes + drops empties.
+    const current = await ctx.stores.idea.getIdea(ideaId);
+    if (!current) {
+      return { content: [{ type: "text" as const, text: JSON.stringify({ error: `Idea not found: ${ideaId}` }) }], isError: true };
+    }
+    updates.tags = mergeTags(updates.tags ?? current.tags, addTags);
+  }
   if (text !== undefined) updates.text = text;
 
   // FSM guard: validate status transition if status is changing. mission-89
@@ -242,6 +274,130 @@ async function getIdea(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   };
 }
 
+// ── get_backlog_health (idea-363 / work-59) ─────────────────────────
+// Server-side incorporation-constraint readout over the FULL Idea collection.
+// The org's binding constraint is INCORPORATION (generation outpaces it ~14:1
+// per the stint-3 retro), so the gate-point question is "is the funnel clearing,
+// and what's aging out?" — not "how many ideas exist". Computed server-side so
+// the counts are accurate + the payload is tiny: a client-side list_ideas survey
+// both caps at 500 per call AND ships fat objects (the 429 class, bug-196).
+// IDEAS-ONLY by design — Bugs are reconcile.py's domain (don't duplicate →
+// drift); Missions are a noted FUTURE extension.
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MONTH_MS = 30 * DAY_MS;
+
+export interface BacklogHealthBuckets {
+  open: Idea[];
+  triaged: Idea[];
+  dismissed: Idea[];
+  incorporated: Idea[];
+}
+
+/** Pure incorporation-constraint computation (exported for direct unit test —
+ *  the truncation + age-bucket logic is testable without 500 real ideas). */
+export function computeBacklogHealth(
+  buckets: BacklogHealthBuckets,
+  opts: { asOfMs: number; staleWeeks: number; truncatedStatuses?: string[] },
+) {
+  const { asOfMs, staleWeeks } = opts;
+  const truncatedStatuses = opts.truncatedStatuses ?? [];
+  const ageMs = (i: Idea): number => {
+    const t = i.createdAt ? Date.parse(i.createdAt) : NaN;
+    return Number.isNaN(t) ? 0 : Math.max(0, asOfMs - t);
+  };
+
+  const funnel = {
+    open: buckets.open.length,
+    triaged: buckets.triaged.length,
+    dismissed: buckets.dismissed.length,
+    incorporated: buckets.incorporated.length,
+    total: buckets.open.length + buckets.triaged.length + buckets.dismissed.length + buckets.incorporated.length,
+  };
+
+  // Age histogram over OPEN ideas (the "best arcs age out ~2.5mo" signal).
+  const openAgeHistogram = { lt1w: 0, "1to4w": 0, "1to3mo": 0, gt3mo: 0 };
+  let oldestOpenAgeDays = 0;
+  for (const i of buckets.open) {
+    const a = ageMs(i);
+    oldestOpenAgeDays = Math.max(oldestOpenAgeDays, Math.floor(a / DAY_MS));
+    if (a < WEEK_MS) openAgeHistogram.lt1w++;
+    else if (a < 4 * WEEK_MS) openAgeHistogram["1to4w"]++;
+    else if (a < 3 * MONTH_MS) openAgeHistogram["1to3mo"]++;
+    else openAgeHistogram.gt3mo++;
+  }
+
+  // Stuck-in-triage: triaged + NOT linked to a mission + age > staleWeeks — the
+  // "ready-but-unactioned" signal idea-363 names (default 3wk, param-overridable).
+  const staleMs = staleWeeks * WEEK_MS;
+  const stuckIdeas = buckets.triaged.filter((i) => !i.missionId && ageMs(i) > staleMs);
+
+  // Incorporation-constraint readout: in-flight (open+triaged, awaiting
+  // incorporation) vs incorporated. ratio > 1 = backlog outpacing incorporation.
+  const inFlight = funnel.open + funnel.triaged;
+  const incorporationRatio = funnel.incorporated > 0
+    ? Number((inFlight / funnel.incorporated).toFixed(2))
+    : null;
+
+  return {
+    funnel,
+    openAgeHistogram,
+    oldestOpenAgeDays,
+    stuckInTriage: {
+      count: stuckIdeas.length,
+      staleWeeks,
+      ideaIds: stuckIdeas.map((i) => i.id),
+    },
+    incorporation: {
+      inFlight,
+      incorporated: funnel.incorporated,
+      ratio: incorporationRatio,
+    },
+    ...(truncatedStatuses.length > 0
+      ? {
+          truncated: true,
+          truncatedStatuses,
+          truncationNote: `status bucket(s) [${truncatedStatuses.join(", ")}] hit the 500-row scan cap; those counts are a floor, not exact.`,
+        }
+      : { truncated: false }),
+  };
+}
+
+async function getBacklogHealth(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const asOfRaw = typeof args.asOf === "string" ? Date.parse(args.asOf) : NaN;
+  const asOfMs = Number.isNaN(asOfRaw) ? Date.now() : asOfRaw;
+  const staleWeeks = typeof args.staleWeeks === "number" && args.staleWeeks > 0 ? args.staleWeeks : 3;
+
+  const [open, triaged, dismissed, incorporated] = await Promise.all([
+    ctx.stores.idea.listIdeas("open"),
+    ctx.stores.idea.listIdeas("triaged"),
+    ctx.stores.idea.listIdeas("dismissed"),
+    ctx.stores.idea.listIdeas("incorporated"),
+  ]);
+
+  // Truncation-honesty (the R2 lesson): listIdeas hard-caps at 500 per status;
+  // a bucket returning exactly the cap may be truncated → flag it.
+  const LIST_CAP = 500;
+  const truncatedStatuses: string[] = [];
+  if (open.length >= LIST_CAP) truncatedStatuses.push("open");
+  if (triaged.length >= LIST_CAP) truncatedStatuses.push("triaged");
+  if (dismissed.length >= LIST_CAP) truncatedStatuses.push("dismissed");
+  if (incorporated.length >= LIST_CAP) truncatedStatuses.push("incorporated");
+
+  const health = computeBacklogHealth(
+    { open, triaged, dismissed, incorporated },
+    { asOfMs, staleWeeks, truncatedStatuses },
+  );
+
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ asOf: new Date(asOfMs).toISOString(), ...health }, null, 2),
+    }],
+  };
+}
+
 // ── Registration ────────────────────────────────────────────────────
 
 export function registerIdeaPolicy(router: PolicyRouter): void {
@@ -279,18 +435,20 @@ export function registerIdeaPolicy(router: PolicyRouter): void {
         .describe("DEPRECATED: use `filter: { status: ... }`. Preserved for backwards compat; `filter.status` wins when both present."),
       ...LIST_TAGS_SCHEMA,
       ...LIST_PAGINATION_SCHEMA,
+      ...LIST_COMPACT_SCHEMA,
     },
     listIdeas,
   );
 
   router.register(
     "update_idea",
-    "[Any] Update an idea. Any caller may edit text, tags, and transition status between 'open' and 'triaged'. Architect-only: setting status to 'dismissed' or 'incorporated', and linking to a mission (missionId).",
+    "[Any] Update an idea. Any caller may edit text, tags, and transition status between 'open' and 'triaged'. Architect-only: setting status to 'dismissed' or 'incorporated', and linking to a mission (missionId). Use `addTags` for additive (union, no-clobber) tag stamping — e.g. a triage pass adding audit:* tags without wiping existing ones; `tags` replaces the whole set.",
     {
       ideaId: z.string().describe("The idea ID to update"),
       status: z.enum(["open", "triaged", "dismissed", "incorporated"]).optional().describe("New status (Engineer limited to 'open' and 'triaged')"),
       missionId: z.string().optional().describe("Link to a mission (Architect-only; sets status to 'incorporated' if not already)"),
-      tags: z.array(z.string()).optional().describe("Replace tags"),
+      tags: z.array(z.string()).optional().describe("REPLACE the whole tag set. For incremental stamping use `addTags` instead (replace clobbers prior tags)."),
+      addTags: z.array(z.string()).optional().describe("ADDITIVE (idea-363): union these tags onto the idea's existing tags (no clobber, deduped). The post-stint triage cadence stamps audit:value/effort/action/tele_primary via this. If both `tags` and `addTags` are given, tags replaces then addTags unions onto it."),
       text: z.string().optional().describe("Replace idea text"),
     },
     updateIdea,
@@ -303,5 +461,17 @@ export function registerIdeaPolicy(router: PolicyRouter): void {
       ideaId: z.string().describe("The idea ID to read"),
     },
     getIdea,
+  );
+
+  router.register(
+    "get_backlog_health",
+    "[Any] Backlog-health readout (idea-363) — the incorporation-constraint metric, computed server-side over the FULL Idea collection (accurate counts + a tiny payload; NOT a fat list_ideas survey, which caps at 500/call and ships full objects). Returns: `funnel` (open/triaged/dismissed/incorporated/total counts); `openAgeHistogram` (lt1w / 1to4w / 1to3mo / gt3mo) + `oldestOpenAgeDays` (the 'best arcs age out' signal); `stuckInTriage` (triaged + unlinked-to-mission + age>staleWeeks — the ready-but-unactioned signal; staleWeeks default 3, param-overridable); `incorporation` (inFlight:incorporated ratio — >1 means the backlog is outpacing incorporation). Truncation-honest: per-status buckets that hit the 500-row scan cap are flagged. IDEAS-ONLY — Bugs are reconcile.py's domain; Missions are a noted future extension.",
+    {
+      staleWeeks: z.number().int().positive().optional()
+        .describe("Stuck-in-triage age threshold in weeks (default 3): a triaged, mission-unlinked idea older than this counts as ready-but-unactioned."),
+      asOf: z.string().optional()
+        .describe("Compute health as-of this ISO instant (default: now). Enables gate-point-dated readouts + deterministic snapshots."),
+    },
+    getBacklogHealth,
   );
 }

@@ -1,0 +1,30 @@
+# n5 image feature-presence verify (build-provenance lesson): pull + assert the artifact CONTAINS
+# the code-under-test (real claude + tmux + the launcher + the in-repo marketplace + the baked config).
+substitutions:
+  _IMG: 'australia-southeast1-docker.pkg.dev/labops-389703/cloud-run-source-deploy/claude-adapter-realcli:n5-bad98e5'
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        docker pull "${_IMG}"
+        echo "=== n5 FEATURE-PRESENCE CHECK ==="
+        docker run --rm --entrypoint bash "${_IMG}" -c '
+          set -e
+          echo "claude:      $(claude --version 2>&1 | head -1)"
+          echo "tmux:        $(tmux -V)"
+          echo "node:        $(node --version)"
+          echo "launcher:    $(ls -la /app/real-cli-launch.sh | tr -s " ")"
+          echo "supervisor:  $(ls -la /app/supervisor.mjs | tr -s " ")"
+          echo "shim:        $(ls -la /app/adapters/claude-plugin/dist/shim.js | tr -s " ")"
+          echo "marketplace: $(ls -la /app/adapters/claude-plugin/.claude-plugin/marketplace.json | tr -s " ")"
+          echo "--- baked known_marketplaces.json (agentic-network -> /app/adapters/claude-plugin?) ---"
+          cat /home/appuser/.claude/plugins/known_marketplaces.json
+          echo "--- baked .claude.json keys ---"
+          node -e "const d=require(\"/home/appuser/.claude/.claude.json\"); console.log(\"hasCompletedOnboarding:\",d.hasCompletedOnboarding,\"| projects:\",Object.keys(d.projects||{}))"
+        '
+        echo "=== n5 VERIFY-OK ==="
+options:
+  logging: CLOUD_LOGGING_ONLY

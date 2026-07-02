@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "resolveJsonModule": true,
+    "lib": ["ES2022"]
+  },
+  // src-only (NOT test/**) — mirrors adapters/opencode-plugin + claude-plugin.
+  // Test files are exercised by vitest (the `test` script), not the emit tsc.
+  "include": ["src/**/*.ts"]
+}
