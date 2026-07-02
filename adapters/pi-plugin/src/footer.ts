@@ -34,62 +34,24 @@ export type Severity = "nominal" | "notice" | "alert";
 //
 // pi passes an available `width` to render(width) and requires each returned
 // line's VISIBLE width to be ≤ width (docs/tui.md §Custom Footer). Color is
-// applied via theme.fg (SGR escapes), so we must measure + truncate on the
-// VISIBLE columns, never the raw byte length. These are self-contained (no
-// dep on @earendil-works/pi-tui, which is not a declared adapter dep) so the
-// budgeting logic is directly unit-testable.
+// applied via theme.fg (SGR escapes) and the footer uses wide glyphs
+// (‹›·⟶⚠…), so we must measure + truncate on the VISIBLE display columns,
+// never the raw byte/char length.
+//
+// A3 compose-by-default (architect steer, thread 01KWHGGKT0…): these are the
+// HOST's own TUI primitives — @earendil-works/pi-tui EXPORTS visibleWidth +
+// truncateToWidth(text, maxWidth, ellipsis?). pi-coding-agent itself depends on
+// pi-tui@^0.80.3, so it is version-aligned; we DECLARE it as a pi-plugin
+// peer+dev dep (matching the pi-coding-agent placement) and COMPOSE the shared
+// helpers rather than re-implement a platform primitive. Bonus correctness:
+// pi-tui's visibleWidth handles East-Asian / wide chars (get-east-asian-width),
+// which a naive .length would miscount. Re-exported here so the render module
+// keeps a single import surface.
+export { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth as _truncateToWidth } from "@earendil-works/pi-tui";
 
-// Matches a CSI SGR escape sequence (\x1b[ ... m) — what theme.fg emits.
-// eslint-disable-next-line no-control-regex
-const ANSI_SGR = /\x1b\[[0-9;]*m/g;
-const ANSI_RESET = "\x1b[0m";
-
-/** Visible display width of a string, ignoring ANSI SGR escapes (spec §gate2). */
-export function visibleWidth(s: string): number {
-  return stripAnsi(s).length;
-}
-
-function stripAnsi(s: string): string {
-  return s.replace(ANSI_SGR, "");
-}
-
-/**
- * ANSI-safe truncate: cap the VISIBLE width at `width`, preserving color runs
- * and always emitting a trailing reset so no SGR state leaks past the line.
- * When truncation occurs the last visible column is an ellipsis `…` (which
- * itself counts toward the budget, so the result is still ≤ width).
- *
- * width ≤ 0 → "" . A string already within budget is returned unchanged.
- */
-export function truncateToWidth(s: string, width: number): string {
-  if (width <= 0) return "";
-  if (visibleWidth(s) <= width) return s;
-  // Budget one column for the ellipsis.
-  const budget = width - 1;
-  let out = "";
-  let vis = 0;
-  let sawAnsi = false;
-  for (let i = 0; i < s.length; ) {
-    if (s[i] === "\x1b") {
-      // Copy the whole escape sequence verbatim (zero visible width).
-      ANSI_SGR.lastIndex = i;
-      const m = ANSI_SGR.exec(s);
-      if (m && m.index === i) {
-        out += m[0];
-        i += m[0].length;
-        sawAnsi = true;
-        continue;
-      }
-    }
-    if (vis >= budget) break;
-    out += s[i];
-    vis += 1;
-    i += 1;
-  }
-  out += "\u2026"; // ellipsis (1 visible col, within budget)
-  if (sawAnsi) out += ANSI_RESET; // never leak SGR state past the line
-  return out;
-}
+/** The truncation ellipsis (§3 didn't pin one; matches pi-tui's conventional default). */
+const ELLIPSIS = "\u2026";
 
 /** Minimal theme accessor the renderer needs (matches pi Theme.fg). */
 export interface FooterTheme {
@@ -298,7 +260,12 @@ export function renderFooter(
   ].join(SEP);
 
   if (width !== undefined && width > 0) {
-    return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
+    // pi-tui truncateToWidth guarantees visibleWidth(result) ≤ width at every
+    // column, ANSI-safe, appending the ellipsis only when it actually truncates.
+    return [
+      _truncateToWidth(line1, width, ELLIPSIS),
+      _truncateToWidth(line2, width, ELLIPSIS),
+    ];
   }
   return [line1, line2];
 }

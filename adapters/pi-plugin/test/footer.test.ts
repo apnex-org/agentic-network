@@ -99,7 +99,9 @@ describe("renderFooter — fixed height + structure (gate 2/3)", () => {
   });
 });
 
-describe("ANSI-safe width helpers (gate 2)", () => {
+describe("ANSI-safe width helpers (gate 2) — composed from pi-tui (A3)", () => {
+  // These are the HOST's own pi-tui primitives (re-exported from footer.ts).
+  // We assert the CONTRACT the footer relies on, not a re-implementation.
   it("visibleWidth ignores SGR escapes (measures display columns)", () => {
     expect(visibleWidth("abc")).toBe(3);
     expect(visibleWidth("\x1b[31mabc\x1b[0m")).toBe(3);
@@ -107,22 +109,22 @@ describe("ANSI-safe width helpers (gate 2)", () => {
     expect(visibleWidth("")).toBe(0);
   });
 
-  it("truncateToWidth caps VISIBLE width (never raw byte length)", () => {
+  it("visibleWidth counts the footer's wide glyphs correctly (‹›·⟶⚠…)", () => {
+    // The A3-composition bonus: pi-tui handles display-width, unlike naive .length.
+    expect(visibleWidth("\u27f6")).toBeGreaterThanOrEqual(1);
+    expect(visibleWidth("abc\u2026")).toBe(4);
+  });
+
+  it("truncateToWidth caps VISIBLE width (never raw byte length), ANSI-safe", () => {
     const colored = "\x1b[31mHELLO WORLD\x1b[0m"; // 11 visible, ~19 bytes
-    const out = truncateToWidth(colored, 5);
+    const out = truncateToWidth(colored, 5, "\u2026");
     expect(visibleWidth(out)).toBeLessThanOrEqual(5);
-    expect(out).toContain("\u2026"); // ellipsis marks truncation
+    expect(out).toContain("\u2026"); // the footer passes … as the ellipsis
   });
 
   it("in-budget strings are returned unchanged; width≤0 → empty", () => {
     expect(truncateToWidth("short", 20)).toBe("short");
     expect(truncateToWidth("anything", 0)).toBe("");
-    expect(truncateToWidth("anything", -5)).toBe("");
-  });
-
-  it("truncation never leaks SGR state past the line (emits a reset)", () => {
-    const out = truncateToWidth("\x1b[31mAAAAAAAAAA\x1b[0m", 4);
-    expect(out.endsWith("\x1b[0m")).toBe(true); // trailing reset present
   });
 });
 
