@@ -519,8 +519,11 @@ describe("claude-plugin shim — cognitive layer integration", () => {
       await eng.agent.call("create_idea", { text: `summarizer-test-${i}` });
     }
 
-    // Now call list_ideas; summarizer should truncate
-    const raw = await eng.agent.call("list_ideas", { limit: 100 });
+    // Now call list_ideas WITHOUT a caller-limit so the summarizer's default
+    // truncation applies. bug-117: passing limit > maxItems now RAISES the cap
+    // to honor the caller, so a TRUNCATION test must not pass such a limit.
+    // (list_ideas returns up to its own DEFAULT_LIST_LIMIT of 100 either way.)
+    const raw = await eng.agent.call("list_ideas", {});
     const result = typeof raw === "string" ? JSON.parse(raw) : raw;
 
     // Summarizer should have added _ois_pagination and truncated ideas

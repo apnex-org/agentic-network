@@ -333,7 +333,7 @@ emit_events:
 correlation_roles:
   - as_subject:
       Task:          "assignedAgentId references Agent.engineerId after claim"
-      EngineerStatus: "projected view returned by get_engineer_status tool"
+      EngineerStatus: "projected view returned by get_agents tool"
   - as_reference:
       labels:        "matchLabels selectors in workflow-registry.md §6 filter to agents whose labels contain every (k, v) pair"
 ```

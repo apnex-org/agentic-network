@@ -27,7 +27,7 @@ import type { Mission, Message, MissionPulses } from "../../src/entities/index.j
 
 const MS = (s: number) => s * 1000;
 
-function buildSweeperRig() {
+function buildSweeperRig(opts: { omitRegistry?: boolean } = {}) {
   const storage = createMemoryStorageSubstrate();
   const counter = new SubstrateCounter(storage);
   const taskStore = new TaskRepository(storage, counter);
@@ -58,6 +58,13 @@ function buildSweeperRig() {
           message: messageStore,
           task: taskStore,
           idea: ideaStore,
+          // bug-176 — iterateAgentPulses reads engineerRegistry.listAgents() on
+          // EVERY tick; without it the pass threw `Cannot read properties of
+          // undefined (reading 'listAgents')` deterministically (caught + logged,
+          // so it never failed an assertion — pure noise masquerading as a flake).
+          // An empty roster makes the agent-pulse pass a clean no-op. The
+          // `omitRegistry` variant drops it to exercise the prod null-guard.
+          ...(opts.omitRegistry ? {} : { engineerRegistry: { listAgents: async () => [] } }),
         },
         metrics: createMetricsCounter(),
         emit: async () => {},
@@ -112,6 +119,11 @@ describe("PulseSweeper — fire-due semantics", () => {
     let result = await rig.sweeper.tick();
     expect(result.fired).toBe(0);
     expect(result.skipped).toBe(1);
+    // bug-176 — a tick must complete with NO iterateAgentPulses error. Pre-fix
+    // (no engineerRegistry in the rig) this was ≥1 on every tick; this assertion
+    // makes the registry stub load-bearing so the deterministic noise can't
+    // silently return.
+    expect(result.errors).toBe(0);
 
     // Advance just over firstFireDelay → fire-due
     rig.setNow(new Date(mission.createdAt).getTime() + MS(1801));
@@ -124,6 +136,28 @@ describe("PulseSweeper — fire-due semantics", () => {
     expect(messages[0].target).toEqual({ role: "engineer" });
     expect(messages[0].migrationSourceId).toMatch(/^pulse:mission-\d+:engineerPulse:/);
     expect((messages[0].payload as { pulseKind: string }).pulseKind).toBe("status_check");
+  });
+
+  it("bug-176 — a context whose stores OMIT engineerRegistry sweeps cleanly (the prod null-guard)", async () => {
+    // Directly exercises the production guard (the non-vacuous regression test):
+    // without it, iterateAgentPulses does `ctx.stores.engineerRegistry.listAgents()`
+    // on a missing registry → `Cannot read properties of undefined (reading
+    // 'listAgents')` every tick (caught → result.errors++). With the guard, a
+    // registry-less context is a clean no-op. Remove the prod guard and this
+    // assertion fails (errors ≥ 1).
+    const rig = buildSweeperRig({ omitRegistry: true });
+    const mission = await createPulseMission(rig, {
+      engineerPulse: {
+        intervalSeconds: 1800,
+        message: "status?",
+        responseShape: "ack",
+        missedThreshold: 3,
+        firstFireDelaySeconds: 1800,
+      },
+    });
+    rig.setNow(new Date(mission.createdAt).getTime() + MS(1801));
+    const result = await rig.sweeper.tick();
+    expect(result.errors).toBe(0);
   });
 
   it("does not fire before firstFireDelaySeconds elapses", async () => {

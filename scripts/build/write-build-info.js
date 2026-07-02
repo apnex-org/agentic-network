@@ -24,7 +24,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 function safeExec(cmd, fallback) {
@@ -35,6 +35,18 @@ function safeExec(cmd, fallback) {
     }).trim();
   } catch {
     return fallback;
+  }
+}
+
+// Exit-code probe (no stdout capture): 0 if the command exits 0, 1 otherwise.
+// Treats a git ERROR identically to a non-zero result — never throws, so the
+// caller can never spuriously fail when state can't be determined.
+function safeExitOk(cmd) {
+  try {
+    execSync(cmd, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -61,3 +73,94 @@ writeFileSync(resolve(distDir, "build-info.json"), JSON.stringify(buildInfo, nul
 process.stderr.write(
   `[build-info] dist/build-info.json: ${sha}${dirty ? "-dirty" : ""} on ${branch} at ${buildInfo.buildTime}\n`,
 );
+
+// ── --assert mode (idea-355 SLICE-3 / bug-182 version-bump GATE) ─────────
+//
+// fork 1 = ASSERT/GATE (NOT auto-increment). Wired into the `prepack` (ship)
+// hook only — `prebuild` (dev/CI `npm run build`) stays stamp-only so a build
+// can never fail here. The gate FAILS iff a package's source advanced PAST its
+// last version bump (i.e. you shipped src changes without bumping the version).
+//
+// Self-contained, no network. Runs with cwd = the package root (npm sets that
+// for prepack). GRACEFUL-SKIP (exit 0) whenever state can't be determined —
+// no git, missing/unversioned package.json, or no version-introducing commit
+// (first release). Idempotent (claude-plugin prepack multi-fires).
+if (process.argv.includes("--assert")) {
+  runAssert();
+}
+
+function assertSkip(note) {
+  process.stderr.write(`[build-info:assert] skip — ${note}\n`);
+}
+
+function runAssert() {
+  // idea-355 SLICE-3 hot-gate scoping (fork-1 follow-up, architect decision B):
+  // the gate's intent is "can't PUBLISH unstamped" — a CONSUMER-publish check.
+  // The hub-internal transient-vendor-pack (build-hub.sh → transient-package-
+  // swap.sh) vendors sovereign SOURCE into the hub image, which is traced by its
+  // OWN git-sha build-info — it is NOT a registry ship, so firing the gate there
+  // is a false positive. That pack sets OIS_SKIP_VERSION_ASSERT=1 to skip ONLY
+  // this FAIL check; the build-info stamp (above) + the package's prepare/tsc
+  // build still run, so dist stays intact (NOT a blanket --ignore-scripts). The
+  // real publish paths (publish-packages.sh / release-plugin / release-opencode)
+  // leave the flag unset and still gate.
+  if (process.env.OIS_SKIP_VERSION_ASSERT === "1") {
+    assertSkip("OIS_SKIP_VERSION_ASSERT=1 (internal vendor-pack; gate scoped to consumer publishes)");
+    return;
+  }
+  // No git context → the top-level `git rev-parse` already fell back to
+  // "unknown". Nothing to assert against.
+  if (sha === "unknown") {
+    assertSkip("no git context");
+    return;
+  }
+
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf-8"));
+  } catch {
+    assertSkip("no readable package.json in cwd");
+    return;
+  }
+  const pkgName = typeof pkg.name === "string" ? pkg.name : process.cwd();
+  const currentVersion = pkg.version;
+  if (typeof currentVersion !== "string" || currentVersion === "") {
+    assertSkip(`${pkgName}: no version string in package.json`);
+    return;
+  }
+
+  // Last commit touching the package's src/.
+  const srcCommit = safeExec("git log -1 --format=%H -- src", "");
+  // Last commit that introduced the CURRENT version string into package.json
+  // (pickaxe: the count of `"version": "<v>"` changed → the bump commit).
+  const versionCommit = safeExec(
+    `git log -1 --format=%H -S '"version": "${currentVersion}"' -- package.json`,
+    "",
+  );
+  if (!srcCommit || !versionCommit) {
+    assertSkip(
+      `${pkgName}@${currentVersion}: indeterminate ` +
+        `(srcCommit=${srcCommit || "none"} versionCommit=${versionCommit || "none"})`,
+    );
+    return;
+  }
+
+  // FAIL iff src advanced PAST the version bump: versionCommit is a strict
+  // ancestor of srcCommit. PASS if srcCommit is an ancestor-or-equal of
+  // versionCommit (version bumped with/after the latest src change). A git
+  // error in --is-ancestor falls through to PASS (never a spurious failure).
+  const srcAheadOfVersion =
+    versionCommit !== srcCommit && safeExitOk(`git merge-base --is-ancestor ${versionCommit} ${srcCommit}`);
+  if (srcAheadOfVersion) {
+    process.stderr.write(
+      `[build-info:assert] FAIL — ${pkgName}@${currentVersion}: src/ advanced PAST the version bump.\n` +
+        `  version-bump commit: ${versionCommit}\n` +
+        `  latest src/ commit:  ${srcCommit}\n` +
+        `  Bump ${pkgName}'s package.json version before shipping.\n`,
+    );
+    process.exit(1);
+  }
+  process.stderr.write(
+    `[build-info:assert] OK — ${pkgName}@${currentVersion} (src not ahead of the version bump)\n`,
+  );
+}

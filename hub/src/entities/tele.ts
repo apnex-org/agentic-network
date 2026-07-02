@@ -13,6 +13,7 @@
 
 import type { EntityProvenance } from "../state.js";
 import { phaseFromEntity } from "./shape-helpers.js";
+import { assertDecodedFlat } from "../storage-substrate/bare-envelope-error.js";
 
 export type TeleStatus = "active" | "superseded" | "retired";
 
@@ -96,7 +97,7 @@ export function normalizeTele(raw: Tele): Tele {
   delete flat.phase;
   delete flat.apiVersion;
   delete flat.kind;
-  return { ...flat, status: phaseFromEntity(raw) ?? "active" } as unknown as Tele;
+  return assertDecodedFlat({ ...flat, status: phaseFromEntity(raw) ?? "active" } as unknown as Tele, "Tele");
 }
 
 // Mission-47 W1: `MemoryTeleStore` deleted. `TeleRepository` in

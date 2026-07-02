@@ -159,5 +159,13 @@ describe("E2E verifier thread participation (mission-93 — thread-674 turn-role
     });
     expect(reply.isError).toBeUndefined();
     expect(JSON.parse(reply.content[0].text).success).not.toBe(false);
+
+    // bug-170: the verifier can DISCOVER its directed thread via list_threads
+    // (recipientAgentId filter, substrate-pushed — not limited to the unordered
+    // prefetch window). recipientAgentId is stable across the turn-flip; the
+    // verifier could not find its directed threads before this.
+    const listed = await verifier.call("list_threads", { filter: { recipientAgentId: vAgent!.id } });
+    const listedThreads = (JSON.parse(listed.content[0].text).threads ?? []) as Array<{ id: string }>;
+    expect(listedThreads.some((th) => th.id === threadId)).toBe(true);
   });
 });

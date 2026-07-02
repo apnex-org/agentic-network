@@ -247,9 +247,10 @@ describe("E2E Foundation", () => {
         "force_close_thread",
         "force_fire_pulse",
         "get_agents",
+        "get_backlog_health", // idea-363 (work-59): incorporation-constraint readout
         "get_clarification",
         // "get_document" REMOVED at mission-83 W6-narrowed (deferred to idea-300)
-        "get_engineer_status",
+        // "get_engineer_status" HARD-REMOVED at idea-355 SLICE-4 (bug-184); get_agents is canonical
         "get_idea",
         "get_metrics",
         "get_mission",

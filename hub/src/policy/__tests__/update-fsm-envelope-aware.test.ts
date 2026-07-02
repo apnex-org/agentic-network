@@ -12,10 +12,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { createTestPool } from "../../storage-substrate/__tests__/_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import pg from "pg";
 import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
@@ -23,9 +23,6 @@ import {
   type HubStorageSubstrate,
   type SchemaReconciler,
 } from "../../storage-substrate/index.js";
-
-const { Pool } = pg;
-
 describe("update_* FSM envelope-aware (bug-137 closure)", () => {
   let pgContainer: StartedPostgreSqlContainer | undefined;
   let pgConnStr: string | undefined;
@@ -47,7 +44,7 @@ describe("update_* FSM envelope-aware (bug-137 closure)", () => {
       .start();
     pgConnStr = `postgres://hub:hub@${pgContainer.getHost()}:${pgContainer.getPort()}/hub`;
 
-    const pool = new Pool({ connectionString: pgConnStr });
+    const pool = createTestPool(pgConnStr, "update-fsm-envelope-aware");
     for (const f of MIGRATION_FILES) {
       const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
       await pool.query(sql);
@@ -65,6 +62,11 @@ describe("update_* FSM envelope-aware (bug-137 closure)", () => {
       warn: () => { /* silent */ },
     });
     await reconciler.start();
+    // C3-R4b: wire the renameMap field-translator as production does (index.ts) so
+    // substrate.list({filter:{flatKey}}) translates flat→envelope-path. Required now
+    // that findByCascadeKey filters by the FLAT cascade key (collapsed dual-path).
+    const pgSub = substrate as ReturnType<typeof createPostgresStorageSubstrate>;
+    pgSub.setFieldTranslator((kind, bareKey) => reconciler!.getFieldTranslation(kind, bareKey));
   }, 60_000);
 
   afterAll(async () => {
@@ -75,7 +77,7 @@ describe("update_* FSM envelope-aware (bug-137 closure)", () => {
 
   beforeEach(async () => {
     if (!pgConnStr) throw new Error("connection unavailable");
-    const pool = new Pool({ connectionString: pgConnStr });
+    const pool = createTestPool(pgConnStr, "update-fsm-envelope-aware");
     try {
       await pool.query(`DELETE FROM entities WHERE kind IN ('Bug', 'Mission', 'Idea', 'Turn')`);
     } finally {
@@ -172,7 +174,7 @@ describe("update_* FSM envelope-aware (bug-137 closure)", () => {
     expect(phaseFromEntity(raw)).toBe("proposed");
   });
 
-  it("findByCascadeKey finds envelope-shape Bug via metadata.sourceThreadId dotted-path", async () => {
+  it("findByCascadeKey finds envelope-shape Bug via the flat cascade key (C3-R4b renameMap-translated)", async () => {
     if (!substrate) throw new Error("substrate not initialized");
     const { BugRepositorySubstrate } = await import("../../entities/bug-repository-substrate.js");
     const { SubstrateCounter } = await import("../../entities/substrate-counter.js");

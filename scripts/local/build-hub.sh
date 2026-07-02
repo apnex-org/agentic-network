@@ -136,9 +136,34 @@ SOVEREIGN_PACKAGES=(
 )
 
 source "$REPO_ROOT/scripts/build/lib/transient-package-swap.sh"
-trap tps_cleanup EXIT INT TERM HUP
+
+# Combined cleanup: restore package.json + remove the staged tarballs
+# (tps_cleanup), AND remove the transient build-info.json stamped below
+# (C3-R1 M-Roll-Signal / idea-340). Bash traps overwrite per-signal, so a
+# single wrapper covers both. HUB_DIR is set above.
+hub_build_cleanup() {
+  tps_cleanup
+  rm -f "$HUB_DIR/build-info.json"
+}
+trap hub_build_cleanup EXIT INT TERM HUP
 
 swap_workspace_deps_to_tarballs "$HUB_DIR" "${SOVEREIGN_PACKAGES[@]}"
+
+# ── build-info.json — deploy-truth stamp (C3-R1 M-Roll-Signal / idea-340) ─
+#
+# Stamp the image with the exact source it was built from so prod /health
+# can report {gitSha, builtAt} and CI can confirm the new image actually
+# rolled (closes the bug-107/DR-011 silent-deploy class). Generated INTO
+# the hub/ build context — `gcloud builds submit "$REPO_ROOT/hub"` uploads
+# hub/ AS the context (no --build-arg path), hub/Dockerfile COPYs it into
+# the prod stage, hub/src/index.ts reads it at boot. Transient: gitignored
+# + removed by hub_build_cleanup; regenerated every build. gitSha prefers
+# the CI-authoritative GITHUB_SHA (so it equals github.sha for the
+# deploy-hub.yml roll-confirm), falls back to local HEAD.
+BUILD_GIT_SHA="${GITHUB_SHA:-$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
+BUILD_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '{"gitSha":"%s","builtAt":"%s"}\n' "$BUILD_GIT_SHA" "$BUILD_BUILT_AT" > "$HUB_DIR/build-info.json"
+echo "[build-hub] build-info: gitSha=$BUILD_GIT_SHA builtAt=$BUILD_BUILT_AT"
 
 # ── Build via Cloud Build ──────────────────────────────────────────────
 

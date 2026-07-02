@@ -33,7 +33,7 @@ import {
 import {
   readCache,
   cachePathFor,
-} from "../../src/tool-manager/tool-catalog-cache.js";
+} from "../../src/tool-manager/catalog/tool-catalog-cache.js";
 
 function notConnectedAgent(): McpAgentClient {
   return {

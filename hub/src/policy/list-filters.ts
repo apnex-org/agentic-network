@@ -9,6 +9,7 @@
  */
 
 import { z } from "zod";
+import { assertKnownFilterOps, hasImplementedFilterOp } from "../storage-substrate/types.js";
 
 export const DEFAULT_LIST_LIMIT = 100;
 export const MAX_LIST_LIMIT = 500;
@@ -19,6 +20,16 @@ export const LIST_PAGINATION_SCHEMA = {
     .describe(`Cap the result set size (max ${MAX_LIST_LIMIT}, default ${DEFAULT_LIST_LIMIT}).`),
   offset: z.number().int().nonnegative().optional()
     .describe("Skip the first N entries for pagination (default 0)."),
+};
+
+/** Compact-projection flag — spread into a `list_*` registration whose handler maps
+ *  each item through a per-entity compact projection. bug-196: fat list payloads pushed
+ *  agents to many per-item get_* calls (steve surveying the ledger), overrunning the
+ *  concurrency=1 proxy = the 2026-06-28 429 storm. Compact = the scannable bulk-survey
+ *  shape; full objects remain available (omit/false). */
+export const LIST_COMPACT_SCHEMA = {
+  compact: z.boolean().optional()
+    .describe("Return a COMPACT scannable projection per item (id + key fields; OMITS long-text bodies — description/text/details/fixRevision). Use for bulk ledger surveys to avoid per-item get_* calls. Full objects when omitted/false."),
 };
 
 /** Label-match-all filter — use on entities with `labels: Record<string, string>`. */
@@ -32,6 +43,46 @@ export const LIST_TAGS_SCHEMA = {
   tags: z.array(z.string()).optional()
     .describe("Match-any tag filter: only entries whose tags include at least one of the provided tags."),
 };
+
+/** bug-198: some adapters (opencode) serialize an UNSET optional as "" / [] / null
+ *  instead of omitting it. Treat those as UNSET — NOT an exact-empty filter that ANDs
+ *  to zero matches. (The get_bug-overrun root: list_bugs(status=resolved) with severity/
+ *  class/tags unset returned _ois_query_unmatched from opencode but worked from claude.) */
+export function unsetIfEmpty<T>(v: T | undefined | null): T | undefined {
+  if (v === undefined || v === null || (v as unknown) === "") return undefined;
+  if (Array.isArray(v) && v.length === 0) return undefined;
+  return v;
+}
+
+/** Drop empty-string / empty-array / null / undefined values from a filter object
+ *  (bug-198), so an adapter-serialized empty optional inside a `filter` object doesn't
+ *  AND to zero either. */
+export function omitEmptyValues(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (unsetIfEmpty(v) !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/** General additive-tag merge (idea-363 / work-59). Union `addTags` onto an
+ *  existing tag list, preserving order (existing first, then new) and dropping
+ *  duplicates + empty strings. The reusable primitive behind update_idea's
+ *  `addTags` mode — pairs with the update_bug tag-REPLACE-clobber sibling
+ *  (the same clobber footgun: a bare `tags = newTags` wipes prior tags, so an
+ *  additive stamp — e.g. a triage pass adding `audit:value:high` — must
+ *  read-merge-write). Pass a fresh `base` (e.g. an explicit `tags` replacement)
+ *  to union onto that instead of the current set. */
+export function mergeTags(existing: readonly string[] | undefined, addTags: readonly string[] | undefined): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of [...(existing ?? []), ...(addTags ?? [])]) {
+    if (typeof t !== "string" || t === "" || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
 
 export function applyLabelFilter<T extends { labels?: Record<string, string> }>(
   items: T[],
@@ -102,9 +153,11 @@ export function paginate<T>(items: T[], args: Record<string, unknown>): Paginate
  * as string but with a `values` allowlist for additional client-side
  * diagnostics (not enforced by Zod — a typo on an enum value returns
  * empty-match, not a Zod error, which keeps the reject-with-hint
- * surface narrow).
+ * surface narrow). "array" (C1-R2) = a stored array field, queried by
+ * `$contains` array-membership ONLY (the stored array CONTAINS the scalar;
+ * the inverse of $in) — no implicit-equality on an array field.
  */
-export type QueryableFieldType = "string" | "date" | "number" | "enum";
+export type QueryableFieldType = "string" | "date" | "number" | "enum" | "array";
 
 export interface QueryableField {
   type: QueryableFieldType;
@@ -160,6 +213,14 @@ function fieldFilterSchema(spec: QueryableField): z.ZodTypeAny {
       }).strict(),
     ]);
   }
+  if (spec.type === "array") {
+    // C1-R2: array-membership ONLY — `{$contains: scalar}` (the stored array
+    // CONTAINS the scalar). No implicit-equality form: an array field is never
+    // compared by whole-value equality at the filter surface.
+    return z.object({
+      $contains: z.union([z.string(), z.number(), z.boolean()]),
+    }).strict();
+  }
   // "string" and "enum": implicit eq or $in only (no range semantics)
   return z.union([
     z.string(),
@@ -209,6 +270,15 @@ export function applyQueryFilter<T>(
 ): T[] {
   const fields = Object.keys(filter);
   if (fields.length === 0) return items;
+  // C1-R2 (audit-4054): FAIL-LOUD before matching — an operator the zod accepted
+  // but matchField doesn't implement must THROW, never silently match every item
+  // (the silent-no-op class, tele-4). Kills the class, not just this instance.
+  for (const name of fields) {
+    const pred = filter[name];
+    if (pred !== null && typeof pred === "object" && !Array.isArray(pred)) {
+      assertKnownFilterOps(pred as Record<string, unknown>, name);
+    }
+  }
   return items.filter((item) =>
     fields.every((name) => matchField(item, filter[name], accessors[name])),
   );
@@ -225,8 +295,20 @@ function matchField<T>(
     return value === predicate;
   }
   const p = predicate as Record<string, unknown>;
+  // FAIL-CLOSED backstop (audit-4070 / C1-R2-FORBIDDEN-FALLTHROUGH): a predicate
+  // with NO implemented operator (a forbidden-only op like $regex that bypassed
+  // Zod, or an empty {}) is UNEVALUABLE → match NOTHING, never match-everything
+  // (the prior `return true` tail was the fail-OPEN hole). Zod/MCP is the primary
+  // rejection; genuinely-unknown ops still THROW via assertKnownFilterOps in
+  // applyQueryFilter (runs before this).
+  if (!hasImplementedFilterOp(p)) return false;
   if ("$in" in p && Array.isArray(p.$in)) {
     if (!(p.$in as unknown[]).includes(value)) return false;
+  }
+  // C1-R2: $contains = TYPED array-membership — the stored array `value` CONTAINS
+  // the scalar (SameValueZero; [3] does NOT match "3"). Parity with JSONB `@>`.
+  if ("$contains" in p) {
+    if (!Array.isArray(value) || !(value as unknown[]).includes(p.$contains)) return false;
   }
   if ("$gt" in p) {
     if (!(comparable(value) && comparable(p.$gt) && (value as any) > (p.$gt as any))) return false;

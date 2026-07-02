@@ -883,12 +883,6 @@ const THREAD_FILTER_SCHEMA = buildQueryFilterSchema(THREAD_FILTERABLE_FIELDS);
 const THREAD_SORT_SCHEMA = buildQuerySortSchema(THREAD_SORTABLE_FIELDS);
 
 async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  let threads = await ctx.stores.thread.listThreads();
-  const totalPreFilter = threads.length;
-
-  // Legacy label match-all filter (pre-QueryShape; preserved).
-  threads = applyLabelFilter(threads, args.labels as Record<string, string> | undefined);
-
   // Backwards-compat: legacy scalar `status` arg subsumed by the new
   // `filter.status` field. filter.status wins when both are present.
   const legacyStatus = typeof args.status === "string" ? args.status : undefined;
@@ -898,6 +892,27 @@ async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): 
     effectiveFilter.status = legacyStatus;
   }
   const hasFilter = Object.keys(effectiveFilter).length > 0;
+
+  // mission-93 bug-170: push simple-equality DISCOVERY predicates
+  // (recipientAgentId / currentTurnAgentId) to the SUBSTRATE so a directed-thread
+  // lookup matches across ALL threads — not just the arbitrary, unordered
+  // LIST_PREFETCH_CAP (500) window the client-side filter sees, which excludes
+  // the newest threads (incl verifier-directed ones → the bug). Only plain string
+  // equality is pushed; richer operators ($in/$gt/…) stay client-side below.
+  const substratePush: Record<string, string> = {};
+  for (const k of ["recipientAgentId", "currentTurnAgentId"] as const) {
+    const v = effectiveFilter[k];
+    if (typeof v === "string") substratePush[k] = v;
+  }
+
+  let threads = await ctx.stores.thread.listThreads(
+    undefined,
+    Object.keys(substratePush).length > 0 ? substratePush : undefined,
+  );
+  const totalPreFilter = threads.length;
+
+  // Legacy label match-all filter (pre-QueryShape; preserved).
+  threads = applyLabelFilter(threads, args.labels as Record<string, string> | undefined);
 
   if (hasFilter) {
     threads = applyQueryFilter(threads, effectiveFilter, THREAD_ACCESSORS);
@@ -1098,7 +1113,11 @@ async function leaveThread(args: Record<string, unknown>, ctx: IPolicyContext): 
       leaverAgentId,
       reason: reason ?? "(no reason provided)",
       retractedActionCount: updated.convergenceActions.filter((a) => a.status === "retracted" && a.proposer.agentId === leaverAgentId).length,
-    }, { agentIds: remainingParticipantIds, matchLabels: updated.labels });
+      // bug-61: pinpoint dispatch to explicit participants — NO matchLabels.
+      // A named recipient must not be label-gated; a cross-tenant participant
+      // would otherwise be silently dropped (the agentId IS the addressing —
+      // mirrors the bug-18 unicast precedent at ~:259).
+    }, { agentIds: remainingParticipantIds });
   }
 
   await ctx.stores.audit.logEntry(
@@ -1156,7 +1175,6 @@ async function handleThreadConvergedWithAction(
     console.error(`[ThreadPolicy] Cascade aborted: thread ${threadId} not found post-convergence`);
     return;
   }
-  const inheritedLabels = sourceThread.labels ?? (payload.labels as Record<string, string> | undefined) ?? {};
   // Include the thread's negotiated summary in audit details — Director
   // notification-A digest surfaces hub/architect audit entries and this
   // gives the human reader the actors' narrative without needing to
@@ -1272,7 +1290,9 @@ async function handleThreadConvergedWithAction(
     warning: cascadeResult.anyFailure,
     threadTerminal: cascadeResult.anyFailure ? "cascade_failed" : "closed",
     report: cascadeResult.report,
-  }, { agentIds: cascadeParticipantIds, matchLabels: inheritedLabels });
+    // bug-61: pinpoint dispatch to explicit participants — NO matchLabels
+    // (named recipients must not be label-gated; bug-18 precedent at ~:259).
+  }, { agentIds: cascadeParticipantIds });
 
   console.log(
     `[ThreadPolicy] Cascade finalized for ${threadId}: ${cascadeResult.executedCount}/${actions.length} executed, ${cascadeResult.failedCount} failed, ${cascadeResult.skippedCount} skipped`,

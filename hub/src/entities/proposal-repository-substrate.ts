@@ -115,12 +115,12 @@ export class ProposalRepositorySubstrate implements IProposalStore {
       limit: 500,
     });
     // mission-90 W8: decode envelope→flat (idea-327) at the read boundary.
-    return items.map((p) => decodeEnvelopeToFlat(p));
+    return items.map((p) => decodeEnvelopeToFlat(p, "Proposal"));
   }
 
   async getProposal(proposalId: string): Promise<Proposal | null> {
     const p = await this.substrate.get<Proposal>(KIND, proposalId);
-    return p ? decodeEnvelopeToFlat(p) : null;
+    return p ? decodeEnvelopeToFlat(p, "Proposal") : null;
   }
 
   async reviewProposal(
@@ -155,17 +155,19 @@ export class ProposalRepositorySubstrate implements IProposalStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Proposal | null> {
-    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). The legacy
-    // top-level cascade-key fallback is retired (W6 proved 0 bare rows live).
+    // C3-R4b (dual-path collapse): flat cascade key; substrate translates via
+    // renameMap (sourceThreadId→metadata.sourceThreadId, sourceActionId→
+    // metadata.sourceActionId) — renameMap is the single field-path authority.
+    // (mission-90 W8 already retired the legacy bare-row fallback: 0 bare rows.)
     const envelopeResult = await this.substrate.list<Proposal>(KIND, {
       filter: {
-        "metadata.sourceThreadId": key.sourceThreadId,
-        "metadata.sourceActionId": key.sourceActionId,
+        sourceThreadId: key.sourceThreadId,
+        sourceActionId: key.sourceActionId,
       },
       limit: 1,
     });
     return envelopeResult.items[0]
-      ? decodeEnvelopeToFlat(envelopeResult.items[0])
+      ? decodeEnvelopeToFlat(envelopeResult.items[0], "Proposal")
       : null;
   }
 
@@ -192,7 +194,7 @@ export class ProposalRepositorySubstrate implements IProposalStore {
       if (!existing) return false;
       let next: Proposal;
       try {
-        next = transform(decodeEnvelopeToFlat(existing.entity)); // mission-90 W8: flat CAS
+        next = transform(decodeEnvelopeToFlat(existing.entity, "Proposal")); // mission-90 W8: flat CAS
       } catch (err) {
         if (err instanceof TransitionRejected) return false;
         throw err;

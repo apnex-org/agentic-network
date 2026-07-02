@@ -9,6 +9,8 @@
     "adapters/*"
   ],
   "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:packages": "npm run build --workspace=@apnex/cognitive-layer --workspace=@apnex/message-router --workspace=@apnex/network-adapter",
     "version-rewrite:check": "node scripts/version-rewrite.js --check",
     "version-rewrite:apply": "node scripts/version-rewrite.js",
     "version-rewrite:revert": "node scripts/version-rewrite.js --revert",

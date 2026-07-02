@@ -1,8 +1,8 @@
 ---
 title: Network Adapter Architecture — L4/L7 Split
 status: canonical reference
-version: "@apnex/network-adapter@2.0.0"
-updated: 2026-04-16
+version: "@apnex/network-adapter@0.1.4"
+updated: 2026-07-01
 ---
 
 # Network Adapter Architecture
@@ -30,10 +30,10 @@ These are the load-bearing properties the adapter must hold, anchored in concret
    - *Canonical scars*: SSE partition behind Cloud Run's proxy (outbound keepalive succeeds while inbound is dead — fixed by making liveness prove itself via inbound POSTs, ADR-007); displacement on plugin restart (fixed by epoch rebinding on `registerAgent`); shared-token collisions between engineers (fixed by fingerprint-derived `engineerId`); zombie sessions that pass keepalive but can't receive targeted push (fixed by session reaper + `markAgentOffline` on cleanup); GCS OCC contention on concurrent registrations (fixed by `ifGenerationMatch` + bounded retry + thrashing circuit breaker).
 
 4. **Authoritative.** Every entity has exactly one canonical source of truth. No dual-store projections, no legacy-namespace mirroring, no "this field lives in two places and we reconcile on read". When an entity has dual namespaces, drift and race conditions are mathematically guaranteed over time.
-   - *Canonical scar*: `ConnectedEngineer` (legacy `engineers/*.json`) coexisted with the M18 `agents/*.json` store. `getStatusSummary` read the legacy namespace; M18 `registerAgent` wrote the new one. Operators saw 7 connected zombies that didn't exist, the live plugin session missing from status, and `clientMetadata`/`sessionEpoch`/`globalInstanceId` absent from the projection — three distinct symptoms, all one root cause. Fixed by purging `ConnectedEngineer` entirely and projecting `get_engineer_status` from `listAgents()`. State is written once, to one place, and read from that same place.
+   - *Canonical scar*: `ConnectedEngineer` (legacy `engineers/*.json`) coexisted with the M18 `agents/*.json` store. `getStatusSummary` read the legacy namespace; M18 `registerAgent` wrote the new one. Operators saw 7 connected zombies that didn't exist, the live plugin session missing from status, and `clientMetadata`/`sessionEpoch`/`globalInstanceId` absent from the projection — three distinct symptoms, all one root cause. Fixed by purging `ConnectedEngineer` entirely and projecting `get_agents` from `listAgents()`. State is written once, to one place, and read from that same place.
 
 5. **Verifiable.** The adapter's current state must be inspectable from outside without reading session transcripts or SSH-ing into the process. Operators and the Architect need to answer "which engineer is on which model, which build, which epoch, how fresh, what SSE state" from a single tool call. Observability is a distinct architectural requirement, not a byproduct of resilience — a system can be perfectly resilient and still completely opaque.
-   - *Canonical scar*: before the M18 projection rewrite, the `ConnectedEngineer` shape lacked `clientMetadata`, `proxyName`, `sessionEpoch`, and `globalInstanceId` entirely. A full Architect ↔ Engineer debugging session was needed on 2026-04-14 to establish identity facts that should have been one tool call away. The post-rewrite projection surfaces the full Agent entity (engineerId, sessionId, status, sessionEpoch, clientMetadata, advisoryTags, firstSeenAt, lastSeenAt) in the `get_engineer_status` response.
+   - *Canonical scar*: before the M18 projection rewrite, the `ConnectedEngineer` shape lacked `clientMetadata`, `proxyName`, `sessionEpoch`, and `globalInstanceId` entirely. A full Architect ↔ Engineer debugging session was needed on 2026-04-14 to establish identity facts that should have been one tool call away. The post-rewrite projection surfaces the full Agent entity (engineerId, sessionId, status, sessionEpoch, clientMetadata, advisoryTags, firstSeenAt, lastSeenAt) in the `get_agents` response.
 
 6. **Efficient.** Hot paths (notification delivery, session heartbeat, tool invocation) must scale to single-connection-at-max throughput on a Cloud Run `maxScale: 1` instance without introducing quadratic behavior or speculative fan-out. Efficiency is last because it is the most tempting premature optimization — and because the first five goals constrain the solution space enough that efficiency usually falls out of correctness done right.
    - *Canonical scar*: `touchAgent` is rate-limited to one persisted GCS write per 30 seconds per agent because writing on every inbound POST would thrash GCS at steady-state tool-call volume, burn quota, and amplify OCC contention into thrashing-circuit-breaker territory. The rate-limit is an in-memory bookkeeping step (`lastTouchAt` map) that collapses concurrent heartbeats into a single write — the simplest intervention that preserves correctness.
@@ -121,38 +121,84 @@ packages/network-adapter/
 ├── src/
 │   ├── index.ts               — public surface re-exports
 │   │
-│   ├── transport.ts           — ITransport, TransportConfig, WireEvent types  (L4)
-│   ├── mcp-transport.ts       — McpTransport implementation                   (L4)
+│   ├── wire/                  — L4 transport
+│   │   ├── transport.ts            — ITransport, TransportConfig, WireEvent types
+│   │   └── mcp-transport.ts        — McpTransport implementation
 │   │
-│   ├── agent-client.ts        — IAgentClient, AgentClientCallbacks,
-│   │                            SessionState, SessionReconnectReason types    (L7)
-│   ├── mcp-agent-client.ts    — McpAgentClient implementation                 (L7)
+│   ├── kernel/                — L7 session + identity
+│   │   ├── agent-client.ts         — IAgentClient, AgentClientCallbacks, SessionState types
+│   │   ├── mcp-agent-client.ts     — McpAgentClient implementation
+│   │   ├── handshake.ts            — buildHandshakePayload, performHandshake, FATAL_CODES
+│   │   ├── state-sync.ts           — performStateSync (get_task + get_pending_actions)
+│   │   ├── event-router.ts         — classifyEvent, parseHubEvent, createDedupFilter
+│   │   ├── adapter-config.ts       — adapter configuration resolution
+│   │   ├── build-identity.ts       — globalInstanceId / build-identity bootstrap
+│   │   ├── poll-backstop.ts        — SSE-gap poll backstop
+│   │   └── session-claim.ts        — explicit claim_session orchestration
 │   │
-│   ├── handshake.ts           — buildHandshakePayload, performHandshake,
-│   │                            parseHandshakeError, FATAL_CODES              (L7 helper)
-│   ├── state-sync.ts          — performStateSync (get_task + get_pending_actions)
-│   ├── event-router.ts        — classifyEvent, parseHubEvent, createDedupFilter
-│   ├── instance.ts            — loadOrCreateGlobalInstanceId (identity bootstrap)
-│   ├── logger.ts              — ILogger, LegacyStringLogger bridging
+│   ├── tool-manager/         — tool CATALOG + tool DISPATCH (internal sovereign module)
+│   │   ├── contracts.ts                   — agnostic surface: IToolDispatchAgent,
+│   │   │                                    ToolDescriptor, ToolDispatchResult, IToolManager
+│   │   ├── dispatch/                      — the per-call DISPATCH authority
+│   │   │   ├── dispatch.ts                  — runToolDispatch (signal-FSM wrap,
+│   │   │   │                                  queueItemId inject, idle-gate, lease observe,
+│   │   │   │                                  error normalize) — transport-neutral
+│   │   │   └── tool-call-policy.ts          — pure OIS policy: TOOL_CALL_SIGNAL_SKIP,
+│   │   │                                      pendingKey, injectQueueItemId (§8 debt, isolated)
+│   │   ├── catalog/                       — tool-surface lifecycle
+│   │   │   ├── tool-catalog-cache.ts        — cached tool catalog
+│   │   │   ├── tool-surface-reconciler.ts   — live tool-surface refresh
+│   │   │   └── health-revision.ts           — /health toolSurfaceRevision fetcher
+│   │   ├── work-protocol/                 — idea-353 wake/stall primitives
+│   │   │   ├── work-lease-tracker.ts        — work-lease bookkeeping
+│   │   │   └── claimable-digest-tracker.ts  — claimable-work digest tracking
+│   │   └── orchestrator/                  — the binding-assembly shell
+│   │       └── dispatcher.ts                — createSharedDispatcher: MCP Server
+│   │                                          factory + pollBackstop + wake/stall
+│   │                                          reconcile + notification routing
 │   │
-│   ├── prompt-format.ts       — engineer-side prompt text helpers (shim-facing)
-│   └── notification-log.ts    — engineer-side notification append helper (shim-facing)
+│   #  M-Tool-Manager decomposition (2026-07-01): the CallTool handler BODY was
+│   #  extracted to dispatch/dispatch.ts (runToolDispatch) so a NATIVE host
+│   #  binding (pi) shares the SAME per-call behavior as the MCP CallTool handler
+│   #  without an MCP server. "One dispatch authority; many last-mile bindings."
+│   #  See docs/designs/m-sovereign-tool-manager-design.md.
+│
+│   ├── observability.ts      — adapter observability surface
+│   ├── hub-error.ts          — HubError taxonomy
+│   ├── file-logger.ts        — FileBackedLogger
+│   ├── logger.ts             — ILogger, LegacyStringLogger bridging
+│   ├── prompt-format.ts      — engineer-side prompt text helpers (shim-facing)
+│   └── notification-log.ts   — engineer-side notification append helper (shim-facing)
 │
 └── test/
-    ├── unit/
-    │   ├── handshake.test.ts        — 19 tests
-    │   ├── instance.test.ts         —  6 tests
-    │   ├── deferred-backlog.test.ts — 19 tests
-    │   └── reconnect-backoff.test.ts —  6 tests (G1 — backoff curve)
-    └── integration/
-        ├── mcp-transport.test.ts         — 7 tests  (L4 surface, real wire)
-        ├── mcp-agent-client.test.ts      — 6 tests  (L7 surface + FSM, loopback)
-        ├── register-role-payload.test.ts — 1 test   (Invariant #9, loopback)
-        ├── sync-phase-rpcs.test.ts       — 1 test   (Invariant #10, loopback)
-        └── invariant-gaps.test.ts        — 3 tests  (G2/G3/G4, loopback)
+    ├── unit/                         (15 files)
+    │   ├── handshake.test.ts                              — 32 tests
+    │   ├── dispatcher-router-integration.test.ts          — 31 tests
+    │   ├── poll-backstop.test.ts                          — 20 tests
+    │   ├── deferred-backlog.test.ts                       — 19 tests
+    │   ├── prompt-format-mission-63-w3.test.ts            — 17 tests
+    │   ├── host-wiring-assertion.test.ts                  — 10 tests
+    │   ├── dispatcher-tick-drive.test.ts                  —  8 tests
+    │   ├── claimable-digest-tracker.test.ts               —  7 tests
+    │   ├── list-tools-cache-fallback.test.ts              —  7 tests
+    │   ├── work-lease-tracker.test.ts                     —  7 tests
+    │   ├── prompt-format-message-arrived.test.ts          —  6 tests
+    │   ├── prompt-format-thread-message-truncation.test.ts —  6 tests
+    │   ├── reconnect-backoff.test.ts                      —  6 tests (G1 — backoff curve)
+    │   ├── dispatcher-idle-gate.test.ts                   —  5 tests
+    │   └── prompt-format-idea-353.test.ts                 —  5 tests
+    └── integration/                  (8 files)
+        ├── threads-2-smoke.test.ts          — 11 tests
+        ├── cognitive-integration.test.ts    —  7 tests
+        ├── mcp-transport.test.ts            —  7 tests  (L4 surface, real wire)
+        ├── mcp-agent-client.test.ts         —  6 tests  (L7 surface + FSM, loopback)
+        ├── label-routing.test.ts            —  5 tests
+        ├── invariant-gaps.test.ts           —  3 tests  (G2/G3/G4, loopback)
+        ├── register-role-payload.test.ts    —  1 test   (Invariant #9, loopback)
+        └── sync-phase-rpcs.test.ts          —  1 test   (Invariant #10, loopback)
 ```
 
-**Total:** 68 tests across 9 files. L4 runs against real `McpTransport` + a loopback-bound `TestHub`; L7 runs against `McpAgentClient` + in-memory `LoopbackTransport`/`LoopbackHub`. See `06-test-specification.md` for the invariant-to-test map.
+**Total:** 227 tests across 23 files. L4 runs against real `McpTransport` + a loopback-bound `TestHub`; L7 runs against `McpAgentClient` + in-memory `LoopbackTransport`/`LoopbackHub`. See `06-test-specification.md` for the invariant-to-test map.
 
 ## 5. L4 — ITransport / McpTransport
 
@@ -377,7 +423,7 @@ const agent = new McpAgentClient(
       proxyName: "@apnex/claude-plugin",
       proxyVersion: "1.2.3",
       transport: "stdio",
-      sdkVersion: "@apnex/network-adapter@2.0.0",
+      sdkVersion: "@apnex/network-adapter@0.1.4",
       getClientInfo: () => ({ name: "Claude Code", version: "..." }),
       onFatalHalt: makeStdioFatalHalt(),
     },
@@ -411,35 +457,131 @@ two-layer split exists specifically so that shims talk to L7 only.
 
 ## 8. Shims today
 
-Three shims consume `@apnex/network-adapter@2.0.0`.
+Four shims consume `@apnex/network-adapter`. Three use the **MCP binding** (host
+is an MCP client → proxy CallTool → `agent.call`); pi uses the **native binding**
+(host has no MCP client → `pi.registerTool().execute` → `runToolDispatch`).
 
-| Shim                                              | Transport host   | Manual sync | Notes                                                                                                 |
-| ------------------------------------------------- | ---------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
-| `adapters/claude-plugin/src/shim.ts` + `dispatcher.ts` | stdio MCP server | no  | Split into `shim.ts` (stdio + config) and `dispatcher.ts` (MCP server + CallTool handler + pendingActionMap). Shipped as `plugin:agent-adapter:proxy`. |
-| `adapters/opencode-plugin/src/shim.ts` + `dispatcher.ts` | Bun.serve proxy  | no   | Split into `shim.ts` (Bun.serve, OpenCode SDK, notification queue) and `dispatcher.ts` (MCP Server factory + fetchHandler + pendingActionMap). Parallels claude-plugin. |
-| `agents/vertex-cloudrun/src/hub-adapter.ts`       | Express (Cloud Run) | **yes**  | Preserves public `HubAdapter` class surface (`onSync`/`completeSync`). Passes `manualSync: true`.     |
+| Shim                                              | Binding  | Transport host   | Manual sync | Notes                                                                                                 |
+| ------------------------------------------------- | -------- | ---------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
+| `adapters/claude-plugin/src/shim.ts` + `dispatcher.ts` | MCP | stdio MCP server | no  | Split into `shim.ts` (stdio + config) and `dispatcher.ts` (MCP server + CallTool handler + pendingActionMap). Shipped as `plugin:agent-adapter:proxy`. |
+| `adapters/opencode-plugin/src/shim.ts` + `dispatcher.ts` | MCP | Bun.serve proxy  | no   | Split into `shim.ts` (Bun.serve, OpenCode SDK, notification queue) and `dispatcher.ts` (MCP Server factory + fetchHandler + pendingActionMap). Parallels claude-plugin. |
+| `adapters/pi-plugin/src/{index,shim,tool-bridge,wake}.ts` | **native** | none (pi extension) | no | **Reference implementation** of the corrected architecture. NO MCP proxy: `tool-bridge.ts` registers Hub tools natively; each `execute` routes through the shared `runToolDispatch`. Facade-clean (imports `@apnex/network-adapter` only). Default role: architect. See `docs/designs/m-pi-plugin-adapter-design.md`. |
+| `agents/vertex-cloudrun/src/hub-adapter.ts`       | MCP | Express (Cloud Run) | **yes**  | Preserves public `HubAdapter` class surface (`onSync`/`completeSync`). Passes `manualSync: true`.     |
+
+> **Facade drift (tracked debt, 2026-07-01):** claude + opencode `package.json`
+> list `@apnex/cognitive-layer` + `@apnex/message-router` as DIRECT deps, and
+> import them directly in `shim.ts` — violating the facade rule (§2: "no adapter
+> behavior in a per-host shim"; a shim depends on `@apnex/network-adapter` ONLY,
+> which re-exports what it needs). pi is facade-clean from day one. Rerouting the
+> two MCP shims through the facade is part of the fold-in mission:
+> `docs/designs/m-claude-opencode-foldin-design.md`.
 
 Each shim does its own host-specific bootstrap (how to discover URL +
 token, how to format toasts, how to persist `globalInstanceId`) and
 funnels everything else through `McpAgentClient`.
 
+### 8.1 SHIM-BOUNDARY note — tool-surface reconciler `readServedRevision` (idea-355 SLICE-1T)
+
+Both the claude and opencode shims drive the **same** kernel
+`ToolSurfaceReconciler` (bug-180 / FR-21) off the same two triggers — L1
+`identityReady` (seed) + L2 the pollBackstop heartbeat tick — and share the same
+hoisted `/health` revision fetcher (`makeFetchLiveToolSurfaceRevision`). They
+differ in exactly one injected dependency, and the difference is a **conscious,
+documented shim divergence — not drift**:
+
+| Shim     | `readServedRevision`                                  | Why                                                                                                 |
+| -------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| claude   | `() => readCache(WORK_DIR)?.toolSurfaceRevision`      | claude persists an on-disk **tool-catalog cache**; the pre-identity probe serves it, so the served revision is a real baseline that can be stale vs live. |
+| opencode | `() => null`                                          | opencode has **no** persistent tool-catalog cache (its MCP sessions are per-Initialize, Bun.serve, in-memory). There is no served-revision to baseline against. |
+
+Consequence of `readServedRevision = () => null` for opencode: the first
+reconcile (the L1 `identityReady` seed pass) baselines `appliedRevision` from
+**live** and emits **nothing** — so there is no spurious first `list_changed`.
+A redeploy that changes the surface mid-session is then caught by the **L2
+heartbeat** backstop (applied→live drift within one heartbeat interval), which
+fans `sendToolListChanged()` over every active proxy server + raises the
+opencode toast. claude additionally catches the *stale-cache-vs-live* delta at
+seed time precisely because it has a cache to compare against; opencode has no
+such surface to go stale, so it loses nothing by seeding from live.
+
+This single-dependency divergence is the entire shim difference; the reconcile
+decision, the fetcher, and both trigger points are shared kernel code.
+
 ## 9. Adding a new shim
 
-The checklist:
+First decide the **binding kind**, because it dictates the tool path:
 
-1. **Pin the tarball.** Add `"@apnex/network-adapter": "file:./ois-network-adapter-2.0.0.tgz"` (or newer) to your `package.json`. Don't float it.
-2. **Bootstrap identity.** Call `loadOrCreateGlobalInstanceId()` once per process with a host-appropriate path (e.g. `~/.ois/<host>-instance.json`). Persist the result across restarts.
-3. **Build callbacks.** Implement `AgentClientCallbacks` — only the handlers you actually need. Shims that don't prompt LLMs can omit `onActionableEvent`.
-4. **Construct.** `new McpAgentClient({role, handshake, logger}, {transportConfig})`. Pass the full enriched handshake unless you genuinely don't care about the M18 identity (Architect is the only such case, and it's grandfathered).
-5. **Start / stop.** `await agent.start()` on boot, `await agent.stop()` on shutdown. Don't swallow exceptions from `start()` — fatal handshake codes need to halt the process.
-6. **Tool surface.** If the host needs full MCP tool schemas, use `(agent.getTransport() as McpTransport).listToolsRaw()`. If not, `agent.listMethods()` returns the flat string list and is cheaper.
-7. **Don't instantiate `McpTransport` yourself.** If you find yourself wanting to, you're probably pushing session concerns into the wire — stop and re-read § 2.2.
+- **MCP binding** — the host is (or embeds) an MCP client and consumes tools over
+  MCP (claude stdio, opencode Bun.serve, vertex Express). The shim stands up an
+  MCP `Server` via `dispatcher.createMcpServer()`; tool calls flow host → MCP
+  CallTool handler → `runToolDispatch` → `agent.call`. You get the per-call
+  behavior for free because it lives in the handler body.
+- **native binding** — the host has NO MCP client and registers tools through its
+  own API (pi's `pi.registerTool`). There is NO MCP server. The shim renders the
+  catalog into the host's tool shape and each `execute` calls `runToolDispatch`
+  DIRECTLY. **This is the path where you must not re-implement dispatch behavior**
+  — route through `runToolDispatch` or you inherit M18 drift (see §9.2).
+
+### 9.1 Shared checklist (both bindings)
+
+1. **Depend on the facade ONLY.** `"@apnex/network-adapter": "*"` (workspace) or a
+   pinned tarball. Do NOT add `@apnex/cognitive-layer` or `@apnex/message-router`
+   as direct deps — the facade re-exports what a shim needs (`CognitivePipeline`,
+   `NotificationCoalescer`, all prompt/notification helpers). A shim importing
+   anything else in the `@apnex/*` graph is facade drift (§2; §8 note).
+2. **Bootstrap identity.** `readRequiredAgentName()` (name IS identity, idea-251)
+   + `loadOrCreateGlobalInstanceId()` with a host path (`~/.ois/<host>-instance.json`).
+3. **Load config.** `loadConfig({ directory, defaults, warn, readAutoPrompt })`.
+   Set `config.role` (default per host; pi defaults `architect`).
+4. **Construct the dispatcher.** `createSharedDispatcher({...})` — supply
+   `getAgent`, `notificationHooks` (your wake render), and `pollBackstop` (role
+   thunk + `onHeartbeatTick` → `reconciler.reconcile("heartbeat")`).
+5. **Construct the agent.** `new McpAgentClient({role, handshake, logger}, {transportConfig, cognitive})`.
+   Pass the full enriched M18 handshake (`proxyName`, `transport` tag, `sdkVersion`,
+   build-identity, `getClientInfo`). Wire `agent.setCallbacks(dispatcher.callbacks)`.
+6. **Start / stop.** `await agent.start()` on session start; on shutdown
+   `pollBackstop.stop()` + `await agent.stop()`. Don't swallow `start()` fatals.
+7. **Wire the tool-surface reconciler.** `ToolSurfaceReconciler` off the two
+   triggers (L1 identityReady seed, L2 heartbeat). `readServedRevision` is the
+   documented per-shim divergence (§8.1): `() => null` if no persistent cache.
+8. **assertHostWiringComplete(dispatcher, log)** after `start()` (bug-53 gate).
+9. **Don't instantiate `McpTransport` yourself** (§2.2).
+
+### 9.2 MCP binding — additional steps
+
+- Stand up the host's MCP transport; obtain a `Server` per session via
+  `dispatcher.createMcpServer()`.
+- Tool schemas: `agent.listTools()` returns the tier-filtered, cognitively-
+  enriched catalog the LLM should see. The CallTool handler already routes
+  through `runToolDispatch` — you write NO dispatch logic.
+
+### 9.3 Native binding — additional steps (pi is the reference)
+
+- **Facade-export needed:** `runToolDispatch`, `ToolDispatchContext`.
+- **Build a `ToolDispatchContext`** from the dispatcher's shared state:
+  `pendingActionMap` + `workLeases` (both exposed on `SharedDispatcher`), a `log`,
+  and `getAgent`. Native tool calls bypass the MCP handler, so:
+  - supply `createSharedDispatcher({ externalIdle: () => host.isIdle() })` — the
+    wake/stall reconcile gates on the HOST's native idle, not the (always-zero)
+    internal `activeCallCount`.
+  - supply `sharedWorkLeases` OR build the context's `workLeases` from
+    `dispatcher.workLeases`, so lease observations reach the reconcile.
+  - `onCallStart/onCallEnd` are typically no-ops (native idle is authoritative).
+- **Render the catalog** into the host tool shape (pi: JSON-Schema → typebox via
+  `Type.Unsafe`, adopting the Hub schema verbatim). This render is SHIM-side; do
+  not add a host-flavored type to core (Speculative Surface — A3). Promote to a
+  neutral core helper only when a 2nd native host needs it.
+- **`execute` MUST call `runToolDispatch(ctx, name, args)`** and render its result
+  into the host result shape. Never re-implement signal-FSM / queueItemId /
+  lease-observe in `execute` — that is the exact M18 drift the extraction prevents
+  (proven by a test: a native `execute` emits `signal_working_started/completed`
+  with zero shim code).
 
 ## 10. Versioning
 
 | Component                         | Version                    |
 | --------------------------------- | -------------------------- |
-| `@apnex/network-adapter` (package)  | 2.0.0                      |
+| `@apnex/network-adapter` (package)  | 0.1.4                      |
 | Tarball consumers                 | pinned via `file:` path    |
 | Phase 7 refactor                  | complete (2026-04-15)       |
 | Phase 8 doc / test cleanup        | in progress                 |

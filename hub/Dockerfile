@@ -36,6 +36,13 @@ RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund
 
 COPY --from=builder /app/dist ./dist
 
+# C3-R1 M-Roll-Signal (idea-340) — deploy-truth stamp generated into the
+# build context by scripts/local/build-hub.sh; read at boot by dist/index.js
+# (../build-info.json → /app/build-info.json) and reported on /health so CI
+# can confirm the image rolled. build-hub.sh is the only supported build
+# path and always generates it (gitignored + transient).
+COPY build-info.json ./
+
 # Cloud Run uses PORT env var (defaults to 8080)
 ENV PORT=8080
 EXPOSE 8080

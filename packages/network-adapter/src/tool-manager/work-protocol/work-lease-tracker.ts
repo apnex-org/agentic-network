@@ -1,0 +1,159 @@
+/**
+ * work-lease-tracker.ts — idea-353 W2 outbound stall-prompt state.
+ *
+ * The lease-escalation ladder (lease-TTL → sweeper → poison → thrash-quarantine,
+ * C1-R2) has no GENTLE first rung: a held item that stalls goes straight from
+ * "leased" to silently reaped. W2 adds that rung — prompt the holder to
+ * renew / block / abandon BEFORE the sweeper's hard reap. It's notification-
+ * shaping over the EXISTING verbs (renew_lease / block_work / abandon_work), not
+ * a new verb.
+ *
+ * The adapter holds no work-lease state of its own (all WorkItem/lease state is
+ * Hub-side, and there is no "my held work" query). Rather than add a Hub tool or
+ * a second per-tick round-trip, this tracker **observes the agent's own
+ * work-verb tool-call results** as they pass through the dispatcher and
+ * maintains a local map of held leases + their expiry. On the heartbeat tick the
+ * host asks which held leases are approaching expiry.
+ *
+ * Window model: each observe of a claim/renew/start result (re)opens a lease
+ * window `[windowStart=observe-time, expiresAt]` and clears the per-window
+ * prompt latch. A lease is "due" once the tick time crosses `thresholdFraction`
+ * of that window AND is still before `expiresAt` (the whole point is *before*
+ * the reap), and it has not already been prompted this window. A renew resets
+ * the window + latch, so a renewing holder is never re-pestered. Completing /
+ * abandoning / releasing / blocking the item drops it entirely.
+ *
+ * Scope (thin MVP): tracks leases this session observes. A lease claimed in a
+ * prior adapter process (pre-restart) is not tracked — named as deferred; the
+ * common stall (claim → heads-down → near-expiry without renew) is in-session.
+ *
+ * Pure: all parsing is synchronous off the already-unwrapped tool result; the
+ * host owns the tick clock + the emit. Unit-testable without a live Hub (AC2).
+ */
+
+/** The work-verbs whose results open/refresh a tracked lease window. */
+const LEASE_OPEN_VERBS = new Set(["claim_work", "renew_lease", "start_work"]);
+/** The work-verbs whose results retire a held lease (no longer the holder's stall). */
+const LEASE_CLOSE_VERBS = new Set([
+  "complete_work",
+  "abandon_work",
+  "release_work",
+  "block_work",
+]);
+
+/** A renew (or claim) reopens the window + clears the prompt latch; start_work
+ *  only refreshes the known expiry without resetting the window. */
+const WINDOW_RESET_VERBS = new Set(["claim_work", "renew_lease"]);
+
+interface TrackedLease {
+  workId: string;
+  /** Epoch ms the current lease window opened (claim/renew observe-time). */
+  windowStartMs: number;
+  /** Epoch ms the lease expires (Hub-authored `lease.expiresAt`). */
+  expiresAtMs: number;
+  /** Per-window latch — prompt at most once until a renew reopens the window. */
+  prompted: boolean;
+}
+
+export interface StallPrompt {
+  workId: string;
+  /** Ms remaining until the Hub sweeper may reap the lease. */
+  msUntilExpiry: number;
+}
+
+/** Pull `{ workId, expiresAtMs }` out of an already-unwrapped work-verb result.
+ *  Tolerant: returns null on any shape that isn't a lease-bearing workItem. */
+function parseLease(
+  result: unknown,
+): { workId: string; expiresAtMs: number } | null {
+  const wi = (result as { workItem?: unknown } | null)?.workItem as
+    | { id?: unknown; lease?: { expiresAt?: unknown } | null }
+    | undefined;
+  if (!wi || typeof wi.id !== "string") return null;
+  const expiresAt = wi.lease?.expiresAt;
+  if (typeof expiresAt !== "string") return null;
+  const expiresAtMs = Date.parse(expiresAt);
+  if (Number.isNaN(expiresAtMs)) return null;
+  return { workId: wi.id, expiresAtMs };
+}
+
+/** Pull a workId for a CLOSE verb — prefer the result workItem, fall back to args. */
+function parseWorkId(
+  result: unknown,
+  args: Record<string, unknown> | undefined,
+): string | null {
+  const id = (result as { workItem?: { id?: unknown } } | null)?.workItem?.id;
+  if (typeof id === "string") return id;
+  if (args && typeof args.workId === "string") return args.workId;
+  return null;
+}
+
+export class WorkLeaseTracker {
+  private leases = new Map<string, TrackedLease>();
+
+  /**
+   * Observe one of THIS agent's work-verb tool-call results as it passes
+   * through the dispatcher. Best-effort: an unrecognized verb or an
+   * unparseable result is a no-op.
+   */
+  observe(
+    method: string,
+    args: Record<string, unknown> | undefined,
+    result: unknown,
+    nowMs: number,
+  ): void {
+    if (LEASE_CLOSE_VERBS.has(method)) {
+      const workId = parseWorkId(result, args);
+      if (workId) this.leases.delete(workId);
+      return;
+    }
+    if (!LEASE_OPEN_VERBS.has(method)) return;
+    const parsed = parseLease(result);
+    if (!parsed) return;
+    const existing = this.leases.get(parsed.workId);
+    const resetWindow = WINDOW_RESET_VERBS.has(method) || !existing;
+    this.leases.set(parsed.workId, {
+      workId: parsed.workId,
+      // claim/renew reopen the window at observe-time; start_work keeps the
+      // existing window start (it does not extend the lease).
+      windowStartMs: resetWindow ? nowMs : existing!.windowStartMs,
+      expiresAtMs: parsed.expiresAtMs,
+      prompted: resetWindow ? false : existing!.prompted,
+    });
+  }
+
+  /**
+   * Held leases that have crossed `thresholdFraction` of their current window
+   * but not yet expired, and have not been prompted this window. The host
+   * emits a renew/block/abandon stall-prompt for each (then marks them).
+   *
+   * @param thresholdFraction window fraction at which to prompt (~0.5–0.75;
+   *   default 0.6 = 60% of the lease life elapsed).
+   */
+  dueForStallPrompt(nowMs: number, thresholdFraction = 0.6): StallPrompt[] {
+    const due: StallPrompt[] = [];
+    for (const lease of this.leases.values()) {
+      if (lease.prompted) continue;
+      const windowLen = lease.expiresAtMs - lease.windowStartMs;
+      if (windowLen <= 0) continue;
+      const elapsed = nowMs - lease.windowStartMs;
+      // Prompt window: [thresholdFraction*windowLen, windowLen) — past the
+      // threshold but BEFORE expiry (the gentle rung is "before the reap").
+      if (elapsed >= thresholdFraction * windowLen && nowMs < lease.expiresAtMs) {
+        due.push({ workId: lease.workId, msUntilExpiry: lease.expiresAtMs - nowMs });
+      }
+    }
+    return due;
+  }
+
+  /** Latch a lease as prompted for its current window (call after emitting). */
+  markPrompted(workId: string): void {
+    const lease = this.leases.get(workId);
+    if (lease) lease.prompted = true;
+  }
+
+  /** Diagnostic/test accessor: number of currently-held tracked leases. */
+  size(): number {
+    return this.leases.size;
+  }
+}

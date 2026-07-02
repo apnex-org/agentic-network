@@ -42,7 +42,7 @@ export interface TestPolicyContext extends IPolicyContext {
   substrate: HubStorageSubstrate;
 }
 
-export function createTestContext(overrides?: Partial<TestPolicyContext>): TestPolicyContext {
+export function createTestContext(overrides?: Partial<TestPolicyContext>, opts?: { skipRoleRegister?: boolean }): TestPolicyContext {
   const emittedEvents: EmittedEvent[] = [];
   const dispatchedEvents: DispatchedEvent[] = [];
 
@@ -76,8 +76,25 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     message: new MessageRepositorySubstrate(substrate),
   };
 
+  // ADR-016: distinct per-call sessionId so M18 handshakes derive unique globalInstanceIds
+  // and each actor ends up with its own Agent record. Previously every context shared
+  // "test-session-001" which caused fingerprint collisions on multi-actor test setups.
+  const sessionId = overrides?.sessionId ?? `test-session-${randomUUID().slice(0, 8)}`;
+  const role = overrides?.role ?? "architect";
+  // bug-175: register the session's role so the RBAC membership-gate (router.ts) admits
+  // role-gated tools — mimics the adapter handshake's register_role (pre-bug-175 the
+  // unknown-bypass made this implicit; closing the fail-open requires the realistic setup).
+  // Engineer-tool tests pass role:"engineer". Tests supplying their own `stores` register
+  // their own roles. Idempotent across the per-test contexts sharing one registry.
+  const effectiveStores = overrides?.stores ?? stores;
+  // opts.skipRoleRegister: leave the session UNREGISTERED (getRole→"unknown") — for tests
+  // that exercise the resolveCreatedBy ctx.role-fallback or the genuinely-unknown-caller path.
+  if (!opts?.skipRoleRegister) {
+    effectiveStores.engineerRegistry.setSessionRole(sessionId, role as Parameters<typeof effectiveStores.engineerRegistry.setSessionRole>[1]);
+  }
+
   return {
-    stores,
+    stores: effectiveStores,
     substrate,
     emit: async (event, data, targetRoles) => {
       emittedEvents.push({ event, data, targetRoles });
@@ -85,13 +102,9 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>): TestP
     dispatch: async (event, data, selector) => {
       dispatchedEvents.push({ event, data, selector });
     },
-    // ADR-016: distinct per-call sessionId so M18 handshakes derive
-    // unique globalInstanceIds and each actor ends up with its own
-    // Agent record. Previously every context shared "test-session-001"
-    // which caused fingerprint collisions on multi-actor test setups.
-    sessionId: `test-session-${randomUUID().slice(0, 8)}`,
+    sessionId,
     clientIp: "127.0.0.1",
-    role: "architect",
+    role,
     internalEvents: [],
     metrics: createMetricsCounter(),
     emittedEvents,

@@ -1,6 +1,6 @@
 {
   "name": "@apnex/network-adapter",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Universal MCP Network Adapter — L4/L7 transport for OIS agentic network",
   "type": "module",
   "main": "dist/index.js",
@@ -12,7 +12,7 @@
   "scripts": {
     "prebuild": "node ../../scripts/build/write-build-info.js",
     "build": "tsc",
-    "prepack": "node ../../scripts/build/write-build-info.js",
+    "prepack": "node ../../scripts/build/write-build-info.js --assert",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest"

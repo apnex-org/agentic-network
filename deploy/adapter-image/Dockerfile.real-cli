@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1
+# M-Real-CLI-Harness n5 — the real-CLI EMBEDDED harness image (TEST image; NOT the reproducible
+# prod adapter Dockerfile). = the pilot adapter (built from source) + the REAL claude-code CLI +
+# tmux, with the supervisor's child flipped from the shim to the real CLI (under tmux) on the
+# PROVEN plugin path. The @apnex/claude-plugin shim is claude's MCP GRANDCHILD — finally exercising
+# the supervisor->CLI->shim-grandchild sentinel seam. ZERO prod surface — built + run only for the
+# n5 e2e on the VM (local docker-run core-dumps node images, so this builds via Cloud Build).
+#
+# Context = a clean `git archive <SHA>` (tracked-files-only -> dirty-free + cred-free), so the
+# n5-specific files (real-cli-launch.sh / real-cli-bootstrap.cjs / claude-cli-preseed.claude.json /
+# supervisor.mjs) are COPY'd straight from deploy/adapter-image/ in the context.
+ARG NODE_BASE=node:22-bookworm-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4
+
+# ── builder: build the adapter workspaces from source (mirrors the pilot builder, minus the
+#    reproducibility stamp + prune — this is a test image, digest-reproducibility is not its bar) ──
+FROM ${NODE_BASE} AS builder
+ENV CI=1
+WORKDIR /build
+COPY . .
+# Neutralize the workspace prepare-cascade (pilot lesson): repo-event-bridge/storage-provider
+# declare prepare:"npm run build" which npm ci runs out-of-dep-order -> TS2307; neither is in the
+# adapter's dependency closure (we build the adapter packages explicitly + in dep-order below).
+RUN node -e "for (const p of ['packages/repo-event-bridge/package.json','packages/storage-provider/package.json']) { const j=require('./'+p); if (j.scripts) delete j.scripts.prepare; require('fs').writeFileSync(p, JSON.stringify(j,null,2)+'\n'); }"
+RUN npm ci --ignore-scripts --no-audit --no-fund
+RUN npm run build --workspace=@apnex/message-router --if-present \
+ && npm run build --workspace=@apnex/cognitive-layer --if-present \
+ && npm run build --workspace=@apnex/network-adapter --if-present \
+ && npm run build --workspace=@apnex/claude-plugin --if-present
+
+# ── runtime: the built adapter + the REAL claude CLI + tmux + the dialog-free + in-repo
+#    plugin-marketplace bake ─────────────────────────────────────────────────────────────────
+FROM ${NODE_BASE} AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+# Real CLI (PINNED) + tmux (PTY host, n1 mode A) + ca-certs — root layer.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tmux ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm i -g @anthropic-ai/claude-code@2.1.196
+# The built adapter + its resolved deps (workspace symlinks + @modelcontextprotocol/sdk) — the
+# shim claude spawns as its MCP grandchild lives at /app/adapters/claude-plugin/dist/shim.js, and
+# /app/adapters/claude-plugin/.claude-plugin/marketplace.json IS the in-repo 'agentic-network'
+# marketplace the plugin flag resolves against.
+COPY --from=builder /build/package.json /build/package-lock.json ./
+COPY --from=builder /build/node_modules ./node_modules
+COPY --from=builder /build/packages ./packages
+COPY --from=builder /build/adapters ./adapters
+# The PID-1 supervisor + the n5 real-CLI launcher + the dialog-free/marketplace bootstrap. These are
+# staged at the CONTEXT ROOT by build-real-cli-image.sh (the pilot convention) because the shared
+# dockerignore.template excludes the whole `deploy/` subtree from the build context.
+COPY supervisor.mjs                  /app/supervisor.mjs
+COPY real-cli-launch.sh              /app/real-cli-launch.sh
+COPY real-cli-bootstrap.cjs          /tmp/bootstrap.cjs
+COPY claude-cli-preseed.claude.json  /tmp/preseed.json
+# Non-root appuser + the dialog-free + plugin-marketplace bake into its CLAUDE_CONFIG_DIR.
+RUN useradd --uid 10001 --create-home appuser \
+ && chmod +x /app/real-cli-launch.sh \
+ && node /tmp/bootstrap.cjs /tmp/preseed.json /home/appuser/.claude /work /app/adapters/claude-plugin \
+ && chown -R appuser:appuser /home/appuser/.claude /app
+USER appuser
+ENV CLAUDE_CONFIG_DIR=/home/appuser/.claude
+# EMBEDDED: PID-1 supervisor -> the real-CLI launcher (child) -> tmux -> claude -> shim GRANDCHILD.
+# The supervisor consumes the wedged-restart sentinel (/run/adapter-wedged) -> exit 75 -> docker-L2.
+ENTRYPOINT ["node", "/app/supervisor.mjs"]
+CMD ["/app/real-cli-launch.sh"]

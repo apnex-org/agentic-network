@@ -62,6 +62,7 @@ import {
 import { validateStagedActions } from "../policy/staged-action-payloads.js";
 import { SubstrateCounter } from "./substrate-counter.js";
 import { phaseFromEntity } from "./shape-helpers.js";
+import { assertDecodedFlat } from "../storage-substrate/bare-envelope-error.js";
 
 const KIND = "Thread";
 const MAX_CAS_RETRIES = 50;
@@ -110,7 +111,7 @@ function normalizeThreadShape(t: unknown): Thread {
   const summaryV = flat.summary;
   const recipient = flat.recipientAgentId;
   const currentTurnAgent = flat.currentTurnAgentId;
-  return {
+  return assertDecodedFlat({
     ...flat,
     status: phaseFromEntity(raw),
     routingMode: normalizeRoutingMode(flat.routingMode),
@@ -124,7 +125,7 @@ function normalizeThreadShape(t: unknown): Thread {
     recipientAgentId: typeof recipient === "string" ? recipient : null,
     currentTurnAgentId: typeof currentTurnAgent === "string" ? currentTurnAgent : null,
     messages: Array.isArray(flat.messages) ? flat.messages : [],
-  } as Thread;
+  } as Thread, "Thread");
 }
 
 function normalizeRoutingMode(v: unknown): "unicast" | "broadcast" | "multicast" {
@@ -384,6 +385,13 @@ export class ThreadRepositorySubstrate implements IThreadStore {
     return thread;
   }
 
+  // bug-177 OBS-2 (→ bug-189): get_thread is a direct keyed substrate read —
+  // STRONGLY CONSISTENT (sees every committed write immediately). It is the
+  // authoritative re-sync when a reader suspects staleness: the SSE-delivered
+  // inbox/notification view is a delivery PROJECTION that can lag (esp. on the
+  // opencode adapter, which is SSE-push-only with no message poll-backstop), so
+  // never infer "no new message" / a stale currentTurn from that view — re-read
+  // via get_thread (or list_messages). The adapter-side poll fallback is bug-189.
   async getThread(threadId: string): Promise<Thread | null> {
     const raw = await this.substrate.get<Thread>(KIND, threadId);
     if (!raw) return null;
@@ -391,12 +399,37 @@ export class ThreadRepositorySubstrate implements IThreadStore {
     return truncateClosedThreadMessages(normalized);
   }
 
-  async listThreads(status?: ThreadStatus): Promise<Thread[]> {
-    const substrateFilter: Record<string, string> = {};
+  async listThreads(status?: ThreadStatus, equalityFilter?: Record<string, string>): Promise<Thread[]> {
+    // mission-93 bug-170: `equalityFilter` pushes simple-equality discovery
+    // predicates (recipientAgentId / currentTurnAgentId) to the SUBSTRATE so a
+    // directed-thread lookup matches across ALL threads — not just whatever
+    // arbitrary LIST_PREFETCH_CAP (500, unordered) window the client-side filter
+    // would otherwise see. With 500+ threads, the newest (incl verifier-directed)
+    // fell outside that window → list_threads returned zero for them. Both keys
+    // translate correctly substrate-side (recipientAgentId top-level;
+    // currentTurnAgentId → status.currentTurnAgentId via renameMap).
+    const substrateFilter: Record<string, string> = { ...(equalityFilter ?? {}) };
     if (status) substrateFilter.status = status;
     const { items } = await this.substrate.list<Thread>(KIND, {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
       limit: LIST_PREFETCH_CAP,
+      // bug-177 OBS-1 — default-order the LIST_PREFETCH_CAP window by updatedAt
+      // DESC so it holds the NEWEST threads, not an arbitrary (unordered) heap-
+      // order slice. Without an ORDER BY, postgres returns the 500-row window in
+      // insertion/heap order, so with 500+ threads the newest (and recently-
+      // active) ones fall OUTSIDE the window → list_threads omits them while
+      // get_thread still sees them (the reported symptom).
+      // Path note: `updatedAt` is partitioned into the ENVELOPE metadata (Thread
+      // migration module) and is intentionally NOT in the renameMap (the generic
+      // decoder spreads metadata→flat on READ), so this SQL sort — which runs
+      // PRE-decode — must address the envelope path `metadata.updatedAt`
+      // explicitly; a bare `updatedAt` would sort on a NULL `data->>'updatedAt'`
+      // (a silent no-op).
+      // RESIDUAL (bug-188): the 500-cap still bounds the TOTAL result set — a
+      // fully-correct list (e.g. the 501st-newest active thread) needs
+      // filter+sort+pagination pushed substrate-side (folds with idea-357). This
+      // closes the newest-omitted symptom only; it is NOT the whole-class fix.
+      sort: [{ field: "metadata.updatedAt", order: "desc" }],
     });
     return items.map((t) => truncateClosedThreadMessages(normalizeThreadShape(t)));
   }
@@ -501,7 +534,13 @@ export class ThreadRepositorySubstrate implements IThreadStore {
       filter: { cascadePending: true },
       limit: LIST_PREFETCH_CAP,
     });
-    return items.map((t) => truncateClosedThreadMessages(normalizeThreadShape(t)));
+    // C3-R4b piece 2: exclude threads terminal-quarantined on a structural 0-bare
+    // defect (cascade-replay-sweeper → markCascadeFailed → status cascade_failed).
+    // They stay cascadePending=true (forensic diagnostic) but are visibly NOT
+    // "done" and are NO LONGER re-dispatched — the cal-84 silent-infinite-retry kill.
+    return items
+      .map((t) => truncateClosedThreadMessages(normalizeThreadShape(t)))
+      .filter((t) => t.status !== "cascade_failed");
   }
 
   async leaveThread(threadId: string, leaverAgentId: string): Promise<Thread | null> {

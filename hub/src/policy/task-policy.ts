@@ -138,7 +138,9 @@ async function createTask(args: Record<string, unknown>, ctx: IPolicyContext): P
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify({ taskId, status: resultStatus, sourceThreadClosed: !!sourceThreadId }),
+        // bug-2: report the ACTUAL created status — submitDirective creates
+        // 'pending' (not 'blocked') when all deps are already completed.
+        text: JSON.stringify({ taskId, status: spawnedTask?.status ?? resultStatus, sourceThreadClosed: !!sourceThreadId }),
       },
     ],
   };
@@ -147,10 +149,12 @@ async function createTask(args: Record<string, unknown>, ctx: IPolicyContext): P
 async function getTask(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const sid = ctx.sessionId;
 
-  // Auto-register as engineer if not already registered
-  if (ctx.stores.engineerRegistry.getRole(sid) === "unknown") {
-    ctx.stores.engineerRegistry.setSessionRole(sid, "engineer");
-  }
+  // bug-175: the legacy `unknown → engineer` auto-register is RETIRED. get_task is
+  // [Engineer]-gated, so the RBAC membership-gate (router.ts) now DENIES an unknown caller
+  // BEFORE this handler runs — the auto-register was unreachable for unknown callers (and a
+  // no-op for registered ones). Both live adapters register the role at the handshake
+  // (McpAgentClient.start() → register_role, before any tool dispatch), so a legitimate
+  // get_task caller is always a registered engineer. register_role is the bootstrap path.
 
   // Mission-19 t4/t5: label-aware claim. Only pull tasks whose labels are
   // a subset of the caller's Agent.labels; persist assignedAgentId for

@@ -1,0 +1,18 @@
+{
+  "_comment": "M-Real-CLI-Harness n3 — pre-seed CLI state baked into the image's CLAUDE_CONFIG_DIR so the real claude-code CLI boots DIALOG-FREE (zero human keystroke). NON-SECRET only: onboarding/theme/trust/first-run-state. The OAuth secret (.credentials.json) is NEVER baked — it is §5 file-mounted at runtime (read-WRITE, so the refresh-token can persist). Identity bits (userID/machineID) are intentionally omitted — claude derives them from the file-mounted creds on first boot. Empirically proven (n3 isolated local-confirm, claude 2.1.196): this established-config state skips theme + onboarding + trust-this-folder(/work) AND the one-time --dangerously-skip-permissions 'Bypass Permissions mode' acceptance (which persists via config state, no explicit flag). If n5's container shows a residual bypass prompt, the documented keystroke-fallback is Down+Enter (NOT Enter — the dialog defaults to 'No, exit').",
+  "hasCompletedOnboarding": true,
+  "lastOnboardingVersion": "2.1.196",
+  "hasSeenTasksHint": true,
+  "numStartups": 1,
+  "opusProMigrationComplete": true,
+  "sonnet1m45MigrationComplete": true,
+  "migrationVersion": 13,
+  "projects": {
+    "/work": {
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 1,
+      "allowedTools": [],
+      "lastVersionBase": "2.1.196"
+    }
+  }
+}

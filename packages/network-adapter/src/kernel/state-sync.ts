@@ -12,19 +12,13 @@
 import type { ILogger, LegacyStringLogger } from "../logger.js";
 import { normalizeToILogger } from "../logger.js";
 
-/**
- * A PendingActionItem as returned by `drain_pending_actions` (ADR-017).
- * Adapter-facing shape — subset of the Hub's canonical type that's
- * relevant for consumption. `id` is the queue item's surrogate ID which
- * MUST be passed back as `sourceQueueItemId` on the settling tool call
- * (e.g., create_thread_reply) for completion-ACK.
- */
-export interface DrainedPendingAction {
-  id: string;
-  dispatchType: string;           // e.g. "thread_message"
-  entityRef: string;              // e.g. "thread-137"
-  payload: Record<string, unknown>; // original dispatch payload
-}
+// bug-160 — DrainedPendingAction relocated to @apnex/message-router (the
+// Message-union payload contract) to break the L2↔L4 source cycle; the package
+// index re-exports it so consumers are unaffected.
+import type { DrainedPendingAction } from "@apnex/message-router";
+// Re-export so internal consumers (event-router / dispatcher import it
+// `from "./state-sync.js"`) keep resolving.
+export type { DrainedPendingAction };
 
 export interface StateSyncContext {
   executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;

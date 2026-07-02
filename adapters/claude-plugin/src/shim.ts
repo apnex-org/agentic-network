@@ -12,6 +12,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   McpAgentClient,
   appendNotification,
+  buildPendingTaskNotification,
+  readRequiredAgentName,
+  loadConfig,
+  readPackageVersion,
+  readBuildInfo,
+  UNKNOWN_BUILD_INFO,
   buildPromptText,
   makeStdioFatalHalt,
   createSharedDispatcher,
@@ -19,9 +25,15 @@ import {
   isCacheValid,
   readCache,
   writeCache,
+  ToolSurfaceReconciler,
+  makeFetchLiveToolSurfaceRevision,
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,
+  LivenessWatchdog,
+  emitLivenessLostSignal,
+  loadHarnessManifest,
+  serverCapabilitiesFromManifest,
   type AgentEvent,
   type DrainedPendingAction,
   type HandshakeResponse,
@@ -31,7 +43,7 @@ import {
   type LogFields,
 } from "@apnex/network-adapter";
 import { CognitivePipeline } from "@apnex/cognitive-layer";
-import { readFileSync, existsSync, appendFileSync, statSync, renameSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -44,72 +56,20 @@ import {
 
 // ── Configuration ───────────────────────────────────────────────────
 
-interface HubConfig {
-  hubUrl: string;
-  hubToken: string;
-  role: string;
-  /**
-   * Mission-19 routing labels. Stamped onto the Agent entity via the
-   * enriched register_role handshake; scoped dispatches (tasks, threads,
-   * etc.) filter by these. Read from adapter-config.json `labels` field or
-   * the `OIS_HUB_LABELS` env var (JSON-encoded). Omit for broadcast.
-   */
-  labels?: Record<string, string>;
+// idea-355 SLICE-1 single-home: HubConfig + parseLabels + loadConfig hoisted to
+// the kernel (@apnex/network-adapter). The shim injects its host specifics (the
+// WORK_DIR/cwd directory + the console.error warn sink) and keeps only the
+// last-mile credential abort (claude can process.exit; opencode can't).
+const config = loadConfig({
+  directory: process.env.WORK_DIR || process.cwd(),
+  warn: (m) => console.error(m),
+});
+if (!config.hubUrl || !config.hubToken) {
+  console.error(
+    "ERROR: Hub credentials not found. Checked .ois/adapter-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars",
+  );
+  process.exit(1);
 }
-
-function parseLabels(raw: string | undefined, source: string): Record<string, string> | undefined {
-  if (!raw) return undefined;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const out: Record<string, string> = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === "string") out[k] = v;
-      }
-      return Object.keys(out).length > 0 ? out : undefined;
-    }
-  } catch (err) {
-    console.error(`WARNING: Failed to parse labels from ${source}: ${err}`);
-  }
-  return undefined;
-}
-
-function loadConfig(): HubConfig {
-  const workDir = process.env.WORK_DIR || process.cwd();
-  const configPath = resolve(workDir, ".ois", "adapter-config.json");
-
-  let fileConfig: Partial<HubConfig> = {};
-  if (existsSync(configPath)) {
-    try {
-      const raw = JSON.parse(readFileSync(configPath, "utf-8"));
-      fileConfig = {
-        hubUrl: raw.hubUrl,
-        hubToken: raw.hubToken,
-        role: raw.role,
-        labels: raw.labels,
-      };
-    } catch (err) {
-      console.error(`WARNING: Failed to parse ${configPath}: ${err}`);
-    }
-  }
-
-  const hubUrl = process.env.OIS_HUB_URL || fileConfig.hubUrl || "";
-  const hubToken = process.env.OIS_HUB_TOKEN || fileConfig.hubToken || "";
-  const role = process.env.OIS_HUB_ROLE || fileConfig.role || "engineer";
-  const labels =
-    parseLabels(process.env.OIS_HUB_LABELS, "OIS_HUB_LABELS env var") ?? fileConfig.labels;
-
-  if (!hubUrl || !hubToken) {
-    console.error(
-      "ERROR: Hub credentials not found. Checked .ois/adapter-config.json and OIS_HUB_URL/OIS_HUB_TOKEN env vars",
-    );
-    process.exit(1);
-  }
-
-  return { hubUrl, hubToken, role, labels };
-}
-
-const config = loadConfig();
 const WORK_DIR = process.env.WORK_DIR || process.cwd();
 const LOG_FILE = join(WORK_DIR, ".ois", "claude-notifications.log");
 const SHUTDOWN_TIMEOUT_MS = 3000;
@@ -119,20 +79,15 @@ const SHUTDOWN_TIMEOUT_MS = 3000;
 // @apnex/network-adapter/package.json. Pre-mission-66 these were
 // hardcoded ("1.2.0" + "@apnex/network-adapter@2.1.0") and drifted
 // from the npm package.json values (0.1.4 + 0.1.2 respectively).
-// Hub-side canonical projection (agent-repository.ts deriveAdvisoryTags)
-// surfaces these via advisoryTags.adapterVersion to all consumers.
+// Hub-side canonical projection (deriveAdvisoryTags) surfaces these via
+// advisoryTags.sdkVersion (kernel) + shimVersion (this plugin) to all
+// consumers (idea-355 SLICE-4 retired the old mislabeled adapterVersion key).
 const __shimDir = dirname(fileURLToPath(import.meta.url));
 const __require = createRequire(import.meta.url);
 
-function readPackageVersion(pkgJsonPath: string, fallback: string): string {
-  try {
-    const raw = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
-    return typeof raw.version === "string" ? raw.version : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
+// readPackageVersion / readBuildInfo / BuildInfo hoisted to the kernel
+// (@apnex/network-adapter) in idea-355 SLICE-1. The shim keeps only its
+// host-specific path resolution + the derived version/build-info constants.
 const CLAUDE_PLUGIN_PKG_VERSION = readPackageVersion(
   resolve(__shimDir, "..", "package.json"),
   "unknown",
@@ -147,40 +102,21 @@ const NETWORK_ADAPTER_PKG_VERSION = (() => {
 const PROXY_VERSION = CLAUDE_PLUGIN_PKG_VERSION;
 const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
 
+// M-Adapter-Modernization P1b: the per-harness STANDARD config (proxyName /
+// transport / serverName / tool-prefix / injection-mechanism / the 3-valued
+// capability-matrix / auth-order / env-template) is single-homed as a schema-
+// validated, versioned JSON manifest at the plugin root. Loaded fail-closed —
+// a missing/malformed manifest must NOT boot a mis-shaped adapter. Per-agent
+// INSTANCE values stay in ENV (the manifest carries only var NAMES, so it can
+// never hold a raw secret).
+const MANIFEST = loadHarnessManifest(resolve(__shimDir, "..", "agent-adapter.manifest.json"));
+
 // M-Build-Identity-AdvisoryTag (idea-256): code-identity source-of-truth.
 // Each package's prepack hook (scripts/build/write-build-info.js) writes
 // dist/build-info.json at pack-time; shim reads both at startup and emits
 // via the existing mission-66 #40 wire-pattern (clientMetadata propagation
 // → Hub deriveAdvisoryTags projection → AgentAdvisoryTags). Surfaces in
 // get-agents as SHIM_COMMIT + ADAPTER_COMMIT columns.
-interface BuildInfo {
-  commitSha: string;
-  dirty: boolean;
-  buildTime: string | null;
-  branch: string;
-}
-
-const UNKNOWN_BUILD_INFO: BuildInfo = {
-  commitSha: "unknown",
-  dirty: false,
-  buildTime: null,
-  branch: "unknown",
-};
-
-function readBuildInfo(buildInfoPath: string): BuildInfo {
-  try {
-    const raw = JSON.parse(readFileSync(buildInfoPath, "utf-8"));
-    return {
-      commitSha: typeof raw.commitSha === "string" ? raw.commitSha : "unknown",
-      dirty: !!raw.dirty,
-      buildTime: typeof raw.buildTime === "string" ? raw.buildTime : null,
-      branch: typeof raw.branch === "string" ? raw.branch : "unknown",
-    };
-  } catch {
-    return UNKNOWN_BUILD_INFO;
-  }
-}
-
 const PROXY_BUILD_INFO = readBuildInfo(resolve(__shimDir, "build-info.json"));
 const SDK_BUILD_INFO = (() => {
   try {
@@ -211,109 +147,33 @@ const SHIM_LOG_FILE = process.env.OIS_SHIM_LOG_FILE || join(WORK_DIR, ".ois", "s
 const SHIM_EVENTS_FILE = process.env.OIS_SHIM_EVENTS_FILE || join(WORK_DIR, ".ois", "shim-events.ndjson");
 const SHIM_LOG_ROTATE_BYTES = Number(process.env.OIS_SHIM_LOG_ROTATE_BYTES) || 10 * 1024 * 1024;
 
-function ensureDir(path: string): void {
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-  } catch {
-    /* best-effort */
-  }
-}
-
-function rotateIfNeeded(file: string): void {
-  try {
-    const stat = statSync(file);
-    if (stat.size > SHIM_LOG_ROTATE_BYTES) {
-      const rotated = `${file}.${Date.now()}`;
-      renameSync(file, rotated);
-    }
-  } catch {
-    /* file doesn't exist yet, that's fine */
-  }
-}
-
-ensureDir(SHIM_LOG_FILE);
-ensureDir(SHIM_EVENTS_FILE);
-rotateIfNeeded(SHIM_LOG_FILE);
-rotateIfNeeded(SHIM_EVENTS_FILE);
-
-function appendText(line: string): void {
-  try {
-    appendFileSync(SHIM_LOG_FILE, line);
-  } catch {
-    /* best-effort — never disturb the call loop */
-  }
-}
-
-// mission-66 commit 4: redaction + log-level helpers extracted to
-// `./observability.ts` for unit-test tractability (shim.ts module init
-// has process.exit(1) side effect via loadConfig()).
-import { redactFields, parseLogLevel, shouldEmitLevel, type LogLevel } from "./observability.js";
+// mission-66 commit 4: redaction + log-level helpers extracted for unit-test
+// tractability (shim.ts module init has a process.exit(1) side effect via
+// loadConfig()). idea-355 SLICE-1: the file-backed logger (NDJSON + text +
+// stderr fan-out, rotation, redaction, level-filter) is hoisted to the kernel
+// `createFileLogger`. The shim injects only its file paths + format choices.
+import { parseLogLevel, createFileLogger, type LogLevel } from "@apnex/network-adapter";
 const SHIM_LOG_LEVEL: LogLevel = parseLogLevel(process.env.OIS_SHIM_LOG_LEVEL);
 
-function appendEvent(event: string, fields: LogFields, message?: string): void {
-  // mission-66 commit 4: OIS_SHIM_LOG_LEVEL filter (ADR-031 §3). Events
-  // tagged with `fields.level` below the configured threshold are
-  // suppressed (no-op). Events without `level` always emit (default INFO).
-  if (!shouldEmitLevel(fields.level as string | undefined, SHIM_LOG_LEVEL)) {
-    return;
-  }
-  const line = JSON.stringify({
-    ts: new Date().toISOString(),
-    event,
-    fields: redactFields(fields),
-    message: message ?? null,
-    pid: process.pid,
-  }) + "\n";
-  try {
-    appendFileSync(SHIM_EVENTS_FILE, line);
-  } catch {
-    /* best-effort */
-  }
-}
+const __fileLog = createFileLogger({
+  textFile: SHIM_LOG_FILE,
+  eventsFile: SHIM_EVENTS_FILE,
+  rotateBytes: SHIM_LOG_ROTATE_BYTES,
+  mirrorToStderr: true,
+  logLevel: SHIM_LOG_LEVEL,
+  pid: process.pid,
+  bound: { pid: process.pid, role: config.role },
+});
 
-// ── Logging (stderr + file) ─────────────────────────────────────────
-
+// Standalone text + structured-event sinks. Function declarations (not const)
+// preserve hoisting for the many call sites that precede this definition.
 function log(msg: string): void {
-  const ts = new Date().toISOString().replace("T", " ").replace("Z", "");
-  const line = `[${ts}] ${msg}\n`;
-  process.stderr.write(line);
-  appendText(line);
+  __fileLog.log(msg);
 }
-
-// FileBackedLogger — concrete ILogger that fans out to:
-//   1. NDJSON events file (every .log call, structured fields preserved)
-//   2. text log file + stderr (rendered friendly form)
-// Bound fields apply to every emission via `child()` for scoped loggers
-// (per-session, per-reconnect, etc.).
-class FileBackedLogger implements ILogger {
-  constructor(private readonly bound: LogFields = {}) {}
-
-  log(event: string, fields?: LogFields, message?: string): void {
-    const merged: LogFields = { ...this.bound, ...(fields ?? {}) };
-    appendEvent(event, merged, message);
-    if (message) {
-      log(`[${event}] ${message}`);
-    } else {
-      const fieldsStr = renderFields(merged);
-      log(fieldsStr ? `[${event}]${fieldsStr}` : `[${event}]`);
-    }
-  }
-
-  child(fields: LogFields): ILogger {
-    return new FileBackedLogger({ ...this.bound, ...fields });
-  }
+function appendEvent(event: string, fields: LogFields, message?: string): void {
+  __fileLog.appendEvent(event, fields, message);
 }
-
-function renderFields(fields: LogFields): string {
-  const parts: string[] = [];
-  for (const k of Object.keys(fields)) {
-    const v = fields[k];
-    parts.push(` ${k}=${Array.isArray(v) ? `[${v.join(",")}]` : String(v)}`);
-  }
-  return parts.join("");
-}
-
-const eventsLogger: ILogger = new FileBackedLogger({ pid: process.pid, role: config.role });
+const eventsLogger: ILogger = __fileLog.logger;
 
 // ── Render-surface: Claude `<channel>` notification injection ───────
 //
@@ -336,6 +196,9 @@ let agent: McpAgentClient | null = null;
 // timers cleanly (the inner main() dispatcherRef is function-scoped and
 // not visible here).
 let shutdownPollBackstop: (() => void) | null = null;
+// L1.5 liveness watchdog stop-callback (set in main() when the watchdog is
+// enabled; called by shutdown() to release its probe timer cleanly).
+let shutdownLivenessWatchdog: (() => void) | null = null;
 let shuttingDown = false;
 
 async function shutdown(reason?: "signal_term" | "signal_int" | "internal_error"): Promise<void> {
@@ -357,6 +220,7 @@ async function shutdown(reason?: "signal_term" | "signal_int" | "internal_error"
     // tickHeartbeat doesn't race with agent.stop() / try to call against
     // a torn-down stream.
     shutdownPollBackstop?.();
+    shutdownLivenessWatchdog?.();
     if (agent) await agent.stop();
   } catch (err) {
     log(`Shutdown error: ${err}`);
@@ -402,15 +266,11 @@ async function main(): Promise<void> {
     sdkBranch: SDK_BUILD_INFO.branch,
   });
 
-  // idea-251 D-prime Phase 2: identity from OIS_AGENT_NAME env. REQUIRED;
-  // loud-error if absent so misconfiguration is visible at startup rather
-  // than producing a silent identity collision on the Hub side.
-  const agentName = process.env.OIS_AGENT_NAME?.trim();
-  if (!agentName) {
-    log("[Handshake] FATAL: OIS_AGENT_NAME env var required (idea-251 D-prime). Set in ~/.config/apnex-agents/{name}.env. Aborting.");
-    process.exit(2);
-  }
-  log(`[Handshake] OIS_AGENT_NAME=${agentName}`);
+  // idea-251 D-prime Phase 2 identity (hoisted to the kernel in idea-355
+  // SLICE-1). The shim keeps only its host-specific abort: claude can
+  // process.exit on misconfiguration.
+  const agentName = readRequiredAgentName(log);
+  if (!agentName) process.exit(2);
 
   const fatalHalt = makeStdioFatalHalt(log);
 
@@ -424,6 +284,13 @@ async function main(): Promise<void> {
   // flows through whenever it's captured from Claude Code.
   let dispatcherRef: SharedDispatcher | null = null;
   let mcpServer: Server | null = null;
+  // bug-180 — tool-surface live-refresh reconciler. Assigned once mcpServer
+  // exists (post-createMcpServer); referenced lazily by the identityReady (L1)
+  // trigger + the PollBackstop heartbeat (L2) closure.
+  let reconciler: ToolSurfaceReconciler | null = null;
+  // idea-355 §4.3 — the queue wake/stall reconcile (trackers + reconcile body +
+  // the W2 observer) is now kernel-internal in the dispatcher; the shim wires
+  // none of it. This shim keeps only its host-coupled bug-180 live-refresh.
   const getClientInfo = () =>
     dispatcherRef ? dispatcherRef.getClientInfo() : { name: "unknown", version: "0.0.0" };
 
@@ -498,34 +365,29 @@ async function main(): Promise<void> {
   // tool-catalog-cache.isCacheValid). The `version` field is logged as a
   // diagnostic only — no longer load-bearing for cache correctness.
   let cachedToolSurfaceRevision: string | null = null;
-  const healthUrl = config.hubUrl.replace(/\/mcp(\/.*)?$/, "/health");
-  (async () => {
-    try {
-      const res = await fetch(healthUrl);
-      if (res.ok) {
-        const json = (await res.json()) as {
-          version?: unknown;
-          toolSurfaceRevision?: unknown;
-        };
-        if (typeof json.version === "string") {
-          log(`[Cache] Hub version: ${json.version}`);
-        }
-        if (
-          typeof json.toolSurfaceRevision === "string" &&
-          json.toolSurfaceRevision !== ""
-        ) {
-          cachedToolSurfaceRevision = json.toolSurfaceRevision;
-          log(`[Cache] Tool-surface revision resolved: ${cachedToolSurfaceRevision}`);
-        } else {
-          log(`[Cache] /health returned no toolSurfaceRevision field — cache invalidation will trust existing cache`);
-        }
-      } else {
-        log(`[Cache] /health fetch returned status ${res.status} — cache invalidation will trust existing cache`);
-      }
-    } catch (err) {
-      log(`[Cache] /health fetch failed (non-fatal): ${(err as Error).message ?? err}`);
-    }
-  })();
+
+  // bug-114 + bug-180 — resolve the Hub's live tool-surface revision from
+  // /health. The network mechanism (URL derivation + fetch + field extraction)
+  // is single-homed in the kernel `makeFetchLiveToolSurfaceRevision` (idea-355
+  // SLICE-1T); this shim wrapper keeps ONLY its host side-effect: updating the
+  // in-memory `cachedToolSurfaceRevision` (the probe-path invalidation key
+  // consumed by getCurrentToolSurfaceRevision + persistCatalog) on a non-null
+  // result. Returns the live revision, or null when the fetch fails or the Hub
+  // doesn't report the field — the bug-180 reconciler treats null as "unknown,
+  // trust the cache" and never emits a spurious list_changed.
+  const __fetchLiveRev = makeFetchLiveToolSurfaceRevision({
+    hubUrl: config.hubUrl,
+    log,
+  });
+  const fetchLiveToolSurfaceRevision = async (): Promise<string | null> => {
+    const rev = await __fetchLiveRev();
+    if (rev !== null) cachedToolSurfaceRevision = rev;
+    return rev;
+  };
+
+  // Warm the probe-path invalidation key once at startup in the background;
+  // the reconciler awaits a definitive fetch at its own L1/L2 trigger points.
+  void fetchLiveToolSurfaceRevision();
 
   agent = new McpAgentClient(
     {
@@ -536,9 +398,9 @@ async function main(): Promise<void> {
         // idea-251 D-prime Phase 2: name IS identity (was globalInstanceId).
         // agentName loaded + validated at top of bootstrap; never undefined here.
         name: agentName,
-        proxyName: "@apnex/claude-plugin",
+        proxyName: MANIFEST.proxyName,
         proxyVersion: PROXY_VERSION,
-        transport: "stdio-mcp-proxy",
+        transport: MANIFEST.transport,
         sdkVersion: SDK_VERSION,
         // M-Build-Identity-AdvisoryTag (idea-256): build-identity flows
         // via clientMetadata → Hub deriveAdvisoryTags → AgentAdvisoryTags.
@@ -579,10 +441,10 @@ async function main(): Promise<void> {
           }
         },
         onPendingTask: (task) => {
-          appendNotification(
-            { event: "task_issued", data: task, action: "Pick up with get_task" },
-            { logPath: LOG_FILE, mirror: (block) => process.stderr.write(block) },
-          );
+          appendNotification(buildPendingTaskNotification(task), {
+            logPath: LOG_FILE,
+            mirror: (block) => process.stderr.write(block),
+          });
         },
         onPendingActionItem: (item) => {
           if (dispatcherRef) {
@@ -638,8 +500,8 @@ async function main(): Promise<void> {
   const dispatcher = createSharedDispatcher({
     getAgent: () => agent,
     proxyVersion: PROXY_VERSION,
-    serverName: "proxy",
-    serverCapabilities: { tools: {}, experimental: { "claude/channel": {} } },
+    serverName: MANIFEST.serverName,
+    serverCapabilities: serverCapabilitiesFromManifest(MANIFEST),
     log,
     listToolsGate: syncReady,
     callToolGate: sessionReady,
@@ -660,7 +522,7 @@ async function main(): Promise<void> {
     },
     notificationHooks: {
       onActionableEvent: (event) => {
-        appendActionableLog(event, buildPromptText(event.event, event.data, { toolPrefix: "mcp__plugin_agent-adapter_proxy__" }));
+        appendActionableLog(event, buildPromptText(event.event, event.data, { toolPrefix: MANIFEST.toolPrefix }));
         // Mission-57 W3: pulse Messages downgrade level from "actionable"
         // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
         // noise reduction during high-activity sub-PR cascades).
@@ -672,7 +534,7 @@ async function main(): Promise<void> {
       onInformationalEvent: (event) => {
         // Informational events log only — `<channel>` push would otherwise
         // wake the LLM. Diagnostic-only routing.
-        appendActionableLog(event, `[INFO] ${buildPromptText(event.event, event.data, { toolPrefix: "mcp__plugin_agent-adapter_proxy__" })}`);
+        appendActionableLog(event, `[INFO] ${buildPromptText(event.event, event.data, { toolPrefix: MANIFEST.toolPrefix })}`);
       },
     },
     // bug-53: opt into pollBackstop heartbeat-second-timer so transport_heartbeat
@@ -684,10 +546,22 @@ async function main(): Promise<void> {
     // notifications missed while the adapter was disconnected. SSE inline
     // delivers only to a connected recipient; offline → the note is lost
     // without this poll. `role` (config.role) is the poll's targetRole filter.
+    // idea-355 §4.3 — the idea-353 W2 lease observer is now kernel-internal in
+    // the dispatcher (onToolCallResult site), so this shim no longer wires it.
     pollBackstop: {
       role: config.role,
       firstTimerEnabled: true,
       log,
+      // bug-180 L2 — tool-surface revision-poll backstop on the heartbeat
+      // cadence. The kernel drives this host hook off the tick (idea-355 §4.3,
+      // isolated in its own try/catch) ALONGSIDE the now-kernel-internal queue
+      // wake/stall reconcile — so the shim provides only the host-coupled
+      // live-refresh (mcpServer.sendToolListChanged), not the wake/stall wiring.
+      // Lazy `reconciler` ref (assigned once mcpServer exists, below); the first
+      // tick fires ≥1 interval after start() so it is always populated.
+      onHeartbeatTick: async () => {
+        await reconciler?.reconcile("heartbeat");
+      },
     },
   });
   dispatcherRef = dispatcher;
@@ -703,6 +577,39 @@ async function main(): Promise<void> {
   mcpServer = dispatcher.createMcpServer();
   await mcpServer.connect(transport);
   log("MCP stdio server ready — Claude Code can call initialize/listTools/callTool");
+
+  // bug-180 — tool-surface live-refresh reconciler. Now that mcpServer exists
+  // we can emit notifications/tools/list_changed on drift. The reconciler
+  // baselines off the on-disk cache (what the pre-identity probe served) and
+  // emits when the live /health revision diverges from it.
+  const liveReconciler = new ToolSurfaceReconciler({
+    fetchLiveRevision: fetchLiveToolSurfaceRevision,
+    readServedRevision: () => readCache(WORK_DIR, log)?.toolSurfaceRevision ?? null,
+    emitListChanged: () => {
+      void mcpServer?.sendToolListChanged();
+      log("[ToolSurface] notifications/tools/list_changed emitted — host will re-enumerate");
+    },
+    log,
+  });
+  reconciler = liveReconciler;
+
+  // idea-355 §4.3 — the queue wake/stall reconcile (W1 inbound digest + W2
+  // outbound stall-prompt + W3 status seam) + its trackers + the W2 lease
+  // observer are now kernel-internal in the dispatcher, driven off the same
+  // heartbeat tick as the bug-180 live-refresh below. The shim wires none of it;
+  // the kernel emits through notificationHooks.onActionableEvent → this shim's
+  // pushChannelNotification, so the surface is unchanged.
+
+  // bug-180 L1 (primary) — reconcile on identityReady. Once identity resolves
+  // the live revision is fetchable + the dispatcher serves the live surface
+  // (probe-cache path is skipped), so re-enumeration after the emit lands the
+  // current tool set. Covers the redeploy-then-reconnect case that caused
+  // bug-180 — no manual cache-delete, no restart. identityReadyResolved is set
+  // on an earlier-registered .then, so the dispatcher already serves live by
+  // the time the host re-calls tools/list.
+  identityReady
+    .then(() => liveReconciler.reconcile("identityReady"))
+    .catch(() => { /* identityReady rejection handled by main()'s catch */ });
 
   try {
     await agent.start();
@@ -722,6 +629,58 @@ async function main(): Promise<void> {
     dispatcher.pollBackstop?.start(() => agent);
     // bug-53: register stop-callback so shutdown() can clean up timers.
     shutdownPollBackstop = () => dispatcher.pollBackstop?.stop();
+
+    // ── L1.5 liveness self-watchdog (M-Adapter-Modernization P1c, Design §4) ──
+    //
+    // Closes the keepalives-flowing-but-session-dead wedge: a PROACTIVE periodic
+    // session-validity probe (a real session-requiring call, INDEPENDENT of the
+    // transport keepalive). The probe surfaces an otherwise-idle dead session ->
+    // L1's session_invalid->reconnect heals it when recoverable; only on a bounded
+    // budget of SUSTAINED failures (L1 could not recover) does the watchdog emit the
+    // wedged-restart sentinel + self-exit -> P1e's PID-1 supervisor consumes the
+    // sentinel -> container-exit -> docker-L2 restart -> fresh re-handshake/re-claim.
+    //
+    // DEFAULT-OFF (opt-in OIS_LIVENESS_WATCHDOG_ENABLED=1). RATIONALE (fail-safe): a
+    // self-exit WITHOUT P1e's supervisor would kill the adapter with NO container
+    // restart — worse than the wedge (a wedged adapter at least holds its session).
+    // Enable only once P1e's supervisor + container can consume the sentinel.
+    if (process.env.OIS_LIVENESS_WATCHDOG_ENABLED === "1") {
+      const probeIntervalMs = Number(process.env.OIS_LIVENESS_PROBE_INTERVAL_MS) || 60_000;
+      const failureBudget = Number(process.env.OIS_LIVENESS_FAILURE_BUDGET) || 3;
+      const probeMethod = process.env.OIS_LIVENESS_PROBE_METHOD || "get_agents";
+      const watchdog = new LivenessWatchdog({
+        probeIntervalMs,
+        failureBudget,
+        log,
+        probe: async () => {
+          const a = agent;
+          if (!a) return false;
+          try {
+            await a.call(probeMethod, {});
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        onLivenessLost: (info) => {
+          emitLivenessLostSignal({
+            consecutiveFailures: info.consecutiveFailures,
+            lastError: info.lastError,
+            log,
+          });
+          log("[LivenessWatchdog] session wedged + unrecoverable — self-exiting; PID-1 supervisor restarts the container");
+          // The shim's exit code is swallowed by the CLI (grandchild); the sentinel
+          // is the out-of-band signal P1e's supervisor consumes. Exit to die so the
+          // supervisor's restart fires.
+          process.exit(1);
+        },
+      });
+      watchdog.start();
+      shutdownLivenessWatchdog = () => watchdog.stop();
+      log(`[LivenessWatchdog] ENABLED — probe '${probeMethod}' every ${probeIntervalMs}ms, budget ${failureBudget}`);
+    } else {
+      log("[LivenessWatchdog] disabled (default; set OIS_LIVENESS_WATCHDOG_ENABLED=1 once the P1e PID-1 supervisor is in place)");
+    }
   } catch (err) {
     rejectIdentityReady(err);
     rejectSessionReady(err);

@@ -42,14 +42,21 @@ cd "$REPO_ROOT"
 #   2. message-router   (peerDep on @apnex/network-adapter; type-only via import type)
 #   3. network-adapter  (deps on cognitive-layer + message-router)
 #   4. claude-plugin    (deps on cognitive-layer + message-router + network-adapter)
+#   5. pi-plugin        (deps on network-adapter; M-Shim-Distribution) — after net-adapter
 #
-# storage-provider + repo-event-bridge: workspace-only (private; not published)
-# opencode-plugin: stub-only (private; not published this mission)
+# storage-provider + repo-event-bridge: workspace-only (not for the registry)
+# opencode-plugin: still on the github: channel — its npm cutover is deferred to
+#   the claude/opencode refactor mission (m-shim-distribution-design.md §7).
+# NOTE: these are NOT marked `private:true`, so a blanket `npm publish --workspaces`
+#   would wrongly attempt them — that is exactly why this script publishes an
+#   EXPLICIT list (+ hoists version-rewrite, which `npm publish --workspace=X`
+#   skips per calibration #35).
 PACKAGES=(
   "@apnex/cognitive-layer"
   "@apnex/message-router"
   "@apnex/network-adapter"
   "@apnex/claude-plugin"
+  "@apnex/pi-plugin"
 )
 
 # Pre-flight: verify NPM_TOKEN sourced (skip in dry-run; npm publish --dry-run doesn't auth)
@@ -60,10 +67,15 @@ if [ -z "$DRY_RUN" ] && [ -z "${NPM_TOKEN:-}" ]; then
   exit 1
 fi
 
-# Pre-flight: verify .npmrc exists at repo root or claude-plugin dir
+# Pre-flight: verify a usable .npmrc exists. Local publishes keep one at the
+# repo root (or claude-plugin dir). In CI, actions/setup-node (with registry-url)
+# writes an .npmrc wired to NODE_AUTH_TOKEN and points npm at it via
+# NPM_CONFIG_USERCONFIG — so honour that path too, otherwise the real (non-dry)
+# publish false-fails the preflight even though `npm publish` IS authenticated
+# (observed: publish run #28555177746).
 NPMRC_FOUND=""
-for npmrc in "$REPO_ROOT/.npmrc" "$REPO_ROOT/adapters/claude-plugin/.npmrc"; do
-  if [ -f "$npmrc" ]; then
+for npmrc in "${NPM_CONFIG_USERCONFIG:-}" "$REPO_ROOT/.npmrc" "$REPO_ROOT/adapters/claude-plugin/.npmrc" "${HOME:-}/.npmrc"; do
+  if [ -n "$npmrc" ] && [ -f "$npmrc" ]; then
     NPMRC_FOUND="$npmrc"
     break
   fi

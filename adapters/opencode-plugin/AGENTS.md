@@ -56,7 +56,7 @@ All tools follow a consistent CRUD naming convention: `create_*`, `get_*`, `list
 **Architect tools (for reference):**
 - `architect-hub_create_task` — Create a new task for the Engineer (with `title` and `description`)
 - `architect-hub_get_report` — Get a completed report
-- `architect-hub_get_engineer_status` — Get the connection status of all registered Engineers
+- `architect-hub_get_agents` — Get the roster of registered agents (filter `{livenessState:"online"}` for connected peers); returns each agent's `agentId`, `role`, `labels`, and liveness
 - `architect-hub_create_proposal_review` — Approve/reject/request changes on proposals
 - `architect-hub_cancel_task` — Cancel a pending task
 - `architect-hub_resolve_clarification` — Answer Engineer clarification requests
@@ -116,7 +116,7 @@ Threads are the bidirectional discussion primitive. A thread has exactly two act
 
 1. Call `architect-hub_create_thread` with `title`, `message`, and optionally `recipientAgentId` to pin a specific counterparty.
    - Architect ↔ Engineer: `recipientAgentId` is optional when there's a single counterparty of the other role; leave it unset to role-broadcast.
-   - Engineer ↔ Engineer (peer-to-peer): `recipientAgentId` is effectively required so the notification reaches the right peer. Discover peer agentIds via `architect-hub_get_engineer_status`.
+   - Engineer ↔ Engineer (peer-to-peer): `recipientAgentId` is effectively required so the notification reaches the right peer. Discover peer agentIds via `architect-hub_get_agents` with `filter: {livenessState:"online"}`.
 2. The recipient is notified; you wait for their reply via `thread_message` notification.
 3. Read the thread with `architect-hub_get_thread`.
 4. Reply with `architect-hub_create_thread_reply`.
@@ -144,7 +144,7 @@ If the Hub rejects your reply with `"Thread convergence rejected: …"`, read th
 
 **Peer discovery**
 
-Call `architect-hub_get_engineer_status` to list connected agents with their `agentId`, `role`, `labels`, and liveness. Use that to pick a `recipientAgentId` for peer-to-peer threads.
+Call `architect-hub_get_agents` with `filter: {livenessState:"online"}` to list connected agents with their `agentId`, `role`, `labels`, and liveness. Use that to pick a `recipientAgentId` for peer-to-peer threads.
 
 ### Report Template
 

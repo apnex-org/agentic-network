@@ -33,11 +33,19 @@ import type {
   AgentEvent,
   SessionState,
   SessionReconnectReason,
-} from "../kernel/agent-client.js";
-import type { McpAgentClient } from "../kernel/mcp-agent-client.js";
-import { PollBackstop, type PollBackstopOptions } from "../kernel/poll-backstop.js";
-import type { DrainedPendingAction } from "../kernel/state-sync.js";
-import type { CachedCatalog } from "./tool-catalog-cache.js";
+} from "../../kernel/agent-client.js";
+import type { McpAgentClient } from "../../kernel/mcp-agent-client.js";
+import { PollBackstop, resolveRole, type PollBackstopOptions } from "../../kernel/poll-backstop.js";
+import type { DrainedPendingAction } from "../../kernel/state-sync.js";
+import type { CachedCatalog } from "../catalog/tool-catalog-cache.js";
+import { ClaimableDigestTracker } from "../work-protocol/claimable-digest-tracker.js";
+import { WorkLeaseTracker } from "../work-protocol/work-lease-tracker.js";
+import {
+  TOOL_CALL_SIGNAL_SKIP,
+  pendingKey,
+  injectQueueItemId,
+} from "../dispatch/tool-call-policy.js";
+import { runToolDispatch, type ToolDispatchContext } from "../dispatch/dispatch.js";
 
 export interface DispatcherClientInfo {
   name: string;
@@ -175,6 +183,19 @@ export interface SharedDispatcherOptions {
   notificationHooks?: DispatcherNotificationHooks;
 
   /**
+   * idea-353 W2: observe each host-driven CallTool's (method, args, result)
+   * after it returns. The host wires this to a WorkLeaseTracker so the
+   * outbound stall-prompt can track this agent's own held leases locally
+   * (claim/renew/complete/abandon) with no Hub round-trip. Best-effort —
+   * a throw is caught + logged and never affects the tool-call return.
+   */
+  onToolCallResult?: (
+    method: string,
+    args: Record<string, unknown>,
+    result: unknown,
+  ) => void;
+
+  /**
    * Mission-56 W3.3: opt-in adapter-side hybrid poll backstop. When
    * supplied, the dispatcher constructs a PollBackstop (Design v1.2
    * commitment #5) that periodically calls `list_messages` with a
@@ -187,6 +208,26 @@ export interface SharedDispatcherOptions {
    * Omit to disable polling (push-only mode).
    */
   pollBackstop?: Omit<PollBackstopOptions, "onPolledMessage">;
+
+  /**
+   * Slice D (pi native binding) — external idle probe. A NATIVE host (pi) drives
+   * tool calls through `runToolDispatch` directly, NOT through this dispatcher's
+   * MCP `CallTool` handler, so the internal `activeCallCount` never sees them.
+   * Supply the host's own idle signal (e.g. pi's `ctx.isIdle()`) and the
+   * wake/stall reconcile gates on THAT instead of the (always-zero) internal
+   * counter. When omitted, the internal `activeCallCount` is authoritative
+   * (MCP hosts — unchanged).
+   */
+  externalIdle?: () => boolean;
+
+  /**
+   * Slice D (pi native binding) — shared WorkLeaseTracker. A native host's
+   * `ToolDispatchContext.workLeases` must be the SAME tracker the reconcile
+   * reads for stall-prompts. Inject it here so the native binding's
+   * `workLeases.observe(...)` populates the tracker the heartbeat tick consumes.
+   * When omitted, the dispatcher constructs its own (MCP hosts — unchanged).
+   */
+  sharedWorkLeases?: WorkLeaseTracker;
 }
 
 export interface SharedDispatcher {
@@ -236,51 +277,48 @@ export interface SharedDispatcher {
    * re-render it.
    */
   ackMessage: (messageId: string) => Promise<void>;
+
+  /**
+   * idea-353 W1 idle-gate: number of host-driven CallTool requests currently
+   * in flight. The wake/stall reconciler reads this on the heartbeat tick to
+   * skip surfacing while the agent is mid-task (AC4). The tick's own internal
+   * `agent.call`s do not pass through the CallTool handler, so they are not
+   * counted (an idle poll never self-gates).
+   */
+  getActiveCallCount: () => number;
+  /** idea-353 W1 idle-gate convenience: `getActiveCallCount() === 0`. */
+  isIdle: () => boolean;
+
+  /**
+   * Slice D (pi native binding) — the WorkLeaseTracker the reconcile reads. A
+   * native host builds its `ToolDispatchContext.workLeases` from THIS instance
+   * so its `runToolDispatch` lease observations feed the stall-prompt path.
+   * (Same object as `opts.sharedWorkLeases` when injected.)
+   */
+  workLeases: WorkLeaseTracker;
 }
 
-/** Compose the pendingActionMap key. Pure helper; exported for tests. */
-/**
- * Mission-62 W3: tools that should NOT trigger signal_working_*
- * wrapping. The signal_* tools themselves would recurse infinitely;
- * register_role + claim_session + drain_pending_actions are lifecycle
- * tools, not semantic tool-call-work.
- */
-export const TOOL_CALL_SIGNAL_SKIP: ReadonlySet<string> = new Set([
-  "signal_working_started",
-  "signal_working_completed",
-  "signal_quota_blocked",
-  "signal_quota_recovered",
-  "register_role",
-  "claim_session",
-  "drain_pending_actions",
-]);
+// M-Tool-Manager Slice B: the pure OIS tool-call policy helpers
+// (TOOL_CALL_SIGNAL_SKIP / pendingKey / injectQueueItemId) moved to
+// `./tool-call-policy.js` so the dispatch authority (`./dispatch.js`) and this
+// god-object shell share them without a circular import. They are imported
+// above (used internally) and RE-EXPORTED here so existing consumers
+// (index.ts, tests) are unaffected.
+export { TOOL_CALL_SIGNAL_SKIP, pendingKey, injectQueueItemId };
 
-export function pendingKey(dispatchType: string, entityRef: string): string {
-  return `${dispatchType}:${entityRef}`;
-}
+// idea-355 §4.3 (review fix) — tight timeout on the wake/stall reconcile's Hub
+// read. The liveness heartbeat now runs concurrently with the reconcile (see
+// PollBackstop.tickHeartbeat), but this still bounds how long the reconcile can
+// hold the heartbeat cadence (heartbeatInFlight) and resource use. On timeout
+// the read is treated as a failed read (AC3 — tracker skipped, no false replay).
+const WAKE_STALL_READ_TIMEOUT_MS = 10_000;
 
-/**
- * Inject `sourceQueueItemId` into a settling tool call's arguments
- * when a pendingActionMap entry is registered for the call's target.
- * Currently only `create_thread_reply` settles a thread_message
- * dispatch; extend this set as new auto-injection rules are ratified.
- *
- * Side effect: deletes the consumed map entry. Explicit
- * sourceQueueItemId in the args wins over the map (no rewrite).
- */
-export function injectQueueItemId(
-  name: string,
-  args: Record<string, unknown>,
-  pendingActionMap: Map<string, string>,
-): Record<string, unknown> {
-  if (name !== "create_thread_reply") return args;
-  const threadId = args.threadId;
-  if (typeof threadId !== "string") return args;
-  if ("sourceQueueItemId" in args) return args;
-  const queueItemId = pendingActionMap.get(pendingKey("thread_message", threadId));
-  if (!queueItemId) return args;
-  pendingActionMap.delete(pendingKey("thread_message", threadId));
-  return { ...args, sourceQueueItemId: queueItemId };
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
 export function createSharedDispatcher(
@@ -291,6 +329,13 @@ export function createSharedDispatcher(
   const serverCapabilities = opts.serverCapabilities ?? { tools: {}, logging: {} };
 
   const pendingActionMap = new Map<string, string>();
+
+  // idea-353 W1 idle-gate: count of host-driven CallTool requests currently in
+  // flight. The wake/stall reconciler reads this on the heartbeat tick to avoid
+  // interrupting a mid-task agent (AC4). The tick's own internal `agent.call`s
+  // (list_ready_work etc.) do NOT pass through this handler, so an idle poll
+  // never self-gates.
+  let activeCallCount = 0;
 
   let capturedClientInfo: DispatcherClientInfo = {
     name: "unknown",
@@ -434,6 +479,128 @@ export function createSharedDispatcher(
     },
   };
 
+  // idea-355 §4.3 — kernel-internal queue wake/stall reconcile. Hoisted from the
+  // claude shim so EVERY host gets it via the dispatcher heartbeat tick with ZERO
+  // shim wiring (the shim that wires none of these seams still emits via
+  // notificationHooks on a tick). The trackers are per-dispatcher-instance and
+  // persist ACROSS ticks — the level-triggered, ID-keyed dedup state must survive
+  // tick-to-tick or every tick re-emits (digest spam).
+  const claimableDigest = new ClaimableDigestTracker();
+  // Slice D: use the injected tracker when a native binding shares one (so its
+  // runToolDispatch observations land where the reconcile reads); else own it.
+  const workLeases = opts.sharedWorkLeases ?? new WorkLeaseTracker();
+  let wakeStallInFlight = false;
+
+  // The reconcile body. Drives W1 (inbound claimable digest), W2 (outbound
+  // stall-prompt), W3 (emit-only status log). Invoked from the heartbeat tick
+  // below (wrapped in its own try/catch alongside the host live-refresh hook).
+  async function runWakeStallReconcile(): Promise<void> {
+    // Invariant: in-flight latch so overlapping ticks don't double-emit. The
+    // gates below run BEFORE the latch is taken, so an early return never needs
+    // to release it.
+    if (wakeStallInFlight) return;
+
+    const agent = opts.getAgent();
+    // Gate on a live streaming agent (the call path requires it anyway).
+    if (!agent || agent.state !== "streaming") return;
+    // Invariant: gate on identityReady — role + agentId come from the post-
+    // handshake identity; a pre-handshake tick would read an undefined identity
+    // and list_ready_work the wrong (or empty) set.
+    const agentId = agent.getMetrics?.().agentId;
+    if (!agentId) return;
+    // bug-173 — resolve the role at USE-time (it may be a `() => string` thunk
+    // for hosts whose dispatcher is constructed before config.role loads), so the
+    // idea-353 wake/stall reconcile filters on the SAME configured role the
+    // PollBackstop tick uses — not a frozen module-init env default.
+    const roleOpt = opts.pollBackstop?.role;
+    const role = roleOpt === undefined ? undefined : resolveRole(roleOpt);
+    if (!role) return;
+
+    wakeStallInFlight = true;
+    try {
+      // Slice D: a native host (pi) supplies its own idle probe because its tool
+      // calls bypass this dispatcher's CallTool handler (so activeCallCount is
+      // always 0 for it). MCP hosts leave externalIdle undefined → counter wins.
+      const idle = opts.externalIdle ? opts.externalIdle() : activeCallCount === 0;
+      const nowMs = Date.now();
+      let claimableCount = 0;
+
+      // W1 — inbound claimable digest. Read the CALLER-CLAIMABLE set via the
+      // stable list_ready_work contract with scopeToCaller (idea-353 WI-2.1 /
+      // audit-4265: the Hub applies claim_work's FULL predicate — deps + role +
+      // WIP-cap + quarantine — so the digest never over-reports what this agent
+      // can actually claim; AC5 strict parity). On a failed read, skip the
+      // tracker entirely so a transient empty/aborted read cannot manufacture a
+      // false 0→N replay (AC3).
+      try {
+        const raw = await withTimeout(
+          agent.call(
+            "list_ready_work",
+            { role, scopeToCaller: true },
+            { internal: true },
+          ),
+          WAKE_STALL_READ_TIMEOUT_MS,
+          "list_ready_work wake/stall read",
+        );
+        const items = (raw as { items?: Array<{ id?: unknown }> } | null)?.items;
+        if (Array.isArray(items)) {
+          const claimableIds = items
+            .map((i) => i?.id)
+            .filter((id): id is string => typeof id === "string");
+          claimableCount = claimableIds.length;
+          const decision = claimableDigest.reconcile({ claimableIds, isIdle: idle });
+          if (decision.emit) {
+            router.route({
+              kind: "notification.actionable",
+              event: {
+                event: "work_claimable_digest",
+                data: { role, count: decision.count, newCount: decision.newCount },
+              },
+            });
+            log(
+              `[idea-353] inbound digest emitted — ${decision.count} claimable (${decision.newCount} new) for ${role}`,
+            );
+          }
+        }
+      } catch (err) {
+        log(
+          `[idea-353] list_ready_work tick failed (non-fatal): ${(err as Error)?.message ?? err}`,
+        );
+      }
+
+      // W2 — outbound stall-prompt. Idle-gated: never pester a visibly-
+      // progressing holder (an in-flight CallTool = active progress). A held
+      // lease past ~60% of its window without a renew gets ONE nudge.
+      if (idle) {
+        for (const due of workLeases.dueForStallPrompt(nowMs)) {
+          router.route({
+            kind: "notification.actionable",
+            event: {
+              event: "work_lease_stall",
+              data: { workId: due.workId, msUntilExpiry: due.msUntilExpiry },
+            },
+          });
+          workLeases.markPrompted(due.workId);
+          log(
+            `[idea-353] outbound stall-prompt emitted — ${due.workId} (~${Math.round(due.msUntilExpiry / 60000)}m left)`,
+          );
+        }
+      }
+
+      // W3 — emit-only Agent.status idle/stall telemetry seam. Thin + non-gating.
+      const heldLeases = workLeases.size();
+      const statusState = !idle ? "working" : heldLeases > 0 ? "holding" : "idle";
+      log(
+        `[idea-353][agent-status] state=${statusState} idle=${idle} claimable=${claimableCount} heldLeases=${heldLeases}`,
+      );
+    } finally {
+      // Invariant: release the latch on BOTH success and error — a thrown
+      // reconcile must not wedge the latch (that would silently disable the
+      // wake forever).
+      wakeStallInFlight = false;
+    }
+  }
+
   // Mission-56 W3.3: PollBackstop construction (opt-in via opts.pollBackstop).
   // The backstop fires `list_messages({status:"new", since:<lastSeen>})`
   // periodically and routes each delta Message through the same
@@ -441,6 +608,12 @@ export function createSharedDispatcher(
   // push+poll race overlap. Polled Messages also fire claim_message
   // (the router invocation goes through onActionableEvent which
   // already includes fireClaimMessage).
+  // idea-355 §4.3 — the kernel owns the heartbeat tick. The host's optional
+  // onHeartbeatTick (e.g. claude's bug-180 tool-surface live-refresh, which is
+  // host-coupled via mcpServer.sendToolListChanged) and the kernel wake/stall
+  // reconcile SHARE the tick; each runs in its OWN try/catch (invariant #5) so a
+  // failing or slow one cannot break or block the other.
+  const hostHeartbeatTick = opts.pollBackstop?.onHeartbeatTick;
   const pollBackstop = opts.pollBackstop
     ? new PollBackstop({
         ...opts.pollBackstop,
@@ -448,6 +621,24 @@ export function createSharedDispatcher(
         onPolledMessage: (event) => {
           router.route({ kind: "notification.actionable", event });
           fireClaimMessage(event);
+        },
+        onHeartbeatTick: async () => {
+          if (hostHeartbeatTick) {
+            try {
+              await hostHeartbeatTick();
+            } catch (err) {
+              log(
+                `[tick] host heartbeat hook threw (non-fatal): ${(err as Error)?.message ?? err}`,
+              );
+            }
+          }
+          try {
+            await runWakeStallReconcile();
+          } catch (err) {
+            log(
+              `[tick] wake/stall reconcile threw (non-fatal): ${(err as Error)?.message ?? err}`,
+            );
+          }
         },
       })
     : undefined;
@@ -623,129 +814,44 @@ export function createSharedDispatcher(
     });
 
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const callStartedAt = Date.now();
-      const requestedTool = request.params.name;
-      log(`[CallTool] ${requestedTool} entered`);
-      try {
-        if (opts.callToolGate) {
-          log(`[CallTool] ${requestedTool} awaiting callToolGate`);
-          // mission-88 W10 (bug-126 fix): timeout the gate await to prevent
-          // indefinite hang on pending-forever sessionReady (the bug-126
-          // incident-window symptom). Default 30s; set callToolGateTimeoutMs=0
-          // to disable (test-only). Structured `gate-timeout` log emitted on
-          // timeout; isError response returned to host instead of hang.
-          const timeoutMs = opts.callToolGateTimeoutMs ?? 30000;
-          if (timeoutMs > 0) {
-            let timeoutHandle: NodeJS.Timeout | undefined;
-            const timeoutPromise = new Promise<void>((_resolve, reject) => {
-              timeoutHandle = setTimeout(() => {
-                reject(new Error(`callToolGate timeout after ${timeoutMs}ms`));
-              }, timeoutMs);
-            });
-            try {
-              await Promise.race([opts.callToolGate, timeoutPromise]);
-            } finally {
-              if (timeoutHandle) clearTimeout(timeoutHandle);
-            }
-          } else {
-            await opts.callToolGate;
-          }
-          log(`[CallTool] ${requestedTool} gate passed (+${Date.now() - callStartedAt}ms)`);
-        }
-        const agent = opts.getAgent();
-        if (!isUsableAgent(agent)) {
-          log(`[CallTool] ${requestedTool} aborted — Hub not connected`);
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: JSON.stringify({
-                  error: "Hub not connected",
-                  message: "The Hub adapter is not currently connected.",
-                }),
-              },
-            ],
-            isError: true,
-          };
-        }
-        const { name } = request.params;
-        const incomingArgs = (request.params.arguments ?? {}) as Record<
-          string,
-          unknown
-        >;
-        const outgoingArgs = injectQueueItemId(
-          name,
-          incomingArgs,
-          pendingActionMap,
-        );
-        // ── Mission-62 W3 — activity FSM signal wrapping ─────────────
-        //
-        // Wrap each LLM-driven tool call with signal_working_started +
-        // signal_working_completed RPCs (fire-and-forget; eventual-
-        // consistency on Hub-side activity FSM). Per Design v1.0 §5.2:
-        // implicit-only inference infeasible (LLM-to-MCP-tool-call
-        // path doesn't enqueue items per ADR-017 §M1-M2); explicit
-        // signaling required for routing peers to see this agent's
-        // working state.
-        //
-        // Skip-list prevents infinite recursion (signal_* calls would
-        // wrap themselves) + handshake/lifecycle tools that are not
-        // semantically tool-call-work (register_role, claim_session,
-        // drain_pending_actions).
-        const wrapWithSignal = !TOOL_CALL_SIGNAL_SKIP.has(name);
-        if (wrapWithSignal) {
-          // Fire-and-forget: don't await; Hub-side eventual-consistency
-          // is acceptable for v1.0 routing-cache use case.
-          agent.call("signal_working_started", { toolName: name }).catch((err: unknown) => {
-            log(`[mission-62] signal_working_started fire-and-forget failed (non-fatal): ${(err as Error)?.message ?? err}`);
-          });
-        }
-        let result: unknown;
-        const agentCallStart = Date.now();
-        log(`[CallTool] ${name} dispatching to agent.call (wrapWithSignal=${wrapWithSignal})`);
-        try {
-          result = await agent.call(name, outgoingArgs);
-          log(`[CallTool] ${name} agent.call returned in ${Date.now() - agentCallStart}ms`);
-        } finally {
-          if (wrapWithSignal) {
-            agent.call("signal_working_completed", {}).catch((err: unknown) => {
-              log(`[mission-62] signal_working_completed fire-and-forget failed (non-fatal): ${(err as Error)?.message ?? err}`);
-            });
-          }
-        }
-        log(`[CallTool] ${name} completed in ${Date.now() - callStartedAt}ms total`);
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                typeof result === "string"
-                  ? result
-                  : JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        // mission-88 W10 (bug-126 fix): post-condition logging discipline —
-        // structured terminal log line distinguishes gate-timeout / gate-
-        // rejected / agent-call-threw / other-error paths. Every CallTool
-        // entry MUST emit exactly one terminal log line (W10 Design §4.1
-        // post-condition; prevents the bug-126 "no terminal log line ever
-        // appeared" silent-hang failure-mode).
-        const outcome = message.startsWith("callToolGate timeout")
-          ? "gate-timeout"
-          : "error-response";
-        log(
-          `[CallTool] ${requestedTool} terminal: outcome=${outcome} elapsed=${Date.now() - callStartedAt}ms message="${message}"`,
-        );
-        return {
-          content: [
-            { type: "text" as const, text: JSON.stringify({ error: message, w10_outcome: outcome }) },
-          ],
-          isError: true,
-        };
-      }
+      // M-Tool-Manager Slice B: the CallTool handler body is now the shared
+      // dispatch authority (`runToolDispatch`). This MCP handler is a thin
+      // caller that supplies the closure state as an explicit dispatch context
+      // and returns the (Slice-B faithful, still MCP-shaped) result. The
+      // per-call behavior — idle-gate, callToolGate+timeout, Hub-not-connected
+      // precheck, queueItemId injection, signal-FSM wrap, lease observe,
+      // onToolCallResult, error normalization — all lives in `dispatch.ts` and
+      // is shared byte-for-byte with any future host binding (pi native, ACP).
+      const dispatchCtx: ToolDispatchContext = {
+        getAgent: opts.getAgent,
+        pendingActionMap,
+        workLeases,
+        onCallStart: () => {
+          activeCallCount++;
+        },
+        onCallEnd: () => {
+          activeCallCount--;
+        },
+        callToolGate: opts.callToolGate,
+        callToolGateTimeoutMs: opts.callToolGateTimeoutMs,
+        onToolCallResult: opts.onToolCallResult,
+        log,
+      };
+      const incomingArgs = (request.params.arguments ?? {}) as Record<
+        string,
+        unknown
+      >;
+      // The dispatch authority returns the Slice-B-faithful MCP-shaped result
+      // ({ content, isError }); the SDK's CallTool result type is broader
+      // (optional task/_meta fields the original literal also omitted). Cast at
+      // this MCP-binding boundary — MCP-shape concerns are the binding's job.
+      const dispatchResult = await runToolDispatch(
+        dispatchCtx,
+        request.params.name,
+        incomingArgs,
+      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return dispatchResult as any;
     });
 
     return server;
@@ -759,6 +865,9 @@ export function createSharedDispatcher(
     makePendingActionItemHandler,
     pollBackstop,
     ackMessage,
+    getActiveCallCount: () => activeCallCount,
+    isIdle: () => activeCallCount === 0,
+    workLeases,
   };
 }
 

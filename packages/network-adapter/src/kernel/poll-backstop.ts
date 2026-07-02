@@ -61,8 +61,17 @@ export interface PollBackstopOptions {
   /**
    * Role this adapter polls for (e.g. "engineer", "architect"). Becomes
    * the `target.role` filter on each `list_messages` call.
+   *
+   * bug-173: accepts a `() => string` resolver in addition to a plain
+   * string. A host whose dispatcher is constructed at MODULE-INIT (before
+   * its config — and thus `config.role` — has loaded) passes a thunk that
+   * reads the role at USE-time, so the poll/reconcile filter tracks the
+   * CONFIGURED role rather than freezing the module-init env default.
+   * Resolved on every use via {@link resolveRole}; a plain string is
+   * returned as-is (the claude-shim path builds its dispatcher at runtime
+   * with `config.role` already known, so it stays a string — unchanged).
    */
-  role: string;
+  role: string | (() => string);
 
   /**
    * Poll cadence in seconds. Defaults to `OIS_ADAPTER_POLL_BACKSTOP_S`
@@ -126,6 +135,18 @@ export interface PollBackstopOptions {
    * cleanly disables the timer (start() skips heartbeat scheduling).
    */
   heartbeatEnabled?: boolean;
+
+  /**
+   * bug-180 L2 — optional hook fired once per heartbeat cycle, BEFORE the
+   * `transport_heartbeat` call and independent of its success or the agent's
+   * connection state. Reuses the heartbeat cadence as the tool-surface
+   * revision-poll backstop: the host wires the ToolSurfaceReconciler here so a
+   * Hub redeploy that changes the surface WHILE a session stays connected is
+   * caught within one heartbeat interval (the case L1's identityReady
+   * reconcile misses — no reconnect, so no fresh identityReady). Default no-op;
+   * a throw is caught + logged so it never disturbs the heartbeat loop.
+   */
+  onHeartbeatTick?: () => void | Promise<void>;
 }
 
 interface CursorFile {
@@ -145,6 +166,19 @@ interface CursorFile {
  */
 export function defaultCursorFile(role: string, agentId: string): string {
   return join(homedir(), ".ois", `poll-cursor-${role}-${agentId}.json`);
+}
+
+/**
+ * Resolve a {@link PollBackstopOptions.role} to its current string value.
+ * A plain string is returned as-is; a `() => string` thunk is invoked at
+ * call-time (bug-173 — lets a dispatcher constructed at MODULE-INIT track
+ * the host's configured role once `config.role` has loaded, instead of
+ * freezing whatever the env default was at construction). Used by both the
+ * PollBackstop tick (target.role filter) and the dispatcher's idea-353
+ * wake/stall reconcile so the two read the SAME resolved role.
+ */
+export function resolveRole(role: string | (() => string)): string {
+  return typeof role === "function" ? role() : role;
 }
 
 /**
@@ -238,19 +272,30 @@ function parseListMessagesResult(raw: unknown): ListMessagesBody | null {
  */
 export class PollBackstop {
   private readonly opts: Required<
-    Omit<PollBackstopOptions, "cursorFile" | "heartbeatIntervalMs" | "heartbeatEnabled" | "firstTimerEnabled" | "onPolledMessage">
+    Omit<PollBackstopOptions, "cursorFile" | "heartbeatIntervalMs" | "heartbeatEnabled" | "firstTimerEnabled" | "onPolledMessage" | "onHeartbeatTick">
   > & {
     cursorFile?: string;
     heartbeatIntervalMs: number;
     heartbeatEnabled: boolean;
     firstTimerEnabled: boolean;
     onPolledMessage: (event: AgentEvent) => void;
+    onHeartbeatTick: () => void | Promise<void>;
   };
   private timer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private resolvedCursorFile: string | null = null;
   private inFlight = false;
   private heartbeatInFlight = false;
+
+  /**
+   * bug-173 — the role resolved at USE-time (`this.opts.role` may be a
+   * `() => string` thunk for hosts that construct the dispatcher before
+   * config loads). Every role read (poll filter, cursor file, log) goes
+   * through here so a configured role propagates without re-construction.
+   */
+  private get currentRole(): string {
+    return resolveRole(this.opts.role);
+  }
 
   constructor(opts: PollBackstopOptions) {
     const fromEnv = parseInt(
@@ -283,6 +328,7 @@ export class PollBackstop {
       cursorFile: opts.cursorFile,
       log: opts.log ?? (() => {}),
       onPolledMessage: opts.onPolledMessage ?? (() => {}),
+      onHeartbeatTick: opts.onHeartbeatTick ?? (() => {}),
       heartbeatIntervalMs,
       heartbeatEnabled,
       firstTimerEnabled,
@@ -298,7 +344,7 @@ export class PollBackstop {
     if (this.timer || this.heartbeatTimer) return;
     const cadenceMs = this.opts.cadenceSeconds * 1000;
     this.opts.log(
-      `[poll-backstop] starting (role=${this.opts.role}, cadenceS=${this.opts.firstTimerEnabled ? this.opts.cadenceSeconds : "disabled"}, heartbeatMs=${this.opts.heartbeatEnabled ? this.opts.heartbeatIntervalMs : "disabled"})`,
+      `[poll-backstop] starting (role=${this.currentRole}, cadenceS=${this.opts.firstTimerEnabled ? this.opts.cadenceSeconds : "disabled"}, heartbeatMs=${this.opts.heartbeatEnabled ? this.opts.heartbeatIntervalMs : "disabled"})`,
     );
     // bug-53: skip first-timer scheduling when firstTimerEnabled === false
     // (heartbeat-only hosts; current shim/opencode adapters use SSE for
@@ -358,14 +404,14 @@ export class PollBackstop {
           // session id which cycles on reconnect.
           const metrics = agent.getMetrics?.();
           const id = metrics?.agentId ?? agentId;
-          this.resolvedCursorFile = defaultCursorFile(this.opts.role, id);
+          this.resolvedCursorFile = defaultCursorFile(this.currentRole, id);
         }
       }
       const cursorFile = this.resolvedCursorFile;
 
       const since = readCursor(cursorFile);
       const args: Record<string, unknown> = {
-        targetRole: this.opts.role,
+        targetRole: this.currentRole,
         status: "new",
       };
       if (since !== undefined) args.since = since;
@@ -447,31 +493,65 @@ export class PollBackstop {
     if (this.heartbeatInFlight) return;
     this.heartbeatInFlight = true;
     try {
-      const agent = getAgent();
-      if (!agent || agent.state !== "streaming") return;
-      try {
-        await agent.call("transport_heartbeat", {}, { internal: true });
-        return;
-      } catch (firstErr) {
-        this.opts.log(
-          `[poll-backstop] transport_heartbeat failed (1st; retrying in ${HEARTBEAT_RETRY_BACKOFF_MS}ms): ${(firstErr as Error)?.message ?? String(firstErr)}`,
-        );
-      }
-      // Single retry with backoff. If this fails too, skip the cycle —
-      // next cycle (heartbeatIntervalMs from now) will try again.
-      await new Promise((resolve) => setTimeout(resolve, HEARTBEAT_RETRY_BACKOFF_MS));
-      try {
-        // Re-check agent state after the backoff (could have torn down).
-        const agent2 = getAgent();
-        if (!agent2 || agent2.state !== "streaming") return;
-        await agent2.call("transport_heartbeat", {}, { internal: true });
-      } catch (secondErr) {
-        this.opts.log(
-          `[poll-backstop] transport_heartbeat failed (2nd; skipping cycle): ${(secondErr as Error)?.message ?? String(secondErr)}`,
-        );
-      }
+      // idea-355 §4.3 (review fix — LIVENESS DECOUPLING): the host tick hook now
+      // carries the idea-355 wake/stall reconcile (a Hub round-trip) on top of the
+      // bug-180 /health live-refresh. Start it, but do NOT let it gate the liveness
+      // heartbeat — transport_heartbeat must never wait on the reconcile's Hub
+      // latency, or a slow read erodes the mission-75 TTL margin and can trip a
+      // FALSE-unresponsive (the exact bug-186 class). The hook runs CONCURRENTLY
+      // with the heartbeat; it has its own error handling + (for the reconcile)
+      // its own in-flight latch + read-timeout. bug-180's /health is still fired
+      // before/independent of the streaming gate, so an in-life redeploy is caught
+      // within one interval regardless of agent state. Best-effort.
+      const hookSettled = Promise.resolve()
+        .then(() => this.opts.onHeartbeatTick())
+        .catch((err) => {
+          this.opts.log(
+            `[poll-backstop] onHeartbeatTick threw (non-fatal): ${(err as Error)?.message ?? String(err)}`,
+          );
+        });
+
+      // Liveness heartbeat — independent of the hook.
+      await this.sendHeartbeat(getAgent);
+
+      // Settle the hook before releasing heartbeatInFlight (bounded by the
+      // reconcile's read-timeout) so a slow reconcile can't overlap the next tick.
+      await hookSettled;
     } finally {
       this.heartbeatInFlight = false;
+    }
+  }
+
+  /**
+   * Send `transport_heartbeat` with one backoff retry. Gated on a streaming
+   * agent (the heartbeat needs the agent transport); a non-streaming agent is a
+   * no-op. Split out of `tickHeartbeat` so its early returns stay local — the
+   * caller must still settle the concurrent tick hook before releasing the
+   * heartbeatInFlight guard.
+   */
+  private async sendHeartbeat(getAgent: () => IAgentClient | null): Promise<void> {
+    const agent = getAgent();
+    if (!agent || agent.state !== "streaming") return;
+    try {
+      await agent.call("transport_heartbeat", {}, { internal: true });
+      return;
+    } catch (firstErr) {
+      this.opts.log(
+        `[poll-backstop] transport_heartbeat failed (1st; retrying in ${HEARTBEAT_RETRY_BACKOFF_MS}ms): ${(firstErr as Error)?.message ?? String(firstErr)}`,
+      );
+    }
+    // Single retry with backoff. If this fails too, skip the cycle —
+    // next cycle (heartbeatIntervalMs from now) will try again.
+    await new Promise((resolve) => setTimeout(resolve, HEARTBEAT_RETRY_BACKOFF_MS));
+    try {
+      // Re-check agent state after the backoff (could have torn down).
+      const agent2 = getAgent();
+      if (!agent2 || agent2.state !== "streaming") return;
+      await agent2.call("transport_heartbeat", {}, { internal: true });
+    } catch (secondErr) {
+      this.opts.log(
+        `[poll-backstop] transport_heartbeat failed (2nd; skipping cycle): ${(secondErr as Error)?.message ?? String(secondErr)}`,
+      );
     }
   }
 }

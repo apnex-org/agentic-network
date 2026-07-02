@@ -57,23 +57,15 @@ describe("INV-P1 — architect-only proposal review (RBAC)", () => {
     expect(archResult.isError).toBeFalsy();
   });
 
-  it("unregistered-session bypass: RBAC allows 'unknown' role through (backward compat)", async () => {
-    // router.ts:120 — `tool.roles.has("any") || callerRole === "unknown"`
-    // short-circuits the RBAC check. This pins the back-compat carve-out
-    // so a future "tighten RBAC" refactor surfaces here rather than
-    // silently breaking legacy adapters.
-    const arch = orch.asArchitect();
+  it("bug-175: an unregistered (unknown-role) session is DENIED a role-gated tool (fail-CLOSED)", async () => {
+    // bug-175 CLOSED the RBAC fail-open. The router membership-gate now denies a caller
+    // whose resolved role is not in the tool's role-set; an unknown (pre-register_role)
+    // caller is no longer waved through (was the back-compat carve-out this test pinned).
+    // create_proposal_review is [Architect] → an unknown session is rejected. Live adapters
+    // register the role at the handshake, so a legitimate caller is never unknown here.
     const eng = orch.asEngineer();
-
-    // Setup: architect creates a proposal via engineer (proposals are
-    // engineer-initiated). Architect registers itself first so the
-    // unregistered-session bypass test uses a genuinely-unregistered
-    // session.
     await eng.createProposal("P1 bypass", "summary", "body");
-    await arch.listTasks(); // ensure architect is registered
-    // Register_role on a fresh session would register it; we want an
-    // unregistered session. Use router.handle directly with a session
-    // that's never been through register_role.
+    // A genuinely-unregistered session (never through register_role) → role "unknown".
     const unknownResult = await orch.router.handle(
       "create_proposal_review",
       { proposalId: "prop-1", decision: "approved", feedback: "unknown-role path" },
@@ -88,12 +80,7 @@ describe("INV-P1 — architect-only proposal review (RBAC)", () => {
         metrics: orch.metrics,
       },
     );
-    // RBAC bypass → handler runs. Outcome depends on proposal state, but
-    // the KEY assertion is: no "Authorization denied" error — the gate let
-    // the unknown-role caller through.
-    if (unknownResult.isError) {
-      const parsed = JSON.parse(unknownResult.content[0].text);
-      expect(parsed.error ?? "").not.toMatch(/Authorization denied/);
-    }
+    expect(unknownResult.isError).toBe(true);
+    expect(JSON.parse(unknownResult.content[0].text).error).toMatch(/Authorization denied/);
   });
 });
