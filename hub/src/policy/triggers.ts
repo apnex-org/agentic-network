@@ -45,6 +45,10 @@
 import type { IPolicyContext } from "./types.js";
 import type { MessageKind, MessageTarget } from "../entities/index.js";
 import { shouldFireTrigger } from "./downstream-actors.js";
+// bug-192 — system-emit through the shared create+push helper so a fired trigger
+// actually live-pushes (SSE) to its target; a bare createMessage leaves
+// push-immediate inert → poll-less (opencode) recipients silent-miss (cf bug-189).
+import { emitAndPush } from "./message-policy.js";
 
 export interface TransitionTrigger {
   /** Which entity type this trigger watches. */
@@ -270,7 +274,7 @@ export async function runTriggers(
     }
 
     try {
-      await ctx.stores.message.createMessage({
+      await emitAndPush(ctx, {
         kind: trigger.emitKind,
         // Author is the Hub itself for synthesized triggers; matches
         // the cascade-runner's "actor=hub" pattern for system audits.
@@ -365,7 +369,10 @@ export async function retryFailedTrigger(
   }
 
   const fireAt = new Date(Date.now() + backoffMsForAttempt(attempt)).toISOString();
-  await ctx.stores.message.createMessage({
+  // bug-192 — uniform path; delivery:"scheduled" → emitAndPush no-ops the push
+  // (the scheduled-message sweeper / poll-backstop delivers it), so this is
+  // unchanged behavior, just routed through the one helper.
+  await emitAndPush(ctx, {
     kind: trigger.emitKind,
     authorRole: "system",
     authorAgentId: "hub",

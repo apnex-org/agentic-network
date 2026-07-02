@@ -8,16 +8,13 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { createTestPool } from "../../storage-substrate/__tests__/_pg-test-pool.js";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import pg from "pg";
 import { createPostgresStorageSubstrate, type HubStorageSubstrate } from "../../storage-substrate/index.js";
 import { BugRepositorySubstrate } from "../bug-repository-substrate.js";
 import { SubstrateCounter } from "../substrate-counter.js";
-
-const { Pool } = pg;
-
 let container: StartedPostgreSqlContainer;
 let substrate: HubStorageSubstrate;
 let connStr: string;
@@ -37,7 +34,7 @@ beforeAll(async () => {
     .start();
   connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
 
-  const pool = new Pool({ connectionString: connStr });
+  const pool = createTestPool(connStr, "bug-repository-substrate");
   for (const f of MIGRATION_FILES) {
     const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
     await pool.query(sql);
@@ -53,7 +50,7 @@ afterAll(async () => {
 }, 30_000);
 
 beforeEach(async () => {
-  const pool = new Pool({ connectionString: connStr });
+  const pool = createTestPool(connStr, "bug-repository-substrate");
   try {
     await pool.query(`DELETE FROM entities WHERE kind IN ($1, $2)`, ["Bug", "Counter"]);
   } finally {
@@ -105,14 +102,40 @@ describe("BugRepositorySubstrate (W4 Option Y sibling-pattern)", () => {
     expect(refetched?.status).toBe("resolved");
 
     // List by filter
-    const openBugs = await repo.listBugs({ status: "open" });
+    const { items: openBugs, truncated: openTrunc } = await repo.listBugs({ status: "open" });
     expect(openBugs).toHaveLength(2);  // bug-2 + bug-3
+    expect(openTrunc).toBe(false);     // bug-200: well under the 500 cap
 
-    const featureBugs = await repo.listBugs({ class: "missing-feature" });
+    const { items: featureBugs } = await repo.listBugs({ class: "missing-feature" });
     expect(featureBugs).toHaveLength(2);  // bug-1 + bug-3
 
     // updateBug on absent returns null
     const noBug = await repo.updateBug("bug-99", { status: "wontfix" });
     expect(noBug).toBeNull();
+  }, 30_000);
+
+  it("idea-364: repo-scope field round-trips through the envelope (create / update / default-null) [real-pg]", async () => {
+    const counter = new SubstrateCounter(substrate);
+    const repo = new BugRepositorySubstrate(substrate, counter);
+
+    // create WITH repo → relocates to spec.repo + decodes back on read (real-pg envelope round-trip)
+    const external = await repo.createBug("External bug", "lives in missioncraft", "minor", { repo: "apnex/missioncraft" });
+    expect(external.repo).toBe("apnex/missioncraft");
+    expect((await repo.getBug(external.id))?.repo).toBe("apnex/missioncraft");
+
+    // create WITHOUT repo → defaults null (home repo / unclassified)
+    const inRepo = await repo.createBug("In-repo bug", "lives here", "minor");
+    expect(inRepo.repo).toBeNull();
+    expect((await repo.getBug(inRepo.id))?.repo).toBeNull();
+
+    // update RECLASSIFIES repo (a cross-repo bug stops accreting in the home reconciliation)
+    const reclassified = await repo.updateBug(inRepo.id, { repo: "apnex/missioncraft" });
+    expect(reclassified?.repo).toBe("apnex/missioncraft");
+    expect((await repo.getBug(inRepo.id))?.repo).toBe("apnex/missioncraft");
+
+    // update can clear it back to null (home repo)
+    const cleared = await repo.updateBug(inRepo.id, { repo: null });
+    expect(cleared?.repo).toBeNull();
+    expect((await repo.getBug(inRepo.id))?.repo).toBeNull();
   }, 30_000);
 });

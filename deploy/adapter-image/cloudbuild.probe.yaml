@@ -1,0 +1,23 @@
+# P1a — fast Cloud Build version probe (no image build). Tells us the docker /
+# buildx CLI / buildkit versions available so the real reproducible cloudbuild
+# (SOURCE_DATE_EPOCH + rewrite-timestamp, needs buildx>=0.11) is authored correctly
+# in one shot. Submit: gcloud builds submit --no-source --config cloudbuild.probe.yaml
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set +e
+        echo "=== docker version ==="
+        docker version --format 'server={{.Server.Version}} client={{.Client.Version}}' 2>&1
+        echo "=== buildx version (need >=0.11 for rewrite-timestamp) ==="
+        docker buildx version 2>&1 || echo "NO-BUILDX-CLI"
+        echo "=== buildx ls ==="
+        docker buildx ls 2>&1
+        echo "=== docker-container driver bootstrap (modern buildkit) ==="
+        docker buildx create --name p1aprobe --driver docker-container --use 2>&1 | tail -2
+        docker buildx inspect --bootstrap 2>&1 | grep -iE 'name|driver|buildkit|status|platforms' | head
+        echo "PROBE-DONE"
+options:
+  logging: CLOUD_LOGGING_ONLY

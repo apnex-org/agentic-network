@@ -1,0 +1,37 @@
+# P1e-2 e2e OVERRIDE — points the adapter at the standalone test-Hub + fast-fires the watchdog
+# for the LIVE docker-L2 restart e2e (M-Adapter-Modernization Design §4/§9).
+#
+# Layered OVER the P1e-1 base compose (never replaces it):
+#   docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d
+#
+# Networking (architect-owned): the adapter joins the EXTERNAL docker network `p1e2-net` and
+# reaches the standalone test-Hub container by name (p1e2-test-hub:8080) — clean container-to-
+# container, no host-gateway. The test-Hub's control port is published to the host for the bash
+# harness's curl. Pre-create the network: `docker network create p1e2-net`.
+#
+# Timing: fast-fires ONLY the watchdog/supervisor timing (the condition + the seam are unchanged;
+# the probe stays a real session round-trip). PROBE-METHOD = get_task: the standalone TestHub
+# serves get_task (a real session-requiring round-trip) but NOT get_agents — so probing
+# get_agents would be an unknown-tool FALSE wedge.
+name: apnex-claude-adapter
+services:
+  claude-adapter:
+    container_name: ${E2E_CONTAINER_NAME:-apnex-claude-adapter-e2e}
+    networks:
+      - p1e2-net
+    environment:
+      # Reach the standalone test-Hub container by name on p1e2-net.
+      OIS_HUB_URL: ${OIS_HUB_URL:-http://p1e2-test-hub:8080/mcp}
+      # TestHub serves get_task (real session round-trip), NOT get_agents -> probe get_task.
+      OIS_LIVENESS_PROBE_METHOD: ${OIS_LIVENESS_PROBE_METHOD:-get_task}
+      # Fast-fire the L1.5 watchdog: real probe every 2s, escalate after 2 consecutive failures.
+      OIS_LIVENESS_PROBE_INTERVAL_MS: ${OIS_LIVENESS_PROBE_INTERVAL_MS:-2000}
+      OIS_LIVENESS_FAILURE_BUDGET: ${OIS_LIVENESS_FAILURE_BUDGET:-2}
+      # Fast sentinel consumption by the PID-1 supervisor.
+      OIS_SUPERVISOR_POLL_MS: ${OIS_SUPERVISOR_POLL_MS:-250}
+      OIS_SUPERVISOR_GRACE_MS: ${OIS_SUPERVISOR_GRACE_MS:-1500}
+networks:
+  # The architect pre-creates this (`docker network create p1e2-net`) + runs the standalone
+  # test-Hub container on it (name p1e2-test-hub); the adapter joins it here.
+  p1e2-net:
+    external: true

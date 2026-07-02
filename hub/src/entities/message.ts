@@ -94,7 +94,10 @@ export const KIND_AXES: Readonly<Record<MessageKind, KindAxes>> = {
 
 // ── Author + target shapes ───────────────────────────────────────────
 
-export const MESSAGE_AUTHOR_ROLES = ["architect", "engineer", "director", "system"] as const;
+// mission-93: verifier authors messages/thread-replies to participate in
+// verification dialogue (verifier-role.md §2.3). Must be a valid author role
+// or create_thread_reply (write-through to the message store) rejects it.
+export const MESSAGE_AUTHOR_ROLES = ["architect", "engineer", "director", "verifier", "system"] as const;
 export type MessageAuthorRole = (typeof MESSAGE_AUTHOR_ROLES)[number];
 
 export const MESSAGE_DELIVERY_MODES = ["push-immediate", "queued", "scheduled"] as const;

@@ -36,7 +36,11 @@ import type { HubStorageSubstrate } from "./types.js";
 export const LOCK_CLASS = {
   assertIdentity: 1,
   Counter: 2,
-  // Reserve future classes here (3, 4, ...; keep this list authoritative).
+  // C1-R2 (mission-94): per-agent WorkItem claim serialization — count(held leases)
+  // + the ready→claimed CAS run INSIDE this lock (keyed on agentId) so the WIP cap
+  // is a hard integrity invariant, not a TOCTOU soft-cap.
+  workItemWip: 3,
+  // Reserve future classes here (4, 5, ...; keep this list authoritative).
 } as const;
 export type LockClass = typeof LOCK_CLASS[keyof typeof LOCK_CLASS];
 

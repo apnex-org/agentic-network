@@ -1,6 +1,6 @@
 {
   "name": "@apnex/message-router",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Sovereign Message-router (Layer 2) — kind/subkind dispatch + seen-id LRU dedup + hooks-pattern host-injection for the OIS Universal Adapter",
   "type": "module",
   "main": "dist/index.js",
@@ -12,13 +12,10 @@
   "scripts": {
     "prebuild": "node ../../scripts/build/write-build-info.js",
     "build": "tsc",
-    "prepack": "node ../../scripts/build/write-build-info.js",
+    "prepack": "node ../../scripts/build/write-build-info.js --assert",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest"
-  },
-  "peerDependencies": {
-    "@apnex/network-adapter": "*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

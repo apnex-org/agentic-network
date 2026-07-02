@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { assertHostWiringComplete } from "../../src/tool-manager/dispatcher.js";
+import { assertHostWiringComplete } from "../../src/tool-manager/orchestrator/dispatcher.js";
 import { PollBackstop } from "../../src/kernel/poll-backstop.js";
 
 describe("bug-53 — assertHostWiringComplete", () => {

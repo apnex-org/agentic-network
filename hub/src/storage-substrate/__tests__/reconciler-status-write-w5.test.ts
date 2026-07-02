@@ -28,6 +28,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { createTestPool } from "./_pg-test-pool.js";
 import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
@@ -82,7 +83,7 @@ describe("W5 reconciler status-write (converge-then-stop + spec-equality guard)"
     container = await new PostgreSqlContainer("postgres:15-alpine")
       .withUsername("hub").withPassword("hub").withDatabase("hub").start();
     connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
-    pool = new Pool({ connectionString: connStr });
+    pool = createTestPool(connStr, "reconciler-status-write-w5");
     for (const f of MIGRATION_FILES) await pool.query(readFileSync(join(MIGRATIONS_DIR, f), "utf-8"));
     substrate = createPostgresStorageSubstrate(connStr);
     // Wire the W4 write-encoder exactly as Hub boot does — the status-write put is an

@@ -14,6 +14,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Pool } from "pg";
+import { createTestPool } from "./_pg-test-pool.js";
 import {
   createPostgresStorageSubstrate,
   createSchemaReconciler,
@@ -42,7 +43,7 @@ beforeAll(async () => {
     .start();
   connStr = `postgres://hub:hub@${container.getHost()}:${container.getPort()}/hub`;
 
-  pool = new Pool({ connectionString: connStr });
+  pool = createTestPool(connStr, "schema-reconciler-w7-ownership");
   for (const f of MIGRATION_FILES) {
     const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf-8");
     await pool.query(sql);

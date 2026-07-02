@@ -36,13 +36,21 @@ import { SubstrateCounter } from "./substrate-counter.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Bug";
+
+// bug-200: listBugs previously passed NO limit → substrate defaulted to 100,
+// silently capping BOTH the page AND the `total` (reported 100 with 198 real
+// bugs, no truncation flag — a tele-4 fail-loud violation). Honor the substrate
+// max (500) + return a truncation-honest flag, mirroring listWorkItems /
+// list_ready_work. The sibling list-all methods (listMissions/listTasks/
+// listIdeas/listEntries) already pass limit:500 — listBugs was the lone outlier.
+const LIST_CAP = 500;
 const MAX_CAS_RETRIES = 50;
 
 function cloneBug(bug: Bug): Bug {
   // mission-90 W8: decode envelope→flat (idea-327); derive `tags` from metadata.labels
   // (drop the raw artifact) + ensure the relocated status arrays (already flattened by
   // the generic decode) are present. Used at the read boundary AND the CAS path.
-  const flat = decodeEnvelopeToFlat(bug as unknown as Record<string, unknown>) as Record<string, unknown>;
+  const flat = decodeEnvelopeToFlat(bug as unknown as Record<string, unknown>, "Bug") as Record<string, unknown>;
   // tags: from the envelope metadata.labels map OR a legacy-flat in-memory tags array.
   if (flat.labels && typeof flat.labels === "object") {
     flat.tags = Object.keys(flat.labels as Record<string, string>);
@@ -52,6 +60,8 @@ function cloneBug(bug: Bug): Bug {
   }
   flat.linkedTaskIds = (flat.linkedTaskIds as string[] | undefined) ?? [];
   flat.fixCommits = (flat.fixCommits as string[] | undefined) ?? [];
+  // idea-364: repo defaults null on bugs predating the field (envelope had no spec.repo).
+  flat.repo = (flat.repo as string | null | undefined) ?? null;
   return flat as unknown as Bug;
 }
 
@@ -72,6 +82,14 @@ export class BugRepositorySubstrate implements IBugStore {
       surfacedBy?: string;
       backlink?: CascadeBacklink;
       createdBy?: EntityProvenance;
+      // bug-118 — direct lineage for the manual create_bug path. The cascade
+      // path carries thread/action via `backlink`; a manually-reported bug from
+      // a thread/mission context passes these so it isn't an orphan in the
+      // lineage graph. linkedMissionId is set from sourceMissionId.
+      sourceThreadId?: string;
+      sourceMissionId?: string;
+      // idea-364 — repo-scope classification at create (null/absent = home repo).
+      repo?: string;
     } = {},
   ): Promise<Bug> {
     const num = await this.counter.next("bugCounter");
@@ -86,13 +104,14 @@ export class BugRepositorySubstrate implements IBugStore {
       class: options.classHint ?? null,
       tags: options.tags ?? [],
       sourceIdeaId: options.sourceIdeaId ?? null,
-      sourceThreadId: options.backlink?.sourceThreadId ?? null,
+      sourceThreadId: options.backlink?.sourceThreadId ?? options.sourceThreadId ?? null,
       sourceActionId: options.backlink?.sourceActionId ?? null,
       sourceThreadSummary: options.backlink?.sourceThreadSummary ?? null,
       linkedTaskIds: [],
-      linkedMissionId: null,
+      linkedMissionId: options.sourceMissionId ?? null,
       fixCommits: [],
       fixRevision: null,
+      repo: options.repo ?? null,
       surfacedBy: options.surfacedBy ?? null,
       createdBy: options.createdBy,
       createdAt: now,
@@ -127,7 +146,7 @@ export class BugRepositorySubstrate implements IBugStore {
     severity?: BugSeverity;
     class?: string;
     tags?: string[];
-  }): Promise<Bug[]> {
+  }): Promise<{ items: Bug[]; truncated: boolean }> {
     // Substrate-API list with filter. tags is array-contains semantics; substrate
     // FilterValue doesn't directly support array-contains, so we filter
     // tags client-side post-list (same as existing repository pattern).
@@ -138,11 +157,17 @@ export class BugRepositorySubstrate implements IBugStore {
 
     const { items } = await this.substrate.list<Bug>(KIND, {
       filter: Object.keys(substrateFilter).length > 0 ? substrateFilter : undefined,
+      limit: LIST_CAP, // bug-200: honor the substrate max (was defaulting to 100)
     });
+
+    // bug-200: truncation-honest — the raw substrate scan hit the cap. Measured
+    // BEFORE the client-side tags filter (matches beyond the scan window may exist),
+    // so the flag reflects "more bugs than the scan saw", never a silent under-report.
+    const truncated = items.length >= LIST_CAP;
 
     // mission-90 W8: decode FIRST (cloneBug derives the flat `tags` array from the
     // metadata.labels map), then filter on it.
-    return items
+    const decoded = items
       .map(cloneBug)
       .filter(bug => {
         if (filter?.tags && filter.tags.length > 0) {
@@ -151,6 +176,7 @@ export class BugRepositorySubstrate implements IBugStore {
         }
         return true;
       });
+    return { items: decoded, truncated };
   }
 
   async updateBug(
@@ -165,6 +191,7 @@ export class BugRepositorySubstrate implements IBugStore {
       linkedMissionId: string | null;
       fixCommits: string[];
       fixRevision: string | null;
+      repo: string | null;
     }>,
   ): Promise<Bug | null> {
     try {
@@ -178,6 +205,7 @@ export class BugRepositorySubstrate implements IBugStore {
         if (updates.linkedMissionId !== undefined) bug.linkedMissionId = updates.linkedMissionId;
         if (updates.fixCommits !== undefined) bug.fixCommits = [...updates.fixCommits];
         if (updates.fixRevision !== undefined) bug.fixRevision = updates.fixRevision;
+        if (updates.repo !== undefined) bug.repo = updates.repo;
         bug.updatedAt = new Date().toISOString();
         return bug;
       });
@@ -192,13 +220,15 @@ export class BugRepositorySubstrate implements IBugStore {
   async findByCascadeKey(
     key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">,
   ): Promise<Bug | null> {
-    // mission-90 W8: envelope-only (TOLERANT/dual-shape retirement). Cascade-key
-    // fields live at metadata.*; the legacy top-level fallback is retired (W6 proved
-    // 0 bare rows live + all writes envelope via the W4 encoder).
+    // C3-R4b (dual-path collapse): filter by the FLAT cascade key — the substrate
+    // translates via renameMap (sourceThreadId→metadata.sourceThreadId,
+    // sourceActionId→metadata.sourceActionId), so renameMap is the single
+    // field-path authority. (mission-90 W8 already retired the legacy bare-row
+    // fallback: 0 bare rows live; all writes envelope via the W4 encoder.)
     const envelopeResult = await this.substrate.list<Bug>(KIND, {
       filter: {
-        "metadata.sourceThreadId": key.sourceThreadId,
-        "metadata.sourceActionId": key.sourceActionId,
+        sourceThreadId: key.sourceThreadId,
+        sourceActionId: key.sourceActionId,
       },
       limit: 1,
     });
@@ -206,9 +236,9 @@ export class BugRepositorySubstrate implements IBugStore {
   }
 
   async findBySourceIdeaId(sourceIdeaId: string): Promise<Bug | null> {
-    // mission-90 W8: envelope-only — the legacy top-level sourceIdeaId fallback is retired.
+    // C3-R4b: flat cascade key; substrate translates sourceIdeaId→metadata.sourceIdeaId.
     const envelopeResult = await this.substrate.list<Bug>(KIND, {
-      filter: { "metadata.sourceIdeaId": sourceIdeaId },
+      filter: { sourceIdeaId },
       limit: 1,
     });
     return envelopeResult.items[0] ? cloneBug(envelopeResult.items[0]) : null;

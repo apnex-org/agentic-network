@@ -77,3 +77,16 @@ export function appendNotification(
     }
   }
 }
+
+/**
+ * idea-355 SLICE-1 dedup: the both-shim-identical pending-task notification
+ * payload (was duplicated verbatim in the claude + opencode onPendingTask
+ * callbacks). Each shim feeds the returned entry to its own
+ * appendNotification(..., { logPath, mirror? }) — the host-specific log sink
+ * stays in the shim (the last mile).
+ */
+export function buildPendingTaskNotification(
+  task: Record<string, unknown>,
+): NotificationLogEntry {
+  return { event: "task_issued", data: task, action: "Pick up with get_task" };
+}

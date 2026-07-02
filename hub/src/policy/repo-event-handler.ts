@@ -99,7 +99,6 @@ export class RepoEventBridge {
   private readonly sink: CreateMessageSink;
   private readonly logger: RepoEventBridgeLogger;
   private state: RepoEventBridgeState = "idle";
-  private drainTasks: Promise<void>[] = [];
 
   constructor(options: RepoEventBridgeOptions) {
     this.logger = options.logger ?? defaultLogger();
@@ -114,6 +113,7 @@ export class RepoEventBridge {
       budgetFraction: options.budgetFraction,
       fetch: options.fetch,
       logger: this.logger,
+      sink: this.sink, // bug-190 (A): inline delivery — the poll loop IS the delivery loop
     });
     this.workflowRunPollSource = new WorkflowRunPollSource({
       storage: options.storage,
@@ -123,6 +123,7 @@ export class RepoEventBridge {
       budgetFraction: options.budgetFraction,
       fetch: options.fetch,
       logger: this.logger,
+      sink: this.sink,
     });
   }
 
@@ -149,19 +150,14 @@ export class RepoEventBridge {
       return;
     }
     this.state = "running";
-    this.drainTasks = [
-      this.drainSource("events", this.pollSource),
-      this.drainSource("workflow-runs", this.workflowRunPollSource),
-    ];
     this.logger.info(
-      `[repo-event-bridge] Bridge running; draining events + workflow-runs into create_message`,
+      `[repo-event-bridge] Bridge running; events + workflow-runs deliver INLINE into create_message (the poll loop IS the delivery loop — no separate drainer)`,
     );
   }
 
   /**
-   * Stop the bridge. Awaits both drainers so any in-flight `emit` lands
-   * before returning — keeps the SIGINT handler symmetric with the
-   * other Hub sweepers.
+   * Stop the bridge. Stops both sources — their poll/deliver loops finish the in-flight cycle
+   * before returning. No separate drainer to await (bug-190 (A): the poll loop is the delivery loop).
    */
   async stop(): Promise<void> {
     if (this.state === "idle" || this.state === "stopped" || this.state === "failed") {
@@ -173,9 +169,6 @@ export class RepoEventBridge {
       this.pollSource.stop(),
       this.workflowRunPollSource.stop(),
     ]);
-    if (this.drainTasks.length > 0) {
-      await Promise.allSettled(this.drainTasks);
-    }
   }
 
   /** Diagnostic: current lifecycle state. */
@@ -184,13 +177,17 @@ export class RepoEventBridge {
   }
 
   /**
-   * Diagnostic: combined health of both sources. The bridge is "paused"
-   * if EITHER source is paused; the most recent successful poll is the
-   * later of the two timestamps.
+   * Diagnostic: combined health of both sources — "paused" if EITHER source is paused;
+   * lastSuccessfulPoll is the later of the two. bug-190 (d): ALSO rolls up the DELIVERY half —
+   * deliveryFailing if EITHER source's sink delivery is persistently failing, lastSuccessfulDelivery
+   * as the later of the two. Wired to /health so a poll-healthy-but-delivery-failing bridge is no
+   * longer dark (closes the 'bridge.health() has zero prod consumers' surface).
    */
   health() {
     const eventsHealth = this.pollSource.health();
     const workflowRunsHealth = this.workflowRunPollSource.health();
+    const laterOf = (a?: string, b?: string): string | undefined =>
+      a && b ? (a > b ? a : b) : (a ?? b);
     return {
       paused: eventsHealth.paused || workflowRunsHealth.paused,
       pausedReason:
@@ -199,28 +196,14 @@ export class RepoEventBridge {
         eventsHealth.lastSuccessfulPoll > workflowRunsHealth.lastSuccessfulPoll
           ? eventsHealth.lastSuccessfulPoll
           : workflowRunsHealth.lastSuccessfulPoll,
+      deliveryFailing:
+        Boolean(eventsHealth.deliveryFailing) ||
+        Boolean(workflowRunsHealth.deliveryFailing),
+      lastSuccessfulDelivery: laterOf(
+        eventsHealth.lastSuccessfulDelivery,
+        workflowRunsHealth.lastSuccessfulDelivery,
+      ),
     };
-  }
-
-  private async drainSource(
-    label: string,
-    source: AsyncIterable<RepoEvent>,
-  ): Promise<void> {
-    try {
-      for await (const event of source) {
-        try {
-          await this.sink.emit(event);
-        } catch (err) {
-          this.logger.error(
-            `[repo-event-bridge] sink.emit failed for ${label}/${event.subkind}: ${(err as Error)?.message ?? String(err)}`,
-          );
-        }
-      }
-    } catch (err) {
-      this.logger.error(
-        `[repo-event-bridge] ${label} drainer error: ${(err as Error)?.message ?? String(err)}`,
-      );
-    }
   }
 }
 

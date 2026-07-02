@@ -109,7 +109,7 @@ export function registerClarificationPolicy(router: PolicyRouter): void {
 
   router.register(
     "get_clarification",
-    "[Engineer] Check if the Architect has responded to a clarification request. Returns the answer if available.",
+    "[Engineer|Verifier] Check if the Architect has responded to a clarification request (by task id). Returns the answer if available. (mission-93: verifier broad/audit read per verifier-role.md §2.2.)",
     {
       taskId: z.string().describe("The task ID to check"),
     },

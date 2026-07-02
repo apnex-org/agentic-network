@@ -37,6 +37,16 @@ export interface SchemaReconcilerOptions {
 
   /** AbortSignal for runtime watch loop; reconciler boot path is not abortable (one-shot). */
   signal?: AbortSignal;
+
+  /**
+   * bug-100 — runtime watch-loop reconnect backoff (ms). After a NON-abort
+   * watch failure (e.g. a transient postgres LISTEN drop), the loop reconnects
+   * with exponential backoff (initial → ×2 → max) instead of silently losing
+   * the runtime watch. Injectable so tests drive reconnect deterministically
+   * with a tiny delay. Defaults: 1000 → 30000.
+   */
+  reconnectInitialBackoffMs?: number;
+  reconnectMaxBackoffMs?: number;
 }
 
 /**
@@ -61,6 +71,20 @@ export class SchemaReconciler {
   private readonly pool: pg.Pool;
   private readonly log: (msg: string) => void;
   private readonly warn: (msg: string, err?: unknown) => void;
+  // bug-100 — runtime watch-loop resilience: reconnect backoff + liveness stamp.
+  private readonly reconnectInitialBackoffMs: number;
+  private readonly reconnectMaxBackoffMs: number;
+  /** ISO timestamp of the last runtime-watch event processed — liveness signal. */
+  private lastWatchHealthyAt: string | null = null;
+
+  // bug-100 — watch cursor. Advanced to each delivered event's resourceVersion,
+  // then passed as `sinceRevision` when (re)entering substrate.watch so a
+  // reconnect REPLAYS any SchemaDef change written during the prior-session-
+  // death → new-LISTEN gap instead of live-tailing from "now" and missing it.
+  // The substrate's subscribe-before-replay primitive (bug-187) makes that
+  // replay gap-free. undefined on the first (cold) session → live-tail from now,
+  // matching the prior behavior (boot already applied the current schemas).
+  private lastSeenResourceVersion: string | undefined = undefined;
   /**
    * Internal AbortController for runtime-loop cancellation. Chains to opts.signal
    * if provided (caller-side abort triggers internal abort); close() also triggers
@@ -122,6 +146,8 @@ export class SchemaReconciler {
     attachPgErrorHandler(this.pool, "SchemaReconciler pool");
     this.log = opts.log ?? ((m) => console.log(`[SchemaReconciler] ${m}`));
     this.warn = opts.warn ?? ((m, err) => console.warn(`[SchemaReconciler] ${m}`, err ?? ""));
+    this.reconnectInitialBackoffMs = opts.reconnectInitialBackoffMs ?? 1000;
+    this.reconnectMaxBackoffMs = opts.reconnectMaxBackoffMs ?? 30_000;
     this.internalAbort = new AbortController();
     if (opts.signal) {
       if (opts.signal.aborted) {
@@ -210,6 +236,22 @@ export class SchemaReconciler {
       );
     }
     this.log(`boot — initial SchemaDef application complete (${successCount} of ${initial.length} kinds applied; 0 failures)`);
+
+    // bug-100 — seed the watch cursor from the substrate high-water mark BEFORE
+    // the first watch session, so even a reconnect that happens before this
+    // session delivers its first event replays from the boot baseline (gap-free)
+    // rather than live-tailing from "now". list()'s snapshotRevision is
+    // COALESCE(MAX(resource_version),0) substrate-wide — a correct lower bound for
+    // any future SchemaDef write. Best-effort: a substrate without list (mock/
+    // dev) or a transient read error simply leaves the cursor undefined → the
+    // prior live-tail-from-now behavior, never a boot failure.
+    try {
+      const { snapshotRevision } = await this.substrate.list("SchemaDef", { limit: 1 });
+      this.lastSeenResourceVersion = snapshotRevision;
+      this.log(`boot — watch cursor seeded at high-water rv=${snapshotRevision}`);
+    } catch (err) {
+      this.warn(`boot — watch-cursor baseline seed skipped (list unavailable); first session live-tails`, err);
+    }
 
     // ── Runtime: subscribe to substrate.watch('SchemaDef') for ongoing changes ──
     // Fire-and-forget; runs until opts.signal is aborted OR substrate.watch terminates
@@ -332,6 +374,16 @@ export class SchemaReconciler {
    */
   public getFieldTranslation(kind: string, bareKey: string): string | null {
     return this.fieldTranslationMap.get(kind)?.get(bareKey) ?? null;
+  }
+
+  /**
+   * C3-R4b (piece 1): does this kind carry ANY renameMap translations — i.e. is it
+   * a known envelope-partitioned domain kind? Gates FilterTranslationGapError: a
+   * null translation is a GAP only for a partitioned kind (a non-reserved domain
+   * field the encoder bucketed), not for an unknown/ad-hoc kind.
+   */
+  public hasTranslations(kind: string): boolean {
+    return this.fieldTranslationMap.has(kind);
   }
 
   /**
@@ -515,11 +567,20 @@ export class SchemaReconciler {
    * use-cases. Partial-index support deferrable to W2.x or v2 architect-decision.
    */
   private buildCreateIndexSQL(kind: string, idx: IndexDef): string {
-    const fieldExprs = idx.fields.map(f => this.jsonbExtract(f));
-    const fieldsList = fieldExprs.map(e => `(${e})`).join(", ");
     // Use double-single-quote escaping for kind name (basic SQL injection mitigation —
     // SchemaDef.kind is engineer-authored content, not external input, but safe-by-default)
     const safeKind = kind.replace(/'/g, "''");
+    // C1-R2: GIN index over the JSON-extracted path for the $contains (@>)
+    // array-membership operator (e.g. roleEligibility[]). Single-field only;
+    // jsonb_path_ops is the compact operator class that supports @>.
+    if (idx.type === "gin") {
+      if (idx.fields.length !== 1 || !idx.fields[0]) {
+        throw new Error(`[SchemaReconciler] GIN index '${idx.name}' requires exactly one field (got ${idx.fields.length})`);
+      }
+      return `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${idx.name} ON entities USING gin ((${this.jsonbExtractJson(idx.fields[0])}) jsonb_path_ops) WHERE kind = '${safeKind}'`;
+    }
+    const fieldExprs = idx.fields.map(f => this.jsonbExtract(f));
+    const fieldsList = fieldExprs.map(e => `(${e})`).join(", ");
     return `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${idx.name} ON entities (${fieldsList}) WHERE kind = '${safeKind}'`;
   }
 
@@ -543,12 +604,70 @@ export class SchemaReconciler {
   }
 
   /**
+   * JSON-extract variant of jsonbExtract — returns jsonb (`->`/`#>`), NOT text
+   * (`->>`/`#>>`). Used for C1-R2 GIN indexes backing the `$contains` (`@>`)
+   * array-membership operator (the LHS of `@>` must be jsonb).
+   */
+  private jsonbExtractJson(dottedPath: string): string {
+    const parts = dottedPath.split(".");
+    if (parts.length === 1) {
+      const safe = parts[0]!.replace(/'/g, "''");
+      return `data->'${safe}'`;
+    }
+    const safe = parts.map(p => p.replace(/'/g, "''")).join(",");
+    return `data#>'{${safe}}'`;
+  }
+
+  /**
    * Runtime watch loop: subscribe to substrate.watch('SchemaDef') + reconcile
    * indexes on put/delete events. Cancelled via opts.signal.
    */
   private async runtimeLoop(): Promise<void> {
+    // bug-100 — reconnect-with-exponential-backoff. A transient watch failure
+    // (e.g. a postgres LISTEN drop) must NOT silently lose the runtime SchemaDef
+    // watch. Re-enter substrate.watch on any non-abort session end (throw OR a
+    // normal iterator end), backing off between attempts; the backoff resets
+    // once the watch delivers an event again. Exits cleanly only on abort.
+    let backoffMs = this.reconnectInitialBackoffMs;
+    while (!this.internalAbort.signal.aborted) {
+      const result = await this.runtimeWatchSession(() => { backoffMs = this.reconnectInitialBackoffMs; });
+      if (result === "abort") break;
+      this.log(`runtime — reconnecting watch in ${backoffMs}ms`);
+      if (await this.abortableDelay(backoffMs)) break;
+      backoffMs = Math.min(backoffMs * 2, this.reconnectMaxBackoffMs);
+    }
+    this.log(`runtime — watch loop exited (aborted=${this.internalAbort.signal.aborted})`);
+  }
+
+  /**
+   * One watch subscription session: for-await over substrate.watch until it ends
+   * (abort → "abort", the clean shutdown path) or throws / self-terminates
+   * (→ "reconnect"; the caller backs off + reconnects). Stamps lastWatchHealthyAt
+   * + invokes onHealthy (backoff reset) on each delivered event.
+   */
+  private async runtimeWatchSession(onHealthy: () => void): Promise<"abort" | "reconnect"> {
     try {
-      for await (const event of this.substrate.watch<Record<string, unknown>>("SchemaDef", { signal: this.internalAbort.signal })) {
+      // bug-100 — pass the watch cursor as sinceRevision so a reconnect replays
+      // the gap (subscribe-before-replay, gap-free per bug-187). undefined on the
+      // first session → live-tail from now.
+      for await (const event of this.substrate.watch<Record<string, unknown>>("SchemaDef", { signal: this.internalAbort.signal, sinceRevision: this.lastSeenResourceVersion })) {
+        // Watch is delivering → healthy.
+        this.lastWatchHealthyAt = new Date().toISOString();
+        onHealthy();
+        // bug-100 — advance the cursor as each event is RECEIVED (before the
+        // skip-reconcile guard / processing), so a reconnect replays strictly
+        // after the last event we actually saw. Re-processing on overlap is
+        // idempotent (the specCache guard + status-write converge).
+        // work-41 (steve audit-4533 finding 1): MONOTONIC — only advance, never
+        // regress. The primitive now delivers in-order, but guard defensively so a
+        // stale/out-of-order event can never move the reconnect cursor BACKWARDS
+        // (which would re-replay + duplicate). Cursor = max(cursor, event.rv).
+        if (
+          this.lastSeenResourceVersion === undefined ||
+          BigInt(event.resourceVersion) > BigInt(this.lastSeenResourceVersion)
+        ) {
+          this.lastSeenResourceVersion = event.resourceVersion;
+        }
         if (event.op === "put" && event.entity) {
           // mission-90 W1: rows are envelope-shaped post boot-put fix — decode
           // back to the runtime SchemaDef (described kind at metadata.name)
@@ -600,14 +719,45 @@ export class SchemaReconciler {
           this.warn(`runtime — SchemaDef deleted for id=${event.id}; orphan indexes NOT cleaned (manual cleanup needed)`);
         }
       }
+      // for-await ended WITHOUT throwing — on abort this is the clean shutdown
+      // (substrate.watch ends its LISTEN client on the signal); otherwise the
+      // iterator self-terminated (e.g. the LISTEN connection closed) → reconnect.
+      return this.internalAbort.signal.aborted ? "abort" : "reconnect";
     } catch (err) {
-      // Watch terminated unexpectedly (signal aborted OR substrate-side error)
+      // Watch threw (e.g. a transient postgres LISTEN drop). Abort → clean exit;
+      // otherwise signal the caller to back off + reconnect.
       if (this.internalAbort.signal.aborted) {
         this.log(`runtime — watch loop aborted via signal`);
-      } else {
-        this.warn(`runtime — watch loop terminated unexpectedly`, err);
+        return "abort";
       }
+      this.warn(`runtime — watch session terminated unexpectedly`, err);
+      return "reconnect";
     }
+  }
+
+  /**
+   * Resolve after `ms`, or immediately when internalAbort fires. Returns true if
+   * the wait was cut short by an abort (caller should exit), false on a normal
+   * timeout — keeps the reconnect backoff from blocking close().
+   */
+  private abortableDelay(ms: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (this.internalAbort.signal.aborted) return resolve(true);
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        this.internalAbort.signal.removeEventListener("abort", onAbort);
+        resolve(false);
+      }, ms);
+      this.internalAbort.signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  /** bug-100 — last time the runtime watch processed an event (observability). */
+  getLastWatchHealthyAt(): string | null {
+    return this.lastWatchHealthyAt;
   }
 
   /**

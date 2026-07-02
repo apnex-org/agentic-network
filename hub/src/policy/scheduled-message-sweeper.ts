@@ -39,6 +39,7 @@ import type { IAuditStore } from "../state.js";
 import type { IThreadStore } from "../state.js";
 import type { ITaskStore } from "../state.js";
 import { evaluatePrecondition } from "./preconditions.js";
+import { escalateBareEnvelope } from "./bare-envelope-escalation.js";
 
 const DEFAULT_INTERVAL_MS = 1000;
 
@@ -54,6 +55,7 @@ export interface ScheduledMessageSweeperOptions {
   logger?: {
     log: (msg: string) => void;
     warn: (msg: string, err?: unknown) => void;
+    error?: (msg: string, err?: unknown) => void;
   };
   /**
    * Optional time-source override for deterministic tests. Returns
@@ -67,6 +69,8 @@ export interface ScheduledSweepResult {
   fired: number;
   cancelled: number;
   errors: number;
+  /** C3-R4b piece 2: messages terminal-quarantined on a structural 0-bare defect. */
+  quarantined: number;
 }
 
 /**
@@ -83,7 +87,11 @@ export class ScheduledMessageSweeper {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly intervalMs: number;
   private readonly metrics: IPolicyContext["metrics"] | undefined;
-  private readonly logger: { log: (m: string) => void; warn: (m: string, err?: unknown) => void };
+  private readonly logger: {
+    log: (m: string) => void;
+    warn: (m: string, err?: unknown) => void;
+    error: (m: string, err?: unknown) => void;
+  };
   private readonly now: () => number;
 
   constructor(
@@ -94,18 +102,25 @@ export class ScheduledMessageSweeper {
   ) {
     this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     this.metrics = options.metrics;
-    this.logger = options.logger ?? {
-      log: (m) => console.log(`[ScheduledMessageSweeper] ${m}`),
-      warn: (m, err) =>
-        console.warn(`[ScheduledMessageSweeper] ${m}`, err ?? ""),
+    this.logger = {
+      log: options.logger?.log ?? ((m) => console.log(`[ScheduledMessageSweeper] ${m}`)),
+      warn: options.logger?.warn ?? ((m, err) => console.warn(`[ScheduledMessageSweeper] ${m}`, err ?? "")),
+      error: options.logger?.error ?? ((m, err) => console.error(`[ScheduledMessageSweeper] ${m}`, err ?? "")),
     };
     this.now = options.now ?? (() => Date.now());
+  }
+
+  /** C3-R4b piece 2: deps for the shared 0-bare escalation (durable audit +
+   *  best-effort per-process metric + ERROR logger). */
+  private escalationDeps(ctx: IPolicyContext) {
+    return { audit: this.auditStore, metrics: ctx.metrics, logger: this.logger };
   }
 
   /**
    * Single sweep pass. Returns counts for telemetry / test assertions.
    * Per-message errors are isolated (logged + metric'd; remaining
-   * messages continue to be processed).
+   * messages continue to be processed). A STRUCTURAL bare-envelope defect is
+   * terminal-quarantined (not re-scanned) + escalated loud/queryable (cal-84).
    */
   async sweep(): Promise<ScheduledSweepResult> {
     const result: ScheduledSweepResult = {
@@ -113,16 +128,37 @@ export class ScheduledMessageSweeper {
       fired: 0,
       cancelled: 0,
       errors: 0,
+      quarantined: 0,
     };
 
-    const pending = await this.messageStore.listMessages({
-      delivery: "scheduled",
-      scheduledState: "pending",
-    });
+    const ctx = this.contextProvider.forSweeper();
+
+    let pending: Message[];
+    try {
+      pending = await this.messageStore.listMessages({
+        delivery: "scheduled",
+        scheduledState: "pending",
+      });
+    } catch (listErr) {
+      // C3-R4b piece 2: a structural bare-envelope in the message-list decode
+      // throws mid-list (no per-item isolation possible). Escalate loud +
+      // queryable and skip THIS sweep cycle — the timer + startup wrap continue,
+      // Hub keeps serving. NOT a silent swallow (cal-84).
+      if (
+        await escalateBareEnvelope(
+          listErr,
+          { sweeper: "scheduled-message (pending list)", entityRef: "(message list)" },
+          this.escalationDeps(ctx),
+        )
+      ) {
+        result.quarantined += 1;
+        return result;
+      }
+      throw listErr;
+    }
     result.scanned = pending.length;
 
     const nowMs = this.now();
-    const ctx = this.contextProvider.forSweeper();
 
     for (const message of pending) {
       // Skip messages whose fireAt is in the future (don't fire early).
@@ -168,6 +204,29 @@ export class ScheduledMessageSweeper {
           result.cancelled += 1;
         }
       } catch (err) {
+        // C3-R4b piece 2: a STRUCTURAL bare-envelope (a dependency entity the
+        // precondition read was still enveloped) is PERMANENT — escalate loud +
+        // queryable, TERMINAL-QUARANTINE the (healthy) message to a non-pending
+        // terminal state so it is NOT re-scanned, and CONTINUE. Kills cal-84's
+        // silent per-tick re-scan of a permanently-failing item.
+        if (
+          await escalateBareEnvelope(
+            err,
+            { sweeper: "scheduled-message", entityRef: message.id },
+            this.escalationDeps(ctx),
+          )
+        ) {
+          result.quarantined += 1;
+          try {
+            await this.messageStore.markScheduledState(message.id, "precondition-failed");
+          } catch (quarErr) {
+            this.logger.warn(
+              `quarantine (markScheduledState) failed for message ${message.id}; it may re-scan next tick:`,
+              quarErr,
+            );
+          }
+          continue;
+        }
         result.errors += 1;
         this.metrics?.increment("scheduled_message_sweeper.message_error", {
           messageId: message.id,
@@ -180,9 +239,9 @@ export class ScheduledMessageSweeper {
       }
     }
 
-    if (result.fired > 0 || result.cancelled > 0 || result.errors > 0) {
+    if (result.fired > 0 || result.cancelled > 0 || result.errors > 0 || result.quarantined > 0) {
       this.logger.log(
-        `sweep complete: scanned=${result.scanned} fired=${result.fired} cancelled=${result.cancelled} errors=${result.errors}`,
+        `sweep complete: scanned=${result.scanned} fired=${result.fired} cancelled=${result.cancelled} errors=${result.errors} quarantined=${result.quarantined}`,
       );
     }
     this.metrics?.increment("scheduled_message_sweeper.tick", {
@@ -190,6 +249,7 @@ export class ScheduledMessageSweeper {
       fired: result.fired,
       cancelled: result.cancelled,
       errors: result.errors,
+      quarantined: result.quarantined,
     });
     return result;
   }

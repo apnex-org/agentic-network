@@ -81,6 +81,14 @@ export interface IndexDef {
   name: string;
   /** Dotted-path fields participating in the index. */
   fields: string[];
+  /**
+   * Index method. Default "btree" (text-extracted expression index, the existing
+   * behavior). "gin" (C1-R2) emits a GIN index over the JSON-extracted path
+   * (`data#>'{path}' jsonb_path_ops`) for the `$contains` (`@>`) array-membership
+   * operator — required for an INDEXED containment filter (e.g. roleEligibility[]).
+   * GIN is single-field only.
+   */
+  type?: "btree" | "gin";
   /** Optional partial-index predicate (substrate-translated to JSONB syntax). */
   where?: string;
 }
@@ -126,6 +134,9 @@ export interface WatchOptions {
  * per-field QueryableFieldType discipline:
  *   - $gt/$lt/$gte/$lte permitted only on numeric + date fields
  *   - $in permitted on all scalar types
+ *   - $contains permitted only on ARRAY fields (C1-R2: JSONB array-membership —
+ *     "the stored array CONTAINS this scalar", `data#>'{path}' @> to_jsonb($v)`;
+ *     the inverse of $in, which is "the stored scalar is one of these candidates")
  *   - $regex/$where/$expr/$or/$and/$not forbidden (substrate enforces; errors on use)
  *
  * SchemaDef.FieldDef.type drives narrowing at validation time.
@@ -133,9 +144,64 @@ export interface WatchOptions {
 export type FilterValue =
   | string | number | boolean
   | { $in: Array<string | number | boolean> }
+  | { $contains: string | number | boolean }
   | { $gt?: number | string; $lt?: number | string; $gte?: number | string; $lte?: number | string };
 
 export type Filter = Record<string, FilterValue>;
+
+/**
+ * The operator keys a FilterValue object may legally carry. SINGLE SOURCE OF
+ * TRUTH — every matcher (postgres SQL translateFilterClause, the postgres + memory
+ * watch matchesFilter, the policy matchField) keys off this set.
+ */
+export const KNOWN_FILTER_OPERATORS = ["$in", "$contains", "$gt", "$lt", "$gte", "$lte"] as const;
+
+/**
+ * Security-rejected operators (ReDoS / arbitrary-code-exec / unbounded logical
+ * composition): $regex/$where/$expr/$or/$and/$not. These are rejected at the
+ * Zod/MCP validation boundary WITH a permitted-set hint — NOT by the runtime
+ * matcher's fail-loud guard (C1-R2 audit-4064). The 3-class operator taxonomy:
+ * IMPLEMENTED (KNOWN_FILTER_OPERATORS), FORBIDDEN (this set), UNKNOWN (neither).
+ */
+export const FORBIDDEN_FILTER_OPERATORS = ["$regex", "$where", "$expr", "$or", "$and", "$not"] as const;
+
+/**
+ * FAIL-LOUD guard (C1-R2 audit-4054, refined audit-4064): throw ONLY for a
+ * GENUINELY-UNKNOWN operator (neither IMPLEMENTED nor FORBIDDEN) — killing the
+ * silent-no-op CLASS (an operator accepted upstream but unimplemented must never
+ * silently return the row; tele-4). FORBIDDEN ops are deliberately NOT thrown here:
+ * their enforcement is the Zod/MCP forbidden-rejection-with-hint (running first);
+ * at the un-Zod'd router level they fall through to the defense-in-depth
+ * match-nothing. So: $regex → forbidden-rejection (Zod); a typo'd op → fail-loud.
+ */
+export function assertKnownFilterOps(op: Record<string, unknown>, field: string): void {
+  for (const k of Object.keys(op)) {
+    if ((KNOWN_FILTER_OPERATORS as readonly string[]).includes(k)) continue; // IMPLEMENTED
+    if ((FORBIDDEN_FILTER_OPERATORS as readonly string[]).includes(k)) continue; // FORBIDDEN → Zod-layer rejection, not here
+    throw new Error(
+      `[filter] unknown operator '${k}' on field '${field}' — neither implemented nor a recognized ` +
+        `forbidden op (fail-loud; no silent-true). Implemented: ${KNOWN_FILTER_OPERATORS.join(", ")}.`,
+    );
+  }
+}
+
+/**
+ * FAIL-CLOSED backstop (C1-R2 audit-4070): does this operator object carry at
+ * least one IMPLEMENTED operator? A predicate with NONE — a forbidden-only op that
+ * bypassed Zod (e.g. `{$regex}`), or an empty `{}` — is UNEVALUABLE, and every
+ * matcher MUST treat it as match-NOTHING, never match-EVERYTHING (the fail-OPEN
+ * hole: an un-Zod'd forbidden-only predicate would otherwise leak every row).
+ *
+ * Pairs with `assertKnownFilterOps` (which THROWS for a genuinely-unknown op);
+ * this returns a boolean the matcher acts on (`if (!hasImplementedFilterOp(op))
+ * return false`). Zod/MCP stays the PRIMARY rejection for forbidden ops; this is
+ * the defense-in-depth backstop at the un-Zod'd matcher level, keyed off the same
+ * single-source-of-truth KNOWN_FILTER_OPERATORS set so the three matchers (policy
+ * matchField, memory + postgres watch matchesFilter) stay at parity.
+ */
+export function hasImplementedFilterOp(op: Record<string, unknown>): boolean {
+  return Object.keys(op).some((k) => (KNOWN_FILTER_OPERATORS as readonly string[]).includes(k));
+}
 
 // ─── Change events (per Design §2.1) ─────────────────────────────────────────
 

@@ -115,9 +115,23 @@ variable "proxy_max_instances" {
 }
 
 variable "proxy_cpu" {
-  description = "Cloud Run nginx-proxy CPU limit (Design §4.15: 0.5 vCPU)"
+  # bug-197: bumped 0.5->1. cpu>=1 is REQUIRED for containerConcurrency>1 on
+  # Cloud Run (fractional CPU pins concurrency to 1). At 0.5/concurrency=1 each
+  # long-lived MCP SSE stream consumed a whole instance, so a multi-agent survey
+  # burst exhausted the ~10-instance budget and 429'd the org's coordination
+  # plane. Live-applied on revision hub-api-00002-5td 2026-06-28; codified here.
+  description = "Cloud Run nginx-proxy CPU limit (bug-197: 1 vCPU; cpu>=1 required for concurrency>1)"
   type        = string
-  default     = "0.5"
+  default     = "1"
+}
+
+variable "proxy_concurrency" {
+  # bug-197: max concurrent requests per instance. 80 (Cloud Run default) so ONE
+  # instance multiplexes many long-lived MCP SSE streams + request bursts instead
+  # of 1-per-instance. Requires proxy_cpu>=1.
+  description = "Cloud Run nginx-proxy max concurrent requests per instance (bug-197: 80)"
+  type        = number
+  default     = 80
 }
 
 variable "proxy_memory" {

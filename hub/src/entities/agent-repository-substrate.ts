@@ -53,7 +53,6 @@ import type {
   AgentClientMetadata,
   AgentLivenessState,
   AgentRole,
-  EngineerStatusEntry,
   RegisterAgentPayload,
   RegisterAgentResult,
   AssertIdentityPayload,
@@ -92,6 +91,10 @@ const MAX_CAS_RETRIES = 50;
  * the liveness-layer (ADR-017) or mission-62 activity-layer fields get sane
  * defaults on read. Ported byte-for-byte from agent-repository.ts.
  */
+/** C1-R2: CAS-retry budget for the claim-thrash counter mutations (so a concurrent
+ *  heartbeat/touch write doesn't silently drop a thrash increment). */
+const WORKITEM_THRASH_CAS_RETRIES = 5;
+
 function normalizeAgentShape(a: Agent): Agent {
   if (!a) return a;
   const raw = a as unknown as Record<string, unknown>;
@@ -132,6 +135,10 @@ function normalizeAgentShape(a: Agent): Agent {
     restartHistoryMs: Array.isArray(a.restartHistoryMs)
       ? (a.restartHistoryMs as number[])
       : [],
+    // C1-R2 (mission-94): WorkItem claim-thrash quarantine defaults (legacy agents
+    // predate these fields).
+    thrashCount: typeof a.thrashCount === "number" ? a.thrashCount : 0,
+    quarantined: a.quarantined === true,
     cognitiveTTL: typeof a.cognitiveTTL === "number" ? a.cognitiveTTL : null,
     transportTTL: typeof a.transportTTL === "number" ? a.transportTTL : null,
     cognitiveState: isComponentState(a.cognitiveState) ? a.cognitiveState : "unknown",
@@ -203,8 +210,21 @@ function deriveAdvisoryTags(
   clientMetadata: AgentClientMetadata | undefined | null,
 ): AgentAdvisoryTags {
   const base: AgentAdvisoryTags = { ...(incoming ?? {}) };
-  if (base.adapterVersion === undefined && clientMetadata?.proxyVersion) {
-    base.adapterVersion = clientMetadata.proxyVersion;
+  // idea-355 SLICE-4 / bug-183 (AG-8 retire): the legacy advisoryTags.adapterVersion
+  // was mislabeled — it carried the SHIM (proxyVersion), not the adapter/SDK —
+  // so SLICE-3's report-both added the honest sdkVersion + shimVersion keys, and
+  // SLICE-4 now RETIRES the adapterVersion write entirely (shimVersion carries the
+  // identical value, so it was a redundant mislabeled duplicate). The intent-
+  // aligned keys are the canonical advisory surface:
+  //   sdkVersion  = clientMetadata.sdkVersion  (the KERNEL / network-adapter)
+  //   shimVersion = clientMetadata.proxyVersion (the SHIM / plugin)
+  // NOTE: the DIFFERENT top-level Agent.adapterVersion (= the kernel/sdkVersion,
+  // decoded elsewhere) is unrelated and is NOT touched.
+  if (base.sdkVersion === undefined && clientMetadata?.sdkVersion) {
+    base.sdkVersion = clientMetadata.sdkVersion;
+  }
+  if (base.shimVersion === undefined && clientMetadata?.proxyVersion) {
+    base.shimVersion = clientMetadata.proxyVersion;
   }
   if (base.proxyCommitSha === undefined && clientMetadata?.proxyCommitSha) {
     base.proxyCommitSha = clientMetadata.proxyCommitSha;
@@ -287,25 +307,6 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
 
   getRole(sessionId: string): SessionRole {
     return this.sessionRoles.get(sessionId) || "unknown";
-  }
-
-  async getStatusSummary() {
-    const agents = await this.listAgents();
-    const engineers: EngineerStatusEntry[] = agents
-      .filter((a) => !a.archived)
-      .map((a) => ({
-        agentId: a.id,
-        sessionId: a.currentSessionId,
-        status: a.status,
-        sessionEpoch: a.sessionEpoch,
-        clientMetadata: a.clientMetadata,
-        advisoryTags: a.advisoryTags,
-        labels: a.labels ?? {},
-        firstSeenAt: a.firstSeenAt,
-        lastSeenAt: a.lastSeenAt,
-      }));
-    const connected = engineers.filter((e) => e.status === "online").length;
-    return { connected, engineers };
   }
 
   // ── M18 Agent methods ──────────────────────────────────────────────
@@ -438,6 +439,9 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
           transportTTL: null,
           cognitiveState: "unknown",
           transportState: "unknown",
+          // C1-R2 (mission-94): claim-thrash quarantine — fresh agent starts clean.
+          thrashCount: 0,
+          quarantined: false,
         };
         const created = await this.createOnlyAgent(agent);
         if (!created.ok) {
@@ -773,6 +777,54 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     const agent = normalizeAgentShape(existing.entity);
     const updated: Agent = { ...agent, livenessState: state };
     await this.putIfMatchAgent(updated, existing.resourceVersion);
+  }
+
+  // ── C1-R2 (mission-94) — WorkItem claim-thrash quarantine ──────────────────
+  // CAS-retry loops (NOT silent-skip-on-conflict like touchAgent) so a concurrent
+  // heartbeat write never drops a thrash increment / reset.
+
+  async recordWorkItemThrash(agentId: string, quarantineCap: number): Promise<{ thrashCount: number; quarantined: boolean } | null> {
+    for (let attempt = 0; attempt < WORKITEM_THRASH_CAS_RETRIES; attempt++) {
+      const existing = await this.loadAgentWithRevision(agentId);
+      if (!existing) return null;
+      const agent = normalizeAgentShape(existing.entity);
+      const thrashCount = agent.thrashCount + 1;
+      const quarantined = agent.quarantined || thrashCount >= quarantineCap;
+      const updated: Agent = { ...agent, thrashCount, quarantined };
+      const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
+      if (result.ok) return { thrashCount, quarantined };
+      // revision-mismatch → re-read + retry (don't lose the increment)
+    }
+    return null; // best-effort: exhausted retries — never crash the sweep
+  }
+
+  /** Returns the PRIOR thrashCount (0 if no-op) so the caller can audit a NON-NOOP reset
+   *  (audit-4133). Quarantined is cleared only by the manual clear path. */
+  async resetWorkItemThrash(agentId: string): Promise<number> {
+    for (let attempt = 0; attempt < WORKITEM_THRASH_CAS_RETRIES; attempt++) {
+      const existing = await this.loadAgentWithRevision(agentId);
+      if (!existing) return 0;
+      const agent = normalizeAgentShape(existing.entity);
+      if (agent.thrashCount === 0) return 0; // no-op
+      const prior = agent.thrashCount;
+      const updated: Agent = { ...agent, thrashCount: 0 };
+      const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
+      if (result.ok) return prior;
+      // revision-mismatch → retry
+    }
+    return 0; // exhausted retries (best-effort)
+  }
+
+  async clearWorkItemQuarantine(agentId: string): Promise<void> {
+    for (let attempt = 0; attempt < WORKITEM_THRASH_CAS_RETRIES; attempt++) {
+      const existing = await this.loadAgentWithRevision(agentId);
+      if (!existing) return;
+      const agent = normalizeAgentShape(existing.entity);
+      if (agent.thrashCount === 0 && !agent.quarantined) return; // no-op
+      const updated: Agent = { ...agent, thrashCount: 0, quarantined: false };
+      const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
+      if (result.ok) return;
+    }
   }
 
   async updateAgentPulseLastFiredAt(agentId: string, lastFiredAt: string): Promise<void> {

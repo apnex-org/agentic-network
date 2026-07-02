@@ -168,7 +168,9 @@ export class ActorFacade {
     private readonly router: PolicyRouter,
     private readonly stores: AllStores,
     private readonly eventCapture: EventCapture,
-    private readonly role: "architect" | "engineer",
+    // mission-93: verifier added so RBAC e2e can drive a real
+    // register_role(verifier) handshake through the full router.
+    private readonly role: "architect" | "engineer" | "verifier",
     private readonly sessionId: string,
     private readonly metrics: MetricsCounter,
   ) {}
@@ -470,6 +472,23 @@ export class TestOrchestrator {
       this.actorCache.set(key, new ActorFacade(
         this.router, this.stores, this.events,
         "engineer", `session-engineer-${agentId}`,
+        this.metrics,
+      ));
+    }
+    return this.actorCache.get(key)!;
+  }
+
+  /** Get a Verifier actor facade (mission-93). The verifier binds via the
+   *  real register_role(verifier) handshake — its RBAC surface (allow the
+   *  [Architect|Verifier] verdict/observe tools + [Any] reads; deny the
+   *  [Architect] produce/gating tools) is exercised end-to-end through the
+   *  full router, the last pre-prod-flip confidence gate for #338. */
+  asVerifier(agentId: string = "default"): ActorFacade {
+    const key = `verifier-${agentId}`;
+    if (!this.actorCache.has(key)) {
+      this.actorCache.set(key, new ActorFacade(
+        this.router, this.stores, this.events,
+        "verifier", `session-verifier-${agentId}`,
         this.metrics,
       ));
     }
