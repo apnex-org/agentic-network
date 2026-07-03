@@ -247,10 +247,14 @@ function peersCell(theme: FooterTheme, s: FooterState, trusted: boolean, nowMs: 
  *  - hub not trusted → `needs ?` (NEVER zeros / "all clear" on an untrusted wire).
  *  - AUTHORITATIVE (fresh pull, spec §10/§11) → exact `⟶ ✎N` (NO tilde — the
  *    approximation is retired) or dim `nothing needs you` at zero.
- *  - fallback (no fresh pull) → push-only ~approx `⟶ ~✎N` (tilde = APPROXIMATE,
- *    spec §10) or dim `nothing needs you` at approx-zero.
- * The authoritative count (slice b) supersedes the push-only approx whenever the
- * pull is fresh; the tilde reappears only if the pull goes stale (honest degrade).
+ *  - STALE authoritative pull (spec §9 / steve audit-6540 #2): once we've HAD an
+ *    authoritative count, a stale/failed refresh must NEVER masquerade as a fresh
+ *    exact all-clear. If a fresh push-approx exists, show it tilde-marked; else
+ *    render the LAST-KNOWN authoritative count stale-marked (`⟶ ✎N (stale)`), or
+ *    `needs ?` when that last count was zero (can't prove it's still zero).
+ *  - no pull ever + push-approx → `⟶ ~✎N` / `nothing needs you` at approx-zero.
+ * The authoritative count supersedes the push-only approx whenever fresh; on
+ * staleness we degrade HONESTLY (never fresh-zero-masquerade).
  */
 function needsCell(theme: FooterTheme, s: FooterState, trusted: boolean, nowMs: number): string {
   const label = theme.fg("dim", "needs");
@@ -263,11 +267,22 @@ function needsCell(theme: FooterTheme, s: FooterState, trusted: boolean, nowMs: 
     if (n <= 0) return theme.fg("dim", "nothing needs you");
     return color(theme, "notice", `⟶ ✎${n}`);
   }
-  // Fallback: push-only approximation (tilde-marked, spec §10).
-  if (s.s4ApproxCount <= 0) {
-    return theme.fg("dim", "nothing needs you");
+  // A fresh push-approx signal is always honest to show (tilde-marked, spec §10).
+  if (s.s4ApproxCount > 0) {
+    return color(theme, "notice", `⟶ ~✎${s.s4ApproxCount}`);
   }
-  return color(theme, "notice", `⟶ ~✎${s.s4ApproxCount}`);
+  // STALE authoritative pull with no fresh approx (steve audit-6540 #2): the prior
+  // authoritative view is no longer trustworthy. NEVER render fresh `nothing needs
+  // you` — that would let a stale/failed refresh masquerade as an exact zero.
+  if (s.swarm !== null) {
+    const last = s.swarm.s4Authoritative;
+    // Last-known >0 → show it stale-marked (approximate now, not authoritative).
+    if (last > 0) return color(theme, "notice", `⟶ ~✎${last} ${theme.fg("dim", "(stale)")}`);
+    // Last-known 0, now stale → can't prove it's still zero → honest unknown.
+    return `${label} ${theme.fg("dim", "?")}`;
+  }
+  // No pull ever + no approx → genuine cold-clear (trusted wire, nothing observed).
+  return theme.fg("dim", "nothing needs you");
 }
 
 // ── The 2-line assembly (fixed height) ───────────────────────────────

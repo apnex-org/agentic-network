@@ -12,8 +12,13 @@
  *
  * ANTI-STAMPEDE (spec §6 / gate 7): this poll piggybacks the poll-backstop
  * heartbeat, which already carries ±20% per-agent jitter (slice c / F2) — so the
- * fleet's Tier-C reads are desynchronized for free. We coalesce to ≤2 Hub reads
- * per tick (get_agents + one role-scoped S4 read).
+ * fleet's Tier-C reads are desynchronized for free. We COALESCE all Tier-C reads
+ * onto the single tick: get_agents + the role-scoped S4 read(s). For the engineer
+ * that is 3 reads/tick (get_agents + list_threads + list_ready_work) — the
+ * architect-RATIFIED reading of §6's '~2 calls/tick' as a COALESCING guideline
+ * (not a hard cap): its intent is tele-11 (zero HOT-PATH cost + no synchronized
+ * burst), which 3-coalesced-reads-per-jittered-tick satisfies (render stays
+ * zero-call, gate 1). architect thread 01KWJKS3MW; steve gate 7.
  *
  * READ-ONLY INVARIANT (spec §6 / gate 8): every call here is a READ tool
  * (get_agents, list_threads, list_ready_work). NEVER drain_pending_actions, NEVER
@@ -39,11 +44,18 @@ export interface PollAgentCall {
   ): Promise<unknown>;
 }
 
-/** A projected agent row from get_agents (canonical AgentProjection subset). */
+/**
+ * A projected agent row from get_agents. The CANONICAL AgentProjection exposes
+ * `id` (hub/src/policy/agent-projection.ts) — NOT `agentId`. We read `id` first
+ * and accept a legacy `agentId` only as a fallback (steve gate audit-6540 #1:
+ * reading `agentId` alone silently failed self-exclusion, since canonical rows
+ * carry `id`).
+ */
 interface AgentRow {
   name?: unknown;
   role?: unknown;
   livenessState?: unknown;
+  id?: unknown;
   agentId?: unknown;
 }
 
@@ -70,9 +82,11 @@ export function projectPeers(raw: unknown, selfAgentId: string | null): PeerHeal
   if (rows === null) return [];
   const peers: PeerHealth[] = [];
   for (const r of rows) {
-    const agentId = typeof r.agentId === "string" ? r.agentId : null;
-    if (selfAgentId && agentId === selfAgentId) continue; // exclude self
-    const name = typeof r.name === "string" && r.name ? r.name : agentId ?? "?";
+    // Canonical AgentProjection.id (preferred) with legacy agentId fallback.
+    const id =
+      typeof r.id === "string" ? r.id : typeof r.agentId === "string" ? r.agentId : null;
+    if (selfAgentId && id === selfAgentId) continue; // exclude self (§8)
+    const name = typeof r.name === "string" && r.name ? r.name : id ?? "?";
     const liveness = typeof r.livenessState === "string" ? r.livenessState : "offline";
     peers.push({ name, livenessState: liveness, down: isPeerDown(liveness) });
   }
@@ -147,12 +161,13 @@ export interface SwarmPollResult {
 }
 
 /**
- * Run ONE Tier-C swarm poll (spec §6 PULL path). Coalesces to ≤2 Hub READS:
+ * Run ONE Tier-C swarm poll (spec §6 PULL path). Coalesces all Hub READS onto
+ * this single tick:
  *   1. get_agents (env=prod filter) → peers projection (§8).
- *   2. one role-scoped S4 read (§11): engineer → list_threads(my-turn) +
- *      list_ready_work(scopeToCaller) [2 reads, still within the coalesce budget
- *      because get_agents is the only OTHER call and these are the S4 pair];
- *      architect → get_pending_actions role-scoped sub-array sum (catch #1).
+ *   2. role-scoped S4 read(s) (§11): engineer → list_threads(my-turn) +
+ *      list_ready_work(scopeToCaller) [3 reads total/tick — architect-ratified as
+ *      within §6's '~2' coalescing guideline; see module header]; architect →
+ *      get_pending_actions role-scoped sub-array sum (catch #1) [2 reads total].
  *
  * READ-ONLY (gate 8): every call is a read tool. Never drains, never mutates.
  * Throws propagate to the caller (the heartbeat tick), which treats a throw as a

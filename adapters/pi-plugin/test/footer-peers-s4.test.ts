@@ -86,15 +86,27 @@ describe("projectPeers — §8 env=prod exception-bias", () => {
     ]);
   });
 
-  it("excludes self (footer shows PEERS, not me)", () => {
+  it("excludes self via CANONICAL `id` (get_agents AgentProjection uses id, not agentId)", () => {
+    // steve gate audit-6540 #1: canonical rows carry `id`; reading `agentId` alone
+    // silently failed self-exclusion (self leaked into peers).
     const raw = {
       agents: [
-        { agentId: "me", name: "greg", role: "engineer", livenessState: "online" },
-        { agentId: "a1", name: "lily", role: "architect", livenessState: "online" },
+        { id: "me", name: "greg", role: "engineer", livenessState: "online" },
+        { id: "a1", name: "lily", role: "architect", livenessState: "online" },
       ],
     };
     const peers = projectPeers(raw, "me");
     expect(peers.map((p) => p.name)).toEqual(["lily"]);
+  });
+
+  it("excludes self via legacy `agentId` fallback too", () => {
+    const raw = {
+      agents: [
+        { agentId: "me", name: "greg", role: "engineer", livenessState: "online" },
+        { id: "a1", name: "lily", role: "architect", livenessState: "online" },
+      ],
+    };
+    expect(projectPeers(raw, "me").map((p) => p.name)).toEqual(["lily"]);
   });
 
   it("tolerates a bare array + drops nothing but coerces missing liveness to offline", () => {
@@ -210,14 +222,48 @@ describe("authoritative S4 — §10/§11 retires the ~tilde, role-keyed", () => 
     expect(line2).toContain("⟶ ~✎2"); // tilde-marked approximation
   });
 
-  it("stale pull → tilde returns (honest degrade from authoritative)", () => {
+  it("stale pull + fresh approx → tilde approx (honest degrade from authoritative)", () => {
     const s = live(createFooterState("greg", "engineer"), T0);
     observeSwarmPull(s, [], 5, T0); // authoritative 5
     observePendingActionItem(s); // approx 1
     const stale = T0 + PULL_STALE_AFTER_MS + 1;
     const [, line2] = renderFooter(plainTheme, baseInputs(s, stale));
-    // pull stale → not authoritative → falls back to ~approx
+    // pull stale → not authoritative → falls back to fresh ~approx
     expect(line2).toContain("⟶ ~✎1");
+  });
+
+  it("REGRESSION (audit-6540 #2): stale auth count + approx 0 must NOT render fresh all-clear", () => {
+    // Prior authoritative 5, pull goes stale, NO fresh approx signal. The old code
+    // fell through to `nothing needs you` — letting a stale/failed refresh
+    // masquerade as an exact zero. Must instead show the last-known count
+    // stale-marked (tilde + (stale)), NEVER a fresh all-clear.
+    const s = live(createFooterState("greg", "engineer"), T0);
+    observeSwarmPull(s, [], 5, T0); // authoritative 5, no approx
+    const stale = T0 + PULL_STALE_AFTER_MS + 1;
+    const [, line2] = renderFooter(plainTheme, baseInputs(s, stale));
+    expect(line2).not.toContain("nothing needs you"); // the bug
+    expect(line2).toContain("⟶ ~✎5"); // last-known, now approximate
+    expect(line2).toContain("(stale)");
+  });
+
+  it("REGRESSION (audit-6540 #2): stale auth count 0 + approx 0 → honest `needs ?`, not all-clear", () => {
+    // Last authoritative count was 0, but the pull is now stale — we can't PROVE
+    // it's still zero. Honest unknown, never a fresh `nothing needs you`.
+    const s = live(createFooterState("greg", "engineer"), T0);
+    observeSwarmPull(s, [], 0, T0); // authoritative 0
+    const stale = T0 + PULL_STALE_AFTER_MS + 1;
+    const [, line2] = renderFooter(plainTheme, baseInputs(s, stale));
+    expect(line2).not.toContain("nothing needs you");
+    expect(line2).toContain("needs ?");
+  });
+
+  it("no pull ever + no approx (trusted wire) → genuine cold-clear is still honest", () => {
+    // Distinct from the stale case: we've NEVER had an authoritative view and no
+    // approx arrived — a trusted-live wire with nothing observed legitimately
+    // renders `nothing needs you` (fail-quiet, spec §9).
+    const s = live(createFooterState("greg", "engineer"));
+    const [, line2] = renderFooter(plainTheme, baseInputs(s));
+    expect(line2).toContain("nothing needs you");
   });
 
   it("untrusted wire → needs `?` (never zeros on a broken wire)", () => {
