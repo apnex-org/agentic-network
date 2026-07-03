@@ -46,12 +46,22 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpAgentClient, CognitivePipeline } from "@apnex/network-adapter";
+import {
+  McpAgentClient,
+  CognitivePipeline,
+  parseHarnessManifest,
+  pendingKey,
+  type SharedDispatcher,
+} from "@apnex/network-adapter";
 import { LoopbackTransport } from "../../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../../packages/network-adapter/test/helpers/policy-loopback.js";
-import { createSharedDispatcher, pendingKey } from "@apnex/network-adapter";
+import { createClaudeRuntime } from "../../src/runtime.js";
 
 // ── Public types ────────────────────────────────────────────────────
 
@@ -65,8 +75,9 @@ export interface ActorHandle {
 
 export interface EngineerActorHandle extends ActorHandle {
   readonly role: "engineer";
-  readonly dispatcher: ReturnType<typeof createSharedDispatcher>;
+  readonly dispatcher: SharedDispatcher;
   readonly mcpClient: Client;
+  readonly workDir: string;
 }
 
 export interface MockClaudeHarness {
@@ -101,6 +112,11 @@ export interface TapeResult {
   readonly captures: Readonly<Record<string, unknown>>;
 }
 
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const MANIFEST = parseHarnessManifest(
+  JSON.parse(readFileSync(resolve(ROOT, "agent-adapter.manifest.json"), "utf-8")),
+);
+
 // ── Factory ──────────────────────────────────────────────────────────
 
 /**
@@ -131,6 +147,7 @@ export async function createMockClaudeClient(
       try { await engineer.mcpClient.close(); } catch { /* ignore */ }
       try { await engineer.agent.stop(); } catch { /* ignore */ }
       try { await architect.agent.stop(); } catch { /* ignore */ }
+      try { rmSync(engineer.workDir, { recursive: true, force: true }); } catch { /* ignore */ }
     },
   };
   return harness;
@@ -181,11 +198,15 @@ async function buildEngineerWithShim(
   name: string | undefined,
 ): Promise<EngineerActorHandle> {
   const transport = new LoopbackTransport(hub);
+  const workDir = mkdtempSync(join(tmpdir(), "mock-claude-client-"));
+  const proxyVersion = "mock-claude-client-1.0.0";
+  const toolSurfaceRevision = "mock-claude-runtime-rev";
 
-  // Forward-reference wiring (mirrors production shim.ts):
-  // agent needs dispatcher's callbacks + getClientInfo + onPendingActionItem;
-  // dispatcher needs the agent. Same pattern as shim.e2e.test.ts.
-  let dispatcherRef: ReturnType<typeof createSharedDispatcher> | null = null;
+  // Forward-reference wiring (matches production shim.ts): the agent handshake
+  // needs dispatcher.getClientInfo + pendingAction handling, while the runtime
+  // factory needs the agent. The dispatcher/server/reconciler itself is now
+  // created by createClaudeRuntime (mission-100 W2), not hand-rolled here.
+  let dispatcherRef: SharedDispatcher | null = null;
 
   const agent = new McpAgentClient(
     {
@@ -194,18 +215,15 @@ async function buildEngineerWithShim(
         // idea-251: name IS identity (globalInstanceId retired); slice the
         // UUID to clear the Hub's register_role [1,32] name-length limit.
         name: name ?? `eng-${randomUUID().slice(0, 8)}`,
-        proxyName: "@apnex/claude-plugin",
-        proxyVersion: "mock-claude-client-1.0.0",
-        transport: "stdio-mcp-proxy",
+        proxyName: MANIFEST.proxyName,
+        proxyVersion,
+        transport: MANIFEST.transport,
         sdkVersion: "0.0.0",
         getClientInfo: () =>
           dispatcherRef?.getClientInfo() ?? { name: "mock-claude-client", version: "0.0.0" },
         onPendingActionItem: (item) => {
           if (dispatcherRef) {
-            dispatcherRef.pendingActionMap.set(
-              pendingKey(item.dispatchType, item.entityRef),
-              item.id,
-            );
+            dispatcherRef.makePendingActionItemHandler({})(item);
           }
         },
       },
@@ -213,9 +231,27 @@ async function buildEngineerWithShim(
     { transport, cognitive },
   );
 
-  const dispatcher = createSharedDispatcher({ getAgent: () => agent, proxyVersion: "mock-claude-client-1.0.0" });
-  dispatcherRef = dispatcher;
-  agent.setCallbacks(dispatcher.callbacks);
+  // Wire MCP InMemoryTransport pair — the client simulates Claude Code, while
+  // the server side is consumed by the SAME runtime seam production shim.ts uses.
+  const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
+  const runtime = await createClaudeRuntime({
+    agent,
+    mcpTransport: serverTx,
+    manifest: MANIFEST,
+    proxyVersion,
+    workDir,
+    role: "engineer",
+    log: () => {},
+    notificationLogPath: join(workDir, "notifications.log"),
+    listToolsGate: Promise.resolve(),
+    callToolGate: Promise.resolve(),
+    identityReady: Promise.resolve(),
+    getIsIdentityReady: () => true,
+    getCurrentToolSurfaceRevision: () => toolSurfaceRevision,
+    fetchLiveToolSurfaceRevision: async () => toolSurfaceRevision,
+    appendActionableLog: () => {},
+  });
+  dispatcherRef = runtime.dispatcher;
 
   await agent.start();
   await waitForImpl(() => agent.isConnected, 5_000);
@@ -224,10 +260,6 @@ async function buildEngineerWithShim(
   const agentId = await hub.agentIdForSession(sid);
   if (!agentId) throw new Error("MockClaudeClient: engineer Agent was not created");
 
-  // Wire MCP InMemoryTransport pair — the client simulates Claude Code.
-  const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
-  const dispatcherServer = dispatcher.createMcpServer();
-  await dispatcherServer.connect(serverTx);
   const mcpClient = new Client(
     { name: "mock-claude-code", version: "1.0.0" },
     { capabilities: {} },
@@ -239,8 +271,9 @@ async function buildEngineerWithShim(
     agent,
     transport,
     agentId,
-    dispatcher,
+    dispatcher: runtime.dispatcher,
     mcpClient,
+    workDir,
     call: (tool, args) => agent.call(tool, args),
   };
 }
