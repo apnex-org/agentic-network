@@ -213,17 +213,33 @@ async function readRoleScopedS4(
 }
 
 /**
- * Architect authoritative S4 (spec §12 catch#1): sum ONLY the role-scoped
- * actionable sub-arrays — NEVER totalPending (polluted by legacy phantom tasks,
- * idea-409). Anomalies are NOT actionable-surface for S4 (separate concern).
+ * Architect authoritative S4 (spec §12 catch#1): sum ONLY the honest role-scoped
+ * actionable sub-arrays — must be `≠ totalPending`, NEVER a re-derivation of it.
+ *
+ * catch#1 subtlety (architect conformance spot-read, thread 01KWJM7NX1): the Hub
+ * derives totalPending as the sum of ALL SIX sub-arrays (system-policy.ts:122
+ * unreadReports+unreviewedTasks+pendingProposals+threadsAwaitingReply+
+ * clarificationsPending+convergedThreads). So summing all six re-derives the
+ * exact polluted number catch#1 forbids. We DROP `unreviewedTasks` because it is
+ * BOTH pollution sources at once:
+ *   (1) legacy phantom-task inflation (idea-409) — the array catch#1 flags; and
+ *   (2) a DOUBLE-COUNT of the same awaiting-review report already in
+ *       `unreadReports` — both filter on `!reviewAssessment` over overlapping
+ *       phases (confirmed by the Hub's own comment, review-policy.ts:51:
+ *       'counts it forever under unreadReports + unreviewedTasks both').
+ * `unreadReports` already represents reports-awaiting-read, so dropping
+ * `unreviewedTasks` loses only the dupes + phantoms. The result is the honest
+ * §11 'report/proposal/thread/clarification inbox' set. Anomalies are NOT
+ * actionable-surface for S4 (separate concern).
  */
 export function sumArchitectS4(raw: unknown): number {
   if (!raw || typeof raw !== "object") return 0;
   const o = raw as Record<string, unknown>;
   const len = (k: string): number => (Array.isArray(o[k]) ? (o[k] as unknown[]).length : 0);
+  // NOTE: unreviewedTasks DELIBERATELY EXCLUDED (phantom-polluted + double-counts
+  // unreadReports) — including it would re-derive the forbidden totalPending.
   return (
     len("unreadReports") +
-    len("unreviewedTasks") +
     len("pendingProposals") +
     len("threadsAwaitingReply") +
     len("clarificationsPending") +

@@ -273,7 +273,7 @@ describe("S4 source role matrix — §11 role-keyed / §12 catch#1", () => {
     });
   });
 
-  it("architect S4 = get_pending_actions role-scoped sub-array sum (NOT totalPending)", async () => {
+  it("architect S4 = honest role-scoped sub-array sum (NOT totalPending, no unreviewedTasks)", async () => {
     const calls: string[] = [];
     const agent: PollAgentCall = {
       call: vi.fn(async (method) => {
@@ -283,7 +283,7 @@ describe("S4 source role matrix — §11 role-keyed / §12 catch#1", () => {
           return {
             totalPending: 999, // POLLUTED (legacy phantoms) — MUST be ignored
             unreadReports: [{}, {}],
-            unreviewedTasks: [{}],
+            unreviewedTasks: [{}], // DROPPED (phantom + double-count) — not summed
             pendingProposals: [],
             threadsAwaitingReply: [{}],
             clarificationsPending: [],
@@ -294,7 +294,10 @@ describe("S4 source role matrix — §11 role-keyed / §12 catch#1", () => {
       }),
     };
     const { s4Authoritative } = await runSwarmPoll(agent, "architect", "arch-id");
-    expect(s4Authoritative).toBe(2 + 1 + 0 + 1 + 0 + 1); // = 5, NOT 999, NOT +anomalies
+    // unreadReports(2) + pendingProposals(0) + threadsAwaitingReply(1)
+    //   + clarificationsPending(0) + convergedThreads(1) = 4 — NOT 5, NOT 999,
+    //   NOT +anomalies; unreviewedTasks EXCLUDED (catch#1).
+    expect(s4Authoritative).toBe(4);
     // architect must NOT touch the engineer surfaces
     expect(calls).not.toContain("list_ready_work");
   });
@@ -314,18 +317,47 @@ describe("S4 source role matrix — §11 role-keyed / §12 catch#1", () => {
     expect(calls).toEqual(["get_agents"]);
   });
 
-  it("sumArchitectS4 ignores totalPending + anomalies; tolerates missing keys", () => {
+  it("sumArchitectS4 ignores totalPending + anomalies + unreviewedTasks; tolerates missing keys", () => {
     expect(
       sumArchitectS4({
         totalPending: 42,
         unreadReports: [{}, {}, {}],
-        unreviewedTasks: [{}],
+        unreviewedTasks: [{}], // EXCLUDED — phantom + double-count
         anomalies: { count: 9 },
       }),
-    ).toBe(4);
+    ).toBe(3); // only unreadReports counted here
     expect(sumArchitectS4({})).toBe(0);
     expect(sumArchitectS4(null)).toBe(0);
     expect(sumArchitectS4("x")).toBe(0);
+  });
+
+  it("catch#1 GUARD: sumArchitectS4 ≠ totalPending on a phantom + awaiting-review fixture", () => {
+    // Fixture models the two pollutions catch#1 forbids:
+    //  - unreviewedTasks carries a legacy phantom (idea-409), AND
+    //  - the awaiting-review report appears in BOTH unreadReports AND
+    //    unreviewedTasks (both filter !reviewAssessment) — a double-count.
+    // The Hub derives totalPending = sum of ALL SIX sub-arrays, so a naive
+    // all-six sum would EQUAL totalPending. The honest sum MUST be strictly less.
+    const raw = {
+      unreadReports: [{ taskId: "t-review" }], // the awaiting-review report
+      unreviewedTasks: [{ taskId: "t-review" }, { taskId: "t-phantom" }], // dup + phantom
+      pendingProposals: [{ proposalId: "p1" }],
+      threadsAwaitingReply: [{ threadId: "th1" }],
+      clarificationsPending: [],
+      convergedThreads: [],
+    };
+    // What the Hub would report as totalPending (all six summed): 1+2+1+1+0+0 = 5.
+    const totalPending =
+      raw.unreadReports.length +
+      raw.unreviewedTasks.length +
+      raw.pendingProposals.length +
+      raw.threadsAwaitingReply.length +
+      raw.clarificationsPending.length +
+      raw.convergedThreads.length;
+    expect(totalPending).toBe(5);
+    // Honest S4 drops unreviewedTasks: 1+1+1+0+0 = 3 — STRICTLY LESS than totalPending.
+    expect(sumArchitectS4(raw)).toBe(3);
+    expect(sumArchitectS4(raw)).toBeLessThan(totalPending); // the catch#1 invariant
   });
 
   it("countMyTurnThreads: only active + my agentId", () => {
