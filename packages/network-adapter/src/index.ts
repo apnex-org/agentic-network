@@ -107,6 +107,8 @@ export {
   resolveRole,
   readCursor,
   writeCursor,
+  jitter,
+  JITTER_FRACTION,
 } from "./kernel/poll-backstop.js";
 export type { PollBackstopOptions } from "./kernel/poll-backstop.js";
 
