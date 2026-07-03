@@ -7,6 +7,9 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createMockClaudeClient, type MockClaudeHarness } from "./MockClaudeClient.js";
 import { pendingKey } from "@apnex/network-adapter";
 
@@ -18,6 +21,15 @@ describe("MockClaudeClient", () => {
       await mock.stop();
       mock = null;
     }
+  });
+
+  it("consumes the real Claude runtime factory instead of re-creating dispatcher wiring", () => {
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "MockClaudeClient.ts"),
+      "utf-8",
+    );
+    expect(source).toContain("createClaudeRuntime");
+    expect(source).not.toContain("createSharedDispatcher({");
   });
 
   it("factory wires architect + engineer-with-dispatcher + MCP client correctly", async () => {
