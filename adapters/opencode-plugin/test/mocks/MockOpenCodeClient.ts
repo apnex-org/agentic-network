@@ -50,6 +50,23 @@ export interface ActorHandle {
   call(tool: string, args: Record<string, unknown>): Promise<unknown>;
 }
 
+export interface MockOpenCodeSdkClient {
+  readonly prompts: unknown[];
+  readonly toasts: unknown[];
+  readonly mcpAdds: unknown[];
+  sessionListCalls: number;
+  readonly session: {
+    list(): Promise<{ data: unknown[] }>;
+    promptAsync(request: unknown): Promise<void>;
+  };
+  readonly tui: {
+    showToast(request: unknown): Promise<void>;
+  };
+  readonly mcp: {
+    add(request: unknown): Promise<void>;
+  };
+}
+
 export interface EngineerActorHandle extends ActorHandle {
   readonly role: "engineer";
   /** Runtime instance that owns dispatcher/fetch-handler state for this mock. */
@@ -57,6 +74,8 @@ export interface EngineerActorHandle extends ActorHandle {
   /** Convenience alias for `runtime.testOnly.dispatcher`. */
   readonly dispatcher: OpenCodeRuntime["testOnly"]["dispatcher"];
   readonly mcpClient: Client;
+  /** Fake OpenCode SDK client injected into the runtime; records prompt/toast calls. */
+  readonly sdkClient: MockOpenCodeSdkClient;
   /** Temp OpenCode workdir used to initialize runtime config/log paths. */
   readonly workDir: string;
 }
@@ -184,9 +203,10 @@ async function buildEngineerWithRuntime(
     // live OpenCode startup side effects (connectToHub/Bun.serve/mcp.add).
     setTimeoutFn: ((() => 0) as unknown as typeof setTimeout),
   });
+  const sdkClient = fakeOpenCodeClient();
   const pluginInput = {
     directory: workDir,
-    client: fakeOpenCodeClient(),
+    client: sdkClient,
   } as Parameters<OpenCodeRuntime["plugin"]>[0];
   await runtime.plugin(pluginInput);
   const dispatcher = runtime.testOnly.dispatcher;
@@ -244,20 +264,39 @@ async function buildEngineerWithRuntime(
     runtime,
     dispatcher,
     mcpClient,
+    sdkClient,
     workDir,
     call: (tool, args) => agent.call(tool, args),
   };
 }
 
-function fakeOpenCodeClient() {
-  return {
+function fakeOpenCodeClient(): MockOpenCodeSdkClient {
+  const client: MockOpenCodeSdkClient = {
+    prompts: [],
+    toasts: [],
+    mcpAdds: [],
+    sessionListCalls: 0,
     session: {
-      list: async () => ({ data: [] }),
-      promptAsync: async () => {},
+      list: async () => {
+        client.sessionListCalls += 1;
+        return { data: [] };
+      },
+      promptAsync: async (request: unknown) => {
+        client.prompts.push(request);
+      },
     },
-    tui: { showToast: async () => {} },
-    mcp: { add: async () => {} },
+    tui: {
+      showToast: async (request: unknown) => {
+        client.toasts.push(request);
+      },
+    },
+    mcp: {
+      add: async (request: unknown) => {
+        client.mcpAdds.push(request);
+      },
+    },
   };
+  return client;
 }
 
 function makeInProcessFetch(
