@@ -1,54 +1,44 @@
 /**
- * MockOpenCodeClient — Mission-41 Wave 1 T4
+ * MockOpenCodeClient — Mission-41 Wave 1 T4; Mission-101 W5 fidelity upgrade.
  *
- * Reusable test harness that exercises the REAL
- * `adapters/opencode-plugin` dispatcher + shim code against a full
- * in-memory Hub over `LoopbackTransport`. Mirror of T3's
- * `MockClaudeClient` for the opencode backend. No network, no Bun, no
- * OpenCode runtime — fully deterministic and reproducible.
+ * Reusable no-network OpenCode harness backed by the REAL
+ * `createOpenCodeRuntime(...)` seam. The mock no longer creates its own
+ * dispatcher or MCP server directly: it consumes the runtime-owned dispatcher
+ * and the runtime's OpenCode HTTP fetch-handler factory, then drives that
+ * handler in-process through the MCP SDK Streamable HTTP client transport.
  *
- * Wiring diagram (matches `test/shim.e2e.test.ts` proof-of-concept):
+ * Wiring diagram:
  *
- *   opencode-simulating MCP Client ← InMemoryTransport pair →  real dispatcher.createMcpServer()
- *                                                                    ↓ agent.call()
- *                                                              real McpAgentClient
- *                                                                    ↕ LoopbackTransport
- *                                                              real PolicyLoopbackHub
- *                                                                    ↑ LoopbackTransport
- *                                                              real architect McpAgentClient
+ *   opencode-simulating MCP Client ← in-process fetch → runtime.makeOpenCodeFetchHandler()
+ *                                                             ↓ runtime-owned dispatcher
+ *                                                       real McpAgentClient
+ *                                                             ↕ LoopbackTransport
+ *                                                       real PolicyLoopbackHub
+ *                                                             ↑ LoopbackTransport
+ *                                                       real architect McpAgentClient
  *
- * Tape-step vocabulary is intentionally aligned with MockClaudeClient —
- * same `architect` / `waitFor` / `assert` kinds; the host-specific step
- * is `opencode` (mirrors T3's `claude`). This honors the T4 exit
- * criterion "shared with T3 format if feasible — one spec, two
- * backends". The tape-runner implementation is per-backend inline
- * (duplicate of T3's ~80 LOC); an upstream refactor into
- * `packages/network-adapter/test/helpers/mock-tape.ts` is a reasonable
- * future follow-up when a third backend appears, but deferred now to
- * keep T4 scope tight and T3 untouched.
+ * Unavoidable host-specific simulation boundary: production connectToHub()
+ * reads config and constructs a remote transport, while this mock constructs
+ * the engineer McpAgentClient against LoopbackTransport so tests stay offline
+ * and deterministic. The production-owned pieces that caused false-green risk
+ * — dispatcher construction, notification hooks, pending-action map, and
+ * OpenCode MCP fetch bridging — are supplied by createOpenCodeRuntime().
  *
- * Surface:
- * - `architect` — `ActorHandle` with `.call(tool, args)` for Hub tool calls.
- * - `engineer` — `EngineerActorHandle`: agent + dispatcher + mcpClient + queueMap access.
- * - `opencode` — the MCP Client simulating OpenCode's plugin runtime;
- *   `.callTool` issues tool invocations the dispatcher routes to Hub.
- * - `hub` — the `PolicyLoopbackHub` (shared stores, tool-call log).
- * - `waitFor(cond, timeoutMs?)` — polls until the predicate is truthy.
- * - `playTape(steps)` — declarative scripted-scenario runner.
- * - `stop()` — idempotent teardown (MCP client → engineer agent → architect agent).
- *
- * Designed to be driven by Mission-41 T2 `assertInv*` helpers for
- * cross-shim parity verification (Wave 2 bonus) and for Wave 2 INV-TH18
- * / INV-TH19 graduation.
+ * Tape-step vocabulary is intentionally aligned with MockClaudeClient — same
+ * `architect` / `waitFor` / `assert` kinds; the host-specific step is
+ * `opencode` (mirrors T3's `claude`).
  */
 
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpAgentClient, CognitivePipeline } from "@apnex/network-adapter";
 import { LoopbackTransport } from "../../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../../packages/network-adapter/test/helpers/policy-loopback.js";
-import { createSharedDispatcher, pendingKey } from "@apnex/network-adapter";
+import { createOpenCodeRuntime, type OpenCodeRuntime } from "../../src/runtime.js";
 
 // ── Public types ────────────────────────────────────────────────────
 
@@ -62,8 +52,13 @@ export interface ActorHandle {
 
 export interface EngineerActorHandle extends ActorHandle {
   readonly role: "engineer";
-  readonly dispatcher: ReturnType<typeof createSharedDispatcher>;
+  /** Runtime instance that owns dispatcher/fetch-handler state for this mock. */
+  readonly runtime: OpenCodeRuntime;
+  /** Convenience alias for `runtime.testOnly.dispatcher`. */
+  readonly dispatcher: OpenCodeRuntime["testOnly"]["dispatcher"];
   readonly mcpClient: Client;
+  /** Temp OpenCode workdir used to initialize runtime config/log paths. */
+  readonly workDir: string;
 }
 
 export interface MockOpenCodeHarness {
@@ -101,7 +96,7 @@ export interface TapeResult {
 // ── Factory ──────────────────────────────────────────────────────────
 
 /**
- * Build a fully-wired MockOpenCodeHarness backed by real dispatcher/shim code.
+ * Build a fully-wired MockOpenCodeHarness backed by the OpenCode runtime seam.
  * Cleanup via `harness.stop()`.
  */
 export async function createMockOpenCodeClient(
@@ -109,7 +104,7 @@ export async function createMockOpenCodeClient(
 ): Promise<MockOpenCodeHarness> {
   const hub = new PolicyLoopbackHub();
   const architect = await buildArchitect(hub, opts.architectName);
-  const engineer = await buildEngineerWithShim(
+  const engineer = await buildEngineerWithRuntime(
     hub,
     opts.cognitive,
     opts.engineerName,
@@ -127,6 +122,9 @@ export async function createMockOpenCodeClient(
     async stop() {
       try { await engineer.mcpClient.close(); } catch { /* ignore */ }
       try { await engineer.agent.stop(); } catch { /* ignore */ }
+      try { engineer.runtime.testOnly.setHubAdapter(null); } catch { /* ignore */ }
+      try { engineer.runtime.testOnly.clearProxyServers(); } catch { /* ignore */ }
+      try { rmSync(engineer.workDir, { recursive: true, force: true }); } catch { /* ignore */ }
       try { await architect.agent.stop(); } catch { /* ignore */ }
     },
   };
@@ -172,24 +170,26 @@ async function buildArchitect(
   };
 }
 
-async function buildEngineerWithShim(
+async function buildEngineerWithRuntime(
   hub: PolicyLoopbackHub,
   cognitive: CognitivePipeline | undefined,
   name: string | undefined,
 ): Promise<EngineerActorHandle> {
   const transport = new LoopbackTransport(hub);
-
-  // opencode-plugin uses late-binding getAgent() — dispatcher is created
-  // first, then agent, then agentRef is set so dispatcher can reach it.
-  // This mirrors production shim.ts wiring.
-  let agentRef: McpAgentClient | null = null;
-  const dispatcher = createSharedDispatcher({
-    getAgent: () => agentRef,
-    proxyVersion: "mock-opencode-client-1.0.0",
-    serverName: "hub-proxy",
-    serverCapabilities: { tools: {}, logging: {} },
+  const workDir = mkdtempSync(join(tmpdir(), "mock-opencode-client-"));
+  const runtime = createOpenCodeRuntime({
+    initialRole: "engineer",
+    startupDelayMs: 0,
+    // Initialize config/sdk/log paths through HubPlugin without firing the
+    // live OpenCode startup side effects (connectToHub/Bun.serve/mcp.add).
+    setTimeoutFn: ((() => 0) as unknown as typeof setTimeout),
   });
-
+  const pluginInput = {
+    directory: workDir,
+    client: fakeOpenCodeClient(),
+  } as Parameters<OpenCodeRuntime["plugin"]>[0];
+  await runtime.plugin(pluginInput);
+  const dispatcher = runtime.testOnly.dispatcher;
   const pendingActionItemHandler = dispatcher.makePendingActionItemHandler();
 
   const agent = new McpAgentClient(
@@ -209,18 +209,11 @@ async function buildEngineerWithShim(
     },
     { transport, cognitive },
   );
-  agentRef = agent;
 
-  // Compose the queueMap callback subset — matches test/shim.e2e.test.ts
-  // (shim would also compose buildPluginCallbacks for OpenCode-runtime
-  // notifications; those are runtime-dependent and orthogonal to the
-  // ADR-017 + workflow-invariant surface this mock targets).
-  agent.setCallbacks({
-    onActionableEvent: (event) => {
-      dispatcher.callbacks.onActionableEvent?.(event);
-    },
-    onInformationalEvent: () => {},
-  });
+  // Mirror production connectToHub(): the runtime owns the hubAdapter ref and
+  // the agent callbacks are the runtime-owned dispatcher's callbacks.
+  runtime.testOnly.setHubAdapter(agent);
+  agent.setCallbacks(dispatcher.callbacks);
 
   await agent.start();
   await waitForImpl(() => agent.isConnected, 5_000);
@@ -229,26 +222,52 @@ async function buildEngineerWithShim(
   const agentId = await hub.agentIdForSession(sid);
   if (!agentId) throw new Error("MockOpenCodeClient: engineer Agent was not created");
 
-  // opencode dispatcher exposes createMcpServer() — the same factory the
-  // production fetchHandler uses per Initialize. Wiring it via
-  // InMemoryTransport gives identical business-logic coverage without Bun.
-  const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
-  const mcpServer = dispatcher.createMcpServer();
-  await mcpServer.connect(serverTx);
+  // Drive the production OpenCode MCP fetch bridge in-process. The MCP SDK's
+  // Streamable HTTP client accepts an injectable fetch implementation, so this
+  // remains no-network/no-Bun while covering runtime.makeOpenCodeFetchHandler().
+  const fetchHandler = runtime.makeOpenCodeFetchHandler();
+  const httpTransport = new StreamableHTTPClientTransport(
+    new URL("http://mock-opencode.local/mcp"),
+    { fetch: makeInProcessFetch(fetchHandler) },
+  );
   const mcpClient = new Client(
     { name: "mock-opencode", version: "1.0.0" },
     { capabilities: {} },
   );
-  await mcpClient.connect(clientTx);
+  await mcpClient.connect(httpTransport);
 
   return {
     role: "engineer",
     agent,
     transport,
     agentId,
+    runtime,
     dispatcher,
     mcpClient,
+    workDir,
     call: (tool, args) => agent.call(tool, args),
+  };
+}
+
+function fakeOpenCodeClient() {
+  return {
+    session: {
+      list: async () => ({ data: [] }),
+      promptAsync: async () => {},
+    },
+    tui: { showToast: async () => {} },
+    mcp: { add: async () => {} },
+  };
+}
+
+function makeInProcessFetch(
+  fetchHandler: (req: Request) => Promise<Response>,
+): typeof fetch {
+  return async (input, init) => {
+    const req = input instanceof Request
+      ? (init ? new Request(input, init) : input)
+      : new Request(input, init);
+    return fetchHandler(req);
   };
 }
 
