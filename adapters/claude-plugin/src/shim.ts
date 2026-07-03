@@ -49,10 +49,8 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 import { isPulseEvent } from "./source-attribute.js";
-import {
-  pushChannelNotification,
-  surfacePendingActionItem,
-} from "./notification-surface.js";
+import { surfacePendingActionItem } from "./notification-surface.js";
+import { createClaudeRuntime } from "./runtime.js";
 
 // ── Configuration ───────────────────────────────────────────────────
 
@@ -497,119 +495,38 @@ async function main(): Promise<void> {
     },
   );
 
-  const dispatcher = createSharedDispatcher({
-    getAgent: () => agent,
-    proxyVersion: PROXY_VERSION,
-    serverName: MANIFEST.serverName,
-    serverCapabilities: serverCapabilitiesFromManifest(MANIFEST),
-    log,
-    listToolsGate: syncReady,
-    callToolGate: sessionReady,
-    getCachedCatalog: () => readCache(WORK_DIR, log),
-    getIsIdentityReady: () => identityReadyResolved,
-    getCurrentToolSurfaceRevision: () => cachedToolSurfaceRevision,
-    isCacheValid,
-    persistCatalog: (catalog) => {
-      // Best-effort persist. Skip if we don't yet have a tool-surface
-      // revision to tag — better to let the next live-fetch (with the
-      // revision known) populate the cache than write a revision-less
-      // entry.
-      if (cachedToolSurfaceRevision === null) {
-        log("[Cache] Skipping persistCatalog — tool-surface revision not yet resolved");
-        return;
-      }
-      writeCache(WORK_DIR, catalog, cachedToolSurfaceRevision, log);
-    },
-    notificationHooks: {
-      onActionableEvent: (event) => {
-        appendActionableLog(event, buildPromptText(event.event, event.data, { toolPrefix: MANIFEST.toolPrefix }));
-        // Mission-57 W3: pulse Messages downgrade level from "actionable"
-        // to "informational" (S3 mitigation per Design v1.0 §4 — pulse-
-        // noise reduction during high-activity sub-PR cascades).
-        // Detection: eventType `message_arrived` + payload.pulseKind ∈
-        // {status_check, missed_threshold_escalation}.
-        const level = isPulseEvent(event.event, event.data) ? "informational" : "actionable";
-        pushChannelNotification(mcpServer, event, level, log);
-      },
-      onInformationalEvent: (event) => {
-        // Informational events log only — `<channel>` push would otherwise
-        // wake the LLM. Diagnostic-only routing.
-        appendActionableLog(event, `[INFO] ${buildPromptText(event.event, event.data, { toolPrefix: MANIFEST.toolPrefix })}`);
-      },
-    },
-    // bug-53: opt into pollBackstop heartbeat-second-timer so transport_heartbeat
-    // fires periodically (mission-75 §3.3 substrate). Env vars
-    // (TRANSPORT_HEARTBEAT_INTERVAL_MS / _ENABLED) plumbed through PollBackstop's
-    // constructor.
-    // bug-103: firstTimerEnabled re-enabled — the list_messages Pull-mode
-    // first-timer is the catch-up path that recovers role-targeted kind:note
-    // notifications missed while the adapter was disconnected. SSE inline
-    // delivers only to a connected recipient; offline → the note is lost
-    // without this poll. `role` (config.role) is the poll's targetRole filter.
-    // idea-355 §4.3 — the idea-353 W2 lease observer is now kernel-internal in
-    // the dispatcher (onToolCallResult site), so this shim no longer wires it.
-    pollBackstop: {
-      role: config.role,
-      firstTimerEnabled: true,
-      log,
-      // bug-180 L2 — tool-surface revision-poll backstop on the heartbeat
-      // cadence. The kernel drives this host hook off the tick (idea-355 §4.3,
-      // isolated in its own try/catch) ALONGSIDE the now-kernel-internal queue
-      // wake/stall reconcile — so the shim provides only the host-coupled
-      // live-refresh (mcpServer.sendToolListChanged), not the wake/stall wiring.
-      // Lazy `reconciler` ref (assigned once mcpServer exists, below); the first
-      // tick fires ≥1 interval after start() so it is always populated.
-      onHeartbeatTick: async () => {
-        await reconciler?.reconcile("heartbeat");
-      },
-    },
-  });
-  dispatcherRef = dispatcher;
-
-  agent.setCallbacks(dispatcher.callbacks);
-
-  // Open stdio FIRST so the host's MCP `initialize` request is ACKed
-  // within its timeout, then run the Hub handshake.
+  // Open stdio FIRST so the host's MCP `initialize` request is ACKed within its
+  // timeout, then run the Hub handshake. Mission-100 W2: the dispatcher/server/
+  // reconciler wiring is now single-homed in the importable runtime factory so
+  // tests + MockClaudeClient can consume the production seam instead of
+  // re-creating it.
   const transport = new StdioServerTransport();
   transport.onclose = () => {
     shutdown();
   };
-  mcpServer = dispatcher.createMcpServer();
-  await mcpServer.connect(transport);
-  log("MCP stdio server ready — Claude Code can call initialize/listTools/callTool");
-
-  // bug-180 — tool-surface live-refresh reconciler. Now that mcpServer exists
-  // we can emit notifications/tools/list_changed on drift. The reconciler
-  // baselines off the on-disk cache (what the pre-identity probe served) and
-  // emits when the live /health revision diverges from it.
-  const liveReconciler = new ToolSurfaceReconciler({
-    fetchLiveRevision: fetchLiveToolSurfaceRevision,
-    readServedRevision: () => readCache(WORK_DIR, log)?.toolSurfaceRevision ?? null,
-    emitListChanged: () => {
-      void mcpServer?.sendToolListChanged();
-      log("[ToolSurface] notifications/tools/list_changed emitted — host will re-enumerate");
-    },
+  const runtime = await createClaudeRuntime({
+    agent,
+    mcpTransport: transport,
+    manifest: MANIFEST,
+    proxyVersion: PROXY_VERSION,
+    workDir: WORK_DIR,
+    role: config.role as "architect" | "engineer" | "director" | "verifier",
     log,
+    notificationLogPath: LOG_FILE,
+    mirrorNotification: (block) => process.stderr.write(block),
+    listToolsGate: syncReady,
+    callToolGate: sessionReady,
+    identityReady,
+    getIsIdentityReady: () => identityReadyResolved,
+    getCurrentToolSurfaceRevision: () => cachedToolSurfaceRevision,
+    fetchLiveToolSurfaceRevision,
+    appendActionableLog,
   });
-  reconciler = liveReconciler;
-
-  // idea-355 §4.3 — the queue wake/stall reconcile (W1 inbound digest + W2
-  // outbound stall-prompt + W3 status seam) + its trackers + the W2 lease
-  // observer are now kernel-internal in the dispatcher, driven off the same
-  // heartbeat tick as the bug-180 live-refresh below. The shim wires none of it;
-  // the kernel emits through notificationHooks.onActionableEvent → this shim's
-  // pushChannelNotification, so the surface is unchanged.
-
-  // bug-180 L1 (primary) — reconcile on identityReady. Once identity resolves
-  // the live revision is fetchable + the dispatcher serves the live surface
-  // (probe-cache path is skipped), so re-enumeration after the emit lands the
-  // current tool set. Covers the redeploy-then-reconnect case that caused
-  // bug-180 — no manual cache-delete, no restart. identityReadyResolved is set
-  // on an earlier-registered .then, so the dispatcher already serves live by
-  // the time the host re-calls tools/list.
-  identityReady
-    .then(() => liveReconciler.reconcile("identityReady"))
-    .catch(() => { /* identityReady rejection handled by main()'s catch */ });
+  const { dispatcher } = runtime;
+  dispatcherRef = dispatcher;
+  mcpServer = runtime.mcpServer;
+  reconciler = runtime.reconciler;
+  log("MCP stdio server ready — Claude Code can call initialize/listTools/callTool");
 
   try {
     await agent.start();
