@@ -1,23 +1,20 @@
 #!/usr/bin/env bash
 #
-# scripts/build/release-opencode-plugin.sh — build the SOURCE-FREE OpenCode-plugin
-# release artifact (idea-329/330: Steve installs a published bundle, never the
-# agentic-network source).
+# scripts/build/release-opencode-plugin.sh — build the LEGACY SOURCE-FREE
+# OpenCode-plugin compatibility artifact.
 #
-# Approach: esbuild bundles the plugin + its `@apnex/*` deps (cognitive-layer /
-# message-router / network-adapter) FROM SOURCE — the deps are aliased to their
-# `src/index.ts` (see the `bundle` script in adapters/opencode-plugin/package.json).
-# This deliberately sidesteps a clean-from-scratch `tsc` build of the deps, which
-# FAILS because `@apnex/network-adapter` and `@apnex/message-router` have a CIRCULAR
-# source-level dependency (network-adapter declares message-router; message-router's
-# src imports network-adapter) — tsc cannot emit either's .d.ts without the other's.
-# esbuild tolerates the circular module graph and drops the type-only
-# `@opencode-ai/plugin` import (the host SDK is provided at runtime), so it inlines
-# everything into ONE self-contained file with zero external `@apnex` deps.
-# (The circular @apnex source-dep is a pre-existing shared-package hygiene issue —
-# bug-116 territory — surfaced by this productionization; flagged to the architect.)
+# Mission-101 W6 makes graph-published npm (`@apnex/opencode-plugin`) the
+# canonical target. This script is retained as a compatibility bridge for the
+# existing GitHub/source-bundle channel (idea-329/330: Steve installed a
+# published bundle, not the agentic-network source) until the coordinated npm
+# cutover is complete.
 #
-# Run this whenever the shared core changes.
+# Approach: esbuild bundles the plugin + its `@apnex/*` deps FROM SOURCE — the
+# deps are aliased to their `src/index.ts` (see scripts/build/bundle-opencode.js).
+# This produces ONE self-contained file with zero external `@apnex` deps and a
+# HubPlugin-only export surface, which is what the legacy OpenCode loader path
+# requires.
+#
 # Run from anywhere:  scripts/build/release-opencode-plugin.sh
 # Output:  adapters/opencode-plugin/dist/shim.js  (self-contained; zero @apnex deps)
 

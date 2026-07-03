@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /**
- * scripts/build/bundle-opencode.js — OpenCode self-contained bundle builder.
+ * scripts/build/bundle-opencode.js — OpenCode self-contained compatibility bundle builder.
  *
- * idea-355 SLICE-3 (fork 3, single-sha): the OpenCode plugin ships as ONE
+ * Mission-101 W6 makes graph-published npm the canonical distribution target;
+ * this builder is retained for the legacy GitHub/source-bundle bridge.
+ * idea-355 SLICE-3 (fork 3, single-sha): the legacy OpenCode bundle ships as ONE
  * esbuild bundle — the `@apnex/*` kernel is inlined FROM SOURCE, so there is
  * no node_modules and no adjacent dist/build-info.json at runtime (unlike the
  * claude shim, which reads its build-info off disk). So build-identity must be

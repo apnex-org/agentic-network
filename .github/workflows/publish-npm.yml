@@ -62,13 +62,14 @@ jobs:
       # Scoped install — MUST mirror test.yml's proven-working list exactly.
       # --ignore-scripts: repo-event-bridge/storage-provider carry prepare:tsc
       # hooks that would fire before their deps exist (calibration #62). The
-      # list must include storage-provider (+ opencode) even though they are
-      # NOT published here: npm only symlinks NAMED workspaces, and the
-      # network-adapter ↔ message-router cyclic tsc build needs every @apnex/*
-      # workspace linked to resolve its module graph. Omitting storage-provider
-      # broke the cyclic build in CI (dry-run run #28554852955: network-adapter
-      # tsc "Cannot find module '@apnex/message-router'"). The publish step
-      # still ships only the explicit list in publish-packages.sh.
+      # list must include storage-provider even though it is NOT published here:
+      # npm only symlinks NAMED workspaces, and the network-adapter ↔
+      # message-router cyclic tsc build needs every @apnex/* workspace linked to
+      # resolve its module graph. Omitting storage-provider broke the cyclic
+      # build in CI (dry-run run #28554852955: network-adapter tsc "Cannot find
+      # module '@apnex/message-router'"). The publish step still ships only the
+      # explicit list in publish-packages.sh; mission-101 W6 deliberately adds
+      # opencode-plugin to that explicit published-family list.
       - name: Install workspaces (scoped)
         run: |
           npm install --no-audit --no-fund --ignore-scripts \
@@ -92,6 +93,7 @@ jobs:
           rm -rf packages/network-adapter/dist
           ( cd packages/network-adapter && npm run build )
           ( cd adapters/claude-plugin && npm run build )
+          ( cd adapters/opencode-plugin && npm run build )
           ( cd adapters/pi-plugin && npm run build )
 
       # Publish (or dry-run). The script gates on prepack --assert (version bump),
