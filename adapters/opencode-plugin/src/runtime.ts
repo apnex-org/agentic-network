@@ -38,6 +38,8 @@ import {
   reconstructDrainedAction,
   ToolSurfaceReconciler,
   makeFetchLiveToolSurfaceRevision,
+  NotificationCoalescer,
+  CognitivePipeline,
   type HubConfig,
   type FileLogger,
   type AgentEvent,
@@ -46,12 +48,8 @@ import {
   type HandshakeFatalError,
   type SharedDispatcher,
   type TelemetryEvent,
-} from "@apnex/network-adapter";
-import {
-  NotificationCoalescer,
   type CoalescedNotification,
-} from "@apnex/message-router";
-import { CognitivePipeline } from "@apnex/cognitive-layer";
+} from "@apnex/network-adapter";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
