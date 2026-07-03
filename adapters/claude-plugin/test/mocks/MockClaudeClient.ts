@@ -57,7 +57,9 @@ import {
   CognitivePipeline,
   parseHarnessManifest,
   pendingKey,
+  type AgentEvent,
   type SharedDispatcher,
+  type ToolSurfaceReconciler,
 } from "@apnex/network-adapter";
 import { LoopbackTransport } from "../../../../packages/network-adapter/test/helpers/loopback-transport.js";
 import { PolicyLoopbackHub } from "../../../../packages/network-adapter/test/helpers/policy-loopback.js";
@@ -76,8 +78,18 @@ export interface ActorHandle {
 export interface EngineerActorHandle extends ActorHandle {
   readonly role: "engineer";
   readonly dispatcher: SharedDispatcher;
+  readonly reconciler: ToolSurfaceReconciler;
   readonly mcpClient: Client;
   readonly workDir: string;
+  readonly runtimeControls: MockClaudeRuntimeControls;
+}
+
+export interface MockClaudeRuntimeControls {
+  readonly trace: string[];
+  readonly logs: string[];
+  readonly actionableLog: Array<{ event: AgentEvent; action: string }>;
+  getLiveToolSurfaceRevision(): string | null;
+  setLiveToolSurfaceRevision(revision: string | null): void;
 }
 
 export interface MockClaudeHarness {
@@ -100,6 +112,8 @@ export interface MockClaudeClientOpts {
   engineerName?: string;
   /** Override the architect's agent name. Default = random. */
   architectName?: string;
+  /** Initial Hub tool-surface revision exposed to the runtime factory. */
+  initialToolSurfaceRevision?: string | null;
 }
 
 export type TapeStep =
@@ -132,6 +146,7 @@ export async function createMockClaudeClient(
     hub,
     opts.cognitive,
     opts.engineerName,
+    opts.initialToolSurfaceRevision,
   );
 
   const harness: MockClaudeHarness = {
@@ -196,11 +211,15 @@ async function buildEngineerWithShim(
   hub: PolicyLoopbackHub,
   cognitive: CognitivePipeline | undefined,
   name: string | undefined,
+  initialToolSurfaceRevision: string | null | undefined,
 ): Promise<EngineerActorHandle> {
   const transport = new LoopbackTransport(hub);
   const workDir = mkdtempSync(join(tmpdir(), "mock-claude-client-"));
   const proxyVersion = "mock-claude-client-1.0.0";
-  const toolSurfaceRevision = "mock-claude-runtime-rev";
+  let toolSurfaceRevision = initialToolSurfaceRevision ?? "mock-claude-runtime-rev";
+  const trace: string[] = [];
+  const logs: string[] = [];
+  const actionableLog: Array<{ event: AgentEvent; action: string }> = [];
 
   // Forward-reference wiring (matches production shim.ts): the agent handshake
   // needs dispatcher.getClientInfo + pendingAction handling, while the runtime
@@ -234,6 +253,7 @@ async function buildEngineerWithShim(
   // Wire MCP InMemoryTransport pair — the client simulates Claude Code, while
   // the server side is consumed by the SAME runtime seam production shim.ts uses.
   const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
+  trace.push("runtime:create:before");
   const runtime = await createClaudeRuntime({
     agent,
     mcpTransport: serverTx,
@@ -241,7 +261,7 @@ async function buildEngineerWithShim(
     proxyVersion,
     workDir,
     role: "engineer",
-    log: () => {},
+    log: (msg) => logs.push(msg),
     notificationLogPath: join(workDir, "notifications.log"),
     listToolsGate: Promise.resolve(),
     callToolGate: Promise.resolve(),
@@ -249,11 +269,14 @@ async function buildEngineerWithShim(
     getIsIdentityReady: () => true,
     getCurrentToolSurfaceRevision: () => toolSurfaceRevision,
     fetchLiveToolSurfaceRevision: async () => toolSurfaceRevision,
-    appendActionableLog: () => {},
+    appendActionableLog: (event, action) => actionableLog.push({ event, action }),
   });
+  trace.push("runtime:create:after");
   dispatcherRef = runtime.dispatcher;
 
+  trace.push("agent:start:before");
   await agent.start();
+  trace.push("agent:start:after");
   await waitForImpl(() => agent.isConnected, 5_000);
   const sid = transport.getSessionId();
   if (!sid) throw new Error("MockClaudeClient: engineer transport did not bind a session");
@@ -264,7 +287,9 @@ async function buildEngineerWithShim(
     { name: "mock-claude-code", version: "1.0.0" },
     { capabilities: {} },
   );
+  trace.push("mcp-client:connect:before");
   await mcpClient.connect(clientTx);
+  trace.push("mcp-client:connect:after");
 
   return {
     role: "engineer",
@@ -272,8 +297,16 @@ async function buildEngineerWithShim(
     transport,
     agentId,
     dispatcher: runtime.dispatcher,
+    reconciler: runtime.reconciler,
     mcpClient,
     workDir,
+    runtimeControls: {
+      trace,
+      logs,
+      actionableLog,
+      getLiveToolSurfaceRevision: () => toolSurfaceRevision,
+      setLiveToolSurfaceRevision: (revision) => { toolSurfaceRevision = revision; },
+    },
     call: (tool, args) => agent.call(tool, args),
   };
 }

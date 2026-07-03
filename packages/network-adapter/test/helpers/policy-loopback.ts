@@ -18,6 +18,7 @@
  */
 
 import { PolicyRouter, registerTaskPolicy, registerSystemPolicy, registerTelePolicy, registerAuditPolicy, registerSessionPolicy, registerIdeaPolicy, registerMissionPolicy, registerTurnPolicy, registerClarificationPolicy, registerReviewPolicy, registerProposalPolicy, registerThreadPolicy, registerMessagePolicy } from "../../../../hub/src/policy/index.js";
+import { registerWorkItemPolicy } from "../../../../hub/src/policy/work-item-policy.js";
 import type { AllStores, IPolicyContext } from "../../../../hub/src/policy/types.js";
 import type { Selector } from "../../../../hub/src/state.js";
 // bug-109 PR-4b — PolicyLoopbackHub repaired against the post-mission-83
@@ -43,6 +44,7 @@ import { AuditRepositorySubstrate } from "../../../../hub/src/entities/audit-rep
 import { BugRepositorySubstrate } from "../../../../hub/src/entities/bug-repository-substrate.js";
 import { MessageRepositorySubstrate } from "../../../../hub/src/entities/message-repository-substrate.js";
 import { PendingActionRepositorySubstrate } from "../../../../hub/src/entities/pending-action-repository-substrate.js";
+import { WorkItemRepositorySubstrate } from "../../../../hub/src/entities/work-item-repository-substrate.js";
 import { createMetricsCounter, type MetricsCounter } from "../../../../hub/src/observability/metrics.js";
 import type { ILoopbackHub, LoopbackTransport, ToolCall } from "./loopback-transport.js";
 
@@ -212,6 +214,7 @@ export class PolicyLoopbackHub implements ILoopbackHub {
       bug: new BugRepositorySubstrate(substrate, counter),
       pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
       message: new MessageRepositorySubstrate(substrate),
+      workItem: new WorkItemRepositorySubstrate(substrate, counter),
     };
   }
 
@@ -233,6 +236,9 @@ export class PolicyLoopbackHub implements ILoopbackHub {
     // claim_message/ack_message) over the real MessageRepositorySubstrate — so the
     // faithful PollBackstop catch-up + ack path is exercisable end-to-end (cal #82).
     registerMessagePolicy(router);
+    // mission-100 offline conformance needs the real WorkItem lifecycle verbs so
+    // dispatcher-side lease observation can be exercised through a full Hub path.
+    registerWorkItemPolicy(router);
     return router;
   }
 }
