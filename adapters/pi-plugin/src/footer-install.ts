@@ -26,8 +26,10 @@ import {
   observeHubState,
   observePendingActionItem,
   observeLlmError,
+  observeSwarmPull,
   resetS4Approx,
   type FooterState,
+  type PeerHealth,
 } from "./footer-state.js";
 import { renderFooter, type FooterTheme } from "./footer.js";
 
@@ -45,6 +47,11 @@ export interface FooterController {
   onPendingActionItem(): void;
   /** message_end stopReason=error → llm coarse tally. */
   onLlmError(): void;
+  /**
+   * Tier-C heartbeat poll → authoritative peers (§8) + role-scoped S4 (§10/§11).
+   * Slice (b) PULL path; observation only (read tools), retires the ~tilde.
+   */
+  onSwarmPull(peers: PeerHealth[], s4Authoritative: number): void;
   /** the agent took a turn → reset the approx "since you last looked" count. */
   onAgentTurn(): void;
   /** Set identity once known (connect). */
@@ -134,6 +141,10 @@ export function installFooter(opts: InstallFooterOpts): FooterController | null 
     },
     onLlmError(): void {
       observeLlmError(state, now());
+      kick();
+    },
+    onSwarmPull(peers: PeerHealth[], s4Authoritative: number): void {
+      observeSwarmPull(state, peers, s4Authoritative, now());
       kick();
     },
     onAgentTurn(): void {

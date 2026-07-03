@@ -50,6 +50,7 @@ import {
 import { registerHubTools } from "./tool-bridge.js";
 import { buildPiNotificationHooks } from "./wake.js";
 import { installFooter, type FooterController } from "./footer-install.js";
+import { runSwarmPoll } from "./footer-poll.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -230,6 +231,25 @@ async function connectAndSeed(
       log,
       onHeartbeatTick: async () => {
         await reconciler?.reconcile("heartbeat");
+        // mission-99 slice (b): Tier-C swarm PULL on the SAME heartbeat tick
+        // (spec §6 — no new timer; rides the F2 ±20% jitter for anti-stampede).
+        // READ-ONLY (get_agents + role-scoped S4 reads); pushes into the footer
+        // store so render stays pure (gate 1). A throw = a failed refresh: the
+        // store keeps its prior pull and render stale-marks it (§6 SLO). No-op
+        // when footer is null (non-TUI) or the wire isn't up yet.
+        if (footer && hubAdapter?.isConnected) {
+          try {
+            const selfAgentId = hubAdapter.getMetrics().agentId ?? null;
+            const { peers, s4Authoritative } = await runSwarmPoll(
+              hubAdapter,
+              currentRole,
+              selfAgentId,
+            );
+            footer.onSwarmPull(peers, s4Authoritative);
+          } catch (err) {
+            log(`[footer] swarm poll failed (non-fatal; will stale-mark): ${(err as Error)?.message ?? err}`);
+          }
+        }
       },
     },
   });

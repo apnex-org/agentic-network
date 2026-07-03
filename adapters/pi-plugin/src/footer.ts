@@ -5,7 +5,7 @@
  *
  * A fixed-height 2-line "me + world" HUD:
  *   Line 1 (SELF):  identity │ ctx │ llm
- *   Line 2 (WORLD): work │ hub[FSM] │ ⟶ needs-you(S4-approx)
+ *   Line 2 (WORLD): work │ hub[FSM] │ peers │ ⟶ needs-you(S4)
  *
  * INVARIANTS ENFORCED HERE:
  *  - gate 1 (pure render): render() reads ONLY the injected FooterInputs — a
@@ -25,7 +25,7 @@
  */
 
 import type { SessionState } from "@apnex/network-adapter";
-import { llmErrorCount, type FooterState } from "./footer-state.js";
+import { llmErrorCount, isSwarmFresh, type FooterState, type PeerHealth } from "./footer-state.js";
 
 /** Severity → theme color-key (spec §9 3-tier). */
 export type Severity = "nominal" | "notice" | "alert";
@@ -208,20 +208,81 @@ const HUB_CELL_SPEC: Record<SessionState, { text: string; sev: Severity }> = {
 };
 
 /**
- * ⟶ needs-you (S4-approx). Honesty cascade (spec §7/§10):
- *  - hub not trusted → `needs ?` (NEVER zeros / "all clear" on an untrusted wire).
- *  - trusted + zero → dim `nothing needs you` (fail-quiet, legal ONLY when live).
- *  - trusted + N   → `⟶ ~N` (tilde = APPROXIMATE; never authoritative — spec §10).
+ * peers cell — exception-biased swarm population (spec §8). Honesty cascade
+ * (spec §7/§9):
+ *  - hub not trusted OR pull stale/absent → `peers ?` (NEVER a fabricated dot
+ *    census / "all healthy" on an untrusted-or-stale view).
+ *  - trusted + fresh, all online → compact `◉◉◉` (one dot per healthy peer).
+ *  - trouble → collapses to NAME the problem `[⚠ name down]` (red), exception-biased.
+ *  - a stale-but-present pull (hub live, pull aged) → dot census + `(stale)` marker
+ *    (spec §9: stale never red-alerts, never masquerades as fresh).
+ * PULL-fed (get_agents env=prod, §6 pull path) — render reads only s.swarm.
  */
-function needsCell(theme: FooterTheme, s: FooterState, trusted: boolean): string {
+function peersCell(theme: FooterTheme, s: FooterState, trusted: boolean, nowMs: number): string {
+  const label = theme.fg("dim", "peers");
+  // Untrusted wire OR no pull yet → honest unknown (§7 cascade).
+  if (!trusted || s.swarm === null) {
+    return `${label} ${theme.fg("dim", "?")}`;
+  }
+  const fresh = isSwarmFresh(s, nowMs);
+  const peers = s.swarm.peers;
+  const down = peers.filter((p) => p.down);
+
+  // Exception-biased: any down peer NAMES the problem (spec §8), red.
+  if (down.length > 0) {
+    const named = down.map((p) => `⚠ ${p.name} down`).join(", ");
+    const cell = color(theme, "alert", `[${named}]`);
+    return `${label} ${fresh ? cell : `${cell} ${theme.fg("dim", "(stale)")}`}`;
+  }
+
+  // All healthy → compact dot census (one ◉ per online peer). Zero peers = honest
+  // dim `none` (never a fabricated dot).
+  const dots = peers.length > 0 ? "◉".repeat(peers.length) : "none";
+  const cell = peers.length > 0 ? theme.fg("dim", dots) : theme.fg("dim", "none");
+  return `${label} ${fresh ? cell : `${cell} ${theme.fg("dim", "(stale)")}`}`;
+}
+
+/**
+ * ⟶ needs-you (S4). Honesty cascade (spec §7/§9/§10) + authoritative-over-approx:
+ *  - hub not trusted → `needs ?` (NEVER zeros / "all clear" on an untrusted wire).
+ *  - AUTHORITATIVE (fresh pull, spec §10/§11) → exact `⟶ ✎N` (NO tilde — the
+ *    approximation is retired) or dim `nothing needs you` at zero.
+ *  - STALE authoritative pull (spec §9 / steve audit-6540 #2): once we've HAD an
+ *    authoritative count, a stale/failed refresh must NEVER masquerade as a fresh
+ *    exact all-clear. If a fresh push-approx exists, show it tilde-marked; else
+ *    render the LAST-KNOWN authoritative count stale-marked (`⟶ ✎N (stale)`), or
+ *    `needs ?` when that last count was zero (can't prove it's still zero).
+ *  - no pull ever + push-approx → `⟶ ~✎N` / `nothing needs you` at approx-zero.
+ * The authoritative count supersedes the push-only approx whenever fresh; on
+ * staleness we degrade HONESTLY (never fresh-zero-masquerade).
+ */
+function needsCell(theme: FooterTheme, s: FooterState, trusted: boolean, nowMs: number): string {
+  const label = theme.fg("dim", "needs");
   if (!trusted) {
-    return `${theme.fg("dim", "needs")} ${theme.fg("dim", "?")}`;
+    return `${label} ${theme.fg("dim", "?")}`;
   }
-  if (s.s4ApproxCount <= 0) {
-    return theme.fg("dim", "nothing needs you");
+  // Authoritative role-scoped S4 (spec §10/§11/§12) — retires the tilde when fresh.
+  if (isSwarmFresh(s, nowMs)) {
+    const n = s.swarm!.s4Authoritative;
+    if (n <= 0) return theme.fg("dim", "nothing needs you");
+    return color(theme, "notice", `⟶ ✎${n}`);
   }
-  // Tilde marks approximation (fed only by onPendingActionItem push, spec §10).
-  return color(theme, "notice", `⟶ ~✎${s.s4ApproxCount}`);
+  // A fresh push-approx signal is always honest to show (tilde-marked, spec §10).
+  if (s.s4ApproxCount > 0) {
+    return color(theme, "notice", `⟶ ~✎${s.s4ApproxCount}`);
+  }
+  // STALE authoritative pull with no fresh approx (steve audit-6540 #2): the prior
+  // authoritative view is no longer trustworthy. NEVER render fresh `nothing needs
+  // you` — that would let a stale/failed refresh masquerade as an exact zero.
+  if (s.swarm !== null) {
+    const last = s.swarm.s4Authoritative;
+    // Last-known >0 → show it stale-marked (approximate now, not authoritative).
+    if (last > 0) return color(theme, "notice", `⟶ ~✎${last} ${theme.fg("dim", "(stale)")}`);
+    // Last-known 0, now stale → can't prove it's still zero → honest unknown.
+    return `${label} ${theme.fg("dim", "?")}`;
+  }
+  // No pull ever + no approx → genuine cold-clear (trusted wire, nothing observed).
+  return theme.fg("dim", "nothing needs you");
 }
 
 // ── The 2-line assembly (fixed height) ───────────────────────────────
@@ -256,7 +317,8 @@ export function renderFooter(
   const line2 = [
     workCell(theme, inputs),
     hub,
-    needsCell(theme, state, trusted),
+    peersCell(theme, state, trusted, nowMs),
+    needsCell(theme, state, trusted, nowMs),
   ].join(SEP);
 
   if (width !== undefined && width > 0) {
