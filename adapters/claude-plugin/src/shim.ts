@@ -41,8 +41,8 @@ import {
   type TelemetryEvent,
   type ILogger,
   type LogFields,
+  CognitivePipeline,
 } from "@apnex/network-adapter";
-import { CognitivePipeline } from "@apnex/cognitive-layer";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
