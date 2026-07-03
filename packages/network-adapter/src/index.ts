@@ -29,11 +29,13 @@ export type {
 // SessionReconnectReason / DrainedPendingAction) was relocated DOWN to
 // @apnex/message-router to break the L2↔L4 source cycle; re-exported here so
 // consumers importing them from @apnex/network-adapter are unaffected.
+export { NotificationCoalescer } from "@apnex/message-router";
 export type {
   AgentEvent,
   SessionState,
   SessionReconnectReason,
   DrainedPendingAction,
+  CoalescedNotification,
 } from "@apnex/message-router";
 
 export type {
