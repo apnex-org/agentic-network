@@ -14,6 +14,7 @@ Current state on fresh main:
 
 - `@apnex/opencode-plugin` workspace version is `0.2.1`.
 - `npm view @apnex/opencode-plugin` returns `E404`; it is not published on npm.
+- Director/operator confirmed live OpenCode GPT-5.5 testing is available for this mission; work-110 should be planned as downstream live evidence after the selected runtime/distribution path is ready, not treated as default-deferred.
 - `adapters/opencode-plugin/src/shim.ts` still imports directly from `@apnex/message-router` and `@apnex/cognitive-layer`.
 - `adapters/opencode-plugin/package.json` and root `package-lock.json` still declare direct deps on `@apnex/cognitive-layer`, `@apnex/message-router`, and `@apnex/network-adapter`.
 - There is no importable `createOpenCodeRuntime(...)` seam. Production owns a module-init singleton dispatcher plus large module state in `shim.ts`.
@@ -308,7 +309,7 @@ Missing or insufficient:
 - No offline conformance suite covering OpenCode-specific runtime startup ordering end-to-end.
 - No pack/install-from-registry-or-tarball proof because no registry package exists.
 - No migration test for GitHub/source config to npm or bundled package config.
-- No live OpenCode smoke evidence in this survey.
+- No live OpenCode smoke evidence in this survey yet; however, work-110 now provides a planned live GPT-5.5 certification node after `distribution_standardization`, `offline_conformance`, and `package_integrity`.
 
 ## 9. Distribution standardisation options
 
@@ -376,17 +377,31 @@ Do not publish the current package as-is.
 
 The design node should prefer **Option A (graph-published npm)** if OpenCode's plugin loader can resolve package dependencies reliably, because it best matches the post-mission-100 family and the A3 facade rule. If loader constraints make graph publish unreliable, choose **Option B (bundled npm)** deliberately and encode bundle-specific integrity gates. Option C is acceptable only as a short, explicit migration bridge.
 
-## 10. Proposed next gated slices
+Live certification is now available, so W2 should not frame live OpenCode smoke as a default deferral. Instead, design the runtime/distribution path so `work-110` can certify the selected artifact with GPT-5.5 after distribution, package integrity, and offline conformance are in place.
 
-1. **Design decision node:** ratify runtime seam and artifact shape before implementation.
+## 10. Live GPT-5.5 evidence plan
+
+Mission brief §10 and `work-110` establish a downstream live certification node:
+
+- **WorkItem:** `work-110` — Live OpenCode GPT-5.5 smoke certification.
+- **Dependencies:** after `distribution_standardization`, `offline_conformance`, and `package_integrity`.
+- **Execution posture:** live smoke should exercise the selected OpenCode plugin artifact/path, not the current pre-refactor path by default.
+- **Evidence target:** version/build identity; Hub agent registration/role/name; tool list availability; at least one safe tool call through shared dispatch; notification/prompt behavior if feasible; tool-surface refresh/list_changed behavior if a safe surface-change trigger is available.
+- **Honesty rule:** explicitly document any skipped live sub-check with rationale. Keep live certification distinct from offline conformance.
+
+## 11. Proposed next gated slices
+
+1. **Design decision node:** ratify runtime seam and artifact shape before implementation, including how the selected path will be live-smoked by `work-110`.
 2. **Facade prerequisite:** export `NotificationCoalescer` / `CoalescedNotification` via `@apnex/network-adapter` if graph/facade path is chosen.
 3. **Runtime seam:** extract `createOpenCodeRuntime(...)` or a two-phase equivalent that respects delayed config/OpenCode SDK constraints.
 4. **MockOpenCodeClient v2:** consume the production runtime seam; add guard against inline dispatcher recreation.
 5. **Facade fold-in:** reroute imports/deps and add boundary guard tests.
 6. **Distribution standardisation:** implement chosen npm/bundle artifact path and update quickstart/migration docs.
-7. **Offline conformance:** after runtime/mock uplift, test real runtime path for listTools/callTool, sourceQueueItemId, signal wrapper, coalescer/prompt queue, session events, work leases, reconciler/list_changed, and no live-cert overclaim.
-8. **Release decision:** version bump, lockfile sync, changelog, pack/bundle proof, registry verification if published, and explicit live-vs-offline boundary.
+7. **Package integrity:** prove the selected artifact/package shape before live certification.
+8. **Offline conformance:** after runtime/mock uplift, test real runtime path for listTools/callTool, sourceQueueItemId, signal wrapper, coalescer/prompt queue, session events, work leases, reconciler/list_changed, and no live-cert overclaim.
+9. **Live GPT-5.5 smoke (`work-110`):** run after distribution/package/offline gates to certify the selected artifact/path with real OpenCode.
+10. **Release decision:** version bump, lockfile sync, changelog, pack/bundle proof, registry verification if published, work-110 disposition, and explicit offline-vs-live claim boundary.
 
-## 11. Completion/audit note
+## 12. Completion/audit note
 
 This survey is complete as an engineer-authored current-state document. The WorkItem requires a bindable audit with `relatedEntity=mission-101`; engineer role cannot create that audit entry. Architect or verifier must bind an audit referencing this document before the WorkItem can be completed.
