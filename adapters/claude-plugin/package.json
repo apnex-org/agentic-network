@@ -29,8 +29,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@apnex/cognitive-layer": "*",
-    "@apnex/message-router": "*",
     "@apnex/network-adapter": "*"
   },
   "devDependencies": {
