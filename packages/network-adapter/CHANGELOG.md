@@ -1,5 +1,17 @@
 # Changelog — @apnex/network-adapter
 
+## 0.1.7 — Publish the NotificationCoalescer facade re-export (bug-215)
+
+### Fixed
+- **`NotificationCoalescer` is now exported from the published package.** The
+  facade re-export (`export { NotificationCoalescer } from "@apnex/message-router"`)
+  was added in mission-101 W4 (#468) but shipped WITHOUT a version bump, so the
+  registry `0.1.6` build lacked the export. `@apnex/opencode-plugin` imports
+  `NotificationCoalescer` from this package, so an npm install of the plugin threw
+  `SyntaxError: does not provide an export named 'NotificationCoalescer'` at module
+  load and silently failed to activate (no Hub handshake). Bumping to 0.1.7 forces
+  a republish that carries the export. See bug-215.
+
 ## 0.1.6 — Per-agent poll/heartbeat jitter (mission-99 F2)
 
 ### Added

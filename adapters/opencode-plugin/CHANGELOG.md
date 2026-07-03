@@ -2,6 +2,17 @@
 
 All notable changes to the OpenCode host plugin are documented here.
 
+## 0.2.3 — fix live-load: depend on network-adapter with NotificationCoalescer (bug-215)
+
+### Fixed
+- Requires `@apnex/network-adapter@^0.1.7`, the first published network-adapter that
+  exports `NotificationCoalescer`. The 0.2.2 release resolved `^0.1.6`, whose published
+  build lacked that export, so a real npm install threw at module load
+  (`SyntaxError: does not provide an export named 'NotificationCoalescer'`) and the
+  plugin silently failed to activate in a live OpenCode session (no Hub handshake).
+  No source change in the plugin itself — the fix is the corrected published dependency.
+  Surfaced bringing greg online for mission-101 work-110 live cert. See bug-215.
+
 ## 0.2.2 — mission-101 refactor shipped to npm (release)
 
 First npm publish of the mission-101 sovereign-adapter refactor. Bumps the version so the shipped `src/` (runtime factory + network-adapter facade routing landed in mission-101 W3/W4) is honestly reflected past the prior `0.2.1` version bump — required by the version-assert gate before publish.
