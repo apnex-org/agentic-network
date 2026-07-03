@@ -1,15 +1,20 @@
 /**
- * MockOpenCodeClient smoke tests — Mission-41 Wave 1 T4.
+ * MockOpenCodeClient smoke tests — Mission-41 Wave 1 T4; Mission-101 W5.
  *
- * Proves the mock harness wires up correctly and supports one complete
- * architect ↔ Hub notification round-trip via the real dispatcher +
- * real Hub behind loopback. Mirrors T3's smoke-test shape for the
- * opencode backend (no Bun, no OpenCode runtime).
+ * Proves the mock harness wires up correctly through createOpenCodeRuntime and
+ * supports complete architect ↔ Hub notification round-trips without a live
+ * OpenCode host, Bun server, or network socket.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createMockOpenCodeClient, type MockOpenCodeHarness } from "./MockOpenCodeClient.js";
 import { pendingKey } from "@apnex/network-adapter";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const mockSourcePath = resolve(here, "MockOpenCodeClient.ts");
 
 describe("MockOpenCodeClient", () => {
   let mock: MockOpenCodeHarness | null = null;
@@ -21,7 +26,7 @@ describe("MockOpenCodeClient", () => {
     }
   });
 
-  it("factory wires architect + engineer-with-dispatcher + MCP client correctly", async () => {
+  it("factory wires architect + engineer through the OpenCode runtime seam + MCP client", async () => {
     mock = await createMockOpenCodeClient();
     expect(mock.architect.role).toBe("architect");
     // agentId is the Hub-derived `agent-{8-hex-of-sha256(name)}` (idea-251) —
@@ -29,13 +34,29 @@ describe("MockOpenCodeClient", () => {
     expect(mock.architect.agentId).toMatch(/^agent-/);
     expect(mock.engineer.role).toBe("engineer");
     expect(mock.engineer.agentId).toMatch(/^agent-/);
-    expect(mock.engineer.dispatcher).toBeDefined();
+    expect(mock.engineer.runtime).toBeDefined();
+    expect(mock.engineer.dispatcher).toBe(mock.engineer.runtime.testOnly.dispatcher);
+    expect(mock.engineer.runtime.testOnly.getHubAdapter()).toBe(mock.engineer.agent);
     expect(mock.engineer.mcpClient).toBeDefined();
     expect(mock.hub).toBeDefined();
     expect(mock.architect.agentId).not.toBe(mock.engineer.agentId);
   });
 
-  it("notification round-trip: architect opens thread → engineer dispatcher captures → opencode replies → Hub acks", async () => {
+  it("does not recreate production dispatcher or MCP-server wiring inside the mock", () => {
+    const source = readFileSync(mockSourcePath, "utf-8");
+
+    expect(source).toContain("createOpenCodeRuntime");
+    expect(source).toContain("runtime.makeOpenCodeFetchHandler()");
+
+    // W5 guard: the mock may construct offline transports/agents, but must not
+    // reintroduce the pre-W5 false-green shape where it owned dispatcher/server
+    // creation instead of consuming the runtime seam.
+    expect(source).not.toMatch(/\bcreateSharedDispatcher\b/);
+    expect(source).not.toMatch(/\bInMemoryTransport\b/);
+    expect(source).not.toMatch(/\.createMcpServer\s*\(/);
+  });
+
+  it("notification round-trip: architect opens thread → runtime dispatcher captures → opencode replies → Hub acks", async () => {
     mock = await createMockOpenCodeClient();
 
     const openRaw = await mock.architect.call("create_thread", {
@@ -47,15 +68,16 @@ describe("MockOpenCodeClient", () => {
     const threadId = parseJsonResult<{ threadId: string }>(openRaw).threadId;
     expect(threadId).toMatch(/^thread-/);
 
-    // Engineer dispatcher's queueMap callbacks populate the pendingActionMap
-    // from the SSE thread_message event (ADR-017 Phase 1.1).
+    // Runtime-owned dispatcher callbacks populate the pendingActionMap from the
+    // SSE thread_message event (ADR-017 Phase 1.1).
     await mock.waitFor((h) => h.engineer.dispatcher.pendingActionMap.size > 0, 2_000);
     const captured = mock.engineer.dispatcher.pendingActionMap.get(
       pendingKey("thread_message", threadId),
     );
     expect(captured).toMatch(/^pa-/);
 
-    // OpenCode (MCP client) issues the reply — dispatcher injects sourceQueueItemId.
+    // OpenCode (MCP client) issues the reply through runtime.makeOpenCodeFetchHandler;
+    // the runtime-owned dispatcher injects sourceQueueItemId.
     const reply = await mock.opencode.callTool("create_thread_reply", {
       threadId,
       message: "looks good",
