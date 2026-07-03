@@ -110,6 +110,7 @@ export function installFooter(opts: InstallFooterOpts): FooterController | null 
               state,
               contextUsage: ctx.getContextUsage(),
               gitBranch: null, // reserved (identity uses name·role; branch is fast-follow)
+              model: ctx.model ? { id: ctx.model.id, provider: ctx.model.provider } : undefined,
               leases: leases.snapshot(),
               nowMs: now(),
             },

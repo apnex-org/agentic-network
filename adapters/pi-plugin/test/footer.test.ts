@@ -61,6 +61,7 @@ function baseInputs(state: FooterState, over: Partial<Parameters<typeof renderFo
     state,
     contextUsage: { tokens: 34_000, contextWindow: 200_000, percent: 17 },
     gitBranch: null,
+    model: { id: "gpt-5.5", provider: "openai-codex" },
     leases: [],
     nowMs: T0,
     ...over,
@@ -87,15 +88,31 @@ describe("renderFooter — fixed height + structure (gate 2/3)", () => {
     }
   });
 
-  it("line1 is SELF (identity·ctx·llm), line2 is WORLD (work·hub·needs)", () => {
+  it("line1 is SELF (identity·ctx·llm) plus selected model, line2 is WORLD (work·hub·needs)", () => {
     const s = createFooterState("greg", "engineer");
     observeHubState(s, "streaming", T0);
     const [l1, l2] = renderFooter(plainTheme, baseInputs(s, { nowMs: T0 }));
     expect(l1).toContain("greg·eng");
     expect(l1).toContain("ctx");
     expect(l1).toContain("llm");
+    expect(l1).toContain("gpt-5.5");
     expect(l2).toContain("work");
     expect(l2).toContain("hub");
+    expect(l2).not.toContain("gpt-5.5");
+  });
+
+  it("right-aligns the selected model on line1 when width is provided", () => {
+    const s = createFooterState("greg", "engineer");
+    const [l1] = renderFooter(plainTheme, baseInputs(s), 80);
+    expect(visibleWidth(l1)).toBe(80);
+    expect(l1.endsWith("gpt-5.5")).toBe(true);
+  });
+
+  it("preserves the selected model on narrow line1 by truncating the left side first", () => {
+    const s = createFooterState("greg-with-a-very-long-name", "engineer");
+    const [l1] = renderFooter(plainTheme, baseInputs(s), 32);
+    expect(visibleWidth(l1)).toBeLessThanOrEqual(32);
+    expect(l1.endsWith("gpt-5.5")).toBe(true);
   });
 });
 
@@ -143,6 +160,7 @@ describe("renderFooter — width matrix (gate 2): every line ≤ width at 120/10
       state: s,
       contextUsage: { tokens: 184_000, contextWindow: 200_000, percent: 92 },
       gitBranch: null,
+      model: { id: "gpt-5.5", provider: "openai-codex" },
       leases: [{ workId: "work-bp-swarmfooterimpl1-spine", expiresAtMs: T0 + 9 * 60_000 + 15_000 }],
       nowMs: T0 + 45_000,
     };

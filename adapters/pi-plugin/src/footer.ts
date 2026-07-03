@@ -4,7 +4,7 @@
  * Design-of-record: docs/designs/m-swarm-footer/ratified-spec.md v2.1.
  *
  * A fixed-height 2-line "me + world" HUD:
- *   Line 1 (SELF):  identity │ ctx │ llm
+ *   Line 1 (SELF):  identity │ ctx │ llm                         selected model
  *   Line 2 (WORLD): work │ hub[FSM] │ peers │ ⟶ needs-you(S4)
  *
  * INVARIANTS ENFORCED HERE:
@@ -48,7 +48,10 @@ export type Severity = "nominal" | "notice" | "alert";
 // which a naive .length would miscount. Re-exported here so the render module
 // keeps a single import surface.
 export { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
-import { truncateToWidth as _truncateToWidth } from "@earendil-works/pi-tui";
+import {
+  truncateToWidth as _truncateToWidth,
+  visibleWidth as _visibleWidth,
+} from "@earendil-works/pi-tui";
 
 /** The truncation ellipsis (§3 didn't pin one; matches pi-tui's conventional default). */
 const ELLIPSIS = "\u2026";
@@ -65,6 +68,8 @@ export interface FooterInputs {
   contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
   /** pi-native git branch (or null). */
   gitBranch: string | null;
+  /** pi-native selected model snapshot (no Hub read; used for line-1 right rail). */
+  model: { id: string; provider?: string } | undefined;
   /**
    * Read-only lease snapshot (client-side; spec §4 work cell). Most-recent first.
    * Empty = idle.
@@ -137,6 +142,11 @@ function llmCell(theme: FooterTheme, s: FooterState, nowMs: number): string {
   // Errors → '⚠ err ×N' (rolling window; decays back to ok). NO retry/backoff/
   // codes — not feedable from the extension surface today (spec §5a).
   return `${label} ${color(theme, "notice", `⚠ err ×${errs}`)}`;
+}
+
+function modelCell(theme: FooterTheme, model: FooterInputs["model"]): string {
+  // The selected model is pi-native local state. Unknown stays honest but quiet.
+  return theme.fg("dim", model?.id ?? "model ?");
 }
 
 // ── Line 2 cells (WORLD) ─────────────────────────────────────────────
@@ -288,6 +298,22 @@ function needsCell(theme: FooterTheme, s: FooterState, trusted: boolean, nowMs: 
 // ── The 2-line assembly (fixed height) ───────────────────────────────
 
 const SEP = " │ ";
+const MIN_RIGHT_RAIL_GAP = 2;
+
+function rightAlignedLine(left: string, right: string, width?: number): string {
+  if (width === undefined || width <= 0) return `${left}${SEP}${right}`;
+
+  const rightWidth = _visibleWidth(right);
+  if (rightWidth >= width) return _truncateToWidth(right, width, ELLIPSIS);
+
+  const availableLeft = Math.max(0, width - rightWidth - MIN_RIGHT_RAIL_GAP);
+  const leftPart = _truncateToWidth(left, availableLeft, ELLIPSIS);
+  const leftWidth = _visibleWidth(leftPart);
+  if (leftWidth === 0) return _truncateToWidth(right, width, ELLIPSIS);
+
+  const padding = " ".repeat(Math.max(MIN_RIGHT_RAIL_GAP, width - leftWidth - rightWidth));
+  return `${leftPart}${padding}${right}`;
+}
 
 /**
  * Render the footer as EXACTLY 2 lines (never collapses/expands — spec §3).
@@ -307,11 +333,12 @@ export function renderFooter(
 ): [string, string] {
   const { state, nowMs } = inputs;
 
-  const line1 = [
+  const line1Left = [
     identityCell(theme, state),
     ctxCell(theme, inputs.contextUsage),
     llmCell(theme, state, nowMs),
   ].join(SEP);
+  const line1 = rightAlignedLine(line1Left, modelCell(theme, inputs.model), width);
 
   const { cell: hub, trusted } = hubCell(theme, state, nowMs);
   const line2 = [
@@ -325,7 +352,7 @@ export function renderFooter(
     // pi-tui truncateToWidth guarantees visibleWidth(result) ≤ width at every
     // column, ANSI-safe, appending the ellipsis only when it actually truncates.
     return [
-      _truncateToWidth(line1, width, ELLIPSIS),
+      line1,
       _truncateToWidth(line2, width, ELLIPSIS),
     ];
   }
