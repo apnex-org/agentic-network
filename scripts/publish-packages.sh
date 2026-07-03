@@ -38,16 +38,16 @@ fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Topological order (manually maintained; small dep-graph for mission-64):
+# Topological order (manually maintained; small dep-graph for mission-64 +
+# mission-101 W6):
 #   1. cognitive-layer  (leaf; no @apnex/* deps)
 #   2. message-router   (peerDep on @apnex/network-adapter; type-only via import type)
 #   3. network-adapter  (deps on cognitive-layer + message-router)
-#   4. claude-plugin    (deps on cognitive-layer + message-router + network-adapter)
-#   5. pi-plugin        (deps on network-adapter; M-Shim-Distribution) — after net-adapter
+#   4. claude-plugin    (deps on network-adapter) — after net-adapter
+#   5. opencode-plugin  (deps on network-adapter; mission-101 npm cutover) — after net-adapter
+#   6. pi-plugin        (deps on network-adapter; M-Shim-Distribution) — after net-adapter
 #
-# storage-provider + repo-event-bridge: workspace-only (not for the registry)
-# opencode-plugin: still on the github: channel — its npm cutover is deferred to
-#   the claude/opencode refactor mission (m-shim-distribution-design.md §7).
+# storage-provider + repo-event-bridge: workspace-only (not for the registry).
 # NOTE: these are NOT marked `private:true`, so a blanket `npm publish --workspaces`
 #   would wrongly attempt them — that is exactly why this script publishes an
 #   EXPLICIT list (+ hoists version-rewrite, which `npm publish --workspace=X`
@@ -57,6 +57,7 @@ PACKAGES=(
   "@apnex/message-router"
   "@apnex/network-adapter"
   "@apnex/claude-plugin"
+  "@apnex/opencode-plugin"
   "@apnex/pi-plugin"
 )
 

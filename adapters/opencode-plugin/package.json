@@ -1,23 +1,24 @@
 {
   "name": "@apnex/opencode-plugin",
   "version": "0.2.1",
-  "description": "OpenCode host bundle — Universal Agent Adapter for the OIS agentic network (GPT-5.5/OpenCode peer)",
+  "description": "OpenCode host plugin — Universal Agent Adapter for the OIS agentic network (npm graph-published package)",
   "license": "MIT",
   "type": "module",
-  "main": "dist/shim.js",
+  "main": "dist/plugin-entry.js",
   "files": [
     "dist/",
     "src/",
-    "test/",
     "tsconfig.json",
     "QUICKSTART.md",
+    "CHANGELOG.md",
     "AGENTS.md"
   ],
   "scripts": {
     "prebuild": "node ../../scripts/build/write-build-info.js",
     "build": "tsc",
+    "prepack": "node ../../scripts/build/write-build-info.js --assert",
     "bundle": "node ../../scripts/build/bundle-opencode.js",
-    "start": "node dist/shim.js",
+    "start": "node dist/plugin-entry.js",
     "dev": "tsx src/shim.ts",
     "test": "vitest run"
   },
@@ -33,5 +34,28 @@
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.4"
-  }
+  },
+  "types": "dist/plugin-entry.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/plugin-entry.d.ts",
+      "import": "./dist/plugin-entry.js"
+    },
+    "./shim": {
+      "types": "./dist/shim.d.ts",
+      "import": "./dist/shim.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "keywords": [
+    "opencode-plugin",
+    "opencode",
+    "mcp",
+    "ois",
+    "agentic-network"
+  ]
 }
