@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# scripts/publish-packages.sh — topological first-publish bootstrap
+# scripts/publish-packages.sh — topological @apnex/* family publish
 #
-# Walks the @apnex/* dep-graph in topological order and publishes
-# each package to the npm registry. Required for first-publish (when
-# no @apnex/* packages exist on registry yet); subsequent publishes
-# can use `npm publish --workspaces` since registry-resolution finds
-# existing versions regardless of alphabetical-vs-topological order.
+# Walks the @apnex/* dep-graph in topological order and publishes each package to
+# the npm registry. Originally a first-publish bootstrap (when no @apnex/*
+# packages existed on registry); now also handles the steady-state PARTIAL
+# release via an idempotent skip-if-already-published guard (see the publish loop
+# below) — a release that bumps only SOME packages skips the unchanged ones
+# rather than fatally aborting on an E403 over-publish. Safe to re-run.
 #
 # Mission-64 W1+W2 deliverable per Design v1.0 §2.5 + Risk register R6.
 #
@@ -122,10 +123,46 @@ node "$REPO_ROOT/scripts/version-rewrite.js" || {
 }
 trap 'echo "[publish-packages] Reverting cross-@apnex/* deps ^X.Y.Z → * (post-publish)"; node "$REPO_ROOT/scripts/version-rewrite.js" --revert' EXIT
 
-# Publish each package in topological order
+# Publish each package in topological order.
+#
+# IDEMPOTENT SKIP-IF-ALREADY-PUBLISHED GUARD (mission-99 release / #458 follow-up):
+# this script was written as a FIRST-PUBLISH bootstrap (see header) and had no
+# guard for the already-published case. On a partial release (only SOME packages
+# version-bumped — the common case for every release after the first), the
+# unchanged packages sit at versions already on the registry. `npm publish` of an
+# existing version returns E403 ('cannot publish over previously published
+# version') = a nonzero exit the loop below treats as FATAL — so the run would
+# abort on the FIRST unchanged package (cognitive-layer) and publish NOTHING,
+# including the genuinely-new packages later in the list.
+#
+# The guard PRE-CHECKS registry existence and SKIPS an exact-version match. It is
+# purely ADDITIVE: when a version is genuinely new the probe is empty and we fall
+# through to the identical publish path (zero behavior change). It does NOT mask a
+# real publish failure — the skip fires ONLY on a confirmed exact-version match
+# (`npm view pkg@ver version` echoing back that exact version); any OTHER publish
+# error (auth/registry/E403-for-a-different-reason) still hits the fatal branch
+# below unchanged.
 for pkg in "${PACKAGES[@]}"; do
   echo ""
   echo "[publish-packages] === Publishing $pkg ==="
+
+  # Read the local (to-be-published) version from the workspace's package.json.
+  pkg_dir="$(readlink -f "$REPO_ROOT/node_modules/$pkg")"
+  ver="$(node -p "require('$pkg_dir/package.json').version" 2>/dev/null || true)"
+  if [ -z "$ver" ]; then
+    echo "[publish-packages] ✗ $pkg — could not read local version from package.json"
+    exit 2  # publish-flow error
+  fi
+
+  # Registry existence probe: `npm view pkg@ver version` echoes the EXACT version
+  # iff that version is already published; empty (E404) otherwise. Distinguishes
+  # 'already published' (skip) from 'publish failed for other reasons' (fatal).
+  published="$(npm view "$pkg@$ver" version 2>/dev/null || true)"
+  if [ "$published" = "$ver" ]; then
+    echo "[publish-packages] ↷ skip $pkg@$ver — already published (idempotent guard)"
+    continue
+  fi
+
   if npm publish --workspace="$pkg" --access public $DRY_RUN; then
     echo "[publish-packages] ✓ $pkg"
   else
