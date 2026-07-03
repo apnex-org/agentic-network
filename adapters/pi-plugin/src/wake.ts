@@ -47,6 +47,16 @@ export interface PiWakeDeps {
   notificationLogPath: string;
   /** Live status surface (optional; TUI-only). */
   ctx?: ExtensionContext;
+  /**
+   * Swarm-aware footer push-feed (mission-99 slice (a)). Optional + null in
+   * non-TUI mode (gate 0). onStateChange feeds the hub FSM cell;
+   * onPendingActionItem feeds the S4-approx cell. Observation only — the footer
+   * render is pure + read-only (gate 1/8).
+   */
+  footer?: {
+    onHubState(state: SessionState): void;
+    onPendingActionItem(): void;
+  } | null;
 }
 
 /**
@@ -120,6 +130,12 @@ export function buildPiNotificationHooks(
       } catch {
         /* UI not ready */
       }
+      // mission-99 slice (a): feed the swarm-footer hub-FSM cell (push, §6).
+      try {
+        deps.footer?.onHubState(state);
+      } catch {
+        /* footer not ready — non-fatal */
+      }
     },
 
     onPendingActionItem: (item: DrainedPendingAction): void => {
@@ -130,6 +146,14 @@ export function buildPiNotificationHooks(
         { event: agentEvent.event, data: agentEvent.data, action: actionHint },
         { logPath: deps.notificationLogPath },
       );
+      // mission-99 slice (a): feed the swarm-footer S4-approx cell (push, §6/§10).
+      // Approximate by construction — the footer renders it tilde-marked, never
+      // authoritative. Read-only observation (does NOT drain; gate 8).
+      try {
+        deps.footer?.onPendingActionItem();
+      } catch {
+        /* footer not ready — non-fatal */
+      }
       if (level === "informational") return; // drained-but-informational: log only
       const promptText = buildPromptText(agentEvent.event, agentEvent.data, {
         toolPrefix: TOOL_PREFIX,

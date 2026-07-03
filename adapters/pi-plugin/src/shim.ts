@@ -49,6 +49,7 @@ import {
 } from "@apnex/network-adapter";
 import { registerHubTools } from "./tool-bridge.js";
 import { buildPiNotificationHooks } from "./wake.js";
+import { installFooter, type FooterController } from "./footer-install.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -119,6 +120,10 @@ function initLogger(directory: string): void {
 // shared workLeases the native ToolDispatchContext writes to.
 let dispatcher: SharedDispatcher | null = null;
 
+// The swarm-aware footer controller (mission-99 slice (a)). Null in non-TUI mode
+// (gate 0) or before connect. Fed by push events; render is pure + read-only.
+let footer: FooterController | null = null;
+
 /**
  * Build the ToolDispatchContext for pi's native tool binding. It shares the
  * dispatcher's pendingActionMap + workLeases so queueItemId injection and lease
@@ -163,6 +168,40 @@ async function connectAndSeed(
   currentRole = config.role;
   log(`[pi-plugin] role bound to config.role="${config.role}"`);
 
+  // ── mission-99 slice (a): install the swarm-aware footer (TUI-only, gate 0) ──
+  // Built BEFORE the notification hooks so onStateChange/onPendingActionItem can
+  // push into it. The lease source lazily reads the dispatcher's shared
+  // WorkLeaseTracker (populated by the agent's own claim/renew — client-side, no
+  // Hub poll; spec §4). installFooter returns null in non-TUI mode (no activity).
+  footer = installFooter({
+    ctx,
+    leases: { snapshot: () => dispatcher?.workLeases.snapshot() ?? [] },
+    log,
+  });
+  footer?.setIdentity(agentName, config.role);
+
+  // llm coarse-error tally (spec §5a): message_end with an error stopReason is
+  // the ONLY extension-visible llm-health signal today (catch #3 / audit-6237 —
+  // auto_retry_*/willRetry are NOT on the extension surface). agent_start resets
+  // the S4-approx "since you last looked" count (the agent is taking its turn).
+  // Both are no-ops when footer is null (non-TUI). Read-only observation.
+  if (footer) {
+    pi.on("message_end", (event) => {
+      try {
+        if (isLlmErrorMessageEnd(event)) footer?.onLlmError();
+      } catch {
+        /* never disturb the turn loop */
+      }
+    });
+    pi.on("agent_start", () => {
+      try {
+        footer?.onAgentTurn();
+      } catch {
+        /* non-fatal */
+      }
+    });
+  }
+
   // Build the dispatcher NOW (config known). Native-binding config: externalIdle
   // = pi's native idle probe (its tool calls bypass the MCP CallTool handler, so
   // the internal counter can't see them); the reconcile gates on THIS instead.
@@ -174,6 +213,7 @@ async function connectAndSeed(
     log,
     notificationLogPath,
     ctx,
+    footer,
   });
 
   const d = createSharedDispatcher({
@@ -302,6 +342,25 @@ async function seedToolSurface(
 
 // ── Lifecycle entrypoints (called from index.ts factory) ─────────────
 
+/**
+ * spec §5a: classify a pi `message_end` event as an llm ERROR for the footer's
+ * coarse tally. DELIBERATELY NARROW — counts ONLY stopReason === "error".
+ *
+ * Non-error terminals (stop / toolUse / aborted / length / any other value) are
+ * NOT errors and must NOT increment (steve gate: over-reporting non-error
+ * states corrupts the llm-health signal). An `errorMessage` WITHOUT an error
+ * stopReason is likewise NOT counted — the tally is a coarse error-STATE signal
+ * keyed on the single extension-visible error discriminator (catch #3 /
+ * audit-6237: the auto_retry / willRetry signals are not on the extension
+ * surface).
+ *
+ * Pure + total (never throws) so the turn-loop hook can call it directly.
+ */
+export function isLlmErrorMessageEnd(event: unknown): boolean {
+  const msg = (event as { message?: { stopReason?: unknown } } | null | undefined)?.message;
+  return msg?.stopReason === "error";
+}
+
 export async function startSession(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -346,6 +405,12 @@ export async function startSession(
 export async function shutdownSession(): Promise<void> {
   log("[pi-plugin] session_shutdown — tearing down");
   try {
+    footer?.dispose();
+  } catch {
+    /* idempotent */
+  }
+  footer = null;
+  try {
     dispatcher?.pollBackstop?.stop();
   } catch {
     /* idempotent */
@@ -363,6 +428,7 @@ export async function shutdownSession(): Promise<void> {
 
 // Test-only surface.
 export const _testOnly = {
+  isLlmErrorMessageEnd,
   getHubAdapter: () => hubAdapter,
   getDispatcher: () => dispatcher,
   buildDispatchContext,
