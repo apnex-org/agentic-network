@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { z } from "zod";
 import { PolicyRouter } from "../router.js";
-import { registerWorkItemPolicy, blueprintNodeId } from "../work-item-policy.js";
+import { registerWorkItemPolicy, blueprintNodeId, EVIDENCE_PRODUCER_PATHS } from "../work-item-policy.js";
 import { createTestContext, type TestPolicyContext } from "../test-utils.js";
 import {
   TransitionRejected,
@@ -445,6 +445,17 @@ describe("work-item-policy on-ramp: create_work + get_work", () => {
     expect(r.isError).toBe(true);
     expect(body(r).errorKind).toBe("invalid_evidence_requirements");
     expect(stub.calls.some((c) => c.method === "createWorkItem")).toBe(false);
+  });
+
+  // ── bug-220 (c): producer-path completeness — every demandable kind must be mintable ──
+  it("bug-220 (c): EVIDENCE_PRODUCER_PATHS covers every EVIDENCE_KIND (a new enum kind without a producer path fails here, not as an unclosable item)", () => {
+    const evidenceKinds = ["commit", "pr", "audit", "review", "test-run", "doc", "freeform"]; // mirrors EVIDENCE_KIND
+    for (const kind of evidenceKinds) {
+      expect(EVIDENCE_PRODUCER_PATHS[kind], `evidence kind "${kind}" has no producer path — authoring would fail-closed reject it`).toBeTruthy();
+    }
+    // the tripwire itself: a kind outside the table is rejected at authoring (validateNodeIntrinsics);
+    // the zod enum blocks unknown kinds at the tool boundary, so this only fires on enum drift.
+    expect(Object.keys(EVIDENCE_PRODUCER_PATHS).sort()).toEqual([...evidenceKinds].sort());
   });
 
   // ── create_work: the node-contract (runbook + references) — work-86 (idea-380) ──

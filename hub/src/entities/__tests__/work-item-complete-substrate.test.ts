@@ -212,15 +212,39 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       .rejects.toThrow(/does not RELATE/);
   }, OP_TIMEOUT);
 
-  it("bug-204 (iv) GUARD-NARROWNESS (steve's ask — normal-task binding UNCHANGED): a NON-gate task with the SAME setup STILL fails", async () => {
-    // (a) the kind-relaxation is verifier-gate-scoped: a TASK with a kind:review req + a gate-related
-    //     verifier audit still fails kind-match (an audit does NOT satisfy a review req off a gate).
+  // ── bug-220 (b): review-kind requirements on NORMAL items are satisfiable by a verifier
+  // verdict-audit. SUPERSEDES bug-204 (iv)(a) guard-narrowness for the review kind ONLY:
+  // Director directive audit-9429 deprecated create_review, leaving review-kind reqs on
+  // normal items unsatisfiable by construction (work-111, the live case) — the audit path
+  // is now the canonical verdict, carrying the SAME relate + author-anchor guards the
+  // verifier-gate path enforces. commit/pr/test-run/doc strictness is untouched.
+
+  it("bug-220 (b) [supersedes bug-204 (iv)(a)]: a NORMAL item's kind:review req IS satisfied by a related verifier-authored audit → done", async () => {
     const wr = await started([{ id: "r1", kind: "review", refResolvable: true }], "agent-nt-r");
-    await mkAudit("audit-nt-rel", wr.id, "verifier"); // related to the task + verifier-authored
-    await expect(repo.completeWork(wr.id, "agent-nt-r", wr.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-nt-rel" })]))
+    await mkAudit("audit-nt-rel", wr.id, "verifier"); // related to the item + verifier-authored
+    const done = await repo.completeWork(wr.id, "agent-nt-r", wr.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-nt-rel" })]);
+    expect(done!.status).toBe("done");
+  }, OP_TIMEOUT);
+
+  it("bug-220 (b) guards: engineer-authored audit → reject (author-anchor); unrelated verifier audit → reject (relate); audit does NOT satisfy a commit req (strictness)", async () => {
+    // author-anchor travels with the kind-relaxation: a worker can't self-close the review req.
+    const we = await started([{ id: "r1", kind: "review", refResolvable: true }], "agent-b220-e");
+    await mkAudit("audit-b220-eng", we.id, "engineer");
+    await expect(repo.completeWork(we.id, "agent-b220-e", we.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-b220-eng" })]))
+      .rejects.toThrow(/was not authored by a verifier/);
+    // relate is NOT waived: a verifier audit about a DIFFERENT entity does not bind.
+    const wu = await started([{ id: "r1", kind: "review", refResolvable: true }], "agent-b220-u");
+    await mkAudit("audit-b220-unrel", "work-elsewhere2", "verifier");
+    await expect(repo.completeWork(wu.id, "agent-b220-u", wu.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-b220-unrel" })]))
+      .rejects.toThrow(/does not RELATE/);
+    // strictness preserved off the review kind: an audit cannot satisfy a commit requirement.
+    const wc = await started([{ id: "code", kind: "commit" }], "agent-b220-c");
+    await mkAudit("audit-b220-code", wc.id, "verifier");
+    await expect(repo.completeWork(wc.id, "agent-b220-c", wc.token, [ev({ requirementId: "code", kind: "audit", ref: "audit-b220-code" })]))
       .rejects.toThrow(/evidence kind mismatch/);
-    // (b) a TASK's kind:audit req still enforces RELATE for an UNRELATED verifier audit (relate path
-    //     is shared + unchanged — proves the verifier-gate refinement didn't loosen normal tasks).
+  }, OP_TIMEOUT);
+
+  it("bug-204 (iv)(b) GUARD-NARROWNESS retained: a TASK's kind:audit req still enforces RELATE for an UNRELATED verifier audit", async () => {
     const wa = await started([{ id: "a1", kind: "audit", refResolvable: true }], "agent-nt-a");
     await mkAudit("audit-nt-unrel", "work-elsewhere", "verifier");
     await expect(repo.completeWork(wa.id, "agent-nt-a", wa.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-nt-unrel" })]))
