@@ -131,8 +131,11 @@ altitude (lightweight variant for contested implementation choices).
 3. Attention efficiency (G0-hardened): TWO trended signals — (a) measured Director-time per
    decision resolved beats the Session-1 benchmark (~2.5 min/decision including context);
    (b) a one-tap Director session rating; both must trend favorably (tele-13 SC4).
-4. Authority integrity: audit shows zero decisions auto-taken and zero self-disposals outside
-   the T5 boundary.
+4. Authority integrity (refined at P1-S1, Director-confirmed): every auto-resolution traces to
+   an explicit ratified grant (T5 standing rule or C5a class authority — "mandate-driven");
+   zero resolutions trace to inference alone ("lean-driven" — leans are recorded as advisory
+   input only, never as authority mode); zero self-disposals outside the T5 boundary; class
+   grants are revocable and periodically re-presented.
 5. Presentation-agnostic: the same decision payload demonstrably renders in ≥2 surfaces
    (inline agent + one non-agent prototype) without payload change.
 6. The arc's own gates (G0–G3) ran on the decision-entity rail (dogfood proof).
