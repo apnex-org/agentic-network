@@ -72,6 +72,16 @@ const PLACEHOLDER = "*";
 const args = new Set(process.argv.slice(2));
 const REVERT = args.has("--revert");
 const CHECK = args.has("--check");
+// --manifest <file>: write a JSON array of the repo-relative package.json paths
+// this run actually modified. Consumed by publish-packages.sh, which points
+// OIS_BUILD_INFO_DIRTY_IGNORE at it so write-build-info.js can stamp an honest
+// `dirty` (pipeline-declared mutations are not "dirty").
+const manifestIdx = process.argv.indexOf("--manifest");
+const MANIFEST = manifestIdx !== -1 ? process.argv[manifestIdx + 1] : null;
+if (manifestIdx !== -1 && !MANIFEST) {
+  console.error("[version-rewrite] --manifest requires a file path");
+  process.exit(3);
+}
 
 function loadRootWorkspaces() {
   const root = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
@@ -178,6 +188,7 @@ function main() {
   }
 
   let totalChanges = 0;
+  const changedFiles = [];
   for (const dir of dirs) {
     const result = processPackage(dir, packageMap, mode);
     if (result.changes.length > 0) {
@@ -186,10 +197,16 @@ function main() {
         console.log(`[version-rewrite]   ${ch.field}.${ch.name}: ${ch.from} → ${ch.to}`);
       }
       totalChanges += result.changes.length;
+      changedFiles.push(path.relative(REPO_ROOT, path.join(dir, "package.json")));
     }
   }
 
   console.log(`[version-rewrite] ${totalChanges} dep-spec change(s)${CHECK ? " (would apply)" : " applied"}`);
+
+  if (MANIFEST && !CHECK) {
+    fs.writeFileSync(MANIFEST, JSON.stringify(changedFiles, null, 2) + "\n");
+    console.log(`[version-rewrite] mutation manifest (${changedFiles.length} file(s)) → ${MANIFEST}`);
+  }
 }
 
 main();

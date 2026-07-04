@@ -118,11 +118,16 @@ echo "[publish-packages] Pre-flight checks passed"
 # to placeholder state for dev workflow continuity.
 echo ""
 echo "[publish-packages] Rewriting cross-@apnex/* deps * → ^X.Y.Z (pre-publish)"
-node "$REPO_ROOT/scripts/version-rewrite.js" || {
+# The rewrite declares its mutations in a manifest; OIS_BUILD_INFO_DIRTY_IGNORE
+# lets write-build-info.js (each package's prepack) subtract them from the
+# `dirty` computation, so a CI publish from a tagged commit stamps dirty:false.
+REWRITE_MANIFEST="$(mktemp)"
+export OIS_BUILD_INFO_DIRTY_IGNORE="$REWRITE_MANIFEST"
+node "$REPO_ROOT/scripts/version-rewrite.js" --manifest "$REWRITE_MANIFEST" || {
   echo "[publish-packages] ✗ version-rewrite failed; aborting"
   exit 2
 }
-trap 'echo "[publish-packages] Reverting cross-@apnex/* deps ^X.Y.Z → * (post-publish)"; node "$REPO_ROOT/scripts/version-rewrite.js" --revert' EXIT
+trap 'echo "[publish-packages] Reverting cross-@apnex/* deps ^X.Y.Z → * (post-publish)"; node "$REPO_ROOT/scripts/version-rewrite.js" --revert; rm -f "$REWRITE_MANIFEST"' EXIT
 
 # Publish each package in topological order.
 #

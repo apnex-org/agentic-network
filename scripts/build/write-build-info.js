@@ -51,8 +51,56 @@ function safeExitOk(cmd) {
 }
 
 const sha = safeExec("git rev-parse --short HEAD", "unknown");
-const dirty = safeExec("git status --porcelain", "") !== "";
 const branch = safeExec("git rev-parse --abbrev-ref HEAD", "unknown");
+
+// `dirty` means: the working tree differs from commitSha in ways NOT declared
+// by the build pipeline itself. Pipeline steps that deliberately mutate tracked
+// files around a publish (version-rewrite.js's dep-spec rewrite) declare those
+// files in a JSON manifest and point OIS_BUILD_INFO_DIRTY_IGNORE at it; those
+// paths are subtracted from the porcelain result. Without the env var the
+// behavior is the raw porcelain check. A CI publish from a tagged commit
+// therefore stamps dirty:false, and dirty:true again means exactly what it
+// says: unexplained local state.
+function computeDirty() {
+  // NOT safeExec: its global trim() would eat the first line's leading
+  // status-column space (` M path`), corrupting the fixed-column parse below.
+  let porcelain;
+  try {
+    porcelain = execSync("git status --porcelain", {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+  } catch {
+    porcelain = "";
+  }
+  if (porcelain.trim() === "") return false;
+  const entries = porcelain.split("\n").filter((l) => l.length > 3);
+  const manifestPath = process.env.OIS_BUILD_INFO_DIRTY_IGNORE;
+  if (!manifestPath) return entries.length > 0;
+  let ignore;
+  try {
+    ignore = new Set(JSON.parse(readFileSync(manifestPath, "utf-8")));
+  } catch {
+    // Unreadable manifest → fall back to the honest-but-strict raw check.
+    return entries.length > 0;
+  }
+  const repoRoot = safeExec("git rev-parse --show-toplevel", "");
+  const unexplained = entries.filter((line) => {
+    // porcelain v1: `XY <path>` (repo-root-relative); renames: `XY <old> -> <new>`.
+    let p = line.slice(3);
+    const arrow = p.indexOf(" -> ");
+    if (arrow !== -1) p = p.slice(arrow + 4);
+    p = p.replace(/^"|"$/g, "");
+    return !ignore.has(p);
+  });
+  if (entries.length > unexplained.length) {
+    process.stderr.write(
+      `[build-info] dirty check: ignored ${entries.length - unexplained.length} pipeline-declared mutation(s) (manifest: ${manifestPath}${repoRoot ? "" : "; repo root unresolved"})\n`,
+    );
+  }
+  return unexplained.length > 0;
+}
+const dirty = computeDirty();
 
 const buildInfo = {
   commitSha: sha,
