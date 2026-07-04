@@ -202,3 +202,78 @@ describe("Source-class enum contract (§3)", () => {
     ]);
   });
 });
+
+// ── work-54 (idea-357 pts 1-2): WorkItem-transition + deploy events ──
+
+describe("work-transition-notification filter + render (work-54)", () => {
+  it("suppresses the routine hot-path transitions (claim / start / resume)", () => {
+    expect(shouldFilterPeekLine("work-transition-notification", { to_status: "claimed", verb: "claim_work" })).toBe(true);
+    expect(shouldFilterPeekLine("work-transition-notification", { to_status: "in_progress", verb: "start_work" })).toBe(true);
+    expect(shouldFilterPeekLine("work-transition-notification", { to_status: "in_progress", verb: "resume_work" })).toBe(true);
+  });
+
+  it("renders the actionable state-changes (blocked / ready / review / done / abandoned / created)", () => {
+    for (const [to, verb] of [
+      ["blocked", "block_work"], ["ready", "release_work"], ["ready", "lease_expired"],
+      ["review", "complete_work"], ["done", "complete_work"], ["abandoned", "abandon_work"],
+      ["ready", "create_work"],
+    ]) {
+      expect(shouldFilterPeekLine("work-transition-notification", { to_status: to, verb })).toBe(false);
+    }
+  });
+
+  it("derives a workitem entityRef + per-transition action verb", () => {
+    const ctx = deriveRenderContext("work-transition-notification", {
+      work_id: "work-9", to_status: "done", from_status: "in_progress",
+      verb: "complete_work", title: "Ship the slice",
+    });
+    expect(ctx).not.toBeNull();
+    expect(ctx!.sourceClass).toBe("Hub");
+    expect(ctx!.actionVerb).toBe("Completed");
+    expect(ctx!.entityRef).toEqual({ type: "workitem", id: "work-9", title: "Ship the slice" });
+    expect(ctx!.actionability).toBe("FYI");
+  });
+
+  it("a review-park is the verifier's turn", () => {
+    const ctx = deriveRenderContext("work-transition-notification", {
+      work_id: "work-9", to_status: "review", verb: "complete_work",
+    });
+    expect(ctx!.actionVerb).toBe("Parked in review");
+    expect(ctx!.actionability).toBe("your-turn");
+  });
+
+  it("a lease-expiry requeue names the sweeper path", () => {
+    const ctx = deriveRenderContext("work-transition-notification", {
+      work_id: "work-9", to_status: "ready", verb: "lease_expired",
+    });
+    expect(ctx!.actionVerb).toBe("Lease-expired, re-queued");
+  });
+});
+
+describe("work-unblocked-notification render (work-54)", () => {
+  it("always renders as your-turn (an agent should claim)", () => {
+    expect(shouldFilterPeekLine("work-unblocked-notification", { work_id: "work-9" })).toBe(false);
+    const ctx = deriveRenderContext("work-unblocked-notification", { work_id: "work-9", title: "Downstream" });
+    expect(ctx!.actionVerb).toBe("Unblocked, now claimable");
+    expect(ctx!.entityRef).toEqual({ type: "workitem", id: "work-9", title: "Downstream" });
+    expect(ctx!.actionability).toBe("your-turn");
+  });
+});
+
+describe("deploy-completed-notification render (work-54)", () => {
+  it("success renders FYI; failure renders your-turn", () => {
+    const ok = deriveRenderContext("deploy-completed-notification", {
+      run_id: 42, workflow_name: "deploy-hub", conclusion: "success",
+    });
+    expect(ok!.sourceClass).toBe("System-Workflow");
+    expect(ok!.actionVerb).toBe("Deploy succeeded");
+    expect(ok!.entityRef).toEqual({ type: "workflow", id: "run-42", title: "deploy-hub" });
+    expect(ok!.actionability).toBe("FYI");
+
+    const bad = deriveRenderContext("deploy-completed-notification", {
+      run_id: 42, workflow_name: "deploy-hub", conclusion: "failure",
+    });
+    expect(bad!.actionVerb).toBe("Deploy failed");
+    expect(bad!.actionability).toBe("your-turn");
+  });
+});

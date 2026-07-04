@@ -242,6 +242,23 @@ function renderMessageArrived(data: Record<string, unknown>, cfg: PromptFormatCo
     );
   }
 
+  // work-54 (PR #480 verifier finding): a Hub system notification — an
+  // external-injection carrying `notificationEvent` (work/deploy/workflow/PR
+  // vocabulary) — renders its Hub-composed body instead of falling through to
+  // the generic "Message arrived" prompt. Prefer the OUTER data.body (the
+  // canonical Hub-side peek-line render attached by augmentDataWithRenderFields,
+  // incl. [source-class] prefix + actionability marker); fall back to the inner
+  // payload.body for an envelope an older Hub pushed without the outer render.
+  if (kind === "external-injection" && typeof payload.notificationEvent === "string") {
+    const outerBody = data.body;
+    if (typeof outerBody === "string" && outerBody.length > 0) {
+      return `${outerBody} (Message ID: ${msgId}.)`;
+    }
+    if (typeof payload.body === "string" && payload.body.length > 0) {
+      return `[Hub] ${payload.body} (Message ID: ${msgId}.)`;
+    }
+  }
+
   if (payload.event && typeof payload.event === "string") {
     return (
       `[Hub] Hub event injected: ${payload.event}. ` +

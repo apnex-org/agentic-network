@@ -820,7 +820,10 @@ const workItemLeaseSweeper = new WorkItemLeaseSweeper(
       stores: allStores,
       metrics: createMetricsCounter(),
       emit: async () => {},
-      dispatch: async () => {},
+      // work-54 (idea-357 pt-2): the sweeper emits lease-expiry transition events
+      // via emitAndPush — a no-op dispatch would persist them but never SSE-push
+      // (the mission-60 Gap #1 / pulse-sweeper lesson; same bind as pulseSweeper below).
+      dispatch: hub.dispatchEvent.bind(hub),
       sessionId: "workitem-lease-sweeper",
       clientIp: "127.0.0.1",
       role: "system",

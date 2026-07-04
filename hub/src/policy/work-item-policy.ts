@@ -16,6 +16,10 @@ import { z } from "zod";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { PolicyRouter } from "./router.js";
 import { resolveCreatedBy } from "./caller-identity.js";
+// work-54 (idea-357 pts 1-2): push-native FSM-transition events. Best-effort +
+// never-throws — the store transition is the source of truth; the event is
+// enhancement (the mission-policy runTriggers posture).
+import { emitWorkTransition, emitDependencyUnblocks } from "./work-item-events.js";
 import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import {
   TransitionRejected,
@@ -94,7 +98,9 @@ async function claimWork(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   }
   try {
     const w = await store.claimWorkItem(args.workId as string, caller.agentId, caller.role);
-    return w ? workItemResult(w) : notFound(args.workId as string);
+    if (!w) return notFound(args.workId as string);
+    await emitWorkTransition(ctx, { item: w, verb: "claim_work", fromStatus: "ready", actor: caller });
+    return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
 }
 
@@ -137,7 +143,9 @@ async function startWork(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   const caller = await resolveCreatedBy(ctx);
   try {
     const w = await store.startWork(args.workId as string, caller.agentId, args.leaseToken as string);
-    return w ? workItemResult(w) : notFound(args.workId as string);
+    if (!w) return notFound(args.workId as string);
+    await emitWorkTransition(ctx, { item: w, verb: "start_work", fromStatus: "claimed", actor: caller });
+    return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
 }
 
@@ -148,7 +156,9 @@ async function blockWork(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   const blockedOn = args.blockedOn as WorkItemBlockedOn;
   try {
     const w = await store.blockWork(args.workId as string, caller.agentId, args.leaseToken as string, blockedOn);
-    return w ? workItemResult(w) : notFound(args.workId as string);
+    if (!w) return notFound(args.workId as string);
+    await emitWorkTransition(ctx, { item: w, verb: "block_work", fromStatus: "in_progress", actor: caller });
+    return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
 }
 
@@ -158,7 +168,9 @@ async function resumeWork(args: Record<string, unknown>, ctx: IPolicyContext): P
   const caller = await resolveCreatedBy(ctx);
   try {
     const w = await store.resumeWork(args.workId as string, caller.agentId, args.leaseToken as string);
-    return w ? workItemResult(w) : notFound(args.workId as string);
+    if (!w) return notFound(args.workId as string);
+    await emitWorkTransition(ctx, { item: w, verb: "resume_work", fromStatus: "blocked", actor: caller });
+    return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
 }
 
@@ -176,9 +188,14 @@ async function releaseWork(args: Record<string, unknown>, ctx: IPolicyContext): 
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
+  // release can come from claimed|in_progress|blocked — pre-read for the event's
+  // from_status (non-atomic; observability-only, the CAS transition stays authoritative).
+  const before = await store.getWorkItem(args.workId as string);
   try {
     const w = await store.releaseWork(args.workId as string, caller.agentId, args.leaseToken as string);
-    return w ? workItemResult(w) : notFound(args.workId as string);
+    if (!w) return notFound(args.workId as string);
+    await emitWorkTransition(ctx, { item: w, verb: "release_work", fromStatus: before?.status ?? null, actor: caller });
+    return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
 }
 
@@ -186,12 +203,16 @@ async function abandonWork(args: Record<string, unknown>, ctx: IPolicyContext): 
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
+  // abandon can come from claimed|in_progress|blocked — pre-read for the event's from_status.
+  const before = await store.getWorkItem(args.workId as string);
   try {
     const w = await store.abandonWork(args.workId as string, caller.agentId, {
       reason: args.reason as string | undefined,
       leaseToken: args.leaseToken as string | undefined,
     });
-    return w ? workItemResult(w) : notFound(args.workId as string);
+    if (!w) return notFound(args.workId as string);
+    await emitWorkTransition(ctx, { item: w, verb: "abandon_work", fromStatus: before?.status ?? null, actor: caller });
+    return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
 }
 
@@ -200,9 +221,15 @@ async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext):
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
   const evidence = (args.evidence as EvidenceItem[] | undefined) ?? [];
+  // complete can come from in_progress|review — pre-read for the event's from_status.
+  const before = await store.getWorkItem(args.workId as string);
   try {
     const w = await store.completeWork(args.workId as string, caller.agentId, args.leaseToken as string, evidence);
     if (!w) return notFound(args.workId as string);
+    await emitWorkTransition(ctx, { item: w, verb: "complete_work", fromStatus: before?.status ?? null, actor: caller });
+    // idea-357 pt-2 keystone: a →done may clear a dependent's LAST unmet dependency —
+    // wake the eligible agents push-natively (the idea-353 digest stays as fallback).
+    if (w.status === "done") await emitDependencyUnblocks(ctx, w);
     // 4b-ii: a successful complete (evidence attached → review|done) is demonstrated
     // progress → reset the agent's claim-thrash counter (leaves quarantine to manual clear).
     const priorThrash = await ctx.stores.engineerRegistry.resetWorkItemThrash(caller.agentId);
@@ -395,6 +422,11 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
       payload: args.payload,
       createdBy: caller,
     });
+    // A new ready item IS the claimable signal — emit it (create has no "from" status).
+    // (seed_blueprint expansion creates via the repo directly and intentionally does NOT
+    // per-node-emit — a 100-node blueprint would broadcast-storm; its claimability lands
+    // via the idea-353 digest until a batch-level event is warranted.)
+    await emitWorkTransition(ctx, { item: w, verb: "create_work", fromStatus: null, actor: caller });
     return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
 }

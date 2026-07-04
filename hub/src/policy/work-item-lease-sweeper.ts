@@ -19,6 +19,9 @@ import type { IPolicyContext } from "./types.js";
 import type { IAuditStore } from "../state.js";
 import type { WorkItemRepositorySubstrate } from "../entities/work-item-repository-substrate.js";
 import { escalateBareEnvelope } from "./bare-envelope-escalation.js";
+// work-54 (idea-357 pt-2): lease-expiry transitions are FSM transitions too —
+// emit them push-native (requeue = "claimable again"; poison-abandon = terminal).
+import { emitWorkTransition } from "./work-item-events.js";
 
 /** Default per-ITEM poison cap (architect-confirmed N=3; configurable). After this many
  *  lease-expiry re-queue cycles the item is terminally abandoned. */
@@ -160,6 +163,10 @@ export class WorkItemLeaseSweeper {
         if (outcome === "requeued") {
           result.requeued += 1;
           this.metrics?.increment("workitem_lease.requeued", { workId: w.id });
+          // push-native "claimable again" wake. `w` is the pre-expiry row the scan
+          // listed (its status + lapsed holder are exactly the event's from-side);
+          // the explicit toStatus avoids a re-read race. Never-throws.
+          await emitWorkTransition(ctx, { item: w, verb: "lease_expired", fromStatus: w.status, toStatus: "ready" });
         } else if (outcome === "abandoned") {
           result.abandoned += 1;
           this.metrics?.increment("workitem_lease.poison_abandoned", { workId: w.id });
@@ -171,6 +178,7 @@ export class WorkItemLeaseSweeper {
           } catch (auditErr) {
             this.logger.warn(`poison-abandon audit write failed for ${w.id}:`, auditErr);
           }
+          await emitWorkTransition(ctx, { item: w, verb: "lease_expired", fromStatus: w.status, toStatus: "abandoned" });
         } else {
           result.skipped += 1; // renewed/released/completed between list + CAS (race-safe)
         }

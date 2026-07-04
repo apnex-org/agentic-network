@@ -69,18 +69,43 @@ import type { TokenStore } from "./storage-substrate/token-store.js";
  * sse-peek-line-render.ts; runtime-effective only for the wire-event-
  * matching subset).
  */
+/**
+ * work-54 (PR #480 verifier finding): emitAndPush wraps every system emission
+ * in an outer `message_arrived` event, so the payload-level notification
+ * vocabulary (payload.notificationEvent — the work/deploy/workflow/PR
+ * notifications) never reached the filter/render tables keyed on those names;
+ * routine transitions could not be suppressed and rendered bodies never
+ * surfaced on the LIVE path. Resolve the render source from the INNER
+ * external-injection payload when present; the suppress flag / render fields
+ * still ride the OUTER data (the adapter contract is unchanged).
+ */
+function resolveRenderSource(
+  event: string,
+  data: Record<string, unknown>,
+): { renderEvent: string; renderData: Record<string, unknown> } {
+  if (event === "message_arrived") {
+    const msg = data.message as { kind?: unknown; payload?: unknown } | undefined;
+    const payload = msg?.payload as Record<string, unknown> | undefined;
+    if (msg?.kind === "external-injection" && typeof payload?.notificationEvent === "string") {
+      return { renderEvent: payload.notificationEvent, renderData: payload };
+    }
+  }
+  return { renderEvent: event, renderData: data };
+}
+
 export function augmentDataWithRenderFields(
   event: string,
   data: Record<string, unknown>,
 ): Record<string, unknown> {
-  const suppress = shouldFilterPeekLine(event, data);
+  const { renderEvent, renderData } = resolveRenderSource(event, data);
+  const suppress = shouldFilterPeekLine(renderEvent, renderData);
   if (suppress) {
     // Filter-listed event: skip render-context derivation; mark
     // suppress_peek_line so adapter routes to internal state-machine
     // only (Phase-1.5 #1 §1.3). Original data preserved unchanged.
     return { ...data, suppress_peek_line: true };
   }
-  const ctx = deriveRenderContext(event, data);
+  const ctx = deriveRenderContext(renderEvent, renderData);
   if (!ctx) return data;
   const body = renderPeekLineBody({
     sourceClass: ctx.sourceClass,

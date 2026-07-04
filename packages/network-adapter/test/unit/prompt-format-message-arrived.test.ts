@@ -100,3 +100,68 @@ describe("buildPromptText — message_arrived (mission-62 Pass 7)", () => {
     expect(text).toContain("kind=unknown");
   });
 });
+
+// ── work-54 (PR #480 verifier finding): notificationEvent-carrying system
+// notifications render their Hub-composed body, not the generic fallback ──
+
+describe("buildPromptText — message_arrived Hub system notifications (work-54)", () => {
+  const transitionPayload = {
+    body: "work-1 ready→claimed (claim_work) by engineer/agent-a",
+    notificationEvent: "work-transition-notification",
+    work_id: "work-1",
+    verb: "claim_work",
+    to_status: "claimed",
+  };
+
+  it("prefers the OUTER data.body (the canonical Hub-side peek-line render)", () => {
+    const text = buildPromptText("message_arrived", {
+      body: '[Hub] Completed work-1: "Ship the slice" [FYI]',
+      sourceClass: "Hub",
+      actionability: "FYI",
+      message: {
+        id: "m1",
+        kind: "external-injection",
+        payload: { ...transitionPayload, verb: "complete_work", to_status: "done" },
+      },
+    }, cfg);
+    expect(text).toContain('[Hub] Completed work-1: "Ship the slice" [FYI]');
+    expect(text).toContain("m1");
+    expect(text).not.toContain("Use "); // not the generic list_messages/claim_message prompt
+  });
+
+  it("falls back to the inner payload.body when the outer render is absent (older Hub)", () => {
+    // the verifier's exact repro shape from the PR #480 review
+    const text = buildPromptText("message_arrived", {
+      message: {
+        id: "m1",
+        kind: "external-injection",
+        payload: transitionPayload,
+      },
+    }, cfg);
+    expect(text).toContain("[Hub] work-1 ready→claimed (claim_work)");
+    expect(text).not.toContain("Use "); // no longer the generic fallback
+  });
+
+  it("a notificationEvent envelope with NO body still gets the generic fallback (never renders empty)", () => {
+    const text = buildPromptText("message_arrived", {
+      message: {
+        id: "m1",
+        kind: "external-injection",
+        payload: { notificationEvent: "work-transition-notification" },
+      },
+    }, cfg);
+    expect(text).toContain("Message m1");
+    expect(text).toContain("arrived");
+  });
+
+  it("legacy payload.event envelopes are unaffected (branch ordering regression guard)", () => {
+    const text = buildPromptText("message_arrived", {
+      message: {
+        id: "m2",
+        kind: "external-injection",
+        payload: { event: "mission_status_changed", data: { missionId: "mission-1" } },
+      },
+    }, cfg);
+    expect(text).toContain("Hub event injected: mission_status_changed");
+  });
+});

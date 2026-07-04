@@ -143,7 +143,9 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     const evidence = [{ requirementId: "r1", kind: "commit", ref: "abc", producedAt: "t" }];
     const okStub = makeStub({ completeWork: () => sampleItem({ status: "done" }) });
     await router.handle("complete_work", { workId: "work-1", leaseToken: "tok-abc", evidence }, ctxFor(okStub, "engineer"));
-    expect(okStub.calls[0].args).toEqual(["work-1", "anonymous-engineer", "tok-abc", evidence]);
+    // calls[0] is the work-54 from_status pre-read (getWorkItem); the verb call follows.
+    const verbCall = okStub.calls.find((c) => c.method === "completeWork")!;
+    expect(verbCall.args).toEqual(["work-1", "anonymous-engineer", "tok-abc", evidence]);
 
     const failStub = makeStub({ completeWork: () => { throw new EvidencePredicateFailed("requirement r1 uncovered"); } });
     const r = await router.handle("complete_work", { workId: "work-1", leaseToken: "tok-abc", evidence: [] }, ctxFor(failStub, "engineer"));
@@ -154,7 +156,9 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   it("abandon_work: leaseToken + reason optional (creator-override path)", async () => {
     const stub = makeStub({ abandonWork: () => sampleItem({ status: "abandoned" }) });
     await router.handle("abandon_work", { workId: "work-1", reason: "obsolete" }, ctxFor(stub, "architect"));
-    expect(stub.calls[0].args).toEqual(["work-1", "anonymous-architect", { reason: "obsolete", leaseToken: undefined }]);
+    // calls[0] is the work-54 from_status pre-read (getWorkItem); the verb call follows.
+    const verbCall = stub.calls.find((c) => c.method === "abandonWork")!;
+    expect(verbCall.args).toEqual(["work-1", "anonymous-architect", { reason: "obsolete", leaseToken: undefined }]);
   });
 
   it("list_ready_work: defaults role to the caller; surfaces truncation loudly", async () => {
@@ -902,5 +906,91 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     expect(b.created).toEqual([]);
     expect(b.reused).toBe(2);
     expect(b.localIdToWorkId).toEqual({ a: "work-bp-rerun-a", b: "work-bp-rerun-b" });
+  });
+
+  // ── work-54 (idea-357 pts 1-2): push-native FSM-transition events ────────────────
+  // The verb handlers emit a broadcast external-injection through emitAndPush; these
+  // tests exercise the REAL router path with the harness's real memory message store
+  // (the dispatch capture proves the bug-192 create+push coupling end-to-end).
+
+  describe("work-54 push events (through the router path)", () => {
+    async function storedEvents(ctx: TestPolicyContext) {
+      const msgs = await ctx.stores.message.listMessages({});
+      return msgs.filter((m) => m.kind === "external-injection").map((m) => m.payload as Record<string, unknown>);
+    }
+
+    it("claim_work emits work-transition (ready→claimed) + live-pushes it", async () => {
+      const stub = makeStub({ claimWorkItem: () => sampleItem() });
+      const ctx = ctxFor(stub, "engineer");
+      await router.handle("claim_work", { workId: "work-1" }, ctx);
+
+      const events = await storedEvents(ctx);
+      expect(events.length).toBe(1);
+      expect(events[0].notificationEvent).toBe("work-transition-notification");
+      expect(events[0].verb).toBe("claim_work");
+      expect(events[0].from_status).toBe("ready");
+      expect(events[0].to_status).toBe("claimed");
+      expect(events[0].actor_agent_id).toBe("anonymous-engineer");
+      // pushed live, not just persisted (bug-192)
+      expect(ctx.dispatchedEvents.some((d) => d.event === "message_arrived")).toBe(true);
+    });
+
+    it("complete_work →done emits the transition (from_status via pre-read) AND runs the dependency-unblock scan", async () => {
+      const dependent = sampleItem({
+        id: "work-9", status: "ready", lease: null as unknown as WorkItem["lease"],
+        dependsOn: ["work-1"], roleEligibility: ["engineer"],
+      });
+      const stub = makeStub({
+        getWorkItem: (id: unknown) => (id === "work-1" ? sampleItem({ status: "in_progress" }) : null),
+        completeWork: () => sampleItem({ status: "done" }),
+        listWorkItems: () => ({ items: [dependent], truncated: false }),
+      });
+      const ctx = ctxFor(stub, "engineer");
+      await router.handle("complete_work", { workId: "work-1", leaseToken: "tok-abc", evidence: [] }, ctx);
+
+      const events = await storedEvents(ctx);
+      const transition = events.find((e) => e.notificationEvent === "work-transition-notification")!;
+      expect(transition.verb).toBe("complete_work");
+      expect(transition.from_status).toBe("in_progress"); // the pre-read supplied it
+      expect(transition.to_status).toBe("done");
+      const unblocked = events.find((e) => e.notificationEvent === "work-unblocked-notification")!;
+      expect(unblocked.work_id).toBe("work-9");
+      expect(unblocked.unblocked_by).toBe("work-1");
+    });
+
+    it("complete_work parking in review emits the transition but NO unblock scan", async () => {
+      const stub = makeStub({
+        getWorkItem: () => sampleItem({ status: "in_progress" }),
+        completeWork: () => sampleItem({ status: "review" }),
+      });
+      const ctx = ctxFor(stub, "engineer");
+      await router.handle("complete_work", { workId: "work-1", leaseToken: "tok-abc", evidence: [] }, ctx);
+
+      const events = await storedEvents(ctx);
+      expect(events.length).toBe(1);
+      expect(events[0].to_status).toBe("review");
+      expect(stub.calls.some((c) => c.method === "listWorkItems")).toBe(false);
+    });
+
+    it("a failed verb emits NOTHING (transition never committed)", async () => {
+      const stub = makeStub({ claimWorkItem: () => { throw new ClaimRejected("nope"); } });
+      const ctx = ctxFor(stub, "engineer");
+      await router.handle("claim_work", { workId: "work-1" }, ctx);
+      expect((await storedEvents(ctx)).length).toBe(0);
+    });
+
+    it("create_work emits the queued (·→ready) claimable signal", async () => {
+      const stub = makeStub({
+        createWorkItem: () => sampleItem({ id: "work-7", status: "ready", lease: null as unknown as WorkItem["lease"] }),
+      });
+      const ctx = ctxFor(stub, "architect");
+      await router.handle("create_work", { type: "task", payload: { title: "t" } }, ctx);
+
+      const events = await storedEvents(ctx);
+      expect(events.length).toBe(1);
+      expect(events[0].verb).toBe("create_work");
+      expect(events[0].from_status).toBeNull();
+      expect(events[0].to_status).toBe("ready");
+    });
   });
 });
