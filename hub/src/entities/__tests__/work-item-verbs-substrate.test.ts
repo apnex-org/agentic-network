@@ -172,6 +172,18 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
     await expect(repo.abandonWork(id, "agent-random")).rejects.toThrow(/lease-holder .* or the creator/);
   }, OP_TIMEOUT);
 
+  it("bug-219 creator abandon from ready: the CREATOR (no seat can claim it) abandons a ready item; a non-creator is rejected", async () => {
+    const creator = { role: "architect", agentId: "agent-219-creator" };
+    // director-gated: no director seat exists → the item is unclaimable, the frozen shape bug-219 fixes
+    const w = await repo.createWorkItem({ type: "task", roleEligibility: ["director"], createdBy: creator });
+    // a non-creator from ready: rejected on identity (ready holds no lease → no holder path exists)
+    await expect(repo.abandonWork(w.id, "agent-219-random", { reason: "nope" })).rejects.toThrow(/lease-holder .* or the creator/);
+    // the creator from ready: succeeds, terminal, lease stays null
+    const abandoned = await repo.abandonWork(w.id, "agent-219-creator", { reason: "Director retired it" });
+    expect(abandoned!.status).toBe("abandoned");
+    expect(abandoned!.lease).toBeNull();
+  }, OP_TIMEOUT);
+
   it("terminal immutability: an abandoned item rejects further transitions", async () => {
     const creator = { role: "architect", agentId: "agent-term" };
     const w = await repo.createWorkItem({ type: "task", roleEligibility: [], createdBy: creator });
@@ -493,6 +505,20 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
       expect(lm.isHolder).toBe(false);
       expect(moveOf(lm, "abandon").legal).toBe(true);      // creator-override (isCreator && !isHolder)
       expect(moveOf(lm, "start").legal).toBe(false);       // but NOT the holder-only verbs
+    }, OP_TIMEOUT);
+
+    it("bug-219 legal<=>verb: abandon from READY — creator legal+succeeds; non-creator illegal (honest reason)+rejects", async () => {
+      const w = await repo.createWorkItem({ type: "task", roleEligibility: ["director"], createdBy: { agentId: "agent-219-lm-creator", role: "architect" } });
+      const other = (await repo.getLegalMoves(w.id, { agentId: "agent-219-lm-other", role: "engineer" }))!;
+      expect(moveOf(other, "abandon").legal).toBe(false);
+      expect(moveOf(other, "abandon").reason).toMatch(/neither the lease-holder nor the creator/);
+      await expect(repo.abandonWork(w.id, "agent-219-lm-other")).rejects.toThrow(/lease-holder .* or the creator/); // verb agrees: rejects
+      const lm = (await repo.getLegalMoves(w.id, { agentId: "agent-219-lm-creator", role: "architect" }))!;
+      expect(lm.status).toBe("ready");
+      expect(lm.isHolder).toBe(false);
+      expect(moveOf(lm, "abandon").legal).toBe(true);      // creator-from-ready (bug-219 fix (c))
+      const abandoned = await repo.abandonWork(w.id, "agent-219-lm-creator", { reason: "Director retired it" }); // verb agrees: succeeds
+      expect(abandoned!.status).toBe("abandoned");
     }, OP_TIMEOUT);
 
     it("claim 'requires ready' reason (sub-3 unexercised branch): a non-ready item → claim illegal with the phase reason", async () => {

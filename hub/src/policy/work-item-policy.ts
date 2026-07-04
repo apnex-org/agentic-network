@@ -203,7 +203,8 @@ async function abandonWork(args: Record<string, unknown>, ctx: IPolicyContext): 
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
-  // abandon can come from claimed|in_progress|blocked — pre-read for the event's from_status.
+  // abandon can come from claimed|in_progress|blocked (creator also from ready, bug-219) —
+  // pre-read for the event's from_status.
   const before = await store.getWorkItem(args.workId as string);
   try {
     const w = await store.abandonWork(args.workId as string, caller.agentId, {
@@ -877,7 +878,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "abandon_work",
-    "[Any] Terminally abandon work ({claimed|in_progress|blocked} → abandoned). The lease-holder (with leaseToken) OR the item creator (no token — override authority) may abandon.",
+    "[Any] Terminally abandon work ({claimed|in_progress|blocked} → abandoned). The lease-holder (with leaseToken) OR the item creator (no token — override authority) may abandon; the creator may also abandon from `ready` (bug-219: closes items whose roleEligibility has no registered seat).",
     {
       workId: z.string(),
       reason: z.string().optional().describe("Why the item is being abandoned"),
