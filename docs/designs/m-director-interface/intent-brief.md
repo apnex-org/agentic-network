@@ -1,6 +1,6 @@
 # M-Director-Interface — Intent Brief (idea-388)
 
-**Status:** DRAFT v0.1 — awaiting Director ratification (Intent Session 2)
+**Status:** v1.0 — RATIFIED at G0 (Intent Session 2, 2026-07-04, item-by-item walkthrough: 7 constraints + 5 fences individually confirmed; two G0 additions — §3.5a decision-class ontology into survey scope, §7.3 dual attention-efficiency metric)
 **Arc:** stint-6 sole focus, per strategic-review GATE 2 (audit-9270 + audit-9271, 2026-07-04)
 **Primary tele:** tele-13 Director Intent Amplification; secondary tele-4, tele-6, tele-10
 **Provenance:** Intent Session 1 with the Director (2026-07-04, audits 9280 / 9285 / 9286 / 9305), conducted per the co-design directive (audit-9272) and the idea-416 interactive-presentation rule
@@ -60,6 +60,10 @@ Director flags it may be replaced by this arc's elicitation class (design must d
    (CLI/TUI/GUI)** the Director uses outside any agent session (roadmap-committed, not v1).
 5. **Authority non-delegation** (tele-13) — no decision is ever auto-taken; the self-disposal
    tier is bounded by T5 and every disposal is visible; the lean never becomes a silent veto.
+   **5a (G0 refinement, Director):** the survey must produce a **decision-class ontology** —
+   an explicit classification of decision types where the Director may grant standing
+   delegated authority per class; auto-decision is only ever a *ratified property of a class*,
+   never an inference (composes with fence 3: inferred automation stays banned).
 6. **Meta-dogfood** — the arc itself trials Director-interaction approaches as named
    experiments; the Director's experience feedback is first-class design evidence. The arc's
    own phase gates ride the decision-entity rail it designs (§5).
@@ -124,8 +128,9 @@ altitude (lightweight variant for contested implementation choices).
    path; the ratify-by-audit workaround is retired.
 2. Nothing dropped: every raised decision reaches resolution or explicit disposal; the raw feed
    is auditable end-to-end.
-3. Attention efficiency: Director attention per decision resolved measurably beats the Session 1
-   benchmark (~2.5 min/decision including context); trend tracked per tele-13 SC4.
+3. Attention efficiency (G0-hardened): TWO trended signals — (a) measured Director-time per
+   decision resolved beats the Session-1 benchmark (~2.5 min/decision including context);
+   (b) a one-tap Director session rating; both must trend favorably (tele-13 SC4).
 4. Authority integrity: audit shows zero decisions auto-taken and zero self-disposals outside
    the T5 boundary.
 5. Presentation-agnostic: the same decision payload demonstrably renders in ≥2 surfaces
