@@ -16,16 +16,16 @@
     "src/",
     "test/",
     "lib/",
-    "skills/",
-    "apnex-*.tgz"
+    "skills/"
   ],
   "scripts": {
     "prebuild": "node ../../scripts/build/write-build-info.js",
     "build": "tsc",
-    "prepack": "node ../../scripts/build/write-build-info.js --assert",
+    "prepack": "node ../../scripts/build/write-build-info.js --assert && node ../../scripts/build/stage-skills.js",
     "start": "node dist/shim.js",
     "dev": "tsx src/shim.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postpack": "node ../../scripts/build/stage-skills.js --clean"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

@@ -51,3 +51,6 @@ raw-notes.txt
 # Per-worktree .npmrc (env-var ref to NPM_TOKEN; never commit auth)
 .npmrc
 __pycache__/
+
+# transient: staged by stage-skills.js during npm pack (postpack cleans)
+/adapters/claude-plugin/skills/

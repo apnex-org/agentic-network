@@ -24,7 +24,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "node ../../scripts/build/write-build-info.js --assert"
   },
   "dependencies": {
     "@apnex/network-adapter": "*"
