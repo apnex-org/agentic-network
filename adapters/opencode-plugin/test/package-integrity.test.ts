@@ -18,7 +18,7 @@ function run(cmd: string, args: string[], cwd = root): string {
   });
 }
 
-describe("opencode-plugin package/bundle integrity", () => {
+describe("opencode-plugin package integrity", () => {
   it("package metadata declares the graph-published npm artifact and loader-safe entry surface", () => {
     const pkg = readJson("package.json");
 
@@ -50,7 +50,6 @@ describe("opencode-plugin package/bundle integrity", () => {
     expect(pkg.files).not.toContain("test/");
     expect(pkg.scripts.prebuild).toBe("node ../../scripts/build/write-build-info.js");
     expect(pkg.scripts.prepack).toBe("node ../../scripts/build/write-build-info.js --assert");
-    expect(pkg.scripts.bundle).toBe("node ../../scripts/build/bundle-opencode.js");
     expect(pkg.scripts.start).toBe("node dist/plugin-entry.js");
     expect(pkg.keywords).toEqual(expect.arrayContaining(["opencode-plugin", "opencode", "mcp"]));
   });
@@ -148,28 +147,4 @@ describe("opencode-plugin package/bundle integrity", () => {
     expect(typeof buildInfo.branch).toBe("string");
   });
 
-  it("legacy bundle bridge remains self-contained with honest build/version markers", { timeout: 120_000 }, () => {
-    run("npm", ["run", "bundle"]);
-
-    const bundle = readText("dist/shim.js");
-    expect(bundle).not.toMatch(/from\s+["']@apnex\//);
-    const exportBlock = bundle.match(/^export\s*{[\s\S]*?};/m)?.[0] ?? "";
-    expect(exportBlock).toContain("HubPlugin");
-    expect(exportBlock).not.toMatch(/_testOnly|makeOpenCodeFetchHandler|createOpenCodeRuntime/);
-    const networkAdapterVersion = JSON.parse(
-      readRepoText("packages/network-adapter/package.json"),
-    ).version;
-    expect(bundle).toContain(`NETWORK_ADAPTER_PKG_VERSION = true ? "${networkAdapterVersion}"`);
-    expect(bundle).toContain("@apnex/network-adapter@");
-    expect(bundle).toContain("commitSha");
-
-    const bundleScript = readRepoText("scripts/build/bundle-opencode.js");
-    expect(bundleScript).toContain("legacy GitHub/source-bundle bridge");
-    expect(bundleScript).toContain("__OPENCODE_BUILD_INFO__");
-    expect(bundleScript).toContain("__NETWORK_ADAPTER_VERSION__");
-
-    const releaseScript = readRepoText("scripts/build/release-opencode-plugin.sh");
-    expect(releaseScript).toContain("compatibility bridge");
-    expect(releaseScript).toContain("HubPlugin-only export surface");
-  });
 });

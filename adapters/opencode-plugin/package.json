@@ -17,7 +17,6 @@
     "prebuild": "node ../../scripts/build/write-build-info.js",
     "build": "tsc",
     "prepack": "node ../../scripts/build/write-build-info.js --assert",
-    "bundle": "node ../../scripts/build/bundle-opencode.js",
     "start": "node dist/plugin-entry.js",
     "dev": "tsx src/shim.ts",
     "test": "vitest run"

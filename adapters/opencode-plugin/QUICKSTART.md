@@ -28,7 +28,9 @@ The npm package is graph-published like the Claude/Pi family members:
 
 ## Migration from GitHub/source config
 
-Existing live OpenCode configs may point at the old GitHub/source channel, for example:
+The legacy `github:apnex/opencode-hub-plugin` bundle channel is RETIRED
+(repo archived; the bundle scripts are removed). Any config still pointing
+at it, for example:
 
 ```jsonc
 {
@@ -49,7 +51,7 @@ or an older source-path object:
 }
 ```
 
-After npm publication is approved, replace those entries with:
+must be replaced with the npm channel:
 
 ```jsonc
 {

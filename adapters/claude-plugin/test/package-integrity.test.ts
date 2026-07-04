@@ -20,11 +20,14 @@ describe("claude-plugin package/install integrity", () => {
       "QUICKSTART.md",
       "lib/",
       "skills/",
-      "apnex-*.tgz",
     ]));
+    expect(pkg.files).not.toContain("apnex-*.tgz");
     expect(pkg.main).toBe("dist/shim.js");
     expect(pkg.scripts.prebuild).toBe("node ../../scripts/build/write-build-info.js");
-    expect(pkg.scripts.prepack).toBe("node ../../scripts/build/write-build-info.js --assert");
+    expect(pkg.scripts.prepack).toBe(
+      "node ../../scripts/build/write-build-info.js --assert && node ../../scripts/build/stage-skills.js",
+    );
+    expect(pkg.scripts.postpack).toBe("node ../../scripts/build/stage-skills.js --clean");
   });
 
   it("package dependencies honor the Claude facade boundary", () => {
@@ -76,9 +79,9 @@ describe("claude-plugin package/install integrity", () => {
     expect(install).toContain("bootstrap_skills");
   });
 
-  it("quickstart documents the no-clone tarball install and build-identity check", () => {
+  it("quickstart documents the no-clone npm install and build-identity check", () => {
     const quickstart = readText("QUICKSTART.md");
-    expect(quickstart).toContain("gh release download <TAG>");
+    expect(quickstart).toContain("npm pack @apnex/claude-plugin@<VERSION>");
     expect(quickstart).toContain("bash package/install.sh");
     expect(quickstart).toContain("dist/build-info.json");
     expect(quickstart).toContain("Tarball install fails to resolve `@apnex/...`");

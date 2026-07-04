@@ -1,22 +1,25 @@
 name: publish-npm
 
-# M-Shim-Distribution Phase 3 — automate the @apnex/* npm family publish.
+# THE single publish channel for the @apnex/* family (all three harness plugins
+# + sovereign packages). A real publish happens ONLY on a git tag push `npm-v*`
+# — workflow_dispatch always runs as a dry-run validation, so every artifact on
+# the registry traces to a tag. (The former second channel — release-plugin.yml
+# building a self-contained GitHub-Release tarball for claude-plugin — is
+# retired: the npm tarball is now the complete consumer artifact, including the
+# staged skills/ payload via claude-plugin's prepack.)
 #
-# The npm family (ADR-029) was published MANUALLY (source greg.env → run
-# publish-packages.sh) — a step-skip + staleness risk (calibrations #25/#39;
-# registry drifted behind local). This workflow makes publish CI-triggered.
-#
-# Trigger: a tag `npm-v*` (deliberately DISTINCT from claude's tarball `v*` in
-# release-plugin.yml — that is a Claude-Code-plugin artifact, a different
-# channel). Per-package versions live in each package.json; the tag string only
-# gates the run. Also dispatchable manually.
+# Per-package versions live in each package.json; the tag string only gates the
+# run. The version-bump --assert gate (each package's prepack) enforces that
+# shipped src changes carry a version bump.
 #
 # Safe publish path: scripts/publish-packages.sh publishes an EXPLICIT package
 # list in topological order and HOISTS the version-rewrite (* → ^X.Y.Z) with a
 # trap-revert. This avoids two traps: (a) `npm publish --workspaces` would
-# attempt private/non-registry workspaces (opencode/storage-provider/
-# repo-event-bridge are not private:true); (b) `npm publish --workspace=X` skips
-# root's prepublishOnly rewrite (calibration #35) and would ship `*` deps.
+# attempt private/non-registry workspaces (storage-provider/repo-event-bridge
+# are not private:true); (b) `npm publish --workspace=X` skips root's
+# prepublishOnly rewrite (calibration #35) and would ship `*` deps. The rewrite
+# declares its mutations in a manifest (OIS_BUILD_INFO_DIRTY_IGNORE) so
+# build-info stamps an honest dirty:false on tagged CI builds.
 #
 # Auth: setup-node writes a project .npmrc wired to NODE_AUTH_TOKEN; the script's
 # .npmrc preflight is satisfied by that file, and NPM_TOKEN (repo secret) drives
@@ -26,12 +29,7 @@ on:
   push:
     tags:
       - 'npm-v*'
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'Dry-run (no actual publish)'
-        type: boolean
-        default: true
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -67,9 +65,7 @@ jobs:
       # message-router cyclic tsc build needs every @apnex/* workspace linked to
       # resolve its module graph. Omitting storage-provider broke the cyclic
       # build in CI (dry-run run #28554852955: network-adapter tsc "Cannot find
-      # module '@apnex/message-router'"). The publish step still ships only the
-      # explicit list in publish-packages.sh; mission-101 W6 deliberately adds
-      # opencode-plugin to that explicit published-family list.
+      # module '@apnex/message-router'").
       - name: Install workspaces (scoped)
         run: |
           npm install --no-audit --no-fund --ignore-scripts \
@@ -83,7 +79,7 @@ jobs:
 
       # Sovereign packages must have dist/ before publish (main → dist/index.js)
       # + build-info.json for build-identity. network-adapter ↔ message-router
-      # cycle broken via the multi-pass build (per test.yml / prepack-claude).
+      # cycle broken via the multi-pass build (per test.yml).
       - name: Build family (topological)
         run: |
           rm -rf packages/cognitive-layer/dist packages/network-adapter/dist packages/message-router/dist
@@ -96,17 +92,42 @@ jobs:
           ( cd adapters/opencode-plugin && npm run build )
           ( cd adapters/pi-plugin && npm run build )
 
-      # Publish (or dry-run). The script gates on prepack --assert (version bump),
-      # hoists version-rewrite, publishes topologically, and trap-reverts deps.
+      # Artifact-completeness gate (successor of release-plugin.yml's
+      # calibration #62 check, adapted to the npm shape): the claude-plugin
+      # tarball must carry the built shim, its build identity, the harness
+      # manifest, and the full skills payload + bootstrapper. Sovereign deps are
+      # registry refs now — no vendored apnex-*.tgz expected.
+      - name: Verify claude-plugin npm artifact structurally complete
+        env:
+          OIS_SKIP_VERSION_ASSERT: '1'  # shape check only — the publish step still gates
+        run: |
+          cd adapters/claude-plugin
+          TGZ=$(npm pack --silent)
+          for path in \
+            "package/dist/shim.js" \
+            "package/dist/build-info.json" \
+            "package/agent-adapter.manifest.json" \
+            "package/skills/survey/" \
+            "package/lib/bootstrap-skills.sh" \
+            "package/install.sh"; do
+            tar tzf "$TGZ" | grep -q "$path" || \
+              { echo "ERROR: $path missing from $TGZ" >&2; exit 1; }
+          done
+          rm -f "$TGZ"
+          echo "✓ claude-plugin npm artifact structurally complete"
+
+      # Publish (or dry-run). Real publish ONLY on tag push — dispatch is a
+      # validation run by construction, so every registry artifact traces to a
+      # git tag.
       - name: Publish @apnex/* family
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            echo "→ dry-run publish"
-            bash scripts/publish-packages.sh --dry-run
-          else
+          if [ "${{ github.event_name }}" = "push" ]; then
             echo "→ REAL publish (tag ${GITHUB_REF#refs/tags/})"
             bash scripts/publish-packages.sh
+          else
+            echo "→ dry-run publish (workflow_dispatch is validation-only; tag npm-v* to publish)"
+            bash scripts/publish-packages.sh --dry-run
           fi
