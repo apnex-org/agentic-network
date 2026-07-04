@@ -62,6 +62,8 @@ export const ENTITY_TYPES = [
   "agent",
   // idea-255 / M-Workflow-Run-Events-Hub-Integration v1.0 §1.5
   "workflow",
+  // work-54 (idea-357 pts 1-2): WorkItem FSM-transition + unblock events
+  "workitem",
 ] as const;
 
 export type EntityType = (typeof ENTITY_TYPES)[number];
@@ -211,6 +213,21 @@ export function shouldFilterPeekLine(
 
   // workflow-run-dispatched-notification: always render (operator triggered)
   // — no filter
+
+  // work-54 (idea-357 pts 1-2) WI-transition filter-list: the routine hot-path
+  // transitions (claim / start / resume — every item passes through them) are
+  // adapter-signal only; the state-changes someone may act on (blocked, back
+  // to ready, review-parked, done, abandoned, created) render. The events
+  // still flow to adapters for state-machine consumption either way.
+  if (event === "work-transition-notification" && data) {
+    const to = typeof data.to_status === "string" ? data.to_status : "";
+    const verb = typeof data.verb === "string" ? data.verb : "";
+    if (verb !== "create_work" && (to === "claimed" || to === "in_progress")) return true;
+    return false;
+  }
+  // work-unblocked-notification: always render (an agent should claim it).
+  // deploy-completed-notification: always render (deploy outcomes are
+  // operator-significant, success or failure — the §1.8 F3 stance).
 
   return false;
 }
@@ -461,6 +478,66 @@ export function deriveRenderContext(
         },
         bodyPreview: str("body"),
         actionability,
+      };
+    }
+
+    case "work-transition-notification": {
+      // work-54 (idea-357 pts 1-2): WorkItem FSM-transition render. The verb +
+      // to_status carry per-transition detail (one event name; the AG-4
+      // coarse-taxonomy stance — no per-transition event split).
+      const workId = str("work_id") ?? "work-?";
+      const to = str("to_status") ?? "?";
+      const from = str("from_status");
+      const verb = str("verb");
+      const actionVerb =
+        verb === "create_work" ? "Queued" :
+        to === "claimed" ? "Claimed" :
+        to === "in_progress" ? (verb === "resume_work" ? "Resumed" : "Started") :
+        to === "blocked" ? "Blocked" :
+        to === "ready" ? (verb === "lease_expired" ? "Lease-expired, re-queued" : "Released to ready") :
+        to === "review" ? "Parked in review" :
+        to === "done" ? "Completed" :
+        to === "abandoned" ? "Abandoned" :
+        `Transitioned (${from ?? "?"}→${to})`;
+      return {
+        sourceClass: "Hub",
+        actionVerb,
+        entityRef: { type: "workitem", id: workId, title: str("title") },
+        // review-parked = a verifier's turn to look (the review evidence gate).
+        actionability: to === "review" ? "your-turn" : "FYI",
+      };
+    }
+
+    case "work-unblocked-notification": {
+      const workId = str("work_id") ?? "work-?";
+      return {
+        sourceClass: "Hub",
+        actionVerb: "Unblocked, now claimable",
+        entityRef: { type: "workitem", id: workId, title: str("title") },
+        bodyPreview: str("body"),
+        actionability: "your-turn",
+      };
+    }
+
+    case "deploy-completed-notification": {
+      // work-54 (idea-357 pt-2): the first-class deploy-outcome event derived
+      // from the deploy workflow's completed run (roll-CONFIRM = bug-195).
+      const runId = data.run_id ?? data.runId;
+      const wfName = str("workflow_name") ?? "deploy";
+      const conclusion = str("conclusion");
+      return {
+        sourceClass: "System-Workflow",
+        actionVerb:
+          conclusion === "success" ? "Deploy succeeded" :
+          conclusion === "failure" ? "Deploy failed" :
+          `Deploy ${conclusion ?? "completed"}`,
+        entityRef: {
+          type: "workflow",
+          id: runId !== undefined ? `run-${runId}` : "run-?",
+          title: wfName,
+        },
+        bodyPreview: str("body"),
+        actionability: conclusion === "failure" ? "your-turn" : "FYI",
       };
     }
 

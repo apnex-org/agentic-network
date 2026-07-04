@@ -123,12 +123,58 @@ describe("workflow-run wire-flow — completed + failure", () => {
     const repoEvent = translateWorkflowRun(run, "apnex-org/agentic-network");
     const inbound = wrapAsExternalInjectionMessage(repoEvent);
     const dispatches = await WORKFLOW_RUN_COMPLETED_HANDLER.handle(inbound, stubCtx);
-    expect(dispatches).toHaveLength(1);
+    // work-54: deploy-hub also gets the derived deploy-completed dispatch (2nd entry)
+    expect(dispatches).toHaveLength(2);
 
     const payload = dispatches[0].payload as Record<string, unknown>;
     expect(payload.conclusion).toBe("failure");
     expect(payload.body as string).toContain("failed");
     expect(payload.body as string).toContain("see https://github.com/");
+  });
+});
+
+// ── work-54 (idea-357 pt-2): the derived first-class deploy event ─────
+
+describe("deploy-completed recognizer (work-54)", () => {
+  it("a deploy workflow's completed run emits an ADDITIONAL deploy-completed dispatch", async () => {
+    const run = makeRun({ name: "deploy-hub", status: "completed", conclusion: "success", event: "push" });
+    const repoEvent = translateWorkflowRun(run, "apnex-org/agentic-network");
+    const inbound = wrapAsExternalInjectionMessage(repoEvent);
+    const dispatches = await WORKFLOW_RUN_COMPLETED_HANDLER.handle(inbound, stubCtx);
+    expect(dispatches).toHaveLength(2);
+
+    // [0] stays the generic workflow-run event (unchanged contract)
+    expect((dispatches[0].payload as Record<string, unknown>).notificationEvent)
+      .toBe("workflow-run-completed-notification");
+
+    const deploy = dispatches[1];
+    expect(deploy.kind).toBe("external-injection");
+    expect(deploy.target).toBeNull();
+    expect(deploy.intent).toBe("deploy-completed");
+    const p = deploy.payload as Record<string, unknown>;
+    expect(p.notificationEvent).toBe("deploy-completed-notification");
+    expect(p.workflow_name).toBe("deploy-hub");
+    expect(p.conclusion).toBe("success");
+    expect(p.head_sha).toMatch(/^[a-f0-9]{40}$/); // the gating agent's roll-identity key
+    expect(p.body as string).toContain("deploy success");
+  });
+
+  it("a deploy failure's derived body carries the run url for follow-up", async () => {
+    const run = makeRun({ name: "deploy-hub", status: "completed", conclusion: "failure", event: "push" });
+    const inbound = wrapAsExternalInjectionMessage(translateWorkflowRun(run, "apnex-org/agentic-network"));
+    const dispatches = await WORKFLOW_RUN_COMPLETED_HANDLER.handle(inbound, stubCtx);
+    const p = dispatches[1].payload as Record<string, unknown>;
+    expect(p.body as string).toContain("deploy failure");
+    expect(p.body as string).toContain("see https://github.com/");
+  });
+
+  it("a non-deploy workflow emits NO deploy dispatch", async () => {
+    const run = makeRun({ name: "release-plugin", status: "completed", conclusion: "success" });
+    const inbound = wrapAsExternalInjectionMessage(translateWorkflowRun(run, "apnex-org/agentic-network"));
+    const dispatches = await WORKFLOW_RUN_COMPLETED_HANDLER.handle(inbound, stubCtx);
+    expect(dispatches).toHaveLength(1);
+    expect((dispatches[0].payload as Record<string, unknown>).notificationEvent)
+      .toBe("workflow-run-completed-notification");
   });
 });
 

@@ -199,16 +199,46 @@ async function handle(
   ];
 }
 
+// work-54 (idea-357 pt-2): a Hub deploy IS a workflow run (deploy-hub.yml), so
+// deploy OUTCOMES already flow through the generic completed event above. This
+// recognizer additionally emits a first-class deploy event — the clean
+// subscription key a gating agent watches without knowing workflow names.
+// Roll-CONFIRM (the new revision actually serving) is bug-195's separate rung.
+const DEPLOY_WORKFLOW_PATTERN = /deploy/i;
+
+function buildDeployBody(f: ExtractedFields): string {
+  const sha = shortSha(f.headSha);
+  const branch = f.headBranch ? `@${f.headBranch}` : "";
+  const urlSuffix = f.conclusion === "failure" && f.htmlUrl ? ` — see ${f.htmlUrl}` : "";
+  return `deploy ${f.conclusion ?? "completed"}: "${f.workflowName}" — head_sha=${sha}${branch}${urlSuffix}`;
+}
+
 async function handleCompleted(
   inbound: Message,
   ctx: IPolicyContext,
 ): Promise<MessageDispatch[]> {
-  return handle(
+  const dispatches = await handle(
     inbound,
     ctx,
     "workflow-run-completed",
     "workflow-run-completed-notification",
   );
+  if (dispatches.length === 0) return dispatches;
+  const inner = readInner(inbound);
+  const fields = inner ? extractFields(inner) : null;
+  if (fields && DEPLOY_WORKFLOW_PATTERN.test(fields.workflowName)) {
+    dispatches.push({
+      kind: "external-injection",
+      target: null,
+      delivery: "push-immediate",
+      payload: {
+        ...buildPayload(fields, inbound, "deploy-completed-notification"),
+        body: buildDeployBody(fields),
+      },
+      intent: "deploy-completed",
+    });
+  }
+  return dispatches;
 }
 
 async function handleDispatched(
