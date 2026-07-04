@@ -2,7 +2,7 @@
 
 Install the OIS agent adapter plugin into OpenCode. This bridges OpenCode into the OIS agentic network as an Engineer agent via the MCP Relay Hub.
 
-> **Release status:** mission-101 W6 prepares the npm package shape. The canonical post-release install target is `npm:@apnex/opencode-plugin`, but the final publish/release decision is gated later in the mission. Until that release is published, keep existing GitHub/source installs on their current pinned channel.
+> **Release status:** `npm:@apnex/opencode-plugin` is published and canonical — the single distribution channel for this plugin. The legacy GitHub/source bundle channel is retired.
 
 ## Canonical install target — npm package
 
@@ -61,17 +61,13 @@ must be replaced with the npm channel:
 
 Do this as a coordinated cutover: restart OpenCode after changing the plugin source, then verify build identity and Hub registration.
 
-## Legacy compatibility bridge — self-contained bundle
+## Legacy compatibility bridge — self-contained bundle (RETIRED)
 
-The repository still keeps the legacy self-contained bundle path:
-
-```bash
-npm run bundle --workspace=@apnex/opencode-plugin
-# or, for the legacy release gate:
-scripts/build/release-opencode-plugin.sh
-```
-
-That bundle emits `adapters/opencode-plugin/dist/shim.js`, inlines the `@apnex/*` runtime graph, and exports only `HubPlugin`. It is retained as a migration bridge for existing GitHub/source consumers, not as the canonical long-term distribution channel.
+The legacy self-contained esbuild bundle path (`bundle-opencode.js` /
+`release-opencode-plugin.sh`, feeding the `github:apnex/opencode-hub-plugin`
+repo) is removed and the bundle repo is archived read-only. Any remaining
+GitHub/source consumer must migrate to the npm package per the section above —
+the frozen bundle receives no further updates.
 
 ## Developer install from a clone
 
@@ -200,7 +196,7 @@ A coalescer/rate limiter prevents prompt flooding. Events arriving during cooldo
 - **Tools not appearing** — The plugin starts the Hub connection in the background after a short delay. Wait a few seconds, then check available tools.
 - **Bun not found** — The local MCP proxy requires Bun runtime. Install from https://bun.sh.
 - **Prompt flooding** — If notifications arrive too frequently, the coalescer queues them. Set `autoPrompt: false` to disable push-to-LLM entirely.
-- **Npm package not found** — The npm channel is only valid after the release node publishes `@apnex/opencode-plugin`. Before then, keep using the legacy GitHub/source channel.
+- **Npm package not found** — The npm channel is only valid after the release node publishes the version you requested; check `npm view @apnex/opencode-plugin versions` and pin an existing version.
 
 ## Diagnostics
 

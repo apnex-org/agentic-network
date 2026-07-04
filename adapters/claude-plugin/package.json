@@ -1,7 +1,7 @@
 {
   "name": "@apnex/claude-plugin",
-  "version": "0.1.12",
-  "description": "Claude Code host bundle — Universal Agent Adapter for the OIS agentic network",
+  "version": "0.1.13",
+  "description": "Claude Code host bundle \u2014 Universal Agent Adapter for the OIS agentic network",
   "license": "MIT",
   "type": "module",
   "main": "dist/shim.js",

@@ -25,15 +25,21 @@ import { resolve, join } from "node:path";
 
 const pkgDir = process.cwd();
 const dst = join(pkgDir, "skills");
+// Repo root is two levels up from adapters/<plugin>/ in the source tree.
+const src = resolve(pkgDir, "..", "..", "skills");
 
 if (process.argv.includes("--clean")) {
+  // Same guard as staging: only remove skills/ when a repo-root source exists
+  // (i.e. it was genuinely staged). In an extracted-tarball context skills/ IS
+  // the shipped payload — deleting it would break install.sh's bootstrap.
+  if (!existsSync(src)) {
+    process.stderr.write("[stage-skills] clean skip — no repo-root skills/ (shipped payload kept)\n");
+    process.exit(0);
+  }
   rmSync(dst, { recursive: true, force: true });
   process.stderr.write("[stage-skills] cleaned staged skills/\n");
   process.exit(0);
 }
-
-// Repo root is two levels up from adapters/<plugin>/ in the source tree.
-const src = resolve(pkgDir, "..", "..", "skills");
 
 if (!existsSync(src)) {
   process.stderr.write("[stage-skills] skip — no repo-root skills/ (tarball context)\n");

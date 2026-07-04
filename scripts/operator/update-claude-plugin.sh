@@ -36,9 +36,12 @@ STAGE_DIR="$(jq -r --arg n "$MARKET" '.[$n].source.path // empty' "$KM" 2>/dev/n
 STAGE_DIR="${STAGE_DIR:-/home/apnex/apnex-claude-plugin/package}"
 [ -d "$STAGE_DIR" ] || { echo "ERROR: staged plugin dir not found: $STAGE_DIR" >&2; exit 1; }
 
-# 2. Resolve the target version (explicit arg, else the registry's latest)
-VER="${1:-$(npm view "$PKG" dist-tags.latest 2>/dev/null)}"
-[ -n "$VER" ] || { echo "ERROR: could not resolve a published version of $PKG" >&2; exit 1; }
+# 2. Resolve the target version (explicit arg, else the registry's latest).
+#    The `|| true` keeps set -e from killing the script on registry failure so
+#    the friendly error below actually fires.
+VER="${1:-}"
+[ -n "$VER" ] || VER="$(npm view "$PKG" dist-tags.latest 2>/dev/null || true)"
+[ -n "$VER" ] || { echo "ERROR: could not resolve a published version of $PKG (registry unreachable?)" >&2; exit 1; }
 
 CUR_SHA="$(jq -r '.commitSha // "unknown"' "$STAGE_DIR/dist/build-info.json" 2>/dev/null || echo unknown)"
 echo "[update] package=$PKG  target=$VER"

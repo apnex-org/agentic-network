@@ -77,6 +77,14 @@ jobs:
             --workspace=@apnex/opencode-plugin \
             --workspace=@apnex/pi-plugin
 
+      # The scoped install rewrites the tracked package-lock.json (bin
+      # normalization etc.) — an install artifact, not source state. Reset it
+      # so the tree matches the tagged commit and build-info can stamp an
+      # honest dirty:false (the ignore manifest declares only the
+      # version-rewrite mutations).
+      - name: Reset install-mutated lockfile
+        run: git checkout -- package-lock.json
+
       # Sovereign packages must have dist/ before publish (main → dist/index.js)
       # + build-info.json for build-identity. network-adapter ↔ message-router
       # cycle broken via the multi-pass build (per test.yml).

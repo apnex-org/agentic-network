@@ -92,7 +92,8 @@ describe("opencode-plugin package integrity", () => {
     expect(quickstart).toContain("adapters/opencode-plugin/src/shim.ts");
     expect(quickstart).toContain("Legacy compatibility bridge");
     expect(quickstart).toContain("npm pack --workspace=@apnex/opencode-plugin --dry-run --ignore-scripts --json");
-    expect(quickstart).toContain("The npm channel is only valid after the release node publishes");
+    expect(quickstart).toContain("The npm channel is only valid after the release node publishes the version");
+    expect(quickstart).toContain("(RETIRED)");
     expect(quickstart).toContain("proxyName: @apnex/opencode-plugin");
 
     const changelog = readText("CHANGELOG.md");
