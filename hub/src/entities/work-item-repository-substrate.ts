@@ -274,15 +274,20 @@ function evaluateEvidence(
     // durable verdict = a kind:audit ref (create_audit_entry; create_review is DEPRECATED per
     // audit-9429 — there is NO verifier-mintable Review entity). So on a verifier-gate, an audit
     // binding ALSO satisfies ANY requirement — including an already-seeded kind:review one
-    // (back-compat for live blueprints). bug-220 (b) widens this ONE notch: on EVERY item, an
-    // audit binding also satisfies a REVIEW-kind requirement (otherwise review-kind requirements
-    // on normal items are unsatisfiable by construction — no role can mint the gate WorkItem the
-    // ref path expects). Provenance is enforced at the resolve phase (the audit's Hub-stamped
-    // actor must be verifier). Still guarded narrow: commit/pr/test-run/doc requirements stay
-    // strict exact-kind-match everywhere — a worker can't audit-bind a normal code requirement.
-    const kindMatched = boundById.filter((e) => e.kind === req.kind || ((isVerifierGate || req.kind === "review") && e.kind === "audit"));
+    // (back-compat for live blueprints). bug-220 (b) widens this ONE notch: an audit binding
+    // also satisfies a REVIEW-kind refResolvable requirement on EVERY item (otherwise such
+    // requirements are unsatisfiable by construction — no role can mint the gate WorkItem the
+    // ref path expects). refResolvable-ONLY (audit-9443 verifier finding #1): the audit
+    // author-anchor + relate guards run in the ref-resolution phase, which only refResolvable
+    // requirements reach — widening the non-refResolvable case would let a caller-supplied
+    // audit bypass those guards onto the spoofable producedBy fallback. A non-refResolvable
+    // review requirement keeps the existing review-kind/producedBy path unchanged. Still
+    // guarded narrow: commit/pr/test-run/doc requirements stay strict exact-kind-match
+    // everywhere — a worker can't audit-bind a normal code requirement.
+    const auditSatisfies = isVerifierGate || (req.kind === "review" && req.refResolvable === true);
+    const kindMatched = boundById.filter((e) => e.kind === req.kind || (auditSatisfies && e.kind === "audit"));
     if (kindMatched.length === 0) {
-      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence kind mismatch (expected ${req.kind}${isVerifierGate || req.kind === "review" ? " or audit (verifier verdict)" : ""}, bound entries: ${boundById.map((e) => e.kind).join(", ")})`);
+      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence kind mismatch (expected ${req.kind}${auditSatisfies ? " or audit (verifier verdict)" : ""}, bound entries: ${boundById.map((e) => e.kind).join(", ")})`);
     }
     // #3 freshness (already-persisted evidence is grandfathered — bug-222)
     const fresh = kindMatched.filter((e) =>

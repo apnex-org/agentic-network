@@ -33,6 +33,7 @@ import type {
   WorkItem,
   WorkItemBlockedOn,
   EvidenceItem,
+  EvidenceKind,
   EvidenceRequirement,
   WorkItemReference,
   WorkItemType,
@@ -698,17 +699,19 @@ async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Pro
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
-const EVIDENCE_KIND = z.enum(["commit", "pr", "audit", "review", "test-run", "doc", "freeform"]);
+// Exported for the bug-220 (c) completeness test — the test iterates .options so the pin
+// is MECHANICAL (audit-9443 verifier finding #2), never a hand-mirrored list.
+export const EVIDENCE_KIND = z.enum(["commit", "pr", "audit", "review", "test-run", "doc", "freeform"]);
 
 /** bug-220 (c): every evidence kind a contract can DEMAND must have a MINTABLE producer
  *  path — otherwise the item parks in review/incompletable forever (work-111 was the live
  *  case: review-kind refResolvable demanded a gate no role could mint). Authoring-side
  *  fail-closed tripwire: validateNodeIntrinsics rejects a requirement whose kind is absent
- *  here, and the policy test pins this table COMPLETE over EVIDENCE_KIND — adding a new
- *  kind to the enum without a producer path fails loudly at authoring + in CI, never as a
- *  silently-unclosable item. Values are human-readable producer descriptions (error text).
- *  Exported for the completeness test. */
-export const EVIDENCE_PRODUCER_PATHS: Readonly<Record<string, string>> = {
+ *  here. DOUBLY pinned (audit-9443 #2): the Record<EvidenceKind, string> type makes a new
+ *  TS-union kind without a producer entry a COMPILE error, and the policy test iterates the
+ *  exported zod enum's .options — no hand-mirrored list anywhere. Values are human-readable
+ *  producer descriptions (error text). */
+export const EVIDENCE_PRODUCER_PATHS: Readonly<Record<EvidenceKind, string>> = {
   commit: "a git commit (external ref, format-validated)",
   pr: "a GitHub PR (external ref, format-validated)",
   "test-run": "a CI/test run (external ref, format-validated)",

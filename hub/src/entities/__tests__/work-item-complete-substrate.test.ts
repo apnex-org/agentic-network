@@ -244,6 +244,17 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       .rejects.toThrow(/evidence kind mismatch/);
   }, OP_TIMEOUT);
 
+  it("bug-220 (b) refResolvable-ONLY (audit-9443 #1 regression): a NON-refResolvable review req is NOT satisfiable by an audit binding", async () => {
+    // the author-anchor + relate guards live in the ref-resolution phase, which only
+    // refResolvable requirements reach — an audit binding on a non-refResolvable review req
+    // would bypass them onto the spoofable producedBy fallback. Kind-match must reject it.
+    const w = await started([{ id: "r1", kind: "review" }], "agent-b220-nrr"); // refResolvable ABSENT
+    await mkAudit("audit-b220-nrr", w.id, "verifier"); // even verifier-authored + related
+    await expect(repo.completeWork(w.id, "agent-b220-nrr", w.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-b220-nrr" })]))
+      .rejects.toThrow(/evidence kind mismatch/);
+    // the existing review-kind/producedBy path for this class is pinned by the FSM review test.
+  }, OP_TIMEOUT);
+
   it("bug-204 (iv)(b) GUARD-NARROWNESS retained: a TASK's kind:audit req still enforces RELATE for an UNRELATED verifier audit", async () => {
     const wa = await started([{ id: "a1", kind: "audit", refResolvable: true }], "agent-nt-a");
     await mkAudit("audit-nt-unrel", "work-elsewhere", "verifier");
