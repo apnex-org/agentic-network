@@ -254,6 +254,32 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
+  it("bug-222: evidence bound under a PRIOR lease is grandfathered through freshness after reap→re-claim; NEW stale evidence still rejects", async () => {
+    // park in review with a bound commit: the work-111 shape (review req unmet → parks).
+    const reqs: EvidenceRequirement[] = [{ id: "code", kind: "commit" }, { id: "rev", kind: "review" }];
+    const { id, token } = await started(reqs, "agent-b222");
+    const parked = await repo.completeWork(id, "agent-b222", token, [ev({ requirementId: "code", kind: "commit", ref: "sha-b222" })]);
+    expect(parked!.status).toBe("review");
+    // the sweeper reaps the parked item: review → ready, evidence preserved (audit-4103 #3).
+    const future = new Date(Date.now() + 60 * 60_000).toISOString();
+    expect(await repo.expireLease(id, future, 3)).toBe("requeued");
+    const requeued = (await repo.getWorkItem(id))!;
+    expect(requeued.status).toBe("ready");
+    expect(requeued.evidence.length).toBe(1); // preserved, per the reap's guarantee
+    // re-claim under a NEW lease whose claimedAt is strictly AFTER the bound producedAt.
+    await new Promise((r) => setTimeout(r, 50));
+    const re = await repo.claimWorkItem(id, "agent-b222-2");
+    expect(Date.parse(re!.lease!.claimedAt)).toBeGreaterThan(Date.parse(requeued.evidence[0].producedAt));
+    await repo.startWork(id, "agent-b222-2", re!.lease!.token);
+    // re-complete with NO new evidence: the persisted binding is grandfathered → re-parks
+    // in review (before bug-222 this threw 'failed freshness' — the work-111 trap).
+    const reparked = await repo.completeWork(id, "agent-b222-2", re!.lease!.token, []);
+    expect(reparked!.status).toBe("review");
+    // anti-gameability intact: NEWLY-SUPPLIED stale evidence (not persisted) still rejects.
+    await expect(repo.completeWork(id, "agent-b222-2", re!.lease!.token, [ev({ requirementId: "rev", kind: "review", ref: "note", producedBy: "verifier-c8", producedAt: STALE })]))
+      .rejects.toThrow(/failed freshness/);
+  }, OP_TIMEOUT);
+
   it("complete from claimed (not started) → TransitionRejected", async () => {
     const w = await repo.createWorkItem({ type: "task", roleEligibility: [] });
     const claimed = await repo.claimWorkItem(w.id, "agent-c9");

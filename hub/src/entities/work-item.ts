@@ -99,7 +99,10 @@ export type EvidenceKind = "commit" | "pr" | "audit" | "review" | "test-run" | "
 /** Evidence-requirement descriptor (spec). The anti-gameability contract (audit-4082
  *  evidence predicate): complete_work binds supplied evidence to each requirement by
  *  `id`, kind-matches, and (unless `allowPreClaim`) requires freshness vs the lease
- *  claim. `refResolvable` additionally existence-checks an OIS-INTERNAL ref. */
+ *  claim — except evidence ALREADY persisted on the item, which is grandfathered
+ *  (bug-222: it was freshness-validated when bound under the prior lease; a reaped
+ *  review/blocked item must stay re-completable after re-claim). `refResolvable`
+ *  additionally existence-checks an OIS-INTERNAL ref. */
 export interface EvidenceRequirement {
   id: string;
   kind: EvidenceKind;

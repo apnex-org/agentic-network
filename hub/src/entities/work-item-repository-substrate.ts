@@ -196,6 +196,14 @@ function producedAtOnOrAfter(producedAt: string, claimedAt: string): boolean {
   return p >= c;
 }
 
+/** Evidence identity (requirementId|kind|ref|producedAt) — the mergeEvidence dedup key
+ *  AND the bug-222 grandfather key (evidence already persisted on the item is exempt
+ *  from freshness re-validation; it could only have been persisted by a prior
+ *  completeWork that enforced the predicate at bind time). */
+function evidenceKey(e: EvidenceItem): string {
+  return `${e.requirementId}|${e.kind}|${e.ref ?? ""}|${e.producedAt}`;
+}
+
 /** Append supplied evidence to the existing set, DEDUPED by identity
  *  (requirementId|kind|ref|producedAt) — so a network-retry can't double-append
  *  (audit-4082 #3 idempotency). */
@@ -203,7 +211,7 @@ function mergeEvidence(existing: EvidenceItem[], supplied: EvidenceItem[]): Evid
   const seen = new Set<string>();
   const out: EvidenceItem[] = [];
   for (const e of [...existing, ...supplied]) {
-    const key = `${e.requirementId}|${e.kind}|${e.ref ?? ""}|${e.producedAt}`;
+    const key = evidenceKey(e);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(e);
@@ -219,7 +227,13 @@ function mergeEvidence(existing: EvidenceItem[], supplied: EvidenceItem[]): Evid
  * (which legitimately PARKS the item in `review` awaiting the verifier).
  *
  *   #1 coverage-by-BINDING (evidence names the requirement id, not just kind)
- *   #2 kind-match  #3 freshness (producedAt >= lease.claimedAt unless allowPreClaim)
+ *   #2 kind-match  #3 freshness (producedAt >= lease.claimedAt unless the requirement
+ *      sets allowPreClaim OR the entry is ALREADY PERSISTED on the item — bug-222: a
+ *      review/blocked item reaped to ready preserves its evidence by design; on re-claim
+ *      that evidence predates the NEW lease, but it was freshness-validated when bound
+ *      under the prior lease, so re-validating it would make the reap's evidence-
+ *      preservation guarantee hollow. `priorKeys` is server-side state (w.evidence),
+ *      never caller input — a completer cannot smuggle stale evidence through it.)
  *   #5 no-double-count (structural: one entry names one requirementId)
  *   #6 empty-req floor (>=1 freeform evidence; no silent zero-evidence close)
  */
@@ -228,6 +242,7 @@ function evaluateEvidence(
   evidence: EvidenceItem[],
   lease: WorkItemLease | null,
   isVerifierGate: boolean,
+  priorKeys: ReadonlySet<string>,
 ): { nextPhase: WorkItemPhase; refsToResolve: RefToResolve[]; verifierChecks: VerifierCheck[] } {
   const claimedAt = lease?.claimedAt ?? null;
   const refsToResolve: RefToResolve[] = [];
@@ -262,10 +277,11 @@ function evaluateEvidence(
     if (kindMatched.length === 0) {
       throw new EvidencePredicateFailed(`requirement '${req.id}' evidence kind mismatch (expected ${req.kind}${isVerifierGate ? " or audit (verifier-gate verdict)" : ""}, bound entries: ${boundById.map((e) => e.kind).join(", ")})`);
     }
-    // #3 freshness
-    const fresh = kindMatched.filter((e) => req.allowPreClaim || (claimedAt != null && producedAtOnOrAfter(e.producedAt, claimedAt)));
+    // #3 freshness (already-persisted evidence is grandfathered — bug-222)
+    const fresh = kindMatched.filter((e) =>
+      req.allowPreClaim || priorKeys.has(evidenceKey(e)) || (claimedAt != null && producedAtOnOrAfter(e.producedAt, claimedAt)));
     if (fresh.length === 0) {
-      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence failed freshness (producedAt before lease.claimedAt=${claimedAt}; set allowPreClaim to permit a pre-claim artifact)`);
+      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence failed freshness (producedAt before lease.claimedAt=${claimedAt}; only the requirement author can waive this via the requirement-level allowPreClaim flag)`);
     }
     const e = fresh[0]; // the binding evidence
     // #4 refResolvable: OIS-internal → existence + RELEVANCE check (queued, audit-4103 #1);
@@ -1053,8 +1069,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // pass-evidence is the verifier's own verdict-audit, not a targetRef-related artifact. The
     // flag narrows the kind-relaxation (above) + the relate-waiver (below) to verifier-gates ONLY.
     const isVerifierGate = item.type === "verifier-gate";
-    // fail-fast the sync predicate + collect the async checks.
-    const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.lease, isVerifierGate);
+    // fail-fast the sync predicate + collect the async checks. priorKeys = the evidence
+    // ALREADY persisted on the item (bound by a prior predicate-enforced complete) —
+    // grandfathered through freshness (bug-222), never caller-suppliable.
+    const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.lease, isVerifierGate, new Set(item.evidence.map(evidenceKey)));
     // #4 + audit-4103 #1: each OIS-internal ref must RESOLVE *and* RELATE to this work-item
     // or its targetRef (existence-AND-relevance — closes the existence-theatre where any
     // org-wide entity, incl. the item's own id, satisfied existence-only).
@@ -1113,7 +1131,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       this.assertLease(w, agentId, leaseToken, "complete");
       if (!COMPLETABLE_PHASES.includes(w.status)) throw new TransitionRejected(`complete requires in_progress or review, was ${w.status}`);
       const merged = mergeEvidence(w.evidence, evidence);
-      const { nextPhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease, w.type === "verifier-gate");
+      const { nextPhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)));
       const nowISO = new Date().toISOString();
       return { ...w, status: nextPhase, evidence: merged, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
