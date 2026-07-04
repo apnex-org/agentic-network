@@ -360,7 +360,9 @@ export interface IWorkItemStore {
   /** {claimed|in_progress|blocked} → ready (holder + matching token); clears the lease. */
   releaseWork(workId: string, agentId: string, leaseToken: string): Promise<WorkItem | null>;
   /** {claimed|in_progress|blocked} → abandoned, terminal. The lease-holder (with a
-   *  matching token) OR the creator (no token — override authority) may abandon. */
+   *  matching token) OR the creator (no token — override authority) may abandon; the
+   *  creator may also abandon from `ready` (bug-219 fix (c): closes items whose
+   *  roleEligibility has no registered seat). */
   abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null>;
 
   /** {in_progress|review} → review|done. Appends + dedups the supplied evidence, then

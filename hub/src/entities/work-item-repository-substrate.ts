@@ -657,9 +657,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // read), so a cold agent may try renew and get the "already expired" reject. Acceptable + now disclosed.
     add("renew", isHolder && LEASE_HELD_PHASES.includes(status), !isHolder ? notHolder : `renew requires a held lease, was ${status}`);
     add("release", isHolder && RELEASABLE_PHASES.includes(status), !isHolder ? notHolder : `release requires an active claim, was ${status}`);
-    // abandon: the holder OR the creator (override authority), from a RELEASABLE phase.
-    add("abandon", (isHolder || isCreator) && RELEASABLE_PHASES.includes(status),
-      !(isHolder || isCreator) ? "the caller is neither the lease-holder nor the creator" : `abandon requires an active claim, was ${status}`);
+    // abandon: the holder OR the creator (override authority), from a RELEASABLE phase; the
+    // CREATOR alone also from `ready` (bug-219 fix (c) — mirrors the abandonWork guard).
+    add("abandon", (isHolder || isCreator) && (RELEASABLE_PHASES.includes(status) || (status === "ready" && isCreator)),
+      !(isHolder || isCreator) ? "the caller is neither the lease-holder nor the creator" : `abandon requires an active claim (or the creator from ready), was ${status}`);
     // complete: holder + COMPLETABLE + the completion-gate met.
     add("complete", isHolder && COMPLETABLE_PHASES.includes(status) && gateMet,
       !isHolder ? notHolder : !COMPLETABLE_PHASES.includes(status) ? `complete requires in_progress or review, was ${status}` : "completion-gate unmet — downstream completionDependsOn children are not all done");
@@ -982,7 +983,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   /**
    * Terminal abandon. The lease-holder (presenting a matching token) OR the creator
    * (override authority — no token; lets a creator reclaim a stuck item from its
-   * holder) may abandon. The reason is recorded by the policy/audit layer (sub-PR-3b).
+   * holder) may abandon. The CREATOR may additionally abandon from `ready` (bug-219
+   * fix (c): a role-gated ready item with no registered seat — e.g. director-gated —
+   * is otherwise permanently unclaimable and un-closeable; ready holds no lease, so
+   * only the creator-override identity path can reach it). The reason is recorded by
+   * the policy/audit layer (sub-PR-3b).
    */
   async abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null> {
     return this.tryCasUpdate(workId, (w) => {
@@ -991,7 +996,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!isHolderWithToken && !isCreator) {
         throw new TransitionRejected(`abandon requires the lease-holder (with matching token) or the creator, not ${agentId}`);
       }
-      if (!RELEASABLE_PHASES.includes(w.status)) throw new TransitionRejected(`abandon requires an active claim, was ${w.status}`);
+      if (!RELEASABLE_PHASES.includes(w.status) && !(w.status === "ready" && isCreator)) {
+        throw new TransitionRejected(`abandon requires an active claim (or the creator from ready), was ${w.status}`);
+      }
       const nowISO = new Date().toISOString();
       return { ...w, status: "abandoned", lease: null, blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });

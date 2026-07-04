@@ -972,6 +972,22 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
       expect(stub.calls.some((c) => c.method === "listWorkItems")).toBe(false);
     });
 
+    it("abandon_work from ready (creator-override, bug-219) emits the transition ready→abandoned", async () => {
+      const stub = makeStub({
+        getWorkItem: () => sampleItem({ status: "ready", lease: null as unknown as WorkItem["lease"] }),
+        abandonWork: () => sampleItem({ status: "abandoned", lease: null as unknown as WorkItem["lease"] }),
+      });
+      const ctx = ctxFor(stub, "architect");
+      await router.handle("abandon_work", { workId: "work-1", reason: "Director retired it" }, ctx);
+
+      const events = await storedEvents(ctx);
+      expect(events.length).toBe(1);
+      expect(events[0].notificationEvent).toBe("work-transition-notification");
+      expect(events[0].verb).toBe("abandon_work");
+      expect(events[0].from_status).toBe("ready"); // the pre-read supplied it
+      expect(events[0].to_status).toBe("abandoned");
+    });
+
     it("a failed verb emits NOTHING (transition never committed)", async () => {
       const stub = makeStub({ claimWorkItem: () => { throw new ClaimRejected("nope"); } });
       const ctx = ctxFor(stub, "engineer");
