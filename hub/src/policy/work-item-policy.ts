@@ -33,6 +33,7 @@ import type {
   WorkItem,
   WorkItemBlockedOn,
   EvidenceItem,
+  EvidenceKind,
   EvidenceRequirement,
   WorkItemReference,
   WorkItemType,
@@ -354,6 +355,13 @@ async function validateNodeIntrinsics(
   const dupId = reqIds.find((id, i) => reqIds.indexOf(id) !== i);
   if (dupId !== undefined) {
     return { errorKind: "invalid_evidence_requirements", message: `duplicate evidenceRequirement id "${dupId}" — requirement ids must be unique within a WorkItem (complete_work binds by requirementId)` };
+  }
+  // bug-220 (c): fail-closed producer-path check — a demanded kind nobody can produce is an
+  // item that can never close (the zod enum blocks unknown kinds at the tool boundary; this
+  // tripwire catches a future enum kind added without a producer path).
+  const unmintable = evidenceRequirements.find((r) => !(r.kind in EVIDENCE_PRODUCER_PATHS));
+  if (unmintable) {
+    return { errorKind: "invalid_evidence_requirements", message: `evidenceRequirement "${unmintable.id}" demands kind "${unmintable.kind}", which has no mintable producer path — every demanded evidence kind must be producible (bug-220)` };
   }
   // work-86 (idea-380): the node-contract — runbook + references as first-class spec fields.
   const references = node.references ?? [];
@@ -691,7 +699,27 @@ async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Pro
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
-const EVIDENCE_KIND = z.enum(["commit", "pr", "audit", "review", "test-run", "doc", "freeform"]);
+// Exported for the bug-220 (c) completeness test — the test iterates .options so the pin
+// is MECHANICAL (audit-9443 verifier finding #2), never a hand-mirrored list.
+export const EVIDENCE_KIND = z.enum(["commit", "pr", "audit", "review", "test-run", "doc", "freeform"]);
+
+/** bug-220 (c): every evidence kind a contract can DEMAND must have a MINTABLE producer
+ *  path — otherwise the item parks in review/incompletable forever (work-111 was the live
+ *  case: review-kind refResolvable demanded a gate no role could mint). Authoring-side
+ *  fail-closed tripwire: validateNodeIntrinsics rejects a requirement whose kind is absent
+ *  here. DOUBLY pinned (audit-9443 #2): the Record<EvidenceKind, string> type makes a new
+ *  TS-union kind without a producer entry a COMPILE error, and the policy test iterates the
+ *  exported zod enum's .options — no hand-mirrored list anywhere. Values are human-readable
+ *  producer descriptions (error text). */
+export const EVIDENCE_PRODUCER_PATHS: Readonly<Record<EvidenceKind, string>> = {
+  commit: "a git commit (external ref, format-validated)",
+  pr: "a GitHub PR (external ref, format-validated)",
+  "test-run": "a CI/test run (external ref, format-validated)",
+  doc: "a document (external ref, format-validated)",
+  freeform: "any freeform artifact",
+  audit: "create_audit_entry ([Any])",
+  review: "a verifier-authored verdict audit via create_audit_entry (bug-220 (b); create_review is DEPRECATED, audit-9429) or an architect-seeded verifier-gate WorkItem",
+};
 const evidenceItemSchema = z.object({
   requirementId: z.string().describe("The evidenceRequirements[].id this evidence binds to"),
   kind: EVIDENCE_KIND,

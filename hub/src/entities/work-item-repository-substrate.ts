@@ -173,16 +173,20 @@ const COMPLETABLE_PHASES: readonly WorkItemPhase[] = ["in_progress", "review"];
 
 /** OIS-INTERNAL evidence kinds whose ref is EXISTENCE-checked (substrate-get) when the
  *  requirement is refResolvable. audit→Audit; review→WorkItem (the verifier-gate
- *  work-item, design §3.4 linkage — there is no standalone Review entity kind; flagged
- *  to architect). External kinds (commit/pr/test-run/doc) are format-validated only. */
+ *  work-item, design §3.4 linkage — there is no standalone Review entity kind, and
+ *  create_review is DEPRECATED per audit-9429). A REVIEW-kind requirement is therefore
+ *  also satisfiable by a verifier-authored AUDIT binding (bug-220 (b) — resolved by this
+ *  map's audit row, since the map is keyed by the EVIDENCE kind, not the requirement's). */
 const OIS_INTERNAL_EVIDENCE_KINDS: Partial<Record<EvidenceKind, string>> = {
   audit: "Audit",
   review: "WorkItem",
 };
 
 /** A ref the completeWork predicate must existence-check AND relevance-check (audit-4103
- *  #1) async (outside the CAS). `evidenceKind` selects the relevance rule. */
-interface RefToResolve { requirementId: string; kind: string; id: string; evidenceKind: EvidenceKind }
+ *  #1) async (outside the CAS). `evidenceKind` selects the relevance rule; `reqKind` lets
+ *  the resolve phase apply the verifier-author anchor when an audit satisfies a REVIEW
+ *  requirement on a normal item (bug-220 (b)). */
+interface RefToResolve { requirementId: string; kind: string; id: string; evidenceKind: EvidenceKind; reqKind: EvidenceKind }
 
 /** A review-requirement binding whose producedBy must resolve to a verifier (audit-4103 #2). */
 interface VerifierCheck { requirementId: string; producedBy?: string }
@@ -267,15 +271,23 @@ function evaluateEvidence(
       throw new EvidencePredicateFailed(`requirement '${req.id}' (${req.kind}) has no bound evidence`);
     }
     // #2 kind-match. bug-204/audit-5093: a verifier-gate's pass-evidence is the verifier's
-    // durable verdict = a kind:audit ref (create_audit_entry; create_review is architect-only +
-    // task-report-bound — there is NO verifier-mintable Review entity). So on a verifier-gate
-    // ONLY, an audit binding ALSO satisfies a requirement — including an already-seeded kind:review
-    // one (back-compat for live blueprints) and the kind:audit template going forward. Guarded
-    // narrow: every NON-verifier-gate requirement stays strict exact-kind-match (anti-gameability
-    // intact everywhere else — a worker still can't audit-bind a normal commit/review requirement).
-    const kindMatched = boundById.filter((e) => e.kind === req.kind || (isVerifierGate && e.kind === "audit"));
+    // durable verdict = a kind:audit ref (create_audit_entry; create_review is DEPRECATED per
+    // audit-9429 — there is NO verifier-mintable Review entity). So on a verifier-gate, an audit
+    // binding ALSO satisfies ANY requirement — including an already-seeded kind:review one
+    // (back-compat for live blueprints). bug-220 (b) widens this ONE notch: an audit binding
+    // also satisfies a REVIEW-kind refResolvable requirement on EVERY item (otherwise such
+    // requirements are unsatisfiable by construction — no role can mint the gate WorkItem the
+    // ref path expects). refResolvable-ONLY (audit-9443 verifier finding #1): the audit
+    // author-anchor + relate guards run in the ref-resolution phase, which only refResolvable
+    // requirements reach — widening the non-refResolvable case would let a caller-supplied
+    // audit bypass those guards onto the spoofable producedBy fallback. A non-refResolvable
+    // review requirement keeps the existing review-kind/producedBy path unchanged. Still
+    // guarded narrow: commit/pr/test-run/doc requirements stay strict exact-kind-match
+    // everywhere — a worker can't audit-bind a normal code requirement.
+    const auditSatisfies = isVerifierGate || (req.kind === "review" && req.refResolvable === true);
+    const kindMatched = boundById.filter((e) => e.kind === req.kind || (auditSatisfies && e.kind === "audit"));
     if (kindMatched.length === 0) {
-      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence kind mismatch (expected ${req.kind}${isVerifierGate ? " or audit (verifier-gate verdict)" : ""}, bound entries: ${boundById.map((e) => e.kind).join(", ")})`);
+      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence kind mismatch (expected ${req.kind}${auditSatisfies ? " or audit (verifier verdict)" : ""}, bound entries: ${boundById.map((e) => e.kind).join(", ")})`);
     }
     // #3 freshness (already-persisted evidence is grandfathered — bug-222)
     const fresh = kindMatched.filter((e) =>
@@ -290,7 +302,7 @@ function evaluateEvidence(
       const internalKind = OIS_INTERNAL_EVIDENCE_KINDS[e.kind];
       if (internalKind) {
         if (!e.ref || e.ref.trim() === "") throw new EvidencePredicateFailed(`requirement '${req.id}' refResolvable evidence has no ref`);
-        refsToResolve.push({ requirementId: req.id, kind: internalKind, id: e.ref, evidenceKind: e.kind });
+        refsToResolve.push({ requirementId: req.id, kind: internalKind, id: e.ref, evidenceKind: e.kind, reqKind: req.kind });
       } else if (!e.ref || e.ref.trim() === "") {
         throw new EvidencePredicateFailed(`requirement '${req.id}' refResolvable evidence has a malformed (empty) ref`);
       }
@@ -1090,17 +1102,20 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!this.refRelatesToWork(r.evidenceKind, e, item)) {
         throw new EvidencePredicateFailed(`requirement '${r.requirementId}' evidence ref ${r.kind}/${r.id} does not RELATE to this work-item (${item.id}) or its targetRef — existence alone is insufficient`);
       }
-      // bug-204/audit-5093 net-new AUTHOR-ANCHOR: a verifier-gate verdict-audit must ALSO be
-      // VERIFIER-authored. relate (above) proves the audit is ABOUT this gate; this proves a
-      // VERIFIER issued it. Trust the Audit's Hub-stamped actor (metadata.actor, derived
-      // server-side from the registered session role, audit-policy.ts — a worker can't forge it;
+      // bug-204/audit-5093 net-new AUTHOR-ANCHOR: a verdict-audit must ALSO be VERIFIER-
+      // authored. relate (above) proves the audit is ABOUT this item; this proves a VERIFIER
+      // issued it. Trust the Audit's Hub-stamped actor (metadata.actor, derived server-side
+      // from the registered session role, audit-policy.ts — a worker can't forge it;
       // producedBy is caller-supplied/forgeable + AuditEntry carries no producedBy field). A
-      // worker self-closing a verifier-gate with its own audit (actor=engineer) is rejected here.
-      // Together: the verdict must be verifier-authored AND specifically about THIS gate.
-      if (isVerifierGate && r.evidenceKind === "audit") {
+      // worker self-closing with its own audit (actor=engineer) is rejected here. Applies on
+      // a verifier-gate (every requirement, bug-204) AND wherever an audit satisfies a
+      // REVIEW-kind requirement on a normal item (bug-220 (b) — the audit IS the verdict, so
+      // the author-anchor travels with the kind-relaxation). Together: the verdict must be
+      // verifier-authored AND specifically about THIS item.
+      if (r.evidenceKind === "audit" && (isVerifierGate || r.reqKind === "review")) {
         const auditActor = (e.metadata as { actor?: string } | undefined)?.actor;
         if (auditActor !== "verifier") {
-          throw new EvidencePredicateFailed(`requirement '${r.requirementId}' verifier-gate pass-evidence audit ${r.id} was not authored by a verifier (actor=${auditActor ?? "unknown"}) — only a verifier's own verdict can close a verifier-gate`);
+          throw new EvidencePredicateFailed(`requirement '${r.requirementId}' verdict-evidence audit ${r.id} was not authored by a verifier (actor=${auditActor ?? "unknown"}) — only a verifier-authored verdict audit can satisfy a review requirement or close a verifier-gate`);
         }
       }
       // audit-4120 #2 (non-spoofable v1): a refResolvable REVIEW gate must be VERIFIER-
