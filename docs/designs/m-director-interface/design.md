@@ -1,6 +1,6 @@
 # M-Director-Interface — Design v1.0 (council synthesis, staged for G2)
 
-**Status:** SYNTHESIS — staged for G2 (Director design ratification). Produced by the P2 full-blueprint council: 3 independent positions → divergence map (4 clash items) → rebuttals with 8 recorded movements → 1 Director tie-break (CL-2). Provenance: docs/council/m-director-interface/* + audits 9650/9745/9750.
+**Status:** v1.0 RATIFIED at G2 (2026-07-05, Director live: authority core + UX cost accepted; 12 contract tests G2-BINDING; 8-slice build plan confirmed; deferred list consciously covered). THE BUILD CONTRACT. Produced by the P2 full-blueprint council: 3 independent positions → divergence map (4 clash items) → rebuttals with 8 recorded movements → 1 Director tie-break (CL-2). Provenance: docs/council/m-director-interface/* + audits 9650/9745/9750.
 **Governing constraints:** intent-brief v1.0+SC4 (G0); p1-survey v1.0 (G1, 13 resolved directions); design-inputs register (26 rows). This design binds only v1 (fence F1: the decision-gate spine); deferred items are named, not implied.
 
 ---
