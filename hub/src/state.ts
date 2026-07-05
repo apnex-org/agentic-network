@@ -291,6 +291,14 @@ export interface Agent {
   archived: boolean;           // replaces deletion (append-only)
   sessionEpoch: number;        // monotonic, incremented on each displacement
   currentSessionId: string | null; // ephemeral, per SSE connection
+  /** bug-230 (work-137): the PERSISTED register_role bindings — rolling list of
+   *  session ids that completed a NAMED handshake as this agent (cap 8,
+   *  newest-last). Distinct from currentSessionId (the CLAIMED session, which
+   *  the displacement machinery owns): a secondary/bridge session registers
+   *  here without touching claim discipline, so a hub restart or an unclaimed
+   *  bridge no longer degrades rail-verb stamps to anonymous-<role>.
+   *  Nullable-tolerant for legacy rows. */
+  registeredSessions?: string[] | null;
   clientMetadata: AgentClientMetadata;
   advisoryTags: AgentAdvisoryTags;
   labels: AgentLabels;         // Mission-19: routing metadata, refreshed on every reconnect from handshake payload (CP3 C5 / bug-16).
