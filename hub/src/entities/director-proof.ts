@@ -63,6 +63,10 @@ export interface DirectorConfirmation {
   proposedAnswer: { chosenOptionId: string } | { customAnswer: string };
   /** sha256 of the decision's stored execution plan at mint; null when no plan. */
   executionPlanHash: string | null;
+  /** work-133 (bug-229): Hub-stamped MINTER — the presenting agent the
+   *  signal-captured event wakes. Null on pre-work-133 legacy rows (the
+   *  audit-10076 legacy-tolerance rule: never throw on absent fields). */
+  mintedBy: { agentId: string; role: string; sessionId?: string } | null;
   nonce: string;
   createdAt: string;
   expiresAt: string;
@@ -104,6 +108,8 @@ export interface IDirectorProofStore {
     proposedAnswer: { chosenOptionId: string } | { customAnswer: string };
     executionPlanHash: string | null;
     ttlMs: number;
+    /** Hub-stamped by the mint verb (work-133) — never caller-trusted. */
+    mintedBy?: { agentId: string; role: string; sessionId?: string } | null;
   }): Promise<DirectorConfirmation>;
   getConfirmation(id: string): Promise<DirectorConfirmation | null>;
   /** B10 two-id-space fix: the OPEN (unconsumed, unexpired, unanswered)

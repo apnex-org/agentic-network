@@ -162,6 +162,7 @@ export class DirectorProofRepositorySubstrate implements IDirectorProofStore {
     proposedAnswer: { chosenOptionId: string } | { customAnswer: string };
     executionPlanHash: string | null;
     ttlMs: number;
+    mintedBy?: { agentId: string; role: string; sessionId?: string } | null;
   }): Promise<DirectorConfirmation> {
     const num = await this.counter.next("directorConfirmationCounter");
     const id = `dconf-${num}`;
@@ -174,6 +175,7 @@ export class DirectorProofRepositorySubstrate implements IDirectorProofStore {
       proposedResolutionHash: input.proposedResolutionHash,
       proposedAnswer: input.proposedAnswer,
       executionPlanHash: input.executionPlanHash,
+      mintedBy: input.mintedBy ?? null,
       nonce: randomUUID(),
       createdAt: nowISO,
       expiresAt: new Date(now + input.ttlMs).toISOString(),
