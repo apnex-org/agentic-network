@@ -50,6 +50,8 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   // arrival-surface routedTo.target filter uses the bucket-prefixed dotted path
   // (status.routedTo.target — isBucketPrefixed, no renameMap entry), NOT listed here.
   Decision: ["status", "class"],
+  // mission-102 P3-B3: active-grant lookups + per-class drift audits.
+  ClassGrant: ["state", "class"],
 };
 
 /**

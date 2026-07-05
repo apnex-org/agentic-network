@@ -141,8 +141,11 @@ describe("Director proof path (real-pg: signals / confirmations / the gate)", ()
       await expect(decisions.resolveDecision(d.id, ARCHITECT, { chosenOptionId: "a" }, gate, { claimedAuthorityRef: ref }))
         .rejects.toThrow(/not a proof object/);
     }
-    await expect(decisions.resolveDecision(d.id, ARCHITECT, { chosenOptionId: "a" }, gate, { claimedAuthorityRef: "grant-1" }))
-      .rejects.toThrow(/slice B3/);
+    // B3 wired the real grant path into the gate: a DANGLING grant ref now rejects
+    // on resolution (the evaluator's own rejections are pinned in the B3 suite);
+    // this gate instance has no grants store → the fail-closed not-wired fence.
+    await expect(decisions.resolveDecision(d.id, ARCHITECT, { chosenOptionId: "a" }, gate, { claimedAuthorityRef: "grant-99999" }))
+      .rejects.toThrow(/not wired in this context|does not resolve/);
     // dangling proof-shaped refs also reject
     await expect(decisions.resolveDecision(d.id, ARCHITECT, { chosenOptionId: "a" }, gate, { claimedAuthorityRef: "dsig-99999" }))
       .rejects.toThrow(/does not resolve/);

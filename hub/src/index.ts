@@ -61,6 +61,7 @@ import { TurnRepositorySubstrate } from "./entities/turn-repository-substrate.js
 import { WorkItemRepositorySubstrate } from "./entities/work-item-repository-substrate.js";
 import { DecisionRepositorySubstrate } from "./entities/decision-repository-substrate.js";
 import { DirectorProofRepositorySubstrate } from "./entities/director-proof-repository-substrate.js";
+import { ClassGrantRepositorySubstrate } from "./entities/class-grant-repository-substrate.js";
 import { DocumentRepository } from "./storage-substrate/new-repositories.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy, computeToolSurfaceRevision } from "./policy/index.js";
@@ -84,6 +85,7 @@ import { registerBugPolicy } from "./policy/bug-policy.js";
 import { registerWorkItemPolicy } from "./policy/work-item-policy.js";
 import { registerDecisionPolicy } from "./policy/decision-policy.js";
 import { registerDirectorProofPolicy } from "./policy/director-proof-policy.js";
+import { registerClassGrantPolicy } from "./policy/class-grant-policy.js";
 import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
 import { registerTransportHeartbeatPolicy } from "./handlers/transport-heartbeat-handler.js";
 import { Watchdog } from "./policy/watchdog.js";
@@ -237,6 +239,8 @@ const workItemStore = new WorkItemRepositorySubstrate(substrate!, substrateCount
 const decisionStore = new DecisionRepositorySubstrate(substrate!, substrateCounter);
 // mission-102 P3-B4: Director proof-path store (DirectorSignal + DirectorConfirmation).
 const directorProofStore = new DirectorProofRepositorySubstrate(substrate!, substrateCounter);
+// mission-102 P3-B3: ClassGrant store (typed-constraint delegation + evaluator).
+const classGrantStore = new ClassGrantRepositorySubstrate(substrate!, substrateCounter);
 console.log("[Hub] substrate-mode repositories instantiated (13 substrate-versions + Document store)");
 
 // ── Aggregate Store Object ────────────────────────────────────────────
@@ -257,6 +261,7 @@ const allStores: AllStores = {
   workItem: workItemStore,
   decision: decisionStore,
   directorProof: directorProofStore,
+  classGrant: classGrantStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────
@@ -290,6 +295,8 @@ registerWorkItemPolicy(policyRouter);
 registerDecisionPolicy(policyRouter);
 // mission-102 P3-B4: the Director proof-path verbs (signal ingress + confirmation + proxy resolve).
 registerDirectorProofPolicy(policyRouter);
+// mission-102 P3-B3: the ClassGrant verb surface (mint/get/list/revoke).
+registerClassGrantPolicy(policyRouter);
 registerPendingActionPolicy(policyRouter);
 // mission-75 v1.0 §3.3 — adapter-internal periodic transport-liveness
 // signal; tier="adapter-internal" excludes it from shim's LLM tool catalogue.

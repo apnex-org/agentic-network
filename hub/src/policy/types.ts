@@ -62,6 +62,11 @@ export interface AllStores {
    */
   directorProof?: import("../entities/director-proof.js").IDirectorProofStore;
   /**
+   * Mission-102 P3-B3 — the ClassGrant store (typed-constraint delegation;
+   * mint/revoke/supersede + the Hub-side evaluator). Optional in test rigs.
+   */
+  classGrant?: import("../entities/class-grant.js").IClassGrantStore;
+  /**
    * Mission-57 W2: PulseSweeper instance (optional; not all test rigs
    * wire it). When present, `message-policy.ts:ackMessage` invokes
    * `onPulseAcked` post-status-flip when payload.pulseKind === "status_check"
