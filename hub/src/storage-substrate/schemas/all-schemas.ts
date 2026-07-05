@@ -724,6 +724,32 @@ const Decision: SchemaDef = {
   },
 };
 
+// ─── mission-102 P3-B4: the Director proof-path kinds ───────────────────────
+// DirectorSignal: immutable Hub-stamped capture of Director intent at a registered
+// ingress (design §1.3; the bug-224 fix's provenance object). Get-by-id only — no
+// filtered queries, no renameMap, no indexes beyond PK.
+const DirectorSignal: SchemaDef = {
+  kind: "DirectorSignal",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+  ],
+  indexes: [],
+  watchable: false,
+};
+
+// DirectorConfirmation: Hub-minted prompt-render token, hash-bound, consumed
+// exactly once under CAS (design §1.3). Get-by-id only (the resolve carries the id).
+const DirectorConfirmation: SchemaDef = {
+  kind: "DirectorConfirmation",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+  ],
+  indexes: [],
+  watchable: false,
+};
+
 // ─── Export all 23 SchemaDef entries ───────────────────────────────────────
 
 /**
@@ -778,4 +804,8 @@ export const ALL_SCHEMAS: SchemaDef[] = [
 
   // 1 NEW mission-102 P3-B1 (the Decision authority-resolution spine)
   Decision,
+
+  // 2 NEW mission-102 P3-B4 (the Director proof-path objects)
+  DirectorSignal,
+  DirectorConfirmation,
 ];

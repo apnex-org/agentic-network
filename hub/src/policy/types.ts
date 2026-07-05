@@ -57,6 +57,11 @@ export interface AllStores {
    */
   decision?: import("../entities/decision.js").IDecisionStore;
   /**
+   * Mission-102 P3-B4 — the Director proof-path store (DirectorSignal ingress +
+   * DirectorConfirmation mint/consume). Optional in test rigs.
+   */
+  directorProof?: import("../entities/director-proof.js").IDirectorProofStore;
+  /**
    * Mission-57 W2: PulseSweeper instance (optional; not all test rigs
    * wire it). When present, `message-policy.ts:ackMessage` invokes
    * `onPulseAcked` post-status-flip when payload.pulseKind === "status_check"
