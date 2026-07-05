@@ -1,6 +1,6 @@
 # Tele Glossary — lookup table
 
-**Status:** v1.1 (work-76 S0-TELE 2026-07-04; MINOR bump per Update protocol — tele-13 row added + umbrella census-refresh tele-0→tele-14. Prior: v1.0, mission-67 close 2026-04-30, first hardened version per Design v1.3 §6.2)
+**Status:** v1.2 (tele-15 Compounding Learning added, Director-ratified 2026-07-05; MINOR bump per Update protocol. NOTE: the FIRST-CLASS record of this principle is mission-kit axiom A14 (apnex/mission-kit axioms/A14-compounding-learning.md, commit 80e7294) per Director direction — axioms are the forward constitutional home; tele-15 is its current agentic-network binding. Prior: v1.1 work-76 2026-07-04; v1.0 mission-67 2026-04-30)
 **Tier:** 1 (per `mission-lifecycle.md` v1.2 + Design v1.3 §1.2 tier-by-location rule)
 **Scope:** load-bearing decoder for inline tele-N references across the methodology + Tier 0 directive surfaces. Cold-session pickup MUST be able to decode `tele-12 (attention-ordering)` style references without out-of-band knowledge.
 **Bound at runtime via:** `CLAUDE.md` §4 Cold-pickup primary surfaces + §5 Companion policies index
@@ -30,6 +30,7 @@ Decode tele-N short-references in methodology docs + CLAUDE.md Tier 0 directives
 | **tele-11** | Cognitive Minimalism | LLM tokens are scarce; deterministic work mechanized; LLM invoked only for cognitive work (judgment / creativity / ambiguity); maximum logic-per-token |
 | **tele-12** | Precision Context Engineering | Every LLM invocation's context precision-engineered for maximum information density per token; bounded accumulation + structured-over-prose + attention-ordering discipline |
 | **tele-13** | Director Intent Amplification | The single human Director is the one irreplaceable non-scalable resource; system continuously evolves intent-elicitation/resolution interfaces to maximize Director-intent resolved per unit of Director attention; revealed-preference leans advisory tie-break only; final authority always the Director's |
+| **tele-15** | Compounding Learning | Engineer the path of greatest learning, not the shortest path; learning is invested compounding capital — friction mined to root cause never recurs, insights captured-on-discovery never depreciate; tangent discipline = adjacency + capture; toil-attention → zero, learning-attention protected. First-class record: mission-kit axiom A14 |
 
 ## Common inline-reference shorthand decoders
 
@@ -55,7 +56,7 @@ The methodology docs use parenthetical short-names alongside tele-N references. 
 - **Hub canonical source:** `list_tele` MCP tool (query for current ratified Tele set; this glossary is derived)
 - **Methodology consumers:** `mission-lifecycle.md` v1.2 + `idea-survey.md` v1.0 + `strategic-review.md` + `multi-agent-pr-workflow.md` + `mission-preflight.md` + `entity-mechanics.md` + `engineer-runtime.md` + `architect-runtime.md` + `CLAUDE.md` (Tier 0)
 - **Design source:** `docs/designs/m-claude-md-hardening-design.md` v1.3 §6.2 (tele-glossary IN-SCOPE upgrade rationale + load-bearing-decoder semantics)
-- **Tele entity creators:** Director (tele-0 through tele-10 ratified 2026-04-21 via idea-149); architect-proposed via Director-direction (tele-11 + tele-12 ratified 2026-04-22; tele-13 Director-ratified 2026-06-20); tele-14 = architect-authored census-refresh successor of tele-0 (work-76 S0-TELE 2026-07-04 — mandate unchanged, "#1–#10" → tele-1..tele-13; tele-0 preserved as `superseded` for lineage)
+- **Tele entity creators:** Director (tele-0 through tele-10 ratified 2026-04-21 via idea-149); architect-proposed via Director-direction (tele-11 + tele-12 ratified 2026-04-22; tele-13 Director-ratified 2026-06-20); tele-14 = architect-authored census-refresh successor of tele-0 (work-76 S0-TELE 2026-07-04 — mandate unchanged, "#1–#10" → tele-1..tele-13; tele-0 preserved as `superseded` for lineage); tele-15 Director-ratified 2026-07-05 (Director-articulated principle, architect-drafted; first-class record = mission-kit axiom A14, per the Director's axioms-as-forward-home direction)
 
 ## Update protocol
 
