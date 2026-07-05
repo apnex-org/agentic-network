@@ -263,6 +263,24 @@ export interface IWorkItemStore {
     createdBy?: EntityProvenance;
   }): Promise<WorkItem>;
 
+  /** work-136 (idea-419, ratified contract v1.0 / decision-11): mutate a
+   *  WorkItem per the field-mutability table. Caller-side validation
+   *  (dangling/cycle/reference checks) happens in the policy layer; THIS
+   *  method owns authority (author|architect, Hub-derived actor), phase
+   *  rules, empty-mutation + terminal rejection, and the single-shot CAS
+   *  (stale write → reject with the current version; caller re-reads).
+   *  Returns {before, after} for the mutation audit. */
+  updateWorkItem(
+    workId: string,
+    actor: { agentId: string; role: string },
+    mutation: {
+      set?: { priority?: WorkItemPriority; targetRef?: { kind: string; id: string } | null; runbook?: string; payload?: unknown; roleEligibility?: string[] };
+      appendDependsOn?: string[];
+      appendCompletionDependsOn?: string[];
+      appendReferences?: WorkItemReference[];
+    },
+  ): Promise<{ before: WorkItem; after: WorkItem }>;
+
   /** work-87 (seed_blueprint): create ONE blueprint node at a DETERMINISTIC id (the run-key
    *  derivation `work-bp-{blueprintRunId}-{localId}`) via createOnly — the idempotency
    *  primitive. Returns `{item, created}`: created:true when this invocation minted it;

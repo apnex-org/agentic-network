@@ -422,6 +422,86 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return cloneWorkItem(w);
   }
 
+
+  /** work-136 (idea-419 ratified contract v1.0 / decision-11): the WorkItem
+   *  mutation verb's authority + phase + CAS core. The policy layer validates
+   *  graph edges (dangling/cycle) and references BEFORE calling; this method
+   *  is the last word on WHO may mutate WHAT WHEN:
+   *    - author (createdBy.agentId) or architect role, Hub-derived actor;
+   *    - terminal items reject everything;
+   *    - runbook/payload/references/roleEligibility mutate PRE-CLAIM only
+   *      (status === "ready": the claimant's contract freezes at claim; a
+   *      reaped item back in ready has no current claimant, so the next
+   *      claimant claims the CURRENT definition);
+   *    - dependsOn appends only while ready (re-gating is the intended
+   *      effect); completionDependsOn appends until done (arc accretion);
+   *    - empty mutations reject (a no-op call is a caller bug, not a write);
+   *    - SINGLE-SHOT CAS: a stale write rejects with the current version —
+   *      the caller re-reads and re-decides (the contract's concurrency rule;
+   *      deliberately NOT a retry loop, because the validation the policy ran
+   *      was against the row the caller saw). */
+  async updateWorkItem(
+    workId: string,
+    actor: { agentId: string; role: string },
+    mutation: {
+      set?: { priority?: WorkItemPriority; targetRef?: { kind: string; id: string } | null; runbook?: string; payload?: unknown; roleEligibility?: string[] };
+      appendDependsOn?: string[];
+      appendCompletionDependsOn?: string[];
+      appendReferences?: WorkItemReference[];
+    },
+  ): Promise<{ before: WorkItem; after: WorkItem }> {
+    const setKeys = Object.keys(mutation.set ?? {});
+    const hasAppends = (mutation.appendDependsOn?.length ?? 0) + (mutation.appendCompletionDependsOn?.length ?? 0) + (mutation.appendReferences?.length ?? 0) > 0;
+    if (setKeys.length === 0 && !hasAppends) {
+      throw new TransitionRejected("update rejected: empty mutation (no set fields, no appends) — a no-op update is a caller bug");
+    }
+    const existing = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
+    if (!existing) throw new TransitionRejected(`update rejected: WorkItem ${workId} does not resolve`);
+    const before = cloneWorkItem(existing.entity);
+    // Authority: author or architect (the ratified model — no lease-holder writes in v1).
+    if (before.createdBy?.agentId !== actor.agentId && actor.role !== "architect") {
+      throw new TransitionRejected(`update rejected: ${actor.role}/${actor.agentId} is neither the item's author (${before.createdBy?.agentId}) nor an architect — the ratified authority model is author+architect`);
+    }
+    if (before.status === "done" || before.status === "abandoned") {
+      throw new TransitionRejected(`update rejected: ${workId} is terminal (${before.status}) — terminal items reject all mutation`);
+    }
+    const preClaim = before.status === "ready";
+    const next: WorkItem = { ...before };
+    const set = mutation.set ?? {};
+    if (set.priority !== undefined) next.priority = set.priority;
+    if (set.targetRef !== undefined) next.targetRef = set.targetRef;
+    if (set.runbook !== undefined) {
+      if (!preClaim) throw new TransitionRejected(`update rejected: runbook is pre-claim-only (status=${before.status}) — the claimant's contract froze at claim`);
+      next.runbook = set.runbook;
+    }
+    if (set.payload !== undefined) {
+      if (!preClaim) throw new TransitionRejected(`update rejected: payload is pre-claim-only (status=${before.status})`);
+      next.payload = set.payload as WorkItem["payload"];
+    }
+    if (set.roleEligibility !== undefined) {
+      if (!preClaim) throw new TransitionRejected(`update rejected: roleEligibility is pre-claim-only (status=${before.status})`);
+      next.roleEligibility = set.roleEligibility;
+    }
+    if (mutation.appendDependsOn?.length) {
+      if (!preClaim) throw new TransitionRejected(`update rejected: dependsOn appends only while ready (status=${before.status}) — re-gating a claimed item would yank a claimant's floor`);
+      next.dependsOn = [...new Set([...before.dependsOn, ...mutation.appendDependsOn])];
+    }
+    if (mutation.appendCompletionDependsOn?.length) {
+      next.completionDependsOn = [...new Set([...before.completionDependsOn, ...mutation.appendCompletionDependsOn])];
+    }
+    if (mutation.appendReferences?.length) {
+      if (!preClaim) throw new TransitionRejected(`update rejected: references append pre-claim only (status=${before.status})`);
+      next.references = [...(before.references ?? []), ...mutation.appendReferences];
+    }
+    next.updatedAt = new Date().toISOString();
+    const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
+    if (!result.ok) {
+      throw new TransitionRejected(`update rejected: stale write on ${workId} (the row changed under you) — re-read and re-decide`);
+    }
+    console.log(`[WorkItemRepositorySubstrate] update_work ${workId} by ${actor.role}/${actor.agentId}: set=[${setKeys.join(",")}] +deps=${mutation.appendDependsOn?.length ?? 0} +cdeps=${mutation.appendCompletionDependsOn?.length ?? 0} +refs=${mutation.appendReferences?.length ?? 0}`);
+    return { before, after: cloneWorkItem(next) };
+  }
+
   async createBlueprintNode(input: {
     id: string;
     blueprintRunId: string;
