@@ -162,6 +162,12 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
     // the decision PARKS in resolved with the binding visible to aging (never
     // silent). Re-validation inside executePlan's wrappers keeps effects tight.
     let finalDecision = resolved;
+    // bug-227 (B): a PLAN-LESS resolution is vacuously executed — nothing is
+    // pending, so it must not park in `resolved` forever (decision-4 was the
+    // live specimen).
+    if ((resolved.executionPlan ?? []).length === 0 && decisions.markExecuted) {
+      finalDecision = (await decisions.markExecuted(resolved.id, executor)) ?? resolved;
+    }
     if ((resolved.executionPlan ?? []).length > 0 && decisions.recordExecutorBinding && decisions.markExecuted) {
       const outcome = await executePlan(resolved, targets);
       const bound = await decisions.recordExecutorBinding(resolved.id, {

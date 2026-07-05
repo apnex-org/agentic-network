@@ -94,6 +94,12 @@ async function emitDecisionTransition(
 async function raiseDecision(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.decision;
   if (!store) return err("not_wired", "Decision store is not available");
+  // bug-227 (A): the plan is declared at ROUTE, never at raise. Reject LOUDLY at
+  // the handler (transport-independent — schema layers may strip unknown keys
+  // silently, which cost the grant-1 live test a full cycle).
+  if (args.executionPlan !== undefined) {
+    return err("invalid_arguments", "executionPlan is declared at ROUTE (route_decision), not at raise — remove it here and pass it to route_decision with the self-disposal citation (bug-227)");
+  }
   const actor = await stampActor(ctx);
   const contextRefs = (args.contextRefs as DecisionContextRef[] | undefined) ?? [];
   // Fail-closed: a REQUIRED entity-storage context ref must resolve at raise (the L3
@@ -342,7 +348,7 @@ export function registerDecisionPolicy(router: PolicyRouter): void {
 
   router.register(
     "dispose_decision",
-    "[Architect] Dispose a raised/curated Decision (→disposed, terminal) with a REQUIRED reason. Every disposal is auditable and appears in the Director's since-you-left digest (S1.4) — nothing dropped silently (SC2).",
+    "[Architect] Dispose a raised/curated/ROUTED Decision (→disposed, terminal) with a REQUIRED reason. routed-disposal exists for MISROUTES (bug-227: immutable-destination over un-route — the misroute stays on the record) and is Director-visible in the digest like every disposal. Nothing dropped silently (SC2).",
     { decisionId: z.string(), reason: z.string().min(1) },
     disposeDecision,
   );

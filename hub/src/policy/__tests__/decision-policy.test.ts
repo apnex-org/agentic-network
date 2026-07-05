@@ -86,6 +86,14 @@ describe("decision-policy (P3-B1)", () => {
     expect(stamped.sessionId).toBe(ctx.sessionId);
   });
 
+  it("bug-227 (A): raise_decision REJECTS an executionPlan argument loudly (never silently strips — the plan belongs at route)", async () => {
+    const stub = makeStub({ raiseDecision: () => sampleDecision() });
+    const r = await router.handle("raise_decision", { title: "t", context: "c", executionPlan: [{ action: "unblock", targetRef: "work-1" }] }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(body(r))).toMatch(/route_decision/);
+    expect(stub.calls.some((c) => c.method === "raiseDecision")).toBe(false);
+  });
+
   it("resolve_decision: NO authorityMode parameter on the schema; fail-closed gate rejects (proof machinery = B3/B4)", async () => {
     // schema-level: a caller supplying authorityMode is a validation error (strict object).
     const stub = makeStub({
