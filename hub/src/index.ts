@@ -63,6 +63,7 @@ import { DecisionRepositorySubstrate } from "./entities/decision-repository-subs
 import { DirectorProofRepositorySubstrate } from "./entities/director-proof-repository-substrate.js";
 import { ClassGrantRepositorySubstrate } from "./entities/class-grant-repository-substrate.js";
 import { ArrivalSurfaceRepositorySubstrate } from "./entities/arrival-surface-repository-substrate.js";
+import { CurationRepositorySubstrate } from "./entities/curation-repository-substrate.js";
 import { DocumentRepository } from "./storage-substrate/new-repositories.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy, computeToolSurfaceRevision } from "./policy/index.js";
@@ -88,6 +89,8 @@ import { registerDecisionPolicy } from "./policy/decision-policy.js";
 import { registerDirectorProofPolicy } from "./policy/director-proof-policy.js";
 import { registerClassGrantPolicy } from "./policy/class-grant-policy.js";
 import { registerArrivalSurfacePolicy } from "./policy/arrival-surface-policy.js";
+import { registerCurationPolicy } from "./policy/curation-policy.js";
+import { runCurationSloSweep } from "./policy/curation-policy.js";
 import { runDecisionAgingSweep } from "./policy/arrival-surface-policy.js";
 import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
 import { registerTransportHeartbeatPolicy } from "./handlers/transport-heartbeat-handler.js";
@@ -239,7 +242,10 @@ const documentStore = new DocumentRepository(substrate!);
 // C1-R2 (mission-94): WorkItem work-queue store (claim/lease/FSM verbs + complete_work).
 const workItemStore = new WorkItemRepositorySubstrate(substrate!, substrateCounter);
 // mission-102 P3-B1: Decision authority-resolution store (raise/curate/route/resolve/exits).
-const decisionStore = new DecisionRepositorySubstrate(substrate!, substrateCounter);
+// mission-102 P3-B2: curation trail store — constructed FIRST so the decision
+// repo can leave raw captures + records at the repo layer (un-bypassable).
+const curationStore = new CurationRepositorySubstrate(substrate!, substrateCounter);
+const decisionStore = new DecisionRepositorySubstrate(substrate!, substrateCounter, curationStore);
 // mission-102 P3-B4: Director proof-path store (DirectorSignal + DirectorConfirmation).
 const directorProofStore = new DirectorProofRepositorySubstrate(substrate!, substrateCounter);
 // mission-102 P3-B3: ClassGrant store (typed-constraint delegation + evaluator).
@@ -268,6 +274,7 @@ const allStores: AllStores = {
   directorProof: directorProofStore,
   classGrant: classGrantStore,
   arrivalSurface: arrivalSurfaceStore,
+  curation: curationStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────
@@ -305,6 +312,8 @@ registerDirectorProofPolicy(policyRouter);
 registerClassGrantPolicy(policyRouter);
 // mission-102 P3-B6: the Director arrival surface (render/ack/presence).
 registerArrivalSurfacePolicy(policyRouter);
+// mission-102 P3-B2: the anti-laundering curation queries.
+registerCurationPolicy(policyRouter);
 registerPendingActionPolicy(policyRouter);
 // mission-75 v1.0 §3.3 — adapter-internal periodic transport-liveness
 // signal; tier="adapter-internal" excludes it from shim's LLM tool catalogue.
@@ -1024,6 +1033,20 @@ startupSequence().then(async () => {
   // NEVER transitions a Decision (the B1 no-timer invariant). Hourly default.
   const DECISION_AGING_SWEEP_INTERVAL_MS = Number(process.env.OIS_DECISION_AGING_SWEEP_INTERVAL_MS ?? 3_600_000);
   setInterval(() => {
+    const sweepCtx = {
+      stores: allStores,
+      metrics: createMetricsCounter(),
+      emit: async () => {},
+      dispatch: hub.dispatchEvent.bind(hub),
+      sessionId: "decision-aging-sweeper",
+      clientIp: "127.0.0.1",
+      role: "system",
+      internalEvents: [],
+    } as unknown as import("./policy/types.js").IPolicyContext;
+    // B2: the 24h curation-SLO breach pass shares the interval (one sweep, §4).
+    void runCurationSloSweep(sweepCtx).catch((e) =>
+      console.error(`[curation-slo-sweep] tick failed (non-fatal): ${e instanceof Error ? e.message : e}`),
+    );
     void runDecisionAgingSweep({
       stores: allStores,
       metrics: createMetricsCounter(),

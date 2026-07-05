@@ -161,7 +161,7 @@ export interface IDecisionStore {
   getDecision(id: string): Promise<Decision | null>;
   listDecisions(filter?: { status?: DecisionPhase; class?: string; routedTarget?: string }): Promise<{ items: Decision[]; truncated: boolean }>;
   /** raised → curated (architect). Stamps curatedBy + optional record ref (B2). */
-  curateDecision(id: string, curator: DecisionActor, opts?: { curationRecordRef?: string; class?: string }): Promise<Decision | null>;
+  curateDecision(id: string, curator: DecisionActor, opts?: { curationRecordRef?: string; class?: string; basis?: string }): Promise<Decision | null>;
   /** curated → routed. B1: target=director only (selfDisposal rejects pending B3).
    *  Unclassified decisions fail closed to the director target. Stores the
    *  execution plan (refs validated by the policy layer). */
@@ -175,7 +175,7 @@ export interface IDecisionStore {
    *  park record; also written on success just before markExecuted). */
   recordExecutorBinding(id: string, binding: NonNullable<Decision["executorBinding"]>): Promise<Decision | null>;
   /** raised|curated → merged(intoRef). intoRef must resolve to another Decision. */
-  mergeDecision(id: string, curator: DecisionActor, intoRef: string): Promise<Decision | null>;
+  mergeDecision(id: string, curator: DecisionActor, intoRef: string, basis?: string): Promise<Decision | null>;
   /** raised|curated → disposed(reason). Auditable curation-window disposal. */
   disposeDecision(id: string, curator: DecisionActor, reason: string): Promise<Decision | null>;
   /** raised|curated → withdrawn. RAISER ONLY (identity check, the bug-219 (c) lesson:

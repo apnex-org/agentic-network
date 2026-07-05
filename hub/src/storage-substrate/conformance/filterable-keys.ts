@@ -123,6 +123,13 @@ export interface AnnotatedFilterSite {
 
 export const ANNOTATED_FILTER_SITES: AnnotatedFilterSite[] = [
   {
+    file: "curation-repository-substrate.ts",
+    kind: null,
+    reason: "unresolved-kind",
+    keys: ["id"],
+    note: "listAll(kind) pages RawDecisionRaised/CurationRecord with sort id ASC — the deterministic ORDER BY that makes LIMIT/OFFSET pages partition exactly (audit-10127 pattern). No filter keys; `id` is the sort key only.",
+  },
+  {
     file: "arrival-surface-repository-substrate.ts",
     kind: null,
     reason: "unresolved-kind",

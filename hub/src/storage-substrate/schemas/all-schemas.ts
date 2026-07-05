@@ -813,6 +813,25 @@ const DirectorPresence: SchemaDef = {
   watchable: false,
 };
 
+// ─── mission-102 P3-B2: the append-only curation-trail kinds ─────────────────
+// RawDecisionRaised (immutable raise capture) + CurationRecord (append-only
+// curation acts). Both createOnly-only — no update path exists. Get + paged
+// id-ordered scans; no renameMaps, no filtered queries.
+const RawDecisionRaised: SchemaDef = {
+  kind: "RawDecisionRaised",
+  version: 1,
+  fields: [{ name: "id", type: "string", required: true }],
+  indexes: [],
+  watchable: false,
+};
+const CurationRecord: SchemaDef = {
+  kind: "CurationRecord",
+  version: 1,
+  fields: [{ name: "id", type: "string", required: true }],
+  indexes: [],
+  watchable: false,
+};
+
 // ─── Export all 23 SchemaDef entries ───────────────────────────────────────
 
 /**
@@ -881,4 +900,8 @@ export const ALL_SCHEMAS: SchemaDef[] = [
   ArrivalSnapshot,
   NudgeReceipt,
   DirectorPresence,
+
+  // 2 NEW mission-102 P3-B2 (append-only curation trail)
+  RawDecisionRaised,
+  CurationRecord,
 ];
