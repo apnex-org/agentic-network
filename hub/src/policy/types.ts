@@ -51,6 +51,12 @@ export interface AllStores {
    */
   workItem?: import("../entities/work-item.js").IWorkItemStore;
   /**
+   * Mission-102 P3-B1 — the Decision authority-resolution store (raise/curate/
+   * route/resolve/exits). Optional in test rigs that don't exercise the
+   * decision-queue MCP tools.
+   */
+  decision?: import("../entities/decision.js").IDecisionStore;
+  /**
    * Mission-57 W2: PulseSweeper instance (optional; not all test rigs
    * wire it). When present, `message-policy.ts:ackMessage` invokes
    * `onPulseAcked` post-status-flip when payload.pulseKind === "status_check"

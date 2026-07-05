@@ -49,6 +49,7 @@ import { createThreadHistoryEntryMigrationModule } from "./kinds/ThreadHistoryEn
 import { createRepoEventBridgeCursorMigrationModule } from "./kinds/RepoEventBridgeCursor.js";
 import { createRepoEventBridgeDedupeMigrationModule } from "./kinds/RepoEventBridgeDedupe.js";
 import { createWorkItemMigrationModule } from "./kinds/WorkItem.js";
+import { createDecisionMigrationModule } from "./kinds/Decision.js";
 
 /** kind → migration-module factory. The single registry of envelope shape-authority. */
 const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModule> = {
@@ -75,6 +76,7 @@ const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModul
   RepoEventBridgeCursor: createRepoEventBridgeCursorMigrationModule,
   RepoEventBridgeDedupe: createRepoEventBridgeDedupeMigrationModule,
   WorkItem: createWorkItemMigrationModule,  // C1-R2 mission-94
+  Decision: createDecisionMigrationModule,  // mission-102 P3-B1
 };
 
 export type EnvelopeWriteEncoder = (kind: string, entity: unknown) => unknown;

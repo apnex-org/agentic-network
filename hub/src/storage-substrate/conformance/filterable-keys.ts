@@ -46,6 +46,10 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   // (status.lease.holder / status.lease.expiresAt — isBucketPrefixed, no renameMap
   // entry, sub-PR-3), NOT listed here.
   WorkItem: ["status", "roleEligibility", "completionDependsOn"],
+  // mission-102 P3-B1: Decision queue views filter by phase + ontology class. The
+  // arrival-surface routedTo.target filter uses the bucket-prefixed dotted path
+  // (status.routedTo.target — isBucketPrefixed, no renameMap entry), NOT listed here.
+  Decision: ["status", "class"],
 };
 
 /**
