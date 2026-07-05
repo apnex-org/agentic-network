@@ -62,7 +62,7 @@ The naive de-risking claim — *"both bindings call `router.handle()`, so REST i
 
 2. **RBAC reads `getRole(sessionId)`, NOT `ctx.role` (`router.ts:149`).** The RBAC decision reads `engineerRegistry.getRole(ctx.sessionId)` — a session-keyed in-memory side-table — not `ctx.role` (which today is used only for logging). So a token→role binding does **not** gate RBAC unless the seam is changed: presenting a credential that resolves a role on `ctx` would be ignored by the router.
 
-3. **`resolveCreatedBy` reads `getAgentForSession(sessionId)` → `anonymous-<role>` fallback (`caller-identity.ts:53,63`).** Provenance stamps `agentId` from `getAgentForSession(ctx.sessionId)`. For a session-less / agent-unbound REST request this returns null → `agentId` falls back to the placeholder `anonymous-<role>`. REST-created entities would be attributed to `anonymous-architect`, not `lily` — an audit/provenance gap (tele-4 no-silent-failure, tele-12 precision-context). **The three-way conflict:** getting a real `agentId` via `getAgentForSession` requires the agent record bound to the session — but binding it is exactly what triggers the **ADR-021 auto-claim displacement** (`router.ts:177`) that would corrupt a live MCP session. Full RBAC + full provenance + no session-displacement cannot all hold under the current code without a seam change.
+3. **`resolveCreatedBy` reads `getAgentForSession(sessionId)` → `anonymous-<role>` fallback (`caller-identity.ts:53,63`).** Provenance stamps `agentId` from `getAgentForSession(ctx.sessionId)`. For a session-less / agent-unbound REST request this returns null → `agentId` falls back to the placeholder `anonymous-<role>`. REST-created entities would be attributed to `anonymous-architect`, not `lily` — an audit/provenance gap (A4 no-silent-failure, A12 precision-context). **The three-way conflict:** getting a real `agentId` via `getAgentForSession` requires the agent record bound to the session — but binding it is exactly what triggers the **ADR-021 auto-claim displacement** (`router.ts:177`) that would corrupt a live MCP session. Full RBAC + full provenance + no session-displacement cannot all hold under the current code without a seam change.
 
 ### §4.2 The approved bounded fix (Director-APPROVED, 2026-06-21)
 
@@ -89,7 +89,7 @@ A surface-equality test ("both bindings project the same tools") is **tautologic
 1. **Correct role → ALLOW + audit row matching the MCP equivalent** (parity, not just success).
 2. **Wrong role → DENY.**
 3. **Unknown / no-identity → DENY** — this is the regression test that **pins the `router.ts:150` fail-open hole shut**.
-4. **Every registered tool is projected** (none silently dropped — tele-4).
+4. **Every registered tool is projected** (none silently dropped — A4).
 5. **Every REST route is backed by a registry tool** (no route un-backed by an authority verb — proves no forked route table).
 
 This gate is specified here at R0; it is implemented as the CI teeth at R2 (write-capable parity) and re-asserted at R3. (5) is partly checkable from R1 as surface-derivation; (1)–(3) require the identity seam and so land at R2.

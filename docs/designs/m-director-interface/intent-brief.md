@@ -2,7 +2,7 @@
 
 **Status:** v1.0 — RATIFIED at G0 (Intent Session 2, 2026-07-04, item-by-item walkthrough: 7 constraints + 5 fences individually confirmed; two G0 additions — §3.5a decision-class ontology into survey scope, §7.3 dual attention-efficiency metric)
 **Arc:** stint-6 sole focus, per strategic-review GATE 2 (audit-9270 + audit-9271, 2026-07-04)
-**Primary tele:** tele-13 Director Intent Amplification; secondary tele-4, tele-6, tele-10
+**Primary tele:** A13 Director Intent Amplification; secondary A4, A6, A10
 **Provenance:** Intent Session 1 with the Director (2026-07-04, audits 9280 / 9285 / 9286 / 9305), conducted per the co-design directive (audit-9272) and the idea-416 interactive-presentation rule
 **Authority note:** every decision in §2 is Director-made, live, one topic at a time; the session record is the source of truth — this brief is its assembly, not its interpretation
 
@@ -10,7 +10,7 @@
 
 ## 1. Purpose and problem
 
-The Director is the single non-scalable resource in the network (tele-13). Today, Director
+The Director is the single non-scalable resource in the network (A13). Today, Director
 decisions and directives are:
 
 - **hand-assembled** — prose lists that can drop items (the friction idea-388 names);
@@ -58,7 +58,7 @@ Director flags it may be replaced by this arc's elicitation class (design must d
 4. **Presentation-agnostic payloads** — the same structured decision/elicitation payload must
    render inline in an agent session (v1) AND in a future **non-agent standalone surface
    (CLI/TUI/GUI)** the Director uses outside any agent session (roadmap-committed, not v1).
-5. **Authority non-delegation** (tele-13) — no decision is ever auto-taken; the self-disposal
+5. **Authority non-delegation** (A13) — no decision is ever auto-taken; the self-disposal
    tier is bounded by T5 and every disposal is visible; the lean never becomes a silent veto.
    **5a (G0 refinement, Director):** the survey must produce a **decision-class ontology** —
    an explicit classification of decision types where the Director may grant standing
@@ -83,7 +83,7 @@ The Director's own formulation (T4): *"a decision is a sub-work-item that requir
 - **Resolved:** Director answer (or in-boundary architect answer) captured as structured state —
   including custom/hybrid answers, which Session 1 showed carry the highest signal.
 - **Executed:** the resolution propagates (approvals fire, scope changes recorded) without
-  re-transcription (tele-6) — retiring the ratify-by-audit workaround (bug-219 fix shapes a/b
+  re-transcription (A6) — retiring the ratify-by-audit workaround (bug-219 fix shapes a/b
   are absorbed into this design space).
 
 Known substrate lessons to absorb: bug-219 (no director seat; frozen FSM), bug-220
@@ -117,7 +117,7 @@ altitude (lightweight variant for contested implementation choices).
   incrementally — no big-bang four-class build.
 - The non-agent surface (CLI/TUI/GUI) is **not v1**; v1 must only guarantee its payloads render
   there without redesign (constraint 4).
-- No auto-decisions, no preference-model re-ranking (tele-13 faults).
+- No auto-decisions, no preference-model re-ranking (A13 faults).
 - Event subscription/routing beyond the Director-gate class stays idea-355.
 - bug-219 fix shapes (a) sanctioned proxy-execution and (b) director seat are design INPUTS
   here, not parallel work.
@@ -130,7 +130,7 @@ altitude (lightweight variant for contested implementation choices).
    is auditable end-to-end.
 3. Attention efficiency (G0-hardened): TWO trended signals — (a) measured Director-time per
    decision resolved beats the Session-1 benchmark (~2.5 min/decision including context);
-   (b) a one-tap Director session rating; both must trend favorably (tele-13 SC4).
+   (b) a one-tap Director session rating; both must trend favorably (A13 SC4).
 4. Authority integrity (refined at P1-S1, Director-confirmed): every auto-resolution traces to
    an explicit ratified grant (T5 standing rule or C5a class authority — "mandate-driven");
    zero resolutions trace to inference alone ("lean-driven" — leans are recorded as advisory

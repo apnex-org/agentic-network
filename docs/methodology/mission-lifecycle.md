@@ -148,7 +148,7 @@ Standard RACI semantics: **R**esponsible (does the work) / **A**ccountable (fina
 
 **The verifier is an advisory, cross-cutting role — not a per-phase R/A holder.** It is the independent VERIFY leg, orthogonal to INTEND (Director) / SPECIFY (architect) / BUILD (engineer): it certifies or refutes what the others claim, surfacing independent evidence to the Accountable party. Born from CDACC run-1's recall-blind finding; first holder is **Steve** (cross-lineage GPT-5.5 / OpenCode, so its blind spots decorrelate from the Anthropic-lineage producers). Full role definition + scope contract: `docs/specs/verifier-role.md`.
 
-**Two invariants:** (1) **advisory, not gating** — the verifier holds no veto; its verdicts are evidence into Director-held gates (tele-13 authority-non-delegation); (2) **refute-not-produce** — no produce surface (`create_mission` / `create_task` / `propose_mission` / `create_proposal`), so independence is structural, not merely disciplined.
+**Two invariants:** (1) **advisory, not gating** — the verifier holds no veto; its verdicts are evidence into Director-held gates (A13 authority-non-delegation); (2) **refute-not-produce** — no produce surface (`create_mission` / `create_task` / `propose_mission` / `create_proposal`), so independence is structural, not merely disciplined.
 
 **Engagement (C at verification points; never R/A):**
 

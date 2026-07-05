@@ -46,7 +46,7 @@
 | C2 | The arc's gates are decision-entities riding the rail being designed (meta-dogfood); every session names its experiment and captures the Director's verdict. | audits 9272, 9343 |
 | C3 | Seat evidence pre-accretes: greg holds the durability/evidence exhibits (A2–A4, A6); steve demonstrated verifier re-derivation discipline. Positions are commissioned AGAINST this register + the sealed survey, not from scratch. | session threads; audit-9438 |
 | C4 | Cross-agent correction loops are design-relevant culture (greg↔architect↔steve↔Director corrections, all one day). Curation must not become a single-voice filter — raw feed auditable. | session record 2026-07-04/05 |
-| C5 | Skill-mechanism dissolution (survey S1.6, idea-418): the council designs decision/blueprint machinery as the KNOWING SUCCESSOR to skill packages — node-contract assembly is a first-class substrate function (tele-12); host skill hooks become thin bridges. | Director 2026-07-05; idea-418 |
+| C5 | Skill-mechanism dissolution (survey S1.6, idea-418): the council designs decision/blueprint machinery as the KNOWING SUCCESSOR to skill packages — node-contract assembly is a first-class substrate function (A12); host skill hooks become thin bridges. | Director 2026-07-05; idea-418 |
 
 ## D. Question ledger (disposition at G1)
 

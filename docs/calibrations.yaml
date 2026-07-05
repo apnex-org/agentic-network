@@ -29,7 +29,7 @@ schema_version: 1
 #   closure_pr            integer (optional); PR # delivering closure
 #   pattern_membership    list of pattern ids (optional); references patterns[].id
 #   cross_refs            list of strings (optional); memory-doc paths or other refs
-#   tele_alignment        list of tele ids (optional); e.g. [tele-3, tele-7]
+#   axiom_alignment       list of axiom ids (optional); e.g. [A3, A7]
 calibrations:
   - id: 1
     class: methodology
@@ -47,8 +47,8 @@ calibrations:
     closure_pr: 110
     cross_refs:
       - docs/designs/m-agent-entity-revisit-design.md
-    tele_alignment:
-      - tele-3
+    axiom_alignment:
+      - A3
 
   - id: 2
     class: methodology
@@ -75,8 +75,8 @@ calibrations:
       lands under idea-121 or fresh idea.
     cross_refs:
       - docs/audits/m-agent-entity-revisit-w4-validation.md
-    tele_alignment:
-      - tele-6
+    axiom_alignment:
+      - A6
 
   - id: 4
     class: methodology
@@ -148,8 +148,8 @@ calibrations:
     closure_pr: 112
     cross_refs:
       - idea-219
-    tele_alignment:
-      - tele-3
+    axiom_alignment:
+      - A3
 
   - id: 9
     class: methodology
@@ -223,8 +223,8 @@ calibrations:
     cross_refs:
       - idea-220
       - reference_idea_219_220_post_mission_62.md
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 16
     class: substrate
@@ -242,8 +242,8 @@ calibrations:
     cross_refs:
       - idea-220
       - reference_shim_observability.md
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 17
     class: substrate
@@ -270,8 +270,8 @@ calibrations:
     cross_refs:
       - idea-219
       - feedback_pass10_rebuild_hub_container.md
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 18
     class: substrate
@@ -299,8 +299,8 @@ calibrations:
     cross_refs:
       - idea-219
       - reference_idea_219_220_post_mission_62.md
-    tele_alignment:
-      - tele-3
+    axiom_alignment:
+      - A3
 
   - id: 19
     class: substrate
@@ -332,8 +332,8 @@ calibrations:
     cross_refs:
       - idea-219
       - feedback_schema_rename_requires_state_migration.md
-    tele_alignment:
-      - tele-3
+    axiom_alignment:
+      - A3
 
   - id: 20
     class: substrate
@@ -362,8 +362,8 @@ calibrations:
     cross_refs:
       - idea-219
       - docs/audits/m-agent-entity-revisit-w4-validation.md
-    tele_alignment:
-      - tele-3
+    axiom_alignment:
+      - A3
 
   - id: 21
     class: substrate
@@ -389,8 +389,8 @@ calibrations:
     cross_refs:
       - idea-220
       - docs/audits/m-agent-entity-revisit-w4-validation.md
-    tele_alignment:
-      - tele-2
+    axiom_alignment:
+      - A2
 
   - id: 22
     class: substrate
@@ -414,8 +414,8 @@ calibrations:
     cross_refs:
       - idea-219
       - docs/audits/m-agent-entity-revisit-w4-validation.md
-    tele_alignment:
-      - tele-3
+    axiom_alignment:
+      - A3
 
   - id: 23
     class: substrate
@@ -431,8 +431,8 @@ calibrations:
     cross_refs:
       - idea-220
       - docs/audits/m-agent-entity-revisit-w4-validation.md
-    tele_alignment:
-      - tele-2
+    axiom_alignment:
+      - A2
 
   - id: 25
     class: substrate
@@ -463,8 +463,8 @@ calibrations:
       - ADR-029
       - docs/audits/m-adapter-streamline-closing-audit.md
       - docs/methodology/multi-agent-pr-workflow.md
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 26
     class: substrate
@@ -500,8 +500,8 @@ calibrations:
     cross_refs:
       - idea-220
       - docs/audits/m-wire-entity-convergence-w4-validation.md
-    tele_alignment:
-      - tele-3
+    axiom_alignment:
+      - A3
 
   - id: 29
     class: methodology
@@ -516,8 +516,8 @@ calibrations:
     closure_pr: 122
     cross_refs:
       - feedback_npm_workspace_lifecycle_quirk.md
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 30
     class: methodology
@@ -531,8 +531,8 @@ calibrations:
       recalibration + notifies Director for visibility rather than blocking on
       Director-in. Mission-64 W0 executed this for #29 (R2 fallback ~2h scope add held
       M sizing).
-    tele_alignment:
-      - tele-2
+    axiom_alignment:
+      - A2
 
   - id: 31
     class: methodology
@@ -547,8 +547,8 @@ calibrations:
       ~3× expected fix-PR count + 4. Mission-64 thread-409 ran 9/10 rounds across 3
       publish iterations.
     closure_pr: 127
-    tele_alignment:
-      - tele-2
+    axiom_alignment:
+      - A2
 
   - id: 32
     class: methodology
@@ -564,8 +564,8 @@ calibrations:
       mission.
     cross_refs:
       - reference_shim_observability.md
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 33
     class: substrate
@@ -579,8 +579,8 @@ calibrations:
       end-to-end layer. Root cause: claude-plugin/package.json `files` field omitted
       marketplace.json from npm pack inclusion list.
     closure_pr: 123
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 34
     class: methodology
@@ -596,9 +596,9 @@ calibrations:
       the retry IS the dogfood gate. Extended to 5-cycle iteration in mission-64
       (cycles 4 + 5 from #38 + #39 fix-forward chain).
     closure_pr: 127
-    tele_alignment:
-      - tele-6
-      - tele-7
+    axiom_alignment:
+      - A6
+      - A7
 
   - id: 35
     class: substrate
@@ -615,8 +615,8 @@ calibrations:
     closure_pr: 124
     cross_refs:
       - feedback_npm_workspace_lifecycle_quirk.md
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 36
     class: substrate
@@ -631,8 +631,8 @@ calibrations:
     closure_pr: 124
     cross_refs:
       - feedback_marketplace_source_format.md
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 37
     class: substrate
@@ -647,8 +647,8 @@ calibrations:
       Claude Code restart (closes install-time test surface gap that originally masked
       #38).
     closure_pr: 124
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 38
     class: substrate
@@ -669,9 +669,9 @@ calibrations:
     cross_refs:
       - feedback_npm_files_whitelist_bypasses_gitignore.md
       - feedback_substrate_introduction_publish_iteration.md
-    tele_alignment:
-      - tele-3
-      - tele-7
+    axiom_alignment:
+      - A3
+      - A7
 
   - id: 39
     class: substrate
@@ -687,8 +687,8 @@ calibrations:
       defect class regardless of caller cwd. Fallback to path.resolve preserved for
       non-git contexts (CI shallow-clones, tarball-extract testing).
     closure_pr: 130
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 40
     class: methodology
@@ -720,8 +720,8 @@ calibrations:
     cross_refs:
       - reference_idea_219_220_post_mission_62.md
       - reference_shim_observability.md
-    tele_alignment:
-      - tele-3
+    axiom_alignment:
+      - A3
 
   - id: 41
     class: substrate
@@ -763,9 +763,9 @@ calibrations:
       - methodology-bypass-becomes-substrate-defect-amplification-loop
     cross_refs:
       - feedback_methodology_bypass_amplification_loop.md
-    tele_alignment:
-      - tele-2
-      - tele-3
+    axiom_alignment:
+      - A2
+      - A3
 
   - id: 42
     class: methodology
@@ -787,8 +787,8 @@ calibrations:
       - review-loop-as-calibration-surface
     cross_refs:
       - project_session_log_timezone.md
-    tele_alignment:
-      - tele-3
+    axiom_alignment:
+      - A3
 
   - id: 43
     class: methodology
@@ -814,9 +814,9 @@ calibrations:
     cross_refs:
       - docs/methodology/idea-survey.md
       - docs/surveys/m-calibration-codification-survey.md
-    tele_alignment:
-      - tele-3
-      - tele-6
+    axiom_alignment:
+      - A3
+      - A6
 
   - id: 44
     class: methodology
@@ -843,9 +843,9 @@ calibrations:
       - review-loop-as-calibration-surface
     cross_refs:
       - feedback_review_loop_calibration_surface.md
-    tele_alignment:
-      - tele-2
-      - tele-6
+    axiom_alignment:
+      - A2
+      - A6
 
   - id: 45
     class: methodology
@@ -869,8 +869,8 @@ calibrations:
     cross_refs:
       - docs/methodology/idea-survey.md
       - docs/designs/m-calibration-codification-design.md
-    tele_alignment:
-      - tele-3
+    axiom_alignment:
+      - A3
 
   - id: 48
     class: methodology
@@ -902,9 +902,9 @@ calibrations:
       - docs/methodology/mission-lifecycle.md
       - docs/designs/m-shim-observability-phase-2-design.md
       - docs/decisions/031-shim-observability.md
-    tele_alignment:
-      - tele-3
-      - tele-7
+    axiom_alignment:
+      - A3
+      - A7
 
   - id: 49
     class: methodology
@@ -950,10 +950,10 @@ calibrations:
       - docs/designs/m-shim-observability-phase-2-design.md
       - docs/decisions/031-shim-observability.md
       - feedback_review_loop_calibration_surface.md
-    tele_alignment:
-      - tele-3
-      - tele-6
-      - tele-7
+    axiom_alignment:
+      - A3
+      - A6
+      - A7
 
   - id: 50
     class: substrate
@@ -984,9 +984,9 @@ calibrations:
       taxonomy may also need per-agent-precondition default vs mission-wide default.
     cross_refs:
       - docs/methodology/mission-lifecycle.md
-    tele_alignment:
-      - tele-7
-      - tele-2
+    axiom_alignment:
+      - A7
+      - A2
 
   - id: 51
     class: methodology
@@ -1008,8 +1008,8 @@ calibrations:
       closing.
     cross_refs:
       - docs/methodology/mission-lifecycle.md
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 52
     class: substrate
@@ -1030,9 +1030,9 @@ calibrations:
       W4 closing pulse asks for closing-audit / retrospective progress.
     cross_refs:
       - docs/methodology/mission-lifecycle.md
-    tele_alignment:
-      - tele-7
-      - tele-2
+    axiom_alignment:
+      - A7
+      - A2
 
   - id: 53
     class: substrate
@@ -1056,8 +1056,8 @@ calibrations:
       notification if engineer N pulses behind threshold.
     cross_refs:
       - docs/methodology/mission-lifecycle.md
-    tele_alignment:
-      - tele-7
+    axiom_alignment:
+      - A7
 
   - id: 54
     class: methodology
@@ -1099,9 +1099,9 @@ calibrations:
     cross_refs:
       - docs/methodology/mission-lifecycle.md
       - docs/methodology/multi-agent-pr-workflow.md
-    tele_alignment:
-      - tele-2
-      - tele-7
+    axiom_alignment:
+      - A2
+      - A7
 
   - id: 55
     class: methodology
@@ -1141,9 +1141,9 @@ calibrations:
     cross_refs:
       - docs/methodology/multi-agent-pr-workflow.md
       - docs/methodology/mission-lifecycle.md
-    tele_alignment:
-      - tele-2
-      - tele-7
+    axiom_alignment:
+      - A2
+      - A7
 
   - id: 56
     class: methodology
@@ -1179,9 +1179,9 @@ calibrations:
       individual closure paths but with consolidation discipline.
     cross_refs:
       - docs/methodology/mission-lifecycle.md
-    tele_alignment:
-      - tele-7
-      - tele-2
+    axiom_alignment:
+      - A7
+      - A2
 
   - id: 57
     class: methodology
@@ -1244,10 +1244,10 @@ calibrations:
     cross_refs:
       - docs/methodology/mission-lifecycle.md
       - feedback_architect_drives_mission_not_director.md
-    tele_alignment:
-      - tele-2
-      - tele-3
-      - tele-7
+    axiom_alignment:
+      - A2
+      - A3
+      - A7
 
   - id: 58
     class: methodology
@@ -1297,10 +1297,10 @@ calibrations:
       - docs/methodology/mission-lifecycle.md
       - docs/methodology/idea-survey.md
       - docs/audits/m-claude-md-hardening-closing-audit.md
-    tele_alignment:
-      - tele-2
-      - tele-4
-      - tele-5
+    axiom_alignment:
+      - A2
+      - A4
+      - A5
 
   - id: 59
     class: methodology
@@ -1362,10 +1362,10 @@ calibrations:
       - docs/designs/m-claude-md-hardening-design.md
       - docs/audits/m-claude-md-hardening-closing-audit.md
       - docs/reviews/m-claude-md-hardening-retrospective.md
-    tele_alignment:
-      - tele-5
-      - tele-6
-      - tele-12
+    axiom_alignment:
+      - A5
+      - A6
+      - A12
 
   - id: 60
     class: substrate
@@ -1399,10 +1399,10 @@ calibrations:
       proves recurrence empirically.
 
       Tele violations:
-      - tele-6 (Deterministic Invincibility) — drift between actual
+      - A6 (Deterministic Invincibility) — drift between actual
         registry contents + asserted contents tolerated by mechanism;
         catches drift only at next PR's CI cycle (post-merge)
-      - tele-7 (Resilient Operations) — recovery requires architect-
+      - A7 (Resilient Operations) — recovery requires architect-
         attention + small follow-on PR cycle (~5-7min friction class)
 
       Two parallel closure mechanisms:
@@ -1458,10 +1458,10 @@ calibrations:
       - docs/audits/m-survey-process-as-skill-closing-audit.md
       - docs/reviews/m-survey-process-as-skill-retrospective.md
       - hub/test/e2e/e2e-foundation.test.ts
-    tele_alignment:
-      - tele-6
-      - tele-7
-      - tele-3
+    axiom_alignment:
+      - A6
+      - A7
+      - A3
 
   - id: 47
     class: methodology
@@ -1495,9 +1495,9 @@ calibrations:
     cross_refs:
       - docs/designs/m-calibration-codification-design.md
       - feedback_review_loop_calibration_surface.md
-    tele_alignment:
-      - tele-6
-      - tele-7
+    axiom_alignment:
+      - A6
+      - A7
 
   - id: 46
     class: methodology
@@ -1530,9 +1530,9 @@ calibrations:
       - review-loop-as-calibration-surface
     cross_refs:
       - feedback_review_loop_calibration_surface.md
-    tele_alignment:
-      - tele-2
-      - tele-6
+    axiom_alignment:
+      - A2
+      - A6
 
   - id: 61
     class: methodology
@@ -1563,9 +1563,9 @@ calibrations:
       extends beyond fixed-8 budgets.
 
       Tele alignment:
-      - tele-2 (Frictionless Agentic Collaboration) — addresses round-budget
+      - A2 (Frictionless Agentic Collaboration) — addresses round-budget
         exhaustion that previously produced false-positive Director notifications
-      - tele-7 (Resilient Agentic Operations) — closure-without-budget-stress
+      - A7 (Resilient Agentic Operations) — closure-without-budget-stress
         means thread classification cleanly resolves to converged
 
       Closure path: PROCEDURAL filed (memory file) + STRUCTURAL proposed (idea-248
@@ -1581,9 +1581,9 @@ calibrations:
     cross_refs:
       - feedback_bilateral_audit_round_budget_discipline.md
       - docs/methodology/multi-agent-pr-workflow.md
-    tele_alignment:
-      - tele-2
-      - tele-7
+    axiom_alignment:
+      - A2
+      - A7
 
   - id: 62
     class: methodology
@@ -1794,9 +1794,9 @@ calibrations:
       rubric IS the §6.4 promotion in operative form.
 
       Tele alignment:
-      - tele-6 (Deterministic Invincibility) — drift between substrate-ratified
+      - A6 (Deterministic Invincibility) — drift between substrate-ratified
         as-correct vs operationally-broken-in-production tolerated by mechanism
-      - tele-7 (Resilient Agentic Operations) — recovery requires prod-audit +
+      - A7 (Resilient Agentic Operations) — recovery requires prod-audit +
         bug-filing + bilateral-fix cycle
 
       Closure mechanisms:
@@ -1955,9 +1955,9 @@ calibrations:
       - mission-of-missions idea-261 thread-507 (parent meta-mission Phase 4 Design v1.0 BILATERAL RATIFIED; substrate-validation post bug-57+58)
       - thread-510 (M-Missioncraft-V1 v1.x 8-round audit cycle; 93 findings folded R1=24 → R8=0 ratify-clean; pattern-decay tracks thread-509 6-9 round prediction range; comprehensive-sweep methodology scale-validated on substantive-reshape envelope)
       - docs/designs/m-missioncraft-v1-design.md (Design v1.1→v1.8 BILATERAL RATIFIED at SHA 226aa46 on agent-lily/m-missioncraft-v1-design branch; documents all 93 thread-510 v1.x findings + folds; v2.0+ active on agent-lily/m-missioncraft-v2-design branch)
-    tele_alignment:
-      - tele-6
-      - tele-7
+    axiom_alignment:
+      - A6
+      - A7
 
   - id: 63
     class: substrate
@@ -1993,9 +1993,9 @@ calibrations:
       behavior.
 
       Tele alignment:
-      - tele-6 (Deterministic Invincibility) — boot-time loud fail catches
+      - A6 (Deterministic Invincibility) — boot-time loud fail catches
         host-integration-never-written class at boot, not at prod-audit-discovery
-      - tele-7 (Resilient Agentic Operations) — recovery is mechanical (set env
+      - A7 (Resilient Agentic Operations) — recovery is mechanical (set env
         var or wire config); error message names recovery path
 
       Closure path:
@@ -2018,9 +2018,9 @@ calibrations:
       - adapters/claude-plugin/src/shim.ts (canonical caller)
       - adapters/opencode-plugin/src/shim.ts (canonical caller)
       - docs/methodology/engineer-runtime.md (target for discipline promotion)
-    tele_alignment:
-      - tele-6
-      - tele-7
+    axiom_alignment:
+      - A6
+      - A7
 
   - id: 64
     class: substrate
@@ -2056,10 +2056,10 @@ calibrations:
       match-on-selector silently persists with zero recipients.
 
       Tele alignment:
-      - tele-6 (Deterministic Invincibility) — silent acceptance of stale
+      - A6 (Deterministic Invincibility) — silent acceptance of stale
         references without runtime error; failure mode invisible until operator
         notices missing communication
-      - tele-7 (Resilient Agentic Operations) — recovery requires manual force-
+      - A7 (Resilient Agentic Operations) — recovery requires manual force-
         close + re-open with correct ID; no automated detection or remediation
 
       Closure mechanisms:
@@ -2096,9 +2096,9 @@ calibrations:
       - idea-252 (name-based dispatch + diagnostic improvement; SHIPPED PR #186 a1d66ef5)
       - bug-55 (sister investigation cycle that surfaced this in thread-485)
       - hub/src/entities/recipient-resolver.ts (canonical resolver post-closure)
-    tele_alignment:
-      - tele-6
-      - tele-7
+    axiom_alignment:
+      - A6
+      - A7
 
   - id: 65
     class: methodology
@@ -2185,9 +2185,9 @@ calibrations:
       broad — boundary-misalignment defects surface silently.
 
       Tele alignment:
-      - tele-6 (Deterministic Invincibility) — concept-matching gates remain
+      - A6 (Deterministic Invincibility) — concept-matching gates remain
         correct as new instances are added; instance-enumeration gates drift
-      - tele-3 (Sovereign Composition) — gate-as-concept = single source of
+      - A3 (Sovereign Composition) — gate-as-concept = single source of
         truth for the boundary; gate-as-list = drift-prone
 
       Closure path:
@@ -2221,9 +2221,9 @@ calibrations:
       - hub/src/policy/thread-policy.ts:163,182,239 (openSelector derivation site; bug-58 fix application point)
       - hub/test/mission-19/labels.test.ts (updated to assert env-only contract; codifies bug-58-correct behavior)
       - feedback_review_loop_calibration_surface.md
-    tele_alignment:
-      - tele-6
-      - tele-3
+    axiom_alignment:
+      - A6
+      - A3
 
   - id: 66
     class: methodology
@@ -2260,9 +2260,9 @@ calibrations:
       gh CLI; architect retains admin-merge authority.
 
       Tele alignment:
-      - tele-7 (Resilient Agentic Operations) — substrate-outage-recovery path
+      - A7 (Resilient Agentic Operations) — substrate-outage-recovery path
         defined; doesn't require breaking RACI under pressure
-      - tele-2 (Frictionless Agentic Collaboration) — Director-bridge enables
+      - A2 (Frictionless Agentic Collaboration) — Director-bridge enables
         critical work to continue during outage without protocol-violations
 
       Closure path:
@@ -2289,9 +2289,9 @@ calibrations:
       - feedback_pr_merge_is_not_director.md (RACI preservation)
       - feedback_thread_vs_github_approval_decoupled.md (sister discipline)
       - idea-252 §4 (structural prevention — closes the underlying class)
-    tele_alignment:
-      - tele-7
-      - tele-2
+    axiom_alignment:
+      - A7
+      - A2
 
   - id: 71
     class: methodology
@@ -2351,8 +2351,8 @@ calibrations:
       - apnex/missioncraft@8cab0aa (W3-new core; failure-mode surfaced)
       - apnex/missioncraft@32ca5a3 (W3-new extension Fix #6/#7/#8/#9)
       - docs/designs/m-missioncraft-d2-substrate-design.md §10.1
-    tele_alignment:
-      - tele-2
+    axiom_alignment:
+      - A2
 
   - id: 72
     class: methodology
@@ -2409,8 +2409,8 @@ calibrations:
       - thread-545 (W3-new + extension coord; Fix #9 SHAPE-assertion strengthening at 32ca5a3)
       - apnex/missioncraft@32ca5a3 (Fix #9 transparency-gate strengthening)
       - test/missioncraft-sdk/v1.2.0-w3-new-single-branch-e2e.test.ts (canonical SHAPE-assertion example)
-    tele_alignment:
-      - tele-2
+    axiom_alignment:
+      - A2
 
   - id: 73
     class: methodology
@@ -2480,8 +2480,8 @@ calibrations:
       - thread-546 (W4-new coord; slice (iv) engineer surface + architect-Director engagement)
       - idea-291 (post-v1.2.0 Hub-missioncraft integration mission candidate)
       - docs/designs/m-missioncraft-d2-substrate-design.md §10.1 (2026-05-13 amendment)
-    tele_alignment:
-      - tele-2
+    axiom_alignment:
+      - A2
 
   - id: 74
     class: methodology
@@ -2535,8 +2535,8 @@ calibrations:
       - apnex/missioncraft@0db1601 (W4-new slice vii ship; BLOCKER latent)
       - apnex/missioncraft@32ca5a3 (W4-new Fix #10 + #11 resolution)
       - docs/designs/m-missioncraft-d2-substrate-design.md (Design v5.0 + 2026-05-13 amendment)
-    tele_alignment:
-      - tele-2
+    axiom_alignment:
+      - A2
 
   - id: 75
     class: methodology
@@ -2591,8 +2591,8 @@ calibrations:
       - calibration #67 + #68 (synthetic test masking patterns; flip-side at test-process-cleanup boundary)
       - thread-548 (W5-new coord; greg's mid-impl finding round 6)
       - apnex/missioncraft daemon-process lifecycle (watcher-entry.js spawned by mc.start; SIGTERM'd by mc.complete/mc.abandon)
-    tele_alignment:
-      - tele-2
+    axiom_alignment:
+      - A2
 
   - id: 76
     class: methodology
@@ -2664,8 +2664,8 @@ calibrations:
       - apnex/missioncraft@166bad3 (Fix #12 ship; substrate-correct but tsc-strict-build broken)
       - apnex/missioncraft@36b6f62 (Fix #12.b ship; tsc-strict-build clean; architect dogfood verified end-to-end)
       - docs/designs/m-missioncraft-d2-substrate-design.md §10.2 + §10.3 (push-cadence + force-push design-intent)
-    tele_alignment:
-      - tele-2
+    axiom_alignment:
+      - A2
 
   - id: 77
     class: substrate
@@ -2721,9 +2721,9 @@ calibrations:
       - PR #211 (ef36b79c; closure ship-commit)
       - hub/test/integration/cluster-23-cursor-restart-safety.test.ts (dispositive evidence)
       - mission-83 W5.4 Hub-bootstrap-flip (defect introduction window; substrate-mode-production cutover)
-    tele_alignment:
-      - tele-3
-      - tele-8
+    axiom_alignment:
+      - A3
+      - A8
 
   - id: 78
     class: methodology
@@ -2821,9 +2821,9 @@ calibrations:
       - feedback_calibration_ledger_discipline (Director-bilateral filing path applied here)
       - feedback_bilateral_audit_round_budget_discipline (v1.0 ratified without round-2; ~15 min mission wall-time)
       - feedback_idea_triage_protocol_skip_criteria (5-criteria Survey-skip applied at idea-303 triage)
-    tele_alignment:
-      - tele-1
-      - tele-3
+    axiom_alignment:
+      - A1
+      - A3
 
   - id: 79
     class: methodology
@@ -2854,7 +2854,7 @@ calibrations:
       (#385 9a7d552). A named pattern recurring AFTER naming is the strongest
       argument to MECHANIZE it into a guard — ties to #88 (re-introduction-
       guard scan-scope) + idea-356 (calibration write-verb/validate +
-      auto-surface). tele-8 + tele-7.
+      auto-surface). A8 + A7.
 
       GENERALIZATION (autonomous-stint-4, idea-378 / #403): the false-green
       class extends beyond TEST-fixture shape to PRODUCTION-INPUT shape. A
@@ -2882,9 +2882,9 @@ calibrations:
       - "PR #385 (mock harness hid two real-pg-only seams; 9a7d552 — autonomous-stint-3)"
       - docs/decisions/autonomous-stint-3-2026-06-27-log.md (false-green recurrence)
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §2.2 + §3.3
-    tele_alignment:
-      - tele-7
-      - tele-9
+    axiom_alignment:
+      - A7
+      - A9
 
   - id: 80
     class: substrate
@@ -2915,7 +2915,7 @@ calibrations:
       must derive from the same renameMap. The ORDER BY updatedAt band-aid
       (bug-177-OBS1) must NOT be mistaken for class-closure — the class closes
       only when sort, like filter and decode, is renameMap-derived across every
-      kind. surfaced_at bug-177 -> bug-188 (DR-S3-012/013); tele-1 + tele-7.
+      kind. surfaced_at bug-177 -> bug-188 (DR-S3-012/013); A1 + A7.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion)
@@ -2925,9 +2925,9 @@ calibrations:
       - bug-177 (OBS1 ORDER BY updatedAt band-aid; NOT class-closure)
       - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-012/013 tri-surface extension)
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §3.2
-    tele_alignment:
-      - tele-1
-      - tele-7
+    axiom_alignment:
+      - A1
+      - A7
 
   - id: 81
     class: methodology
@@ -2944,7 +2944,7 @@ calibrations:
       every consumer, and verify each, before the claim ships. Treat
       partial-verification as PARTIAL, never as structural.
       Composes with #83 (deep-adversarial-audit as the full-surface
-      instrument) + tele-8 binary pass/fail certification.
+      instrument) + A8 binary pass/fail certification.
       Folded into retro §3.1.
     closure_pr: 324
     cross_refs:
@@ -2953,9 +2953,9 @@ calibrations:
       - bug-158 (the residual the 2nd premature claim missed)
       - "#83 (deep-adversarial-audit; the full-surface verification instrument)"
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §3.1
-    tele_alignment:
-      - tele-8
-      - tele-9
+    axiom_alignment:
+      - A8
+      - A9
 
   - id: 82
     class: methodology
@@ -3002,9 +3002,9 @@ calibrations:
       - bug-178 (~42 testcontainer raw-Pool files; the recurrence — autonomous-stint-3)
       - "PR #385 (mock harness hid two real-pg-only seams — autonomous-stint-3)"
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §2.2 + §5
-    tele_alignment:
-      - tele-9
-      - tele-5
+    axiom_alignment:
+      - A9
+      - A5
 
   - id: 83
     class: methodology
@@ -3030,9 +3030,9 @@ calibrations:
       - "#81 (premature-closure; this is the full-surface verification instrument)"
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §2.3
       - docs/methodology/cdacc-dual-altitude-conformance-council.md (the council exercise this discipline seeds)
-    tele_alignment:
-      - tele-8
-      - tele-9
+    axiom_alignment:
+      - A8
+      - A9
 
   - id: 84
     class: substrate
@@ -3050,7 +3050,7 @@ calibrations:
       mitigation — a loud detector (assert/monitor that a bare envelope row
       never appears above the membrane) — is a PROPOSED follow-on, not yet
       built. OPEN until the 0-bare anomaly-monitor lands.
-      Folded into retro §3.3 + §5 (forward observation); tele-7
+      Folded into retro §3.3 + §5 (forward observation); A7
       no-silent-failures is the governing mandate.
     closure_pr: 324
     cross_refs:
@@ -3058,9 +3058,9 @@ calibrations:
       - "#79 (false-green-at-scale; the compounding test-side mechanism)"
       - bug-138 (the defect class the silent-degrade masked)
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §3.3 + §5 (0-bare anomaly-monitor follow-on)
-    tele_alignment:
-      - tele-7
-      - tele-1
+    axiom_alignment:
+      - A7
+      - A1
 
   - id: 85
     class: methodology
@@ -3101,7 +3101,7 @@ calibrations:
       (4) AUDIT-FINDINGS — engineer code-truth before filing; ~43% of LLM-
           auditor findings were over-calls, filtered only by ground-truthing
           each against the code.
-      Same class as sync-before-irreversible-coordination. tele-1 + tele-4.
+      Same class as sync-before-irreversible-coordination. A1 + A4.
     closure_pr: 324
     cross_refs:
       - mission-90 (M-Envelope-Substrate-Completion)
@@ -3111,11 +3111,11 @@ calibrations:
       - docs/operator/envelope-substrate-cutover-runbook.md B.3 (corrected in PR #324)
       - docs/designs/m-envelope-substrate-completion-design.md §4 (corrected in PR #324)
       - docs/reviews/m-envelope-substrate-completion-retrospective.md §4 candidate 9
-    tele_alignment:
-      - tele-2
-      - tele-5
-      - tele-1
-      - tele-4
+    axiom_alignment:
+      - A2
+      - A5
+      - A1
+      - A4
 
   - id: 86
     class: methodology
@@ -3157,9 +3157,9 @@ calibrations:
       - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-004/006)
       - feedback_close_divergence_over_defer.md
       - feedback_capture_valuable_steers.md
-    tele_alignment:
-      - tele-3
-      - tele-4
+    axiom_alignment:
+      - A3
+      - A4
 
   - id: 87
     class: methodology
@@ -3175,7 +3175,7 @@ calibrations:
       wired packages' prepack hook) then false-fires on the transient
       mismatch — either FROZEN-version (src advanced, stamp did not) or
       SRC-AHEAD-OF-VERSION (a partial bump landed before the last src PR).
-      The gate is correct (tele-7 fail-loud); the churn is self-inflicted by
+      The gate is correct (A7 fail-loud); the churn is self-inflicted by
       commit ordering.
 
       Discipline: the version-bump co-commits with the FINAL src PR of a ship
@@ -3190,9 +3190,9 @@ calibrations:
       - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-011 version-gate-3x)
       - scripts/build/release-opencode-plugin.sh (step 1 ship-path version-gate)
       - "PRs #376 / #377 / #378 (the three gate-fires)"
-    tele_alignment:
-      - tele-2
-      - tele-7
+    axiom_alignment:
+      - A2
+      - A7
 
   - id: 88
     class: methodology
@@ -3206,8 +3206,8 @@ calibrations:
       SCAN-SCOPE is drawn around the files the fix happened to touch rather
       than around the full DEFECT-CLASS surface. The guard then certifies
       green while the same defect persists in unscanned siblings — a
-      "mostly-verified" state (tele-8 anti-pattern) presenting as a silent
-      false-green (tele-7).
+      "mostly-verified" state (A8 anti-pattern) presenting as a silent
+      false-green (A7).
 
       Discipline: when adding a re-introduction guard, define its scan-scope
       from the DEFECT CLASS ("every test that should use the shared fixture",
@@ -3255,10 +3255,10 @@ calibrations:
       - "bug-200 / PR #410 (fix-time adjacent-signal third face — autonomous-stint-4, verifier catch #5)"
       - "#94 (truncation-honesty-as-list-contract; the positive design-contract peer)"
       - docs/reviews/autonomous-stint-4-retrospective.md §6
-    tele_alignment:
-      - tele-8
-      - tele-7
-      - tele-4
+    axiom_alignment:
+      - A8
+      - A7
+      - A4
 
   - id: 89
     class: methodology
@@ -3288,15 +3288,15 @@ calibrations:
       - docs/decisions/autonomous-stint-3-2026-06-27-log.md (DR-S3-013 backplane merge-train + DR-S3-007)
       - "#87 (version-bump-co-commits; an instantiation of this axiom)"
       - "#88 (re-introduction-guard scan-scope; sibling ship-verify discipline)"
-    tele_alignment:
-      - tele-7
-      - tele-9
+    axiom_alignment:
+      - A7
+      - A9
 
   - id: 90
     class: substrate
-    title: "SILENT-FAILURE in fire-and-forget async seams — a tele-7 defect class where work is enqueued/emitted/polled without supervised delivery so failures go dark; per-site fixes RE-EMERGE, only shared helpers + a class-scoped audit hold"
+    title: "SILENT-FAILURE in fire-and-forget async seams — a A7 defect class where work is enqueued/emitted/polled without supervised delivery so failures go dark; per-site fixes RE-EMERGE, only shared helpers + a class-scoped audit hold"
     origin: autonomous-stint-3 (idea-362 / work-40 audit)
-    surfaced_at: autonomous-stint-3 2026-06-27 — idea-362 / work-40 tele-7 class-audit surfaced one debt class across bug-190/191/192/193/194 + bug-176; peer-verified (steve work-40 + greg work-42)
+    surfaced_at: autonomous-stint-3 2026-06-27 — idea-362 / work-40 A7 class-audit surfaced one debt class across bug-190/191/192/193/194 + bug-176; peer-verified (steve work-40 + greg work-42)
     status: open
     closure_mechanism: |
       Pattern signature: a fire-and-forget async seam advances/reports success
@@ -3321,7 +3321,7 @@ calibrations:
       (bug-190 / work-44) land and the class-audit checklist is folded into
       engineer-runtime.
     cross_refs:
-      - autonomous-stint-3 (idea-362 / work-40 tele-7 class-audit)
+      - autonomous-stint-3 (idea-362 / work-40 A7 class-audit)
       - docs/decisions/autonomous-stint-3-2026-06-27-log.md
       - bug-190 (cursor-advances-on-enqueue + consumerless-health + collapse-to-one-loop)
       - bug-191 (unsupervised poller / watchdog latch)
@@ -3329,9 +3329,9 @@ calibrations:
       - bug-193 (catch-and-swallow-infra-fault)
       - bug-176 (swallowed-error-as-flake)
       - "#88 (re-introduction-guard scan-scope — the same class-scope discipline)"
-    tele_alignment:
-      - tele-7
-      - tele-8
+    axiom_alignment:
+      - A7
+      - A8
 
   - id: 91
     class: substrate
@@ -3368,7 +3368,7 @@ calibrations:
       seat (greg) named it the sharpest engineer friction: "I ship a verb I
       then can't call from the seat that built it." Rider: extend the work-5
       AC1 smoke to assert schema-level refresh (a changed inputSchema on an
-      existing tool propagates), not only new-verb appearance. tele-5
+      existing tool propagates), not only new-verb appearance. A5
       (perceptual-parity) violation surfaced on an observability-FOCUS stint.
     cross_refs:
       - autonomous-stint-3 (bug-180 stale tool-catalog cache)
@@ -3377,10 +3377,10 @@ calibrations:
       - "PR #362 (kernel ToolSurfaceReconciler structural fix)"
       - bug-199 (schema-granularity facet — autonomous-stint-4 recurrence-after-merge)
       - docs/reviews/autonomous-stint-4-retrospective.md §6 + FR-37
-    tele_alignment:
-      - tele-4
-      - tele-13
-      - tele-5
+    axiom_alignment:
+      - A4
+      - A13
+      - A5
 
   - id: 92
     class: substrate
@@ -3412,9 +3412,9 @@ calibrations:
       - "#79 / #82 (faithful-shape family; this is the projection-boundary peer)"
       - "PR #407 (filter-optionality + compact projection)"
       - docs/reviews/autonomous-stint-4-retrospective.md §5 (verifier catch #4) + §6
-    tele_alignment:
-      - tele-4
-      - tele-5
+    axiom_alignment:
+      - A4
+      - A5
 
   - id: 93
     class: methodology
@@ -3450,9 +3450,9 @@ calibrations:
       - "bug-181 (branch 9ec45ee squashed to real fix 5c64f58)"
       - docs/audits/work-50-reconcile-cross-validation.md
       - docs/reviews/autonomous-stint-4-retrospective.md §6
-    tele_alignment:
-      - tele-1
-      - tele-4
+    axiom_alignment:
+      - A1
+      - A4
 
   - id: 94
     class: substrate
@@ -3464,7 +3464,7 @@ calibrations:
       Pattern signature: a list/aggregate handler caps its scan (page limit,
       result cap) but reports derived certainty — a total count, a "zero
       matches" sentinel, an aggregate — as if the scan were complete. The
-      report is a tele-4 silent-failure: a confident answer over an incomplete
+      report is a A4 silent-failure: a confident answer over an incomplete
       read. The honest primitive (list_ready_work) already carries `truncated`;
       the list_bugs family did not, so a 100-cap presented as the whole ledger
       and a no-match sentinel presented as authoritative.
@@ -3490,9 +3490,9 @@ calibrations:
       - "#88 (fix-time-same-handler-sweep; the fix-scope peer)"
       - list_ready_work (the honest-primitive precedent that already carries truncated)
       - docs/reviews/autonomous-stint-4-retrospective.md §6 (incl. PER-STATUS-ACCURATE-AGGREGATE corollary)
-    tele_alignment:
-      - tele-4
-      - tele-1
+    axiom_alignment:
+      - A4
+      - A1
 
   - id: 95
     class: methodology
@@ -3531,10 +3531,10 @@ calibrations:
       - bug-161
       - bug-164
       - bug-165
-    tele_alignment:
-      - tele-8
-      - tele-9
-      - tele-4
+    axiom_alignment:
+      - A8
+      - A9
+      - A4
 
   - id: 96
     class: methodology
@@ -3564,9 +3564,9 @@ calibrations:
       - "#88 (re-introduction guard scan-scope; the coverage-completeness sibling)"
       - "PRs #416 / #417 / #418 / #419 / #420 (idea-380 S2 cold-start spine)"
       - deferred-divergence-becomes-drift (pattern)
-    tele_alignment:
-      - tele-7
-      - tele-8
+    axiom_alignment:
+      - A7
+      - A8
 
   - id: 97
     class: methodology
@@ -3592,9 +3592,9 @@ calibrations:
       - "#85 (reconcile-contradictory-docs-against-ground-truth-first)"
       - bug-202
       - scripts/reconciliation/reconcile.py
-    tele_alignment:
-      - tele-3
-      - tele-2
+    axiom_alignment:
+      - A3
+      - A2
   - id: 98
     class: methodology
     title: 'VERIFIER-OFFLINE STANDING CONTRACT — when no verifier-agent is online, architect-spawned adversarial-verify
@@ -3738,10 +3738,10 @@ calibrations:
       - idea-405 (M-Real-CLI-Harness — origin arc)
       - idea-406 (thin-container channels path — a deferred investigation this discipline scoped)
       - project_adapter_pilot_executed_2026_06_30
-    tele_alignment:
-      - tele-7
-      - tele-8
-      - tele-4
+    axiom_alignment:
+      - A7
+      - A8
+      - A4
   - id: 105
     class: methodology
     title: 'Self-stall vs peer-stall vs channel-drop vs peer-busy — DO NOT CONFLATE — an agent observing
@@ -3770,9 +3770,9 @@ calibrations:
     - bug-208 (opencode in-flight HANG — self-stall instance with no self-recovery)
     - idea-408 (cross-agent peer-stall detection — mutual-silence bridge, the missing disambiguator)
     - idea-405 (M-Real-CLI-Harness — origin arc)
-    tele_alignment:
-    - tele-7
-    - tele-8
+    axiom_alignment:
+    - A7
+    - A8
   - id: 106
     class: substrate
     title: 'RECOVERY-NET SELECTOR-BLIND-SPOT — a recovery / catch-up / replay / dedup net scoped to ONE
@@ -3802,14 +3802,14 @@ calibrations:
     - '#90 (silent-failure in fire-and-forget async seams — kin class)'
     - '#94 (truncation-honesty — sibling on the bulk-query honesty axis)'
     - idea-405 (M-Real-CLI-Harness — origin arc)
-    tele_alignment:
-    - tele-7
-    - tele-4
+    axiom_alignment:
+    - A7
+    - A4
   - id: 107
     class: methodology
     title: 'FAITHFUL-CHAOS-TEST — a recovery layer''s test MUST model the failure-shape the layer EXISTS
       for, NOT a synthetic disturbance tuned to TRIGGER the layer''s detector — proving the detector fires
-      is NOT proving the recovery works. Tuning chaos intensity to beat the detector is a tele-7 false-green:
+      is NOT proving the recovery works. Tuning chaos intensity to beat the detector is a A7 false-green:
       the test proves only that ''if the detector ever fires, the recovery runs'', leaving the real-world
       failure mode (the one the layer was built to recover) un-rehearsed. Faithful chaos = inject the LITERAL
       failure-shape (a real wedge, a real lapse, a real network partition), then let the detector observe
@@ -3838,9 +3838,9 @@ calibrations:
     - '#104 (localize-before-fix / reproduce-at-the-lowest-faithful-layer — diagnosis-side sibling)'
     - '#96 (agreement-pin every load-bearing invariant — non-vacuity kin)'
     - idea-405 (M-Real-CLI-Harness — origin arc; n5 the practiced instance)
-    tele_alignment:
-    - tele-7
-    - tele-8
+    axiom_alignment:
+    - A7
+    - A8
 
 
 

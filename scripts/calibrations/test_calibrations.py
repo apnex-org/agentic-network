@@ -42,7 +42,7 @@ def with_ledger(text: str) -> Path:
 def ns(**kw) -> types.SimpleNamespace:
     base = dict(cls=None, title=None, origin=None, status=None, surfaced_at=None,
                 closure_mechanism=None, closure_pr=None, pattern_membership=None,
-                cross_ref=None, tele=None)
+                cross_ref=None, axiom=None)
     base.update(kw)
     return types.SimpleNamespace(**base)
 

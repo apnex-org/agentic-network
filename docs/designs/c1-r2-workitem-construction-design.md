@@ -89,7 +89,7 @@ SchemaDef + decode-to-flat decoder + repository-substrate + STRICT envelope + ro
 
 ## 2. The `$contains` operator — ALL 6 surfaces (C1-R2-JSONB-CONTAINMENT)
 
-`list_ready_work({role})` needs `role ∈ spec.roleEligibility[]` — array-membership the current filter (scalar-eq/$in/range) cannot express. ONE general operator, NOT WorkItem-special-cased (tele-3), spanning:
+`list_ready_work({role})` needs `role ∈ spec.roleEligibility[]` — array-membership the current filter (scalar-eq/$in/range) cannot express. ONE general operator, NOT WorkItem-special-cased (A3), spanning:
 
 1. **FilterValue type** (`storage-substrate/types.ts`): extend the union with `{ $contains: string | number | boolean }`.
 2. **SQL translator** (`postgres-substrate.ts` `translateFilterClause`): new branch → `${jsonbExtractJson(field)} @> to_jsonb($n)` where the extract is `data#>'{path}'` (JSON `#>`, NOT text `#>>`) so the JSONB array containment operator `@>` applies.
@@ -123,7 +123,7 @@ Passes iff, for **every** `evidenceRequirements[]` entry: ≥1 supplied evidence
 
 ### 3.5 Lease-expiry sweeper + poison-guard + thrash-quarantine
 - **Lease-expiry sweeper** (PulseSweeper/Watchdog pattern): lists `status ∈ {claimed,in_progress}` with `{ "status.lease.expiresAt": {$lt: nowISO} }` (bucket-prefixed dotted path, option (c); ISO-8601 lexicographic range — safe) + heartbeat-gap; CAS → ready (re-queue, no Director escalation). Inherits the R4b cal-84 escalation (a bare WorkItem row fails loud, not silent).
-- **Per-ITEM poison-guard**: increment `status.leaseExpiryCount` on each re-queue; at N → `abandoned` + LOUD flag (tele-4). Orthogonal to:
+- **Per-ITEM poison-guard**: increment `status.leaseExpiryCount` on each re-queue; at N → `abandoned` + LOUD flag (A4). Orthogonal to:
 - **Per-AGENT thrash-quarantine** (resolution #8): per-agent consecutive claim→expire-without-evidence counter on `Agent.status` (converges the D-3 Option-B telemetry gauge + the C1→C2 supervisor quarantine-read seam); at N → `Agent.status.quarantined=true` + LOUD; `claim_work` reads it as a claim-path guard.
 
 ---

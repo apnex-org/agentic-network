@@ -2,8 +2,8 @@
 
 **Status:** v0.2 DRAFT (v0.2: + invariants E/F/G/H from the verifier cross-check, idea-338) · **Author:** lily (architect) · **Date:** 2026-06-21
 **Origin:** mission-92 dedup optimality audit §6 (the wrong-success-metric finding) + R3 (idea-333). The companion calibration (R5) is the *methodology*; this doc is the *mechanism* — the contract a harness proves.
-**Relationship to construction:** this spec defines the CONTRACT (the invariants that must be proven). It does NOT prescribe the harness CONSTRUCTION — fan-out shape, fixtures, runtime-driver are the engineer's sovereign design (tele-3). The self-test (§5) measures construction quality so that sovereignty is safe.
-**Tele anchor:** tele-8/tele-9 (gated recursive integrity + chaos/deployment-validated integrity) extended across a lineage boundary; tele-4 (zero-loss / no silent failure — a silent-degrade is a tele-4 breach); tele-2 (isomorphic spec — contract must equal lived reality); tele-6 (frictionless cross-lineage collaboration).
+**Relationship to construction:** this spec defines the CONTRACT (the invariants that must be proven). It does NOT prescribe the harness CONSTRUCTION — fan-out shape, fixtures, runtime-driver are the engineer's sovereign design (A3). The self-test (§5) measures construction quality so that sovereignty is safe.
+**Tele anchor:** A8/A9 (gated recursive integrity + chaos/deployment-validated integrity) extended across a lineage boundary; A4 (zero-loss / no silent failure — a silent-degrade is a A4 breach); A2 (isomorphic spec — contract must equal lived reality); A6 (frictionless cross-lineage collaboration).
 
 ---
 

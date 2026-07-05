@@ -4,7 +4,7 @@
 
 The **live agenda for the next adversarial inter-stint council** — analogous to `autonomous-stint-operating-model.md` §8 (the live stint): this is the live *council* backlog. Items land here two ways: (a) the **standing review items** below (run every council), and (b) **candidate items** tagged `council-agenda` / `next-council` on Idea entities (query: `list_ideas` tag=`council-agenda`). The inter-stint-council ritual itself is **idea-373** (which should ratify *this* agenda + the seat-set + the cadence).
 
-> *Why this exists:* before this file, future-council items lived only as scattered idea-tags. A council needs a curated, durable home (zero-loss; tele-13). This is it.
+> *Why this exists:* before this file, future-council items lived only as scattered idea-tags. A council needs a curated, durable home (zero-loss; A13). This is it.
 
 ---
 
@@ -23,12 +23,12 @@ The **live agenda for the next adversarial inter-stint council** — analogous t
 
 ## B. Candidate items — QUERY the Hub (do NOT hand-list here)
 
-Candidate items are **Idea entities tagged `council-agenda` / `next-council`** — query them live: `list_ideas` (tag=`council-agenda`). They are **deliberately not duplicated here**: the Hub is the sovereign, queryable state-backplane (tele-1); a hand-maintained list would drift from the live tags. This file holds only the standing *process* (§A) + obligations (§C), not the candidate inventory. *(To add a council candidate: tag the Idea `council-agenda` — it surfaces in the query automatically.)*
+Candidate items are **Idea entities tagged `council-agenda` / `next-council`** — query them live: `list_ideas` (tag=`council-agenda`). They are **deliberately not duplicated here**: the Hub is the sovereign, queryable state-backplane (A1); a hand-maintained list would drift from the live tags. This file holds only the standing *process* (§A) + obligations (§C), not the candidate inventory. *(To add a council candidate: tag the Idea `council-agenda` — it surfaces in the query automatically.)*
 
 ## C. Standing obligations (carry until cleared)
 
 - **CDACC run-672bd0f** drift-map completion + the owed **PING-DIRECTOR** ("ping me when the drift-map is ready").
-- **tele-0 staleness** (still reads "1–10") → reconcile into `vision-synthesis`.
+- **A0 staleness** (still reads "1–10") → reconcile into `vision-synthesis`.
 
 ---
 *Cadence note (open, per idea-373): not every stint-boundary warrants a full council — gate on stint significance. A trivial stint may take a lightweight summary-review; a structural-inflection stint takes the full adversarial council (as stint-3→stint-4 did).*

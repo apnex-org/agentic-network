@@ -137,7 +137,7 @@ The **P2a–d skeleton is the engineer altitude's *own* construction template** 
 
 **Why the line is here:**
 1. **Decorrelation is the value.** Dictating a principal's construction makes its errors inherit the other's blind spots — the two audits correlate, and the spec×code cross (the headline finding) collapses into an echo.
-2. **tele-3 (Sovereign Composition).** Each principal is a sovereign unit owning one concern, exposing a bit-perfect interface (the verdict schema), composing without leaking internals (its fan-out). CDACC is an instance of the project's own tele-3.
+2. **A3 (Sovereign Composition).** Each principal is a sovereign unit owning one concern, exposing a bit-perfect interface (the verdict schema), composing without leaking internals (its fan-out). CDACC is an instance of the project's own A3.
 3. **The canary makes sovereignty safe.** Construction quality is *measured* (canary recall + precision) and fail-fast-checked (the ~5-agent harness pre-flight), not mandated — so leaving construction sovereign carries no quality risk the instrument can't see.
 
 **The residual the line accepts:** run-to-run variance in fan-out quality — absorbed by the pre-flight (catches a broken harness before the spend), the canary (measures the miss rate), and the mandated completeness-critic + loop-until-dry (bound under-coverage). CDACC *measures and disciplines* construction variance rather than dictating the method.
@@ -171,7 +171,7 @@ Materiality is therefore itself a **two-altitude product**: the architect's Dire
 
 **Per-tele required-harness table.** The proof-bar ceiling is a property of the *tele*, not harness brokenness — and it is set per-tele with a stated reason, **never blanket-by-domain** (ceiling-by-domain hands the highest-Director-impact teles the weakest bar — backwards). Harness ∈ `{schema-decode | chaos-injection | incident-replay | metric-observation}`. Two-altitude: the **architect specifies what evidence the tele's intent demands**; the **engineer specifies the reproducing harness + whether it's reachable in-window**. Genuine traced/metric-ceilings are reserved for time/scale/real-incident-only teles (e.g. "no poll-pressure CPU regression over weeks" = metric-observation-tier; UNAUDITED-at-ceiling if unobservable in-window, not FAIL).
 
-*Worked example — tele-7/9 (resilience) SPLIT for v1:*
+*Worked example — A7/9 (resilience) SPLIT for v1:*
 | slice | harness | window | v1 disposition |
 |---|---|---|---|
 | substrate-crash-recovery (kill `ois-postgres` mid-write → assert reconnect + LISTEN/NOTIFY re-subscribe + zero committed-write loss) | chaos-injection (testcontainers exist; thin add) | in-window | **build v1 → reproduced** |
@@ -208,7 +208,7 @@ A real **stateful component**, not a role. It pins the commitments (P3), holds t
 
 ## B.10 Cost / scale
 
-~100-160 sub-agent invocations (the two fan-outs run in PARALLEL = max, not sum) + a ~5-agent pre-flight + ~24 council dispute-turns. A **one-off mission-wave instrument**, NOT a recurring CI gate — the tele-11 (cognitive-minimalism) tension is explicit and bounded by ratified cadence (B.11).
+~100-160 sub-agent invocations (the two fan-outs run in PARALLEL = max, not sum) + a ~5-agent pre-flight + ~24 council dispute-turns. A **one-off mission-wave instrument**, NOT a recurring CI gate — the A11 (cognitive-minimalism) tension is explicit and bounded by ratified cadence (B.11).
 
 ## B.11 P0 ratification — RATIFIED 2026-06-20
 
@@ -220,11 +220,11 @@ The co-design (thread-660) resolved the core mechanics; the Director ratified th
 - **Canary:** **~8–12 plants, ~60/40 real-bug to false-positive-trap, both altitudes, opaque.** *Authorship resolved (thread-661):* principals author the trap **PATTERNS/INTENTS** (two-altitude expertise — architect: spec-interpretation-FP intents; engineer: reproduced-tier code-trap signatures + code FP-traps); a **neutral instantiation sub-agent (no audit role)** places each pattern at a site neither principal can see and wires it into a live runtime path (real-bug traps actually reproduce FAIL; FP-traps actually run-correct); the holder verify-reproduces each plant at plant-time and records the expected verdict. **Blindness lives in LOCATION, not PATTERN** — principals know trap *types*, not *where/how-many*, so recall stays real. Discipline: code-trap patterns must be **non-greppable** (pattern-knowledge can't collapse into location-knowledge).
 - **Director P10 SLA:** the single batched escalation gate = one adjudication session (gate-points-only RACI); default-verdict-on-timeout is orchestration-owned.
 
-**Blessed as-designed:** the verdict-schema + blast-radius severity rubric + per-tele harness table (verdict-neutral); the tele-7/9 v1 split (substrate-crash reproduced / deploy-self-heal + network-chaos deferred to v2); diagnostic-floors-on-run-1 / gating-from-run-2.
+**Blessed as-designed:** the verdict-schema + blast-radius severity rubric + per-tele harness table (verdict-neutral); the A7/9 v1 split (substrate-crash reproduced / deploy-self-heal + network-chaos deferred to v2); diagnostic-floors-on-run-1 / gating-from-run-2.
 
 **Holder separation-of-duties (thread-661):** the holder is the only component that knows plant-locations AND runs orchestration — acceptable iff (i) it authors no *audit* verdict (only mechanical gates + recall/precision *arithmetic*), (ii) the plant-diff is sealed from the fan-out sub-agents (they query the *snapshot*, never the holder's plant-knowledge), (iii) the scoring arithmetic is fixed/inspectable. Temporally separated: instantiation = P1 (pre-pin), scoring = P5 (post-seal). The **~5-agent pre-flight doubles as a holder self-test** — a known self-seeded probe confirms the holder scores recall correctly *before* it is trusted on the neutral canary.
 
-**Execution gate:** the full ~100–160-agent sweep is gated on (a) the pre-flight + holder self-test passing AND (b) the **Director's explicit spend-go** — the Director retains final authority on the large/expensive action (tele-11 + tele-13).
+**Execution gate:** the full ~100–160-agent sweep is gated on (a) the pre-flight + holder self-test passing AND (b) the **Director's explicit spend-go** — the Director retains final authority on the large/expensive action (A11 + A13).
 
 ---
 

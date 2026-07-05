@@ -3,7 +3,7 @@
 **Status:** v0.1 DRAFT — for Director ratification (security-sensitive, cf. #338) · **Author:** lily (architect) · **Date:** 2026-06-21
 **Origin:** mission-93 verifier cutover. The architect→verifier flip was blocked by `assertIdentity`'s anti-spoofing role-change refusal and had to be done by hand-SQL on the prod substrate (Director-authorized, one-off). 1b makes that path durable, audited, and first-class.
 **Auth model:** **architect-executable with per-occasion Director authorization** (Director-ratified 2026-06-21) — mirrors the existing prod-write / prod-deploy pattern (Director authorizes the occasion; architect executes; audited).
-**Tele anchor:** tele-8/9 (integrity — the sanctioned-vs-spoofed distinction is *preserved*, not weakened); tele-10 (declarative source of truth — role change becomes a first-class audited Hub op, not raw SQL); tele-4 (no silent change); tele-13 (Director-intent amplification — Director authorizes, architect executes, minimal Director operational load).
+**Tele anchor:** A8/9 (integrity — the sanctioned-vs-spoofed distinction is *preserved*, not weakened); A10 (declarative source of truth — role change becomes a first-class audited Hub op, not raw SQL); A4 (no silent change); A13 (Director-intent amplification — Director authorizes, architect executes, minimal Director operational load).
 
 ---
 

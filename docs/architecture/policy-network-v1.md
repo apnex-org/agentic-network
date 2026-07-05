@@ -124,7 +124,7 @@ interface Turn {
 **Schema:**
 ```typescript
 interface Tele {
-  id: string;              // "tele-1", etc.
+  id: string;              // "A1", etc.
   name: string;            // Short name (e.g., "Absolute State Fidelity")
   description: string;     // What this tele represents
   successCriteria: string; // Markdown describing the measurable target

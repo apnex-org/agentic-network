@@ -17,11 +17,11 @@
 
 | Tele | Role | Why |
 |---|---|---|
-| tele-11 Cognitive Minimalism | primary | Agent-behavior invariants encode the substrate-first boundary — tests verify LLM stays in its cognitive lane |
-| tele-12 Precision Context Engineering | primary | Per-invocation context-shape invariants need LLM-integration test surface to verify |
-| tele-2 Isomorphic Specification | primary | §6.2 8 system invariants currently NONE — spec↔runtime gap is 100% for this cluster |
-| tele-7 Resilient Agentic Operations | secondary | Agent-behavior failure modes get mechanized gates |
-| tele-9 Chaos-Validated Deployment | secondary | LLM-integration chaos paths become testable |
+| A11 Cognitive Minimalism | primary | Agent-behavior invariants encode the substrate-first boundary — tests verify LLM stays in its cognitive lane |
+| A12 Precision Context Engineering | primary | Per-invocation context-shape invariants need LLM-integration test surface to verify |
+| A2 Isomorphic Specification | primary | §6.2 8 system invariants currently NONE — spec↔runtime gap is 100% for this cluster |
+| A7 Resilient Agentic Operations | secondary | Agent-behavior failure modes get mechanized gates |
+| A9 Chaos-Validated Deployment | secondary | LLM-integration chaos paths become testable |
 
 **Tele-leverage score: 5.**
 
@@ -29,7 +29,7 @@
 
 ## Concept-grounding (Phase 3 register)
 
-- **Substrate-First Logic (§2.2)** — primary (agent-behavior invariants ARE the tele-11 operational boundary in testable form)
+- **Substrate-First Logic (§2.2)** — primary (agent-behavior invariants ARE the A11 operational boundary in testable form)
 - **Precision Context Engineering (§2.6)** — primary (per-invocation context-shape invariants)
 - **Layered Certification (§2.7)** — partial (new certification layer: agent-behavior invariants are distinct from entity or workflow invariants)
 - **LLM-Integration Test Pattern** — new sub-concept introduced by this mission; formalized via prerequisite ADR
