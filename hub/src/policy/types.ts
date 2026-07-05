@@ -66,6 +66,7 @@ export interface AllStores {
    * mint/revoke/supersede + the Hub-side evaluator). Optional in test rigs.
    */
   classGrant?: import("../entities/class-grant.js").IClassGrantStore;
+  arrivalSurface?: import("../entities/arrival-surface.js").IArrivalSurfaceStore;
   /**
    * Mission-57 W2: PulseSweeper instance (optional; not all test rigs
    * wire it). When present, `message-policy.ts:ackMessage` invokes

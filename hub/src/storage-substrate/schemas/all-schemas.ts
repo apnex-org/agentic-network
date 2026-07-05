@@ -786,6 +786,33 @@ const GrantRatification: SchemaDef = {
   watchable: false,
 };
 
+// ─── mission-102 P3-B6: the arrival-surface delivery-accounting kinds ────────
+// Presenter-side receipts, never authority state: ArrivalSnapshot (the server-
+// side proof a render happened — DELIVERED=PRESENTED), NudgeReceipt (the aging
+// path's emission/receipt chain), DirectorPresence (singleton). Get-by-id +
+// small capped lists; no renameMaps.
+const ArrivalSnapshot: SchemaDef = {
+  kind: "ArrivalSnapshot",
+  version: 1,
+  fields: [{ name: "id", type: "string", required: true }],
+  indexes: [],
+  watchable: false,
+};
+const NudgeReceipt: SchemaDef = {
+  kind: "NudgeReceipt",
+  version: 1,
+  fields: [{ name: "id", type: "string", required: true }],
+  indexes: [],
+  watchable: false,
+};
+const DirectorPresence: SchemaDef = {
+  kind: "DirectorPresence",
+  version: 1,
+  fields: [{ name: "id", type: "string", required: true }],
+  indexes: [],  // singleton row
+  watchable: false,
+};
+
 // ─── Export all 23 SchemaDef entries ───────────────────────────────────────
 
 /**
@@ -849,4 +876,9 @@ export const ALL_SCHEMAS: SchemaDef[] = [
   // ratification-consumption companion)
   ClassGrant,
   GrantRatification,
+
+  // 3 NEW mission-102 P3-B6 (arrival-surface delivery accounting)
+  ArrivalSnapshot,
+  NudgeReceipt,
+  DirectorPresence,
 ];
