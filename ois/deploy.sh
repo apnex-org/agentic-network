@@ -21,8 +21,14 @@ fi
 
 mkdir -p "$(dirname "$DEST")"
 if [[ -f "$DEST" ]]; then
-  BAK="$DEST.bak-$(date +%Y%m%d-%H%M%S)"
-  cp -p "$DEST" "$BAK"
+  # Collision-safe backup (audit-10371): a timestamp alone clobbers when two
+  # deploys land in the same second — probe for a free name with a numeric
+  # suffix, and copy no-clobber so a racing deploy can never eat a backup.
+  STAMP="$(date +%Y%m%d-%H%M%S)"
+  BAK="$DEST.bak-$STAMP"
+  n=1
+  while [[ -e "$BAK" ]]; do BAK="$DEST.bak-$STAMP.$n"; n=$((n+1)); done
+  cp -p -n "$DEST" "$BAK" && [[ -e "$BAK" ]] || { echo "error: backup failed (refusing to overwrite live copy without one)" >&2; exit 1; }
   echo "backed up live copy -> $BAK"
 fi
 install -m 0755 "$SRC" "$DEST"
