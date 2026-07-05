@@ -215,6 +215,29 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     expect((await proposals.getProposal(pBad.id))!.status).toBe("submitted"); // reverted, not half-approved
   });
 
+  it("get_director_confirmation (R:B3): renders WHAT THE HASHES BIND hub-side — decision echo, divergence flags, lifecycle state (the Director never confirms blind)", async () => {
+    const { decisionId } = await armedDecision();
+    const decision = (await decisions.getDecision(decisionId))!;
+    const mint = await router.handle("mint_director_confirmation", { decisionId, chosenOptionId: "yes" }, ctx);
+    const confId = (body(mint) as { confirmation: { id: string } }).confirmation.id;
+    const r = await router.handle("get_director_confirmation", { confirmationId: confId }, ctx);
+    expect(r.isError).toBeFalsy();
+    const view = body(r) as { binds: { decisionId: string; title: string; promptCurrent: boolean; planCurrent: boolean }; state: string };
+    expect(view.binds.decisionId).toBe(decisionId);
+    expect(view.binds.title).toBe(decision.title);        // Hub-side echo, not caller-supplied
+    expect(view.binds.promptCurrent).toBe(true);          // decision unmutated since render
+    expect(view.binds.planCurrent).toBe(true);
+    expect(view.state).toBe("awaiting-director-answer");  // unanswered token = render token only
+    // divergent-plan confirmation renders planCurrent=false (the tamper flag)
+    const stale = await proofs.mintConfirmation({
+      decisionId, promptHash: canonicalPromptHash(decision),
+      proposedResolutionHash: hashProposedResolution({ chosenOptionId: "yes" }),
+      executionPlanHash: "0".repeat(64), ttlMs: 60_000,
+    });
+    const r2 = await router.handle("get_director_confirmation", { confirmationId: stale.id }, ctx);
+    expect((body(r2) as { binds: { planCurrent: boolean } }).binds.planCurrent).toBe(false);
+  });
+
   it("failure-park: an effect failing mid-plan leaves the decision RESOLVED with executorBinding.ok=false — visible, never executed, never silent", async () => {
     // Unit-level: executePlan against a target that throws (the vanished/raced case).
     const d = await decisions.raiseDecision({ title: "park", context: "c", class: "x", options: [], raisedBy: ARCHITECT });

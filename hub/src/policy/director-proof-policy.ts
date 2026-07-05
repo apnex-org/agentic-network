@@ -80,6 +80,34 @@ async function getDirectorSignal(args: Record<string, unknown>, ctx: IPolicyCont
   return signal ? ok({ signal }) : err("not_found", `DirectorSignal ${args.signalId} not found`);
 }
 
+async function getDirectorConfirmation(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const proofs = ctx.stores.directorProof;
+  const decisions = ctx.stores.decision;
+  if (!proofs || !decisions) return err("not_wired", "DirectorProof/Decision stores are not available");
+  const confirmation = await proofs.getConfirmation(args.confirmationId as string);
+  if (!confirmation) return err("not_found", `DirectorConfirmation ${args.confirmationId} not found`);
+  // R:B3 verify-cheaply (Director UX finding, 2026-07-05): render WHAT THE HASHES
+  // BIND, recomputed HUB-SIDE from the decision row — never a caller-supplied
+  // summary. The Director sees exactly what consuming this token authorizes;
+  // binds.promptCurrent flags a decision mutated since render (hash divergence).
+  const decision = await decisions.getDecision(confirmation.decisionId);
+  const binds = decision ? {
+    decisionId: decision.id,
+    title: decision.title,
+    context: decision.context,
+    options: decision.options,
+    executionPlan: decision.executionPlan,
+    decisionStatus: decision.status,
+    promptCurrent: canonicalPromptHash(decision) === confirmation.promptHash,
+    planCurrent: (hashExecutionPlan(decision.executionPlan) ?? null) === (confirmation.executionPlanHash ?? null),
+  } : null;
+  const state = confirmation.consumedAt ? "consumed"
+    : Date.parse(confirmation.expiresAt) < Date.now() ? "expired"
+    : confirmation.answeredBySignalId ? "answered-unconsumed"
+    : "awaiting-director-answer";
+  return ok({ confirmation, binds, state });
+}
+
 async function mintDirectorConfirmation(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const proofs = ctx.stores.directorProof;
   const decisions = ctx.stores.decision;
@@ -248,6 +276,13 @@ export function registerDirectorProofPolicy(router: PolicyRouter): void {
     "[Any] Read a DirectorSignal by id (verification surface — B3 of the register: make verification cheap).",
     { signalId: z.string() },
     getDirectorSignal,
+  );
+
+  router.register(
+    "get_director_confirmation",
+    "[Any] Read a DirectorConfirmation WITH the Hub-side echo of what its hashes BIND (R:B3 verify-cheaply — the Director must never confirm blind): the bound decision's title/context/options/plan recomputed from the decision row (never caller-supplied), promptCurrent/planCurrent divergence flags, and the lifecycle state (awaiting-director-answer | answered-unconsumed | consumed | expired).",
+    { confirmationId: z.string() },
+    getDirectorConfirmation,
   );
 
   router.register(
