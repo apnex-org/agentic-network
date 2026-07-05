@@ -20,7 +20,7 @@ import { createTestContext, type TestPolicyContext } from "../test-utils.js";
 import { createMemoryStorageSubstrate } from "../../storage-substrate/memory-substrate.js";
 import { SubstrateCounter } from "../../entities/substrate-counter.js";
 import { DecisionRepositorySubstrate } from "../../entities/decision-repository-substrate.js";
-import { DirectorProofRepositorySubstrate, hashProposedResolution, canonicalPromptHash } from "../../entities/director-proof-repository-substrate.js";
+import { DirectorProofRepositorySubstrate, hashProposedResolution, canonicalPromptHash, hashExecutionPlan } from "../../entities/director-proof-repository-substrate.js";
 import { WorkItemRepositorySubstrate } from "../../entities/work-item-repository-substrate.js";
 import { ProposalRepositorySubstrate } from "../../entities/proposal-repository-substrate.js";
 import { executePlan } from "../../entities/decision-executor.js";
@@ -143,7 +143,7 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     const c = await proofs.mintConfirmation({
       decisionId,
       promptHash: canonicalPromptHash(decision),
-      proposedResolutionHash: hashProposedResolution({ chosenOptionId: "yes" }),
+      proposedResolutionHash: hashProposedResolution({ chosenOptionId: "yes" }), proposedAnswer: { chosenOptionId: "yes" },
       executionPlanHash: "0".repeat(64), // divergent
       ttlMs: 60_000,
     });
@@ -213,6 +213,109 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     expect(parked.status).toBe("resolved");
     expect(parked.executorBinding.ok).toBe(false);
     expect((await proposals.getProposal(pBad.id))!.status).toBe("submitted"); // reverted, not half-approved
+  });
+
+  it("get_director_confirmation (R:B3): renders WHAT THE HASHES BIND hub-side — decision echo, divergence flags, lifecycle state (the Director never confirms blind)", async () => {
+    const { decisionId } = await armedDecision();
+    const decision = (await decisions.getDecision(decisionId))!;
+    const mint = await router.handle("mint_director_confirmation", { decisionId, chosenOptionId: "yes" }, ctx);
+    const confId = (body(mint) as { confirmation: { id: string } }).confirmation.id;
+    const r = await router.handle("get_director_confirmation", { confirmationId: confId }, ctx);
+    expect(r.isError).toBeFalsy();
+    const view = body(r) as { binds: { decisionId: string; title: string; promptCurrent: boolean; planCurrent: boolean }; state: string };
+    expect(view.binds.decisionId).toBe(decisionId);
+    expect(view.binds.title).toBe(decision.title);        // Hub-side echo, not caller-supplied
+    expect(view.binds.promptCurrent).toBe(true);          // decision unmutated since render
+    expect(view.binds.planCurrent).toBe(true);
+    expect(view.state).toBe("awaiting-director-answer");  // unanswered token = render token only
+    // audit-10069 (1): the token's PROPOSED ANSWER renders in plaintext with the
+    // rederived-hash integrity flag — option A can never be mistaken for option B.
+    const v = view as unknown as { binds: { proposedAnswer: { chosenOptionId?: string }; answerCurrent: boolean } };
+    expect(v.binds.proposedAnswer).toEqual({ chosenOptionId: "yes" });
+    expect(v.binds.answerCurrent).toBe(true);
+    // divergent-plan confirmation renders planCurrent=false (the tamper flag)
+    const stale = await proofs.mintConfirmation({
+      decisionId, promptHash: canonicalPromptHash(decision),
+      proposedResolutionHash: hashProposedResolution({ chosenOptionId: "yes" }), proposedAnswer: { chosenOptionId: "yes" },
+      executionPlanHash: "0".repeat(64), ttlMs: 60_000,
+    });
+    const r2 = await router.handle("get_director_confirmation", { confirmationId: stale.id }, ctx);
+    expect((body(r2) as { binds: { planCurrent: boolean } }).binds.planCurrent).toBe(false);
+  });
+
+  it("B10 two-id-space fix: the Director answers by DECISION id — the Hub resolves the open confirmation server-side; zero/ambiguous/both-args all reject loud", async () => {
+    const { decisionId } = await armedDecision();
+    // zero open → loud reject
+    const dctx = createTestContext({ role: "director" });
+    dctx.stores.decision = decisions; dctx.stores.directorProof = proofs; dctx.stores.workItem = workItems; dctx.stores.proposal = proposals;
+    const r0 = await router.handle("capture_director_signal", { channel: "ois-say", answer: "moot", capturedBySurface: "cli", confidence: "session-bound", decisionId }, dctx);
+    expect(r0.isError).toBe(true);
+    expect(body(r0).error).toMatch(/no open confirmation/);
+    // exactly one open → resolved server-side and BOUND
+    await router.handle("mint_director_confirmation", { decisionId, chosenOptionId: "yes" }, ctx);
+    const r1 = await router.handle("capture_director_signal", { channel: "ois-say", answer: "yes", capturedBySurface: "cli", confidence: "session-bound", decisionId }, dctx);
+    expect(r1.isError).toBeFalsy();
+    const answered = (body(r1) as { answeredConfirmationId: string }).answeredConfirmationId;
+    expect(answered).toMatch(/^dconf-/);
+    expect((await proofs.getConfirmation(answered))!.answeredBySignalId).toMatch(/^dsig-/);
+    // ambiguity (two open on another decision) → loud reject listing ids
+    const d2 = await decisions.raiseDecision({ title: "amb", context: "c", class: "x", options: [{ id: "a", label: "A", description: "a" }], raisedBy: ARCHITECT });
+    await decisions.curateDecision(d2.id, ARCHITECT);
+    await decisions.routeDecision(d2.id, ARCHITECT, { target: "director" });
+    await router.handle("mint_director_confirmation", { decisionId: d2.id, chosenOptionId: "a" }, ctx);
+    await router.handle("mint_director_confirmation", { decisionId: d2.id, customAnswer: "alt" }, ctx);
+    const r2 = await router.handle("capture_director_signal", { channel: "ois-say", answer: "a", capturedBySurface: "cli", confidence: "session-bound", decisionId: d2.id }, dctx);
+    expect(r2.isError).toBe(true);
+    expect(body(r2).error).toMatch(/2 open confirmations.*dconf-.*dconf-/);
+    // both id-spaces at once → reject
+    const r3 = await router.handle("capture_director_signal", { channel: "ois-say", answer: "a", capturedBySurface: "cli", confidence: "session-bound", decisionId: d2.id, confirmationId: "dconf-1" }, dctx);
+    expect(r3.isError).toBe(true);
+    expect(body(r3).error).toMatch(/not both/);
+  });
+
+  it("audit-10076: a LEGACY confirmation (pre-proposedAnswer row) renders null/false with a note — never a 500 on read", async () => {
+    const { decisionId } = await armedDecision();
+    const decision = (await decisions.getDecision(decisionId))!;
+    const c = await proofs.mintConfirmation({
+      decisionId, promptHash: canonicalPromptHash(decision),
+      proposedResolutionHash: hashProposedResolution({ chosenOptionId: "yes" }),
+      proposedAnswer: { chosenOptionId: "yes" }, executionPlanHash: hashExecutionPlan(decision.executionPlan), ttlMs: 60_000,
+    });
+    // simulate the live legacy rows (dconf-1..5): strip proposedAnswer at the store
+    const legacy = (await proofs.getConfirmation(c.id))! as unknown as Record<string, unknown>;
+    delete legacy.proposedAnswer;
+    // write the stripped row back through the substrate the repo uses
+    const sub = (proofs as unknown as { substrate: { getWithRevision: (k: string, i: string) => Promise<{ entity: unknown; resourceVersion: string }>; putIfMatch: (k: string, e: unknown, v: string) => Promise<{ ok: boolean }> } }).substrate;
+    const existing = await sub.getWithRevision("DirectorConfirmation", c.id);
+    const stripped = JSON.parse(JSON.stringify(existing.entity)) as { spec?: Record<string, unknown> };
+    if (stripped.spec) delete stripped.spec.proposedAnswer;
+    await sub.putIfMatch("DirectorConfirmation", stripped, existing.resourceVersion);
+    const r = await router.handle("get_director_confirmation", { confirmationId: c.id }, ctx);
+    expect(r.isError).toBeFalsy(); // never a throw
+    const view = body(r) as { binds: { proposedAnswer: unknown; answerCurrent: boolean; answerNote?: string; promptCurrent: boolean } };
+    expect(view.binds.proposedAnswer).toBeNull();
+    expect(view.binds.answerCurrent).toBe(false);
+    expect(view.binds.answerNote).toMatch(/legacy token/);
+    expect(view.binds.promptCurrent).toBe(true); // the hash surfaces still verify
+  });
+
+  it("audit-10069 (2) cap-safety: answer-by-decisionId FAILS LOUD when the confirmation scan truncates — never a silently wrong zero/ambiguity verdict", async () => {
+    const { decisionId } = await armedDecision();
+    await router.handle("mint_director_confirmation", { decisionId, chosenOptionId: "yes" }, ctx);
+    // flood 500 tokens for OTHER decisions — the target's open token is now
+    // potentially beyond the scan page (the exact hidden-page hazard).
+    for (let i = 0; i < 500; i++) {
+      await proofs.mintConfirmation({
+        decisionId: `decision-flood-${i}`, promptHash: "0".repeat(64),
+        proposedResolutionHash: "0".repeat(64), proposedAnswer: { customAnswer: "x" },
+        executionPlanHash: null, ttlMs: 60_000,
+      });
+    }
+    const dctx = createTestContext({ role: "director" });
+    dctx.stores.decision = decisions; dctx.stores.directorProof = proofs; dctx.stores.workItem = workItems; dctx.stores.proposal = proposals;
+    const r = await router.handle("capture_director_signal", { channel: "ois-say", answer: "yes", capturedBySurface: "cli", confidence: "session-bound", decisionId }, dctx);
+    expect(r.isError).toBe(true);
+    expect(body(r).error).toMatch(/truncated at 500/);
   });
 
   it("failure-park: an effect failing mid-plan leaves the decision RESOLVED with executorBinding.ok=false — visible, never executed, never silent", async () => {

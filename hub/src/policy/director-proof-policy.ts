@@ -60,6 +60,20 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
   const proofs = ctx.stores.directorProof;
   if (!proofs) return err("not_wired", "DirectorProof store is not available");
   const capturedBy = await stampActor(ctx);
+  // B10 (two-id-space trap, Director UX finding #2): the Director thinks in
+  // DECISIONS — accept decisionId and resolve the open confirmation SERVER-side.
+  // Zero open → loud reject; more than one → loud reject with the ids (never
+  // ambiguity); exactly one → bind it. dconf-N stays presenter-internal.
+  let confirmationId = args.confirmationId as string | undefined;
+  if (args.decisionId !== undefined) {
+    if (confirmationId) return err("invalid_arguments", "pass decisionId OR confirmationId, not both — decisionId resolves the open confirmation server-side");
+    try {
+      const open = await proofs.findOpenConfirmationsForDecision(args.decisionId as string);
+      if (open.length === 0) return err("decision_proof_rejected", `no open confirmation for ${args.decisionId} — mint one at prompt render (mint_director_confirmation) before the Director answers`);
+      if (open.length > 1) return err("decision_proof_rejected", `${open.length} open confirmations for ${args.decisionId} [${open.map((c) => c.id).join(", ")}] — ambiguous; answer by confirmationId or let the stale ones expire`);
+      confirmationId = open[0].id;
+    } catch (e) { return mapVerbError(e); } // the truncation guard maps to a policy error, never a 500
+  }
   const signal = await proofs.mintSignal({
     channel: args.channel as string,
     answer: args.answer as string,
@@ -67,10 +81,10 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
     confidence: args.confidence as "authenticated" | "session-bound" | "side-channel-low",
     replyable: (args.replyable as boolean | undefined) ?? true,
     rawIngressRef: args.rawIngressRef as string | undefined,
-    confirmationId: args.confirmationId as string | undefined,
+    confirmationId,
     capturedBy,
   });
-  return ok({ signal });
+  return ok({ signal, answeredConfirmationId: confirmationId ?? null });
 }
 
 async function getDirectorSignal(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
@@ -78,6 +92,46 @@ async function getDirectorSignal(args: Record<string, unknown>, ctx: IPolicyCont
   if (!proofs) return err("not_wired", "DirectorProof store is not available");
   const signal = await proofs.getSignal(args.signalId as string);
   return signal ? ok({ signal }) : err("not_found", `DirectorSignal ${args.signalId} not found`);
+}
+
+async function getDirectorConfirmation(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const proofs = ctx.stores.directorProof;
+  const decisions = ctx.stores.decision;
+  if (!proofs || !decisions) return err("not_wired", "DirectorProof/Decision stores are not available");
+  const confirmation = await proofs.getConfirmation(args.confirmationId as string);
+  if (!confirmation) return err("not_found", `DirectorConfirmation ${args.confirmationId} not found`);
+  // R:B3 verify-cheaply (Director UX finding, 2026-07-05): render WHAT THE HASHES
+  // BIND, recomputed HUB-SIDE from the decision row — never a caller-supplied
+  // summary. The Director sees exactly what consuming this token authorizes;
+  // binds.promptCurrent flags a decision mutated since render (hash divergence).
+  const decision = await decisions.getDecision(confirmation.decisionId);
+  const binds = decision ? {
+    decisionId: decision.id,
+    title: decision.title,
+    context: decision.context,
+    options: decision.options,
+    // audit-10069 (1): WHICH answer the token proposes, in plaintext — with the
+    // re-derived hash check so a tampered plaintext is visible (the hash stays
+    // the binding authority; the plaintext is only the render). audit-10076:
+    // LEGACY rows (minted before proposedAnswer existed) render null/false with
+    // a note — never a throw; the hash fields remain the verification surface.
+    proposedAnswer: confirmation.proposedAnswer ?? null,
+    answerCurrent: confirmation.proposedAnswer !== undefined && confirmation.proposedAnswer !== null
+      ? hashProposedResolution(confirmation.proposedAnswer) === confirmation.proposedResolutionHash
+      : false,
+    answerNote: confirmation.proposedAnswer === undefined || confirmation.proposedAnswer === null
+      ? "legacy token (pre-render era): plaintext unavailable — verify against proposedResolutionHash"
+      : undefined,
+    executionPlan: decision.executionPlan,
+    decisionStatus: decision.status,
+    promptCurrent: canonicalPromptHash(decision) === confirmation.promptHash,
+    planCurrent: (hashExecutionPlan(decision.executionPlan) ?? null) === (confirmation.executionPlanHash ?? null),
+  } : null;
+  const state = confirmation.consumedAt ? "consumed"
+    : Date.parse(confirmation.expiresAt) < Date.now() ? "expired"
+    : confirmation.answeredBySignalId ? "answered-unconsumed"
+    : "awaiting-director-answer";
+  return ok({ confirmation, binds, state });
 }
 
 async function mintDirectorConfirmation(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
@@ -101,6 +155,7 @@ async function mintDirectorConfirmation(args: Record<string, unknown>, ctx: IPol
     decisionId: decision.id,
     promptHash: canonicalPromptHash(decision),
     proposedResolutionHash: hashProposedResolution(proposedAnswer),
+    proposedAnswer, // plaintext beside its hash (audit-10069: the render, never the authority)
     executionPlanHash: hashExecutionPlan(decision.executionPlan),
     ttlMs: CONFIRMATION_TTL_MS,
   });
@@ -238,7 +293,8 @@ export function registerDirectorProofPolicy(router: PolicyRouter): void {
       confidence: z.enum(["authenticated", "session-bound", "side-channel-low"]),
       replyable: z.boolean().optional().describe("Whether the ingress supports a reply leg (default true — registered ingress fixes bug-224)"),
       rawIngressRef: z.string().optional().describe("The Message/entity id the raw ingress landed as, when relayed"),
-      confirmationId: z.string().optional().describe("The DirectorConfirmation this signal answers (round-trip lineage)"),
+      confirmationId: z.string().optional().describe("The DirectorConfirmation this signal answers (round-trip lineage; presenter-internal id-space)"),
+      decisionId: z.string().optional().describe("B10: answer by DECISION id — the Hub resolves the single open confirmation server-side (rejects loud on zero or ambiguous). The Director's id-space is the decision; dconf plumbing stays out of his surface."),
     },
     captureDirectorSignal,
   );
@@ -248,6 +304,13 @@ export function registerDirectorProofPolicy(router: PolicyRouter): void {
     "[Any] Read a DirectorSignal by id (verification surface — B3 of the register: make verification cheap).",
     { signalId: z.string() },
     getDirectorSignal,
+  );
+
+  router.register(
+    "get_director_confirmation",
+    "[Any] Read a DirectorConfirmation WITH the Hub-side echo of what its hashes BIND (R:B3 verify-cheaply — the Director must never confirm blind): the bound decision's title/context/options/plan recomputed from the decision row (never caller-supplied), promptCurrent/planCurrent divergence flags, and the lifecycle state (awaiting-director-answer | answered-unconsumed | consumed | expired).",
+    { confirmationId: z.string() },
+    getDirectorConfirmation,
   );
 
   router.register(
