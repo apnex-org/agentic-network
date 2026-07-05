@@ -90,6 +90,7 @@ import { registerDirectorProofPolicy } from "./policy/director-proof-policy.js";
 import { registerClassGrantPolicy } from "./policy/class-grant-policy.js";
 import { registerArrivalSurfacePolicy } from "./policy/arrival-surface-policy.js";
 import { registerCurationPolicy } from "./policy/curation-policy.js";
+import { registerSc3FunnelPolicy } from "./policy/sc3-funnel-policy.js";
 import { runCurationSloSweep } from "./policy/curation-policy.js";
 import { runDecisionAgingSweep } from "./policy/arrival-surface-policy.js";
 import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
@@ -314,6 +315,8 @@ registerClassGrantPolicy(policyRouter);
 registerArrivalSurfacePolicy(policyRouter);
 // mission-102 P3-B2: the anti-laundering curation queries.
 registerCurationPolicy(policyRouter);
+// mission-102 B8-R2: the SC3 funnel + gaming flag (contract 6).
+registerSc3FunnelPolicy(policyRouter);
 registerPendingActionPolicy(policyRouter);
 // mission-75 v1.0 §3.3 — adapter-internal periodic transport-liveness
 // signal; tier="adapter-internal" excludes it from shim's LLM tool catalogue.
