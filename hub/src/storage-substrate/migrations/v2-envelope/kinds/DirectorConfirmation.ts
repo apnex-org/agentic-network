@@ -18,7 +18,7 @@ export function createDirectorConfirmationMigrationModule(schema: SchemaDef): Ki
     renameMap: {},
     partition: {
       metadata: ["createdAt", "updatedAt"],
-      spec: ["decisionId", "promptHash", "proposedResolutionHash", "proposedAnswer", "executionPlanHash", "nonce", "expiresAt"],
+      spec: ["decisionId", "promptHash", "proposedResolutionHash", "proposedAnswer", "executionPlanHash", "mintedBy", "nonce", "expiresAt"],
       status: ["answeredBySignalId", "consumedAt", "consumedBy"],
     },
   };

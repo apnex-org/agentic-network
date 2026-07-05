@@ -39,6 +39,8 @@ import { createProposalReview } from "./proposal-policy.js";
 
 /** Confirmation TTL: 30 minutes — long enough for a live decision walkthrough,
  *  short enough that a stale prompt cannot authorize much later (design §1.3). */
+export const SIGNAL_CAPTURED_EVENT = "signal-captured-notification"; // work-133 (bug-229): the answered→resolved wake
+
 const CONFIRMATION_TTL_MS = 30 * 60_000;
 
 function ok(body: Record<string, unknown>): PolicyResult {
@@ -107,7 +109,12 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
         : "a real capture would mint an unbound signal (no confirmationId/decisionId supplied)",
     });
   }
-  const signal = await proofs.mintSignal({
+  // work-133: the bind's first-answer-wins/consumed rejections are CONTRACT
+  // behavior — map them to policy errors (the caller's own notification for a
+  // moot answer), never a raw 500.
+  let signal;
+  try {
+    signal = await proofs.mintSignal({
     channel: args.channel as string,
     answer: args.answer as string,
     capturedBySurface: args.capturedBySurface as string,
@@ -117,7 +124,49 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
     confirmationId,
     capturedBy,
   });
+  } catch (e) { return mapVerbError(e); }
   await touchPresenceIfDirector(ctx, capturedBy);
+  // work-133 (bug-229): the answered→resolved leg wakes PUSH-natively — emit a
+  // targeted signal-captured event so the presenting proxy resolves instead of
+  // polling ("I have ratified" / "recheck the queue" were live human relays).
+  // Targets ride the work-124 pattern: the confirmation's Hub-stamped MINTER
+  // (agent-pinpoint — the proxy that rendered the prompt) plus the architect
+  // role when the minter isn't an architect. No bound confirmation → architect
+  // role only. Best-effort: the capture (the PROOF) never fails on emit.
+  // MOOT CAPTURES ARE SILENT BY DESIGN: an answer to an already-answered or
+  // consumed confirmation REJECTS at bindAnswerToConfirmation before this point
+  // (first-answer-wins), and the rejection surfaces at the CALLER's own seat —
+  // the Director learns immediately; a second event would double-notify.
+  try {
+    const boundConf = confirmationId ? await proofs.getConfirmation(confirmationId) : null;
+    const minter = boundConf?.mintedBy ?? null;
+    const targets: Array<import("../entities/message.js").MessageTarget> = [];
+    if (minter) targets.push({ agentId: minter.agentId });
+    if (!minter || minter.role !== "architect") targets.push({ role: "architect" });
+    for (const target of targets) {
+      await emitAndPush(ctx, {
+        kind: "external-injection",
+        authorRole: "system",
+        authorAgentId: "hub",
+        target,
+        delivery: "push-immediate",
+        intent: "signal_captured",
+        payload: {
+          notificationEvent: SIGNAL_CAPTURED_EVENT,
+          signal_id: signal.id,
+          confirmation_id: confirmationId ?? null,
+          decision_id: boundConf?.decisionId ?? null,
+          answer: signal.answer,
+          confidence: signal.confidence,
+          channel: signal.channel,
+          captured_by_agent_id: capturedBy.agentId,
+          body: `Director signal ${signal.id} captured${boundConf ? ` — ${boundConf.decisionId} is ANSWERED (via ${confirmationId}); resolve it with resolve_as_director proofRef=${confirmationId}` : " (unbound utterance)"}: "${signal.answer}"`,
+        },
+      });
+    }
+  } catch (e) {
+    console.error(`[director-proof-policy] signal-captured emit failed (non-fatal; the capture stands): ${e instanceof Error ? e.message : e}`);
+  }
   return ok({ signal, answeredConfirmationId: confirmationId ?? null });
 }
 
@@ -192,6 +241,9 @@ async function mintDirectorConfirmation(args: Record<string, unknown>, ctx: IPol
     proposedAnswer, // plaintext beside its hash (audit-10069: the render, never the authority)
     executionPlanHash: hashExecutionPlan(decision.executionPlan),
     ttlMs: CONFIRMATION_TTL_MS,
+    // work-133 (bug-229): Hub-stamp the MINTER — the presenting agent the
+    // signal-captured event wakes when the Director answers this token.
+    mintedBy: await stampActor(ctx),
   });
   return ok({ confirmation });
 }
