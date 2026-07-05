@@ -131,7 +131,8 @@ describe("director-proof-policy (P3-B4)", () => {
     expect(proofs.calls.some((c) => c.method === "consumeConfirmation")).toBe(true);
     const msgs = await ctx.stores.message.listMessages({});
     const events = msgs.filter((m) => m.kind === "external-injection").map((m) => m.payload as Record<string, unknown>);
-    expect(events.length).toBe(1);
+// work-124: one resolve event = two role-targeted copies (architect + director).
+    expect(events.length).toBe(2);
     expect(events[0].notificationEvent).toBe(DECISION_TRANSITION_EVENT);
     expect(events[0].verb).toBe("resolve_as_director");
     expect(events[0].authority_mode).toBe("director-direct");

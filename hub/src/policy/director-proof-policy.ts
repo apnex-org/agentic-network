@@ -268,11 +268,15 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
     }
     // Emit through the same decision-transition vocabulary (observability, never throws).
     try {
+      // work-124 flood stopgap: same scoping rule as decision-policy — the
+      // architect always; the director additionally (this verb only resolves
+      // director-routed decisions, so both targets always apply here).
+      for (const target of [{ role: "architect" }, { role: "director" }] as Array<import("../entities/message.js").MessageTarget>)
       await emitAndPush(ctx, {
         kind: "external-injection",
         authorRole: "system",
         authorAgentId: "hub",
-        target: null,
+        target,
         delivery: "push-immediate",
         intent: "resolve_as_director",
         payload: {

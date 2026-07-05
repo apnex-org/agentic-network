@@ -928,6 +928,65 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
       return msgs.filter((m) => m.kind === "external-injection").map((m) => m.payload as Record<string, unknown>);
     }
 
+    // ── work-124: role-targeted delivery (the flood stopgap) ────────────────
+    async function rawEvents(ctx: TestPolicyContext) {
+      const msgs = await ctx.stores.message.listMessages({});
+      return msgs.filter((m) => m.kind === "external-injection");
+    }
+
+    it("work-124: single-role eligibility targets THAT role; payload shape unchanged from the broadcast era", async () => {
+      const stub = makeStub({ claimWorkItem: () => sampleItem({ roleEligibility: ["engineer"] }) });
+      const ctx = ctxFor(stub, "engineer");
+      await router.handle("claim_work", { workId: "work-1" }, ctx);
+      const msgs = await rawEvents(ctx);
+      expect(msgs.length).toBe(1);
+      expect(msgs[0].target).toEqual({ role: "engineer" });
+      // Payload identity: exactly the pre-stopgap key set.
+      expect(Object.keys(msgs[0].payload as Record<string, unknown>).sort()).toEqual([
+        "actor_agent_id", "actor_role", "body", "from_status", "holder", "lease_expiry_count",
+        "notificationEvent", "priority", "role_eligibility", "target_ref", "title", "to_status",
+        "type", "verb", "work_id",
+      ].sort());
+    });
+
+    it("work-124: multi-role eligibility emits ONE message per role with IDENTICAL payloads", async () => {
+      const stub = makeStub({ claimWorkItem: () => sampleItem({ roleEligibility: ["engineer", "verifier"] }) });
+      const ctx = ctxFor(stub, "engineer");
+      await router.handle("claim_work", { workId: "work-1" }, ctx);
+      const msgs = await rawEvents(ctx);
+      expect(msgs.length).toBe(2);
+      expect(msgs.map((m) => m.target)).toEqual([{ role: "engineer" }, { role: "verifier" }]);
+      expect(JSON.stringify(msgs[0].payload)).toBe(JSON.stringify(msgs[1].payload));
+    });
+
+    it("work-124: empty (any-role) eligibility keeps the broadcast (target null)", async () => {
+      const stub = makeStub({ claimWorkItem: () => sampleItem({ roleEligibility: [] }) });
+      const ctx = ctxFor(stub, "engineer");
+      await router.handle("claim_work", { workId: "work-1" }, ctx);
+      const msgs = await rawEvents(ctx);
+      expect(msgs.length).toBe(1);
+      expect(msgs[0].target).toBeNull();
+    });
+
+    it("work-124: the dependency-unblock wake targets the roles that can CLAIM the unblocked item", async () => {
+      const dependent = sampleItem({
+        id: "work-9", status: "ready", lease: null as unknown as WorkItem["lease"],
+        dependsOn: ["work-1"], roleEligibility: ["engineer", "architect"],
+      });
+      const stub = makeStub({
+        getWorkItem: (id: unknown) => (id === "work-1" ? sampleItem({ status: "in_progress", roleEligibility: ["engineer"] }) : null),
+        completeWork: () => sampleItem({ status: "done", roleEligibility: ["engineer"] }),
+        listWorkItems: () => ({ items: [dependent], truncated: false }),
+      });
+      const ctx = ctxFor(stub, "engineer");
+      await router.handle("complete_work", { workId: "work-1", leaseToken: "tok-abc", evidence: [] }, ctx);
+      const msgs = await rawEvents(ctx);
+      const unblocks = msgs.filter((m) => (m.payload as Record<string, unknown>).notificationEvent === "work-unblocked-notification");
+      expect(unblocks.length).toBe(2);
+      expect(unblocks.map((m) => m.target)).toEqual([{ role: "engineer" }, { role: "architect" }]);
+      expect(JSON.stringify(unblocks[0].payload)).toBe(JSON.stringify(unblocks[1].payload));
+    });
+
     it("claim_work emits work-transition (ready→claimed) + live-pushes it", async () => {
       const stub = makeStub({ claimWorkItem: () => sampleItem() });
       const ctx = ctxFor(stub, "engineer");

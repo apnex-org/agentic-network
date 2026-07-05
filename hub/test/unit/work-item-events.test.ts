@@ -71,7 +71,7 @@ function payloadOf(m: Message): Record<string, unknown> {
 }
 
 describe("emitWorkTransition (work-54)", () => {
-  it("persists a broadcast external-injection Message AND live-pushes it (bug-192 coupling)", async () => {
+  it("persists a role-targeted (broadcast when any-role) external-injection Message AND live-pushes it (bug-192 coupling; work-124 targeting)", async () => {
     const { ctx, dispatched, messageStore } = makeCtx();
     await emitWorkTransition(ctx, {
       item: item(),
@@ -84,7 +84,7 @@ describe("emitWorkTransition (work-54)", () => {
     expect(stored.length).toBe(1);
     const msg = stored[0];
     expect(msg.kind).toBe("external-injection");
-    expect(msg.target).toBeNull(); // broadcast
+    expect(msg.target).toEqual({ role: "engineer" }); // work-124: targeted to the eligible role
     expect(msg.delivery).toBe("push-immediate");
     const p = payloadOf(msg);
     expect(p.notificationEvent).toBe(WORK_TRANSITION_EVENT);
