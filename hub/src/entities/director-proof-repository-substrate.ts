@@ -296,6 +296,14 @@ export class DirectorProofGate implements IDecisionProofGate {
       // Residual (revoke landing between this read and the decision CAS commit)
       // is milliseconds and observable — the resolution stores id@version, so a
       // drift audit can always join resolutions against revocation timestamps.
+      // PR #488 finding 2 (route↔proof tie): grant authority exists ONLY on the
+      // self-disposal path — a decision routed to the DIRECTOR cannot be resolved
+      // under a grant (that would bypass the curation/arrival semantics), and the
+      // route must cite exactly this grant.
+      const cited = input.decision.routedTo?.target === "self-disposal" ? input.decision.routedTo.selfDisposal?.classGrantRef : undefined;
+      if (cited !== ref) {
+        throw new DecisionTransitionRejected(`resolve-as-director rejected: grant proof requires the decision to be ROUTED self-disposal citing this grant (routed: ${input.decision.routedTo?.target ?? "(none)"}, cited: ${cited ?? "(none)"}, proof: ${ref}) — the route is the authority path, not the proof alone`);
+      }
       const grant = await this.grants.getGrant(ref);
       if (!grant) throw new DecisionTransitionRejected(`resolve-as-director rejected: grant ${ref} does not resolve`);
       const { evaluateGrant } = await import("./class-grant-repository-substrate.js");

@@ -58,7 +58,12 @@ async function mintClassGrant(args: Record<string, unknown>, ctx: IPolicyContext
     }
   }
   try {
-    const grant = await grants.mintGrant({ ...spec, ratificationRef: args.ratificationRef as string, supersedes: args.supersedes as string | undefined }, ratified);
+    const grant = await grants.mintGrant(
+      { ...spec, ratificationRef: args.ratificationRef as string, supersedes: args.supersedes as string | undefined },
+      // Due-date anchors to the DIRECTOR'S ratification instant, never mint time
+      // (audit-9886: a delayed mint must not extend the delegation window).
+      { resolved: ratified, resolvedAt: ratification?.resolution?.resolvedAt ?? null },
+    );
     return ok({ grant });
   } catch (e) { return mapVerbError(e); }
 }

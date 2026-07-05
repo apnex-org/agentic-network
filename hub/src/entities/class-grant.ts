@@ -72,7 +72,7 @@ export interface IClassGrantStore {
      *  computed at mint: now + days). Part of the canonical spec hash. */
     representationDays: number;
     supersedes?: string | null;
-  }, ratificationResolved: boolean): Promise<ClassGrant>;
+  }, ratification: { resolved: boolean; resolvedAt: string | null }): Promise<ClassGrant>;
   getGrant(id: string): Promise<ClassGrant | null>;
   listGrants(filter?: { state?: ClassGrantState; class?: string }): Promise<{ items: ClassGrant[]; truncated: boolean }>;
   /** active → revoked (terminal). CAS-guarded; already-terminal rejects. */

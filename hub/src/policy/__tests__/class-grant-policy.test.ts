@@ -84,8 +84,8 @@ describe("class-grant-policy (P3-B3)", () => {
 
   it("mint fail-closed: a resolution WITHOUT director-grade authority cannot ratify (architect-t5 / class-grant rejected; director-via-proxy accepted)", async () => {
     const grants = makeGrantStub({
-      mintGrant: (input: unknown, ratified: unknown) => {
-        if (!ratified) throw new DecisionTransitionRejected("mint rejected: ratificationRef decision-9 does not resolve to a resolved/executed Decision — a grant exists only as ratified cargo of the rail");
+      mintGrant: (input: unknown, ratification: unknown) => {
+        if (!(ratification as { resolved: boolean }).resolved) throw new DecisionTransitionRejected("mint rejected: ratificationRef decision-9 does not resolve to a resolved/executed Decision — a grant exists only as ratified cargo of the rail");
         return { id: "grant-1", version: 1, state: "active", ...(input as object) } as unknown as ClassGrant;
       },
     });

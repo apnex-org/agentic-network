@@ -132,12 +132,18 @@ describe("Decision FSM (real-pg: raise / curate / route / resolve / exits)", () 
     expect((await repo.getDecision(d.id))!.status).toBe("routed");
   }, OP_TIMEOUT);
 
-  it("B3 fence: route target=self-disposal REJECTS fail-closed until the ClassGrant evaluator lands", async () => {
-    const d = await raise("fence");
-    await repo.curateDecision(d.id, ARCHITECT);
-    await expect(repo.routeDecision(d.id, ARCHITECT, { target: "self-disposal", selfDisposal: { t5RuleRef: "rule-1" } }))
-      .rejects.toThrow(/requires the ClassGrant evaluator \(slice B3\)/);
-    expect((await repo.getDecision(d.id))!.status).toBe("curated");
+  it("self-disposal routing (B3 live): a route WITHOUT a citation rejects; a classified decision citing a grant routes; unclassified fails closed to the director", async () => {
+    const d = await raise("sd-route");
+    await repo.curateDecision(d.id, ARCHITECT, { class: "approval-unblock" });
+    await expect(repo.routeDecision(d.id, ARCHITECT, { target: "self-disposal" }))
+      .rejects.toThrow(/must cite its authority/);
+    const routed = (await repo.routeDecision(d.id, ARCHITECT, { target: "self-disposal", selfDisposal: { classGrantRef: "grant-1" } }))!;
+    expect(routed.status).toBe("routed");
+    expect(routed.routedTo).toEqual({ target: "self-disposal", selfDisposal: { classGrantRef: "grant-1" } });
+    const u = await raise("sd-unclassified");
+    await repo.curateDecision(u.id, ARCHITECT);
+    await expect(repo.routeDecision(u.id, ARCHITECT, { target: "self-disposal", selfDisposal: { classGrantRef: "grant-1" } }))
+      .rejects.toThrow(/unclassified decision fails closed/);
   }, OP_TIMEOUT);
 
   it("exits: merge preserves lineage + target must exist + no self-merge; dispose requires a reason; withdraw is RAISER-ONLY", async () => {

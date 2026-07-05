@@ -191,12 +191,17 @@ export class DecisionRepositorySubstrate implements IDecisionStore {
   async routeDecision(id: string, router: DecisionActor, route: DecisionRoute, executionPlan?: DecisionPlanAction[]): Promise<Decision | null> {
     return this.tryCasUpdate(id, (d) => {
       this.assertEdge(d, "routed", "route");
-      // B3 fence, fail-closed: the selfDisposal leg needs the ClassGrant evaluator.
-      if (route.target === "self-disposal") {
-        throw new DecisionTransitionRejected("route rejected: self-disposal requires the ClassGrant evaluator (slice B3) — until it lands every decision routes to the director");
+      // B3 (PR #488 finding 2): the selfDisposal leg is live — it MUST cite its
+      // authority (classGrantRef or t5RuleRef); the policy layer fail-closed
+      // resolves the citation at route time, and the grant gate at resolve time
+      // rejects any grant proof the route does not cite (route↔proof tie).
+      if (route.target === "self-disposal" && !route.selfDisposal?.classGrantRef && !route.selfDisposal?.t5RuleRef) {
+        throw new DecisionTransitionRejected("route rejected: a self-disposal route must cite its authority (selfDisposal.classGrantRef or t5RuleRef)");
       }
-      // Unclassified fails closed to the director target (design §1.1) — since B1
-      // only supports the director target this is an assertion, not a rewrite.
+      // Unclassified fails closed to the director target (design §1.1).
+      if (route.target === "self-disposal" && d.class === null) {
+        throw new DecisionTransitionRejected("route rejected: an unclassified decision fails closed to the director — it cannot be self-disposed");
+      }
       const nowISO = new Date().toISOString();
       return {
         ...d,

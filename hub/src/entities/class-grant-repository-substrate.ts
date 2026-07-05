@@ -85,17 +85,25 @@ export class ClassGrantRepositorySubstrate implements IClassGrantStore {
     ratificationRef: string;
     representationDays: number;
     supersedes?: string | null;
-  }, ratificationResolved: boolean): Promise<ClassGrant> {
+  }, ratification: { resolved: boolean; resolvedAt: string | null }): Promise<ClassGrant> {
     // Fail-closed at authoring (the A3/bug-220(c) law): an unratified grant row
     // cannot exist — the policy layer resolves the ratification Decision and
     // passes the verdict; a false here is a loud reject, never a draft state.
-    if (!ratificationResolved) {
+    if (!ratification.resolved || !ratification.resolvedAt) {
       throw new DecisionTransitionRejected(`mint rejected: ratificationRef ${input.ratificationRef} does not resolve to a resolved/executed Decision — a grant exists only as ratified cargo of the rail`);
     }
     // A grant must not authorize actions the reversibleOnly flag forbids — reject
     // the contradiction at mint rather than dead-lettering it at evaluation.
     if (input.reversibleOnly && input.allowedActions.some((a) => !GRANT_REVERSIBLE_ACTIONS.includes(a))) {
       throw new DecisionTransitionRejected(`mint rejected: reversibleOnly grant lists non-reversible action(s) [${input.allowedActions.filter((a) => !GRANT_REVERSIBLE_ACTIONS.includes(a)).join(", ")}] — self-contradictory constraint set`);
+    }
+    // PR #488 re-review finding 1: a ratification is SINGLE-USE — one Director act
+    // mints at most one grant row. Replay (any existing row already citing this
+    // ratificationRef) rejects; a superseding version needs a FRESH ratification.
+    const { items: existingGrants } = await this.listGrants();
+    const replay = existingGrants.find((g) => g.ratificationRef === input.ratificationRef);
+    if (replay) {
+      throw new DecisionTransitionRejected(`mint rejected: ratification ${input.ratificationRef} was already consumed by ${replay.id}@v${replay.version} — one Director ratification mints exactly one grant (re-ratify for a new version)`);
     }
     let priorVersion = 0;
     if (input.supersedes) {
@@ -118,7 +126,9 @@ export class ClassGrantRepositorySubstrate implements IClassGrantStore {
       issuer: "director",
       ratificationRef: input.ratificationRef,
       state: "active",
-      representationDue: new Date(Date.now() + input.representationDays * 24 * 3600_000).toISOString(),
+      // Anchored to the DIRECTOR'S ratification instant, not mint time (PR #488
+      // re-review finding 1): a delayed mint cannot extend the delegation window.
+      representationDue: new Date(Date.parse(ratification.resolvedAt) + input.representationDays * 24 * 3600_000).toISOString(),
       supersedes: input.supersedes ?? null,
       supersededBy: null,
       createdAt: now,
