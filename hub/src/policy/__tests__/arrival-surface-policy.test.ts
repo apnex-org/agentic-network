@@ -140,7 +140,9 @@ describe("arrival surface (P3-B6: pull projection + snapshots + aging + presence
     // EMIT-ONLY: still routed, untouched.
     expect((await decisions.getDecision(id))!.status).toBe("routed");
     const msgs = await ctx.stores.message.listMessages({});
-    expect(msgs.length).toBe(before + 1);
+    // work-124: one nudge = TWO role-targeted copies (director + architect).
+    expect(msgs.length).toBe(before + 2);
+    expect(msgs.slice(-2).map((m) => (m as { target: unknown }).target)).toEqual([{ role: "director" }, { role: "architect" }]);
     const receipts = await arrival.openNudgeReceipts();
     expect(receipts).toHaveLength(1);
     expect(receipts[0].decisionId).toBe(id);

@@ -168,11 +168,13 @@ export async function runCurationSloSweep(ctx: IPolicyContext, nowISO?: string):
     if (open.some((n) => n.decisionId === d.id && n.level === "slo")) continue; // once
     let ref: string | null = null;
     try {
+      // work-124 flood stopgap extension: curation is ARCHITECT work — the
+      // breach exception goes to the architect, not the whole network.
       const msg = await emitAndPush(ctx, {
         kind: "external-injection",
         authorRole: "system",
         authorAgentId: "hub",
-        target: null,
+        target: { role: "architect" },
         delivery: "push-immediate",
         intent: "curation_slo_breach",
         payload: {

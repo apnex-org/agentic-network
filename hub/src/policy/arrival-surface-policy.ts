@@ -234,11 +234,16 @@ export async function runDecisionAgingSweep(ctx: IPolicyContext, nowISO?: string
 
 async function emitAging(ctx: IPolicyContext, d: Decision, kind: string): Promise<string | null> {
   try {
-    const msg = await emitAndPush(ctx, {
+    // work-124 flood stopgap extension (same rule as decision events): aging
+    // nudges concern the DIRECTOR queue — director + architect (the proxy
+    // operator), never the whole network.
+    let msg: unknown;
+    for (const target of [{ role: "director" }, { role: "architect" }] as Array<import("../entities/message.js").MessageTarget>)
+    msg = await emitAndPush(ctx, {
       kind: "external-injection",
       authorRole: "system",
       authorAgentId: "hub",
-      target: null,
+      target,
       delivery: "push-immediate",
       intent: "decision_aging",
       payload: {

@@ -133,11 +133,30 @@ describe("director-proof-policy (P3-B4)", () => {
     expect(proofs.calls.some((c) => c.method === "consumeConfirmation")).toBe(true);
     const msgs = await ctx.stores.message.listMessages({});
     const events = msgs.filter((m) => m.kind === "external-injection").map((m) => m.payload as Record<string, unknown>);
-    expect(events.length).toBe(1);
+// work-124: one resolve event = two role-targeted copies (architect + director).
+    expect(events.length).toBe(2);
     expect(events[0].notificationEvent).toBe(DECISION_TRANSITION_EVENT);
     expect(events[0].verb).toBe("resolve_as_director");
     expect(events[0].authority_mode).toBe("director-direct");
     expect(events[0].authority_ref).toBe("dconf-7");
+  });
+
+  it("work-124/audit-10228: a grant-backed SELF-DISPOSAL resolve targets the ARCHITECT only (never floods the Director)", async () => {
+    const resolved = sampleDecision({
+      status: "resolved",
+      routedTo: { target: "self-disposal", selfDisposal: { classGrantRef: "grant-1" } },
+      resolution: { authorityMode: "class-grant", authorityRef: "grant-1@v1", executor: { agentId: "agent-a", role: "architect" }, answer: { chosenOptionId: "a" }, resolvedAt: "t3" },
+    });
+    const decisions = makeDecisionStub({
+      getDecision: () => sampleDecision({ status: "routed", routedTo: { target: "self-disposal", selfDisposal: { classGrantRef: "grant-1" } } }),
+      resolveDecision: () => resolved,
+    });
+    const ctx = ctxFor("architect", { decision: decisions, directorProof: makeProofStub() });
+    const r = await router.handle("resolve_as_director", { decisionId: "decision-1", proofRef: "grant-1", chosenOptionId: "a" }, ctx);
+    expect(r.isError).toBeFalsy();
+    const msgs = (await ctx.stores.message.listMessages({})).filter((m) => m.kind === "external-injection");
+    expect(msgs.length).toBe(1);
+    expect(msgs[0].target).toEqual({ role: "architect" }); // the Director never hears the mandate path
   });
 
   it("resolve_as_director: via-proxy resolutions do NOT consume; missing answer → invalid_arguments; store rejections map to decision_proof_rejected", async () => {
