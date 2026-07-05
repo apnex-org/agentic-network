@@ -362,6 +362,11 @@ export interface IWorkItemStore {
   renewLease(workId: string, agentId: string, leaseToken: string): Promise<WorkItem | null>;
   /** {claimed|in_progress|blocked} → ready (holder + matching token); clears the lease. */
   releaseWork(workId: string, agentId: string, leaseToken: string): Promise<WorkItem | null>;
+  /** mission-102 P3-B5: blocked → in_progress WITHOUT holder credentials, legal
+   *  ONLY when the item is blocked ON the given decision (blockedOn.blockerIds
+   *  includes decisionRef) — the resolution IS the blocker resolving (the
+   *  dependency-unblock principle). Lease preserved; never forges the holder. */
+  systemUnblock(workId: string, decisionRef: string): Promise<WorkItem | null>;
   /** {claimed|in_progress|blocked} → abandoned, terminal. The lease-holder (with a
    *  matching token) OR the creator (no token — override authority) may abandon; the
    *  creator may also abandon from `ready` (bug-219 fix (c): closes items whose

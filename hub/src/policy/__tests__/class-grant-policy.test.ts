@@ -36,7 +36,7 @@ const resolvedDecision = (authorityMode: string): Decision => ({
   raisedBy: { agentId: "a", role: "architect" }, curatedBy: null, curationRecordRef: null,
   routedTo: { target: "director" }, routedBy: null,
   resolution: { authorityMode: authorityMode as Decision["resolution"] extends null ? never : NonNullable<Decision["resolution"]>["authorityMode"], authorityRef: "dsig-1", executor: { agentId: "a", role: "architect" }, answer: { chosenOptionId: "yes" }, resolvedAt: "t" },
-  executionPlan: [], mergedInto: null, disposedReason: null, status: "resolved",
+  executionPlan: [], mergedInto: null, disposedReason: null, executorBinding: null, status: "resolved",
   enteredCurrentStateAt: "t", stateDurations: { raised: 0, curated: 0, routed: 0, resolved: 0 },
   createdAt: "t", updatedAt: "t",
 });

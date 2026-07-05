@@ -188,6 +188,25 @@ async function routeDecisionHandler(args: Record<string, unknown>, ctx: IPolicyC
       return err("decision_transition_rejected", `route rejected: cited grant covers class '${grant.class}', not '${decision.class ?? "(unclassified)"}' — routing cannot launder a class onto a grant`);
     }
   }
+  // B5: plan validation at ROUTE (design §3) — every action is in-registry
+  // (zod-enforced) and every target RESOLVES; fail-closed before the transition.
+  // The blocked-ON-this-decision check runs again at resolve (the target may
+  // legitimately block on the decision after routing).
+  const plan = (args.executionPlan as DecisionPlanAction[] | undefined) ?? [];
+  for (const step of plan) {
+    if (step.action === "unblock") {
+      if (!ctx.stores.workItem) return err("not_wired", "unblock plan validation requires the WorkItem store");
+      if (!(await ctx.stores.workItem.getWorkItem(step.targetRef))) {
+        return err("unresolvable_ref", `route rejected: plan target ${step.targetRef} does not resolve`);
+      }
+    }
+    if (step.action === "approve") {
+      if (!ctx.stores.proposal) return err("not_wired", "approve plan validation requires the Proposal store");
+      if (!(await ctx.stores.proposal.getProposal(step.targetRef))) {
+        return err("unresolvable_ref", `route rejected: plan target ${step.targetRef} does not resolve`);
+      }
+    }
+  }
   const before = await store.getDecision(args.decisionId as string);
   try {
     const d = await store.routeDecision(args.decisionId as string, actor, route, args.executionPlan as DecisionPlanAction[] | undefined);

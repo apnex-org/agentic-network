@@ -31,7 +31,7 @@ export function createDecisionMigrationModule(schema: SchemaDef): KindMigrationM
       spec: ["schemaVersion", "parentRef", "class", "title", "context", "contextRefs", "options", "freeAnswerPolicy", "raisedBy", "executionPlan"],
       // status = lifecycle: transition-stamped actors + route + resolution + the
       // exit fields + the per-FSM-state wall-clock timers (the WorkItem pattern).
-      status: ["curatedBy", "curationRecordRef", "routedTo", "routedBy", "resolution", "mergedInto", "disposedReason", "enteredCurrentStateAt", "stateDurations"],
+      status: ["curatedBy", "curationRecordRef", "routedTo", "routedBy", "resolution", "mergedInto", "disposedReason", "executorBinding", "enteredCurrentStateAt", "stateDurations"],
     },
   };
 

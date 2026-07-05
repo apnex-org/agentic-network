@@ -33,6 +33,7 @@ import {
   hashProposedResolution,
   hashExecutionPlan,
 } from "../entities/director-proof-repository-substrate.js";
+import { validatePlan, executePlan } from "../entities/decision-executor.js";
 
 /** Confirmation TTL: 30 minutes — long enough for a live decision walkthrough,
  *  short enough that a stale prompt cannot authorize much later (design §1.3). */
@@ -119,7 +120,15 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
     return err("invalid_arguments", "exactly one of chosenOptionId | customAnswer is required");
   }
   const gate = new DirectorProofGate(proofs, ctx.stores.classGrant);
+  const targets = { workItem: ctx.stores.workItem, proposal: ctx.stores.proposal };
   try {
+    // B5 contract 11 — the proof chain INCLUDES plan validation, all BEFORE any
+    // effect and before the decision transitions: every action in-registry, every
+    // target resolves, unblock targets are blocked ON this decision. Any failure
+    // here (or in the gate) is a whole-transition reject with ZERO effects.
+    if ((before.executionPlan ?? []).length > 0) {
+      await validatePlan(before, targets);
+    }
     // PR #488 finding 2: a grant-backed resolve runs ENTIRELY inside the grant's
     // serialization barrier (advisory lock keyed on grantId) — the gate's fresh
     // grant read and the decision CAS both happen under the lock revoke/supersede
@@ -137,6 +146,23 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
       ? await ctx.stores.classGrant.withGrantBarrier(proofRef, doResolve)
       : await doResolve();
     if (!resolved) return err("not_found", `Decision ${args.decisionId} not found`);
+    // B5: fire the plan AFTER the resolved commit; record the outcome either way.
+    // All-ok → executed (the CL-1 no-transcription-seam close); any failure →
+    // the decision PARKS in resolved with the binding visible to aging (never
+    // silent). Re-validation inside executePlan's wrappers keeps effects tight.
+    let finalDecision = resolved;
+    if ((resolved.executionPlan ?? []).length > 0 && decisions.recordExecutorBinding && decisions.markExecuted) {
+      const outcome = await executePlan(resolved, targets);
+      const bound = await decisions.recordExecutorBinding(resolved.id, {
+        executor, boundAt: new Date().toISOString(), ok: outcome.ok, results: outcome.results,
+      });
+      if (outcome.ok) {
+        finalDecision = (await decisions.markExecuted(resolved.id, executor)) ?? bound ?? resolved;
+      } else {
+        console.error(`[director-proof-policy] plan execution FAILED for ${resolved.id} — parked in resolved with binding: ${JSON.stringify(outcome.results)}`);
+        finalDecision = bound ?? resolved;
+      }
+    }
     // Consume-after-commit: a director-direct resolution burned its confirmation.
     // (Validated pre-CAS by the gate; the crash-window residual is inert — see the
     // repository header.) Failure here is LOUD but does not unwind the resolution.
@@ -169,7 +195,7 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
           title: resolved.title,
           class: resolved.class,
           from_status: before.status,
-          to_status: resolved.status,
+          to_status: finalDecision.status,
           authority_mode: resolved.resolution?.authorityMode ?? null,
           authority_ref: resolved.resolution?.authorityRef ?? null,
           actor_role: executor.role,
@@ -180,7 +206,7 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
     } catch (e) {
       console.error(`[director-proof-policy] transition emit failed (non-fatal): ${e instanceof Error ? e.message : e}`);
     }
-    return ok({ decision: resolved });
+    return ok({ decision: finalDecision });
   } catch (e) { return mapVerbError(e); }
 }
 
