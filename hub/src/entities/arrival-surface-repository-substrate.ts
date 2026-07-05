@@ -177,14 +177,20 @@ export class ArrivalSurfaceRepositorySubstrate implements IArrivalSurfaceStore {
     return result ?? this.getPresence();
   }
 
-  /** Page the whole kind in LIST_CAP batches — exact, never truncates. Offset
-   *  paging can skip/dup under concurrent writes; at presenter volume that is
-   *  the same benign race any snapshot-read has (dup receipt-flips are
-   *  idempotent; a just-created row lands next pull). */
+  /** Page the whole kind in LIST_CAP batches — exact, never truncates. The
+   *  stable sort is LOAD-BEARING (audit-10127): without ORDER BY, Postgres row
+   *  order is undefined and LIMIT/OFFSET pages may overlap/skip. id is unique,
+   *  so id ASC is a total order and pages partition exactly (lex-vs-numeric is
+   *  irrelevant for partitioning; callers do their own max). Offset paging can
+   *  still skip/dup under CONCURRENT writes; at presenter volume that is the
+   *  same benign race any snapshot-read has (dup receipt-flips are idempotent;
+   *  a just-created row lands next pull). */
   private async listAll<T>(kind: string): Promise<T[]> {
     const all: T[] = [];
     for (let offset = 0; ; offset += LIST_CAP) {
-      const { items } = await this.substrate.list<T>(kind, { limit: LIST_CAP, offset });
+      const { items } = await this.substrate.list<T>(kind, {
+        limit: LIST_CAP, offset, sort: [{ field: "id", order: "asc" }],
+      });
       all.push(...items.map((r) => clone(r, kind)));
       if (items.length < LIST_CAP) return all;
     }
