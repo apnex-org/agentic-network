@@ -48,6 +48,8 @@ function roleTargets(roleEligibility: string[]): Array<MessageTarget | null> {
 export const WORK_TRANSITION_EVENT = "work-transition-notification";
 /** The derived dependency-unblock event name (payload.notificationEvent). */
 export const WORK_UNBLOCKED_EVENT = "work-unblocked-notification";
+/** work-136 (idea-419): the mutation event (payload.notificationEvent). */
+export const WORK_UPDATED_EVENT = "work-updated-notification";
 
 /** Which verb produced the transition. `lease_expired` is the sweeper's
  *  requeue/poison-abandon path (no acting agent). */
@@ -242,5 +244,48 @@ export async function emitDependencyUnblocks(
       `[work-item-events] dependency-unblock scan failed after ${completed.id} completed (non-fatal):`,
       err,
     );
+  }
+}
+
+/**
+ * work-136 (idea-419): the update_work mutation event — role-targeted per the
+ * work-124 scoping (the item's eligible roles; any-role stays broadcast).
+ * Observability, never authority: best-effort + never throws.
+ */
+export async function emitWorkUpdated(
+  ctx: IPolicyContext,
+  item: WorkItem,
+  actor: { agentId: string; role: string },
+  changedFields: string[],
+): Promise<void> {
+  try {
+    const title = itemTitle(item);
+    for (const target of roleTargets(item.roleEligibility)) {
+      await emitAndPush(ctx, {
+        kind: "external-injection",
+        authorRole: "system",
+        authorAgentId: "hub",
+        target,
+        delivery: "push-immediate",
+        intent: "update_work",
+        payload: {
+          body: `${item.id} updated (${changedFields.join(", ")}) by ${actor.role}/${actor.agentId}${title ? ` — "${title}"` : ""}`,
+          work_id: item.id,
+          verb: "update_work",
+          changed_fields: changedFields,
+          status: item.status,
+          priority: item.priority,
+          role_eligibility: item.roleEligibility,
+          target_ref: item.targetRef,
+          title,
+          actor_agent_id: actor.agentId,
+          actor_role: actor.role,
+          notificationEvent: WORK_UPDATED_EVENT,
+        },
+      });
+    }
+    ctx.metrics.increment("work_event.updated_emitted", { workId: item.id });
+  } catch (err) {
+    console.warn(`[work-item-events] update emit failed for ${item.id} (non-fatal; the mutation committed):`, err);
   }
 }

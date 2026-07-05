@@ -19,7 +19,7 @@ import { resolveCreatedBy } from "./caller-identity.js";
 // work-54 (idea-357 pts 1-2): push-native FSM-transition events. Best-effort +
 // never-throws — the store transition is the source of truth; the event is
 // enhancement (the mission-policy runTriggers posture).
-import { emitWorkTransition, emitDependencyUnblocks } from "./work-item-events.js";
+import { emitWorkTransition, emitDependencyUnblocks, emitWorkUpdated } from "./work-item-events.js";
 import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import {
   TransitionRejected,
@@ -379,6 +379,114 @@ async function validateNodeIntrinsics(
     if (problem) return { errorKind: "unresolvable_ref", message: problem };
   }
   return null;
+}
+
+
+// ── work-136 (idea-419): update_work — the ratified WorkItem mutation verb ──
+
+/** Cycle guard for edge APPENDS: walk the chosen edge kind from each appended
+ *  target; if the item under mutation is reachable, the append closes a cycle.
+ *  (create_work is acyclic by construction — a fresh node has no incoming
+ *  edges; an UPDATE is the first verb that can bend the graph back.) */
+async function appendWouldCycle(
+  store: NonNullable<IPolicyContext["stores"]["workItem"]>,
+  workId: string,
+  appended: string[],
+  edge: "dependsOn" | "completionDependsOn",
+): Promise<string | null> {
+  const visited = new Set<string>();
+  const frontier = [...appended];
+  while (frontier.length > 0) {
+    const id = frontier.pop()!;
+    if (id === workId) return id;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const row = await store.getWorkItem(id);
+    if (row) frontier.push(...(edge === "dependsOn" ? row.dependsOn : row.completionDependsOn));
+  }
+  return null;
+}
+
+async function updateWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const caller = await resolveCreatedBy(ctx);
+  const workId = args.workId as string;
+  const set = (args.set ?? {}) as { priority?: WorkItemPriority; targetRef?: { kind: string; id: string } | null; runbook?: string; payload?: unknown; roleEligibility?: string[] };
+  // Handler-level strictness (the bug-227 lesson: router.handle does not run
+  // zod — the schema's .strict() only guards the MCP boundary). An unknown
+  // set-key is the contract's own rejection row: status/evidence/type must
+  // never be reachable through this verb.
+  const ALLOWED_SET = ["priority", "targetRef", "runbook", "payload", "roleEligibility"];
+  const unknownKey = Object.keys(set).find((k) => !ALLOWED_SET.includes(k));
+  if (unknownKey !== undefined) {
+    return err("invalid_arguments", `update rejected: unknown set field "${unknownKey}" — mutable via set: ${ALLOWED_SET.join("/")}; structural edges are explicit append params; type/evidenceRequirements/status are immutable via this verb`);
+  }
+  const appendDependsOn = (args.appendDependsOn as string[] | undefined) ?? [];
+  const appendCompletionDependsOn = (args.appendCompletionDependsOn as string[] | undefined) ?? [];
+  const appendReferences = (args.appendReferences as WorkItemReference[] | undefined) ?? [];
+
+  // Orphan guard (contract: "resulting set must be non-empty-claimable"): in
+  // this queue an EMPTY roleEligibility means any-role (claimable by all), so
+  // the orphan risk is a set naming roles nobody holds — reject unknown roles.
+  if (set.roleEligibility) {
+    const KNOWN = ["engineer", "architect", "verifier", "director"];
+    const bad = set.roleEligibility.find((r) => !KNOWN.includes(r));
+    if (bad !== undefined) return err("invalid_arguments", `update rejected: roleEligibility entry "${bad}" is not a claimable role (${KNOWN.join("/")}) — the resulting set must be claimable-by-someone (empty = any-role is allowed)`);
+  }
+  // Dangling posture (mirrors create_work): every appended edge target exists.
+  for (const depId of [...appendDependsOn, ...appendCompletionDependsOn]) {
+    if (!(await store.getWorkItem(depId))) {
+      return err("unresolvable_ref", `update rejected: appended edge references a non-existent WorkItem: ${depId}`);
+    }
+  }
+  // Cycle guard across the appended edges (the update-specific hazard).
+  if (appendDependsOn.length) {
+    const via = await appendWouldCycle(store, workId, appendDependsOn, "dependsOn");
+    if (via) return err("invalid_arguments", `update rejected: appending dependsOn [${appendDependsOn.join(",")}] closes a cycle back to ${workId} — the queue graph stays a DAG`);
+  }
+  if (appendCompletionDependsOn.length) {
+    const via = await appendWouldCycle(store, workId, appendCompletionDependsOn, "completionDependsOn");
+    if (via) return err("invalid_arguments", `update rejected: appending completionDependsOn [${appendCompletionDependsOn.join(",")}] closes a cycle back to ${workId}`);
+  }
+  // Appended REQUIRED references fail-closed resolve (the create_work seed rule).
+  for (const ref of appendReferences) {
+    if (!ref.required) continue;
+    const problem = await validateRequiredReference(ref, store, ctx);
+    if (problem) return err("unresolvable_ref", `update rejected: ${problem}`);
+  }
+
+  try {
+    const { before, after } = await store.updateWorkItem(workId, { agentId: caller.agentId, role: caller.role }, {
+      set: Object.keys(set).length ? set : undefined,
+      appendDependsOn: appendDependsOn.length ? appendDependsOn : undefined,
+      appendCompletionDependsOn: appendCompletionDependsOn.length ? appendCompletionDependsOn : undefined,
+      appendReferences: appendReferences.length ? appendReferences : undefined,
+    });
+    // The contract's loudness: one audit entry per accepted call, before→after
+    // per touched field...
+    const changes: Record<string, { before: unknown; after: unknown }> = {};
+    for (const k of Object.keys(set)) changes[k] = { before: (before as unknown as Record<string, unknown>)[k], after: (after as unknown as Record<string, unknown>)[k] };
+    if (appendDependsOn.length) changes.dependsOn = { before: before.dependsOn, after: after.dependsOn };
+    if (appendCompletionDependsOn.length) changes.completionDependsOn = { before: before.completionDependsOn, after: after.completionDependsOn };
+    if (appendReferences.length) changes.references = { before: (before.references ?? []).length, after: (after.references ?? []).length };
+    try {
+      await ctx.stores.audit.logEntry(
+        caller.role as "architect" | "engineer" | "verifier" | "hub",
+        "work_updated",
+        `update_work ${workId} by ${caller.role}/${caller.agentId}: ${JSON.stringify(changes)}`,
+        workId,
+      );
+    } catch (e) {
+      console.error(`[work-item-policy] update_work audit failed (non-fatal; the mutation stands): ${e instanceof Error ? e.message : e}`);
+    }
+    // ...and one work-updated event on the work-124 role-targeted path.
+    await emitWorkUpdated(ctx, after, { agentId: caller.agentId, role: caller.role }, Object.keys(changes));
+    return ok({ workItem: after, changed: Object.keys(changes) });
+  } catch (e) {
+    if (e instanceof TransitionRejected) return err("update_rejected", e.message);
+    throw e;
+  }
 }
 
 async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
@@ -798,6 +906,25 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       payload: z.unknown().optional().describe("Freeform work payload (e.g. the task brief)"),
     },
     createWork,
+  );
+
+  router.register(
+    "update_work",
+    "[Any] work-136 (idea-419, ratified contract v1.0 / decision-11): mutate a WorkItem per the field-mutability table. AUTHORITY: the item's AUTHOR or the ARCHITECT (Hub-derived from the session — no lease-holder writes in v1). set{} replaces priority/targetRef anytime pre-terminal; runbook/payload/roleEligibility PRE-CLAIM only (the claimant's contract freezes at claim). Structural edges are APPEND-ONLY explicit params (never via set): appendDependsOn (while ready; re-gating is the intended effect — the work-133 case), appendCompletionDependsOn (until done; arc accretion), appendReferences (pre-claim; required refs fail-closed resolve). Rejects: empty mutation, terminal item, phase violations, dangling/cyclic edges, unclaimable roleEligibility, stale CAS (re-read and re-decide). Every accepted call: one audit entry (actor + before→after) + one work-updated event, role-targeted per work-124. type + evidenceRequirements are IMMUTABLE FOREVER (the anti-gameability contract).",
+    {
+      workId: z.string(),
+      set: z.object({
+        priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+        targetRef: targetRefSchema.nullable().optional(),
+        runbook: z.string().optional(),
+        payload: z.unknown().optional(),
+        roleEligibility: z.array(z.string()).optional(),
+      }).strict().optional().describe("Replace-semantics fields, per-field phase rules; UNKNOWN KEYS REJECT (strict)"),
+      appendDependsOn: z.array(z.string()).optional().describe("Append claim-gate deps (while ready; existence+cycle checked)"),
+      appendCompletionDependsOn: z.array(z.string()).optional().describe("Append completion-gate children (until done; existence+cycle checked)"),
+      appendReferences: z.array(referenceSchema).optional().describe("Append node-contract inputs (pre-claim; required refs must resolve)"),
+    },
+    updateWork,
   );
 
   router.register(
