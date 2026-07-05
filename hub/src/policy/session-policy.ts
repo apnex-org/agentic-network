@@ -242,6 +242,14 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
     );
   }
   ctx.stores.engineerRegistry.setSessionRole(sid, role as "engineer" | "architect" | "director" | "verifier");
+  // work-137 follow-up (bug-230 replay-1 finding): a NAME without clientMetadata
+  // used to downgrade SILENTLY to role-only registration — the caller believed
+  // they had an identity binding, and every subsequent rail-verb stamp was
+  // anonymous-<role> (dead-letter for targeted wakes). The downgrade is now
+  // LOUD: identityBound:false + a warning naming the missing field.
+  const identityWarning = nameArg && !clientMetadataArg
+    ? `name '${nameArg}' was IGNORED — identity binding requires clientMetadata alongside name (the M18 handshake); this session is registered ROLE-ONLY and rail verbs will stamp anonymous-${role}. Re-register with both to bind.`
+    : undefined;
   return {
     content: [{
       type: "text" as const,
@@ -249,6 +257,8 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
         success: true,
         role,
         sessionId: sid,
+        identityBound: false,
+        ...(identityWarning ? { warning: identityWarning } : {}),
         message: `Registered as ${role}`,
       }),
     }],

@@ -22,6 +22,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { PolicyRouter } from "../router.js";
 import { registerDecisionPolicy } from "../decision-policy.js";
 import { registerDirectorProofPolicy } from "../director-proof-policy.js";
+import { registerSessionPolicy } from "../session-policy.js";
 import { createTestContext, type TestPolicyContext } from "../test-utils.js";
 import { createMemoryStorageSubstrate } from "../../storage-substrate/memory-substrate.js";
 import { buildEnvelopeWriteEncoder } from "../../storage-substrate/index.js";
@@ -100,6 +101,22 @@ describe("session-identity fallback (work-137 / bug-230)", () => {
     wipeMap(registry);
     expect(await registry.getAgentForSession("sess-old")).toBeNull();               // revoked — no zombie resolution
     expect((await registry.getAgentForSession("sess-new"))?.name).toBe("mover");    // the live session resolves
+  });
+
+  it("replay-1 finding: name WITHOUT clientMetadata registers role-only LOUDLY (identityBound:false + warning), never silently", async () => {
+    const router = new PolicyRouter();
+    registerSessionPolicy(router);
+    const ctx = createTestContext({ role: "unknown" as never }, { skipRoleRegister: true });
+    const r = await router.handle("register_role", { role: "architect", name: "lily" }, ctx);
+    const out = JSON.parse(r.content[0].text) as { success: boolean; identityBound?: boolean; warning?: string; agentId?: string };
+    expect(out.success).toBe(true);
+    expect(out.identityBound).toBe(false);
+    expect(out.warning).toMatch(/IGNORED.*clientMetadata|clientMetadata alongside name/);
+    expect(out.agentId).toBeUndefined(); // the caller can see no binding happened
+    // ...and the SAME call WITH clientMetadata takes the identity path (agentId echoed).
+    const r2 = await router.handle("register_role", { role: "architect", name: "lily", clientMetadata: META }, ctx);
+    const out2 = JSON.parse(r2.content[0].text) as { agent?: { id?: string } };
+    expect(out2.agent?.id).toBeDefined(); // the M18 envelope echoes the bound agent
   });
 
   it("END TO END (the bug-230 specimen): after a map wipe, mint_director_confirmation stamps the REAL registered identity — the bug-229 wake targets a reachable agent, not anonymous-architect", async () => {
