@@ -103,11 +103,28 @@ describe("ClassGrant (real-pg: mint / revoke / evaluate / the gate's grant path)
     expect(g1After.allowedActions).toEqual(["unblock", "approve"]);
   }, OP_TIMEOUT);
 
-  it("audit-9886 regressions: ratification is SINGLE-USE (replay rejects) and representationDue anchors to the RATIFICATION instant, not mint time", async () => {
+  it("audit-9886/9897 regressions: ratification is SINGLE-USE and ATOMIC (concurrent same-ref race → exactly one wins; replay rejects; PK-exact at any scale) and representationDue anchors to the RATIFICATION instant", async () => {
     const g = await mintApprovalUnblock({ ratificationRef: "decision-ratify-once" });
-    // replay: same ratification cannot mint a second row (same or different fields)
+    // sequential replay: same ratification cannot mint a second row
     await expect(mintApprovalUnblock({ ratificationRef: "decision-ratify-once" }))
-      .rejects.toThrow(/already consumed by/);
+      .rejects.toThrow(/already consumed/);
+    // CONCURRENT same-ref race (audit-9897): both mints scan nothing — they race the
+    // deterministic-id createOnly on the consumption row; exactly one wins.
+    const results = await Promise.allSettled([
+      mintApprovalUnblock({ ratificationRef: "decision-ratify-race" }),
+      mintApprovalUnblock({ ratificationRef: "decision-ratify-race" }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled.length).toBe(1);
+    expect(rejected.length).toBe(1);
+    expect(String((rejected[0] as PromiseRejectedResult).reason)).toMatch(/already consumed/);
+    // cap-safety is STRUCTURAL: replay detection is a primary-key createOnly on the
+    // consumption row (no listGrants scan exists in the mint path) — exact whether
+    // there are 3 grants or 3000. Pin the exact-match behavior across several rows:
+    for (let i = 0; i < 3; i++) await mintApprovalUnblock();
+    await expect(mintApprovalUnblock({ ratificationRef: "decision-ratify-once" }))
+      .rejects.toThrow(/already consumed/);
     // anchored due: minted NOW but ratified at RATIFIED_AT → due = RATIFIED_AT + 90d,
     // NOT now + 90d (a delayed mint does not extend the window).
     expect(g.representationDue).toBe(new Date(Date.parse(RATIFIED_AT) + 90 * 24 * 3600_000).toISOString());

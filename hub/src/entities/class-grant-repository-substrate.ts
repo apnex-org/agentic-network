@@ -19,6 +19,11 @@ import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock
 import { createHash } from "node:crypto";
 
 const KIND = "ClassGrant";
+/** PR #488 audit-9897: the ratification-consumption kind — one row per consumed
+ *  ratification, PK = the ratificationRef itself, created via createOnly. The
+ *  primary key IS the single-use invariant: atomic under concurrency (two mints
+ *  race createOnly; exactly one wins) and exact at any scale (no scan, no cap). */
+const RATIFICATION_KIND = "GrantRatification";
 const LIST_CAP = 500;
 const MAX_CAS_RETRIES = 20;
 
@@ -97,14 +102,6 @@ export class ClassGrantRepositorySubstrate implements IClassGrantStore {
     if (input.reversibleOnly && input.allowedActions.some((a) => !GRANT_REVERSIBLE_ACTIONS.includes(a))) {
       throw new DecisionTransitionRejected(`mint rejected: reversibleOnly grant lists non-reversible action(s) [${input.allowedActions.filter((a) => !GRANT_REVERSIBLE_ACTIONS.includes(a)).join(", ")}] — self-contradictory constraint set`);
     }
-    // PR #488 re-review finding 1: a ratification is SINGLE-USE — one Director act
-    // mints at most one grant row. Replay (any existing row already citing this
-    // ratificationRef) rejects; a superseding version needs a FRESH ratification.
-    const { items: existingGrants } = await this.listGrants();
-    const replay = existingGrants.find((g) => g.ratificationRef === input.ratificationRef);
-    if (replay) {
-      throw new DecisionTransitionRejected(`mint rejected: ratification ${input.ratificationRef} was already consumed by ${replay.id}@v${replay.version} — one Director ratification mints exactly one grant (re-ratify for a new version)`);
-    }
     let priorVersion = 0;
     if (input.supersedes) {
       const prior = await this.getGrant(input.supersedes);
@@ -114,6 +111,21 @@ export class ClassGrantRepositorySubstrate implements IClassGrantStore {
     const num = await this.counter.next("classGrantCounter");
     const id = `grant-${num}`;
     const now = new Date().toISOString();
+    // Audit-9897: consume the ratification FIRST via deterministic-id createOnly —
+    // the PK is the uniqueness primitive (the createBlueprintNode idempotency
+    // pattern): concurrent same-ref mints race this createOnly and exactly one
+    // wins; replay at ANY later time hits the existing row; no scan, no list cap.
+    const consumption = await this.substrate.createOnly(RATIFICATION_KIND, {
+      id: input.ratificationRef,
+      grantId: id,
+      consumedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (!consumption.ok) {
+      const prior = await this.substrate.get<{ grantId?: string }>(RATIFICATION_KIND, input.ratificationRef);
+      throw new DecisionTransitionRejected(`mint rejected: ratification ${input.ratificationRef} was already consumed${prior?.grantId ? ` by ${prior.grantId}` : ""} — one Director ratification mints exactly one grant (re-ratify for a new version)`);
+    }
     const g: ClassGrant = {
       id,
       version: priorVersion + 1,

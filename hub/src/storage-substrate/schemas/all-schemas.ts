@@ -774,6 +774,18 @@ const ClassGrant: SchemaDef = {
   },
 };
 
+// GrantRatification: the single-use ratification-consumption row (audit-9897) —
+// PK = the ratificationRef; createOnly on this kind IS the atomicity primitive.
+const GrantRatification: SchemaDef = {
+  kind: "GrantRatification",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+  ],
+  indexes: [],
+  watchable: false,
+};
+
 // ─── Export all 23 SchemaDef entries ───────────────────────────────────────
 
 /**
@@ -833,6 +845,8 @@ export const ALL_SCHEMAS: SchemaDef[] = [
   DirectorSignal,
   DirectorConfirmation,
 
-  // 1 NEW mission-102 P3-B3 (typed-constraint delegation)
+  // 2 NEW mission-102 P3-B3 (typed-constraint delegation + its single-use
+  // ratification-consumption companion)
   ClassGrant,
+  GrantRatification,
 ];
