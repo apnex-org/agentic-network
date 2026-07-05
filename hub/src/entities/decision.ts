@@ -88,10 +88,17 @@ export interface DecisionResolution {
 }
 
 /** Declared-at-route execution plan entry (design §3). B1 stores + ref-validates;
- *  B5 executes. Registry v1: unblock | approve. */
+ *  B5 executes. Registry v1: unblock | approve; mission-103 S1 adds the
+ *  charter pair bind_axiom | amend_charter (decision-17 §2: charter mutation
+ *  exists ONLY as plan actions — no free-form verbs). */
 export interface DecisionPlanAction {
-  action: "unblock" | "approve";
+  action: "unblock" | "approve" | "bind_axiom" | "amend_charter";
   targetRef: string;
+  /** Typed cargo for the charter actions (bind_axiom: {predecessor?, status?,
+   *  supersedes?}; amend_charter: {text}). Part of the plan, therefore
+   *  covered by executionPlanHash — the Director's confirmation binds the
+   *  EXACT binding/amendment content, not a summary of it. */
+  params?: Record<string, unknown>;
 }
 
 export interface Decision {

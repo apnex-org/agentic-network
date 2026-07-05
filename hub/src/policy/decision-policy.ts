@@ -309,8 +309,11 @@ const contextRefSchema = z.object({
 }).strict();
 
 const planActionSchema = z.object({
-  action: z.enum(["unblock", "approve"]),
+  action: z.enum(["unblock", "approve", "bind_axiom", "amend_charter"]),
   targetRef: z.string().min(1),
+  // mission-103 S1: typed cargo for the charter actions — inside the plan,
+  // therefore covered by executionPlanHash (the confirmation binds it exactly).
+  params: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
 const DECISION_PHASE = z.enum(["raised", "curated", "routed", "resolved", "executed", "merged", "disposed", "withdrawn"]);

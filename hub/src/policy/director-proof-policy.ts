@@ -334,6 +334,44 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
       const parsed = JSON.parse(res.content[0].text) as { success?: boolean; error?: string; scaffolded?: boolean };
       return { ok: !res.isError && parsed.success === true, detail: res.isError ? (parsed.error ?? "review failed") : `approved${parsed.scaffolded ? " + scaffolded" : ""}` };
     },
+    // mission-103 S1 (decision-17 §2): the charter pair. The {ratifiedBy,
+    // proofRef} authority pair is bound HERE from the executing decision —
+    // ratifiedBy is the decision id; proofRef is the stored authorityRef
+    // (signal/grant modes) or the consumed confirmation (director-direct,
+    // where the resolution stores no ref by design). Never caller-supplied.
+    constitution: ctx.stores.constitution,
+    bindAxiomViaPolicy: async (step: import("../entities/decision.js").DecisionPlanAction) => {
+      if (!ctx.stores.orgCharter) return { ok: false, detail: "OrgCharter store is not wired" };
+      try {
+        const decision = await decisions.getDecision(args.decisionId as string);
+        const charter = await ctx.stores.orgCharter.bindAxiom({
+          axiom: step.targetRef,
+          predecessor: (step.params?.predecessor as string | undefined) ?? null,
+          status: step.params?.status as "bound" | "superseded" | "unbound" | undefined,
+          supersedes: (step.params?.supersedes as string | undefined) ?? null,
+          ratifiedBy: args.decisionId as string,
+          proofRef: decision?.resolution?.authorityRef ?? (args.proofRef as string | undefined) ?? "unproven",
+        });
+        return { ok: true, detail: `${step.targetRef} bound in charter v${charter.charterVersion}` };
+      } catch (e) {
+        return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    amendCharterViaPolicy: async (step: import("../entities/decision.js").DecisionPlanAction) => {
+      if (!ctx.stores.orgCharter) return { ok: false, detail: "OrgCharter store is not wired" };
+      try {
+        const decision = await decisions.getDecision(args.decisionId as string);
+        const charter = await ctx.stores.orgCharter.amendCharter({
+          section: step.targetRef as "vision" | "directorProfile",
+          text: step.params?.text as string,
+          ratifiedBy: args.decisionId as string,
+          proofRef: decision?.resolution?.authorityRef ?? (args.proofRef as string | undefined) ?? "unproven",
+        });
+        return { ok: true, detail: `charter.${step.targetRef} amended in v${charter.charterVersion}` };
+      } catch (e) {
+        return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+      }
+    },
   };
   // work-128 dry-run: run the REAL validators — the same DirectorProofGate,
   // the same validatePlan (zero-effects by contract 11), the same FSM table —

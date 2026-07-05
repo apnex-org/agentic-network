@@ -52,6 +52,8 @@ import { createWorkItemMigrationModule } from "./kinds/WorkItem.js";
 import { createDecisionMigrationModule } from "./kinds/Decision.js";
 import { createDirectorSignalMigrationModule } from "./kinds/DirectorSignal.js";
 import { createDirectorConfirmationMigrationModule } from "./kinds/DirectorConfirmation.js";
+import { createConstitutionSnapshotMigrationModule } from "./kinds/ConstitutionSnapshot.js";
+import { createOrgCharterMigrationModule } from "./kinds/OrgCharter.js";
 import { createClassGrantMigrationModule } from "./kinds/ClassGrant.js";
 import { createGrantRatificationMigrationModule } from "./kinds/GrantRatification.js";
 import { createArrivalSnapshotMigrationModule } from "./kinds/ArrivalSnapshot.js";
@@ -88,6 +90,8 @@ const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModul
   Decision: createDecisionMigrationModule,  // mission-102 P3-B1
   DirectorSignal: createDirectorSignalMigrationModule,              // mission-102 P3-B4
   DirectorConfirmation: createDirectorConfirmationMigrationModule,  // mission-102 P3-B4
+  ConstitutionSnapshot: createConstitutionSnapshotMigrationModule,  // mission-103 P3-S1
+  OrgCharter: createOrgCharterMigrationModule,                      // mission-103 P3-S1
   ClassGrant: createClassGrantMigrationModule,  // mission-102 P3-B3
   GrantRatification: createGrantRatificationMigrationModule,  // mission-102 P3-B3 (audit-9897)
   ArrivalSnapshot: createArrivalSnapshotMigrationModule,      // mission-102 P3-B6

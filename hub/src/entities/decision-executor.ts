@@ -27,9 +27,15 @@ import type { IWorkItemStore } from "./work-item.js";
 import type { IProposalStore } from "../state.js";
 import { DecisionTransitionRejected } from "./decision-repository-substrate.js";
 
-/** The enumerated v1 registry — the ONLY actions a plan may carry (schema-
- *  enforced at route; re-checked here fail-closed for defense in depth). */
-export const V1_ACTION_REGISTRY: readonly DecisionPlanAction["action"][] = ["unblock", "approve"];
+/** The enumerated registry — the ONLY actions a plan may carry (schema-
+ *  enforced at route; re-checked here fail-closed for defense in depth).
+ *  v1: unblock | approve. mission-103 S1 (decision-17 §2): the charter pair
+ *  bind_axiom | amend_charter — charter mutation exists ONLY here, so every
+ *  charter change structurally carries {ratifiedBy: decision, proofRef}. */
+export const V1_ACTION_REGISTRY: readonly DecisionPlanAction["action"][] = ["unblock", "approve", "bind_axiom", "amend_charter"];
+
+const BINDING_STATUSES = ["bound", "superseded", "unbound"] as const;
+const CHARTER_SECTIONS = ["vision", "directorProfile"] as const;
 
 export interface ExecutionTargets {
   workItem?: Pick<IWorkItemStore, "getWorkItem" | "systemUnblock">;
@@ -40,6 +46,14 @@ export interface ExecutionTargets {
    *  dispatches) — the policy layer supplies this closure; the executor never
    *  touches the raw repository method. */
   approveViaPolicy?: (proposalRef: string, feedback: string) => Promise<{ ok: boolean; detail: string }>;
+  /** mission-103 S1: the served constitution — bind_axiom targets must
+   *  resolve in the CURRENT snapshot manifest (referential, fail-closed). */
+  constitution?: { getCurrent(): Promise<{ manifest: Array<{ id: string }> } | null> };
+  /** mission-103 S1: the charter append closures, supplied by the policy
+   *  layer with the executing decision's {ratifiedBy, proofRef} already
+   *  bound — the executor never fabricates authority fields. */
+  bindAxiomViaPolicy?: (step: DecisionPlanAction) => Promise<{ ok: boolean; detail: string }>;
+  amendCharterViaPolicy?: (step: DecisionPlanAction) => Promise<{ ok: boolean; detail: string }>;
 }
 
 /** Pre-effect validation (part of the contract-11 proof chain): every action
@@ -69,6 +83,44 @@ export async function validatePlan(decision: Decision, targets: ExecutionTargets
         throw new DecisionTransitionRejected(`plan rejected: approve target ${step.targetRef} is '${p.status}', not 'submitted' (INV-P2) — a decision cannot re-decide a decided proposal`);
       }
     }
+    if (step.action === "bind_axiom" || step.action === "amend_charter") {
+      // Design §4 anti-gameability (the complete_work posture): a
+      // CONSTITUTIONAL plan action executes only on a decision that CARRIES
+      // required evidence — the S2 batch's required evidence is the verifier
+      // fidelity audit, and an evidence-free charter mutation must reject
+      // BEFORE any transition, not rely on raise-time discipline alone.
+      if (!(decision.contextRefs ?? []).some((r) => r.required)) {
+        throw new DecisionTransitionRejected(`plan rejected: ${step.action} requires the decision to carry required evidence (a required:true contextRef — design §4: the fidelity audit is the batch ratification's REQUIRED evidence); ${decision.id} carries none`);
+      }
+    }
+    if (step.action === "bind_axiom") {
+      // Referential, fail-closed: the axiom must exist in the SERVED
+      // constitution — a binding to an unsynced/unknown axiom is invalid
+      // cargo, rejected BEFORE the decision transitions (contract 11).
+      if (!targets.constitution) throw new DecisionTransitionRejected("plan rejected: bind_axiom requires the Constitution store");
+      const snapshot = await targets.constitution.getCurrent();
+      if (!snapshot) throw new DecisionTransitionRejected("plan rejected: bind_axiom before the first constitution sync — the axiom set is not served yet (not_synced)");
+      if (!snapshot.manifest.some((m) => m.id === step.targetRef)) {
+        throw new DecisionTransitionRejected(`plan rejected: bind_axiom target '${step.targetRef}' is not in the served constitution (known: ${snapshot.manifest.map((m) => m.id).join(", ")})`);
+      }
+      const status = step.params?.status;
+      if (status !== undefined && !BINDING_STATUSES.includes(status as typeof BINDING_STATUSES[number])) {
+        throw new DecisionTransitionRejected(`plan rejected: bind_axiom status '${String(status)}' not in the domain [${BINDING_STATUSES.join(", ")}]`);
+      }
+      // Self-reference guard travels into the pre-effect chain too.
+      if (step.params?.predecessor === step.targetRef || step.params?.supersedes === step.targetRef) {
+        throw new DecisionTransitionRejected(`plan rejected: bind_axiom '${step.targetRef}' cannot reference itself as predecessor/supersedes (self-reference guard)`);
+      }
+    }
+    if (step.action === "amend_charter") {
+      if (!CHARTER_SECTIONS.includes(step.targetRef as typeof CHARTER_SECTIONS[number])) {
+        throw new DecisionTransitionRejected(`plan rejected: amend_charter target '${step.targetRef}' not in the domain [${CHARTER_SECTIONS.join(", ")}]`);
+      }
+      const text = step.params?.text;
+      if (typeof text !== "string" || text.trim().length === 0) {
+        throw new DecisionTransitionRejected("plan rejected: amend_charter requires non-empty params.text (the amendment content IS the plan — hash-bound at confirmation)");
+      }
+    }
   }
 }
 
@@ -86,6 +138,14 @@ export async function executePlan(decision: Decision, targets: ExecutionTargets)
       } else if (step.action === "approve") {
         if (!targets.approveViaPolicy) throw new DecisionTransitionRejected("approve requires the policy-path closure (never the raw repository method)");
         const outcome = await targets.approveViaPolicy(step.targetRef, `Approved by decision ${decision.id} (${decision.resolution?.authorityMode}; ref ${decision.resolution?.authorityRef})`);
+        results.push({ action: step.action, targetRef: step.targetRef, ok: outcome.ok, detail: outcome.detail });
+      } else if (step.action === "bind_axiom") {
+        if (!targets.bindAxiomViaPolicy) throw new DecisionTransitionRejected("bind_axiom requires the policy-path closure (the {ratifiedBy, proofRef} pair is bound there, never fabricated here)");
+        const outcome = await targets.bindAxiomViaPolicy(step);
+        results.push({ action: step.action, targetRef: step.targetRef, ok: outcome.ok, detail: outcome.detail });
+      } else if (step.action === "amend_charter") {
+        if (!targets.amendCharterViaPolicy) throw new DecisionTransitionRejected("amend_charter requires the policy-path closure (the {ratifiedBy, proofRef} pair is bound there, never fabricated here)");
+        const outcome = await targets.amendCharterViaPolicy(step);
         results.push({ action: step.action, targetRef: step.targetRef, ok: outcome.ok, detail: outcome.detail });
       }
     } catch (e) {
