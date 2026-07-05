@@ -16,10 +16,10 @@
 
 | Tele | Role | Why |
 |---|---|---|
-| tele-3 Sovereign Composition | primary | Every module (Hub, adapters, agents) gains standardized PR-gated integration contract; boundary discipline goes from methodology-enforced to tooling-enforced |
-| tele-6 Frictionless Agentic Collaboration | primary | Eliminates the per-task-nudge + per-merge-coordination overhead; agents coordinate via main, not via bilateral threads |
-| tele-2 Isomorphic Specification | secondary | CODEOWNERS mechanizes directory-ownership spec; runtime-reality parity on ownership enforcement |
-| tele-7 Resilient Agentic Operations | secondary | Branch protection + CI gates prevent merge-time class of errors (subdirectory gitignore bypass from mission-41 is canonical example) |
+| A3 Sovereign Composition | primary | Every module (Hub, adapters, agents) gains standardized PR-gated integration contract; boundary discipline goes from methodology-enforced to tooling-enforced |
+| A6 Frictionless Agentic Collaboration | primary | Eliminates the per-task-nudge + per-merge-coordination overhead; agents coordinate via main, not via bilateral threads |
+| A2 Isomorphic Specification | secondary | CODEOWNERS mechanizes directory-ownership spec; runtime-reality parity on ownership enforcement |
+| A7 Resilient Agentic Operations | secondary | Branch protection + CI gates prevent merge-time class of errors (subdirectory gitignore bypass from mission-41 is canonical example) |
 
 **Tele-leverage score: 4.**
 

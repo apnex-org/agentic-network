@@ -12,7 +12,7 @@ This is a **zero-production-code** conventions rung. It defines, at **architectu
 
 ## §1 Resources are derived, never hand-listed
 
-The set of REST resources is **DERIVED at runtime** from the live authority + substrate — never a hand-maintained list. This is the tele-10 (declarative-source-of-truth) property and it auto-corrects the verified kind-count drift.
+The set of REST resources is **DERIVED at runtime** from the live authority + substrate — never a hand-maintained list. This is the A10 (declarative-source-of-truth) property and it auto-corrects the verified kind-count drift.
 
 - **`deriveContract(router, schemaDefs)`** generalizes the existing `computeToolSurfaceRevision(router)` walk (`tool-surface-revision.ts:62`).
 - **Resources = the set of kinds that have at least one registered policy verb.** This is the load-bearing rule:
@@ -44,7 +44,7 @@ Rationale: CRUD maps to HTTP methods on resource nouns (not RPC verbs); domain a
 
 ### §2.1 List / filter — flat filter keys → envelope paths via `renameMap`
 
-The substrate stores K8s envelopes; the domain shape above the repo membrane is flat. REST filters are expressed in **flat** domain terms (what callers know), and translated to **envelope field-paths** via each kind's **`renameMap`** — the single field-path authority (tele-12). A `GET` collection with filter query params translates each flat filter key to its envelope path through `renameMap` before the query reaches the authority. `renameMap` is the one place a relocated field is declared (write-encode + filter-translate + read-decode all derive from it), so a filter never hard-codes an envelope path.
+The substrate stores K8s envelopes; the domain shape above the repo membrane is flat. REST filters are expressed in **flat** domain terms (what callers know), and translated to **envelope field-paths** via each kind's **`renameMap`** — the single field-path authority (A12). A `GET` collection with filter query params translates each flat filter key to its envelope path through `renameMap` before the query reaches the authority. `renameMap` is the one place a relocated field is declared (write-encode + filter-translate + read-decode all derive from it), so a filter never hard-codes an envelope path.
 
 ### §2.2 WATCH — SSE over LISTEN/NOTIFY (never a poll loop)
 

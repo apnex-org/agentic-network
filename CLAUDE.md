@@ -18,7 +18,7 @@ Project-level context binding all Claude Code instances on this repository.
 
 **Why:** defeats LLM-state-fidelity drift — narrative-doc recall produces hallucinated cross-references; ledger queries return ground truth.
 
-**How to apply:** `python3 scripts/calibrations/calibrations.py {list,show,status}` (read surface). Calibrations are **architect-fileable, not Director-gated** (relaxed 2026-06-27): file when evidence-anchored (origin + surfaced_at + cross_refs) and — for substrate/architectural entries — peer-verified (bilateral architect+engineer concur, or an adversarial-verify pass); methodology/working-discipline entries the architect may file solo. IDs are next-monotonic-integer (deterministic; a Phase-2 write-verb will mechanize filing + validation). The **Director curates** — retire / downgrade / re-class authority + periodic review — rather than gating each filing (Director-direct filing remains for Director-originated entries). **Why relaxed:** removes the Director-as-minting-bottleneck so the org self-records its learning; the Director curates the high-signal ledger instead (tele-13 — amplify Director attention, don't gate on it). **Still true:** query the ledger via the Skill rather than narrative recall (ground-truth, not hallucinated cross-refs).
+**How to apply:** `python3 scripts/calibrations/calibrations.py {list,show,status}` (read surface). Calibrations are **architect-fileable, not Director-gated** (relaxed 2026-06-27): file when evidence-anchored (origin + surfaced_at + cross_refs) and — for substrate/architectural entries — peer-verified (bilateral architect+engineer concur, or an adversarial-verify pass); methodology/working-discipline entries the architect may file solo. IDs are next-monotonic-integer (deterministic; a Phase-2 write-verb will mechanize filing + validation). The **Director curates** — retire / downgrade / re-class authority + periodic review — rather than gating each filing (Director-direct filing remains for Director-originated entries). **Why relaxed:** removes the Director-as-minting-bottleneck so the org self-records its learning; the Director curates the high-signal ledger instead (A13 — amplify Director attention, don't gate on it). **Still true:** query the ledger via the Skill rather than narrative recall (ground-truth, not hallucinated cross-refs).
 
 ## Mission RACI
 
@@ -36,7 +36,7 @@ Project-level context binding all Claude Code instances on this repository.
 - Work-trace location: `docs/traces/trace-management.md` — canonical how-to; engineer-owned `docs/traces/<task-or-mission>-work-trace.md` per task
 - Engineer-runtime overlay: `docs/methodology/engineer-runtime.md` — INDEX of engineer-runtime concerns (Pass 10 rebuild, schema-rename migration, thread-vs-GitHub approval, commit-push heartbeat, work-trace discipline, etc.)
 - Architect-runtime overlay: `docs/methodology/architect-runtime.md` — INDEX of architect-runtime concerns (mission-driving authority, categorised-concerns surface, Idea Triage Protocol, pulse coordination, substrate-self-dogfood, etc.)
-- Tele glossary: `docs/methodology/tele-glossary.md` — tele-N → short-name → mandate lookup (load-bearing decoder for inline tele references)
+- Constitution / axioms: the org charter (`get_charter`) + the mission-kit axioms (`get_axiom {A0..A14}`, `list_axioms`) — A-N → short-name → mandate lookup (the constitutional decoder for inline axiom references). Transitional: `docs/methodology/tele-glossary.md` (tele-N) still resolves until the S4 tele cut.
 
 ## Hub storage substrate (post-mission-83 W5 cutover)
 
@@ -86,5 +86,5 @@ Methodology + role-runtime + glossary docs (load when phase-engaged or role-enga
 - `docs/methodology/entity-mechanics.md` — per-entity FSM + status transitions + cascade behaviors
 - `docs/methodology/engineer-runtime.md` — engineer-runtime concerns INDEX
 - `docs/methodology/architect-runtime.md` — architect-runtime concerns INDEX
-- `docs/methodology/tele-glossary.md` — tele-N lookup
+- Constitution: `get_charter` (org charter) + `get_axiom`/`list_axioms` (mission-kit axioms A0..A14) — A-N lookup. Transitional: `docs/methodology/tele-glossary.md` (tele-N) until the S4 cut.
 - `.github/CODEOWNERS` — directory-ownership map; mechanized review routing

@@ -19,7 +19,7 @@ Each idea triaged in a post-stint pass gets four `audit:*` tags. `addTags` is ad
 | `audit:tele_primary:*` | `tele-N` | The single tele the idea most serves (the primary leverage axis). |
 
 Stamp example (additive — preserves existing tags):
-`update_idea(ideaId, addTags: ["audit:value:high", "audit:effort:M", "audit:action:design-next", "audit:tele_primary:tele-13"])`
+`update_idea(ideaId, addTags: ["audit:value:high", "audit:effort:M", "audit:action:design-next", "audit:tele_primary:A13"])`
 
 ## Disposition buckets (`audit:action:*`)
 

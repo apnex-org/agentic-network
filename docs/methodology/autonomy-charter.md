@@ -8,7 +8,7 @@
 
 ## §0 Purpose
 
-The org proved an autonomous operating model end-to-end across stint-1 (DR-001..012, Director-ratified; hard-lines held) and the in-flight stint-2 (`docs/decisions/autonomous-stint-2-2026-06-21-log.md`). What was *not* durable was **repeatability + reviewability**: the model lived as a verbal authority handshake plus an uncommitted DR log. The next stint could not be reliably re-run, and its decisions could not be queried — only re-narrated, which re-imports the LLM-state-fidelity drift the org built ledgers to defeat (tele-10 autopoietic-evolution / declarative-truth).
+The org proved an autonomous operating model end-to-end across stint-1 (DR-001..012, Director-ratified; hard-lines held) and the in-flight stint-2 (`docs/decisions/autonomous-stint-2-2026-06-21-log.md`). What was *not* durable was **repeatability + reviewability**: the model lived as a verbal authority handshake plus an uncommitted DR log. The next stint could not be reliably re-run, and its decisions could not be queried — only re-narrated, which re-imports the LLM-state-fidelity drift the org built ledgers to defeat (A10 autopoietic-evolution / declarative-truth).
 
 This charter is the honest fix: **write down exactly what worked, make it queryable, make the next stint reviewable, and STOP.** Its success measure is that the next real autonomous stint runs *under* this charter (repeatable + reviewable), and that same stint is the evidence-collector for whether any enforcement is ever warranted.
 
@@ -22,7 +22,7 @@ A stint runs under a **time-boxed, scoped Director AuthorityGrant** — an expli
 
 **How a stint opens.** The Director issues a grant naming (a) the **scope** the elevation covers, (b) a **time-box** (the window), and (c) the **ceiling** — the prose bound on what the acting-Director may do autonomously. Example (stint-2, 2026-06-21): *"Away stint. Full authority to drive. Try and utilise Greg and Steve, and even yourself between tasks to minimise long periods of idle."* That grant, issued immediately after the Director ratified the stint-2 roadmap at the consolidated gate, is the live AuthorityGrant the stint-2 DR log records against.
 
-**The acting-Director.** Within the grant window one agent holds the drive (stint-2: lily, architect). The acting-Director executes within-authority actions (§3) and defers/records out-of-scope or hard-line actions. Peers are utilized actively (greg/engineer, Steve/verifier) — the never-idle directive is part of the grant intent (tele-6 frictionless-collab, tele-13 Director-attention-amplification: the Director steps fully out, the org self-drives).
+**The acting-Director.** Within the grant window one agent holds the drive (stint-2: lily, architect). The acting-Director executes within-authority actions (§3) and defers/records out-of-scope or hard-line actions. Peers are utilized actively (greg/engineer, Steve/verifier) — the never-idle directive is part of the grant intent (A6 frictionless-collab, A13 Director-attention-amplification: the Director steps fully out, the org self-drives).
 
 **How a stint closes.** On Director return, the grant window closes and the acting-Director surfaces the stint for review: the DR-ledger is presented for **batch ratification** (§4), and any within-authority high-authority actions taken (prod-deploys, autonomous closes) are surfaced for the Director — and for the verifier backstop (§5). The default convention is **revert-on-Director-return for anything provisional** that the Director did not pre-bless; durable changes stand only once ratified.
 
@@ -41,7 +41,7 @@ The protocol validated across both stints is: **triangulate against the teles �
 ### Decision-flow
 
 1. **Encounter a decision point** during the stint.
-2. **Triangulate against the teles.** Which teles does each option serve, and which does it strain? The triangulation is recorded, not just performed (tele-10 declarative-truth).
+2. **Triangulate against the teles.** Which teles does each option serve, and which does it strain? The triangulation is recorded, not just performed (A10 declarative-truth).
 3. **Classify the action** against the within-authority set vs the hard-line taxonomy (§3) under the active AuthorityGrant. (Once the §4 CLI exists, an *advisory* preflight check informs this step; it NEVER blocks.)
 4. **Record a DecisionRecord** (author-autonomous, `status: proposed`): context, triangulation, decision, disposition, backstop-coverage, grants-established, source-ref.
 5. **Disposition** — one of (descriptive vocabulary, never enforcement-flavored):
@@ -87,7 +87,7 @@ All deferred enforcement (deny-set membrane, AuthorityGrant auto-revert, verifie
 
 **Trip-condition:** a SECOND stint, run under R1 (+R2 record), that yields an actual prose-discipline failure — a **near-breached hard-line**, a **skipped backstop**, an **UNCONVENED high-authority action**, or an **unobserved fan-out** — **architect-surfaced AND Director-confirmed as a DR.** If any *gating-shaped* enforcement is ever contemplated, a `verifier-role.md` §1/§2.3 **re-ratification is a prerequisite** (gating reverses a Director-ratified contract; see §5).
 
-Until a trip, the arc is **COMPLETE at R2.** Premature enforcement is itself a tele-13 regression: a structural deny-set on irreversible/destructive prod ops would block exactly the DR-008-class legitimate recovery the Director preserved, forcing a halt + Director round-trip.
+Until a trip, the arc is **COMPLETE at R2.** Premature enforcement is itself a A13 regression: a structural deny-set on irreversible/destructive prod ops would block exactly the DR-008-class legitimate recovery the Director preserved, forcing a halt + Director round-trip.
 
 ---
 
@@ -132,11 +132,11 @@ R2 (`M-AuthorityGrant-DecisionRecord-Substrate`) later promotes the **same shape
 
 A **cross-lineage verifier** (Steve — GPT-5.5/OpenCode, deliberately decorrelated from the Anthropic-lineage producers) independently audits the acting-Director's autonomous high-authority actions (prod-deploys, autonomous closes). This codifies the stint-1 convening pattern while honoring `docs/specs/verifier-role.md` §1/§2.3 **strictly**:
 
-- **Advisory, never gating.** The verdict attaches as a non-gating `create_audit_entry`. The DecisionRecord **finalizes immediately** — there is no pending-integrity-check state, no verifier reopen-authority, no `create_review` for the verifier. The verifier holds **no veto**; the Director decides (tele-13 authority-non-delegation).
+- **Advisory, never gating.** The verdict attaches as a non-gating `create_audit_entry`. The DecisionRecord **finalizes immediately** — there is no pending-integrity-check state, no verifier reopen-authority, no `create_review` for the verifier. The verifier holds **no veto**; the Director decides (A13 authority-non-delegation).
 - **Reopen-via-finding only.** Dissent surfaces as a Director-routed flag (`create_audit_entry` / `create_bug` / `create_idea` — the §2.3 finding-surfacing set), never as a block on work.
 - This means `verifier-role.md` §1/§2.3 is **not reopened** and no re-ratification dependency is incurred by this rung. Any future gating-shaped output requires a separate, explicit verifier-role re-ratification (§3.4).
 
-**OPEN — recall-coverage is a NAMED instrument, not a closed property.** The backstop fired in stint-1 only because the architect *chose* to convene Steve — convening is currently **voluntary**, and the org is precision-trustworthy but **recall-blind** by construction (the finding that birthed `verifier-role.md`; calibration #87). The recall-coverage canary is **deferred** (nothing to meter until enforcement + the work-queue exist). Do **not** imply the backstop is closed because it was convened once. The mitigation is honesty: each DR records whether the backstop was `convened`, so an **unconvened high-authority action is itself a queryable gap** the next stint surfaces (tele-4 no-silent-failure) — and that gap is one of the §3.4 evidence-gate trip-conditions.
+**OPEN — recall-coverage is a NAMED instrument, not a closed property.** The backstop fired in stint-1 only because the architect *chose* to convene Steve — convening is currently **voluntary**, and the org is precision-trustworthy but **recall-blind** by construction (the finding that birthed `verifier-role.md`; calibration #87). The recall-coverage canary is **deferred** (nothing to meter until enforcement + the work-queue exist). Do **not** imply the backstop is closed because it was convened once. The mitigation is honesty: each DR records whether the backstop was `convened`, so an **unconvened high-authority action is itself a queryable gap** the next stint surfaces (A4 no-silent-failure) — and that gap is one of the §3.4 evidence-gate trip-conditions.
 
 ---
 
@@ -167,7 +167,7 @@ This charter is load-bearing only if it is **loaded before an AuthorityGrant is 
 - **Verifier contract:** `docs/specs/verifier-role.md` §1 (advisory-not-gating + refute-not-produce) + §2.3 (finding-surfacing WRITE scope; `create_review` excluded as gating) — held strictly by §5.
 - **Calibration discipline (the contrasted ledger):** `CLAUDE.md` §"Calibration ledger discipline" + `docs/calibrations.yaml` + `scripts/calibrations/calibrations.py`; calibration #87 (precision-trustworthy ≠ complete; recall-blind).
 - **DX mold cloned by §4.4:** `docs/decisions/030-calibration-ledger-mechanization.md` (ADR-030) + the `skills/survey` skill mold.
-- **RACI + glossary:** `docs/methodology/mission-lifecycle.md` §1.5 (mission RACI; Director engages at gate-points); `docs/methodology/architect-runtime.md` (INDEX entry to add per §6); `docs/methodology/tele-glossary.md` (tele-N decoder).
+- **RACI + constitution:** `docs/methodology/mission-lifecycle.md` §1.5 (mission RACI; Director engages at gate-points); `docs/methodology/architect-runtime.md` (INDEX entry to add per §6); the org charter (`get_charter`) + mission-kit axioms (`get_axiom` A0..A14) as the constitutional decoder — transitionally `docs/methodology/tele-glossary.md` (tele-N) still resolves until the S4 cut.
 
 ---
 

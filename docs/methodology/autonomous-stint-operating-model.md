@@ -25,7 +25,7 @@ The FOCUS is **produced by the engine's ranking (§2)** then **ratified by counc
 
 - *Examples:* **stint-3** FOCUS = "consolidate the substrate + cleanup conflicting tooling" (implicit — never named as such, a lesson). **stint-4** FOCUS = "**Bank-the-Base** — observability + selection substrate" (the first EXPLICIT, ratified FOCUS; staked summits **C2** [+1], **D-1** [+2]).
 
-**The through-line the FOCUS banks toward** is **"k8s + cognitive continuity"**: a sovereign REST control-plane (**D-1** — Hub = apiserver, oisctl = kubectl, agents = controllers) that **observes + actuates** via the **C1** work-queue, over **containerised, context-aware agents** (**C2 / D-2**), shipped through a **self-verifying, fail-loud** path (**C3**), **bounded by governed autonomy** (**C4**). North-stars: **tele-13** (amplify the Director's non-scalable attention — the org self-drives) + **tele-4** (nothing completes silently or masks its own failure). Every FOCUS must name which of these summits it banks toward.
+**The through-line the FOCUS banks toward** is **"k8s + cognitive continuity"**: a sovereign REST control-plane (**D-1** — Hub = apiserver, oisctl = kubectl, agents = controllers) that **observes + actuates** via the **C1** work-queue, over **containerised, context-aware agents** (**C2 / D-2**), shipped through a **self-verifying, fail-loud** path (**C3**), **bounded by governed autonomy** (**C4**). North-stars: **A13** (amplify the Director's non-scalable attention — the org self-drives) + **A4** (nothing completes silently or masks its own failure). Every FOCUS must name which of these summits it banks toward.
 
 ## 2. The engine (prioritise → seed → rank → drive)
 
@@ -83,13 +83,13 @@ This is distinct from the **lifecycle/commitment** axis (`candidate` / resourced
 **Four autonomous-stint-native refinements (adopt):**
 1. **`dogfoodProves` / `validatedBy` edge** — the org is its own first customer (work-19 validated live at `leaseExpiryCount=2`); an edge from a shipped rung to the stint that exercised it *upgrades confidence in its banked status*.
 2. **Observability-multiplier on summit-value** — a banked rung you cannot *observe* is effectively a bet; rungs that convert assumed-state→ground-truth (idea-357, C1-widen, idea-364, telemetry) get a multiplier because they raise the reliability of *every other rung's* banked status. (This is why observability is co-equal with incorporation in stint-4's FOCUS.)
-3. **Director-attention negative-edge (tele-13)** — items that *reduce Director-gating in-degree* (C2/FR-23, governance relaxation) earn forward-investment via attention-saved; the autonomous org has a human-attention budget arc-core does not.
+3. **Director-attention negative-edge (A13)** — items that *reduce Director-gating in-degree* (C2/FR-23, governance relaxation) earn forward-investment via attention-saved; the autonomous org has a human-attention budget arc-core does not.
 4. **Staking-obligation / summit-liveness decay** — banked base substrate that **no summit stakes within N stints** is dead capital; its score must **decay**. The dual of SubstrateBanked: bank the base, but re-price it down when its intended summit stays dormant. **This is the structural cure for the generation-skew** (the org banking inward forever) — it makes indefinite banking impossible and forces the stake.
 
 ## 4. The three planes + the architect-deliverable taxonomy
 
-**The three planes (kept sovereign — tele-3):**
-1. **Project state (entities)** — Ideas / Missions / Bugs / Designs / Teles / Agents = the durable truth (tele-1).
+**The three planes (kept sovereign — A3):**
+1. **Project state (entities)** — Ideas / Missions / Bugs / Designs / Teles / Agents = the durable truth (A1).
 2. **Work items (the queue)** — the claimable execution / work-assignment plane.
 3. **Comms (threads / councils / notes / events)** — deliberation + signal.
 
@@ -133,7 +133,7 @@ The queue does **not** replace comms. Threads & councils remain where agents *de
 
 - **Reconciliation is a MANDATORY stint-open pre-flight gate** — run ledger-reconciliation BEFORE strategic-review / seeding. Zero-build; it deleted ~52% of wasted seed-candidates at stint-3 *after the fact*. Never trust a stale backlog.
 - **Ground-truth-over-assumption (4-surface)** — ground-truth an item from *code* before acting on it, across all four surfaces: **sizing / seeding / audit-promotion / deploy-diagnosis** (cal #85, generalised). Never act on ledger-recall or assumed state.
-- **Fix-the-class, not-the-instance** (tele-8; cal #88 corollary) — when a defect is one of a class, sweep the class (claim-time path-enumeration + blast-radius grep) rather than patching the single instance.
+- **Fix-the-class, not-the-instance** (A8; cal #88 corollary) — when a defect is one of a class, sweep the class (claim-time path-enumeration + blast-radius grep) rather than patching the single instance.
 - **Standing post-stint Idea Triage + backlog-health metric** — close the incorporation funnel: triage the open-idea cohort (keep-vs-CUT, triage tags) and track a backlog-health metric every stint-close (the gen:incorp constraint).
 - Mechanise + declare before any imperative path · tele-alignment over speed · safety before leverage · NARROW adoption first, widen after dogfood · flow verifier-gated, reversible deploys autonomously (pre-gate only genuine hard-lines) · **verifier-gate is mandatory-to-run + generative + release-critical on backplane/deploy slices, yet the verifier stays advisory-in-authority (never a hard veto — ratified verifier-role)** · thin-shim / shared-kernel · `get_agents` is the canonical roster · decisions → DR-ledger, calibrations → architect-fileable / Director-curates · **version-bump co-commits with the final src PR of a ship** (the version-gate fired 3× at stint-3 from split bumps) · **never bypass the ship-path gate.**
 

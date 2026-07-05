@@ -2,7 +2,7 @@
 
 **Status:** LIVING (v1, opened 2026-06-22 during stint-2 at Director direction) — a documented, triaged backlog of friction encountered while running the **self-autonomous-stint operating model** (architect-as-acting-Director driving greg + Steve autonomously under a Director AuthorityGrant). Companion to the DR-ledger (`docs/decisions/autonomous-stint-*-log.md`, the *decision*-trace) — this is the *friction*-trace.
 
-**Why this exists:** the autonomous-stint is a novel operating model (C4 governed-autonomy). It works — but it surfaces recurring friction in the Hub primitives, tooling, substrate, harness, and the architect-runtime methodology itself. Capturing + triaging that friction is how the model improves (tele-10 autopoietic-evolution; tele-13 less-Director-attention). Left in narration/memory it drifts; documented it compounds.
+**Why this exists:** the autonomous-stint is a novel operating model (C4 governed-autonomy). It works — but it surfaces recurring friction in the Hub primitives, tooling, substrate, harness, and the architect-runtime methodology itself. Capturing + triaging that friction is how the model improves (A10 autopoietic-evolution; A13 less-Director-attention). Left in narration/memory it drifts; documented it compounds.
 
 **Disposition legend:**
 - `FIX-NOW` — small, unambiguous; fix in-flight.
@@ -79,7 +79,7 @@
 
 ### FR-14 — Director-reporting cadence: status-close nearly every turn
 **Evidence:** ~20+ end-of-turn status syntheses this stint. Useful for a monitoring Director, but likely over-reporting at steady-state; risks signal-dilution.
-**Disposition:** `COUNCIL` / methodology — calibrate the Director-facing cadence: full synthesis at milestones/gates + on-request; terse or silent at routine steady-state. (Tension with tele-13 "Director sees the org at a glance" — the *right* glance-surface may be a dashboard/pulse, not prose every turn.)
+**Disposition:** `COUNCIL` / methodology — calibrate the Director-facing cadence: full synthesis at milestones/gates + on-request; terse or silent at routine steady-state. (Tension with A13 "Director sees the org at a glance" — the *right* glance-surface may be a dashboard/pulse, not prose every turn.)
 
 ---
 
@@ -114,7 +114,7 @@ When the Hub container rolls (watchtower deploy), the repo-event-bridge reconnec
 ## Section G — Stint-2 C1-adoption GO-LIVE + dogfood-2 + adapter-hygiene (FR-23..FR-30, 2026-06-27)
 
 ### FR-23 — OPERATOR-AS-LIFECYCLE-BOTTLENECK (HEADLINE — Director-emphasized for council)
-This stint, **every agent-lifecycle + prod-write action routed through the Director as manual operator.** The org cannot self-drive (tele-13) while a human is the restart/deploy/wake operator. Facets:
+This stint, **every agent-lifecycle + prod-write action routed through the Director as manual operator.** The org cannot self-drive (A13) while a human is the restart/deploy/wake operator. Facets:
 - **Adapter hop = manual client restart.** Loading new proxy/adapter CODE needs a full Claude Code exit+relaunch (a stdio code-swap can't hot-reload; the bug-180 "bootstrap caveat" — the live-refresh can't deliver the fix that enables live-refresh). Director-executed for lily+greg this stint.
 - **Plugin update = manual build+stage.** No consumer/producer auto-refresh subscription; the operator hand-stages the marketplace dir + installs (→ idea-354). The `update-claude-plugin.sh` one-command script (#365) compressed this but still requires the operator to run it + restart.
 - **Hub deploys = Director-coordinated** prod-write (each watchtower roll).
@@ -122,10 +122,10 @@ This stint, **every agent-lifecycle + prod-write action routed through the Direc
 → The dominant friction class + the strongest signal for the **C2/D-2 supervisor arc** (agent lifecycle restartable/upgradable from outside the LLM) + idea-353/354/355. **Council charge:** which operator actions are intrinsically human (genuine hard-lines) vs mechanizable by C2/D-2?
 
 ### FR-24 — Forked shared-adapter → kernel features don't reach all hosts (→ idea-355)
-The "shared" `@apnex/network-adapter` is on two divergent version lines (claude `0.1.4` vs opencode `2.1.0`) + suspected code drift. idea-353's wake/stall (kernel code) reached claude only; opencode/Steve stays wake-gapped. Violates tele-3 (one shared kernel). → **idea-355** (deep shim/adapter audit + converge to one kernel + thin shims); cluster bug-182/183/184. **This is the now-prioritized consolidation focus.**
+The "shared" `@apnex/network-adapter` is on two divergent version lines (claude `0.1.4` vs opencode `2.1.0`) + suspected code drift. idea-353's wake/stall (kernel code) reached claude only; opencode/Steve stays wake-gapped. Violates A3 (one shared kernel). → **idea-355** (deep shim/adapter audit + converge to one kernel + thin shims); cluster bug-182/183/184. **This is the now-prioritized consolidation focus.**
 
 ### FR-25 — adapterVersion telemetry mis-reports the shim, not the kernel (→ bug-183)
-`get_agents` `advisoryTags.adapterVersion` == the proxy/SHIM version, not `@apnex/network-adapter` (the kernel) → it MASKED the kernel drift (FR-24). tele-1/tele-4 (sovereign-state-transparency) violation. → bug-183.
+`get_agents` `advisoryTags.adapterVersion` == the proxy/SHIM version, not `@apnex/network-adapter` (the kernel) → it MASKED the kernel drift (FR-24). A1/A4 (sovereign-state-transparency) violation. → bug-183.
 
 ### FR-26 — Deprecated tool still live + reached-for (→ bug-184)
 `get_engineer_status` (deprecated long ago; superseded by `get_agents`, mission-63/ADR-028) is still exposed + was used repeatedly this stint before the Director's correction. A deprecated-but-live tool invites drift. → bug-184. (Same class as FR-4.)
@@ -134,7 +134,7 @@ The "shared" `@apnex/network-adapter` is on two divergent version lines (claude 
 The idea-353 W2 stall-prompt routed greg to `block_work` on work-5 (parking on an external trigger), but block RETAINED the lease clock → the sweeper reaped the blocked item back to `ready` + the idle-digest false-re-fired. No durable "armed/waiting-on-external" state. → bug-185 (idea-353 queue-semantics). **Council:** does the queue FSM need a park state outside the lease regime, or should the sweeper skip `blocked`?
 
 ### FR-28 — AC1 prod-smoke needs a deliberate surface-changing deploy
-bug-180's literal AC1 proof (work-5) can't be captured without an actual Hub tool-set change — no cheap way to manufacture a surface change for a smoke. Forced a choice between a gratuitous deploy (Route B) and an indeterminate wait (Route A, chosen — riding the next natural change). Test-affordance gap; relates tele-9 (prove-it-in-prod). → minor.
+bug-180's literal AC1 proof (work-5) can't be captured without an actual Hub tool-set change — no cheap way to manufacture a surface change for a smoke. Forced a choice between a gratuitous deploy (Route B) and an indeterminate wait (Route A, chosen — riding the next natural change). Test-affordance gap; relates A9 (prove-it-in-prod). → minor.
 
 ### FR-29 — Async-thread coordination can cross (decision vs reply race)
 greg's "B is the right call" reply crossed my Route-A steer in flight (he was answering my earlier lean-B; the Director had since picked A). Resolved cleanly (he'd deferred to the Director's pick), but the async thread model lets a reply + a superseding decision race. Coordination-ergonomics; relates FR-15/FR-18. **Council:** does queue-native coordination (vs threads) reduce this class?
@@ -238,7 +238,7 @@ This lands the **VERIFIER half of FR-20** (multi-party friction intake — frict
 **Disposition:** FIX-NOW (op-model §5) → the **SHA-pinned verifier preflight**: `git fetch` → assert local `HEAD == headRefOid` → inspect CI/merge state → run positive probe + one negative/mutation probe → post verdict AFTER the WorkItem claim (single fresh artifact, stale re-gate mechanically detectable). Calibration candidate **GATE-THE-HEAD-SHA** on recurrence (first occurrence → workflow-fix, not yet a calibration).
 
 ### FR-37 — Tool-catalog staleness recurs (a just-shipped verb is uninvocable from the session that shipped it)
-**Evidence (stint-4):** bug-199/bug-180 — `get_backlog_health` + `update_bug repo` deployed but uncallable from the architect's running session (stale on-disk per-tool inputSchema). Engineer (greg): the sharpest engineer friction — *"I ship a verb I then can't call from the seat that built it."* **3rd recurrence AND post-structural-fix-MERGE** (= FR-21 + cal #91; the #362/ade10cf fix is merged but smoke-PENDING). tele-5 perceptual-parity violation on an observability-FOCUS stint.
+**Evidence (stint-4):** bug-199/bug-180 — `get_backlog_health` + `update_bug repo` deployed but uncallable from the architect's running session (stale on-disk per-tool inputSchema). Engineer (greg): the sharpest engineer friction — *"I ship a verb I then can't call from the seat that built it."* **3rd recurrence AND post-structural-fix-MERGE** (= FR-21 + cal #91; the #362/ade10cf fix is merged but smoke-PENDING). A5 perceptual-parity violation on an observability-FOCUS stint.
 **Disposition:** COUNCIL/IDEA — high priority (directly undercuts the observability FOCUS) → make the #362 invalidation path DEFAULT (block first ListTools on a /health revision-check OR emit `notifications/tools/list_changed` on revision-drift); extend the work-5 AC1 smoke to assert schema-level refresh, not only new-verb appearance. Single-home consolidation (mission-95) kills the adjacent stale-kernel family. Escalated cal **#91**.
 
 ### FR-38 — Lease-expiry-race on an active anchor item (backstop WORKED)

@@ -16,10 +16,10 @@
 
 | Tele | Role | Why |
 |---|---|---|
-| tele-2 Isomorphic Specification | primary | Workflow-level spec↔runtime bridge; cross-domain spec↔runtime parity |
-| tele-9 Chaos-Validated Deployment | primary | Workflow tests with chaos paths complement mission-41 WF-001/005 coverage |
-| tele-8 Gated Recursive Integrity | secondary | Cross-domain gate surface extends mechanically |
-| tele-6 Frictionless Agentic Collaboration | secondary | Workflow invariants pin multi-agent collaboration patterns |
+| A2 Isomorphic Specification | primary | Workflow-level spec↔runtime bridge; cross-domain spec↔runtime parity |
+| A9 Chaos-Validated Deployment | primary | Workflow tests with chaos paths complement mission-41 WF-001/005 coverage |
+| A8 Gated Recursive Integrity | secondary | Cross-domain gate surface extends mechanically |
+| A6 Frictionless Agentic Collaboration | secondary | Workflow invariants pin multi-agent collaboration patterns |
 
 **Tele-leverage score: 4.**
 

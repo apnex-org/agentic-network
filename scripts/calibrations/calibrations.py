@@ -5,7 +5,7 @@ Three read-only subcommands surface the architectural shape (Design v1.0 §2.3).
 Verb names are PLACEHOLDERS pending idea-121 (API v2.0 tool-surface) ratification.
 
 Usage:
-  calibrations.py list [--class CLASS] [--status STATUS] [--mission MISSION] [--tele TELE]
+  calibrations.py list [--class CLASS] [--status STATUS] [--mission MISSION] [--axiom AXIOM]
   calibrations.py show <id-or-slug>
   calibrations.py status
 
@@ -53,8 +53,8 @@ def cmd_list(args: argparse.Namespace) -> None:
         rows = [c for c in rows if c.get("status") == args.status]
     if args.mission:
         rows = [c for c in rows if (c.get("origin") or "").startswith(args.mission)]
-    if args.tele:
-        rows = [c for c in rows if args.tele in (c.get("tele_alignment") or [])]
+    if args.axiom:
+        rows = [c for c in rows if args.axiom in (c.get("axiom_alignment") or [])]
 
     if not rows:
         print("(no calibrations match filter)")
@@ -124,8 +124,8 @@ def _render_calibration(c: dict, doc: dict) -> None:
         print(f"  cross_refs:")
         for ref in c["cross_refs"]:
             print(f"    - {ref}")
-    if c.get("tele_alignment"):
-        print(f"  tele_alignment: {', '.join(c['tele_alignment'])}")
+    if c.get("axiom_alignment"):
+        print(f"  axiom_alignment: {', '.join(c['axiom_alignment'])}")
 
 
 def _render_pattern(p: dict, doc: dict) -> None:
@@ -171,14 +171,14 @@ def cmd_status(args: argparse.Namespace) -> None:
     for mission, n in sorted(by_mission.items()):
         print(f"  {mission:<22} {n}")
 
-    print("\nby tele_alignment:")
-    by_tele: Counter[str] = Counter()
+    print("\nby axiom_alignment:")
+    by_axiom: Counter[str] = Counter()
     for c in calibs:
-        for tele in c.get("tele_alignment") or []:
-            by_tele[tele] += 1
-    for tele, n in by_tele.most_common():
-        print(f"  {tele:<22} {n}")
-    untagged = sum(1 for c in calibs if not c.get("tele_alignment"))
+        for axiom in c.get("axiom_alignment") or []:
+            by_axiom[axiom] += 1
+    for axiom, n in by_axiom.most_common():
+        print(f"  {axiom:<22} {n}")
+    untagged = sum(1 for c in calibs if not c.get("axiom_alignment"))
     print(f"  (untagged)             {untagged}")
 
     if patterns:
@@ -316,8 +316,8 @@ def cmd_add(args: argparse.Namespace) -> None:
         entry["pattern_membership"] = list(args.pattern_membership)
     if args.cross_ref:
         entry["cross_refs"] = list(args.cross_ref)
-    if args.tele:
-        entry["tele_alignment"] = list(args.tele)
+    if args.axiom:
+        entry["axiom_alignment"] = list(args.axiom)
 
     ent_errs = _validate_calibration(entry)
     if ent_errs:
@@ -358,14 +358,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--class", dest="cls", help="filter by class (substrate | methodology)")
     p_list.add_argument("--status", help="filter by status")
     p_list.add_argument("--mission", help="filter by mission prefix (e.g. mission-64)")
-    p_list.add_argument("--tele", help="filter by tele id (e.g. tele-3)")
+    p_list.add_argument("--axiom", help="filter by axiom id (e.g. A3)")
     p_list.set_defaults(func=cmd_list)
 
     p_show = sub.add_parser("show", help="show calibration (int id) or pattern (slug)")
     p_show.add_argument("id_or_slug", help="calibration id (integer) or pattern slug (kebab-case)")
     p_show.set_defaults(func=cmd_show)
 
-    p_status = sub.add_parser("status", help="aggregate cross-mission counts + tele-aligned slices")
+    p_status = sub.add_parser("status", help="aggregate cross-mission counts + axiom-aligned slices")
     p_status.set_defaults(func=cmd_status)
 
     # ── Phase-2 WRITE surface (work-97 / idea-356 part 1) ──
@@ -382,7 +382,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("--closure-pr", dest="closure_pr", type=int, help="PR # delivering closure (optional)")
     p_add.add_argument("--pattern-membership", dest="pattern_membership", action="append", metavar="SLUG", help="pattern id (slug); repeatable — the referenced pattern must EXIST (validate enforces no-dangling; the pattern need NOT list this id back — membership is a superset of the surfaced_by originators)")
     p_add.add_argument("--cross-ref", dest="cross_ref", action="append", metavar="REF", help="memory-doc path / entity ref; repeatable")
-    p_add.add_argument("--tele", dest="tele", action="append", metavar="TELE", help="tele id (e.g. tele-3); repeatable")
+    p_add.add_argument("--axiom", dest="axiom", action="append", metavar="AXIOM", help="axiom id (e.g. A3); repeatable")
     p_add.set_defaults(func=cmd_add)
 
     return p

@@ -16,9 +16,9 @@
 
 | Tele | Role | Why |
 |---|---|---|
-| tele-2 Isomorphic Specification | primary | Continues the spec↔runtime bridge from mission-41; closes remaining entity-invariant NONE surface |
-| tele-8 Gated Recursive Integrity | primary | Each INV added to scanner; CI merge-gate coverage surface grows mechanically |
-| tele-4 Zero-Loss Knowledge | secondary | 3 implicit-coverage cases get explicit spec-fold citations (INV-T10/T11/T12 — Wave 2 INV-T4.test.ts already exercises these) |
+| A2 Isomorphic Specification | primary | Continues the spec↔runtime bridge from mission-41; closes remaining entity-invariant NONE surface |
+| A8 Gated Recursive Integrity | primary | Each INV added to scanner; CI merge-gate coverage surface grows mechanically |
+| A4 Zero-Loss Knowledge | secondary | 3 implicit-coverage cases get explicit spec-fold citations (INV-T10/T11/T12 — Wave 2 INV-T4.test.ts already exercises these) |
 
 **Tele-leverage score: 3.**
 

@@ -1,6 +1,6 @@
 # Verifier role — definition + scope contract
 
-**Status:** v1.0 RATIFIED (Director, 2026-06-20 — all §6 points ratified as written, incl `create_bug` / `create_idea` in the finding-surfacing set). Source: idea-330 → mission-93 (M-Verifier-Role). Born from CDACC run-1's headline finding (the org is *precision-trustworthy but recall-blind* — it cannot see its own blind spots, and same-lineage agreement is a hedge, not corroboration). Serves tele-8 (Gated Recursive Integrity), tele-9 (Chaos-Validated Resilience), tele-13 (Director Intent Amplification). First holder: **Steve** (GPT-5.5 / OpenCode — a deliberately *cross-lineage* model so its blind spots decorrelate from the Anthropic-lineage producers).
+**Status:** v1.0 RATIFIED (Director, 2026-06-20 — all §6 points ratified as written, incl `create_bug` / `create_idea` in the finding-surfacing set). Source: idea-330 → mission-93 (M-Verifier-Role). Born from CDACC run-1's headline finding (the org is *precision-trustworthy but recall-blind* — it cannot see its own blind spots, and same-lineage agreement is a hedge, not corroboration). Serves A8 (Gated Recursive Integrity), A9 (Chaos-Validated Resilience), A13 (Director Intent Amplification). First holder: **Steve** (GPT-5.5 / OpenCode — a deliberately *cross-lineage* model so its blind spots decorrelate from the Anthropic-lineage producers).
 
 This is the **architect deliverable that blocks the engineer Hub-enum work** on mission-93. §2 is the implementable contract; §4 is the Hub surface; §6 lists the points needing Director ratification before deploy.
 
@@ -21,7 +21,7 @@ The verifier is **orthogonal** to the other three: it does not intend, specify, 
 
 **Two load-bearing invariants:**
 
-1. **Advisory, not gating.** The verifier surfaces independent evidence; it does **not** hold a veto. The Director decides (tele-13 authority-non-delegation). A verifier verdict is an input to a gate, never the gate itself. This keeps the verifier from becoming a bottleneck or an unaccountable authority.
+1. **Advisory, not gating.** The verifier surfaces independent evidence; it does **not** hold a veto. The Director decides (A13 authority-non-delegation). A verifier verdict is an input to a gate, never the gate itself. This keeps the verifier from becoming a bottleneck or an unaccountable authority.
 2. **Refute-not-produce, by construction.** The verifier defaults to *checking*, not *building*. It has no produce surface (no `create_mission` / `create_task` / `propose_mission` / `create_proposal`). A party that produces what it later verifies is conflicted; removing the produce surface makes the independence structural rather than a matter of discipline.
 
 ---
@@ -114,11 +114,11 @@ Spec-level pointers (engineer holds the code ground-truth):
 
 All three points ratified by the Director ("Agree with 335 recommends. Include them"):
 1. **Finding-surfacing additions — RATIFIED.** `create_bug` + `create_idea` are **in** the verifier finding-surfacing set (§2.3): a verifier that finds a defect but cannot file it is hamstrung, and bug/idea are *surfacing*, not *producing* (they drive no work-cascade).
-2. **Advisory-not-gating — RATIFIED.** The verifier holds no veto; its verdicts are evidence into Director-held gates (tele-13).
+2. **Advisory-not-gating — RATIFIED.** The verifier holds no veto; its verdicts are evidence into Director-held gates (A13).
 3. **Own-push scope — RATIFIED.** The narrow directed-only PUSH + broad READ separation (§2.1/§2.2) is the standing verifier scope.
 
 This contract is now **authoritative** and unblocks greg's Hub-enum work on mission-93. The Hub **deploy** remains a separate Director-gated prod-write (§5); the Steve role-flip rides that deploy.
 
 ---
 
-**Cross-refs:** idea-330; mission-93; CDACC run-1 drift-map (`docs/cdacc/run-672bd0f/drift-map.md`) §2 (recall-blind); calibration #87 (precision-trustworthy ≠ complete); tele-8 / tele-9 / tele-13; `mission-lifecycle.md` §1.5 (RACI) + §5.3 (mediation invariant); thread-672 (the charter convergence).
+**Cross-refs:** idea-330; mission-93; CDACC run-1 drift-map (`docs/cdacc/run-672bd0f/drift-map.md`) §2 (recall-blind); calibration #87 (precision-trustworthy ≠ complete); A8 / A9 / A13; `mission-lifecycle.md` §1.5 (RACI) + §5.3 (mediation invariant); thread-672 (the charter convergence).
