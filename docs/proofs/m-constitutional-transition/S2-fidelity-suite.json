@@ -1,0 +1,242 @@
+{
+  "verdict": "PASS",
+  "missionKitSha": "a93e71114b7e21e6bf6bac25b227537ca78817b9",
+  "teleSnapshotCapturedAt": "2026-07-05T22:40:00Z",
+  "cardinality": {
+    "axioms": 15,
+    "activeTeles": 15,
+    "pairs": 15,
+    "bijection": true,
+    "detail": "15 axioms ↔ 15 active teles, bijective over the design §4 map"
+  },
+  "matrix": [
+    {
+      "axiom": "A0",
+      "tele": "tele-14",
+      "umbrella": true,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A1",
+      "tele": "tele-1",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A2",
+      "tele": "tele-2",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A3",
+      "tele": "tele-3",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A4",
+      "tele": "tele-4",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A5",
+      "tele": "tele-5",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A6",
+      "tele": "tele-6",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A7",
+      "tele": "tele-7",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A8",
+      "tele": "tele-8",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A9",
+      "tele": "tele-9",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A10",
+      "tele": "tele-10",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A11",
+      "tele": "tele-11",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A12",
+      "tele": "tele-12",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A13",
+      "tele": "tele-13",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    },
+    {
+      "axiom": "A14",
+      "tele": "tele-15",
+      "umbrella": false,
+      "pass": true,
+      "dims": {
+        "D1-cardinality": true,
+        "D2-mandate": true,
+        "D3-mechanics": true,
+        "D4-fault-scar": true,
+        "D5-success-criteria": true,
+        "D6-org-confinement": true,
+        "D7-provenance": true
+      }
+    }
+  ],
+  "residueNotes": [
+    "A13: 3× principle-term residue in body (inter-tele, teles) — generalization nit (\"inter-tele\"→\"inter-axiom\"), not an operational leak; non-gating."
+  ]
+}
