@@ -67,10 +67,12 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
   let confirmationId = args.confirmationId as string | undefined;
   if (args.decisionId !== undefined) {
     if (confirmationId) return err("invalid_arguments", "pass decisionId OR confirmationId, not both — decisionId resolves the open confirmation server-side");
-    const open = await proofs.findOpenConfirmationsForDecision(args.decisionId as string);
-    if (open.length === 0) return err("decision_proof_rejected", `no open confirmation for ${args.decisionId} — mint one at prompt render (mint_director_confirmation) before the Director answers`);
-    if (open.length > 1) return err("decision_proof_rejected", `${open.length} open confirmations for ${args.decisionId} [${open.map((c) => c.id).join(", ")}] — ambiguous; answer by confirmationId or let the stale ones expire`);
-    confirmationId = open[0].id;
+    try {
+      const open = await proofs.findOpenConfirmationsForDecision(args.decisionId as string);
+      if (open.length === 0) return err("decision_proof_rejected", `no open confirmation for ${args.decisionId} — mint one at prompt render (mint_director_confirmation) before the Director answers`);
+      if (open.length > 1) return err("decision_proof_rejected", `${open.length} open confirmations for ${args.decisionId} [${open.map((c) => c.id).join(", ")}] — ambiguous; answer by confirmationId or let the stale ones expire`);
+      confirmationId = open[0].id;
+    } catch (e) { return mapVerbError(e); } // the truncation guard maps to a policy error, never a 500
   }
   const signal = await proofs.mintSignal({
     channel: args.channel as string,
@@ -108,6 +110,11 @@ async function getDirectorConfirmation(args: Record<string, unknown>, ctx: IPoli
     title: decision.title,
     context: decision.context,
     options: decision.options,
+    // audit-10069 (1): WHICH answer the token proposes, in plaintext — with the
+    // re-derived hash check so a tampered plaintext is visible (the hash stays
+    // the binding authority; the plaintext is only the render).
+    proposedAnswer: confirmation.proposedAnswer,
+    answerCurrent: hashProposedResolution(confirmation.proposedAnswer) === confirmation.proposedResolutionHash,
     executionPlan: decision.executionPlan,
     decisionStatus: decision.status,
     promptCurrent: canonicalPromptHash(decision) === confirmation.promptHash,
@@ -141,6 +148,7 @@ async function mintDirectorConfirmation(args: Record<string, unknown>, ctx: IPol
     decisionId: decision.id,
     promptHash: canonicalPromptHash(decision),
     proposedResolutionHash: hashProposedResolution(proposedAnswer),
+    proposedAnswer, // plaintext beside its hash (audit-10069: the render, never the authority)
     executionPlanHash: hashExecutionPlan(decision.executionPlan),
     ttlMs: CONFIRMATION_TTL_MS,
   });

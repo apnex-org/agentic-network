@@ -55,6 +55,12 @@ export interface DirectorConfirmation {
   promptHash: string;
   /** sha256 of the canonical proposed-resolution payload (Hub-computed at mint). */
   proposedResolutionHash: string;
+  /** audit-10069: the proposed answer in PLAINTEXT beside its hash — the hash
+   *  stays the binding authority; this is the RENDER (the Director must see
+   *  WHICH option the token proposes, not an opaque digest). The read verb's
+   *  answerCurrent flag re-derives the hash from this so plaintext tampering
+   *  is visible. */
+  proposedAnswer: { chosenOptionId: string } | { customAnswer: string };
   /** sha256 of the decision's stored execution plan at mint; null when no plan. */
   executionPlanHash: string | null;
   nonce: string;
@@ -95,6 +101,7 @@ export interface IDirectorProofStore {
     decisionId: string;
     promptHash: string;
     proposedResolutionHash: string;
+    proposedAnswer: { chosenOptionId: string } | { customAnswer: string };
     executionPlanHash: string | null;
     ttlMs: number;
   }): Promise<DirectorConfirmation>;

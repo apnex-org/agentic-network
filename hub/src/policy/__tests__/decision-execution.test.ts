@@ -143,7 +143,7 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     const c = await proofs.mintConfirmation({
       decisionId,
       promptHash: canonicalPromptHash(decision),
-      proposedResolutionHash: hashProposedResolution({ chosenOptionId: "yes" }),
+      proposedResolutionHash: hashProposedResolution({ chosenOptionId: "yes" }), proposedAnswer: { chosenOptionId: "yes" },
       executionPlanHash: "0".repeat(64), // divergent
       ttlMs: 60_000,
     });
@@ -228,10 +228,15 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     expect(view.binds.promptCurrent).toBe(true);          // decision unmutated since render
     expect(view.binds.planCurrent).toBe(true);
     expect(view.state).toBe("awaiting-director-answer");  // unanswered token = render token only
+    // audit-10069 (1): the token's PROPOSED ANSWER renders in plaintext with the
+    // rederived-hash integrity flag — option A can never be mistaken for option B.
+    const v = view as unknown as { binds: { proposedAnswer: { chosenOptionId?: string }; answerCurrent: boolean } };
+    expect(v.binds.proposedAnswer).toEqual({ chosenOptionId: "yes" });
+    expect(v.binds.answerCurrent).toBe(true);
     // divergent-plan confirmation renders planCurrent=false (the tamper flag)
     const stale = await proofs.mintConfirmation({
       decisionId, promptHash: canonicalPromptHash(decision),
-      proposedResolutionHash: hashProposedResolution({ chosenOptionId: "yes" }),
+      proposedResolutionHash: hashProposedResolution({ chosenOptionId: "yes" }), proposedAnswer: { chosenOptionId: "yes" },
       executionPlanHash: "0".repeat(64), ttlMs: 60_000,
     });
     const r2 = await router.handle("get_director_confirmation", { confirmationId: stale.id }, ctx);
@@ -266,6 +271,25 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     const r3 = await router.handle("capture_director_signal", { channel: "ois-say", answer: "a", capturedBySurface: "cli", confidence: "session-bound", decisionId: d2.id, confirmationId: "dconf-1" }, dctx);
     expect(r3.isError).toBe(true);
     expect(body(r3).error).toMatch(/not both/);
+  });
+
+  it("audit-10069 (2) cap-safety: answer-by-decisionId FAILS LOUD when the confirmation scan truncates — never a silently wrong zero/ambiguity verdict", async () => {
+    const { decisionId } = await armedDecision();
+    await router.handle("mint_director_confirmation", { decisionId, chosenOptionId: "yes" }, ctx);
+    // flood 500 tokens for OTHER decisions — the target's open token is now
+    // potentially beyond the scan page (the exact hidden-page hazard).
+    for (let i = 0; i < 500; i++) {
+      await proofs.mintConfirmation({
+        decisionId: `decision-flood-${i}`, promptHash: "0".repeat(64),
+        proposedResolutionHash: "0".repeat(64), proposedAnswer: { customAnswer: "x" },
+        executionPlanHash: null, ttlMs: 60_000,
+      });
+    }
+    const dctx = createTestContext({ role: "director" });
+    dctx.stores.decision = decisions; dctx.stores.directorProof = proofs; dctx.stores.workItem = workItems; dctx.stores.proposal = proposals;
+    const r = await router.handle("capture_director_signal", { channel: "ois-say", answer: "yes", capturedBySurface: "cli", confidence: "session-bound", decisionId }, dctx);
+    expect(r.isError).toBe(true);
+    expect(body(r).error).toMatch(/truncated at 500/);
   });
 
   it("failure-park: an effect failing mid-plan leaves the decision RESOLVED with executorBinding.ok=false — visible, never executed, never silent", async () => {

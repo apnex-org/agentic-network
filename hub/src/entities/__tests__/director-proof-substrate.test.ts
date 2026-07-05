@@ -101,13 +101,13 @@ describe("Director proof path (real-pg: signals / confirmations / the gate)", ()
     const mint = () => proofs.mintConfirmation({
       decisionId: d.id,
       promptHash: canonicalPromptHash(d),
-      proposedResolutionHash: hashProposedResolution(answer),
+      proposedResolutionHash: hashProposedResolution(answer), proposedAnswer: answer,
       executionPlanHash: hashExecutionPlan(d.executionPlan),
       ttlMs: 60_000,
     });
     const expect1 = {
       decisionId: d.id, promptHash: canonicalPromptHash(d),
-      proposedResolutionHash: hashProposedResolution(answer),
+      proposedResolutionHash: hashProposedResolution(answer), proposedAnswer: answer,
       executionPlanHash: hashExecutionPlan(d.executionPlan), consumedBy: "agent-arch",
     };
     const c1 = await mint();
@@ -118,7 +118,7 @@ describe("Director proof path (real-pg: signals / confirmations / the gate)", ()
     // double-consume
     await expect(proofs.consumeConfirmation(c1.id, expect1)).rejects.toThrow(/already consumed/);
     // expired
-    const cExp = await proofs.mintConfirmation({ ...expect1, promptHash: canonicalPromptHash(d), proposedResolutionHash: hashProposedResolution(answer), executionPlanHash: null, decisionId: d.id, ttlMs: -1 });
+    const cExp = await proofs.mintConfirmation({ ...expect1, promptHash: canonicalPromptHash(d), proposedResolutionHash: hashProposedResolution(answer), proposedAnswer: answer, executionPlanHash: null, decisionId: d.id, ttlMs: -1 });
     await expect(proofs.consumeConfirmation(cExp.id, { ...expect1, executionPlanHash: null })).rejects.toThrow(/expired/);
     // decision mismatch
     const c2 = await mint();
@@ -163,7 +163,7 @@ describe("Director proof path (real-pg: signals / confirmations / the gate)", ()
     // the exact exploit from the PR #486 review: mint + immediately resolve, no Director anywhere.
     const c = await proofs.mintConfirmation({
       decisionId: d.id, promptHash: canonicalPromptHash(d),
-      proposedResolutionHash: hashProposedResolution(answer),
+      proposedResolutionHash: hashProposedResolution(answer), proposedAnswer: answer,
       executionPlanHash: hashExecutionPlan(d.executionPlan), ttlMs: 60_000,
     });
     await expect(decisions.resolveDecision(d.id, ARCHITECT, answer, gate, { claimedAuthorityRef: c.id }))
@@ -179,7 +179,7 @@ describe("Director proof path (real-pg: signals / confirmations / the gate)", ()
     const answer = { chosenOptionId: "b" as const };
     const c = await proofs.mintConfirmation({
       decisionId: d.id, promptHash: canonicalPromptHash(d),
-      proposedResolutionHash: hashProposedResolution(answer),
+      proposedResolutionHash: hashProposedResolution(answer), proposedAnswer: answer,
       executionPlanHash: hashExecutionPlan(d.executionPlan), ttlMs: 60_000,
     });
     await answerConfirmation(c.id);
@@ -220,7 +220,7 @@ describe("Director proof path (real-pg: signals / confirmations / the gate)", ()
     const confirmedAnswer = { chosenOptionId: "a" as const };
     const c = await proofs.mintConfirmation({
       decisionId: d.id, promptHash: canonicalPromptHash(d),
-      proposedResolutionHash: hashProposedResolution(confirmedAnswer),
+      proposedResolutionHash: hashProposedResolution(confirmedAnswer), proposedAnswer: confirmedAnswer,
       executionPlanHash: hashExecutionPlan(d.executionPlan), ttlMs: 60_000,
     });
     await answerConfirmation(c.id); // the Director's capture makes the token proof

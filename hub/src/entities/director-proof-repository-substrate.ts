@@ -143,6 +143,13 @@ export class DirectorProofRepositorySubstrate implements IDirectorProofStore {
     // with in-memory filtering is honest at this volume; no filter-translation
     // machinery for a presenter-internal kind.
     const { items } = await this.substrate.list<DirectorConfirmation>(CONFIRMATION_KIND, { limit: 500 });
+    // audit-10069 (2): a capped scan can HIDE open confirmations beyond the page,
+    // making zero/ambiguity detection wrong — fail LOUD on truncation (500
+    // ephemeral 30-min tokens alive at once is itself an anomaly) rather than
+    // silently mis-resolve; the by-confirmationId path remains available.
+    if (items.length >= 500) {
+      throw new DecisionTransitionRejected("confirmation scan truncated at 500 rows — cannot guarantee zero/ambiguity detection for answer-by-decisionId; answer by confirmationId (and investigate the token pileup)");
+    }
     const now = Date.now();
     return items.map((c) => cloneFlat(c, CONFIRMATION_KIND)).filter((c) =>
       c.decisionId === decisionId && c.consumedAt === null && c.answeredBySignalId === null && Date.parse(c.expiresAt) >= now);
@@ -152,6 +159,7 @@ export class DirectorProofRepositorySubstrate implements IDirectorProofStore {
     decisionId: string;
     promptHash: string;
     proposedResolutionHash: string;
+    proposedAnswer: { chosenOptionId: string } | { customAnswer: string };
     executionPlanHash: string | null;
     ttlMs: number;
   }): Promise<DirectorConfirmation> {
@@ -164,6 +172,7 @@ export class DirectorProofRepositorySubstrate implements IDirectorProofStore {
       decisionId: input.decisionId,
       promptHash: input.promptHash,
       proposedResolutionHash: input.proposedResolutionHash,
+      proposedAnswer: input.proposedAnswer,
       executionPlanHash: input.executionPlanHash,
       nonce: randomUUID(),
       createdAt: nowISO,
