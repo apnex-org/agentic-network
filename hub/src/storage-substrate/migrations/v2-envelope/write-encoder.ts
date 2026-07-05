@@ -52,6 +52,7 @@ import { createWorkItemMigrationModule } from "./kinds/WorkItem.js";
 import { createDecisionMigrationModule } from "./kinds/Decision.js";
 import { createDirectorSignalMigrationModule } from "./kinds/DirectorSignal.js";
 import { createDirectorConfirmationMigrationModule } from "./kinds/DirectorConfirmation.js";
+import { createClassGrantMigrationModule } from "./kinds/ClassGrant.js";
 
 /** kind → migration-module factory. The single registry of envelope shape-authority. */
 const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModule> = {
@@ -81,6 +82,7 @@ const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModul
   Decision: createDecisionMigrationModule,  // mission-102 P3-B1
   DirectorSignal: createDirectorSignalMigrationModule,              // mission-102 P3-B4
   DirectorConfirmation: createDirectorConfirmationMigrationModule,  // mission-102 P3-B4
+  ClassGrant: createClassGrantMigrationModule,  // mission-102 P3-B3
 };
 
 export type EnvelopeWriteEncoder = (kind: string, entity: unknown) => unknown;

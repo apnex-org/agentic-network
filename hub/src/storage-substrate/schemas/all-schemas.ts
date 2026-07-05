@@ -750,6 +750,30 @@ const DirectorConfirmation: SchemaDef = {
   watchable: false,
 };
 
+// ─── mission-102 P3-B3: the ClassGrant delegation kind ───────────────────────
+// Typed-constraint delegation, row-per-version immutable (design §1.2). Filterable:
+// status.state (active-grant lookups + drift audits), spec.class (per-class queries).
+const ClassGrant: SchemaDef = {
+  kind: "ClassGrant",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "class", type: "string", required: false },
+    { name: "state", type: "string", required: false, enum: ["active", "revoked", "superseded"] },
+  ],
+  indexes: [
+    { name: "classgrant_status_state_idx", fields: ["status.state"] },
+    { name: "classgrant_spec_class_idx", fields: ["spec.class"] },
+  ],
+  watchable: false,
+  indexOwnershipPattern: "^classgrant_",
+  renameMap: {
+    state: "status.state",
+    class: "spec.class",
+    supersededBy: "status.supersededBy",
+  },
+};
+
 // ─── Export all 23 SchemaDef entries ───────────────────────────────────────
 
 /**
@@ -808,4 +832,7 @@ export const ALL_SCHEMAS: SchemaDef[] = [
   // 2 NEW mission-102 P3-B4 (the Director proof-path objects)
   DirectorSignal,
   DirectorConfirmation,
+
+  // 1 NEW mission-102 P3-B3 (typed-constraint delegation)
+  ClassGrant,
 ];

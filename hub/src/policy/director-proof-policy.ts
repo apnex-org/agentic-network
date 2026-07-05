@@ -118,7 +118,7 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
   if (!args.chosenOptionId && typeof args.customAnswer !== "string") {
     return err("invalid_arguments", "exactly one of chosenOptionId | customAnswer is required");
   }
-  const gate = new DirectorProofGate(proofs);
+  const gate = new DirectorProofGate(proofs, ctx.stores.classGrant);
   try {
     const resolved = await decisions.resolveDecision(
       args.decisionId as string,

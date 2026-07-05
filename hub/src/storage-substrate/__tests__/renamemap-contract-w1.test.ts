@@ -49,6 +49,7 @@ import { createSchemaDefMigrationModule } from "../migrations/v2-envelope/kinds/
 import { createDocumentMigrationModule } from "../migrations/v2-envelope/kinds/Document.js";
 import { createWorkItemMigrationModule } from "../migrations/v2-envelope/kinds/WorkItem.js";
 import { createDecisionMigrationModule } from "../migrations/v2-envelope/kinds/Decision.js";
+import { createClassGrantMigrationModule } from "../migrations/v2-envelope/kinds/ClassGrant.js";
 import type { KindMigrationModule } from "../migrations/v2-envelope/kinds/_contract.js";
 import { createNotificationMigrationModule } from "../migrations/v2-envelope/kinds/Notification.js";
 import { createArchitectDecisionMigrationModule } from "../migrations/v2-envelope/kinds/ArchitectDecision.js";
@@ -93,6 +94,9 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   // mission-102 P3-B1: the Decision authority-resolution spine (no lease anywhere —
   // the entity has no liveness by design).
   Decision: { status: "status.phase", class: "spec.class", curatedBy: "status.curatedBy", curationRecordRef: "status.curationRecordRef", routedTo: "status.routedTo", routedBy: "status.routedBy", resolution: "status.resolution", mergedInto: "status.mergedInto", disposedReason: "status.disposedReason", enteredCurrentStateAt: "status.enteredCurrentStateAt", stateDurations: "status.stateDurations" },
+  // mission-102 P3-B3: row-per-version delegation; state relocates to status.state
+  // (NOT status.phase — grants have no FSM phase), class to spec.class.
+  ClassGrant: { state: "status.state", class: "spec.class", supersededBy: "status.supersededBy" },
   Message: {
     kind: "metadata.messageKind",
     status: "status.phase",
@@ -165,6 +169,7 @@ const MODULE_FACTORIES: Record<string, (s: SchemaDef) => KindMigrationModule> = 
   Document: createDocumentMigrationModule,
   WorkItem: createWorkItemMigrationModule,  // C1-R2 mission-94
   Decision: createDecisionMigrationModule,  // mission-102 P3-B1
+  ClassGrant: createClassGrantMigrationModule,  // mission-102 P3-B3
 };
 
 function moduleFor(kind: string): KindMigrationModule {
@@ -258,8 +263,8 @@ describe("W1.1 renameMap inventory + faithfulness — complete field-movement au
     // 27 runtime consts total; exactly 23 carry renameMap (mission-102 P3-B1 added
     // Decision with one; P3-B4 added DirectorSignal + DirectorConfirmation WITHOUT —
     // no `status` field, get-by-id only).
-    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(23);
-    expect(ALL_SCHEMAS).toHaveLength(27);
+    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(24);
+    expect(ALL_SCHEMAS).toHaveLength(28);
   });
 
   it("W1.1b every renameMap entry resolves to the encoder's ACTUAL placement (sentinel-probe vs migrateOne)", () => {

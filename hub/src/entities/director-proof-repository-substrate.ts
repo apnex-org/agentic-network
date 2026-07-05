@@ -237,7 +237,12 @@ export function planRequiresConfirmation(plan: Decision["executionPlan"]): boole
  * No caller-supplied mode exists anywhere on this path (S1.2 / L2 / L4).
  */
 export class DirectorProofGate implements IDecisionProofGate {
-  constructor(private readonly proofs: IDirectorProofStore) {}
+  /** `grants` lands with B3: absent (older test rigs) the grant branch keeps the
+   *  fail-closed fence message. */
+  constructor(
+    private readonly proofs: IDirectorProofStore,
+    private readonly grants?: import("./class-grant.js").IClassGrantStore,
+  ) {}
 
   async evaluate(input: {
     decision: Decision;
@@ -283,7 +288,21 @@ export class DirectorProofGate implements IDecisionProofGate {
       return { authorityMode: "director-via-proxy", authorityRef: ref };
     }
     if (ref.startsWith("grant-")) {
-      throw new DecisionTransitionRejected("resolve-as-director rejected: ClassGrant proof is slice B3 — the grant evaluator is not yet available (fail-closed, never a silent fall-through)");
+      if (!this.grants) {
+        throw new DecisionTransitionRejected("resolve-as-director rejected: the ClassGrant evaluator is not wired in this context (fail-closed, never a silent fall-through)");
+      }
+      // Re-read FRESH immediately before evaluation (the revocation-recheck
+      // posture): a revoke committed any time before this read rejects here.
+      // Residual (revoke landing between this read and the decision CAS commit)
+      // is milliseconds and observable — the resolution stores id@version, so a
+      // drift audit can always join resolutions against revocation timestamps.
+      const grant = await this.grants.getGrant(ref);
+      if (!grant) throw new DecisionTransitionRejected(`resolve-as-director rejected: grant ${ref} does not resolve`);
+      const { evaluateGrant } = await import("./class-grant-repository-substrate.js");
+      evaluateGrant(grant, input.decision, new Date().toISOString());
+      // design §1.2: the resolution stores grant id+version (row-per-version
+      // immutability — the historical constraint content survives revocation).
+      return { authorityMode: "class-grant", authorityRef: `${grant.id}@v${grant.version}` };
     }
     throw new DecisionTransitionRejected(`resolve-as-director rejected: ref ${ref} is not a proof object (DirectorSignal/DirectorConfirmation) — an assertion-class ref (audit/message/doc) is NOT proof (CL-2)`);
   }
