@@ -48,6 +48,7 @@ import { createTurnMigrationModule } from "../migrations/v2-envelope/kinds/Turn.
 import { createSchemaDefMigrationModule } from "../migrations/v2-envelope/kinds/SchemaDef.js";
 import { createDocumentMigrationModule } from "../migrations/v2-envelope/kinds/Document.js";
 import { createWorkItemMigrationModule } from "../migrations/v2-envelope/kinds/WorkItem.js";
+import { createDecisionMigrationModule } from "../migrations/v2-envelope/kinds/Decision.js";
 import type { KindMigrationModule } from "../migrations/v2-envelope/kinds/_contract.js";
 import { createNotificationMigrationModule } from "../migrations/v2-envelope/kinds/Notification.js";
 import { createArchitectDecisionMigrationModule } from "../migrations/v2-envelope/kinds/ArchitectDecision.js";
@@ -89,6 +90,9 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   // placement-based (value-type-agnostic) so all entries validate here; only the
   // W6 equality-shadow step carves out the object/array entries (see that test).
   WorkItem: { status: "status.phase", lease: "status.lease", evidence: "status.evidence", blockedOn: "status.blockedOn", leaseExpiryCount: "status.leaseExpiryCount", enteredCurrentStateAt: "status.enteredCurrentStateAt", stateDurations: "status.stateDurations", priority: "spec.priority", type: "spec.type", roleEligibility: "spec.roleEligibility", completionDependsOn: "spec.completionDependsOn" },
+  // mission-102 P3-B1: the Decision authority-resolution spine (no lease anywhere —
+  // the entity has no liveness by design).
+  Decision: { status: "status.phase", class: "spec.class", curatedBy: "status.curatedBy", curationRecordRef: "status.curationRecordRef", routedTo: "status.routedTo", routedBy: "status.routedBy", resolution: "status.resolution", mergedInto: "status.mergedInto", disposedReason: "status.disposedReason", enteredCurrentStateAt: "status.enteredCurrentStateAt", stateDurations: "status.stateDurations" },
   Message: {
     kind: "metadata.messageKind",
     status: "status.phase",
@@ -160,6 +164,7 @@ const MODULE_FACTORIES: Record<string, (s: SchemaDef) => KindMigrationModule> = 
   RepoEventBridgeDedupe: createRepoEventBridgeDedupeMigrationModule,
   Document: createDocumentMigrationModule,
   WorkItem: createWorkItemMigrationModule,  // C1-R2 mission-94
+  Decision: createDecisionMigrationModule,  // mission-102 P3-B1
 };
 
 function moduleFor(kind: string): KindMigrationModule {
@@ -250,9 +255,9 @@ describe("W1.1 renameMap inventory + faithfulness — complete field-movement au
         expect(expectedKinds.has(def.kind), `unexpected renameMap on kind=${def.kind}`).toBe(true);
       }
     }
-    // 24 runtime consts total; exactly 22 carry renameMap (C1-R2 mission-94 added WorkItem).
-    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(22);
-    expect(ALL_SCHEMAS).toHaveLength(24);
+    // 25 runtime consts total; exactly 23 carry renameMap (mission-102 P3-B1 added Decision).
+    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(23);
+    expect(ALL_SCHEMAS).toHaveLength(25);
   });
 
   it("W1.1b every renameMap entry resolves to the encoder's ACTUAL placement (sentinel-probe vs migrateOne)", () => {

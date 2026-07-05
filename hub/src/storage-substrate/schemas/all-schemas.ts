@@ -686,6 +686,44 @@ const WorkItem: SchemaDef = {
   },
 };
 
+// ─── mission-102 P3-B1: the Decision authority-resolution kind ───────────────
+// Sovereign authority node (design.md v1.0 §1.1, G2-ratified): no lease, no timer
+// transitions, no WIP interaction. Filterable: status.phase (queue views), spec.class
+// (ontology/grant queries), status.routedTo.target (the director arrival-surface pull).
+const Decision: SchemaDef = {
+  kind: "Decision",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "class", type: "string", required: false },
+    { name: "status", type: "string", required: false, enum: ["raised", "curated", "routed", "resolved", "executed", "merged", "disposed", "withdrawn"] },
+  ],
+  indexes: [
+    { name: "decision_status_phase_idx", fields: ["status.phase"] },
+    { name: "decision_spec_class_idx", fields: ["spec.class"] },
+    { name: "decision_status_routedto_target_idx", fields: ["status.routedTo.target"] },
+  ],
+  watchable: true,
+  indexOwnershipPattern: "^decision_",
+  // status→status.phase; lifecycle sub-objects (actors stamped at transitions, route,
+  // resolution, exits, dwell timers) route to status; the FILTERABLE spec field (class)
+  // gets the explicit alias. Immutable-at-raise fields (title/context/options/
+  // contextRefs/raisedBy/parentRef/executionPlan) default-partition to spec.
+  renameMap: {
+    status: "status.phase",
+    class: "spec.class",
+    curatedBy: "status.curatedBy",
+    curationRecordRef: "status.curationRecordRef",
+    routedTo: "status.routedTo",
+    routedBy: "status.routedBy",
+    resolution: "status.resolution",
+    mergedInto: "status.mergedInto",
+    disposedReason: "status.disposedReason",
+    enteredCurrentStateAt: "status.enteredCurrentStateAt",
+    stateDurations: "status.stateDurations",
+  },
+};
+
 // ─── Export all 23 SchemaDef entries ───────────────────────────────────────
 
 /**
@@ -737,4 +775,7 @@ export const ALL_SCHEMAS: SchemaDef[] = [
 
   // 1 NEW C1-R2 mission-94 (the claimable work-queue keystone kind)
   WorkItem,
+
+  // 1 NEW mission-102 P3-B1 (the Decision authority-resolution spine)
+  Decision,
 ];
