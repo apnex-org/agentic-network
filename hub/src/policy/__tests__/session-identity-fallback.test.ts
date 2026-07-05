@@ -94,9 +94,9 @@ describe("session-identity fallback (work-137 / bug-230)", () => {
   it("displacement REVOKES the persisted binding (the mission-19 invariant holds through the fallback): only the new session resolves", async () => {
     const r1 = await registry.assertIdentity({ name: "mover", role: "engineer", clientMetadata: META }, "sess-old");
     expect(r1.ok).toBe(true);
-    await registry.claimSession((r1 as { agentId: string }).agentId, "sess-old");
+    await registry.claimSession((r1 as { agentId: string }).agentId, "sess-old", "explicit");
     // The agent restarts: a NEW session claims, displacing the old one.
-    await registry.claimSession((r1 as { agentId: string }).agentId, "sess-new");
+    await registry.claimSession((r1 as { agentId: string }).agentId, "sess-new", "explicit");
     wipeMap(registry);
     expect(await registry.getAgentForSession("sess-old")).toBeNull();               // revoked — no zombie resolution
     expect((await registry.getAgentForSession("sess-new"))?.name).toBe("mover");    // the live session resolves
