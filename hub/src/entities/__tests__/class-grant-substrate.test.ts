@@ -27,7 +27,6 @@ const MIGRATIONS_DIR = join(__dirname, "..", "..", "storage-substrate", "migrati
 const MIGRATION_FILES = ["001-entities-table.sql", "002-notify-trigger.sql", "003-jsonb-size-check.sql"];
 
 const ARCHITECT: DecisionActor = { agentId: "agent-arch", role: "architect", sessionId: "sess-a1" };
-const FUTURE = new Date(Date.now() + 90 * 24 * 3600_000).toISOString();
 
 describe("ClassGrant (real-pg: mint / revoke / evaluate / the gate's grant path)", () => {
   let container: StartedPostgreSqlContainer;
@@ -69,7 +68,7 @@ describe("ClassGrant (real-pg: mint / revoke / evaluate / the gate's grant path)
       reversibleOnly: true,
       excludedClasses: ["scope-change", "deprecation", "preference-probe"],
       ratificationRef: "decision-ratify-1",
-      representationDue: FUTURE,
+      representationDays: 90,
       ...over,
     }, true);
 
@@ -84,7 +83,7 @@ describe("ClassGrant (real-pg: mint / revoke / evaluate / the gate's grant path)
   }
 
   it("mint mechanics: ratification fail-closed; reversibleOnly self-contradiction rejects; version chain via supersede", async () => {
-    await expect(grants.mintGrant({ class: "x", allowedActions: ["unblock"], reversibleOnly: true, ratificationRef: "decision-ghost", representationDue: FUTURE }, false))
+    await expect(grants.mintGrant({ class: "x", allowedActions: ["unblock"], reversibleOnly: true, ratificationRef: "decision-ghost", representationDays: 90 }, false))
       .rejects.toThrow(/does not resolve to a resolved\/executed Decision/);
     const g1 = await mintApprovalUnblock();
     expect(g1.version).toBe(1);
@@ -109,8 +108,9 @@ describe("ClassGrant (real-pg: mint / revoke / evaluate / the gate's grant path)
     // excludedRefs: plan touching the forbidden row → reject
     expect(() => evaluateGrant(g, { ...withParent, executionPlan: [{ action: "unblock", targetRef: "work-forbidden" }] }, new Date().toISOString()))
       .toThrow(/forbidden boundary row/);
-    // past-due re-presentation → reject
-    const overdue = await mintApprovalUnblock({ representationDue: new Date(Date.now() - 1000).toISOString() });
+    // past-due re-presentation → reject (pure-evaluator check: construct the row
+    // directly — mint can only produce future dates by construction)
+    const overdue = { ...g, representationDue: new Date(Date.now() - 1000).toISOString() };
     expect(() => evaluateGrant(overdue, withParent, new Date().toISOString())).toThrow(/re-presentation due date/);
     // reversibility constant agrees with the proof-path registry (cross-layer pin)
     expect([...GRANT_REVERSIBLE_ACTIONS].sort()).toEqual(["approve", "unblock"]);

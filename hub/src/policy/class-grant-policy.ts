@@ -16,6 +16,7 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { DecisionTransitionRejected } from "../entities/decision-repository-substrate.js";
+import { canonicalGrantSpecHash, GRANT_SPEC_HASH_MARKER } from "../entities/class-grant-repository-substrate.js";
 
 function ok(body: Record<string, unknown>): PolicyResult {
   return { content: [{ type: "text" as const, text: JSON.stringify(body) }] };
@@ -36,18 +37,28 @@ async function mintClassGrant(args: Record<string, unknown>, ctx: IPolicyContext
   const ratification = await decisions.getDecision(args.ratificationRef as string);
   const directorGrade = ratification?.resolution?.authorityMode === "director-direct" || ratification?.resolution?.authorityMode === "director-via-proxy";
   const ratified = !!ratification && (ratification.status === "resolved" || ratification.status === "executed") && directorGrade;
+  const spec = {
+    class: args.class as string,
+    allowedActions: args.allowedActions as string[],
+    reversibleOnly: (args.reversibleOnly as boolean | undefined) ?? true,
+    parentKinds: (args.parentKinds as string[] | undefined) ?? null,
+    excludedRefs: (args.excludedRefs as string[] | undefined) ?? [],
+    excludedClasses: (args.excludedClasses as string[] | undefined) ?? [],
+    representationDays: args.representationDays as number,
+  };
+  // PR #488 finding 1: the ratification decision must BIND this exact spec — its
+  // context (covered by the Director's B4 confirmation promptHash) must carry the
+  // canonical spec hash. An unrelated Director-grade decision, or ANY altered
+  // field, diverges the hash and the mint REJECTS. The Director ratified THIS
+  // grant, not "a decision".
+  if (ratified) {
+    const expected = `${GRANT_SPEC_HASH_MARKER}${canonicalGrantSpecHash(spec)}`;
+    if (!ratification!.context.includes(expected)) {
+      return err("grant_rejected", `mint rejected: ratification ${args.ratificationRef} does not bind this exact grant spec — its context must carry '${GRANT_SPEC_HASH_MARKER}<hash>' matching the supplied fields (recomputed: ${canonicalGrantSpecHash(spec)}). The Director ratifies a SPEC, not a label.`);
+    }
+  }
   try {
-    const grant = await grants.mintGrant({
-      class: args.class as string,
-      allowedActions: args.allowedActions as string[],
-      reversibleOnly: (args.reversibleOnly as boolean | undefined) ?? true,
-      parentKinds: (args.parentKinds as string[] | undefined) ?? null,
-      excludedRefs: (args.excludedRefs as string[] | undefined) ?? [],
-      excludedClasses: (args.excludedClasses as string[] | undefined) ?? [],
-      ratificationRef: args.ratificationRef as string,
-      representationDue: args.representationDue as string,
-      supersedes: args.supersedes as string | undefined,
-    }, ratified);
+    const grant = await grants.mintGrant({ ...spec, ratificationRef: args.ratificationRef as string, supersedes: args.supersedes as string | undefined }, ratified);
     return ok({ grant });
   } catch (e) { return mapVerbError(e); }
 }
@@ -91,8 +102,8 @@ export function registerClassGrantPolicy(router: PolicyRouter): void {
       parentKinds: z.array(z.string()).optional().describe("Allowlist for the decision's parentRef.kind"),
       excludedRefs: z.array(z.string()).optional().describe("Machine-checkable forbidden boundary rows (refs the grant may never touch)"),
       excludedClasses: z.array(z.string()).optional().describe("Classes explicitly never covered (belt against reclassification)"),
-      ratificationRef: z.string().describe("The resolved Decision that ratified this grant"),
-      representationDue: z.string().describe("ISO-8601 date past which evaluation rejects until re-ratified"),
+      ratificationRef: z.string().describe("The resolved Decision that ratified this grant — its context MUST carry grant-spec-hash:<hash> matching these exact fields"),
+      representationDays: z.number().int().positive().describe("Re-presentation policy in days (part of the canonical spec hash; the instant is computed at mint)"),
       supersedes: z.string().optional().describe("Prior grant row this version replaces (marks it superseded, links the chain)"),
     },
     mintClassGrant,

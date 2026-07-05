@@ -120,13 +120,22 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
   }
   const gate = new DirectorProofGate(proofs, ctx.stores.classGrant);
   try {
-    const resolved = await decisions.resolveDecision(
+    // PR #488 finding 2: a grant-backed resolve runs ENTIRELY inside the grant's
+    // serialization barrier (advisory lock keyed on grantId) — the gate's fresh
+    // grant read and the decision CAS both happen under the lock revoke/supersede
+    // also take, so a committed revoke is always seen and "a revoked grant
+    // authorizes nothing new" is a hard invariant, not a TOCTOU claim.
+    const proofRef = args.proofRef as string | undefined;
+    const doResolve = () => decisions.resolveDecision(
       args.decisionId as string,
       executor,
       answer,
       gate,
-      { rationale: args.rationale as string | undefined, claimedAuthorityRef: args.proofRef as string | undefined },
+      { rationale: args.rationale as string | undefined, claimedAuthorityRef: proofRef },
     );
+    const resolved = proofRef?.startsWith("grant-") && ctx.stores.classGrant
+      ? await ctx.stores.classGrant.withGrantBarrier(proofRef, doResolve)
+      : await doResolve();
     if (!resolved) return err("not_found", `Decision ${args.decisionId} not found`);
     // Consume-after-commit: a director-direct resolution burned its confirmation.
     // (Validated pre-CAS by the gate; the crash-window residual is inert — see the

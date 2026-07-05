@@ -15,6 +15,8 @@ import { DecisionTransitionRejected } from "./decision-repository-substrate.js";
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
 import { SubstrateCounter } from "./substrate-counter.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
+import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock.js";
+import { createHash } from "node:crypto";
 
 const KIND = "ClassGrant";
 const LIST_CAP = 500;
@@ -25,6 +27,37 @@ const MAX_CAS_RETRIES = 20;
  *  cannot silently drift from the plan-confirmation check (both are pinned by
  *  the cross-layer agreement test). */
 export const GRANT_REVERSIBLE_ACTIONS: readonly string[] = ["unblock", "approve"];
+
+/** PR #488 finding 1: the canonical grant-spec hash — the mechanical binding
+ *  between the ratification decision the Director confirmed and the exact grant
+ *  fields being minted. The RAISE embeds `grant-spec-hash:<hex>` in the
+ *  ratification decision's context (which the B4 Confirmation promptHash covers,
+ *  so the Director's confirmation binds THIS hash); mint recomputes from the
+ *  supplied fields and rejects on divergence. Arrays are sorted — field ORDER is
+ *  not spec content. */
+export function canonicalGrantSpecHash(spec: {
+  class: string;
+  allowedActions: string[];
+  reversibleOnly: boolean;
+  parentKinds?: string[] | null;
+  excludedRefs?: string[];
+  excludedClasses?: string[];
+  representationDays: number;
+}): string {
+  const canonical = {
+    class: spec.class,
+    allowedActions: [...spec.allowedActions].sort(),
+    reversibleOnly: spec.reversibleOnly,
+    parentKinds: spec.parentKinds ? [...spec.parentKinds].sort() : null,
+    excludedRefs: [...(spec.excludedRefs ?? [])].sort(),
+    excludedClasses: [...(spec.excludedClasses ?? [])].sort(),
+    representationDays: spec.representationDays,
+  };
+  return createHash("sha256").update(JSON.stringify(canonical), "utf8").digest("hex");
+}
+
+/** The context marker the ratification raise embeds. */
+export const GRANT_SPEC_HASH_MARKER = "grant-spec-hash:";
 
 function cloneGrant(g: ClassGrant): ClassGrant {
   const flat = decodeEnvelopeToFlat(g as unknown as Record<string, unknown>, KIND) as Record<string, unknown>;
@@ -50,7 +83,7 @@ export class ClassGrantRepositorySubstrate implements IClassGrantStore {
     excludedRefs?: string[];
     excludedClasses?: string[];
     ratificationRef: string;
-    representationDue: string;
+    representationDays: number;
     supersedes?: string | null;
   }, ratificationResolved: boolean): Promise<ClassGrant> {
     // Fail-closed at authoring (the A3/bug-220(c) law): an unratified grant row
@@ -85,7 +118,7 @@ export class ClassGrantRepositorySubstrate implements IClassGrantStore {
       issuer: "director",
       ratificationRef: input.ratificationRef,
       state: "active",
-      representationDue: input.representationDue,
+      representationDue: new Date(Date.now() + input.representationDays * 24 * 3600_000).toISOString(),
       supersedes: input.supersedes ?? null,
       supersededBy: null,
       createdAt: now,
@@ -115,15 +148,20 @@ export class ClassGrantRepositorySubstrate implements IClassGrantStore {
     if (!reason || reason.trim() === "") {
       throw new DecisionTransitionRejected("revoke rejected: a revocation reason is required");
     }
-    return this.transitionState(id, "revoked", (g) => {
+    // PR #488 finding 2: revoke serializes with grant-backed resolves (same barrier).
+    return this.withGrantBarrier(id, () => this.transitionState(id, "revoked", (g) => {
       if (g.state !== "active") throw new DecisionTransitionRejected(`revoke rejected: grant ${id} is ${g.state}, not active`);
-    });
+    }));
   }
 
   async markSuperseded(id: string, successorId: string): Promise<ClassGrant | null> {
-    return this.transitionState(id, "superseded", (g) => {
+    return this.withGrantBarrier(id, () => this.transitionState(id, "superseded", (g) => {
       if (g.state !== "active") throw new DecisionTransitionRejected(`supersede rejected: grant ${id} is ${g.state}, not active`);
-    }, successorId);
+    }, successorId));
+  }
+
+  async withGrantBarrier<T>(grantId: string, fn: () => Promise<T>): Promise<T> {
+    return withAdvisoryLock(this.substrate, LOCK_CLASS.classGrant, grantId, fn);
   }
 
   private async transitionState(id: string, to: ClassGrantState, guard: (g: ClassGrant) => void, successorId?: string): Promise<ClassGrant | null> {

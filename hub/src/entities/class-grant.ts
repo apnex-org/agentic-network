@@ -68,7 +68,9 @@ export interface IClassGrantStore {
     excludedRefs?: string[];
     excludedClasses?: string[];
     ratificationRef: string;
-    representationDue: string;
+    /** Re-presentation POLICY in days (hashable at raise time — the instant is
+     *  computed at mint: now + days). Part of the canonical spec hash. */
+    representationDays: number;
     supersedes?: string | null;
   }, ratificationResolved: boolean): Promise<ClassGrant>;
   getGrant(id: string): Promise<ClassGrant | null>;
@@ -78,4 +80,10 @@ export interface IClassGrantStore {
   /** Marks the PRIOR row superseded and links it to the successor (called by
    *  the mint of the successor version). */
   markSuperseded(id: string, successorId: string): Promise<ClassGrant | null>;
+  /** PR #488 finding 2: the grant-use SERIALIZATION barrier (advisory lock keyed
+   *  on grantId). A class-grant-backed resolve runs its gate-read + decision CAS
+   *  inside this barrier; revoke/supersede take the same barrier — so a revoke
+   *  committed first is ALWAYS seen by the resolve's fresh read, and a resolve
+   *  holding the barrier completes before the revoke proceeds. */
+  withGrantBarrier<T>(grantId: string, fn: () => Promise<T>): Promise<T>;
 }

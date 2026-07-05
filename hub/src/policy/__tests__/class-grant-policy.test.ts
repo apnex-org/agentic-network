@@ -12,6 +12,7 @@ import { createTestContext, type TestPolicyContext } from "../test-utils.js";
 import type { Decision, IDecisionStore } from "../../entities/decision.js";
 import type { ClassGrant, IClassGrantStore } from "../../entities/class-grant.js";
 import { DecisionTransitionRejected } from "../../entities/decision-repository-substrate.js";
+import { canonicalGrantSpecHash, GRANT_SPEC_HASH_MARKER } from "../../entities/class-grant-repository-substrate.js";
 
 type Call = { method: string; args: unknown[] };
 
@@ -31,7 +32,7 @@ function makeGrantStub(overrides: Partial<Record<keyof IClassGrantStore, (...a: 
 
 const resolvedDecision = (authorityMode: string): Decision => ({
   id: "decision-9", schemaVersion: 1, parentRef: null, class: "approval-unblock",
-  title: "ratify grant", context: "c", contextRefs: [], options: [], freeAnswerPolicy: "always",
+  title: "ratify grant", context: `ratify the approval-unblock grant. ${GRANT_SPEC_HASH_MARKER}${MINT_SPEC_HASH}`, contextRefs: [], options: [], freeAnswerPolicy: "always",
   raisedBy: { agentId: "a", role: "architect" }, curatedBy: null, curationRecordRef: null,
   routedTo: { target: "director" }, routedBy: null,
   resolution: { authorityMode: authorityMode as Decision["resolution"] extends null ? never : NonNullable<Decision["resolution"]>["authorityMode"], authorityRef: "dsig-1", executor: { agentId: "a", role: "architect" }, answer: { chosenOptionId: "yes" }, resolvedAt: "t" },
@@ -52,8 +53,13 @@ function body(r: { content: Array<{ text: string }> }): Record<string, unknown> 
 
 const MINT_ARGS = {
   class: "approval-unblock", allowedActions: ["unblock", "approve"],
-  ratificationRef: "decision-9", representationDue: "2026-10-01T00:00:00Z",
+  ratificationRef: "decision-9", representationDays: 90,
 };
+/** The canonical hash of MINT_ARGS' spec (defaults applied as the handler does). */
+const MINT_SPEC_HASH = canonicalGrantSpecHash({
+  class: "approval-unblock", allowedActions: ["unblock", "approve"], reversibleOnly: true,
+  parentKinds: null, excludedRefs: [], excludedClasses: [], representationDays: 90,
+});
 
 describe("class-grant-policy (P3-B3)", () => {
   let router: PolicyRouter;
@@ -97,5 +103,26 @@ describe("class-grant-policy (P3-B3)", () => {
     const r2 = await router.handle("mint_class_grant", MINT_ARGS,
       ctxFor("architect", { decision: { getDecision: async () => unresolved }, classGrant: grants }));
     expect(r2.isError).toBe(true);
+  });
+
+  it("PR #488 finding 1 regressions: an UNRELATED Director-grade decision cannot mint (no spec-hash marker); ALTERED fields diverge the hash and reject", async () => {
+    const grants = makeGrantStub({ mintGrant: (input: unknown) => ({ id: "grant-1", version: 1, state: "active", ...(input as object) } as unknown as ClassGrant) });
+    // (a) unrelated decision: director-grade + resolved, but its context carries no marker
+    const unrelated = { ...resolvedDecision("director-direct"), context: "some other ratification entirely" };
+    const rA = await router.handle("mint_class_grant", MINT_ARGS,
+      ctxFor("architect", { decision: { getDecision: async () => unrelated }, classGrant: grants }));
+    expect(rA.isError).toBe(true);
+    expect(body(rA).error).toMatch(/does not bind this exact grant spec/);
+    // (b) altered fields: the real ratification, but the mint asks for MORE than ratified
+    const altered = { ...MINT_ARGS, excludedClasses: [] as string[], allowedActions: ["unblock", "approve"], representationDays: 365 };
+    const rB = await router.handle("mint_class_grant", altered,
+      ctxFor("architect", { decision: { getDecision: async () => resolvedDecision("director-direct") }, classGrant: grants }));
+    expect(rB.isError).toBe(true);
+    expect(body(rB).error).toMatch(/does not bind this exact grant spec/);
+    // the exact ratified spec mints fine
+    const rC = await router.handle("mint_class_grant", MINT_ARGS,
+      ctxFor("architect", { decision: { getDecision: async () => resolvedDecision("director-direct") }, classGrant: grants }));
+    expect(rC.isError).toBeFalsy();
+    expect(grants.calls.filter((c) => c.method === "mintGrant").length).toBe(1); // only the bound mint reached the store
   });
 });

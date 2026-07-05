@@ -40,7 +40,12 @@ export const LOCK_CLASS = {
   // + the ready→claimed CAS run INSIDE this lock (keyed on agentId) so the WIP cap
   // is a hard integrity invariant, not a TOCTOU soft-cap.
   workItemWip: 3,
-  // Reserve future classes here (4, 5, ...; keep this list authoritative).
+  // mission-102 P3-B3 (PR #488 review finding 2): grant-use serialization — a
+  // class-grant-backed resolve and a revoke/supersede of the SAME grant take this
+  // lock (keyed on grantId), so "a revoked grant authorizes nothing new" is a hard
+  // serialization invariant, not a TOCTOU claim.
+  classGrant: 4,
+  // Reserve future classes here (5, 6, ...; keep this list authoritative).
 } as const;
 export type LockClass = typeof LOCK_CLASS[keyof typeof LOCK_CLASS];
 
