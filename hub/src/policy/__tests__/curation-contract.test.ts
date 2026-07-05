@@ -207,6 +207,43 @@ describe("curation model (P3-B2: append-only trail + anti-laundering queries + S
     expect(receipt.emittedRef).not.toBeNull(); // EMITTED, not suppressed
   });
 
+  // ── audit-10199 regressions ────────────────────────────────────────────────
+  it("audit-10199(1): class_changed, slo_breaches and the sweep are EXACT past the 500-row decision page", async () => {
+    for (let i = 0; i < 502; i++) await raise(`filler ${i}`);
+    // The laundered decision is created LAST — beyond the first page.
+    const laundered = await raise("laundered late", "escalation");
+    await decisions.curateDecision(laundered, ARCHITECT, { class: "routine", basis: "quiet downgrade" });
+
+    const changed = body(await router.handle("query_curation", { query: "class_changed" }, ctx)) as { items: Array<{ decisionId: string }> };
+    expect(changed.items.map((i) => i.decisionId)).toContain(laundered);
+
+    const breaches = body(await router.handle("query_curation", { query: "slo_breaches" }, ctx)) as { count: number };
+    // slo_breaches computes live at real now (dwell ~0) → 0; the EXACTNESS
+    // claim rides the sweep below, which takes a future nowISO.
+    expect(breaches.count).toBe(0);
+    const s1 = await runCurationSloSweep(ctx, hoursFromNow(25));
+    expect(s1.emitted).toBe(502); // every filler, none hidden past the page
+    expect((await runCurationSloSweep(ctx, hoursFromNow(26))).emitted).toBe(0);
+  }, 60_000);
+
+  it("audit-10199(2): merge lineage is TRANSITIVE — A→B then B→C surfaces BOTH A and B from C, with depths", async () => {
+    const a = await raise("A: the original minority claim");
+    const b = await raise("B: the intermediate framing");
+    const c = await raise("C: the survivor");
+    await decisions.mergeDecision(a, ARCHITECT, b, "A folded into B");
+    await decisions.mergeDecision(b, ARCHITECT, c, "B folded into C");
+
+    const lineage = body(await router.handle("query_curation", { query: "merge_lineage", decisionId: c }, ctx)) as {
+      mergedIn: Array<{ decisionId: string; mergedInto: string; depth: number; raw: { title: string } | null }>;
+    };
+    const byId = Object.fromEntries(lineage.mergedIn.map((m) => [m.decisionId, m]));
+    expect(Object.keys(byId).sort()).toEqual([a, b].sort());
+    expect(byId[b]).toMatchObject({ mergedInto: c, depth: 1 });
+    expect(byId[a]).toMatchObject({ mergedInto: b, depth: 2 });
+    // A's ORIGINAL content is reachable from C — two hops of curation later.
+    expect(byId[a].raw!.title).toBe("A: the original minority claim");
+  });
+
   it("sanity: the SLO constant is 24h (S3.2)", () => {
     expect(CURATION_SLO_MS).toBe(24 * 3600_000);
   });

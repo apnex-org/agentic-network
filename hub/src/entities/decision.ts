@@ -160,6 +160,11 @@ export interface IDecisionStore {
   }): Promise<Decision>;
   getDecision(id: string): Promise<Decision | null>;
   listDecisions(filter?: { status?: DecisionPhase; class?: string; routedTarget?: string }): Promise<{ items: Decision[]; truncated: boolean }>;
+  /** EXACT full-kind scan (paged, deterministic id order; filter in memory) —
+   *  for consumers whose CORRECTNESS keys off completeness (the B2
+   *  anti-laundering queries + SLO sweep; audit-10199). Prefer listDecisions
+   *  (capped, indexed) wherever truncation is tolerable. */
+  listAllDecisions(filter?: { status?: DecisionPhase; class?: string; routedTarget?: string }): Promise<Decision[]>;
   /** raised → curated (architect). Stamps curatedBy + optional record ref (B2). */
   curateDecision(id: string, curator: DecisionActor, opts?: { curationRecordRef?: string; class?: string; basis?: string }): Promise<Decision | null>;
   /** curated → routed. B1: target=director only (selfDisposal rejects pending B3).

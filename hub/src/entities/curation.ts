@@ -73,4 +73,6 @@ export interface ICurationStore {
   listRecordsForDecision(decisionId: string): Promise<CurationRecord[]>;
   /** ALL records — exact paged scan; the query layer filters (presenter volume). */
   listAllRecords(): Promise<CurationRecord[]>;
+  /** ALL raw captures — one exact scan so per-decision joins are O(n), not n scans. */
+  listAllRaws(): Promise<RawDecisionRaised[]>;
 }

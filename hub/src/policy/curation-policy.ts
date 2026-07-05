@@ -83,10 +83,13 @@ async function queryCuration(args: Record<string, unknown>, ctx: IPolicyContext)
       });
     }
     case "class_changed": {
-      const { items } = await decisions.listDecisions();
+      // EXACT (audit-10199): a capped scan would let a laundered class hide
+      // past row 500. One full decision scan + one full raw scan, joined.
+      const items = await decisions.listAllDecisions();
+      const rawByDecision = new Map((await curation.listAllRaws()).map((r) => [r.decisionId, r]));
       const changed: Array<Record<string, unknown>> = [];
       for (const d of items) {
-        const raw = await curation.getRawForDecision(d.id);
+        const raw = rawByDecision.get(d.id);
         if (raw && JSON.stringify(raw.class) !== JSON.stringify(d.class)) {
           changed.push({ decisionId: d.id, rawClass: raw.class, presentedClass: d.class, status: d.status });
         }
@@ -100,21 +103,41 @@ async function queryCuration(args: Record<string, unknown>, ctx: IPolicyContext)
     }
     case "merge_lineage": {
       if (!args.decisionId) return err("invalid_arguments", "merge_lineage requires decisionId");
-      // The full constituent set: this decision's raw + every raw cited by
-      // merge records POINTING AT it (children merged in), recursively flat.
-      const { items } = await decisions.listDecisions({ status: "merged" });
-      const constituents = items.filter((d) => d.mergedInto === args.decisionId);
-      const ownRaw = await curation.getRawForDecision(args.decisionId as string);
-      const lineage = await Promise.all(constituents.map(async (c) => ({
-        decisionId: c.id,
-        raw: await curation.getRawForDecision(c.id),
-        records: await curation.listRecordsForDecision(c.id),
-      })));
+      // The full constituent set, TRANSITIVE (audit-10199): A→B then B→C must
+      // surface BOTH A and B from C. BFS over mergedInto edges (exact scan;
+      // visited set guards hypothetical cycles), depth recorded per hop.
+      const merged = await decisions.listAllDecisions({ status: "merged" });
+      const rawByDecision = new Map((await curation.listAllRaws()).map((r) => [r.decisionId, r]));
+      const allRecords = await curation.listAllRecords();
+      const visited = new Set<string>([args.decisionId as string]);
+      const lineage: Array<Record<string, unknown>> = [];
+      let frontier = [args.decisionId as string];
+      let depth = 0;
+      while (frontier.length > 0) {
+        depth++;
+        const next: string[] = [];
+        for (const c of merged) {
+          if (c.mergedInto !== null && frontier.includes(c.mergedInto) && !visited.has(c.id)) {
+            visited.add(c.id);
+            next.push(c.id);
+            lineage.push({
+              decisionId: c.id,
+              mergedInto: c.mergedInto,
+              depth,
+              raw: rawByDecision.get(c.id) ?? null,
+              records: allRecords.filter((r) => r.decisionId === c.id),
+            });
+          }
+        }
+        frontier = next;
+      }
+      const ownRaw = rawByDecision.get(args.decisionId as string) ?? null;
       return ok({ query: "merge_lineage", decisionId: args.decisionId, own: ownRaw, mergedIn: lineage });
     }
     case "slo_breaches": {
       const now = Date.now();
-      const { items } = await decisions.listDecisions({ status: "raised" });
+      // EXACT (audit-10199): a breach beyond row 500 must not silently vanish.
+      const items = await decisions.listAllDecisions({ status: "raised" });
       const breaches = items
         .filter((d) => now - Date.parse(d.enteredCurrentStateAt) > CURATION_SLO_MS)
         .map((d) => ({ decisionId: d.id, title: d.title, raisedAt: d.enteredCurrentStateAt, dwellMs: now - Date.parse(d.enteredCurrentStateAt) }));
@@ -136,7 +159,8 @@ export async function runCurationSloSweep(ctx: IPolicyContext, nowISO?: string):
   const arrival = ctx.stores.arrivalSurface;
   if (!decisions || !arrival) return { emitted: 0 };
   const now = nowISO ?? new Date().toISOString();
-  const { items } = await decisions.listDecisions({ status: "raised" });
+  // EXACT (audit-10199): the sweep must see every raised decision.
+  const items = await decisions.listAllDecisions({ status: "raised" });
   const open = await arrival.openNudgeReceipts();
   let emitted = 0;
   for (const d of items) {

@@ -71,6 +71,10 @@ export class CurationRepositorySubstrate implements ICurationStore {
     return this.listAll<CurationRecord>(RECORD_KIND);
   }
 
+  async listAllRaws(): Promise<RawDecisionRaised[]> {
+    return this.listAll<RawDecisionRaised>(RAW_KIND);
+  }
+
   /** Exact paged scan; deterministic id ASC ORDER BY is LOAD-BEARING (audit-10127). */
   private async listAll<T>(kind: string): Promise<T[]> {
     const all: T[] = [];

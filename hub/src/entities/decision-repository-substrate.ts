@@ -211,6 +211,24 @@ export class DecisionRepositorySubstrate implements IDecisionStore {
     return { items: items.map(cloneDecision), truncated: items.length >= LIST_CAP };
   }
 
+  async listAllDecisions(filter?: { status?: DecisionPhase; class?: string; routedTarget?: string }): Promise<Decision[]> {
+    // EXACT scan (audit-10199): paged with a deterministic ORDER BY id ASC —
+    // pages partition exactly (the audit-10127 law); filters apply in memory
+    // so completeness never depends on translated-filter + offset interplay.
+    const all: Decision[] = [];
+    for (let offset = 0; ; offset += LIST_CAP) {
+      const { items } = await this.substrate.list<Decision>(KIND, {
+        limit: LIST_CAP, offset, sort: [{ field: "id", order: "asc" }],
+      });
+      all.push(...items.map(cloneDecision));
+      if (items.length < LIST_CAP) break;
+    }
+    return all.filter((d) =>
+      (!filter?.status || d.status === filter.status) &&
+      (!filter?.class || d.class === filter.class) &&
+      (!filter?.routedTarget || d.routedTo?.target === filter.routedTarget));
+  }
+
   async curateDecision(id: string, curator: DecisionActor, opts?: { curationRecordRef?: string; class?: string; basis?: string }): Promise<Decision | null> {
     const before = await this.getDecision(id);
     const result = await this.tryCasUpdate(id, (d) => {
