@@ -60,6 +60,12 @@ export interface DirectorConfirmation {
   nonce: string;
   createdAt: string;
   expiresAt: string;
+  /** The Director-origin capture that ANSWERED this confirmation (audit-9443
+   *  successor finding, PR #486 review: an unanswered confirmation is a
+   *  self-issued render token, NOT proof — the gate rejects it. Set exactly
+   *  once by capture_director_signal(confirmationId=...), which is RBAC
+   *  director-only, so this field can only ever hold a Director-origin id). */
+  answeredBySignalId: string | null;
   consumedAt: string | null;
   /** Set at consume: the resolving actor's agentId (observability). */
   consumedBy: string | null;
@@ -69,7 +75,9 @@ export interface DirectorConfirmation {
 export interface IDirectorProofStore {
   /** Mint an immutable DirectorSignal. capturedBy is Hub-stamped by the policy
    *  layer from the registered director-role session; the content hash is
-   *  computed server-side from `answer`. */
+   *  computed server-side from `answer`. When `confirmationId` is supplied the
+   *  mint ALSO binds the signal as that confirmation's answer (first answer
+   *  wins; an already-answered confirmation REJECTS the bind). */
   mintSignal(input: {
     channel: string;
     answer: string;

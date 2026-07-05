@@ -200,7 +200,7 @@ export function registerDirectorProofPolicy(router: PolicyRouter): void {
 
   router.register(
     "mint_director_confirmation",
-    "[Architect|Director] Mint a DirectorConfirmation at prompt render for a ROUTED decision: Hub-computes the prompt hash (canonical render of the decision itself — tamper-evident), the proposed-resolution hash, and the execution-plan hash; nonce + 30min expiry; consumable exactly once. The caller supplies CONTENT, never hashes.",
+    "[Architect|Director] Mint a DirectorConfirmation at prompt render for a ROUTED decision: Hub-computes the prompt hash (canonical render of the decision itself — tamper-evident), the proposed-resolution hash, and the execution-plan hash; nonce + 30min expiry; consumable exactly once. The caller supplies CONTENT, never hashes. A freshly-minted confirmation is a RENDER TOKEN, not proof — it becomes proof only after the Director answers it via capture_director_signal(confirmationId) (audit-9821: a self-issued token can never be director-direct authority).",
     {
       decisionId: z.string(),
       chosenOptionId: z.string().optional().describe("The proposed pick the Director is confirming (exactly one of chosenOptionId | customAnswer)"),
@@ -211,7 +211,7 @@ export function registerDirectorProofPolicy(router: PolicyRouter): void {
 
   router.register(
     "resolve_as_director",
-    "[Architect] The sanctioned proxy resolve (S2.1): routed→resolved with authority Hub-DERIVED from the proof object behind proofRef — a DirectorSignal → director-via-proxy; a valid unexpired hash-bound DirectorConfirmation → director-direct (consumed exactly once). REJECTS (never parks): no proofRef; an assertion-class ref (audit/message); a plan requiring confirmation on Signal proof alone; expired/consumed/mismatched confirmations; grant refs (slice B3). Dual identity stamped: authority from the proof, executor from YOUR session.",
+    "[Architect] The sanctioned proxy resolve (S2.1): routed→resolved with authority Hub-DERIVED from the proof object behind proofRef — a DirectorSignal → director-via-proxy; a Director-ANSWERED, unexpired, hash-bound DirectorConfirmation → director-direct (consumed exactly once). REJECTS (never parks): no proofRef; an assertion-class ref (audit/message); an UNANSWERED confirmation (self-issued render token, audit-9821); a plan requiring confirmation on Signal proof alone; expired/consumed/mismatched confirmations; grant refs (slice B3). Dual identity stamped: authority from the proof, executor from YOUR session.",
     {
       decisionId: z.string(),
       proofRef: z.string().optional().describe("The proof object id (dsig-N | dconf-N). Omitting it REJECTS — kept optional so the reject is a policy error, not a schema error (contract test 7)"),

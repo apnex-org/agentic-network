@@ -100,7 +100,37 @@ export class DirectorProofRepositorySubstrate implements IDirectorProofStore {
     const result = await this.substrate.createOnly(SIGNAL_KIND, s);
     if (!result.ok) throw new Error(`[DirectorProofRepository] mintSignal: counter issued existing ID ${id}`);
     console.log(`[DirectorProofRepository] DirectorSignal minted: ${id} (channel=${input.channel}, confidence=${input.confidence})`);
+    // PR #486 review (audit-9821): a capture answering a confirmation BINDS it —
+    // this is the only writer of answeredBySignalId, and it sits behind the
+    // director-RBAC capture verb, so the field is Director-origin by construction.
+    if (input.confirmationId) {
+      await this.bindAnswerToConfirmation(input.confirmationId, id);
+    }
     return cloneFlat(s, SIGNAL_KIND);
+  }
+
+  /** First answer wins: an already-answered confirmation REJECTS a second bind
+   *  (a re-answer would let a later capture silently repoint the proof). */
+  private async bindAnswerToConfirmation(confirmationId: string, signalId: string): Promise<void> {
+    for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+      const existing = await this.substrate.getWithRevision<DirectorConfirmation>(CONFIRMATION_KIND, confirmationId);
+      if (!existing) throw new DecisionTransitionRejected(`signal bind rejected: confirmation ${confirmationId} does not resolve`);
+      const c = cloneFlat(existing.entity, CONFIRMATION_KIND);
+      if (c.answeredBySignalId !== null) {
+        throw new DecisionTransitionRejected(`signal bind rejected: confirmation ${confirmationId} was already answered by ${c.answeredBySignalId} (first answer wins)`);
+      }
+      if (c.consumedAt !== null) {
+        throw new DecisionTransitionRejected(`signal bind rejected: confirmation ${confirmationId} was already consumed`);
+      }
+      const nowISO = new Date().toISOString();
+      const next: DirectorConfirmation = { ...c, answeredBySignalId: signalId, updatedAt: nowISO };
+      const result = await this.substrate.putIfMatch(CONFIRMATION_KIND, next, existing.resourceVersion);
+      if (result.ok) {
+        console.log(`[DirectorProofRepository] DirectorConfirmation ${confirmationId} answered by ${signalId}`);
+        return;
+      }
+    }
+    throw new Error(`[DirectorProofRepository] bindAnswerToConfirmation exhausted ${MAX_CAS_RETRIES} retries on ${confirmationId}`);
   }
 
   async getSignal(id: string): Promise<DirectorSignal | null> {
@@ -128,6 +158,7 @@ export class DirectorProofRepositorySubstrate implements IDirectorProofStore {
       nonce: randomUUID(),
       createdAt: nowISO,
       expiresAt: new Date(now + input.ttlMs).toISOString(),
+      answeredBySignalId: null, // a render token is NOT proof until a Director-origin capture answers it
       consumedAt: null,
       consumedBy: null,
       updatedAt: nowISO,
@@ -221,6 +252,18 @@ export class DirectorProofGate implements IDecisionProofGate {
     if (ref.startsWith("dconf-")) {
       const c = await this.proofs.getConfirmation(ref);
       if (!c) throw new DecisionTransitionRejected(`resolve-as-director rejected: confirmation ${ref} does not resolve`);
+      // PR #486 review (audit-9821, CL-2): an UNANSWERED confirmation is a
+      // self-issued render token — the minter (architect) proving they resolved
+      // the same prompt they minted proves nothing about the DIRECTOR. Proof
+      // requires the Director-origin capture bound via the director-RBAC
+      // capture verb (first answer wins).
+      if (c.answeredBySignalId === null) {
+        throw new DecisionTransitionRejected(`resolve-as-director rejected: confirmation ${ref} has not been answered by a Director-origin capture — a render token alone is not proof (mint → Director answers via capture_director_signal(confirmationId) → then resolve)`);
+      }
+      const answering = await this.proofs.getSignal(c.answeredBySignalId);
+      if (!answering || answering.capturedBy?.role !== "director") {
+        throw new DecisionTransitionRejected(`resolve-as-director rejected: confirmation ${ref}'s answering capture ${c.answeredBySignalId} does not resolve to a Director-stamped signal (defense-in-depth on the bind)`);
+      }
       // VALIDATE here (reject loudly pre-CAS); the policy layer consumes after the
       // decision CAS commits (see the repository header for the race analysis).
       assertConsumable(c, {

@@ -148,7 +148,30 @@ describe("Director proof path (real-pg: signals / confirmations / the gate)", ()
       .rejects.toThrow(/does not resolve/);
   }, OP_TIMEOUT);
 
-  it("contract #7c double-consume: an already-consumed confirmation cannot authorize a resolve → REJECT", async () => {
+  /** Bind a Director-origin answer to a confirmation (the capture-with-confirmationId path). */
+  const answerConfirmation = (confirmationId: string) => proofs.mintSignal({
+    channel: "ois-say", answer: "confirmed", capturedBySurface: "cli",
+    confidence: "session-bound", replyable: true, capturedBy: DIRECTOR, confirmationId,
+  });
+
+  it("contract #7e SELF-ISSUED-TOKEN exploit (audit-9821 regression): an architect-minted confirmation with NO Director-origin answer is NOT proof → REJECT", async () => {
+    const d = await routed();
+    const answer = { chosenOptionId: "a" as const };
+    // the exact exploit from the PR #486 review: mint + immediately resolve, no Director anywhere.
+    const c = await proofs.mintConfirmation({
+      decisionId: d.id, promptHash: canonicalPromptHash(d),
+      proposedResolutionHash: hashProposedResolution(answer),
+      executionPlanHash: hashExecutionPlan(d.executionPlan), ttlMs: 60_000,
+    });
+    await expect(decisions.resolveDecision(d.id, ARCHITECT, answer, gate, { claimedAuthorityRef: c.id }))
+      .rejects.toThrow(/has not been answered by a Director-origin capture/);
+    expect((await decisions.getDecision(d.id))!.status).toBe("routed");
+    // first answer wins: a second capture cannot re-point an answered confirmation.
+    await answerConfirmation(c.id);
+    await expect(answerConfirmation(c.id)).rejects.toThrow(/already answered/);
+  }, OP_TIMEOUT);
+
+  it("contract #7c double-consume: an already-consumed (Director-answered) confirmation cannot authorize a resolve → REJECT", async () => {
     const d = await routed();
     const answer = { chosenOptionId: "b" as const };
     const c = await proofs.mintConfirmation({
@@ -156,6 +179,7 @@ describe("Director proof path (real-pg: signals / confirmations / the gate)", ()
       proposedResolutionHash: hashProposedResolution(answer),
       executionPlanHash: hashExecutionPlan(d.executionPlan), ttlMs: 60_000,
     });
+    await answerConfirmation(c.id);
     await proofs.consumeConfirmation(c.id, {
       decisionId: d.id, promptHash: canonicalPromptHash(d),
       proposedResolutionHash: hashProposedResolution(answer),
@@ -188,7 +212,7 @@ describe("Director proof path (real-pg: signals / confirmations / the gate)", ()
     expect(resolved.resolution!.executor).toEqual(ARCHITECT); // dual identity: authority ≠ executor
   }, OP_TIMEOUT);
 
-  it("happy path: valid hash-bound Confirmation → director-direct; a MUTATED answer diverges the hash → REJECT (exact-binding)", async () => {
+  it("happy path: Director-ANSWERED hash-bound Confirmation → director-direct; a MUTATED answer diverges the hash → REJECT (exact-binding)", async () => {
     const d = await routed();
     const confirmedAnswer = { chosenOptionId: "a" as const };
     const c = await proofs.mintConfirmation({
@@ -196,6 +220,7 @@ describe("Director proof path (real-pg: signals / confirmations / the gate)", ()
       proposedResolutionHash: hashProposedResolution(confirmedAnswer),
       executionPlanHash: hashExecutionPlan(d.executionPlan), ttlMs: 60_000,
     });
+    await answerConfirmation(c.id); // the Director's capture makes the token proof
     // resolver swaps the answer after confirmation → hash mismatch → reject
     await expect(decisions.resolveDecision(d.id, ARCHITECT, { customAnswer: "something else" }, gate, { claimedAuthorityRef: c.id }))
       .rejects.toThrow(/hash mismatch/);

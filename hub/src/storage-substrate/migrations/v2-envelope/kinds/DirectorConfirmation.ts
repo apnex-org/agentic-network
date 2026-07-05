@@ -19,7 +19,7 @@ export function createDirectorConfirmationMigrationModule(schema: SchemaDef): Ki
     partition: {
       metadata: ["createdAt", "updatedAt"],
       spec: ["decisionId", "promptHash", "proposedResolutionHash", "executionPlanHash", "nonce", "expiresAt"],
-      status: ["consumedAt", "consumedBy"],
+      status: ["answeredBySignalId", "consumedAt", "consumedBy"],
     },
   };
 
