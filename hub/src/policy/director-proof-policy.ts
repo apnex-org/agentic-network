@@ -170,6 +170,62 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
   return ok({ signal, answeredConfirmationId: confirmationId ?? null });
 }
 
+/**
+ * bug-231 (work-144): the arrival-snapshot BACKSTOP for lost signal-captured
+ * wakes. The live wake above is emit-then-hope — a capture coinciding with a
+ * deploy roll persists the signal (the PROOF survives) but the notification
+ * event dies with the instance, and the answered→resolved leg stalls until a
+ * human relays ("I did the ratify. It did not work.", decision-14, 2026-07-05).
+ *
+ * This replays the SAME payload shape at the one place every proxy passes on
+ * (re)engagement: the register_role identity handshake. For each confirmation
+ * THIS agent minted that is ANSWERED but UNCONSUMED with its decision still
+ * ROUTED (the resolve pointer is live), re-emit the wake targeted at the
+ * re-engaging agent only, marked backstop:true. Resolved decisions and
+ * consumed confirmations never re-surface (the crash-residual rule in the
+ * repository header: a spent edge authorizes nothing), so re-emission
+ * converges to zero — eventually-exactly-once, whatever killed the live emit.
+ *
+ * Best-effort by contract: callers hook this into the handshake path and a
+ * failure here must never break registration.
+ */
+export async function replayLostWakesForAgent(ctx: IPolicyContext, agentId: string): Promise<number> {
+  const proofs = ctx.stores.directorProof;
+  const decisions = ctx.stores.decision;
+  if (!proofs || !decisions) return 0;
+  const stranded = await proofs.findAnsweredUnconsumedForMinter(agentId);
+  let replayed = 0;
+  for (const conf of stranded) {
+    const decision = await decisions.getDecision(conf.decisionId);
+    if (!decision || decision.status !== "routed") continue; // resolved/executed by another path — the token is spent residue, not a lost wake
+    const signal = conf.answeredBySignalId ? await proofs.getSignal(conf.answeredBySignalId) : null;
+    const expired = Date.parse(conf.expiresAt) < Date.now();
+    await emitAndPush(ctx, {
+      kind: "external-injection",
+      authorRole: "system",
+      authorAgentId: "hub",
+      target: { agentId },
+      delivery: "push-immediate",
+      intent: "signal_captured",
+      payload: {
+        notificationEvent: SIGNAL_CAPTURED_EVENT,
+        backstop: true, // recovery replay at (re)engagement — not a live capture
+        signal_id: conf.answeredBySignalId,
+        confirmation_id: conf.id,
+        decision_id: conf.decisionId,
+        answer: signal?.answer ?? null,
+        confidence: signal?.confidence ?? null,
+        channel: signal?.channel ?? null,
+        captured_by_agent_id: signal?.capturedBy.agentId ?? null,
+        body: `RECOVERED Director signal ${conf.answeredBySignalId} — ${conf.decisionId} is ANSWERED (via ${conf.id}) but unresolved; ${expired ? `the confirmation EXPIRED at ${conf.expiresAt} — re-render the prompt to mint a fresh one` : `resolve it with resolve_as_director proofRef=${conf.id}`}${signal ? `: "${signal.answer}"` : ""}`,
+      },
+    });
+    replayed += 1;
+  }
+  if (replayed > 0) console.log(`[director-proof-policy] arrival backstop replayed ${replayed} lost wake(s) for ${agentId}`);
+  return replayed;
+}
+
 async function getDirectorSignal(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const proofs = ctx.stores.directorProof;
   if (!proofs) return err("not_wired", "DirectorProof store is not available");

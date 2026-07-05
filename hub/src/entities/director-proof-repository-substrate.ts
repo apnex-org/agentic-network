@@ -155,6 +155,21 @@ export class DirectorProofRepositorySubstrate implements IDirectorProofStore {
       c.decisionId === decisionId && c.consumedAt === null && c.answeredBySignalId === null && Date.parse(c.expiresAt) >= now);
   }
 
+  async findAnsweredUnconsumedForMinter(agentId: string): Promise<DirectorConfirmation[]> {
+    // bug-231 (work-144): the arrival-backstop query. Same full-kind scan +
+    // loud-truncation posture as findOpenConfirmationsForDecision — a capped
+    // scan that silently hides rows would make the backstop's recovery claim
+    // a lie (the audit-10069 completeness rule). No expiry filter: an answered
+    // confirmation carries a bound Director answer even past its TTL, and the
+    // policy layer decides what an expired-but-answered row means.
+    const { items } = await this.substrate.list<DirectorConfirmation>(CONFIRMATION_KIND, { limit: 500 });
+    if (items.length >= 500) {
+      throw new DecisionTransitionRejected("confirmation scan truncated at 500 rows — the arrival backstop cannot guarantee completeness (investigate the token pileup)");
+    }
+    return items.map((c) => cloneFlat(c, CONFIRMATION_KIND)).filter((c) =>
+      c.mintedBy?.agentId === agentId && c.answeredBySignalId !== null && c.consumedAt === null);
+  }
+
   async mintConfirmation(input: {
     decisionId: string;
     promptHash: string;
