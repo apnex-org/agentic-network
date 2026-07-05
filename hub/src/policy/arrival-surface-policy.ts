@@ -111,7 +111,16 @@ async function renderArrivalSurface(args: Record<string, unknown>, ctx: IPolicyC
     return err("forbidden", `${actorRaw.role ?? "unregistered"} cannot operate the Director arrival surface — a non-Director render would falsely mark nudges PRESENTED (delivery = snapshot membership)`);
   }
   const actor = actorRaw;
-  const surface = (args.surface as string | undefined) ?? "default";
+  // audit-10269: probe isolation is STRUCTURAL, not caller discipline. A probe
+  // render always lands in its own agent-scoped namespace — an omitted surface
+  // can never advance the Director's production cursor ('default'), and a real
+  // render can never claim a probe surface. latestSnapshot(surface) chains are
+  // per-surface, so the two worlds cannot interact by construction.
+  const requested = (args.surface as string | undefined) ?? "default";
+  if (!probe && requested.startsWith("probe:")) {
+    return err("invalid_arguments", "the 'probe:' surface namespace is reserved for probe renders — a real render on it would let a probe cursor shadow delivery accounting");
+  }
+  const surface = probe ? `probe:${actor.agentId}:${requested}` : requested;
   // PURE PULL: the queue is the single source (contract test 4 — complete with
   // every push channel dead). Cold start = no prior snapshot = everything.
   const prior = await arrival.latestSnapshot(surface);

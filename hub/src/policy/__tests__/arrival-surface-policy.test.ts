@@ -335,7 +335,7 @@ describe("arrival surface (P3-B6: pull projection + snapshots + aging + presence
     expect(out.queue.map((q) => q.id)).toEqual([id]); // the full pull
     // The snapshot receipt EXISTS (server-side, on the probe's own surface)...
     const snap = await arrival.getSnapshot(out.snapshotId);
-    expect(snap!.surface).toBe("verifier-probe-1");
+    expect(snap!.surface).toBe(`probe:${snap!.renderedFor.agentId}:verifier-probe-1`); // structurally namespaced (audit-10269)
     expect(snap!.renderedFor.role).toBe("verifier"); // honestly stamped
     // ...but NOTHING was delivered: receipts still open, presence untouched.
     expect(out.nudgesPresented).toBe(0);
@@ -353,6 +353,23 @@ describe("arrival surface (P3-B6: pull projection + snapshots + aging + presence
     const r = await router.handle("render_arrival_surface", {}, vctx);
     expect(r.isError).toBe(true);
     expect(JSON.parse(r.content[0].text).error).toMatch(/probe-only/);
+  });
+
+  it("audit-10269: a probe with an OMITTED surface cannot advance the Director's default cursor; real renders cannot claim the probe namespace", async () => {
+    await routedDecision("cursor-guard");
+    const vctx = createTestContext({ role: "verifier" });
+    vctx.stores.decision = decisions;
+    vctx.stores.arrivalSurface = arrival;
+    // The exact audit-10269 repro: probe WITHOUT an explicit surface.
+    const r = await router.handle("render_arrival_surface", { probe: true }, vctx);
+    expect(r.isError).toBeFalsy();
+    // The Director's production cursor is untouched — his next real pull keeps
+    // its full since-you-left digest.
+    expect(await arrival.latestSnapshot("default")).toBeNull();
+    // ...and the reverse fence: a REAL render cannot squat the probe namespace.
+    const bad = await router.handle("render_arrival_surface", { surface: "probe:sneaky" }, ctx);
+    expect(bad.isError).toBe(true);
+    expect(JSON.parse(bad.content[0].text).error).toMatch(/reserved for probe renders/);
   });
 
   it("work-128: architect probes also skip delivery effects (probe semantics are role-independent)", async () => {
