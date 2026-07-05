@@ -268,11 +268,20 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
     }
     // Emit through the same decision-transition vocabulary (observability, never throws).
     try {
+      // work-124 flood stopgap (audit-10228): same scoping rule as
+      // decision-policy — the architect always; the director ADDITIONALLY only
+      // when the decision was ROUTED to the director. resolve_as_director also
+      // lands grant-backed SELF-DISPOSAL resolutions (the B3 route-proof tie),
+      // and those must never push a Director message (the mandate path exists
+      // to keep them off his surface).
+      const resolveTargets: Array<import("../entities/message.js").MessageTarget> = [{ role: "architect" }];
+      if (resolved.routedTo?.target === "director") resolveTargets.push({ role: "director" });
+      for (const target of resolveTargets)
       await emitAndPush(ctx, {
         kind: "external-injection",
         authorRole: "system",
         authorAgentId: "hub",
-        target: null,
+        target,
         delivery: "push-immediate",
         intent: "resolve_as_director",
         payload: {

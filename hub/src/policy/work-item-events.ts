@@ -31,7 +31,18 @@
  */
 import type { IPolicyContext } from "./types.js";
 import type { WorkItem, WorkItemPhase } from "../entities/work-item.js";
+import type { MessageTarget } from "../entities/message.js";
 import { emitAndPush } from "./message-policy.js";
+
+/** work-124 (Director-sequenced flood stopgap; NOT the idea-355 subscription
+ *  system — a temporary retarget until 355 ships): queue events deliver to the
+ *  ELIGIBLE roles, not the whole network. Empty/any-role eligibility keeps the
+ *  broadcast; multi-role sends one Message per role (the target machinery has
+ *  no multi-role member). */
+function roleTargets(roleEligibility: string[]): Array<MessageTarget | null> {
+  if (roleEligibility.length === 0) return [null]; // any-role -> broadcast unchanged
+  return roleEligibility.map((role) => ({ role }) as MessageTarget);
+}
 
 /** The FSM-transition event name (payload.notificationEvent). */
 export const WORK_TRANSITION_EVENT = "work-transition-notification";
@@ -106,11 +117,14 @@ export async function emitWorkTransition(
     const titleSuffix = title ? ` — "${title}"` : "";
     const body = `${input.item.id} ${transition} (${input.verb})${by}${titleSuffix}`;
 
-    await emitAndPush(ctx, {
+    // work-124: role-targeted delivery (one Message per eligible role; the
+    // payload object is IDENTICAL across copies and to the pre-stopgap shape).
+    for (const target of roleTargets(input.item.roleEligibility)) {
+      await emitAndPush(ctx, {
       kind: "external-injection",
       authorRole: "system",
       authorAgentId: "hub",
-      target: null, // broadcast — the workflow-run external-injection convention
+      target,
       delivery: "push-immediate",
       intent: input.verb,
       payload: {
@@ -130,7 +144,8 @@ export async function emitWorkTransition(
         actor_role: input.actor?.role ?? null,
         notificationEvent: WORK_TRANSITION_EVENT,
       },
-    });
+      });
+    }
     ctx.metrics.increment("work_event.transition_emitted", {
       verb: input.verb,
       toStatus,
@@ -190,11 +205,13 @@ export async function emitDependencyUnblocks(
       const title = itemTitle(dep);
       const roles = dep.roleEligibility.length > 0 ? dep.roleEligibility.join("/") : "any role";
       const titleSuffix = title ? ` — "${title}"` : "";
+      // work-124: the unblock wake goes to the roles that can CLAIM it.
+      for (const target of roleTargets(dep.roleEligibility)) {
       await emitAndPush(ctx, {
         kind: "external-injection",
         authorRole: "system",
         authorAgentId: "hub",
-        target: null,
+        target,
         delivery: "push-immediate",
         intent: "work_unblocked",
         payload: {
@@ -209,6 +226,7 @@ export async function emitDependencyUnblocks(
           notificationEvent: WORK_UNBLOCKED_EVENT,
         },
       });
+      }
       ctx.metrics.increment("work_event.unblocked_emitted", { workId: dep.id });
     }
   } catch (err) {

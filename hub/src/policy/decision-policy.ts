@@ -62,11 +62,18 @@ async function emitDecisionTransition(
   input: { decision: Decision; verb: string; fromStatus: DecisionPhase | null; actor: DecisionActor },
 ): Promise<void> {
   try {
+    // work-124 flood stopgap: decision events are scoped per their routedTo —
+    // the architect (curator-operator) always hears them; the director
+    // ADDITIONALLY hears decisions routed to the director target. Engineers/
+    // verifiers query on demand (F4: the gate is a filter, not transport).
+    const targets: Array<{ role: string } | null> = [{ role: "architect" }];
+    if (input.decision.routedTo?.target === "director") targets.push({ role: "director" });
+    for (const target of targets)
     await emitAndPush(ctx, {
       kind: "external-injection",
       authorRole: "system",
       authorAgentId: "hub",
-      target: null, // broadcast — the work-54 external-injection convention
+      target: target as import("../entities/message.js").MessageTarget | null,
       delivery: "push-immediate",
       intent: input.verb,
       payload: {

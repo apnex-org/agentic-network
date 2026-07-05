@@ -125,6 +125,29 @@ describe("decision-policy (P3-B1)", () => {
       return msgs.filter((m) => m.kind === "external-injection").map((m) => m.payload as Record<string, unknown>);
     }
 
+    // ── work-124: decision events scoped per routedTo ───────────────────────
+    it("work-124: an unrouted decision event targets the ARCHITECT only", async () => {
+      const stub = makeStub({ raiseDecision: (input: unknown) => sampleDecision({ raisedBy: (input as { raisedBy: Decision["raisedBy"] }).raisedBy }) });
+      const ctx = ctxFor(stub, "engineer");
+      await router.handle("raise_decision", { title: "t", context: "c" }, ctx);
+      const msgs = (await ctx.stores.message.listMessages({})).filter((m) => m.kind === "external-injection");
+      expect(msgs.length).toBe(1);
+      expect(msgs[0].target).toEqual({ role: "architect" });
+    });
+
+    it("work-124: a director-routed decision event ALSO targets the director, payloads identical", async () => {
+      const stub = makeStub({
+        getDecision: () => sampleDecision({ status: "curated" }),
+        routeDecision: () => sampleDecision({ status: "routed", routedTo: { target: "director" } }),
+      });
+      const ctx = ctxFor(stub, "architect");
+      await router.handle("route_decision", { decisionId: "decision-1", target: "director" }, ctx);
+      const msgs = (await ctx.stores.message.listMessages({})).filter((m) => m.kind === "external-injection");
+      expect(msgs.length).toBe(2);
+      expect(msgs.map((m) => m.target)).toEqual([{ role: "architect" }, { role: "director" }]);
+      expect(JSON.stringify(msgs[0].payload)).toBe(JSON.stringify(msgs[1].payload));
+    });
+
     it("raise_decision emits ·→raised + live-pushes it", async () => {
       const stub = makeStub({ raiseDecision: (input: unknown) => sampleDecision({ raisedBy: (input as { raisedBy: Decision["raisedBy"] }).raisedBy }) });
       const ctx = ctxFor(stub, "engineer");
