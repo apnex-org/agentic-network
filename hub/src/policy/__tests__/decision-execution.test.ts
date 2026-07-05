@@ -238,6 +238,36 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     expect((body(r2) as { binds: { planCurrent: boolean } }).binds.planCurrent).toBe(false);
   });
 
+  it("B10 two-id-space fix: the Director answers by DECISION id — the Hub resolves the open confirmation server-side; zero/ambiguous/both-args all reject loud", async () => {
+    const { decisionId } = await armedDecision();
+    // zero open → loud reject
+    const dctx = createTestContext({ role: "director" });
+    dctx.stores.decision = decisions; dctx.stores.directorProof = proofs; dctx.stores.workItem = workItems; dctx.stores.proposal = proposals;
+    const r0 = await router.handle("capture_director_signal", { channel: "ois-say", answer: "moot", capturedBySurface: "cli", confidence: "session-bound", decisionId }, dctx);
+    expect(r0.isError).toBe(true);
+    expect(body(r0).error).toMatch(/no open confirmation/);
+    // exactly one open → resolved server-side and BOUND
+    await router.handle("mint_director_confirmation", { decisionId, chosenOptionId: "yes" }, ctx);
+    const r1 = await router.handle("capture_director_signal", { channel: "ois-say", answer: "yes", capturedBySurface: "cli", confidence: "session-bound", decisionId }, dctx);
+    expect(r1.isError).toBeFalsy();
+    const answered = (body(r1) as { answeredConfirmationId: string }).answeredConfirmationId;
+    expect(answered).toMatch(/^dconf-/);
+    expect((await proofs.getConfirmation(answered))!.answeredBySignalId).toMatch(/^dsig-/);
+    // ambiguity (two open on another decision) → loud reject listing ids
+    const d2 = await decisions.raiseDecision({ title: "amb", context: "c", class: "x", options: [{ id: "a", label: "A", description: "a" }], raisedBy: ARCHITECT });
+    await decisions.curateDecision(d2.id, ARCHITECT);
+    await decisions.routeDecision(d2.id, ARCHITECT, { target: "director" });
+    await router.handle("mint_director_confirmation", { decisionId: d2.id, chosenOptionId: "a" }, ctx);
+    await router.handle("mint_director_confirmation", { decisionId: d2.id, customAnswer: "alt" }, ctx);
+    const r2 = await router.handle("capture_director_signal", { channel: "ois-say", answer: "a", capturedBySurface: "cli", confidence: "session-bound", decisionId: d2.id }, dctx);
+    expect(r2.isError).toBe(true);
+    expect(body(r2).error).toMatch(/2 open confirmations.*dconf-.*dconf-/);
+    // both id-spaces at once → reject
+    const r3 = await router.handle("capture_director_signal", { channel: "ois-say", answer: "a", capturedBySurface: "cli", confidence: "session-bound", decisionId: d2.id, confirmationId: "dconf-1" }, dctx);
+    expect(r3.isError).toBe(true);
+    expect(body(r3).error).toMatch(/not both/);
+  });
+
   it("failure-park: an effect failing mid-plan leaves the decision RESOLVED with executorBinding.ok=false — visible, never executed, never silent", async () => {
     // Unit-level: executePlan against a target that throws (the vanished/raced case).
     const d = await decisions.raiseDecision({ title: "park", context: "c", class: "x", options: [], raisedBy: ARCHITECT });

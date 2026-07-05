@@ -26,6 +26,7 @@ function makeProofStub(overrides: Partial<Record<keyof IDirectorProofStore, (...
     calls,
     mintSignal: m("mintSignal"), getSignal: m("getSignal"),
     mintConfirmation: m("mintConfirmation"), getConfirmation: m("getConfirmation"),
+    findOpenConfirmationsForDecision: m("findOpenConfirmationsForDecision"),
     consumeConfirmation: m("consumeConfirmation"),
   } as unknown as IDirectorProofStore & { calls: Call[] };
 }

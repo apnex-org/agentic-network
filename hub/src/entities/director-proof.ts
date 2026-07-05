@@ -99,6 +99,10 @@ export interface IDirectorProofStore {
     ttlMs: number;
   }): Promise<DirectorConfirmation>;
   getConfirmation(id: string): Promise<DirectorConfirmation | null>;
+  /** B10 two-id-space fix: the OPEN (unconsumed, unexpired, unanswered)
+   *  confirmations for a decision — lets the Director answer by DECISION id;
+   *  dconf plumbing stays presenter-internal. Low-volume in-memory filter. */
+  findOpenConfirmationsForDecision(decisionId: string): Promise<DirectorConfirmation[]>;
 
   /** Consume exactly once, CAS-guarded. REJECTS (throws) when: not found,
    *  expired, already consumed, decision mismatch, or ANY hash mismatch.

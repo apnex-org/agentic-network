@@ -60,6 +60,18 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
   const proofs = ctx.stores.directorProof;
   if (!proofs) return err("not_wired", "DirectorProof store is not available");
   const capturedBy = await stampActor(ctx);
+  // B10 (two-id-space trap, Director UX finding #2): the Director thinks in
+  // DECISIONS — accept decisionId and resolve the open confirmation SERVER-side.
+  // Zero open → loud reject; more than one → loud reject with the ids (never
+  // ambiguity); exactly one → bind it. dconf-N stays presenter-internal.
+  let confirmationId = args.confirmationId as string | undefined;
+  if (args.decisionId !== undefined) {
+    if (confirmationId) return err("invalid_arguments", "pass decisionId OR confirmationId, not both — decisionId resolves the open confirmation server-side");
+    const open = await proofs.findOpenConfirmationsForDecision(args.decisionId as string);
+    if (open.length === 0) return err("decision_proof_rejected", `no open confirmation for ${args.decisionId} — mint one at prompt render (mint_director_confirmation) before the Director answers`);
+    if (open.length > 1) return err("decision_proof_rejected", `${open.length} open confirmations for ${args.decisionId} [${open.map((c) => c.id).join(", ")}] — ambiguous; answer by confirmationId or let the stale ones expire`);
+    confirmationId = open[0].id;
+  }
   const signal = await proofs.mintSignal({
     channel: args.channel as string,
     answer: args.answer as string,
@@ -67,10 +79,10 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
     confidence: args.confidence as "authenticated" | "session-bound" | "side-channel-low",
     replyable: (args.replyable as boolean | undefined) ?? true,
     rawIngressRef: args.rawIngressRef as string | undefined,
-    confirmationId: args.confirmationId as string | undefined,
+    confirmationId,
     capturedBy,
   });
-  return ok({ signal });
+  return ok({ signal, answeredConfirmationId: confirmationId ?? null });
 }
 
 async function getDirectorSignal(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
@@ -266,7 +278,8 @@ export function registerDirectorProofPolicy(router: PolicyRouter): void {
       confidence: z.enum(["authenticated", "session-bound", "side-channel-low"]),
       replyable: z.boolean().optional().describe("Whether the ingress supports a reply leg (default true — registered ingress fixes bug-224)"),
       rawIngressRef: z.string().optional().describe("The Message/entity id the raw ingress landed as, when relayed"),
-      confirmationId: z.string().optional().describe("The DirectorConfirmation this signal answers (round-trip lineage)"),
+      confirmationId: z.string().optional().describe("The DirectorConfirmation this signal answers (round-trip lineage; presenter-internal id-space)"),
+      decisionId: z.string().optional().describe("B10: answer by DECISION id — the Hub resolves the single open confirmation server-side (rejects loud on zero or ambiguous). The Director's id-space is the decision; dconf plumbing stays out of his surface."),
     },
     captureDirectorSignal,
   );

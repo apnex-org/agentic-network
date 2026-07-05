@@ -138,6 +138,16 @@ export class DirectorProofRepositorySubstrate implements IDirectorProofStore {
     return s ? cloneFlat(s, SIGNAL_KIND) : null;
   }
 
+  async findOpenConfirmationsForDecision(decisionId: string): Promise<DirectorConfirmation[]> {
+    // Confirmations are ephemeral 30-minute tokens — a full-kind list (cap 500)
+    // with in-memory filtering is honest at this volume; no filter-translation
+    // machinery for a presenter-internal kind.
+    const { items } = await this.substrate.list<DirectorConfirmation>(CONFIRMATION_KIND, { limit: 500 });
+    const now = Date.now();
+    return items.map((c) => cloneFlat(c, CONFIRMATION_KIND)).filter((c) =>
+      c.decisionId === decisionId && c.consumedAt === null && c.answeredBySignalId === null && Date.parse(c.expiresAt) >= now);
+  }
+
   async mintConfirmation(input: {
     decisionId: string;
     promptHash: string;
