@@ -304,15 +304,23 @@ cmd_check() {
 }
 
 cmd_list() {
-  printf '%-8s %-9s %-12s %-28s %-16s %s\n' AGENT HARNESS ROLE MODEL TAG EAGER
+  # bug-228: ONE jq per row doing the whole layered merge (was cell_json's
+  # 3-file merge + 2 validation calls + 4 field extractions = ~7 spawns/row,
+  # rendering progressively) + buffered single-flush output — the cmd_ps cure.
+  local a h row out
+  out=$(printf '%-8s %-9s %-12s %-28s %-16s %s' AGENT HARNESS ROLE MODEL TAG EAGER)
   while read -r a h; do
-    local c; c=$(cell_json "$a" "$h")
-    printf '%-8s %-9s %-12s %-28s %-16s %s\n' "$a" "$h" \
-      "$(jq -r '.role' <<<"$c")" \
-      "$(jq -r 'if .model then .model elif .piProvider then .piProvider + "/" + .piModel else .hubModelTag end' <<<"$c")" \
-      "$(jq -r '.hubModelTag' <<<"$c")" \
-      "$(jq -r '.eagerSessionClaim' <<<"$c")"
+    row=$(jq -rn --arg h "$h" '
+      (input.defaults) as $d | (input) as $hz | (input) as $ag |
+      ($d * $hz * ($ag | del(.harness)) * ($ag.harness[$h] // {})) as $m |
+      [ ($m.role // "?"),
+        (if $m.model then $m.model elif $m.piProvider then $m.piProvider + "/" + $m.piModel else ($m.hubModelTag // "?") end),
+        ($m.hubModelTag // "?"),
+        ($m.eagerSessionClaim | if . == null then "?" else tostring end) ] | @tsv' \
+      "$CFG/fleet.json" "$CFG/harnesses/$h.json" "$CFG/agents/$a.json" 2>/dev/null || printf '?\t?\t?\t?')
+    out+=$'\n'"$(IFS=$'\t' read -r r m t e <<<"$row"; printf '%-8s %-9s %-12s %-28s %-16s %s' "$a" "$h" "$r" "$m" "$t" "$e")"
   done < <(cells_all)
+  printf '%s\n' "$out"
 }
 
 cmd_doctor() {
