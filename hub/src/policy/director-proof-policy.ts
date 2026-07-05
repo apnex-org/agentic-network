@@ -112,9 +112,16 @@ async function getDirectorConfirmation(args: Record<string, unknown>, ctx: IPoli
     options: decision.options,
     // audit-10069 (1): WHICH answer the token proposes, in plaintext — with the
     // re-derived hash check so a tampered plaintext is visible (the hash stays
-    // the binding authority; the plaintext is only the render).
-    proposedAnswer: confirmation.proposedAnswer,
-    answerCurrent: hashProposedResolution(confirmation.proposedAnswer) === confirmation.proposedResolutionHash,
+    // the binding authority; the plaintext is only the render). audit-10076:
+    // LEGACY rows (minted before proposedAnswer existed) render null/false with
+    // a note — never a throw; the hash fields remain the verification surface.
+    proposedAnswer: confirmation.proposedAnswer ?? null,
+    answerCurrent: confirmation.proposedAnswer !== undefined && confirmation.proposedAnswer !== null
+      ? hashProposedResolution(confirmation.proposedAnswer) === confirmation.proposedResolutionHash
+      : false,
+    answerNote: confirmation.proposedAnswer === undefined || confirmation.proposedAnswer === null
+      ? "legacy token (pre-render era): plaintext unavailable — verify against proposedResolutionHash"
+      : undefined,
     executionPlan: decision.executionPlan,
     decisionStatus: decision.status,
     promptCurrent: canonicalPromptHash(decision) === confirmation.promptHash,

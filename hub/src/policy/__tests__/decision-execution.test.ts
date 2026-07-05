@@ -20,7 +20,7 @@ import { createTestContext, type TestPolicyContext } from "../test-utils.js";
 import { createMemoryStorageSubstrate } from "../../storage-substrate/memory-substrate.js";
 import { SubstrateCounter } from "../../entities/substrate-counter.js";
 import { DecisionRepositorySubstrate } from "../../entities/decision-repository-substrate.js";
-import { DirectorProofRepositorySubstrate, hashProposedResolution, canonicalPromptHash } from "../../entities/director-proof-repository-substrate.js";
+import { DirectorProofRepositorySubstrate, hashProposedResolution, canonicalPromptHash, hashExecutionPlan } from "../../entities/director-proof-repository-substrate.js";
 import { WorkItemRepositorySubstrate } from "../../entities/work-item-repository-substrate.js";
 import { ProposalRepositorySubstrate } from "../../entities/proposal-repository-substrate.js";
 import { executePlan } from "../../entities/decision-executor.js";
@@ -271,6 +271,32 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     const r3 = await router.handle("capture_director_signal", { channel: "ois-say", answer: "a", capturedBySurface: "cli", confidence: "session-bound", decisionId: d2.id, confirmationId: "dconf-1" }, dctx);
     expect(r3.isError).toBe(true);
     expect(body(r3).error).toMatch(/not both/);
+  });
+
+  it("audit-10076: a LEGACY confirmation (pre-proposedAnswer row) renders null/false with a note — never a 500 on read", async () => {
+    const { decisionId } = await armedDecision();
+    const decision = (await decisions.getDecision(decisionId))!;
+    const c = await proofs.mintConfirmation({
+      decisionId, promptHash: canonicalPromptHash(decision),
+      proposedResolutionHash: hashProposedResolution({ chosenOptionId: "yes" }),
+      proposedAnswer: { chosenOptionId: "yes" }, executionPlanHash: hashExecutionPlan(decision.executionPlan), ttlMs: 60_000,
+    });
+    // simulate the live legacy rows (dconf-1..5): strip proposedAnswer at the store
+    const legacy = (await proofs.getConfirmation(c.id))! as unknown as Record<string, unknown>;
+    delete legacy.proposedAnswer;
+    // write the stripped row back through the substrate the repo uses
+    const sub = (proofs as unknown as { substrate: { getWithRevision: (k: string, i: string) => Promise<{ entity: unknown; resourceVersion: string }>; putIfMatch: (k: string, e: unknown, v: string) => Promise<{ ok: boolean }> } }).substrate;
+    const existing = await sub.getWithRevision("DirectorConfirmation", c.id);
+    const stripped = JSON.parse(JSON.stringify(existing.entity)) as { spec?: Record<string, unknown> };
+    if (stripped.spec) delete stripped.spec.proposedAnswer;
+    await sub.putIfMatch("DirectorConfirmation", stripped, existing.resourceVersion);
+    const r = await router.handle("get_director_confirmation", { confirmationId: c.id }, ctx);
+    expect(r.isError).toBeFalsy(); // never a throw
+    const view = body(r) as { binds: { proposedAnswer: unknown; answerCurrent: boolean; answerNote?: string; promptCurrent: boolean } };
+    expect(view.binds.proposedAnswer).toBeNull();
+    expect(view.binds.answerCurrent).toBe(false);
+    expect(view.binds.answerNote).toMatch(/legacy token/);
+    expect(view.binds.promptCurrent).toBe(true); // the hash surfaces still verify
   });
 
   it("audit-10069 (2) cap-safety: answer-by-decisionId FAILS LOUD when the confirmation scan truncates — never a silently wrong zero/ambiguity verdict", async () => {
