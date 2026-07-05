@@ -1,0 +1,133 @@
+{
+  "_meta": {
+    "purpose": "Frozen snapshot of the LIVE Hub tele set at mission-103 P3-S2 migration time — the 'before' corpus the constitutional fidelity suite proves the mission-kit axioms faithfully carry. Captured from list_tele (default filter: active only) on 2026-07-05T22:40Z. tele-0 (the original umbrella) is absent because it is superseded by tele-14; the active set is exactly tele-1..tele-15 (15 teles), a clean bijection with axioms A0..A14. This fixture is deliberately vendored so the suite survives the S4b tele tombstone.",
+    "capturedAt": "2026-07-05T22:40:00Z",
+    "source": "hub list_tele (active)",
+    "activeTeleCount": 15
+  },
+  "teles": [
+    {
+      "id": "tele-1",
+      "name": "Sovereign State Transparency",
+      "status": "active",
+      "faults": ["Hidden State Problem", "Silent Drift", "Ephemeral Truth Loss", "Logic Poisoning"],
+      "mandate": "All system truth lives in a sovereign, structured, decoupled state-backplane. No functional unit possesses private, opaque, or transient truth; all state is perceivable by any authorized entity and durable across any infrastructure restart.",
+      "successCriteriaCount": 3
+    },
+    {
+      "id": "tele-2",
+      "name": "Isomorphic Specification",
+      "status": "active",
+      "faults": ["Doc-Code Drift", "Snowflake Entropy", "Instructional Bloat", "Phantom State"],
+      "mandate": "The specification IS the system. Human-readable intent and machine-executable reality are mathematically identical. The Manifest is the Master — no state changes through imperative drift; declared intent auto-reconciles the active system.",
+      "successCriteriaCount": 4
+    },
+    {
+      "id": "tele-3",
+      "name": "Sovereign Composition",
+      "status": "active",
+      "faults": ["Logic Leakage", "Architectural Paralysis", "God-Object Accretion", "Ceremony Bloat", "Veto Paralysis"],
+      "mandate": "Every module is a self-contained sovereign unit owning exactly one concern, exposing bit-perfect semantic interfaces, composing without leaking internals. God objects, spaghetti coupling, and dual-purpose modules are structurally impossible.",
+      "successCriteriaCount": 5
+    },
+    {
+      "id": "tele-4",
+      "name": "Zero-Loss Knowledge",
+      "status": "active",
+      "faults": ["Corporate Amnesia", "Narrative Debt", "Onboarding Decay", "Hallucinated Fill-In"],
+      "mandate": "Information is an engineering product. Summarization is loss. All organizational knowledge is authored and maintained at bit-perfect fidelity — expansion over summarization, structure over prose, mechanics-rationale-consequence in every artifact.",
+      "successCriteriaCount": 4
+    },
+    {
+      "id": "tele-5",
+      "name": "Perceptual Parity",
+      "status": "active",
+      "faults": ["Cognitive Friction", "Black-Box Failure", "Architect Amnesia", "Operational Lag"],
+      "mandate": "Humans and agents share symmetric perception of reality. The delta between a Director's view of the system and an agent's view is <1%. Every actor's prompt is hydrated with mathematically verified ground truth before generating a single token.",
+      "successCriteriaCount": 4
+    },
+    {
+      "id": "tele-6",
+      "name": "Frictionless Agentic Collaboration",
+      "status": "active",
+      "faults": ["Transcription Toil", "Boundary Blocking", "DAG Manual Stitching", "Cascade Amnesia"],
+      "mandate": "Multi-agent collaboration occurs with zero administrative friction. No actor manually transcribes approved data, performs redundant tool calls, or produces context-wasting boilerplate. The Hub seamlessly translates approved intent into executable state.",
+      "successCriteriaCount": 4
+    },
+    {
+      "id": "tele-7",
+      "name": "Resilient Agentic Operations",
+      "status": "active",
+      "faults": ["Silent Collapse", "Cascade Bomb", "Blocked Actor", "Non-Actionable Failure"],
+      "mandate": "The Agentic Network is self-healing, resilient to transient failures, and provides actionable feedback at every surface. No operation fails silently; no actor is permanently blocked by a system error.",
+      "successCriteriaCount": 4
+    },
+    {
+      "id": "tele-8",
+      "name": "Gated Recursive Integrity",
+      "status": "active",
+      "faults": ["Debugging Quicksand", "Surface Patching", "Foundation-of-Sand", "Trust Collapse"],
+      "mandate": "Integrity proven from the core outward. No entity, layer, or system ascends to Layer N+1 until Layer N is bit-perfect and physically sealed. There is no \"mostly verified\" state.",
+      "successCriteriaCount": 4
+    },
+    {
+      "id": "tele-9",
+      "name": "Chaos-Validated Deployment",
+      "status": "active",
+      "faults": ["Production Fragility", "Hope-Based Engineering", "Happy-Path Brittleness", "Regression Leakage"],
+      "mandate": "If it cannot be proven under chaos in a sandboxed environment, it does not exist in production. Every merge to main is deterministically proven against simulated chaos — node death, packet loss, jitter, concurrency races, cascade failures — before it reaches real users.",
+      "successCriteriaCount": 4
+    },
+    {
+      "id": "tele-10",
+      "name": "Autopoietic Evolution",
+      "status": "active",
+      "faults": ["Friction Fossilization", "Lesson Loss", "Manual Remediation", "Post-Mortem Debt"],
+      "mandate": "The system autonomously corrects itself and refines its own architecture. When a task fails, a thread deadlocks, or friction surfaces, the system detects its own friction, diagnoses the root cause, and proposes its own evolution.",
+      "successCriteriaCount": 4
+    },
+    {
+      "id": "tele-11",
+      "name": "Cognitive Minimalism",
+      "status": "active",
+      "faults": ["LLM as Calculator", "Substrate Leakage", "Token Fragility", "Context Displacement", "Economic Blindness", "Prompt as Configuration"],
+      "mandate": "LLM tokens are the scarce economic resource. Every deterministic function is mechanized; the LLM is invoked only for genuinely cognitive work — judgment, creativity, ambiguity resolution. Maximum logic-per-token is the engineering objective.",
+      "successCriteriaCount": 7
+    },
+    {
+      "id": "tele-12",
+      "name": "Precision Context Engineering",
+      "status": "active",
+      "faults": ["Context Bloat", "Prompt Sprawl", "Unbounded Accumulation", "Unstructured Hydration", "Attention-Blind Positioning", "Waste-Blind Prompting", "Cosmetic Precision"],
+      "mandate": "Every LLM invocation's context is precision-engineered for maximum information density per token. Prompts are bounded, structured, and ordered so each context-window cell carries productive judgment-load, not administrative ballast.",
+      "successCriteriaCount": 8
+    },
+    {
+      "id": "tele-13",
+      "name": "Director Intent Amplification",
+      "status": "active",
+      "faults": ["Attention Leak", "Preference Overreach", "Interface Fossilization", "Authority Drift", "Profile Miscalibration"],
+      "mandate": "The single human Director is the one irreplaceable, non-scalable resource in the network. The aggregate system exists to augment, offload, and serve the Director — and continuously evolves the interfaces by which Director intent is elicited, clarified, and resolved, maximizing efficacy, effectiveness, efficiency, and clarity per unit of Director attention.",
+      "successCriteriaCount": 5
+    },
+    {
+      "id": "tele-14",
+      "name": "Sovereign Intelligence Engine",
+      "status": "active",
+      "role": "umbrella",
+      "supersedes": "tele-0",
+      "faults": ["Fragmented Asymptote", "Umbrella Amnesia", "Director Fatigue"],
+      "mandate": "Directors provide strategic intent; a network of specialized autonomous agents collaboratively design, build, test, deploy, and self-heal complex software systems with zero administrative friction, mathematical correctness, and perfect institutional memory.",
+      "successCriteriaCount": 3,
+      "note": "The refreshed umbrella. Supersedes the original tele-0 (idea-149, 2026-04-21) to absorb the post-ratification census (tele-11/12/13); mandate/mechanics/faults otherwise unchanged. Pairs with axiom A0, whose frontmatter records the lineage origin as source-tele: tele-0."
+    },
+    {
+      "id": "tele-15",
+      "name": "Compounding Learning",
+      "status": "active",
+      "faults": ["Insight Depreciation", "Workaround Culture", "Shortest-Path Myopia", "Tangent Sprawl", "Curiosity Suppression"],
+      "mandate": "The organization engineers the path of greatest learning, not the shortest path. Learning — knowledge, insights, hardened substrate, sharpened design — is invested capital: captured durably at the moment of discovery, compounding into greater future velocity and returns.",
+      "successCriteriaCount": 6
+    }
+  ]
+}
