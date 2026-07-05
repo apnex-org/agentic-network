@@ -13,6 +13,58 @@
 import { describe, it, expect } from "vitest";
 import { ClaimableDigestTracker } from "../../src/index.js";
 
+describe("ClaimableDigestTracker — bug-226 level-triggered idle-entry wake", () => {
+  it("bug-226 replay: work surfaced BEFORE going busy re-surfaces at the NEXT idle-entry (the 04:01Z manual-wake failure)", () => {
+    const t = new ClaimableDigestTracker();
+    // The agent is told about standing work while idle...
+    expect(t.reconcile({ claimableIds: ["work-116", "work-117"], isIdle: true }).emit).toBe(true);
+    // ...goes busy on a long slice (several busy ticks; set unchanged)...
+    expect(t.reconcile({ claimableIds: ["work-116", "work-117"], isIdle: false }).emit).toBe(false);
+    expect(t.reconcile({ claimableIds: ["work-116", "work-117"], isIdle: false }).emit).toBe(false);
+    // ...and at idle-entry the STANDING set re-surfaces (edge-only code sat silent here).
+    const d = t.reconcile({ claimableIds: ["work-116", "work-117"], isIdle: true });
+    expect(d.emit).toBe(true);
+    expect(d.trigger).toBe("level");
+    expect(d.newCount).toBe(2);
+    // Continuously idle: no re-fire (once per idle-entry).
+    expect(t.reconcile({ claimableIds: ["work-116", "work-117"], isIdle: true }).emit).toBe(false);
+  });
+
+  it("bug-226: idle-entry with an EMPTY queue never fires", () => {
+    const t = new ClaimableDigestTracker();
+    expect(t.reconcile({ claimableIds: ["work-1"], isIdle: false }).emit).toBe(false); // busy
+    const d = t.reconcile({ claimableIds: [], isIdle: true }); // idle-entry, queue drained
+    expect(d.emit).toBe(false);
+    expect(d.trigger).toBeNull();
+  });
+
+  it("bug-226: edge and level in the SAME tick collapse to ONE emit (one reconcile, trigger=level)", () => {
+    const t = new ClaimableDigestTracker();
+    expect(t.reconcile({ claimableIds: ["work-1"], isIdle: true }).emit).toBe(true);
+    expect(t.reconcile({ claimableIds: ["work-1"], isIdle: false }).emit).toBe(false); // busy
+    // At idle-entry a NEW item has ALSO appeared: one decision, one emit.
+    const d = t.reconcile({ claimableIds: ["work-1", "work-2"], isIdle: true });
+    expect(d.emit).toBe(true);
+    expect(d.trigger).toBe("level");
+    expect(d.newCount).toBe(2); // the standing item AND the new one, one digest
+  });
+
+  it("bug-226: adapter restart = first idle tick is an idle-entry (the lost in-memory baseline re-surfaces)", () => {
+    const fresh = new ClaimableDigestTracker(); // a restarted process
+    const d = fresh.reconcile({ claimableIds: ["work-9"], isIdle: true });
+    expect(d.emit).toBe(true);
+    expect(d.trigger).toBe("level");
+  });
+
+  it("steady-idle edges stay edge-triggered (trigger='edge' when a new id appears mid-idle)", () => {
+    const t = new ClaimableDigestTracker();
+    expect(t.reconcile({ claimableIds: [], isIdle: true }).emit).toBe(false); // idle-entry, empty
+    const d = t.reconcile({ claimableIds: ["work-3"], isIdle: true }); // new id, still idle
+    expect(d.emit).toBe(true);
+    expect(d.trigger).toBe("edge");
+  });
+});
+
 describe("ClaimableDigestTracker — idea-353 W1 inbound wake", () => {
   it("AC1: a 0→N edge while idle emits a digest wake", () => {
     const t = new ClaimableDigestTracker();

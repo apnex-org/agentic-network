@@ -300,10 +300,15 @@ function renderWorkClaimableDigest(data: Record<string, unknown>, cfg: PromptFor
   const newCount = typeof data.newCount === "number" ? data.newCount : count;
   const noun = count === 1 ? "item" : "items";
   const newClause = newCount > 0 && newCount < count ? ` (${newCount} new)` : "";
+  // bug-226: the level-triggered marker — an idle-ENTRY re-surface of standing
+  // work (claimable while you were busy), vs the edge (newly-appeared) wake.
+  const basis = data.trigger === "level"
+    ? "surfaced on idle-entry — this work was already claimable while you were busy"
+    : "surfaced because you are idle and newly-claimable work appeared";
   return (
     `[Hub] ${count} ${noun} now claimable for the ${role} role${newClause}. ` +
     `Call ${p}list_ready_work to view, then ${p}claim_work to pick one up. ` +
-    `(Idle-wake digest: surfaced because you are idle and newly-claimable work appeared.)`
+    `(Idle-wake digest: ${basis}.)`
   );
 }
 
