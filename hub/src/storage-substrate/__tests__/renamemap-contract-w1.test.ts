@@ -255,9 +255,11 @@ describe("W1.1 renameMap inventory + faithfulness — complete field-movement au
         expect(expectedKinds.has(def.kind), `unexpected renameMap on kind=${def.kind}`).toBe(true);
       }
     }
-    // 25 runtime consts total; exactly 23 carry renameMap (mission-102 P3-B1 added Decision).
+    // 27 runtime consts total; exactly 23 carry renameMap (mission-102 P3-B1 added
+    // Decision with one; P3-B4 added DirectorSignal + DirectorConfirmation WITHOUT —
+    // no `status` field, get-by-id only).
     expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(23);
-    expect(ALL_SCHEMAS).toHaveLength(25);
+    expect(ALL_SCHEMAS).toHaveLength(27);
   });
 
   it("W1.1b every renameMap entry resolves to the encoder's ACTUAL placement (sentinel-probe vs migrateOne)", () => {
