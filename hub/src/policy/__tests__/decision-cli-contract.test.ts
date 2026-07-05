@@ -30,7 +30,7 @@ import { SubstrateCounter } from "../../entities/substrate-counter.js";
 import { DecisionRepositorySubstrate } from "../../entities/decision-repository-substrate.js";
 import { ArrivalSurfaceRepositorySubstrate } from "../../entities/arrival-surface-repository-substrate.js";
 import { DirectorProofRepositorySubstrate, canonicalPromptHash } from "../../entities/director-proof-repository-substrate.js";
-import { runDecisionCli, type VerbCaller, type CliIO } from "../../cli/decision-cli.js";
+import { runDecisionCli, twoIdentityCaller, type VerbCaller, type CliIO } from "../../cli/decision-cli.js";
 import type { DecisionActor, DecisionOption } from "../../entities/decision.js";
 
 const ARCHITECT: DecisionActor = { agentId: "agent-arch", role: "architect", sessionId: "s-a" };
@@ -84,14 +84,16 @@ describe("decision CLI contract (P3-B7 / SC5: same verbs, zero payload transform
       c.stores.arrivalSurface = arrival;
       c.stores.directorProof = proofs;
     }
-    // The CLI's only dependency: a verb caller. Same router the inline path uses.
-    call = async (tool, args) => {
-      const c = tool === "capture_director_signal" ? directorCtx : ctx;
+    // The CLI's only dependency: a verb caller — built with the SAME
+    // twoIdentityCaller the live wrapper uses, so the dispatch rule
+    // (capture → director ingress, everything else → surface) is CI-covered.
+    const callerAs = (c: TestPolicyContext): VerbCaller => async (tool, args) => {
       const r = await router.handle(tool, args, c);
       const body = JSON.parse(r.content[0].text) as Record<string, unknown>;
       if (r.isError) throw new Error(`${tool} rejected: ${String(body.error)}`);
       return body;
     };
+    call = twoIdentityCaller(callerAs(ctx), callerAs(directorCtx));
   });
 
   async function routedDecision(title: string): Promise<string> {
@@ -146,6 +148,17 @@ describe("decision CLI contract (P3-B7 / SC5: same verbs, zero payload transform
     const resolution = (result.decision as { resolution: { answer: { customAnswer: string } } }).resolution;
     expect(resolution.answer.customAnswer).toBe(utterance);
     // The signal stored the raw utterance too (verbatim at the proof layer).
+    expect((result.signal as { answer: string }).answer).toBe(utterance);
+  });
+
+  it("audit-10168: leading/trailing whitespace is PAYLOAD — ' opt-a ' is a free answer landing byte-exact, never a pick", async () => {
+    const id = await routedDecision("cli whitespace verbatim");
+    const utterance = "  opt-a \t";
+    const { io } = scriptedIO([id, utterance]);
+    const result = await runDecisionCli(call, io);
+    const resolution = (result.decision as { resolution: { answer: { customAnswer?: string; chosenOptionId?: string }; authorityMode: string } }).resolution;
+    expect(resolution.answer.chosenOptionId).toBeUndefined(); // NOT coerced to a pick
+    expect(resolution.answer.customAnswer).toBe(utterance);   // byte-exact incl. whitespace
     expect((result.signal as { answer: string }).answer).toBe(utterance);
   });
 

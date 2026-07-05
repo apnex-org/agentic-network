@@ -22,6 +22,16 @@
 /** Call a Hub verb; resolves the parsed JSON body, throws on isError. */
 export type VerbCaller = (tool: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
+/** The production two-identity topology (bug-224): the Director's utterance is
+ *  captured at the registered DIRECTOR ingress; every other verb runs as the
+ *  architect-proxy SURFACE (resolve_as_director is architect-RBAC). Exported +
+ *  unit-covered so the live wrapper and the CI test share ONE dispatch rule. */
+export const DIRECTOR_INGRESS_VERBS: ReadonlySet<string> = new Set(["capture_director_signal"]);
+
+export function twoIdentityCaller(surface: VerbCaller, director: VerbCaller): VerbCaller {
+  return (tool, args) => (DIRECTOR_INGRESS_VERBS.has(tool) ? director(tool, args) : surface(tool, args));
+}
+
 export interface CliIO {
   prompt(question: string): Promise<string>;
   print(line: string): void;
@@ -52,8 +62,10 @@ export async function runDecisionCli(call: VerbCaller, io: CliIO, surface = "ois
   io.print(JSON.stringify(rendered));
   io.print("free answer: always accepted — type an option id or any text");
 
-  // 3. The answer: an option id or free text, verbatim either way.
-  const answer = (await io.prompt("answer> ")).trim();
+  // 3. The answer: an option id or free text — RAW, byte-verbatim, no trim
+  // (audit-10168: trimming is a payload transformation; " opt-a " is a FREE
+  // answer, not a pick — verbatim wins over convenience by contract).
+  const answer = await io.prompt("answer> ");
   const options = (rendered.options ?? []) as Array<{ id: string }>;
   const pick = options.some((o) => o.id === answer)
     ? { chosenOptionId: answer }
