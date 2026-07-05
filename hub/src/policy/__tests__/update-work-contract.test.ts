@@ -102,6 +102,16 @@ describe("update_work (work-136 / idea-419: the ratified WorkItem mutation contr
     }
   });
 
+  it("audit-10445: an out-of-domain priority value rejects at the handler (the router runs no zod)", async () => {
+    const item = await created();
+    const r = await router.handle("update_work", { workId: item, set: { priority: "urgent" } }, ctx);
+    expect(r.isError).toBe(true);
+    expect(String(body(r).error)).toMatch(/not in the domain/);
+    // ...and the row is untouched.
+    const row = await repo.getWorkItem(item);
+    expect(row!.priority).toBe("normal");
+  });
+
   it("rejects: empty mutation (a no-op call is a caller bug)", async () => {
     const item = await created();
     const r = await router.handle("update_work", { workId: item }, ctx);
@@ -128,7 +138,7 @@ describe("update_work (work-136 / idea-419: the ratified WorkItem mutation contr
       expect(String(body(r).error)).toMatch(/pre-claim/);
     }
     // ...but coordination metadata stays mutable post-claim:
-    const ok = await router.handle("update_work", { workId: item, set: { priority: "urgent" } }, ctx);
+    const ok = await router.handle("update_work", { workId: item, set: { priority: "critical" } }, ctx);
     expect(ok.isError).toBeFalsy();
   });
 

@@ -422,6 +422,13 @@ async function updateWork(args: Record<string, unknown>, ctx: IPolicyContext): P
   if (unknownKey !== undefined) {
     return err("invalid_arguments", `update rejected: unknown set field "${unknownKey}" — mutable via set: ${ALLOWED_SET.join("/")}; structural edges are explicit append params; type/evidenceRequirements/status are immutable via this verb`);
   }
+  // Handler-level VALUE validation (audit-10445, same bug-227 rationale as the
+  // key check above): the router doesn't run zod, so an internal caller could
+  // persist an out-of-domain priority.
+  const PRIORITIES = ["low", "normal", "high", "critical"];
+  if (set.priority !== undefined && !PRIORITIES.includes(set.priority as string)) {
+    return err("invalid_arguments", `update rejected: priority "${String(set.priority)}" is not in the domain ${PRIORITIES.join("/")}`);
+  }
   const appendDependsOn = (args.appendDependsOn as string[] | undefined) ?? [];
   const appendCompletionDependsOn = (args.appendCompletionDependsOn as string[] | undefined) ?? [];
   const appendReferences = (args.appendReferences as WorkItemReference[] | undefined) ?? [];
@@ -914,7 +921,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
     {
       workId: z.string(),
       set: z.object({
-        priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+        priority: z.enum(["low", "normal", "high", "critical"]).optional(),
         targetRef: targetRefSchema.nullable().optional(),
         runbook: z.string().optional(),
         payload: z.unknown().optional(),
