@@ -1017,6 +1017,19 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * only the creator-override identity path can reach it). The reason is recorded by
    * the policy/audit layer (sub-PR-3b).
    */
+  async systemUnblock(workId: string, decisionRef: string): Promise<WorkItem | null> {
+    return this.tryCasUpdate(workId, (w) => {
+      if (w.status !== "blocked") {
+        throw new TransitionRejected(`systemUnblock requires blocked, was ${w.status}`);
+      }
+      if (!w.blockedOn?.blockerIds?.includes(decisionRef)) {
+        throw new TransitionRejected(`systemUnblock rejected: ${workId} is not blocked on ${decisionRef} (blockers: [${w.blockedOn?.blockerIds?.join(", ") ?? ""}]) — a decision only unblocks what waits on it`);
+      }
+      const nowISO = new Date().toISOString();
+      return { ...w, status: "in_progress", blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+    });
+  }
+
   async abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null> {
     return this.tryCasUpdate(workId, (w) => {
       const isHolderWithToken = w.lease?.holder === agentId && w.lease?.token === opts?.leaseToken;

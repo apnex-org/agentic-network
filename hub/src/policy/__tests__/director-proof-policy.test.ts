@@ -41,7 +41,7 @@ function makeDecisionStub(overrides: Partial<Record<keyof IDecisionStore, (...a:
     calls,
     raiseDecision: m("raiseDecision"), getDecision: m("getDecision"), listDecisions: m("listDecisions"),
     curateDecision: m("curateDecision"), routeDecision: m("routeDecision"), resolveDecision: m("resolveDecision"),
-    markExecuted: m("markExecuted"), mergeDecision: m("mergeDecision"), disposeDecision: m("disposeDecision"),
+    markExecuted: m("markExecuted"), recordExecutorBinding: m("recordExecutorBinding"), mergeDecision: m("mergeDecision"), disposeDecision: m("disposeDecision"),
     withdrawDecision: m("withdrawDecision"), listAging: m("listAging"),
   } as unknown as IDecisionStore & { calls: Call[] };
 }
@@ -52,7 +52,7 @@ const sampleDecision = (over: Partial<Decision> = {}): Decision => ({
   freeAnswerPolicy: "always",
   raisedBy: { agentId: "agent-x", role: "engineer" }, curatedBy: null, curationRecordRef: null,
   routedTo: { target: "director" }, routedBy: null, resolution: null, executionPlan: [],
-  mergedInto: null, disposedReason: null, status: "routed",
+  mergedInto: null, disposedReason: null, executorBinding: null, status: "routed",
   enteredCurrentStateAt: "t0", stateDurations: { raised: 0, curated: 0, routed: 0, resolved: 0 },
   createdAt: "t0", updatedAt: "t0", ...over,
 });

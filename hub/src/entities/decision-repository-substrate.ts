@@ -89,6 +89,7 @@ function cloneDecision(d: Decision): Decision {
   flat.routedBy = (flat.routedBy as DecisionActor | null | undefined) ?? null;
   flat.resolution = (flat.resolution as DecisionResolution | null | undefined) ?? null;
   flat.mergedInto = (flat.mergedInto as string | null | undefined) ?? null;
+  flat.executorBinding = (flat.executorBinding as Decision["executorBinding"] | undefined) ?? null;
   flat.disposedReason = (flat.disposedReason as string | null | undefined) ?? null;
   flat.enteredCurrentStateAt = (flat.enteredCurrentStateAt as string | undefined) ?? (flat.updatedAt as string);
   flat.stateDurations = (flat.stateDurations as Decision["stateDurations"] | undefined) ?? { ...DEFAULT_DWELL };
@@ -144,6 +145,7 @@ export class DecisionRepositorySubstrate implements IDecisionStore {
       executionPlan: [],
       mergedInto: null,
       disposedReason: null,
+      executorBinding: null,
       status: "raised",
       enteredCurrentStateAt: now,
       stateDurations: { ...DEFAULT_DWELL },
@@ -265,6 +267,16 @@ export class DecisionRepositorySubstrate implements IDecisionStore {
         ...accrueExiting(d, nowISO),
         updatedAt: nowISO,
       };
+    });
+  }
+
+  async recordExecutorBinding(id: string, binding: NonNullable<Decision["executorBinding"]>): Promise<Decision | null> {
+    return this.tryCasUpdate(id, (d) => {
+      if (d.status !== "resolved") {
+        throw new DecisionTransitionRejected(`executor binding requires resolved, was ${d.status}`);
+      }
+      const nowISO = new Date().toISOString();
+      return { ...d, executorBinding: binding, updatedAt: nowISO };
     });
   }
 

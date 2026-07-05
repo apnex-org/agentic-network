@@ -118,6 +118,10 @@ export interface Decision {
   executionPlan: DecisionPlanAction[];
   mergedInto: string | null;
   disposedReason: string | null;
+  /** B5: set when a resolved decision's plan execution completed or failed —
+   *  {executor, boundAt, ok, results}. A resolved decision with ok=false is the
+   *  visible failure-park the aging sweep surfaces (never silent). */
+  executorBinding: { executor: DecisionActor; boundAt: string; ok: boolean; results: Array<{ action: string; targetRef: string; ok: boolean; detail: string }> } | null;
   status: DecisionPhase;
   enteredCurrentStateAt: string;
   /** Per-state wall-clock dwell (the WorkItem pattern) — the curation SLO (S3.2)
@@ -167,6 +171,9 @@ export interface IDecisionStore {
   resolveDecision(id: string, executor: DecisionActor, answer: DecisionResolution["answer"], gate: IDecisionProofGate, opts?: { rationale?: string; claimedAuthorityRef?: string }): Promise<Decision | null>;
   /** resolved → executed (B5 drives this; the transition exists for FSM closure). */
   markExecuted(id: string, executor: DecisionActor): Promise<Decision | null>;
+  /** B5: record the plan-execution outcome on a RESOLVED decision (the failure-
+   *  park record; also written on success just before markExecuted). */
+  recordExecutorBinding(id: string, binding: NonNullable<Decision["executorBinding"]>): Promise<Decision | null>;
   /** raised|curated → merged(intoRef). intoRef must resolve to another Decision. */
   mergeDecision(id: string, curator: DecisionActor, intoRef: string): Promise<Decision | null>;
   /** raised|curated → disposed(reason). Auditable curation-window disposal. */
