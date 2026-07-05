@@ -67,6 +67,7 @@ export interface AllStores {
    */
   classGrant?: import("../entities/class-grant.js").IClassGrantStore;
   arrivalSurface?: import("../entities/arrival-surface.js").IArrivalSurfaceStore;
+  curation?: import("../entities/curation.js").ICurationStore;
   /**
    * Mission-57 W2: PulseSweeper instance (optional; not all test rigs
    * wire it). When present, `message-policy.ts:ackMessage` invokes

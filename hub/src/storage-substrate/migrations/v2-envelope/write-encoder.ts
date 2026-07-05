@@ -57,6 +57,8 @@ import { createGrantRatificationMigrationModule } from "./kinds/GrantRatificatio
 import { createArrivalSnapshotMigrationModule } from "./kinds/ArrivalSnapshot.js";
 import { createNudgeReceiptMigrationModule } from "./kinds/NudgeReceipt.js";
 import { createDirectorPresenceMigrationModule } from "./kinds/DirectorPresence.js";
+import { createRawDecisionRaisedMigrationModule } from "./kinds/RawDecisionRaised.js";
+import { createCurationRecordMigrationModule } from "./kinds/CurationRecord.js";
 
 /** kind → migration-module factory. The single registry of envelope shape-authority. */
 const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModule> = {
@@ -91,6 +93,8 @@ const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModul
   ArrivalSnapshot: createArrivalSnapshotMigrationModule,      // mission-102 P3-B6
   NudgeReceipt: createNudgeReceiptMigrationModule,            // mission-102 P3-B6
   DirectorPresence: createDirectorPresenceMigrationModule,    // mission-102 P3-B6
+  RawDecisionRaised: createRawDecisionRaisedMigrationModule,  // mission-102 P3-B2
+  CurationRecord: createCurationRecordMigrationModule,        // mission-102 P3-B2
 };
 
 export type EnvelopeWriteEncoder = (kind: string, entity: unknown) => unknown;

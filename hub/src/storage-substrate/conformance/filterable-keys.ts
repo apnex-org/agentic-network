@@ -49,7 +49,9 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   // mission-102 P3-B1: Decision queue views filter by phase + ontology class. The
   // arrival-surface routedTo.target filter uses the bucket-prefixed dotted path
   // (status.routedTo.target — isBucketPrefixed, no renameMap entry), NOT listed here.
-  Decision: ["status", "class"],
+  // "id" = the listAllDecisions exact-scan SORT key (audit-10199; universal PK,
+  // no renameMap needed — W1 exempts id).
+  Decision: ["status", "class", "id"],
   // mission-102 P3-B3: active-grant lookups + per-class drift audits.
   ClassGrant: ["state", "class"],
 };
@@ -122,6 +124,13 @@ export interface AnnotatedFilterSite {
 }
 
 export const ANNOTATED_FILTER_SITES: AnnotatedFilterSite[] = [
+  {
+    file: "curation-repository-substrate.ts",
+    kind: null,
+    reason: "unresolved-kind",
+    keys: ["id"],
+    note: "listAll(kind) pages RawDecisionRaised/CurationRecord with sort id ASC — the deterministic ORDER BY that makes LIMIT/OFFSET pages partition exactly (audit-10127 pattern). No filter keys; `id` is the sort key only.",
+  },
   {
     file: "arrival-surface-repository-substrate.ts",
     kind: null,

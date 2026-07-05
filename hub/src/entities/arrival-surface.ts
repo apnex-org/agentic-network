@@ -62,7 +62,9 @@ export interface ArrivalSnapshot {
   updatedAt: string;
 }
 
-export type NudgeLevel = "normal" | "critical";
+/** "slo" = the B2 curation-SLO breach receipt (rides the same receipt
+ *  machinery; never suppressed by presence — an exception, not a nudge). */
+export type NudgeLevel = "normal" | "critical" | "slo";
 
 export interface NudgeReceipt {
   id: string;

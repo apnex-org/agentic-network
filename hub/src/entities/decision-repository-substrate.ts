@@ -114,10 +114,28 @@ function accrueExiting(d: Decision, nowISO: string): { stateDurations: Decision[
 }
 
 export class DecisionRepositorySubstrate implements IDecisionStore {
+  /** The B2 curation trail is an OPTIONAL collaborator wired at construction —
+   *  when present, every raise mints the immutable RawDecisionRaised capture
+   *  and every curation act appends its CurationRecord AT THE REPO LAYER, so
+   *  no caller (policy or otherwise) can transition without leaving trail.
+   *  Trail writes happen after the committed transition and FAIL LOUD: a
+   *  gap surfaces as a verb error, never silently. */
   constructor(
     private readonly substrate: HubStorageSubstrate,
     private readonly counter: SubstrateCounter,
+    private readonly curation?: import("./curation.js").ICurationStore,
   ) {}
+
+  private async trail(decisionId: string, entry: Omit<import("./curation.js").CurationRecord, "id" | "decisionId" | "sourceRawIds" | "createdAt" | "updatedAt"> & { extraRawIds?: string[] }): Promise<void> {
+    if (!this.curation) return;
+    const raw = await this.curation.getRawForDecision(decisionId);
+    const { extraRawIds, ...rest } = entry;
+    await this.curation.record({
+      ...rest,
+      decisionId,
+      sourceRawIds: [...(raw ? [raw.id] : []), ...(extraRawIds ?? [])],
+    });
+  }
 
   async raiseDecision(input: {
     parentRef?: { kind: string; id: string } | null;
@@ -162,6 +180,20 @@ export class DecisionRepositorySubstrate implements IDecisionStore {
       throw new Error(`[DecisionRepositorySubstrate] raiseDecision: counter issued existing ID ${id}; refusing to clobber`);
     }
     console.log(`[DecisionRepositorySubstrate] Decision raised: ${id} ("${input.title}") by ${input.raisedBy.agentId}`);
+    if (this.curation) {
+      // The immutable raise capture (design §2) — field-for-field what the
+      // raiser submitted, minted with the Decision, never touched again.
+      await this.curation.mintRaw({
+        decisionId: id,
+        title: d.title,
+        context: d.context,
+        class: d.class,
+        options: d.options,
+        contextRefs: d.contextRefs,
+        raisedBy: d.raisedBy,
+        raisedAt: now,
+      });
+    }
     return cloneDecision(d);
   }
 
@@ -179,8 +211,27 @@ export class DecisionRepositorySubstrate implements IDecisionStore {
     return { items: items.map(cloneDecision), truncated: items.length >= LIST_CAP };
   }
 
-  async curateDecision(id: string, curator: DecisionActor, opts?: { curationRecordRef?: string; class?: string }): Promise<Decision | null> {
-    return this.tryCasUpdate(id, (d) => {
+  async listAllDecisions(filter?: { status?: DecisionPhase; class?: string; routedTarget?: string }): Promise<Decision[]> {
+    // EXACT scan (audit-10199): paged with a deterministic ORDER BY id ASC —
+    // pages partition exactly (the audit-10127 law); filters apply in memory
+    // so completeness never depends on translated-filter + offset interplay.
+    const all: Decision[] = [];
+    for (let offset = 0; ; offset += LIST_CAP) {
+      const { items } = await this.substrate.list<Decision>(KIND, {
+        limit: LIST_CAP, offset, sort: [{ field: "id", order: "asc" }],
+      });
+      all.push(...items.map(cloneDecision));
+      if (items.length < LIST_CAP) break;
+    }
+    return all.filter((d) =>
+      (!filter?.status || d.status === filter.status) &&
+      (!filter?.class || d.class === filter.class) &&
+      (!filter?.routedTarget || d.routedTo?.target === filter.routedTarget));
+  }
+
+  async curateDecision(id: string, curator: DecisionActor, opts?: { curationRecordRef?: string; class?: string; basis?: string }): Promise<Decision | null> {
+    const before = await this.getDecision(id);
+    const result = await this.tryCasUpdate(id, (d) => {
       this.assertEdge(d, "curated", "curate");
       const nowISO = new Date().toISOString();
       return {
@@ -193,10 +244,16 @@ export class DecisionRepositorySubstrate implements IDecisionStore {
         updatedAt: nowISO,
       };
     });
+    if (result && before) {
+      const changes: Record<string, { before: unknown; after: unknown }> = {};
+      if (opts?.class !== undefined && opts.class !== before.class) changes.class = { before: before.class, after: opts.class };
+      await this.trail(id, { act: "curate", changes, curator, basis: opts?.basis ?? "curated", grantCitation: null });
+    }
+    return result;
   }
 
   async routeDecision(id: string, router: DecisionActor, route: DecisionRoute, executionPlan?: DecisionPlanAction[]): Promise<Decision | null> {
-    return this.tryCasUpdate(id, (d) => {
+    const routed = await this.tryCasUpdate(id, (d) => {
       this.assertEdge(d, "routed", "route");
       // B3 (PR #488 finding 2): the selfDisposal leg is live — it MUST cite its
       // authority (classGrantRef or t5RuleRef); the policy layer fail-closed
@@ -220,6 +277,18 @@ export class DecisionRepositorySubstrate implements IDecisionStore {
         updatedAt: nowISO,
       };
     });
+    if (routed && route.target === "self-disposal") {
+      // The §2 disposal-packet hook: every self-disposal route leaves a record
+      // CITING its grant/rule — per-grant classification queries key off this.
+      await this.trail(id, {
+        act: "route-self-disposal",
+        changes: { routedTo: { before: null, after: route } },
+        curator: router,
+        basis: "routed for self-disposal under cited authority",
+        grantCitation: route.selfDisposal?.classGrantRef ?? route.selfDisposal?.t5RuleRef ?? null,
+      });
+    }
+    return routed;
   }
 
   async resolveDecision(
@@ -285,27 +354,51 @@ export class DecisionRepositorySubstrate implements IDecisionStore {
     });
   }
 
-  async mergeDecision(id: string, curator: DecisionActor, intoRef: string): Promise<Decision | null> {
+  async mergeDecision(id: string, curator: DecisionActor, intoRef: string, basis?: string): Promise<Decision | null> {
     // The merge target must exist and be a different decision (lineage edge, C4).
     if (intoRef === id) throw new DecisionTransitionRejected("merge rejected: a decision cannot merge into itself");
     const target = await this.substrate.get(KIND, intoRef);
     if (!target) throw new DecisionTransitionRejected(`merge rejected: target ${intoRef} does not resolve to a Decision`);
-    return this.tryCasUpdate(id, (d) => {
+    const merged = await this.tryCasUpdate(id, (d) => {
       this.assertEdge(d, "merged", "merge");
       const nowISO = new Date().toISOString();
       return { ...d, status: "merged", mergedInto: intoRef, curatedBy: d.curatedBy ?? curator, ...accrueExiting(d, nowISO), updatedAt: nowISO };
     });
+    if (merged && this.curation) {
+      // Lineage preserves EVERY constituent raw id — the minority claim stays
+      // reachable through its own immutable raw row (design §2).
+      const targetRaw = await this.curation.getRawForDecision(intoRef);
+      await this.trail(id, {
+        act: "merge",
+        changes: { mergedInto: { before: null, after: intoRef } },
+        curator,
+        basis: basis ?? `merged into ${intoRef}`,
+        grantCitation: null,
+        extraRawIds: targetRaw ? [targetRaw.id] : [],
+      });
+    }
+    return merged;
   }
 
   async disposeDecision(id: string, curator: DecisionActor, reason: string): Promise<Decision | null> {
     if (!reason || reason.trim() === "") {
       throw new DecisionTransitionRejected("dispose rejected: a disposal reason is required (SC2 — nothing dropped silently)");
     }
-    return this.tryCasUpdate(id, (d) => {
+    const disposed = await this.tryCasUpdate(id, (d) => {
       this.assertEdge(d, "disposed", "dispose");
       const nowISO = new Date().toISOString();
       return { ...d, status: "disposed", disposedReason: reason, curatedBy: d.curatedBy ?? curator, ...accrueExiting(d, nowISO), updatedAt: nowISO };
     });
+    if (disposed) {
+      await this.trail(id, {
+        act: "dispose",
+        changes: { status: { before: "raised|curated", after: "disposed" } },
+        curator,
+        basis: reason,
+        grantCitation: null,
+      });
+    }
+    return disposed;
   }
 
   async withdrawDecision(id: string, caller: DecisionActor): Promise<Decision | null> {

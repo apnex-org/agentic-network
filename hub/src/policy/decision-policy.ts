@@ -168,6 +168,7 @@ const curateDecision = transitionHandler("curate_decision", (store, args, actor)
   store.curateDecision(args.decisionId as string, actor, {
     curationRecordRef: args.curationRecordRef as string | undefined,
     class: args.class as string | undefined,
+    basis: args.basis as string | undefined, // B2: lands in the CurationRecord
   }));
 
 // route: the self-disposal leg fail-closed validates its citation at ROUTE time
@@ -237,7 +238,7 @@ const resolveDecision = transitionHandler("resolve_decision", (store, args, acto
   ));
 
 const mergeDecision = transitionHandler("merge_decision", (store, args, actor) =>
-  store.mergeDecision(args.decisionId as string, actor, args.intoRef as string));
+  store.mergeDecision(args.decisionId as string, actor, args.intoRef as string, args.basis as string | undefined));
 
 const disposeDecision = transitionHandler("dispose_decision", (store, args, actor) =>
   store.disposeDecision(args.decisionId as string, actor, args.reason as string));
@@ -310,6 +311,7 @@ export function registerDecisionPolicy(router: PolicyRouter): void {
       decisionId: z.string(),
       class: z.string().optional().describe("Assign/refine the ontology class"),
       curationRecordRef: z.string().optional().describe("Ref to the B2 curation record (framing edits, merge lineage, priority basis)"),
+      basis: z.string().optional().describe("B2: why — stored in the append-only CurationRecord"),
     },
     curateDecision,
   );
@@ -342,7 +344,7 @@ export function registerDecisionPolicy(router: PolicyRouter): void {
   router.register(
     "merge_decision",
     "[Architect] Merge a raised/curated Decision into another (→merged, terminal). Lineage preserved via mergedInto — the raw item stays queryable (C4: merge must never erase minority claims; the full merge record is B2).",
-    { decisionId: z.string(), intoRef: z.string().describe("The surviving Decision id") },
+    { decisionId: z.string(), intoRef: z.string().describe("The surviving Decision id"), basis: z.string().optional().describe("B2: the compound-value rationale (B9) — stored in the merge CurationRecord") },
     mergeDecision,
   );
 
