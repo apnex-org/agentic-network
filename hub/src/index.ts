@@ -89,6 +89,9 @@ import { registerDecisionPolicy } from "./policy/decision-policy.js";
 import { registerDirectorProofPolicy } from "./policy/director-proof-policy.js";
 import { registerClassGrantPolicy } from "./policy/class-grant-policy.js";
 import { registerArrivalSurfacePolicy } from "./policy/arrival-surface-policy.js";
+import { registerConstitutionPolicy } from "./policy/constitution-policy.js";
+import { ConstitutionRepositorySubstrate, OrgCharterRepositorySubstrate } from "./entities/constitution-repository-substrate.js";
+import { ConstitutionSync } from "./storage-substrate/constitution-sync.js";
 import { registerCurationPolicy } from "./policy/curation-policy.js";
 import { registerSc3FunnelPolicy } from "./policy/sc3-funnel-policy.js";
 import { runCurationSloSweep } from "./policy/curation-policy.js";
@@ -253,6 +256,15 @@ const directorProofStore = new DirectorProofRepositorySubstrate(substrate!, subs
 const classGrantStore = new ClassGrantRepositorySubstrate(substrate!, substrateCounter);
 // mission-102 P3-B6: arrival-surface store (snapshots/receipts/presence).
 const arrivalSurfaceStore = new ArrivalSurfaceRepositorySubstrate(substrate!, substrateCounter);
+// mission-103 P3-S1: constitutional serve substrate (decision-17). Staleness
+// honesty threshold = 10x the sync cadence (design SS2 payload law).
+const OIS_CONSTITUTION_REPO = process.env.OIS_CONSTITUTION_REPO ?? "apnex/mission-kit";
+const OIS_CONSTITUTION_CADENCE_S = parseInt(process.env.OIS_CONSTITUTION_CADENCE_S ?? "60", 10);
+const constitutionStore = new ConstitutionRepositorySubstrate(substrate!, {
+  sourceRepo: OIS_CONSTITUTION_REPO,
+  staleAfterMs: OIS_CONSTITUTION_CADENCE_S * 1000 * 10,
+});
+const orgCharterStore = new OrgCharterRepositorySubstrate(substrate!, substrateCounter);
 console.log("[Hub] substrate-mode repositories instantiated (13 substrate-versions + Document store)");
 
 // ── Aggregate Store Object ────────────────────────────────────────────
@@ -276,6 +288,8 @@ const allStores: AllStores = {
   classGrant: classGrantStore,
   arrivalSurface: arrivalSurfaceStore,
   curation: curationStore,
+  constitution: constitutionStore,
+  orgCharter: orgCharterStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────
@@ -317,6 +331,8 @@ registerArrivalSurfacePolicy(policyRouter);
 registerCurationPolicy(policyRouter);
 // mission-102 B8-R2: the SC3 funnel + gaming flag (contract 6).
 registerSc3FunnelPolicy(policyRouter);
+// mission-103 P3-S1: the constitutional read surface (4 pure verbs; zero write verbs).
+registerConstitutionPolicy(policyRouter);
 registerPendingActionPolicy(policyRouter);
 // mission-75 v1.0 §3.3 — adapter-internal periodic transport-liveness
 // signal; tier="adapter-internal" excludes it from shim's LLM tool catalogue.
@@ -969,11 +985,54 @@ if (OIS_GH_API_TOKEN && OIS_REPO_EVENT_BRIDGE_REPOS.length > 0) {
   );
 }
 
+// mission-103 P3-S1: the constitution sync loop (decision-17 design §3) —
+// A1 poll against the git-canonical mission-kit repo. Conditional on the
+// same PAT as the bridge; absent → serve verbs answer loud not_synced and
+// the Hub starts cleanly (never unlabeled bootstrap content).
+let constitutionSync: ConstitutionSync | undefined;
+if (OIS_GH_API_TOKEN) {
+  constitutionSync = new ConstitutionSync({
+    repo: OIS_CONSTITUTION_REPO,
+    token: OIS_GH_API_TOKEN,
+    cadenceMs: OIS_CONSTITUTION_CADENCE_S * 1000,
+    rateBudgetPct: parseFloat(process.env.OIS_CONSTITUTION_RATE_BUDGET_PCT ?? "0.8"),
+    store: constitutionStore,
+    charterStore: orgCharterStore,
+    // Post-commit announcement: broadcast (empty target = all roles — the
+    // constitution concerns everyone); best-effort by contract (bug-231
+    // lesson: loss costs latency never correctness — provenance converges).
+    announce: async (payload) => {
+      const { emitAndPush } = await import("./policy/message-policy.js");
+      await emitAndPush({
+        stores: allStores,
+        metrics: createMetricsCounter(),
+        emit: async () => {},
+        dispatch: hub.dispatchEvent.bind(hub),
+        sessionId: "constitution-sync",
+        clientIp: "127.0.0.1",
+        role: "system",
+        internalEvents: [],
+      } as unknown as import("./policy/types.js").IPolicyContext, {
+        kind: "external-injection",
+        authorRole: "system",
+        authorAgentId: "hub",
+        target: null,
+        delivery: "push-immediate",
+        intent: "constitution_updated",
+        payload,
+      });
+    },
+  });
+} else {
+  console.log("[Hub] OIS_GH_API_TOKEN not set — constitution sync skipped (serve verbs will answer not_synced).");
+}
+
 startupSequence().then(async () => {
   await hub.start();
   startThreadReaper();
   startAgentReaper();
   startContinuationSweep();
+  constitutionSync?.start();
   // Mission-51 W2: full-sweep before announcing readiness so any
   // unprojected messages from the previous Hub instance are caught up
   // before traffic starts flowing.
@@ -1079,6 +1138,7 @@ startupSequence().then(async () => {
   startThreadReaper();
   startAgentReaper();
   startContinuationSweep();
+  constitutionSync?.start();
   messageProjectionSweeper.start();
   scheduledMessageSweeper.start();
   pulseSweeper.start();

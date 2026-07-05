@@ -61,6 +61,10 @@ export interface AllStores {
    * DirectorConfirmation mint/consume). Optional in test rigs.
    */
   directorProof?: import("../entities/director-proof.js").IDirectorProofStore;
+  /** mission-103 S1: the constitutional serve substrate (read-only mirror). */
+  constitution?: import("../entities/constitution.js").IConstitutionStore;
+  /** mission-103 S1: the org charter (rail-mutated only — no free-form verbs). */
+  orgCharter?: import("../entities/constitution.js").IOrgCharterStore;
   /**
    * Mission-102 P3-B3 — the ClassGrant store (typed-constraint delegation;
    * mint/revoke/supersede + the Hub-side evaluator). Optional in test rigs.

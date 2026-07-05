@@ -750,6 +750,36 @@ const DirectorConfirmation: SchemaDef = {
   watchable: false,
 };
 
+// ─── mission-103 P3-S1: the constitutional serve-substrate kinds ─────────────
+// ConstitutionSnapshot: the singleton read-serve mirror of the git-canonical
+// axiom set (decision-17 design §1). Whole-corpus row — the CAS unit IS the
+// atomicity unit (a reader can never observe a mixed-version constitution).
+// Get-by-id only (`current` + `snap-<sha>` history); content opaque verbatim
+// markdown (validation = sync-time parse gate, never a schema at rest).
+const ConstitutionSnapshot: SchemaDef = {
+  kind: "ConstitutionSnapshot",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+  ],
+  indexes: [],
+  watchable: false,
+};
+
+// OrgCharter: the Hub-native org layer (T1 two-layer stack) — versioned
+// append-only rows; charter mutation exists ONLY as decision-rail registry
+// actions (bind_axiom / amend_charter), so every row carries rail proof.
+// Get-by-id + tiny full-kind scans.
+const OrgCharter: SchemaDef = {
+  kind: "OrgCharter",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+  ],
+  indexes: [],
+  watchable: false,
+};
+
 // ─── mission-102 P3-B3: the ClassGrant delegation kind ───────────────────────
 // Typed-constraint delegation, row-per-version immutable (design §1.2). Filterable:
 // status.state (active-grant lookups + drift audits), spec.class (per-class queries).
@@ -890,6 +920,8 @@ export const ALL_SCHEMAS: SchemaDef[] = [
   // 2 NEW mission-102 P3-B4 (the Director proof-path objects)
   DirectorSignal,
   DirectorConfirmation,
+  ConstitutionSnapshot,
+  OrgCharter,
 
   // 2 NEW mission-102 P3-B3 (typed-constraint delegation + its single-use
   // ratification-consumption companion)
