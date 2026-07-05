@@ -66,6 +66,7 @@ const AGENT_SCHEMA_REF: MigrationSchemaRef = {
     status: [
       "sessionEpoch",
       "currentSessionId",
+      "registeredSessions",
       "livenessState",
       "lastHeartbeatAt",
       "activityState",
@@ -160,6 +161,7 @@ export function envelopeToAgent(maybeEnvelope: unknown): Agent {
     // Hoist status partition (except `phase` which became top-level status above)
     sessionEpoch: status.sessionEpoch,
     currentSessionId: status.currentSessionId,
+    registeredSessions: status.registeredSessions,  // bug-230 (work-137): persisted register bindings
     livenessState: status.livenessState,
     lastHeartbeatAt: status.lastHeartbeatAt,
     activityState: status.activityState,

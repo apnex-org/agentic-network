@@ -644,6 +644,13 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         ...agent,
         sessionEpoch: agent.sessionEpoch + 1,
         currentSessionId: sessionId,
+        // bug-230 (work-137): displacement REVOKES the old session's persisted
+        // binding — the mission-19 invariant (only the new session resolves)
+        // holds through the fallback path too; the new session is appended.
+        registeredSessions: AgentRepositorySubstrate.appendRegisteredSession(
+          (agent.registeredSessions ?? []).filter((sid) => sid !== displaced?.sessionId),
+          sessionId,
+        ),
         status: "online",
         livenessState: "online",
         lastHeartbeatAt: now,
