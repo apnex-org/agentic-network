@@ -246,6 +246,13 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
   // In-memory bookkeeping (wipes on Hub restart, identical to legacy).
   private readonly displacementHistory = new Map<string, number[]>();
   private readonly sessionToEngineerId = new Map<string, string>();
+
+  /** bug-230: rolling, deduped, capped persisted register bindings (newest-last). */
+  private static appendRegisteredSession(list: string[] | null | undefined, sessionId: string): string[] {
+    const next = [...(list ?? []).filter((s) => s !== sessionId), sessionId];
+    while (next.length > 8) next.shift();
+    return next;
+  }
   private readonly lastTouchAt = new Map<string, number>();
 
   constructor(private readonly substrate: HubStorageSubstrate) {}
@@ -413,6 +420,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
           archived: false,
           sessionEpoch: 0,
           currentSessionId: null,
+          registeredSessions: sessionId ? [sessionId] : [],
           clientMetadata: payload.clientMetadata,
           advisoryTags: advisoryTagsWithAdapterVersion,
           labels: payload.labels ?? {},
@@ -523,6 +531,8 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         clientMetadata: payload.clientMetadata,
         advisoryTags: refreshedAdvisoryTags,
         labels: nextLabels,
+        // bug-230 (work-137): persist the handshake binding — see the retry leg.
+        registeredSessions: sessionId ? AgentRepositorySubstrate.appendRegisteredSession(agent.registeredSessions, sessionId) : agent.registeredSessions ?? [],
         // bug-55 Tier 2 — transport-tier bump on reconnect; do NOT bump lastSeenAt.
         lastHeartbeatAt: now,
         receiptSla: payload.receiptSla ?? agent.receiptSla ?? DEFAULT_AGENT_RECEIPT_SLA_MS,
@@ -551,6 +561,10 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         const refreshedAgent = normalizeAgentShape(refreshed.entity);
         const restamped: Agent = {
           ...refreshedAgent,
+          // bug-230: persist the handshake binding so a rail verb after a hub
+          // restart (or from an unclaimed bridge session) still resolves the
+          // registered identity instead of stamping anonymous-<role>.
+          registeredSessions: sessionId ? AgentRepositorySubstrate.appendRegisteredSession(refreshedAgent.registeredSessions, sessionId) : refreshedAgent.registeredSessions ?? [],
           clientMetadata: payload.clientMetadata,
           advisoryTags: refreshedAdvisoryTags,
           labels: nextLabels,
@@ -680,8 +694,21 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
 
   async getAgentForSession(sessionId: string): Promise<Agent | null> {
     const agentId = this.sessionToEngineerId.get(sessionId);
-    if (!agentId) return null;
-    return this.getAgent(agentId);
+    if (agentId) return this.getAgent(agentId);
+    // bug-230 (work-137): the in-memory map dies with the process while the
+    // session AND the Agent row both survive — the row persists the binding
+    // as currentSessionId (written at claim/handshake). A rail verb arriving
+    // after a hub restart used to stamp anonymous-<role> (a dead-letter id
+    // that defeated the bug-229 minter-targeted wake live). Fall back to the
+    // PERSISTED binding and rehydrate the map; a genuinely unregistered
+    // session matches no row and keeps the anonymous stamp (no invented
+    // identity). One row-scan per unknown session per process — fleet-scale.
+    const rows = await this.listAgents();
+    const match = rows.find((a) => !a.archived && (a.currentSessionId === sessionId || (a.registeredSessions ?? []).includes(sessionId)));
+    if (!match) return null;
+    this.sessionToEngineerId.set(sessionId, match.id);
+    console.log(`[AgentRepositorySubstrate] session→agent binding rehydrated from the persisted row: ${sessionId} → ${match.id} (bug-230)`);
+    return match;
   }
 
   async listAgents(): Promise<Agent[]> {

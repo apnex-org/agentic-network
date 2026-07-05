@@ -56,6 +56,7 @@ export function createAgentMigrationModule(schema: SchemaDef): KindMigrationModu
       status: [
         "sessionEpoch",
         "currentSessionId",
+        "registeredSessions",
         "livenessState",
         "lastHeartbeatAt",
         "activityState",
