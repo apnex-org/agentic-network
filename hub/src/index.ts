@@ -62,6 +62,7 @@ import { WorkItemRepositorySubstrate } from "./entities/work-item-repository-sub
 import { DecisionRepositorySubstrate } from "./entities/decision-repository-substrate.js";
 import { DirectorProofRepositorySubstrate } from "./entities/director-proof-repository-substrate.js";
 import { ClassGrantRepositorySubstrate } from "./entities/class-grant-repository-substrate.js";
+import { ArrivalSurfaceRepositorySubstrate } from "./entities/arrival-surface-repository-substrate.js";
 import { DocumentRepository } from "./storage-substrate/new-repositories.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy, computeToolSurfaceRevision } from "./policy/index.js";
@@ -86,6 +87,8 @@ import { registerWorkItemPolicy } from "./policy/work-item-policy.js";
 import { registerDecisionPolicy } from "./policy/decision-policy.js";
 import { registerDirectorProofPolicy } from "./policy/director-proof-policy.js";
 import { registerClassGrantPolicy } from "./policy/class-grant-policy.js";
+import { registerArrivalSurfacePolicy } from "./policy/arrival-surface-policy.js";
+import { runDecisionAgingSweep } from "./policy/arrival-surface-policy.js";
 import { registerPendingActionPolicy } from "./policy/pending-action-policy.js";
 import { registerTransportHeartbeatPolicy } from "./handlers/transport-heartbeat-handler.js";
 import { Watchdog } from "./policy/watchdog.js";
@@ -241,6 +244,8 @@ const decisionStore = new DecisionRepositorySubstrate(substrate!, substrateCount
 const directorProofStore = new DirectorProofRepositorySubstrate(substrate!, substrateCounter);
 // mission-102 P3-B3: ClassGrant store (typed-constraint delegation + evaluator).
 const classGrantStore = new ClassGrantRepositorySubstrate(substrate!, substrateCounter);
+// mission-102 P3-B6: arrival-surface store (snapshots/receipts/presence).
+const arrivalSurfaceStore = new ArrivalSurfaceRepositorySubstrate(substrate!, substrateCounter);
 console.log("[Hub] substrate-mode repositories instantiated (13 substrate-versions + Document store)");
 
 // ── Aggregate Store Object ────────────────────────────────────────────
@@ -262,6 +267,7 @@ const allStores: AllStores = {
   decision: decisionStore,
   directorProof: directorProofStore,
   classGrant: classGrantStore,
+  arrivalSurface: arrivalSurfaceStore,
 };
 
 // ── PolicyRouter Singleton ───────────────────────────────────────────
@@ -297,6 +303,8 @@ registerDecisionPolicy(policyRouter);
 registerDirectorProofPolicy(policyRouter);
 // mission-102 P3-B3: the ClassGrant verb surface (mint/get/list/revoke).
 registerClassGrantPolicy(policyRouter);
+// mission-102 P3-B6: the Director arrival surface (render/ack/presence).
+registerArrivalSurfacePolicy(policyRouter);
 registerPendingActionPolicy(policyRouter);
 // mission-75 v1.0 §3.3 — adapter-internal periodic transport-liveness
 // signal; tier="adapter-internal" excludes it from shim's LLM tool catalogue.
@@ -1010,6 +1018,25 @@ startupSequence().then(async () => {
     console.warn("[Hub] Startup WorkItem lease sweep failed; sweeper still starts:", err);
   }
   workItemLeaseSweeper.start(WORKITEM_LEASE_SWEEP_INTERVAL_MS);
+
+  // mission-102 P3-B6: EMIT-ONLY decision-aging sweep (S2.4) — reads dwell in
+  // the routed queue, mints NudgeReceipts, emits decision-aging-notification.
+  // NEVER transitions a Decision (the B1 no-timer invariant). Hourly default.
+  const DECISION_AGING_SWEEP_INTERVAL_MS = Number(process.env.OIS_DECISION_AGING_SWEEP_INTERVAL_MS ?? 3_600_000);
+  setInterval(() => {
+    void runDecisionAgingSweep({
+      stores: allStores,
+      metrics: createMetricsCounter(),
+      emit: async () => {},
+      dispatch: hub.dispatchEvent.bind(hub),
+      sessionId: "decision-aging-sweeper",
+      clientIp: "127.0.0.1",
+      role: "system",
+      internalEvents: [],
+    } as unknown as import("./policy/types.js").IPolicyContext).catch((e) =>
+      console.error(`[decision-aging-sweep] tick failed (non-fatal): ${e instanceof Error ? e.message : e}`),
+    );
+  }, DECISION_AGING_SWEEP_INTERVAL_MS).unref();
   // Mission-52 T3: start repo-event-bridge if configured. PAT failures
   // are caught inside .start() — Hub continues with bridge in `failed`
   // state per directive (no Hub-crash on under-scoped tokens).

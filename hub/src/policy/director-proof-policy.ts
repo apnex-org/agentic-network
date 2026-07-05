@@ -56,6 +56,20 @@ async function stampActor(ctx: IPolicyContext): Promise<DecisionActor> {
   return { agentId: p.agentId, role: p.role, sessionId: ctx.sessionId };
 }
 
+
+/** audit-10122: proven Director activity must flip presence — a Director who
+ *  answers a signal while declared away is BACK for nudge purposes (S3.1
+ *  "first activity flips present"). Best-effort: delivery accounting must
+ *  never break the authority path. */
+async function touchPresenceIfDirector(ctx: IPolicyContext, actor: DecisionActor): Promise<void> {
+  if (actor.role !== "director") return;
+  try {
+    await ctx.stores.arrivalSurface?.touchDirectorActivity();
+  } catch (e) {
+    console.error(`[director-proof] presence touch failed (non-fatal): ${e instanceof Error ? e.message : e}`);
+  }
+}
+
 async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const proofs = ctx.stores.directorProof;
   if (!proofs) return err("not_wired", "DirectorProof store is not available");
@@ -84,6 +98,7 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
     confirmationId,
     capturedBy,
   });
+  await touchPresenceIfDirector(ctx, capturedBy);
   return ok({ signal, answeredConfirmationId: confirmationId ?? null });
 }
 
@@ -278,6 +293,7 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
     } catch (e) {
       console.error(`[director-proof-policy] transition emit failed (non-fatal): ${e instanceof Error ? e.message : e}`);
     }
+    await touchPresenceIfDirector(ctx, executor);
     return ok({ decision: finalDecision });
   } catch (e) { return mapVerbError(e); }
 }
