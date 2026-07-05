@@ -2,10 +2,10 @@
 #
 # ois — declarative fleet launcher for OIS agents (greg/lily/steve/pitest x claude/opencode/pi).
 #
-# DEPLOYMENT (work-132): THIS FILE (scripts/operator/ois in apnex-org/agentic-network)
-# is the SOURCE OF TRUTH. The live copy runs at ~/.config/apnex-agents/bin/ois on the
+# DEPLOYMENT (work-132, Director-ratified structure): THIS FILE (ois/bin/ois in
+# apnex-org/agentic-network) is the SOURCE OF TRUTH. The live copy runs at ~/.config/apnex-agents/bin/ois on the
 # Director's workstation — future patches land HERE first (verifier-gated PR), then
-# deploy by copying to the live path. The apnex-agents repo stays remote-less by
+# deploy with ois/deploy.sh (pre-overwrite timestamped backup). The apnex-agents repo stays remote-less by
 # design (it sits adjacent to secrets/); do not add a remote there without a
 # Director-rail decision.
 #
