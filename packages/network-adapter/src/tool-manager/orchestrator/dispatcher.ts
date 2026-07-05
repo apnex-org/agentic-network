@@ -554,11 +554,11 @@ export function createSharedDispatcher(
               kind: "notification.actionable",
               event: {
                 event: "work_claimable_digest",
-                data: { role, count: decision.count, newCount: decision.newCount },
+                data: { role, count: decision.count, newCount: decision.newCount, trigger: decision.trigger },
               },
             });
             log(
-              `[idea-353] inbound digest emitted — ${decision.count} claimable (${decision.newCount} new) for ${role}`,
+              `[idea-353] inbound digest emitted — ${decision.count} claimable (${decision.newCount} new, ${decision.trigger}-triggered) for ${role}`,
             );
           }
         }

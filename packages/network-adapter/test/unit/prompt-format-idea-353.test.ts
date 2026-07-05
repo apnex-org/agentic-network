@@ -34,6 +34,22 @@ describe("prompt-format — idea-353 work_claimable_digest (W1 inbound)", () => 
     expect(text).not.toContain("new)");
   });
 
+  it("bug-226: the level-triggered marker renders the idle-entry basis; edge keeps the original", () => {
+    const level = buildPromptText(
+      "work_claimable_digest",
+      { role: "engineer", count: 2, newCount: 2, trigger: "level" },
+      CFG,
+    );
+    expect(level).toContain("surfaced on idle-entry");
+    expect(level).toContain("already claimable while you were busy");
+    const edge = buildPromptText(
+      "work_claimable_digest",
+      { role: "engineer", count: 2, newCount: 2, trigger: "edge" },
+      CFG,
+    );
+    expect(edge).toContain("newly-claimable work appeared");
+  });
+
   it("getActionText gives a short hint for the digest", () => {
     expect(getActionText("work_claimable_digest", { count: 2, role: "engineer" })).toContain(
       "list_ready_work",

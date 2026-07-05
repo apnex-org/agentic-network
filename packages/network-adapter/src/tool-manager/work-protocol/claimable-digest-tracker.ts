@@ -48,11 +48,20 @@ export interface ClaimableDigestDecision {
   count: number;
   /** Number of newly-appeared claimable ids since the last surfaced set. */
   newCount: number;
+  /** bug-226: what fired this emit — "edge" = a genuinely-new claimable id;
+   *  "level" = the idle-ENTRY re-surface of a standing claimable set. Both in
+   *  one tick collapse into a single "level" emit (the same reconcile). */
+  trigger: "edge" | "level" | null;
 }
 
 export class ClaimableDigestTracker {
   /** The claimable id set the agent was last woken about (the de-dup baseline). */
   private lastSurfaced = new Set<string>();
+  /** bug-226: the prior tick's idle state — false at construction so the FIRST
+   *  idle tick after adapter boot counts as an idle-entry (a restarted process
+   *  must be re-told about standing work; the in-memory baseline it lost was
+   *  exactly the bug). */
+  private prevIdle = false;
 
   /**
    * Decide whether this tick should surface a claimable-digest wake.
@@ -62,15 +71,29 @@ export class ClaimableDigestTracker {
     const count = input.claimableIds.length;
 
     // AC4 idle-gate: never surface while mid-task, and do NOT advance the
-    // baseline — accumulate so the first idle tick surfaces what appeared
-    // while the agent was busy.
+    // baseline (or the idle latch) — accumulate so the first idle tick
+    // surfaces what appeared while the agent was busy.
     if (!input.isIdle) {
-      return { emit: false, count, newCount: 0 };
+      this.prevIdle = false;
+      return { emit: false, count, newCount: 0, trigger: null };
     }
 
+    // bug-226 fix shape (a): LEVEL trigger on idle-ENTRY. The edge-only
+    // baseline meant an agent that was told about work BEFORE going busy was
+    // never re-told at the next idle — it sat beside claimable work until a
+    // human probed (3× in one day). On the busy→idle transition (and on the
+    // first tick after adapter boot), clear the baseline so the STANDING
+    // claimable set re-surfaces. Fires at most once per idle-entry by
+    // construction — continuous idle never re-enters; the aging/nudge
+    // machinery owns longer-horizon persistence.
+    const idleEntry = !this.prevIdle;
+    this.prevIdle = true;
+    if (idleEntry) this.lastSurfaced.clear();
+
     const newIds = input.claimableIds.filter((id) => !this.lastSurfaced.has(id));
-    // AC3 level-trigger: emit only on an upward edge (0→N or a new id). A
-    // steady set / re-tick / Hub-restart-replay yields no new ids → no emit.
+    // AC3 level-trigger: emit only on an upward edge (0→N or a new id) — which
+    // an idle-entry reset widens to the full standing set. Edge + level in the
+    // same tick is ONE reconcile → ONE emit (the bug-226 dedupe requirement).
     const emit = count > 0 && newIds.length > 0;
 
     // Advance the baseline to the current set on every IDLE pass (emit or not),
@@ -78,7 +101,7 @@ export class ClaimableDigestTracker {
     // re-edges correctly.
     this.lastSurfaced = new Set(input.claimableIds);
 
-    return { emit, count, newCount: newIds.length };
+    return { emit, count, newCount: newIds.length, trigger: emit ? (idleEntry ? "level" : "edge") : null };
   }
 
   /** Diagnostic/test accessor for the current de-dup baseline size. */
