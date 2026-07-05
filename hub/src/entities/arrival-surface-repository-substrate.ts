@@ -72,12 +72,12 @@ export class ArrivalSurfaceRepositorySubstrate implements IArrivalSurfaceStore {
   }
 
   async latestSnapshot(surface: string): Promise<ArrivalSnapshot | null> {
-    // Snapshot ids are counter-monotonic; a capped list + in-memory max is honest
-    // at presenter volume. Truncation cannot HIDE the latest: ids only grow, and
-    // the store returns the most recent rows first when supported — we sort
-    // defensively regardless.
-    const { items } = await this.substrate.list<ArrivalSnapshot>(SNAPSHOT_KIND, { limit: LIST_CAP });
-    const mine = items.map((s) => clone(s, SNAPSHOT_KIND)).filter((s) => s.surface === surface);
+    // EXACT scan (audit-10122): paged through the WHOLE kind — a capped single
+    // list could hide the true latest cursor once snapshots outgrow one page,
+    // silently resetting the digest to cold-start. Ids are counter-monotonic,
+    // so max-by-number over the full set is the latest.
+    const all = await this.listAll<ArrivalSnapshot>(SNAPSHOT_KIND);
+    const mine = all.filter((s) => s.surface === surface);
     if (mine.length === 0) return null;
     return mine.sort((a, b) => Number(b.id.slice(6)) - Number(a.id.slice(6)))[0];
   }
@@ -113,8 +113,11 @@ export class ArrivalSurfaceRepositorySubstrate implements IArrivalSurfaceStore {
   }
 
   async openNudgeReceipts(): Promise<NudgeReceipt[]> {
-    const { items } = await this.substrate.list<NudgeReceipt>(NUDGE_KIND, { limit: LIST_CAP });
-    return items.map((n) => clone(n, NUDGE_KIND)).filter((n) => n.presentedInSnapshotId === null);
+    // EXACT scan (audit-10122): DELIVERED=PRESENTED and the once/retry bounds
+    // both key off open receipts — a capped scan that hid one would re-nudge a
+    // presented decision or lose a suppression from the digest. Page the kind.
+    const all = await this.listAll<NudgeReceipt>(NUDGE_KIND);
+    return all.filter((n) => n.presentedInSnapshotId === null);
   }
 
   async markNudgesPresented(decisionIds: string[], snapshotId: string): Promise<number> {
@@ -172,6 +175,19 @@ export class ArrivalSurfaceRepositorySubstrate implements IArrivalSurfaceStore {
       return { ...p, state: "present", basis: "declared", lastDirectorActivityAt: now, updatedAt: now };
     });
     return result ?? this.getPresence();
+  }
+
+  /** Page the whole kind in LIST_CAP batches — exact, never truncates. Offset
+   *  paging can skip/dup under concurrent writes; at presenter volume that is
+   *  the same benign race any snapshot-read has (dup receipt-flips are
+   *  idempotent; a just-created row lands next pull). */
+  private async listAll<T>(kind: string): Promise<T[]> {
+    const all: T[] = [];
+    for (let offset = 0; ; offset += LIST_CAP) {
+      const { items } = await this.substrate.list<T>(kind, { limit: LIST_CAP, offset });
+      all.push(...items.map((r) => clone(r, kind)));
+      if (items.length < LIST_CAP) return all;
+    }
   }
 
   private async cas<T>(kind: string, id: string, transform: (row: T) => T): Promise<T | null> {

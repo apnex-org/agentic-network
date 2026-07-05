@@ -16,6 +16,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { PolicyRouter } from "../router.js";
 import { registerArrivalSurfacePolicy, runDecisionAgingSweep, AGING_NORMAL_MS, AGING_CRITICAL_MS } from "../arrival-surface-policy.js";
+import { registerDirectorProofPolicy } from "../director-proof-policy.js";
+import { DirectorProofRepositorySubstrate } from "../../entities/director-proof-repository-substrate.js";
 import { createTestContext, type TestPolicyContext } from "../test-utils.js";
 import { createMemoryStorageSubstrate } from "../../storage-substrate/memory-substrate.js";
 import { buildEnvelopeWriteEncoder } from "../../storage-substrate/index.js";
@@ -56,9 +58,11 @@ describe("arrival surface (P3-B6: pull projection + snapshots + aging + presence
     arrival = new ArrivalSurfaceRepositorySubstrate(substrate, counter);
     router = new PolicyRouter();
     registerArrivalSurfacePolicy(router);
+    registerDirectorProofPolicy(router);
     ctx = createTestContext({ role: "director" });
     ctx.stores.decision = decisions;
     ctx.stores.arrivalSurface = arrival;
+    ctx.stores.directorProof = new DirectorProofRepositorySubstrate(substrate, counter);
   });
 
   /** raise→curate→route a director-target decision; returns its id. */
@@ -270,6 +274,49 @@ describe("arrival surface (P3-B6: pull projection + snapshots + aging + presence
     expect(await arrival.openNudgeReceipts()).toHaveLength(1);
     expect((await arrival.getPresence()).state).toBe("present");
   });
+
+  // ── audit-10122 regressions ────────────────────────────────────────────────
+  it("audit-10122(1): Director PROOF activity while declared away flips present — later normal nudges EMIT, not suppress", async () => {
+    await routedDecision("waits-during-away");
+    await router.handle("declare_away_stint", {}, ctx);
+    expect((await arrival.getPresence()).state).toBe("away");
+    // The Director answers a signal through B4 — proven Director activity.
+    const r = await router.handle("capture_director_signal", {
+      channel: "ois-say", answer: "acknowledged", capturedBySurface: "cli", confidence: "session-bound",
+    }, ctx);
+    expect(r.isError).toBeFalsy();
+    expect((await arrival.getPresence()).state).toBe("present");
+    // A sweep after the activity EMITS the normal nudge (no away-suppression left).
+    const s = await runDecisionAgingSweep(ctx, hoursFromNow(49));
+    expect(s.suppressed).toBe(0);
+    expect(s.emitted).toBe(1);
+  });
+
+  it("audit-10122(2a): latestSnapshot is EXACT past the 500-row page — the true per-surface cursor is never hidden", async () => {
+    const mkSnap = (surface: string) => arrival.recordSnapshot({
+      surface, renderedFor: { agentId: "a", role: "director", sessionId: "s" },
+      sinceSnapshotId: null, entries: [],
+      digest: { routedCount: 0, selfDisposalsSinceCursor: 0, disposalsSinceCursor: 0, suppressedNudges: 0, failureParks: 0 },
+    });
+    for (let i = 0; i < 503; i++) await mkSnap("busy");
+    const last = await mkSnap("busy"); // asnap-504 — beyond the first list page
+    const rare = await mkSnap("quiet"); // asnap-505 — a surface whose ONLY row is past the cap
+    expect((await arrival.latestSnapshot("busy"))!.id).toBe(last.id);
+    expect((await arrival.latestSnapshot("quiet"))!.id).toBe(rare.id);
+  }, 30_000);
+
+  it("audit-10122(2b): openNudgeReceipts is EXACT past the 500-row page — hidden receipts can't break once-only or the digest", async () => {
+    for (let i = 0; i < 504; i++) {
+      await arrival.mintNudgeReceipt({ decisionId: `decision-${i}`, level: "normal", emittedRef: null });
+    }
+    const open = await arrival.openNudgeReceipts();
+    expect(open).toHaveLength(504);
+    // ...and presenting a decision whose receipt sits past the page still flips it.
+    const victim = open[open.length - 1];
+    const flipped = await arrival.markNudgesPresented([victim.decisionId], "asnap-x");
+    expect(flipped).toBe(1);
+    expect((await arrival.openNudgeReceipts()).map((n) => n.id)).not.toContain(victim.id);
+  }, 30_000);
 
   it("sanity: threshold constants match S2.4 (48h normal / 24h critical)", () => {
     expect(AGING_NORMAL_MS).toBe(48 * 3600_000);
