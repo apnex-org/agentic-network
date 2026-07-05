@@ -49,7 +49,12 @@ export class DecisionTransitionRejected extends Error {
 export const DECISION_TRANSITIONS: Readonly<Record<DecisionPhase, readonly DecisionPhase[]>> = {
   raised: ["curated", "merged", "disposed", "withdrawn"],
   curated: ["routed", "merged", "disposed", "withdrawn"],
-  routed: ["resolved"],
+  // bug-227 (C): routed ALSO exits to disposed — a MISROUTED decision must not
+  // pollute the Director queue until someone resolves a mistake (decision-3 was
+  // the live specimen). Immutable-destination over un-route (architect-ratified
+  // anti-laundering instinct): the misroute stays on the record; the disposal is
+  // reason-carrying, audited, and Director-visible in the digest.
+  routed: ["resolved", "disposed"],
   resolved: ["executed"],
   executed: [],
   merged: [],

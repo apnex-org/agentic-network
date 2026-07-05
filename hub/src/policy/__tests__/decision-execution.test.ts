@@ -155,6 +155,16 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     expect((await workItems.getWorkItem(workId))!.status).toBe("blocked"); // zero effects
   });
 
+  it("bug-227 (B): a PLAN-LESS resolution completes to EXECUTED (vacuous execution — never parks in resolved forever)", async () => {
+    const d = await decisions.raiseDecision({ title: "no-plan", context: "c", class: "x", options: [], raisedBy: ARCHITECT });
+    await decisions.curateDecision(d.id, ARCHITECT);
+    await decisions.routeDecision(d.id, ARCHITECT, { target: "director" }); // no plan
+    const sig = await proofs.mintSignal({ channel: "ois-say", answer: "yes", capturedBySurface: "cli", confidence: "session-bound", replyable: true, capturedBy: DIRECTOR });
+    const r = await router.handle("resolve_as_director", { decisionId: d.id, proofRef: sig.id, customAnswer: "yes" }, ctx);
+    expect(r.isError).toBeFalsy();
+    expect((body(r) as { decision: { status: string } }).decision.status).toBe("executed");
+  });
+
   it("audit-9938 (1): a NON-SUBMITTED proposal target rejects BEFORE the decision transitions — zero effects, proposal untouched", async () => {
     const d = await decisions.raiseDecision({ title: "re-decide", context: "c", class: "x", options: [], raisedBy: ARCHITECT });
     const p = await proposals.submitProposal("t", "s", "b");

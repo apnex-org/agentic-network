@@ -167,6 +167,17 @@ describe("Decision FSM (real-pg: raise / curate / route / resolve / exits)", () 
     expect(withdrawn.status).toBe("withdrawn");
   }, OP_TIMEOUT);
 
+  it("bug-227 (C): a MISROUTED decision disposes from routed (reason-carrying, terminal); resolved does NOT gain the exit", async () => {
+    const d = await raise("misroute");
+    await repo.curateDecision(d.id, ARCHITECT, { class: "approval-unblock" });
+    await repo.routeDecision(d.id, ARCHITECT, { target: "director" }); // the mistake
+    const disposed = (await repo.disposeDecision(d.id, ARCHITECT, "misrouted to director; superseded by decision-N"))!;
+    expect(disposed.status).toBe("disposed");
+    expect(disposed.disposedReason).toMatch(/misrouted/);
+    // resolved decisions still cannot be disposed (no laundering a made decision away)
+    expect(DECISION_TRANSITIONS.resolved).toEqual(["executed"]);
+  }, OP_TIMEOUT);
+
   it("terminal immutability: every verb rejects from a terminal state", async () => {
     const d = await raise("terminal");
     await repo.withdrawDecision(d.id, RAISER); // → withdrawn
