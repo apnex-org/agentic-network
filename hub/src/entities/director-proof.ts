@@ -116,6 +116,12 @@ export interface IDirectorProofStore {
    *  confirmations for a decision — lets the Director answer by DECISION id;
    *  dconf plumbing stays presenter-internal. Low-volume in-memory filter. */
   findOpenConfirmationsForDecision(decisionId: string): Promise<DirectorConfirmation[]>;
+  /** bug-231 (work-144): the ANSWERED-but-UNCONSUMED confirmations this agent
+   *  minted — the arrival-snapshot backstop's query. An answered-unconsumed
+   *  row means a Director capture bound an answer but the resolve leg hasn't
+   *  run: exactly the state a lost signal-captured wake strands. Same
+   *  low-volume in-memory filter posture as the decision-scoped finder. */
+  findAnsweredUnconsumedForMinter(agentId: string): Promise<DirectorConfirmation[]>;
 
   /** Consume exactly once, CAS-guarded. REJECTS (throws) when: not found,
    *  expired, already consumed, decision mismatch, or ANY hash mismatch.

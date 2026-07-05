@@ -12,6 +12,7 @@ import type { AgentRole, RegisterAgentPayload, AgentClientMetadata } from "../st
 import { projectAgent } from "./agent-projection.js";
 import type { AgentProjection, SessionBindingState } from "./agent-projection.js";
 import { resolveRecipient } from "../entities/recipient-resolver.js";
+import { replayLostWakesForAgent } from "./director-proof-policy.js";
 
 // ── M18 Handshake: register_role ────────────────────────────────────
 
@@ -214,6 +215,17 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
       epoch: currentSessionEpoch,
       claimed: false,
     };
+    // bug-231 (work-144): the arrival-snapshot backstop — every identity-bound
+    // (re)engagement replays this agent's answered-but-unresolved Director
+    // confirmations as targeted wakes (the live signal-captured emit is not
+    // roll-durable; this is the leg that converges it). Best-effort: a backstop
+    // failure must never break the handshake.
+    let recoveredWakes = 0;
+    try {
+      recoveredWakes = await replayLostWakesForAgent(ctx, identity.agentId);
+    } catch (e) {
+      console.warn(`[session-policy] arrival wake backstop failed for ${identity.agentId} (non-fatal): ${e instanceof Error ? e.message : e}`);
+    }
     return {
       content: [{
         type: "text" as const,
@@ -221,6 +233,7 @@ async function registerRole(args: Record<string, unknown>, ctx: IPolicyContext):
           ok: true,
           agent: agentProjection,
           session,
+          ...(recoveredWakes > 0 ? { recoveredWakes } : {}),
           wasCreated: identity.wasCreated,
           message: `Identity asserted for agent ${identity.agentId} (no session claim — call claim_session to bind this session as the active one${identity.wasCreated ? ", newly created" : ""})`,
         }),
