@@ -320,6 +320,73 @@ describe("arrival surface (P3-B6: pull projection + snapshots + aging + presence
     expect((await arrival.openNudgeReceipts()).map((n) => n.id)).not.toContain(victim.id);
   }, 30_000);
 
+  // ── work-128 (B8-R1): the verifier PROBE render ────────────────────────────
+  it("work-128: a verifier probe renders the FULL pull + snapshot receipt with ZERO delivery side effects", async () => {
+    const id = await routedDecision("probed");
+    await runDecisionAgingSweep(ctx, hoursFromNow(49)); // one open nudge receipt
+    await router.handle("declare_away_stint", {}, ctx);
+    const vctx = createTestContext({ role: "verifier" });
+    vctx.stores.decision = decisions;
+    vctx.stores.arrivalSurface = arrival;
+    const r = await router.handle("render_arrival_surface", { surface: "verifier-probe-1", probe: true }, vctx);
+    expect(r.isError).toBeFalsy();
+    const out = body(r) as { probe: boolean; queue: Array<{ id: string }>; snapshotId: string; nudgesPresented: number };
+    expect(out.probe).toBe(true);
+    expect(out.queue.map((q) => q.id)).toEqual([id]); // the full pull
+    // The snapshot receipt EXISTS (server-side, on the probe's own surface)...
+    const snap = await arrival.getSnapshot(out.snapshotId);
+    expect(snap!.surface).toBe(`probe:${snap!.renderedFor.agentId}:verifier-probe-1`); // structurally namespaced (audit-10269)
+    expect(snap!.renderedFor.role).toBe("verifier"); // honestly stamped
+    // ...but NOTHING was delivered: receipts still open, presence untouched.
+    expect(out.nudgesPresented).toBe(0);
+    expect(await arrival.openNudgeReceipts()).toHaveLength(1);
+    expect((await arrival.getPresence()).state).toBe("away");
+    // ...and the Director's own cursor chain is unpolluted (per-surface isolation).
+    expect(await arrival.latestSnapshot("default")).toBeNull();
+  });
+
+  it("work-128: a verifier render WITHOUT probe:true rejects (probes are observation, never delivery)", async () => {
+    await routedDecision("guarded-from-verifier");
+    const vctx = createTestContext({ role: "verifier" });
+    vctx.stores.decision = decisions;
+    vctx.stores.arrivalSurface = arrival;
+    const r = await router.handle("render_arrival_surface", {}, vctx);
+    expect(r.isError).toBe(true);
+    expect(JSON.parse(r.content[0].text).error).toMatch(/probe-only/);
+  });
+
+  it("audit-10269: a probe with an OMITTED surface cannot advance the Director's default cursor; real renders cannot claim the probe namespace", async () => {
+    await routedDecision("cursor-guard");
+    const vctx = createTestContext({ role: "verifier" });
+    vctx.stores.decision = decisions;
+    vctx.stores.arrivalSurface = arrival;
+    // The exact audit-10269 repro: probe WITHOUT an explicit surface.
+    const r = await router.handle("render_arrival_surface", { probe: true }, vctx);
+    expect(r.isError).toBeFalsy();
+    // The Director's production cursor is untouched — his next real pull keeps
+    // its full since-you-left digest.
+    expect(await arrival.latestSnapshot("default")).toBeNull();
+    // ...and the reverse fence: a REAL render cannot squat the probe namespace.
+    const bad = await router.handle("render_arrival_surface", { surface: "probe:sneaky" }, ctx);
+    expect(bad.isError).toBe(true);
+    expect(JSON.parse(bad.content[0].text).error).toMatch(/reserved for probe renders/);
+  });
+
+  it("work-128: architect probes also skip delivery effects (probe semantics are role-independent)", async () => {
+    const id = await routedDecision("arch-probed");
+    await runDecisionAgingSweep(ctx, hoursFromNow(49));
+    const actx = createTestContext({ role: "architect" });
+    actx.stores.decision = decisions;
+    actx.stores.arrivalSurface = arrival;
+    const r = await router.handle("render_arrival_surface", { surface: "arch-probe", probe: true }, actx);
+    expect((body(r) as { nudgesPresented: number }).nudgesPresented).toBe(0);
+    expect(await arrival.openNudgeReceipts()).toHaveLength(1);
+    // A REAL render afterwards still delivers (the probe consumed nothing).
+    const real = await router.handle("render_arrival_surface", {}, ctx);
+    expect((body(real) as { nudgesPresented: number }).nudgesPresented).toBe(1);
+    expect((body(real) as { queue: Array<{ id: string }> }).queue.map((q) => q.id)).toEqual([id]);
+  });
+
   it("sanity: threshold constants match S2.4 (48h normal / 24h critical)", () => {
     expect(AGING_NORMAL_MS).toBe(48 * 3600_000);
     expect(AGING_CRITICAL_MS).toBe(24 * 3600_000);

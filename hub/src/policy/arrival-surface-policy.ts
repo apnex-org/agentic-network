@@ -95,10 +95,32 @@ async function renderArrivalSurface(args: Record<string, unknown>, ctx: IPolicyC
   const decisions = ctx.stores.decision;
   const arrival = ctx.stores.arrivalSurface;
   if (!decisions || !arrival) return err("not_wired", "Decision/ArrivalSurface stores are not available");
-  const gated = await requireDirectorSurface(ctx);
-  if (isPolicyResult(gated)) return gated;
-  const actor = gated;
-  const surface = (args.surface as string | undefined) ?? "default";
+  // work-128 (B8-R1): PROBE mode — the full pull (queue + digest + a snapshot
+  // receipt on the caller-named surface; per-surface cursor chains are
+  // isolated) with the two DELIVERY side effects skipped: no nudge-receipt
+  // flip (a probe must never falsely mark Director nudges PRESENTED) and no
+  // presence touch. The VERIFIER seat is probe-only — that's what lets him
+  // live-execute contract #4 from his own seat without becoming a delivery
+  // surface; architect/director may probe too (e.g. dry-checking a digest).
+  const probe = args.probe === true;
+  const actorRaw = await stampActor(ctx);
+  if (actorRaw.role === "verifier" && !probe) {
+    return err("forbidden", "verifier renders are probe-only — pass probe:true (a non-probe render flips nudge receipts to PRESENTED, which is Director-delivery accounting)");
+  }
+  if (actorRaw.role !== "director" && actorRaw.role !== "architect" && actorRaw.role !== "verifier") {
+    return err("forbidden", `${actorRaw.role ?? "unregistered"} cannot operate the Director arrival surface — a non-Director render would falsely mark nudges PRESENTED (delivery = snapshot membership)`);
+  }
+  const actor = actorRaw;
+  // audit-10269: probe isolation is STRUCTURAL, not caller discipline. A probe
+  // render always lands in its own agent-scoped namespace — an omitted surface
+  // can never advance the Director's production cursor ('default'), and a real
+  // render can never claim a probe surface. latestSnapshot(surface) chains are
+  // per-surface, so the two worlds cannot interact by construction.
+  const requested = (args.surface as string | undefined) ?? "default";
+  if (!probe && requested.startsWith("probe:")) {
+    return err("invalid_arguments", "the 'probe:' surface namespace is reserved for probe renders — a real render on it would let a probe cursor shadow delivery accounting");
+  }
+  const surface = probe ? `probe:${actor.agentId}:${requested}` : requested;
   // PURE PULL: the queue is the single source (contract test 4 — complete with
   // every push channel dead). Cold start = no prior snapshot = everything.
   const prior = await arrival.latestSnapshot(surface);
@@ -118,11 +140,16 @@ async function renderArrivalSurface(args: Record<string, unknown>, ctx: IPolicyC
       failureParks: digest.failureParks.length,
     },
   });
-  // DELIVERED = PRESENTED: open nudge receipts for rendered decisions flip now.
-  const presented = await arrival.markNudgesPresented(routed.map((d) => d.id), snapshot.id);
+  // DELIVERED = PRESENTED: open nudge receipts for rendered decisions flip now
+  // — UNLESS this is a probe (work-128: probes are observation, not delivery).
+  const presented = probe ? 0 : await arrival.markNudgesPresented(routed.map((d) => d.id), snapshot.id);
   // A Director pull is Director activity — presence flips present (S3.1).
-  if (actor.role === "director") await arrival.touchDirectorActivity();
+  if (!probe && actor.role === "director") await arrival.touchDirectorActivity();
   return ok({
+    probe,
+    // Explicit for the verifier's B8b evidence (steve's amendment 2): a probe
+    // response SAYS it skipped delivery, so the transcript is unambiguous.
+    deliveryEffectsSkipped: probe,
     snapshotId: snapshot.id,
     queue: routed.map((d) => ({ id: d.id, title: d.title, class: d.class, context: d.context, options: d.options, executionPlan: d.executionPlan, enteredCurrentStateAt: d.enteredCurrentStateAt })),
     truncated,
@@ -248,9 +275,10 @@ async function emitAging(ctx: IPolicyContext, d: Decision, kind: string): Promis
 export function registerArrivalSurfacePolicy(router: PolicyRouter): void {
   router.register(
     "render_arrival_surface",
-    "[Architect|Director] THE Director arrival pull (design §1.4): the routed queue + since-you-left digest (self-disposals with their grant refs, disposal packets, suppressed-nudge accounting, failure parks) — a PURE function of queue state, complete with every push channel dead (the anti-bug-225 contract). Records the ArrivalSnapshot server-side (DELIVERED = membership), flips open nudge receipts to presented, and counts as Director activity (presence → present).",
+    "[Architect|Director|Verifier] THE Director arrival pull (design §1.4): the routed queue + since-you-left digest (self-disposals with their grant refs, disposal packets, suppressed-nudge accounting, failure parks) — a PURE function of queue state, complete with every push channel dead (the anti-bug-225 contract). Records the ArrivalSnapshot server-side (DELIVERED = membership), flips open nudge receipts to presented, and counts as Director activity (presence → present).",
     {
       surface: z.string().optional().describe("Rendering surface id (default 'default'); the snapshot cursor chain is per-surface"),
+      probe: z.boolean().optional().describe("work-128: PROBE render — full pull + snapshot receipt on this surface, but NO delivery side effects (no nudge-receipt flip, no presence touch). REQUIRED for the verifier seat; available to architect/director"),
     },
     renderArrivalSurface,
   );
