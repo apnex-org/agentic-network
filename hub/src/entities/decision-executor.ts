@@ -33,7 +33,13 @@ export const V1_ACTION_REGISTRY: readonly DecisionPlanAction["action"][] = ["unb
 
 export interface ExecutionTargets {
   workItem?: Pick<IWorkItemStore, "getWorkItem" | "systemUnblock">;
-  proposal?: Pick<IProposalStore, "getProposal" | "reviewProposal">;
+  proposal?: Pick<IProposalStore, "getProposal">;
+  /** PR #489 review (audit-9938): approve fires through the SHIPPED policy
+   *  handler (create_proposal_review semantics: submitted-only guard, auto-
+   *  scaffold with revert-on-failure, task_issued + proposal_decided
+   *  dispatches) — the policy layer supplies this closure; the executor never
+   *  touches the raw repository method. */
+  approveViaPolicy?: (proposalRef: string, feedback: string) => Promise<{ ok: boolean; detail: string }>;
 }
 
 /** Pre-effect validation (part of the contract-11 proof chain): every action
@@ -56,6 +62,12 @@ export async function validatePlan(decision: Decision, targets: ExecutionTargets
       if (!targets.proposal) throw new DecisionTransitionRejected("plan rejected: approve requires the Proposal store");
       const p = await targets.proposal.getProposal(step.targetRef);
       if (!p) throw new DecisionTransitionRejected(`plan rejected: approve target ${step.targetRef} does not resolve`);
+      // audit-9938: INV-P2 travels into the plan chain — only a SUBMITTED proposal
+      // is approvable; anything else is a pre-transition reject with zero effects
+      // (an already-approved/rejected/implemented proposal is invalid cargo).
+      if (p.status !== "submitted") {
+        throw new DecisionTransitionRejected(`plan rejected: approve target ${step.targetRef} is '${p.status}', not 'submitted' (INV-P2) — a decision cannot re-decide a decided proposal`);
+      }
     }
   }
 }
@@ -72,8 +84,9 @@ export async function executePlan(decision: Decision, targets: ExecutionTargets)
         const w = await targets.workItem!.systemUnblock(step.targetRef, decision.id);
         results.push({ action: step.action, targetRef: step.targetRef, ok: !!w, detail: w ? `unblocked → ${w.status}` : "target vanished mid-execution" });
       } else if (step.action === "approve") {
-        const approved = await targets.proposal!.reviewProposal(step.targetRef, "approved", `Approved by decision ${decision.id} (${decision.resolution?.authorityMode}; ref ${decision.resolution?.authorityRef})`);
-        results.push({ action: step.action, targetRef: step.targetRef, ok: approved, detail: approved ? "approved" : "reviewProposal returned false" });
+        if (!targets.approveViaPolicy) throw new DecisionTransitionRejected("approve requires the policy-path closure (never the raw repository method)");
+        const outcome = await targets.approveViaPolicy(step.targetRef, `Approved by decision ${decision.id} (${decision.resolution?.authorityMode}; ref ${decision.resolution?.authorityRef})`);
+        results.push({ action: step.action, targetRef: step.targetRef, ok: outcome.ok, detail: outcome.detail });
       }
     } catch (e) {
       results.push({ action: step.action, targetRef: step.targetRef, ok: false, detail: e instanceof Error ? e.message : String(e) });

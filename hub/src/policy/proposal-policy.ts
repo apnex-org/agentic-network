@@ -284,7 +284,11 @@ async function listProposals(args: Record<string, unknown>, ctx: IPolicyContext)
   };
 }
 
-async function createProposalReview(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+// Exported for mission-102 P3-B5 (PR #489 review, audit-9938): the decision
+// executor's approve action calls THIS handler — the exact shipped semantics
+// (submitted-only guard, auto-scaffold with revert-on-failure, task_issued +
+// proposal_decided dispatches) — never the raw repository method.
+export async function createProposalReview(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const proposalId = args.proposalId as string;
   const decision = args.decision as string;
   const feedback = args.feedback as string;

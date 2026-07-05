@@ -155,6 +155,56 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     expect((await workItems.getWorkItem(workId))!.status).toBe("blocked"); // zero effects
   });
 
+  it("audit-9938 (1): a NON-SUBMITTED proposal target rejects BEFORE the decision transitions — zero effects, proposal untouched", async () => {
+    const d = await decisions.raiseDecision({ title: "re-decide", context: "c", class: "x", options: [], raisedBy: ARCHITECT });
+    const p = await proposals.submitProposal("t", "s", "b");
+    await proposals.reviewProposal(p.id, "rejected", "no"); // already decided
+    await decisions.curateDecision(d.id, ARCHITECT);
+    await decisions.routeDecision(d.id, ARCHITECT, { target: "director" }, [{ action: "approve", targetRef: p.id }]);
+    const sig = await proofs.mintSignal({ channel: "ois-say", answer: "yes", capturedBySurface: "cli", confidence: "session-bound", replyable: true, capturedBy: DIRECTOR });
+    const r = await router.handle("resolve_as_director", { decisionId: d.id, proofRef: sig.id, customAnswer: "yes" }, ctx);
+    expect(r.isError).toBe(true);
+    expect(body(r).error).toMatch(/'rejected', not 'submitted'/);
+    expect((await decisions.getDecision(d.id))!.status).toBe("routed");     // never transitioned
+    expect((await proposals.getProposal(p.id))!.status).toBe("rejected");   // untouched
+  });
+
+  it("audit-9938 (2): approving a proposal WITH an execution plan runs the SHIPPED scaffold semantics; scaffold failure reverts the proposal and PARKS the decision visibly", async () => {
+    // happy: valid plan → approval scaffolds mission+task through create_proposal_review
+    const d1 = await decisions.raiseDecision({ title: "scaffold", context: "c", class: "x", options: [], raisedBy: ARCHITECT });
+    const pGood = await proposals.submitProposal("t", "s", "b", undefined, {
+      missions: [{ idRef: "m1", title: "M", description: "d" }],
+      tasks: [{ idRef: "t1", missionRef: "m1", title: "T", description: "d" }],
+    });
+    await decisions.curateDecision(d1.id, ARCHITECT);
+    await decisions.routeDecision(d1.id, ARCHITECT, { target: "director" }, [{ action: "approve", targetRef: pGood.id }]);
+    const sig1 = await proofs.mintSignal({ channel: "ois-say", answer: "yes", capturedBySurface: "cli", confidence: "session-bound", replyable: true, capturedBy: DIRECTOR });
+    const r1 = await router.handle("resolve_as_director", { decisionId: d1.id, proofRef: sig1.id, customAnswer: "yes" }, ctx);
+    expect(r1.isError).toBeFalsy();
+    const done1 = (body(r1) as { decision: { status: string; executorBinding: { ok: boolean; results: Array<{ detail: string }> } } }).decision;
+    expect(done1.status).toBe("executed");
+    expect(done1.executorBinding.results.find((x) => x.detail.includes("scaffolded"))).toBeTruthy();
+    const approved = (await proposals.getProposal(pGood.id))!;
+    expect(approved.status).toBe("approved");
+    expect(approved.scaffoldResult?.missions.length).toBe(1);
+    expect(approved.scaffoldResult?.tasks.length).toBe(1);
+    // failure: broken plan (task references a missing mission) → shipped handler
+    // REVERTS to submitted; the decision parks in resolved with ok=false — visible.
+    const d2 = await decisions.raiseDecision({ title: "scaffold-fail", context: "c", class: "x", options: [], raisedBy: ARCHITECT });
+    const pBad = await proposals.submitProposal("t2", "s", "b", undefined, {
+      tasks: [{ idRef: "t1", missionRef: "m-ghost", title: "T", description: "d" }],
+    });
+    await decisions.curateDecision(d2.id, ARCHITECT);
+    await decisions.routeDecision(d2.id, ARCHITECT, { target: "director" }, [{ action: "approve", targetRef: pBad.id }]);
+    const sig2 = await proofs.mintSignal({ channel: "ois-say", answer: "yes", capturedBySurface: "cli", confidence: "session-bound", replyable: true, capturedBy: DIRECTOR });
+    const r2 = await router.handle("resolve_as_director", { decisionId: d2.id, proofRef: sig2.id, customAnswer: "yes" }, ctx);
+    expect(r2.isError).toBeFalsy(); // the RESOLUTION stands; execution parked
+    const parked = (body(r2) as { decision: { status: string; executorBinding: { ok: boolean } } }).decision;
+    expect(parked.status).toBe("resolved");
+    expect(parked.executorBinding.ok).toBe(false);
+    expect((await proposals.getProposal(pBad.id))!.status).toBe("submitted"); // reverted, not half-approved
+  });
+
   it("failure-park: an effect failing mid-plan leaves the decision RESOLVED with executorBinding.ok=false — visible, never executed, never silent", async () => {
     // Unit-level: executePlan against a target that throws (the vanished/raced case).
     const d = await decisions.raiseDecision({ title: "park", context: "c", class: "x", options: [], raisedBy: ARCHITECT });

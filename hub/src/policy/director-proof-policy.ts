@@ -34,6 +34,7 @@ import {
   hashExecutionPlan,
 } from "../entities/director-proof-repository-substrate.js";
 import { validatePlan, executePlan } from "../entities/decision-executor.js";
+import { createProposalReview } from "./proposal-policy.js";
 
 /** Confirmation TTL: 30 minutes — long enough for a live decision walkthrough,
  *  short enough that a stale prompt cannot authorize much later (design §1.3). */
@@ -120,7 +121,17 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
     return err("invalid_arguments", "exactly one of chosenOptionId | customAnswer is required");
   }
   const gate = new DirectorProofGate(proofs, ctx.stores.classGrant);
-  const targets = { workItem: ctx.stores.workItem, proposal: ctx.stores.proposal };
+  const targets = {
+    workItem: ctx.stores.workItem,
+    proposal: ctx.stores.proposal,
+    // The SHIPPED create_proposal_review semantics, closed over ctx (audit-9938):
+    // submitted-only guard + auto-scaffold (revert on failure) + dispatches.
+    approveViaPolicy: async (proposalRef: string, feedback: string) => {
+      const res = await createProposalReview({ proposalId: proposalRef, decision: "approved", feedback }, ctx);
+      const parsed = JSON.parse(res.content[0].text) as { success?: boolean; error?: string; scaffolded?: boolean };
+      return { ok: !res.isError && parsed.success === true, detail: res.isError ? (parsed.error ?? "review failed") : `approved${parsed.scaffolded ? " + scaffolded" : ""}` };
+    },
+  };
   try {
     // B5 contract 11 — the proof chain INCLUDES plan validation, all BEFORE any
     // effect and before the decision transitions: every action in-registry, every
