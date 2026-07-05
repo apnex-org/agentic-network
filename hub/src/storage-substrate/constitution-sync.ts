@@ -30,7 +30,11 @@ import { manifestHashOf } from "../entities/constitution-repository-substrate.js
 
 export const CONSTITUTION_UPDATED_EVENT = "constitution-updated-notification";
 
-const AXIOM_PATH_RE = /^axioms\/(A\d+)\.md$/;
+// The live mission-kit filename shape is SLUGGED (axioms/A14-compounding-
+// learning.md); the bare form (axioms/A7.md) is tolerated too. The id is the
+// A<N> prefix either way (audit-10754: the bare-only regex matched zero real
+// files — a real tick would have parse-gate-rejected as empty forever).
+const AXIOM_PATH_RE = /^axioms\/(A\d+)(?:-[A-Za-z0-9-]+)?\.md$/;
 
 export type TickResult =
   | { result: "unchanged"; sha: string }
@@ -217,9 +221,12 @@ export function parseGate(files: Record<string, string>): AxiomManifestEntry[] {
   const paths = Object.keys(files);
   if (paths.length === 0) throw new Error("candidate has zero axiom files (axioms/A*.md) — an empty constitution is a malformed one");
   const manifest: AxiomManifestEntry[] = [];
+  const seen = new Map<string, string>();
   for (const path of paths) {
     const m = AXIOM_PATH_RE.exec(path);
     if (!m) throw new Error(`unexpected path in candidate: ${path}`);
+    if (seen.has(m[1])) throw new Error(`duplicate axiom id ${m[1]}: ${seen.get(m[1])} and ${path} both claim it — an ambiguous constitution is a malformed one`);
+    seen.set(m[1], path);
     const content = files[path];
     if (!content || content.trim().length === 0) throw new Error(`${path} is empty`);
     const heading = content.split("\n").find((line) => /^#\s+\S/.test(line));

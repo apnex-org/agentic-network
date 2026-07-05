@@ -70,9 +70,11 @@ function fakeGithub(state: {
   }) as typeof fetch;
 }
 
+// The LIVE mission-kit filename shape: slugged (audit-10754) — plus one bare
+// form to pin the tolerance.
 const CORPUS_V1 = {
-  "axioms/A0.md": "# The Umbrella\n\nAll models are wrong.",
-  "axioms/A1.md": "# Evidence Over Assertion\n\nShow, don't claim.",
+  "axioms/A0-sovereign-intelligence-engine.md": "# The Umbrella\n\nAll models are wrong.",
+  "axioms/A1-evidence-over-assertion.md": "# Evidence Over Assertion\n\nShow, don't claim.",
   "axioms/A7.md": "# Fault Boundaries\n\nBlame the boundary, not the person.",
 };
 
@@ -120,12 +122,12 @@ describe("constitution serve substrate (work-150 / mission-103 S1)", () => {
     expect(calls).toHaveLength(1); // HEAD check only — steady-state cost is 1 call/tick
     const snapshot = await store.getCurrent();
     expect(snapshot!.manifest.map((m) => m.id)).toEqual(["A0", "A1", "A7"]); // numeric-sorted manifest
-    expect(snapshot!.files["axioms/A7.md"]).toContain("Blame the boundary");
+    expect(snapshot!.files["axioms/A7.md"]).toContain("Blame the boundary"); // the bare form still accepted
   });
 
   it("FAIL-CLOSED-MALFORMED: one axiom file without a heading rejects the ENTIRE candidate — the prior corpus keeps serving whole", async () => {
     await sync().tick();
-    const bad = { ...CORPUS_V1, "axioms/A9.md": "no heading here, just prose" };
+    const bad = { ...CORPUS_V1, "axioms/A9-unheaded.md": "no heading here, just prose" };
     const r = await sync({}, { headSha: "sha-2", corpora: { "sha-2": bad } }).tick();
     expect(r.result).toBe("rejected_parse");
     expect((r as { reason: string }).reason).toContain("A9");
@@ -140,10 +142,19 @@ describe("constitution serve substrate (work-150 / mission-103 S1)", () => {
     expect(await store.getCurrent()).toBeNull(); // still not_synced — not an empty corpus
   });
 
+  it("DUPLICATE-ID is malformed (audit-10754 follow-through): two files claiming the same A<N> reject the whole candidate", async () => {
+    await sync().tick();
+    const dup = { ...CORPUS_V1, "axioms/A7-fault-boundaries.md": "# Fault Boundaries (slugged twin)\n\nSame id, different file." };
+    const r = await sync({}, { headSha: "sha-dup", corpora: { "sha-dup": dup } }).tick();
+    expect(r.result).toBe("rejected_parse");
+    expect((r as { reason: string }).reason).toContain("duplicate axiom id A7");
+    expect((await store.getCurrent())!.sha).toBe("sha-1");
+  });
+
   it("REFERENTIAL GATE: a candidate dropping an axiom with a LIVE charter binding rejects whole", async () => {
     await sync().tick();
     await charterStore.bindAxiom({ axiom: "A7", ratifiedBy: "decision-99", proofRef: "dconf-99" });
-    const withoutA7 = { "axioms/A0.md": CORPUS_V1["axioms/A0.md"], "axioms/A1.md": CORPUS_V1["axioms/A1.md"] };
+    const withoutA7 = { "axioms/A0-sovereign-intelligence-engine.md": CORPUS_V1["axioms/A0-sovereign-intelligence-engine.md"], "axioms/A1-evidence-over-assertion.md": CORPUS_V1["axioms/A1-evidence-over-assertion.md"] };
     const r = await sync({}, { headSha: "sha-3", corpora: { "sha-3": withoutA7 } }).tick();
     expect(r.result).toBe("rejected_referential");
     expect((r as { reason: string }).reason).toContain("A7");
@@ -162,12 +173,12 @@ describe("constitution serve substrate (work-150 / mission-103 S1)", () => {
 
   it("ATOMIC SWAP + history: the swap commits the new corpus in one CAS; the prior snapshot is retained as a history row", async () => {
     await sync().tick();
-    const v2 = { ...CORPUS_V1, "axioms/A1.md": "# Evidence Over Assertion v2\n\nAmended by the gauntlet." };
+    const v2 = { ...CORPUS_V1, "axioms/A1-evidence-over-assertion.md": "# Evidence Over Assertion v2\n\nAmended by the gauntlet." };
     const r = await sync({}, { headSha: "sha-2", corpora: { "sha-2": v2 } }).tick();
     expect(r.result).toBe("synced");
     const current = await store.getCurrent();
     expect(current!.sha).toBe("sha-2");
-    expect(current!.files["axioms/A1.md"]).toContain("v2");
+    expect(current!.files["axioms/A1-evidence-over-assertion.md"]).toContain("v2");
     expect(current!.manifestHash).not.toBe("");
   });
 
@@ -179,7 +190,7 @@ describe("constitution serve substrate (work-150 / mission-103 S1)", () => {
     expect(announced[0].old_sha).toBeNull();
     expect(announced[0].new_sha).toBe("sha-1");
     // A dead announce path: the swap still commits (the bug-231 lesson).
-    const v2 = { ...CORPUS_V1, "axioms/A0.md": "# The Umbrella v2\n\nStill wrong, still useful." };
+    const v2 = { ...CORPUS_V1, "axioms/A0-sovereign-intelligence-engine.md": "# The Umbrella v2\n\nStill wrong, still useful." };
     const r = await sync(
       { announce: async () => { throw new Error("emit path down"); } },
       { headSha: "sha-2", corpora: { "sha-2": v2 } },
@@ -240,7 +251,7 @@ describe("constitution serve substrate (work-150 / mission-103 S1)", () => {
       charter: { bindings: Array<{ axiom: string; ratifiedBy: string; proofRef: string }> };
     };
     expect(r.axioms.map((a) => a.id)).toEqual(["A0", "A1", "A7"]);
-    expect(r.axioms[1].body).toBe(CORPUS_V1["axioms/A1.md"]); // VERBATIM — served exactly as ratified
+    expect(r.axioms[1].body).toBe(CORPUS_V1["axioms/A1-evidence-over-assertion.md"]); // VERBATIM — served exactly as ratified
     expect(r.charter.bindings[0]).toMatchObject({ axiom: "A1", ratifiedBy: "decision-42", proofRef: "dconf-42" });
   });
 
