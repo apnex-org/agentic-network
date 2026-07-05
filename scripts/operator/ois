@@ -1,0 +1,610 @@
+#!/usr/bin/env bash
+#
+# ois — declarative fleet launcher for OIS agents (greg/lily/steve/pitest x claude/opencode/pi).
+#
+# DEPLOYMENT (work-132): THIS FILE (scripts/operator/ois in apnex-org/agentic-network)
+# is the SOURCE OF TRUTH. The live copy runs at ~/.config/apnex-agents/bin/ois on the
+# Director's workstation — future patches land HERE first (verifier-gated PR), then
+# deploy by copying to the live path. The apnex-agents repo stays remote-less by
+# design (it sits adjacent to secrets/); do not add a remote there without a
+# Director-rail decision.
+#
+# Config model (see config/fleet.json _why):
+#   config/fleet.json + config/harnesses/<h>.json + config/agents/<a>.json  →  merged cell
+#   secrets/<ref>   one value per file, referenced by name, never inlined in config or renders
+#   state/<agent>/  lkg/ (pre-overwrite backups), launches.jsonl (launch journal)
+#
+# Commands:
+#   ois launch <agent> <harness> [args...]   render + env + exec (the only way to start a cell)
+#   ois up <agent> <harness>                 detached tmux launch + banner accept + handshake verify
+#   ois attach [agent] [harness]             attach to the agent's live session (Ctrl+b d detaches);
+#                                            no args = fleet status (same as ois ps)
+#   ois say <agent> <message...>             Director note via the hub (durable, turn-safe,
+#                                            audited; body prefixed [director])
+#   ois down <agent> [harness] / ois ps      graceful stop (harness optional) / fleet status
+#   ois render <agent> <harness>             print rendered artifacts to stdout
+#   ois check  [<agent> <harness>]           validate + parity-compare renders vs live (no writes)
+#   ois env    <agent> <harness>             print launch env (secret values as sha256:12)
+#   ois seed   <agent>                       idempotent claude sovereign-config seed only
+#   ois list                                 cell matrix
+#   ois doctor                               perms, secret presence, token expiry, hub probe
+#
+set -euo pipefail
+
+ROOT="$HOME/.config/apnex-agents"
+CFG="$ROOT/config"
+SEC="$ROOT/secrets"
+STATE="$ROOT/state"
+
+fatal() { echo "ois: FATAL: $*" >&2; exit 1; }
+expand() { local p="${1:-}"; [[ "$p" == "~/"* ]] && p="$HOME/${p#\~/}"; printf '%s' "$p"; }
+sha12() { sha256sum | cut -c1-12; }
+command -v jq >/dev/null 2>&1 || fatal "'jq' not found on PATH"
+
+# ---------- cell resolution ----------
+# merged cell JSON on stdout; layers: fleet.defaults < harness < agent-common < agent.harness[h]
+cell_json() {
+  local a="$1" h="$2"
+  local af="$CFG/agents/$a.json" hf="$CFG/harnesses/$h.json" ff="$CFG/fleet.json"
+  [[ -f "$ff" ]] || fatal "missing $ff"
+  [[ -f "$af" ]] || fatal "unknown agent '$a' (no $af)"
+  [[ -f "$hf" ]] || fatal "unknown harness '$h' (no $hf)"
+  jq -e --arg h "$h" '.harness[$h]' "$af" >/dev/null 2>&1 || fatal "agent '$a' does not declare harness '$h'"
+  jq -s --arg h "$h" --arg a "$1" '
+    (.[0].defaults) as $d | (.[1]) as $hz | (.[2]) as $ag |
+    ($d * $hz * ($ag | del(.harness)) * ($ag.harness[$h] // {})) as $m |
+    $m + {
+      # labels REPLACE wholesale across layers (never deep-merge) — same rule the hub
+      # plugins apply to OIS_HUB_LABELS; deep-merging would leak fleet labels into
+      # deliberately-reduced label sets (pitest isolation).
+      labels: (($ag.harness[$h] // {}).labels // $ag.labels // $d.labels),
+      fleetHub: .[0].hub,
+      fleetCredentials: (.[0].credentials // {}),
+      cellAgent: $a,
+      cellHarness: $h,
+      secretEnv: ((($d.secretEnv // {}) | with_entries(.value |= gsub("\\{agent\\}"; $a))) * ($ag.secretEnv // {}))
+    }
+  ' "$ff" "$hf" "$af"
+}
+
+cells_all() {
+  local af a h
+  for af in "$CFG"/agents/*.json; do
+    a=$(jq -r '.agent' "$af")
+    for h in $(jq -r '.harness | keys[]' "$af"); do echo "$a $h"; done
+  done
+}
+
+# ---------- renders ----------
+render_adapter_config() { # cell-json arg -> rendered adapter-config on stdout
+  # NON-SECRET by construction: the hub token is never rendered to the workspace.
+  # ois launch injects OIS_HUB_TOKEN as env; the kernel loadConfig gives env
+  # precedence over the file, so hubUrl/role/labels come from here and the
+  # credential from the environment — one on-disk copy (secrets/hub/fleet.token).
+  jq -n --argjson c "$1" '{hubUrl: $c.fleetHub.url, role: $c.role, labels: $c.labels}'
+}
+
+render_opencode_json() { # workspace opencode.json (compaction/permission fleet-invariant today)
+  jq -n --argjson c "$1" '
+    {"$schema": "https://opencode.ai/config.json",
+     compaction: {auto: true, prune: false, reserved: 100000},
+     permission: {task: "allow", edit: "allow", bash: "allow", webfetch: "allow"},
+     model: $c.model}
+    + (if $c.smallModel then {small_model: $c.smallModel} else {} end)
+    + {agent:
+        (if $c.agentVariant
+         then {build: {model: $c.model, variant: $c.agentVariant}, plan: {model: $c.model, variant: $c.agentVariant}}
+         else {build: {model: $c.model}, plan: {model: $c.model}} end),
+       plugin: [$c.opencodePlugin]}'
+}
+
+render_git_config() { # agent-level: directory-scoped git identity include
+  local ref; ref=$(jq -r '.gitIdentity.sshKeyRef' <<<"$1")
+  # -F /dev/null: ignore ~/.ssh/config — its default github.com block would add the
+  # operator's key to the identity list and can WIN over -i (observed; doctor caught it).
+  printf '[core]\n\tsshCommand = ssh -F /dev/null -i ~/.config/apnex-agents/secrets/%s -o IdentitiesOnly=yes\n' "$ref"
+}
+
+render_pi_settings() {
+  jq -n --argjson c "$1" \
+    '{compaction: {enabled: true, reserveTokens: $c.piReserveTokens, keepRecentTokens: ($c.piKeepRecentTokens // 24000)}}'
+}
+
+artifact_targets() { # echo "<kind> <path>" lines for a cell
+  local c="$1" ws; ws=$(expand "$(jq -r '.workspace' <<<"$c")")
+  local r; for r in $(jq -r '.renders[]' <<<"$c"); do
+    case "$r" in
+      adapter-config) echo "adapter-config $ws/.ois/adapter-config.json" ;;
+      opencode-json)  echo "opencode-json $ws/opencode.json" ;;
+      pi-settings)    jq -e '.piReserveTokens' <<<"$c" >/dev/null 2>&1 && echo "pi-settings $ws/.pi/settings.json" || true ;;
+    esac
+  done
+  # agent-level renders (harness-independent)
+  jq -e '.gitIdentity' <<<"$c" >/dev/null 2>&1 && echo "git-config $STATE/$(jq -r '.cellAgent' <<<"$c")/gitconfig" || true
+}
+
+render_kind() { # $1 kind, $2 cell-json -> stdout
+  case "$1" in
+    adapter-config) render_adapter_config "$2" ;;
+    opencode-json)  render_opencode_json "$2" ;;
+    pi-settings)    render_pi_settings "$2" ;;
+    git-config)     render_git_config "$2" ;;
+    *) fatal "unknown render kind $1" ;;
+  esac
+}
+
+# ---------- env assembly ----------
+# emits NAME=VALUE lines; secret values raw when $2=raw, sha256:12 otherwise
+env_lines() {
+  local c="$1" mode="${2:-masked}" ws role tag name eager
+  ws=$(expand "$(jq -r '.workspace' <<<"$c")")
+  role=$(jq -r '.role' <<<"$c"); tag=$(jq -r '.hubModelTag' <<<"$c"); name=$(jq -r '.agentName' <<<"$c")
+  eager=$(jq -r '.eagerSessionClaim' <<<"$c")
+  echo "OIS_AGENT_NAME=$name"
+  # harness env template
+  local k v
+  while IFS=$'\t' read -r k v; do
+    v=${v//\{agentName\}/$name}; v=${v//\{hubModelTag\}/$tag}; v=${v//\{role\}/$role}; v=${v//\{workspace\}/$ws}
+    if [[ "$v" == *"{eagerFlag}"* ]]; then [[ "$eager" == "true" ]] && v="1" || continue; fi
+    echo "$k=$v"
+  done < <(jq -r '.envTemplate // {} | to_entries[] | .key + "\t" + (.value|tostring)' <<<"$c")
+  # agent plain env
+  while IFS=$'\t' read -r k v; do echo "$k=$v"; done \
+    < <(jq -r '.env // {} | to_entries[] | .key + "\t" + (.value|tostring)' <<<"$c")
+  # secret env
+  local ref val
+  while IFS=$'\t' read -r k ref; do
+    [[ -f "$SEC/$ref" ]] || fatal "secretEnv $k -> missing secret $ref"
+    if [[ "$mode" == raw ]]; then val=$(cat "$SEC/$ref"); else val="sha256:$(sha12 < "$SEC/$ref")"; fi
+    echo "$k=$val"
+  done < <(jq -r '.secretEnv // {} | to_entries[] | .key + "\t" + .value' <<<"$c")
+  # hub credential — env-injected, never rendered (adapter-config is non-secret)
+  ref=$(jq -r '.fleetHub.tokenRef' <<<"$c")
+  [[ -f "$SEC/$ref" ]] || fatal "hub token secret missing: $ref"
+  if [[ "$mode" == raw ]]; then val=$(cat "$SEC/$ref"); else val="sha256:$(sha12 < "$SEC/$ref")"; fi
+  echo "OIS_HUB_TOKEN=$val"
+  # litellm credential — injection-scoped: only cells whose resolved provider
+  # rides the LiteLLM proxy get the key (opencode model litellm-*/..., pi
+  # provider litellm-*). Harness configs hold env references, never the value.
+  if jq -e '((.model // "") | startswith("litellm-")) or ((.piProvider // "") | startswith("litellm"))' <<<"$c" >/dev/null; then
+    local lref lname
+    lref=$(jq -r '.fleetCredentials.litellm.secretRef // empty' <<<"$c")
+    lname=$(jq -r '.fleetCredentials.litellm.injectAs // "LITELLM_API_KEY"' <<<"$c")
+    [[ -n "$lref" && -f "$SEC/$lref" ]] || fatal "litellm credential missing (secretRef=$lref)"
+    if [[ "$mode" == raw ]]; then val=$(cat "$SEC/$lref"); else val="sha256:$(sha12 < "$SEC/$lref")"; fi
+    echo "$lname=$val"
+  fi
+  # harness credential imports (from fleet catalog)
+  local cred inj
+  while IFS=$'\t' read -r cred inj ref; do
+    [[ -f "$SEC/$ref" ]] || fatal "credential '$cred' -> missing secret $ref"
+    if [[ "$mode" == raw ]]; then val=$(cat "$SEC/$ref"); else val="sha256:$(sha12 < "$SEC/$ref")"; fi
+    echo "$inj=$val"
+  done < <(jq -r '.credentialImports // {} | to_entries[] | select(.value.inject=="env")
+                  | .key + "\t" + .value.name' <<<"$c" | while IFS=$'\t' read -r cred inj; do
+             ref=$(jq -r --arg cr "$cred" '.fleetCredentials[$cr].secretRef // empty' <<<"$c")
+             [[ -n "$ref" ]] && printf '%s\t%s\t%s\n' "$cred" "$inj" "$ref"
+           done)
+  # claude sovereign config dir
+  local cdir; cdir=$(jq -r '.configDirTemplate // empty' <<<"$c")
+  if [[ -n "$cdir" ]]; then
+    cdir=${cdir//\{agent\}/$(jq -r '.cellAgent' <<<"$c")}
+    echo "CLAUDE_CONFIG_DIR=$(expand "$cdir")"
+  fi
+}
+
+# ---------- claude sovereign seed (ported from bin/claude-agent, behavior-identical) ----------
+claude_seed() {
+  local c="$1" a ws cdir mp
+  a=$(jq -r '.cellAgent' <<<"$c"); ws=$(expand "$(jq -r '.workspace' <<<"$c")")
+  cdir=$(jq -r '.configDirTemplate' <<<"$c"); cdir=$(expand "${cdir//\{agent\}/$a}")
+  mp=$(jq -r '.marketplacePath' <<<"$c")
+  [[ -d "$mp" ]] || fatal "missing $mp (staged agent-adapter plugin)"
+  export CLAUDE_CONFIG_DIR="$cdir"
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  if [[ ! -f "$cdir/.claude.json" ]]; then
+    echo "  seeding : $cdir/.claude.json (onboarding established, ${ws} pre-trusted)"
+    jq -n --arg ws "$ws" '{hasCompletedOnboarding: true, lastOnboardingVersion: "2.1.200",
+      hasSeenTasksHint: true, numStartups: 1,
+      projects: {($ws): {hasTrustDialogAccepted: true, projectOnboardingSeenCount: 1, allowedTools: []}}}' \
+      > "$cdir/.claude.json"
+  elif [[ "$(jq -r --arg ws "$ws" '.projects[$ws].hasTrustDialogAccepted // false' "$cdir/.claude.json")" != "true" ]]; then
+    echo "  seeding : re-flipping trust flag for ${ws}"
+    local tmp="$cdir/.claude.json.tmp.$$"
+    jq --arg ws "$ws" '.projects[$ws] = ((.projects[$ws] // {projectOnboardingSeenCount: 1, allowedTools: []}) + {hasTrustDialogAccepted: true})' \
+      "$cdir/.claude.json" > "$tmp" && mv "$tmp" "$cdir/.claude.json"
+  fi
+  local sl; sl=$(jq -r '.statusLine // empty' <<<"$c")
+  if [[ ! -f "$cdir/settings.json" ]]; then
+    echo "  seeding : $cdir/settings.json (marketplace + plugin + prompt skips + statusline)"
+    jq -n --arg mp "$mp" --arg sl "$sl" '{skipDangerousModePermissionPrompt: true,
+      extraKnownMarketplaces: {"agentic-network": {source: {source: "directory", path: $mp}}},
+      enabledPlugins: {"agent-adapter@agentic-network": true},
+      permissions: {allow: ["mcp__plugin_agent-adapter_proxy__*"]}}
+      + (if $sl != "" then {statusLine: {type: "command", command: $sl}} else {} end)' > "$cdir/settings.json"
+  elif [[ -n "$sl" ]] && ! jq -e '.statusLine' "$cdir/settings.json" >/dev/null 2>&1; then
+    echo "  seeding : adding statusLine to existing settings.json"
+    local tmp="$cdir/settings.json.tmp.$$"
+    jq --arg sl "$sl" '.statusLine = {type: "command", command: $sl}' "$cdir/settings.json" > "$tmp" && mv "$tmp" "$cdir/settings.json"
+  fi
+  if ! grep -qs '"agentic-network"' "$cdir/plugins/known_marketplaces.json"; then
+    echo "  seeding : registering agentic-network marketplace (${mp})"
+    claude plugin marketplace add "$mp"
+  fi
+  if ! grep -qs '"agent-adapter@agentic-network"' "$cdir/plugins/installed_plugins.json"; then
+    echo "  seeding : installing agent-adapter@agentic-network into sovereign config"
+    claude plugin install agent-adapter@agentic-network
+  fi
+}
+
+# ---------- artifact write with LKG retention ----------
+write_artifact() { # $1 agent, $2 path, $3 content
+  local a="$1" path="$2" content="$3"
+  mkdir -p "$(dirname "$path")" "$STATE/$a/lkg"
+  if [[ -f "$path" ]] && ! diff -q <(printf '%s' "$content") "$path" >/dev/null 2>&1; then
+    cp -p "$path" "$STATE/$a/lkg/$(basename "$path").$(date +%Y%m%dT%H%M%S)"
+  fi
+  if [[ ! -f "$path" ]] || ! diff -q <(printf '%s' "$content") "$path" >/dev/null 2>&1; then
+    umask 077
+    printf '%s' "$content" > "$path"
+  fi
+}
+
+# ---------- commands ----------
+cmd_render() {
+  local c; c=$(cell_json "$1" "$2")
+  local kind path
+  while read -r kind path; do
+    echo "===== $kind -> $path ====="
+    render_kind "$kind" "$c"
+  done < <(artifact_targets "$c")
+}
+
+cmd_env() { local c; c=$(cell_json "$1" "$2"); env_lines "$c" masked | sort; }
+
+check_cell() { # returns nonzero on any mismatch
+  local a="$1" h="$2" rc=0 c kind path live rendered
+  c=$(cell_json "$a" "$h") || return 1
+  while read -r kind path; do
+    rendered=$(render_kind "$kind" "$c")
+    if [[ ! -f "$path" ]]; then echo "  [$a/$h] $kind: MISSING live file $path (would create)"; rc=1; continue; fi
+    if [[ "$kind" == "git-config" ]]; then
+      if diff -q <(printf '%s\n' "$rendered") "$path" >/dev/null 2>&1; then echo "  [$a/$h] $kind: BYTE-IDENTICAL"
+      else echo "  [$a/$h] $kind: CONTENT MISMATCH vs $path"; rc=1; fi
+      continue
+    fi
+    if diff -q <(jq -S . <<<"$rendered") <(jq -S . "$path") >/dev/null 2>&1; then
+      if diff -q <(printf '%s\n' "$rendered") "$path" >/dev/null 2>&1 || diff -q <(printf '%s' "$rendered") "$path" >/dev/null 2>&1; then
+        echo "  [$a/$h] $kind: BYTE-IDENTICAL"
+      else
+        echo "  [$a/$h] $kind: semantically identical (whitespace/key-order differs — normalizes at first launch)"
+      fi
+    else
+      echo "  [$a/$h] $kind: CONTENT MISMATCH vs $path"
+      diff <(jq -S . <<<"$rendered") <(jq -S . "$path") | head -15 | sed 's/^/    /'
+      rc=1
+    fi
+  done < <(artifact_targets "$c")
+  # secrets referenced must exist
+  local ref
+  while read -r ref; do
+    [[ -f "$SEC/$ref" ]] || { echo "  [$a/$h] secret MISSING: $ref"; rc=1; }
+  done < <(jq -r '(.secretEnv // {} | to_entries[].value), (.fleetHub.tokenRef)' <<<"$c")
+  return $rc
+}
+
+cmd_check() {
+  local rc=0
+  if [[ $# -ge 2 ]]; then check_cell "$1" "$2" || rc=1
+  else
+    while read -r a h; do check_cell "$a" "$h" || rc=1; done < <(cells_all)
+  fi
+  [[ $rc -eq 0 ]] && echo "ois check: ALL OK" || echo "ois check: MISMATCHES FOUND"
+  return $rc
+}
+
+cmd_list() {
+  printf '%-8s %-9s %-12s %-28s %-16s %s\n' AGENT HARNESS ROLE MODEL TAG EAGER
+  while read -r a h; do
+    local c; c=$(cell_json "$a" "$h")
+    printf '%-8s %-9s %-12s %-28s %-16s %s\n' "$a" "$h" \
+      "$(jq -r '.role' <<<"$c")" \
+      "$(jq -r 'if .model then .model elif .piProvider then .piProvider + "/" + .piModel else .hubModelTag end' <<<"$c")" \
+      "$(jq -r '.hubModelTag' <<<"$c")" \
+      "$(jq -r '.eagerSessionClaim' <<<"$c")"
+  done < <(cells_all)
+}
+
+cmd_doctor() {
+  local rc=0
+  echo "— secrets perms —"
+  find "$SEC" -type f ! -perm 600 -exec echo "  BAD PERMS (want 600): {}" \; | grep . && rc=1 || echo "  all 600"
+  find "$SEC" -type d ! -perm 700 -exec echo "  BAD DIR PERMS (want 700): {}" \; | grep . && rc=1 || true
+  echo "— PATH —"
+  case ":$PATH:" in
+    *":$ROOT/bin:"*) echo "  $ROOT/bin on PATH" ;;
+    *) echo "  NOT on PATH — add to your shell rc:"; echo "    export PATH=\"\$HOME/.config/apnex-agents/bin:\$PATH\"" ;;
+  esac
+  echo "— anthropic token expiry —"
+  local exp; exp=$(jq -r '.credentials.anthropic.expiresAt // empty' "$CFG/fleet.json")
+  if [[ -n "$exp" ]]; then
+    local days=$(( ($(date -d "$exp" +%s) - $(date +%s)) / 86400 ))
+    echo "  expires $exp (${days}d)"; (( days < 30 )) && { echo "  WARNING: <30d — re-mint with 'claude setup-token'"; rc=1; }
+  fi
+  echo "— git identities —"
+  local af ag login ref inc
+  for af in "$CFG"/agents/*.json; do
+    jq -e '.gitIdentity' "$af" >/dev/null 2>&1 || continue
+    ag=$(jq -r '.agent' "$af"); login=$(jq -r '.gitIdentity.githubLogin' "$af"); ref=$(jq -r '.gitIdentity.sshKeyRef' "$af")
+    [[ -f "$SEC/$ref" ]] || { echo "  $ag: MISSING key $ref"; rc=1; continue; }
+    [[ -f "$STATE/$ag/gitconfig" ]] || { echo "  $ag: gitconfig not rendered"; rc=1; }
+    grep -q "state/$ag/gitconfig" "$HOME/.gitconfig" 2>/dev/null || { echo "  $ag: includeIf pointer missing from ~/.gitconfig"; rc=1; }
+    # ssh -T exits nonzero even on successful auth — || true keeps set -e/pipefail out of it
+    inc=$(ssh -F /dev/null -i "$SEC/$ref" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | grep -oE 'Hi [A-Za-z0-9-]+' | cut -d' ' -f2 || true)
+    if [[ "$inc" == "$login" ]]; then echo "  $ag: key authenticates as $login ✓"
+    else echo "  $ag: key authenticates as '${inc:-none}' (expected $login)"; rc=1; fi
+  done
+  echo "— hub reachability (fleet token) —"
+  local url tok code
+  url=$(jq -r '.hub.url' "$CFG/fleet.json"); tok=$(cat "$SEC/$(jq -r '.hub.tokenRef' "$CFG/fleet.json")")
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url" -H "Authorization: Bearer $tok" \
+    -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 15 \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ois-doctor","version":"1"}}}') || code=ERR
+  echo "  $url -> HTTP $code"; [[ "$code" == "200" ]] || rc=1
+  return $rc
+}
+
+do_launch() {
+  local a="$1" h="$2"; shift 2
+  local c ws; c=$(cell_json "$a" "$h"); ws=$(expand "$(jq -r '.workspace' <<<"$c")")
+  [[ -d "$ws" ]] || fatal "missing workspace $ws"
+  # render + write artifacts
+  local kind path content shas=""
+  while read -r kind path; do
+    content=$(render_kind "$kind" "$c")
+    write_artifact "$a" "$path" "$content"$'\n'
+    shas+="$kind:$(printf '%s\n' "$content" | sha12) "
+  done < <(artifact_targets "$c")
+  # claude: sovereign seed
+  [[ "$h" == "claude" ]] && claude_seed "$c"
+  # env
+  local line
+  while IFS= read -r line; do export "${line%%=*}=${line#*=}"; done < <(env_lines "$c" raw)
+  # opencode plugin cache refresh (npm channel only — github: specs are retired)
+  if [[ "$h" == "opencode" ]]; then
+    local plug; plug=$(jq -r '.opencodePlugin' <<<"$c")
+    [[ "$plug" == github:* ]] && fatal "github: opencode plugin specs are retired (0004) — use the npm channel"
+    if [[ "${OIS_PLUGIN_REFRESH:-1}" == "1" ]]; then
+      local cachepath; cachepath=$(expand "$(jq -r '.pluginCache' <<<"$c")")
+      echo "  plugin  : refreshing cache ($cachepath) — OIS_PLUGIN_REFRESH=0 to skip"
+      rm -rf "$cachepath" 2>/dev/null || true
+    fi
+  fi
+  # exec line from harness template (+ per-cell extraExecArgs, e.g. permission mode)
+  local -a argv=()
+  local tok tag name prov model pspec
+  tag=$(jq -r '.hubModelTag' <<<"$c"); pspec=$(jq -r '.pluginSpec // .piPluginSpec // empty' <<<"$c")
+  prov=$(jq -r '.piProvider // empty' <<<"$c"); model=$(jq -r '.piModel // empty' <<<"$c")
+  while IFS= read -r tok; do
+    tok=${tok//\{hubModelTag\}/$tag}; tok=${tok//\{pluginSpec\}/$pspec}
+    tok=${tok//\{piPluginSpec\}/${PI_PLUGIN_SPEC:-$pspec}}; tok=${tok//\{piProvider\}/${PI_PROVIDER:-$prov}}; tok=${tok//\{piModel\}/${PI_MODEL:-$model}}
+    argv+=("$tok")
+  done < <(jq -r '.exec[]' <<<"$c")
+  while IFS= read -r tok; do argv+=("$tok"); done < <(jq -r '.extraExecArgs[]? // empty' <<<"$c")
+  # journal
+  mkdir -p "$STATE/$a"
+  jq -cn --arg ts "$(date -Is)" --arg a "$a" --arg h "$h" --arg exec "${argv[*]} $*" --arg shas "$shas" \
+    '{ts:$ts, agent:$a, harness:$h, exec:$exec, renders:$shas}' >> "$STATE/$a/launches.jsonl"
+  echo "→ ois launch $a/$h as '$(jq -r '.agentName' <<<"$c")' (role $(jq -r '.role' <<<"$c"), tag $tag)"
+  echo "  workspace : $ws"
+  cd "$ws"
+  exec "${argv[@]}" "$@"
+}
+
+# ---------- fleet session ops (tmux) ----------
+session_name() { echo "ois-$1-$2"; }
+harness_log_marker() { # $1 harness -> "logfile-rel|marker-regex"
+  case "$1" in
+    claude)   echo ".ois/shim.log|Sync complete" ;;
+    opencode) echo ".ois/hub-plugin.log|registered" ;;
+    pi)       echo ".ois/pi-plugin.log|registered" ;;
+    *) fatal "no log marker for harness $1" ;;
+  esac
+}
+
+cmd_up() {
+  local a="$1" h="$2" c ws s lm logf marker pre banner=0 ok=0 pane new i
+  c=$(cell_json "$a" "$h"); ws=$(expand "$(jq -r '.workspace' <<<"$c")"); s=$(session_name "$a" "$h")
+  command -v tmux >/dev/null 2>&1 || fatal "'tmux' required for ois up"
+  tmux has-session -t "$s" 2>/dev/null && fatal "session $s already running (ois down $a $h first)"
+  # displacement guard: one live harness per agent (hub allows one session per identity)
+  local other
+  other=$(tmux ls -F '#S' 2>/dev/null | grep "^ois-$a-" || true)
+  [[ -n "$other" ]] && fatal "agent '$a' already has a live session ($other) — hub would displace it; ois down first"
+  lm=$(harness_log_marker "$h"); logf="$ws/${lm%%|*}"; marker="${lm##*|}"
+  pre=0; [[ -f "$logf" ]] && pre=$(wc -l < "$logf")
+  echo "→ ois up $a/$h  (session: $s)"
+  tmux new-session -d -s "$s" -x 220 -y 50 "$ROOT/bin/ois launch $a $h"
+  for i in $(seq 1 60); do
+    sleep 2
+    tmux has-session -t "$s" 2>/dev/null || { echo "  ✗ session exited during startup — check $logf"; return 1; }
+    if [[ "$h" == "claude" && $banner -eq 0 ]]; then
+      pane=$(tmux capture-pane -pt "$s" 2>/dev/null || true)
+      echo "$pane" | grep -qi "local development" && { banner=1; tmux send-keys -t "$s" Enter; echo "  · dev-channels banner accepted"; }
+    fi
+    new=$(tail -n +$((pre+1)) "$logf" 2>/dev/null)
+    echo "$new" | grep -q "FATAL" && { echo "  ✗ harness FATAL:"; echo "$new" | grep FATAL | head -2 | sed 's/^/    /'; return 1; }
+    echo "$new" | grep -qiE "$marker" && { ok=1; break; }
+  done
+  if [[ $ok -eq 1 ]]; then
+    echo "  ✓ hub handshake confirmed ($(basename "$logf"): '$marker' at $((i*2))s)"
+    tail -n +$((pre+1)) "$logf" | grep -E "Registered as|Session claimed" | head -2 | sed 's/^/    /'
+    echo "  session stays up — attach: tmux attach -t $s ; stop: ois down $a $h"
+  else
+    echo "  ✗ no handshake within 120s — session left up for debugging (tmux attach -t $s)"; return 1
+  fi
+}
+
+cmd_down() { # <agent> [harness] — harness optional: at most one live session per agent
+  local a="$1" h="${2:-}" s
+  if [[ -n "$h" ]]; then
+    s=$(session_name "$a" "$h")
+  else
+    s=$(tmux ls -F '#S' 2>/dev/null | grep "^ois-$a-" | head -1 || true)
+    [[ -n "$s" ]] || { echo "no live session for agent '$a'"; return 0; }
+    h=${s#ois-$a-}
+  fi
+  tmux has-session -t "$s" 2>/dev/null || { echo "no session $s"; return 0; }
+  if [[ "$h" == "claude" ]]; then tmux send-keys -t "$s" "/exit" Enter; else tmux send-keys -t "$s" C-c; fi
+  sleep 5; tmux kill-session -t "$s" 2>/dev/null || true
+  echo "session $s stopped"
+}
+
+cmd_attach() { # <agent> [harness] — harness optional: at most one live session per agent
+  local a="$1" h="${2:-}" s
+  command -v tmux >/dev/null 2>&1 || fatal "'tmux' required"
+  if [[ -n "$h" ]]; then
+    s=$(session_name "$a" "$h")
+  else
+    s=$(tmux ls -F '#S' 2>/dev/null | grep "^ois-$a-" | head -1 || true)
+    [[ -n "$s" ]] || fatal "no live session for agent '$a' — ois up $a <harness> first"
+  fi
+  tmux has-session -t "$s" 2>/dev/null || fatal "no session $s (ois ps to list)"
+  echo "attaching to $s — detach with Ctrl+b d (leaves the agent running)"
+  exec tmux attach -t "$s"
+}
+
+
+_register_director_identity() { # $1=url $2=token $3=session-id — B4 director messaging identity (provenance, not a seat)
+  local hn; hn=$(hostname)
+  curl -s -o /dev/null -X POST "$1" -H "Authorization: Bearer $2" -H "mcp-session-id: $3" \
+    -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 20 \
+    -d "$(jq -cn --arg hn "$hn" '{jsonrpc:"2.0",id:9,method:"tools/call",params:{name:"register_role",arguments:{role:"director",name:"apnex",labels:{env:"prod"},clientMetadata:{clientName:"ois-cli",clientVersion:"1",proxyName:"ois-say",proxyVersion:"1",transport:"streamable-http",hostname:$hn,platform:"linux",pid:0,sdkVersion:"raw",sdkCommitSha:"none",proxyCommitSha:"none",sdkDirty:false,proxyDirty:false}}}}')"
+}
+
+
+_hub_session() { # sets HUB_URL, HUB_TOK, HUB_SID (registered director identity)
+  HUB_URL=$(jq -r '.hub.url' "$CFG/fleet.json"); HUB_TOK=$(cat "$SEC/$(jq -r '.hub.tokenRef' "$CFG/fleet.json")")
+  local hdr; hdr=$(mktemp)
+  curl -s -D "$hdr" -o /dev/null -X POST "$HUB_URL" -H "Authorization: Bearer $HUB_TOK" \
+    -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 20 \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ois-director","version":"1"}}}'
+  HUB_SID=$(grep -i '^mcp-session-id:' "$hdr" | tr -d '\r' | awk '{print $2}'); rm -f "$hdr"
+  [[ -n "$HUB_SID" ]] || fatal "hub initialize failed (no session id) — check network/token (ois doctor)"
+  _register_director_identity "$HUB_URL" "$HUB_TOK" "$HUB_SID"
+}
+
+_hub_call() { # $1=json-rpc body → prints the tool result text
+  curl -s -X POST "$HUB_URL" -H "Authorization: Bearer $HUB_TOK" -H "mcp-session-id: $HUB_SID" \
+    -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 25 -d "$1" \
+    | sed 's/^data: //' | grep -o '{.*}' | jq -r '.result.content[0].text // empty' 2>/dev/null
+}
+
+cmd_decisions() { # list the Director-relevant decision queue from the hub (default: routed)
+  local st="${1:-routed}"
+  [[ "$st" == "list" ]] && st="all"
+  case "$st" in raised|curated|routed|resolved|executed|merged|disposed|withdrawn|all) ;; *) fatal "usage: ois decisions [raised|curated|routed|resolved|executed|merged|disposed|withdrawn|all]  (default: routed)" ;; esac
+  _hub_session
+  local out; out=$(_hub_call "$(jq -cn --arg st "$st" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"list_decisions",arguments:(if $st == "all" then {} else {status:$st} end)}}')")
+  [[ -n "$out" ]] || fatal "list_decisions failed"
+  echo "$out" | jq -e '.decisions' >/dev/null 2>&1 || { echo "hub error: $out" >&2; exit 1; }
+  echo "$out" | jq -r '(.decisions // [])[] | [.id, .status, .class, ((.routedTo.target // (if .routedTo.selfDisposal then "self-disposal" else "-" end)) // "-"), .title] | @tsv' \
+    | awk -F'\t' 'BEGIN{printf "%-12s %-10s %-18s %-14s %s\n","ID","STATUS","CLASS","ROUTED","TITLE"} {printf "%-12s %-10s %-18s %-14s %s\n",$1,$2,$3,$4,substr($5,1,70)}'
+  [[ "$(echo "$out" | jq '(.decisions // []) | length')" != "0" ]] || echo "(no decisions with status: $st — try: ois decisions all)"
+}
+
+cmd_show() { # render one decision in full — what you would be confirming
+  local id="$1"; [[ -n "$id" ]] || fatal "usage: ois show <decision-id>"
+  _hub_session
+  local out; out=$(_hub_call "$(jq -cn --arg id "$id" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"get_decision",arguments:{decisionId:$id}}}')")
+  [[ -n "$out" ]] || fatal "get_decision failed"
+  echo "$out" | jq -r '
+    (.decision // .) |
+    "\u001b[1m" + .id + " — " + .title + "\u001b[0m",
+    "status: " + .status + "   class: " + .class + "   routed: " + ((.routedTo.target // (if .routedTo.selfDisposal then ("self-disposal via " + .routedTo.selfDisposal.classGrantRef) else "-" end)) // "-"),
+    "", .context, "",
+    "OPTIONS:",
+    ((.options // [])[] | "  [" + .id + "] " + .label + " — " + .description),
+    (if .resolution then "", "RESOLVED: " + (.resolution.answer.chosenOptionId // .resolution.answer.customAnswer // "?") + "  (authority: " + (.resolution.authorityMode // "?") + " via " + (.resolution.authorityRef // "?") + ")" else empty end),
+    (if .executionPlan then "", "EXECUTION PLAN: " + (.executionPlan | tojson) else empty end)
+  '
+}
+
+cmd_confirm() { # answer a DirectorConfirmation: capture_director_signal via the REGISTERED director identity (B4 proof path)
+  local cid="$1"; shift; local msg="$*"
+  [[ -n "$cid" && -n "$msg" ]] || fatal "usage: ois confirm <decision-N|dconf-N> <answer...>  (prefer the DECISION id — ois decisions to list, ois show <decision-id> to inspect; dconf ids remain for presenter-driven flows)"
+  local idkey="confirmationId"; [[ "$cid" == decision-* ]] && idkey="decisionId"  # PR #491: decisions-only surface
+  _hub_session  # shared bootstrap: initialize + director-identity registration (papercut fix: was a duplicated inline bootstrap)
+  local resp
+  resp=$(curl -s -X POST "$HUB_URL" -H "Authorization: Bearer $HUB_TOK" -H "mcp-session-id: $HUB_SID" \
+    -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 30 \
+    -d "$(jq -cn --arg k "$idkey" --arg cid "$cid" --arg a "$msg" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"capture_director_signal",arguments:({channel:"ois-say",answer:$a,capturedBySurface:"ois-cli",confidence:"authenticated",replyable:true} + {($k):$cid})}}')" \
+    | sed 's/^data: //' | grep -o '{.*}' | jq -r '.result.content[0].text // empty' 2>/dev/null)
+  [[ -n "$resp" ]] || fatal "capture_director_signal failed"
+  if echo "$resp" | jq -e '.signal' >/dev/null 2>&1; then
+    echo "$resp" | jq -r '"✓ answered — DirectorSignal " + .signal.id + " bound to " + (.signal.confirmationId // "?") + " (answer: " + .signal.answer + ")"'
+    echo "next: ois decisions   (anything else waiting in the queue?)"
+  else
+    echo "$resp"
+  fi
+}
+
+cmd_say() { # send a Director note to an agent via the hub (create_message -> channel push)
+  local a="$1"; shift; local msg="$*"
+  [[ -n "$msg" ]] || fatal "usage: ois say <agent> <message...>"
+  local name; name=$(jq -r '.agentName' "$CFG/agents/$a.json" 2>/dev/null) || fatal "unknown agent '$a'"
+  local url tok; url=$(jq -r '.hub.url' "$CFG/fleet.json"); tok=$(cat "$SEC/$(jq -r '.hub.tokenRef' "$CFG/fleet.json")")
+  local hdr sid; hdr=$(mktemp)
+  curl -s -D "$hdr" -o /dev/null -X POST "$url" -H "Authorization: Bearer $tok"     -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 20     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ois-director","version":"1"}}}'
+  sid=$(grep -i '^mcp-session-id:' "$hdr" | tr -d '\r' | awk '{print $2}'); rm -f "$hdr"
+  [[ -n "$sid" ]] || fatal "hub initialize failed (no session id) — check network/token (ois doctor)"
+  _register_director_identity "$url" "$tok" "$sid"
+  # resolve agentId from the hub registry (hub truth — never duplicated locally)
+  local reg aid
+  reg=$(curl -s -X POST "$url" -H "Authorization: Bearer $tok" -H "mcp-session-id: $sid"     -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 20     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_agents","arguments":{}}}'     | sed 's/^data: //' | grep -o '{.*}' | jq -r '.result.content[0].text' 2>/dev/null)
+  aid=$(jq -r --arg n "$name" '(.agents // .) | .[]? | select(.name == $n) | .agentId // .id // empty' <<<"$reg" 2>/dev/null | head -1)
+  [[ -n "$aid" ]] || fatal "agent '$name' not in hub registry (known: $(jq -r '(.agents // .) | [.[]?.name] | join(", ")' <<<"$reg" 2>/dev/null))"
+  # send — body prefixed [director]: the fleet token is not a per-sender identity (yet)
+  local resp
+  resp=$(curl -s -X POST "$url" -H "Authorization: Bearer $tok" -H "mcp-session-id: $sid"     -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 30     -d "$(jq -cn --arg aid "$aid" --arg b "[director] $msg" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"create_message",arguments:{kind:"note",target:{agentId:$aid},payload:{body:$b}}}}')"     | sed 's/^data: //' | grep -o '{.*}' | jq -r '.result.content[0].text // empty' 2>/dev/null)
+  [[ -n "$resp" ]] || fatal "create_message failed"
+  jq -r --arg n "$name" --arg aid "$aid" '"→ note " + .messageId + " to " + $n + " (" + $aid + ")  status=" + .status' <<<"$resp"
+}
+
+cmd_ps() {
+  local sessions out s a h m j
+  sessions=$(tmux ls -F '#S' 2>/dev/null | grep '^ois-' || true)
+  out=$(printf '%-8s %-9s %-20s %-22s %-6s %s\n' AGENT HARNESS MODEL SESSION STATE "LAST LAUNCH")
+  for s in $sessions; do
+    a=${s#ois-}; h=${a#*-}; a=${a%%-*}
+    # one targeted jq: agent-cell override, else harness default (skip the full merge)
+    m=$(jq -rn --arg h "$h" '(input.harness[$h].hubModelTag) // (input.hubModelTag) // "?"' \
+        "$CFG/agents/$a.json" "$CFG/harnesses/$h.json" 2>/dev/null || echo "?")
+    j=$(tail -1 "$STATE/$a/launches.jsonl" 2>/dev/null | jq -r '.ts' 2>/dev/null || echo "?")
+    out+=$'\n'"$(printf '%-8s %-9s %-20s %-22s %-6s %s' "$a" "$h" "$m" "$s" up "$j")"
+  done
+  [[ -z "$sessions" ]] && out+=$'\n(no ois sessions)'
+  printf '%s\n' "$out"
+  return 0
+}
+
+# ---------- dispatch ----------
+sub="${1:-}"; shift || true
+case "$sub" in
+  launch) [[ $# -ge 2 ]] || fatal "usage: ois launch <agent> <harness> [args...]"; do_launch "$@" ;;
+  up)     [[ $# -eq 2 ]] || fatal "usage: ois up <agent> <harness>"; cmd_up "$@" ;;
+  attach) if [[ $# -eq 0 ]]; then cmd_ps; else cmd_attach "$@"; fi ;;
+  down)   [[ $# -ge 1 ]] || fatal "usage: ois down <agent> [harness]"; cmd_down "$@" ;;
+  say)    [[ $# -ge 2 ]] || fatal "usage: ois say <agent> <message...>"; cmd_say "$@" ;;
+  decisions) cmd_decisions "$@" ;;
+  show)   [[ $# -ge 1 ]] || fatal "usage: ois show <decision-id>"; cmd_show "$@" ;;
+  confirm) [[ $# -ge 2 ]] || fatal "usage: ois confirm <decision-N|dconf-N> <answer...>"; cmd_confirm "$@" ;;
+  ps)     cmd_ps ;;
+  render) [[ $# -eq 2 ]] || fatal "usage: ois render <agent> <harness>"; cmd_render "$@" ;;
+  env)    [[ $# -eq 2 ]] || fatal "usage: ois env <agent> <harness>"; cmd_env "$@" ;;
+  check)  cmd_check "$@" ;;
+  seed)   [[ $# -ge 1 ]] || fatal "usage: ois seed <agent>"; c=$(cell_json "$1" claude); claude_seed "$c"; echo "seed OK" ;;
+  list)   cmd_list ;;
+  doctor) cmd_doctor ;;
+  *) fatal "usage: ois {launch|up|attach|say|confirm|decisions|show|down|ps|render|env|check|seed|list|doctor}" ;;
+esac
