@@ -178,21 +178,47 @@ async function routeDecisionHandler(args: Record<string, unknown>, ctx: IPolicyC
   const store = ctx.stores.decision;
   if (!store) return err("not_wired", "Decision store is not available");
   const actor = await stampActor(ctx);
+  // work-128 (B8-R1): the verifier seat is dryRun-only — the SAME validation
+  // code runs in collect-mode (every check reported, none skipped, no
+  // transition, no emit); the authority fence is unchanged for real routes.
+  const dryRun = args.dryRun === true;
+  if (actor.role !== "architect" && !dryRun) {
+    return err("authorization_denied", `route_decision requires the architect seat — the ${actor.role} seat may only probe with dryRun:true`);
+  }
+  const checks: Array<{ check: string; ok: boolean; rejection?: string }> = [];
+  const fail = (kind: string, msg: string, check: string): PolicyResult | null => {
+    checks.push({ check, ok: false, rejection: msg });
+    return dryRun ? null : err(kind, msg);
+  };
+  const pass = (check: string) => checks.push({ check, ok: true });
   const route = { target: args.target as "director" | "self-disposal", selfDisposal: args.selfDisposal as { t5RuleRef?: string; classGrantRef?: string } | undefined };
   if (route.target === "self-disposal") {
     const grantRef = route.selfDisposal?.classGrantRef;
     if (route.selfDisposal?.t5RuleRef && !grantRef) {
-      return err("decision_transition_rejected", "route rejected: the t5-rule self-disposal leg awaits the T5 rule registry — cite a classGrantRef (fail-closed, never silent)");
-    }
-    if (!grantRef) return err("decision_transition_rejected", "route rejected: a self-disposal route must cite selfDisposal.classGrantRef");
-    const grants = ctx.stores.classGrant;
-    if (!grants) return err("not_wired", "self-disposal routing requires the ClassGrant store");
-    const grant = await grants.getGrant(grantRef);
-    if (!grant) return err("unresolvable_ref", `route rejected: cited grant ${grantRef} does not resolve`);
-    if (grant.state !== "active") return err("decision_transition_rejected", `route rejected: cited grant ${grantRef} is ${grant.state}, not active`);
-    const decision = await store.getDecision(args.decisionId as string);
-    if (decision && decision.class !== grant.class) {
-      return err("decision_transition_rejected", `route rejected: cited grant covers class '${grant.class}', not '${decision.class ?? "(unclassified)"}' — routing cannot launder a class onto a grant`);
+      const r = fail("decision_transition_rejected", "route rejected: the t5-rule self-disposal leg awaits the T5 rule registry — cite a classGrantRef (fail-closed, never silent)", "citation");
+      if (r) return r;
+    } else if (!grantRef) {
+      const r = fail("decision_transition_rejected", "route rejected: a self-disposal route must cite selfDisposal.classGrantRef", "citation");
+      if (r) return r;
+    } else {
+      const grants = ctx.stores.classGrant;
+      if (!grants) return err("not_wired", "self-disposal routing requires the ClassGrant store");
+      const grant = await grants.getGrant(grantRef);
+      if (!grant) {
+        const r = fail("unresolvable_ref", `route rejected: cited grant ${grantRef} does not resolve`, "citation");
+        if (r) return r;
+      } else if (grant.state !== "active") {
+        const r = fail("decision_transition_rejected", `route rejected: cited grant ${grantRef} is ${grant.state}, not active`, "citation");
+        if (r) return r;
+      } else {
+        const decision = await store.getDecision(args.decisionId as string);
+        if (decision && decision.class !== grant.class) {
+          const r = fail("decision_transition_rejected", `route rejected: cited grant covers class '${grant.class}', not '${decision.class ?? "(unclassified)"}' — routing cannot launder a class onto a grant`, "citation");
+          if (r) return r;
+        } else {
+          pass("citation");
+        }
+      }
     }
   }
   // B5: plan validation at ROUTE (design §3) — every action is in-registry
@@ -200,21 +226,32 @@ async function routeDecisionHandler(args: Record<string, unknown>, ctx: IPolicyC
   // The blocked-ON-this-decision check runs again at resolve (the target may
   // legitimately block on the decision after routing).
   const plan = (args.executionPlan as DecisionPlanAction[] | undefined) ?? [];
+  let planOk = true;
   for (const step of plan) {
     if (step.action === "unblock") {
       if (!ctx.stores.workItem) return err("not_wired", "unblock plan validation requires the WorkItem store");
       if (!(await ctx.stores.workItem.getWorkItem(step.targetRef))) {
-        return err("unresolvable_ref", `route rejected: plan target ${step.targetRef} does not resolve`);
+        planOk = false;
+        const r = fail("unresolvable_ref", `route rejected: plan target ${step.targetRef} does not resolve`, "plan");
+        if (r) return r;
       }
     }
     if (step.action === "approve") {
       if (!ctx.stores.proposal) return err("not_wired", "approve plan validation requires the Proposal store");
       if (!(await ctx.stores.proposal.getProposal(step.targetRef))) {
-        return err("unresolvable_ref", `route rejected: plan target ${step.targetRef} does not resolve`);
+        planOk = false;
+        const r = fail("unresolvable_ref", `route rejected: plan target ${step.targetRef} does not resolve`, "plan");
+        if (r) return r;
       }
     }
   }
+  if (plan.length > 0 && planOk) pass("plan");
   const before = await store.getDecision(args.decisionId as string);
+  if (dryRun) {
+    const routable = before ? (before.status === "curated") : false;
+    checks.push({ check: "phase", ok: routable, ...(routable ? {} : { rejection: before ? `route requires curated, was ${before.status}` : "decision not found" }) });
+    return ok({ dryRun: true, effects: "none", checks, wouldSucceed: checks.every((c) => c.ok) });
+  }
   try {
     const d = await store.routeDecision(args.decisionId as string, actor, route, args.executionPlan as DecisionPlanAction[] | undefined);
     if (!d) return notFound(args.decisionId as string);
@@ -318,12 +355,13 @@ export function registerDecisionPolicy(router: PolicyRouter): void {
 
   router.register(
     "route_decision",
-    "[Architect] Route a curated Decision (curated→routed). The self-disposal leg is LIVE (B3): it must cite selfDisposal.classGrantRef, which fail-closed resolves at route (active grant, class match) — and the grant gate at resolve rejects any grant proof the route does not cite (route↔proof tie). Unclassified decisions fail closed to the director. An execution plan declared here is stored; execution is B5.",
+    "[Architect|Verifier] Route a curated Decision (curated→routed) — VERIFIER SEAT IS dryRun-ONLY (work-128 rejection-path probing). The self-disposal leg is LIVE (B3): it must cite selfDisposal.classGrantRef, which fail-closed resolves at route (active grant, class match) — and the grant gate at resolve rejects any grant proof the route does not cite (route↔proof tie). Unclassified decisions fail closed to the director. An execution plan declared here is stored; execution is B5.",
     {
       decisionId: z.string(),
       target: z.enum(["director", "self-disposal"]),
       selfDisposal: z.object({ t5RuleRef: z.string().optional(), classGrantRef: z.string().optional() }).strict().optional(),
       executionPlan: z.array(planActionSchema).optional().describe("Declared-at-route plan (v1 registry: unblock | approve); executes atomically at resolve once B5 lands"),
+      dryRun: z.boolean().optional().describe("work-128: run the SAME citation/plan/phase validators in collect-mode and report every verdict WITHOUT routing or emitting (required for the verifier seat)"),
     },
     routeDecision,
   );

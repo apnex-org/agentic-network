@@ -26,6 +26,7 @@ import { resolveCreatedBy } from "./caller-identity.js";
 import { emitAndPush } from "./message-policy.js";
 import { DECISION_TRANSITION_EVENT } from "./decision-policy.js";
 import type { DecisionActor, DecisionResolution } from "../entities/decision.js";
+import { DECISION_TRANSITIONS } from "../entities/decision-repository-substrate.js";
 import { DecisionTransitionRejected } from "../entities/decision-repository-substrate.js";
 import {
   DirectorProofGate,
@@ -74,6 +75,14 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
   const proofs = ctx.stores.directorProof;
   if (!proofs) return err("not_wired", "DirectorProof store is not available");
   const capturedBy = await stampActor(ctx);
+  // work-128 (B8-R1): the verifier seat is dryRun-only — report what the
+  // capture WOULD bind (open-confirmation resolution incl. the zero/ambiguous
+  // rejections) without minting a signal or touching presence. The director-
+  // origin fence is unchanged: a real capture still requires the director seat.
+  const dryRun = args.dryRun === true;
+  if (capturedBy.role !== "director" && !dryRun) {
+    return err("authorization_denied", `capture_director_signal requires the director ingress — the ${capturedBy.role} seat may only probe with dryRun:true`);
+  }
   // B10 (two-id-space trap, Director UX finding #2): the Director thinks in
   // DECISIONS — accept decisionId and resolve the open confirmation SERVER-side.
   // Zero open → loud reject; more than one → loud reject with the ids (never
@@ -87,6 +96,16 @@ async function captureDirectorSignal(args: Record<string, unknown>, ctx: IPolicy
       if (open.length > 1) return err("decision_proof_rejected", `${open.length} open confirmations for ${args.decisionId} [${open.map((c) => c.id).join(", ")}] — ambiguous; answer by confirmationId or let the stale ones expire`);
       confirmationId = open[0].id;
     } catch (e) { return mapVerbError(e); } // the truncation guard maps to a policy error, never a 500
+  }
+  if (dryRun) {
+    return ok({
+      dryRun: true,
+      effects: "none",
+      wouldBindConfirmationId: confirmationId ?? null,
+      note: confirmationId
+        ? "a real director-seat capture would mint a signal answering this confirmation"
+        : "a real capture would mint an unbound signal (no confirmationId/decisionId supplied)",
+    });
   }
   const signal = await proofs.mintSignal({
     channel: args.channel as string,
@@ -182,6 +201,12 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
   const decisions = ctx.stores.decision;
   if (!proofs || !decisions) return err("not_wired", "DirectorProof/Decision stores are not available");
   const executor = await stampActor(ctx);
+  // work-128 (B8-R1): the verifier seat is admitted by router RBAC but may ONLY
+  // dry-run — the authority fence is unchanged for real resolutions.
+  const dryRun = args.dryRun === true;
+  if (executor.role !== "architect" && !dryRun) {
+    return err("authorization_denied", `resolve_as_director requires the architect seat — the ${executor.role} seat may only probe with dryRun:true`);
+  }
   const before = await decisions.getDecision(args.decisionId as string);
   if (!before) return err("not_found", `Decision ${args.decisionId} not found`);
   const answer = (args.chosenOptionId
@@ -202,6 +227,37 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
       return { ok: !res.isError && parsed.success === true, detail: res.isError ? (parsed.error ?? "review failed") : `approved${parsed.scaffolded ? " + scaffolded" : ""}` };
     },
   };
+  // work-128 dry-run: run the REAL validators — the same DirectorProofGate,
+  // the same validatePlan (zero-effects by contract 11), the same FSM table —
+  // in sequence, report EVERY verdict independently (an unrouted probe
+  // decision still exercises the proof/evaluator paths), and stop before any
+  // effect: no transition, no consume/mint, no emitted Message, no arrival or
+  // presence touch. This is how the verifier live-executes the rejection
+  // contracts (#1/#7/#11/#12) from his own seat (audit-10226).
+  if (dryRun) {
+    const report: Record<string, unknown> = { dryRun: true, effects: "none" };
+    report.phase = {
+      status: before.status,
+      resolvable: (DECISION_TRANSITIONS[before.status] ?? []).includes("resolved"),
+    };
+    try {
+      const verdict = await gate.evaluate({ decision: before, executor, answer, claimedAuthorityRef: args.proofRef as string | undefined });
+      report.proof = { ok: true, authorityMode: verdict.authorityMode, authorityRef: verdict.authorityRef ?? null };
+    } catch (e) {
+      report.proof = { ok: false, errorKind: "decision_proof_rejected", rejection: e instanceof Error ? e.message : String(e) };
+    }
+    try {
+      if ((before.executionPlan ?? []).length > 0) await validatePlan(before, targets);
+      report.plan = { ok: true, actions: (before.executionPlan ?? []).length };
+    } catch (e) {
+      report.plan = { ok: false, rejection: e instanceof Error ? e.message : String(e) };
+    }
+    report.wouldSucceed =
+      (report.phase as { resolvable: boolean }).resolvable &&
+      (report.proof as { ok: boolean }).ok &&
+      (report.plan as { ok: boolean }).ok;
+    return ok(report);
+  }
   try {
     // B5 contract 11 — the proof chain INCLUDES plan validation, all BEFORE any
     // effect and before the decision transitions: every action in-registry, every
@@ -301,7 +357,7 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
 export function registerDirectorProofPolicy(router: PolicyRouter): void {
   router.register(
     "capture_director_signal",
-    "[Director] Capture a Director utterance as a Hub-stamped DirectorSignal at a REGISTERED ingress (the bug-224 fix: the ois-say session registers a director messaging identity — provenance only, NOT a seat). The content hash is computed server-side; confidence is stored as an enum with NO tier logic in v1. Signals are immutable and are the Signal-grade proof object for resolve_as_director.",
+    "[Director|Verifier] Capture a Director utterance — VERIFIER SEAT IS dryRun-ONLY (work-128: reports what a capture would bind without minting). as a Hub-stamped DirectorSignal at a REGISTERED ingress (the bug-224 fix: the ois-say session registers a director messaging identity — provenance only, NOT a seat). The content hash is computed server-side; confidence is stored as an enum with NO tier logic in v1. Signals are immutable and are the Signal-grade proof object for resolve_as_director.",
     {
       channel: z.string().min(1).describe("Ingress channel, e.g. 'ois-say' | 'session' | 'side-channel'"),
       answer: z.string().min(1).describe("The VERBATIM Director utterance"),
@@ -311,6 +367,7 @@ export function registerDirectorProofPolicy(router: PolicyRouter): void {
       rawIngressRef: z.string().optional().describe("The Message/entity id the raw ingress landed as, when relayed"),
       confirmationId: z.string().optional().describe("The DirectorConfirmation this signal answers (round-trip lineage; presenter-internal id-space)"),
       decisionId: z.string().optional().describe("B10: answer by DECISION id — the Hub resolves the single open confirmation server-side (rejects loud on zero or ambiguous). The Director's id-space is the decision; dconf plumbing stays out of his surface."),
+      dryRun: z.boolean().optional().describe("work-128: report the open-confirmation resolution (incl. zero/ambiguous rejections) WITHOUT minting a signal or touching presence (required for the verifier seat)"),
     },
     captureDirectorSignal,
   );
@@ -342,13 +399,14 @@ export function registerDirectorProofPolicy(router: PolicyRouter): void {
 
   router.register(
     "resolve_as_director",
-    "[Architect] The sanctioned proxy resolve (S2.1): routed→resolved with authority Hub-DERIVED from the proof object behind proofRef — a DirectorSignal → director-via-proxy; a Director-ANSWERED, unexpired, hash-bound DirectorConfirmation → director-direct (consumed exactly once). REJECTS (never parks): no proofRef; an assertion-class ref (audit/message); an UNANSWERED confirmation (self-issued render token, audit-9821); a plan requiring confirmation on Signal proof alone; expired/consumed/mismatched confirmations; grant refs (slice B3). Dual identity stamped: authority from the proof, executor from YOUR session.",
+    "[Architect|Verifier] The sanctioned proxy resolve (S2.1) — VERIFIER SEAT IS dryRun-ONLY (work-128: rejection-path probing; a verifier call without dryRun:true is denied): routed→resolved with authority Hub-DERIVED from the proof object behind proofRef — a DirectorSignal → director-via-proxy; a Director-ANSWERED, unexpired, hash-bound DirectorConfirmation → director-direct (consumed exactly once). REJECTS (never parks): no proofRef; an assertion-class ref (audit/message); an UNANSWERED confirmation (self-issued render token, audit-9821); a plan requiring confirmation on Signal proof alone; expired/consumed/mismatched confirmations; grant refs (slice B3). Dual identity stamped: authority from the proof, executor from YOUR session.",
     {
       decisionId: z.string(),
       proofRef: z.string().optional().describe("The proof object id (dsig-N | dconf-N). Omitting it REJECTS — kept optional so the reject is a policy error, not a schema error (contract test 7)"),
       chosenOptionId: z.string().optional(),
       customAnswer: z.string().optional(),
       rationale: z.string().optional(),
+      dryRun: z.boolean().optional().describe("work-128: evaluate the REAL proof gate + plan validators and report every verdict WITHOUT transitioning, consuming, minting, or emitting — the verifier's live rejection probe (required for the verifier seat)"),
     },
     resolveAsDirector,
   );

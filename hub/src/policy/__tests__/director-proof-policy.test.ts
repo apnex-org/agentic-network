@@ -87,7 +87,9 @@ describe("director-proof-policy (P3-B4)", () => {
     for (const role of ["architect", "engineer", "verifier"]) {
       const r = await router.handle("capture_director_signal", { channel: "ois-say", answer: "x", capturedBySurface: "cli", confidence: "session-bound" }, ctxFor(role, { directorProof: proofs }));
       expect(r.isError).toBe(true);
-      expect(body(r).error).toMatch(/Authorization denied/);
+      // work-128: the verifier is router-admitted but handler-denied without
+      // dryRun — a different message, the same fence (nothing mints either way).
+      expect(body(r).error).toMatch(/Authorization denied|may only probe with dryRun/);
     }
     expect(proofs.calls.length).toBe(0);
   });

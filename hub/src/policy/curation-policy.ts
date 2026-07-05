@@ -196,7 +196,7 @@ export async function runCurationSloSweep(ctx: IPolicyContext, nowISO?: string):
 export function registerCurationPolicy(router: PolicyRouter): void {
   router.register(
     "query_curation",
-    "[Architect|Director] The §2 anti-laundering queries over the append-only curation trail: raw_feed (interval, complete incl. disposed+merged — contract test 8), raw_vs_presented (immutable capture vs curated view diff + records), class_changed, per_grant (self-disposal classification packets), merge_lineage (all constituent raws — minority claims reachable), slo_breaches (24h curation SLO, live off queue state). Read-only.",
+    "[Any] (work-128: read-only AUDIT surface by design — R:C4 wants it widely queryable; the verifier live-executes contracts 2+8 from his own seat.) The §2 anti-laundering queries over the append-only curation trail: raw_feed (interval, complete incl. disposed+merged — contract test 8), raw_vs_presented (immutable capture vs curated view diff + records), class_changed, per_grant (self-disposal classification packets), merge_lineage (all constituent raws — minority claims reachable), slo_breaches (24h curation SLO, live off queue state). Read-only.",
     {
       query: z.enum(["raw_feed", "raw_vs_presented", "class_changed", "per_grant", "merge_lineage", "slo_breaches"]),
       decisionId: z.string().optional(),
