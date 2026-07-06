@@ -89,7 +89,7 @@ import { registerClassGrantPolicy } from "./policy/class-grant-policy.js";
 import { registerArrivalSurfacePolicy } from "./policy/arrival-surface-policy.js";
 import { registerConstitutionPolicy } from "./policy/constitution-policy.js";
 import { ConstitutionRepositorySubstrate, OrgCharterRepositorySubstrate } from "./entities/constitution-repository-substrate.js";
-import { ConstitutionSync } from "./storage-substrate/constitution-sync.js";
+import { ConstitutionSync, selectConstitutionSyncToken } from "./storage-substrate/constitution-sync.js";
 import { registerCurationPolicy } from "./policy/curation-policy.js";
 import { registerSc3FunnelPolicy } from "./policy/sc3-funnel-policy.js";
 import { runCurationSloSweep } from "./policy/curation-policy.js";
@@ -975,17 +975,19 @@ if (OIS_GH_API_TOKEN && OIS_REPO_EVENT_BRIDGE_REPOS.length > 0) {
 }
 
 // mission-103 P3-S1: the constitution sync loop (decision-17 design §3) —
-// A1 poll against the git-canonical mission-kit repo. Conditional on the
-// same PAT as the bridge; absent → serve verbs answer loud not_synced and
-// the Hub starts cleanly (never unlabeled bootstrap content).
-// bug-236: the constitution sync ALWAYS runs — mission-kit is public, so it needs
-// no PAT. A token is passed opportunistically (higher core-API limit) but is not
-// required; without it the sync fetches unauthenticated.
+// A1 poll against the git-canonical mission-kit repo. The sync ALWAYS runs —
+// mission-kit is public, so it needs no PAT and the serve verbs are never blank.
+// audit-11100: the sync path must NOT authenticate in prod. It takes its token
+// ONLY from the dedicated OIS_CONSTITUTION_GH_TOKEN opt-in — NEVER the global
+// OIS_GH_API_TOKEN (that is the RepoEventBridge's private-repo PAT; reusing it
+// would send an Authorization header on every constitution poll). Unset in prod
+// ⇒ pure unauthenticated public fetch.
+const OIS_CONSTITUTION_GH_TOKEN = selectConstitutionSyncToken(process.env);
 let constitutionSync: ConstitutionSync | undefined;
 {
   constitutionSync = new ConstitutionSync({
     repo: OIS_CONSTITUTION_REPO,
-    token: OIS_GH_API_TOKEN,
+    token: OIS_CONSTITUTION_GH_TOKEN,
     cadenceMs: OIS_CONSTITUTION_CADENCE_S * 1000,
     rateBudgetPct: parseFloat(process.env.OIS_CONSTITUTION_RATE_BUDGET_PCT ?? "0.8"),
     store: constitutionStore,
@@ -1016,7 +1018,7 @@ let constitutionSync: ConstitutionSync | undefined;
     },
   });
 }
-console.log(`[Hub] constitution sync wired (${OIS_GH_API_TOKEN ? "authenticated — PAT present" : "UNAUTHENTICATED public fetch — bug-236, no PAT"}).`);
+console.log(`[Hub] constitution sync wired (${OIS_CONSTITUTION_GH_TOKEN ? "authenticated — dedicated OIS_CONSTITUTION_GH_TOKEN opt-in present" : "UNAUTHENTICATED public fetch — bug-236, no PAT (global OIS_GH_API_TOKEN NOT used here — audit-11100)"}).`);
 
 startupSequence().then(async () => {
   await hub.start();

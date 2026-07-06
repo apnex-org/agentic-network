@@ -21,10 +21,17 @@
  *
  * GitHub access (bug-236): mission-kit is a PUBLIC repo, so the sync runs
  * UNAUTHENTICATED — no PAT dependency. Change-detection + tree are core-API polls
- * (unauth 60/hr, opportunistically 5000/hr if a token happens to be present) run
- * at a MODEST cadence; axiom bodies come from raw.githubusercontent.com (the raw
- * CDN, NOT counted against the core limit). Rate-limit headers still tracked;
- * fetch injectable for contract tests.
+ * (unauth 60/hr) run at a MODEST cadence; axiom bodies come from
+ * raw.githubusercontent.com (the raw CDN, NOT counted against the core limit).
+ * Rate-limit headers still tracked; fetch injectable for contract tests.
+ *
+ * audit-11100 (work-158 live-verify): the sync path must NOT authenticate in prod.
+ * It deliberately does NOT read the global OIS_GH_API_TOKEN — that PAT is the
+ * RepoEventBridge's PRIVATE-repo credential, and reusing it here would send an
+ * Authorization header on every constitution poll (the gate failure: "no PAT in
+ * the constitution-sync path"). Auth for THIS path is a dedicated, normally-unset
+ * opt-in (OIS_CONSTITUTION_GH_TOKEN) — a break-glass for core-API rate relief,
+ * disabled in prod. See selectConstitutionSyncToken.
  */
 import { createHash } from "node:crypto";
 import type { AxiomManifestEntry } from "../entities/constitution.js";
@@ -33,6 +40,23 @@ import type { IOrgCharterStore } from "../entities/constitution.js";
 import { manifestHashOf } from "../entities/constitution-repository-substrate.js";
 
 export const CONSTITUTION_UPDATED_EVENT = "constitution-updated-notification";
+
+/**
+ * Composition-level token selection for the constitution sync (audit-11100).
+ *
+ * The constitution fetch targets a PUBLIC repo and must stay unauthenticated in
+ * prod. This selector reads ONLY the dedicated OIS_CONSTITUTION_GH_TOKEN opt-in —
+ * it deliberately IGNORES the global OIS_GH_API_TOKEN (the RepoEventBridge's
+ * private-repo PAT). So when the process has OIS_GH_API_TOKEN set for the bridge
+ * (as prod does) but no dedicated constitution token, this returns undefined and
+ * ConstitutionSync sends no Authorization header. The dedicated var is a
+ * break-glass for core-API rate relief on the public fetch; unset in prod.
+ */
+export function selectConstitutionSyncToken(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  return env.OIS_CONSTITUTION_GH_TOKEN || undefined;
+}
 
 // The live mission-kit filename shape is SLUGGED (axioms/A14-compounding-
 // learning.md); the bare form (axioms/A7.md) is tolerated too. The id is the
@@ -52,9 +76,10 @@ export interface ConstitutionSyncOptions {
   /** "owner/repo" (e.g. "apnex/mission-kit"). */
   repo: string;
   /** OPTIONAL (bug-236): mission-kit is a PUBLIC repo, so the constitution sync
-   *  runs UNAUTHENTICATED — no PAT dependency. When a token IS present it is used
-   *  opportunistically (raising the core-API limit from 60/hr to 5000/hr); when
-   *  absent, the core polls run unauth (60/hr) and bodies come from
+   *  runs UNAUTHENTICATED — no PAT dependency. A token is supplied ONLY via the
+   *  dedicated OIS_CONSTITUTION_GH_TOKEN opt-in (see selectConstitutionSyncToken) —
+   *  NEVER the global OIS_GH_API_TOKEN (audit-11100). Unset in prod ⇒ no
+   *  Authorization header; core polls run unauth (60/hr) and bodies come from
    *  raw.githubusercontent.com (never core-rate-limited). */
   token?: string;
   cadenceMs: number;
