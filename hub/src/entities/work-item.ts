@@ -519,6 +519,15 @@ export interface IWorkItemStore {
    *  incl. dependency-blocked); the deps/WIP readiness gate is list_ready_work's job. */
   listWorkItems(filter?: { status?: WorkItemPhase; role?: string; holder?: string }): Promise<{ items: WorkItem[]; truncated: boolean }>;
 
+  /** W1 (idea-446 / work-181): sweeper-only direct write of the node-native pulse
+   *  bookkeeping — mirrors the Mission `updatePulseBookkeeping`. CAS-safe (preserves
+   *  the rest of the node), NOT authz-gated (the system PulseSweeper is the writer).
+   *  No-op if the node carries no `nodeConfig.pulse`. */
+  updateNodePulseBookkeeping(
+    nodeId: string,
+    delta: { lastFiredAt?: string; lastResponseAt?: string | null; missedCount?: number; lastEscalatedAt?: string | null },
+  ): Promise<void>;
+
   /** The list_ready_work projection: ready items claimable by `role` (empty
    *  roleEligibility = any-role, OR'd in). truncation-HONEST — `truncated` flags a
    *  capped scan (never a silent cap). `role` undefined = all ready items.

@@ -1687,6 +1687,34 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * updated (re-decoded) WorkItem on success, null if absent. A TransitionRejected /
    * WipCapExceeded thrown by the transform propagates (the policy layer maps it).
    */
+  /** W1 (idea-446 / work-181): sweeper-only direct write of the node-native pulse
+   *  bookkeeping. Mirrors the Mission `updatePulseBookkeeping` — CAS-safe (the
+   *  transform preserves everything else; the pulse subtree is status-partitioned
+   *  so decodeEnvelopeToFlat round-trips it), no authz gate (the system sweeper is
+   *  the writer). No-op when the node carries no `nodeConfig.pulse`. */
+  async updateNodePulseBookkeeping(
+    nodeId: string,
+    delta: { lastFiredAt?: string; lastResponseAt?: string | null; missedCount?: number; lastEscalatedAt?: string | null },
+  ): Promise<void> {
+    await this.tryCasUpdate(nodeId, (w) => {
+      const pulse = w.nodeConfig?.pulse;
+      if (!pulse) return w; // no node pulse → CAS no-op
+      return {
+        ...w,
+        nodeConfig: {
+          ...w.nodeConfig,
+          pulse: {
+            ...pulse,
+            lastFiredAt: delta.lastFiredAt ?? pulse.lastFiredAt,
+            lastResponseAt: delta.lastResponseAt !== undefined ? delta.lastResponseAt : pulse.lastResponseAt,
+            missedCount: delta.missedCount !== undefined ? delta.missedCount : pulse.missedCount,
+            lastEscalatedAt: delta.lastEscalatedAt !== undefined ? delta.lastEscalatedAt : pulse.lastEscalatedAt,
+          },
+        },
+      };
+    });
+  }
+
   private async tryCasUpdate(
     workId: string,
     transform: (current: WorkItem) => WorkItem,
