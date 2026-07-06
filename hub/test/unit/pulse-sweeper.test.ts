@@ -542,6 +542,37 @@ describe("PulseSweeper — S1a-(ii) target-agent-scoped authored-write crediting
     const m = (await rig.missionStore.getMission(mission.id))!;
     expect(m.pulses!.architectPulse!.missedCount ?? 0).toBe(0);
   });
+
+  it("BOUNDED existence [cap-immunity, bug-117/idea-292 class]: >500 OLD target messages + one newer in-window write → still credits LIVE", async () => {
+    const rig = buildSweeperRig({ agents: AGENTS });
+    // 500 OLD architect messages (created first → smallest ULID ids). An
+    // ascending + LIST_PREFETCH_CAP(500) listMessages returns exactly these,
+    // hiding any newer message beyond the page — the first-N-cap trap the fix
+    // closes. hasAuthoredSince resolves the global newest (id-desc, limit 1).
+    for (let i = 0; i < 500; i++) await authorMessage(rig, "arch-1", "architect");
+    await new Promise((r) => setTimeout(r, 5)); // ensure the fire boundary is strictly after the 500 old writes
+    const firedAtMs = Date.now();
+    await new Promise((r) => setTimeout(r, 5));
+    // the 501st architect message — newest id, authored IN-WINDOW (after the fire).
+    await authorMessage(rig, "arch-1", "architect");
+
+    const mission = await createPulseMission(rig, {
+      architectPulse: { intervalSeconds: 60, message: "status?", responseShape: "ack", missedThreshold: 3, firstFireDelaySeconds: 60 },
+    });
+    const base = mission.pulses!.architectPulse!;
+    await rig.missionStore.updateMission(mission.id, {
+      pulses: { architectPulse: { ...base, lastFiredAt: new Date(firedAtMs).toISOString(), missedCount: 0 } },
+    });
+    rig.setNow(firedAtMs + MS(150)); // past grace (150s > intervalSeconds+grace = 90s)
+    await rig.sweeper.tick();
+
+    // The bounded newest-by-author lookup finds the 501st (in-window) despite the
+    // 500 older ones → LIVE. The old listMessages(...).length-1 (newest of the
+    // OLDEST 500, all pre-fire) would have false-MISSED — the exact defect for a
+    // long-lived, prolific target this fix targets.
+    const m = (await rig.missionStore.getMission(mission.id))!;
+    expect(m.pulses!.architectPulse!.missedCount ?? 0).toBe(0);
+  });
 });
 
 describe("PulseSweeper — onPulseAcked webhook (Item-2)", () => {

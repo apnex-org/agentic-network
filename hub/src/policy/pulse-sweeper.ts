@@ -507,12 +507,11 @@ export class PulseSweeper {
       const agents = await registry.listAgents();
       const targetIds = agents.filter((a) => a.role === targetRole).map((a) => a.id);
       for (const agentId of targetIds) {
-        const msgs = await this.messageStore.listMessages({ authorAgentId: agentId });
-        // Messages return ULID(id)-sorted asc == creation-time asc; the last is
-        // the target's most recent authored write. One write at/after the last
-        // fire proves the agent was working in-window.
-        const latest = msgs[msgs.length - 1];
-        if (latest && Date.parse(latest.createdAt) >= sinceMs) return true;
+        // BOUNDED existence — must not fetch-all-then-index. `hasAuthoredSince`
+        // resolves the newest message by this author (id-descending, limit 1);
+        // a `listMessages(...).length-1` would be capped to the oldest 500 and
+        // miss a prolific target's in-window write (bug-117 / idea-292 class).
+        if (await this.messageStore.hasAuthoredSince(agentId, sinceMs)) return true;
       }
       return false;
     } catch {

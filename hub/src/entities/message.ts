@@ -452,6 +452,18 @@ export interface IMessageStore {
   listMessages(query: MessageQuery): Promise<Message[]>;
 
   /**
+   * S1a-(ii) (idea-458): bounded existence — does `authorAgentId` have any
+   * Message authored at/after `sinceMs`? Resolves the NEWEST message by that
+   * author (substrate-side, id-descending, limit 1) and checks its `createdAt`.
+   * O(1) rows by design: it must NOT fetch-all-then-index (the bug-117 /
+   * idea-292 first-N-cap class) — a prolific author's in-window write must stay
+   * visible past the oldest-`LIST_PREFETCH_CAP` page. Since ULID id-order ==
+   * creation-time order, the global newest's `createdAt` decides in-window
+   * existence.
+   */
+  hasAuthoredSince(authorAgentId: string, sinceMs: number): Promise<boolean>;
+
+  /**
    * Mission-56 W1b: Hub-internal cursor-based replay query for the SSE
    * Last-Event-ID protocol + cold-start stream-all path.
    *

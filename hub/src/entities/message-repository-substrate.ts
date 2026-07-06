@@ -280,6 +280,26 @@ export class MessageRepositorySubstrate implements IMessageStore {
   }
 
   /**
+   * S1a-(ii) (idea-458): bounded existence check. Resolves the single NEWEST
+   * message by `authorAgentId` (substrate-side id-DESCENDING, limit 1) and
+   * returns whether its `createdAt` is at/after `sinceMs`. O(1) rows — deliberately
+   * NOT `listMessages(...).length-1`, which is ascending + `LIST_PREFETCH_CAP`-
+   * capped and so returns the newest of the OLDEST 500 (bug-117 / idea-292
+   * first-N-cap class): a prolific author's in-window write would be invisible
+   * beyond the page. ULID id-order == creation-time order, so the global newest's
+   * createdAt is the correct in-window-existence decider.
+   */
+  async hasAuthoredSince(authorAgentId: string, sinceMs: number): Promise<boolean> {
+    const { items } = await this.substrate.list<Message>(KIND, {
+      filter: messageQueryToFilter({ authorAgentId }),
+      sort: [{ field: "id", order: "desc" }],
+      limit: 1,
+    });
+    if (items.length === 0) return false;
+    return Date.parse(decodeMessage(items[0]).createdAt) >= sinceMs;
+  }
+
+  /**
    * Mission-56 W1b: Hub-internal cursor-based replay for SSE Last-Event-ID
    * protocol + cold-start stream-all.
    *
