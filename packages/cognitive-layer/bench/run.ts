@@ -96,8 +96,8 @@ async function runScenarios(mode: "baseline" | "cognitive"): Promise<RunResult> 
     const ctx: ScenarioContext = {
       eng: eng.agent,
       arch: arch.agent,
-      engEngineerId: eng.agentId,
-      archEngineerId: arch.agentId,
+      engAgentId: eng.agentId,
+      archAgentId: arch.agentId,
     };
 
     // Reset the hub log after seeding so we only count scenario-run calls
