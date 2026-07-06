@@ -102,6 +102,11 @@ export class WorkLeaseTracker {
     result: unknown,
     nowMs: number,
   ): void {
+    // work-165 (idea-358): drop any lease whose expiry has already passed before
+    // (re)observing. The Hub sweeper reaps an expired lease server-side, but if the
+    // holder never issues a close verb (the exact silent-reap case this arc fixes)
+    // the local entry would linger forever — so every observation self-cleans.
+    this.prune(nowMs);
     if (LEASE_CLOSE_VERBS.has(method)) {
       const workId = parseWorkId(result, args);
       if (workId) this.leases.delete(workId);
@@ -150,6 +155,25 @@ export class WorkLeaseTracker {
   markPrompted(workId: string): void {
     const lease = this.leases.get(workId);
     if (lease) lease.prompted = true;
+  }
+
+  /**
+   * work-165 (idea-358): drop every lease whose expiry has passed as of `nowMs`.
+   * Without this the Map only shrinks on an explicit close verb, so a lease reaped
+   * server-side (holder went silent) lingers forever — `size()`/`snapshot()` then
+   * mis-report a stale "holding", and long-lived processes leak the Map unbounded.
+   * Called on every `observe` and on the host heartbeat tick. Returns the count
+   * pruned (host may log it). Deleting the current key mid-Map-iteration is safe.
+   */
+  prune(nowMs: number): number {
+    let pruned = 0;
+    for (const [workId, lease] of this.leases) {
+      if (nowMs >= lease.expiresAtMs) {
+        this.leases.delete(workId);
+        pruned += 1;
+      }
+    }
+    return pruned;
   }
 
   /** Diagnostic/test accessor: number of currently-held tracked leases. */

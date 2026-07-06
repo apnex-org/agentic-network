@@ -41,6 +41,21 @@ export interface ClaimableDigestInput {
   isIdle: boolean;
 }
 
+/** work-165 (idea-358): consecutive failed `list_ready_work` reads before the
+ *  inbound wake is declared degraded. The wake only surfaces on a SUCCESSFUL read,
+ *  so a run of failed reads (Hub unreachable, stream wedged) silently kills the
+ *  wake with no signal. After this many misses the host emits a degraded-mode
+ *  notification so the dead wake is visible instead of silent. */
+const DEFAULT_READ_FAILURE_THRESHOLD = 3;
+
+export interface ReadFailureDecision {
+  /** True on the SINGLE tick where consecutive failures first reach the threshold
+   *  (emit-once per streak; re-arms after the next successful read). */
+  degraded: boolean;
+  /** Current consecutive-failure count (for the host's log/notification). */
+  consecutiveFailures: number;
+}
+
 export interface ClaimableDigestDecision {
   /** True iff an upward edge was detected while idle → surface the digest. */
   emit: boolean;
@@ -62,6 +77,37 @@ export class ClaimableDigestTracker {
    *  must be re-told about standing work; the in-memory baseline it lost was
    *  exactly the bug). */
   private prevIdle = false;
+  /** work-165 (idea-358): consecutive failed list_ready_work reads (silent-wake-
+   *  death detector). Reset by recordReadSuccess; incremented by recordReadFailure. */
+  private consecutiveReadFailures = 0;
+  /** Emit-once latch for the degraded notification — set when the threshold is
+   *  first crossed, cleared by the next successful read (so a persistent outage
+   *  emits once, not every tick). */
+  private degradedNotified = false;
+
+  /**
+   * work-165 (idea-358): record a SUCCESSFUL list_ready_work read — the wake is
+   * alive, so clear the failure streak + re-arm the degraded latch. Call on any
+   * non-throwing read (independent of idle-gate / reconcile).
+   */
+  recordReadSuccess(): void {
+    this.consecutiveReadFailures = 0;
+    this.degradedNotified = false;
+  }
+
+  /**
+   * work-165 (idea-358): record a FAILED list_ready_work read. The inbound wake
+   * only surfaces on a successful read, so a run of failures silently kills it.
+   * Returns `degraded:true` exactly once — on the tick the count first reaches
+   * `threshold` — so the host emits a single degraded-mode notification per
+   * outage (re-armed by the next recordReadSuccess).
+   */
+  recordReadFailure(threshold = DEFAULT_READ_FAILURE_THRESHOLD): ReadFailureDecision {
+    this.consecutiveReadFailures += 1;
+    const degraded = this.consecutiveReadFailures >= threshold && !this.degradedNotified;
+    if (degraded) this.degradedNotified = true;
+    return { degraded, consecutiveFailures: this.consecutiveReadFailures };
+  }
 
   /**
    * Decide whether this tick should surface a claimable-digest wake.

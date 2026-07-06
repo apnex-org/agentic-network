@@ -523,6 +523,10 @@ export function createSharedDispatcher(
       // always 0 for it). MCP hosts leave externalIdle undefined → counter wins.
       const idle = opts.externalIdle ? opts.externalIdle() : activeCallCount === 0;
       const nowMs = Date.now();
+      // work-165 (idea-358): drop expired leases up front, so both the W2 stall
+      // scan and the W3 size()-based "holding" status below see only live leases
+      // (a reaped-but-unclosed lease would otherwise linger + mis-report).
+      workLeases.prune(nowMs);
       let claimableCount = 0;
 
       // W1 — inbound claimable digest. Read the CALLER-CLAIMABLE set via the
@@ -542,6 +546,9 @@ export function createSharedDispatcher(
           WAKE_STALL_READ_TIMEOUT_MS,
           "list_ready_work wake/stall read",
         );
+        // work-165 (idea-358): the read returned (didn't throw/timeout) — the wake
+        // is alive, so clear any consecutive-failure streak + re-arm the degraded latch.
+        claimableDigest.recordReadSuccess();
         const items = (raw as { items?: Array<{ id?: unknown }> } | null)?.items;
         if (Array.isArray(items)) {
           const claimableIds = items
@@ -563,9 +570,26 @@ export function createSharedDispatcher(
           }
         }
       } catch (err) {
+        // work-165 (idea-358): a failed read skips the tracker (AC3) — but a RUN of
+        // failures silently kills the inbound wake (no reconcile ever runs). Count
+        // them; once the streak crosses the threshold, emit ONE degraded-mode
+        // notification so the dead wake is visible instead of silent.
+        const rf = claimableDigest.recordReadFailure();
         log(
-          `[idea-353] list_ready_work tick failed (non-fatal): ${(err as Error)?.message ?? err}`,
+          `[idea-353] list_ready_work tick failed (non-fatal, ${rf.consecutiveFailures} consecutive): ${(err as Error)?.message ?? err}`,
         );
+        if (rf.degraded) {
+          router.route({
+            kind: "notification.actionable",
+            event: {
+              event: "wake_degraded",
+              data: { role, consecutiveFailures: rf.consecutiveFailures },
+            },
+          });
+          log(
+            `[idea-358] WAKE DEGRADED — ${rf.consecutiveFailures} consecutive list_ready_work read failures; the inbound claimable-digest wake is silently dead until reads recover (check the Hub connection / restart the stream)`,
+          );
+        }
       }
 
       // W2 — outbound stall-prompt. Idle-gated: never pester a visibly-
