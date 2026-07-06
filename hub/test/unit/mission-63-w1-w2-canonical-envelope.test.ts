@@ -13,6 +13,7 @@ import { PolicyRouter } from "../../src/policy/router.js";
 import { registerSessionPolicy } from "../../src/policy/session-policy.js";
 import { projectAgent } from "../../src/policy/agent-projection.js";
 import { createTestContext, type TestPolicyContext } from "../../src/policy/test-utils.js";
+import { makeAgent } from "../helpers/canonical-fixtures.js";
 import type { Agent } from "../../src/state.js";
 
 const noop = () => {};
@@ -33,39 +34,19 @@ const handshake = {
 
 describe("projectAgent — canonical wire shape per Design §2.1 + §2.3", () => {
   it("surfaces the canonical fields and hides internal/operational fields", () => {
-    const fakeAgent: Agent = {
+    // Canonical fixture (idea-414): built via makeAgent so a rename of any
+    // Agent field breaks here, not silently. The leak-sentinels
+    // (fingerprint / currentSessionId) are overridden to prove they stay OFF
+    // the wire; everything else takes the factory default.
+    const fakeAgent = makeAgent({
       id: "eng-test123",
       fingerprint: "FINGERPRINT_SHOULD_NOT_LEAK",
-      role: "engineer",
-      status: "online",
-      archived: false,
       sessionEpoch: 7,
       currentSessionId: "sess-leak",
-      clientMetadata: {
-        clientName: "x", clientVersion: "0", proxyName: "p", proxyVersion: "0",
-      },
       advisoryTags: { llmModel: "test-model" },
       labels: { team: "test" },
-      firstSeenAt: "2026-01-01T00:00:00.000Z",
-      lastSeenAt: "2026-01-02T00:00:00.000Z",
-      livenessState: "online",
-      lastHeartbeatAt: "2026-01-02T00:00:00.000Z",
-      receiptSla: 1000,
-      wakeEndpoint: null,
       name: "test-instance",
-      activityState: "online_idle",
-      sessionStartedAt: "2026-01-01T00:00:01.000Z",
-      lastToolCallAt: null,
-      lastToolCallName: null,
-      idleSince: "2026-01-01T00:00:01.000Z",
-      workingSince: null,
-      quotaBlockedUntil: null,
-      adapterVersion: "@apnex/network-adapter@2.1.0",
-      ipAddress: "127.0.0.1",
-      restartCount: 1,
-      recentErrors: [],
-      restartHistoryMs: [Date.now()],
-    };
+    });
     const proj = projectAgent(fakeAgent, Date.now());
 
     // Required canonical fields are present
