@@ -22,11 +22,11 @@ import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import { PulseSweeper, pulseSelector } from "../../src/policy/pulse-sweeper.js";
 import { createMetricsCounter } from "../../src/observability/metrics.js";
 import type { IPolicyContext } from "../../src/policy/types.js";
-import type { Mission, Message, MissionPulses } from "../../src/entities/index.js";
+import type { Mission, Message, MissionPulses, MessageAuthorRole } from "../../src/entities/index.js";
 
 const MS = (s: number) => s * 1000;
 
-function buildSweeperRig(opts: { omitRegistry?: boolean } = {}) {
+function buildSweeperRig(opts: { omitRegistry?: boolean; agents?: Array<{ id: string; role: string }> } = {}) {
   const storage = createMemoryStorageSubstrate();
   const counter = new SubstrateCounter(storage);
   const ideaStore = new IdeaRepository(storage, counter);
@@ -61,7 +61,7 @@ function buildSweeperRig(opts: { omitRegistry?: boolean } = {}) {
           // so it never failed an assertion — pure noise masquerading as a flake).
           // An empty roster makes the agent-pulse pass a clean no-op. The
           // `omitRegistry` variant drops it to exercise the prod null-guard.
-          ...(opts.omitRegistry ? {} : { engineerRegistry: { listAgents: async () => [] } }),
+          ...(opts.omitRegistry ? {} : { engineerRegistry: { listAgents: async () => (opts.agents ?? []) } }),
         },
         metrics: createMetricsCounter(),
         emit: async () => {},
@@ -454,6 +454,124 @@ describe("PulseSweeper — missed-count + escalation (E1 + E2)", () => {
       (m) => (m.payload as { pulseKind?: string })?.pulseKind === "missed_threshold_escalation",
     );
     expect(escalations).toHaveLength(1); // exactly once, N cadences later
+  });
+});
+
+describe("PulseSweeper — S1a-(ii) target-agent-scoped authored-write crediting (idea-458)", () => {
+  const AGENTS = [
+    { id: "arch-1", role: "architect" },
+    { id: "eng-1", role: "engineer" },
+  ];
+
+  // The sweeper clock is simulated (rig.now) but the message + mission stores
+  // stamp REAL wall-clock time. To keep authored-write / ack timestamps
+  // comparable to lastFiredAt, seed a "fired 200s ago (real)" state via
+  // updateMission (the same manual-bookkeeping pattern the E1 test uses) so
+  // real-stamped writes land AFTER lastFired. In production all clocks are real
+  // and consistent; this only reconciles the test harness's clock split.
+  async function seedFiredArchitectPulse(
+    rig: ReturnType<typeof buildSweeperRig>,
+    overrides: Record<string, unknown> = {},
+  ) {
+    const mission = await createPulseMission(rig, {
+      architectPulse: {
+        intervalSeconds: 60,
+        message: "status?",
+        responseShape: "ack",
+        missedThreshold: 3,
+        firstFireDelaySeconds: 60,
+      },
+    });
+    const firedAtMs = Date.now() - MS(200); // fired 200s ago (real clock)
+    const base = mission.pulses!.architectPulse!;
+    await rig.missionStore.updateMission(mission.id, {
+      pulses: { architectPulse: { ...base, lastFiredAt: new Date(firedAtMs).toISOString(), missedCount: 0, ...overrides } },
+    });
+    // Advance the sweeper past the grace window relative to the seeded fire.
+    rig.setNow(Date.now() + MS(1));
+    return { mission, firedAtMs };
+  }
+
+  async function authorMessage(rig: ReturnType<typeof buildSweeperRig>, agentId: string, role: string) {
+    await rig.messageStore.createMessage({
+      kind: "note",
+      authorRole: role as MessageAuthorRole,
+      authorAgentId: agentId,
+      target: null,
+      delivery: "push-immediate",
+      payload: { body: "working" },
+    });
+  }
+
+  it("MISSED witness [load-bearing]: target (architect) quiescent WHILE another agent (engineer) writes → STILL credits target MISSED", async () => {
+    const rig = buildSweeperRig({ agents: AGENTS });
+    // The ENGINEER is actively writing; the ARCHITECT (the pulse's target) is NOT.
+    await authorMessage(rig, "eng-1", "engineer");
+    const { mission } = await seedFiredArchitectPulse(rig);
+    await rig.sweeper.tick();
+
+    // The engineer's write must NOT credit the architectPulse — scoping is
+    // per-target-agentId, never any-agent. So the architect pulse is MISSED
+    // (else the incident reproduces inverted: architect idle, engineers busy).
+    const m = (await rig.missionStore.getMission(mission.id))!;
+    expect(m.pulses!.architectPulse!.missedCount).toBe(1);
+  });
+
+  it("LIVE witness: target (architect) authors a write WITHOUT acking in-window → credits LIVE (the literal incident, no false-pause)", async () => {
+    const rig = buildSweeperRig({ agents: AGENTS });
+    // The ARCHITECT authored real work — but never acked the synthetic pulse.
+    await authorMessage(rig, "arch-1", "architect");
+    const { mission } = await seedFiredArchitectPulse(rig);
+    await rig.sweeper.tick();
+
+    // Authored-write credits liveness → NOT missed (pre-fix this false-paused
+    // the backstop — the idea-458 lived incident).
+    const m = (await rig.missionStore.getMission(mission.id))!;
+    expect(m.pulses!.architectPulse!.missedCount ?? 0).toBe(0);
+  });
+
+  it("regression: an ack still credits LIVE (backward-compat — ack remains an additional positive signal)", async () => {
+    const rig = buildSweeperRig({ agents: AGENTS });
+    // The architect acked the pulse (lastResponseAt after the fire) and authored
+    // no other write — the existing ack signal must still credit LIVE.
+    const { mission } = await seedFiredArchitectPulse(rig, {
+      lastResponseAt: new Date(Date.now()).toISOString(),
+    });
+    await rig.sweeper.tick();
+
+    const m = (await rig.missionStore.getMission(mission.id))!;
+    expect(m.pulses!.architectPulse!.missedCount ?? 0).toBe(0);
+  });
+
+  it("BOUNDED existence [cap-immunity, bug-117/idea-292 class]: >500 OLD target messages + one newer in-window write → still credits LIVE", async () => {
+    const rig = buildSweeperRig({ agents: AGENTS });
+    // 500 OLD architect messages (created first → smallest ULID ids). An
+    // ascending + LIST_PREFETCH_CAP(500) listMessages returns exactly these,
+    // hiding any newer message beyond the page — the first-N-cap trap the fix
+    // closes. hasAuthoredSince resolves the global newest (id-desc, limit 1).
+    for (let i = 0; i < 500; i++) await authorMessage(rig, "arch-1", "architect");
+    await new Promise((r) => setTimeout(r, 5)); // ensure the fire boundary is strictly after the 500 old writes
+    const firedAtMs = Date.now();
+    await new Promise((r) => setTimeout(r, 5));
+    // the 501st architect message — newest id, authored IN-WINDOW (after the fire).
+    await authorMessage(rig, "arch-1", "architect");
+
+    const mission = await createPulseMission(rig, {
+      architectPulse: { intervalSeconds: 60, message: "status?", responseShape: "ack", missedThreshold: 3, firstFireDelaySeconds: 60 },
+    });
+    const base = mission.pulses!.architectPulse!;
+    await rig.missionStore.updateMission(mission.id, {
+      pulses: { architectPulse: { ...base, lastFiredAt: new Date(firedAtMs).toISOString(), missedCount: 0 } },
+    });
+    rig.setNow(firedAtMs + MS(150)); // past grace (150s > intervalSeconds+grace = 90s)
+    await rig.sweeper.tick();
+
+    // The bounded newest-by-author lookup finds the 501st (in-window) despite the
+    // 500 older ones → LIVE. The old listMessages(...).length-1 (newest of the
+    // OLDEST 500, all pre-fire) would have false-MISSED — the exact defect for a
+    // long-lived, prolific target this fix targets.
+    const m = (await rig.missionStore.getMission(mission.id))!;
+    expect(m.pulses!.architectPulse!.missedCount ?? 0).toBe(0);
   });
 });
 
