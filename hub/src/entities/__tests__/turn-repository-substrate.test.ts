@@ -133,6 +133,37 @@ describe("TurnRepositorySubstrate (W4.x.11 Option Y sibling-pattern)", () => {
     expect(noTurn).toBeNull();
   }, 60_000);
 
+  it("mission-103 S4 cut: a legacy envelope spec.tele is NOT surfaced on read, and CAS does not re-preserve it", async () => {
+    const counter = new SubstrateCounter(substrate);
+    const stubMission = { listMissions: async (): Promise<Mission[]> => [] } as unknown as IMissionStore;
+    const stubTask = { listTasks: async (): Promise<Task[]> => [] } as unknown as ITaskStore;
+    const repo = new TurnRepositorySubstrate(substrate, counter, stubMission, stubTask);
+
+    // Inject a pre-cut envelope row still carrying a legacy spec.tele (a row
+    // migrated before the S4 cut). It is already envelope-shape, so the write
+    // encoder passes it through unchanged — spec.tele survives in storage.
+    await substrate.put("Turn", {
+      id: "turn-legacy",
+      kind: "Turn",
+      apiVersion: "core.ois/v1",
+      name: "Legacy turn",
+      metadata: { name: "Legacy turn", createdAt: "2026-05-24T00:00:00Z", updatedAt: "2026-05-24T00:00:00Z", correlationId: "turn-legacy" },
+      spec: { scope: "legacy scope", tele: ["tele-1", "tele-2"] },
+      status: { phase: "active" },
+    });
+
+    // Read membrane: getTurn must NOT surface tele.
+    const got = (await repo.getTurn("turn-legacy")) as unknown as Record<string, unknown>;
+    expect(got).not.toBeNull();
+    expect(got.scope).toBe("legacy scope");
+    expect(got.tele).toBeUndefined();
+
+    // CAS update decodes → mutates → re-encodes; it must NOT re-preserve tele.
+    await repo.updateTurn("turn-legacy", { status: "completed" });
+    const raw = (await substrate.get("Turn", "turn-legacy")) as { spec?: Record<string, unknown> } | null;
+    expect(raw?.spec?.tele).toBeUndefined();
+  }, 60_000);
+
   it("hydrate virtual-view (missionIds + taskIds filtered by turnId)", async () => {
     const counter = new SubstrateCounter(substrate);
 

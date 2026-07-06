@@ -6,7 +6,8 @@
  *   - title → metadata.name (FIRST cluster-2 kind to use handle-classified pattern
  *     per §1.5; also sets envelope.name top-level for substrate-API ergonomic)
  *   - scope → spec (substantive markdown content; Mission.goal precedent)
- *   - tele[] → spec (declared teleological references)
+ *   - tele[] → DROPPED (mission-103 S4 constitutional cut; legacy flat tele must
+ *     NOT default into spec.tele — the bug caught at the S4a code-gate)
  *   - missionIds/taskIds → DROPPED (virtual-hydrated per Mission precedent)
  *   - Idempotency reference-equality
  */
@@ -74,10 +75,20 @@ describe("Turn migration module", () => {
     expect(env.metadata.createdBy).toEqual({ role: "engineer", agentId: "agent-greg" });
   });
 
-  it("spec carries declared scope + tele references", () => {
+  it("spec carries declared scope", () => {
     const env = module.migrateOne(legacyTurn()) as EnvelopeShape;
     expect(env.spec.scope).toBe("Migrate Task/PendingAction/Turn to envelope shape per cluster-2 Design v0.3");
-    expect(env.spec.tele).toEqual(["tele-1", "tele-2"]);
+  });
+
+  it("DROPS a legacy tele (mission-103 S4 cut): flat tele must NOT default into spec.tele", () => {
+    // A legacy flat Turn carrying tele must migrate WITHOUT it landing anywhere on
+    // the envelope — encodeEnvelope buckets unpartitioned keys into spec, so an
+    // un-deleted tele would survive as spec.tele (the S4a code-gate blocker).
+    const env = module.migrateOne(legacyTurn({ tele: ["tele-1", "tele-2"] })) as EnvelopeShape;
+    expect(env.spec.tele).toBeUndefined();
+    expect(env.metadata.tele).toBeUndefined();
+    expect(env.status.tele).toBeUndefined();
+    expect((env as unknown as Record<string, unknown>).tele).toBeUndefined();
   });
 
   it("status carries FSM phase only (single-FSM monolithic per Q3)", () => {

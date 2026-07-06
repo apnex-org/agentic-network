@@ -11,9 +11,12 @@
  *   - scope (free-text markdown) → spec.scope (substantive content; matches
  *     Mission.goal / Proposal.summary cluster-1 pattern)
  *   - tele[] REMOVED (mission-103 S4 constitutional cut): the Turn.tele field is
- *     gone; new envelopes carry no spec.tele. Old envelopes with a legacy spec.tele
- *     are tolerated on read — the field is simply not mapped back onto the Turn
- *     entity (which no longer declares it), so it drops silently. History untouched.
+ *     gone. preTransform DELETES `tele` before encode, so a legacy FLAT row never
+ *     migrates into spec.tele. A legacy ENVELOPE that already carries spec.tele is
+ *     tolerated (migrateOne returns it as-is on the isEnvelopeShape fast-path), but
+ *     the field is STRIPPED at the repository read membrane
+ *     (TurnRepositorySubstrate.decodeTurn) so it never surfaces above the store and
+ *     a CAS update cannot re-preserve it. History untouched.
  *   - missionIds[] + taskIds[] → DROPPED (virtual-hydrated per
  *     IMissionStore.list({turnId})/ITaskStore.list({turnId}); envelope omits per
  *     cluster-1 Mission.tasks/ideas precedent)
@@ -62,6 +65,12 @@ function preTransform(legacy: Record<string, unknown>): Record<string, unknown> 
   // envelope OMITS (cluster-1 Mission.tasks/ideas precedent)
   delete out.missionIds;
   delete out.taskIds;
+
+  // tele[] REMOVED (mission-103 S4 constitutional cut): drop it before encode so a
+  // legacy flat row never defaults into spec.tele. (encodeEnvelope buckets any
+  // unpartitioned key into spec, so an un-deleted tele WOULD survive — bug-caught
+  // at S4a code-gate.)
+  delete out.tele;
 
   // title also populates envelope.name top-level for substrate-API ergonomic;
   // pre-transform copies legacy.title → legacy.name. renameMap then ALSO

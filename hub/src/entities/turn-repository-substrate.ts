@@ -37,6 +37,11 @@ function decodeTurn(raw: Turn): Turn {
   const flat = decodeEnvelopeToFlat(raw as unknown as Record<string, unknown>, "Turn") as Record<string, unknown>;
   const rawName = (raw as { metadata?: { name?: unknown } }).metadata?.name;
   if (rawName !== undefined) flat.title = rawName;
+  // mission-103 S4 constitutional cut: strip any legacy spec.tele that
+  // decodeEnvelopeToFlat spreads back, so the removed Turn.tele never surfaces
+  // above the repository membrane (get_turn/list_turns) and a CAS update — which
+  // re-encodes this decoded flat — cannot re-preserve it into spec.tele.
+  delete (flat as Record<string, unknown>).tele;
   return flat as unknown as Turn;
 }
 
