@@ -9,12 +9,14 @@
  *   runner sets/clears at runKind boundary; consumer (sweeper) reads
  *   isMigrationInProgress("PendingAction") at tick-start to skip.
  *
- * Q4(b) Turn TOLERANT-shape on read: module's migrateOne handles dual-shape
- *   inputs via isEnvelopeShape probe (legacy → encode; envelope → return as-is);
- *   wire-flow.test.ts cluster-2 batch case exercises substrate-stored dual rows.
+ * Q4(b) Turn TOLERANT-shape on read: RETIRED with the Task/Turn subsystem
+ *   (work-162 A1) — the module dual-shape parity is now covered generically by
+ *   surviving kinds; the Turn/Task-specific module cases are deleted.
  *
  * Q4(c) Task WRITE-FREEZE: env-var flag mechanism + MigrationInProgressError
  *   marker class; consumers (writers) check the flag and throw the error.
+ *   (The flag mechanism itself is kind-agnostic — exercised here with generic
+ *   test-kind labels, independent of the retired Task/Turn modules.)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -24,13 +26,6 @@ import {
   isMigrationInProgress,
   MigrationInProgressError,
 } from "../shared/migration-flag.js";
-import { createTaskMigrationModule } from "../kinds/Task.js";
-import { createPendingActionMigrationModule } from "../kinds/PendingAction.js";
-import { createTurnMigrationModule } from "../kinds/Turn.js";
-import { isEnvelopeShape, type EnvelopeShape } from "../shared/envelope.js";
-import type { SchemaDef } from "../../../types.js";
-
-const mkSchema = (kind: string): SchemaDef => ({ kind, version: 2, fields: [], indexes: [], watchable: true });
 
 // Use kinds that aren't likely to collide with parallel test files
 const KIND_TASK = "TaskW2Test";
@@ -136,65 +131,7 @@ describe("Q4(c) — MigrationInProgressError marker class", () => {
   });
 });
 
-describe("Q4(b) — Turn TOLERANT-shape on read (module dual-shape handling)", () => {
-  const turnModule = createTurnMigrationModule(mkSchema("Turn"));
-
-  function legacyTurn(): Record<string, unknown> {
-    return {
-      id: "turn-W2",
-      title: "Dual-shape test",
-      scope: "Tolerant-read verification",
-      status: "active",
-      missionIds: [],
-      taskIds: [],
-      tele: [],
-      correlationId: "turn-W2",
-      createdBy: { role: "engineer", agentId: "agent-greg" },
-      createdAt: "2026-05-24T03:00:00Z",
-      updatedAt: "2026-05-24T03:00:00Z",
-    };
-  }
-
-  it("migrateOne(legacy) → envelope; migrateOne(envelope) → same envelope (idempotent dual-shape)", () => {
-    const legacy = legacyTurn();
-    const env1 = turnModule.migrateOne(legacy) as EnvelopeShape;
-    expect(isEnvelopeShape(env1)).toBe(true);
-
-    // Re-invoke with envelope: must return identical reference (idempotency)
-    const env2 = turnModule.migrateOne(env1);
-    expect(env2).toBe(env1);
-  });
-
-  it("dual-row: legacy + envelope sources both produce equivalent envelope outputs", () => {
-    const legacy = legacyTurn();
-    const envFromLegacy = turnModule.migrateOne(legacy) as EnvelopeShape;
-    const envFromEnvelope = turnModule.migrateOne(envFromLegacy) as EnvelopeShape;
-
-    // Both reach the same envelope-shape; envFromLegacy must equal envFromEnvelope
-    expect(envFromLegacy.id).toBe(envFromEnvelope.id);
-    expect(envFromLegacy.kind).toBe(envFromEnvelope.kind);
-    expect(envFromLegacy.apiVersion).toBe(envFromEnvelope.apiVersion);
-    expect(envFromLegacy.metadata).toEqual(envFromEnvelope.metadata);
-    expect(envFromLegacy.spec).toEqual(envFromEnvelope.spec);
-    expect(envFromLegacy.status).toEqual(envFromEnvelope.status);
-  });
-
-  it("all 3 cluster-2 kinds handle dual-shape uniformly (module-level tolerant-read)", () => {
-    const taskModule = createTaskMigrationModule(mkSchema("Task"));
-    const paModule = createPendingActionMigrationModule(mkSchema("PendingAction"));
-
-    const taskLegacy = { id: "task-W2", directive: "test", status: "pending", createdAt: "2026-05-24T00:00:00Z", labels: {}, dependsOn: [], revisionCount: 0 };
-    const paLegacy = { id: "pa-2026-05-24T00-00-00-000Z-1", targetAgentId: "agent-1", dispatchType: "thread_message", entityRef: "thread-1", naturalKey: "agent-1:thread-1:thread_message", payload: {}, enqueuedAt: "2026-05-24T00:00:00Z", receiptDeadline: "2026-05-24T00:00:30Z", completionDeadline: "2026-05-24T00:05:00Z", receiptAckedAt: null, completionAckedAt: null, attemptCount: 0, lastAttemptAt: null, state: "enqueued", escalationReason: null };
-
-    for (const [name, module, legacy] of [
-      ["Task", taskModule, taskLegacy],
-      ["PendingAction", paModule, paLegacy],
-      ["Turn", turnModule, legacyTurn()],
-    ] as const) {
-      const env1 = module.migrateOne(legacy) as EnvelopeShape;
-      const env2 = module.migrateOne(env1);
-      expect(isEnvelopeShape(env1), `${name} encoded`).toBe(true);
-      expect(env2, `${name} idempotent`).toBe(env1);
-    }
-  });
-});
+// work-162 (A1): the Q4(b) Turn TOLERANT-shape describe block (Turn/Task
+// module dual-shape parity) is RETIRED with the Task/Turn migration modules.
+// PendingAction (the surviving cluster-2 kind) retains its dual-shape coverage
+// in wire-flow.test.ts.
