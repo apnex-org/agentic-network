@@ -59,6 +59,8 @@ export type WorkTransitionVerb =
   | "start_work"
   | "block_work"
   | "resume_work"
+  | "pause_work"
+  | "unpause_work"
   | "release_work"
   | "abandon_work"
   | "complete_work"

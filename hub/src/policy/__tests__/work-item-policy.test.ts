@@ -40,7 +40,7 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
     listWorkItems: m("listWorkItems"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
-    abandonWork: m("abandonWork"), completeWork: m("completeWork"),
+    abandonWork: m("abandonWork"), pauseWork: m("pauseWork"), unpauseWork: m("unpauseWork"), completeWork: m("completeWork"),
   } as unknown as StubStore;
 }
 
@@ -49,7 +49,7 @@ const sampleItem = (over: Partial<WorkItem> = {}): WorkItem => ({
   evidenceRequirements: [], targetRef: null, status: "claimed",
   lease: { holder: "anonymous-engineer", token: "tok-abc", claimedAt: "t", expiresAt: "t", heartbeatAt: "t" },
   evidence: [], blockedOn: null, leaseExpiryCount: 0,
-  enteredCurrentStateAt: "t", stateDurations: { ready: 0, claimed: 0, in_progress: 0, blocked: 0, review: 0 },
+  enteredCurrentStateAt: "t", stateDurations: { ready: 0, claimed: 0, in_progress: 0, blocked: 0, paused: 0, review: 0 },
   attestationHistory: [], attestations: {}, executorHistory: [],
   createdAt: "t", updatedAt: "t", ...over,
 });
@@ -83,10 +83,57 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("registers all 17 tools (create_work + seed_blueprint + get_work + get_current_stint + legal_moves + list_work snapshot + the 9 lifecycle verbs + SEAL attest_evidence/verify_attestation)", () => {
-    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_stint", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work", "attest_evidence", "verify_attestation"]) {
+  it("registers all 19 tools (create_work + seed_blueprint + get_work + get_current_stint + legal_moves + list_work snapshot + the 9 lifecycle verbs + S3 pause_work/unpause_work + SEAL attest_evidence/verify_attestation)", () => {
+    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_stint", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "pause_work", "unpause_work", "complete_work", "attest_evidence", "verify_attestation"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
+  });
+
+  // ── S3 (idea-454) — pause_work / unpause_work + the paused query surface ──
+  // The repo owns the creator/Director authz + FSM gate (proven in entities/__tests__/paused-state.test.ts);
+  // these prove the POLICY SURFACE the operational verb rides on: registered + reachable, server-stamped
+  // identity (not caller-claimed), and repo denials/transitions surface through the dispatch path.
+  it("pause_work: passes the SERVER-STAMPED caller identity (agentId+role from session, not args) to store.pauseWork + surfaces the item", async () => {
+    const stub = makeStub({ pauseWork: () => sampleItem({ status: "paused", lease: null }) });
+    const r = await router.handle("pause_work", { workId: "work-1", agentId: "HACKER", role: "director", reason: "deferring" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBeFalsy();
+    expect((body(r).workItem as WorkItem).status).toBe("paused");
+    // creator authz is derived from the SESSION, never the spoofed args — the actor object carries the session identity.
+    expect(stub.calls[0].method).toBe("pauseWork");
+    expect(stub.calls[0].args).toEqual(["work-1", { agentId: "anonymous-engineer", role: "engineer" }, "deferring"]);
+  });
+
+  it("pause_work: a repo authz/phase denial (non-creator, or not-ready) surfaces as transition_rejected", async () => {
+    const stub = makeStub({ pauseWork: () => { throw new TransitionRejected("only the creator or Director may pause"); } });
+    const r = await router.handle("pause_work", { workId: "work-1" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("transition_rejected");
+  });
+
+  it("unpause_work: passes the SERVER-STAMPED identity to store.unpauseWork + surfaces the resumed item", async () => {
+    const stub = makeStub({ unpauseWork: () => sampleItem({ status: "ready", lease: null }) });
+    const r = await router.handle("unpause_work", { workId: "work-1", role: "director" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBeFalsy();
+    expect((body(r).workItem as WorkItem).status).toBe("ready");
+    expect(stub.calls[0].method).toBe("unpauseWork");
+    expect(stub.calls[0].args).toEqual(["work-1", { agentId: "anonymous-engineer", role: "engineer" }]);
+  });
+
+  it("unpause_work: a repo denial (non-creator, or not-paused) surfaces as transition_rejected", async () => {
+    const stub = makeStub({ unpauseWork: () => { throw new TransitionRejected("not paused"); } });
+    const r = await router.handle("unpause_work", { workId: "work-1" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("transition_rejected");
+  });
+
+  it("list_work: the status schema ADMITS `paused` (digest-excluded items are findable via the snapshot)", async () => {
+    const paused = sampleItem({ id: "work-dormant", status: "paused", lease: null });
+    const stub = makeStub({ listWorkItems: () => ({ items: [paused], truncated: false }) });
+    const r = await router.handle("list_work", { status: "paused" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBeFalsy(); // schema accepted status="paused" (would reject pre-S3)
+    expect((body(r).items as WorkItem[])[0].id).toBe("work-dormant");
+    // the filter reached the store verbatim
+    expect(stub.calls[0].args[0]).toMatchObject({ status: "paused" });
   });
 
   it("SEAL: attest_evidence is [Verifier]-gated — an ENGINEER is denied at the router", async () => {
