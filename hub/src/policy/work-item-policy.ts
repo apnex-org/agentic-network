@@ -665,15 +665,27 @@ async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext)
       return err("invalid_blueprint", `nodesRef document "${nodesRef}" content is not valid JSON: ${e instanceof Error ? e.message : String(e)}`);
     }
     // Accept a bare node array OR a { runId?, nodes } envelope (idea-393's shape).
+    let candidateNodes: unknown;
     if (Array.isArray(parsed)) {
-      nodes = parsed as BlueprintNode[];
+      candidateNodes = parsed;
     } else if (parsed && typeof parsed === "object" && Array.isArray((parsed as { nodes?: unknown }).nodes)) {
-      nodes = (parsed as { nodes: BlueprintNode[] }).nodes;
+      candidateNodes = (parsed as { nodes: unknown }).nodes;
       const rr = (parsed as { runId?: unknown }).runId;
       if (typeof rr === "string") refRunId = rr;
     } else {
       return err("invalid_blueprint", `nodesRef document "${nodesRef}" must contain a blueprint node array or a { runId?, nodes } object`);
     }
+    // VALIDATION PARITY (steve audit-11721): the inline nodes[] param is schema-checked
+    // at the router boundary, but a nodesRef doc is JSON.parse'd HERE — AFTER that layer —
+    // so the resolved nodes must run through the SAME per-node blueprintNodeSchema, or
+    // malformed content (e.g. a node missing required `type`, a bad enum, a non-array
+    // dependsOn) would reach createBlueprintNode uncontracted. Fail-closed → zero creates.
+    const validated = z.array(blueprintNodeSchema).safeParse(candidateNodes);
+    if (!validated.success) {
+      const detail = validated.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+      return err("invalid_blueprint", `nodesRef document "${nodesRef}" nodes failed schema validation: ${detail}`);
+    }
+    nodes = validated.data as unknown as BlueprintNode[];
   }
 
   // runId: the explicit arg wins (caller-controlled idempotency key); else the

@@ -985,6 +985,51 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
       expect(bpCalls(stub.calls).length).toBe(0);
     });
 
+    // VALIDATION PARITY (steve audit-11721): a nodesRef doc is parsed AFTER the router
+    // schema layer, so the resolved nodes must be re-validated against blueprintNodeSchema
+    // — else malformed doc content bypasses the per-node contract the inline nodes[] param
+    // enforces. Each of these reaches createBlueprintNode uncontracted WITHOUT the fix.
+    it("ref-path schema parity: a node MISSING required `type` → invalid_blueprint, zero created", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({ runId: "bad", nodes: [{ localId: "n1" }] }); // no `type`
+      const r = await router.handle("seed_blueprint", { nodesRef: "doc-notype" }, ctxWithDocs(stub, { "doc-notype": content }));
+      expect(body(r).errorKind).toBe("invalid_blueprint");
+      expect(String(body(r).error)).toMatch(/schema validation/);
+      expect(bpCalls(stub.calls).length).toBe(0); // never reaches createBlueprintNode with type=undefined
+    });
+
+    it("ref-path schema parity: an INVALID enum `type` → invalid_blueprint, zero created", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({ nodes: [{ localId: "n1", type: "not-a-real-type" }] });
+      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-badenum" }, ctxWithDocs(stub, { "doc-badenum": content }));
+      expect(body(r).errorKind).toBe("invalid_blueprint");
+      expect(bpCalls(stub.calls).length).toBe(0);
+    });
+
+    it("ref-path schema parity: a NON-ARRAY dependsOn (malformed field shape) → invalid_blueprint", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({ nodes: [{ localId: "n1", type: "task", dependsOn: "a" }] }); // string, not array
+      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-baddep" }, ctxWithDocs(stub, { "doc-baddep": content }));
+      expect(body(r).errorKind).toBe("invalid_blueprint");
+      expect(bpCalls(stub.calls).length).toBe(0);
+    });
+
+    it("ref-path schema parity: a NON-ARRAY references (malformed field shape) → invalid_blueprint", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({ nodes: [{ localId: "n1", type: "task", references: "nope" }] });
+      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-badref" }, ctxWithDocs(stub, { "doc-badref": content }));
+      expect(body(r).errorKind).toBe("invalid_blueprint");
+      expect(bpCalls(stub.calls).length).toBe(0);
+    });
+
+    it("ref-path schema parity: an UNKNOWN node field (strict) → invalid_blueprint", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({ nodes: [{ localId: "n1", type: "task", bogusField: 1 }] });
+      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-strict" }, ctxWithDocs(stub, { "doc-strict": content }));
+      expect(body(r).errorKind).toBe("invalid_blueprint");
+      expect(bpCalls(stub.calls).length).toBe(0);
+    });
+
     it("RBAC still gates the ref path: an ENGINEER is denied (no resolve, no create)", async () => {
       const stub = expandStub();
       const r = await router.handle(
