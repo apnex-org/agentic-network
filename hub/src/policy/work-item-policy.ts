@@ -967,7 +967,7 @@ const WORK_PRIORITY = z.enum(["critical", "high", "normal", "low"]);
 // Canonical phase set = WorkItemPhase (entities/work-item.ts) — mirrored here for the
 // list_work filter schema (same local duplication pattern as WORK_TYPE/WORK_PRIORITY +
 // the all-schemas storage-validation copy). Keep in sync with WorkItemPhase.
-const WORK_PHASE = z.enum(["ready", "claimed", "in_progress", "blocked", "review", "done", "abandoned"]);
+const WORK_PHASE = z.enum(["ready", "claimed", "in_progress", "blocked", "paused", "review", "done", "abandoned"]);
 const evidenceRequirementSchema = z.object({
   id: z.string().min(1).describe("Author-supplied requirement id — complete_work binds evidence to it by requirementId (unique within the item)"),
   kind: EVIDENCE_KIND,
@@ -1137,7 +1137,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
     "list_work",
     "[Any] Query WorkItems by status/role/holder — the org-state SNAPSHOT (the controller's ground-truth view, today hand-stitched from list_ready_work × roles × get_work). Returns FLAT items incl. the LEASE column (holder / expiry / state) for observability, UNFILTERED by claim-readiness: shows ALL matching items incl. dependency-blocked + leased + done (lease/blocked are COLUMNS, not filters — the deps/WIP readiness gate is list_ready_work's job, bug-181). Filters AND across status/role/holder. Paginated (limit/offset); truncation-HONEST — a 500-row scan-cap sets `truncated` + a note, never a silent cap (A4). idea-357-pt3.",
     {
-      status: WORK_PHASE.optional().describe("Filter by FSM phase (ready|claimed|in_progress|blocked|review|done|abandoned)"),
+      status: WORK_PHASE.optional().describe("Filter by FSM phase (ready|claimed|in_progress|blocked|paused|review|done|abandoned). `paused` items are digest-EXCLUDED (drop out of list_ready_work), so this snapshot is the way to surface them — status=\"paused\" is the find-my-dormant-work query."),
       role: z.string().optional().describe("Filter by role-eligibility ($contains membership; empty-eligibility 'any-role' items won't match a specific role)"),
       holder: z.string().optional().describe("Filter by current lease holder (agentId) — items this agent holds a lease on"),
       ...LIST_PAGINATION_SCHEMA,
