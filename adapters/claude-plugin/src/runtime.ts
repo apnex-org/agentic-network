@@ -132,7 +132,16 @@ export async function createClaudeRuntime(opts: ClaudeRuntimeOptions): Promise<C
     fetchLiveRevision: opts.fetchLiveToolSurfaceRevision,
     readServedRevision: () => readCache(opts.workDir, opts.log)?.toolSurfaceRevision ?? null,
     emitListChanged: () => {
-      void mcpServer?.sendToolListChanged();
+      // sendToolListChanged() is promise-returning; a stale/vintage host
+      // transport (the exact S2b scenario) can reject ASYNCHRONOUSLY, which the
+      // reconciler's sync emit-guard cannot catch. Mirror the opencode shim:
+      // swallow the rejection here, non-fatally (mid-close / session-dead), so
+      // it never escapes as an unhandled rejection.
+      mcpServer?.sendToolListChanged().catch((err) => {
+        opts.log(
+          `[ToolSurface] sendToolListChanged rejected (non-fatal; host transport likely closing): ${(err as Error)?.message ?? String(err)}`,
+        );
+      });
       opts.log("[ToolSurface] notifications/tools/list_changed emitted — host will re-enumerate");
     },
     log: opts.log,
