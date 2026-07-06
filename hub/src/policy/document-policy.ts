@@ -134,9 +134,9 @@ export function registerDocumentPolicy(router: PolicyRouter): void {
 
   router.register(
     "create_document",
-    "[Any] Write a document to the Hub's substrate storage. Path must start with 'docs/'. Overwrites if file already exists (preserves createdAt; bumps updatedAt + resourceVersion). Use for collaborative authoring, mission briefs, and shared documents.",
+    "[Any] Write a document to the Hub's substrate storage. NEW documents must be created under 'docs/'; an EXISTING document at ANY path may be overwritten (including legacy bare-path docs — e.g. tombstoning them). Overwrite preserves createdAt and bumps updatedAt + resourceVersion. Use for collaborative authoring, mission briefs, and shared documents.",
     {
-      path: z.string().describe("The document path (must start with 'docs/', e.g., 'docs/planning/mission-1.md')"),
+      path: z.string().describe("The document path. For a NEW document, must start with 'docs/' (e.g., 'docs/planning/mission-1.md'); an EXISTING document at any path may be overwritten regardless of prefix."),
       content: z.string().describe("The document content (Markdown)"),
       category: z.string().optional().describe("Optional category tag for filtering at list_documents (e.g., 'planning', 'design', 'retrospective')"),
     },
