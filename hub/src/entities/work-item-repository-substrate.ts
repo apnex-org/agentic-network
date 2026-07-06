@@ -31,6 +31,7 @@ import type {
   WorkItemReference,
   ReadyEmptyReason,
   StintProjection,
+  NextActionProjection,
   StintChild,
   LegalMoves,
   LegalMove,
@@ -696,6 +697,56 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * only (F-B; whole-subtree recursion is a follow-on). Works for ANY arc-node. null if the arc
    * id does not exist.
    */
+  /** W2 (idea-451 / work-182): the graph-projected NEXT ACTION for an arc-node — the
+   *  highest-priority READY completionDependsOn child.
+   *
+   *  CHILD-LOCAL claimability (steve #546): the candidates are computed by evaluating THIS
+   *  arc's completionDependsOn children DIRECTLY against the claim predicate (per-child
+   *  point-get → ready-status + roleEligibility + start-gate/dependency-readiness), NOT by
+   *  intersecting the arc's children with a capped GLOBAL ready-scan. The prior assembly
+   *  (`children ∩ listReadyForRole(role, 500)`) silently dropped an arc child ranked beyond
+   *  the 500-row global window — projection-empty while raw scope held a ready child, the
+   *  exact dark-miss the W3 reconciler seam forbids. Child-local, the scan is bounded by the
+   *  arc's OWN fan-out, so `readyCandidates` is the true RAW claimable scope, never capped.
+   *
+   *  Priority-ordered (critical<high<normal<low) with a deterministic id tiebreak →
+   *  scope-inversion is unrepresentable. blocked/paused/done/claimed children are excluded by
+   *  the ready-status check. The agent-scoped WIP-cap short-circuits FIRST (a maxed caller can
+   *  claim nothing → non-dark `wip_capped`); quarantine is the policy layer's caller gate. */
+  async getNextAction(arcId: string, role?: string, agentId?: string): Promise<NextActionProjection | null> {
+    const arc = await this.getWorkItem(arcId);
+    if (!arc) return null;
+    const childIds = arc.completionDependsOn ?? [];
+    const hasChildren = childIds.length > 0;
+    // Agent-scoped WIP-cap: a maxed caller can claim NOTHING — mirror listReadyForRole's
+    // short-circuit so a caller-scoped projection never over-reports a nextAction claim_work
+    // would reject. Non-dark (wip_capped). The role-only projection (agentId omitted, W3's
+    // path) skips this — it reports the arc's raw claimable scope regardless of any caller.
+    if (agentId !== undefined) {
+      const cap = wipCap(role);
+      if ((await this.inFlightCount(agentId, cap)) >= cap) {
+        return { arcId, nextAction: null, readyCandidates: 0, hasChildren, emptyReason: "wip_capped" };
+      }
+    }
+    // Per-child point-get + claim predicate. Mirrors claimWorkItem's authority checks:
+    // ready phase, roleEligibility (empty = any-role, OR'd in), dependency-readiness
+    // (dependsOn all done). A vanished child is simply not claimable (skipped, never hidden).
+    const readyChildren: WorkItem[] = [];
+    for (const childId of childIds) {
+      const child = await this.getWorkItem(childId);
+      if (!child || child.status !== "ready") continue;
+      if (role && child.roleEligibility.length > 0 && !child.roleEligibility.includes(role)) continue;
+      if (child.dependsOn.length > 0 && (await this.unmetDependencies(child.dependsOn)).length > 0) continue;
+      readyChildren.push(child);
+    }
+    const RANK: Record<string, number> = { critical: 0, high: 1, normal: 2, low: 3 };
+    readyChildren.sort((a, b) => {
+      const pr = (RANK[a.priority] ?? 9) - (RANK[b.priority] ?? 9);
+      return pr !== 0 ? pr : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    return { arcId, nextAction: readyChildren[0] ?? null, readyCandidates: readyChildren.length, hasChildren };
+  }
+
   async getStintProjection(workId: string): Promise<StintProjection | null> {
     const arc = await this.getWorkItem(workId);
     if (!arc) return null;
