@@ -215,17 +215,35 @@ claude_seed() {
       "$cdir/.claude.json" > "$tmp" && mv "$tmp" "$cdir/.claude.json"
   fi
   local sl; sl=$(jq -r '.statusLine // empty' <<<"$c")
+  # work-160: ultracode ON by default for every claude session (Director directive).
+  # Mechanism (deep-traced + A/B-verified against the v2.1.201 binary): TWO first-class
+  # settings.json booleans — ultracode:true AND enableWorkflows:true (ultracode
+  # REQUIRES workflows enabled). Read from merged settings at every session start;
+  # forces xhigh effort + dynamic workflow orchestration (session-start reminder reads
+  # "ultracode is on for the session"). Default-on at launch — an agent may /effort
+  # down mid-session but that is not persisted (reverts next launch). Do NOT add
+  # CLAUDE_CODE_EFFORT_LEVEL: a non-xhigh value SUPPRESSES ultracode. Fleet accounts
+  # must also hold the allow_workflows entitlement (no settings key grants it —
+  # confirm in the post-deploy settling check).
   if [[ ! -f "$cdir/settings.json" ]]; then
-    echo "  seeding : $cdir/settings.json (marketplace + plugin + prompt skips + statusline)"
+    echo "  seeding : $cdir/settings.json (marketplace + plugin + prompt skips + statusline + ultracode)"
     jq -n --arg mp "$mp" --arg sl "$sl" '{skipDangerousModePermissionPrompt: true,
       extraKnownMarketplaces: {"agentic-network": {source: {source: "directory", path: $mp}}},
       enabledPlugins: {"agent-adapter@agentic-network": true},
-      permissions: {allow: ["mcp__plugin_agent-adapter_proxy__*"]}}
+      permissions: {allow: ["mcp__plugin_agent-adapter_proxy__*"]},
+      ultracode: true, enableWorkflows: true}
       + (if $sl != "" then {statusLine: {type: "command", command: $sl}} else {} end)' > "$cdir/settings.json"
-  elif [[ -n "$sl" ]] && ! jq -e '.statusLine' "$cdir/settings.json" >/dev/null 2>&1; then
-    echo "  seeding : adding statusLine to existing settings.json"
+  else
+    # Existing settings.json: UNCONDITIONAL idempotent merge — set the two ultracode
+    # booleans on every seed (most agents are ALREADY seeded, so the fresh-create path
+    # never fires for them; the old statusLine-only elif never reached them), plus
+    # backfill statusLine only if absent. `. + {…}` is idempotent and leaves any other
+    # existing keys untouched.
+    echo "  seeding : ensuring ultracode+enableWorkflows on existing settings.json (+statusLine backfill if absent)"
     local tmp="$cdir/settings.json.tmp.$$"
-    jq --arg sl "$sl" '.statusLine = {type: "command", command: $sl}' "$cdir/settings.json" > "$tmp" && mv "$tmp" "$cdir/settings.json"
+    jq --arg sl "$sl" '. + {ultracode: true, enableWorkflows: true}
+      + (if $sl != "" and (.statusLine | not) then {statusLine: {type: "command", command: $sl}} else {} end)' \
+      "$cdir/settings.json" > "$tmp" && mv "$tmp" "$cdir/settings.json"
   fi
   if ! grep -qs '"agentic-network"' "$cdir/plugins/known_marketplaces.json"; then
     echo "  seeding : registering agentic-network marketplace (${mp})"
