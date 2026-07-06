@@ -706,7 +706,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const done = countOf("done");
     const statusCounts: Record<string, number> = {
       ready: countOf("ready"), claimed: countOf("claimed"), in_progress: countOf("in_progress"),
-      blocked: countOf("blocked"), review: countOf("review"), done, abandoned: countOf("abandoned"),
+      blocked: countOf("blocked"), paused: countOf("paused"), review: countOf("review"), done, abandoned: countOf("abandoned"),
       missing: countOf("missing"),
     };
     // work-99 (idea-384 Part B): the recursive SUBTREE rollup (leaves-only, DAG-deduped) + the
@@ -850,6 +850,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // complete: holder + COMPLETABLE + the completion-gate met.
     add("complete", isHolder && COMPLETABLE_PHASES.includes(status) && gateMet,
       !isHolder ? notHolder : !COMPLETABLE_PHASES.includes(status) ? `complete requires in_progress or review, was ${status}` : "completion-gate unmet — downstream completionDependsOn children are not all done");
+    // S3 (idea-454): pause (ready → paused) / unpause (paused → ready) — CREATOR-only or Director.
+    const canSuspend = isCreator || caller.role === "director";
+    add("pause", canSuspend && status === "ready",
+      !canSuspend ? "pause requires the item's creator or Director" : `pause requires ready, was ${status}`);
+    add("unpause", canSuspend && status === "paused",
+      !canSuspend ? "unpause requires the item's creator or Director" : `unpause requires paused, was ${status}`);
 
     return { workId: w.id, status, isHolder, gateMet, moves };
   }
@@ -1035,6 +1041,38 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (w.status !== "blocked") throw new TransitionRejected(`resume requires blocked, was ${w.status}`);
       const nowISO = new Date().toISOString();
       return { ...w, status: "in_progress", blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+    });
+  }
+
+  // ── S3 (idea-454) — paused/disabled dormancy state ────────────────────────
+  async pauseWork(workId: string, actor: { agentId: string; role: string }, _reason?: string): Promise<WorkItem | null> {
+    return this.tryCasUpdate(workId, (w) => {
+      // AUTHZ (high-stakes lifecycle-suspension): CREATOR-only (server-stamped createdBy) OR Director.
+      const isCreator = w.createdBy?.agentId === actor.agentId;
+      if (!isCreator && actor.role !== "director") {
+        throw new TransitionRejected(`pause requires the item's creator (${w.createdBy?.agentId ?? "unknown"}) or Director, not ${actor.role}/${actor.agentId}`);
+      }
+      // READY-ONLY: a claimed/in_progress/blocked item holds a lease — pausing would zombie the
+      // claimant. Use release/abandon for leased work (v1: no force-release).
+      if (w.status !== "ready") {
+        throw new TransitionRejected(`pause requires ready (no lease to zombie), was ${w.status} — use release/abandon for leased work`);
+      }
+      const nowISO = new Date().toISOString();
+      return { ...w, status: "paused" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+    });
+  }
+
+  async unpauseWork(workId: string, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
+    return this.tryCasUpdate(workId, (w) => {
+      const isCreator = w.createdBy?.agentId === actor.agentId;
+      if (!isCreator && actor.role !== "director") {
+        throw new TransitionRejected(`unpause requires the item's creator (${w.createdBy?.agentId ?? "unknown"}) or Director, not ${actor.role}/${actor.agentId}`);
+      }
+      if (w.status !== "paused") throw new TransitionRejected(`unpause requires paused, was ${w.status}`);
+      // → ready: re-enters the NORMAL claim gate — deps + roleEligibility are re-validated fail-closed
+      // at the subsequent claim (claimWorkItem's authority). Start-gates are NOT bypassed.
+      const nowISO = new Date().toISOString();
+      return { ...w, status: "ready" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 

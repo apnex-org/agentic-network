@@ -222,6 +222,31 @@ async function abandonWork(args: Record<string, unknown>, ctx: IPolicyContext): 
   } catch (e) { return mapVerbError(e); }
 }
 
+// ── S3 (idea-454) — pause_work / unpause_work ───────────────────────────────
+async function pauseWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const caller = await resolveCreatedBy(ctx); // server-stamped {role, agentId} — the authz basis
+  try {
+    const w = await store.pauseWork(args.workId as string, { agentId: caller.agentId, role: caller.role }, args.reason as string | undefined);
+    if (!w) return notFound(args.workId as string);
+    await emitWorkTransition(ctx, { item: w, verb: "pause_work", fromStatus: "ready", actor: caller });
+    return workItemResult(w);
+  } catch (e) { return mapVerbError(e); }
+}
+
+async function unpauseWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const caller = await resolveCreatedBy(ctx);
+  try {
+    const w = await store.unpauseWork(args.workId as string, { agentId: caller.agentId, role: caller.role });
+    if (!w) return notFound(args.workId as string);
+    await emitWorkTransition(ctx, { item: w, verb: "unpause_work", fromStatus: "paused", actor: caller });
+    return workItemResult(w);
+  } catch (e) { return mapVerbError(e); }
+}
+
 async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
@@ -1164,6 +1189,25 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       leaseToken: z.string().optional().describe("Required for the holder path; omitted for the creator override"),
     },
     abandonWork,
+  );
+
+  router.register(
+    "pause_work",
+    "[Any] S3 (idea-454): ready → PAUSED — a dormancy state (unclaimable, no lease, resumable). READY-ONLY (a leased item cannot be paused — its holder would be zombied; use release_work/abandon_work for leased work). AUTHZ: the item's CREATOR (Hub-derived from the session) or the Director. Paused items are EXCLUDED from list_ready_work + the claimable digest (dormant, not dark — get_current_stint surfaces them). NOTE: the reverse is `unpause_work` (paused→ready); `resume_work` is the DISTINCT blocked→in_progress lease-holder verb.",
+    {
+      workId: z.string(),
+      reason: z.string().optional().describe("Why the item is being paused (advisory)"),
+    },
+    pauseWork,
+  );
+
+  router.register(
+    "unpause_work",
+    "[Any] S3 (idea-454): PAUSED → ready — reactivate a paused item back into the normal claim gate. Start-gates are NOT bypassed: dependencies + roleEligibility are re-validated fail-closed at the subsequent claim_work. AUTHZ: the item's CREATOR or the Director.",
+    {
+      workId: z.string(),
+    },
+    unpauseWork,
   );
 
   router.register(

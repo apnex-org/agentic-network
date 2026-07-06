@@ -557,7 +557,7 @@ const WorkItem: SchemaDef = {
     { name: "id", type: "string", required: true },
     { name: "type", type: "string", required: false, enum: ["task", "bug", "review", "verifier-gate", "freeform"] },
     { name: "priority", type: "string", required: false, enum: ["critical", "high", "normal", "low"] },
-    { name: "status", type: "string", required: false, enum: ["ready", "claimed", "in_progress", "blocked", "review", "done", "abandoned"] },
+    { name: "status", type: "string", required: false, enum: ["ready", "claimed", "in_progress", "blocked", "paused", "review", "done", "abandoned"] },
   ],
   indexes: [
     { name: "workitem_status_phase_idx", fields: ["status.phase"] },

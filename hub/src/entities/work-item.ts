@@ -18,7 +18,7 @@ import type { EntityProvenance } from "../state.js";
 export type WorkItemType = "task" | "bug" | "review" | "verifier-gate" | "freeform";
 export type WorkItemPriority = "critical" | "high" | "normal" | "low";
 export type WorkItemPhase =
-  | "ready" | "claimed" | "in_progress" | "blocked" | "review" | "done" | "abandoned";
+  | "ready" | "claimed" | "in_progress" | "blocked" | "paused" | "review" | "done" | "abandoned";
 
 /** work-94 (cold-start spine, non-dark digest): WHY a caller-scoped claimable digest is
  *  empty — never a DARK (silent) zero. `wip_capped` + `no_claimable_ready` are repo-set
@@ -74,7 +74,8 @@ export interface StintProjection {
  *  agent learns the affordances AND why the others are unavailable. Caller-aware (holder vs not)
  *  + gate-aware (an arc with an unmet completion-gate → complete is NOT legal; a leaf → it is). */
 export type WorkItemVerb =
-  | "claim" | "start" | "block" | "resume" | "complete" | "release" | "abandon" | "renew";
+  | "claim" | "start" | "block" | "resume" | "complete" | "release" | "abandon" | "renew"
+  | "pause" | "unpause";
 export interface LegalMove {
   verb: WorkItemVerb;
   legal: boolean;
@@ -260,10 +261,13 @@ export interface StateDurations {
   claimed: number;
   in_progress: number;
   blocked: number;
+  /** S3 (idea-454): dwell in the `paused` dormancy state (resumable→ready). A non-terminal
+   *  dwell bucket so sum(buckets) === createdAt→completedAt still holds across a pause/resume. */
+  paused: number;
   review: number;
 }
 export const DEFAULT_STATE_DURATIONS: StateDurations = Object.freeze({
-  ready: 0, claimed: 0, in_progress: 0, blocked: 0, review: 0,
+  ready: 0, claimed: 0, in_progress: 0, blocked: 0, paused: 0, review: 0,
 });
 
 export interface WorkItem {
@@ -534,6 +538,19 @@ export interface IWorkItemStore {
    *  creator may also abandon from `ready` (bug-219 fix (c): closes items whose
    *  roleEligibility has no registered seat). */
   abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null>;
+
+  /** S3 (idea-454): `ready` → `paused` — a dormancy state (unclaimable, NO lease, resumable). READY-ONLY
+   *  (a claimed item has a holder+lease; pausing would zombie the claimant — use abandon/release for
+   *  leased work). AUTHZ: CREATOR-only (server-stamped createdBy) OR Director override. `paused` is a
+   *  non-terminal dwell state excluded from listReadyForRole + the claimable digest. NOTE: the
+   *  paused→ready reverse is `unpauseWork` — NOT `resumeWork` (which is the distinct blocked→in_progress
+   *  lease-holder verb; the council's 'resume_work' name collides with it, so this pair is pause/unpause). */
+  pauseWork(workId: string, actor: { agentId: string; role: string }, reason?: string): Promise<WorkItem | null>;
+
+  /** S3 (idea-454): `paused` → `ready` — reactivate a paused item back into the normal claim gate.
+   *  Start-gates are NOT bypassed: deps + roleEligibility are re-validated at the subsequent claim
+   *  (claimWorkItem's fail-closed authority). AUTHZ: CREATOR-only OR Director override. */
+  unpauseWork(workId: string, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
 
   /** {in_progress|review} → review|done. Appends + dedups the supplied evidence, then
    *  validates the anti-gameability predicate (coverage-by-binding + kind-match +
