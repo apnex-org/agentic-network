@@ -37,7 +37,6 @@ import type {
 } from "../entities/index.js";
 import type { IAuditStore } from "../state.js";
 import type { IThreadStore } from "../state.js";
-import type { ITaskStore } from "../state.js";
 import { evaluatePrecondition } from "./preconditions.js";
 import { escalateBareEnvelope } from "./bare-envelope-escalation.js";
 
@@ -352,4 +351,4 @@ export class ScheduledMessageSweeper {
 }
 
 // Force module-level type imports stay alive for ts isolatedModules.
-void (null as unknown as IThreadStore | ITaskStore);
+void (null as unknown as IThreadStore);

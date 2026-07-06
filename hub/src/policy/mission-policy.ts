@@ -13,7 +13,6 @@ import type { FsmTransitionTable } from "./types.js";
 import type {
   Mission,
   MissionStatus,
-  PlannedTask,
   MissionClass,
   MissionPulses,
   PulseConfig,
@@ -190,23 +189,8 @@ async function createMission(args: Record<string, unknown>, ctx: IPolicyContext)
   const title = args.title as string;
   const description = args.description as string;
   const documentRef = args.documentRef as string | undefined;
-  const plannedTasks = args.plannedTasks as PlannedTask[] | undefined;
   const missionClass = args.missionClass as MissionClass | undefined;
   const pulses = args.pulses as MissionPulses | undefined;
-
-  // task-316 / idea-144 Path A: normalize plannedTasks input — fresh
-  // plannedTasks always start as `unissued` with no bound taskId.
-  // Callers can omit status/issuedTaskId; we clamp to the canonical
-  // initial state.
-  const normalizedPlans = plannedTasks
-    ? plannedTasks.map((p) => ({
-        sequence: p.sequence,
-        title: p.title,
-        description: p.description,
-        status: "unissued" as const,
-        issuedTaskId: null,
-      }))
-    : undefined;
 
   // Mission-57 W1 + mission-68 W1: validate missionClass enum + prepare
   // pulses (strip sweeper-managed bookkeeping; auto-inject defaults;
@@ -238,7 +222,6 @@ async function createMission(args: Record<string, unknown>, ctx: IPolicyContext)
     documentRef,
     undefined,
     createdBy,
-    normalizedPlans,
     missionClass,
     preparedPulses,
   );
@@ -252,7 +235,6 @@ async function createMission(args: Record<string, unknown>, ctx: IPolicyContext)
       missionId: mission.id,
       status: mission.status,
       correlationId: mission.correlationId,
-      plannedTasks: mission.plannedTasks,
       missionClass: mission.missionClass,
       pulses: mission.pulses,
     }) }],
@@ -264,7 +246,6 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
   const status = args.status as MissionStatus | undefined;
   const description = args.description as string | undefined;
   const documentRef = args.documentRef as string | undefined;
-  const plannedTasks = args.plannedTasks as PlannedTask[] | undefined;
   const missionClass = args.missionClass as MissionClass | undefined;
   const pulses = args.pulses as MissionPulses | undefined;
 
@@ -272,27 +253,12 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
     status?: MissionStatus;
     description?: string;
     documentRef?: string;
-    plannedTasks?: PlannedTask[];
     missionClass?: MissionClass;
     pulses?: MissionPulses;
   } = {};
   if (status) updates.status = status;
   if (description !== undefined) updates.description = description;
   if (documentRef !== undefined) updates.documentRef = documentRef;
-  if (plannedTasks !== undefined) {
-    // task-316 / idea-144 Path A: incoming plannedTasks on update are
-    // also normalized to initial state. Callers revising an existing
-    // mission's plan are replacing the plan wholesale; advancement
-    // bookkeeping (issued/completed) belongs to the cascade handler,
-    // not direct update paths.
-    updates.plannedTasks = plannedTasks.map((p) => ({
-      sequence: p.sequence,
-      title: p.title,
-      description: p.description,
-      status: p.status ?? ("unissued" as const),
-      issuedTaskId: p.issuedTaskId ?? null,
-    }));
-  }
   // Mission-57 W1: validate missionClass enum + prepare pulses (strip
   // sweeper-managed bookkeeping; auto-inject defaults; validate
   // engineer-authored fields). Per Design v1.0 §3 default-injection
@@ -399,9 +365,7 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
     content: [{ type: "text" as const, text: JSON.stringify({
       missionId: mission.id,
       status: mission.status,
-      tasks: mission.tasks,
       ideas: mission.ideas,
-      plannedTasks: mission.plannedTasks,
       missionClass: mission.missionClass,
       pulses: mission.pulses,
     }) }],
@@ -523,7 +487,6 @@ const MISSION_ACCESSORS: FieldAccessors<Mission> = {
   id: (m) => m.id,
   status: (m) => phaseFromEntity(m),
   correlationId: (m) => m.correlationId,
-  turnId: (m) => m.turnId,
   sourceThreadId: (m) => m.sourceThreadId,
   sourceActionId: (m) => m.sourceActionId,
   createdAt: (m) => m.createdAt,
@@ -542,7 +505,6 @@ const MISSION_SORT_SCHEMA = buildQuerySortSchema(MISSION_SORTABLE_FIELDS);
 function projectMissionCompact(m: Mission) {
   return {
     id: m.id, title: m.title, status: m.status, missionClass: m.missionClass ?? null,
-    tasksCount: Array.isArray(m.tasks) ? m.tasks.length : 0,
     ideasCount: Array.isArray(m.ideas) ? m.ideas.length : 0,
     updatedAt: m.updatedAt,
   };

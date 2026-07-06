@@ -51,9 +51,7 @@ import { createBugMigrationModule } from "../storage-substrate/migrations/v2-env
 import { createThreadMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Thread.js";
 import { createMissionMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Mission.js";
 import { createProposalMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Proposal.js";
-import { createTaskMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Task.js";
 import { createPendingActionMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/PendingAction.js";
-import { createTurnMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Turn.js";
 import { createAgentMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Agent.js";
 import { createSchemaDefMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/SchemaDef.js";
 import { createCounterMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Counter.js";
@@ -173,10 +171,8 @@ function registerAllModules(runner: MigrationRunner): void {
   runner.register(createMissionMigrationModule(findSchema("Mission")));
   runner.register(createProposalMigrationModule(findSchema("Proposal")));
 
-  // cluster-2 (3): queue/FSM-active
-  runner.register(createTaskMigrationModule(findSchema("Task")));
+  // cluster-2 (1): queue/FSM-active
   runner.register(createPendingActionMigrationModule(findSchema("PendingAction")));
-  runner.register(createTurnMigrationModule(findSchema("Turn")));
 
   // cluster-3 (4): metadata/config/projection
   runner.register(createAgentMigrationModule(findSchema("Agent")));

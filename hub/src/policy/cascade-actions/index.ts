@@ -12,7 +12,6 @@
  */
 
 import "./close-no-action.js";
-import "./create-task.js";
 import "./create-proposal.js";
 import "./create-idea.js";
 import "./update-idea.js";

@@ -12,10 +12,9 @@
  * fail-fast optimization rather than a second enforcement point; the
  * cascade handler remains the final transactional arbiter.
  */
-import type { ITaskStore, IProposalStore, IThreadStore } from "../../state.js";
+import type { IProposalStore, IThreadStore } from "../../state.js";
 import type { IIdeaStore } from "../../entities/idea.js";
 import type { IMissionStore } from "../../entities/mission.js";
-import type { ITurnStore } from "../../entities/turn.js";
 import type { IBugStore } from "../../entities/bug.js";
 import type { ConvergenceGateSubtype } from "../../state.js";
 
@@ -27,12 +26,10 @@ import type { ConvergenceGateSubtype } from "../../state.js";
  * callers — validators MUST NOT invoke mutating methods.
  */
 export interface ValidationContext {
-  task: ITaskStore;
   idea: IIdeaStore;
   mission: IMissionStore;
   thread: IThreadStore;
   proposal: IProposalStore;
-  turn: ITurnStore;
   bug: IBugStore;
 }
 

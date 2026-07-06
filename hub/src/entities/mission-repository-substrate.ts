@@ -27,13 +27,12 @@
 
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
-import type { ITaskStore, EntityProvenance } from "../state.js";
+import type { EntityProvenance } from "../state.js";
 import type { IIdeaStore, CascadeBacklink } from "./idea.js";
 import type {
   Mission,
   MissionStatus,
   IMissionStore,
-  PlannedTask,
   MissionClass,
   MissionPulses,
   PulseConfig,
@@ -85,7 +84,6 @@ export class MissionRepositorySubstrate implements IMissionStore {
   constructor(
     private readonly substrate: HubStorageSubstrate,
     private readonly counter: SubstrateCounter,
-    private readonly taskStore: ITaskStore,
     private readonly ideaStore: IIdeaStore,
   ) {}
 
@@ -95,7 +93,6 @@ export class MissionRepositorySubstrate implements IMissionStore {
     documentRef?: string,
     backlink?: CascadeBacklink,
     createdBy?: EntityProvenance,
-    plannedTasks?: PlannedTask[],
     missionClass?: MissionClass,
     pulses?: MissionPulses,
   ): Promise<Mission> {
@@ -109,15 +106,12 @@ export class MissionRepositorySubstrate implements IMissionStore {
       description,
       documentRef: documentRef || null,
       status: "proposed",
-      tasks: [],
       ideas: [],
       correlationId: id,
-      turnId: null,
       sourceThreadId: backlink?.sourceThreadId ?? null,
       sourceActionId: backlink?.sourceActionId ?? null,
       sourceThreadSummary: backlink?.sourceThreadSummary ?? null,
       createdBy,
-      plannedTasks: plannedTasks ? plannedTasks.map((p) => ({ ...p })) : undefined,
       missionClass,
       pulses: pulses
         ? {
@@ -137,8 +131,7 @@ export class MissionRepositorySubstrate implements IMissionStore {
     }
     console.log(
       `[MissionRepositorySubstrate] Mission created: ${id} — ${title}` +
-        (backlink ? ` (cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId})` : "") +
-        (plannedTasks?.length ? ` [plannedTasks=${plannedTasks.length}]` : ""),
+        (backlink ? ` (cascade from ${backlink.sourceThreadId}/${backlink.sourceActionId})` : ""),
     );
     return this.hydrate(mission);
   }
@@ -181,7 +174,6 @@ export class MissionRepositorySubstrate implements IMissionStore {
       status?: MissionStatus;
       description?: string;
       documentRef?: string;
-      plannedTasks?: PlannedTask[];
       missionClass?: MissionClass;
       pulses?: MissionPulses;
     },
@@ -191,9 +183,6 @@ export class MissionRepositorySubstrate implements IMissionStore {
         if (updates.status) m.status = updates.status;
         if (updates.description !== undefined) m.description = updates.description;
         if (updates.documentRef !== undefined) m.documentRef = updates.documentRef;
-        if (updates.plannedTasks !== undefined) {
-          m.plannedTasks = updates.plannedTasks.map((p) => ({ ...p }));
-        }
         if (updates.missionClass !== undefined) {
           m.missionClass = updates.missionClass;
         }
@@ -205,7 +194,6 @@ export class MissionRepositorySubstrate implements IMissionStore {
       });
       console.log(
         `[MissionRepositorySubstrate] Mission updated: ${missionId} → status=${updated.status}` +
-          (updates.plannedTasks ? ` [plannedTasks=${updates.plannedTasks.length}]` : "") +
           (updates.missionClass ? ` [missionClass=${updates.missionClass}]` : "") +
           (updates.pulses ? ` [pulses-updated]` : ""),
       );
@@ -218,89 +206,14 @@ export class MissionRepositorySubstrate implements IMissionStore {
     }
   }
 
-  async markPlannedTaskIssued(
-    missionId: string,
-    sequence: number,
-    issuedTaskId: string,
-  ): Promise<PlannedTask | null> {
-    let result: PlannedTask | null = null;
-    try {
-      await this.casUpdate(missionId, (m) => {
-        if (!m.plannedTasks) {
-          result = null;
-          return m;
-        }
-        const slot = m.plannedTasks.find((p) => p.sequence === sequence);
-        if (!slot || slot.status !== "unissued") {
-          result = null;
-          return m;
-        }
-        slot.status = "issued";
-        slot.issuedTaskId = issuedTaskId;
-        m.updatedAt = new Date().toISOString();
-        result = { ...slot };
-        return m;
-      });
-      if (result) {
-        console.log(
-          `[MissionRepositorySubstrate] plannedTask issued: ${missionId} seq=${sequence} → ${issuedTaskId}`,
-        );
-      }
-      return result;
-    } catch (err) {
-      if (err instanceof Error && err.message === `Mission not found: ${missionId}`) {
-        return null;
-      }
-      throw err;
-    }
-  }
-
-  async markPlannedTaskCompleted(
-    missionId: string,
-    issuedTaskId: string,
-  ): Promise<PlannedTask | null> {
-    let result: PlannedTask | null = null;
-    try {
-      await this.casUpdate(missionId, (m) => {
-        if (!m.plannedTasks) {
-          result = null;
-          return m;
-        }
-        const slot = m.plannedTasks.find((p) => p.issuedTaskId === issuedTaskId);
-        if (!slot || slot.status !== "issued") {
-          result = null;
-          return m;
-        }
-        slot.status = "completed";
-        m.updatedAt = new Date().toISOString();
-        result = { ...slot };
-        return m;
-      });
-      if (result) {
-        console.log(
-          `[MissionRepositorySubstrate] plannedTask completed: ${missionId} seq=${(result as PlannedTask).sequence} taskId=${issuedTaskId}`,
-        );
-      }
-      return result;
-    } catch (err) {
-      if (err instanceof Error && err.message === `Mission not found: ${missionId}`) {
-        return null;
-      }
-      throw err;
-    }
-  }
-
   // ── Internal ─────────────────────────────────────────────────────
 
   private async hydrate(stored: Mission): Promise<Mission> {
-    const [tasks, ideas] = await Promise.all([
-      this.taskStore.listTasks(),
-      this.ideaStore.listIdeas(),
-    ]);
+    // work-162: Task retired — Mission's only remaining virtual view is `ideas`.
+    const ideas = await this.ideaStore.listIdeas();
     // mission-90 W8: decode envelope→flat (idea-327) at the read boundary.
     return {
       ...decodeEnvelopeToFlat(stored, "Mission"),
-      tasks: tasks.filter((t) => t.correlationId === stored.id).map((t) => t.id),
       ideas: ideas.filter((i) => i.missionId === stored.id).map((i) => i.id),
     };
   }

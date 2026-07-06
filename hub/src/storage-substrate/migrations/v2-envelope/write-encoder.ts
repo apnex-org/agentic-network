@@ -35,9 +35,7 @@ import { createMessageMigrationModule } from "./kinds/Message.js";
 import { createMissionMigrationModule } from "./kinds/Mission.js";
 import { createPendingActionMigrationModule } from "./kinds/PendingAction.js";
 import { createProposalMigrationModule } from "./kinds/Proposal.js";
-import { createTaskMigrationModule } from "./kinds/Task.js";
 import { createThreadMigrationModule } from "./kinds/Thread.js";
-import { createTurnMigrationModule } from "./kinds/Turn.js";
 import { createSchemaDefMigrationModule } from "./kinds/SchemaDef.js";
 import { createNotificationMigrationModule } from "./kinds/Notification.js";
 import { createDocumentMigrationModule } from "./kinds/Document.js";
@@ -72,9 +70,7 @@ const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModul
   Mission: createMissionMigrationModule,
   PendingAction: createPendingActionMigrationModule,
   Proposal: createProposalMigrationModule,
-  Task: createTaskMigrationModule,
   Thread: createThreadMigrationModule,
-  Turn: createTurnMigrationModule,
   SchemaDef: createSchemaDefMigrationModule,
   Notification: createNotificationMigrationModule,
   Document: createDocumentMigrationModule,

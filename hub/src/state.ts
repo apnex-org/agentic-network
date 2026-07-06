@@ -1215,40 +1215,9 @@ export interface IProposalStore {
   findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Proposal | null>;
 }
 
-export interface ITaskStore {
-  submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink, createdBy?: EntityProvenance): Promise<string>;
-  findByIdempotencyKey(key: string): Promise<Task | null>;
-  /**
-   * Mission-24 Phase 2 (ADR-014, INV-TH20): look up a Task by the natural
-   * idempotency key {sourceThreadId, sourceActionId}. Returns null when
-   * no Task has been spawned from that thread+action pair. Cascade
-   * handlers query this before create to dedupe retries. The key
-   * structurally matches CascadeBacklink minus the summary — summary
-   * isn't part of the lookup.
-   */
-  findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Task | null>;
-  unblockDependents(completedTaskId: string): Promise<string[]>;
-  cancelDependents(failedTaskId: string): Promise<string[]>;
-  /**
-   * Mission-19: claim the next directive the caller is authorized to run.
-   * A Task with non-empty `labels` is only matched when every (k,v) pair
-   * in task.labels is present and equal in `claimant.labels` (subset).
-   * When `claimant` is omitted, behaves like the pre-Mission-19 FIFO pull
-   * (used by legacy paths that have not yet completed M18 handshake).
-   * `claimant.agentId`, when set, is persisted on the task as
-   * `assignedAgentId` for P2P routing of subsequent events.
-   */
-  getNextDirective(claimant?: { agentId?: string; labels?: Record<string, string> }): Promise<Task | null>;
-  submitReport(taskId: string, report: string, summary: string, success: boolean, verification?: string): Promise<boolean>;
-  getNextReport(): Promise<Task | null>;
-  getTask(taskId: string): Promise<Task | null>;
-  listTasks(): Promise<Task[]>;
-  cancelTask(taskId: string): Promise<boolean>;
-  requestClarification(taskId: string, question: string): Promise<boolean>;
-  respondToClarification(taskId: string, answer: string): Promise<boolean>;
-  submitReview(taskId: string, assessment: string, decision?: "approved" | "rejected"): Promise<boolean>;
-  getReview(taskId: string): Promise<{ taskId: string; assessment: string; reviewRef: string } | null>;
-}
+// work-162 (A1): ITaskStore retired — Task verbs/cascade/stores cut. The `Task`
+// read-shape above is preserved for frozen historical-row reads per A4; there is
+// no store interface to mutate or produce Tasks.
 
 export interface IEngineerRegistry {
   /** Bare role-set used by the legacy register_role path and auto-register in task-policy. */
