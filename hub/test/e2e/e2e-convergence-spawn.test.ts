@@ -28,51 +28,9 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
     eng = orch.asEngineer();
   });
 
-  it("bilateral convergence with create_task action spawns a task (executed report entry)", async () => {
-    const thread = await arch.createThread("Build caching layer", "Should we add Redis?");
-    const threadId = thread.threadId as string;
-
-    // Engineer stages + converges; summary authored here.
-    await eng.replyToThread(threadId, "Yes — Redis as a write-through cache", {
-      converged: true,
-      intent: "implementation_ready",
-      summary: "Agreed: Redis as write-through cache for hot queries.",
-      stagedActions: [{
-        kind: "stage", type: "create_task",
-        payload: {
-          title: "Implement Redis caching",
-          description: "Add Redis as a write-through cache for hot queries",
-        },
-      }],
-    });
-
-    orch.events.clear();
-    // Architect mirrors converge → gate fires → cascade executes.
-    await arch.replyToThread(threadId, "Agreed. Proceed.", { converged: true });
-
-    // Merged Phase-2 event carries the full ConvergenceReport
-    const finalized = orch.events.expectEvent("thread_convergence_finalized");
-    expect(finalized.data.committedActionCount).toBe(1);
-    expect(finalized.data.executedCount).toBe(1);
-    expect(finalized.data.warning).toBe(false);
-    expect(finalized.data.threadTerminal).toBe("closed");
-    const entry = (finalized.data.report as any[])[0];
-    expect(entry.type).toBe("create_task");
-    expect(entry.status).toBe("executed");
-    expect(entry.entityId).toMatch(/^task-/);
-
-    // Task was spawned with back-link metadata
-    const tasks = await orch.stores.task.listTasks();
-    const spawned = tasks.find((t) => t.title === "Implement Redis caching");
-    expect(spawned).toBeDefined();
-    expect(spawned!.sourceThreadId).toBe(threadId);
-    expect(spawned!.sourceActionId).toBe(entry.actionId);
-    expect(spawned!.sourceThreadSummary).toMatch(/Redis as write-through cache/);
-
-    // Thread auto-closed by cascade
-    const closed = await arch.getThread(threadId);
-    expect(closed.status).toBe("closed");
-  });
+  // work-162 (A1): the "create_task action spawns a task" convergence test is
+  // retired (create_task cascade + Task store gone). create_proposal / create_idea
+  // spawn tests below retain the bilateral-convergence-cascade coverage.
 
   it("bilateral convergence with create_proposal action spawns a proposal", async () => {
     const thread = await arch.createThread("Store refactor", "Repository pattern?");
@@ -161,11 +119,9 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
     expect(entry.type).toBe("close_no_action");
     expect(entry.entityId).toBeNull();
 
-    // No task / proposal / idea spawned.
-    const tasks = await orch.stores.task.listTasks();
+    // work-162: no proposal / idea spawned (Task store retired).
     const proposals = await orch.stores.proposal.getProposals();
     const ideas = await orch.stores.idea.listIdeas();
-    expect(tasks.filter((t) => t.sourceThreadId === threadId)).toHaveLength(0);
     expect(proposals.filter((p) => p.sourceThreadId === threadId)).toHaveLength(0);
     expect(ideas.filter((i) => i.sourceThreadId === threadId)).toHaveLength(0);
 
@@ -184,10 +140,10 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
     // Architect stages + converges
     await arch.replyToThread(threadId, "Let's do it", {
       converged: true,
-      summary: "Architect proposed a late-bound task; Engineer to confirm.",
+      summary: "Architect proposed a late-bound idea; Engineer to confirm.",
       stagedActions: [{
-        kind: "stage", type: "create_task",
-        payload: { title: "Late-bound task", description: "Bound by architect at converge time" },
+        kind: "stage", type: "create_idea",
+        payload: { title: "Late-bound idea", description: "Bound by architect at converge time" },
       }],
     });
 
@@ -198,23 +154,24 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
     const finalized = orch.events.expectEvent("thread_convergence_finalized");
     expect(finalized.data.executedCount).toBe(1);
 
-    const tasks = await orch.stores.task.listTasks();
-    const spawned = tasks.find((t) => t.title === "Late-bound task");
+    // work-162: re-pointed off create_task → create_idea.
+    const ideas = await orch.stores.idea.listIdeas();
+    const spawned = ideas.find((i) => i.sourceThreadId === threadId);
     expect(spawned).toBeDefined();
-    expect(spawned!.sourceThreadId).toBe(threadId);
   });
 
-  it("multi-action cascade: create_task + create_idea in one convergence, both execute", async () => {
+  it("multi-action cascade: create_proposal + create_idea in one convergence, both execute", async () => {
+    // work-162: re-pointed off create_task → create_proposal (both surviving spawn actions).
     const thread = await arch.createThread("Multi", "Two outcomes");
     const threadId = thread.threadId as string;
 
     await eng.replyToThread(threadId, "Spawn both.", {
       converged: true,
-      summary: "Agreed to spawn a task and a backlog idea.",
+      summary: "Agreed to spawn a proposal and a backlog idea.",
       stagedActions: [
         {
-          kind: "stage", type: "create_task",
-          payload: { title: "Task A", description: "desc A" },
+          kind: "stage", type: "create_proposal",
+          payload: { title: "Proposal A", description: "desc A" },
         },
         {
           kind: "stage", type: "create_idea",
@@ -231,9 +188,9 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
     expect(finalized.data.executedCount).toBe(2);
     expect(finalized.data.warning).toBe(false);
 
-    const tasks = await orch.stores.task.listTasks();
+    const proposals = await orch.stores.proposal.getProposals();
     const ideas = await orch.stores.idea.listIdeas();
-    expect(tasks.filter((t) => t.sourceThreadId === threadId)).toHaveLength(1);
+    expect(proposals.filter((p) => p.sourceThreadId === threadId)).toHaveLength(1);
     expect(ideas.filter((i) => i.sourceThreadId === threadId)).toHaveLength(1);
   });
 
@@ -241,24 +198,25 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
     const thread = await arch.createThread("Idempotent", "Spawn once");
     const threadId = thread.threadId as string;
 
-    await eng.replyToThread(threadId, "Spawn task", {
+    await eng.replyToThread(threadId, "Spawn idea", {
       converged: true,
-      summary: "Spawn exactly one task.",
+      summary: "Spawn exactly one idea.",
       stagedActions: [{
-        kind: "stage", type: "create_task",
+        kind: "stage", type: "create_idea",
         payload: { title: "Once", description: "only once" },
       }],
     });
     await arch.replyToThread(threadId, "Confirmed", { converged: true });
 
-    const tasksBefore = await orch.stores.task.listTasks();
-    const spawnedBefore = tasksBefore.filter((t) => t.sourceThreadId === threadId);
+    // work-162: re-pointed off create_task → create_idea.
+    const ideasBefore = await orch.stores.idea.listIdeas();
+    const spawnedBefore = ideasBefore.filter((i) => i.sourceThreadId === threadId);
     expect(spawnedBefore).toHaveLength(1);
 
     // Re-run the cascade directly against the same committed action.
     const { runCascade } = await import("../../src/policy/cascade.js");
     const threadRec = await orch.stores.thread.getThread(threadId);
-    const action = threadRec!.convergenceActions.find((a) => a.type === "create_task")!;
+    const action = threadRec!.convergenceActions.find((a) => a.type === "create_idea")!;
     const result = await runCascade(
       (arch as any).ctx() ?? {
         stores: orch.stores,
@@ -274,8 +232,8 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
     expect(result.report[0].status).toBe("skipped_idempotent");
 
     // Still only one spawned.
-    const tasksAfter = await orch.stores.task.listTasks();
-    expect(tasksAfter.filter((t) => t.sourceThreadId === threadId)).toHaveLength(1);
+    const ideasAfter = await orch.stores.idea.listIdeas();
+    expect(ideasAfter.filter((i) => i.sourceThreadId === threadId)).toHaveLength(1);
   });
 
   it("auto-close: thread transitions to 'closed' after successful cascade", async () => {
@@ -286,8 +244,8 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
       converged: true,
       summary: "Spawn and close.",
       stagedActions: [{
-        kind: "stage", type: "create_task",
-        payload: { title: "Auto-close task", description: "test" },
+        kind: "stage", type: "create_idea",
+        payload: { title: "Auto-close idea", description: "test" },
       }],
     });
     await arch.replyToThread(threadId, "OK", { converged: true });

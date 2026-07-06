@@ -91,20 +91,21 @@ describe("Mission migration module", () => {
     });
   });
 
-  it("spec carries title + description + documentRef + missionClass + plannedTasks", () => {
+  it("spec carries title + description + documentRef + missionClass (work-162: plannedTasks STRIPPED)", () => {
     const env = module.migrateOne(legacyMission()) as EnvelopeShape;
     expect(env.spec.title).toBe("M-K8s-Envelope");
     expect(env.spec.description).toBe("Substrate-wide K8s envelope upgrade");
     expect(env.spec.documentRef).toBe("docs/missions/m-k8s-envelope.md");
     expect(env.spec.missionClass).toBe("substrate-introduction");
-    expect(env.spec.plannedTasks).toBeInstanceOf(Array);
-    expect((env.spec.plannedTasks as unknown[]).length).toBe(2);
+    // work-162 (A1) A4-seal: plannedTasks DROPPED on re-encode — never carried
+    // into the envelope spec (the read boundary also quarantines legacy rows).
+    expect(env.spec.plannedTasks).toBeUndefined();
   });
 
-  it("status carries FSM phase + turnId + monolithic pulses", () => {
+  it("status carries FSM phase + monolithic pulses", () => {
+    // work-162 (A1): turnId retired from the Mission status partition.
     const env = module.migrateOne(legacyMission()) as EnvelopeShape;
     expect(env.status.phase).toBe("active");
-    expect(env.status.turnId).toBe(null);
     expect(env.status.pulses).toBeDefined();
     const pulses = env.status.pulses as Record<string, unknown>;
     expect(pulses.engineerPulse).toBeDefined();
@@ -116,12 +117,14 @@ describe("Mission migration module", () => {
     expect(env.status.phase).toBe("abandoned");
   });
 
-  it("plannedTasks[].issuedTaskId IS intrinsic per-slot (no synthetic issuedTaskIds[] envelope field)", () => {
+  it("work-162 (A1) A4-seal: retired plannedTasks + turnId are STRIPPED on re-encode (no resurrection into the envelope)", () => {
     const env = module.migrateOne(legacyMission()) as EnvelopeShape;
-    const tasks = env.spec.plannedTasks as Array<{ issuedTaskId?: string }>;
-    expect(tasks[0].issuedTaskId).toBe("task-500");
-    expect(tasks[1].issuedTaskId).toBe("task-501");
-    // No synthetic envelope-level issuedTaskIds array
+    // The legacyMission() fixture carries plannedTasks (with issuedTaskId slots)
+    // + turnId; the Mission migration module must DROP both — neither may appear
+    // in spec OR status (nor as a synthetic issuedTaskIds[] field).
+    expect(env.spec.plannedTasks).toBeUndefined();
+    expect(env.status.turnId).toBeUndefined();
+    expect(env.spec.turnId).toBeUndefined();
     expect(env.status.issuedTaskIds).toBeUndefined();
   });
 

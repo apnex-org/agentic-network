@@ -43,8 +43,10 @@ export function createMissionMigrationModule(schema: SchemaDef): KindMigrationMo
         "annotations",
         "updatedAt",
       ],
-      spec: ["title", "description", "documentRef", "missionClass", "plannedTasks"],
-      status: ["turnId", "pulses"],
+      // work-162 (A1): plannedTasks (spec) + turnId (status) removed with the
+      // Task/Turn subsystem. Frozen historical rows keep their old partitions.
+      spec: ["title", "description", "documentRef", "missionClass"],
+      status: ["pulses"],
     },
   };
 
@@ -68,6 +70,13 @@ function preTransform(legacy: Record<string, unknown>): Record<string, unknown> 
   // Virtual-hydrated fields — envelope omits (repository.hydrate() recomputes at read-time)
   delete out.tasks;
   delete out.ideas;
+
+  // work-162 (A1) A4-seal: DROP the retired Task/Turn appendages on re-encode so
+  // no re-migrated legacy row carries plannedTasks/turnId forward into the
+  // envelope. Already-encoded rows keep them in storage (immutable, never
+  // rewritten); the read boundary (hydrate) quarantines those from get_mission.
+  delete out.plannedTasks;
+  delete out.turnId;
 
   // sourceThreadSummary → annotations
   if (typeof out.sourceThreadSummary === "string" && out.sourceThreadSummary.length > 0) {

@@ -14,7 +14,6 @@
 export type { Idea, IdeaStatus, IIdeaStore, CascadeBacklink as IdeaCascadeBacklink } from "./idea.js";
 export { IdeaRepositorySubstrate } from "./idea-repository-substrate.js";
 
-export { TaskRepositorySubstrate } from "./task-repository-substrate.js";
 export { ProposalRepositorySubstrate } from "./proposal-repository-substrate.js";
 export { ThreadRepositorySubstrate } from "./thread-repository-substrate.js";
 export { AgentRepositorySubstrate } from "./agent-repository-substrate.js";
@@ -24,8 +23,6 @@ export type {
   Mission,
   MissionStatus,
   IMissionStore,
-  PlannedTask,
-  PlannedTaskStatus,
   MissionClass,
   MissionPulses,
   PulseConfig,
@@ -33,7 +30,6 @@ export type {
   PulseResponseShape,
 } from "./mission.js";
 export {
-  findNextUnissuedPlannedTask,
   MISSION_CLASSES,
   PULSE_KEYS,
   PULSE_RESPONSE_SHAPES,
@@ -43,9 +39,6 @@ export {
   DEFAULT_ARCHITECT_PULSE_INTERVAL_SECONDS,
 } from "./mission.js";
 export { MissionRepositorySubstrate } from "./mission-repository-substrate.js";
-
-export type { Turn, TurnStatus, ITurnStore } from "./turn.js";
-export { TurnRepositorySubstrate } from "./turn-repository-substrate.js";
 
 export { SubstrateCounter } from "./substrate-counter.js";
 

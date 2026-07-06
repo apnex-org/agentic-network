@@ -16,28 +16,23 @@
 
 import {
   PolicyRouter,
-  registerTaskPolicy,
   registerSystemPolicy,
   registerAuditPolicy,
   // mission-83 W6-narrowed: registerDocumentPolicy DELETED with document-policy.ts
+  // work-162 (A1): registerTask/Turn/Clarification/ReviewPolicy retired with the subsystem.
   registerSessionPolicy,
   registerIdeaPolicy,
   registerMissionPolicy,
-  registerTurnPolicy,
-  registerClarificationPolicy,
-  registerReviewPolicy,
   registerProposalPolicy,
   registerThreadPolicy,
   registerMessagePolicy,
 } from "../../src/policy/index.js";
 import type { AllStores, IPolicyContext, PolicyResult } from "../../src/policy/types.js";
 import { AgentRepositorySubstrate as AgentRepository } from "../../src/entities/agent-repository-substrate.js";
-import { TaskRepositorySubstrate as TaskRepository } from "../../src/entities/task-repository-substrate.js";
 import { ProposalRepositorySubstrate as ProposalRepository } from "../../src/entities/proposal-repository-substrate.js";
 import { ThreadRepositorySubstrate as ThreadRepository } from "../../src/entities/thread-repository-substrate.js";
 import { IdeaRepositorySubstrate as IdeaRepository } from "../../src/entities/idea-repository-substrate.js";
 import { MissionRepositorySubstrate as MissionRepository } from "../../src/entities/mission-repository-substrate.js";
-import { TurnRepositorySubstrate as TurnRepository } from "../../src/entities/turn-repository-substrate.js";
 import { AuditRepositorySubstrate as AuditRepository } from "../../src/entities/audit-repository-substrate.js";
 import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import { createMemoryStorageSubstrate, buildEnvelopeWriteEncoder } from "../../src/storage-substrate/index.js";
@@ -252,84 +247,12 @@ export class ActorFacade {
     return this.router.handle(toolName, args, this.ctx());
   }
 
-  // ── Task lifecycle ──────────────────────────────────────────────
-
-  async createTask(title: string, description: string, opts?: {
-    correlationId?: string; sourceThreadId?: string;
-    idempotencyKey?: string; dependsOn?: string[];
-  }): Promise<Record<string, unknown>> {
-    await this.ensureRegistered();
-    const result = await this.router.handle("create_task", {
-      title, description, ...opts,
-    }, this.ctx());
-    return this.parse("create_task", result);
-  }
-
-  async getTask(): Promise<Record<string, unknown>> {
-    await this.ensureRegistered();
-    const result = await this.router.handle("get_task", {}, this.ctx());
-    return this.parse("get_task", result);
-  }
-
-  async createReport(taskId: string, report: string, summary: string): Promise<Record<string, unknown>> {
-    await this.ensureRegistered();
-    const result = await this.router.handle("create_report", {
-      taskId, report, summary,
-    }, this.ctx());
-    return this.parse("create_report", result);
-  }
-
-  async listTasks(): Promise<Record<string, unknown>> {
-    await this.ensureRegistered();
-    const result = await this.router.handle("list_tasks", {}, this.ctx());
-    return this.parse("list_tasks", result);
-  }
-
-  async cancelTask(taskId: string): Promise<Record<string, unknown>> {
-    await this.ensureRegistered();
-    const result = await this.router.handle("cancel_task", { taskId }, this.ctx());
-    return this.parse("cancel_task", result);
-  }
-
-  // ── Clarification ───────────────────────────────────────────────
-
-  async requestClarification(taskId: string, question: string): Promise<Record<string, unknown>> {
-    await this.ensureRegistered();
-    const result = await this.router.handle("create_clarification", {
-      taskId, question,
-    }, this.ctx());
-    return this.parse("create_clarification", result);
-  }
-
-  async resolveClarification(taskId: string, answer: string): Promise<Record<string, unknown>> {
-    await this.ensureRegistered();
-    const result = await this.router.handle("resolve_clarification", {
-      taskId, answer,
-    }, this.ctx());
-    return this.parse("resolve_clarification", result);
-  }
-
-  async getClarification(taskId: string): Promise<Record<string, unknown>> {
-    await this.ensureRegistered();
-    const result = await this.router.handle("get_clarification", { taskId }, this.ctx());
-    return this.parse("get_clarification", result);
-  }
-
-  // ── Review ──────────────────────────────────────────────────────
-
-  async createReview(taskId: string, assessment: string, decision?: "approved" | "rejected"): Promise<Record<string, unknown>> {
-    await this.ensureRegistered();
-    const args: Record<string, unknown> = { taskId, assessment };
-    if (decision) args.decision = decision;
-    const result = await this.router.handle("create_review", args, this.ctx());
-    return this.parse("create_review", result);
-  }
-
-  async getReview(taskId: string): Promise<Record<string, unknown>> {
-    await this.ensureRegistered();
-    const result = await this.router.handle("get_review", { taskId }, this.ctx());
-    return this.parse("get_review", result);
-  }
+  // ── Task / Clarification / Review lifecycle ─────────────────────
+  // work-162 (A1): the createTask/getTask/createReport/listTasks/cancelTask +
+  // requestClarification/resolveClarification/getClarification + createReview/
+  // getReview facade helpers are RETIRED with the Task subsystem. Tests that
+  // drove the task lifecycle end-to-end are deleted; peripheral callers use
+  // the raw `.call()` escape hatch.
 
   // ── Proposal lifecycle ──────────────────────────────────────────
 
@@ -514,18 +437,15 @@ export class TestOrchestrator {
     // E2E memory substrate validates the real envelope-only path. See test-utils.ts.
     storageProvider.setWriteEncoder(buildEnvelopeWriteEncoder());
     const storageCounter = new SubstrateCounter(storageProvider);
-    const task = new TaskRepository(storageProvider, storageCounter);
     const idea = new IdeaRepository(storageProvider, storageCounter);
-    const mission = new MissionRepository(storageProvider, storageCounter, task, idea);
+    const mission = new MissionRepository(storageProvider, storageCounter, idea);
     return {
-      task,
       engineerRegistry: new AgentRepository(storageProvider),
       proposal: new ProposalRepository(storageProvider, storageCounter),
       thread: new ThreadRepository(storageProvider, storageCounter),
       audit: new AuditRepository(storageProvider, storageCounter),
       idea,
       mission,
-      turn: new TurnRepository(storageProvider, storageCounter, mission, task),
       bug: new BugRepository(storageProvider, storageCounter),
       pendingAction: new PendingActionRepository(storageProvider, storageCounter),
       message: new MessageRepository(storageProvider),
@@ -534,16 +454,13 @@ export class TestOrchestrator {
 
   private createRouter(): PolicyRouter {
     const router = new PolicyRouter(() => {});
-    registerTaskPolicy(router);
     registerSystemPolicy(router);
     registerAuditPolicy(router);
     // mission-83 W6-narrowed: registerDocumentPolicy DELETED with document-policy.ts
+    // work-162 (A1): registerTask/Turn/Clarification/ReviewPolicy retired.
     registerSessionPolicy(router);
     registerIdeaPolicy(router);
     registerMissionPolicy(router);
-    registerTurnPolicy(router);
-    registerClarificationPolicy(router);
-    registerReviewPolicy(router);
     registerProposalPolicy(router);
     registerThreadPolicy(router);
     registerMessagePolicy(router);

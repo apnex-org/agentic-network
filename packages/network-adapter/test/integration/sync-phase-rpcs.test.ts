@@ -1,5 +1,5 @@
 /**
- * Invariant #10 — State sync issues get_task + get_pending_actions during
+ * Invariant #10 — State sync issues list_missions + get_pending_actions during
  * the synchronizing phase, strictly after the enriched register_role, and
  * strictly before the state transitions to `streaming`.
  *
@@ -47,7 +47,7 @@ describe("Invariant #10 — sync phase RPCs", () => {
     try { if (agent) await agent.stop(); } catch { /* */ }
   });
 
-  it("get_task and get_pending_actions fire during synchronizing, after enriched register_role, before streaming", async () => {
+  it("list_missions and get_pending_actions fire during synchronizing, after enriched register_role, before streaming", async () => {
     const ticks: StateTick[] = [];
     const callbacks: AgentClientCallbacks = {
       onStateChange: (state, prev, reason) => {
@@ -78,7 +78,7 @@ describe("Invariant #10 — sync phase RPCs", () => {
     // Wait until both sync RPCs have landed on the Hub.
     await waitFor(
       () =>
-        hub.getToolCalls("get_task").length >= 1 &&
+        hub.getToolCalls("list_missions").length >= 1 &&
         hub.getToolCalls("get_pending_actions").length >= 1,
       10_000
     );
@@ -90,7 +90,7 @@ describe("Invariant #10 — sync phase RPCs", () => {
     const streamingAt = ticks.find((t) => t.state === "streaming")!.at;
 
     const registerRoleCalls = hub.getToolCalls("register_role");
-    const getTaskCalls = hub.getToolCalls("get_task");
+    const listMissionsCalls = hub.getToolCalls("list_missions");
     const getPendingCalls = hub.getToolCalls("get_pending_actions");
 
     // Enriched register_role is the second call (first is the plain
@@ -99,15 +99,15 @@ describe("Invariant #10 — sync phase RPCs", () => {
     const enrichedRegister = registerRoleCalls[1];
     expect(enrichedRegister.args.name).toBe("test-instance-uuid-10");
 
-    expect(getTaskCalls.length).toBeGreaterThanOrEqual(1);
+    expect(listMissionsCalls.length).toBeGreaterThanOrEqual(1);
     expect(getPendingCalls.length).toBeGreaterThanOrEqual(1);
 
     // Ordering: sync RPCs happen strictly after enriched register_role.
-    expect(getTaskCalls[0].at).toBeGreaterThanOrEqual(enrichedRegister.at);
+    expect(listMissionsCalls[0].at).toBeGreaterThanOrEqual(enrichedRegister.at);
     expect(getPendingCalls[0].at).toBeGreaterThanOrEqual(enrichedRegister.at);
 
     // Ordering: sync RPCs happen strictly before streaming.
-    expect(getTaskCalls[0].at).toBeLessThanOrEqual(streamingAt);
+    expect(listMissionsCalls[0].at).toBeLessThanOrEqual(streamingAt);
     expect(getPendingCalls[0].at).toBeLessThanOrEqual(streamingAt);
 
     // Cross-check via the Hub's full tool-call log — enriched register_role
@@ -116,15 +116,15 @@ describe("Invariant #10 — sync phase RPCs", () => {
     const enrichedIdx = fullLog.findIndex(
       (c) => c.tool === "register_role" && c.args.name === "test-instance-uuid-10"
     );
-    const getTaskIdx = fullLog.findIndex((c) => c.tool === "get_task");
+    const listMissionsIdx = fullLog.findIndex((c) => c.tool === "list_missions");
     const getPendingIdx = fullLog.findIndex((c) => c.tool === "get_pending_actions");
 
     expect(enrichedIdx).toBeGreaterThanOrEqual(0);
-    expect(getTaskIdx).toBeGreaterThan(enrichedIdx);
+    expect(listMissionsIdx).toBeGreaterThan(enrichedIdx);
     expect(getPendingIdx).toBeGreaterThan(enrichedIdx);
 
     // Sync RPCs run on the same session as the enriched register_role.
-    expect(getTaskCalls[0].sessionId).toBe(enrichedRegister.sessionId);
+    expect(listMissionsCalls[0].sessionId).toBe(enrichedRegister.sessionId);
     expect(getPendingCalls[0].sessionId).toBe(enrichedRegister.sessionId);
   }, 20_000);
 });

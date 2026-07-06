@@ -179,12 +179,14 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     expect((await proposals.getProposal(p.id))!.status).toBe("rejected");   // untouched
   });
 
-  it("audit-9938 (2): approving a proposal WITH an execution plan runs the SHIPPED scaffold semantics; scaffold failure reverts the proposal and PARKS the decision visibly", async () => {
-    // happy: valid plan → approval scaffolds mission+task through create_proposal_review
+  it("audit-9938 (2): approving a proposal WITH an execution plan runs the SHIPPED scaffold semantics (missions-only)", async () => {
+    // work-162 (A1): task auto-scaffolding retired — proposals scaffold missions
+    // only (WorkItems are the sole work substrate). The former scaffold-failure/
+    // revert half was triggered by task→missing-mission resolution, which no
+    // longer exists; that path is retired with task-minting.
     const d1 = await decisions.raiseDecision({ title: "scaffold", context: "c", class: "x", options: [], raisedBy: ARCHITECT });
     const pGood = await proposals.submitProposal("t", "s", "b", undefined, {
       missions: [{ idRef: "m1", title: "M", description: "d" }],
-      tasks: [{ idRef: "t1", missionRef: "m1", title: "T", description: "d" }],
     });
     await decisions.curateDecision(d1.id, ARCHITECT);
     await decisions.routeDecision(d1.id, ARCHITECT, { target: "director" }, [{ action: "approve", targetRef: pGood.id }]);
@@ -197,22 +199,7 @@ describe("decision execution (P3-B5: registry + atomic resolve+execute)", () => 
     const approved = (await proposals.getProposal(pGood.id))!;
     expect(approved.status).toBe("approved");
     expect(approved.scaffoldResult?.missions.length).toBe(1);
-    expect(approved.scaffoldResult?.tasks.length).toBe(1);
-    // failure: broken plan (task references a missing mission) → shipped handler
-    // REVERTS to submitted; the decision parks in resolved with ok=false — visible.
-    const d2 = await decisions.raiseDecision({ title: "scaffold-fail", context: "c", class: "x", options: [], raisedBy: ARCHITECT });
-    const pBad = await proposals.submitProposal("t2", "s", "b", undefined, {
-      tasks: [{ idRef: "t1", missionRef: "m-ghost", title: "T", description: "d" }],
-    });
-    await decisions.curateDecision(d2.id, ARCHITECT);
-    await decisions.routeDecision(d2.id, ARCHITECT, { target: "director" }, [{ action: "approve", targetRef: pBad.id }]);
-    const sig2 = await proofs.mintSignal({ channel: "ois-say", answer: "yes", capturedBySurface: "cli", confidence: "session-bound", replyable: true, capturedBy: DIRECTOR });
-    const r2 = await router.handle("resolve_as_director", { decisionId: d2.id, proofRef: sig2.id, customAnswer: "yes" }, ctx);
-    expect(r2.isError).toBeFalsy(); // the RESOLUTION stands; execution parked
-    const parked = (body(r2) as { decision: { status: string; executorBinding: { ok: boolean } } }).decision;
-    expect(parked.status).toBe("resolved");
-    expect(parked.executorBinding.ok).toBe(false);
-    expect((await proposals.getProposal(pBad.id))!.status).toBe("submitted"); // reverted, not half-approved
+    expect(approved.scaffoldResult?.tasks.length).toBe(0);
   });
 
   it("get_director_confirmation (R:B3): renders WHAT THE HASHES BIND hub-side — decision echo, divergence flags, lifecycle state (the Director never confirms blind)", async () => {

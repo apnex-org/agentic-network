@@ -11,12 +11,14 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { RECENT_DETAILS_CAP } from "../observability/metrics.js";
 import { phaseFromEntity } from "../entities/shape-helpers.js";
-import type { Task, Proposal, Thread } from "../state.js";
+import type { Proposal, Thread } from "../state.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
 async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  const tasks = await ctx.stores.task.listTasks();
+  // work-162 (A1): Task subsystem retired — the task-derived dimensions
+  // (unreadReports / unreviewedTasks / clarificationsPending / orphanedReviews /
+  // escalatedTasks) are dropped. This aggregator now surfaces proposals + threads.
   const proposals = await ctx.stores.proposal.getProposals();
   const threads = await ctx.stores.thread.listThreads();
 
@@ -43,40 +45,9 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
     }
   }
 
-  // Reports awaiting Architect read (exclude already-reviewed).
-  // mission-89 Phase 4 (bug-137 closure): pre-compute envelope-aware phase
-  // for each entity so downstream filters work uniformly on both legacy-flat
-  // and envelope-shape rows.
-  const taskPhase = (t: Task) => phaseFromEntity(t);
+  // mission-89 Phase 4 (bug-137 closure): envelope-aware phase reads.
   const proposalPhase = (p: Proposal) => phaseFromEntity(p);
   const threadPhase = (t: Thread) => phaseFromEntity(t);
-
-  // idea-89 fix: submitReport transitions task → "in_review", but this
-  // filter was only matching "completed"/"failed"/"reported_*". Result:
-  // 14+ engineer reports sat in in_review indefinitely because the
-  // architect's EventLoop poll saw unreviewedTasks:[] every tick.
-  // Include "in_review" so the architect sandwich picks them up.
-  const unreadReports = tasks.filter(
-    (t) => {
-      const p = taskPhase(t);
-      return (p === "in_review" || p === "completed" || p === "failed") && t.report !== null && !t.reviewAssessment;
-    }
-  );
-
-  // Completed tasks without review. Same fix as above — add "in_review"
-  // so the EventLoop.unreviewedTasks poll drains reports awaiting review.
-  const unreviewedTasks = tasks.filter(
-    (t) => {
-      const p = taskPhase(t);
-      return (
-        (p === "in_review" ||
-         p === "completed" ||
-         p === "failed" ||
-         p?.startsWith("reported_")) &&
-        !t.reviewAssessment
-      );
-    }
-  );
 
   // Proposals needing review
   const pendingProposals = proposals.filter((p) => proposalPhase(p) === "submitted");
@@ -87,55 +58,24 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
     (t) => threadPhase(t) === "active" && t.currentTurn === "architect" && !inFlightThreadIds.has(t.id)
   );
 
-  // Clarification requests
-  const clarificationsPending = tasks.filter(
-    (t) => taskPhase(t) === "input_required"
-  );
-
   // Converged threads awaiting closure
   const convergedThreads = threads.filter(
     (t) => threadPhase(t) === "converged"
   );
 
   // ── Anomalous States Detection ──────────────────────────────────
-  // Detect state inconsistencies that indicate partial failures
-
-  // Orphaned reviews: task in in_review but reviewRef already set
-  // (review was stored but state transition failed — the deadlock scenario)
-  const orphanedReviews = tasks.filter(
-    (t) => taskPhase(t) === "in_review" && t.reviewRef !== null
-  );
-
   // Dangling proposals: approved but no scaffold result and has execution plan
   const danglingProposals = proposals.filter(
     (p) => proposalPhase(p) === "approved" && p.executionPlan && !p.scaffoldResult
   );
 
-  // Escalated tasks: tasks stuck in escalated state requiring Director intervention
-  const escalatedTasks = tasks.filter(
-    (t) => taskPhase(t) === "escalated"
-  );
-
-  const anomalyCount = orphanedReviews.length + danglingProposals.length + escalatedTasks.length;
+  const anomalyCount = danglingProposals.length;
 
   const summary = {
     totalPending:
-      unreadReports.length +
-      unreviewedTasks.length +
       pendingProposals.length +
       threadsAwaitingArchitect.length +
-      clarificationsPending.length +
       convergedThreads.length,
-    unreadReports: unreadReports.map((t) => ({
-      taskId: t.id,
-      summary: t.reportSummary,
-      reportRef: t.reportRef,
-    })),
-    unreviewedTasks: unreviewedTasks.map((t) => ({
-      taskId: t.id,
-      title: t.title || (t.description || t.directive || "").substring(0, 100),
-      reportRef: t.reportRef,
-    })),
     pendingProposals: pendingProposals.map((p) => ({
       proposalId: p.id,
       title: p.title,
@@ -148,10 +88,6 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
       roundCount: t.roundCount,
       outstandingIntent: t.outstandingIntent,
     })),
-    clarificationsPending: clarificationsPending.map((t) => ({
-      taskId: t.id,
-      question: t.clarificationQuestion,
-    })),
     convergedThreads: convergedThreads.map((t) => ({
       threadId: t.id,
       title: t.title,
@@ -160,22 +96,10 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
     // Anomalous States — state inconsistencies requiring intervention
     anomalies: {
       count: anomalyCount,
-      orphanedReviews: orphanedReviews.map((t) => ({
-        taskId: t.id,
-        title: t.title || (t.description || "").substring(0, 100),
-        reviewRef: t.reviewRef,
-        message: "Task has a stored review but is still in_review. Re-submit create_review with decision: approved.",
-      })),
       danglingProposals: danglingProposals.map((p) => ({
         proposalId: p.id,
         title: p.title,
         message: "Proposal approved with execution plan but scaffolding did not complete.",
-      })),
-      escalatedTasks: escalatedTasks.map((t) => ({
-        taskId: t.id,
-        title: t.title || (t.description || "").substring(0, 100),
-        revisionCount: t.revisionCount,
-        message: "Task hit circuit breaker. Director intervention required.",
       })),
     },
   };

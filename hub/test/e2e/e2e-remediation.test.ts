@@ -148,10 +148,13 @@ describe("Registry Remediation", () => {
   // ── T4b: RBAC Enforcement ─────────────────────────────────────────
 
   describe("RBAC Enforcement", () => {
-    it("engineer cannot call architect-only tool (create_task)", async () => {
-      const result = await eng.call("create_task", {
+    // work-162 (A1): the create_task/cancel_task/get_task/create_clarification/
+    // list_tasks RBAC cases are re-pointed onto surviving role-gated verbs —
+    // create_mission [Architect], create_proposal [Engineer], list_missions [Any].
+    it("engineer cannot call architect-only tool (create_mission)", async () => {
+      const result = await eng.call("create_mission", {
         title: "Unauthorized",
-        description: "Engineer should not create tasks",
+        description: "Engineer should not create missions",
       });
 
       expect(result.isError).toBe(true);
@@ -161,15 +164,8 @@ describe("Registry Remediation", () => {
       expect(parsed.error).toContain("engineer");
     });
 
-    it("engineer cannot call cancel_task", async () => {
-      const result = await eng.call("cancel_task", { taskId: "task-1" });
-      expect(result.isError).toBe(true);
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.error).toContain("Authorization denied");
-    });
-
-    it("architect cannot call engineer-only tool (get_task)", async () => {
-      const result = await arch.call("get_task", {});
+    it("architect cannot call engineer-only tool (create_proposal)", async () => {
+      const result = await arch.call("create_proposal", { title: "T", summary: "s", body: "b" });
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.error).toContain("Authorization denied");
@@ -177,22 +173,11 @@ describe("Registry Remediation", () => {
       expect(parsed.error).toContain("architect");
     });
 
-    it("architect cannot call create_clarification", async () => {
-      const result = await arch.call("create_clarification", {
-        taskId: "task-1",
-        question: "Architects don't clarify",
-      });
-      expect(result.isError).toBe(true);
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.error).toContain("Authorization denied");
-    });
-
-    it("[Any] tools accessible by both roles", async () => {
-      // list_tasks is [Any]
-      const archResult = await arch.call("list_tasks", {});
+    it("[Any] tools accessible by both roles (list_missions)", async () => {
+      const archResult = await arch.call("list_missions", {});
       expect(archResult.isError).toBeUndefined();
 
-      const engResult = await eng.call("list_tasks", {});
+      const engResult = await eng.call("list_missions", {});
       expect(engResult.isError).toBeUndefined();
     });
 
@@ -207,7 +192,7 @@ describe("Registry Remediation", () => {
     it("RBAC allows unknown role through (backward compat)", async () => {
       // An unregistered session should not be blocked
       // (allows for initial register_role call and Architect via McpToolset)
-      const unknownResult = await orch.router.handle("list_tasks", {}, {
+      const unknownResult = await orch.router.handle("list_threads", {}, {
         stores: orch.stores,
         emit: async () => {},
         dispatch: async () => {},

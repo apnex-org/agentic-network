@@ -110,70 +110,76 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
   });
 
   describe("Dispatch — selector matches only labeled Agents", () => {
-    it("labeled task from {env:prod} architect reaches only {env:prod} engineer", async () => {
-      const arch = await createActor(hub, "architect", { env: "prod" });
-      const engProd = await createActor(hub, "engineer", { env: "prod" });
-      const engSmoke = await createActor(hub, "engineer", { env: "smoke" });
+    // work-162 (A1): re-pointed off create_task → create_proposal (the surviving
+    // label-scoped dispatch: proposal_submitted → architects with matchLabels).
+    // Role-inverted — engineer authors, matching-label architect receives.
+    it("labeled proposal from {env:prod} engineer reaches only {env:prod} architect", async () => {
+      const eng = await createActor(hub, "engineer", { env: "prod" });
+      const archProd = await createActor(hub, "architect", { env: "prod" });
+      const archSmoke = await createActor(hub, "architect", { env: "smoke" });
 
       try {
-        // task.labels inherits from creator (architect) = {env:"prod"}
-        // dispatch selector → {roles:["engineer"], matchLabels:{env:"prod"}}
-        const result = await arch.client.call("create_task", {
-          title: "Prod-only directive",
-          description: "Should only reach env:prod engineer",
+        // proposal.labels inherits from creator (engineer) = {env:"prod"}
+        // dispatch selector → {roles:["architect"], matchLabels:{env:"prod"}}
+        const result = await eng.client.call("create_proposal", {
+          title: "Prod-only proposal",
+          summary: "s",
+          body: "Should only reach env:prod architect",
         }) as Record<string, unknown>;
-        expect(result.taskId).toBeTruthy();
+        expect(result.proposalId).toBeTruthy();
 
         await waitFor(() =>
-          engProd.actionable.some((e) => e.event === "task_issued"),
+          archProd.actionable.some((e) => e.event === "proposal_submitted"),
           2_000,
         );
 
-        const prodHits = engProd.actionable.filter((e) => e.event === "task_issued");
-        const smokeHits = engSmoke.actionable.filter((e) => e.event === "task_issued");
+        const prodHits = archProd.actionable.filter((e) => e.event === "proposal_submitted");
+        const smokeHits = archSmoke.actionable.filter((e) => e.event === "proposal_submitted");
         expect(prodHits.length).toBe(1);
         expect(smokeHits.length).toBe(0);
 
         // Verify the dispatch record agrees with delivery.
-        const dispatches = hub.dispatched.filter((d) => d.event === "task_issued");
+        const dispatches = hub.dispatched.filter((d) => d.event === "proposal_submitted");
         expect(dispatches.length).toBe(1);
         expect(dispatches[0].selector.matchLabels).toEqual({ env: "prod" });
-        expect(dispatches[0].deliveredTo).toEqual([engProd.agentId]);
+        expect(dispatches[0].deliveredTo).toEqual([archProd.agentId]);
       } finally {
-        await stopAll([arch, engProd, engSmoke]);
+        await stopAll([eng, archProd, archSmoke]);
       }
     });
 
     it("empty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)", async () => {
-      // Architect created with no labels → labels={} → task.labels={} →
-      // selector.matchLabels={} → matches every engineer regardless of labels.
-      const arch = await createActor(hub, "architect");
-      const engProd = await createActor(hub, "engineer", { env: "prod" });
-      const engSmoke = await createActor(hub, "engineer", { env: "smoke" });
-      const engBare = await createActor(hub, "engineer");
+      // work-162: re-pointed off create_task → create_proposal (role-inverted).
+      // Engineer created with no labels → labels={} → proposal.labels={} →
+      // selector.matchLabels={} → matches every architect regardless of labels.
+      const eng = await createActor(hub, "engineer");
+      const archProd = await createActor(hub, "architect", { env: "prod" });
+      const archSmoke = await createActor(hub, "architect", { env: "smoke" });
+      const archBare = await createActor(hub, "architect");
 
       try {
-        await arch.client.call("create_task", {
+        await eng.client.call("create_proposal", {
           title: "Unlabeled broadcast",
-          description: "Every engineer should see this",
+          summary: "s",
+          body: "Every architect should see this",
         });
 
         await waitFor(
           () =>
-            engProd.actionable.some((e) => e.event === "task_issued") &&
-            engSmoke.actionable.some((e) => e.event === "task_issued") &&
-            engBare.actionable.some((e) => e.event === "task_issued"),
+            archProd.actionable.some((e) => e.event === "proposal_submitted") &&
+            archSmoke.actionable.some((e) => e.event === "proposal_submitted") &&
+            archBare.actionable.some((e) => e.event === "proposal_submitted"),
           2_000,
         );
 
-        const dispatches = hub.dispatched.filter((d) => d.event === "task_issued");
+        const dispatches = hub.dispatched.filter((d) => d.event === "proposal_submitted");
         expect(dispatches.length).toBe(1);
         expect(dispatches[0].selector.matchLabels).toEqual({});
         expect(dispatches[0].deliveredTo.sort()).toEqual(
-          [engProd.agentId, engSmoke.agentId, engBare.agentId].sort(),
+          [archProd.agentId, archSmoke.agentId, archBare.agentId].sort(),
         );
       } finally {
-        await stopAll([arch, engProd, engSmoke, engBare]);
+        await stopAll([eng, archProd, archSmoke, archBare]);
       }
     });
   });

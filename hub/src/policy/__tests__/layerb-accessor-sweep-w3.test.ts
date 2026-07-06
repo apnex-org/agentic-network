@@ -30,14 +30,12 @@ import {
 import { SubstrateCounter } from "../../entities/substrate-counter.js";
 import { IdeaRepositorySubstrate } from "../../entities/idea-repository-substrate.js";
 import { MissionRepositorySubstrate } from "../../entities/mission-repository-substrate.js";
-import { TaskRepositorySubstrate } from "../../entities/task-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "../../entities/thread-repository-substrate.js";
 import { ProposalRepositorySubstrate } from "../../entities/proposal-repository-substrate.js";
 import { PendingActionRepositorySubstrate } from "../../entities/pending-action-repository-substrate.js";
 import { PolicyRouter } from "../router.js";
 import { registerIdeaPolicy } from "../idea-policy.js";
 import { registerMissionPolicy } from "../mission-policy.js";
-import { registerTaskPolicy } from "../task-policy.js";
 import { registerThreadPolicy } from "../thread-policy.js";
 import { registerProposalPolicy } from "../proposal-policy.js";
 import type { IPolicyContext, AllStores } from "../types.js";
@@ -92,8 +90,7 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     const counter = new SubstrateCounter(substrate);
     const stores = {
       idea: new IdeaRepositorySubstrate(substrate, counter),
-      mission: new MissionRepositorySubstrate(substrate, counter, new TaskRepositorySubstrate(substrate, counter), new IdeaRepositorySubstrate(substrate, counter)),
-      task: new TaskRepositorySubstrate(substrate, counter),
+      mission: new MissionRepositorySubstrate(substrate, counter, new IdeaRepositorySubstrate(substrate, counter)),
       thread: new ThreadRepositorySubstrate(substrate, counter),
       proposal: new ProposalRepositorySubstrate(substrate, counter),
       pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
@@ -105,7 +102,6 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     router = new PolicyRouter(() => { /* silent */ });
     registerIdeaPolicy(router);
     registerMissionPolicy(router);
-    registerTaskPolicy(router);
     registerThreadPolicy(router);
     registerProposalPolicy(router);
 
@@ -129,7 +125,7 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
   }, 30_000);
 
   beforeEach(async () => {
-    await pool.query(`DELETE FROM entities WHERE kind IN ('Idea','Mission','Task','Thread','Proposal','PendingAction')`);
+    await pool.query(`DELETE FROM entities WHERE kind IN ('Idea','Mission','Thread','Proposal','PendingAction')`);
   });
 
   function idea(id: string, phase: string, extra: Record<string, unknown> = {}, status: Record<string, unknown> = {}): Row {
@@ -159,7 +155,7 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     // cutover exposed it: list_missions({status}) returned 0 for ALL statuses on
     // prod (m.status was the {phase} OBJECT) — breaking ledger/Survey (idea-325).
     await seed([
-      { kind: "Mission", id: "w7-m1", data: { id: "w7-m1", kind: "Mission", apiVersion: "core.ois/v1", metadata: { name: "w7-m1", correlationId: "corr-A", createdBy: { role: "architect", agentId: "arch-1" } }, spec: { title: "a" }, status: { phase: "active", turnId: "turn-7" } } },
+      { kind: "Mission", id: "w7-m1", data: { id: "w7-m1", kind: "Mission", apiVersion: "core.ois/v1", metadata: { name: "w7-m1", correlationId: "corr-A", createdBy: { role: "architect", agentId: "arch-1" } }, spec: { title: "a" }, status: { phase: "active" } } },
       { kind: "Mission", id: "w7-m2", data: { id: "w7-m2", kind: "Mission", apiVersion: "core.ois/v1", metadata: { name: "w7-m2", correlationId: "corr-B" }, spec: { title: "b" }, status: { phase: "completed" } } },
     ]);
     // status → status.phase (the dispositive prod regression: pre-fix → 0 matches)
@@ -168,8 +164,7 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     expect((parse(await router.handle("list_missions", { status: "completed" }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m2"]);
     // relocated metadata.correlationId accessor
     expect((parse(await router.handle("list_missions", { filter: { correlationId: "corr-A" } }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m1"]);
-    // relocated status.turnId accessor
-    expect((parse(await router.handle("list_missions", { filter: { turnId: "turn-7" } }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m1"]);
+    // work-162 (A1): the status.turnId accessor assertion is retired with Mission.turnId.
     // relocated metadata.createdBy accessor
     expect((parse(await router.handle("list_missions", { filter: { "createdBy.role": "architect" } }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m1"]);
     // non-matching status → empty + _ois_query_unmatched (pre-fix this was the result for EVERY status)
@@ -178,15 +173,8 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     expect(none._ois_query_unmatched).toBe(true);
   }, 30_000);
 
-  it("W3.2 list_tasks: envelope status accessor (the 9th broken tool) reads envelope-aware (F4)", async () => {
-    await seed([
-      { kind: "Task", id: "w3-t1", data: { id: "w3-t1", kind: "Task", apiVersion: "core.ois/v1", metadata: { name: "w3-t1" }, spec: { directive: "d", assignedAgentId: "eng-1" }, status: { phase: "pending" } } },
-      { kind: "Task", id: "w3-t2", data: { id: "w3-t2", kind: "Task", apiVersion: "core.ois/v1", metadata: { name: "w3-t2" }, spec: { directive: "d2", assignedAgentId: "eng-2" }, status: { phase: "completed" } } },
-    ]);
-    expect((parse(await router.handle("list_tasks", { filter: { status: "pending" } }, ctx)).tasks as Array<{ id: string }>).map((t) => t.id)).toEqual(["w3-t1"]);
-    // relocated spec.assignedAgentId accessor
-    expect((parse(await router.handle("list_tasks", { filter: { assignedAgentId: "eng-2" } }, ctx)).tasks as Array<{ id: string }>).map((t) => t.id)).toEqual(["w3-t2"]);
-  }, 30_000);
+  // work-162 (A1): the "W3.2 list_tasks" accessor test is RETIRED — list_tasks
+  // (the 9th tool) is gone with the Task subsystem.
 
   it("W3.3 list_threads: envelope status accessor reads envelope-aware (F4)", async () => {
     await seed([

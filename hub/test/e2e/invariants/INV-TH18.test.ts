@@ -45,7 +45,7 @@ describe("INV-TH18 — thread routing mode immutability + field consistency", ()
     it("unicast thread records routingMode='unicast' at open", async () => {
       const arch = orch.asArchitect();
       const eng = orch.asEngineer();
-      await eng.listTasks();
+      await eng.call("list_missions", {}); // work-162: was eng.listTasks() (registration warm-up)
       const engId = await agentIdFor(orch);
       await arch.createThread("TH18 unicast", "open", {
         routingMode: "unicast",
@@ -147,7 +147,7 @@ describe("INV-TH18 — thread routing mode immutability + field consistency", ()
       // Contrast test — unicast is IMMUTABLE; only broadcast coerces.
       const arch = orch.asArchitect();
       const eng = orch.asEngineer();
-      await eng.listTasks();
+      await eng.call("list_missions", {}); // work-162: was eng.listTasks() (registration warm-up)
       const engId = await agentIdFor(orch);
       await arch.createThread("TH18 unicast immutable", "open", {
         routingMode: "unicast",

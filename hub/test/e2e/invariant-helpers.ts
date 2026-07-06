@@ -42,46 +42,7 @@ function fail(inv: string, mode: string, detail: string): never {
   throw new Error(`[INV-${inv}/${mode}] invariant violated: ${detail}`);
 }
 
-// ── INV-T4 — Task terminal states ────────────────────────────────────
-
-/**
- * INV-T4: `completed`, `failed`, `escalated`, `cancelled` are terminal task
- * states with no outbound transitions. workflow-registry §7.2.
- */
-export async function assertInvT4(o: TestOrchestrator, mode: InvariantMode = "all"): Promise<void> {
-  const arch = o.asArchitect();
-  const eng = o.asEngineer();
-
-  if (shouldRun(mode, "positive")) {
-    // Positive: cancelled is reachable via cancelTask from pending.
-    await arch.createTask("T4 positive", "Will be cancelled");
-    const result = await arch.call("cancel_task", { taskId: "task-1" });
-    if (result.isError) fail("T4", "positive", `cancel_task on pending should succeed; got ${JSON.stringify(result)}`);
-  }
-
-  if (shouldRun(mode, "negativeReject")) {
-    // Negative: report on cancelled terminal → rejected.
-    o.reset();
-    const arch2 = o.asArchitect();
-    const eng2 = o.asEngineer();
-    await arch2.createTask("T4 negative", "To cancel then report");
-    await arch2.call("cancel_task", { taskId: "task-1" });
-    const reportResult = await eng2.call("create_report", {
-      taskId: "task-1", report: "Attempting report on terminal", summary: "Should fail",
-    });
-    if (!reportResult.isError) fail("T4", "negativeReject", "create_report on cancelled task should be rejected but succeeded");
-  }
-
-  if (shouldRun(mode, "edge")) {
-    // Edge: cancel on cancelled → rejected (no self-terminal re-transition).
-    o.reset();
-    const arch3 = o.asArchitect();
-    await arch3.createTask("T4 edge", "Double cancel");
-    await arch3.call("cancel_task", { taskId: "task-1" });
-    const secondCancel = await arch3.call("cancel_task", { taskId: "task-1" });
-    if (!secondCancel.isError) fail("T4", "edge", "cancel_task on cancelled task should be rejected");
-  }
-}
+// work-162 (A1): assertInvT4 (Task terminal states) RETIRED with the Task subsystem.
 
 // ── INV-P1 — Architect-only proposal review ──────────────────────────
 
@@ -367,13 +328,13 @@ export async function assertInvTH18(o: TestOrchestrator, mode: InvariantMode = "
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const reg = orch.stores.engineerRegistry as any;
     const agent = await reg.getAgentForSession("session-engineer-default");
-    if (!agent?.id) throw new Error("INV-TH18 helper: engineer not registered — call eng.listTasks() or similar first");
+    if (!agent?.id) throw new Error("INV-TH18 helper: engineer not registered — call a read verb (e.g. list_missions) first");
     return agent.id as string;
   }
 
   if (shouldRun(mode, "positive")) {
     // unicast: requires recipientAgentId; persists routingMode='unicast'.
-    await eng.listTasks();
+    await eng.call("list_missions", {});
     const engId = await agentIdFor(o);
     await arch.createThread("TH18 unicast positive", "msg", {
       routingMode: "unicast",
@@ -410,7 +371,7 @@ export async function assertInvTH18(o: TestOrchestrator, mode: InvariantMode = "
     }
 
     // broadcast with recipientAgentId → rejected.
-    await (o.asEngineer()).listTasks();
+    await (o.asEngineer()).call("list_missions", {});
     const broadcastBad = await arch3.call("create_thread", {
       title: "TH18 broadcast-with-recipient",
       message: "should fail",
@@ -483,7 +444,7 @@ export async function assertInvTH19(o: TestOrchestrator, mode: InvariantMode = "
 
   if (shouldRun(mode, "positive")) {
     // Bilateral convergence with valid staged action → atomically committed.
-    await eng.listTasks();
+    await eng.call("list_missions", {});
     const { threadId } = (await arch.createThread("TH19 positive", "open", { routingMode: "broadcast" })) as { threadId: string };
     await eng.replyToThread(threadId, "agreed", {
       converged: true,
@@ -506,13 +467,13 @@ export async function assertInvTH19(o: TestOrchestrator, mode: InvariantMode = "
     o.reset();
     const arch2 = o.asArchitect();
     const eng2 = o.asEngineer();
-    await eng2.listTasks();
+    await eng2.call("list_missions", {});
     const { threadId } = (await arch2.createThread("TH19 invalid-payload", "open", { routingMode: "broadcast" })) as { threadId: string };
-    // create_task schema requires `title` + `description`. Omit description.
+    // work-162: create_proposal payload requires title+description. Omit description → invalid.
     await eng2.replyToThread(threadId, "staging invalid", {
       converged: true,
       summary: "invalid staged action — should reject whole convergence",
-      stagedActions: [{ kind: "stage", type: "create_task", payload: { title: "missing description" } }],
+      stagedActions: [{ kind: "stage", type: "create_proposal", payload: { title: "missing description" } }],
     });
     // Architect converges — gate should reject because staged action is invalid.
     const archResult = await arch2.call("create_thread_reply", {

@@ -17,7 +17,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 import { MissionRepositorySubstrate as MissionRepository } from "../../src/entities/mission-repository-substrate.js";
 import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
-import { TaskRepositorySubstrate as TaskRepository } from "../../src/entities/task-repository-substrate.js";
 import { IdeaRepositorySubstrate as IdeaRepository } from "../../src/entities/idea-repository-substrate.js";
 import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import { PulseSweeper, pulseSelector } from "../../src/policy/pulse-sweeper.js";
@@ -30,9 +29,8 @@ const MS = (s: number) => s * 1000;
 function buildSweeperRig(opts: { omitRegistry?: boolean } = {}) {
   const storage = createMemoryStorageSubstrate();
   const counter = new SubstrateCounter(storage);
-  const taskStore = new TaskRepository(storage, counter);
   const ideaStore = new IdeaRepository(storage, counter);
-  const missionStore = new MissionRepository(storage, counter, taskStore, ideaStore);
+  const missionStore = new MissionRepository(storage, counter, ideaStore);
   const messageStore = new MessageRepository(storage);
   let nowMs = new Date("2026-04-26T10:00:00.000Z").getTime();
   const advance = (ms: number) => {
@@ -56,7 +54,6 @@ function buildSweeperRig(opts: { omitRegistry?: boolean } = {}) {
         stores: {
           mission: missionStore,
           message: messageStore,
-          task: taskStore,
           idea: ideaStore,
           // bug-176 — iterateAgentPulses reads engineerRegistry.listAgents() on
           // EVERY tick; without it the pass threw `Cannot read properties of
@@ -79,7 +76,7 @@ function buildSweeperRig(opts: { omitRegistry?: boolean } = {}) {
     },
     { graceMs: 30_000, now: () => nowMs, intervalMs: 60_000 },
   );
-  return { sweeper, missionStore, messageStore, taskStore, ideaStore, advance, setNow, getNowMs: () => nowMs, dispatched };
+  return { sweeper, missionStore, messageStore, ideaStore, advance, setNow, getNowMs: () => nowMs, dispatched };
 }
 
 async function createPulseMission(
@@ -89,11 +86,11 @@ async function createPulseMission(
   const created = await rig.missionStore.createMission(
     "Pulse Mission",
     "test",
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    "coordination-primitive-shipment",
+    undefined,  // documentRef
+    undefined,  // backlink
+    undefined,  // createdBy
+    // work-162 (A1): plannedTasks positional arg removed from createMission.
+    "coordination-primitive-shipment",  // missionClass
     pulses,
   );
   // Flip to active so the sweeper iterates this mission
@@ -477,11 +474,10 @@ describe("PulseSweeper — multi-pulse + multi-mission", () => {
     const mission = await rig.missionStore.createMission(
       "Proposed",
       "test",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      "coordination-primitive-shipment",
+      undefined,  // documentRef
+      undefined,  // backlink
+      undefined,  // createdBy
+      "coordination-primitive-shipment",  // missionClass (work-162: plannedTasks slot removed)
       {
         engineerPulse: {
           intervalSeconds: 60,
@@ -516,11 +512,10 @@ describe("PulseSweeper — backward-compat", () => {
     const mission = await rig.missionStore.createMission(
       "Class-only",
       "no pulses",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      "coordination-primitive-shipment",
+      undefined,  // documentRef
+      undefined,  // backlink
+      undefined,  // createdBy
+      "coordination-primitive-shipment",  // missionClass (work-162: plannedTasks slot removed)
       undefined, // no pulses
     );
     await rig.missionStore.updateMission(mission.id, { status: "active" });

@@ -16,12 +16,10 @@ import { registerActionValidator } from "./registry.js";
 import { NULL_VALIDATOR } from "./types.js";
 import { updateMissionStatusValidator } from "./update-mission-status-validator.js";
 import { updateIdeaValidator } from "./update-idea-validator.js";
-import { createTaskValidator } from "./create-task-validator.js";
 
 // Real checks.
 registerActionValidator("update_mission_status", updateMissionStatusValidator);
 registerActionValidator("update_idea", updateIdeaValidator);
-registerActionValidator("create_task", createTaskValidator);
 
 // Pass-through — no state-reality concern under the current schema.
 registerActionValidator("close_no_action", NULL_VALIDATOR);

@@ -11,7 +11,6 @@ import { describe, expect, it } from "vitest";
 import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.js";
 
 import { ThreadRepositorySubstrate as ThreadRepository } from "../../src/entities/thread-repository-substrate.js";
-import { TaskRepositorySubstrate as TaskRepository } from "../../src/entities/task-repository-substrate.js";
 import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import {
   PRECONDITIONS,
@@ -27,9 +26,8 @@ async function makeCtx(): Promise<{
   const provider = createMemoryStorageSubstrate();
   const counter = new SubstrateCounter(provider);
   const threadStore = new ThreadRepository(provider, counter);
-  const taskStore = new TaskRepository(provider, counter);
   const ctx: IPolicyContext = {
-    stores: { thread: threadStore, task: taskStore },
+    stores: { thread: threadStore },
     metrics: { increment: () => {} },
     emit: async () => {},
     dispatch: async () => {},
@@ -38,14 +36,14 @@ async function makeCtx(): Promise<{
     role: "system",
     internalEvents: [],
   } as unknown as IPolicyContext;
-  return { ctx, threadStore, taskStore };
+  return { ctx, threadStore };
 }
 
 describe("PRECONDITIONS registry", () => {
-  it("contains the W4 initial seed: thread-still-active + task-not-completed", () => {
+  it("contains the W4 initial seed: thread-still-active", () => {
+    // work-162 (A1): `task-not-completed` predicate retired with the Task subsystem.
     const fns = PRECONDITIONS.map((p) => p.fn);
     expect(fns).toContain("thread-still-active");
-    expect(fns).toContain("task-not-completed");
   });
 
   it("each predicate has a non-empty fn name + description + evaluator", () => {

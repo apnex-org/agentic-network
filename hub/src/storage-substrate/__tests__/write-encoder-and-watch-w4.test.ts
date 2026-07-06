@@ -49,8 +49,7 @@ const BARE_FIXTURES: Array<{ kind: string; entity: Record<string, unknown> }> = 
   { kind: "Thread", entity: { id: "w4-th1", title: "t", status: "active", routingMode: "broadcast" } },
   { kind: "Idea", entity: { id: "w4-i1", text: "x", status: "open" } },
   { kind: "Mission", entity: { id: "w4-mi1", title: "t", status: "active" } },
-  { kind: "Task", entity: { id: "w4-t1", directive: "d", status: "pending" } },
-  { kind: "Turn", entity: { id: "w4-tn1", title: "t", status: "planning", correlationId: "c1" } },
+  // work-162 (A1): Task + Turn removed from the live-bare-writer canary.
 ];
 
 describe("W4 write-encoder + watch envelope-awareness", () => {

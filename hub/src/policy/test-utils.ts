@@ -2,12 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { IPolicyContext, AllStores, DomainEvent } from "./types.js";
 import { AgentRepositorySubstrate } from "../entities/agent-repository-substrate.js";
 import type { Selector } from "../state.js";
-import { TaskRepositorySubstrate } from "../entities/task-repository-substrate.js";
 import { ProposalRepositorySubstrate } from "../entities/proposal-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "../entities/thread-repository-substrate.js";
 import { IdeaRepositorySubstrate } from "../entities/idea-repository-substrate.js";
 import { MissionRepositorySubstrate } from "../entities/mission-repository-substrate.js";
-import { TurnRepositorySubstrate } from "../entities/turn-repository-substrate.js";
 import { AuditRepositorySubstrate } from "../entities/audit-repository-substrate.js";
 import { SubstrateCounter } from "../entities/substrate-counter.js";
 import { createMemoryStorageSubstrate, buildEnvelopeWriteEncoder } from "../storage-substrate/index.js";
@@ -57,18 +55,15 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>, opts?:
   // (bare filter keys → envelope JSONB paths).
   substrate.setWriteEncoder(buildEnvelopeWriteEncoder());
   const counter = new SubstrateCounter(substrate);
-  const task = new TaskRepositorySubstrate(substrate, counter);
   const idea = new IdeaRepositorySubstrate(substrate, counter);
-  const mission = new MissionRepositorySubstrate(substrate, counter, task, idea);
+  const mission = new MissionRepositorySubstrate(substrate, counter, idea);
   const stores: AllStores = {
-    task,
     engineerRegistry: new AgentRepositorySubstrate(substrate),
     proposal: new ProposalRepositorySubstrate(substrate, counter),
     thread: new ThreadRepositorySubstrate(substrate, counter),
     audit: new AuditRepositorySubstrate(substrate, counter),
     idea,
     mission,
-    turn: new TurnRepositorySubstrate(substrate, counter, mission, task),
     bug: new BugRepositorySubstrate(substrate, counter),
     pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
     message: new MessageRepositorySubstrate(substrate),

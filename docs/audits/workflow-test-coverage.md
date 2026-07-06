@@ -9,24 +9,24 @@
 | Dimension | Count |
 |---|---|
 | Ratified Wave-2 subset | 10 |
-| &nbsp;&nbsp;Tested (≥1 call-site, helper not stubbed) | 10 |
-| &nbsp;&nbsp;Stubbed (pending Wave 2 graduation) | 0 |
+| &nbsp;&nbsp;Tested (≥1 call-site, helper not stubbed) | 9 |
+| &nbsp;&nbsp;Stubbed (pending Wave 2 graduation) | 1 |
 | Out-of-Scope for v1 (§7.2 NONE, not in ratified subset) | 8 |
 
 ## Per-invariant status — ratified subset
 
 | INV-id | Status | Call sites | Note |
 |---|---|---|---|
-| `INV-T4` | Tested | `hub/test/e2e/invariant-helpers.test.ts:38`, `hub/test/e2e/invariant-helpers.ts:51`, `hub/test/e2e/invariants/INV-T4.test.ts:24` | Task terminal states — completed/failed/escalated/cancelled |
-| `INV-P1` | Tested | `hub/test/e2e/invariant-helpers.test.ts:42`, `hub/test/e2e/invariant-helpers.ts:93`, `hub/test/e2e/invariants/INV-P1.test.ts:24` | Architect-only proposal review |
-| `INV-P2` | Tested | `hub/test/e2e/invariant-helpers.test.ts:47`, `hub/test/e2e/invariant-helpers.ts:131`, `hub/test/e2e/invariants/INV-P2.test.ts:30` | Only submitted proposals reviewable (gap-surfacing ratchet) |
-| `INV-P4` | Tested | `hub/test/e2e/invariant-helpers.test.ts:51`, `hub/test/e2e/invariant-helpers.ts:165`, `hub/test/e2e/invariants/INV-P4.test.ts:29` | Proposal `implemented` is terminal |
-| `INV-TH6` | Tested | `hub/test/e2e/invariant-helpers.test.ts:55`, `hub/test/e2e/invariant-helpers.ts:217`, `hub/test/e2e/invariants/INV-TH6.test.ts:29` | Non-active thread replies rejected |
-| `INV-TH7` | Tested | `hub/test/e2e/invariant-helpers.test.ts:59`, `hub/test/e2e/invariant-helpers.ts:249`, `hub/test/e2e/invariants/INV-TH7.test.ts:27` | close_thread architect-only stewardship |
-| `INV-I2` | Tested | `hub/test/e2e/invariant-helpers.test.ts:63`, `hub/test/e2e/invariant-helpers.ts:281`, `hub/test/e2e/invariants/INV-I2.test.ts:32` | Idea auto-linkage failure is non-fatal |
-| `INV-M4` | Tested | `hub/test/e2e/invariant-helpers.test.ts:67`, `hub/test/e2e/invariant-helpers.ts:303`, `hub/test/e2e/invariants/INV-M4.test.ts:30` | Mission completed/abandoned are terminal |
-| `INV-TH18` | Tested | `hub/test/e2e/invariant-helpers.test.ts:72`, `hub/test/e2e/invariant-helpers.ts:359`, `hub/test/e2e/invariants/INV-TH18.test.ts:41` | Workflow turn-pinning (cascade guard) — P2 spec |
-| `INV-TH19` | Tested | `hub/test/e2e/invariant-helpers.test.ts:77`, `hub/test/e2e/invariant-helpers.ts:480`, `hub/test/e2e/invariants/INV-TH19.test.ts:30` | Cascade validate-then-execute atomicity — P2 spec |
+| `INV-T4` | Stub | — | Task terminal states — completed/failed/escalated/cancelled |
+| `INV-P1` | Tested | `hub/test/e2e/invariant-helpers.test.ts:39`, `hub/test/e2e/invariant-helpers.ts:54`, `hub/test/e2e/invariants/INV-P1.test.ts:24` | Architect-only proposal review |
+| `INV-P2` | Tested | `hub/test/e2e/invariant-helpers.test.ts:44`, `hub/test/e2e/invariant-helpers.ts:92`, `hub/test/e2e/invariants/INV-P2.test.ts:30` | Only submitted proposals reviewable (gap-surfacing ratchet) |
+| `INV-P4` | Tested | `hub/test/e2e/invariant-helpers.test.ts:48`, `hub/test/e2e/invariant-helpers.ts:126`, `hub/test/e2e/invariants/INV-P4.test.ts:29` | Proposal `implemented` is terminal |
+| `INV-TH6` | Tested | `hub/test/e2e/invariant-helpers.test.ts:52`, `hub/test/e2e/invariant-helpers.ts:178`, `hub/test/e2e/invariants/INV-TH6.test.ts:29` | Non-active thread replies rejected |
+| `INV-TH7` | Tested | `hub/test/e2e/invariant-helpers.test.ts:56`, `hub/test/e2e/invariant-helpers.ts:210`, `hub/test/e2e/invariants/INV-TH7.test.ts:27` | close_thread architect-only stewardship |
+| `INV-I2` | Tested | `hub/test/e2e/invariant-helpers.test.ts:60`, `hub/test/e2e/invariant-helpers.ts:242`, `hub/test/e2e/invariants/INV-I2.test.ts:32` | Idea auto-linkage failure is non-fatal |
+| `INV-M4` | Tested | `hub/test/e2e/invariant-helpers.test.ts:64`, `hub/test/e2e/invariant-helpers.ts:264`, `hub/test/e2e/invariants/INV-M4.test.ts:30` | Mission completed/abandoned are terminal |
+| `INV-TH18` | Tested | `hub/test/e2e/invariant-helpers.test.ts:69`, `hub/test/e2e/invariant-helpers.ts:320`, `hub/test/e2e/invariants/INV-TH18.test.ts:41` | Workflow turn-pinning (cascade guard) — P2 spec |
+| `INV-TH19` | Tested | `hub/test/e2e/invariant-helpers.test.ts:74`, `hub/test/e2e/invariant-helpers.ts:441`, `hub/test/e2e/invariants/INV-TH19.test.ts:30` | Cascade validate-then-execute atomicity — P2 spec |
 
 ## Out-of-scope for v1
 

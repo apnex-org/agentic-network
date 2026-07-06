@@ -13,7 +13,6 @@ import type { FsmTransitionTable } from "./types.js";
 import type {
   Mission,
   MissionStatus,
-  PlannedTask,
   MissionClass,
   MissionPulses,
   PulseConfig,
@@ -190,23 +189,8 @@ async function createMission(args: Record<string, unknown>, ctx: IPolicyContext)
   const title = args.title as string;
   const description = args.description as string;
   const documentRef = args.documentRef as string | undefined;
-  const plannedTasks = args.plannedTasks as PlannedTask[] | undefined;
   const missionClass = args.missionClass as MissionClass | undefined;
   const pulses = args.pulses as MissionPulses | undefined;
-
-  // task-316 / idea-144 Path A: normalize plannedTasks input — fresh
-  // plannedTasks always start as `unissued` with no bound taskId.
-  // Callers can omit status/issuedTaskId; we clamp to the canonical
-  // initial state.
-  const normalizedPlans = plannedTasks
-    ? plannedTasks.map((p) => ({
-        sequence: p.sequence,
-        title: p.title,
-        description: p.description,
-        status: "unissued" as const,
-        issuedTaskId: null,
-      }))
-    : undefined;
 
   // Mission-57 W1 + mission-68 W1: validate missionClass enum + prepare
   // pulses (strip sweeper-managed bookkeeping; auto-inject defaults;
@@ -238,7 +222,6 @@ async function createMission(args: Record<string, unknown>, ctx: IPolicyContext)
     documentRef,
     undefined,
     createdBy,
-    normalizedPlans,
     missionClass,
     preparedPulses,
   );
@@ -252,7 +235,6 @@ async function createMission(args: Record<string, unknown>, ctx: IPolicyContext)
       missionId: mission.id,
       status: mission.status,
       correlationId: mission.correlationId,
-      plannedTasks: mission.plannedTasks,
       missionClass: mission.missionClass,
       pulses: mission.pulses,
     }) }],
@@ -264,7 +246,6 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
   const status = args.status as MissionStatus | undefined;
   const description = args.description as string | undefined;
   const documentRef = args.documentRef as string | undefined;
-  const plannedTasks = args.plannedTasks as PlannedTask[] | undefined;
   const missionClass = args.missionClass as MissionClass | undefined;
   const pulses = args.pulses as MissionPulses | undefined;
 
@@ -272,27 +253,12 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
     status?: MissionStatus;
     description?: string;
     documentRef?: string;
-    plannedTasks?: PlannedTask[];
     missionClass?: MissionClass;
     pulses?: MissionPulses;
   } = {};
   if (status) updates.status = status;
   if (description !== undefined) updates.description = description;
   if (documentRef !== undefined) updates.documentRef = documentRef;
-  if (plannedTasks !== undefined) {
-    // task-316 / idea-144 Path A: incoming plannedTasks on update are
-    // also normalized to initial state. Callers revising an existing
-    // mission's plan are replacing the plan wholesale; advancement
-    // bookkeeping (issued/completed) belongs to the cascade handler,
-    // not direct update paths.
-    updates.plannedTasks = plannedTasks.map((p) => ({
-      sequence: p.sequence,
-      title: p.title,
-      description: p.description,
-      status: p.status ?? ("unissued" as const),
-      issuedTaskId: p.issuedTaskId ?? null,
-    }));
-  }
   // Mission-57 W1: validate missionClass enum + prepare pulses (strip
   // sweeper-managed bookkeeping; auto-inject defaults; validate
   // engineer-authored fields). Per Design v1.0 §3 default-injection
@@ -399,9 +365,7 @@ async function updateMission(args: Record<string, unknown>, ctx: IPolicyContext)
     content: [{ type: "text" as const, text: JSON.stringify({
       missionId: mission.id,
       status: mission.status,
-      tasks: mission.tasks,
       ideas: mission.ideas,
-      plannedTasks: mission.plannedTasks,
       missionClass: mission.missionClass,
       pulses: mission.pulses,
     }) }],
@@ -484,7 +448,7 @@ async function forceFirePulse(
 const MISSION_FILTERABLE_FIELDS: QueryableFieldSpec = {
   status: { type: "enum", values: ["proposed", "active", "completed", "abandoned"] },
   correlationId: { type: "string" },
-  turnId: { type: "string" },
+  // work-162 (A1): turnId removed from the live query surface (Turn retired).
   sourceThreadId: { type: "string" },
   sourceActionId: { type: "string" },
   createdAt: { type: "date" },
@@ -500,7 +464,6 @@ const MISSION_SORTABLE_FIELDS = [
   "createdAt",
   "updatedAt",
   "correlationId",
-  "turnId",
   "sourceThreadId",
   "sourceActionId",
   "createdBy.role",
@@ -523,7 +486,6 @@ const MISSION_ACCESSORS: FieldAccessors<Mission> = {
   id: (m) => m.id,
   status: (m) => phaseFromEntity(m),
   correlationId: (m) => m.correlationId,
-  turnId: (m) => m.turnId,
   sourceThreadId: (m) => m.sourceThreadId,
   sourceActionId: (m) => m.sourceActionId,
   createdAt: (m) => m.createdAt,
@@ -542,7 +504,6 @@ const MISSION_SORT_SCHEMA = buildQuerySortSchema(MISSION_SORTABLE_FIELDS);
 function projectMissionCompact(m: Mission) {
   return {
     id: m.id, title: m.title, status: m.status, missionClass: m.missionClass ?? null,
-    tasksCount: Array.isArray(m.tasks) ? m.tasks.length : 0,
     ideasCount: Array.isArray(m.ideas) ? m.ideas.length : 0,
     updatedAt: m.updatedAt,
   };
@@ -592,18 +553,8 @@ async function listMissions(args: Record<string, unknown>, ctx: IPolicyContext):
   };
 }
 
-// task-316 / idea-144 Path A — plannedTasks input schema. Normalized
-// server-side: status defaults to "unissued", issuedTaskId to null.
-// Callers supplying status/issuedTaskId on create/update are ignored
-// for non-`unissued` values — the advancement cascade owns the
-// bookkeeping transitions.
-const PLANNED_TASK_INPUT_SCHEMA = z.object({
-  sequence: z.number().describe("Ordinal position in the mission's execution plan"),
-  title: z.string().describe("Short title for the spawned Task"),
-  description: z.string().describe("Directive body that becomes the spawned Task's description"),
-  status: z.enum(["unissued", "issued", "completed"]).optional().describe("Lifecycle state; defaults to 'unissued' on fresh input"),
-  issuedTaskId: z.string().nullable().optional().describe("ID of the spawned Task once issued (managed by advancement cascade; callers should leave null)"),
-});
+// work-162 (A1): PLANNED_TASK_INPUT_SCHEMA removed — plannedTasks is no longer a
+// live create_mission/update_mission MCP input surface (Task subsystem retired).
 
 // Mission-57 W1 + mission-68 W1: PulseConfig + MissionPulses input schemas.
 // Sweeper-managed bookkeeping fields (lastFiredAt / lastResponseAt /
@@ -639,16 +590,12 @@ const MISSION_CLASS_INPUT_SCHEMA = z.enum(MISSION_CLASSES).describe(
 export function registerMissionPolicy(router: PolicyRouter): void {
   router.register(
     "create_mission",
-    "[Architect] Create a new mission — a committed arc of work grouping related tasks. " +
-    "task-316 / idea-144 Path A: `plannedTasks` is an optional execution plan. " +
-    "When present, the post-review advancement cascade auto-issues the next unissued plannedTask on each approved review, eliminating the nudge-per-review pattern observed in mission-38 (5 nudge threads for 5 tasks). " +
-    "Missions without plannedTasks behave exactly as before — no auto-advancement. " +
+    "[Architect] Create a new mission — a committed arc of work (WorkItem arc-nodes are the work substrate). " +
     "Mission-57 W1: optional `missionClass` + `pulses` declarative coordination config; sweeper-managed bookkeeping fields stripped at MCP-tool boundary; engineer-authored field defaults auto-injected per Design v1.0 §3.",
     {
       title: z.string().describe("Mission title"),
       description: z.string().describe("Brief description of the mission objectives"),
       documentRef: z.string().optional().describe("GCS document path for the full brief (e.g., 'docs/missions/brief.md')"),
-      plannedTasks: z.array(PLANNED_TASK_INPUT_SCHEMA).optional().describe("Optional execution plan. Ordered task templates auto-issued by the advancement cascade on approved reviews. See thread-241/thread-242 for cascade shape + revision-loop FSMs."),
       missionClass: MISSION_CLASS_INPUT_SCHEMA.optional(),
       pulses: MISSION_PULSES_INPUT_SCHEMA.optional().describe("Optional declarative pulse configuration (mission-57 W1). PulseSweeper consumes; engineer + architect pulses with cadence + response-shape + missed-threshold. See Design v1.0 §3 for schema; §6 for per-class default cadence templates (codified in mission-lifecycle.md v1.0)."),
     },
@@ -657,15 +604,13 @@ export function registerMissionPolicy(router: PolicyRouter): void {
 
   router.register(
     "update_mission",
-    "[Architect] Update a mission's status, description, document reference, plannedTasks, missionClass, or pulses. " +
-    "task-316: updating `plannedTasks` replaces the existing plan wholesale; advancement bookkeeping (issued/completed) is driven by the cascade handler, not direct updates. " +
+    "[Architect] Update a mission's status, description, document reference, missionClass, or pulses. " +
     "Mission-57 W1: pulses-update preserves sweeper-managed bookkeeping (lastFiredAt / lastResponseAt / missedCount / lastEscalatedAt); only PulseSweeper writes those via direct repository updates that bypass this MCP surface.",
     {
       missionId: z.string().describe("The mission ID to update"),
       status: z.enum(["proposed", "active", "completed", "abandoned"]).optional().describe("New status"),
       description: z.string().optional().describe("Updated description"),
       documentRef: z.string().optional().describe("Updated document reference"),
-      plannedTasks: z.array(PLANNED_TASK_INPUT_SCHEMA).optional().describe("Replace the mission's plannedTasks plan. Normalized to initial state on input."),
       missionClass: MISSION_CLASS_INPUT_SCHEMA.optional(),
       pulses: MISSION_PULSES_INPUT_SCHEMA.optional().describe("Replace the mission's pulses config. Sweeper-managed bookkeeping is preserved across replacements; engineer-authored fields validated + defaults auto-injected per Design v1.0 §3."),
     },
@@ -711,11 +656,11 @@ export function registerMissionPolicy(router: PolicyRouter): void {
     "`filter` accepts a Mongo-ish object with implicit AND across fields: " +
     "`{status: 'active'}` for eq, `{status: {$in: ['proposed','active']}}` for set membership, " +
     "`{createdAt: {$lt: '2026-04-01T00:00:00Z'}}` for range. " +
-    "Filterable fields: status, correlationId, turnId, sourceThreadId, sourceActionId, createdAt, updatedAt, " +
+    "Filterable fields: status, correlationId, sourceThreadId, sourceActionId, createdAt, updatedAt, " +
     "'createdBy.role', 'createdBy.agentId', 'createdBy.id' (computed `${role}:${agentId}`). " +
     "Range operators ($gt/$lt/$gte/$lte) apply only to dates + numbers. " +
     "Forbidden operators ($regex, $where, $expr, $or, $and, $not) are rejected with an error naming the permitted set. " +
-    "`sort` accepts an ordered tuple `[{field, order}]` on: id, status, createdAt, updatedAt, correlationId, turnId, sourceThreadId, sourceActionId, 'createdBy.role', 'createdBy.agentId', 'createdBy.id'. " +
+    "`sort` accepts an ordered tuple `[{field, order}]` on: id, status, createdAt, updatedAt, correlationId, sourceThreadId, sourceActionId, 'createdBy.role', 'createdBy.agentId', 'createdBy.id'. " +
     "Implicit id:asc tie-breaker is appended for deterministic pagination. " +
     "Returns `_ois_query_unmatched: true` when the filter yields zero matches but the collection is non-empty. " +
     "Legacy scalar `status:` arg preserved for backwards compat; `filter.status` wins when both present.",

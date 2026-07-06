@@ -17,7 +17,6 @@ import { createMemoryStorageSubstrate } from "../../src/storage-substrate/index.
 import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
 import { ScheduledMessageSweeper } from "../../src/policy/scheduled-message-sweeper.js";
 import { ThreadRepositorySubstrate as ThreadRepository } from "../../src/entities/thread-repository-substrate.js";
-import { TaskRepositorySubstrate as TaskRepository } from "../../src/entities/task-repository-substrate.js";
 import { AuditRepositorySubstrate as AuditRepository } from "../../src/entities/audit-repository-substrate.js";
 import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import type { IPolicyContext } from "../../src/policy/types.js";
@@ -29,13 +28,11 @@ async function makeFixture(now: () => number = () => Date.now()) {
   const counter = new SubstrateCounter(provider);
   const messageStore = new MessageRepository(provider);
   const threadStore = new ThreadRepository(provider, counter);
-  const taskStore = new TaskRepository(provider, counter);
   const auditStore = new AuditRepository(provider, counter);
   const ctx: IPolicyContext = {
     stores: {
       message: messageStore,
       thread: threadStore,
-      task: taskStore,
       audit: auditStore,
     },
     metrics: { increment: () => {} },
@@ -52,7 +49,7 @@ async function makeFixture(now: () => number = () => Date.now()) {
     { forSweeper: () => ctx },
     { intervalMs: 50, logger: silentLogger, now },
   );
-  return { provider, counter, messageStore, threadStore, taskStore, auditStore, sweeper, ctx };
+  return { provider, counter, messageStore, threadStore, auditStore, sweeper, ctx };
 }
 
 const baseScheduledInput = {

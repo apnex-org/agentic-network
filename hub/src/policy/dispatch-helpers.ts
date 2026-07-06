@@ -18,48 +18,10 @@
  */
 
 import type { IPolicyContext } from "./types.js";
-import type { Task, Proposal } from "../state.js";
+import type { Proposal } from "../state.js";
 import type { Idea } from "../entities/idea.js";
 import type { Mission } from "../entities/mission.js";
 import type { Bug } from "../entities/bug.js";
-
-/**
- * Fire the matching SSE event for a newly-spawned Task.
- *
- * Mirrors the dispatch at task-policy.ts:submitTask — `task_blocked`
- * to architects when the task has dependsOn, else `task_issued` to
- * engineers. matchLabels scopes the selector to the creator's label
- * inheritance.
- *
- * @param sourceThreadId — caller override. When omitted, falls back
- *   to `task.sourceThreadId` (set by the cascade back-link). Direct
- *   callers pass the arg-supplied sourceThreadId; cascade callers
- *   can omit.
- */
-export async function dispatchTaskSpawned(
-  ctx: IPolicyContext,
-  task: Task,
-  labels: Record<string, string>,
-  sourceThreadId?: string | null,
-): Promise<void> {
-  const hasDeps = (task.dependsOn?.length ?? 0) > 0;
-  const effectiveSourceThreadId = sourceThreadId ?? task.sourceThreadId ?? undefined;
-  if (hasDeps) {
-    await ctx.dispatch("task_blocked", {
-      taskId: task.id,
-      directive: task.directive.substring(0, 200),
-      correlationId: task.correlationId,
-      dependsOn: task.dependsOn,
-    }, { roles: ["architect"], matchLabels: labels });
-  } else {
-    await ctx.dispatch("task_issued", {
-      taskId: task.id,
-      directive: task.directive.substring(0, 200),
-      correlationId: task.correlationId,
-      sourceThreadId: effectiveSourceThreadId,
-    }, { roles: ["engineer"], matchLabels: labels });
-  }
-}
 
 /**
  * Fire `proposal_submitted` to architects matching the proposal's

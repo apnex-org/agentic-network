@@ -15,7 +15,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { TestOrchestrator } from "./orchestrator.js";
 import {
   InvariantNotYetTestable,
-  assertInvT4,
   assertInvP1,
   assertInvP2,
   assertInvP4,
@@ -34,9 +33,7 @@ describe("invariant-helpers", () => {
     orch = TestOrchestrator.create();
   });
 
-  it("assertInvT4 (task terminal states) runs positive mode without throwing", async () => {
-    await expect(assertInvT4(orch, "positive")).resolves.toBeUndefined();
-  });
+  // work-162 (A1): assertInvT4 (task terminal states) test retired with the Task subsystem.
 
   it("assertInvP1 (architect-only proposal review) runs positive mode", async () => {
     await expect(assertInvP1(orch, "positive")).resolves.toBeUndefined();

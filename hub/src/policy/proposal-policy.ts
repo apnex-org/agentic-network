@@ -18,7 +18,6 @@ import type { ProposedExecutionPlan, ScaffoldResult, ProposalStatus } from "../s
 import { callerLabels } from "./labels.js";
 import { resolveCreatedBy } from "./caller-identity.js";
 import { dispatchProposalSubmitted } from "./dispatch-helpers.js";
-import { phaseFromEntity } from "../entities/shape-helpers.js";
 
 // ── Scaffolding ─────────────────────────────────────────────────────
 
@@ -27,7 +26,6 @@ interface ScaffoldContext {
   proposalId: string;
   resolutionMap: Map<string, string>;  // idRef → generated ID
   createdMissionIds: string[];
-  createdTaskIds: string[];
 }
 
 /**
@@ -96,13 +94,7 @@ async function scaffoldPlan(
     proposalId,
     resolutionMap: new Map(),
     createdMissionIds: [],
-    createdTaskIds: [],
   };
-
-  // Mission-19: scaffolded tasks inherit labels from the parent proposal
-  // (authoritative source) rather than the approver's caller-labels.
-  const parent = await ctx.stores.proposal.getProposal(proposalId);
-  const inheritedLabels = parent?.labels ?? {};
 
   try {
     // Phase 1: Create missions
@@ -117,51 +109,9 @@ async function scaffoldPlan(
       console.log(`[Scaffold] Created mission ${mission.id} (idRef: ${m.idRef})`);
     }
 
-    // Phase 2: Create tasks (after missions, so missionRefs can resolve)
-    for (const t of plan.tasks || []) {
-      // Resolve correlationId based on lineage rules
-      let correlationId: string;
-      if (t.missionRef) {
-        const missionId = sc.resolutionMap.get(t.missionRef);
-        if (!missionId) {
-          throw new Error(`Cannot resolve missionRef: ${t.missionRef}`);
-        }
-        correlationId = missionId;
-      } else {
-        correlationId = proposalId;
-      }
-
-      // Resolve dependsOn: swap local idRefs for generated IDs
-      const resolvedDeps: string[] = [];
-      for (const dep of t.dependsOn || []) {
-        const resolved = sc.resolutionMap.get(dep);
-        if (resolved) {
-          resolvedDeps.push(resolved);
-        } else {
-          // Assume external ID (e.g., "task-123")
-          resolvedDeps.push(dep);
-        }
-      }
-
-      const taskId = await ctx.stores.task.submitDirective(
-        t.description,
-        correlationId,
-        undefined, // no idempotency key
-        t.title,
-        t.description,
-        resolvedDeps.length > 0 ? resolvedDeps : undefined,
-        inheritedLabels,
-      );
-
-      sc.resolutionMap.set(t.idRef, taskId);
-      sc.createdTaskIds.push(taskId);
-
-      // Mission linkage is a virtual view over the task store keyed by
-      // `correlationId` (see entities/mission.ts). Passing `correlationId`
-      // above is sufficient — no explicit link step.
-
-      console.log(`[Scaffold] Created task ${taskId} (idRef: ${t.idRef}, correlationId: ${correlationId})`);
-    }
+    // work-162 (A1): Task auto-scaffolding retired — proposals scaffold
+    // missions only; WorkItems are the sole work substrate. `plan.tasks`
+    // is no longer minted (schema field preserved for plan back-compat).
 
     // Build result
     const result: ScaffoldResult = {
@@ -169,27 +119,16 @@ async function scaffoldPlan(
         idRef: m.idRef,
         generatedId: sc.resolutionMap.get(m.idRef)!,
       })),
-      tasks: (plan.tasks || []).map(t => ({
-        idRef: t.idRef,
-        generatedId: sc.resolutionMap.get(t.idRef)!,
-      })),
+      tasks: [],
     };
 
     return { result, errors: [] };
 
   } catch (err) {
-    console.error(`[Scaffold] FAILED: ${err}. Rolling back ${sc.createdMissionIds.length} missions, ${sc.createdTaskIds.length} tasks`);
+    console.error(`[Scaffold] FAILED: ${err}. Rolling back ${sc.createdMissionIds.length} missions`);
 
-    // Rollback: delete created entities (best-effort)
+    // Rollback: missions have no delete/cancel API — log orphans for manual cleanup.
     const rollbackErrors: string[] = [];
-    for (const taskId of sc.createdTaskIds) {
-      try {
-        await ctx.stores.task.cancelTask(taskId);
-      } catch (rollbackErr) {
-        rollbackErrors.push(`Failed to rollback task ${taskId}: ${rollbackErr}`);
-      }
-    }
-    // Note: missions don't have a delete/cancel — log orphans for manual cleanup
     if (sc.createdMissionIds.length > 0) {
       rollbackErrors.push(`Orphaned missions (no delete API): ${sc.createdMissionIds.join(", ")}`);
     }
@@ -356,21 +295,8 @@ export async function createProposalReview(args: Record<string, unknown>, ctx: I
       };
     }
 
-    // Store the scaffold result on the proposal
+    // Store the scaffold result on the proposal.
     await ctx.stores.proposal.setScaffoldResult(proposalId, scaffoldData);
-
-    // Emit task_issued for each created task that is pending (not blocked)
-    for (const t of scaffoldData.tasks) {
-      const task = await ctx.stores.task.getTask(t.generatedId);
-      // mission-89 Phase 4 (bug-137): envelope-aware status read.
-      if (task && phaseFromEntity(task) === "pending") {
-        await ctx.dispatch("task_issued", {
-          taskId: t.generatedId,
-          directive: (task.description || task.title || "").substring(0, 200),
-          correlationId: task.correlationId,
-        }, { roles: ["engineer"], matchLabels: task.labels });
-      }
-    }
   }
 
   await ctx.dispatch("proposal_decided", {

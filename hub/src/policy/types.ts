@@ -3,11 +3,10 @@
  */
 
 import type { ZodType } from "zod";
-import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, Selector } from "../state.js";
+import type { IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore, Selector } from "../state.js";
 import type {
   IIdeaStore,
   IMissionStore,
-  ITurnStore,
   IBugStore,
   IPendingActionStore,
   IMessageStore,
@@ -24,14 +23,12 @@ export interface DomainEvent {
 // ── All Stores (pure CRUD DAOs) ─────────────────────────────────────
 
 export interface AllStores {
-  task: ITaskStore;
   engineerRegistry: IEngineerRegistry;
   proposal: IProposalStore;
   thread: IThreadStore;
   audit: IAuditStore;
   idea: IIdeaStore;
   mission: IMissionStore;
-  turn: ITurnStore;
   bug: IBugStore;
   pendingAction: IPendingActionStore;
   /** Mission-51 W1: universal Message primitive store. */

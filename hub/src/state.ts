@@ -1,53 +1,15 @@
 /**
  * State interfaces and in-memory implementation for the MCP Relay Hub.
  *
- * Defines ITaskStore and IEngineerRegistry interfaces that can be backed
+ * Defines IEngineerRegistry + peer store interfaces that can be backed
  * by either in-memory storage (local dev) or GCS (production).
+ *
+ * work-162 (A1): the Task entity + TaskStatus + ITaskStore were retired
+ * with the Task subsystem. Historical Task rows remain immutable in the
+ * substrate (A4 zero-loss); there is no read path or type.
  */
 
-export type TaskStatus = "pending" | "working" | "blocked" | "input_required" | "in_review" | "completed" | "failed" | "escalated" | "cancelled";
-
 export type SessionRole = "engineer" | "architect" | "director" | "verifier" | "unknown";
-
-export interface Task {
-  id: string;
-  directive: string;
-  report: string | null;
-  reportSummary: string | null;
-  reportRef: string | null;
-  verification: string | null;
-  reviewAssessment: string | null;
-  reviewRef: string | null;
-  assignedAgentId: string | null;
-  clarificationQuestion: string | null;
-  clarificationAnswer: string | null;
-  correlationId: string | null;
-  idempotencyKey: string | null;
-  title: string | null;
-  description: string | null;
-  dependsOn: string[];
-  revisionCount: number;
-  status: TaskStatus;
-  /** Mission-19: routing labels inherited from creator at submit-time. */
-  labels: Record<string, string>;
-  /** Mission-20 Phase 3: owning Turn for virtual-view composition. */
-  turnId: string | null;
-  /**
-   * Mission-24 Phase 2 (ADR-014, INV-TH20/23): cascade-spawn back-links.
-   * When this Task was spawned by a thread cascade handler, these fields
-   * carry the provenance pair (sourceThreadId+sourceActionId is the
-   * natural idempotency key) plus the thread's negotiated summary frozen
-   * at commit (Summary-as-Living-Record). Null for non-cascade-spawned
-   * tasks — Director-directed, legacy, or Architect-decomposed tasks.
-   */
-  sourceThreadId: string | null;
-  sourceActionId: string | null;
-  sourceThreadSummary: string | null;
-  /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
-  createdBy?: EntityProvenance;
-  createdAt: string;
-  updatedAt: string;
-}
 
 /**
  * Mission-24 Phase 2 (ADR-014): cascade-spawn provenance metadata
@@ -650,7 +612,6 @@ export interface ThreadParticipant {
  */
 export type StagedActionType =
   | "close_no_action"
-  | "create_task"
   | "create_proposal"
   | "create_idea"
   | "update_idea"
@@ -674,12 +635,8 @@ export interface CloseNoActionPayload {
   reason: string;
 }
 
-/** Phase 2 autonomous: spawn a Task from thread convergence. */
-export interface CreateTaskActionPayload {
-  title: string;
-  description: string;
-  correlationId?: string;
-}
+// work-162 (A1): CreateTaskActionPayload removed — create_task retired as a
+// convergence-spawnable action with the Task subsystem.
 
 /** Phase 2 autonomous: spawn a Proposal from thread convergence. */
 export interface CreateProposalActionPayload {
@@ -741,7 +698,6 @@ export interface CreateBugActionPayload {
  * the paired `type` discriminator on StagedAction. */
 export type StagedActionPayload =
   | CloseNoActionPayload
-  | CreateTaskActionPayload
   | CreateProposalActionPayload
   | CreateIdeaActionPayload
   | UpdateIdeaActionPayload
@@ -787,7 +743,6 @@ interface StagedActionCommon {
  * access payload fields without explicit casts. */
 export type StagedAction =
   | (StagedActionCommon & { type: "close_no_action"; payload: CloseNoActionPayload })
-  | (StagedActionCommon & { type: "create_task"; payload: CreateTaskActionPayload })
   | (StagedActionCommon & { type: "create_proposal"; payload: CreateProposalActionPayload })
   | (StagedActionCommon & { type: "create_idea"; payload: CreateIdeaActionPayload })
   | (StagedActionCommon & { type: "update_idea"; payload: UpdateIdeaActionPayload })
@@ -798,7 +753,6 @@ export type StagedAction =
 
 export type StagedActionOp =
   | { kind: "stage"; type: "close_no_action"; payload: CloseNoActionPayload }
-  | { kind: "stage"; type: "create_task"; payload: CreateTaskActionPayload }
   | { kind: "stage"; type: "create_proposal"; payload: CreateProposalActionPayload }
   | { kind: "stage"; type: "create_idea"; payload: CreateIdeaActionPayload }
   | { kind: "stage"; type: "update_idea"; payload: UpdateIdeaActionPayload }
@@ -1215,40 +1169,9 @@ export interface IProposalStore {
   findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Proposal | null>;
 }
 
-export interface ITaskStore {
-  submitDirective(directive: string, correlationId?: string, idempotencyKey?: string, title?: string, description?: string, dependsOn?: string[], labels?: Record<string, string>, backlink?: CascadeBacklink, createdBy?: EntityProvenance): Promise<string>;
-  findByIdempotencyKey(key: string): Promise<Task | null>;
-  /**
-   * Mission-24 Phase 2 (ADR-014, INV-TH20): look up a Task by the natural
-   * idempotency key {sourceThreadId, sourceActionId}. Returns null when
-   * no Task has been spawned from that thread+action pair. Cascade
-   * handlers query this before create to dedupe retries. The key
-   * structurally matches CascadeBacklink minus the summary — summary
-   * isn't part of the lookup.
-   */
-  findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Task | null>;
-  unblockDependents(completedTaskId: string): Promise<string[]>;
-  cancelDependents(failedTaskId: string): Promise<string[]>;
-  /**
-   * Mission-19: claim the next directive the caller is authorized to run.
-   * A Task with non-empty `labels` is only matched when every (k,v) pair
-   * in task.labels is present and equal in `claimant.labels` (subset).
-   * When `claimant` is omitted, behaves like the pre-Mission-19 FIFO pull
-   * (used by legacy paths that have not yet completed M18 handshake).
-   * `claimant.agentId`, when set, is persisted on the task as
-   * `assignedAgentId` for P2P routing of subsequent events.
-   */
-  getNextDirective(claimant?: { agentId?: string; labels?: Record<string, string> }): Promise<Task | null>;
-  submitReport(taskId: string, report: string, summary: string, success: boolean, verification?: string): Promise<boolean>;
-  getNextReport(): Promise<Task | null>;
-  getTask(taskId: string): Promise<Task | null>;
-  listTasks(): Promise<Task[]>;
-  cancelTask(taskId: string): Promise<boolean>;
-  requestClarification(taskId: string, question: string): Promise<boolean>;
-  respondToClarification(taskId: string, answer: string): Promise<boolean>;
-  submitReview(taskId: string, assessment: string, decision?: "approved" | "rejected"): Promise<boolean>;
-  getReview(taskId: string): Promise<{ taskId: string; assessment: string; reviewRef: string } | null>;
-}
+// work-162 (A1): ITaskStore retired — Task verbs/cascade/stores cut. The `Task`
+// read-shape above is preserved for frozen historical-row reads per A4; there is
+// no store interface to mutate or produce Tasks.
 
 export interface IEngineerRegistry {
   /** Bare role-set used by the legacy register_role path and auto-register in task-policy. */

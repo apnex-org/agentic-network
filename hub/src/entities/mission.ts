@@ -35,24 +35,6 @@ export type MissionStatus = "proposed" | "active" | "completed" | "abandoned";
  * `docs/audits/task-316-*` for the per-cell cascade matrix this field
  * participates in.
  */
-export type PlannedTaskStatus = "unissued" | "issued" | "completed";
-
-export interface PlannedTask {
-  /** Ordinal position in the mission's planned sequence. Monotonic; not reused. */
-  sequence: number;
-  /** Short title — becomes the spawned Task's title. */
-  title: string;
-  /** Directive body — becomes the spawned Task's description. */
-  description: string;
-  /** Lifecycle state. Starts as `unissued`; flips to `issued` when the
-   *  advancement cascade spawns a Task; flips to `completed` when the
-   *  architect approves that Task's review. */
-  status: PlannedTaskStatus;
-  /** ID of the spawned Task once `status` is `issued` or `completed`.
-   *  Enables lineage queries (plannedTask → Task → Report → Review). */
-  issuedTaskId?: string | null;
-}
-
 /** Terminal states — mission's FSM has no outbound edges from these. */
 export const TERMINAL_MISSION_STATUSES: ReadonlySet<MissionStatus> = new Set(["completed", "abandoned"]);
 
@@ -192,13 +174,9 @@ export interface Mission {
   description: string;
   documentRef: string | null;
   status: MissionStatus;
-  /** Virtual view — computed on read from `ITaskStore` by `correlationId`. */
-  tasks: string[];
   /** Virtual view — computed on read from `IIdeaStore` by `missionId`. */
   ideas: string[];
   correlationId: string | null;
-  /** Mission-20 Phase 3: owning Turn for virtual-view composition. */
-  turnId: string | null;
   /** Mission-24 Phase 2 (ADR-014, INV-TH20/23): cascade-spawn back-links.
    * Populated when this Mission was spawned via `propose_mission`
    * cascade action. Null for Director-created or legacy missions. */
@@ -207,17 +185,6 @@ export interface Mission {
   sourceThreadSummary: string | null;
   /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
   createdBy?: EntityProvenance;
-  /**
-   * task-316 / idea-144 Path A — Mission execution plan. Ordered array
-   * of task templates the architect commits to as the mission's scope.
-   * The post-review cascade auto-advances through this array on each
-   * `approved` review, issuing the next `unissued` template as a Task.
-   * Undefined on pre-task-316 missions (migrate-on-read semantics —
-   * missions without `plannedTasks` behave exactly as before: no
-   * auto-advancement). See thread-241 / thread-242 for the sealed
-   * cascade shape + revision-loop FSMs.
-   */
-  plannedTasks?: PlannedTask[];
   /**
    * Mission-57 W1: mission-class taxonomy per mission-56 retrospective
    * §5.4.1. Drives per-class default pulse cadence template lookup at the
@@ -245,7 +212,6 @@ export interface IMissionStore {
     documentRef?: string,
     backlink?: CascadeBacklink,
     createdBy?: EntityProvenance,
-    plannedTasks?: PlannedTask[],
     missionClass?: MissionClass,
     pulses?: MissionPulses,
   ): Promise<Mission>;
@@ -260,39 +226,10 @@ export interface IMissionStore {
       status?: MissionStatus;
       description?: string;
       documentRef?: string;
-      plannedTasks?: PlannedTask[];
       missionClass?: MissionClass;
       pulses?: MissionPulses;
     }
   ): Promise<Mission | null>;
-
-  /**
-   * task-316 / idea-144 Path A — atomically transition the next
-   * `unissued` plannedTask to `issued` and persist the spawned
-   * Task id. Returns the transitioned PlannedTask or null if no
-   * unissued slot exists (mission lacks plannedTasks, or all are
-   * issued/completed). Idempotency: subsequent calls advance the
-   * next slot; callers must not call this outside the advancement
-   * cascade handler.
-   */
-  markPlannedTaskIssued(
-    missionId: string,
-    sequence: number,
-    issuedTaskId: string,
-  ): Promise<PlannedTask | null>;
-
-  /**
-   * task-316 — transition a plannedTask from `issued` to `completed`
-   * when the architect approves its Task's review. Keyed on the
-   * `issuedTaskId` so the cascade handler doesn't need to know the
-   * plannedTask's sequence in advance. Null when the mission has no
-   * plannedTask bound to the given taskId (standalone task, or not a
-   * mission-linked plannedTask).
-   */
-  markPlannedTaskCompleted(
-    missionId: string,
-    issuedTaskId: string,
-  ): Promise<PlannedTask | null>;
 
   /** Mission-24 Phase 2 (ADR-014, INV-TH20): look up by natural key. */
   findByCascadeKey(key: Pick<CascadeBacklink, "sourceThreadId" | "sourceActionId">): Promise<Mission | null>;
@@ -304,14 +241,6 @@ export interface IMissionStore {
  * no plannedTasks or all are already issued/completed. Pure
  * computation — no store mutation.
  */
-export function findNextUnissuedPlannedTask(
-  plannedTasks: PlannedTask[] | undefined,
-): PlannedTask | null {
-  if (!plannedTasks || plannedTasks.length === 0) return null;
-  const sorted = [...plannedTasks].sort((a, b) => a.sequence - b.sequence);
-  return sorted.find((p) => p.status === "unissued") ?? null;
-}
-
 // Mission-47 W4: `MemoryMissionStore` deleted. `MissionRepository`
 // in `mission-repository.ts` composes any `StorageProvider` (including
 // `MemoryStorageProvider` for tests) via the IMissionStore interface.

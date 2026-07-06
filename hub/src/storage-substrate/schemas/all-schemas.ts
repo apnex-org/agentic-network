@@ -284,40 +284,8 @@ const Proposal: SchemaDef = {
   renameMap: { status: "status.phase", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
 };
 
-const Task: SchemaDef = {
-  kind: "Task",
-  // v1→v2 (mission-87 W3 / idea-302): completes the mission-62
-  // agent-identifier rename for the Task entity — the legacy
-  // claimant field is now `assignedAgentId`. The index is RENAMED
-  // task_assigned_agent_idx → task_agent_idx (not fields-only-changed):
-  // the reconciler's `CREATE INDEX … IF NOT EXISTS <name>` keys on the
-  // name, so a fields-only change under an unchanged name silently
-  // no-ops, leaving the index bound to the dead old expression. The
-  // data-key rename for existing substrate rows + the orphaned-index
-  // drop are hub/scripts/migrate-task-engineerid-to-agentid.ts.
-  version: 2,
-  fields: [
-    { name: "id", type: "string", required: true },
-    { name: "directive", type: "string", required: false },
-    { name: "status", type: "string", required: false, enum: ["pending", "working", "blocked", "input_required", "in_review", "completed", "failed", "escalated", "cancelled"] },
-    { name: "assignedAgentId", type: "string", required: false },
-    { name: "turnId", type: "string", required: false },
-    // NOTE: clarification is INLINE FIELD on task (clarificationQuestion +
-    // clarificationAnswer per task-repository.ts grep) — NOT separate kind
-  ],
-  indexes: [
-    { name: "task_status_phase_idx", fields: ["status.phase"] },
-    // assignedAgentId moved to spec partition per cluster-2 Task.ts.
-    { name: "task_spec_agent_idx", fields: ["spec.assignedAgentId"] },
-  ],
-  watchable: true,
-  indexOwnershipPattern: "^task_",
-  // W2 finding-A / bug-147 (CRITICAL): idempotencyKey is a LIVE single-path filter
-  // (findByIdempotencyKey, task-repo:177) with NO repo dual-path — bare → null on
-  // envelope rows post-W6 → idempotency dedup silently breaks → duplicate task
-  // creation. Relocates to metadata.idempotencyKey. (Cascade-keys excluded — see oracle.)
-  renameMap: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
-};
+// work-162 (A1): Task SchemaDef DELETED with the Task subsystem. Historical
+// Task rows remain immutable in the substrate (A4 zero-loss) — no read path.
 
 const Thread: SchemaDef = {
   kind: "Thread",
@@ -363,35 +331,8 @@ const Thread: SchemaDef = {
   renameMap: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId", recipientAgentId: "spec.recipientAgentId" },
 };
 
-const Turn: SchemaDef = {
-  kind: "Turn",
-  version: 2,
-  // W4.x.11 architect-blind-correction (architect proactive audit thread-569
-  // round 5 flagged 'essentially-fabricated; needs total rewrite'): v1 had
-  // 'agentId' (DOESN'T EXIST on Turn entity — likely confused with Agent
-  // entity), 'missionId' scalar (actual is missionIds[] array), missing 'status'
-  // (TurnStatus enum [planning/active/completed]). Actual fields per
-  // hub/src/entities/turn.ts: id/title/scope/status/missionIds[]/taskIds[]/
-  // tele[]/correlationId/createdBy/createdAt/updatedAt. v2 corrected — full
-  // rewrite. 14th-instance substrate-currency-failure pattern (most-fabricated
-  // SchemaDef tied with Tele v1 at 3+ fabricated fields).
-  fields: [
-    { name: "id", type: "string", required: true },
-    { name: "title", type: "string", required: true },
-    { name: "status", type: "string", required: true, enum: ["planning", "active", "completed"] },
-    { name: "correlationId", type: "string", required: false },
-  ],
-  indexes: [
-    // turn_agent_idx + turn_mission_idx (v1) DROPPED — fields don't exist on Turn.
-    // Virtual-view hydration of missionIds/taskIds happens via
-    // missionStore.listMissions() + taskStore.listTasks() filter by turnId
-    // (Mission/Task entities carry turnId field; lookup uses those indexes).
-    { name: "turn_status_phase_idx", fields: ["status.phase"] },
-  ],
-  watchable: true,
-  indexOwnershipPattern: "^turn_",
-  renameMap: { status: "status.phase", title: "metadata.name" },
-};
+// work-162 (A1): Turn SchemaDef DELETED with the Turn subsystem. Historical
+// Turn rows remain immutable in the substrate (A4 zero-loss) — no read path.
 
 // ─── 2 NEW kinds this mission ──────────────────────────────────────────────
 
@@ -862,9 +803,7 @@ export const ALL_SCHEMAS: SchemaDef[] = [
   Mission,
   PendingAction,
   Proposal,
-  Task,
   Thread,
-  Turn,
 
   // 1 NEW substrate (re-introduction)
   Notification,

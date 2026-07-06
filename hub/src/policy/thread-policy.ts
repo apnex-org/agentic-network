@@ -453,12 +453,10 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
 
       if (filteredProjectedStaged.length > 0) {
         const validationContext: ValidationContext = {
-          task: ctx.stores.task,
           idea: ctx.stores.idea,
           mission: ctx.stores.mission,
           thread: ctx.stores.thread,
           proposal: ctx.stores.proposal,
-          turn: ctx.stores.turn,
           bug: ctx.stores.bug,
         };
         const stateValidation = await validateActionsWithRegistry(filteredProjectedStaged, validationContext);
@@ -1324,7 +1322,7 @@ export function registerThreadPolicy(router: PolicyRouter): void {
 
   router.register(
     "create_thread_reply",
-    "[Any] Reply to an active ideation thread. Only works when it is your turn. Threads 2.0 (ADR-013/014): stage / revise / retract convergenceActions, author a summary narrating the thread's agreed outcome. At converged=true, the policy rejects the reply unless at least one action is committed and the summary is non-empty. Mission-24 Phase 2 widens the stage vocabulary to the 8 autonomous action types — close_no_action, create_task, create_proposal, create_idea, update_idea, update_mission_status, propose_mission, create_clarification — each committed action is executed by a registered cascade handler that spawns its entity with back-link metadata (sourceThreadId, sourceActionId, sourceThreadSummary).",
+    "[Any] Reply to an active ideation thread. Only works when it is your turn. Threads 2.0 (ADR-013/014): stage / revise / retract convergenceActions, author a summary narrating the thread's agreed outcome. At converged=true, the policy rejects the reply unless at least one action is committed and the summary is non-empty. Mission-24 Phase 2 widens the stage vocabulary to the autonomous action types — close_no_action, create_proposal, create_idea, update_idea, update_mission_status, propose_mission, create_clarification, create_bug — each committed action is executed by a registered cascade handler that spawns its entity with back-link metadata (sourceThreadId, sourceActionId, sourceThreadSummary). (work-162: create_task retired with the Task subsystem.)",
     {
       threadId: z.string().describe("The thread ID to reply to"),
       message: z.string().describe("Your response message"),
