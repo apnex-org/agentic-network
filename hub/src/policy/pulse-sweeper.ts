@@ -452,6 +452,19 @@ export class PulseSweeper {
       return false;
     }
 
+    // S1a-(ii) (idea-458, S1 v0.3 §3.2): ack-only would declare a MISS here — but
+    // an authored WRITE by the pulse's TARGET agent is liveness too. The lived
+    // incident was a working-but-not-acking agent false-flagged idle. If the
+    // target agent authored anything since the last fire, it is demonstrably
+    // working → NOT missed. SCOPED to the target role's agentId(s), NEVER
+    // any-agent: crediting the architectPulse off engineers' writes would
+    // reproduce the incident inverted (architect idle, engineers writing →
+    // falsely LIVE → never nudged). Ack remains an additional positive signal
+    // (handled by noAckSinceLastFire above); authored-write is the primary one.
+    if (await this.targetAuthoredWriteSince(pulseKey, lastFiredMs)) {
+      return false;
+    }
+
     const newMissedCount = (config.missedCount ?? 0) + 1;
     await this.updatePulseBookkeeping(mission.id, pulseKey, { missedCount: newMissedCount });
     this.metrics?.increment("pulse.missed", {
@@ -468,6 +481,43 @@ export class PulseSweeper {
       `Missed ${pulseKey} on ${mission.id} (count=${newMissedCount}/${config.missedThreshold})`,
     );
     return false;
+  }
+
+  /**
+   * S1a-(ii) (idea-458 / S1 v0.3 §3.2): has the pulse's TARGET agent authored any
+   * Message since `sinceMs`? Message-authorship is the do-now authored-write
+   * liveness proxy — passive to the crediting logic, provably advances on real
+   * work (the incident's architect authored 5+ messages while false-flagged idle).
+   *
+   * SCOPED to the target role's agentId(s). A stint is multi-agent; crediting a
+   * pulse off a DIFFERENT agent's writes reproduces the incident inverted (target
+   * idle while others write → falsely LIVE). The pulse's target role (engineer /
+   * architect) resolves to its agent(s) via the registry; a Message counts only
+   * if its authorAgentId is one of them.
+   *
+   * Fail-safe: an unresolvable registry / no target agent → false, so
+   * missed-detection falls back to the ack-only signal (never a spurious
+   * live-credit that would silence the backstop).
+   */
+  private async targetAuthoredWriteSince(pulseKey: PulseKey, sinceMs: number): Promise<boolean> {
+    const targetRole = pulseKey === "engineerPulse" ? "engineer" : "architect";
+    try {
+      const registry = this.contextProvider.forSweeper().stores.engineerRegistry;
+      if (!registry) return false;
+      const agents = await registry.listAgents();
+      const targetIds = agents.filter((a) => a.role === targetRole).map((a) => a.id);
+      for (const agentId of targetIds) {
+        const msgs = await this.messageStore.listMessages({ authorAgentId: agentId });
+        // Messages return ULID(id)-sorted asc == creation-time asc; the last is
+        // the target's most recent authored write. One write at/after the last
+        // fire proves the agent was working in-window.
+        const latest = msgs[msgs.length - 1];
+        if (latest && Date.parse(latest.createdAt) >= sinceMs) return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   /**
