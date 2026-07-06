@@ -170,7 +170,7 @@ export class WorkItemLeaseSweeper {
         } else if (outcome === "abandoned") {
           result.abandoned += 1;
           this.metrics?.increment("workitem_lease.poison_abandoned", { workId: w.id });
-          this.logger.warn(`WorkItem ${w.id} POISON-ABANDONED after ${this.poisonCap} lease-expiry cycles (tele-4)`);
+          this.logger.warn(`WorkItem ${w.id} POISON-ABANDONED after ${this.poisonCap} lease-expiry cycles (A4)`);
           // LOUD + queryable: a durable audit entry for the terminal abandon.
           try {
             await this.audit?.logEntry("hub", "workitem_poison_abandoned",
@@ -193,7 +193,7 @@ export class WorkItemLeaseSweeper {
             // newly quarantined this cycle — LOUD + queryable (the C2 supervisor signal).
             result.agentsQuarantined += 1;
             this.metrics?.increment("workitem_thrash.agent_quarantined", { agentId: holder });
-            this.logger.warn(`agent ${holder} QUARANTINED after ${this.thrashCap} consecutive claim-thrash cycles (tele-4; C2 supervisor signal)`);
+            this.logger.warn(`agent ${holder} QUARANTINED after ${this.thrashCap} consecutive claim-thrash cycles (A4; C2 supervisor signal)`);
             try {
               await this.audit?.logEntry("hub", "agent_workitem_quarantined",
                 `Agent ${holder} quarantined by the lease-sweeper after ${this.thrashCap} consecutive claim→lease-expire-without-evidence cycles`, holder);
