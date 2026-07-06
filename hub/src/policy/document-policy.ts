@@ -51,12 +51,6 @@ async function createDocument(args: Record<string, unknown>, ctx: IPolicyContext
   const content = args.content as string;
   const category = args.category as string | undefined;
 
-  if (!id.startsWith("docs/")) {
-    return {
-      content: [{ type: "text" as const, text: JSON.stringify({ error: "Path must start with 'docs/' to use create_document. Other namespaces (reports/, proposals/, tasks/) are managed by their respective workflows." }) }],
-      isError: true,
-    };
-  }
   if (!ctx.stores.document) {
     return {
       content: [{ type: "text" as const, text: JSON.stringify({ error: "Document store not configured for this Hub" }) }],
@@ -66,6 +60,17 @@ async function createDocument(args: Record<string, unknown>, ctx: IPolicyContext
   try {
     const now = new Date().toISOString();
     const existing = await ctx.stores.document.get(id);
+    // bug-237: the docs/-namespace gate applies ONLY to NEW-path CREATION. An
+    // EXISTING document — including a legacy BARE-PATH doc predating the docs/
+    // convention (e.g. `teles`, `policy-network-v1`) — may be OVERWRITTEN
+    // (tombstone / migrate / cleanup). Without this, legacy bare-path docs were
+    // live-readable via get_document but UNCLEANABLE (no overwrite/delete/migrate).
+    if (!existing && !id.startsWith("docs/")) {
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ error: "Path must start with 'docs/' to CREATE a new document (existing documents at any path may be overwritten). Other namespaces (reports/, proposals/, tasks/) are managed by their respective workflows." }) }],
+        isError: true,
+      };
+    }
     const result = await ctx.stores.document.put({
       id,
       content,

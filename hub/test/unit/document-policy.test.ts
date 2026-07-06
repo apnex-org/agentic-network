@@ -98,6 +98,45 @@ describe("document-policy (mission-84 W6 substrate-backed re-introduction)", () 
     });
   });
 
+  describe("bug-237 — legacy bare-path docs are overwritable (uncleanable-doc fix)", () => {
+    it("overwrites an EXISTING doc at a non-docs/ path (tombstone/migrate path)", async () => {
+      // Seed a legacy bare-path doc directly (predating the docs/ convention),
+      // the way `teles` / `policy-network-v1` exist in the live substrate.
+      await ctx.stores.document!.put({
+        id: "teles",
+        content: "legacy body",
+        category: "specs",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const r = await router.handle(
+        "create_document",
+        { path: "teles", content: "TOMBSTONE — retired; see mission-kit axioms.", category: "specs" },
+        ctx,
+      );
+      expect(r.isError).toBeFalsy();
+      expect(JSON.parse(r.content[0]!.text).success).toBe(true);
+
+      const got = await router.handle("get_document", { path: "teles" }, ctx);
+      expect(got.content[0]!.text).toBe("TOMBSTONE — retired; see mission-kit axioms.");
+
+      // createdAt is preserved across the overwrite (updatedAt advances).
+      const row = await ctx.stores.document!.get("teles");
+      expect(row!.createdAt).toBe("2026-01-01T00:00:00.000Z");
+    });
+
+    it("still REJECTS creating a NEW doc at a non-docs/ path (gate holds for new paths)", async () => {
+      const r = await router.handle(
+        "create_document",
+        { path: "reports/new.md", content: "x" },
+        ctx,
+      );
+      expect(r.isError).toBe(true);
+      expect(JSON.parse(r.content[0]!.text).error).toMatch(/must start with 'docs\//);
+    });
+  });
+
   describe("list_documents filter coverage", () => {
     beforeEach(async () => {
       await router.handle("create_document", { path: "docs/planning/a.md", content: "A", category: "planning" }, ctx);
