@@ -829,6 +829,21 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     expect(bpCalls(stub.calls)[0].nodeConfig).toBeUndefined();
   });
 
+  // steve W1 gate #4 — inline nodes validate at the same boundary as nodesRef (no bypass).
+  it("W1: an INLINE node with an invalid node-pulse (sub-60s interval) is rejected — invalid_blueprint, zero created", async () => {
+    const stub = expandStub();
+    const r = await router.handle(
+      "seed_blueprint",
+      {
+        runId: "act3",
+        nodes: [node({ localId: "bad", nodeConfig: { pulse: { intervalSeconds: 5, message: "x", responseShape: "ack", missedThreshold: 1 } } })],
+      },
+      ctxFor(stub, "architect"),
+    );
+    expect(body(r).errorKind).toBe("invalid_blueprint");
+    expect(bpCalls(stub.calls).length).toBe(0); // fail-closed: nothing materialized
+  });
+
   it("RBAC: an ENGINEER is denied at the [Architect] gate (no nodes created)", async () => {
     const stub = expandStub();
     const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node()] }, ctxFor(stub, "engineer"));

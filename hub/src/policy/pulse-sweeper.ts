@@ -53,7 +53,7 @@ import type {
 } from "../entities/index.js";
 import type { WorkItem } from "../entities/work-item.js";
 import { PULSE_KEYS } from "../entities/index.js";
-import type { Selector, Agent, AgentPulseConfig } from "../state.js";
+import type { Selector, Agent, AgentPulseConfig, AgentRole } from "../state.js";
 import { AGENT_PULSE_KIND } from "../state.js";
 import type { IPolicyContext } from "./types.js";
 // Mission-68 W1 (Design v1.0 §4.2): precondition layer for pulses removed.
@@ -754,7 +754,12 @@ export class PulseSweeper {
    * Public so the policy layer can invoke via `ctx.stores.pulseSweeper`.
    */
   async onPulseAcked(pulseMessage: Message): Promise<void> {
-    const payload = pulseMessage.payload as { missionId?: unknown };
+    const payload = pulseMessage.payload as { missionId?: unknown; nodeId?: unknown };
+    // W1 (idea-446): node-native pulse ACK path — a node pulse carries `nodeId` (not
+    // missionId), so without this branch a node ACK never credited nodeConfig.pulse
+    // bookkeeping → false misses/escalations (steve W1 gate #1).
+    const nodeId = typeof payload.nodeId === "string" ? payload.nodeId : null;
+    if (nodeId) return this.onNodePulseAcked(nodeId, pulseMessage);
     const missionId = typeof payload.missionId === "string" ? payload.missionId : null;
     if (!missionId) {
       this.logger.warn(
@@ -782,6 +787,35 @@ export class PulseSweeper {
     });
     this.metrics?.increment("pulse.acked", { missionId, pulseKey });
     this.logger.log(`Acked ${pulseKey} on ${missionId} at ${responseAt}`);
+  }
+
+  /** W1 (idea-446): node-native pulse ACK. HOLDER-SCOPED (steve W1 gate #2): a LEASED
+   *  node's pulse is credited ONLY by its FRESH holder — a same-role non-holder acking
+   *  must NOT credit (else it false-credits while the holder is silent — the S1a-(ii)
+   *  agent-scoping, on the ACK side). Credits lastResponseAt + resets missedCount.
+   *  Never throws (best-effort, like the mission ack path). */
+  private async onNodePulseAcked(nodeId: string, pulseMessage: Message): Promise<void> {
+    try {
+      const store = this.nodeStore();
+      if (!store) return;
+      const node = await store.getWorkItem(nodeId);
+      if (!node?.nodeConfig?.pulse) {
+        this.logger.warn(`onPulseAcked: node ${nodeId} carries no node pulse; skip`);
+        return;
+      }
+      const holder = node.lease?.holder;
+      const acker = (pulseMessage as { claimedBy?: string | null }).claimedBy ?? null;
+      if (holder && acker && acker !== holder) {
+        this.logger.warn(`onPulseAcked: node ${nodeId} ACK by ${acker} != fresh holder ${holder}; NOT crediting`);
+        return;
+      }
+      const responseAt = new Date().toISOString();
+      await store.updateNodePulseBookkeeping(nodeId, { lastResponseAt: responseAt, missedCount: 0 });
+      this.metrics?.increment("pulse.node.acked", { nodeId });
+      this.logger.log(`Acked node pulse ${nodeId} at ${responseAt}`);
+    } catch (err) {
+      this.logger.warn(`onNodePulseAcked failed for ${nodeId} (non-fatal)`, err);
+    }
   }
 
   /**
@@ -812,7 +846,18 @@ export class PulseSweeper {
   private async iterateNodePulses(result: PulseSweepResult): Promise<void> {
     const store = this.nodeStore();
     if (!store) return;
-    const { items } = await store.listWorkItems();
+    const { items, truncated } = await store.listWorkItems();
+    if (truncated) {
+      // FAIL-LOUD (steve W1 gate #5): nodeConfig.pulse is status-partitioned + non-filterable
+      // (no index), so the scan can't be scoped — a pulse-carrying node beyond the listWorkItems
+      // cap would be SILENTLY unbacked this tick. Surface it (error + metric) rather than hide it;
+      // a backstop scan that silently drops coverage is worse than none.
+      result.errors += 1;
+      this.metrics?.increment("pulse.node.scan_truncated", {});
+      this.logger.warn(
+        `iterateNodePulses: listWorkItems scan hit the cap (truncated) — a pulse-carrying node MAY be omitted this tick; node-pulse coverage is INCOMPLETE`,
+      );
+    }
     const terminal = new Set(["done", "abandoned"]);
     const pulseNodes = items.filter((n) => n.nodeConfig?.pulse && !terminal.has(n.status));
     for (const node of pulseNodes) {
@@ -928,12 +973,17 @@ export class PulseSweeper {
       }
       return;
     }
+    // W1 gate #2 (holder-scoped delivery): deliver to the specific HOLDER when the node is
+    // leased (so a same-role NON-holder can't claim/ack the pulse and false-credit it), else
+    // the eligible role, else broadcast. Symmetric with the holder-scoped ack + crediting.
+    const holder = node.lease?.holder ?? null;
     const targetRole = node.roleEligibility && node.roleEligibility.length > 0 ? node.roleEligibility[0] : null;
-    await this.messageStore.createMessage({
+    const target = holder ? { agentId: holder } : targetRole ? { role: targetRole as MessageAuthorRole } : null;
+    const message = await this.messageStore.createMessage({
       kind: "external-injection",
       authorRole: "system",
       authorAgentId: "hub",
-      target: targetRole ? { role: targetRole as MessageAuthorRole } : null,
+      target,
       delivery: "push-immediate",
       payload: {
         pulseKind: "status_check",
@@ -947,6 +997,16 @@ export class PulseSweeper {
     await store.updateNodePulseBookkeeping(node.id, { lastFiredAt: fireAt });
     this.metrics?.increment("pulse.node.fired", { nodeId: node.id });
     this.logger.log(`Fired node pulse for ${node.id} at ${fireAt} (cadence ${config.intervalSeconds}s)`);
+    // W1 gate #3 (push-on-fire wake): dispatch message_arrived non-fatally, symmetric with the
+    // mission firePulse Path-A wake — else a node pulse persists but never wakes the session
+    // (the persisted-but-not-woken gap). Selector matches the delivery scope.
+    try {
+      const ctx = this.contextProvider.forSweeper();
+      const selector: Selector = holder ? { agentId: holder } : targetRole ? { roles: [targetRole as AgentRole] } : {};
+      await ctx.dispatch("message_arrived", { message }, selector);
+    } catch (err) {
+      this.logger.warn(`[PulseSweeper] node push-on-fire dispatch failed for ${node.id} (non-fatal)`, err);
+    }
   }
 
   /** Escalate a node pulse (E1 mediation invariant: architect-routed). */

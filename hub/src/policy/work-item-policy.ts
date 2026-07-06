@@ -717,6 +717,18 @@ async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext)
       return err("invalid_blueprint", `nodesRef document "${nodesRef}" nodes failed schema validation: ${detail}`);
     }
     nodes = validated.data as unknown as BlueprintNode[];
+  } else if (inlineNodes) {
+    // W1 gate #4 (validation parity): the MCP router boundary zod-checks inline nodes[], but a
+    // DIRECT policy-path caller (router.handle / an internal caller) bypasses that layer — so
+    // re-validate inline nodes with the SAME blueprintNodeSchema here (mirrors the nodesRef path
+    // above). Fail-closed → zero creates. Closes a sub-60 node-pulse (or any malformed node)
+    // reaching createBlueprintNode uncontracted via a direct path.
+    const validated = z.array(blueprintNodeSchema).safeParse(inlineNodes);
+    if (!validated.success) {
+      const detail = validated.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+      return err("invalid_blueprint", `inline nodes failed schema validation: ${detail}`);
+    }
+    nodes = validated.data as unknown as BlueprintNode[];
   }
 
   // runId: the explicit arg wins (caller-controlled idempotency key); else the

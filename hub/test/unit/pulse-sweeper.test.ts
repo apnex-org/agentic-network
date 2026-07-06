@@ -649,6 +649,38 @@ describe("PulseSweeper — W1 node-native pulse pass (idea-446 / work-181)", () 
     await rig.sweeper.tick();
     expect((await rig.workItemStore.getWorkItem(node.id))!.nodeConfig!.pulse!.missedCount ?? 0).toBe(0);
   });
+
+  // steve W1 gate #1 + #2 — the node ACK path (payload.nodeId, holder-scoped).
+  it("onPulseAcked (nodeId payload): a node ACK credits liveness — lastResponseAt set + missedCount reset", async () => {
+    const rig = buildSweeperRig();
+    const node = await makePulseNode(rig, ["engineer"]);
+    await seedFired(rig, node.id, { missedCount: 2 });
+    await rig.sweeper.onPulseAcked({ id: "m1", payload: { nodeId: node.id }, claimedBy: null } as unknown as Message);
+    const pulse = (await rig.workItemStore.getWorkItem(node.id))!.nodeConfig!.pulse!;
+    expect(pulse.missedCount).toBe(0);
+    expect(pulse.lastResponseAt).toBeDefined();
+  });
+
+  it("onPulseAcked (holder-scoped): a node ACK by a NON-holder is rejected — no credit", async () => {
+    const rig = buildSweeperRig({ agents: [{ id: "eng-1", role: "engineer" }] });
+    const node = await makePulseNode(rig, ["engineer"]);
+    await rig.workItemStore.claimWorkItem(node.id, "eng-1", "engineer"); // holder = eng-1
+    await seedFired(rig, node.id, { missedCount: 2 });
+    await rig.sweeper.onPulseAcked({ id: "m2", payload: { nodeId: node.id }, claimedBy: "eng-2" } as unknown as Message); // NON-holder
+    expect((await rig.workItemStore.getWorkItem(node.id))!.nodeConfig!.pulse!.missedCount).toBe(2); // NOT credited
+  });
+
+  it("FIRES on a LEASED node: delivery is holder-scoped (target agentId = holder)", async () => {
+    const rig = buildSweeperRig({ agents: [{ id: "eng-1", role: "engineer" }] });
+    const node = await makePulseNode(rig, ["engineer"]);
+    await rig.workItemStore.claimWorkItem(node.id, "eng-1", "engineer");
+    rig.setNow(new Date(node.createdAt).getTime() + MS(61));
+    await rig.sweeper.tick();
+    const msg = (await rig.messageStore.listMessages({})).find(
+      (m) => (m.payload as { nodeId?: string })?.nodeId === node.id && (m.payload as { pulseKind?: string })?.pulseKind === "status_check",
+    );
+    expect(msg?.target).toEqual({ agentId: "eng-1" }); // delivered to the HOLDER, not the role
+  });
 });
 
 describe("PulseSweeper — onPulseAcked webhook (Item-2)", () => {
