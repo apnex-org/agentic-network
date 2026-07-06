@@ -126,18 +126,52 @@ export class ToolSurfaceReconciler {
       this.log(
         `[tool-surface-reconcile] ${reason}: drift applied=${this.appliedRevision} → live=${live} — emitting tools/list_changed`,
       );
-      try {
-        this.deps.emitListChanged();
-      } catch (err) {
-        // Never let a host-emit failure escape the reconcile loop.
-        this.log(
-          `[tool-surface-reconcile] ${reason}: emitListChanged threw (non-fatal): ${(err as Error)?.message ?? String(err)}`,
-        );
-      }
+      this.safeEmit(reason);
       this.appliedRevision = live;
       return { emitted: true, live };
     }
 
     return { emitted: false, live };
+  }
+
+  /**
+   * Operator escape-hatch (S2b / idea-456) — UNCONDITIONALLY emit
+   * `notifications/tools/list_changed`, bypassing the drift check.
+   *
+   * Two jobs:
+   *   1. Unstick an already-stale session. The passive `reconcile()` loop can
+   *      only fix drift a live process OBSERVES going forward; it cannot
+   *      retroactively refresh a session whose vintage predates the wiring/
+   *      redeploy that registered a verb (the session-vintage case bug-180
+   *      can't reach). A forced emit hands the host a fresh re-enumeration
+   *      trigger on demand — no process restart.
+   *   2. Deterministic test/dev trigger — drive the emit→host boundary
+   *      (L3) without staging a real /health revision flip.
+   *
+   * Best-effort refreshes the applied baseline to live when resolvable, so a
+   * subsequent `reconcile()` doesn't re-emit for the same surface. Never throws
+   * (same host-emit guard as `reconcile()`).
+   */
+  async forceEmit(reason = "force-emit"): Promise<ReconcileOutcome> {
+    const live = await this.deps.fetchLiveRevision();
+    this.log(
+      `[tool-surface-reconcile] ${reason}: FORCE emit tools/list_changed (unconditional; live=${live ?? "unknown"}, applied=${this.appliedRevision ?? "none"})`,
+    );
+    this.safeEmit(reason);
+    // Advance the baseline only when live is known — an unknown live must not
+    // clobber a good applied marker (mirrors reconcile's fail-safe on null).
+    if (live !== null) this.appliedRevision = live;
+    return { emitted: true, live };
+  }
+
+  /** Emit to the host, never letting a host-emit failure escape the loop. */
+  private safeEmit(reason: string): void {
+    try {
+      this.deps.emitListChanged();
+    } catch (err) {
+      this.log(
+        `[tool-surface-reconcile] ${reason}: emitListChanged threw (non-fatal): ${(err as Error)?.message ?? String(err)}`,
+      );
+    }
   }
 }

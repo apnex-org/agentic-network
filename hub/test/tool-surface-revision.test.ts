@@ -13,6 +13,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { PolicyRouter, type ToolTier } from "../src/policy/router.js";
 import { computeToolSurfaceRevision } from "../src/policy/tool-surface-revision.js";
+import { registerWorkItemPolicy } from "../src/policy/work-item-policy.js";
 
 const noop = () => {};
 const handler = async () => ({ content: [{ type: "text" as const, text: "ok" }] });
@@ -118,5 +119,34 @@ describe("computeToolSurfaceRevision", () => {
       routerWith([{ ...BASE[0], tier: "adapter-internal" }, BASE[1]]),
     );
     expect(after).not.toBe(before);
+  });
+});
+
+// S2b (idea-456) — L1 left-edge of the two-victim reachability oracle.
+// The generic tests above prove the ETag is drift-sensitive with SYNTHETIC
+// tools; this proves it against the REAL registration that caused the
+// incident — the [Any] verbs update_work + pause_work entering the live hub
+// surface must move R. Both victims (not just one) crossing the boundary is
+// the false-green killer the oracle's downstream reconciler leg relies on:
+// a single-verb delta could pass while the real multi-verb registration
+// regressed.
+describe("computeToolSurfaceRevision — S2b two-victim L1 (real registration delta)", () => {
+  const VICTIMS = ["update_work", "pause_work"] as const;
+
+  it("both update_work AND pause_work are absent pre-registration, present post — and R moves", () => {
+    const before = new PolicyRouter(noop); // baseline surface: no work-item verbs
+    const after = new PolicyRouter(noop);
+    registerWorkItemPolicy(after); // the redeploy that registers the [Any] work verbs
+
+    const beforeTools = new Set(before.getAllToolNames());
+    const afterTools = new Set(after.getAllToolNames());
+    for (const v of VICTIMS) {
+      expect(beforeTools.has(v)).toBe(false); // not in the stale surface
+      expect(afterTools.has(v)).toBe(true); // in the live surface
+    }
+
+    // The real registration delta moves the ETag — the signal the reconciler
+    // downstream diffs to decide whether to emit tools/list_changed.
+    expect(computeToolSurfaceRevision(after)).not.toBe(computeToolSurfaceRevision(before));
   });
 });
