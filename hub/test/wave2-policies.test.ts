@@ -197,22 +197,10 @@ describe("IdeaPolicy", () => {
       expect(parsed._ois_query_unmatched).toBe(true);
     });
 
-    it("filter.status wins over legacy scalar status when both present", async () => {
-      // Verifies backwards-compat legacy path still works post-rewrite
-      await router.handle("create_idea", { text: "Open A" }, ctx);
-      const createResult = await router.handle("create_idea", { text: "Open B" }, ctx);
-      const { ideaId } = JSON.parse(createResult.content[0].text);
-      await router.handle("update_idea", { ideaId, status: "triaged" }, ctx);
-
-      const result = await router.handle(
-        "list_ideas",
-        { status: "open", filter: { status: "triaged" } },
-        ctx,
-      );
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.ideas.length).toBe(1);
-      expect(parsed.ideas[0].status).toBe("triaged");
-    });
+    // work-171 (A2): the "filter.status wins over legacy scalar status" precedence
+    // test is RETIRED — the deprecated scalar `status:` alias is gone, so there's
+    // no scalar for filter{status} to take precedence over. filter{status} filtering
+    // is covered by "list_ideas filters by status" above.
   });
 
   it("update_idea changes status", async () => {

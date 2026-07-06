@@ -153,7 +153,7 @@ async function getMetrics(args: Record<string, unknown>, ctx: IPolicyContext): P
 export function registerSystemPolicy(router: PolicyRouter): void {
   router.register(
     "get_pending_actions",
-    "[Architect] Get a summary of all items requiring Architect attention: unread reports, pending proposals, active threads awaiting Architect reply, and tasks needing review. Designed for autonomous event loop polling.",
+    "[Architect] Get a summary of all items requiring Architect attention: pending proposals, active threads awaiting Architect reply, and converged threads awaiting closure (plus dangling-proposal anomalies). Designed for autonomous event loop polling. (work-162/A3: the Task-derived dimensions — unread reports, unreviewed/escalated tasks, task clarifications — were retired with the Task subsystem; the inbox is now WorkItem-native, so its terminal-legacy-Task noise is gone by construction.)",
     {},
     getPendingActions,
   );
