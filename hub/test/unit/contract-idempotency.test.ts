@@ -73,7 +73,7 @@ interface SpawnCase {
 }
 
 const SPAWN_CASES: SpawnCase[] = [
-  { type: "create_task", payload: { title: "contract-task", description: "directive" } },
+  // work-162 (A1): create_task spawn-case retired (cascade ActionSpec removed).
   { type: "create_proposal", payload: { title: "contract-proposal", description: "body" } },
   { type: "create_idea", payload: { title: "contract-idea", description: "body" } },
   { type: "create_bug", payload: { title: "contract-bug", description: "repro" } },

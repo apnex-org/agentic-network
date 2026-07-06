@@ -89,12 +89,10 @@ describe("E2E Verifier RBAC (mission-93 #338 pre-deploy gate)", () => {
 
   // ── DENY: produce + gating surface ([Architect]) ──────────────────
 
+  // work-162 (A1): create_task + create_review removed from the DENY set — the
+  // verbs are retired (now unknown-tool, not RBAC-denied).
   it.each([
     ["create_mission", { title: "M", description: "D" }],
-    ["create_task", { title: "T", description: "D" }],
-    // create_review is task-GATING authority — explicitly excluded from the
-    // verifier set (b001db3); the verifier verdict is advisory (audit entry).
-    ["create_review", { taskId: "task-1", assessment: "looks good" }],
     ["update_mission", { missionId: "mission-1", status: "active" }],
     ["get_pending_actions", {}],
   ] as Array<[string, Record<string, unknown>]>)(
