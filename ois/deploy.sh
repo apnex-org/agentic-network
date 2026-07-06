@@ -22,7 +22,16 @@ bash -n "$SRC" || { echo "error: canonical source fails bash -n; refusing to dep
 grep -q 'claudeSettings' "$SRC" || { echo "error: deploy source lacks the claudeSettings reader — stale ois? pull main or deploy from the worktree with the code. Refusing to deploy." >&2; exit 1; }
 
 if [[ "${1:-}" == "--diff" ]]; then
-  diff -u "$DEST" "$SRC" && echo "live copy is identical to canonical"
+  diff -u "$DEST" "$SRC" && echo "live bin/ois is identical to canonical" || true
+  # work-179 (Arc-1 S4): the preflight must also cover the skill-sync manifest —
+  # bin/ois alone is not the whole staged surface. Shows the manifest (incl. the
+  # pinned source_ref) the Director is about to activate.
+  MSRC="$(dirname "$SRC")/../manifests/skill-sync/wanted-bundles.yaml"
+  MDEST="$HOME/.config/apnex-agents/manifests/skill-sync/wanted-bundles.yaml"
+  if [[ -f "$MSRC" ]]; then
+    echo "--- skill-sync manifest diff ---"
+    diff -u "$MDEST" "$MSRC" && echo "live skill-sync manifest is identical to canonical" || true
+  fi
   exit 0
 fi
 
@@ -40,4 +49,18 @@ if [[ -f "$DEST" ]]; then
 fi
 install -m 0755 "$SRC" "$DEST"
 echo "deployed $SRC -> $DEST"
+
+# work-179 (Arc-1 S4): ship the claude/ois skill-sync manifest alongside bin/ois.
+# `mission_kit_sync` (in claude_seed) reads $ROOT/manifests/skill-sync/wanted-bundles.yaml;
+# absent it no-ops, so this deploy is what activates the sync. Non-fatal if absent.
+MANIFEST_SRC="$(dirname "$SRC")/../manifests/skill-sync/wanted-bundles.yaml"
+MANIFEST_DEST="$HOME/.config/apnex-agents/manifests/skill-sync/wanted-bundles.yaml"
+if [[ -f "$MANIFEST_SRC" ]]; then
+  mkdir -p "$(dirname "$MANIFEST_DEST")"
+  install -m 0644 "$MANIFEST_SRC" "$MANIFEST_DEST"
+  echo "deployed $MANIFEST_SRC -> $MANIFEST_DEST"
+else
+  echo "note: no skill-sync manifest at $MANIFEST_SRC (skill-sync will no-op until present)"
+fi
+
 echo "verify: ois doctor"
