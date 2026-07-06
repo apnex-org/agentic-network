@@ -178,8 +178,14 @@ let notificationLogPath = "";
 let __fileLog: FileLogger | null = null;
 let hubAdapter: McpAgentClient | null = null;
 let proxyPort = 0;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let sdkClient: any = null;
+// idea-332 (C-bundle C1): type the SDK egress. `ctx.client` is the opencode SDK
+// client — derive its type from the already-imported `Plugin` input rather than
+// re-guessing the @opencode-ai/sdk export name, so a request-shape skew on any
+// `sdkClient.session.*` / `.tui.*` / `.mcp.*` call is COMPILE-caught (retires the
+// SDK-request-shape-skew defect class — e.g. the thread-669 injectContext
+// system:true→string fix that only an eye caught).
+type OpencodeSdkClient = Parameters<Plugin>[0]["client"];
+let sdkClient: OpencodeSdkClient | null = null;
 let currentSessionId: string | null = null;
 let config: HubConfig;
 // bug-173 — the dispatcher (and its pollBackstop) is constructed at MODULE-INIT,
@@ -293,7 +299,11 @@ function log(msg: string): void {
 
 // ── OpenCode SDK integration ─────────────────────────────────────────
 
-async function showToast(message: string, variant: string = "info"): Promise<void> {
+// idea-332 (C1): `variant` was `string` — the untyped egress hid that the SDK's
+// showToast requires the toast-variant enum, not an arbitrary string. Narrowed to
+// the SDK's union so a bad variant is now compile-caught at the call site.
+type ToastVariant = "info" | "success" | "warning" | "error";
+async function showToast(message: string, variant: ToastVariant = "info"): Promise<void> {
   if (!sdkClient) return;
   try {
     await sdkClient.tui.showToast({ body: { message, variant } });
@@ -763,10 +773,15 @@ const HubPlugin: Plugin = async (ctx) => {
   sdkClient = ctx.client;
 
   schedule(async () => {
+    // idea-332 (C1): capture the just-assigned client into a const so the typed
+    // (non-null) narrowing holds across the awaits in this closure (a module-level
+    // `let` isn't narrowed across await points).
+    const client = sdkClient;
+    if (!client) return;
     try {
       // 1. Capture current session ID
       try {
-        const sessions = await sdkClient.session.list();
+        const sessions = await client.session.list();
         if (sessions.data && sessions.data.length > 0) {
           const sorted = [...sessions.data].sort(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -805,7 +820,7 @@ const HubPlugin: Plugin = async (ctx) => {
 
       // 5. Register proxy with OpenCode
       try {
-        await sdkClient.mcp.add({
+        await client.mcp.add({
           body: {
             name: "architect-hub",
             config: { type: "remote" as const, url: `http://127.0.0.1:${proxyPort}/mcp` },
@@ -866,7 +881,9 @@ const testOnly = {
     activeProxyServers.length = 0;
   },
   setSdkClient: (c: unknown) => {
-    sdkClient = c;
+    // idea-332 (C1): the test-injection seam stays `unknown` at the boundary
+    // (its declared type); cast to the typed client on assignment.
+    sdkClient = c as OpencodeSdkClient;
   },
 };
 
