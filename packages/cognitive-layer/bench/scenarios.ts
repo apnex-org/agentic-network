@@ -16,8 +16,8 @@ import type { McpAgentClient } from "../../network-adapter/src/mcp-agent-client.
 export interface ScenarioContext {
   eng: McpAgentClient;
   arch: McpAgentClient;
-  engEngineerId: string;
-  archEngineerId: string;
+  engAgentId: string;
+  archAgentId: string;
 }
 
 export interface Scenario {
@@ -116,12 +116,12 @@ export const readCacheScenario: Scenario = {
 export const threadConvergenceScenario: Scenario = {
   name: "thread-convergence",
   description: "Full thread open → 3 replies → convergence with stagedAction",
-  async run({ eng, arch, engEngineerId }) {
+  async run({ eng, arch, engAgentId }) {
     const openRaw = await arch.call("create_thread", {
       title: "bench convergence",
       message: "benchmark scenario",
       routingMode: "unicast",
-      recipientAgentId: engEngineerId,
+      recipientAgentId: engAgentId,
     }).catch(() => null);
 
     const threadId = extractId(openRaw, "threadId");
