@@ -114,11 +114,11 @@ export interface EvidenceRequirement {
    *  pre-claim artifact (e.g. a design doc authored before the work was claimed). */
   allowPreClaim?: boolean;
   /** SEAL (idea-444) — the AUTHORITY axis (not a style): who may satisfy this requirement.
-   *  `"executor-attestation"` reserved-none; `"verifier-attestation"` = satisfiable ONLY by a
-   *  verifier's server-stamped `attest_evidence` verdict (NOT by executor-supplied evidence,
-   *  even if producedBy names a verifier — the A2 hard fence). ABSENT ⇒ `"executor-evidence"`
-   *  (back-compat: every existing requirement keeps its current executor-evidence behavior; only
-   *  a requirement that explicitly opts into `verifier-attestation` gets the SEAL gate). */
+   *  `"verifier-attestation"` = satisfiable ONLY by a verifier's server-stamped `attest_evidence`
+   *  verdict (NOT by executor-supplied evidence, even if `producedBy` names a verifier — the hard
+   *  fence). ABSENT ⇒ `"executor-evidence"` (back-compat: every existing requirement keeps its
+   *  current executor-evidence behavior; only a requirement that explicitly opts into
+   *  `verifier-attestation` gets the SEAL gate). */
   evidenceAuthority?: EvidenceAuthority;
 }
 
@@ -127,6 +127,20 @@ export type EvidenceAuthority = "executor-evidence" | "verifier-attestation";
 
 /** SEAL verdict (idea-444) — the load-bearing pass/fail a verifier records via `attest_evidence`. */
 export type AttestationVerdict = "pass" | "fail";
+
+/** SEAL (idea-444) — a TYPED, per-ref-classified evidence reference bound to an attestation
+ *  (steve audit-11832 #2: a bare `string[]` with "≥1 relates" is not a sufficient authority gate).
+ *  Every ref is validated by its `kind` — and ≥1 must be LOAD-BEARING (an `evidence` entry or a
+ *  resolving non-self `entity`), never prose or the item's own id:
+ *    - `"evidence"`: `ref` MUST equal a concrete `evidence[].ref` already submitted on the item.
+ *    - `"entity"`:   `ref` is `Kind/id` (e.g. `bug/bug-9`); existence-resolved via the substrate;
+ *                    the item's OWN id does not count as load-bearing.
+ *    - `"external"`: `ref` is a non-empty locator (PR url / commit sha); format-only, honestly
+ *                    unresolvable server-side, NEVER load-bearing on its own. */
+export interface AttestationEvidenceRef {
+  kind: "evidence" | "entity" | "external";
+  ref: string;
+}
 
 /** SEAL attestation (idea-444) — a verifier's server-stamped, load-bearing verdict against a
  *  `verifier-attestation` requirement. Append-only in `status.attestationHistory[]`; the active
@@ -143,9 +157,9 @@ export interface Attestation {
   /** The load-bearing verdict. `pass` satisfies the requirement's gate; `fail` parks it in review. */
   verdict: AttestationVerdict;
   producedAt: string;
-  /** >=1 typed evidence ref (WorkItem evidence entry / OIS-internal entity id; external = format-only).
-   *  Non-empty REQUIRED — a bare pass/fail with no referent is the trust-by-prose verdict SEAL kills. */
-  evidenceRefs: string[];
+  /** ≥1 TYPED evidence ref; ≥1 must be load-bearing (an `evidence` entry / resolving non-self
+   *  `entity`). A bare pass/fail with no resolvable referent is the trust-by-prose verdict SEAL kills. */
+  evidenceRefs: AttestationEvidenceRef[];
   /** Relocation guard (A2): a hash of the requirement descriptor at attest time — the validator
    *  recomputes and rejects if the requirement mutated out from under the attestation. */
   requirementHash: string;
@@ -158,6 +172,21 @@ export interface Attestation {
   /** Supersession (A2): when a later attestation replaces this one, the new record names the
    *  superseded attestation's identity here; the active projection repoints to the latest. */
   supersedes?: string;
+}
+
+/** SEAL (idea-444) — `verify_attestation` output: the active attestation + full per-requirement
+ *  history + the RECOMPUTED validity (not a passive read — the validator re-derives the hashes,
+ *  re-resolves the verifier role + refs, and re-checks the no-self-attestation history), plus the
+ *  concrete `invalidReasons` when it does not hold. `legacyReviewEvidencePresent` flags executor
+ *  review/audit evidence bound to the requirement as NOT-SEAL-grade (never satisfies attestation). */
+export interface AttestationVerification {
+  workId: string;
+  requirementId: string;
+  valid: boolean;
+  invalidReasons: string[];
+  active: Attestation | null;
+  history: Attestation[];
+  legacyReviewEvidencePresent: boolean;
 }
 
 /** Supplied evidence (status). Binds to a requirement by `requirementId`. */
@@ -297,6 +326,12 @@ export interface WorkItem {
    *  construction (attest_evidence appends to history + repoints this projection atomically under
    *  CAS). status-partitioned, non-filterable. Birth-empty. */
   attestations: Record<string, Attestation>;
+  /** SEAL (idea-444) fold 2 — the append-only set of distinct agentIds that have EVER held the
+   *  lease (executed) this item. Appended server-side on each claim. Backs the no-owner/executor-
+   *  write HISTORY check: `attest_evidence` rejects a verifierId ∈ executorHistory ∪ {createdBy}
+   *  — so an executor cannot release/role-switch then attest their own work. status-partitioned,
+   *  non-filterable, birth-empty. */
+  executorHistory: string[];
   // metadata / provenance
   createdBy?: EntityProvenance;
   createdAt: string;
@@ -397,6 +432,29 @@ export interface IWorkItemStore {
   deleteWorkItem(workId: string): Promise<void>;
 
   getWorkItem(workId: string): Promise<WorkItem | null>;
+
+  /** SEAL (idea-444) — record a verifier's server-stamped, load-bearing attestation against a
+   *  `verifier-attestation` requirement. `verifierId` is the Hub-derived caller (the policy layer
+   *  passes the spoof-proof session agentId; the verifier ROLE gate is enforced at the router).
+   *  Rejects (AttestationRejected): non-verifier-attestation requirement, empty evidenceRefs,
+   *  refs that don't relate to the work, or a verifierId in the executor/holder/creator HISTORY
+   *  (self-attestation). Appends to attestationHistory + repoints the active projection under CAS
+   *  (preserve-not-inject MERGE). Dual-edge: if the item is parked in review and the gate now
+   *  clears, advances review→done in the same write. */
+  attestEvidence(
+    workId: string,
+    requirementId: string,
+    verifierId: string,
+    verdict: AttestationVerdict,
+    evidenceRefs: AttestationEvidenceRef[],
+    note?: string,
+  ): Promise<{ item: WorkItem; attestation: Attestation }>;
+
+  /** SEAL (idea-444) — the cheap independent validator: recompute an attestation's validity
+   *  (requirement exists + is verifier-attestation, hashes match, verifier resolves to a verifier
+   *  role + is NOT in the executor/creator history, evidenceRefs resolve/relate) + return
+   *  invalid-reasons. Reports legacy executor review/audit evidence as NOT-SEAL-grade. */
+  verifyAttestation(workId: string, requirementId: string): Promise<AttestationVerification>;
 
   /** work-88 (arc-node): the k/N COMPLETION-gate progress projection over a node's DIRECT
    *  completionDependsOn children — `{done, total, pending}` (done = children at phase=done;

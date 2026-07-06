@@ -50,7 +50,7 @@ const sampleItem = (over: Partial<WorkItem> = {}): WorkItem => ({
   lease: { holder: "anonymous-engineer", token: "tok-abc", claimedAt: "t", expiresAt: "t", heartbeatAt: "t" },
   evidence: [], blockedOn: null, leaseExpiryCount: 0,
   enteredCurrentStateAt: "t", stateDurations: { ready: 0, claimed: 0, in_progress: 0, blocked: 0, review: 0 },
-  attestationHistory: [], attestations: {},
+  attestationHistory: [], attestations: {}, executorHistory: [],
   createdAt: "t", updatedAt: "t", ...over,
 });
 
@@ -83,10 +83,26 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("registers all 15 tools (create_work + seed_blueprint + get_work + get_current_stint + legal_moves + list_work snapshot + the 9 lifecycle verbs)", () => {
-    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_stint", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work"]) {
+  it("registers all 17 tools (create_work + seed_blueprint + get_work + get_current_stint + legal_moves + list_work snapshot + the 9 lifecycle verbs + SEAL attest_evidence/verify_attestation)", () => {
+    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_stint", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "complete_work", "attest_evidence", "verify_attestation"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
+  });
+
+  it("SEAL: attest_evidence is [Verifier]-gated — an ENGINEER is denied at the router", async () => {
+    // The role gate rejects before the handler runs (server-stamped authority, not caller-claimed).
+    const stub = makeStub({});
+    const r = await router.handle("attest_evidence", { workId: "work-1", requirementId: "att", verdict: "pass", evidenceRefs: [{ kind: "evidence", ref: "work-1" }] }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+  });
+
+  it("SEAL: create_work ADMITS evidenceAuthority on a requirement (the authoring leg)", async () => {
+    const stub = makeStub({ createWorkItem: () => sampleItem({ status: "ready" }) });
+    const r = await router.handle("create_work", {
+      type: "task",
+      evidenceRequirements: [{ id: "att", kind: "freeform", evidenceAuthority: "verifier-attestation" }],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy(); // schema accepts evidenceAuthority
   });
 
   it("claim_work: passes the SPOOF-PROOF caller identity (agentId + role from session, not args) + surfaces leaseToken", async () => {
