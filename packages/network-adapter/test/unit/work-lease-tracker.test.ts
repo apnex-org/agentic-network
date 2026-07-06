@@ -90,3 +90,33 @@ describe("WorkLeaseTracker — idea-353 W2 outbound stall-prompt", () => {
     expect(t.size()).toBe(0);
   });
 });
+
+describe("WorkLeaseTracker — work-165 (idea-358) prune of expired leases", () => {
+  it("prune() drops leases past expiry and returns the count", () => {
+    const t = new WorkLeaseTracker();
+    t.observe("claim_work", { workId: "work-1" }, leaseResult("work-1", T0 + TTL), T0);
+    t.observe("claim_work", { workId: "work-2" }, leaseResult("work-2", T0 + 2 * TTL), T0);
+    expect(t.size()).toBe(2);
+    // At T0 + 1.5·TTL, work-1 (expiry T0+TTL) is past; work-2 (T0+2·TTL) is live.
+    expect(t.prune(T0 + 1.5 * TTL)).toBe(1);
+    expect(t.size()).toBe(1);
+    expect(t.snapshot().map((l) => l.workId)).toEqual(["work-2"]);
+  });
+
+  it("observe() self-prunes: a reaped-but-unclosed lease never lingers to mis-report size()/snapshot()", () => {
+    const t = new WorkLeaseTracker();
+    t.observe("claim_work", { workId: "work-1" }, leaseResult("work-1", T0 + TTL), T0);
+    // A later observation for a DIFFERENT item, after work-1 already expired, prunes work-1
+    // (the holder never issued a close verb — the exact silent-reap this arc fixes).
+    t.observe("claim_work", { workId: "work-2" }, leaseResult("work-2", T0 + 3 * TTL), T0 + 2 * TTL);
+    expect(t.size()).toBe(1); // would have been 2 (stale "holding") without the prune
+    expect(t.snapshot().map((l) => l.workId)).toEqual(["work-2"]);
+  });
+
+  it("prune() is a no-op when all leases are live", () => {
+    const t = new WorkLeaseTracker();
+    t.observe("claim_work", { workId: "work-1" }, leaseResult("work-1", T0 + TTL), T0);
+    expect(t.prune(T0 + 0.5 * TTL)).toBe(0);
+    expect(t.size()).toBe(1);
+  });
+});

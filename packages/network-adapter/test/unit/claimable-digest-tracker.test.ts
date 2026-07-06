@@ -130,3 +130,40 @@ describe("ClaimableDigestTracker — idea-353 W1 inbound wake", () => {
     expect(idle.newCount).toBe(2);
   });
 });
+
+describe("ClaimableDigestTracker — work-165 (idea-358) read-failure escalation", () => {
+  it("emits degraded EXACTLY ONCE when consecutive failures reach the threshold", () => {
+    const t = new ClaimableDigestTracker();
+    expect(t.recordReadFailure(3)).toEqual({ degraded: false, consecutiveFailures: 1 });
+    expect(t.recordReadFailure(3)).toEqual({ degraded: false, consecutiveFailures: 2 });
+    expect(t.recordReadFailure(3)).toEqual({ degraded: true, consecutiveFailures: 3 }); // crossing
+    expect(t.recordReadFailure(3)).toEqual({ degraded: false, consecutiveFailures: 4 }); // emit-once latch
+  });
+
+  it("recordReadSuccess resets the streak + re-arms the latch (re-degrades after recovery)", () => {
+    const t = new ClaimableDigestTracker();
+    t.recordReadFailure(2);
+    expect(t.recordReadFailure(2).degraded).toBe(true); // degraded fired
+    t.recordReadSuccess();
+    expect(t.recordReadFailure(2)).toEqual({ degraded: false, consecutiveFailures: 1 });
+    expect(t.recordReadFailure(2).degraded).toBe(true); // re-degrades on a fresh streak
+  });
+
+  it("a success mid-streak prevents a false degraded — the streak must be CONSECUTIVE", () => {
+    const t = new ClaimableDigestTracker();
+    t.recordReadFailure(3);
+    t.recordReadFailure(3);
+    t.recordReadSuccess(); // recovered before the threshold
+    expect(t.recordReadFailure(3).degraded).toBe(false); // count restarts at 1
+    expect(t.recordReadFailure(3).degraded).toBe(false);
+    expect(t.recordReadFailure(3).degraded).toBe(true); // now 3 consecutive
+  });
+
+  it("a successful reconcile (busy or idle) does NOT touch the failure counter (separate concerns)", () => {
+    const t = new ClaimableDigestTracker();
+    t.recordReadFailure(3);
+    t.reconcile({ claimableIds: [], isIdle: true }); // a real read happened; host calls recordReadSuccess itself
+    // reconcile alone must not reset the counter — the host owns success/failure signalling.
+    expect(t.recordReadFailure(3)).toEqual({ degraded: false, consecutiveFailures: 2 });
+  });
+});
