@@ -3307,6 +3307,34 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     expect(parsed.bugs.some((b: any) => b.id === bugId)).toBe(true); // the resolved bug IS returned
   });
 
+  it("work-167 (idea-375) — terminal→open walk-back is guarded by reopenReason + emits a bug_reopened audit", async () => {
+    const { bugId } = JSON.parse((await router.handle("create_bug", { title: "wrongly resolved", description: "d", severity: "major" }, ctx)).content[0].text);
+    await router.handle("update_bug", { bugId, status: "resolved" }, ctx);
+
+    // (a) reopen WITHOUT a reason → rejected (the ledger correction must be justified).
+    const noReason = await router.handle("update_bug", { bugId, status: "open" }, ctx);
+    expect(noReason.isError).toBe(true);
+    expect(JSON.parse(noReason.content[0].text).error).toMatch(/reopenReason/);
+    // status unchanged (still resolved) — the guard fired before the write.
+    expect(JSON.parse((await router.handle("get_bug", { bugId }, ctx)).content[0].text).status).toBe("resolved");
+
+    // (b) reopen WITH a reason → walks back to open.
+    const ok = await router.handle("update_bug", { bugId, status: "open", reopenReason: "fix-sha abc123 is not in main" }, ctx);
+    expect(ok.isError).toBeFalsy();
+    expect(JSON.parse(ok.content[0].text).status).toBe("open");
+
+    // (c) an attributable bug_reopened audit entry was written.
+    const entries = await ctx.stores.audit.listEntries();
+    expect(entries.some((e: any) => e.action === "bug_reopened" && (e.details ?? "").includes("fix-sha abc123"))).toBe(true);
+
+    // (d) wontfix → open is likewise a guarded walk-back.
+    const { bugId: b2 } = JSON.parse((await router.handle("create_bug", { title: "premature wontfix", description: "d", severity: "minor" }, ctx)).content[0].text);
+    await router.handle("update_bug", { bugId: b2, status: "wontfix" }, ctx);
+    expect((await router.handle("update_bug", { bugId: b2, status: "open" }, ctx)).isError).toBe(true); // needs reason
+    const w = await router.handle("update_bug", { bugId: b2, status: "open", reopenReason: "wontfix was premature" }, ctx);
+    expect(JSON.parse(w.content[0].text).status).toBe("open");
+  });
+
   // ── CP2 C5 (task-307): _ois_query_unmatched sentinel ────────────
   it("list_bugs fires _ois_query_unmatched when filter yields zero on non-empty collection", async () => {
     await router.handle("create_bug", { title: "A", description: "a", severity: "critical" }, ctx);
@@ -3419,7 +3447,7 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     expect(bug.fixCommits).toEqual(["abc123"]);
   });
 
-  it("update_bug rejects invalid FSM transitions (open → resolved is legal; resolved → open is not)", async () => {
+  it("update_bug FSM: open→resolved legal; resolved→investigating still invalid; resolved→open now legal but guarded (work-167)", async () => {
     const r = await router.handle("create_bug", { title: "T", description: "d" }, ctx);
     const { bugId } = JSON.parse(r.content[0].text);
 
@@ -3427,10 +3455,19 @@ describe("BugPolicy (ADR-015 Phase 2)", () => {
     const ok = await router.handle("update_bug", { bugId, status: "resolved" }, ctx);
     expect(ok.isError).toBeUndefined();
 
-    // resolved → open is not
-    const bad = await router.handle("update_bug", { bugId, status: "open" }, ctx);
+    // resolved → investigating is NOT an edge — still rejected as an invalid transition
+    const bad = await router.handle("update_bug", { bugId, status: "investigating" }, ctx);
     expect(bad.isError).toBe(true);
     expect(JSON.parse(bad.content[0].text).error).toMatch(/Invalid state transition/);
+
+    // work-167: resolved → open IS now a legal edge, but GUARDED — rejected without a reopenReason...
+    const noReason = await router.handle("update_bug", { bugId, status: "open" }, ctx);
+    expect(noReason.isError).toBe(true);
+    expect(JSON.parse(noReason.content[0].text).error).toMatch(/reopenReason/);
+    // ...accepted with one.
+    const reopened = await router.handle("update_bug", { bugId, status: "open", reopenReason: "regression reproduced" }, ctx);
+    expect(reopened.isError).toBeFalsy();
+    expect(JSON.parse(reopened.content[0].text).status).toBe("open");
   });
 
   it("update_bug metadata-only changes don't fire bug_status_changed", async () => {
