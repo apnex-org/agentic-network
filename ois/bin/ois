@@ -238,13 +238,15 @@ mission_kit_sync() {
   local src="$work/repo"
 
   # Clone the default branch, then fetch + checkout the PINNED ref (a SHA, tag,
-  # or branch — GitHub serves fetch-by-sha). Pin-resolution failure falls back to
-  # the cloned default + logs it (never aborts).
+  # or branch — GitHub serves fetch-by-sha). FAIL-CLOSED: if the pin can't be
+  # resolved (typo / unavailable SHA / fetch-by-sha unsupported), sync NOTHING —
+  # never silently deploy default-branch content, which would defeat the whole
+  # point of pinning. Still non-fatal to launch (returns 0).
   if ! git clone --depth 1 "$repo" "$src" >/dev/null 2>&1; then
     echo "  · skill-sync: clone failed ($repo) — skipping (non-fatal)"; return 0
   fi
   if ! { git -C "$src" fetch --depth 1 origin "$ref" >/dev/null 2>&1 && git -C "$src" checkout -q FETCH_HEAD >/dev/null 2>&1; }; then
-    echo "  · skill-sync: could not pin to '$ref' — using cloned default (non-fatal)"
+    echo "  · skill-sync: could not resolve pinned source_ref '$ref' — syncing NOTHING (fail-closed; launch continues)"; return 0
   fi
   local synced_sha; synced_sha="$(git -C "$src" rev-parse HEAD 2>/dev/null || echo unknown)"
 
