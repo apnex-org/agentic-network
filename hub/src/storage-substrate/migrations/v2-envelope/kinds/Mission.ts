@@ -71,6 +71,13 @@ function preTransform(legacy: Record<string, unknown>): Record<string, unknown> 
   delete out.tasks;
   delete out.ideas;
 
+  // work-162 (A1) A4-seal: DROP the retired Task/Turn appendages on re-encode so
+  // no re-migrated legacy row carries plannedTasks/turnId forward into the
+  // envelope. Already-encoded rows keep them in storage (immutable, never
+  // rewritten); the read boundary (hydrate) quarantines those from get_mission.
+  delete out.plannedTasks;
+  delete out.turnId;
+
   // sourceThreadSummary → annotations
   if (typeof out.sourceThreadSummary === "string" && out.sourceThreadSummary.length > 0) {
     out.annotations = { "ois.io/sourceThreadSummary": out.sourceThreadSummary };

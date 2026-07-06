@@ -212,8 +212,18 @@ export class MissionRepositorySubstrate implements IMissionStore {
     // work-162: Task retired — Mission's only remaining virtual view is `ideas`.
     const ideas = await this.ideaStore.listIdeas();
     // mission-90 W8: decode envelope→flat (idea-327) at the read boundary.
+    // work-162 (A1) A4-seal: QUARANTINE legacy plannedTasks/turnId from the READ
+    // surface. Stored rows keep them immutable (never rewritten), but get_mission /
+    // list_missions must NEVER re-expose the retired Task/Turn appendages —
+    // strip them here so no read path can resurrect them.
+    const decoded = { ...decodeEnvelopeToFlat(stored, "Mission") } as Mission & {
+      plannedTasks?: unknown;
+      turnId?: unknown;
+    };
+    delete decoded.plannedTasks;
+    delete decoded.turnId;
     return {
-      ...decodeEnvelopeToFlat(stored, "Mission"),
+      ...decoded,
       ideas: ideas.filter((i) => i.missionId === stored.id).map((i) => i.id),
     };
   }
