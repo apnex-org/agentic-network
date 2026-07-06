@@ -19,8 +19,12 @@
  * fail-open with honesty); malformed/unreferential candidate → whole-snapshot
  * reject, loud log, prior serves (fail-closed on the SYNC, open on the SERVE).
  *
- * GitHub access mirrors the RepoEventBridge discipline: PAT auth, rate-limit
- * headers tracked per response, fetch injectable for contract tests.
+ * GitHub access (bug-236): mission-kit is a PUBLIC repo, so the sync runs
+ * UNAUTHENTICATED — no PAT dependency. Change-detection + tree are core-API polls
+ * (unauth 60/hr, opportunistically 5000/hr if a token happens to be present) run
+ * at a MODEST cadence; axiom bodies come from raw.githubusercontent.com (the raw
+ * CDN, NOT counted against the core limit). Rate-limit headers still tracked;
+ * fetch injectable for contract tests.
  */
 import { createHash } from "node:crypto";
 import type { AxiomManifestEntry } from "../entities/constitution.js";
@@ -47,7 +51,12 @@ export type TickResult =
 export interface ConstitutionSyncOptions {
   /** "owner/repo" (e.g. "apnex/mission-kit"). */
   repo: string;
-  token: string;
+  /** OPTIONAL (bug-236): mission-kit is a PUBLIC repo, so the constitution sync
+   *  runs UNAUTHENTICATED — no PAT dependency. When a token IS present it is used
+   *  opportunistically (raising the core-API limit from 60/hr to 5000/hr); when
+   *  absent, the core polls run unauth (60/hr) and bodies come from
+   *  raw.githubusercontent.com (never core-rate-limited). */
+  token?: string;
   cadenceMs: number;
   /** Fraction of the rate limit the sync may consume; below (1-pct)·limit
    *  remaining, fetch-all is skipped and serving stays stale-honest. */
@@ -60,6 +69,8 @@ export interface ConstitutionSyncOptions {
   /** Injectable for contract tests. */
   fetchImpl?: typeof fetch;
   apiBase?: string;
+  /** raw.githubusercontent.com base (bug-236 body fetch); injectable for tests. */
+  rawBase?: string;
 }
 
 export class ConstitutionSync {
@@ -172,13 +183,15 @@ export class ConstitutionSync {
   private async gh(path: string, accept = "application/vnd.github+json"): Promise<Response> {
     const fetchImpl = this.opts.fetchImpl ?? fetch;
     const base = this.opts.apiBase ?? "https://api.github.com";
-    const response = await fetchImpl(`${base}${path}`, {
-      headers: {
-        authorization: `Bearer ${this.opts.token}`,
-        accept,
-        "x-github-api-version": "2022-11-28",
-      },
-    });
+    const headers: Record<string, string> = {
+      accept,
+      "x-github-api-version": "2022-11-28",
+    };
+    // bug-236: mission-kit is PUBLIC. Auth only when a token is present
+    // (opportunistic 5000/hr core limit); otherwise unauth (60/hr core) — the
+    // sync never DEPENDS on a PAT.
+    if (this.opts.token) headers.authorization = `Bearer ${this.opts.token}`;
+    const response = await fetchImpl(`${base}${path}`, { headers });
     if (!response.ok) {
       throw new Error(`GitHub ${path} → ${response.status}`);
     }
@@ -193,24 +206,37 @@ export class ConstitutionSync {
   }
 
   private async headSha(): Promise<{ sha: string; remaining: number; limit: number }> {
-    const response = await this.gh(`/repos/${this.opts.repo}/branches/main`);
-    const body = (await response.json()) as { commit?: { sha?: string } };
-    if (!body.commit?.sha) throw new Error("branches/main response has no commit sha");
-    return { sha: body.commit.sha, ...this.rate(response) };
+    // bug-236: /commits/main (core-API, unauth OK) returns the HEAD sha directly.
+    const response = await this.gh(`/repos/${this.opts.repo}/commits/main`);
+    const body = (await response.json()) as { sha?: string };
+    if (!body.sha) throw new Error("commits/main response has no sha");
+    return { sha: body.sha, ...this.rate(response) };
   }
 
   private async fetchAxiomFiles(sha: string): Promise<Record<string, string>> {
-    // Tree at the PINNED sha — the fetch set can never straddle two commits.
+    // Tree at the PINNED sha (core-API, ONE call per change) — the fetch set can
+    // never straddle two commits.
     const treeResponse = await this.gh(`/repos/${this.opts.repo}/git/trees/${sha}?recursive=1`);
     const tree = (await treeResponse.json()) as { truncated?: boolean; tree?: Array<{ path: string; type: string }> };
     if (tree.truncated) throw new Error("git tree response truncated — cannot guarantee a complete axiom set");
     const paths = (tree.tree ?? []).filter((t) => t.type === "blob" && AXIOM_PATH_RE.test(t.path)).map((t) => t.path);
     const files: Record<string, string> = {};
     for (const path of paths) {
-      const blob = await this.gh(`/repos/${this.opts.repo}/contents/${path}?ref=${sha}`, "application/vnd.github.raw+json");
-      files[path] = await blob.text();
+      // bug-236: bodies from raw.githubusercontent.com at the PINNED sha — NOT
+      // core-rate-limited, so the axiom-set fetch never eats the core budget.
+      files[path] = await this.raw(sha, path);
     }
     return files;
+  }
+
+  /** Raw file body from raw.githubusercontent.com — unauthenticated, and served
+   *  off GitHub's raw CDN which is NOT counted against the core-API rate limit. */
+  private async raw(sha: string, path: string): Promise<string> {
+    const fetchImpl = this.opts.fetchImpl ?? fetch;
+    const base = this.opts.rawBase ?? "https://raw.githubusercontent.com";
+    const response = await fetchImpl(`${base}/${this.opts.repo}/${sha}/${path}`);
+    if (!response.ok) throw new Error(`raw ${path}@${sha.slice(0, 7)} → ${response.status}`);
+    return response.text();
   }
 }
 

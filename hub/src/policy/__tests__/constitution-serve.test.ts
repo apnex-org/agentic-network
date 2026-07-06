@@ -44,25 +44,32 @@ function fakeGithub(state: {
   remaining?: number;
   limit?: number;
   calls?: string[];
+  authCalls?: string[];
 }): typeof fetch {
-  return (async (url: string | URL | Request) => {
+  return (async (url: string | URL | Request, init?: RequestInit) => {
     const u = String(url);
-    state.calls?.push(u.replace("https://api.github.com", ""));
+    state.calls?.push(u.replace("https://api.github.com", "").replace("https://raw.githubusercontent.com", "[raw]"));
+    // bug-236: record whether an auth header was sent, so tests can assert the
+    // UNAUTHENTICATED path (no Authorization) works.
+    const authHeader = new Headers(init?.headers).get("authorization");
+    if (authHeader) state.authCalls?.push(u);
     const headers = new Headers({
       "x-ratelimit-remaining": String(state.remaining ?? 4000),
       "x-ratelimit-limit": String(state.limit ?? 5000),
     });
     const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200, headers });
-    if (u.includes("/branches/main")) return json({ commit: { sha: state.headSha } });
+    // HEAD sha via /commits/main (core-API, unauth OK).
+    if (u.includes("/commits/main")) return json({ sha: state.headSha });
     const treeMatch = /\/git\/trees\/([^?]+)/.exec(u);
     if (treeMatch) {
       const files = state.corpora[treeMatch[1]] ?? {};
       return json({ truncated: false, tree: Object.keys(files).map((path) => ({ path, type: "blob" })) });
     }
-    const contentsMatch = /\/contents\/([^?]+)\?ref=(.+)$/.exec(u);
-    if (contentsMatch) {
-      const files = state.corpora[contentsMatch[2]] ?? {};
-      const content = files[decodeURIComponent(contentsMatch[1])];
+    // Bodies via raw.githubusercontent.com/<owner>/<repo>/<sha>/<path> (raw CDN).
+    const rawMatch = /raw\.githubusercontent\.com\/[^/]+\/[^/]+\/([^/]+)\/(.+)$/.exec(u);
+    if (rawMatch) {
+      const files = state.corpora[rawMatch[1]] ?? {};
+      const content = files[decodeURIComponent(rawMatch[2])];
       if (content === undefined) return new Response("not found", { status: 404, headers });
       return new Response(content, { status: 200, headers });
     }
@@ -123,6 +130,37 @@ describe("constitution serve substrate (work-150 / mission-103 S1)", () => {
     const snapshot = await store.getCurrent();
     expect(snapshot!.manifest.map((m) => m.id)).toEqual(["A0", "A1", "A7"]); // numeric-sorted manifest
     expect(snapshot!.files["axioms/A7.md"]).toContain("Blame the boundary"); // the bare form still accepted
+  });
+
+  it("bug-236: syncs UNAUTHENTICATED (no PAT) — no Authorization header is EVER sent, provenance sha still populates", async () => {
+    const authCalls: string[] = [];
+    const gh = { headSha: "sha-1", corpora: { "sha-1": CORPUS_V1 }, authCalls };
+    const r = await sync({ token: undefined }, gh).tick();
+    expect(r).toEqual({ result: "synced", sha: "sha-1", axioms: 3 });
+    expect(authCalls).toEqual([]); // ZERO authenticated requests — pure public fetch, no token dependency
+    const snapshot = await store.getCurrent();
+    expect(snapshot!.sha).toBe("sha-1");
+    expect(store.buildProvenance(snapshot!).sha).toBe("sha-1"); // sha provenance beside content unchanged
+  });
+
+  it("bug-236: axiom bodies come from raw.githubusercontent (raw CDN), NOT the core-rate-limited contents API; per-change core cost = 1 HEAD + 1 tree", async () => {
+    const calls: string[] = [];
+    const gh = { headSha: "sha-1", corpora: { "sha-1": CORPUS_V1 }, calls };
+    await sync({}, gh).tick();
+    expect(calls.filter((c) => c.startsWith("[raw]/apnex/mission-kit/sha-1/"))).toHaveLength(3); // 3 bodies off the raw CDN
+    expect(calls.filter((c) => c.includes("/contents/"))).toHaveLength(0);                       // ZERO core contents calls
+    expect(calls.filter((c) => c.includes("/commits/main"))).toHaveLength(1);                    // 1 core HEAD poll
+    expect(calls.filter((c) => c.includes("/git/trees/"))).toHaveLength(1);                      // 1 core tree (pinned sha)
+  });
+
+  it("bug-236: FAIL-OPEN-STALE — when GitHub is unreachable the tick errors but the last-good snapshot keeps serving (never blanks)", async () => {
+    await sync().tick(); // sha-1 committed
+    const unreachable = (async () => { throw new Error("ENOTFOUND raw.githubusercontent.com"); }) as typeof fetch;
+    const r = await sync({ fetchImpl: unreachable }).tick();
+    expect(r.result).toBe("error");
+    const snapshot = await store.getCurrent();
+    expect(snapshot!.sha).toBe("sha-1");        // prior snapshot still serves...
+    expect(snapshot!.manifest).toHaveLength(3); // ...WHOLE — a network drop never blanks the constitution
   });
 
   it("FAIL-CLOSED-MALFORMED: one axiom file without a heading rejects the ENTIRE candidate — the prior corpus keeps serving whole", async () => {

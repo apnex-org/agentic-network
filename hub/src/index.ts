@@ -248,7 +248,9 @@ const arrivalSurfaceStore = new ArrivalSurfaceRepositorySubstrate(substrate!, su
 // mission-103 P3-S1: constitutional serve substrate (decision-17). Staleness
 // honesty threshold = 10x the sync cadence (design SS2 payload law).
 const OIS_CONSTITUTION_REPO = process.env.OIS_CONSTITUTION_REPO ?? "apnex/mission-kit";
-const OIS_CONSTITUTION_CADENCE_S = parseInt(process.env.OIS_CONSTITUTION_CADENCE_S ?? "60", 10);
+// bug-236: MODEST cadence — the change-detection poll is a core-API call (unauth
+// 60/hr). 180s = 20/hr, well under the limit with headroom. Do NOT drop to 60s.
+const OIS_CONSTITUTION_CADENCE_S = parseInt(process.env.OIS_CONSTITUTION_CADENCE_S ?? "180", 10);
 const constitutionStore = new ConstitutionRepositorySubstrate(substrate!, {
   sourceRepo: OIS_CONSTITUTION_REPO,
   staleAfterMs: OIS_CONSTITUTION_CADENCE_S * 1000 * 10,
@@ -976,8 +978,11 @@ if (OIS_GH_API_TOKEN && OIS_REPO_EVENT_BRIDGE_REPOS.length > 0) {
 // A1 poll against the git-canonical mission-kit repo. Conditional on the
 // same PAT as the bridge; absent → serve verbs answer loud not_synced and
 // the Hub starts cleanly (never unlabeled bootstrap content).
+// bug-236: the constitution sync ALWAYS runs — mission-kit is public, so it needs
+// no PAT. A token is passed opportunistically (higher core-API limit) but is not
+// required; without it the sync fetches unauthenticated.
 let constitutionSync: ConstitutionSync | undefined;
-if (OIS_GH_API_TOKEN) {
+{
   constitutionSync = new ConstitutionSync({
     repo: OIS_CONSTITUTION_REPO,
     token: OIS_GH_API_TOKEN,
@@ -1010,9 +1015,8 @@ if (OIS_GH_API_TOKEN) {
       });
     },
   });
-} else {
-  console.log("[Hub] OIS_GH_API_TOKEN not set — constitution sync skipped (serve verbs will answer not_synced).");
 }
+console.log(`[Hub] constitution sync wired (${OIS_GH_API_TOKEN ? "authenticated — PAT present" : "UNAUTHENTICATED public fetch — bug-236, no PAT"}).`);
 
 startupSequence().then(async () => {
   await hub.start();
