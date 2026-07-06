@@ -26,7 +26,7 @@
 
 ## 1. Introduction
 
-The OIS platform today has **10 first-class entities** (Task, Mission, Idea, Thread, Proposal, Turn, Tele, Audit, Document, Agent) defined implicitly across `hub/src/state.ts`, `hub/src/entities/*.ts`, and `hub/src/gcs-state.ts`. Their schemas are declared in TypeScript and enforced at compile time. Their **semantics, ownership, mutability, and cross-entity contracts are not documented in any single place** — they must be inferred by reading the type definitions, the owning policy file, and the handshake / event emission code.
+The OIS platform today has **9 first-class entities** (Task, Mission, Idea, Thread, Proposal, Turn, Audit, Document, Agent) defined implicitly across `hub/src/state.ts`, `hub/src/entities/*.ts`, and `hub/src/gcs-state.ts`. Their schemas are declared in TypeScript and enforced at compile time. Their **semantics, ownership, mutability, and cross-entity contracts are not documented in any single place** — they must be inferred by reading the type definitions, the owning policy file, and the handshake / event emission code.
 
 This registry exists to:
 
@@ -63,7 +63,7 @@ fields:
     mutability: create-only
     description: Unique identifier. Format per-entity — see §5 (ID generation strategy).
   entityType:
-    type: "\"task\" | \"mission\" | \"idea\" | \"thread\" | \"proposal\" | \"turn\" | \"tele\" | \"audit\" | \"document\" | \"agent\""
+    type: "\"task\" | \"mission\" | \"idea\" | \"thread\" | \"proposal\" | \"turn\" | \"audit\" | \"document\" | \"agent\""
     mutability: create-only
     description: Discriminator for the entity kind. NOT currently present in code — proposed addition for dispatch / polymorphic handling.
   createdAt:
@@ -361,7 +361,7 @@ This layering lets a client rotate its token (authentication) or bounce its sess
 | **Thread** | Threads 2.0 — see ADR-013. Scalar: `{id, title, status, initiatedBy, currentTurn, roundCount, maxRounds, outstandingIntent, currentSemanticIntent, correlationId, convergenceActions[], summary, participants[], labels, lastMessageConverged, createdAt, updatedAt}`. Per-message: `{author, authorAgentId, text, timestamp, converged, intent, semanticIntent}`. | scalar create-only for identity, transition-only for status / currentTurn / roundCount / convergenceActions lifecycle / summary, free-form for updatedAt / lastMessageConverged; messages append-only | `hub/src/policy/thread-policy.ts` | `threads/{threadId}.json` + `threads/{threadId}/messages/{seq}.json` | `workflow-registry.md §1.3` (now with INV-TH11..TH15 from ADR-013) | Task / Proposal (auto-spawn via Phase 2 cascade actions); Audit (relatedEntity); Agent (via authorAgentId on messages and participants[] entries) |
 | **Proposal** | _TBD_ | transition-only | `hub/src/policy/proposal-policy.ts` | `proposals/{proposalId}.json` | workflow-registry §1.X | Mission (scaffolding), Task (scaffolding) |
 | **Turn** | _TBD_ | virtual-view scalar | `hub/src/policy/turn-policy.ts` | `turns/{turnId}.json` | workflow-registry §1.X | Mission, Task (virtual view via turnId) |
-| **Tele** | _TBD_ | content-immutable; status-mutable via supersede_tele / retire_tele (mission-43) | `hub/src/policy/tele-policy.ts` | `tele/{teleId}.json` | `docs/specs/teles.md §Tele Lifecycle` | Turn (tele[]) |
+| ~~**Tele**~~ | **RETIRED** (mission-103 S4 constitutional cut) | — | — | — | tombstone: `docs/specs/teles.md` → mission-kit axioms (`get_constitution`/`get_charter`) | — |
 | **Audit** | _TBD_ | immutable append | `hub/src/policy/audit-policy.ts` | `audit/{auditId}.json` | — (no FSM) | any entity (relatedEntity) |
 | **Document** | _TBD_ | free-form, create-or-overwrite | `hub/src/policy/document-policy.ts` | `docs/**` | — (no FSM) | referenced by reportRef, proposalRef, documentRef |
 
@@ -414,7 +414,7 @@ The list below enumerates inconsistencies discovered during the v1.0 draft. Each
 
 - **Where:** IDs vary across entities.
 - **Current state:**
-  - Task, Mission, Idea, Thread, Proposal, Turn, Tele: **human-readable counter** (`task-{N}`, `mission-{N}`, etc.) via `getAndIncrementCounter` in `gcs-state.ts`.
+  - Task, Mission, Idea, Thread, Proposal, Turn: **human-readable counter** (`task-{N}`, `mission-{N}`, etc.) via `getAndIncrementCounter` in `gcs-state.ts`.
   - Audit: **ULID-style** for chronological sort (inferred from `audit/{id}.json` sorted/reversed behaviour).
   - Agent: **Hub-issued prefixed random** (`eng-{random}`) — not a monotonic counter; stable across reconnects via fingerprint.
   - Document: **path-based** (`docs/<arbitrary>/<path>.md`) — no ID per se.

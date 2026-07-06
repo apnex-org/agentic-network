@@ -52,7 +52,7 @@ The SR methodology operates against a three-tier entity model.
 | Concept | outcome axis | deliberate project effort |
 | Completion semantics | no — Teles don't ship | yes — Initiatives ship/abandon |
 | Cadence | stable (10–20 ever; refinement common, addition rare) | active (declared per SR run; ships/abandons frequently) |
-| Mutation primitive | Tele audit (rare); `supersede_tele` / `retire_tele` (refinement) | `create_initiative` / `update_initiative` (per SR run) |
+| Mutation primitive | constitutional refinement via the mission-kit pen (axiom PRs; the tele mutation verbs are retired) | `create_initiative` / `update_initiative` (per SR run) |
 
 **Relationship:** Initiative declares Tele alignment (M-N). An Initiative without Tele alignment is suspect; either find one or propose a new Tele via the Tele audit primitive.
 
