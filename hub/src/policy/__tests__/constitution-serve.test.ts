@@ -31,7 +31,7 @@ import {
   ConstitutionRepositorySubstrate,
   OrgCharterRepositorySubstrate,
 } from "../../entities/constitution-repository-substrate.js";
-import { ConstitutionSync, parseGate, CONSTITUTION_UPDATED_EVENT } from "../../storage-substrate/constitution-sync.js";
+import { ConstitutionSync, parseGate, CONSTITUTION_UPDATED_EVENT, selectConstitutionSyncToken } from "../../storage-substrate/constitution-sync.js";
 
 function body(r: { content: Array<{ text: string }> }): Record<string, unknown> {
   return JSON.parse(r.content[0].text);
@@ -151,6 +151,28 @@ describe("constitution serve substrate (work-150 / mission-103 S1)", () => {
     expect(calls.filter((c) => c.includes("/contents/"))).toHaveLength(0);                       // ZERO core contents calls
     expect(calls.filter((c) => c.includes("/commits/main"))).toHaveLength(1);                    // 1 core HEAD poll
     expect(calls.filter((c) => c.includes("/git/trees/"))).toHaveLength(1);                      // 1 core tree (pinned sha)
+  });
+
+  // audit-11100 (work-158 live-verify): the composition invariant. The sync path
+  // must not authenticate in prod even though the process carries the global PAT
+  // for the RepoEventBridge. The token SELECTOR is the seam that guarantees it.
+  it("audit-11100: selectConstitutionSyncToken IGNORES the global OIS_GH_API_TOKEN — RepoEventBridge PAT present ⇒ sync token undefined", () => {
+    // Prod shape: the bridge PAT is set, the dedicated constitution opt-in is not.
+    expect(selectConstitutionSyncToken({ OIS_GH_API_TOKEN: "ghp_bridge_private_repo_pat" } as NodeJS.ProcessEnv)).toBeUndefined();
+    // Neither var set ⇒ undefined.
+    expect(selectConstitutionSyncToken({} as NodeJS.ProcessEnv)).toBeUndefined();
+    // The dedicated break-glass opt-in (only) supplies a token.
+    expect(selectConstitutionSyncToken({ OIS_GH_API_TOKEN: "ghp_bridge", OIS_CONSTITUTION_GH_TOKEN: "ghp_constitution_optin" } as NodeJS.ProcessEnv)).toBe("ghp_constitution_optin");
+  });
+
+  it("audit-11100: COMPOSITION — with the RepoEventBridge PAT present in the env, the sync sends NO Authorization header (uses the selected token, which is undefined)", async () => {
+    const authCalls: string[] = [];
+    const gh = { headSha: "sha-1", corpora: { "sha-1": CORPUS_V1 }, authCalls };
+    // Exactly the prod composition: OIS_GH_API_TOKEN set (bridge), no dedicated opt-in.
+    const token = selectConstitutionSyncToken({ OIS_GH_API_TOKEN: "ghp_bridge_private_repo_pat" } as NodeJS.ProcessEnv);
+    const r = await sync({ token }, gh).tick();
+    expect(r).toEqual({ result: "synced", sha: "sha-1", axioms: 3 });
+    expect(authCalls).toEqual([]); // the bridge PAT never leaks into a constitution-sync Authorization header
   });
 
   it("bug-236: FAIL-OPEN-STALE — when GitHub is unreachable the tick errors but the last-good snapshot keeps serving (never blanks)", async () => {
