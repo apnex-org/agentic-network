@@ -65,4 +65,42 @@ describe("W2 getNextAction — highest-priority READY child (anti-invert)", () =
     const { repo } = await setup();
     expect(await repo.getNextAction("work-nope", "engineer")).toBeNull();
   });
+
+  // steve #546 blocker-1: a ready arc child ranked BEYOND the global ready-scan window
+  // (READY_SCAN_CAP=500) must still be found. The OLD assembly — children ∩
+  // listReadyForRole(role, 500) — sliced the first 500 globally-ready rows, so a child at
+  // insertion-position 511 was DROPPED (nextAction:null / readyCandidates:0 while raw scope
+  // held a ready child). Child-local point-gets the arc's children directly → position-immune.
+  it("child-local: a ready arc child BEYOND the 500-row global ready-scan window is still found", async () => {
+    const { repo } = await setup();
+    for (let i = 0; i < 510; i++) {
+      await repo.createWorkItem({ type: "task", priority: "normal", roleEligibility: ["engineer"], evidenceRequirements: [] });
+    }
+    const cCrit = await child(repo, "critical"); // the 511th ready item — beyond the old 500-window
+    const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements: [], completionDependsOn: [cCrit.id] });
+    const proj = (await repo.getNextAction(arc.id, "engineer"))!;
+    expect(proj.nextAction!.id).toBe(cCrit.id); // the old capped intersection returned null here
+    expect(proj.readyCandidates).toBe(1);
+  });
+
+  // Agent-scoped WIP-cap short-circuit: a maxed caller can claim nothing → non-dark wip_capped,
+  // never a nextAction claim_work would reject. The role-only projection (no agentId) is exempt.
+  it("agent-scoped: a WIP-maxed caller gets nextAction:null + emptyReason:wip_capped; role-only still sees the child", async () => {
+    const { repo } = await setup();
+    const cCrit = await child(repo, "critical");
+    const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements: [], completionDependsOn: [cCrit.id] });
+    // Max out eng-1's WIP by claiming its cap worth of unrelated ready items.
+    const cap = 3; // engineer WIP cap (wipCap("engineer")); claim that many to hit the ceiling
+    for (let i = 0; i < cap; i++) {
+      const w = await child(repo, "normal");
+      await repo.claimWorkItem(w.id, "eng-1", "engineer");
+    }
+    const scoped = (await repo.getNextAction(arc.id, "engineer", "eng-1"))!;
+    expect(scoped.nextAction).toBeNull();
+    expect(scoped.emptyReason).toBe("wip_capped");
+    // role-only (no caller) is not WIP-gated — it reports the raw claimable scope.
+    const roleOnly = (await repo.getNextAction(arc.id, "engineer"))!;
+    expect(roleOnly.nextAction!.id).toBe(cCrit.id);
+    expect(roleOnly.emptyReason).toBeUndefined();
+  });
 });

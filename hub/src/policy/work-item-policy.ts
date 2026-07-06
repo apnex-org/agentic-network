@@ -904,9 +904,22 @@ async function getNextAction(args: Record<string, unknown>, ctx: IPolicyContext)
   const caller = await resolveCreatedBy(ctx);
   const roleOverride = args.role as string | undefined;
   const role = roleOverride ?? caller.role;
-  // Self-query → agent-scoped (respects the caller's WIP-cap/quarantine); cross-role query →
-  // role-only (a different role's WIP is not the caller's).
+  // Self-query → agent-scoped (respects the caller's WIP-cap [substrate] + quarantine [here]);
+  // cross-role query → role-only (a different role's WIP/quarantine is not the caller's).
   const agentId = roleOverride ? undefined : caller.agentId;
+  // Quarantine is the POLICY-layer caller gate (the substrate has no agent-registry). A
+  // claim-thrash-quarantined caller is locked OUT of claiming (claim_work :98-103 +
+  // list_ready_work(scopeToCaller) :130-138), so its self-query "what next" must be a non-dark
+  // no-action-with-reason, never a nextAction claim_work would immediately reject. The raw role
+  // scope (readyCandidates/hasChildren) is still surfaced — honest "there IS work, but YOU are
+  // quarantined", distinct from "scope exhausted".
+  if (agentId !== undefined) {
+    const agent = await ctx.stores.engineerRegistry.getAgent(agentId);
+    if (agent?.quarantined) {
+      const raw = await store.getNextAction(args.workId as string, role, undefined); // role-only raw scope
+      return raw ? ok({ ...raw, nextAction: null, emptyReason: "quarantined" as const }) : notFound(args.workId as string);
+    }
+  }
   const proj = await store.getNextAction(args.workId as string, role, agentId);
   return proj ? ok(proj) : notFound(args.workId as string);
 }
@@ -1126,7 +1139,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "get_next_action",
-    "[Any] W2 (idea-451): the graph-projected NEXT ACTION for an arc-node — the HIGHEST-PRIORITY READY completionDependsOn child claimable by the caller (deps + roleEligibility [+ WIP-cap/quarantine]). Corrects scope-inversion: 'what next' is READ FROM THE GRAPH, never chosen from memory; selecting a lower-priority ready child over a higher-priority ready one is UNREPRESENTABLE (priority-ordered, head returned). Blocked/paused/done children excluded by construction (they are not claim-ready). Feeds W3's reconciler + the cold-start 'what next'. Returns { arcId, nextAction, readyCandidates, hasChildren }.",
+    "[Any] W2 (idea-451): the graph-projected NEXT ACTION for an arc-node — the HIGHEST-PRIORITY READY completionDependsOn child claimable by the caller. CHILD-LOCAL: candidates are the arc's OWN children evaluated directly against the claim predicate (ready + roleEligibility + start-gates), so `readyCandidates` is the RAW claimable scope — NEVER silently capped by a global ready-scan window. Corrects scope-inversion: 'what next' is READ FROM THE GRAPH, never chosen from memory; selecting a lower-priority ready child over a higher-priority ready one is UNREPRESENTABLE (priority-ordered, head returned). Blocked/paused/done children excluded by construction. Caller-scoped self-query applies the WIP-cap (substrate) + quarantine (policy) gates NON-DARK: when the caller is gated, nextAction is null with `emptyReason` (wip_capped | quarantined) while `readyCandidates` still reports raw scope. A `role` override projects that role's queue (role-only, no caller gate). Feeds W3's reconciler + the cold-start 'what next'. Returns { arcId, nextAction, readyCandidates, hasChildren, emptyReason? }.",
     {
       workId: z.string().describe("The arc-node WorkItem id whose completionDependsOn children to project"),
       role: z.string().optional().describe("Project another role's queue (default: the caller's role, agent-scoped to their WIP-cap/quarantine)"),

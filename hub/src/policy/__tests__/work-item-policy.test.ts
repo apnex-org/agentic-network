@@ -312,6 +312,40 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     expect(stub.calls[0].args[2]).toBeUndefined(); // role-view only, no agent scoping
   });
 
+  // ── get_next_action quarantine gate (steve #546 blocker-2) ──
+  it("get_next_action: a QUARANTINED self-query returns nextAction:null + emptyReason:quarantined, still surfacing raw scope", async () => {
+    const rawChild = sampleItem({ id: "work-child", status: "ready" });
+    const stub = makeStub({ getNextAction: () => ({ arcId: "work-arc", nextAction: rawChild, readyCandidates: 1, hasChildren: true }) });
+    const reg = stubRegistry({ getAgent: async () => ({ quarantined: true }) });
+    const b = body(await router.handle("get_next_action", { workId: "work-arc" }, ctxFor(stub, "engineer", reg)));
+    expect(b.nextAction).toBeNull();           // claim_work would reject → no action offered
+    expect(b.emptyReason).toBe("quarantined"); // non-dark caller-gate reason
+    expect(b.readyCandidates).toBe(1);         // raw scope still honest ("work exists; YOU are gated")
+    // a quarantined caller's WIP-scope is moot → the store is queried ROLE-ONLY (agentId undefined).
+    const call = stub.calls.find((c) => c.method === "getNextAction")!;
+    expect(call.args).toEqual(["work-arc", "engineer", undefined]);
+  });
+
+  it("get_next_action: a NON-quarantined self-query threads the caller agentId (agent-scoped WIP gate)", async () => {
+    const stub = makeStub({ getNextAction: () => ({ arcId: "work-arc", nextAction: null, readyCandidates: 0, hasChildren: true }) });
+    const reg = stubRegistry({ getAgent: async () => ({ quarantined: false }) });
+    await router.handle("get_next_action", { workId: "work-arc" }, ctxFor(stub, "engineer", reg));
+    const call = stub.calls.find((c) => c.method === "getNextAction")!;
+    expect(call.args[0]).toBe("work-arc");
+    expect(call.args[1]).toBe("engineer");
+    expect(call.args[2]).toBeDefined(); // agent-scoped (not role-only) → substrate applies WIP-cap
+  });
+
+  it("get_next_action: a role-OVERRIDE query is role-only (no quarantine gate, another role's WIP is not the caller's)", async () => {
+    const stub = makeStub({ getNextAction: () => ({ arcId: "work-arc", nextAction: sampleItem({ status: "ready" }), readyCandidates: 1, hasChildren: true }) });
+    const reg = stubRegistry({ getAgent: async () => ({ quarantined: true }) }); // caller quarantined, but override → role-only
+    const b = body(await router.handle("get_next_action", { workId: "work-arc", role: "verifier" }, ctxFor(stub, "engineer", reg)));
+    expect(b.emptyReason).toBeUndefined();  // role-projection is not caller-gated
+    expect(b.nextAction).not.toBeNull();
+    const call = stub.calls.find((c) => c.method === "getNextAction")!;
+    expect(call.args).toEqual(["work-arc", "verifier", undefined]); // role-only, no agentId
+  });
+
   it("list_work: org-state snapshot — returns FLAT items incl. the lease column, paginated, filters AND'd through to the store (stint-4 R1 / idea-357-pt3)", async () => {
     const held = sampleItem({ id: "work-held", status: "claimed" }); // sampleItem carries a lease
     const blocked = sampleItem({ id: "work-blocked", status: "blocked" });

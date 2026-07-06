@@ -78,10 +78,16 @@ export interface NextActionProjection {
   arcId: string;
   /** the highest-priority READY child claimable by the (role, agentId); null when none. */
   nextAction: WorkItem | null;
-  /** count of READY candidate children (observability for the reconciler). */
+  /** count of READY candidate children (the arc's RAW claimable scope — child-local, never
+   *  capped by a global ready-scan window; the W3 reconciler's fail-loud signal). */
   readyCandidates: number;
   /** false when the arc has no completionDependsOn children (a leaf, not an arc-node). */
   hasChildren: boolean;
+  /** NON-DARK caller-gate reason when nextAction is null despite raw scope: the caller is
+   *  WIP-capped (substrate) or claim-thrash quarantined (policy). Absent on the role-only
+   *  projection (no caller) and when nextAction is non-null. `readyCandidates` still reports
+   *  the RAW scope, so the reconciler can tell "you are gated" from "scope is exhausted". */
+  emptyReason?: "wip_capped" | "quarantined";
 }
 
 /** work-94 (cold-start spine, sub-slice 3): the legal FSM transition verbs for an item given
