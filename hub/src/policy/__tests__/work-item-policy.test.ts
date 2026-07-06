@@ -50,6 +50,7 @@ const sampleItem = (over: Partial<WorkItem> = {}): WorkItem => ({
   lease: { holder: "anonymous-engineer", token: "tok-abc", claimedAt: "t", expiresAt: "t", heartbeatAt: "t" },
   evidence: [], blockedOn: null, leaseExpiryCount: 0,
   enteredCurrentStateAt: "t", stateDurations: { ready: 0, claimed: 0, in_progress: 0, blocked: 0, review: 0 },
+  attestationHistory: [], attestations: {},
   createdAt: "t", updatedAt: "t", ...over,
 });
 
