@@ -11,9 +11,10 @@
  * isolation catches treat it as the STRUCTURAL/permanent class it is:
  *
  *   - ERROR (not WARN) — it is a code defect, not a transient blip.
- *   - A first-class QUERYABLE signal: a Hub AUDIT ENTRY (action
- *     `bare_envelope_violation`, queryable via list_audit_entries) — the durable
- *     record cal-84 demanded, since the per-process metrics counter is throwaway
+ *   - A first-class signal: a Hub AUDIT ENTRY (action `bare_envelope_violation`)
+ *     — the durable record cal-84 demanded, since the per-process metrics counter
+ *     is throwaway (SEAL-C/idea-444: the Audit row still persists via logEntry; the
+ *     `list_audit_entries` MCP verb is retired, so it is no longer MCP-queryable).
  *     and not query-aggregated. A metric is ALSO emitted (best-effort, consistent
  *     with the existing sweeper instrumentation).
  *
@@ -28,8 +29,8 @@ import { BareEnvelopeError } from "../storage-substrate/bare-envelope-error.js";
 import type { IAuditStore } from "../state.js";
 
 export interface BareEnvelopeEscalationDeps {
-  /** Durable queryable signal sink (list_audit_entries). The primary record.
-   *  Only logEntry is needed — narrowed for interface segregation + easy mocking. */
+  /** Durable Audit-row signal sink (logEntry still persists; the list_audit_entries verb is
+   *  retired at SEAL-C). Only logEntry is needed — narrowed for interface segregation + mocking. */
   audit?: Pick<IAuditStore, "logEntry">;
   /** Best-effort metric counter (per-process; not globally aggregated). */
   metrics?: { increment: (bucket: string, details?: Record<string, unknown>) => void };

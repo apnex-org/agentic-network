@@ -87,19 +87,11 @@ describe("Registry Remediation", () => {
 
   // ── T4a: Audit Actor Attribution ──────────────────────────────────
 
-  describe("Audit Actor Attribution", () => {
-    it("architect audit entries attributed to 'architect'", async () => {
-      await arch.call("create_audit_entry", {
-        action: "test_action",
-        details: "Architect did something",
-      });
-
-      const result = await arch.call("list_audit_entries", {});
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.entries[0].actor).toBe("architect");
-    });
-
-    it("engineer audit entries attributed to 'engineer'", async () => {
+  describe("Audit Actor Attribution (SEAL-C: verb retired; store logEntry actor param remains)", () => {
+    // SEAL-C (idea-444): create_audit_entry is retired (verdict authoring → attest_evidence with a
+    // server-stamped verifierId, A2). The verb-level actor-derivation tests are removed with the
+    // verb; the store's logEntry actor param (firehose) is still live + tested below.
+    it("engineer audit entries attributed to 'engineer' (store logEntry)", async () => {
       // Engineer calls create_audit_entry
       // Note: create_audit_entry is tagged [Architect], but RBAC allows 'unknown' roles through.
       // The engineer facade auto-registers as engineer, so this WILL be blocked by RBAC.
@@ -130,19 +122,6 @@ describe("Registry Remediation", () => {
       expect(engEntry?.actor).toBe("engineer");
     });
 
-    it("actor derived from session role, not hardcoded", async () => {
-      // Create audit entry as architect (properly registered)
-      await arch.call("create_audit_entry", {
-        action: "derived_actor_test",
-        details: "Should attribute to architect based on session",
-      });
-
-      const result = await arch.call("list_audit_entries", {});
-      const parsed = JSON.parse(result.content[0].text);
-      const entry = parsed.entries.find((e: any) => e.action === "derived_actor_test");
-      expect(entry).toBeDefined();
-      expect(entry.actor).toBe("architect");
-    });
   });
 
   // ── T4b: RBAC Enforcement ─────────────────────────────────────────

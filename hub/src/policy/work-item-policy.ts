@@ -920,8 +920,8 @@ export const EVIDENCE_PRODUCER_PATHS: Readonly<Record<EvidenceKind, string>> = {
   "test-run": "a CI/test run (external ref, format-validated)",
   doc: "a document (external ref, format-validated)",
   freeform: "any freeform artifact",
-  audit: "create_audit_entry ([Any])",
-  review: "a verifier-authored verdict audit via create_audit_entry (bug-220 (b); create_review is DEPRECATED, audit-9429) or an architect-seeded verifier-gate WorkItem",
+  audit: "a LEGACY audit ref (SEAL-C/idea-444: create_audit_entry is RETIRED — new verifier verdicts use attest_evidence; existing Audit rows stay readable, fenced)",
+  review: "a LEGACY verifier-authored verdict audit (create_audit_entry RETIRED at SEAL-C — new verifier verdicts use attest_evidence) or an architect-seeded verifier-gate WorkItem",
 };
 const evidenceItemSchema = z.object({
   requirementId: z.string().describe("The evidenceRequirements[].id this evidence binds to"),

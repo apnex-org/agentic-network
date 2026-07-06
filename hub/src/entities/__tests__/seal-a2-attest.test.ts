@@ -77,6 +77,22 @@ describe("SEAL A2 — attest_evidence authority", () => {
     ).rejects.toThrow(EvidencePredicateFailed);
   });
 
+  it("SEAL-C SAFETY: an AUDIT-kind executor ref (firehose/legacy audit, incl. work_updated-by-executor) CANNOT satisfy a verifier-attestation req — only attest_evidence can", async () => {
+    // This is the line between the accepted idea-457 firehose-bypass DEFERRAL and an A2 breach
+    // (steve's escalate-trigger): the A2 hard fence rejects ANY executor evidence bound to a
+    // verifier-attestation req — including a kind:audit ref an executor could mint via the firehose
+    // — so the deferred, un-redirected firehose can NEVER let an executor self-satisfy a
+    // verifier-attestation requirement. Only a server-stamped attest_evidence verdict can.
+    const { repo } = await setup();
+    const w = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements: [ATT] });
+    const claimed = await repo.claimWorkItem(w.id, "agent-eng", "engineer");
+    const token = claimed!.lease!.token;
+    await repo.startWork(w.id, "agent-eng", token);
+    await expect(
+      repo.completeWork(w.id, "agent-eng", token, [{ requirementId: "att", kind: "audit", ref: "audit-firehose-1", producedAt: new Date().toISOString() }]),
+    ).rejects.toThrow(EvidencePredicateFailed);
+  });
+
   it("attest on an executor-evidence (default) requirement is rejected", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
