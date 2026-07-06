@@ -27,6 +27,7 @@ import {
   WipCapExceeded,
   EvidencePredicateFailed,
   CompletionGateRejected,
+  AttestationRejected,
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
 import type {
@@ -40,6 +41,7 @@ import type {
   WorkItemPriority,
   WorkItemPhase,
   ReadyEmptyReason,
+  AttestationVerdict,
 } from "../entities/work-item.js";
 
 // ── work-94 (cold-start spine): the NON-DARK empty-digest reasons ────────────────────
@@ -74,6 +76,7 @@ function mapVerbError(e: unknown): PolicyResult {
   if (e instanceof ClaimRejected) return err("claim_rejected", e.message);
   if (e instanceof EvidencePredicateFailed) return err("evidence_predicate_failed", e.message);
   if (e instanceof CompletionGateRejected) return err("completion_gate_unmet", e.message);
+  if (e instanceof AttestationRejected) return err("attestation_rejected", e.message);
   if (e instanceof LockAcquisitionTimeoutError) return err("lock_timeout", e.message);
   if (e instanceof TransitionRejected) return err("transition_rejected", e.message);
   throw e;
@@ -810,6 +813,33 @@ async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext)
   });
 }
 
+// ── SEAL (idea-444) — attest_evidence + verify_attestation ──────────────────────
+async function attestEvidence(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  // Server-stamp the verifier identity from the authenticated session (the [Verifier] router gate
+  // guarantees the caller's role; the caller cannot supply/forge verifierId).
+  const caller = await resolveCreatedBy(ctx);
+  const workId = args.workId as string;
+  const requirementId = args.requirementId as string;
+  const verdict = args.verdict as AttestationVerdict;
+  const evidenceRefs = (args.evidenceRefs as string[] | undefined) ?? [];
+  const note = typeof args.note === "string" ? args.note : undefined;
+  try {
+    const { item, attestation } = await store.attestEvidence(workId, requirementId, caller.agentId, verdict, evidenceRefs, note);
+    return ok({ workItem: item, attestation });
+  } catch (e) {
+    return mapVerbError(e);
+  }
+}
+
+async function verifyAttestation(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const result = await store.verifyAttestation(args.workId as string, args.requirementId as string);
+  return ok(result);
+}
+
 async function getWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
@@ -918,6 +948,7 @@ const evidenceRequirementSchema = z.object({
   description: z.string().optional(),
   refResolvable: z.boolean().optional().describe("When set, an OIS-internal bound ref (audit/review) must existence-resolve at complete; external refs (commit/pr/...) are format-validated only"),
   allowPreClaim: z.boolean().optional().describe("When set, freshness (producedAt >= claimedAt) is NOT required — permits a pre-claim artifact"),
+  evidenceAuthority: z.enum(["executor-evidence", "verifier-attestation"]).optional().describe("SEAL (idea-444): the authority axis. 'verifier-attestation' = satisfiable ONLY by a verifier's server-stamped attest_evidence verdict (executor-supplied evidence is hard-fenced, even if producedBy names a verifier). Absent ⇒ 'executor-evidence' (back-compat; existing requirements unchanged)."),
 }).strict();
 const targetRefSchema = z.object({
   kind: z.string().min(1),
@@ -1002,6 +1033,29 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       dryRun: z.boolean().optional().describe("When true: validate the whole graph + return the planned create-order + would-be work-ids, creating ZERO WorkItems (a true preview)."),
     },
     seedBlueprint,
+  );
+
+  router.register(
+    "attest_evidence",
+    "[Verifier] SEAL (idea-444): record a load-bearing pass/fail ATTESTATION against a verifier-attestation requirement — the authority-separated verdict that retires the audit-as-verdict path. verifierId is SERVER-STAMPED from the session (caller cannot forge it). Rejects: a non-verifier-attestation requirement; empty evidenceRefs or refs that don't relate to the work (>=1 must resolve to an evidence entry / the item id / its targetRef — no trust-by-prose); a verifierId in the item's executor/holder/creator HISTORY (self-attestation — closes release-then-attest); a targetRef that moved since an attestation exists (relocation laundering). Appends to the append-only attestationHistory + repoints the active projection under CAS (preserve-not-inject MERGE). DUAL-EDGE: if the item is parked in review and the gate now clears, advances review→done in the same write. A `fail` verdict parks/keeps it in review (a later `pass` supersedes + unparks).",
+    {
+      workId: z.string().describe("The WorkItem the requirement lives on"),
+      requirementId: z.string().describe("The evidenceRequirement.id (must have evidenceAuthority=verifier-attestation)"),
+      verdict: z.enum(["pass", "fail"]).describe("The load-bearing verdict — pass satisfies the gate; fail parks in review"),
+      evidenceRefs: z.array(z.string().min(1)).min(1).describe("≥1 typed evidence ref; ≥1 must relate to the work (an evidence entry ref / the item id / its targetRef id). External refs are format-only. A bare verdict with no referent is rejected (criterion #3)."),
+      note: z.string().optional().describe("Optional freeform reviewer note"),
+    },
+    attestEvidence,
+  );
+
+  router.register(
+    "verify_attestation",
+    "[Any] SEAL (idea-444): the CHEAP INDEPENDENT VALIDATOR — recompute an attestation's validity rather than trust the stored value. Re-derives requirementHash/targetRefHash/evidenceSetHash, re-resolves the verifier role, re-checks the no-self-attestation history + ref-relatedness, and returns `valid` + concrete `invalidReasons`. Also flags any legacy executor review/audit evidence bound to the requirement as NOT-SEAL-grade. A passive get is insufficient — this is steve's anti-laundering query.",
+    {
+      workId: z.string().describe("The WorkItem"),
+      requirementId: z.string().describe("The verifier-attestation requirement to validate"),
+    },
+    verifyAttestation,
   );
 
   router.register(

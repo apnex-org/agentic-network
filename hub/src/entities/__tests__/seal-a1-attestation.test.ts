@@ -56,6 +56,7 @@ function flatItem(over: Partial<WorkItem> = {}): Record<string, unknown> {
     stateDurations: { ready: 0, claimed: 0, in_progress: 0, blocked: 0, review: 0 },
     attestationHistory: [att],
     attestations: { r1: att },
+    executorHistory: [],
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     ...over,

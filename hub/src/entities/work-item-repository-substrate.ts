@@ -15,7 +15,7 @@
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
 import type { Filter } from "../storage-substrate/types.js";
 import type { EntityProvenance } from "../state.js";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import type {
   WorkItem,
   WorkItemPhase,
@@ -35,8 +35,11 @@ import type {
   LegalMove,
   WorkItemVerb,
   IWorkItemStore,
+  Attestation,
+  AttestationVerdict,
+  AttestationVerification,
 } from "./work-item.js";
-import { DEFAULT_STATE_DURATIONS } from "./work-item.js";
+import { DEFAULT_STATE_DURATIONS, evaluateCompletionGate } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
 import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
@@ -274,6 +277,16 @@ function evaluateEvidence(
   for (const req of requirements) {
     // #1 coverage-by-binding: evidence entries that NAME this requirement's id.
     const boundById = evidence.filter((e) => e.requirementId === req.id);
+    // SEAL (idea-444) HARD FENCE: a verifier-attestation requirement is NEVER satisfiable by
+    // executor-supplied evidence — its satisfaction is the attestation gate's domain
+    // (evaluateCompletionGate). Executor evidence bound to it (even with producedBy naming a
+    // verifier — that field is caller-forgeable) is a laundering attempt → reject loudly.
+    if (req.evidenceAuthority === "verifier-attestation") {
+      if (boundById.length > 0) {
+        throw new EvidencePredicateFailed(`requirement '${req.id}' is evidenceAuthority=verifier-attestation — executor-supplied evidence cannot satisfy it (only a verifier's attest_evidence verdict can); remove the bound evidence`);
+      }
+      continue; // satisfied via the attestation gate, not the executor predicate
+    }
     if (boundById.length === 0) {
       // an uncovered REVIEW requirement parks the item in `review` (verifier not yet);
       // any other uncovered requirement is a hard fail (the agent's evidence is short).
@@ -354,6 +367,7 @@ function cloneWorkItem(w: WorkItem): WorkItem {
   // intact (the preserve-not-inject read boundary; A2's attest_evidence is the only writer).
   flat.attestationHistory = (flat.attestationHistory as unknown[] | undefined) ?? [];
   flat.attestations = (flat.attestations as Record<string, unknown> | undefined) ?? {};
+  flat.executorHistory = (flat.executorHistory as string[] | undefined) ?? [];
   return flat as unknown as WorkItem;
 }
 
@@ -382,6 +396,34 @@ export function accrueExitingState(
   }
   return { stateDurations: durations, enteredCurrentStateAt: nowISO };
 }
+
+/** SEAL (idea-444) — attest_evidence rejection (authority / history / relocation / ref failures). */
+export class AttestationRejected extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AttestationRejected";
+  }
+}
+
+/** Stable sha256 over a canonical JSON encoding (object keys sorted recursively) — the
+ *  relocation-guard hash basis (requirementHash / targetRefHash / evidenceSetHash). Deterministic
+ *  so verify_attestation can RECOMPUTE + compare, not trust the stored value. */
+function sha256Canonical(value: unknown): string {
+  const canon = (v: unknown): unknown => {
+    if (v === null || typeof v !== "object") return v;
+    if (Array.isArray(v)) return v.map(canon);
+    return Object.keys(v as Record<string, unknown>)
+      .sort()
+      .reduce((acc, k) => {
+        acc[k] = canon((v as Record<string, unknown>)[k]);
+        return acc;
+      }, {} as Record<string, unknown>);
+  };
+  return createHash("sha256").update(JSON.stringify(canon(value))).digest("hex");
+}
+const hashRequirement = (req: EvidenceRequirement): string => sha256Canonical(req);
+const hashTargetRef = (tr: { kind: string; id: string } | null): string => sha256Canonical(tr);
+const hashEvidenceSet = (refs: string[]): string => sha256Canonical([...refs].sort());
 
 export class WorkItemRepositorySubstrate implements IWorkItemStore {
   constructor(
@@ -427,9 +469,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // work-98 (idea-384 Part A): birth-stamp the timer — entered `ready` at createdAt, zero buckets.
       enteredCurrentStateAt: now,
       stateDurations: { ...DEFAULT_STATE_DURATIONS },
-      // SEAL (idea-444): birth-empty the attestation subtree.
+      // SEAL (idea-444): birth-empty the attestation subtree + executor history.
       attestationHistory: [],
       attestations: {},
+      executorHistory: [],
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -489,7 +532,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const next: WorkItem = { ...before };
     const set = mutation.set ?? {};
     if (set.priority !== undefined) next.priority = set.priority;
-    if (set.targetRef !== undefined) next.targetRef = set.targetRef;
+    if (set.targetRef !== undefined) {
+      // SEAL (idea-444) relocation guard: freeze targetRef once ANY attestation exists — a
+      // relocation would launder a pass verdict onto a different deliverable. (attest_evidence +
+      // verify_attestation also recompute targetRefHash; this rejects the mutation at the source.)
+      if (before.attestationHistory.length > 0 && hashTargetRef(set.targetRef) !== hashTargetRef(before.targetRef)) {
+        throw new TransitionRejected(`update rejected: ${workId} has attestations — targetRef is frozen (a relocation would launder the verdict onto a different target)`);
+      }
+      next.targetRef = set.targetRef;
+    }
     if (set.runbook !== undefined) {
       if (!preClaim) throw new TransitionRejected(`update rejected: runbook is pre-claim-only (status=${before.status}) — the claimant's contract froze at claim`);
       next.runbook = set.runbook;
@@ -559,9 +610,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // work-98 (idea-384 Part A): birth-stamp the timer — entered `ready` at createdAt, zero buckets.
       enteredCurrentStateAt: now,
       stateDurations: { ...DEFAULT_STATE_DURATIONS },
-      // SEAL (idea-444): birth-empty the attestation subtree.
+      // SEAL (idea-444): birth-empty the attestation subtree + executor history.
       attestationHistory: [],
       attestations: {},
+      executorHistory: [],
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -946,7 +998,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
             expiresAt: new Date(now.getTime() + leaseTtlMsFor(w)).toISOString(),
             heartbeatAt: nowISO,
           };
-          return { ...w, status: "claimed", lease, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+          // SEAL (idea-444) fold 2: record this holder in the append-only executor history
+          // (distinct) — backs the no-owner/executor-write HISTORY check in attest_evidence.
+          const executorHistory = w.executorHistory.includes(agentId) ? w.executorHistory : [...w.executorHistory, agentId];
+          return { ...w, status: "claimed", lease, executorHistory, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
         });
       },
       { timeoutMs: CLAIM_LOCK_TIMEOUT_MS },
@@ -1262,10 +1317,129 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       this.assertLease(w, agentId, leaseToken, "complete");
       if (!COMPLETABLE_PHASES.includes(w.status)) throw new TransitionRejected(`complete requires in_progress or review, was ${w.status}`);
       const merged = mergeEvidence(w.evidence, evidence);
-      const { nextPhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)));
+      const { nextPhase: evidencePhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)));
+      // SEAL (idea-444) dual-edge, edge #1 (complete_work): combine the executor-evidence phase
+      // with the attestation gate. A pending verifier-attestation requirement parks the item in
+      // `review` until a verifier attests pass — the attest_evidence tail (edge #2) then advances
+      // review→done, level-triggered. Only both-satisfied reaches done.
+      const gate = evaluateCompletionGate(w);
+      const nextPhase: WorkItemPhase = evidencePhase === "done" && gate.attestationReqsSatisfied ? "done" : "review";
       const nowISO = new Date().toISOString();
       return { ...w, status: nextPhase, evidence: merged, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
+  }
+
+  // ── SEAL (idea-444) — attest_evidence + verify_attestation ────────────────
+  async attestEvidence(
+    workId: string,
+    requirementId: string,
+    verifierId: string,
+    verdict: AttestationVerdict,
+    evidenceRefs: string[],
+    _note?: string,
+  ): Promise<{ item: WorkItem; attestation: Attestation }> {
+    if (!Array.isArray(evidenceRefs) || evidenceRefs.length === 0 || evidenceRefs.some((r) => typeof r !== "string" || r.trim() === "")) {
+      throw new AttestationRejected("evidenceRefs must be a non-empty array of non-empty refs — an attestation MUST bind >=1 typed, resolvable ref (criterion #3: no trust-by-prose verdict)");
+    }
+    const pre = await this.substrate.get<WorkItem>(KIND, workId);
+    if (!pre) throw new AttestationRejected(`work item ${workId} not found`);
+    const item = cloneWorkItem(pre);
+    const req = item.evidenceRequirements.find((r) => r.id === requirementId);
+    if (!req) throw new AttestationRejected(`requirement '${requirementId}' not found on ${workId}`);
+    if (req.evidenceAuthority !== "verifier-attestation") {
+      throw new AttestationRejected(`requirement '${requirementId}' is evidenceAuthority=${req.evidenceAuthority ?? "executor-evidence"} — attest_evidence only applies to verifier-attestation requirements`);
+    }
+    // fold 2 HISTORY check: the verifier must NEVER have executed/held or created this item (a
+    // release-then-attest self-close is exactly what this closes). Uses the append-only
+    // executorHistory ∪ {creator, current holder} — not merely the current owner.
+    const excluded = new Set<string>(item.executorHistory);
+    if (item.createdBy?.agentId) excluded.add(item.createdBy.agentId);
+    if (item.lease?.holder) excluded.add(item.lease.holder);
+    if (excluded.has(verifierId)) {
+      throw new AttestationRejected(`verifier ${verifierId} is in the executor/holder/creator history of ${workId} — self-attestation rejected (no owner/executor write path, fold 2)`);
+    }
+    // ref-relatedness (criterion #3): >=1 ref must resolve/relate to the work — an evidence entry
+    // ref on the item, the item id, or its targetRef id (semantic binding; external refs stay
+    // format-only, never prose). verify_attestation RECOMPUTES this.
+    const related = new Set<string>([item.id, ...(item.targetRef ? [item.targetRef.id] : []), ...item.evidence.map((e) => e.ref).filter((r): r is string => !!r)]);
+    if (!evidenceRefs.some((r) => related.has(r))) {
+      throw new AttestationRejected(`no evidenceRef relates to ${workId} (its evidence entries / id / targetRef) — an attestation must bind to concrete work evidence, not prose`);
+    }
+    const producedAt = new Date().toISOString();
+    const prior = item.attestations[requirementId];
+    const attestation: Attestation = {
+      requirementId,
+      verifierId,
+      verdict,
+      producedAt,
+      evidenceRefs: [...evidenceRefs],
+      requirementHash: hashRequirement(req),
+      targetRefSnapshot: item.targetRef,
+      targetRefHash: hashTargetRef(item.targetRef),
+      evidenceSetHash: hashEvidenceSet(evidenceRefs),
+      ...(prior ? { supersedes: `${prior.requirementId}:${prior.verifierId}:${prior.producedAt}` } : {}),
+    };
+    const written = await this.tryCasUpdate(workId, (w) => {
+      // relocation guard: targetRef must not have moved since an attestation was recorded.
+      const anchor = w.attestationHistory[0];
+      if (anchor && anchor.targetRefHash !== hashTargetRef(w.targetRef)) {
+        throw new AttestationRejected(`targetRef of ${workId} changed after an attestation exists — relocation rejected (point-at-A-then-move-to-B laundering)`);
+      }
+      // preserve-not-inject: MERGE the single attestation into the CURRENT map/history (never
+      // overwrite the subtree — concurrent-verifier safety under CAS retry).
+      const attestationHistory = [...w.attestationHistory, attestation];
+      const attestations = { ...w.attestations, [requirementId]: attestation };
+      // dual-edge, edge #2: if parked in review and the gate now clears (executor dimension already
+      // satisfied + every verifier-attestation req passes + no unmet arc-gate), advance review→done.
+      if (w.status === "review") {
+        const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations });
+        let executorDone = false;
+        try {
+          executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey))).nextPhase === "done";
+        } catch {
+          executorDone = false;
+        }
+        const arcMet = w.completionDependsOn.length === 0; // a gated ARC re-checks the async k/N at complete_work
+        if (gate.attestationReqsSatisfied && executorDone && arcMet) {
+          const nowISO = new Date().toISOString();
+          return { ...w, attestationHistory, attestations, status: "done" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+        }
+      }
+      return { ...w, attestationHistory, attestations, updatedAt: new Date().toISOString() };
+    });
+    return { item: written!, attestation };
+  }
+
+  async verifyAttestation(workId: string, requirementId: string): Promise<AttestationVerification> {
+    const pre = await this.substrate.get<WorkItem>(KIND, workId);
+    if (!pre) {
+      return { workId, requirementId, valid: false, invalidReasons: [`work item ${workId} not found`], active: null, history: [], legacyReviewEvidencePresent: false };
+    }
+    const item = cloneWorkItem(pre);
+    const req = item.evidenceRequirements.find((r) => r.id === requirementId);
+    const active = item.attestations[requirementId] ?? null;
+    const history = item.attestationHistory.filter((a) => a.requirementId === requirementId);
+    // legacy executor review/audit evidence bound here is NOT-SEAL-grade (never satisfies attestation).
+    const legacyReviewEvidencePresent = item.evidence.some((e) => e.requirementId === requirementId && (e.kind === "review" || e.kind === "audit"));
+    const invalidReasons: string[] = [];
+    if (!req) invalidReasons.push(`requirement '${requirementId}' does not exist`);
+    else if (req.evidenceAuthority !== "verifier-attestation") invalidReasons.push(`requirement '${requirementId}' is not evidenceAuthority=verifier-attestation (is ${req.evidenceAuthority ?? "executor-evidence"})`);
+    if (!active) invalidReasons.push("no active attestation for this requirement");
+    if (active && req) {
+      // RECOMPUTE the relocation-guard hashes + re-resolve role/refs — never trust the stored values.
+      if (active.requirementHash !== hashRequirement(req)) invalidReasons.push("requirementHash mismatch — the requirement descriptor changed after attestation");
+      if (active.targetRefHash !== hashTargetRef(item.targetRef)) invalidReasons.push("targetRefHash mismatch — the item's targetRef changed after attestation (relocation)");
+      if (active.evidenceSetHash !== hashEvidenceSet(active.evidenceRefs)) invalidReasons.push("evidenceSetHash mismatch — the recorded evidence set is inconsistent");
+      if (!active.evidenceRefs || active.evidenceRefs.length === 0) invalidReasons.push("attestation has no evidence refs");
+      const role = await this.resolveAgentRole(active.verifierId);
+      if (role !== "verifier") invalidReasons.push(`verifier ${active.verifierId} does not resolve to a verifier role (role=${role ?? "unknown"})`);
+      const excluded = new Set<string>(item.executorHistory);
+      if (item.createdBy?.agentId) excluded.add(item.createdBy.agentId);
+      if (excluded.has(active.verifierId)) invalidReasons.push(`verifier ${active.verifierId} is in the executor/creator history (self-attestation)`);
+      const related = new Set<string>([item.id, ...(item.targetRef ? [item.targetRef.id] : []), ...item.evidence.map((e) => e.ref).filter((r): r is string => !!r)]);
+      if (active.evidenceRefs.length > 0 && !active.evidenceRefs.some((r) => related.has(r))) invalidReasons.push("no evidenceRef resolves/relates to the work (evidence entries / id / targetRef)");
+    }
+    return { workId, requirementId, valid: invalidReasons.length === 0, invalidReasons, active, history, legacyReviewEvidencePresent };
   }
 
   // ── Lease-expiry sweep surface (sub-PR-4a) ────────────────────────────────

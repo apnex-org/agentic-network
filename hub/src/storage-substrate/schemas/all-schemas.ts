@@ -598,6 +598,7 @@ const WorkItem: SchemaDef = {
     // (the W1 renamemap-contract sentinel-probe asserts this agreement).
     attestationHistory: "status.attestationHistory",
     attestations: "status.attestations",
+    executorHistory: "status.executorHistory",
     priority: "spec.priority",
     type: "spec.type",
     roleEligibility: "spec.roleEligibility",
