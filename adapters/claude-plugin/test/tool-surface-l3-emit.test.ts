@@ -55,8 +55,9 @@ describe("S2b L3 — claude-plugin runtime emit reaches a connected MCP client",
     tmp = null;
   });
 
-  it("forceEmit → the host receives notifications/tools/list_changed (no restart)", async () => {
+  async function buildRuntime() {
     tmp = mkdtempSync(join(tmpdir(), "claude-l3-emit-"));
+    const logs: string[] = [];
     const [clientTx, serverTx] = InMemoryTransport.createLinkedPair();
     const runtime = await createClaudeRuntime({
       agent: fakeAgent(),
@@ -65,7 +66,7 @@ describe("S2b L3 — claude-plugin runtime emit reaches a connected MCP client",
       proxyVersion: "l3-emit-test-1.0.0",
       workDir: tmp,
       role: "engineer",
-      log: () => {},
+      log: (m: string) => { logs.push(m); },
       notificationLogPath: join(tmp, "notifications.log"),
       listToolsGate: Promise.resolve(),
       callToolGate: Promise.resolve(),
@@ -75,6 +76,11 @@ describe("S2b L3 — claude-plugin runtime emit reaches a connected MCP client",
       fetchLiveToolSurfaceRevision: async () => "rev-l3",
       appendActionableLog: () => {},
     });
+    return { runtime, logs, clientTx };
+  }
+
+  it("forceEmit → the host receives notifications/tools/list_changed (no restart)", async () => {
+    const { runtime, clientTx } = await buildRuntime();
 
     client = new Client({ name: "l3-emit-test-client", version: "1.0.0" }, { capabilities: {} });
     const received: string[] = [];
@@ -96,5 +102,33 @@ describe("S2b L3 — claude-plugin runtime emit reaches a connected MCP client",
       await new Promise((r) => setTimeout(r, 5));
     }
     expect(received).toContain("notifications/tools/list_changed");
+  });
+
+  it("a rejected host send (stale/dying transport) is swallowed non-fatally — never an unhandled rejection", async () => {
+    // The S2b failure branch: an already-stale/vintage host whose transport is
+    // mid-close rejects sendToolListChanged() ASYNCHRONOUSLY. The reconciler's
+    // sync emit-guard cannot catch that — the runtime closure must. Without the
+    // .catch, this leaks an unhandled promise rejection even though forceEmit()
+    // resolves.
+    const { runtime, logs } = await buildRuntime();
+    const boom = new Error("host transport closed");
+    // Replace the live server method the emit closure calls (same object ref).
+    runtime.mcpServer.sendToolListChanged = vi.fn(() => Promise.reject(boom));
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => { unhandled.push(e); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const forced = await runtime.reconciler.forceEmit("l3-reject-test");
+      expect(forced.emitted).toBe(true); // entrypoint still reports success
+      // let the rejected microtask settle so a missing .catch would surface.
+      await new Promise((r) => setTimeout(r, 15));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    expect(runtime.mcpServer.sendToolListChanged).toHaveBeenCalledTimes(1);
+    expect(unhandled).toHaveLength(0); // the .catch swallowed it — nothing escaped
+    expect(logs.some((l) => l.includes("sendToolListChanged rejected"))).toBe(true);
   });
 });
