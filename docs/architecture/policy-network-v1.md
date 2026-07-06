@@ -136,9 +136,6 @@ interface Tele {
 
 | Tool          | Role      | Parameters                                    | Description               |
 | ------------- | --------- | --------------------------------------------- | ------------------------- |
-| `define_tele` | Architect | `name`, `description`, `successCriteria`      | Define a new tele         |
-| `get_tele`    | Any       | `teleId`                                      | Read a tele definition    |
-| `list_tele`   | Any       | (none)                                        | List all defined tele     |
 
 ---
 

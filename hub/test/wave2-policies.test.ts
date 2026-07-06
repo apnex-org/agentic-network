@@ -748,7 +748,6 @@ describe("TurnPolicy", () => {
     const result = await router.handle("create_turn", {
       title: "Guided Turn",
       scope: "With goals",
-      tele: ["tele-1", "tele-2"],
     }, ctx);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.turnId).toBeDefined();

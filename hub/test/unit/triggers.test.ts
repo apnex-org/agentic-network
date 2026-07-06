@@ -84,15 +84,13 @@ describe("DOWNSTREAM_ACTORS — skip-list invariant by absence", () => {
     expect(names).toContain("review_submitted_inbox");
   });
 
-  it("declares NO actor for idea / audit-entry / tele transition shapes (skip-list)", () => {
+  it("declares NO actor for idea / audit-entry transition shapes (skip-list)", () => {
     // Skip-list is honored implicitly: no actor's `matches` predicate
-    // returns true for an idea/audit/tele payload shape.
+    // returns true for an idea/audit payload shape.
     const ideaPayload = { transition: "idea_triaged", ideaId: "idea-1" };
     const auditPayload = { transition: "audit_logged", auditId: "audit-1" };
-    const telePayload = { transition: "tele_retired", teleId: "tele-1" };
     expect(shouldFireTrigger("note", ideaPayload)).toBe(false);
     expect(shouldFireTrigger("note", auditPayload)).toBe(false);
-    expect(shouldFireTrigger("note", telePayload)).toBe(false);
   });
 
   it("returns false for kinds with no registered actor (e.g., amendment)", () => {

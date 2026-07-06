@@ -21,8 +21,10 @@
  *   - Both variants PASS → bug is outside the harnessed path
  *       (real OS-pipe stdio, real HTTP Hub, or LLM API ingest)
  *
- * Fixture: docs/specs/teles.md — the actual ~18KB payload that truncated
- * in thread-243. Same bytes, same structure.
+ * Fixture: docs/specs/workflow-registry.md — a large (~90KB) stable spec used as
+ * the truncation payload. Re-pointed from docs/specs/teles.md at the mission-103
+ * S4b tele tombstone (teles.md is now a tombstone); bug-25 needs a large body, not
+ * tele semantics. Same class of oversized-payload repro as thread-243.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -42,15 +44,15 @@ import { createSharedDispatcher } from "@apnex/network-adapter";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const TELES_FIXTURE = readFileSync(
-  join(__dirname, "../../../docs/specs/teles.md"),
+const LARGE_DOC_FIXTURE = readFileSync(
+  join(__dirname, "../../../docs/specs/workflow-registry.md"),
   "utf-8",
 );
 
-if (TELES_FIXTURE.length < 15000) {
+if (LARGE_DOC_FIXTURE.length < 15000) {
   throw new Error(
-    `teles.md fixture smaller than expected (${TELES_FIXTURE.length} bytes) — ` +
-      `bug-25 repro needs the full ratified spec to match thread-243's payload size.`,
+    `workflow-registry.md fixture smaller than expected (${LARGE_DOC_FIXTURE.length} bytes) — ` +
+      `bug-25 repro needs a large spec body to match thread-243's payload size.`,
   );
 }
 
@@ -232,10 +234,10 @@ describe.each(VARIANTS)(
       receiver.mcpPair.dispose?.();
     });
 
-    it(`Hub storage preserves full ${TELES_FIXTURE.length}-byte body (Layer 3 rule-out)`, async () => {
+    it(`Hub storage preserves full ${LARGE_DOC_FIXTURE.length}-byte body (Layer 3 rule-out)`, async () => {
       const openRaw = await sender.agent.call("create_thread", {
         title: "bug-25 Hub storage check",
-        message: TELES_FIXTURE,
+        message: LARGE_DOC_FIXTURE,
         routingMode: "unicast",
         recipientAgentId: receiver.agentId,
       });
@@ -246,16 +248,16 @@ describe.each(VARIANTS)(
 
       const stored = await hub.stores.thread.getThread(threadId);
       expect(stored).toBeTruthy();
-      expect(stored!.messages[0].text.length).toBe(TELES_FIXTURE.length);
-      expect(stored!.messages[0].text).toBe(TELES_FIXTURE);
+      expect(stored!.messages[0].text.length).toBe(LARGE_DOC_FIXTURE.length);
+      expect(stored!.messages[0].text).toBe(LARGE_DOC_FIXTURE);
     });
 
-    it(`SEND path: create_thread via MCP tool-call preserves full ${TELES_FIXTURE.length}-byte body`, async () => {
+    it(`SEND path: create_thread via MCP tool-call preserves full ${LARGE_DOC_FIXTURE.length}-byte body`, async () => {
       const openResult = await sender.mcpClient.callTool({
         name: "create_thread",
         arguments: {
           title: "bug-25 SEND path",
-          message: TELES_FIXTURE,
+          message: LARGE_DOC_FIXTURE,
           routingMode: "unicast",
           recipientAgentId: receiver.agentId,
         },
@@ -270,15 +272,15 @@ describe.each(VARIANTS)(
       // Hub-side check: did the full body survive the SEND path?
       const stored = await hub.stores.thread.getThread(threadId);
       expect(stored).toBeTruthy();
-      expect(stored!.messages[0].text.length).toBe(TELES_FIXTURE.length);
-      expect(stored!.messages[0].text).toBe(TELES_FIXTURE);
+      expect(stored!.messages[0].text.length).toBe(LARGE_DOC_FIXTURE.length);
+      expect(stored!.messages[0].text).toBe(LARGE_DOC_FIXTURE);
     });
 
-    it(`RECEIVE path: get_thread via MCP tool-call preserves full ${TELES_FIXTURE.length}-byte body`, async () => {
+    it(`RECEIVE path: get_thread via MCP tool-call preserves full ${LARGE_DOC_FIXTURE.length}-byte body`, async () => {
       // Prime the thread directly via adapter.call (keeps SEND out of scope)
       const openRaw = await sender.agent.call("create_thread", {
         title: "bug-25 RECEIVE path",
-        message: TELES_FIXTURE,
+        message: LARGE_DOC_FIXTURE,
         routingMode: "unicast",
         recipientAgentId: receiver.agentId,
       });
@@ -300,17 +302,17 @@ describe.each(VARIANTS)(
 
       const receivedMessageText = receivedThread.messages[0].text;
       // Canonical bug-25 assertion — fails if any byte dropped in the pipeline.
-      expect(receivedMessageText.length).toBe(TELES_FIXTURE.length);
-      expect(receivedMessageText).toBe(TELES_FIXTURE);
+      expect(receivedMessageText.length).toBe(LARGE_DOC_FIXTURE.length);
+      expect(receivedMessageText).toBe(LARGE_DOC_FIXTURE);
     });
 
-    it(`ROUND-TRIP: sender creates + receiver reads both via MCP — full ${TELES_FIXTURE.length}-byte fidelity`, async () => {
+    it(`ROUND-TRIP: sender creates + receiver reads both via MCP — full ${LARGE_DOC_FIXTURE.length}-byte fidelity`, async () => {
       // Exercises SEND and RECEIVE through MCP back-to-back.
       const openResult = await sender.mcpClient.callTool({
         name: "create_thread",
         arguments: {
           title: "bug-25 round-trip",
-          message: TELES_FIXTURE,
+          message: LARGE_DOC_FIXTURE,
           routingMode: "unicast",
           recipientAgentId: receiver.agentId,
         },
@@ -323,8 +325,8 @@ describe.each(VARIANTS)(
       });
       const receivedMessageText = JSON.parse(extractToolResultText(toolResult)).messages[0].text;
 
-      expect(receivedMessageText.length).toBe(TELES_FIXTURE.length);
-      expect(receivedMessageText).toBe(TELES_FIXTURE);
+      expect(receivedMessageText.length).toBe(LARGE_DOC_FIXTURE.length);
+      expect(receivedMessageText).toBe(LARGE_DOC_FIXTURE);
     });
   },
 );
