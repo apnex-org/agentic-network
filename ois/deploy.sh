@@ -13,6 +13,13 @@ DEST="$HOME/.config/apnex-agents/bin/ois"
 
 [[ -f "$SRC" ]] || { echo "error: canonical source not found at $SRC" >&2; exit 1; }
 bash -n "$SRC" || { echo "error: canonical source fails bash -n; refusing to deploy" >&2; exit 1; }
+# work-160: content guard — deploy.sh ships whatever bin/ois is next to it, so a STALE
+# (unpulled) checkout would silently ship an old ois and persist nothing. Refuse unless
+# the source carries the claudeSettings reader (the marker of the current config-driven
+# claude-defaults wiring). NB: the claudeSettings VALUES live in the separate config repo
+# (config/harnesses/claude.json) — verify those are present at deploy time too, else the
+# reader defaults to {} and seeds nothing.
+grep -q 'claudeSettings' "$SRC" || { echo "error: deploy source lacks the claudeSettings reader — stale ois? pull main or deploy from the worktree with the code. Refusing to deploy." >&2; exit 1; }
 
 if [[ "${1:-}" == "--diff" ]]; then
   diff -u "$DEST" "$SRC" && echo "live copy is identical to canonical"
