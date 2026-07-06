@@ -55,7 +55,6 @@ import { createTaskMigrationModule } from "../storage-substrate/migrations/v2-en
 import { createPendingActionMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/PendingAction.js";
 import { createTurnMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Turn.js";
 import { createAgentMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Agent.js";
-import { createTeleMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Tele.js";
 import { createSchemaDefMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/SchemaDef.js";
 import { createCounterMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Counter.js";
 import { createMessageMigrationModule } from "../storage-substrate/migrations/v2-envelope/kinds/Message.js";
@@ -181,7 +180,6 @@ function registerAllModules(runner: MigrationRunner): void {
 
   // cluster-3 (4): metadata/config/projection
   runner.register(createAgentMigrationModule(findSchema("Agent")));
-  runner.register(createTeleMigrationModule(findSchema("Tele")));
   runner.register(createSchemaDefMigrationModule(findSchema("SchemaDef")));
   runner.register(createCounterMigrationModule(findSchema("Counter")));
 

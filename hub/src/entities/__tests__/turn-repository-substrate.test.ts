@@ -94,11 +94,10 @@ describe("TurnRepositorySubstrate (W4.x.11 Option Y sibling-pattern)", () => {
     const stubTask = { listTasks: async (): Promise<Task[]> => [] } as unknown as ITaskStore;
     const repo = new TurnRepositorySubstrate(substrate, counter, stubMission, stubTask);
 
-    const t1 = await repo.createTurn("Turn one", "Wave 1 scope", ["tele-1", "tele-2"]);
+    const t1 = await repo.createTurn("Turn one", "Wave 1 scope");
     expect(t1.id).toBe("turn-1");
     expect(t1.title).toBe("Turn one");
     expect(t1.status).toBe("planning");
-    expect(t1.tele).toEqual(["tele-1", "tele-2"]);
     expect(t1.correlationId).toBe("turn-1");
     expect(t1.missionIds).toEqual([]);
     expect(t1.taskIds).toEqual([]);

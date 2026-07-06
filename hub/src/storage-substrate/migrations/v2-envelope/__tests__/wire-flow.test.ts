@@ -33,7 +33,6 @@ import { createTaskMigrationModule } from "../kinds/Task.js";
 import { createPendingActionMigrationModule } from "../kinds/PendingAction.js";
 import { createTurnMigrationModule } from "../kinds/Turn.js";
 import { createAgentMigrationModule } from "../kinds/Agent.js";
-import { createTeleMigrationModule } from "../kinds/Tele.js";
 import { createSchemaDefMigrationModule } from "../kinds/SchemaDef.js";
 import { createCounterMigrationModule } from "../kinds/Counter.js";
 import { createMessageMigrationModule } from "../kinds/Message.js";
@@ -448,7 +447,7 @@ function seedCluster2Row(kind: typeof CLUSTER_2_KINDS[number], n: number): { id:
     case "Turn":
       return {
         id, title: `Turn ${n}`, scope: `Free-text scope ${n}`,
-        status: "planning", missionIds: [], taskIds: [], tele: [`tele-${n}`],
+        status: "planning", missionIds: [], taskIds: [],
         correlationId: id,
         createdBy: { role: "engineer", agentId: "agent-greg" },
         createdAt: `2026-05-2${n}T00:00:00Z`, updatedAt: `2026-05-2${n}T00:00:00Z`,
@@ -618,7 +617,7 @@ describe("W2 cluster-2 batch wire-flow — 3-kind migration + per-kind cursor is
 // W3 cluster-3 batch-migration wire-flow (Q7 disposition; per thread-645 R2)
 // ───────────────────────────────────────────────────────────────────────
 
-const CLUSTER_3_KINDS = ["Agent", "Tele", "SchemaDef", "Counter"] as const;
+const CLUSTER_3_KINDS = ["Agent", "SchemaDef", "Counter"] as const;
 
 function seedCluster3Row(kind: typeof CLUSTER_3_KINDS[number], n: number): { id: string } & Record<string, unknown> {
   switch (kind) {
@@ -641,16 +640,6 @@ function seedCluster3Row(kind: typeof CLUSTER_3_KINDS[number], n: number): { id:
         adapterVersion: "test", ipAddress: null,
         restartCount: 0, recentErrors: [], restartHistoryMs: [],
       };
-    case "Tele":
-      return {
-        id: `tele-${n}`,
-        name: `T${n}-Test-Goal`,
-        description: `description ${n}`,
-        successCriteria: `criteria ${n}`,
-        status: "active",
-        createdBy: { role: "architect", agentId: "agent-arch" },
-        createdAt: `2026-05-2${n}T00:00:00Z`,
-      };
     case "SchemaDef":
       return {
         id: `TestKind${n}`,
@@ -670,22 +659,20 @@ function seedCluster3Row(kind: typeof CLUSTER_3_KINDS[number], n: number): { id:
 
 function registerCluster3(runner: MigrationRunner): void {
   runner.register(createAgentMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Agent")!));
-  runner.register(createTeleMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Tele")!));
   runner.register(createSchemaDefMigrationModule(ALL_SCHEMAS.find(s => s.kind === "SchemaDef")!));
   runner.register(createCounterMigrationModule(ALL_SCHEMAS.find(s => s.kind === "Counter")!));
 }
 
-describe("W3 cluster-3 batch wire-flow — 4-kind migration + Counter structural transform", () => {
+describe("W3 cluster-3 batch wire-flow — 3-kind migration + Counter structural transform", () => {
   beforeEach(async () => {
     for (const k of CLUSTER_3_KINDS) await cleanKind(fixture.connStr, k);
     await cleanKind(fixture.connStr, "MigrationCursor");
   });
 
-  it("migrates all 4 cluster-3 kinds end-to-end + cursors isolate per-kind", async () => {
+  it("migrates all 3 cluster-3 kinds end-to-end + cursors isolate per-kind", async () => {
     // Counter is single-row; seed once. Others 2 rows each.
     for (const n of [1, 2]) {
       await fixture.substrate.put("Agent", seedCluster3Row("Agent", n));
-      await fixture.substrate.put("Tele", seedCluster3Row("Tele", n));
       await fixture.substrate.put("SchemaDef", seedCluster3Row("SchemaDef", n));
     }
     await fixture.substrate.put("Counter", seedCluster3Row("Counter", 1));
@@ -702,7 +689,6 @@ describe("W3 cluster-3 batch wire-flow — 4-kind migration + Counter structural
 
     // Per-kind acceptance: 2 rows for non-Counter; 1 for Counter
     expect(results.get("Agent")!.rowsMigrated).toBe(2);
-    expect(results.get("Tele")!.rowsMigrated).toBe(2);
     expect(results.get("SchemaDef")!.rowsMigrated).toBe(2);
     expect(results.get("Counter")!.rowsMigrated).toBe(1);
 
@@ -739,18 +725,6 @@ describe("W3 cluster-3 batch wire-flow — 4-kind migration + Counter structural
     expect(agent!.name).toBe("agent-name-1");
   });
 
-  it("Tele: NO updatedAt (A4 precedent — immutable-content kind)", async () => {
-    await fixture.substrate.put("Tele", seedCluster3Row("Tele", 1));
-    const runner = new MigrationRunner(fixture.substrate);
-    registerCluster3(runner);
-    await runner.runKind("Tele");
-
-    const tele = await fixture.substrate.get<EnvelopeRow>("Tele", "tele-1");
-    expect(tele!.metadata.updatedAt).toBeUndefined();
-    expect(tele!.name).toBe("T1-Test-Goal");
-    expect(tele!.status.phase).toBe("active");
-  });
-
   it("SchemaDef: OQ10 deliberate-extension — status.phase='applied' injected", async () => {
     await fixture.substrate.put("SchemaDef", seedCluster3Row("SchemaDef", 1));
     const runner = new MigrationRunner(fixture.substrate);
@@ -766,7 +740,6 @@ describe("W3 cluster-3 batch wire-flow — 4-kind migration + Counter structural
 
   it("idempotent re-run across cluster-3: all rows skip on second pass", async () => {
     await fixture.substrate.put("Agent", seedCluster3Row("Agent", 1));
-    await fixture.substrate.put("Tele", seedCluster3Row("Tele", 1));
     await fixture.substrate.put("SchemaDef", seedCluster3Row("SchemaDef", 1));
     await fixture.substrate.put("Counter", seedCluster3Row("Counter", 1));
 
@@ -890,7 +863,7 @@ function registerCluster4(runner: MigrationRunner): void {
   runner.register(createRepoEventBridgeDedupeMigrationModule(ALL_SCHEMAS.find(s => s.kind === "RepoEventBridgeDedupe")!));
 }
 
-describe("W4 cluster-4 batch wire-flow — 4-kind migration + Message renameMap CANONICAL", () => {
+describe("W4 cluster-4 batch wire-flow — 3-kind migration + Message renameMap CANONICAL", () => {
   beforeEach(async () => {
     for (const k of CLUSTER_4_KINDS) await cleanKind(fixture.connStr, k);
     await cleanKind(fixture.connStr, "MigrationCursor");

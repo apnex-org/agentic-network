@@ -30,7 +30,7 @@ const MAX_CAS_RETRIES = 50;
 /**
  * mission-90 W8: Turn read-decode = generic envelope→flat + restore `title` from the
  * `metadata.name` rename (the generic base strips the envelope `name` artifact, so
- * capture title from the raw row). status→status.phase + tele@spec + scope@spec are
+ * capture title from the raw row). status→status.phase + scope@spec are
  * handled by the generic flatten.
  */
 function decodeTurn(raw: Turn): Turn {
@@ -51,7 +51,6 @@ export class TurnRepositorySubstrate implements ITurnStore {
   async createTurn(
     title: string,
     scope: string,
-    tele?: string[],
     createdBy?: EntityProvenance,
   ): Promise<Turn> {
     const num = await this.counter.next("turnCounter");
@@ -65,7 +64,6 @@ export class TurnRepositorySubstrate implements ITurnStore {
       status: "planning",
       missionIds: [],
       taskIds: [],
-      tele: tele || [],
       correlationId: id,
       createdBy,
       createdAt: now,
@@ -99,13 +97,12 @@ export class TurnRepositorySubstrate implements ITurnStore {
 
   async updateTurn(
     turnId: string,
-    updates: { status?: TurnStatus; scope?: string; tele?: string[] },
+    updates: { status?: TurnStatus; scope?: string },
   ): Promise<Turn | null> {
     try {
       const updated = await this.casUpdate(turnId, (t) => {
         if (updates.status) t.status = updates.status;
         if (updates.scope !== undefined) t.scope = updates.scope;
-        if (updates.tele) t.tele = updates.tele;
         t.updatedAt = new Date().toISOString();
         return t;
       });
@@ -129,7 +126,6 @@ export class TurnRepositorySubstrate implements ITurnStore {
       ...flat,
       missionIds: missions.filter((m) => m.turnId === stored.id).map((m) => m.id),
       taskIds: tasks.filter((t) => t.turnId === stored.id).map((t) => t.id),
-      tele: (flat.tele as string[] | undefined) ?? [],
     };
   }
 

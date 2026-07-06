@@ -83,7 +83,7 @@ describe("AggregatingTelemetrySink — Virtual Tokens Saved KPI", () => {
     });
     sink.ingest({
       kind: "tool_call",
-      tool: "list_tele",
+      tool: "get_agents",
       tags: { summarized: "true", virtualTokensSaved: "340" },
       timestamp: now(),
     });

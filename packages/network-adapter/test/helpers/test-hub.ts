@@ -34,7 +34,6 @@ import { ThreadRepositorySubstrate } from "../../../../hub/src/entities/thread-r
 import { IdeaRepositorySubstrate } from "../../../../hub/src/entities/idea-repository-substrate.js";
 import { MissionRepositorySubstrate } from "../../../../hub/src/entities/mission-repository-substrate.js";
 import { TurnRepositorySubstrate } from "../../../../hub/src/entities/turn-repository-substrate.js";
-import { TeleRepositorySubstrate } from "../../../../hub/src/entities/tele-repository-substrate.js";
 import { AuditRepositorySubstrate } from "../../../../hub/src/entities/audit-repository-substrate.js";
 import { BugRepositorySubstrate } from "../../../../hub/src/entities/bug-repository-substrate.js";
 import { MessageRepositorySubstrate } from "../../../../hub/src/entities/message-repository-substrate.js";
@@ -326,7 +325,6 @@ export class TestHub {
       idea,
       mission,
       turn: new TurnRepositorySubstrate(substrate, counter, mission, task),
-      tele: new TeleRepositorySubstrate(substrate, counter),
       bug: new BugRepositorySubstrate(substrate, counter),
       pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
       message,

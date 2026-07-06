@@ -10,8 +10,10 @@
  *     duplicate of K8s metadata.name canonical handle)
  *   - scope (free-text markdown) → spec.scope (substantive content; matches
  *     Mission.goal / Proposal.summary cluster-1 pattern)
- *   - tele[] → spec.tele (declared teleological references; idea-151 forward-only
- *     Relationship-kind extraction defers to follow-on)
+ *   - tele[] REMOVED (mission-103 S4 constitutional cut): the Turn.tele field is
+ *     gone; new envelopes carry no spec.tele. Old envelopes with a legacy spec.tele
+ *     are tolerated on read — the field is simply not mapped back onto the Turn
+ *     entity (which no longer declares it), so it drops silently. History untouched.
  *   - missionIds[] + taskIds[] → DROPPED (virtual-hydrated per
  *     IMissionStore.list({turnId})/ITaskStore.list({turnId}); envelope omits per
  *     cluster-1 Mission.tasks/ideas precedent)
@@ -34,7 +36,7 @@ export function createTurnMigrationModule(schema: SchemaDef): KindMigrationModul
     },
     partition: {
       metadata: ["createdAt", "updatedAt", "createdBy", "correlationId"],
-      spec: ["scope", "tele"],
+      spec: ["scope"],
       status: [],
     },
   };

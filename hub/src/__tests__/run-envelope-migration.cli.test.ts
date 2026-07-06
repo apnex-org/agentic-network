@@ -114,12 +114,12 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
     }
   });
 
-  it("full-sweep over empty substrate: exit 0; structured-text output; 22 kinds reported", async () => {
+  it("full-sweep over empty substrate: exit 0; structured-text output; 21 kinds reported", async () => {
     const result = await runCli({ POSTGRES_CONNECTION_STRING: fixture.connStr });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/\[envelope-migrate\] starting wave=W6\.1 kinds=22/);
+    expect(result.stdout).toMatch(/\[envelope-migrate\] starting wave=W6\.1 kinds=21/);
     // SUMMARY footer carries the per-kind count + totals
-    expect(result.stdout).toMatch(/\[envelope-migrate\] SUMMARY: 22 kinds; 0 total rowsMigrated; 0 total rowsErrored/);
+    expect(result.stdout).toMatch(/\[envelope-migrate\] SUMMARY: 21 kinds; 0 total rowsMigrated; 0 total rowsErrored/);
   }, 120_000);
 
   it("--dry-run flag: legacy-shape rows are NOT mutated", async () => {
@@ -159,7 +159,7 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
     expect(parsed.exitCode).toBe(0);
     expect(parsed.dryRun).toBe(false);
     expect(Array.isArray(parsed.perKind)).toBe(true);
-    expect(parsed.perKind.length).toBe(22);
+    expect(parsed.perKind.length).toBe(21);
     for (const kind of parsed.perKind) {
       expect(typeof kind.kind).toBe("string");
       expect(typeof kind.rowsMigrated).toBe("number");
@@ -188,10 +188,9 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
       createdBy: { role: "engineer", agentId: "agent-greg" },
       createdAt: "2026-05-24T00:00:00Z", updatedAt: "2026-05-24T00:00:00Z",
     });
-    await fixture.substrate.put("Tele", {
-      id: "tele-1001", name: "T1-Test", description: "c3", successCriteria: "criteria",
-      status: "active", createdBy: { role: "architect", agentId: "agent-arch" },
-      createdAt: "2026-05-24T00:00:00Z",
+    await fixture.substrate.put("Agent", {
+      id: "agent-1001", fingerprint: "fp-c3", role: "engineer",
+      labels: {}, lastSeenAt: "2026-05-24T00:00:00Z",
     });
     await fixture.substrate.put("Audit", {
       id: "audit-1001", timestamp: "2026-05-24T00:00:00Z",
@@ -204,7 +203,7 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
     const result = await runCli({ POSTGRES_CONNECTION_STRING: fixture.connStr });
     expect(result.exitCode).toBe(0);
     // 5 rows migrated; remaining 16 kinds empty
-    expect(result.stdout).toMatch(/SUMMARY: 22 kinds; 5 total rowsMigrated; 0 total rowsErrored/);
+    expect(result.stdout).toMatch(/SUMMARY: 21 kinds; 5 total rowsMigrated; 0 total rowsErrored/);
 
     // Verify per-cluster envelope-shape
     const ideaPost = await fixture.substrate.get<Record<string, unknown>>("Idea", "idea-1001");
@@ -217,9 +216,9 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
     expect(taskPost!.apiVersion).toBe("core.ois/v1");
     expect((taskPost!.spec as Record<string, unknown>).directive).toBe("c2");
 
-    const telePost = await fixture.substrate.get<Record<string, unknown>>("Tele", "tele-1001");
-    expect(telePost!.apiVersion).toBe("core.ois/v1");
-    expect((telePost!.metadata as Record<string, unknown>).name).toBe("T1-Test");
+    const agentPost = await fixture.substrate.get<Record<string, unknown>>("Agent", "agent-1001");
+    expect(agentPost!.apiVersion).toBe("core.ois/v1");
+    expect((agentPost!.spec as Record<string, unknown>).role).toBe("engineer");
 
     const auditPost = await fixture.substrate.get<Record<string, unknown>>("Audit", "audit-1001");
     expect(auditPost!.apiVersion).toBe("core.ois/v1");

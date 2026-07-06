@@ -94,15 +94,6 @@
       "notes": "Clarification is an INLINE FIELD on Task (task.clarificationQuestion + task.clarificationAnswer per task-repository.ts grep); NOT a separate kind. Verified."
     },
     {
-      "name": "Tele",
-      "mediation": "ITeleStore",
-      "interface-file": "hub/src/entities/tele.ts:38",
-      "repository-file": "hub/src/entities/tele-repository.ts",
-      "persistence-prefix": "tele/",
-      "id-pattern": "tele-N",
-      "per-entity-logic": "putIfMatch CAS retry loops for supersede/retire (tele-repository.ts:157); preserves directly via substrate.putIfMatch per Design §2.1"
-    },
-    {
       "name": "Thread",
       "mediation": "IThreadStore",
       "interface-file": "hub/src/state.ts:1099",

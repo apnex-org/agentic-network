@@ -42,7 +42,6 @@ import { createMissionMigrationModule } from "../migrations/v2-envelope/kinds/Mi
 import { createPendingActionMigrationModule } from "../migrations/v2-envelope/kinds/PendingAction.js";
 import { createProposalMigrationModule } from "../migrations/v2-envelope/kinds/Proposal.js";
 import { createTaskMigrationModule } from "../migrations/v2-envelope/kinds/Task.js";
-import { createTeleMigrationModule } from "../migrations/v2-envelope/kinds/Tele.js";
 import { createThreadMigrationModule } from "../migrations/v2-envelope/kinds/Thread.js";
 import { createTurnMigrationModule } from "../migrations/v2-envelope/kinds/Turn.js";
 import { createSchemaDefMigrationModule } from "../migrations/v2-envelope/kinds/SchemaDef.js";
@@ -119,7 +118,6 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   },
   Proposal: { status: "status.phase", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
   Task: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
-  Tele: { status: "status.phase", name: "metadata.name" },
   Thread: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId", recipientAgentId: "spec.recipientAgentId" },
   Turn: { status: "status.phase", title: "metadata.name" },
   SchemaDef: { kind: "metadata.name" },
@@ -155,7 +153,6 @@ const MODULE_FACTORIES: Record<string, (s: SchemaDef) => KindMigrationModule> = 
   PendingAction: createPendingActionMigrationModule,
   Proposal: createProposalMigrationModule,
   Task: createTaskMigrationModule,
-  Tele: createTeleMigrationModule,
   Thread: createThreadMigrationModule,
   Turn: createTurnMigrationModule,
   SchemaDef: createSchemaDefMigrationModule,
@@ -263,8 +260,8 @@ describe("W1.1 renameMap inventory + faithfulness — complete field-movement au
     // 27 runtime consts total; exactly 23 carry renameMap (mission-102 P3-B1 added
     // Decision with one; P3-B4 added DirectorSignal + DirectorConfirmation WITHOUT —
     // no `status` field, get-by-id only).
-    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(24);
-    expect(ALL_SCHEMAS).toHaveLength(36); // mission-103 S1: +ConstitutionSnapshot +OrgCharter (no renameMap)
+    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(23);
+    expect(ALL_SCHEMAS).toHaveLength(35); // mission-103 S4: -Tele (constitutional cut); S1 +ConstitutionSnapshot +OrgCharter (no renameMap)
   });
 
   it("W1.1b every renameMap entry resolves to the encoder's ACTUAL placement (sentinel-probe vs migrateOne)", () => {

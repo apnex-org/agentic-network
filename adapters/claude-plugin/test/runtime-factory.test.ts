@@ -34,7 +34,7 @@ describe("claude runtime factory", () => {
       isConnected: true,
       setCallbacks: vi.fn(),
       listTools: vi.fn(async () => [
-        { name: "list_tele", description: "[Any] list tele", inputSchema: { type: "object" } },
+        { name: "get_agents", description: "[Any] list tele", inputSchema: { type: "object" } },
       ]),
       call: vi.fn(async (tool: string, args: Record<string, unknown>) => {
         calls.push({ tool, args });
@@ -76,15 +76,15 @@ describe("claude runtime factory", () => {
     await client.connect(clientTx);
 
     const tools = await client.listTools();
-    expect(tools.tools.map((t) => t.name)).toEqual(["list_tele"]);
+    expect(tools.tools.map((t) => t.name)).toEqual(["get_agents"]);
     expect(agent.listTools).toHaveBeenCalledOnce();
 
-    const result = await client.callTool({ name: "list_tele", arguments: { limit: 1 } });
+    const result = await client.callTool({ name: "get_agents", arguments: { limit: 1 } });
     expect((result as { isError?: boolean }).isError).toBeFalsy();
     const text = (result as { content: Array<{ text: string }> }).content[0].text;
-    expect(JSON.parse(text)).toMatchObject({ ok: true, tool: "list_tele", args: { limit: 1 } });
+    expect(JSON.parse(text)).toMatchObject({ ok: true, tool: "get_agents", args: { limit: 1 } });
     expect(calls.map((c) => c.tool)).toContain("signal_working_started");
-    expect(calls.map((c) => c.tool)).toContain("list_tele");
+    expect(calls.map((c) => c.tool)).toContain("get_agents");
     expect(calls.map((c) => c.tool)).toContain("signal_working_completed");
   });
 

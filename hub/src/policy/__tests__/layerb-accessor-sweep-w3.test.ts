@@ -33,7 +33,6 @@ import { MissionRepositorySubstrate } from "../../entities/mission-repository-su
 import { TaskRepositorySubstrate } from "../../entities/task-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "../../entities/thread-repository-substrate.js";
 import { ProposalRepositorySubstrate } from "../../entities/proposal-repository-substrate.js";
-import { TeleRepositorySubstrate } from "../../entities/tele-repository-substrate.js";
 import { PendingActionRepositorySubstrate } from "../../entities/pending-action-repository-substrate.js";
 import { PolicyRouter } from "../router.js";
 import { registerIdeaPolicy } from "../idea-policy.js";
@@ -41,7 +40,6 @@ import { registerMissionPolicy } from "../mission-policy.js";
 import { registerTaskPolicy } from "../task-policy.js";
 import { registerThreadPolicy } from "../thread-policy.js";
 import { registerProposalPolicy } from "../proposal-policy.js";
-import { registerTelePolicy } from "../tele-policy.js";
 import type { IPolicyContext, AllStores } from "../types.js";
 const MIGRATIONS_DIR = join(__dirname, "..", "..", "storage-substrate", "migrations");
 const MIGRATION_FILES = ["001-entities-table.sql", "002-notify-trigger.sql", "003-jsonb-size-check.sql"];
@@ -98,7 +96,6 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
       task: new TaskRepositorySubstrate(substrate, counter),
       thread: new ThreadRepositorySubstrate(substrate, counter),
       proposal: new ProposalRepositorySubstrate(substrate, counter),
-      tele: new TeleRepositorySubstrate(substrate, counter),
       pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
       // RBAC stub: "unknown" role bypasses the router's role check;
       // getAgentForSession→null skips the auto-claim block.
@@ -111,7 +108,6 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     registerTaskPolicy(router);
     registerThreadPolicy(router);
     registerProposalPolicy(router);
-    registerTelePolicy(router);
 
     ctx = {
       stores,
@@ -133,7 +129,7 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
   }, 30_000);
 
   beforeEach(async () => {
-    await pool.query(`DELETE FROM entities WHERE kind IN ('Idea','Mission','Task','Thread','Proposal','Tele','PendingAction')`);
+    await pool.query(`DELETE FROM entities WHERE kind IN ('Idea','Mission','Task','Thread','Proposal','PendingAction')`);
   });
 
   function idea(id: string, phase: string, extra: Record<string, unknown> = {}, status: Record<string, unknown> = {}): Row {
@@ -211,20 +207,6 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     const none = parse(await router.handle("list_proposals", { status: "rejected" }, ctx));
     expect(none.proposals as unknown[]).toHaveLength(0);
     expect(none._ois_query_unmatched).toBe(true); // collection non-empty, nothing matched
-  }, 30_000);
-
-  it("W3.5 list_tele: superseded/retired AUDIT views read envelope phase (boolean guard)", async () => {
-    await seed([
-      { kind: "Tele", id: "w3-te1", data: { id: "w3-te1", kind: "Tele", apiVersion: "core.ois/v1", metadata: { name: "w3-te1" }, spec: {}, status: { phase: "active" } } },
-      { kind: "Tele", id: "w3-te2", data: { id: "w3-te2", kind: "Tele", apiVersion: "core.ois/v1", metadata: { name: "w3-te2" }, spec: {}, status: { phase: "superseded" } } },
-      { kind: "Tele", id: "w3-te3", data: { id: "w3-te3", kind: "Tele", apiVersion: "core.ois/v1", metadata: { name: "w3-te3" }, spec: {}, status: { phase: "retired" } } },
-    ]);
-    // default: active only (superseded/retired excluded via envelope-phase guard)
-    expect((parse(await router.handle("list_tele", {}, ctx)).tele as Array<{ id: string }>).map((t) => t.id).sort()).toEqual(["w3-te1"]);
-    // include superseded
-    expect((parse(await router.handle("list_tele", { includeSuperseded: true }, ctx)).tele as Array<{ id: string }>).map((t) => t.id).sort()).toEqual(["w3-te1", "w3-te2"]);
-    // include retired
-    expect((parse(await router.handle("list_tele", { includeRetired: true }, ctx)).tele as Array<{ id: string }>).map((t) => t.id).sort()).toEqual(["w3-te1", "w3-te3"]);
   }, 30_000);
 
   it("W3.6 get_pending_actions alignment: listForAgent state filter pushes down (envelope path)", async () => {

@@ -32,7 +32,6 @@ import {
 import { isEnvelopeShape } from "../migrations/v2-envelope/shared/envelope.js";
 import { writeEncoderRegisteredKinds } from "../migrations/v2-envelope/write-encoder.js";
 import { ThreadRepositorySubstrate } from "../../entities/thread-repository-substrate.js";
-import { TeleRepositorySubstrate } from "../../entities/tele-repository-substrate.js";
 import { SubstrateCounter } from "../../entities/substrate-counter.js";
 
 const SETUP_TIMEOUT = 90_000;
@@ -362,36 +361,6 @@ describe("W4 write-encoder + watch envelope-awareness", () => {
       expect((stored4.rows[0]?.data.status as Record<string, unknown>).phase).toBe("converged");
       // no re-partition garbage from the decode/encode cycle (spec must not carry a nested bucket)
       expect((stored4.rows[0]?.data.spec as Record<string, unknown>).metadata).toBeUndefined();
-    }, OP_TIMEOUT);
-
-    it("bug-152: tele retire + supersede-gate FSM runs end-to-end on ENVELOPE-backed storage", async () => {
-      // defineTele stores an envelope row (writer-closure). retireTele/supersedeTele
-      // read it via normalizeTele, which must FULL-DECODE (status→phase legacy-flat).
-      // Pre-fix `if (raw.status) return raw` returned the envelope OBJECT → the
-      // supersede retire-gate (`current.status === "retired"`) never fired and the
-      // CAS write produced a hybrid row.
-      const repo = new TeleRepositorySubstrate(substrate, new SubstrateCounter(substrate));
-      const a = await repo.defineTele("Tele A 152", "desc", "criteria");
-      const b = await repo.defineTele("Tele B 152", "desc", "criteria"); // successor for the gate
-      const storedA0 = await pool.query<{ data: Record<string, unknown> }>(
-        `SELECT data FROM entities WHERE kind='Tele' AND id=$1`, [a.id]);
-      expect(isEnvelopeShape(storedA0.rows[0]?.data), "defineTele stored envelope").toBe(true);
-
-      const retired = await repo.retireTele(a.id);
-      expect(retired.status).toBe("retired");
-      expect(retired.retiredAt).toBeDefined();
-
-      const storedA1 = await pool.query<{ data: Record<string, unknown> }>(
-        `SELECT data FROM entities WHERE kind='Tele' AND id=$1`, [a.id]);
-      expect(isEnvelopeShape(storedA1.rows[0]?.data), "retired tele re-encoded to envelope").toBe(true);
-      expect((storedA1.rows[0]?.data.status as Record<string, unknown>).phase).toBe("retired");
-
-      // read-side decode surfaces the phase as legacy-flat status
-      const got = await repo.getTele(a.id);
-      expect(got?.status).toBe("retired");
-
-      // supersede-gate reads the decoded status === "retired" → rejects (was object-compare → never fired)
-      await expect(repo.supersedeTele(a.id, b.id)).rejects.toThrow(/retired/);
     }, OP_TIMEOUT);
   });
 

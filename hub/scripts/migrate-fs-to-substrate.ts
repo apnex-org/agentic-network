@@ -143,7 +143,6 @@ const KIND_SCANNERS: Record<string, KindScanner> = {
   PendingAction: dirScanner("PendingAction", "pending-actions"),
   Proposal: dirScanner("Proposal", "proposals"),
   Task: dirScanner("Task", "tasks"),
-  Tele: dirScanner("Tele", "tele"),
   // W5.4-fix: custom Thread scanner — reads scalar at threads/<id>.json + assembles
   // inline messages[] from threads/<id>/messages/*.json per W4.x.10 ThreadRepository-
   // Substrate inline-messages disposition (replaces FS dual-namespace pattern).
@@ -218,7 +217,7 @@ const KIND_SCANNERS: Record<string, KindScanner> = {
 // values to allocate from), then leaf-entities, then graph-entities last.
 const KIND_ORDER = [
   "Counter",
-  "Agent", "Tele",
+  "Agent",
   "Audit", "Notification",
   "Bug", "Idea", "Mission", "Task", "Proposal", "Turn",
   "PendingAction",

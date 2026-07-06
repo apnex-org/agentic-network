@@ -48,8 +48,6 @@ const OUT_OF_SCOPE_V1 = [
   // Entity (6 not in ratified set)
   { id: "INV-TH8", note: "Thread invariant (not in ratified v1 subset)" },
   { id: "INV-TN1", note: "Turn invariant" },
-  { id: "INV-TE1", note: "Tele invariant" },
-  { id: "INV-TE2", note: "Tele invariant" },
   { id: "INV-A1",  note: "Agent invariant" },
   { id: "INV-A2",  note: "Agent invariant" },
   { id: "INV-D1",  note: "Director-notification invariant" },

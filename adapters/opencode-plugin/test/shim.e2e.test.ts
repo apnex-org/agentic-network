@@ -397,12 +397,12 @@ describe("opencode-plugin shim — cognitive layer integration", () => {
     });
 
     faultNext = 2;
-    await expect(eng.agent.call("list_tele", {})).rejects.toThrow("503");
-    await expect(eng.agent.call("list_tele", {})).rejects.toThrow("503");
+    await expect(eng.agent.call("get_agents", {})).rejects.toThrow("503");
+    await expect(eng.agent.call("get_agents", {})).rejects.toThrow("503");
 
     faultNext = 0;
     const result = await eng.mcpClient.callTool({
-      name: "list_tele",
+      name: "get_agents",
       arguments: {},
     });
     const content = (result as { content: Array<{ text: string }> }).content;
@@ -438,9 +438,9 @@ describe("opencode-plugin shim — cognitive layer integration", () => {
     });
 
     faultNext = 2;
-    await expect(eng.agent.call("list_tele", {})).rejects.toThrow();
-    await expect(eng.agent.call("list_tele", {})).rejects.toThrow();
-    await expect(eng.agent.call("list_tele", {})).rejects.toBeInstanceOf(
+    await expect(eng.agent.call("get_agents", {})).rejects.toThrow();
+    await expect(eng.agent.call("get_agents", {})).rejects.toThrow();
+    await expect(eng.agent.call("get_agents", {})).rejects.toBeInstanceOf(
       HubUnavailableError,
     );
 
@@ -519,19 +519,19 @@ describe("opencode-plugin shim — cognitive layer integration", () => {
 
     hub.clearToolCallLog();
 
-    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
-    expect(hub.getToolCalls("list_tele")).toHaveLength(1);
+    await eng.mcpClient.callTool({ name: "get_agents", arguments: {} });
+    expect(hub.getToolCalls("get_agents")).toHaveLength(1);
 
-    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
-    expect(hub.getToolCalls("list_tele")).toHaveLength(1);
+    await eng.mcpClient.callTool({ name: "get_agents", arguments: {} });
+    expect(hub.getToolCalls("get_agents")).toHaveLength(1);
 
     await eng.mcpClient.callTool({
       name: "create_idea",
       arguments: { text: "cache-flush-test-opencode" },
     });
 
-    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
-    expect(hub.getToolCalls("list_tele")).toHaveLength(2);
+    await eng.mcpClient.callTool({ name: "get_agents", arguments: {} });
+    expect(hub.getToolCalls("get_agents")).toHaveLength(2);
 
     try { await eng.mcpClient.close(); } catch { /* ignore */ }
     try { await eng.agent.stop(); } catch { /* ignore */ }

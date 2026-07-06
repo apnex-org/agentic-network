@@ -300,7 +300,7 @@ const PINNED_GIT_REF = /^[0-9a-f]{40}(:.+)?$/;
 
 // semantic ref-kind → SchemaDef kind, for storage=entity existence checks (the substrate is kind-cased).
 const SEMANTIC_KIND_TO_SCHEMA: Record<string, string> = {
-  bug: "Bug", idea: "Idea", mission: "Mission", task: "Task", tele: "Tele",
+  bug: "Bug", idea: "Idea", mission: "Mission", task: "Task",
   proposal: "Proposal", thread: "Thread", workitem: "WorkItem", "work-item": "WorkItem",
   document: "Document", doc: "Document", audit: "Audit", agent: "Agent", turn: "Turn",
 };

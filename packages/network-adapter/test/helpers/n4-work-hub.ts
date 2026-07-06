@@ -36,7 +36,6 @@ import { ThreadRepositorySubstrate } from "../../../../hub/src/entities/thread-r
 import { IdeaRepositorySubstrate } from "../../../../hub/src/entities/idea-repository-substrate.js";
 import { MissionRepositorySubstrate } from "../../../../hub/src/entities/mission-repository-substrate.js";
 import { TurnRepositorySubstrate } from "../../../../hub/src/entities/turn-repository-substrate.js";
-import { TeleRepositorySubstrate } from "../../../../hub/src/entities/tele-repository-substrate.js";
 import { AuditRepositorySubstrate } from "../../../../hub/src/entities/audit-repository-substrate.js";
 import { BugRepositorySubstrate } from "../../../../hub/src/entities/bug-repository-substrate.js";
 import { MessageRepositorySubstrate } from "../../../../hub/src/entities/message-repository-substrate.js";
@@ -50,7 +49,6 @@ import { createMetricsCounter } from "../../../../hub/src/observability/metrics.
 // Production policies — imported from leaves (mirrors hub/src/index.ts), pg-free.
 import { registerTaskPolicy } from "../../../../hub/src/policy/task-policy.js";
 import { registerSystemPolicy } from "../../../../hub/src/policy/system-policy.js";
-import { registerTelePolicy } from "../../../../hub/src/policy/tele-policy.js";
 import { registerAuditPolicy } from "../../../../hub/src/policy/audit-policy.js";
 import { registerSessionPolicy } from "../../../../hub/src/policy/session-policy.js";
 import { registerIdeaPolicy } from "../../../../hub/src/policy/idea-policy.js";
@@ -98,7 +96,6 @@ export function buildN4Stores(): N4Stores {
     idea,
     mission,
     turn: new TurnRepositorySubstrate(substrate, counter, mission, task),
-    tele: new TeleRepositorySubstrate(substrate, counter),
     bug: new BugRepositorySubstrate(substrate, counter),
     pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
     message,
@@ -115,7 +112,6 @@ export function buildN4Router(): PolicyRouter {
   const router = new PolicyRouter(() => {});
   registerTaskPolicy(router);
   registerSystemPolicy(router);
-  registerTelePolicy(router);
   registerAuditPolicy(router);
   registerSessionPolicy(router);
   registerIdeaPolicy(router);

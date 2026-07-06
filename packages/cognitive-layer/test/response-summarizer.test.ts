@@ -138,11 +138,11 @@ describe("ResponseSummarizer — default shouldSummarize heuristic", () => {
   it("summarizes read-verb results that exceed byte threshold even if array is short", async () => {
     const summarizer = new ResponseSummarizer({ maxItems: 5, maxBytes: 100 });
     const heavy = {
-      tele: "x".repeat(500), // single large string, no array
+      agents: "x".repeat(500), // single large string, no array
       items: [1, 2], // array is tiny — but we also check byte threshold
     };
     const next = vi.fn().mockResolvedValue(heavy);
-    const context = ctx({ tool: "list_tele" });
+    const context = ctx({ tool: "get_agents" });
     const result = await summarizer.onToolCall(context, next);
     // Heuristic: oversized byte count should trigger, but there's
     // no eligible array to truncate → falls through to pass-through
@@ -278,11 +278,11 @@ describe("ResponseSummarizer — perToolMaxItems overrides", () => {
   it("null override disables summarization for that tool", async () => {
     const summarizer = new ResponseSummarizer({
       maxItems: 5,
-      perToolMaxItems: { list_tele: null },
+      perToolMaxItems: { get_agents: null },
     });
     const big = Array.from({ length: 50 }, (_, i) => i);
     const next = vi.fn().mockResolvedValue(big);
-    const context = ctx({ tool: "list_tele" });
+    const context = ctx({ tool: "get_agents" });
     const result = await summarizer.onToolCall(context, next);
     expect(result).toBe(big); // no truncation
     expect(context.tags.summarized).toBeUndefined();

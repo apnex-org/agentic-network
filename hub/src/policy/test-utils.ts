@@ -8,7 +8,6 @@ import { ThreadRepositorySubstrate } from "../entities/thread-repository-substra
 import { IdeaRepositorySubstrate } from "../entities/idea-repository-substrate.js";
 import { MissionRepositorySubstrate } from "../entities/mission-repository-substrate.js";
 import { TurnRepositorySubstrate } from "../entities/turn-repository-substrate.js";
-import { TeleRepositorySubstrate } from "../entities/tele-repository-substrate.js";
 import { AuditRepositorySubstrate } from "../entities/audit-repository-substrate.js";
 import { SubstrateCounter } from "../entities/substrate-counter.js";
 import { createMemoryStorageSubstrate, buildEnvelopeWriteEncoder } from "../storage-substrate/index.js";
@@ -70,7 +69,6 @@ export function createTestContext(overrides?: Partial<TestPolicyContext>, opts?:
     idea,
     mission,
     turn: new TurnRepositorySubstrate(substrate, counter, mission, task),
-    tele: new TeleRepositorySubstrate(substrate, counter),
     bug: new BugRepositorySubstrate(substrate, counter),
     pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
     message: new MessageRepositorySubstrate(substrate),

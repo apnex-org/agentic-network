@@ -34,7 +34,7 @@ function routerWith(
 
 const BASE = [
   { name: "create_thread", description: "[Any] Open a thread", schema: { title: z.string() } },
-  { name: "list_tele", description: "[Any] List teles", schema: {} },
+  { name: "list_axioms", description: "[Any] List axioms", schema: {} },
 ];
 
 describe("computeToolSurfaceRevision", () => {
