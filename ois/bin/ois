@@ -446,6 +446,11 @@ harness_log_marker() { # $1 harness -> "logfile-rel|marker-regex"
 
 cmd_up() {
   local a="$1" h="$2" c ws s lm logf marker pre banner=0 ok=0 pane new i
+  # work-157 (bug-235): trailing args after <agent> <harness> are harness launch
+  # passthrough (e.g. `ois up lily claude -c` to resume). do_launch already execs
+  # them onto the harness command; here we thread them through the tmux launch
+  # string. DEFAULT stays fresh-start — nothing is auto-injected.
+  shift 2; local -a largs=("$@")
   c=$(cell_json "$a" "$h"); ws=$(expand "$(jq -r '.workspace' <<<"$c")"); s=$(session_name "$a" "$h")
   command -v tmux >/dev/null 2>&1 || fatal "'tmux' required for ois up"
   tmux has-session -t "$s" 2>/dev/null && fatal "session $s already running (ois down $a $h first)"
@@ -455,8 +460,10 @@ cmd_up() {
   [[ -n "$other" ]] && fatal "agent '$a' already has a live session ($other) — hub would displace it; ois down first"
   lm=$(harness_log_marker "$h"); logf="$ws/${lm%%|*}"; marker="${lm##*|}"
   pre=0; [[ -f "$logf" ]] && pre=$(wc -l < "$logf")
-  echo "→ ois up $a/$h  (session: $s)"
-  tmux new-session -d -s "$s" -x 220 -y 50 "$ROOT/bin/ois launch $a $h"
+  echo "→ ois up $a/$h  (session: $s)${largs:+  [launch args: ${largs[*]}]}"
+  # Append passthrough args %q-quoted so flags/values survive the tmux shell-string parse.
+  local ltail=""; ((${#largs[@]})) && ltail=" $(printf '%q ' "${largs[@]}")"
+  tmux new-session -d -s "$s" -x 220 -y 50 "$ROOT/bin/ois launch $a $h$ltail"
   for i in $(seq 1 60); do
     sleep 2
     tmux has-session -t "$s" 2>/dev/null || { echo "  ✗ session exited during startup — check $logf"; return 1; }
@@ -624,7 +631,7 @@ cmd_ps() {
 sub="${1:-}"; shift || true
 case "$sub" in
   launch) [[ $# -ge 2 ]] || fatal "usage: ois launch <agent> <harness> [args...]"; do_launch "$@" ;;
-  up)     [[ $# -eq 2 ]] || fatal "usage: ois up <agent> <harness>"; cmd_up "$@" ;;
+  up)     [[ $# -ge 2 ]] || fatal "usage: ois up <agent> <harness> [launch-args…]"; cmd_up "$@" ;;
   attach) if [[ $# -eq 0 ]]; then cmd_ps; else cmd_attach "$@"; fi ;;
   down)   [[ $# -ge 1 ]] || fatal "usage: ois down <agent> [harness]"; cmd_down "$@" ;;
   say)    [[ $# -ge 2 ]] || fatal "usage: ois say <agent> <message...>"; cmd_say "$@" ;;
