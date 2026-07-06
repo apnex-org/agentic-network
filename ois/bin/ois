@@ -225,23 +225,31 @@ claude_seed() {
   # CLAUDE_CODE_EFFORT_LEVEL: a non-xhigh value SUPPRESSES ultracode. Fleet accounts
   # must also hold the allow_workflows entitlement (no settings key grants it —
   # confirm in the post-deploy settling check).
+  # work-160 (model default, Director directive): claude sessions default to Opus 4.8
+  # via the settings.json "model" key. VERIFIED it is load-bearing: an agent whose
+  # settings.json carries model:"opus" runs claude-opus-4-8 even though the harness
+  # exec passes --model {hubModelTag} — the settings key wins over the launch flag
+  # (greg/lily already carry it from the Director's /model). "opus" is the alias
+  # /model itself wrote (auto-tracks latest Opus). Seeded on BOTH paths, mirroring
+  # ultracode. (The harness hubModelTag is aligned to opus separately so --model,
+  # HUB_LLM_MODEL, and the ois ps/nodes display match the real session model.)
   if [[ ! -f "$cdir/settings.json" ]]; then
-    echo "  seeding : $cdir/settings.json (marketplace + plugin + prompt skips + statusline + ultracode)"
+    echo "  seeding : $cdir/settings.json (marketplace + plugin + prompt skips + statusline + ultracode + model=opus)"
     jq -n --arg mp "$mp" --arg sl "$sl" '{skipDangerousModePermissionPrompt: true,
       extraKnownMarketplaces: {"agentic-network": {source: {source: "directory", path: $mp}}},
       enabledPlugins: {"agent-adapter@agentic-network": true},
       permissions: {allow: ["mcp__plugin_agent-adapter_proxy__*"]},
-      ultracode: true, enableWorkflows: true}
+      ultracode: true, enableWorkflows: true, model: "opus"}
       + (if $sl != "" then {statusLine: {type: "command", command: $sl}} else {} end)' > "$cdir/settings.json"
   else
-    # Existing settings.json: UNCONDITIONAL idempotent merge — set the two ultracode
-    # booleans on every seed (most agents are ALREADY seeded, so the fresh-create path
-    # never fires for them; the old statusLine-only elif never reached them), plus
-    # backfill statusLine only if absent. `. + {…}` is idempotent and leaves any other
-    # existing keys untouched.
-    echo "  seeding : ensuring ultracode+enableWorkflows on existing settings.json (+statusLine backfill if absent)"
+    # Existing settings.json: UNCONDITIONAL idempotent merge — set the ultracode
+    # booleans + model on every seed (most agents are ALREADY seeded, so the
+    # fresh-create path never fires for them; the old statusLine-only elif never
+    # reached them), plus backfill statusLine only if absent. `. + {…}` is idempotent
+    # and leaves any other existing keys untouched.
+    echo "  seeding : ensuring ultracode+enableWorkflows+model=opus on existing settings.json (+statusLine backfill if absent)"
     local tmp="$cdir/settings.json.tmp.$$"
-    jq --arg sl "$sl" '. + {ultracode: true, enableWorkflows: true}
+    jq --arg sl "$sl" '. + {ultracode: true, enableWorkflows: true, model: "opus"}
       + (if $sl != "" and (.statusLine | not) then {statusLine: {type: "command", command: $sl}} else {} end)' \
       "$cdir/settings.json" > "$tmp" && mv "$tmp" "$cdir/settings.json"
   fi
