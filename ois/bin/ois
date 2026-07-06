@@ -552,6 +552,27 @@ cmd_decisions() { # list the Director-relevant decision queue from the hub (defa
   [[ "$(echo "$out" | jq '(.decisions // []) | length')" != "0" ]] || echo "(no decisions with status: $st — try: ois decisions all)"
 }
 
+cmd_nodes() { # work-161: list workgraph arc nodes (missions) from the hub — Director-facing (list only)
+  local sub="${1:-}"
+  [[ "$sub" == "list" ]] && shift || fatal "usage: ois nodes list [active|proposed|completed|abandoned|all]"
+  local st="${1:-}"   # empty = default recent frontier
+  case "$st" in ""|all|active|proposed|completed|abandoned) ;; *) fatal "usage: ois nodes list [active|proposed|completed|abandoned|all]" ;; esac
+  _hub_session
+  # Default (no status) + `all`: the 25 most-recent missions by createdAt desc across ALL
+  # statuses — the live arc frontier at a glance (active is often empty between arcs). A
+  # concrete status arg filters. list_missions is [Any], so the director session can read it.
+  local body; body=$(jq -cn --arg st "$st" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"list_missions",
+    arguments:({sort:[{field:"createdAt",order:"desc"}], limit:25, compact:true}
+      + (if ($st|length)>0 and $st!="all" then {filter:{status:$st}} else {} end))}}')
+  local out; out=$(_hub_call "$body")
+  [[ -n "$out" ]] || fatal "list_missions failed"
+  echo "$out" | jq -e '.missions' >/dev/null 2>&1 || { echo "hub error: $out" >&2; exit 1; }
+  echo "$out" | jq -r '(.missions // [])[] | [.id, .status, (.missionClass // "-"), .title] | @tsv' \
+    | awk -F'\t' 'BEGIN{printf "%-12s %-11s %-22s %s\n","ID","STATUS","CLASS","TITLE"} {printf "%-12s %-11s %-22s %s\n",$1,$2,$3,substr($4,1,60)}'
+  local n total; n=$(echo "$out" | jq '(.missions // []) | length'); total=$(echo "$out" | jq '.total // 0')
+  if [[ "$n" == "0" ]]; then echo "(no missions${st:+ with status: $st})"; else echo "  ($n of $total shown${st:+, status=$st})"; fi
+}
+
 cmd_show() { # render one decision in full — what you would be confirming
   local id="$1"; [[ -n "$id" ]] || fatal "usage: ois show <decision-id>"
   _hub_session
@@ -636,6 +657,7 @@ case "$sub" in
   down)   [[ $# -ge 1 ]] || fatal "usage: ois down <agent> [harness]"; cmd_down "$@" ;;
   say)    [[ $# -ge 2 ]] || fatal "usage: ois say <agent> <message...>"; cmd_say "$@" ;;
   decisions) cmd_decisions "$@" ;;
+  nodes)  cmd_nodes "$@" ;;
   show)   [[ $# -ge 1 ]] || fatal "usage: ois show <decision-id>"; cmd_show "$@" ;;
   confirm) [[ $# -ge 2 ]] || fatal "usage: ois confirm <decision-N|dconf-N> <answer...>"; cmd_confirm "$@" ;;
   ps)     cmd_ps ;;
@@ -662,5 +684,5 @@ case "$sub" in
     ;;
   list)   cmd_list ;;
   doctor) cmd_doctor ;;
-  *) fatal "usage: ois {launch|up|attach|say|confirm|decisions|show|down|ps|render|env|check|seed|list|doctor}" ;;
+  *) fatal "usage: ois {launch|up|attach|say|confirm|decisions|nodes|show|down|ps|render|env|check|seed|list|doctor}" ;;
 esac
