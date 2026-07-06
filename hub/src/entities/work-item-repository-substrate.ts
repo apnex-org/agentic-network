@@ -295,8 +295,9 @@ function evaluateEvidence(
       throw new EvidencePredicateFailed(`requirement '${req.id}' (${req.kind}) has no bound evidence`);
     }
     // #2 kind-match. bug-204/audit-5093: a verifier-gate's pass-evidence is the verifier's
-    // durable verdict = a kind:audit ref (create_audit_entry; create_review is DEPRECATED per
-    // audit-9429 — there is NO verifier-mintable Review entity). So on a verifier-gate, an audit
+    // durable verdict = a kind:audit ref. (SEAL-C/idea-444: create_audit_entry is RETIRED — this
+    // is now the LEGACY path; new verifier verdicts use attest_evidence. create_review is DEPRECATED
+    // per audit-9429 — there is NO verifier-mintable Review entity.) So on a verifier-gate, an audit
     // binding ALSO satisfies ANY requirement — including an already-seeded kind:review one
     // (back-compat for live blueprints). bug-220 (b) widens this ONE notch: an audit binding
     // also satisfies a REVIEW-kind refResolvable requirement on EVERY item (otherwise such

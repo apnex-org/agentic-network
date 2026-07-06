@@ -164,7 +164,7 @@ export function registerSystemPolicy(router: PolicyRouter): void {
     "Default (no `bucket`) returns a compact `snapshot` object mapping every counter name to its integer count. " +
     "Pass `bucket: 'name'` to additionally get `recentDetails` (ring-buffer up to 32 entries per bucket) for that specific counter. " +
     "Counter taxonomy (CP1): `inv_th<N>.shadow_breach`, `inv_th25.near_miss`, `convergence_gate.rejected`, `convergence_gate.authority_rejected`, `create_thread.routing_mode_rejected`, `cascade_fail.{depth_exhausted,unknown_spec,execute_threw,dispatch_failed,audit_failed}`, `cascade.idempotent_skip`, `cascade.idempotent_update_skip`. " +
-    "Counter state is per-process (Hub restart resets all counts); use `list_audit_entries` for a persisted view where available.",
+    "Counter state is per-process (Hub restart resets all counts). (SEAL-C/idea-444: the `list_audit_entries` verb is retired — there is no MCP-queryable persisted view of these counters.)",
     {
       bucket: z.string().optional()
         .describe("Specific counter bucket to drill into (returns count + recentDetails for that bucket)."),

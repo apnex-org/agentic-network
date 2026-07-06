@@ -1,11 +1,11 @@
 /**
- * SEAL C (idea-444) — audit-verb retirement CATALOG-NEGATIVE gate.
+ * SEAL C(c) (idea-444) — audit-VERB retirement CATALOG-NEGATIVE gate.
  *
- * The audit-as-verdict-store is retired: verifier verdicts are now load-bearing attest_evidence
- * attestations (A2), and the logEntry firehose is redirected to the structured-log stream (no
- * persist). The two Audit authoring/listing verbs are retired from the production policy surface —
- * this is the standing proof that neither survives: each resolves to Unknown tool. (The Audit KIND
- * itself stays READABLE for the fenced legacy verdict path; full kind-removal = idea-457.)
+ * SCOPE (additive, 104): the two Audit authoring/listing VERBS (create_audit_entry +
+ * list_audit_entries) are retired from the production policy surface — the standing proof that
+ * neither survives: each resolves to "Unknown tool". Verifier verdicts are now attest_evidence
+ * attestations (A2). The Audit KIND + the store's logEntry (firehose still persists) + get/listEntries
+ * are RETAINED, fenced read-only. The firehose→log redirect + full no-bypass + kind-removal = idea-457.
  */
 
 import { describe, it, expect } from "vitest";

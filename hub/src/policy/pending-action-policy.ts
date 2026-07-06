@@ -127,14 +127,14 @@ async function pruneStuckQueueItems(
 
     // Phase 2d CP3 C2 — reverse bidirectional integrity: when the
     // pruned item is thread-bound, emit a thread-scoped observability
-    // signal so the thread's participants + `list_audit_entries` on
-    // the thread surface the prune (CP1 audit §5.2 bullet 4).
+    // signal (a persisted Audit row; SEAL-C/idea-444 retired the
+    // `list_audit_entries` MCP verb, but the row is still written).
     if (item.dispatchType === "thread_message" || item.dispatchType === "thread_convergence_finalized") {
       const thread = await ctx.stores.thread.getThread(item.entityRef);
       if (thread) {
         // Thread-scoped audit entry — distinct from the queue-item
-        // audit above; this one's relatedEntity is the thread so
-        // `list_audit_entries({relatedEntity: thread-N})` surfaces it.
+        // audit above; this one's relatedEntity is the thread (persisted
+        // via logEntry; the list_audit_entries query verb is retired at SEAL-C).
         await ctx.stores.audit.logEntry(
           "hub",
           "thread_queue_item_pruned",
