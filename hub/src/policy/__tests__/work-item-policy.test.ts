@@ -882,6 +882,121 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     expect(afterCall.dependsOn).toEqual(["work-bp-run2-arc"]);          // translated localId → work-id
   });
 
+  // ── C4 (idea-393): nodesRef server-side resolution ─────────────────────────────
+  // A large/committed blueprint can be seeded by POINTER (a Hub Document id) instead
+  // of inlining ~39KB. The resolved nodes feed the SAME whole-graph validator — the
+  // ref is only a fetch+parse in front of the existing expander (zero new trust surface).
+  describe("nodesRef server-side resolution (C4 / idea-393)", () => {
+    // Inject a Document store keyed by id → raw content string (what the Hub resolves).
+    const ctxWithDocs = (store: IWorkItemStore, docs: Record<string, string>, role = "architect") => {
+      const ctx = ctxFor(store, role);
+      (ctx.stores as unknown as { document: unknown }).document = {
+        get: async (id: string) => (id in docs ? { id, content: docs[id] } : null),
+      };
+      return ctx;
+    };
+
+    it("resolves { nodes } from the referenced doc + expands identically to inline", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({
+        nodes: [node({ localId: "leaf" }), node({ localId: "arc", completionDependsOn: ["leaf"] })],
+      });
+      const r = await router.handle(
+        "seed_blueprint",
+        { runId: "rref", nodesRef: "doc-bp" },
+        ctxWithDocs(stub, { "doc-bp": content }),
+      );
+      expect(r.isError).toBeFalsy();
+      expect(body(r).localIdToWorkId).toEqual({ leaf: "work-bp-rref-leaf", arc: "work-bp-rref-arc" });
+      const arcCall = bpCalls(stub.calls).find((c) => c.id === "work-bp-rref-arc")!;
+      expect(arcCall.completionDependsOn).toEqual(["work-bp-rref-leaf"]); // same edge-translation path
+    });
+
+    it("accepts a BARE node array as the doc content", async () => {
+      const stub = expandStub();
+      const r = await router.handle(
+        "seed_blueprint",
+        { runId: "rbare", nodesRef: "doc-arr" },
+        ctxWithDocs(stub, { "doc-arr": JSON.stringify([node({ localId: "solo" })]) }),
+      );
+      expect(r.isError).toBeFalsy();
+      expect(body(r).localIdToWorkId).toEqual({ solo: "work-bp-rbare-solo" });
+    });
+
+    it("uses the doc's top-level runId when the arg omits it", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({ runId: "docrun", nodes: [node({ localId: "a" })] });
+      const r = await router.handle("seed_blueprint", { nodesRef: "doc-rr" }, ctxWithDocs(stub, { "doc-rr": content }));
+      expect(r.isError).toBeFalsy();
+      expect(body(r).localIdToWorkId).toEqual({ a: "work-bp-docrun-a" });
+    });
+
+    it("the explicit runId arg WINS over the doc's runId (caller controls the idempotency key)", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({ runId: "docrun", nodes: [node({ localId: "a" })] });
+      const r = await router.handle("seed_blueprint", { runId: "argrun", nodesRef: "doc-rr" }, ctxWithDocs(stub, { "doc-rr": content }));
+      expect(r.isError).toBeFalsy();
+      expect(body(r).localIdToWorkId).toEqual({ a: "work-bp-argrun-a" }); // argrun, not docrun
+    });
+
+    it("BOTH nodes[] inline AND nodesRef → reject (ambiguous source), zero created", async () => {
+      const stub = expandStub();
+      const r = await router.handle(
+        "seed_blueprint",
+        { runId: "r1", nodes: [node()], nodesRef: "doc-bp" },
+        ctxWithDocs(stub, { "doc-bp": JSON.stringify({ nodes: [node()] }) }),
+      );
+      expect(body(r).errorKind).toBe("invalid_blueprint");
+      expect(String(body(r).error)).toMatch(/EITHER/);
+      expect(bpCalls(stub.calls).length).toBe(0);
+    });
+
+    it("nodesRef document not found → unresolvable_ref, zero created", async () => {
+      const stub = expandStub();
+      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-missing" }, ctxWithDocs(stub, {}));
+      expect(body(r).errorKind).toBe("unresolvable_ref");
+      expect(bpCalls(stub.calls).length).toBe(0);
+    });
+
+    it("nodesRef content not valid JSON → invalid_blueprint", async () => {
+      const stub = expandStub();
+      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-bad" }, ctxWithDocs(stub, { "doc-bad": "{not json" }));
+      expect(body(r).errorKind).toBe("invalid_blueprint");
+      expect(bpCalls(stub.calls).length).toBe(0);
+    });
+
+    it("nodesRef content neither array nor { nodes } → invalid_blueprint", async () => {
+      const stub = expandStub();
+      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-shape" }, ctxWithDocs(stub, { "doc-shape": JSON.stringify({ foo: 1 }) }));
+      expect(body(r).errorKind).toBe("invalid_blueprint");
+    });
+
+    it("document store not wired → not_wired", async () => {
+      const stub = expandStub();
+      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-bp" }, ctxFor(stub, "architect"));
+      expect(body(r).errorKind).toBe("not_wired");
+    });
+
+    it("resolved nodes get the FULL whole-graph validation (a cycle in the doc → cycle_detected, zero created)", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({ nodes: [node({ localId: "a", dependsOn: ["b"] }), node({ localId: "b", dependsOn: ["a"] })] });
+      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-cyc" }, ctxWithDocs(stub, { "doc-cyc": content }));
+      expect(body(r).errorKind).toBe("cycle_detected");
+      expect(bpCalls(stub.calls).length).toBe(0);
+    });
+
+    it("RBAC still gates the ref path: an ENGINEER is denied (no resolve, no create)", async () => {
+      const stub = expandStub();
+      const r = await router.handle(
+        "seed_blueprint",
+        { runId: "r1", nodesRef: "doc-bp" },
+        ctxWithDocs(stub, { "doc-bp": JSON.stringify({ nodes: [node()] }) }, "engineer"),
+      );
+      expect(r.isError).toBe(true);
+      expect(bpCalls(stub.calls).length).toBe(0);
+    });
+  });
+
   it("mid-create infra failure → compensating-delete THIS run's creates + loud id-trail (zero orphans)", async () => {
     let n = 0;
     const deleted: string[] = [];
