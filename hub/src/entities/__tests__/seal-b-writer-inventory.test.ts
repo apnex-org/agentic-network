@@ -122,12 +122,40 @@ describe("SEAL B — writer inventory: EVERY writer preserves the attestation su
     await expectSubtreeIntact(repo, id);
   });
 
-  it("expireLease (sweeper re-queue) preserves the subtree", async () => {
+  it("expireLease REQUEUE branch (poisonCap=5) preserves the subtree", async () => {
     const { repo } = await setup();
     const id = await attestedReadyItem(repo);
     await repo.claimWorkItem(id, "agent-eng", "engineer");
-    await repo.expireLease(id, "2099-01-01T00:00:00.000Z", 5); // sweeper re-queues an expired claim → ready
+    const outcome = await repo.expireLease(id, "2099-01-01T00:00:00.000Z", 5); // under cap → requeue
+    expect(outcome).toBe("requeued");
     await expectSubtreeIntact(repo, id);
+  });
+
+  it("expireLease TERMINAL poison-abandon branch (poisonCap=1) preserves the subtree", async () => {
+    const { repo } = await setup();
+    const id = await attestedReadyItem(repo);
+    await repo.claimWorkItem(id, "agent-eng", "engineer");
+    const outcome = await repo.expireLease(id, "2099-01-01T00:00:00.000Z", 1); // at cap → terminal abandon
+    expect(outcome).toBe("abandoned");
+    await expectSubtreeIntact(repo, id); // subtree survives even the abandoned terminal row
+  });
+
+  it("renewLease ANCESTOR-HEARTBEAT writer: a child renew bumps a parent arc — the parent's subtree survives", async () => {
+    const { repo } = await setup();
+    // child leaf + a parent ARC that names it in completionDependsOn and holds an attestation.
+    const child = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements: [] });
+    const parent = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements: [ATT], completionDependsOn: [child.id], targetRef: { kind: "mission", id: "m-1" } });
+    await repo.attestEvidence(parent.id, "att", "agent-verifier", "pass", [{ kind: "entity", ref: "mission/m-1" }]);
+    const pc = await repo.claimWorkItem(parent.id, "agent-arch", "architect"); // parent claimed → has a lease to bump
+    const parentHb0 = pc!.lease!.heartbeatAt;
+    await new Promise((r) => setTimeout(r, 5)); // ensure a distinct heartbeat timestamp
+    // renew the CHILD → propagateHeartbeatToAncestors → tryBumpAncestorHeartbeat(parent) = a SEPARATE
+    // CAS write on the parent arc. The parent's attestation subtree must survive that write.
+    const cc = await repo.claimWorkItem(child.id, "agent-eng", "engineer");
+    await repo.renewLease(child.id, "agent-eng", cc!.lease!.token);
+    const parentAfter = await repo.getWorkItem(parent.id);
+    expect(parentAfter!.lease!.heartbeatAt).not.toBe(parentHb0); // PROVES the ancestor-heartbeat write actually ran
+    await expectSubtreeIntact(repo, parent.id); // parent subtree intact through the ancestor-heartbeat write
   });
 
   it("completeWork (attestation already recorded → done) preserves the subtree", async () => {
