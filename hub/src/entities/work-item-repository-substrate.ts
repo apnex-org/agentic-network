@@ -30,6 +30,7 @@ import type {
   WorkItemReference,
   ReadyEmptyReason,
   StintProjection,
+  NextActionProjection,
   StintChild,
   LegalMoves,
   LegalMove,
@@ -688,6 +689,29 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * only (F-B; whole-subtree recursion is a follow-on). Works for ANY arc-node. null if the arc
    * id does not exist.
    */
+  /** W2 (idea-451 / work-182): the graph-projected NEXT ACTION for an arc-node — the
+   *  highest-priority READY completionDependsOn child. ASSEMBLES existing primitives
+   *  (getWorkItem + listReadyForRole), it does not reinvent the claim gate: listReadyForRole
+   *  already applies ready-status + dependency-readiness + roleEligibility [+ WIP-cap +
+   *  quarantine when agentId given], so the intersection with THIS arc's completion-gate
+   *  children yields exactly the claimable children. Priority-ordered (critical<high<normal<low)
+   *  with a deterministic id tiebreak → scope-inversion is unrepresentable; blocked/paused/done
+   *  children are excluded by construction (they are not in listReadyForRole). */
+  async getNextAction(arcId: string, role?: string, agentId?: string): Promise<NextActionProjection | null> {
+    const arc = await this.getWorkItem(arcId);
+    if (!arc) return null;
+    const childIds = new Set(arc.completionDependsOn ?? []);
+    const hasChildren = childIds.size > 0;
+    const { items } = await this.listReadyForRole(role, 500, agentId);
+    const readyChildren = items.filter((w) => childIds.has(w.id));
+    const RANK: Record<string, number> = { critical: 0, high: 1, normal: 2, low: 3 };
+    readyChildren.sort((a, b) => {
+      const pr = (RANK[a.priority] ?? 9) - (RANK[b.priority] ?? 9);
+      return pr !== 0 ? pr : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    return { arcId, nextAction: readyChildren[0] ?? null, readyCandidates: readyChildren.length, hasChildren };
+  }
+
   async getStintProjection(workId: string): Promise<StintProjection | null> {
     const arc = await this.getWorkItem(workId);
     if (!arc) return null;

@@ -893,6 +893,24 @@ async function getCurrentStint(args: Record<string, unknown>, ctx: IPolicyContex
   return stint ? ok({ stint }) : notFound(args.workId as string);
 }
 
+// W2 (idea-451 / work-182): the graph-projected "next action" — the highest-priority READY
+// completionDependsOn child claimable by the SPOOF-PROOF caller (role + agentId from the
+// session). `role` may override to project another role's queue (role-only, no WIP-scope),
+// mirroring list_ready_work. Corrects scope-inversion: the reconciler/agent reads "what next"
+// from the graph, never from memory.
+async function getNextAction(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const caller = await resolveCreatedBy(ctx);
+  const roleOverride = args.role as string | undefined;
+  const role = roleOverride ?? caller.role;
+  // Self-query → agent-scoped (respects the caller's WIP-cap/quarantine); cross-role query →
+  // role-only (a different role's WIP is not the caller's).
+  const agentId = roleOverride ? undefined : caller.agentId;
+  const proj = await store.getNextAction(args.workId as string, role, agentId);
+  return proj ? ok(proj) : notFound(args.workId as string);
+}
+
 // work-94 (cold-start spine): the "what can I do from here" projection — the legal FSM moves
 // for the SPOOF-PROOF caller (resolved from the session, not args) given the item's state.
 async function legalMoves(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
@@ -1104,6 +1122,16 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       workId: z.string().describe("The arc-node WorkItem id to project (any item id)"),
     },
     getCurrentStint,
+  );
+
+  router.register(
+    "get_next_action",
+    "[Any] W2 (idea-451): the graph-projected NEXT ACTION for an arc-node — the HIGHEST-PRIORITY READY completionDependsOn child claimable by the caller (deps + roleEligibility [+ WIP-cap/quarantine]). Corrects scope-inversion: 'what next' is READ FROM THE GRAPH, never chosen from memory; selecting a lower-priority ready child over a higher-priority ready one is UNREPRESENTABLE (priority-ordered, head returned). Blocked/paused/done children excluded by construction (they are not claim-ready). Feeds W3's reconciler + the cold-start 'what next'. Returns { arcId, nextAction, readyCandidates, hasChildren }.",
+    {
+      workId: z.string().describe("The arc-node WorkItem id whose completionDependsOn children to project"),
+      role: z.string().optional().describe("Project another role's queue (default: the caller's role, agent-scoped to their WIP-cap/quarantine)"),
+    },
+    getNextAction,
   );
 
   router.register(

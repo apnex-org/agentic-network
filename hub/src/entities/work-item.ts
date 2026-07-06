@@ -68,6 +68,22 @@ export interface StintProjection {
   parallelism: number | null;
 }
 
+/** W2 (idea-451 / work-182): the graph-projected NEXT ACTION for an arc-node — the
+ *  HIGHEST-PRIORITY READY completionDependsOn child, per the FULL claim gate (deps +
+ *  roleEligibility [+ WIP/quarantine when agentId given]). Corrects the last stint's
+ *  scope-inversion: "what next" is READ FROM THE GRAPH, not chosen from memory. A
+ *  lower-priority pick over a ready higher-priority one is UNREPRESENTABLE (the projection
+ *  orders by priority + returns the head). Feeds W3's reconciler + cold-start "what next". */
+export interface NextActionProjection {
+  arcId: string;
+  /** the highest-priority READY child claimable by the (role, agentId); null when none. */
+  nextAction: WorkItem | null;
+  /** count of READY candidate children (observability for the reconciler). */
+  readyCandidates: number;
+  /** false when the arc has no completionDependsOn children (a leaf, not an arc-node). */
+  hasChildren: boolean;
+}
+
 /** work-94 (cold-start spine, sub-slice 3): the legal FSM transition verbs for an item given
  *  its state/lease/gates, FROM THE CALLER'S seat — the cold-agent "what can I do from here"
  *  surface. Each verb carries `legal` + (when illegal) a non-dark `reason`, so a process-naive
@@ -472,6 +488,12 @@ export interface IWorkItemStore {
    *  surface. k/N completion progress + per-child status + in-flight/blocked rollups + the
    *  gate-open flag, over ANY arc-node. Returns null if the arc id does not exist. */
   getStintProjection(workId: string): Promise<StintProjection | null>;
+
+  /** W2 (idea-451 / work-182): the graph-projected NEXT ACTION for an arc-node — the
+   *  highest-priority READY completionDependsOn child claimable by (role, agentId), per
+   *  the full claim gate (assembles the completion-gate children ∩ listReadyForRole).
+   *  null if the arc doesn't exist. */
+  getNextAction(arcId: string, role?: string, agentId?: string): Promise<NextActionProjection | null>;
 
   /** work-94 (cold-start spine): the legal FSM transition verbs for the caller given the
    *  item's state/lease/gates — the "what can I do from here" surface. Caller-aware (holder

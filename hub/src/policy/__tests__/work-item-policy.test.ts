@@ -36,7 +36,7 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
   return {
     calls,
     createWorkItem: m("createWorkItem"), createBlueprintNode: m("createBlueprintNode"), deleteWorkItem: m("deleteWorkItem"),
-    getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), getLegalMoves: m("getLegalMoves"), entityExists: m("entityExists"),
+    getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), getNextAction: m("getNextAction"), getLegalMoves: m("getLegalMoves"), entityExists: m("entityExists"),
     listWorkItems: m("listWorkItems"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
@@ -83,8 +83,8 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("registers all 19 tools (create_work + seed_blueprint + get_work + get_current_stint + legal_moves + list_work snapshot + the 9 lifecycle verbs + S3 pause_work/unpause_work + SEAL attest_evidence/verify_attestation)", () => {
-    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_stint", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "pause_work", "unpause_work", "complete_work", "attest_evidence", "verify_attestation"]) {
+  it("registers all 20 tools (create_work + seed_blueprint + get_work + get_current_stint + get_next_action + legal_moves + list_work snapshot + the 9 lifecycle verbs + S3 pause_work/unpause_work + SEAL attest_evidence/verify_attestation)", () => {
+    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_stint", "get_next_action", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "pause_work", "unpause_work", "complete_work", "attest_evidence", "verify_attestation"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
   });
