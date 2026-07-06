@@ -365,7 +365,13 @@ describe("PulseSweeper — missed-count + escalation (E1 + E2)", () => {
     expect(escalation!.migrationSourceId).toBeUndefined();
   });
 
-  it("paused pulse stops firing after escalation", async () => {
+  // S1a-(i) (idea-458): the anti-idle backstop must NOT self-disable on
+  // escalation. Previously a missedThreshold breach paused the pulse (skipped
+  // forever) — a silent backstop is worse than none. Now it escalates ONCE and
+  // keeps firing at a floor cadence. These two tests pin the new contract
+  // (they replace the old "paused pulse stops firing after escalation" test,
+  // which asserted the self-disable this slice removes).
+  it("continues firing at a FLOOR cadence after escalation — no self-disable (S1a-(i))", async () => {
     const rig = buildSweeperRig();
     const mission = await createPulseMission(rig, {
       engineerPulse: {
@@ -376,22 +382,78 @@ describe("PulseSweeper — missed-count + escalation (E1 + E2)", () => {
         firstFireDelaySeconds: 60,
       },
     });
+    const t0 = new Date(mission.createdAt).getTime();
 
-    // First fire
-    rig.setNow(new Date(mission.createdAt).getTime() + MS(61));
-    await rig.sweeper.tick();
+    // First fire (lastFiredAt = t0+60s).
+    rig.setNow(t0 + MS(61));
+    expect((await rig.sweeper.tick()).fired).toBe(1);
 
-    // Advance past grace → missed (count=1) → threshold breached → escalate + pause
-    rig.setNow(new Date(mission.createdAt).getTime() + MS(61) + MS(60) + 31_000);
-    let result = await rig.sweeper.tick();
-    expect(result.escalated).toBe(1);
+    // Grace elapses with no ack → missedCount 0→1 → threshold(1) breached →
+    // escalate ONCE (this tick returns "escalated", does not fire a pulse).
+    rig.setNow(t0 + MS(152));
+    let r = await rig.sweeper.tick();
+    expect(r.escalated).toBe(1);
+    expect(r.fired).toBe(0);
 
-    // Subsequent ticks: no further fires (pulse paused)
-    rig.setNow(new Date(mission.createdAt).getTime() + MS(1200));
-    result = await rig.sweeper.tick();
-    expect(result.fired).toBe(0);
-    expect(result.escalated).toBe(0);
-    expect(result.skipped).toBe(1); // paused → skip
+    // PRE-FIX: the pulse would now be permanently paused (skipped forever).
+    // POST-FIX: the very next tick floor-fires (floorDue = lastFired t0+60 +
+    // floor 60 = t0+120, already past) — the backstop is ALIVE, still nudging.
+    r = await rig.sweeper.tick();
+    expect(r.fired).toBe(1); // STILL FIRING (was 0 / paused pre-fix)
+    expect(r.escalated).toBe(0); // no re-escalation
+
+    // Quiet BETWEEN floor fires — floor cadence not yet due (quiet, not silent).
+    rig.setNow(t0 + MS(170)); // lastFired now t0+120 → next floorDue t0+180
+    r = await rig.sweeper.tick();
+    expect(r.fired).toBe(0);
+    expect(r.skipped).toBe(1);
+
+    // Next floor cadence due → fires again.
+    rig.setNow(t0 + MS(185));
+    expect((await rig.sweeper.tick()).fired).toBe(1);
+
+    // Escalation happened EXACTLY ONCE across all of the above (no storm).
+    const escalations = (await rig.messageStore.listMessages({})).filter(
+      (m) => (m.payload as { pulseKind?: string })?.pulseKind === "missed_threshold_escalation",
+    );
+    expect(escalations).toHaveLength(1);
+  });
+
+  it("escalates exactly once but keeps firing for N cadences after breach (no storm, no silence)", async () => {
+    const rig = buildSweeperRig();
+    const mission = await createPulseMission(rig, {
+      engineerPulse: {
+        intervalSeconds: 60,
+        message: "status?",
+        responseShape: "ack",
+        missedThreshold: 1,
+        firstFireDelaySeconds: 60,
+      },
+    });
+    const t0 = new Date(mission.createdAt).getTime();
+
+    rig.setNow(t0 + MS(61));
+    await rig.sweeper.tick(); // first fire
+    rig.setNow(t0 + MS(152));
+    expect((await rig.sweeper.tick()).escalated).toBe(1); // breach + escalate once
+
+    // Drive 10 floor cadences well past threshold breach: the pulse fires every
+    // cadence (never goes silent) and never re-escalates (no storm).
+    let fires = 0;
+    let t = t0 + MS(152);
+    for (let i = 0; i < 10; i++) {
+      t += MS(60); // advance one floor cadence
+      rig.setNow(t);
+      const r = await rig.sweeper.tick();
+      fires += r.fired;
+      expect(r.escalated).toBe(0);
+    }
+    expect(fires).toBe(10); // still firing every cadence — NOT self-disabled
+
+    const escalations = (await rig.messageStore.listMessages({})).filter(
+      (m) => (m.payload as { pulseKind?: string })?.pulseKind === "missed_threshold_escalation",
+    );
+    expect(escalations).toHaveLength(1); // exactly once, N cadences later
   });
 });
 

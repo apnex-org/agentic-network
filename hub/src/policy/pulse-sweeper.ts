@@ -64,6 +64,14 @@ import type { IPolicyContext } from "./types.js";
 const DEFAULT_TICK_INTERVAL_MS = 60_000;
 const DEFAULT_GRACE_MS = 30_000;
 
+// S1a-(i) (idea-458): after missedThreshold breach the pulse must NOT go silent
+// (a self-disabled anti-idle backstop is worse than none). It keeps firing at a
+// FLOOR cadence = max(intervalSeconds, this). The floor is a hard anti-storm
+// minimum between post-escalation fires; for any normally-configured pulse
+// (intervalSeconds ≥ 60) it does not bind and the pulse continues at its normal
+// cadence — it only caps a pathologically fast interval.
+const PULSE_ESCALATION_FLOOR_SECONDS = 60;
+
 /**
  * Mission-61 W1: map a pulse target-role to a dispatch Selector for SSE
  * push delivery. Symmetric with `pushSelector(target)` at
@@ -215,9 +223,24 @@ export class PulseSweeper {
     const nowMs = this.now();
     const lastFiredMs = config.lastFiredAt ? new Date(config.lastFiredAt).getTime() : 0;
 
-    // 1. Pause: missedThreshold breached → no further fires until resumed
+    // 1. Post-escalation FLOOR CADENCE (S1a-(i), idea-458): missedThreshold
+    //    breached. Previously this returned "skipped" forever — the pulse went
+    //    silent (self-disabled), the WORST failure mode (a paused backstop is
+    //    worse than none: false assurance while silently off). Instead, keep
+    //    firing at a floor cadence so a stalled/idle agent is still nudged.
+    //    Escalation already fired exactly once (on the tick that CROSSED the
+    //    threshold, via step 4 → maybeIncrementMissedCountAndEscalate); this
+    //    path deliberately does NOT re-run missed-detection/crediting, so it
+    //    cannot re-escalate (no storm) and does not touch the crediting logic
+    //    (that is S1a-(ii)) — escalation-RESPONSE only.
     if ((config.missedCount ?? 0) >= config.missedThreshold) {
-      return "skipped";
+      const floorSeconds = Math.max(config.intervalSeconds, PULSE_ESCALATION_FLOOR_SECONDS);
+      const floorDueMs = lastFiredMs + floorSeconds * 1000;
+      if (nowMs < floorDueMs) {
+        return "skipped"; // floor cadence not yet due — quiet between floor fires, not silent
+      }
+      await this.firePulse(mission, pulseKey, config, floorDueMs);
+      return "fired";
     }
 
     // 2. Fire-due check
@@ -481,7 +504,8 @@ export class PulseSweeper {
         title: `Mission ${mission.id} ${silentRole} pulse missed ${missedCount} times`,
         details:
           `Pulse cadence ${config.intervalSeconds}s; threshold ${config.missedThreshold}; ` +
-          `pulse paused. Architect: evaluate + resolve OR escalate to Director per ` +
+          `pulse CONTINUES at a floor cadence (S1a-(i), idea-458 — no longer self-disables on ` +
+          `escalation). Architect: evaluate + resolve OR escalate to Director per ` +
           `categorised-concerns table.`,
       },
       // No migrationSourceId per Option C (W2 engineer-final)
