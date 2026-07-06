@@ -27,12 +27,8 @@ export const CloseNoActionPayloadSchema = z.object({
   reason: z.string().describe("Why the thread is concluding with no entity-creation action"),
 });
 
-/** create_task { title, description, correlationId? } */
-export const CreateTaskActionPayloadSchema = z.object({
-  title: z.string().describe("Short title for the spawned Task"),
-  description: z.string().describe("Directive body"),
-  correlationId: z.string().optional().describe("Optional correlation ID linking the task to related entities"),
-});
+// work-162 (A1): CreateTaskActionPayloadSchema removed — create_task is no
+// longer a convergence-spawnable cascade action (Task subsystem retired).
 
 /** create_proposal { title, description, correlationId? } */
 export const CreateProposalActionPayloadSchema = z.object({
@@ -99,7 +95,6 @@ export const CreateBugActionPayloadSchema = z.object({
  */
 export const STAGED_ACTION_PAYLOAD_SCHEMAS = {
   close_no_action: CloseNoActionPayloadSchema,
-  create_task: CreateTaskActionPayloadSchema,
   create_proposal: CreateProposalActionPayloadSchema,
   create_idea: CreateIdeaActionPayloadSchema,
   update_idea: UpdateIdeaActionPayloadSchema,
@@ -124,7 +119,6 @@ export const STAGED_ACTION_PAYLOAD_SCHEMAS = {
  */
 export const STAGED_ACTION_STAGE_OP_SCHEMA = z.discriminatedUnion("type", [
   z.object({ kind: z.literal("stage"), type: z.literal("close_no_action"), payload: CloseNoActionPayloadSchema }),
-  z.object({ kind: z.literal("stage"), type: z.literal("create_task"), payload: CreateTaskActionPayloadSchema }),
   z.object({ kind: z.literal("stage"), type: z.literal("create_proposal"), payload: CreateProposalActionPayloadSchema }),
   z.object({ kind: z.literal("stage"), type: z.literal("create_idea"), payload: CreateIdeaActionPayloadSchema }),
   z.object({ kind: z.literal("stage"), type: z.literal("update_idea"), payload: UpdateIdeaActionPayloadSchema }),
@@ -136,7 +130,6 @@ export const STAGED_ACTION_STAGE_OP_SCHEMA = z.discriminatedUnion("type", [
 /** Enum of all autonomous (convergence-spawnable) action types. */
 export const AUTONOMOUS_STAGED_ACTION_TYPES = [
   "close_no_action",
-  "create_task",
   "create_proposal",
   "create_idea",
   "update_idea",
@@ -166,7 +159,6 @@ export const REQUIRED_CONVERGER_ROLE: Record<
   ConvergerRoleRequirement
 > = {
   close_no_action: "either",
-  create_task: "architect",
   create_proposal: "engineer",
   create_idea: "either",
   update_idea: "either",
@@ -225,7 +217,7 @@ export function checkConvergerAuthority(
     `Convergence denied: this thread stages ${violating.join(", ")} ` +
     `which requires converger role '${required}', but caller role is '${callerRole}'. ` +
     `Per-action commit authority (Phase 2a task-303): architect-only actions ` +
-    `(create_task, update_mission_status, propose_mission) must be converged by the Architect.`
+    `(update_mission_status, propose_mission) must be converged by the Architect.`
   );
 }
 

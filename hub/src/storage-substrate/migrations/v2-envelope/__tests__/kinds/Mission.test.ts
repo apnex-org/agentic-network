@@ -101,10 +101,10 @@ describe("Mission migration module", () => {
     expect((env.spec.plannedTasks as unknown[]).length).toBe(2);
   });
 
-  it("status carries FSM phase + turnId + monolithic pulses", () => {
+  it("status carries FSM phase + monolithic pulses", () => {
+    // work-162 (A1): turnId retired from the Mission status partition.
     const env = module.migrateOne(legacyMission()) as EnvelopeShape;
     expect(env.status.phase).toBe("active");
-    expect(env.status.turnId).toBe(null);
     expect(env.status.pulses).toBeDefined();
     const pulses = env.status.pulses as Record<string, unknown>;
     expect(pulses.engineerPulse).toBeDefined();

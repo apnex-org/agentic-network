@@ -612,7 +612,6 @@ export interface ThreadParticipant {
  */
 export type StagedActionType =
   | "close_no_action"
-  | "create_task"
   | "create_proposal"
   | "create_idea"
   | "update_idea"
@@ -636,12 +635,8 @@ export interface CloseNoActionPayload {
   reason: string;
 }
 
-/** Phase 2 autonomous: spawn a Task from thread convergence. */
-export interface CreateTaskActionPayload {
-  title: string;
-  description: string;
-  correlationId?: string;
-}
+// work-162 (A1): CreateTaskActionPayload removed — create_task retired as a
+// convergence-spawnable action with the Task subsystem.
 
 /** Phase 2 autonomous: spawn a Proposal from thread convergence. */
 export interface CreateProposalActionPayload {
@@ -703,7 +698,6 @@ export interface CreateBugActionPayload {
  * the paired `type` discriminator on StagedAction. */
 export type StagedActionPayload =
   | CloseNoActionPayload
-  | CreateTaskActionPayload
   | CreateProposalActionPayload
   | CreateIdeaActionPayload
   | UpdateIdeaActionPayload
@@ -749,7 +743,6 @@ interface StagedActionCommon {
  * access payload fields without explicit casts. */
 export type StagedAction =
   | (StagedActionCommon & { type: "close_no_action"; payload: CloseNoActionPayload })
-  | (StagedActionCommon & { type: "create_task"; payload: CreateTaskActionPayload })
   | (StagedActionCommon & { type: "create_proposal"; payload: CreateProposalActionPayload })
   | (StagedActionCommon & { type: "create_idea"; payload: CreateIdeaActionPayload })
   | (StagedActionCommon & { type: "update_idea"; payload: UpdateIdeaActionPayload })
@@ -760,7 +753,6 @@ export type StagedAction =
 
 export type StagedActionOp =
   | { kind: "stage"; type: "close_no_action"; payload: CloseNoActionPayload }
-  | { kind: "stage"; type: "create_task"; payload: CreateTaskActionPayload }
   | { kind: "stage"; type: "create_proposal"; payload: CreateProposalActionPayload }
   | { kind: "stage"; type: "create_idea"; payload: CreateIdeaActionPayload }
   | { kind: "stage"; type: "update_idea"; payload: UpdateIdeaActionPayload }

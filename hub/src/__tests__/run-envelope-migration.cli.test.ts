@@ -109,17 +109,18 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
 
   beforeEach(async () => {
     // Clean only kinds we touch; MigrationRunner may write to MigrationCursor too
-    for (const k of ["Idea", "Bug", "Task", "Tele", "Audit", "Document", "MigrationCursor"]) {
+    for (const k of ["Idea", "Bug", "Audit", "Document", "MigrationCursor"]) {
       await cleanKind(fixture.connStr, k);
     }
   });
 
-  it("full-sweep over empty substrate: exit 0; structured-text output; 21 kinds reported", async () => {
+  it("full-sweep over empty substrate: exit 0; structured-text output; 19 kinds reported", async () => {
+    // work-162 (A1): Task + Turn migration modules retired → 21 kinds → 19.
     const result = await runCli({ POSTGRES_CONNECTION_STRING: fixture.connStr });
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/\[envelope-migrate\] starting wave=W6\.1 kinds=21/);
+    expect(result.stdout).toMatch(/\[envelope-migrate\] starting wave=W6\.1 kinds=19/);
     // SUMMARY footer carries the per-kind count + totals
-    expect(result.stdout).toMatch(/\[envelope-migrate\] SUMMARY: 21 kinds; 0 total rowsMigrated; 0 total rowsErrored/);
+    expect(result.stdout).toMatch(/\[envelope-migrate\] SUMMARY: 19 kinds; 0 total rowsMigrated; 0 total rowsErrored/);
   }, 120_000);
 
   it("--dry-run flag: legacy-shape rows are NOT mutated", async () => {
@@ -159,7 +160,7 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
     expect(parsed.exitCode).toBe(0);
     expect(parsed.dryRun).toBe(false);
     expect(Array.isArray(parsed.perKind)).toBe(true);
-    expect(parsed.perKind.length).toBe(21);
+    expect(parsed.perKind.length).toBe(19);
     for (const kind of parsed.perKind) {
       expect(typeof kind.kind).toBe("string");
       expect(typeof kind.rowsMigrated).toBe("number");
@@ -168,25 +169,14 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
     }
   }, 120_000);
 
-  it("seeded legacy-shape across 5 cluster-classes: full-sweep migrates all to envelope shape; exit 0", async () => {
-    // Seed minimal legacy-shape across 5 cluster-classes (one per cluster)
+  it("seeded legacy-shape across 4 cluster-classes: full-sweep migrates all to envelope shape; exit 0", async () => {
+    // work-162 (A1): Task (cluster-2 example) removed — 5 cluster-classes → 4.
+    // Seed minimal legacy-shape across 4 cluster-classes (one per cluster)
     await fixture.substrate.put("Idea", {
       id: "idea-1001", text: "c1", status: "open", missionId: null,
       createdBy: { role: "engineer", agentId: "agent-greg" },
       sourceThreadId: null, sourceActionId: null, sourceThreadSummary: null,
       tags: [], createdAt: "2026-05-24T00:00:00Z", updatedAt: "2026-05-24T00:00:00Z",
-    });
-    await fixture.substrate.put("Task", {
-      id: "task-1001", directive: "c2",
-      report: null, reportSummary: null, reportRef: null,
-      verification: null, reviewAssessment: null, reviewRef: null,
-      assignedAgentId: null, clarificationQuestion: null, clarificationAnswer: null,
-      correlationId: null, idempotencyKey: null, title: null, description: null,
-      dependsOn: [], revisionCount: 0, status: "pending",
-      labels: {}, turnId: null,
-      sourceThreadId: null, sourceActionId: null, sourceThreadSummary: null,
-      createdBy: { role: "engineer", agentId: "agent-greg" },
-      createdAt: "2026-05-24T00:00:00Z", updatedAt: "2026-05-24T00:00:00Z",
     });
     await fixture.substrate.put("Agent", {
       id: "agent-1001", fingerprint: "fp-c3", role: "engineer",
@@ -202,8 +192,8 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
 
     const result = await runCli({ POSTGRES_CONNECTION_STRING: fixture.connStr });
     expect(result.exitCode).toBe(0);
-    // 5 rows migrated; remaining 16 kinds empty
-    expect(result.stdout).toMatch(/SUMMARY: 21 kinds; 5 total rowsMigrated; 0 total rowsErrored/);
+    // 4 rows migrated; remaining 15 kinds empty
+    expect(result.stdout).toMatch(/SUMMARY: 19 kinds; 4 total rowsMigrated; 0 total rowsErrored/);
 
     // Verify per-cluster envelope-shape
     const ideaPost = await fixture.substrate.get<Record<string, unknown>>("Idea", "idea-1001");
@@ -211,10 +201,6 @@ describe("run-envelope-migration CLI — integration against testcontainer postg
     expect((ideaPost!.metadata as Record<string, unknown>).createdAt).toBe("2026-05-24T00:00:00Z");
     expect((ideaPost!.spec as Record<string, unknown>).text).toBe("c1");
     expect((ideaPost!.status as Record<string, unknown>).phase).toBe("open");
-
-    const taskPost = await fixture.substrate.get<Record<string, unknown>>("Task", "task-1001");
-    expect(taskPost!.apiVersion).toBe("core.ois/v1");
-    expect((taskPost!.spec as Record<string, unknown>).directive).toBe("c2");
 
     const agentPost = await fixture.substrate.get<Record<string, unknown>>("Agent", "agent-1001");
     expect(agentPost!.apiVersion).toBe("core.ois/v1");
