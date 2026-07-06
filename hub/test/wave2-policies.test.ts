@@ -89,7 +89,7 @@ describe("IdeaPolicy", () => {
   it("list_ideas filters by status", async () => {
     await router.handle("create_idea", { text: "Open idea" }, ctx);
 
-    const result = await router.handle("list_ideas", { status: "triaged" }, ctx);
+    const result = await router.handle("list_ideas", { filter: { status: "triaged" } }, ctx);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.count).toBe(0);
   });
@@ -569,7 +569,7 @@ describe("MissionPolicy", () => {
   it("list_missions filters by status", async () => {
     await router.handle("create_mission", { title: "M1", description: "D1" }, ctx);
 
-    const result = await router.handle("list_missions", { status: "active" }, ctx);
+    const result = await router.handle("list_missions", { filter: { status: "active" } }, ctx);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.count).toBe(0); // newly created missions are "proposed"
   });

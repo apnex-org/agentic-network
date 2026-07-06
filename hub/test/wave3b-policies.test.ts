@@ -350,7 +350,7 @@ describe("ThreadPolicy", () => {
     }, ctx);
     await router.handle("create_thread", { routingMode: "broadcast",title: "Active", message: "M1" }, ctx);
 
-    const result = await router.handle("list_threads", { status: "closed" }, ctx);
+    const result = await router.handle("list_threads", { filter: { status: "closed" } }, ctx);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.count).toBe(0);
   });

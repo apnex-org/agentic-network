@@ -881,14 +881,10 @@ const THREAD_FILTER_SCHEMA = buildQueryFilterSchema(THREAD_FILTERABLE_FIELDS);
 const THREAD_SORT_SCHEMA = buildQuerySortSchema(THREAD_SORTABLE_FIELDS);
 
 async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  // Backwards-compat: legacy scalar `status` arg subsumed by the new
-  // `filter.status` field. filter.status wins when both are present.
-  const legacyStatus = typeof args.status === "string" ? args.status : undefined;
+  // work-171 (A2, idea-359): the deprecated scalar `status:` arg is RETIRED —
+  // `filter: { status }` is the single query surface (north-star).
   const filterArgRaw = args.filter as Record<string, unknown> | undefined;
   const effectiveFilter: Record<string, unknown> = { ...(filterArgRaw ?? {}) };
-  if (legacyStatus && effectiveFilter.status === undefined) {
-    effectiveFilter.status = legacyStatus;
-  }
   const hasFilter = Object.keys(effectiveFilter).length > 0;
 
   // mission-93 bug-170: push simple-equality DISCOVERY predicates
@@ -1393,14 +1389,12 @@ export function registerThreadPolicy(router: PolicyRouter): void {
     "Implicit id:asc tie-breaker is appended for deterministic pagination. " +
     "Returns `_ois_query_unmatched: true` when the filter yields zero matches but the collection is non-empty. " +
     "Response is a lightweight summary projection (no messages[], convergenceActions[], or participants[] — use get_thread for those). " +
-    "Legacy scalar `status:` arg and `labels:` match-all filter preserved for backwards compat; `filter.status` wins when both status shapes present.",
+    "The `labels:` match-all filter is preserved for backwards compat. (work-171: the deprecated scalar `status:` arg is retired — use `filter: { status }`.)",
     {
       filter: THREAD_FILTER_SCHEMA.optional()
         .describe("Mongo-ish filter object; see tool description for permitted fields + operators"),
       sort: THREAD_SORT_SCHEMA
         .describe("Ordered-tuple sort; see tool description for permitted fields"),
-      status: z.enum(["active", "converged", "round_limit", "closed", "abandoned", "cascade_failed"]).optional()
-        .describe("DEPRECATED: use `filter: { status: ... }`. Preserved for backwards compat; `filter.status` wins when both present."),
       ...LIST_LABELS_SCHEMA,
       ...LIST_PAGINATION_SCHEMA,
     },

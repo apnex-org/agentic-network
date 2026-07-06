@@ -135,16 +135,12 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   // Legacy tag match-any filter (pre-QueryShape; preserved).
   ideas = applyTagFilter(ideas, args.tags as string[] | undefined);
 
-  // Backwards-compat: legacy scalar `status` arg subsumed by the new
-  // `filter.status` field. filter.status wins when both are present.
-  // bug-198: empty-string legacy status + any empty values in the `filter` object are
-  // adapter-serialized UNSETs (opencode) — drop them, don't AND them to zero matches.
-  const legacyStatus = unsetIfEmpty(typeof args.status === "string" ? args.status : undefined) as IdeaStatus | undefined;
+  // work-171 (A2, idea-359): the deprecated scalar `status:` arg is RETIRED —
+  // `filter: { status }` is the single query surface (north-star). bug-198: empty
+  // values in the `filter` object are adapter-serialized UNSETs (opencode) — drop
+  // them, don't AND them to zero matches.
   const filterArgRaw = args.filter as Record<string, unknown> | undefined;
   const effectiveFilter: Record<string, unknown> = omitEmptyValues({ ...(filterArgRaw ?? {}) });
-  if (legacyStatus && effectiveFilter.status === undefined) {
-    effectiveFilter.status = legacyStatus;
-  }
   const hasFilter = Object.keys(effectiveFilter).length > 0;
 
   if (hasFilter) {
@@ -425,14 +421,12 @@ export function registerIdeaPolicy(router: PolicyRouter): void {
     "`sort` accepts an ordered tuple `[{field, order}]` on: id, status, createdAt, updatedAt, missionId, sourceThreadId, sourceActionId, 'createdBy.role', 'createdBy.agentId', 'createdBy.id'. " +
     "Implicit id:asc tie-breaker is appended for deterministic pagination. " +
     "Returns `_ois_query_unmatched: true` when the filter yields zero matches but the collection is non-empty (distinct from tool error). " +
-    "Legacy scalar `status:` arg and `tags:` match-any filter preserved for backwards compat; `filter.status` wins when both status shapes present.",
+    "The `tags:` match-any filter is preserved for backwards compat. (work-171: the deprecated scalar `status:` arg is retired — use `filter: { status }`.)",
     {
       filter: IDEA_FILTER_SCHEMA.optional()
         .describe("Mongo-ish filter object; see tool description for permitted fields + operators"),
       sort: IDEA_SORT_SCHEMA
         .describe("Ordered-tuple sort; see tool description for permitted fields"),
-      status: z.enum(["open", "triaged", "dismissed", "incorporated"]).optional()
-        .describe("DEPRECATED: use `filter: { status: ... }`. Preserved for backwards compat; `filter.status` wins when both present."),
       ...LIST_TAGS_SCHEMA,
       ...LIST_PAGINATION_SCHEMA,
       ...LIST_COMPACT_SCHEMA,
