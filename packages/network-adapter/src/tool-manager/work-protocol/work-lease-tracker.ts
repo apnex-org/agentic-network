@@ -53,6 +53,9 @@ interface TrackedLease {
   expiresAtMs: number;
   /** Per-window latch — prompt at most once until a renew reopens the window. */
   prompted: boolean;
+  /** work-164 (idea-395): the Hub-authored lease token — required to auto-renew
+   *  on the holder's behalf. Empty string if a result carried no token. */
+  token: string;
 }
 
 export interface StallPrompt {
@@ -61,20 +64,30 @@ export interface StallPrompt {
   msUntilExpiry: number;
 }
 
-/** Pull `{ workId, expiresAtMs }` out of an already-unwrapped work-verb result.
- *  Tolerant: returns null on any shape that isn't a lease-bearing workItem. */
+/** work-164 (idea-395): a held lease due for an auto-heartbeat renew — carries the
+ *  token the host needs to call `renew_lease` on the holder's behalf. */
+export interface RenewDue {
+  workId: string;
+  token: string;
+  /** Ms remaining until expiry (for the host's log). */
+  msUntilExpiry: number;
+}
+
+/** Pull `{ workId, expiresAtMs, token }` out of an already-unwrapped work-verb
+ *  result. Tolerant: returns null on any shape that isn't a lease-bearing workItem. */
 function parseLease(
   result: unknown,
-): { workId: string; expiresAtMs: number } | null {
+): { workId: string; expiresAtMs: number; token: string } | null {
   const wi = (result as { workItem?: unknown } | null)?.workItem as
-    | { id?: unknown; lease?: { expiresAt?: unknown } | null }
+    | { id?: unknown; lease?: { expiresAt?: unknown; token?: unknown } | null }
     | undefined;
   if (!wi || typeof wi.id !== "string") return null;
   const expiresAt = wi.lease?.expiresAt;
   if (typeof expiresAt !== "string") return null;
   const expiresAtMs = Date.parse(expiresAt);
   if (Number.isNaN(expiresAtMs)) return null;
-  return { workId: wi.id, expiresAtMs };
+  const token = typeof wi.lease?.token === "string" ? wi.lease.token : "";
+  return { workId: wi.id, expiresAtMs, token };
 }
 
 /** Pull a workId for a CLOSE verb — prefer the result workItem, fall back to args. */
@@ -124,7 +137,35 @@ export class WorkLeaseTracker {
       windowStartMs: resetWindow ? nowMs : existing!.windowStartMs,
       expiresAtMs: parsed.expiresAtMs,
       prompted: resetWindow ? false : existing!.prompted,
+      // work-164: keep the freshest token; fall back to the prior one if a result
+      // (e.g. some start_work shapes) carried none.
+      token: parsed.token || existing?.token || "",
     });
+  }
+
+  /**
+   * work-164 (idea-395): held leases past `thresholdFraction` of their window and
+   * not yet expired, WITH a known token — candidates for an auto-heartbeat renew.
+   * No prompt-latch: a successful renew resets the window via observe (so it won't
+   * re-fire until the next threshold crossing), and a failed renew leaves it due so
+   * the next tick retries. Only the host's ACTIVE-WORK gate decides whether to
+   * actually renew — a stalled/crashed holder is left to the stall-prompt + sweeper.
+   *
+   * @param thresholdFraction renew once past this fraction of the window
+   *   (default 0.5 — renew around the halfway mark while genuinely working).
+   */
+  dueForRenew(nowMs: number, thresholdFraction = 0.5): RenewDue[] {
+    const due: RenewDue[] = [];
+    for (const lease of this.leases.values()) {
+      if (!lease.token) continue; // can't renew without a token
+      const windowLen = lease.expiresAtMs - lease.windowStartMs;
+      if (windowLen <= 0) continue;
+      const elapsed = nowMs - lease.windowStartMs;
+      if (elapsed >= thresholdFraction * windowLen && nowMs < lease.expiresAtMs) {
+        due.push({ workId: lease.workId, token: lease.token, msUntilExpiry: lease.expiresAtMs - nowMs });
+      }
+    }
+    return due;
   }
 
   /**

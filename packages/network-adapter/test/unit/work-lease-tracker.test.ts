@@ -120,3 +120,37 @@ describe("WorkLeaseTracker — work-165 (idea-358) prune of expired leases", () 
     expect(t.size()).toBe(1);
   });
 });
+
+describe("WorkLeaseTracker — work-164 (idea-395) auto-heartbeat renew candidates", () => {
+  it("dueForRenew: a lease past the renew threshold surfaces WITH its token", () => {
+    const t = new WorkLeaseTracker();
+    t.observe("claim_work", { workId: "work-1" }, leaseResult("work-1", T0 + TTL), T0);
+    // 40% through → not yet due (default threshold 0.5).
+    expect(t.dueForRenew(T0 + 0.4 * TTL)).toEqual([]);
+    // 55% through → due, carrying the Hub token for the host to renew with.
+    const due = t.dueForRenew(T0 + 0.55 * TTL);
+    expect(due.map((d) => d.workId)).toEqual(["work-1"]);
+    expect(due[0].token).toBe("tok");
+    expect(due[0].msUntilExpiry).toBeGreaterThan(0);
+  });
+
+  it("dueForRenew: a renew observe resets the window, so it's not due again until the next crossing", () => {
+    const t = new WorkLeaseTracker();
+    t.observe("claim_work", { workId: "work-1" }, leaseResult("work-1", T0 + TTL), T0);
+    expect(t.dueForRenew(T0 + 0.6 * TTL).length).toBe(1); // due
+    // Host auto-renewed → the fresh lease result flows back in, reopening the window at 0.6·TTL.
+    t.observe("renew_lease", { workId: "work-1" }, leaseResult("work-1", T0 + 0.6 * TTL + TTL), T0 + 0.6 * TTL);
+    expect(t.dueForRenew(T0 + 0.7 * TTL)).toEqual([]); // only 0.1·TTL into the new window → not due
+    // ...and due again once the NEW window crosses the threshold.
+    expect(t.dueForRenew(T0 + 0.6 * TTL + 0.6 * TTL).length).toBe(1);
+  });
+
+  it("dueForRenew: a lease with NO token is never a renew candidate (can't renew without it)", () => {
+    const t = new WorkLeaseTracker();
+    // A lease result carrying an expiry but no token.
+    const noTokenResult = { workItem: { id: "work-1", lease: { holder: "a", expiresAt: new Date(T0 + TTL).toISOString() } } };
+    t.observe("claim_work", { workId: "work-1" }, noTokenResult, T0);
+    expect(t.size()).toBe(1); // still tracked (for the stall-prompt path)
+    expect(t.dueForRenew(T0 + 0.9 * TTL)).toEqual([]); // but never auto-renewed
+  });
+});

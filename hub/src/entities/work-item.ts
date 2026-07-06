@@ -212,6 +212,12 @@ export interface WorkItem {
    *  (intent), default-partitioned to spec in the envelope (no renameMap entry). */
   runbook?: string;
   references?: WorkItemReference[];
+  /** work-164 (idea-395): optional node-type-aware lease window in ms. When set, the
+   *  claim/renew lease grant uses this instead of the flat default LEASE_TTL_MS — the
+   *  architect marks known long-hold / design-first nodes 'extended' at create_work so
+   *  a heavy cognitive turn is not reaped on the standard 15-min window. Absent = the
+   *  default. Spec (intent), default-partitioned to spec in the envelope. */
+  leaseWindowMs?: number;
   targetRef: { kind: string; id: string } | null;
   payload?: unknown;
   /** work-87 (seed_blueprint): the deterministic run-key stamped on every node a
@@ -258,6 +264,7 @@ export interface IWorkItemStore {
     evidenceRequirements?: EvidenceRequirement[];
     runbook?: string;
     references?: WorkItemReference[];
+    leaseWindowMs?: number;
     targetRef?: { kind: string; id: string } | null;
     payload?: unknown;
     createdBy?: EntityProvenance;

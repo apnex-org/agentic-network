@@ -53,6 +53,16 @@ const MAX_CAS_RETRIES = 50;
  *  15 min default; flagged to architect for confirmation against the sweeper design. */
 const LEASE_TTL_MS = 15 * 60 * 1000;
 
+/** work-164 (idea-395): the effective lease window for an item — its author-set
+ *  node-type-aware `leaseWindowMs` when present (a positive finite number), else the
+ *  flat default. The declarative belt-and-suspenders behind the adapter auto-heartbeat:
+ *  a known long-hold / design-first node gets an extended floor so it survives even a
+ *  quiet stretch. The sweeper reads expiresAt, so no sweeper change is needed. */
+export function leaseTtlMsFor(w: { leaseWindowMs?: number }): number {
+  const win = w.leaseWindowMs;
+  return typeof win === "number" && Number.isFinite(win) && win > 0 ? win : LEASE_TTL_MS;
+}
+
 /** Max wall-time waiting for the per-agent WIP advisory lock. On timeout the claim
  *  is REJECTED (fail-CLOSED, LockAcquisitionTimeoutError) — never proceeds unlocked. */
 const CLAIM_LOCK_TIMEOUT_MS = 5000;
@@ -383,6 +393,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     evidenceRequirements?: EvidenceRequirement[];
     runbook?: string;
     references?: WorkItemReference[];
+    leaseWindowMs?: number;
     targetRef?: { kind: string; id: string } | null;
     payload?: unknown;
     createdBy?: EntityProvenance;
@@ -400,6 +411,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       evidenceRequirements: input.evidenceRequirements ?? [],
       runbook: input.runbook,
       references: input.references ?? [],
+      leaseWindowMs: input.leaseWindowMs,
       targetRef: input.targetRef ?? null,
       payload: input.payload,
       status: "ready",
@@ -920,7 +932,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
             holder: agentId,
             token: randomUUID(), // audit-4082 #1: fences a stale zombie-process re-read
             claimedAt: nowISO,
-            expiresAt: new Date(now.getTime() + LEASE_TTL_MS).toISOString(),
+            expiresAt: new Date(now.getTime() + leaseTtlMsFor(w)).toISOString(),
             heartbeatAt: nowISO,
           };
           return { ...w, status: "claimed", lease, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
@@ -974,7 +986,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const lease: WorkItemLease = {
         ...(w.lease as WorkItemLease),
         heartbeatAt: nowISO,
-        expiresAt: new Date(now.getTime() + LEASE_TTL_MS).toISOString(),
+        expiresAt: new Date(now.getTime() + leaseTtlMsFor(w)).toISOString(),
       };
       return { ...w, lease, updatedAt: nowISO };
     });
@@ -1070,7 +1082,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const lease: WorkItemLease = {
         ...w.lease,
         heartbeatAt: nowISO,
-        expiresAt: new Date(now.getTime() + LEASE_TTL_MS).toISOString(),
+        expiresAt: new Date(now.getTime() + leaseTtlMsFor(w)).toISOString(),
       };
       return { ...w, lease, updatedAt: nowISO };
     });

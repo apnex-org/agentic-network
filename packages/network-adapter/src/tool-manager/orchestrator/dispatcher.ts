@@ -228,6 +228,15 @@ export interface SharedDispatcherOptions {
    * When omitted, the dispatcher constructs its own (MCP hosts — unchanged).
    */
   sharedWorkLeases?: WorkLeaseTracker;
+
+  /**
+   * work-164 (idea-395) — override the auto-heartbeat's active-work recency window
+   * (ms). Defaults to RECENT_ACTIVITY_WINDOW_MS (env OIS_ADAPTER_ACTIVE_WORK_WINDOW_MS
+   * or 5min). Primarily a test seam: a small value makes an agent read "stalled" soon
+   * after its last tool call (exercising the stall-prompt + sweeper fallback), a large
+   * one keeps it "active" (exercising the auto-renew). Prod leaves it default.
+   */
+  activeWorkWindowMs?: number;
 }
 
 export interface SharedDispatcher {
@@ -313,6 +322,18 @@ export { TOOL_CALL_SIGNAL_SKIP, pendingKey, injectQueueItemId };
 // the read is treated as a failed read (AC3 — tracker skipped, no false replay).
 const WAKE_STALL_READ_TIMEOUT_MS = 10_000;
 
+// work-164 (idea-395): the auto-heartbeat's active-work recency window. An agent is
+// treated as "genuinely working the node" if a tool-call boundary happened within
+// this window (OR a call is in flight / the host reports non-idle). MUST be > the
+// heartbeat tick interval (30s) AND > a plausible inter-tool REASONING gap (so a
+// long mid-turn between tool calls does not read idle and get reaped — the case the
+// architect flagged), yet < the lease TTL (15min) so a genuinely dead/silent holder
+// falls out of "active" and is left to the stall-prompt + sweeper reap. 5 min sits in
+// that band. Tunable via env for ops.
+const RECENT_ACTIVITY_WINDOW_MS = Number(
+  process.env.OIS_ADAPTER_ACTIVE_WORK_WINDOW_MS ?? 5 * 60_000,
+);
+
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
@@ -336,6 +357,14 @@ export function createSharedDispatcher(
   // (list_ready_work etc.) do NOT pass through this handler, so an idle poll
   // never self-gates.
   let activeCallCount = 0;
+  // work-164 (idea-395): epoch-ms of the most recent host-driven tool-call boundary
+  // (start OR end). The auto-heartbeat's active-work signal reads this so a claim
+  // held by an agent that is mid-a-long-REASONING-turn (between tool calls at the
+  // tick instant, so activeCallCount===0) is still recognised as genuinely working
+  // and gets auto-renewed — the mid-turn survival case. Instantaneous
+  // activeCallCount alone would read "idle" here and reap live work (the bug one
+  // layer down). 0 until the first call.
+  let lastToolActivityMs = 0;
 
   let capturedClientInfo: DispatcherClientInfo = {
     name: "unknown",
@@ -592,10 +621,56 @@ export function createSharedDispatcher(
         }
       }
 
-      // W2 — outbound stall-prompt. Idle-gated: never pester a visibly-
-      // progressing holder (an in-flight CallTool = active progress). A held
-      // lease past ~60% of its window without a renew gets ONE nudge.
-      if (idle) {
+      // work-164 (idea-395) — the ACTIVE-WORK signal. NOT the instantaneous
+      // activeCallCount: an agent mid-a-long reasoning turn sits BETWEEN tool calls
+      // at the tick instant (activeCallCount===0) yet is genuinely working — reaping
+      // it would be the same bug one layer down. So active = host reports non-idle
+      // (a call is in flight now) OR a tool-call boundary happened within
+      // RECENT_ACTIVITY_WINDOW_MS (covers the inter-tool reasoning gap).
+      const activeWindowMs = opts.activeWorkWindowMs ?? RECENT_ACTIVITY_WINDOW_MS;
+      const activeWork = !idle || nowMs - lastToolActivityMs < activeWindowMs;
+
+      // W1.5 — AUTO-HEARTBEAT (idea-395 centerpiece / the work-155 incident). While
+      // genuinely working, renew due leases on the holder's behalf so a long
+      // cognitive turn is never silently reaped mid-work. Crash-safe by construction:
+      // a stalled/dead holder (no activity within the window and not in a call) is
+      // NOT active → skipped here and left to the stall-prompt + sweeper below, so
+      // this never keeps a dead agent's lease alive.
+      if (activeWork) {
+        for (const due of workLeases.dueForRenew(nowMs)) {
+          try {
+            const renewResult = await withTimeout(
+              agent.call(
+                "renew_lease",
+                { workId: due.workId, leaseToken: due.token },
+                { internal: true },
+              ),
+              WAKE_STALL_READ_TIMEOUT_MS,
+              "auto-heartbeat renew_lease",
+            );
+            // Feed the renew result back so the tracker resets the window (the
+            // internal call bypasses the CallTool observe path in dispatch.ts).
+            workLeases.observe(
+              "renew_lease",
+              { workId: due.workId },
+              renewResult,
+              Date.now(),
+            );
+            log(
+              `[work-164] auto-heartbeat renewed ${due.workId} (was ~${Math.round(due.msUntilExpiry / 60000)}m to expiry; active work in progress)`,
+            );
+          } catch (err) {
+            log(
+              `[work-164] auto-heartbeat renew failed for ${due.workId} (non-fatal, retries next tick): ${(err as Error)?.message ?? err}`,
+            );
+          }
+        }
+      }
+
+      // W2 — outbound stall-prompt. Fires only when NOT actively working (the
+      // fallback for a genuinely stalled holder the auto-heartbeat left alone): a
+      // held lease past ~60% of its window gets ONE gentle nudge before the sweeper.
+      if (!activeWork) {
         for (const due of workLeases.dueForStallPrompt(nowMs)) {
           router.route({
             kind: "notification.actionable",
@@ -852,9 +927,11 @@ export function createSharedDispatcher(
         workLeases,
         onCallStart: () => {
           activeCallCount++;
+          lastToolActivityMs = Date.now(); // work-164: stamp active-work recency
         },
         onCallEnd: () => {
           activeCallCount--;
+          lastToolActivityMs = Date.now(); // work-164: a just-completed call is recent activity
         },
         callToolGate: opts.callToolGate,
         callToolGateTimeoutMs: opts.callToolGateTimeoutMs,
