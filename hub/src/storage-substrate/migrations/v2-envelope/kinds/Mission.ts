@@ -43,8 +43,10 @@ export function createMissionMigrationModule(schema: SchemaDef): KindMigrationMo
         "annotations",
         "updatedAt",
       ],
-      spec: ["title", "description", "documentRef", "missionClass", "plannedTasks"],
-      status: ["turnId", "pulses"],
+      // work-162 (A1): plannedTasks (spec) + turnId (status) removed with the
+      // Task/Turn subsystem. Frozen historical rows keep their old partitions.
+      spec: ["title", "description", "documentRef", "missionClass"],
+      status: ["pulses"],
     },
   };
 

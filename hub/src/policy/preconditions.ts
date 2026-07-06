@@ -72,28 +72,12 @@ export const PRECONDITIONS: readonly Precondition[] = [
       return phaseFromEntity(thread) === "active";
     },
   },
-  {
-    fn: "task-not-completed",
-    description:
-      "Returns true iff the named task is NOT in `completed` status. Used to gate scheduled-messages (e.g., reminders) that are irrelevant once the task closes.",
-    evaluate: async (args, ctx) => {
-      const taskId = args.taskId;
-      if (typeof taskId !== "string" || taskId.length === 0) {
-        return false;
-      }
-      const task = await ctx.stores.task.getTask(taskId);
-      // Predicate true iff task exists AND status is not "completed".
-      // Missing task → false (conservative: don't fire if we can't
-      // verify task state). mission-89 Phase 4 (bug-137): envelope-aware.
-      return task !== null && phaseFromEntity(task) !== "completed";
-    },
-  },
+  // work-162 (A1): `task-not-completed` predicate REMOVED with the Task
+  // subsystem — scheduled-messages no longer gate on task state.
   // Mission-68 W1 (Design v1.0 §4.2 C2 fold): `mission_idle_for_at_least`
   // predicate REMOVED. The pulse-precondition layer is gone (Q3a) — pulses
-  // fire unconditionally on schedule. Other registry consumers
-  // (`thread-still-active`, `task-not-completed` for scheduled-message-
-  // sweeper) are PRESERVED above. The registry stays; only this entry +
-  // the auto-inject branch in mission-policy.ts removed.
+  // fire unconditionally on schedule. `thread-still-active` is PRESERVED
+  // above. The registry stays; only these entries removed.
 ];
 
 /**

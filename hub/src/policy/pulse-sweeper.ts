@@ -550,28 +550,13 @@ export class PulseSweeper {
     const eligible = agents.filter((a) => a.pulseConfig?.enabled === true);
     if (eligible.length === 0) return;
 
-    // STRICT suppression — build engaged-agent set from active missions.
-    // Architect-side: createdBy.agentId. Engineer-side: assignedAgentId
-    // on any task whose correlationId is in the active-mission set.
+    // STRICT suppression — build engaged-agent set from active missions
+    // (architect-side: createdBy.agentId). work-162 (A1): the former
+    // engineer-side augmentation (assignedAgentId on tasks whose correlationId
+    // is an active mission) is retired with the Task subsystem.
     const engaged = new Set<string>();
     for (const m of activeMissions) {
       if (m.createdBy?.agentId) engaged.add(m.createdBy.agentId);
-    }
-    if (eligible.some((a) => !engaged.has(a.id))) {
-      // Only load tasks if at least one eligible agent isn't already
-      // architect-side engaged — saves I/O when all eligible agents are
-      // mission-creators.
-      const activeMissionIds = new Set(activeMissions.map((m) => m.id));
-      const allTasks = await ctx.stores.task.listTasks();
-      for (const t of allTasks) {
-        if (
-          t.assignedAgentId &&
-          t.correlationId &&
-          activeMissionIds.has(t.correlationId)
-        ) {
-          engaged.add(t.assignedAgentId);
-        }
-      }
     }
 
     const nowMs = this.now();

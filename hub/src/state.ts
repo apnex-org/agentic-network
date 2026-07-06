@@ -1,53 +1,15 @@
 /**
  * State interfaces and in-memory implementation for the MCP Relay Hub.
  *
- * Defines ITaskStore and IEngineerRegistry interfaces that can be backed
+ * Defines IEngineerRegistry + peer store interfaces that can be backed
  * by either in-memory storage (local dev) or GCS (production).
+ *
+ * work-162 (A1): the Task entity + TaskStatus + ITaskStore were retired
+ * with the Task subsystem. Historical Task rows remain immutable in the
+ * substrate (A4 zero-loss); there is no read path or type.
  */
 
-export type TaskStatus = "pending" | "working" | "blocked" | "input_required" | "in_review" | "completed" | "failed" | "escalated" | "cancelled";
-
 export type SessionRole = "engineer" | "architect" | "director" | "verifier" | "unknown";
-
-export interface Task {
-  id: string;
-  directive: string;
-  report: string | null;
-  reportSummary: string | null;
-  reportRef: string | null;
-  verification: string | null;
-  reviewAssessment: string | null;
-  reviewRef: string | null;
-  assignedAgentId: string | null;
-  clarificationQuestion: string | null;
-  clarificationAnswer: string | null;
-  correlationId: string | null;
-  idempotencyKey: string | null;
-  title: string | null;
-  description: string | null;
-  dependsOn: string[];
-  revisionCount: number;
-  status: TaskStatus;
-  /** Mission-19: routing labels inherited from creator at submit-time. */
-  labels: Record<string, string>;
-  /** Mission-20 Phase 3: owning Turn for virtual-view composition. */
-  turnId: string | null;
-  /**
-   * Mission-24 Phase 2 (ADR-014, INV-TH20/23): cascade-spawn back-links.
-   * When this Task was spawned by a thread cascade handler, these fields
-   * carry the provenance pair (sourceThreadId+sourceActionId is the
-   * natural idempotency key) plus the thread's negotiated summary frozen
-   * at commit (Summary-as-Living-Record). Null for non-cascade-spawned
-   * tasks — Director-directed, legacy, or Architect-decomposed tasks.
-   */
-  sourceThreadId: string | null;
-  sourceActionId: string | null;
-  sourceThreadSummary: string | null;
-  /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
-  createdBy?: EntityProvenance;
-  createdAt: string;
-  updatedAt: string;
-}
 
 /**
  * Mission-24 Phase 2 (ADR-014): cascade-spawn provenance metadata

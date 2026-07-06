@@ -453,12 +453,10 @@ async function createThreadReply(args: Record<string, unknown>, ctx: IPolicyCont
 
       if (filteredProjectedStaged.length > 0) {
         const validationContext: ValidationContext = {
-          task: ctx.stores.task,
           idea: ctx.stores.idea,
           mission: ctx.stores.mission,
           thread: ctx.stores.thread,
           proposal: ctx.stores.proposal,
-          turn: ctx.stores.turn,
           bug: ctx.stores.bug,
         };
         const stateValidation = await validateActionsWithRegistry(filteredProjectedStaged, validationContext);

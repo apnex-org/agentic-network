@@ -9,7 +9,6 @@ export { registerAuditPolicy } from "./audit-policy.js";
 export { registerSessionPolicy } from "./session-policy.js";
 export { registerIdeaPolicy } from "./idea-policy.js";
 export { registerMissionPolicy } from "./mission-policy.js";
-export { registerClarificationPolicy } from "./clarification-policy.js";
 export { registerProposalPolicy } from "./proposal-policy.js";
 export { registerThreadPolicy } from "./thread-policy.js";
 export { registerMessagePolicy } from "./message-policy.js";

@@ -15,14 +15,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // were the local-fs dispatch-branch (writability assertion + cutover-sentinel
 // guard) which W4 deleted along with the dispatch. cutover-sentinel.{ts,test.ts}
 // retired in this same PR (W5) per coordinated-upgrade-discipline.
-import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore } from "./state.js";
+import type { IEngineerRegistry, IProposalStore, IThreadStore, IAuditStore } from "./state.js";
 // mission-83 W6-narrowed: gcs-state.js DELETED (substrate replaces GCS at
 // production-prod); reconcileCounters + cleanupOrphanedFiles startup hooks
 // were GCS-only and have no substrate-mode equivalent.
 // mission-84 W4: FS-version repository imports DELETED (12 *-repository.ts + counter.ts
 // removed from the codebase; substrate-version repos are sole production path).
 import {
-  type IIdeaStore, type IMissionStore, type ITurnStore, type IBugStore,
+  type IIdeaStore, type IMissionStore, type IBugStore,
   type IPendingActionStore, type IMessageStore,
 } from "./entities/index.js";
 // mission-83 W6-narrowed: GcsStorageProvider DELETED (substrate replaces GCS
@@ -54,9 +54,7 @@ import { MessageRepositorySubstrate } from "./entities/message-repository-substr
 import { MissionRepositorySubstrate } from "./entities/mission-repository-substrate.js";
 import { PendingActionRepositorySubstrate } from "./entities/pending-action-repository-substrate.js";
 import { ProposalRepositorySubstrate } from "./entities/proposal-repository-substrate.js";
-import { TaskRepositorySubstrate } from "./entities/task-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "./entities/thread-repository-substrate.js";
-import { TurnRepositorySubstrate } from "./entities/turn-repository-substrate.js";
 import { WorkItemRepositorySubstrate } from "./entities/work-item-repository-substrate.js";
 import { DecisionRepositorySubstrate } from "./entities/decision-repository-substrate.js";
 import { DirectorProofRepositorySubstrate } from "./entities/director-proof-repository-substrate.js";
@@ -65,7 +63,7 @@ import { ArrivalSurfaceRepositorySubstrate } from "./entities/arrival-surface-re
 import { CurationRepositorySubstrate } from "./entities/curation-repository-substrate.js";
 import { DocumentRepository } from "./storage-substrate/new-repositories.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
-import { PolicyRouter, registerTaskPolicy, computeToolSurfaceRevision } from "./policy/index.js";
+import { PolicyRouter, computeToolSurfaceRevision } from "./policy/index.js";
 import { registerSystemPolicy } from "./policy/system-policy.js";
 import { registerAuditPolicy } from "./policy/audit-policy.js";
 // mission-84 W6: registerDocumentPolicy RE-INTRODUCED with substrate-backed
@@ -75,9 +73,6 @@ import { registerDocumentPolicy } from "./policy/document-policy.js";
 import { registerSessionPolicy } from "./policy/session-policy.js";
 import { registerIdeaPolicy } from "./policy/idea-policy.js";
 import { registerMissionPolicy } from "./policy/mission-policy.js";
-import { registerTurnPolicy } from "./policy/turn-policy.js";
-import { registerClarificationPolicy } from "./policy/clarification-policy.js";
-import { registerReviewPolicy } from "./policy/review-policy.js";
 import { registerProposalPolicy } from "./policy/proposal-policy.js";
 import { registerThreadPolicy } from "./policy/thread-policy.js";
 import { registerMessagePolicy } from "./policy/message-policy.js";
@@ -138,14 +133,12 @@ if (!POSTGRES_CONNECTION_STRING) {
 // runtime) are gone. Logged for operability.
 console.log(`[Hub] envelope substrate: STRICT (envelope-only; dual-shape tolerance retired at mission-90 W8)`);
 
-let taskStore: ITaskStore;
 let engineerRegistry: IEngineerRegistry;
 let proposalStore: IProposalStore;
 let threadStore: IThreadStore;
 let auditStore: IAuditStore;
 let ideaStore: IIdeaStore;
 let missionStore: IMissionStore;
-let turnStore: ITurnStore;
 let bugStore: IBugStore;
 // ADR-017: comms reliability layer. GCS-backed in Phase 2x P0-1 (was
 // memory-only in v1 — Hub restarts wiped the queue, observed twice
@@ -216,7 +209,6 @@ armBareEnvelopeDetector((kind) => reconciler.hasTranslations(kind));
 // repository instantiation else-branch DELETED (FS-version repos retired entirely).
 const substrateCounter = new SubstrateCounter(substrate!);
 auditStore = new AuditRepositorySubstrate(substrate!, substrateCounter);
-taskStore = new TaskRepositorySubstrate(substrate!, substrateCounter);
 proposalStore = new ProposalRepositorySubstrate(substrate!, substrateCounter);
 ideaStore = new IdeaRepositorySubstrate(substrate!, substrateCounter);
 bugStore = new BugRepositorySubstrate(substrate!, substrateCounter);
@@ -226,10 +218,9 @@ pendingActionStore = new PendingActionRepositorySubstrate(substrate!, substrateC
 messageStore = new MessageRepositorySubstrate(substrate!);
 // AgentRepositorySubstrate has no counter (fingerprint-derived ids).
 engineerRegistry = new AgentRepositorySubstrate(substrate!);
-// MissionRepositorySubstrate takes counter + taskStore + ideaStore for hydration.
-missionStore = new MissionRepositorySubstrate(substrate!, substrateCounter, taskStore, ideaStore);
-// TurnRepositorySubstrate takes counter + missionStore + taskStore for hydration.
-turnStore = new TurnRepositorySubstrate(substrate!, substrateCounter, missionStore, taskStore);
+// work-162 (A1): Task/Turn stores retired. MissionRepositorySubstrate takes
+// counter + ideaStore for hydration (Mission's only virtual view is `ideas`).
+missionStore = new MissionRepositorySubstrate(substrate!, substrateCounter, ideaStore);
 // mission-84 W6: DocumentRepository (substrate-backed; W2.4 stub now production)
 const documentStore = new DocumentRepository(substrate!);
 // C1-R2 (mission-94): WorkItem work-queue store (claim/lease/FSM verbs + complete_work).
@@ -260,14 +251,12 @@ console.log("[Hub] substrate-mode repositories instantiated (13 substrate-versio
 
 // ── Aggregate Store Object ────────────────────────────────────────────
 const allStores: AllStores = {
-  task: taskStore,
   engineerRegistry,
   proposal: proposalStore,
   thread: threadStore,
   audit: auditStore,
   idea: ideaStore,
   mission: missionStore,
-  turn: turnStore,
   bug: bugStore,
   pendingAction: pendingActionStore,
   message: messageStore,
@@ -286,7 +275,6 @@ const allStores: AllStores = {
 // The router is stateless — it holds only handler registrations.
 // All mutable state lives in the stores (injected via IPolicyContext).
 const policyRouter = new PolicyRouter();
-registerTaskPolicy(policyRouter);
 registerSystemPolicy(policyRouter);
 registerAuditPolicy(policyRouter);
 // mission-84 W6: registerDocumentPolicy RE-INTRODUCED (substrate-backed); 3 tools
@@ -298,9 +286,6 @@ registerDocumentPolicy(policyRouter);
 registerSessionPolicy(policyRouter);
 registerIdeaPolicy(policyRouter);
 registerMissionPolicy(policyRouter);
-registerTurnPolicy(policyRouter);
-registerClarificationPolicy(policyRouter);
-registerReviewPolicy(policyRouter);
 registerProposalPolicy(policyRouter);
 registerThreadPolicy(policyRouter);
 registerBugPolicy(policyRouter);
