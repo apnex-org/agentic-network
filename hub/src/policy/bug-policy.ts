@@ -27,6 +27,13 @@ export const BUG_FSM: FsmTransitionTable = [
   { from: "investigating", to: "resolved" },
   { from: "investigating", to: "wontfix" },
   { from: "investigating", to: "open" }, // allow walk-back if diagnosis discovers re-open conditions
+  // work-167 (idea-375): walk-back from a TERMINAL verdict. A bug marked resolved/wontfix
+  // whose fix-sha isn't actually in main (or whose wontfix was premature) could previously
+  // only be flagged, never corrected — the ledger lied. These transitions REQUIRE a
+  // reopenReason (guarded in updateBug) + emit a reopen audit event, so the correction is
+  // justified + attributable. Lets the reconciliation flow (idea-364) ACT, not just flag.
+  { from: "resolved", to: "open" },
+  { from: "wontfix", to: "open" },
 ];
 
 // ── Handlers ────────────────────────────────────────────────────────
@@ -160,6 +167,10 @@ async function updateBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   // bug-201: additive-tag mode — union onto the existing tags instead of clobbering
   // (the same footgun fixed for update_idea; reuses the shared mergeTags primitive).
   const addTags = unsetIfEmpty(args.addTags as string[] | undefined) as string[] | undefined;
+  // work-167 (idea-375): required justification when walking a bug back from a TERMINAL
+  // verdict (resolved/wontfix → open). Set reopenWalkback in the guard, use it for the audit.
+  const reopenReason = (args.reopenReason as string | undefined)?.trim() || undefined;
+  let reopenWalkback = false;
 
   // FSM guard on status transitions. mission-89 Phase 4 (bug-137 closure):
   // envelope-shape Bug entity has status as {phase, ...} not string; use
@@ -184,6 +195,17 @@ async function updateBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
         content: [{ type: "text" as const, text: JSON.stringify({ error: `Invalid state transition: cannot move bug from '${currentPhase}' to '${status}'` }) }],
         isError: true,
       };
+    }
+    // work-167: a terminal→open walk-back MUST carry a non-empty reopenReason — the
+    // ledger correction has to be justified + attributable (A0 ground-truth), never silent.
+    if ((currentPhase === "resolved" || currentPhase === "wontfix") && status === "open") {
+      if (!reopenReason) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: `Reopening a '${currentPhase}' bug requires a non-empty reopenReason (e.g. "fix-sha not in main", "regression reproduced")` }) }],
+          isError: true,
+        };
+      }
+      reopenWalkback = true;
     }
   }
 
@@ -220,6 +242,17 @@ async function updateBug(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   // metadata-only updates like adding fixCommits).
   if (status !== undefined) {
     await dispatchBugStatusChanged(ctx, bug);
+    // work-167 (idea-375): a terminal→open walk-back leaves a dedicated, attributable
+    // audit trail (actor + reason) — so a reopened bug's correction is never silent.
+    if (reopenWalkback && ctx.stores.audit) {
+      const actor = await resolveCreatedBy(ctx);
+      await ctx.stores.audit.logEntry(
+        actor.role as "architect" | "engineer" | "verifier" | "hub",
+        "bug_reopened",
+        `bug ${bug.id} walked back to 'open' (reopenReason: ${reopenReason})`,
+        bug.id,
+      );
+    }
   }
 
   return {
@@ -271,10 +304,11 @@ export function registerBugPolicy(router: PolicyRouter): void {
 
   router.register(
     "update_bug",
-    "[Any] Update a bug. Status transitions enforced by BUG_FSM (open → investigating → resolved | wontfix; walk-back investigating → open permitted). Other fields (severity, class, tags, description, linkedTaskIds, linkedMissionId, fixCommits, fixRevision, repo) are freely editable. Use `addTags` for additive (union, no-clobber) tag stamping — e.g. a triage/reconciliation pass adding a classification tag without wiping existing ones; `tags` replaces the whole set.",
+    "[Any] Update a bug. Status transitions enforced by BUG_FSM (open → investigating → resolved | wontfix; walk-backs: investigating → open, and — work-167 — resolved → open / wontfix → open, i.e. a TERMINAL verdict can be corrected). A terminal→open walk-back REQUIRES a non-empty `reopenReason` (justification, e.g. 'fix-sha not in main') and emits a `bug_reopened` audit entry so the correction is attributable, never silent. Other fields (severity, class, tags, description, linkedTaskIds, linkedMissionId, fixCommits, fixRevision, repo) are freely editable. Use `addTags` for additive (union, no-clobber) tag stamping; `tags` replaces the whole set.",
     {
       bugId: z.string().describe("The bug ID to update"),
       status: z.enum(["open", "investigating", "resolved", "wontfix"]).optional(),
+      reopenReason: z.string().optional().describe("work-167 (idea-375): REQUIRED when walking a bug back from a terminal verdict (resolved/wontfix → open) — the justification for the correction (e.g. 'fix-sha not in main', 'regression reproduced'). Recorded in a bug_reopened audit entry. Ignored for other transitions."),
       severity: z.enum(["critical", "major", "minor"]).optional(),
       class: z.string().nullable().optional(),
       tags: z.array(z.string()).optional().describe("REPLACE the whole tag set. For incremental stamping use `addTags` instead (replace clobbers prior tags)."),
