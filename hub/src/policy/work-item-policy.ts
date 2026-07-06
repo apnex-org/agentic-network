@@ -639,8 +639,58 @@ async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext)
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
 
-  const runId = args.runId as string;
-  const nodes = (args.nodes as BlueprintNode[] | undefined) ?? [];
+  // C4 (idea-393): resolve the blueprint source — inline nodes[] XOR a server-side
+  // nodesRef (a Hub Document whose content is the blueprint JSON). The ref path lets
+  // the architect seed a large/committed blueprint by POINTER instead of inlining
+  // ~39KB into the MCP call; the resolved nodes feed the SAME whole-graph
+  // validate-before-create expander below — zero new trust surface, the ref is only
+  // a fetch-and-parse in front of the existing validator.
+  const nodesRef = typeof args.nodesRef === "string" ? args.nodesRef : undefined;
+  const inlineNodes = args.nodes as BlueprintNode[] | undefined;
+  if (nodesRef && inlineNodes) {
+    return err("invalid_blueprint", "provide EITHER nodes[] inline OR nodesRef (a Hub Document holding the blueprint JSON) — not both");
+  }
+
+  let nodes: BlueprintNode[] = inlineNodes ?? [];
+  let refRunId: string | undefined;
+  if (nodesRef) {
+    const docStore = ctx.stores.document;
+    if (!docStore) return err("not_wired", "Document store is not available for nodesRef resolution");
+    const doc = await docStore.get(nodesRef);
+    if (!doc) return err("unresolvable_ref", `nodesRef document "${nodesRef}" not found`);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(doc.content);
+    } catch (e) {
+      return err("invalid_blueprint", `nodesRef document "${nodesRef}" content is not valid JSON: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    // Accept a bare node array OR a { runId?, nodes } envelope (idea-393's shape).
+    let candidateNodes: unknown;
+    if (Array.isArray(parsed)) {
+      candidateNodes = parsed;
+    } else if (parsed && typeof parsed === "object" && Array.isArray((parsed as { nodes?: unknown }).nodes)) {
+      candidateNodes = (parsed as { nodes: unknown }).nodes;
+      const rr = (parsed as { runId?: unknown }).runId;
+      if (typeof rr === "string") refRunId = rr;
+    } else {
+      return err("invalid_blueprint", `nodesRef document "${nodesRef}" must contain a blueprint node array or a { runId?, nodes } object`);
+    }
+    // VALIDATION PARITY (steve audit-11721): the inline nodes[] param is schema-checked
+    // at the router boundary, but a nodesRef doc is JSON.parse'd HERE — AFTER that layer —
+    // so the resolved nodes must run through the SAME per-node blueprintNodeSchema, or
+    // malformed content (e.g. a node missing required `type`, a bad enum, a non-array
+    // dependsOn) would reach createBlueprintNode uncontracted. Fail-closed → zero creates.
+    const validated = z.array(blueprintNodeSchema).safeParse(candidateNodes);
+    if (!validated.success) {
+      const detail = validated.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+      return err("invalid_blueprint", `nodesRef document "${nodesRef}" nodes failed schema validation: ${detail}`);
+    }
+    nodes = validated.data as unknown as BlueprintNode[];
+  }
+
+  // runId: the explicit arg wins (caller-controlled idempotency key); else the
+  // ref document's top-level runId. Emptiness is caught by the F0 check below.
+  const runId = (args.runId as string | undefined) ?? refRunId ?? "";
   const dryRun = args.dryRun === true;
 
   // ── Validate the WHOLE graph fail-closed BEFORE creating anything (all-or-nothing) ──
@@ -944,10 +994,11 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "seed_blueprint",
-    "[Architect] Expand a declarative blueprint (a WorkItem-graph template) onto the queue — the seed_blueprint primitive (idea-380 S2). A FINITE DAG expander (NOT a workflow platform): nodes[] keyed by localId, dependsOn + completionDependsOn referencing OTHER localIds. VALIDATES THE WHOLE GRAPH fail-closed BEFORE creating anything (dup/dangling localId; cycle across BOTH edges; per-node #416 runbook+required-refs; node-cap) → any validation failure creates ZERO. Deterministic + idempotent (kubectl-apply): each node id = work-bp-{runId}-{localId}, created via createOnly, so re-running the same runId+blueprint never double-creates AND completes a crash-partial. dryRun:true validates + returns the planned create-order + would-be work-ids, creating ZERO. A mid-create infra fault compensating-deletes THIS run's creates + returns a loud id-trail.",
+    "[Architect] Expand a declarative blueprint (a WorkItem-graph template) onto the queue — the seed_blueprint primitive (idea-380 S2). A FINITE DAG expander (NOT a workflow platform): nodes[] keyed by localId, dependsOn + completionDependsOn referencing OTHER localIds. Supply the nodes INLINE (nodes[]) OR by POINTER (nodesRef — a Hub Document holding the blueprint JSON, resolved server-side; idea-393, lets a large/committed blueprint seed without inlining ~39KB into the call). VALIDATES THE WHOLE GRAPH fail-closed BEFORE creating anything (dup/dangling localId; cycle across BOTH edges; per-node #416 runbook+required-refs; node-cap) → any validation failure creates ZERO. Deterministic + idempotent (kubectl-apply): each node id = work-bp-{runId}-{localId}, created via createOnly, so re-running the same runId+blueprint never double-creates AND completes a crash-partial. dryRun:true validates + returns the planned create-order + would-be work-ids, creating ZERO. A mid-create infra fault compensating-deletes THIS run's creates + returns a loud id-trail.",
     {
-      runId: z.string().min(1).describe("Deterministic run-key (alphanumeric/underscore) — keys the per-node ids work-bp-{runId}-{localId}; re-running the same runId+blueprint is idempotent (no double-create)."),
-      nodes: z.array(blueprintNodeSchema).describe("The blueprint nodes (≥1, ≤cap). Each localId-keyed; dependsOn/completionDependsOn reference other localIds in the SAME blueprint."),
+      runId: z.string().min(1).optional().describe("Deterministic run-key (alphanumeric/underscore) — keys the per-node ids work-bp-{runId}-{localId}; re-running the same runId+blueprint is idempotent (no double-create). Required inline; with nodesRef it MAY instead come from the document's top-level runId (the explicit arg wins)."),
+      nodes: z.array(blueprintNodeSchema).optional().describe("The blueprint nodes (≥1, ≤cap) INLINE. Each localId-keyed; dependsOn/completionDependsOn reference other localIds in the SAME blueprint. Provide EITHER nodes[] OR nodesRef — not both."),
+      nodesRef: z.string().min(1).optional().describe("idea-393: a Hub Document id whose content is the blueprint JSON — either a bare node array or a { runId?, nodes } object. Resolved SERVER-SIDE and fed to the SAME whole-graph validator as inline nodes[]. Provide EITHER nodes[] OR nodesRef — not both."),
       dryRun: z.boolean().optional().describe("When true: validate the whole graph + return the planned create-order + would-be work-ids, creating ZERO WorkItems (a true preview)."),
     },
     seedBlueprint,
