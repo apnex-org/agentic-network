@@ -1,5 +1,5 @@
 /**
- * Wave 2 Policy Tests — Idea, Mission, Turn
+ * Wave 2 Policy Tests — Idea, Mission (work-162: Turn retired)
  *
  * Tests the CRUD + Events domain policies extracted in
  * The Great Decoupling T3.
@@ -9,7 +9,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { PolicyRouter } from "../src/policy/router.js";
 import { registerIdeaPolicy, computeBacklogHealth } from "../src/policy/idea-policy.js";
 import { registerMissionPolicy } from "../src/policy/mission-policy.js";
-import { registerTurnPolicy } from "../src/policy/turn-policy.js";
 import { createTestContext } from "../src/policy/test-utils.js";
 import { AgentRepository } from "../src/entities/agent-repository.js";
 import type { IPolicyContext } from "../src/policy/types.js";
@@ -677,87 +676,5 @@ describe("MissionPolicy", () => {
   });
 });
 
-// ── Turn Policy ─────────────────────────────────────────────────────
-
-describe("TurnPolicy", () => {
-  let router: PolicyRouter;
-  let ctx: IPolicyContext;
-
-  beforeEach(() => {
-    router = new PolicyRouter(noop);
-    registerTurnPolicy(router);
-    ctx = createTestContext();
-  });
-
-  it("registers all turn tools", () => {
-    expect(router.has("create_turn")).toBe(true);
-    expect(router.has("update_turn")).toBe(true);
-    expect(router.has("get_turn")).toBe(true);
-    expect(router.has("list_turns")).toBe(true);
-  });
-
-  it("create_turn creates and emits turn_created", async () => {
-    const result = await router.handle("create_turn", {
-      title: "Sprint 1",
-      scope: "Build the core platform",
-    }, ctx);
-
-    expect(result.isError).toBeUndefined();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.turnId).toBeDefined();
-    expect(parsed.status).toBe("planning");
-
-    const emitted = (ctx as any).emittedEvents.find((e: any) => e.event === "turn_created");
-    expect(emitted).toBeDefined();
-  });
-
-  it("update_turn changes status and emits turn_updated", async () => {
-    const createResult = await router.handle("create_turn", {
-      title: "Test Turn", scope: "Testing",
-    }, ctx);
-    const { turnId } = JSON.parse(createResult.content[0].text);
-
-    const result = await router.handle("update_turn", {
-      turnId,
-      status: "active",
-    }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.status).toBe("active");
-
-    const emitted = (ctx as any).emittedEvents.find((e: any) => e.event === "turn_updated");
-    expect(emitted).toBeDefined();
-  });
-
-  it("get_turn returns a created turn", async () => {
-    const createResult = await router.handle("create_turn", {
-      title: "Get me", scope: "Scope",
-    }, ctx);
-    const { turnId } = JSON.parse(createResult.content[0].text);
-
-    const result = await router.handle("get_turn", { turnId }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.title).toBe("Get me");
-  });
-
-  it("get_turn returns error for non-existent", async () => {
-    const result = await router.handle("get_turn", { turnId: "turn-999" }, ctx);
-    expect(result.isError).toBe(true);
-  });
-
-  it("create_turn with tele IDs", async () => {
-    const result = await router.handle("create_turn", {
-      title: "Guided Turn",
-      scope: "With goals",
-    }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.turnId).toBeDefined();
-  });
-
-  it("list_turns filters by status", async () => {
-    await router.handle("create_turn", { title: "T1", scope: "S1" }, ctx);
-
-    const result = await router.handle("list_turns", { status: "active" }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.count).toBe(0); // newly created turns are "planning"
-  });
-});
+// work-162 (A1): the TurnPolicy describe block (create/update/get/list_turn)
+// is retired with the Turn subsystem.
