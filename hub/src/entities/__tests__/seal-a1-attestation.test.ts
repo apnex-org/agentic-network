@@ -26,7 +26,7 @@ function attestation(over: Partial<Attestation> = {}): Attestation {
     verifierId: "agent-verifier",
     verdict: "pass",
     producedAt: "2026-01-01T00:00:00.000Z",
-    evidenceRefs: ["pr-1"],
+    evidenceRefs: [{ kind: "evidence", ref: "pr-1" }],
     requirementHash: "rh",
     targetRefSnapshot: null,
     targetRefHash: "th",

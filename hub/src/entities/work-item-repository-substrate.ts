@@ -38,6 +38,7 @@ import type {
   Attestation,
   AttestationVerdict,
   AttestationVerification,
+  AttestationEvidenceRef,
 } from "./work-item.js";
 import { DEFAULT_STATE_DURATIONS, evaluateCompletionGate } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
@@ -423,7 +424,8 @@ function sha256Canonical(value: unknown): string {
 }
 const hashRequirement = (req: EvidenceRequirement): string => sha256Canonical(req);
 const hashTargetRef = (tr: { kind: string; id: string } | null): string => sha256Canonical(tr);
-const hashEvidenceSet = (refs: string[]): string => sha256Canonical([...refs].sort());
+const hashEvidenceSet = (refs: AttestationEvidenceRef[]): string =>
+  sha256Canonical([...refs].map((r) => `${r.kind}:${r.ref}`).sort());
 
 export class WorkItemRepositorySubstrate implements IWorkItemStore {
   constructor(
@@ -1330,67 +1332,131 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   }
 
   // ── SEAL (idea-444) — attest_evidence + verify_attestation ────────────────
+  /** SEAL (idea-444, steve audit-11832/11839) — pre-fetch each `entity`-kind ref's entity for
+   *  existence + relatedness classification. Existence is monotonic, so this async fetch is safe
+   *  pre-CAS; the RELATEDNESS decision runs on the fresh `w` inside classifyEvidenceRefs. */
+  private async resolveEntityRefs(refs: AttestationEvidenceRef[]): Promise<Map<string, Record<string, unknown> | null>> {
+    const map = new Map<string, Record<string, unknown> | null>();
+    for (const r of refs) {
+      if (r.kind !== "entity") continue;
+      const slash = r.ref.indexOf("/");
+      if (slash <= 0 || slash === r.ref.length - 1) { map.set(r.ref, null); continue; }
+      const kind = r.ref.slice(0, slash);
+      const id = r.ref.slice(slash + 1);
+      map.set(r.ref, (await this.substrate.get<Record<string, unknown>>(kind, id)) ?? null);
+    }
+    return map;
+  }
+
+  /** SEAL — the SINGLE typed-ref validator (steve audit-11839): classify EVERY ref + count the
+   *  LOAD-BEARING ones, against the FRESH `item`. Used identically by attest_evidence (throws on
+   *  any reason) and verify_attestation (collects reasons) so the two can never drift.
+   *   - `evidence`: `ref` must match a concrete submitted `evidence[].ref` (load-bearing).
+   *   - `entity` (`Kind/id`): must existence-resolve (pre-fetched in `resolved`) AND be RELATED to
+   *     this work — the item's targetRef, or a `refRelatesToWork` audit/review relation — NEVER the
+   *     item's own id, NEVER a bare existing entity (that would re-open existence-theatre).
+   *   - `external`: non-empty locator; honestly unresolvable server-side; NEVER load-bearing.
+   *  Rule: ≥1 load-bearing ref required; every non-passing typed ref is a reason. */
+  private classifyEvidenceRefs(
+    refs: AttestationEvidenceRef[],
+    item: WorkItem,
+    resolved: Map<string, Record<string, unknown> | null>,
+  ): { reasons: string[]; loadBearing: number } {
+    const reasons: string[] = [];
+    const evidenceRefSet = new Set<string>(item.evidence.map((e) => e.ref).filter((r): r is string => !!r));
+    let loadBearing = 0;
+    for (const r of refs) {
+      if (r.kind === "evidence") {
+        if (evidenceRefSet.has(r.ref)) loadBearing++;
+        else reasons.push(`evidence ref '${r.ref}' matches no submitted evidence entry on ${item.id}`);
+      } else if (r.kind === "entity") {
+        const slash = r.ref.indexOf("/");
+        if (slash <= 0 || slash === r.ref.length - 1) { reasons.push(`entity ref '${r.ref}' must be 'Kind/id'`); continue; }
+        const kind = r.ref.slice(0, slash);
+        const id = r.ref.slice(slash + 1);
+        if (id === item.id) { reasons.push(`entity ref '${r.ref}' is the item itself — not load-bearing`); continue; }
+        const ent = resolved.get(r.ref) ?? null;
+        if (!ent) { reasons.push(`entity ref '${r.ref}' does not resolve`); continue; }
+        const isTargetRef = !!item.targetRef && kind === item.targetRef.kind && id === item.targetRef.id;
+        const ek = kind.toLowerCase();
+        const related = isTargetRef
+          || (ek === "audit" && this.refRelatesToWork("audit", ent, item))
+          || ((ek === "workitem" || ek === "review") && this.refRelatesToWork("review", ent, item));
+        if (related) loadBearing++;
+        else reasons.push(`entity ref '${r.ref}' resolves but is not related to ${item.id} or its target — existence alone is insufficient (existence-theatre)`);
+      }
+      // 'external': non-load-bearing, honestly unresolvable; shape already validated by the caller.
+    }
+    if (loadBearing === 0) reasons.push(`no LOAD-BEARING evidenceRef — need >=1 'evidence' entry match or a related non-self 'entity' ref ('external' refs are never load-bearing)`);
+    return { reasons, loadBearing };
+  }
+
   async attestEvidence(
     workId: string,
     requirementId: string,
     verifierId: string,
     verdict: AttestationVerdict,
-    evidenceRefs: string[],
+    evidenceRefs: AttestationEvidenceRef[],
     _note?: string,
   ): Promise<{ item: WorkItem; attestation: Attestation }> {
-    if (!Array.isArray(evidenceRefs) || evidenceRefs.length === 0 || evidenceRefs.some((r) => typeof r !== "string" || r.trim() === "")) {
-      throw new AttestationRejected("evidenceRefs must be a non-empty array of non-empty refs — an attestation MUST bind >=1 typed, resolvable ref (criterion #3: no trust-by-prose verdict)");
+    // (a) SHAPE validation (sync): non-empty, well-formed typed refs.
+    if (!Array.isArray(evidenceRefs) || evidenceRefs.length === 0) {
+      throw new AttestationRejected("evidenceRefs must be non-empty (criterion #3: no trust-by-prose verdict)");
+    }
+    for (const r of evidenceRefs) {
+      if (!r || typeof r.ref !== "string" || r.ref.trim() === "" || !["evidence", "entity", "external"].includes(r.kind)) {
+        throw new AttestationRejected(`malformed evidenceRef ${JSON.stringify(r)} — each is { kind: 'evidence'|'entity'|'external', ref: <non-empty> }`);
+      }
     }
     const pre = await this.substrate.get<WorkItem>(KIND, workId);
     if (!pre) throw new AttestationRejected(`work item ${workId} not found`);
-    const item = cloneWorkItem(pre);
-    const req = item.evidenceRequirements.find((r) => r.id === requirementId);
-    if (!req) throw new AttestationRejected(`requirement '${requirementId}' not found on ${workId}`);
-    if (req.evidenceAuthority !== "verifier-attestation") {
-      throw new AttestationRejected(`requirement '${requirementId}' is evidenceAuthority=${req.evidenceAuthority ?? "executor-evidence"} — attest_evidence only applies to verifier-attestation requirements`);
-    }
-    // fold 2 HISTORY check: the verifier must NEVER have executed/held or created this item (a
-    // release-then-attest self-close is exactly what this closes). Uses the append-only
-    // executorHistory ∪ {creator, current holder} — not merely the current owner.
-    const excluded = new Set<string>(item.executorHistory);
-    if (item.createdBy?.agentId) excluded.add(item.createdBy.agentId);
-    if (item.lease?.holder) excluded.add(item.lease.holder);
-    if (excluded.has(verifierId)) {
-      throw new AttestationRejected(`verifier ${verifierId} is in the executor/holder/creator history of ${workId} — self-attestation rejected (no owner/executor write path, fold 2)`);
-    }
-    // ref-relatedness (criterion #3): >=1 ref must resolve/relate to the work — an evidence entry
-    // ref on the item, the item id, or its targetRef id (semantic binding; external refs stay
-    // format-only, never prose). verify_attestation RECOMPUTES this.
-    const related = new Set<string>([item.id, ...(item.targetRef ? [item.targetRef.id] : []), ...item.evidence.map((e) => e.ref).filter((r): r is string => !!r)]);
-    if (!evidenceRefs.some((r) => related.has(r))) {
-      throw new AttestationRejected(`no evidenceRef relates to ${workId} (its evidence entries / id / targetRef) — an attestation must bind to concrete work evidence, not prose`);
-    }
-    const producedAt = new Date().toISOString();
-    const prior = item.attestations[requirementId];
-    const attestation: Attestation = {
-      requirementId,
-      verifierId,
-      verdict,
-      producedAt,
-      evidenceRefs: [...evidenceRefs],
-      requirementHash: hashRequirement(req),
-      targetRefSnapshot: item.targetRef,
-      targetRefHash: hashTargetRef(item.targetRef),
-      evidenceSetHash: hashEvidenceSet(evidenceRefs),
-      ...(prior ? { supersedes: `${prior.requirementId}:${prior.verifierId}:${prior.producedAt}` } : {}),
-    };
+    // (b) async ENTITY existence resolution (monotonic — safe pre-CAS; relatedness runs on fresh w).
+    const resolved = await this.resolveEntityRefs(evidenceRefs);
+    // (c) CAS: derive requirement/hashes/HISTORY/ref-validation ALL from the FRESH w (steve
+    //     audit-11832 #1: closes the first-attestation relocation TOCTOU — an attestation built
+    //     from a stale pre-read must never be merged onto a moved row / auto-advance).
     const written = await this.tryCasUpdate(workId, (w) => {
-      // relocation guard: targetRef must not have moved since an attestation was recorded.
+      const req = w.evidenceRequirements.find((r) => r.id === requirementId);
+      if (!req) throw new AttestationRejected(`requirement '${requirementId}' not found on ${workId}`);
+      if (req.evidenceAuthority !== "verifier-attestation") {
+        throw new AttestationRejected(`requirement '${requirementId}' is evidenceAuthority=${req.evidenceAuthority ?? "executor-evidence"} — attest_evidence only applies to verifier-attestation requirements`);
+      }
+      // fold 2 HISTORY exclusion — executorHistory ∪ {creator, current holder}, from the fresh w.
+      const excluded = new Set<string>(w.executorHistory);
+      if (w.createdBy?.agentId) excluded.add(w.createdBy.agentId);
+      if (w.lease?.holder) excluded.add(w.lease.holder);
+      if (excluded.has(verifierId)) {
+        throw new AttestationRejected(`verifier ${verifierId} is in the executor/holder/creator history of ${workId} — self-attestation rejected (fold 2)`);
+      }
+      // typed-ref validation against the fresh w (steve audit-11839): every ref validated, ≥1 load-bearing.
+      const { reasons } = this.classifyEvidenceRefs(evidenceRefs, w, resolved);
+      if (reasons.length > 0) throw new AttestationRejected(`evidenceRefs invalid: ${reasons.join("; ")}`);
+      // relocation anchor guard (belt): a prior attestation stamped for a different targetRef.
       const anchor = w.attestationHistory[0];
       if (anchor && anchor.targetRefHash !== hashTargetRef(w.targetRef)) {
         throw new AttestationRejected(`targetRef of ${workId} changed after an attestation exists — relocation rejected (point-at-A-then-move-to-B laundering)`);
       }
-      // preserve-not-inject: MERGE the single attestation into the CURRENT map/history (never
-      // overwrite the subtree — concurrent-verifier safety under CAS retry).
+      // Build the attestation FROM THE FRESH w (hashes, targetRef snapshot, supersedes).
+      const producedAt = new Date().toISOString();
+      const prior = w.attestations[requirementId];
+      const attestation: Attestation = {
+        requirementId,
+        verifierId,
+        verdict,
+        producedAt,
+        evidenceRefs: evidenceRefs.map((r) => ({ ...r })),
+        requirementHash: hashRequirement(req),
+        targetRefSnapshot: w.targetRef,
+        targetRefHash: hashTargetRef(w.targetRef),
+        evidenceSetHash: hashEvidenceSet(evidenceRefs),
+        ...(prior ? { supersedes: `${prior.requirementId}:${prior.verifierId}:${prior.producedAt}` } : {}),
+      };
+      // preserve-not-inject: MERGE into the CURRENT map/history (never overwrite the subtree).
       const attestationHistory = [...w.attestationHistory, attestation];
       const attestations = { ...w.attestations, [requirementId]: attestation };
-      // dual-edge, edge #2: if parked in review and the gate now clears (executor dimension already
-      // satisfied + every verifier-attestation req passes + no unmet arc-gate), advance review→done.
+      // dual-edge edge #2: LEAF-only auto-advance (a gated ARC completes only via complete_work,
+      // which re-checks completionDependsOn — steve/architect: no gated-arc auto-advance until a
+      // fresh-row completionDependsOn reconciler exists).
       if (w.status === "review") {
         const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations });
         let executorDone = false;
@@ -1399,15 +1465,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         } catch {
           executorDone = false;
         }
-        const arcMet = w.completionDependsOn.length === 0; // a gated ARC re-checks the async k/N at complete_work
-        if (gate.attestationReqsSatisfied && executorDone && arcMet) {
+        const isLeaf = w.completionDependsOn.length === 0;
+        if (gate.attestationReqsSatisfied && executorDone && isLeaf) {
           const nowISO = new Date().toISOString();
           return { ...w, attestationHistory, attestations, status: "done" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
         }
       }
       return { ...w, attestationHistory, attestations, updatedAt: new Date().toISOString() };
     });
-    return { item: written!, attestation };
+    return { item: written!, attestation: written!.attestations[requirementId] };
   }
 
   async verifyAttestation(workId: string, requirementId: string): Promise<AttestationVerification> {
@@ -1426,18 +1492,20 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     else if (req.evidenceAuthority !== "verifier-attestation") invalidReasons.push(`requirement '${requirementId}' is not evidenceAuthority=verifier-attestation (is ${req.evidenceAuthority ?? "executor-evidence"})`);
     if (!active) invalidReasons.push("no active attestation for this requirement");
     if (active && req) {
-      // RECOMPUTE the relocation-guard hashes + re-resolve role/refs — never trust the stored values.
+      // RECOMPUTE the relocation-guard hashes — never trust the stored values.
       if (active.requirementHash !== hashRequirement(req)) invalidReasons.push("requirementHash mismatch — the requirement descriptor changed after attestation");
       if (active.targetRefHash !== hashTargetRef(item.targetRef)) invalidReasons.push("targetRefHash mismatch — the item's targetRef changed after attestation (relocation)");
       if (active.evidenceSetHash !== hashEvidenceSet(active.evidenceRefs)) invalidReasons.push("evidenceSetHash mismatch — the recorded evidence set is inconsistent");
-      if (!active.evidenceRefs || active.evidenceRefs.length === 0) invalidReasons.push("attestation has no evidence refs");
       const role = await this.resolveAgentRole(active.verifierId);
       if (role !== "verifier") invalidReasons.push(`verifier ${active.verifierId} does not resolve to a verifier role (role=${role ?? "unknown"})`);
+      // self-attestation set = executorHistory ∪ {creator, current holder} (steve audit-11832 #3: include holder).
       const excluded = new Set<string>(item.executorHistory);
       if (item.createdBy?.agentId) excluded.add(item.createdBy.agentId);
-      if (excluded.has(active.verifierId)) invalidReasons.push(`verifier ${active.verifierId} is in the executor/creator history (self-attestation)`);
-      const related = new Set<string>([item.id, ...(item.targetRef ? [item.targetRef.id] : []), ...item.evidence.map((e) => e.ref).filter((r): r is string => !!r)]);
-      if (active.evidenceRefs.length > 0 && !active.evidenceRefs.some((r) => related.has(r))) invalidReasons.push("no evidenceRef resolves/relates to the work (evidence entries / id / targetRef)");
+      if (item.lease?.holder) excluded.add(item.lease.holder);
+      if (excluded.has(active.verifierId)) invalidReasons.push(`verifier ${active.verifierId} is in the executor/holder/creator history (self-attestation)`);
+      // RECOMPUTE the exact same typed-ref validation as attest_evidence (drift → invalid).
+      const resolved = await this.resolveEntityRefs(active.evidenceRefs);
+      invalidReasons.push(...this.classifyEvidenceRefs(active.evidenceRefs, item, resolved).reasons);
     }
     return { workId, requirementId, valid: invalidReasons.length === 0, invalidReasons, active, history, legacyReviewEvidencePresent };
   }

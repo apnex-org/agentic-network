@@ -128,6 +128,20 @@ export type EvidenceAuthority = "executor-evidence" | "verifier-attestation";
 /** SEAL verdict (idea-444) — the load-bearing pass/fail a verifier records via `attest_evidence`. */
 export type AttestationVerdict = "pass" | "fail";
 
+/** SEAL (idea-444) — a TYPED, per-ref-classified evidence reference bound to an attestation
+ *  (steve audit-11832 #2: a bare `string[]` with "≥1 relates" is not a sufficient authority gate).
+ *  Every ref is validated by its `kind` — and ≥1 must be LOAD-BEARING (an `evidence` entry or a
+ *  resolving non-self `entity`), never prose or the item's own id:
+ *    - `"evidence"`: `ref` MUST equal a concrete `evidence[].ref` already submitted on the item.
+ *    - `"entity"`:   `ref` is `Kind/id` (e.g. `bug/bug-9`); existence-resolved via the substrate;
+ *                    the item's OWN id does not count as load-bearing.
+ *    - `"external"`: `ref` is a non-empty locator (PR url / commit sha); format-only, honestly
+ *                    unresolvable server-side, NEVER load-bearing on its own. */
+export interface AttestationEvidenceRef {
+  kind: "evidence" | "entity" | "external";
+  ref: string;
+}
+
 /** SEAL attestation (idea-444) — a verifier's server-stamped, load-bearing verdict against a
  *  `verifier-attestation` requirement. Append-only in `status.attestationHistory[]`; the active
  *  (latest, non-superseded) attestation per requirement is projected into `status.attestations`.
@@ -143,9 +157,9 @@ export interface Attestation {
   /** The load-bearing verdict. `pass` satisfies the requirement's gate; `fail` parks it in review. */
   verdict: AttestationVerdict;
   producedAt: string;
-  /** >=1 typed evidence ref (WorkItem evidence entry / OIS-internal entity id; external = format-only).
-   *  Non-empty REQUIRED — a bare pass/fail with no referent is the trust-by-prose verdict SEAL kills. */
-  evidenceRefs: string[];
+  /** ≥1 TYPED evidence ref; ≥1 must be load-bearing (an `evidence` entry / resolving non-self
+   *  `entity`). A bare pass/fail with no resolvable referent is the trust-by-prose verdict SEAL kills. */
+  evidenceRefs: AttestationEvidenceRef[];
   /** Relocation guard (A2): a hash of the requirement descriptor at attest time — the validator
    *  recomputes and rejects if the requirement mutated out from under the attestation. */
   requirementHash: string;
@@ -432,7 +446,7 @@ export interface IWorkItemStore {
     requirementId: string,
     verifierId: string,
     verdict: AttestationVerdict,
-    evidenceRefs: string[],
+    evidenceRefs: AttestationEvidenceRef[],
     note?: string,
   ): Promise<{ item: WorkItem; attestation: Attestation }>;
 

@@ -92,7 +92,7 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   it("SEAL: attest_evidence is [Verifier]-gated — an ENGINEER is denied at the router", async () => {
     // The role gate rejects before the handler runs (server-stamped authority, not caller-claimed).
     const stub = makeStub({});
-    const r = await router.handle("attest_evidence", { workId: "work-1", requirementId: "att", verdict: "pass", evidenceRefs: ["work-1"] }, ctxFor(stub, "engineer"));
+    const r = await router.handle("attest_evidence", { workId: "work-1", requirementId: "att", verdict: "pass", evidenceRefs: [{ kind: "evidence", ref: "work-1" }] }, ctxFor(stub, "engineer"));
     expect(r.isError).toBe(true);
   });
 

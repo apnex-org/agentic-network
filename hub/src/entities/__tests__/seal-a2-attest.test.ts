@@ -26,6 +26,9 @@ async function setup() {
   // `role` field into the spec bucket → get().spec.role. (Seeding {spec:{role}} would double-nest.)
   await substrate.put("Agent", { id: "agent-verifier", role: "verifier" });
   await substrate.put("Agent", { id: "agent-eng", role: "engineer" });
+  // the targetRef entity (for entity-ref relatedness) + an UNRELATED entity (existence-theatre test)
+  await substrate.put("mission", { id: "m-1" });
+  await substrate.put("bug", { id: "bug-99" });
   return { substrate, repo };
 }
 
@@ -50,7 +53,7 @@ describe("SEAL A2 — attest_evidence authority", () => {
     const { repo } = await setup();
     const { workId, completed } = await sealItemInReview(repo);
     expect(completed!.status).toBe("review"); // parked: verifier-attestation req pending
-    const { item, attestation } = await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [workId]);
+    const { item, attestation } = await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }]);
     expect(attestation.verifierId).toBe("agent-verifier");
     expect(item.status).toBe("done");
     expect(item.attestations["att"].verdict).toBe("pass");
@@ -60,7 +63,7 @@ describe("SEAL A2 — attest_evidence authority", () => {
   it("HISTORY check: an agent who executed the item CANNOT attest it (release-then-attest closed)", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
-    await expect(repo.attestEvidence(workId, "att", "agent-eng", "pass", [workId])).rejects.toThrow(AttestationRejected);
+    await expect(repo.attestEvidence(workId, "att", "agent-eng", "pass", [{ kind: "evidence", ref: "pr-1" }])).rejects.toThrow(AttestationRejected);
   });
 
   it("HARD FENCE: executor evidence bound to a verifier-attestation req is rejected at complete_work", async () => {
@@ -77,7 +80,7 @@ describe("SEAL A2 — attest_evidence authority", () => {
   it("attest on an executor-evidence (default) requirement is rejected", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
-    await expect(repo.attestEvidence(workId, "exec", "agent-verifier", "pass", [workId])).rejects.toThrow(AttestationRejected);
+    await expect(repo.attestEvidence(workId, "exec", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }])).rejects.toThrow(AttestationRejected);
   });
 
   it("empty evidenceRefs rejected (no trust-by-prose verdict)", async () => {
@@ -86,25 +89,38 @@ describe("SEAL A2 — attest_evidence authority", () => {
     await expect(repo.attestEvidence(workId, "att", "agent-verifier", "pass", [])).rejects.toThrow(AttestationRejected);
   });
 
-  it("unrelated evidenceRefs rejected (must bind to concrete work evidence)", async () => {
+  it("an evidence ref matching no submitted evidence entry is rejected", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
-    await expect(repo.attestEvidence(workId, "att", "agent-verifier", "pass", ["totally-unrelated"])).rejects.toThrow(AttestationRejected);
+    await expect(repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "no-such-entry" }])).rejects.toThrow(AttestationRejected);
   });
 
-  it("evidenceRef relates via an evidence entry ref / targetRef id (not just the item id)", async () => {
+  it("an ENTITY ref that is the item's targetRef is load-bearing", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
-    const viaEvidence = await repo.attestEvidence(workId, "att", "agent-verifier", "pass", ["pr-1"]);
-    expect(viaEvidence.item.status).toBe("done");
+    const via = await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "entity", ref: "mission/m-1" }]);
+    expect(via.item.status).toBe("done");
+  });
+
+  it("EXISTENCE-THEATRE: an entity ref that resolves but is NOT related to the work is rejected", async () => {
+    const { repo } = await setup();
+    const { workId } = await sealItemInReview(repo);
+    // bug-99 exists in the substrate but has no relation to this work / its target.
+    await expect(repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "entity", ref: "bug/bug-99" }])).rejects.toThrow(AttestationRejected);
+  });
+
+  it("an EXTERNAL ref alone is NOT load-bearing (rejected)", async () => {
+    const { repo } = await setup();
+    const { workId } = await sealItemInReview(repo);
+    await expect(repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "external", ref: "https://github.com/o/r/pull/1" }])).rejects.toThrow(AttestationRejected);
   });
 
   it("FAIL keeps the item in review; a later PASS supersedes + unparks to done (append-only)", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
-    const failed = await repo.attestEvidence(workId, "att", "agent-verifier", "fail", [workId]);
+    const failed = await repo.attestEvidence(workId, "att", "agent-verifier", "fail", [{ kind: "evidence", ref: "pr-1" }]);
     expect(failed.item.status).toBe("review");
-    const passed = await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [workId]);
+    const passed = await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }]);
     expect(passed.item.status).toBe("done");
     expect(passed.attestation.supersedes).toBeDefined();
     expect(passed.item.attestationHistory).toHaveLength(2); // history is append-only
@@ -115,8 +131,8 @@ describe("SEAL A2 — attest_evidence authority", () => {
     const { repo } = await setup();
     const att2: EvidenceRequirement = { id: "att2", kind: "freeform", evidenceAuthority: "verifier-attestation" };
     const { workId } = await sealItemInReview(repo, [EXEC, ATT, att2]);
-    await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [workId]);
-    const second = await repo.attestEvidence(workId, "att2", "agent-verifier", "pass", [workId]);
+    await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }]);
+    const second = await repo.attestEvidence(workId, "att2", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }]);
     expect(second.item.attestations["att"].verdict).toBe("pass"); // first preserved
     expect(second.item.attestations["att2"].verdict).toBe("pass");
     expect(second.item.status).toBe("done"); // both cleared → done
@@ -125,7 +141,7 @@ describe("SEAL A2 — attest_evidence authority", () => {
   it("RELOCATION guard: targetRef is frozen once an attestation exists (updateWork rejects)", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
-    await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [workId]);
+    await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }]);
     await expect(
       repo.updateWorkItem(workId, { agentId: "arch-1", role: "architect" }, { set: { targetRef: { kind: "mission", id: "m-2" } } }),
     ).rejects.toThrow(TransitionRejected);
@@ -136,7 +152,7 @@ describe("SEAL A2 — verify_attestation (recompute)", () => {
   it("a valid attestation → valid:true with the active record", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
-    await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [workId]);
+    await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }]);
     const v = await repo.verifyAttestation(workId, "att");
     expect(v.valid).toBe(true);
     expect(v.active?.verdict).toBe("pass");
@@ -146,7 +162,7 @@ describe("SEAL A2 — verify_attestation (recompute)", () => {
   it("flags a verifier that does not resolve to a verifier role", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
-    await repo.attestEvidence(workId, "att", "agent-ghost", "pass", [workId]); // not seeded as verifier
+    await repo.attestEvidence(workId, "att", "agent-ghost", "pass", [{ kind: "evidence", ref: "pr-1" }]); // not seeded as verifier
     const v = await repo.verifyAttestation(workId, "att");
     expect(v.valid).toBe(false);
     expect(v.invalidReasons.some((r) => r.includes("verifier"))).toBe(true);

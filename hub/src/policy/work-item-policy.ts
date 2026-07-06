@@ -42,6 +42,7 @@ import type {
   WorkItemPhase,
   ReadyEmptyReason,
   AttestationVerdict,
+  AttestationEvidenceRef,
 } from "../entities/work-item.js";
 
 // ── work-94 (cold-start spine): the NON-DARK empty-digest reasons ────────────────────
@@ -823,7 +824,7 @@ async function attestEvidence(args: Record<string, unknown>, ctx: IPolicyContext
   const workId = args.workId as string;
   const requirementId = args.requirementId as string;
   const verdict = args.verdict as AttestationVerdict;
-  const evidenceRefs = (args.evidenceRefs as string[] | undefined) ?? [];
+  const evidenceRefs = (args.evidenceRefs as AttestationEvidenceRef[] | undefined) ?? [];
   const note = typeof args.note === "string" ? args.note : undefined;
   try {
     const { item, attestation } = await store.attestEvidence(workId, requirementId, caller.agentId, verdict, evidenceRefs, note);
@@ -1037,12 +1038,15 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "attest_evidence",
-    "[Verifier] SEAL (idea-444): record a load-bearing pass/fail ATTESTATION against a verifier-attestation requirement — the authority-separated verdict that retires the audit-as-verdict path. verifierId is SERVER-STAMPED from the session (caller cannot forge it). Rejects: a non-verifier-attestation requirement; empty evidenceRefs or refs that don't relate to the work (>=1 must resolve to an evidence entry / the item id / its targetRef — no trust-by-prose); a verifierId in the item's executor/holder/creator HISTORY (self-attestation — closes release-then-attest); a targetRef that moved since an attestation exists (relocation laundering). Appends to the append-only attestationHistory + repoints the active projection under CAS (preserve-not-inject MERGE). DUAL-EDGE: if the item is parked in review and the gate now clears, advances review→done in the same write. A `fail` verdict parks/keeps it in review (a later `pass` supersedes + unparks).",
+    "[Verifier] SEAL (idea-444): record a load-bearing pass/fail ATTESTATION against a verifier-attestation requirement — the authority-separated verdict that retires the audit-as-verdict path. verifierId is SERVER-STAMPED from the session (caller cannot forge it). Rejects: a non-verifier-attestation requirement; evidenceRefs that fail typed validation or lack a load-bearing ref (see below); a verifierId in the item's executor/holder/creator HISTORY (self-attestation — closes release-then-attest); a targetRef that moved since an attestation exists (relocation laundering). All row-derived checks (hashes, history, ref-relatedness) run against the FRESH row under CAS. Appends to the append-only attestationHistory + repoints the active projection (preserve-not-inject MERGE). DUAL-EDGE: for a LEAF item parked in review, a passing gate advances review→done in the same write (a GATED-ARC node still completes only via complete_work, which re-checks its completionDependsOn). A `fail` verdict keeps it in review (a later `pass` supersedes + unparks).",
     {
       workId: z.string().describe("The WorkItem the requirement lives on"),
       requirementId: z.string().describe("The evidenceRequirement.id (must have evidenceAuthority=verifier-attestation)"),
       verdict: z.enum(["pass", "fail"]).describe("The load-bearing verdict — pass satisfies the gate; fail parks in review"),
-      evidenceRefs: z.array(z.string().min(1)).min(1).describe("≥1 typed evidence ref; ≥1 must relate to the work (an evidence entry ref / the item id / its targetRef id). External refs are format-only. A bare verdict with no referent is rejected (criterion #3)."),
+      evidenceRefs: z.array(z.object({
+        kind: z.enum(["evidence", "entity", "external"]),
+        ref: z.string().min(1),
+      }).strict()).min(1).describe("≥1 TYPED evidence ref; ≥1 must be LOAD-BEARING. kind='evidence' → ref MUST match a submitted evidence[].ref on the item; kind='entity' → 'Kind/id' that existence-resolves AND relates to this work (its targetRef, or an audit whose relatedEntity is this work/target, or a done review-gate for this work) — NEVER the item's own id; kind='external' → a non-empty locator (PR url / commit sha), recorded but honestly unresolvable server-side, NEVER load-bearing. A verdict with no load-bearing ref is rejected (criterion #3)."),
       note: z.string().optional().describe("Optional freeform reviewer note"),
     },
     attestEvidence,
