@@ -101,6 +101,8 @@ describe("E2E Foundation", () => {
       // work-162 (A1): Task (create/get/list/cancel_task, create/get_report),
       // Turn (create/get/list/update_turn), Clarification (create/resolve/
       // get_clarification), Review (create/get_review) verbs retired.
+      // SEAL-C (idea-444): create_audit_entry + list_audit_entries retired (audit-verdict
+      // authoring is now attest_evidence; the legacy Audit KIND stays read-only, fenced).
       const tools = orch.router.getAllToolNames().sort();
       expect(tools).toEqual([
         "ack_message",
@@ -108,7 +110,6 @@ describe("E2E Foundation", () => {
         "claim_session",
         "close_proposal",
         "close_thread",
-        "create_audit_entry",
         // "create_document" REMOVED at mission-83 W6-narrowed (document-policy deleted; deferred to idea-300)
         "create_idea",
         "create_message",
@@ -130,7 +131,7 @@ describe("E2E Foundation", () => {
         "get_proposal",
         "get_thread",
         "leave_thread",
-        "list_audit_entries",
+        // "list_audit_entries" RETIRED at SEAL-C (idea-444)
         // "list_documents" REMOVED at mission-83 W6-narrowed (deferred to idea-300)
         "list_ideas",
         "list_messages",

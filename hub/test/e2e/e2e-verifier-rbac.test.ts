@@ -49,27 +49,11 @@ describe("E2E Verifier RBAC (mission-93 #338 pre-deploy gate)", () => {
     expect(orch.stores.engineerRegistry.getRole("session-verifier-default")).toBe("verifier");
   });
 
-  // ── ALLOW: verdict + observe surface ([Architect|Verifier]) ───────
-
-  it("ALLOWS create_audit_entry (the verifier's durable verdict surface)", async () => {
-    const r = await verifier.call("create_audit_entry", {
-      action: "auto_review",
-      details: "verifier verdict: PR #338 escalation chain independently verified closed",
-      relatedEntity: "task-424",
-    });
-    expect(r.isError).toBeUndefined();
-    expect(JSON.parse(r.content[0].text).success).toBe(true);
-  });
-
-  it("attributes the verifier's audit entry to actor='verifier' (not silently 'architect')", async () => {
-    // mis-attributing the verdict to 'architect' would defeat the
-    // independent-verifier point (audit-policy.ts derives actor from role).
-    await verifier.call("create_audit_entry", { action: "auto_review", details: "verdict record" });
-    const list = await verifier.call("list_audit_entries", { actor: "verifier" });
-    const parsed = JSON.parse(list.content[0].text);
-    expect(parsed.count).toBeGreaterThanOrEqual(1);
-    expect(parsed.entries.every((e: { actor: string }) => e.actor === "verifier")).toBe(true);
-  });
+  // ── ALLOW: observe surface ([Verifier]) ───────
+  // SEAL-C (idea-444): the verifier's durable verdict surface is RE-HOMED from create_audit_entry
+  // (retired) to attest_evidence (A2, [Verifier]-RBAC + server-stamped verifierId — a stronger,
+  // load-bearing verdict). The create_audit_entry/list_audit_entries RBAC cases are retired here;
+  // attest_evidence's [Verifier] RBAC is covered in seal-a2-attest + work-item-policy.
 
   it("ALLOWS get_metrics (read-only observability counters)", async () => {
     const r = await verifier.call("get_metrics", {});
@@ -80,7 +64,8 @@ describe("E2E Verifier RBAC (mission-93 #338 pre-deploy gate)", () => {
   // ── ALLOW: read surface ([Any]) ───────────────────────────────────
 
   // work-162 (A1): list_tasks removed from the [Any] read GRANT set (retired).
-  it.each(["list_missions", "get_agents", "list_audit_entries"])(
+  // SEAL-C (idea-444): list_audit_entries retired from the [Any] read set.
+  it.each(["list_missions", "get_agents"])(
     "ALLOWS read tool %s ([Any])",
     async (tool) => {
       const r = await verifier.call(tool, {});

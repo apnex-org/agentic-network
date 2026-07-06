@@ -33,90 +33,16 @@ async function mutateAgentBlob(
 
 // ── Audit Policy ────────────────────────────────────────────────────
 
-describe("AuditPolicy", () => {
-  let router: PolicyRouter;
-  let ctx: IPolicyContext;
-
-  beforeEach(() => {
-    router = new PolicyRouter(noop);
+describe("AuditPolicy — RETIRED (SEAL C, idea-444)", () => {
+  // create_audit_entry + list_audit_entries are retired: verdict authoring is now attest_evidence
+  // (A2); the legacy Audit KIND stays read-only + fenced. Firehose-redirect + full kind-retirement
+  // + the observability-oracle migration = idea-457. See the SEAL-C catalog-negative test.
+  it("registers NO audit verbs — both retired", () => {
+    const router = new PolicyRouter(noop);
     registerAuditPolicy(router);
-    ctx = createTestContext();
-  });
-
-  it("registers all audit tools", () => {
-    expect(router.has("create_audit_entry")).toBe(true);
-    expect(router.has("list_audit_entries")).toBe(true);
-    expect(router.size).toBe(2);
-  });
-
-  it("create_audit_entry logs an entry", async () => {
-    const result = await router.handle("create_audit_entry", {
-      action: "auto_review",
-      details: "Reviewed task-1",
-      relatedEntity: "task-1",
-    }, ctx);
-
-    expect(result.isError).toBeUndefined();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.success).toBe(true);
-    expect(parsed.auditId).toBeDefined();
-  });
-
-  it("list_audit_entries returns logged entries", async () => {
-    await router.handle("create_audit_entry", {
-      action: "test_action",
-      details: "Test details",
-    }, ctx);
-
-    const result = await router.handle("list_audit_entries", {}, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.count).toBeGreaterThanOrEqual(1);
-  });
-
-  it("bug-196 — list_audit_entries compact:true omits the details body", async () => {
-    await router.handle("create_audit_entry", { action: "compact_test", details: "a long details body that bulk surveys do not need", relatedEntity: "task-9" }, ctx);
-    const compact = JSON.parse((await router.handle("list_audit_entries", { compact: true }, ctx)).content[0].text);
-    expect(compact.compact).toBe(true);
-    const e = compact.entries[0];
-    expect(e.action).toBe("compact_test");
-    expect(e.actor).toBeDefined();
-    expect(e.timestamp).toBeDefined();
-    expect(e.relatedEntity).toBe("task-9");
-    expect(e.details).toBeUndefined();   // the only long-text body OMITTED
-    // full mode preserves details
-    const full = JSON.parse((await router.handle("list_audit_entries", {}, ctx)).content[0].text);
-    expect(full.entries[0].details).toBe("a long details body that bulk surveys do not need");
-    // steve's #406 catch: an entry WITHOUT relatedEntity must have it PRESENT as null
-    // (NOT undefined-dropped by JSON.stringify) → consistent compact row shape.
-    await router.handle("create_audit_entry", { action: "no_related", details: "y" }, ctx);
-    const e2 = JSON.parse((await router.handle("list_audit_entries", { compact: true }, ctx)).content[0].text).entries[0];
-    expect(e2.action).toBe("no_related");
-    expect(Object.prototype.hasOwnProperty.call(e2, "relatedEntity")).toBe(true);
-    expect(e2.relatedEntity).toBeNull();
-  });
-
-  it("list_audit_entries supports limit", async () => {
-    for (let i = 0; i < 5; i++) {
-      await router.handle("create_audit_entry", {
-        action: `action_${i}`,
-        details: `Details ${i}`,
-      }, ctx);
-    }
-
-    const result = await router.handle("list_audit_entries", { limit: 3 }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.count).toBeLessThanOrEqual(3);
-  });
-
-  // ── CP2 C5 (task-307): _ois_query_unmatched sentinel ────────────
-  it("list_audit_entries fires _ois_query_unmatched when actor filter yields zero on non-empty log", async () => {
-    // Default ctx role is "architect"; seed an architect entry.
-    await router.handle("create_audit_entry", { action: "test", details: "seed" }, ctx);
-    // Filter for a different actor — log is non-empty but filter yields zero.
-    const result = await router.handle("list_audit_entries", { actor: "engineer" }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.count).toBe(0);
-    expect(parsed._ois_query_unmatched).toBe(true);
+    expect(router.has("create_audit_entry")).toBe(false);
+    expect(router.has("list_audit_entries")).toBe(false);
+    expect(router.size).toBe(0);
   });
 });
 
