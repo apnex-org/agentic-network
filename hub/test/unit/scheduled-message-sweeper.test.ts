@@ -49,7 +49,7 @@ async function makeFixture(now: () => number = () => Date.now()) {
     { forSweeper: () => ctx },
     { intervalMs: 50, logger: silentLogger, now },
   );
-  return { provider, counter, messageStore, threadStore, taskStore, auditStore, sweeper, ctx };
+  return { provider, counter, messageStore, threadStore, auditStore, sweeper, ctx };
 }
 
 const baseScheduledInput = {

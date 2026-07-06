@@ -76,7 +76,7 @@ function buildSweeperRig(opts: { omitRegistry?: boolean } = {}) {
     },
     { graceMs: 30_000, now: () => nowMs, intervalMs: 60_000 },
   );
-  return { sweeper, missionStore, messageStore, taskStore, ideaStore, advance, setNow, getNowMs: () => nowMs, dispatched };
+  return { sweeper, missionStore, messageStore, ideaStore, advance, setNow, getNowMs: () => nowMs, dispatched };
 }
 
 async function createPulseMission(

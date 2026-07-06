@@ -580,7 +580,7 @@ describe("MissionPolicy", () => {
     expect(compact.compact).toBe(true);
     const m = compact.missions[0];
     expect(m.title).toBe("M-compact");
-    expect(m.tasksCount).toBe(0);            // virtual `tasks` array → count
+    // work-162 (A1): tasksCount removed from the compact projection (Mission.tasks retired).
     expect(m.ideasCount).toBe(0);            // virtual `ideas` array → count
     expect(m.description).toBeUndefined();   // long-text OMITTED
     expect(m.tasks).toBeUndefined();         // heavy virtual array NOT inlined

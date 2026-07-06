@@ -20,129 +20,6 @@ describe("E2E Foundation", () => {
     eng = orch.asEngineer();
   });
 
-  // ── Scenario 1: Task Lifecycle (Happy Path) ─────────────────────
-
-  describe("Task Lifecycle (Happy Path)", () => {
-    it("Architect creates → Engineer picks up → reports → Architect reviews", async () => {
-      // 1. Architect creates a task
-      const task = await arch.createTask("Implement feature X", "Build the X feature with tests");
-      expect(task.taskId).toBe("task-1");
-      expect(task.status).toBe("pending");
-
-      // Event: task_issued → engineer
-      orch.events.expectEventFor("task_issued", "engineer");
-
-      // 2. Engineer picks up the task
-      const picked = await eng.getTask();
-      expect(picked.taskId).toBe("task-1");
-      expect(picked.status).toBe("working");
-
-      // 3. Engineer submits a report — task transitions to in_review (not completed)
-      const report = await eng.createReport("task-1", "Feature X implemented. All tests pass.", "Completed successfully");
-      expect(report.success).toBe(true);
-      expect(report.status).toBe("in_review");
-
-      // Event: report_submitted → architect
-      orch.events.expectEventFor("report_submitted", "architect");
-
-      // 4. Architect reviews the report (stores assessment; task stays in_review until T3 adds decision)
-      const review = await arch.createReview("task-1", "Excellent work. All requirements met.");
-      expect(review.success).toBe(true);
-
-      // Event: review_completed → engineer
-      orch.events.expectEventFor("review_completed", "engineer");
-
-      // Verify the full event sequence (no task_completed cascade on report)
-      orch.events.expectEventSequence([
-        "task_issued",
-        "directive_acknowledged",
-        "report_submitted",
-        "review_completed",
-      ]);
-    });
-
-    it("events target the correct roles throughout the lifecycle", async () => {
-      await arch.createTask("Task for role check", "Description");
-      await eng.getTask();
-      await eng.createReport("task-1", "Done", "OK");
-      await arch.createReview("task-1", "Good");
-
-      // Verify role targeting
-      const engineerEvents = orch.events.forRole("engineer");
-      const architectEvents = orch.events.forRole("architect");
-
-      // Engineer should receive: task_issued, review_completed
-      expect(engineerEvents.some((e) => e.event === "task_issued")).toBe(true);
-      expect(engineerEvents.some((e) => e.event === "review_completed")).toBe(true);
-
-      // Architect should receive: directive_acknowledged, report_submitted
-      expect(architectEvents.some((e) => e.event === "directive_acknowledged")).toBe(true);
-      expect(architectEvents.some((e) => e.event === "report_submitted")).toBe(true);
-
-      // Architect should NOT receive task_issued (that's for engineers)
-      expect(architectEvents.some((e) => e.event === "task_issued")).toBe(false);
-    });
-  });
-
-  // ── Scenario 2: Clarification Round-Trip ────────────────────────
-
-  describe("Clarification Round-Trip", () => {
-    it("working → input_required → working state transitions", async () => {
-      // Setup: create and pick up a task
-      await arch.createTask("Ambiguous task", "Do the thing");
-      await eng.getTask();
-      orch.events.clear(); // reset for clean assertions
-
-      // 1. Engineer requests clarification
-      const clarReq = await eng.requestClarification("task-1", "What format should the output be?");
-      expect(clarReq.success).toBe(true);
-      expect(clarReq.status).toBe("input_required");
-
-      // Event: clarification_requested → architect
-      orch.events.expectEventFor("clarification_requested", "architect");
-
-      // 2. Engineer checks — not yet answered
-      const before = await eng.getClarification("task-1");
-      expect(before.answered).toBe(false);
-      expect(before.question).toBe("What format should the output be?");
-      expect(before.status).toBe("input_required");
-
-      // 3. Architect answers
-      const clarRes = await arch.resolveClarification("task-1", "Use JSON format with ISO timestamps");
-      expect(clarRes.success).toBe(true);
-      expect(clarRes.status).toBe("working");
-
-      // Event: clarification_answered → engineer
-      orch.events.expectEventFor("clarification_answered", "engineer");
-
-      // 4. Engineer checks — now answered
-      const after = await eng.getClarification("task-1");
-      expect(after.answered).toBe(true);
-      expect(after.answer).toBe("Use JSON format with ISO timestamps");
-      expect(after.status).toBe("working");
-
-      // Verify event sequence
-      orch.events.expectEventSequence([
-        "clarification_requested",
-        "clarification_answered",
-      ]);
-    });
-
-    it("clarification on non-working task throws E2EError", async () => {
-      // Task doesn't exist
-      await expect(
-        eng.requestClarification("task-999", "Any question")
-      ).rejects.toThrow(/not found or not in working/);
-    });
-
-    it("resolve on non-input_required task throws E2EError", async () => {
-      // Task doesn't exist in input_required state
-      await expect(
-        arch.resolveClarification("task-999", "Any answer")
-      ).rejects.toThrow(/not found or not in input_required/);
-    });
-  });
-
   // ── Scenario 3: Thread Convergence ──────────────────────────────
 
   describe("Thread Convergence", () => {
@@ -221,33 +98,29 @@ describe("E2E Foundation", () => {
       // (pending-action-policy tools like `prune_stuck_queue_items` are NOT
       // registered on the orchestrator router — orchestrator skips
       // `registerPendingActionPolicy`.)
+      // work-162 (A1): Task (create/get/list/cancel_task, create/get_report),
+      // Turn (create/get/list/update_turn), Clarification (create/resolve/
+      // get_clarification), Review (create/get_review) verbs retired.
       const tools = orch.router.getAllToolNames().sort();
       expect(tools).toEqual([
         "ack_message",
-        "cancel_task",
         "claim_message",
         "claim_session",
         "close_proposal",
         "close_thread",
         "create_audit_entry",
-        "create_clarification",
         // "create_document" REMOVED at mission-83 W6-narrowed (document-policy deleted; deferred to idea-300)
         "create_idea",
         "create_message",
         "create_mission",
         "create_proposal",
         "create_proposal_review",
-        "create_report",
-        "create_review",
-        "create_task",
         "create_thread",
         "create_thread_reply",
-        "create_turn",
         "force_close_thread",
         "force_fire_pulse",
         "get_agents",
         "get_backlog_health", // idea-363 (work-59): incorporation-constraint readout
-        "get_clarification",
         // "get_document" REMOVED at mission-83 W6-narrowed (deferred to idea-300)
         // "get_engineer_status" HARD-REMOVED at idea-355 SLICE-4 (bug-184); get_agents is canonical
         "get_idea",
@@ -255,11 +128,7 @@ describe("E2E Foundation", () => {
         "get_mission",
         "get_pending_actions",
         "get_proposal",
-        "get_report",
-        "get_review",
-        "get_task",
         "get_thread",
-        "get_turn",
         "leave_thread",
         "list_audit_entries",
         // "list_documents" REMOVED at mission-83 W6-narrowed (deferred to idea-300)
@@ -267,49 +136,32 @@ describe("E2E Foundation", () => {
         "list_messages",
         "list_missions",
         "list_proposals",
-        "list_tasks",
         "list_threads",
-        "list_turns",
         "migrate_agent_queue",
         "register_role",
-        "resolve_clarification",
         "signal_quota_blocked",
         "signal_quota_recovered",
         "signal_working_completed",
         "signal_working_started",
         "update_idea",
         "update_mission",
-        "update_turn",
       ]);
     });
 
-    it("multi-engineer support with distinct sessions", async () => {
-      const eng1 = orch.asEngineer("eng-1");
-      const eng2 = orch.asEngineer("eng-2");
-
-      // Create two tasks
-      await arch.createTask("Task 1", "For eng-1");
-      await arch.createTask("Task 2", "For eng-2");
-
-      // Each engineer picks up one
-      const picked1 = await eng1.getTask();
-      expect(picked1.taskId).toBe("task-1");
-
-      const picked2 = await eng2.getTask();
-      expect(picked2.taskId).toBe("task-2");
-    });
-
     it("EventCapture tracks correct event count", async () => {
+      // work-162 (A1): re-pointed off create_task → create_idea (idea_submitted).
       expect(orch.events.count()).toBe(0);
 
-      await arch.createTask("Counted task", "Description");
+      await arch.call("create_idea", { text: "Counted idea" });
       expect(orch.events.count()).toBeGreaterThan(0);
-      expect(orch.events.count("task_issued")).toBe(1);
+      expect(orch.events.count("idea_submitted")).toBe(1);
     });
 
     it("E2EError is thrown on policy errors", async () => {
+      // work-162 (A1): re-pointed off create_report → create_proposal_review on
+      // a non-existent proposal (still a policy error → E2EError).
       await expect(
-        eng.createReport("task-nonexistent", "Report", "Summary")
+        arch.reviewProposal("proposal-nonexistent", "approved", "fb")
       ).rejects.toThrow();
     });
   });

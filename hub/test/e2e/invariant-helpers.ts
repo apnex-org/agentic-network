@@ -328,7 +328,7 @@ export async function assertInvTH18(o: TestOrchestrator, mode: InvariantMode = "
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const reg = orch.stores.engineerRegistry as any;
     const agent = await reg.getAgentForSession("session-engineer-default");
-    if (!agent?.id) throw new Error("INV-TH18 helper: engineer not registered — call eng.call("list_missions", {}) or similar first");
+    if (!agent?.id) throw new Error("INV-TH18 helper: engineer not registered — call a read verb (e.g. list_missions) first");
     return agent.id as string;
   }
 
