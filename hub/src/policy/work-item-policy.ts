@@ -37,6 +37,7 @@ import type {
   EvidenceKind,
   EvidenceRequirement,
   WorkItemReference,
+  NodeConfig,
   WorkItemType,
   WorkItemPriority,
   WorkItemPhase,
@@ -629,6 +630,7 @@ interface BlueprintNode {
   runbook?: string;
   targetRef?: { kind: string; id: string } | null;
   payload?: unknown;
+  nodeConfig?: NodeConfig;
 }
 
 /** F3: Kahn topological sort over the UNION of dependsOn + completionDependsOn edges. Both
@@ -804,6 +806,7 @@ async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext)
         references: n.references,
         targetRef: n.targetRef ?? null,
         payload: n.payload,
+        nodeConfig: n.nodeConfig,
         createdBy: caller,
       });
       if (created) createdThisRun.push(localToWork.get(localId)!);
@@ -993,8 +996,24 @@ const referenceSchema = z.object({
 // work-87 (seed_blueprint): a declarative blueprint node. localId-keyed (template-internal);
 // dependsOn/completionDependsOn reference OTHER localIds in the same blueprint (NOT real work-ids
 // — the expander translates them to the minted ids). Mirrors the WorkItem node-contract.
+// W1 (idea-446 / work-181): the node-native backstop config a blueprint node may DECLARE —
+// authored fields only (the sweeper sets the bookkeeping; .strict() rejects it in a blueprint).
+// Declaring it here is what makes activation node-native + UNSKIPPABLE (proof-1 anti-skip):
+// a charter seeded via the activation-blueprint is born with its pulse on the node, never Mission.
+const nodePulseSchema = z.object({
+  intervalSeconds: z.number().int().min(60).describe("Pulse cadence in seconds (≥60s floor; ≥300s recommended)"),
+  message: z.string().min(1).describe("The status_check prompt body"),
+  responseShape: z.enum(["ack", "short_status", "full_status"]).describe("Pulse-response-shape hint to the renderer"),
+  missedThreshold: z.number().int().min(1).describe("Missed pulses before escalation"),
+  firstFireDelaySeconds: z.number().int().min(0).optional().describe("Delay before first fire (default: intervalSeconds)"),
+}).strict();
+const nodeConfigSchema = z.object({
+  pulse: nodePulseSchema.optional(),
+}).strict();
+
 const blueprintNodeSchema = z.object({
   localId: z.string().min(1).describe("Template-internal node key (alphanumeric/underscore); UNIQUE within the blueprint; referenced by other nodes' dependsOn/completionDependsOn."),
+  nodeConfig: nodeConfigSchema.optional().describe("W1 (idea-446): node-native backstop — the arc-node's own anti-idle pulse. Born-native via the activation-blueprint (unskippable): a charter seeded with this carries its pulse on the node, NOT the deprecated Mission machinery."),
   label: z.string().optional().describe("Human label (advisory)"),
   type: WORK_TYPE.describe("WorkItem type"),
   priority: WORK_PRIORITY.optional().describe("Priority (default: normal)"),

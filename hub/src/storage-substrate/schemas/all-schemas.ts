@@ -599,6 +599,11 @@ const WorkItem: SchemaDef = {
     attestationHistory: "status.attestationHistory",
     attestations: "status.attestations",
     executorHistory: "status.executorHistory",
+    // W1 (idea-446 / work-181): the node-native pulse subtree — status (lifecycle),
+    // non-filterable (surfaced on get_work, swept by role, not queried). Sweeper-written
+    // bookkeeping → status so every owner-path write round-trips it (preserve-not-inject);
+    // mirrors the kinds/WorkItem.ts status partition (sentinel-probe asserts the agreement).
+    nodeConfig: "status.nodeConfig",
     priority: "spec.priority",
     type: "spec.type",
     roleEligibility: "spec.roleEligibility",

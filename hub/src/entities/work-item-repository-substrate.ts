@@ -18,6 +18,7 @@ import type { EntityProvenance } from "../state.js";
 import { randomUUID, createHash } from "node:crypto";
 import type {
   WorkItem,
+  NodeConfig,
   WorkItemPhase,
   StateDurations,
   WorkItemType,
@@ -446,6 +447,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     leaseWindowMs?: number;
     targetRef?: { kind: string; id: string } | null;
     payload?: unknown;
+    /** W1 (idea-446): create_work parity for the node-native backstop pulse. */
+    nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
   }): Promise<WorkItem> {
     const num = await this.counter.next("workItemCounter");
@@ -464,6 +467,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       leaseWindowMs: input.leaseWindowMs,
       targetRef: input.targetRef ?? null,
       payload: input.payload,
+      ...(input.nodeConfig ? { nodeConfig: input.nodeConfig } : {}),
       status: "ready",
       lease: null,
       evidence: [],
@@ -589,6 +593,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     references?: WorkItemReference[];
     targetRef?: { kind: string; id: string } | null;
     payload?: unknown;
+    /** W1 (idea-446): born-native backstop — the activation-blueprint declares the
+     *  node's pulse so a charter is node-native at birth (proof-1 anti-skip). */
+    nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
   }): Promise<{ item: WorkItem; created: boolean }> {
     const now = new Date().toISOString();
@@ -605,6 +612,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       targetRef: input.targetRef ?? null,
       payload: input.payload,
       blueprintRunId: input.blueprintRunId,
+      ...(input.nodeConfig ? { nodeConfig: input.nodeConfig } : {}),
       status: "ready",
       lease: null,
       evidence: [],
