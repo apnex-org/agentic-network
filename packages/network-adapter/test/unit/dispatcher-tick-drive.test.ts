@@ -180,7 +180,10 @@ describe("idea-355 §4.3 — invariant #3: the W2 lease observer is wired kernel
         return "ok";
       }),
     );
-    const { dispatcher, onActionable } = build({ getAgent: () => agent });
+    // work-164: tiny active-work window so the agent reads STALLED by the tick
+    // (700ms after its last tool call) → the W2 stall-prompt fires (this test's
+    // concern). An active agent would instead auto-renew (covered separately).
+    const { dispatcher, onActionable } = build({ getAgent: () => agent, activeWorkWindowMs: 100 });
 
     // Drive a claim_work CallTool through the real handler — the kernel observer
     // at the onToolCallResult site feeds the lease tracker. NO shim wiring.
@@ -202,6 +205,44 @@ describe("idea-355 §4.3 — invariant #3: the W2 lease observer is wired kernel
       .find((e) => e.event === "work_lease_stall");
     expect(stall).toBeDefined();
     expect(stall!.data).toMatchObject({ workId: "work-77" });
+  });
+
+  it("work-164: an ACTIVE claim auto-heartbeats (renew_lease with the tracked token) instead of stall-prompting", async () => {
+    const T0 = 1_000_000_000_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+
+    const renewCalls: Array<Record<string, unknown>> = [];
+    const agent = streamingAgent(
+      ticking([], async (method, args) => {
+        if (method === "claim_work") {
+          return { workItem: { id: "work-88", lease: { token: "tok-88", expiresAt: new Date(T0 + 1000).toISOString() } } };
+        }
+        if (method === "renew_lease") {
+          renewCalls.push(args as Record<string, unknown>);
+          return { workItem: { id: "work-88", lease: { token: "tok-88", expiresAt: new Date(T0 + 700 + 1000).toISOString() } } };
+        }
+        return "ok";
+      }),
+    );
+    // Default (5-min) active window → the agent is still ACTIVE 700ms after its claim,
+    // so the auto-heartbeat renews rather than the stall-prompt firing.
+    const { dispatcher, onActionable } = build({ getAgent: () => agent });
+    const server = dispatcher.createMcpServer();
+    const callTool = (server as unknown as {
+      _requestHandlers: Map<string, (req: unknown) => Promise<unknown>>;
+    })._requestHandlers.get("tools/call")!;
+    await callTool({ method: "tools/call", params: { name: "claim_work", arguments: { workId: "work-88" } } });
+
+    vi.setSystemTime(T0 + 700); // 70% into the window, past the 0.5 renew threshold
+    await dispatcher.pollBackstop!.tickHeartbeat(() => agent);
+
+    // Renewed on the holder's behalf, carrying the tracked token; NO stall-prompt while active.
+    expect(renewCalls).toEqual([{ workId: "work-88", leaseToken: "tok-88" }]);
+    const stall = onActionable.mock.calls
+      .map((c) => c[0] as AgentEvent)
+      .find((e) => e.event === "work_lease_stall");
+    expect(stall).toBeUndefined();
   });
 });
 
@@ -246,6 +287,7 @@ describe("idea-355 §4.3 — invariant #1: the in-flight latch is released even 
       notificationHooks: { onActionableEvent: onActionable },
       pollBackstop: { role: "engineer" },
       getAgent: () => agent,
+      activeWorkWindowMs: 100, // work-164: read STALLED by the tick → W2 stall path (latch test)
     });
 
     // Track a lease via a real claim_work CallTool.

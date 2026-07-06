@@ -507,6 +507,12 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
   const evidenceRequirements = (args.evidenceRequirements as EvidenceRequirement[] | undefined) ?? [];
   const runbook = args.runbook as string | undefined;
   const references = (args.references as WorkItemReference[] | undefined) ?? [];
+  // work-164 (idea-395): optional node-type-aware lease window. Fail-closed on a
+  // nonsense value (the lease grant would silently fall back, hiding the typo).
+  const leaseWindowMs = args.leaseWindowMs as number | undefined;
+  if (leaseWindowMs !== undefined && !(Number.isFinite(leaseWindowMs) && leaseWindowMs > 0)) {
+    return err("invalid_arg", `leaseWindowMs must be a positive number of milliseconds (got ${leaseWindowMs})`);
+  }
 
   // The #416 per-node intrinsic validation (evidence-dup + runbook + required-refs) — shared
   // with the seed_blueprint expander (F2, one source of truth).
@@ -542,6 +548,7 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
       evidenceRequirements,
       runbook,
       references,
+      leaseWindowMs,
       targetRef: (args.targetRef as { kind: string; id: string } | null | undefined) ?? null,
       payload: args.payload,
       createdBy: caller,
@@ -909,6 +916,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       evidenceRequirements: z.array(evidenceRequirementSchema).optional().describe("Anti-gameability evidence contract enforced by complete_work"),
       runbook: z.string().optional().describe("work-86: the cold-start instruction the claimant executes. REQUIRED for a blueprint/gate node (type=verifier-gate or carrying references[]); a process-naive agent learns the task from it (no prior context)."),
       references: z.array(referenceSchema).optional().describe("work-86: typed inputs the node CONSUMES (the references(consume) leg of the node-contract). A required:true reference is fail-closed-validated to resolve at seed-time (inline content present | pinned git sha | hub-doc exists | entity exists) — a dangling required input is a cold-start trap, rejected at authoring."),
+      leaseWindowMs: z.number().positive().optional().describe("work-164 (idea-395): node-type-aware lease window in ms. Overrides the flat 15-min default for the claim/renew lease grant — mark known long-hold / design-first nodes 'extended' so a heavy cognitive turn is not reaped on the standard window. Omit for the default. Pairs with the adapter auto-heartbeat."),
       targetRef: targetRefSchema.nullable().optional().describe("Pointer to the entity this work is about ({kind,id}); opaque/advisory at create"),
       payload: z.unknown().optional().describe("Freeform work payload (e.g. the task brief)"),
     },
