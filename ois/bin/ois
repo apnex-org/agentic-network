@@ -215,41 +215,39 @@ claude_seed() {
       "$cdir/.claude.json" > "$tmp" && mv "$tmp" "$cdir/.claude.json"
   fi
   local sl; sl=$(jq -r '.statusLine // empty' <<<"$c")
-  # work-160: ultracode ON by default for every claude session (Director directive).
-  # Mechanism (deep-traced + A/B-verified against the v2.1.201 binary): TWO first-class
-  # settings.json booleans — ultracode:true AND enableWorkflows:true (ultracode
-  # REQUIRES workflows enabled). Read from merged settings at every session start;
-  # forces xhigh effort + dynamic workflow orchestration (session-start reminder reads
-  # "ultracode is on for the session"). Default-on at launch — an agent may /effort
-  # down mid-session but that is not persisted (reverts next launch). Do NOT add
-  # CLAUDE_CODE_EFFORT_LEVEL: a non-xhigh value SUPPRESSES ultracode. Fleet accounts
-  # must also hold the allow_workflows entitlement (no settings key grants it —
-  # confirm in the post-deploy settling check).
-  # work-160 (model default, Director directive): claude sessions default to Opus 4.8
-  # via the settings.json "model" key. VERIFIED it is load-bearing: an agent whose
-  # settings.json carries model:"opus" runs claude-opus-4-8 even though the harness
-  # exec passes --model {hubModelTag} — the settings key wins over the launch flag
-  # (greg/lily already carry it from the Director's /model). "opus" is the alias
-  # /model itself wrote (auto-tracks latest Opus). Seeded on BOTH paths, mirroring
-  # ultracode. (The harness hubModelTag is aligned to opus separately so --model,
-  # HUB_LLM_MODEL, and the ois ps/nodes display match the real session model.)
+  # work-160 (config-driven claude defaults — Director directive): the claude session
+  # defaults live DECLARATIVELY in the harness config (config/harnesses/claude.json
+  # .claudeSettings) and flow claude.json → merged cell $c → here, exactly like
+  # statusLine above. cell_json's deep-merge means an agent json can override
+  # .claudeSettings per-agent. Canonical set = {ultracode:true, enableWorkflows:true,
+  # model:"opus"}:
+  #   - ultracode + enableWorkflows: forces xhigh effort + dynamic workflow orchestration
+  #     (session-start reminder "ultracode is on for the session"); ultracode REQUIRES
+  #     enableWorkflows. Do NOT set CLAUDE_CODE_EFFORT_LEVEL — a non-xhigh value SUPPRESSES
+  #     ultracode. The account must ALSO hold the allow_workflows entitlement (no settings
+  #     key grants it — confirmed live in the settling check, else ultracode silently no-ops).
+  #   - model:"opus": VERIFIED load-bearing — the settings.json "model" key WINS over the
+  #     harness --model {hubModelTag} exec flag (greg/lily run claude-opus-4-8 from it);
+  #     "opus" auto-tracks latest Opus. hubModelTag is aligned to opus in claude.json so
+  #     --model / HUB_LLM_MODEL / the ois ps display all match.
+  local cs; cs=$(jq -c '.claudeSettings // {}' <<<"$c")
   if [[ ! -f "$cdir/settings.json" ]]; then
-    echo "  seeding : $cdir/settings.json (marketplace + plugin + prompt skips + statusline + ultracode + model=opus)"
-    jq -n --arg mp "$mp" --arg sl "$sl" '{skipDangerousModePermissionPrompt: true,
+    echo "  seeding : $cdir/settings.json (marketplace + plugin + prompt skips + statusline + claudeSettings=$cs)"
+    jq -n --arg mp "$mp" --arg sl "$sl" --argjson cs "$cs" '{skipDangerousModePermissionPrompt: true,
       extraKnownMarketplaces: {"agentic-network": {source: {source: "directory", path: $mp}}},
       enabledPlugins: {"agent-adapter@agentic-network": true},
-      permissions: {allow: ["mcp__plugin_agent-adapter_proxy__*"]},
-      ultracode: true, enableWorkflows: true, model: "opus"}
+      permissions: {allow: ["mcp__plugin_agent-adapter_proxy__*"]}}
+      + $cs
       + (if $sl != "" then {statusLine: {type: "command", command: $sl}} else {} end)' > "$cdir/settings.json"
   else
-    # Existing settings.json: UNCONDITIONAL idempotent merge — set the ultracode
-    # booleans + model on every seed (most agents are ALREADY seeded, so the
-    # fresh-create path never fires for them; the old statusLine-only elif never
-    # reached them), plus backfill statusLine only if absent. `. + {…}` is idempotent
-    # and leaves any other existing keys untouched.
-    echo "  seeding : ensuring ultracode+enableWorkflows+model=opus on existing settings.json (+statusLine backfill if absent)"
+    # Existing settings.json: UNCONDITIONAL idempotent merge of the declared claudeSettings
+    # (most agents are ALREADY seeded, so the fresh-create path never fires for them; the
+    # old statusLine-only elif never reached them), plus backfill statusLine only if absent.
+    # `. + $cs` is idempotent and leaves other keys untouched; a later change to
+    # .claudeSettings converges on the next re-seed.
+    echo "  seeding : merging claudeSettings ($cs) into existing settings.json (+statusLine backfill if absent)"
     local tmp="$cdir/settings.json.tmp.$$"
-    jq --arg sl "$sl" '. + {ultracode: true, enableWorkflows: true, model: "opus"}
+    jq --arg sl "$sl" --argjson cs "$cs" '. + $cs
       + (if $sl != "" and (.statusLine | not) then {statusLine: {type: "command", command: $sl}} else {} end)' \
       "$cdir/settings.json" > "$tmp" && mv "$tmp" "$cdir/settings.json"
   fi
@@ -637,7 +635,24 @@ case "$sub" in
   render) [[ $# -eq 2 ]] || fatal "usage: ois render <agent> <harness>"; cmd_render "$@" ;;
   env)    [[ $# -eq 2 ]] || fatal "usage: ois env <agent> <harness>"; cmd_env "$@" ;;
   check)  cmd_check "$@" ;;
-  seed)   [[ $# -ge 1 ]] || fatal "usage: ois seed <agent>"; c=$(cell_json "$1" claude); claude_seed "$c"; echo "seed OK" ;;
+  seed)
+    if [[ "${1:-}" == "--all" ]]; then
+      # work-160: re-seed EVERY claude agent so a settings change (e.g. new
+      # claudeSettings) lands immediately, not only when each agent next cycles.
+      # Skip agents that do not declare the claude harness (cell_json would fatal).
+      seed_n=0
+      for seed_f in "$CFG"/agents/*.json; do
+        [[ -e "$seed_f" ]] || fatal "no agents found in $CFG/agents"
+        seed_a=$(basename "$seed_f" .json)
+        jq -e '.harness.claude' "$seed_f" >/dev/null 2>&1 || { echo "  skip $seed_a (no claude harness)"; continue; }
+        echo "seed $seed_a:"; claude_seed "$(cell_json "$seed_a" claude)"; seed_n=$((seed_n+1))
+      done
+      echo "seed --all OK ($seed_n claude agents)"
+    else
+      [[ $# -ge 1 ]] || fatal "usage: ois seed <agent> | ois seed --all"
+      c=$(cell_json "$1" claude); claude_seed "$c"; echo "seed OK"
+    fi
+    ;;
   list)   cmd_list ;;
   doctor) cmd_doctor ;;
   *) fatal "usage: ois {launch|up|attach|say|confirm|decisions|show|down|ps|render|env|check|seed|list|doctor}" ;;
