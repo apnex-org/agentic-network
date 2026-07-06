@@ -19,6 +19,7 @@ import { MissionRepositorySubstrate as MissionRepository } from "../../src/entit
 import { MessageRepositorySubstrate as MessageRepository } from "../../src/entities/message-repository-substrate.js";
 import { IdeaRepositorySubstrate as IdeaRepository } from "../../src/entities/idea-repository-substrate.js";
 import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
+import { WorkItemRepositorySubstrate } from "../../src/entities/work-item-repository-substrate.js";
 import { PulseSweeper, pulseSelector } from "../../src/policy/pulse-sweeper.js";
 import { createMetricsCounter } from "../../src/observability/metrics.js";
 import type { IPolicyContext } from "../../src/policy/types.js";
@@ -32,6 +33,7 @@ function buildSweeperRig(opts: { omitRegistry?: boolean; agents?: Array<{ id: st
   const ideaStore = new IdeaRepository(storage, counter);
   const missionStore = new MissionRepository(storage, counter, ideaStore);
   const messageStore = new MessageRepository(storage);
+  const workItemStore = new WorkItemRepositorySubstrate(storage, counter);
   let nowMs = new Date("2026-04-26T10:00:00.000Z").getTime();
   const advance = (ms: number) => {
     nowMs += ms;
@@ -61,6 +63,7 @@ function buildSweeperRig(opts: { omitRegistry?: boolean; agents?: Array<{ id: st
           // so it never failed an assertion — pure noise masquerading as a flake).
           // An empty roster makes the agent-pulse pass a clean no-op. The
           // `omitRegistry` variant drops it to exercise the prod null-guard.
+          workItem: workItemStore,
           ...(opts.omitRegistry ? {} : { engineerRegistry: { listAgents: async () => (opts.agents ?? []) } }),
         },
         metrics: createMetricsCounter(),
@@ -76,7 +79,7 @@ function buildSweeperRig(opts: { omitRegistry?: boolean; agents?: Array<{ id: st
     },
     { graceMs: 30_000, now: () => nowMs, intervalMs: 60_000 },
   );
-  return { sweeper, missionStore, messageStore, ideaStore, advance, setNow, getNowMs: () => nowMs, dispatched };
+  return { sweeper, missionStore, messageStore, workItemStore, ideaStore, advance, setNow, getNowMs: () => nowMs, dispatched };
 }
 
 async function createPulseMission(
@@ -572,6 +575,111 @@ describe("PulseSweeper — S1a-(ii) target-agent-scoped authored-write crediting
     // long-lived, prolific target this fix targets.
     const m = (await rig.missionStore.getMission(mission.id))!;
     expect(m.pulses!.architectPulse!.missedCount ?? 0).toBe(0);
+  });
+});
+
+describe("PulseSweeper — W1 node-native pulse pass (idea-446 / work-181)", () => {
+  const PULSE = { intervalSeconds: 60, message: "status?", responseShape: "ack" as const, missedThreshold: 3, firstFireDelaySeconds: 60 };
+
+  async function makePulseNode(rig: ReturnType<typeof buildSweeperRig>, roleEligibility: string[]) {
+    return rig.workItemStore.createWorkItem({
+      type: "task", roleEligibility, evidenceRequirements: [], nodeConfig: { pulse: { ...PULSE } },
+    });
+  }
+  async function authorMessage(rig: ReturnType<typeof buildSweeperRig>, agentId: string, role: string) {
+    await rig.messageStore.createMessage({
+      kind: "note", authorRole: role as MessageAuthorRole, authorAgentId: agentId, target: null, delivery: "push-immediate", payload: { body: "working" },
+    });
+  }
+  // Like S1a-(ii): the sweeper clock is simulated but the stores stamp REAL time,
+  // so seed lastFiredAt to the real past → real-stamped writes land AFTER it.
+  async function seedFired(rig: ReturnType<typeof buildSweeperRig>, nodeId: string, overrides: Record<string, unknown> = {}) {
+    await rig.workItemStore.updateNodePulseBookkeeping(nodeId, { lastFiredAt: new Date(Date.now() - MS(200)).toISOString(), missedCount: 0, ...overrides });
+    rig.setNow(Date.now() + MS(1));
+  }
+
+  it("FIRES a node-native pulse when first-fire is due (message carries nodeId; bookkeeping advances)", async () => {
+    const rig = buildSweeperRig();
+    const node = await makePulseNode(rig, ["engineer"]);
+    rig.setNow(new Date(node.createdAt).getTime() + MS(61)); // past firstFireDelay
+    const r = await rig.sweeper.tick();
+    expect(r.fired).toBeGreaterThanOrEqual(1);
+    const msg = (await rig.messageStore.listMessages({})).find(
+      (m) => (m.payload as { pulseKind?: string; nodeId?: string })?.pulseKind === "status_check" && (m.payload as { nodeId?: string })?.nodeId === node.id,
+    );
+    expect(msg).toBeDefined();
+    const after = (await rig.workItemStore.getWorkItem(node.id))!;
+    expect(after.nodeConfig!.pulse!.lastFiredAt).toBeDefined();
+  });
+
+  it("LIVE (fork-c holder-scoped reprieve): the HOLDER's authored write credits liveness → NOT missed", async () => {
+    const rig = buildSweeperRig({ agents: [{ id: "eng-1", role: "engineer" }] });
+    const node = await makePulseNode(rig, ["engineer"]);
+    await rig.workItemStore.claimWorkItem(node.id, "eng-1", "engineer"); // holder = eng-1
+    await authorMessage(rig, "eng-1", "engineer"); // the HOLDER authored real work, no ack
+    await seedFired(rig, node.id);
+    await rig.sweeper.tick();
+    expect((await rig.workItemStore.getWorkItem(node.id))!.nodeConfig!.pulse!.missedCount ?? 0).toBe(0);
+  });
+
+  it("MISSED [load-bearing scoping]: holder quiescent WHILE another agent writes → still credits the node MISSED (holder-scoped, not any-agent)", async () => {
+    const rig = buildSweeperRig({ agents: [{ id: "eng-1", role: "engineer" }, { id: "eng-2", role: "engineer" }] });
+    const node = await makePulseNode(rig, ["engineer"]);
+    await rig.workItemStore.claimWorkItem(node.id, "eng-1", "engineer"); // holder = eng-1
+    await authorMessage(rig, "eng-2", "engineer"); // a DIFFERENT agent writes; the holder is silent
+    await seedFired(rig, node.id);
+    await rig.sweeper.tick();
+    // eng-2's write must NOT credit eng-1's node — else the S1a-(ii) multi-agent trap reappears.
+    expect((await rig.workItemStore.getWorkItem(node.id))!.nodeConfig!.pulse!.missedCount).toBe(1);
+  });
+
+  it("EMPTY roleEligibility (any-role, unleased): authored-write does NOT reprieve (ack-only) — no any-agent false-credit", async () => {
+    const rig = buildSweeperRig({ agents: [{ id: "eng-1", role: "engineer" }] });
+    const node = await makePulseNode(rig, []); // any-role, unleased
+    await authorMessage(rig, "eng-1", "engineer"); // some agent writes — must NOT credit
+    await seedFired(rig, node.id);
+    await rig.sweeper.tick();
+    expect((await rig.workItemStore.getWorkItem(node.id))!.nodeConfig!.pulse!.missedCount).toBe(1);
+  });
+
+  it("EMPTY roleEligibility: an ACK still credits LIVE (the fallback signal)", async () => {
+    const rig = buildSweeperRig();
+    const node = await makePulseNode(rig, []);
+    await seedFired(rig, node.id, { lastResponseAt: new Date(Date.now()).toISOString() }); // acked after fire
+    await rig.sweeper.tick();
+    expect((await rig.workItemStore.getWorkItem(node.id))!.nodeConfig!.pulse!.missedCount ?? 0).toBe(0);
+  });
+
+  // steve W1 gate #1 + #2 — the node ACK path (payload.nodeId, holder-scoped).
+  it("onPulseAcked (nodeId payload): a node ACK credits liveness — lastResponseAt set + missedCount reset", async () => {
+    const rig = buildSweeperRig();
+    const node = await makePulseNode(rig, ["engineer"]);
+    await seedFired(rig, node.id, { missedCount: 2 });
+    await rig.sweeper.onPulseAcked({ id: "m1", payload: { nodeId: node.id }, claimedBy: null } as unknown as Message);
+    const pulse = (await rig.workItemStore.getWorkItem(node.id))!.nodeConfig!.pulse!;
+    expect(pulse.missedCount).toBe(0);
+    expect(pulse.lastResponseAt).toBeDefined();
+  });
+
+  it("onPulseAcked (holder-scoped): a node ACK by a NON-holder is rejected — no credit", async () => {
+    const rig = buildSweeperRig({ agents: [{ id: "eng-1", role: "engineer" }] });
+    const node = await makePulseNode(rig, ["engineer"]);
+    await rig.workItemStore.claimWorkItem(node.id, "eng-1", "engineer"); // holder = eng-1
+    await seedFired(rig, node.id, { missedCount: 2 });
+    await rig.sweeper.onPulseAcked({ id: "m2", payload: { nodeId: node.id }, claimedBy: "eng-2" } as unknown as Message); // NON-holder
+    expect((await rig.workItemStore.getWorkItem(node.id))!.nodeConfig!.pulse!.missedCount).toBe(2); // NOT credited
+  });
+
+  it("FIRES on a LEASED node: delivery is holder-scoped (target agentId = holder)", async () => {
+    const rig = buildSweeperRig({ agents: [{ id: "eng-1", role: "engineer" }] });
+    const node = await makePulseNode(rig, ["engineer"]);
+    await rig.workItemStore.claimWorkItem(node.id, "eng-1", "engineer");
+    rig.setNow(new Date(node.createdAt).getTime() + MS(61));
+    await rig.sweeper.tick();
+    const msg = (await rig.messageStore.listMessages({})).find(
+      (m) => (m.payload as { nodeId?: string })?.nodeId === node.id && (m.payload as { pulseKind?: string })?.pulseKind === "status_check",
+    );
+    expect(msg?.target).toEqual({ agentId: "eng-1" }); // delivered to the HOLDER, not the role
   });
 });
 

@@ -49,9 +49,11 @@ import type {
   PulseConfig,
   PulseKey,
   Message,
+  MessageAuthorRole,
 } from "../entities/index.js";
+import type { WorkItem } from "../entities/work-item.js";
 import { PULSE_KEYS } from "../entities/index.js";
-import type { Selector, Agent, AgentPulseConfig } from "../state.js";
+import type { Selector, Agent, AgentPulseConfig, AgentRole } from "../state.js";
 import { AGENT_PULSE_KIND } from "../state.js";
 import type { IPolicyContext } from "./types.js";
 // Mission-68 W1 (Design v1.0 §4.2): precondition layer for pulses removed.
@@ -205,6 +207,16 @@ export class PulseSweeper {
     } catch (err) {
       result.errors += 1;
       this.logger.warn(`iterateAgentPulses pass failed`, err);
+    }
+    // W1 (idea-446 / work-181): the ADDITIVE node-native pulse pass — the
+    // backstop, carried on the arc-node itself. Runs ALONGSIDE the Mission-pulse
+    // passes (dual-run-safe per v0.3 §4); the live-cutover of an existing
+    // mission's pulse is the STAGED Director-ratified procedure, not this code.
+    try {
+      await this.iterateNodePulses(result);
+    } catch (err) {
+      result.errors += 1;
+      this.logger.warn(`iterateNodePulses pass failed`, err);
     }
     return result;
   }
@@ -742,7 +754,12 @@ export class PulseSweeper {
    * Public so the policy layer can invoke via `ctx.stores.pulseSweeper`.
    */
   async onPulseAcked(pulseMessage: Message): Promise<void> {
-    const payload = pulseMessage.payload as { missionId?: unknown };
+    const payload = pulseMessage.payload as { missionId?: unknown; nodeId?: unknown };
+    // W1 (idea-446): node-native pulse ACK path — a node pulse carries `nodeId` (not
+    // missionId), so without this branch a node ACK never credited nodeConfig.pulse
+    // bookkeeping → false misses/escalations (steve W1 gate #1).
+    const nodeId = typeof payload.nodeId === "string" ? payload.nodeId : null;
+    if (nodeId) return this.onNodePulseAcked(nodeId, pulseMessage);
     const missionId = typeof payload.missionId === "string" ? payload.missionId : null;
     if (!missionId) {
       this.logger.warn(
@@ -772,6 +789,35 @@ export class PulseSweeper {
     this.logger.log(`Acked ${pulseKey} on ${missionId} at ${responseAt}`);
   }
 
+  /** W1 (idea-446): node-native pulse ACK. HOLDER-SCOPED (steve W1 gate #2): a LEASED
+   *  node's pulse is credited ONLY by its FRESH holder — a same-role non-holder acking
+   *  must NOT credit (else it false-credits while the holder is silent — the S1a-(ii)
+   *  agent-scoping, on the ACK side). Credits lastResponseAt + resets missedCount.
+   *  Never throws (best-effort, like the mission ack path). */
+  private async onNodePulseAcked(nodeId: string, pulseMessage: Message): Promise<void> {
+    try {
+      const store = this.nodeStore();
+      if (!store) return;
+      const node = await store.getWorkItem(nodeId);
+      if (!node?.nodeConfig?.pulse) {
+        this.logger.warn(`onPulseAcked: node ${nodeId} carries no node pulse; skip`);
+        return;
+      }
+      const holder = node.lease?.holder;
+      const acker = (pulseMessage as { claimedBy?: string | null }).claimedBy ?? null;
+      if (holder && acker && acker !== holder) {
+        this.logger.warn(`onPulseAcked: node ${nodeId} ACK by ${acker} != fresh holder ${holder}; NOT crediting`);
+        return;
+      }
+      const responseAt = new Date().toISOString();
+      await store.updateNodePulseBookkeeping(nodeId, { lastResponseAt: responseAt, missedCount: 0 });
+      this.metrics?.increment("pulse.node.acked", { nodeId });
+      this.logger.log(`Acked node pulse ${nodeId} at ${responseAt}`);
+    } catch (err) {
+      this.logger.warn(`onNodePulseAcked failed for ${nodeId} (non-fatal)`, err);
+    }
+  }
+
   /**
    * Update sweeper-managed bookkeeping fields on a single pulse via
    * direct repository update. Bypasses MCP-tool boundary (which strips
@@ -781,6 +827,216 @@ export class PulseSweeper {
    * so missing fields in the incoming `pulses[pulseKey]` are preserved
    * from on-disk state.
    */
+  // ── W1 (idea-446 / work-181): the ADDITIVE node-native pulse pass ─────────────
+  // The anti-idle backstop carried on the arc-node itself (nodeConfig.pulse),
+  // reusing the merged S1a machinery: the no-silence floor (PULSE_ESCALATION_FLOOR_
+  // SECONDS) + authored-write crediting (hasAuthoredSince), agent-scoped per fork (c).
+  // Mission-pulse passes are untouched (dual-run-safe).
+
+  private nodeStore() {
+    const s = this.contextProvider.forSweeper().stores.workItem;
+    if (!s) return null;
+    return s;
+  }
+
+  /** Iterate pulse-carrying, non-terminal arc-nodes. nodeConfig.pulse is
+   *  status-partitioned + non-filterable (no index), so scan the observability
+   *  list + client-filter (bounded by the listWorkItems cap). NEVER throws
+   *  per-node — one bad node cannot stall the sweep. */
+  private async iterateNodePulses(result: PulseSweepResult): Promise<void> {
+    const store = this.nodeStore();
+    if (!store) return;
+    const { items, truncated } = await store.listWorkItems();
+    if (truncated) {
+      // FAIL-LOUD (steve W1 gate #5): nodeConfig.pulse is status-partitioned + non-filterable
+      // (no index), so the scan can't be scoped — a pulse-carrying node beyond the listWorkItems
+      // cap would be SILENTLY unbacked this tick. Surface it (error + metric) rather than hide it;
+      // a backstop scan that silently drops coverage is worse than none.
+      result.errors += 1;
+      this.metrics?.increment("pulse.node.scan_truncated", {});
+      this.logger.warn(
+        `iterateNodePulses: listWorkItems scan hit the cap (truncated) — a pulse-carrying node MAY be omitted this tick; node-pulse coverage is INCOMPLETE`,
+      );
+    }
+    const terminal = new Set(["done", "abandoned"]);
+    const pulseNodes = items.filter((n) => n.nodeConfig?.pulse && !terminal.has(n.status));
+    for (const node of pulseNodes) {
+      result.scanned += 1;
+      try {
+        const outcome = await this.evaluateNodePulse(node);
+        if (outcome === "fired") result.fired += 1;
+        else if (outcome === "escalated") result.escalated += 1;
+        else result.skipped += 1;
+      } catch (err) {
+        result.errors += 1;
+        this.logger.warn(`evaluateNodePulse failed for node ${node.id}`, err);
+      }
+    }
+  }
+
+  /** The node-pulse FSM — mirrors evaluatePulse (S1a): post-escalation floor,
+   *  fire-due, missed-detection-with-reprieve, fire. */
+  private async evaluateNodePulse(node: WorkItem): Promise<"fired" | "escalated" | "skipped"> {
+    const config = node.nodeConfig!.pulse!;
+    const nowMs = this.now();
+    const lastFiredMs = config.lastFiredAt ? new Date(config.lastFiredAt).getTime() : 0;
+
+    // 1. Post-escalation FLOOR CADENCE (S1a-(i) reuse): breached → keep firing at
+    //    a floor, never go silent.
+    if ((config.missedCount ?? 0) >= config.missedThreshold) {
+      const floorSeconds = Math.max(config.intervalSeconds, PULSE_ESCALATION_FLOOR_SECONDS);
+      const floorDueMs = lastFiredMs + floorSeconds * 1000;
+      if (nowMs < floorDueMs) return "skipped";
+      await this.fireNodePulse(node, config, floorDueMs);
+      return "fired";
+    }
+
+    // 2. Fire-due (first fire off node.createdAt + firstFireDelay; then cadence).
+    const baseFireMs = lastFiredMs > 0
+      ? lastFiredMs + config.intervalSeconds * 1000
+      : new Date(node.createdAt).getTime() + (config.firstFireDelaySeconds ?? config.intervalSeconds) * 1000;
+    if (nowMs < baseFireMs) {
+      return (await this.detectNodePulseMiss(node, config, nowMs)) ? "escalated" : "skipped";
+    }
+
+    // 4. Missed-detection on the PREVIOUS fire before firing the next.
+    if (await this.detectNodePulseMiss(node, config, nowMs)) return "escalated";
+
+    // 6. Fire.
+    await this.fireNodePulse(node, config, baseFireMs);
+    return "fired";
+  }
+
+  /** Missed-detection for a node pulse (S1a): ack OR authored-write credits
+   *  liveness (reprieve); else increment + escalate at threshold. Returns true
+   *  iff it escalated this pass. */
+  private async detectNodePulseMiss(node: WorkItem, config: PulseConfig, nowMs: number): Promise<boolean> {
+    const lastFiredMs = config.lastFiredAt ? new Date(config.lastFiredAt).getTime() : 0;
+    const lastResponseMs = config.lastResponseAt ? new Date(config.lastResponseAt).getTime() : 0;
+    const pulseFiredAtLeastOnce = lastFiredMs > 0;
+    const noAckSinceLastFire = lastResponseMs < lastFiredMs;
+    const graceElapsed = pulseFiredAtLeastOnce && nowMs - lastFiredMs > config.intervalSeconds * 1000 + this.graceMs;
+    if (!(pulseFiredAtLeastOnce && noAckSinceLastFire && graceElapsed)) return false;
+
+    // S1a-(ii) reprieve: an authored write by the node's TARGET agent credits
+    // liveness — NOT missed.
+    if (await this.nodeTargetAuthoredSince(node, lastFiredMs)) return false;
+
+    const store = this.nodeStore();
+    if (!store) return false;
+    const newMissed = (config.missedCount ?? 0) + 1;
+    await store.updateNodePulseBookkeeping(node.id, { missedCount: newMissed });
+    this.metrics?.increment("pulse.node.missed", { nodeId: node.id, missedCount: String(newMissed) });
+    if (newMissed >= config.missedThreshold) {
+      await this.escalateNodePulse(node, config, newMissed);
+      return true;
+    }
+    return false;
+  }
+
+  /** W1 fork (c): the node-pulse credits authored writes by the node's HOLDER if
+   *  leased (single-agent, precise), else its roleEligibility-role agents; EMPTY
+   *  roleEligibility (any-role) → NO reprieve (ack-only), so an any-agent write can
+   *  never false-credit (the S1a-(ii) multi-agent trap). The leased→holder branch
+   *  is the SAME holder-scoping W3's arc-child in-flight predicate uses — the same
+   *  predicate at the two ends of the lifecycle; keep them consistent (a future
+   *  refactor should share one helper so they can't drift). Fail-safe → false. */
+  private async nodeTargetAuthoredSince(node: WorkItem, sinceMs: number): Promise<boolean> {
+    try {
+      const holder = node.lease?.holder;
+      if (holder) return await this.messageStore.hasAuthoredSince(holder, sinceMs);
+      const roles = node.roleEligibility ?? [];
+      if (roles.length === 0) return false; // any-role → ack-only, never any-agent credit
+      const registry = this.contextProvider.forSweeper().stores.engineerRegistry;
+      if (!registry) return false;
+      const agents = await registry.listAgents();
+      for (const a of agents.filter((ag) => roles.includes(ag.role))) {
+        if (await this.messageStore.hasAuthoredSince(a.id, sinceMs)) return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Fire a node pulse (mirrors firePulse): restart-safe migrationSourceId,
+   *  role-targeted message, bookkeeping via updateNodePulseBookkeeping. */
+  private async fireNodePulse(node: WorkItem, config: PulseConfig, baseFireMs: number): Promise<void> {
+    const store = this.nodeStore();
+    if (!store) return;
+    const fireAt = new Date(baseFireMs).toISOString();
+    const migrationSourceId = `pulse:node:${node.id}:${fireAt}`;
+    const existing = await this.messageStore.findByMigrationSourceId(migrationSourceId);
+    if (existing) {
+      if (!config.lastFiredAt || new Date(config.lastFiredAt).getTime() < baseFireMs) {
+        await store.updateNodePulseBookkeeping(node.id, { lastFiredAt: fireAt });
+      }
+      return;
+    }
+    // W1 gate #2 (holder-scoped delivery): deliver to the specific HOLDER when the node is
+    // leased (so a same-role NON-holder can't claim/ack the pulse and false-credit it), else
+    // the eligible role, else broadcast. Symmetric with the holder-scoped ack + crediting.
+    const holder = node.lease?.holder ?? null;
+    const targetRole = node.roleEligibility && node.roleEligibility.length > 0 ? node.roleEligibility[0] : null;
+    const target = holder ? { agentId: holder } : targetRole ? { role: targetRole as MessageAuthorRole } : null;
+    const message = await this.messageStore.createMessage({
+      kind: "external-injection",
+      authorRole: "system",
+      authorAgentId: "hub",
+      target,
+      delivery: "push-immediate",
+      payload: {
+        pulseKind: "status_check",
+        nodeId: node.id,
+        intervalSeconds: config.intervalSeconds,
+        message: config.message,
+        responseShape: config.responseShape,
+      },
+      migrationSourceId,
+    });
+    await store.updateNodePulseBookkeeping(node.id, { lastFiredAt: fireAt });
+    this.metrics?.increment("pulse.node.fired", { nodeId: node.id });
+    this.logger.log(`Fired node pulse for ${node.id} at ${fireAt} (cadence ${config.intervalSeconds}s)`);
+    // W1 gate #3 (push-on-fire wake): dispatch message_arrived non-fatally, symmetric with the
+    // mission firePulse Path-A wake — else a node pulse persists but never wakes the session
+    // (the persisted-but-not-woken gap). Selector matches the delivery scope.
+    try {
+      const ctx = this.contextProvider.forSweeper();
+      const selector: Selector = holder ? { agentId: holder } : targetRole ? { roles: [targetRole as AgentRole] } : {};
+      await ctx.dispatch("message_arrived", { message }, selector);
+    } catch (err) {
+      this.logger.warn(`[PulseSweeper] node push-on-fire dispatch failed for ${node.id} (non-fatal)`, err);
+    }
+  }
+
+  /** Escalate a node pulse (E1 mediation invariant: architect-routed). */
+  private async escalateNodePulse(node: WorkItem, config: PulseConfig, missedCount: number): Promise<void> {
+    const store = this.nodeStore();
+    if (!store) return;
+    await this.messageStore.createMessage({
+      kind: "external-injection",
+      authorRole: "system",
+      authorAgentId: "hub",
+      target: { role: "architect" },
+      delivery: "push-immediate",
+      payload: {
+        pulseKind: "missed_threshold_escalation",
+        nodeId: node.id,
+        missedCount,
+        intervalSeconds: config.intervalSeconds,
+        threshold: config.missedThreshold,
+        title: `Arc-node ${node.id} pulse missed ${missedCount} times`,
+        details:
+          `Node-native backstop; cadence ${config.intervalSeconds}s; threshold ${config.missedThreshold}; ` +
+          `pulse CONTINUES at a floor cadence (S1a-(i) — no self-disable). Architect: evaluate + resolve OR ` +
+          `escalate to Director per categorised-concerns table.`,
+      },
+    });
+    await store.updateNodePulseBookkeeping(node.id, { lastEscalatedAt: new Date().toISOString() });
+    this.metrics?.increment("pulse.node.escalated", { nodeId: node.id, missedCount: String(missedCount) });
+    this.logger.warn(`Escalated node pulse for ${node.id} (missed ${missedCount}/${config.missedThreshold})`);
+  }
+
   private async updatePulseBookkeeping(
     missionId: string,
     pulseKey: PulseKey,

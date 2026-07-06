@@ -804,6 +804,46 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     expect(router.getToolRegistration("seed_blueprint")).toBeDefined();
   });
 
+  // W1 (idea-446 / work-181) — ANTI-SKIP structural proof (proof-1): activation is
+  // expressed AS a seed_blueprint that DECLARES the node's pulse, so a charter
+  // activated via the blueprint is BORN node-native — its backstop is on the arc-node,
+  // never the deprecated Mission machinery. Migration-IS-activation: you cannot reach
+  // an 'active' charter (via the blueprint) without the node-pulse; it's in the template.
+  it("W1 anti-skip: a declared nodeConfig.pulse is schema-accepted + reaches the node materialization (born node-native)", async () => {
+    const stub = expandStub();
+    const pulse = { intervalSeconds: 300, message: "stint status?", responseShape: "short_status", missedThreshold: 2 };
+    const r = await router.handle("seed_blueprint", {
+      runId: "act1", nodes: [node({ localId: "charter", nodeConfig: { pulse } })],
+    }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy(); // the .strict() blueprint schema ACCEPTS the declared node-pulse
+    const calls = bpCalls(stub.calls);
+    expect(calls).toHaveLength(1);
+    // the declared pulse reaches createBlueprintNode → the charter is born with its backstop
+    // ON THE NODE (proof-1). A Mission-pulse activation is unrepresentable via this path.
+    expect((calls[0].nodeConfig as { pulse?: unknown })?.pulse).toEqual(pulse);
+  });
+
+  it("W1: a blueprint node WITHOUT nodeConfig materializes with no node-pulse (pulse is declared, not automatic)", async () => {
+    const stub = expandStub();
+    await router.handle("seed_blueprint", { runId: "act2", nodes: [node({ localId: "plain" })] }, ctxFor(stub, "architect"));
+    expect(bpCalls(stub.calls)[0].nodeConfig).toBeUndefined();
+  });
+
+  // steve W1 gate #4 — inline nodes validate at the same boundary as nodesRef (no bypass).
+  it("W1: an INLINE node with an invalid node-pulse (sub-60s interval) is rejected — invalid_blueprint, zero created", async () => {
+    const stub = expandStub();
+    const r = await router.handle(
+      "seed_blueprint",
+      {
+        runId: "act3",
+        nodes: [node({ localId: "bad", nodeConfig: { pulse: { intervalSeconds: 5, message: "x", responseShape: "ack", missedThreshold: 1 } } })],
+      },
+      ctxFor(stub, "architect"),
+    );
+    expect(body(r).errorKind).toBe("invalid_blueprint");
+    expect(bpCalls(stub.calls).length).toBe(0); // fail-closed: nothing materialized
+  });
+
   it("RBAC: an ENGINEER is denied at the [Architect] gate (no nodes created)", async () => {
     const stub = expandStub();
     const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node()] }, ctxFor(stub, "engineer"));

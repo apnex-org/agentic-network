@@ -18,6 +18,7 @@ import type { EntityProvenance } from "../state.js";
 import { randomUUID, createHash } from "node:crypto";
 import type {
   WorkItem,
+  NodeConfig,
   WorkItemPhase,
   StateDurations,
   WorkItemType,
@@ -446,6 +447,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     leaseWindowMs?: number;
     targetRef?: { kind: string; id: string } | null;
     payload?: unknown;
+    /** W1 (idea-446): create_work parity for the node-native backstop pulse. */
+    nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
   }): Promise<WorkItem> {
     const num = await this.counter.next("workItemCounter");
@@ -464,6 +467,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       leaseWindowMs: input.leaseWindowMs,
       targetRef: input.targetRef ?? null,
       payload: input.payload,
+      ...(input.nodeConfig ? { nodeConfig: input.nodeConfig } : {}),
       status: "ready",
       lease: null,
       evidence: [],
@@ -589,6 +593,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     references?: WorkItemReference[];
     targetRef?: { kind: string; id: string } | null;
     payload?: unknown;
+    /** W1 (idea-446): born-native backstop — the activation-blueprint declares the
+     *  node's pulse so a charter is node-native at birth (proof-1 anti-skip). */
+    nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
   }): Promise<{ item: WorkItem; created: boolean }> {
     const now = new Date().toISOString();
@@ -605,6 +612,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       targetRef: input.targetRef ?? null,
       payload: input.payload,
       blueprintRunId: input.blueprintRunId,
+      ...(input.nodeConfig ? { nodeConfig: input.nodeConfig } : {}),
       status: "ready",
       lease: null,
       evidence: [],
@@ -1679,6 +1687,34 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * updated (re-decoded) WorkItem on success, null if absent. A TransitionRejected /
    * WipCapExceeded thrown by the transform propagates (the policy layer maps it).
    */
+  /** W1 (idea-446 / work-181): sweeper-only direct write of the node-native pulse
+   *  bookkeeping. Mirrors the Mission `updatePulseBookkeeping` — CAS-safe (the
+   *  transform preserves everything else; the pulse subtree is status-partitioned
+   *  so decodeEnvelopeToFlat round-trips it), no authz gate (the system sweeper is
+   *  the writer). No-op when the node carries no `nodeConfig.pulse`. */
+  async updateNodePulseBookkeeping(
+    nodeId: string,
+    delta: { lastFiredAt?: string; lastResponseAt?: string | null; missedCount?: number; lastEscalatedAt?: string | null },
+  ): Promise<void> {
+    await this.tryCasUpdate(nodeId, (w) => {
+      const pulse = w.nodeConfig?.pulse;
+      if (!pulse) return w; // no node pulse → CAS no-op
+      return {
+        ...w,
+        nodeConfig: {
+          ...w.nodeConfig,
+          pulse: {
+            ...pulse,
+            lastFiredAt: delta.lastFiredAt ?? pulse.lastFiredAt,
+            lastResponseAt: delta.lastResponseAt !== undefined ? delta.lastResponseAt : pulse.lastResponseAt,
+            missedCount: delta.missedCount !== undefined ? delta.missedCount : pulse.missedCount,
+            lastEscalatedAt: delta.lastEscalatedAt !== undefined ? delta.lastEscalatedAt : pulse.lastEscalatedAt,
+          },
+        },
+      };
+    });
+  }
+
   private async tryCasUpdate(
     workId: string,
     transform: (current: WorkItem) => WorkItem,

@@ -14,6 +14,19 @@
  * object here.
  */
 import type { EntityProvenance } from "../state.js";
+import type { PulseConfig } from "./mission.js";
+
+/**
+ * W1 (idea-446 / work-181): node-native backstop config. The anti-idle pulse,
+ * carried on the arc-node itself instead of the (deprecated) Mission entity —
+ * the deferred S1b of the S1 v0.3 build spec. `pulse` is the SAME shape as the
+ * Mission `PulseConfig` (authored config + sweeper-managed bookkeeping); the
+ * type's canonical home moves here as the Mission is retired. Additive per
+ * v0.3 §3.1 — the Mission-pulse path is preserved (dual-run-safe).
+ */
+export interface NodeConfig {
+  pulse?: PulseConfig;
+}
 
 export type WorkItemType = "task" | "bug" | "review" | "verifier-gate" | "freeform";
 export type WorkItemPriority = "critical" | "high" | "normal" | "low";
@@ -336,6 +349,14 @@ export interface WorkItem {
    *  — so an executor cannot release/role-switch then attest their own work. status-partitioned,
    *  non-filterable, birth-empty. */
   executorHistory: string[];
+  /** W1 (idea-446 / work-181): the node-native anti-idle backstop. The pulse CONFIG
+   *  (interval/message/threshold) is authored at create/seed_blueprint; the BOOKKEEPING
+   *  (lastFiredAt/lastResponseAt/missedCount/lastEscalatedAt) is sweeper-written — so, like
+   *  the Mission pulse, the whole subtree is STATUS-partitioned: owner-path writes
+   *  (claim/complete/...) preserve-not-inject it, and a spec placement would hit the
+   *  envelope resurrection trap (SEAL idea-444 lesson). Absent on ordinary nodes.
+   *  Additive per v0.3 §3.1 — the Mission-pulse path stays (dual-run-safe). */
+  nodeConfig?: NodeConfig;
   // metadata / provenance
   createdBy?: EntityProvenance;
   createdAt: string;
@@ -385,6 +406,8 @@ export interface IWorkItemStore {
     leaseWindowMs?: number;
     targetRef?: { kind: string; id: string } | null;
     payload?: unknown;
+    /** W1 (idea-446 / work-181): optional node-native backstop config at create. */
+    nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
   }): Promise<WorkItem>;
 
@@ -426,6 +449,8 @@ export interface IWorkItemStore {
     references?: WorkItemReference[];
     targetRef?: { kind: string; id: string } | null;
     payload?: unknown;
+    /** W1 (idea-446 / work-181): born-native backstop — the blueprint declares the node's pulse. */
+    nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
   }): Promise<{ item: WorkItem; created: boolean }>;
 
@@ -493,6 +518,15 @@ export interface IWorkItemStore {
    *  claim-readiness: this is the observability surface (shows ALL matching items
    *  incl. dependency-blocked); the deps/WIP readiness gate is list_ready_work's job. */
   listWorkItems(filter?: { status?: WorkItemPhase; role?: string; holder?: string }): Promise<{ items: WorkItem[]; truncated: boolean }>;
+
+  /** W1 (idea-446 / work-181): sweeper-only direct write of the node-native pulse
+   *  bookkeeping — mirrors the Mission `updatePulseBookkeeping`. CAS-safe (preserves
+   *  the rest of the node), NOT authz-gated (the system PulseSweeper is the writer).
+   *  No-op if the node carries no `nodeConfig.pulse`. */
+  updateNodePulseBookkeeping(
+    nodeId: string,
+    delta: { lastFiredAt?: string; lastResponseAt?: string | null; missedCount?: number; lastEscalatedAt?: string | null },
+  ): Promise<void>;
 
   /** The list_ready_work projection: ready items claimable by `role` (empty
    *  roleEligibility = any-role, OR'd in). truncation-HONEST — `truncated` flags a
