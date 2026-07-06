@@ -40,4 +40,18 @@ if [[ -f "$DEST" ]]; then
 fi
 install -m 0755 "$SRC" "$DEST"
 echo "deployed $SRC -> $DEST"
+
+# work-179 (Arc-1 S4): ship the claude/ois skill-sync manifest alongside bin/ois.
+# `mission_kit_sync` (in claude_seed) reads $ROOT/manifests/skill-sync/wanted-bundles.yaml;
+# absent it no-ops, so this deploy is what activates the sync. Non-fatal if absent.
+MANIFEST_SRC="$(dirname "$SRC")/../manifests/skill-sync/wanted-bundles.yaml"
+MANIFEST_DEST="$HOME/.config/apnex-agents/manifests/skill-sync/wanted-bundles.yaml"
+if [[ -f "$MANIFEST_SRC" ]]; then
+  mkdir -p "$(dirname "$MANIFEST_DEST")"
+  install -m 0644 "$MANIFEST_SRC" "$MANIFEST_DEST"
+  echo "deployed $MANIFEST_SRC -> $MANIFEST_DEST"
+else
+  echo "note: no skill-sync manifest at $MANIFEST_SRC (skill-sync will no-op until present)"
+fi
+
 echo "verify: ois doctor"

@@ -1,0 +1,32 @@
+# wanted-bundles.yaml — claude/ois skill-sync manifest (Arc-1 S4 / idea-453).
+#
+# Declares which mission-kit skills the claude fleet carries. The
+# `mission_kit_sync` step in ois/bin/ois::claude_seed resolves these against
+# apnex/mission-kit and copies the SKILL.md trees into the agent's sovereign
+# $CLAUDE_CONFIG_DIR/skills/, ALONGSIDE the local-repo skills (per-skill merge,
+# never a wipe). Mirrors hermes/manifests/skill-sync/wanted-bundles.yaml — same
+# format, same apnex/mission-kit source — and extends the mission-103
+# constitution-sync pattern (mission-kit canonical, synced fleet-wide) from
+# axioms to SKILLS for the claude/ois path.
+#
+# Format:
+#   bundles:      - <name>   resolved via mission-kit bundles/<name>.yaml (`skills:` list)
+#   extra_skills: - <name>   individual skill, resolved via mission-kit skills/<name>/SKILL.md
+#
+# STAGING NOTE (idea-453 / work-179): mission-kit's operator K-series K3–K6 exist
+# as claude-skill directories and are declared below:
+#   K3 = substrate-audit, K4 = research-artefacts, K5 = survey, K6 = arc-lifecycle.
+# K1/K2 are flat rule-cards not yet in SKILL.md-directory form, and
+# O1-convene-council is a ratified design not yet promoted into mission-kit —
+# both are Director-owned mission-kit promotions (see the staging doc). Add them
+# here (or via an `operator-manuals` bundle) once promoted.
+#
+# Source: apnex/mission-kit (override via SKILL_SYNC_REPO / SKILL_SYNC_REF).
+
+bundles: []
+
+extra_skills:
+  - survey
+  - substrate-audit
+  - research-artefacts
+  - arc-lifecycle

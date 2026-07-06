@@ -194,6 +194,68 @@ env_lines() {
 }
 
 # ---------- claude sovereign seed (ported from bin/claude-agent, behavior-identical) ----------
+# _mk_yaml_list KEY FILE — print the list items under a top-level `KEY:` in a
+# small YAML file (no yaml dep; mirrors hermes/manifests/skill-sync/skill-sync.sh).
+_mk_yaml_list() {
+  awk -v key="$1" '
+    $0 ~ "^"key":" { in_list=1; next }
+    in_list && /^[a-zA-Z_]/ { in_list=0 }
+    in_list && /^[ \t]*-/ { sub(/^[ \t]*-[ \t]*/,""); sub(/[ \t]*(#.*)?$/,""); if (length($0)) print }
+  ' "$2"
+}
+
+# mission_kit_sync TARGET_SKILLS_DIR — Arc-1 S4 (idea-453 / work-179): deploy
+# ratified mission-kit operator skills into a claude agent's sovereign skills
+# dir on `ois up`, ALONGSIDE the local-repo skills (per-skill merge, never a
+# wipe). Resolves $ROOT/manifests/skill-sync/wanted-bundles.yaml (bundles +
+# extra_skills) against apnex/mission-kit, copying each skills/<name>/ SKILL.md
+# tree into TARGET/<name>/. Mirrors the hermes bundle-driven model for the
+# claude harness. Read-only on mission-kit (shallow clone). BEST-EFFORT: every
+# failure logs + returns 0 so it can NEVER block launch. Overrides: SKILL_SYNC_REPO
+# (default apnex/mission-kit), SKILL_SYNC_REF (default main).
+mission_kit_sync() {
+  local target="$1"
+  local manifest="$ROOT/manifests/skill-sync/wanted-bundles.yaml"
+  [[ -f "$manifest" ]] || { echo "  · skill-sync: no manifest ($manifest) — skipping"; return 0; }
+  command -v git >/dev/null 2>&1 || { echo "  · skill-sync: git not found — skipping"; return 0; }
+
+  local repo="${SKILL_SYNC_REPO:-https://github.com/apnex/mission-kit.git}"
+  local ref="${SKILL_SYNC_REF:-main}"
+  local work; work="$(mktemp -d)" || { echo "  · skill-sync: mktemp failed — skipping"; return 0; }
+  # shellcheck disable=SC2064
+  trap "rm -rf '$work'" RETURN
+
+  if ! git clone --depth 1 --branch "$ref" "$repo" "$work/repo" >/dev/null 2>&1; then
+    echo "  · skill-sync: clone failed ($repo@$ref) — skipping (non-fatal)"; return 0
+  fi
+  local src="$work/repo"
+
+  # Resolve bundles → skill names + append extra_skills; dedup.
+  local wanted="" b
+  for b in $(_mk_yaml_list bundles "$manifest"); do
+    local bf="$src/bundles/$b.yaml"
+    [[ -f "$bf" ]] || { echo "  · skill-sync: bundle '$b' not found (bundles/$b.yaml) — skipping"; continue; }
+    wanted="$wanted $(_mk_yaml_list skills "$bf")"
+  done
+  wanted="$wanted $(_mk_yaml_list extra_skills "$manifest")"
+  wanted="$(printf '%s\n' $wanted | sed '/^$/d' | sort -u)"
+  [[ -n "$wanted" ]] || { echo "  · skill-sync: nothing requested — skipping"; return 0; }
+
+  mkdir -p "$target"
+  local ok=0 miss=0 s
+  for s in $wanted; do
+    local sd="$src/skills/$s"
+    if [[ ! -d "$sd" || ! -f "$sd/SKILL.md" ]]; then
+      echo "  · skill-sync: skill '$s' not found (skills/$s/SKILL.md) — skipping"; miss=$((miss+1)); continue
+    fi
+    rm -rf "${target:?}/$s"   # per-skill merge: replace only this skill, leave others (local-repo) intact
+    cp -a "$sd" "$target/$s"
+    ok=$((ok+1))
+  done
+  echo "  seeding : mission-kit skill-sync → $target ($ok synced, $miss missed, from $repo@$ref)"
+  return 0
+}
+
 claude_seed() {
   local c="$1" a ws cdir mp
   a=$(jq -r '.cellAgent' <<<"$c"); ws=$(expand "$(jq -r '.workspace' <<<"$c")")
@@ -259,6 +321,11 @@ claude_seed() {
     echo "  seeding : installing agent-adapter@agentic-network into sovereign config"
     claude plugin install agent-adapter@agentic-network
   fi
+  # work-179 (Arc-1 S4 / idea-453): sync ratified mission-kit operator skills into
+  # the agent's sovereign skills dir, alongside the local-repo skills. Best-effort
+  # (never blocks launch). This is the deployment last-mile — ratifying a skill in
+  # mission-kit now makes it reachable by the claude agents meant to use it.
+  mission_kit_sync "$cdir/skills"
 }
 
 # ---------- artifact write with LKG retention ----------
