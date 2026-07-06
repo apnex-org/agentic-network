@@ -45,7 +45,7 @@ describe("E2E Verifier RBAC (mission-93 #338 pre-deploy gate)", () => {
     // handshake (schema-validate → coerceAgentRole → bind). A [Any]-tagged
     // tool drives the handshake without itself being RBAC-gated. Pre-#338-fix
     // the registration enum rejected 'verifier' and this stayed 'unknown'.
-    await verifier.call("list_tasks", {});
+    await verifier.call("list_missions", {}); // work-162: was list_tasks (registration warm-up)
     expect(orch.stores.engineerRegistry.getRole("session-verifier-default")).toBe("verifier");
   });
 
@@ -79,7 +79,8 @@ describe("E2E Verifier RBAC (mission-93 #338 pre-deploy gate)", () => {
 
   // ── ALLOW: read surface ([Any]) ───────────────────────────────────
 
-  it.each(["list_tasks", "list_missions", "get_agents", "list_audit_entries"])(
+  // work-162 (A1): list_tasks removed from the [Any] read GRANT set (retired).
+  it.each(["list_missions", "get_agents", "list_audit_entries"])(
     "ALLOWS read tool %s ([Any])",
     async (tool) => {
       const r = await verifier.call(tool, {});
@@ -127,7 +128,7 @@ describe("E2E verifier thread participation (mission-93 — thread-674 turn-role
     const verifier = orch.asVerifier();
 
     // Register the verifier so it has an agent record + resolvable agentId.
-    await verifier.call("list_tasks", {});
+    await verifier.call("list_missions", {}); // work-162: was list_tasks (registration warm-up)
     const vAgent = await orch.stores.engineerRegistry.getAgentForSession("session-verifier-default");
     expect(vAgent?.role).toBe("verifier");
 

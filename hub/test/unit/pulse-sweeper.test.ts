@@ -86,11 +86,11 @@ async function createPulseMission(
   const created = await rig.missionStore.createMission(
     "Pulse Mission",
     "test",
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    "coordination-primitive-shipment",
+    undefined,  // documentRef
+    undefined,  // backlink
+    undefined,  // createdBy
+    // work-162 (A1): plannedTasks positional arg removed from createMission.
+    "coordination-primitive-shipment",  // missionClass
     pulses,
   );
   // Flip to active so the sweeper iterates this mission
@@ -474,11 +474,10 @@ describe("PulseSweeper — multi-pulse + multi-mission", () => {
     const mission = await rig.missionStore.createMission(
       "Proposed",
       "test",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      "coordination-primitive-shipment",
+      undefined,  // documentRef
+      undefined,  // backlink
+      undefined,  // createdBy
+      "coordination-primitive-shipment",  // missionClass (work-162: plannedTasks slot removed)
       {
         engineerPulse: {
           intervalSeconds: 60,
@@ -513,11 +512,10 @@ describe("PulseSweeper — backward-compat", () => {
     const mission = await rig.missionStore.createMission(
       "Class-only",
       "no pulses",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      "coordination-primitive-shipment",
+      undefined,  // documentRef
+      undefined,  // backlink
+      undefined,  // createdBy
+      "coordination-primitive-shipment",  // missionClass (work-162: plannedTasks slot removed)
       undefined, // no pulses
     );
     await rig.missionStore.updateMission(mission.id, { status: "active" });
