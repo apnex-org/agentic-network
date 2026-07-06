@@ -11,7 +11,7 @@
 | Ratified Wave-2 subset | 10 |
 | &nbsp;&nbsp;Tested (≥1 call-site, helper not stubbed) | 10 |
 | &nbsp;&nbsp;Stubbed (pending Wave 2 graduation) | 0 |
-| Out-of-Scope for v1 (§7.2 NONE, not in ratified subset) | 10 |
+| Out-of-Scope for v1 (§7.2 NONE, not in ratified subset) | 8 |
 
 ## Per-invariant status — ratified subset
 
@@ -36,8 +36,6 @@ Invariants from `docs/specs/workflow-registry.md` §7.2 `Tested By: NONE` that a
 |---|---|
 | `INV-TH8` | Thread invariant (not in ratified v1 subset) |
 | `INV-TN1` | Turn invariant |
-| `INV-TE1` | Tele invariant |
-| `INV-TE2` | Tele invariant |
 | `INV-A1` | Agent invariant |
 | `INV-A2` | Agent invariant |
 | `INV-D1` | Director-notification invariant |

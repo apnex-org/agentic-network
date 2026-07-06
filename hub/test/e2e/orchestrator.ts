@@ -18,7 +18,6 @@ import {
   PolicyRouter,
   registerTaskPolicy,
   registerSystemPolicy,
-  registerTelePolicy,
   registerAuditPolicy,
   // mission-83 W6-narrowed: registerDocumentPolicy DELETED with document-policy.ts
   registerSessionPolicy,
@@ -39,7 +38,6 @@ import { ThreadRepositorySubstrate as ThreadRepository } from "../../src/entitie
 import { IdeaRepositorySubstrate as IdeaRepository } from "../../src/entities/idea-repository-substrate.js";
 import { MissionRepositorySubstrate as MissionRepository } from "../../src/entities/mission-repository-substrate.js";
 import { TurnRepositorySubstrate as TurnRepository } from "../../src/entities/turn-repository-substrate.js";
-import { TeleRepositorySubstrate as TeleRepository } from "../../src/entities/tele-repository-substrate.js";
 import { AuditRepositorySubstrate as AuditRepository } from "../../src/entities/audit-repository-substrate.js";
 import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import { createMemoryStorageSubstrate, buildEnvelopeWriteEncoder } from "../../src/storage-substrate/index.js";
@@ -528,7 +526,6 @@ export class TestOrchestrator {
       idea,
       mission,
       turn: new TurnRepository(storageProvider, storageCounter, mission, task),
-      tele: new TeleRepository(storageProvider, storageCounter),
       bug: new BugRepository(storageProvider, storageCounter),
       pendingAction: new PendingActionRepository(storageProvider, storageCounter),
       message: new MessageRepository(storageProvider),
@@ -539,7 +536,6 @@ export class TestOrchestrator {
     const router = new PolicyRouter(() => {});
     registerTaskPolicy(router);
     registerSystemPolicy(router);
-    registerTelePolicy(router);
     registerAuditPolicy(router);
     // mission-83 W6-narrowed: registerDocumentPolicy DELETED with document-policy.ts
     registerSessionPolicy(router);

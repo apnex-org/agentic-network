@@ -27,10 +27,9 @@ export const TURN_FSM: FsmTransitionTable = [
 async function createTurn(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const title = args.title as string;
   const scope = args.scope as string;
-  const tele = args.tele as string[] | undefined;
 
   const createdBy = await resolveCreatedBy(ctx);
-  const turn = await ctx.stores.turn.createTurn(title, scope, tele, createdBy);
+  const turn = await ctx.stores.turn.createTurn(title, scope, createdBy);
 
   await ctx.emit("turn_created", {
     turnId: turn.id,
@@ -46,12 +45,10 @@ async function updateTurn(args: Record<string, unknown>, ctx: IPolicyContext): P
   const turnId = args.turnId as string;
   const status = args.status as TurnStatus | undefined;
   const scope = args.scope as string | undefined;
-  const tele = args.tele as string[] | undefined;
 
-  const updates: { status?: TurnStatus; scope?: string; tele?: string[] } = {};
+  const updates: { status?: TurnStatus; scope?: string } = {};
   if (status) updates.status = status;
   if (scope !== undefined) updates.scope = scope;
-  if (tele) updates.tele = tele;
 
   // FSM guard: validate status transition if status is changing. mission-89
   // Phase 4 (bug-137 closure): envelope-shape Turn has status as {phase,...}
@@ -116,26 +113,24 @@ export function registerTurnPolicy(router: PolicyRouter): void {
     {
       title: z.string().describe("Turn title"),
       scope: z.string().describe("Free-text markdown description of the Turn's objectives"),
-      tele: z.array(z.string()).optional().describe("Tele IDs — teleological goals for this turn"),
     },
     createTurn,
   );
 
   router.register(
     "update_turn",
-    "[Architect] Update a Turn's status, scope, or tele goals.",
+    "[Architect] Update a Turn's status or scope.",
     {
       turnId: z.string().describe("The turn ID to update"),
       status: z.enum(["planning", "active", "completed"]).optional().describe("New status"),
       scope: z.string().optional().describe("Updated scope"),
-      tele: z.array(z.string()).optional().describe("Updated tele IDs"),
     },
     updateTurn,
   );
 
   router.register(
     "get_turn",
-    "[Any] Read a specific Turn with all linked missions, tasks, and tele.",
+    "[Any] Read a specific Turn with all linked missions and tasks.",
     { turnId: z.string().describe("The turn ID") },
     getTurn,
   );

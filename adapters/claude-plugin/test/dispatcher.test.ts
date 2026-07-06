@@ -289,7 +289,7 @@ describe("dispatcher gates", () => {
 
     const requestPromise = callToolHandler({
       method: "tools/call",
-      params: { name: "list_tele", arguments: {} },
+      params: { name: "get_agents", arguments: {} },
     });
 
     await Promise.resolve();
@@ -298,14 +298,14 @@ describe("dispatcher gates", () => {
 
     deferred.resolve();
     await requestPromise;
-    // Filter to list_tele calls (excludes the signal_working_started +
+    // Filter to get_agents calls (excludes the signal_working_started +
     // signal_working_completed fire-and-forget wrap from PR #114 W3 — see
-    // TOOL_CALL_SIGNAL_SKIP). The gate semantic is "list_tele invoked
+    // TOOL_CALL_SIGNAL_SKIP). The gate semantic is "get_agents invoked
     // exactly once after gate opened", independent of wrap mechanics.
     const listTeleCalls = (agent.call as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([name]) => name === "list_tele");
+      .filter(([name]) => name === "get_agents");
     expect(listTeleCalls).toHaveLength(1);
-    expect(listTeleCalls[0]).toEqual(["list_tele", {}]);
+    expect(listTeleCalls[0]).toEqual(["get_agents", {}]);
   });
 
   it("Initialize is NOT gated — MUST ack while gates pending", async () => {
@@ -342,7 +342,7 @@ describe("dispatcher gates", () => {
 
     const requestPromise = callToolHandler({
       method: "tools/call",
-      params: { name: "list_tele", arguments: {} },
+      params: { name: "get_agents", arguments: {} },
     });
 
     deferred.reject(new Error("Hub handshake failed: 401 Unauthorized"));
@@ -364,14 +364,14 @@ describe("dispatcher gates", () => {
 
     const result = await callToolHandler({
       method: "tools/call",
-      params: { name: "list_tele", arguments: {} },
+      params: { name: "get_agents", arguments: {} },
     });
-    // Filter to list_tele calls (excludes the signal_working_started +
+    // Filter to get_agents calls (excludes the signal_working_started +
     // signal_working_completed wrap from PR #114 W3). Tests the gate-omitted
-    // semantic: pass-through invokes list_tele exactly once, regardless of
+    // semantic: pass-through invokes get_agents exactly once, regardless of
     // wrap mechanics.
     const listTeleCalls = (agent.call as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([name]) => name === "list_tele");
+      .filter(([name]) => name === "get_agents");
     expect(listTeleCalls).toHaveLength(1);
     expect(result).toBeDefined();
   });
@@ -431,7 +431,7 @@ describe("Hub-not-connected handling", () => {
 
     const result = (await callToolHandler({
       method: "tools/call",
-      params: { name: "list_tele", arguments: {} },
+      params: { name: "get_agents", arguments: {} },
     })) as { content: Array<{ text: string }>; isError?: boolean };
 
     expect(result.isError).toBe(true);

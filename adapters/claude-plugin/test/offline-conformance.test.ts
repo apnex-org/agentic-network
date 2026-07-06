@@ -51,11 +51,11 @@ describe("mission-100 offline conformance — real Claude runtime via MockClaude
     expect(names).toContain("claim_work");
     expect(names.length).toBeGreaterThan(20);
 
-    const raw = await mock.claude.callTool("list_tele", { limit: 1 });
+    const raw = await mock.claude.callTool("get_agents", { limit: 1 });
     expect((raw as { isError?: boolean }).isError).toBeFalsy();
-    expect(parseMcpText(raw)).toMatchObject({ tele: expect.any(Array) });
+    expect(parseMcpText(raw)).toMatchObject({ agents: expect.any(Array) });
 
-    const listTeleCalls = mock.hub.getToolCalls("list_tele");
+    const listTeleCalls = mock.hub.getToolCalls("get_agents");
     expect(listTeleCalls).toHaveLength(1);
     expect(listTeleCalls[0].args).toEqual({ limit: 1 });
 
@@ -63,7 +63,7 @@ describe("mission-100 offline conformance — real Claude runtime via MockClaude
     // runtime factory wires under the MCP callTool handler.
     await mock.waitFor((h) => h.hub.getToolCalls("signal_working_completed").length > 0, 2_000);
     expect(
-      mock.hub.getToolCalls("signal_working_started").some((c) => c.args.toolName === "list_tele"),
+      mock.hub.getToolCalls("signal_working_started").some((c) => c.args.toolName === "get_agents"),
     ).toBe(true);
   });
 

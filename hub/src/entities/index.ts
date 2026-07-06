@@ -47,9 +47,6 @@ export { MissionRepositorySubstrate } from "./mission-repository-substrate.js";
 export type { Turn, TurnStatus, ITurnStore } from "./turn.js";
 export { TurnRepositorySubstrate } from "./turn-repository-substrate.js";
 
-export type { Tele, TeleStatus, ITeleStore } from "./tele.js";
-export { normalizeTele } from "./tele.js";
-export { TeleRepositorySubstrate } from "./tele-repository-substrate.js";
 export { SubstrateCounter } from "./substrate-counter.js";
 
 export type { Bug, BugStatus, BugSeverity, IBugStore, CascadeBacklink as BugCascadeBacklink } from "./bug.js";

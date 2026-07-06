@@ -420,8 +420,8 @@ describe("claude-plugin shim — cognitive layer integration", () => {
 
     // Induce two 5xx faults via agent.call directly
     faultNext = 2;
-    await expect(eng.agent.call("list_tele", {})).rejects.toThrow("503");
-    await expect(eng.agent.call("list_tele", {})).rejects.toThrow("503");
+    await expect(eng.agent.call("get_agents", {})).rejects.toThrow("503");
+    await expect(eng.agent.call("get_agents", {})).rejects.toThrow("503");
 
     // Circuit now OPEN. Next call from the MCP client (simulating
     // Claude Code) reaches the dispatcher → agent.call → cognitive
@@ -429,7 +429,7 @@ describe("claude-plugin shim — cognitive layer integration", () => {
     // isError content block; the Hub is NOT reached.
     faultNext = 0;
     const result = await eng.mcpClient.callTool({
-      name: "list_tele",
+      name: "get_agents",
       arguments: {},
     });
     const content = (result as { content: Array<{ text: string }> }).content;
@@ -466,9 +466,9 @@ describe("claude-plugin shim — cognitive layer integration", () => {
     });
 
     faultNext = 2;
-    await expect(eng.agent.call("list_tele", {})).rejects.toThrow();
-    await expect(eng.agent.call("list_tele", {})).rejects.toThrow();
-    await expect(eng.agent.call("list_tele", {})).rejects.toBeInstanceOf(
+    await expect(eng.agent.call("get_agents", {})).rejects.toThrow();
+    await expect(eng.agent.call("get_agents", {})).rejects.toThrow();
+    await expect(eng.agent.call("get_agents", {})).rejects.toBeInstanceOf(
       HubUnavailableError,
     );
 
@@ -605,13 +605,13 @@ describe("claude-plugin shim — cognitive layer integration", () => {
 
     hub.clearToolCallLog();
 
-    // First list_tele — cache miss, hits Hub
-    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
-    expect(hub.getToolCalls("list_tele")).toHaveLength(1);
+    // First get_agents — cache miss, hits Hub
+    await eng.mcpClient.callTool({ name: "get_agents", arguments: {} });
+    expect(hub.getToolCalls("get_agents")).toHaveLength(1);
 
-    // Second list_tele — cache hit, Hub NOT called again
-    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
-    expect(hub.getToolCalls("list_tele")).toHaveLength(1); // still 1
+    // Second get_agents — cache hit, Hub NOT called again
+    await eng.mcpClient.callTool({ name: "get_agents", arguments: {} });
+    expect(hub.getToolCalls("get_agents")).toHaveLength(1); // still 1
 
     // Issue a write (create_idea) — FlushAllOnWriteStrategy wipes cache
     await eng.mcpClient.callTool({
@@ -619,9 +619,9 @@ describe("claude-plugin shim — cognitive layer integration", () => {
       arguments: { text: "cache-flush-test" },
     });
 
-    // Next list_tele — cache was flushed, hits Hub again
-    await eng.mcpClient.callTool({ name: "list_tele", arguments: {} });
-    expect(hub.getToolCalls("list_tele")).toHaveLength(2);
+    // Next get_agents — cache was flushed, hits Hub again
+    await eng.mcpClient.callTool({ name: "get_agents", arguments: {} });
+    expect(hub.getToolCalls("get_agents")).toHaveLength(2);
 
     await eng.mcpClient.close();
     await eng.agent.stop();

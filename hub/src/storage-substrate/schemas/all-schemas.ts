@@ -319,33 +319,6 @@ const Task: SchemaDef = {
   renameMap: { status: "status.phase", idempotencyKey: "metadata.idempotencyKey", createdAt: "metadata.createdAt", createdBy: "metadata.createdBy", updatedAt: "metadata.updatedAt", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
 };
 
-const Tele: SchemaDef = {
-  kind: "Tele",
-  version: 2,
-  // W4.x.9 architect-blind-correction (architect proactive audit thread-569
-  // round 5 confirmed 4 issues): v1 had FOUR fabricated fields — 'class' /
-  // 'outcomes' / 'supersedesId' DON'T EXIST on Tele entity (largest single-
-  // SchemaDef fabrication-density of mission-83); actual fields per
-  // hub/src/entities/tele.ts:18 are name/description/successCriteria/status/
-  // supersededBy/retiredAt/createdBy/createdAt. v2 corrected. 12th-instance
-  // substrate-currency-failure pattern (most-fabricated v1 SchemaDef in mission).
-  fields: [
-    { name: "id", type: "string", required: true },
-    { name: "name", type: "string", required: true },
-    { name: "status", type: "string", required: true, enum: ["active", "superseded", "retired"] },
-    { name: "supersededBy", type: "string", required: false },
-    { name: "retiredAt", type: "string", required: false },
-  ],
-  indexes: [
-    { name: "tele_status_phase_idx", fields: ["status.phase"] },
-    // supersededBy in status partition per cluster-3 Tele.ts FSM-mutated fields.
-    { name: "tele_status_supersededby_idx", fields: ["status.supersededBy"] },
-  ],
-  watchable: true,
-  indexOwnershipPattern: "^tele_",
-  renameMap: { status: "status.phase", name: "metadata.name" },
-};
-
 const Thread: SchemaDef = {
   kind: "Thread",
   version: 2,
@@ -890,7 +863,6 @@ export const ALL_SCHEMAS: SchemaDef[] = [
   PendingAction,
   Proposal,
   Task,
-  Tele,
   Thread,
   Turn,
 

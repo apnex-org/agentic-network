@@ -31,7 +31,6 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   PendingAction: ["state", "naturalKey", "targetAgentId", "dispatchType", "entityRef"],
   Proposal: ["status", "sourceThreadId", "sourceActionId"],
   Task: ["status", "idempotencyKey", "sourceThreadId", "sourceActionId"],
-  Tele: [],
   Thread: ["status", "cascadePending", "currentTurnAgentId", "recipientAgentId"],
   Turn: ["status"],
   Document: ["category"],

@@ -84,7 +84,7 @@ describe("McpAgentClient cognitive integration", () => {
   it("no cognitive config → legacy behavior, no pipeline state observed", async () => {
     const { agent } = await createAgent(hub); // no cognitive
     // Call should succeed end-to-end with raw transport.
-    const result = await agent.call("list_tele", {});
+    const result = await agent.call("get_agents", {});
     expect(result).toBeDefined();
     await agent.stop();
   });
@@ -97,7 +97,7 @@ describe("McpAgentClient cognitive integration", () => {
     const { agent, transport } = await createAgent(hub, pipeline);
     const sid = transport.getSessionId();
 
-    await agent.call("list_tele", {});
+    await agent.call("get_agents", {});
     await agent.call("list_ideas", {});
 
     await flushMicrotasks(5);
@@ -109,7 +109,7 @@ describe("McpAgentClient cognitive integration", () => {
     // depending on timing; assert at least 2.
     const toolCalls = events.filter((e) => e.kind === "tool_call");
     expect(toolCalls.length).toBeGreaterThanOrEqual(2);
-    const listTele = toolCalls.find((e) => e.tool === "list_tele");
+    const listTele = toolCalls.find((e) => e.tool === "get_agents");
     const listIdeas = toolCalls.find((e) => e.tool === "list_ideas");
     expect(listTele).toBeDefined();
     expect(listIdeas).toBeDefined();
@@ -161,12 +161,12 @@ describe("McpAgentClient cognitive integration", () => {
 
     // Induce 2 transport faults → breaker trips
     faultNextN = 2;
-    await expect(agent.call("list_tele", {})).rejects.toThrow("503");
-    await expect(agent.call("list_tele", {})).rejects.toThrow("503");
+    await expect(agent.call("get_agents", {})).rejects.toThrow("503");
+    await expect(agent.call("get_agents", {})).rejects.toThrow("503");
 
     // Next call: no fault intended, but breaker should fail-fast
     faultNextN = 0;
-    await expect(agent.call("list_tele", {})).rejects.toBeInstanceOf(HubUnavailableError);
+    await expect(agent.call("get_agents", {})).rejects.toBeInstanceOf(HubUnavailableError);
 
     await agent.stop();
   });
@@ -215,11 +215,11 @@ describe("McpAgentClient cognitive integration", () => {
 
     // 2 induced faults trip the breaker.
     faultNextN = 2;
-    await expect(agent.call("list_tele", {})).rejects.toThrow();
-    await expect(agent.call("list_tele", {})).rejects.toThrow();
+    await expect(agent.call("get_agents", {})).rejects.toThrow();
+    await expect(agent.call("get_agents", {})).rejects.toThrow();
 
     // 3rd call fails-fast via breaker.
-    await expect(agent.call("list_tele", {})).rejects.toBeInstanceOf(HubUnavailableError);
+    await expect(agent.call("get_agents", {})).rejects.toBeInstanceOf(HubUnavailableError);
 
     await flushMicrotasks(5);
 
@@ -296,7 +296,7 @@ describe("McpAgentClient cognitive integration", () => {
 
     const pipeline = new CognitivePipeline().use(
       new ErrorNormalizer({
-        knownTools: ["list_tele", "list_ideas", "get_thread", "create_thread"],
+        knownTools: ["get_agents", "list_ideas", "get_thread", "create_thread"],
       }),
     );
     const { agent } = await createAgent(hub, pipeline);

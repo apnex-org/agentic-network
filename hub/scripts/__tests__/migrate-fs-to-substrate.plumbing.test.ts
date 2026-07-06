@@ -57,7 +57,6 @@ function generateSyntheticState(root: string): void {
     ["PendingAction", "pending-actions", 5],
     ["Proposal", "proposals", 3],
     ["Task", "tasks", 8],
-    ["Tele", "tele", 4],
     ["Thread", "threads", 5],
     ["Turn", "turns", 3],
     ["Notification", "notifications", 6],
@@ -154,7 +153,7 @@ function countFsEntities(root: string): number {
   let count = 0;
   // per-kind directory scan (top-level only per W5.4-fix; matches dirScanner behavior)
   const dirs = ["agents", "audit/v2", "bugs", "ideas", "messages", "missions",
-                "pending-actions", "proposals", "tasks", "tele", "threads", "turns",
+                "pending-actions", "proposals", "tasks", "threads", "turns",
                 "notifications"];
   for (const d of dirs) {
     const dir = path.join(root, d);
@@ -315,7 +314,6 @@ describe("W5.5-plumbing — substrate-API surface against migrated synthetic sta
       ["Idea", "idea-1"],
       ["Mission", "mission-1"],
       ["Task", "task-1"],
-      ["Tele", "tele-1"],
       ["Thread", "thread-1"],
       ["Notification", "notification-1"],
       ["Document", "test-doc"],
@@ -335,7 +333,6 @@ describe("W5.5-plumbing — substrate-API surface against migrated synthetic sta
       ["Idea", 6],
       ["Message", 10],
       ["Task", 8],
-      ["Tele", 4],
       ["Thread", 5],
       ["Turn", 3],
       ["Notification", 6],

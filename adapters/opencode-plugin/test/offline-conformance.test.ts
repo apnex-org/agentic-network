@@ -57,17 +57,17 @@ describe("mission-101 offline conformance — real OpenCode runtime via MockOpen
     expect(names).toContain("claim_work");
     expect(names.length).toBeGreaterThan(20);
 
-    const raw = await mock.opencode.callTool("list_tele", { limit: 1 });
+    const raw = await mock.opencode.callTool("get_agents", { limit: 1 });
     expect((raw as { isError?: boolean }).isError).toBeFalsy();
-    expect(parseMcpText(raw)).toMatchObject({ tele: expect.any(Array) });
+    expect(parseMcpText(raw)).toMatchObject({ agents: expect.any(Array) });
 
-    expect(mock.hub.getToolCalls("list_tele").slice(-1)[0].args).toEqual({ limit: 1 });
+    expect(mock.hub.getToolCalls("get_agents").slice(-1)[0].args).toEqual({ limit: 1 });
     await mock.waitFor(
       (h) => h.hub.getToolCalls("signal_working_completed").length > 0,
       2_000,
     );
     expect(
-      mock.hub.getToolCalls("signal_working_started").some((c) => c.args.toolName === "list_tele"),
+      mock.hub.getToolCalls("signal_working_started").some((c) => c.args.toolName === "get_agents"),
     ).toBe(true);
   });
 

@@ -8,7 +8,6 @@ import type {
   IIdeaStore,
   IMissionStore,
   ITurnStore,
-  ITeleStore,
   IBugStore,
   IPendingActionStore,
   IMessageStore,
@@ -33,7 +32,6 @@ export interface AllStores {
   idea: IIdeaStore;
   mission: IMissionStore;
   turn: ITurnStore;
-  tele: ITeleStore;
   bug: IBugStore;
   pendingAction: IPendingActionStore;
   /** Mission-51 W1: universal Message primitive store. */

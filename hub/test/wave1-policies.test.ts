@@ -1,5 +1,5 @@
 /**
- * Wave 1 Policy Tests — Tele, Audit, Document, Session
+ * Wave 1 Policy Tests — Audit, Document, Session
  *
  * Tests the stateless/simple domain policies extracted in
  * The Great Decoupling T2.
@@ -7,7 +7,6 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { PolicyRouter } from "../src/policy/router.js";
-import { registerTelePolicy } from "../src/policy/tele-policy.js";
 import { registerAuditPolicy } from "../src/policy/audit-policy.js";
 import { registerSessionPolicy } from "../src/policy/session-policy.js";
 import { createTestContext } from "../src/policy/test-utils.js";
@@ -31,159 +30,6 @@ async function mutateAgentBlob(
   const legacy = envelopeToAgent(entity);
   await substrate.put("Agent", agentToEnvelope({ ...legacy, ...patch } as any));
 }
-
-// ── Tele Policy ─────────────────────────────────────────────────────
-
-describe("TelePolicy", () => {
-  let router: PolicyRouter;
-  let ctx: IPolicyContext;
-
-  beforeEach(() => {
-    router = new PolicyRouter(noop);
-    registerTelePolicy(router);
-    ctx = createTestContext();
-  });
-
-  it("registers all tele tools", () => {
-    expect(router.has("create_tele")).toBe(true);
-    expect(router.has("get_tele")).toBe(true);
-    expect(router.has("list_tele")).toBe(true);
-    expect(router.has("supersede_tele")).toBe(true);
-    expect(router.has("retire_tele")).toBe(true);
-    expect(router.size).toBe(5);
-  });
-
-  it("create_tele creates and emits tele_defined", async () => {
-    const result = await router.handle("create_tele", {
-      name: "Absolute State Fidelity",
-      description: "All state changes are durable",
-      successCriteria: "Zero data loss under any failure mode",
-    }, ctx);
-
-    expect(result.isError).toBeUndefined();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.teleId).toBeDefined();
-    expect(parsed.name).toBe("Absolute State Fidelity");
-
-    const emitted = (ctx as any).emittedEvents.find((e: any) => e.event === "tele_defined");
-    expect(emitted).toBeDefined();
-  });
-
-  it("get_tele returns a created tele", async () => {
-    const createResult = await router.handle("create_tele", {
-      name: "Test",
-      description: "Test tele",
-      successCriteria: "Passes all tests",
-    }, ctx);
-    const { teleId } = JSON.parse(createResult.content[0].text);
-
-    const result = await router.handle("get_tele", { teleId }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.name).toBe("Test");
-  });
-
-  it("get_tele returns error for non-existent tele", async () => {
-    const result = await router.handle("get_tele", { teleId: "tele-999" }, ctx);
-    expect(result.isError).toBe(true);
-  });
-
-  it("list_tele returns all teles", async () => {
-    await router.handle("create_tele", {
-      name: "T1", description: "D1", successCriteria: "S1",
-    }, ctx);
-    await router.handle("create_tele", {
-      name: "T2", description: "D2", successCriteria: "S2",
-    }, ctx);
-
-    const result = await router.handle("list_tele", {}, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.count).toBe(2);
-  });
-
-  it("create_tele writes status=active by default", async () => {
-    const createResult = await router.handle("create_tele", {
-      name: "Lifecycle test", description: "D", successCriteria: "S",
-    }, ctx);
-    const { teleId } = JSON.parse(createResult.content[0].text);
-    const getResult = await router.handle("get_tele", { teleId }, ctx);
-    const parsed = JSON.parse(getResult.content[0].text);
-    expect(parsed.status).toBe("active");
-  });
-
-  it("supersede_tele flips status + emits tele_superseded", async () => {
-    const a = await router.handle("create_tele", { name: "A", description: "D", successCriteria: "S" }, ctx);
-    const b = await router.handle("create_tele", { name: "B", description: "D", successCriteria: "S" }, ctx);
-    const { teleId: aId } = JSON.parse(a.content[0].text);
-    const { teleId: bId } = JSON.parse(b.content[0].text);
-
-    const result = await router.handle("supersede_tele", { teleId: aId, successorId: bId }, ctx);
-    expect(result.isError).toBeUndefined();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.status).toBe("superseded");
-    expect(parsed.supersededBy).toBe(bId);
-
-    const emitted = (ctx as any).emittedEvents.find((e: any) => e.event === "tele_superseded");
-    expect(emitted).toBeDefined();
-  });
-
-  it("supersede_tele errors when successor doesn't exist", async () => {
-    const a = await router.handle("create_tele", { name: "A", description: "D", successCriteria: "S" }, ctx);
-    const { teleId: aId } = JSON.parse(a.content[0].text);
-    const result = await router.handle("supersede_tele", { teleId: aId, successorId: "tele-999" }, ctx);
-    expect(result.isError).toBe(true);
-  });
-
-  it("retire_tele flips status + emits tele_retired", async () => {
-    const a = await router.handle("create_tele", { name: "A", description: "D", successCriteria: "S" }, ctx);
-    const { teleId: aId } = JSON.parse(a.content[0].text);
-
-    const result = await router.handle("retire_tele", { teleId: aId }, ctx);
-    expect(result.isError).toBeUndefined();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.status).toBe("retired");
-    expect(parsed.retiredAt).toBeDefined();
-
-    const emitted = (ctx as any).emittedEvents.find((e: any) => e.event === "tele_retired");
-    expect(emitted).toBeDefined();
-  });
-
-  it("retired tele cannot be superseded", async () => {
-    const a = await router.handle("create_tele", { name: "A", description: "D", successCriteria: "S" }, ctx);
-    const b = await router.handle("create_tele", { name: "B", description: "D", successCriteria: "S" }, ctx);
-    const { teleId: aId } = JSON.parse(a.content[0].text);
-    const { teleId: bId } = JSON.parse(b.content[0].text);
-
-    await router.handle("retire_tele", { teleId: aId }, ctx);
-    const result = await router.handle("supersede_tele", { teleId: aId, successorId: bId }, ctx);
-    expect(result.isError).toBe(true);
-  });
-
-  it("list_tele excludes superseded + retired by default", async () => {
-    const a = await router.handle("create_tele", { name: "A", description: "D", successCriteria: "S" }, ctx);
-    const b = await router.handle("create_tele", { name: "B", description: "D", successCriteria: "S" }, ctx);
-    const c = await router.handle("create_tele", { name: "C", description: "D", successCriteria: "S" }, ctx);
-    const { teleId: aId } = JSON.parse(a.content[0].text);
-    const { teleId: bId } = JSON.parse(b.content[0].text);
-    const { teleId: cId } = JSON.parse(c.content[0].text);
-
-    await router.handle("supersede_tele", { teleId: aId, successorId: cId }, ctx);
-    await router.handle("retire_tele", { teleId: bId }, ctx);
-
-    const defaultResult = await router.handle("list_tele", {}, ctx);
-    const defaultParsed = JSON.parse(defaultResult.content[0].text);
-    expect(defaultParsed.count).toBe(1);
-    expect(defaultParsed.tele[0].id).toBe(cId);
-
-    const withSuperseded = await router.handle("list_tele", { includeSuperseded: true }, ctx);
-    expect(JSON.parse(withSuperseded.content[0].text).count).toBe(2);
-
-    const withRetired = await router.handle("list_tele", { includeRetired: true }, ctx);
-    expect(JSON.parse(withRetired.content[0].text).count).toBe(2);
-
-    const withBoth = await router.handle("list_tele", { includeSuperseded: true, includeRetired: true }, ctx);
-    expect(JSON.parse(withBoth.content[0].text).count).toBe(3);
-  });
-});
 
 // ── Audit Policy ────────────────────────────────────────────────────
 

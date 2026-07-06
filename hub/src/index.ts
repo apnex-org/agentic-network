@@ -22,7 +22,7 @@ import type { ITaskStore, IEngineerRegistry, IProposalStore, IThreadStore, IAudi
 // mission-84 W4: FS-version repository imports DELETED (12 *-repository.ts + counter.ts
 // removed from the codebase; substrate-version repos are sole production path).
 import {
-  type IIdeaStore, type IMissionStore, type ITurnStore, type ITeleStore, type IBugStore,
+  type IIdeaStore, type IMissionStore, type ITurnStore, type IBugStore,
   type IPendingActionStore, type IMessageStore,
 } from "./entities/index.js";
 // mission-83 W6-narrowed: GcsStorageProvider DELETED (substrate replaces GCS
@@ -55,7 +55,6 @@ import { MissionRepositorySubstrate } from "./entities/mission-repository-substr
 import { PendingActionRepositorySubstrate } from "./entities/pending-action-repository-substrate.js";
 import { ProposalRepositorySubstrate } from "./entities/proposal-repository-substrate.js";
 import { TaskRepositorySubstrate } from "./entities/task-repository-substrate.js";
-import { TeleRepositorySubstrate } from "./entities/tele-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "./entities/thread-repository-substrate.js";
 import { TurnRepositorySubstrate } from "./entities/turn-repository-substrate.js";
 import { WorkItemRepositorySubstrate } from "./entities/work-item-repository-substrate.js";
@@ -68,7 +67,6 @@ import { DocumentRepository } from "./storage-substrate/new-repositories.js";
 // Legacy registerAllTools REMOVED — all 43 tools now served by PolicyRouter
 import { PolicyRouter, registerTaskPolicy, computeToolSurfaceRevision } from "./policy/index.js";
 import { registerSystemPolicy } from "./policy/system-policy.js";
-import { registerTelePolicy } from "./policy/tele-policy.js";
 import { registerAuditPolicy } from "./policy/audit-policy.js";
 // mission-84 W6: registerDocumentPolicy RE-INTRODUCED with substrate-backed
 // DocumentRepository per Design v1.0 §2.7 (mission-83 W6-narrowed retired the
@@ -148,7 +146,6 @@ let auditStore: IAuditStore;
 let ideaStore: IIdeaStore;
 let missionStore: IMissionStore;
 let turnStore: ITurnStore;
-let teleStore: ITeleStore;
 let bugStore: IBugStore;
 // ADR-017: comms reliability layer. GCS-backed in Phase 2x P0-1 (was
 // memory-only in v1 — Hub restarts wiped the queue, observed twice
@@ -158,13 +155,6 @@ let pendingActionStore: IPendingActionStore;
 // Mission-51 W1: universal Message primitive store.
 let messageStore: IMessageStore;
 
-// Mission-47 W1: tele store is now `TeleRepository` composed over a
-// `StorageProvider`. Provider is selected per STORAGE_BACKEND and
-// shared with the counter helper. Future waves will migrate the
-// other entities to the same pattern; during mission-47 in-flight
-// period, legacy `*Store` classes continue to coexist with
-// TeleRepository (both read/write the same GCS keyspace safely via
-// CAS on shared meta/counter.json).
 // mission-84 W5: substrate-only-unconditional per Design v1.0 §2.5; STORAGE_BACKEND
 // env-var ceremony fully retired. Hub bootstrap reduces to: createPostgresStorage
 // Substrate + reconciler-start. No dispatch logic; no env-var-fallback fatal.
@@ -230,7 +220,6 @@ taskStore = new TaskRepositorySubstrate(substrate!, substrateCounter);
 proposalStore = new ProposalRepositorySubstrate(substrate!, substrateCounter);
 ideaStore = new IdeaRepositorySubstrate(substrate!, substrateCounter);
 bugStore = new BugRepositorySubstrate(substrate!, substrateCounter);
-teleStore = new TeleRepositorySubstrate(substrate!, substrateCounter);
 threadStore = new ThreadRepositorySubstrate(substrate!, substrateCounter);
 pendingActionStore = new PendingActionRepositorySubstrate(substrate!, substrateCounter);
 // MessageRepositorySubstrate uses ULID + substrate-native sequence (no counter).
@@ -277,7 +266,6 @@ const allStores: AllStores = {
   idea: ideaStore,
   mission: missionStore,
   turn: turnStore,
-  tele: teleStore,
   bug: bugStore,
   pendingAction: pendingActionStore,
   message: messageStore,
@@ -298,7 +286,6 @@ const allStores: AllStores = {
 const policyRouter = new PolicyRouter();
 registerTaskPolicy(policyRouter);
 registerSystemPolicy(policyRouter);
-registerTelePolicy(policyRouter);
 registerAuditPolicy(policyRouter);
 // mission-84 W6: registerDocumentPolicy RE-INTRODUCED (substrate-backed); 3 tools
 // (create_document / get_document / list_documents); PolicyRouter tool count 68 → 71.

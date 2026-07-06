@@ -4,7 +4,7 @@
  * State machine:
  *   planning → active → completed
  *
- * Groups Missions and Tasks. References Tele (teleological goals)
+ * Groups Missions and Tasks.
  * as guiding axioms for the cycle.
  *
  * `missionIds` and `taskIds` are returned on every read as a virtual
@@ -29,7 +29,6 @@ export interface Turn {
   missionIds: string[];
   /** Virtual view — computed on read from `ITaskStore` by `turnId`. */
   taskIds: string[];
-  tele: string[];       // Tele IDs — teleological goals for this turn
   correlationId: string | null;
   /** Mission-24 idea-120: uniform direct-create provenance (task-305). */
   createdBy?: EntityProvenance;
@@ -43,7 +42,6 @@ export interface ITurnStore {
   createTurn(
     title: string,
     scope: string,
-    tele?: string[],
     createdBy?: EntityProvenance
   ): Promise<Turn>;
 
@@ -53,7 +51,7 @@ export interface ITurnStore {
 
   updateTurn(
     turnId: string,
-    updates: { status?: TurnStatus; scope?: string; tele?: string[] }
+    updates: { status?: TurnStatus; scope?: string }
   ): Promise<Turn | null>;
 }
 

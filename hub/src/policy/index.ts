@@ -3,7 +3,6 @@ export { isValidTransition } from "./types.js";
 export { PolicyRouter } from "./router.js";
 export { registerTaskPolicy, TASK_FSM } from "./task-policy.js";
 export { registerSystemPolicy } from "./system-policy.js";
-export { registerTelePolicy } from "./tele-policy.js";
 export { registerAuditPolicy } from "./audit-policy.js";
 // mission-83 W6-narrowed: registerDocumentPolicy DELETED with document-policy.ts;
 // document MCP tools deferred to idea-300 follow-on (substrate-backed

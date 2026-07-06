@@ -26,7 +26,7 @@ import {
 } from "@apnex/network-adapter";
 
 const SAMPLE_CATALOG: CachedCatalog["catalog"] = [
-  { name: "list_tele", description: "[Any] List teles" },
+  { name: "get_agents", description: "[Any] List teles" },
   { name: "create_thread", description: "[Any] Open a thread" },
 ];
 
