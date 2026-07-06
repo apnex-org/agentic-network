@@ -36,8 +36,12 @@ export function createWorkItemMigrationModule(schema: SchemaDef): KindMigrationM
       spec: ["type", "priority", "roleEligibility", "dependsOn", "completionDependsOn", "evidenceRequirements", "targetRef", "payload"],
       // status = lifecycle (phase via the rename above; lease = sole claim
       // authority; evidence accumulates; blockedOn + the per-item poison counter;
-      // work-98 idea-384 Part A: the per-FSM-state wall-clock timers).
-      status: ["lease", "evidence", "blockedOn", "leaseExpiryCount", "enteredCurrentStateAt", "stateDurations"],
+      // work-98 idea-384 Part A: the per-FSM-state wall-clock timers;
+      // SEAL idea-444: the append-only attestationHistory + active attestations
+      // projection — partitioned into status so EVERY write round-trips them by
+      // construction (the structural preserve-not-inject; closes the un-partitioned→
+      // spec resurrection trap in envelope.ts pickPartition).
+      status: ["lease", "evidence", "blockedOn", "leaseExpiryCount", "enteredCurrentStateAt", "stateDurations", "attestationHistory", "attestations"],
     },
   };
 

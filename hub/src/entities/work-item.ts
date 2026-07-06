@@ -113,6 +113,51 @@ export interface EvidenceRequirement {
   /** When set, freshness (producedAt >= lease.claimedAt) is NOT required — permits a
    *  pre-claim artifact (e.g. a design doc authored before the work was claimed). */
   allowPreClaim?: boolean;
+  /** SEAL (idea-444) — the AUTHORITY axis (not a style): who may satisfy this requirement.
+   *  `"executor-attestation"` reserved-none; `"verifier-attestation"` = satisfiable ONLY by a
+   *  verifier's server-stamped `attest_evidence` verdict (NOT by executor-supplied evidence,
+   *  even if producedBy names a verifier — the A2 hard fence). ABSENT ⇒ `"executor-evidence"`
+   *  (back-compat: every existing requirement keeps its current executor-evidence behavior; only
+   *  a requirement that explicitly opts into `verifier-attestation` gets the SEAL gate). */
+  evidenceAuthority?: EvidenceAuthority;
+}
+
+/** SEAL authority axis (idea-444). Absent on a requirement ⇒ `"executor-evidence"`. */
+export type EvidenceAuthority = "executor-evidence" | "verifier-attestation";
+
+/** SEAL verdict (idea-444) — the load-bearing pass/fail a verifier records via `attest_evidence`. */
+export type AttestationVerdict = "pass" | "fail";
+
+/** SEAL attestation (idea-444) — a verifier's server-stamped, load-bearing verdict against a
+ *  `verifier-attestation` requirement. Append-only in `status.attestationHistory[]`; the active
+ *  (latest, non-superseded) attestation per requirement is projected into `status.attestations`.
+ *  Every field except `supersedes` is stamped by the Hub at `attest_evidence` time — the caller
+ *  cannot forge `verifierId` (server-derived from the authenticated session) nor the hashes. */
+export interface Attestation {
+  /** The evidenceRequirement.id this attestation binds to. */
+  requirementId: string;
+  /** Server-stamped verifier agentId (from the authenticated session; caller-supplied id ignored).
+   *  The no-owner/executor-write invariant rejects an attestation whose verifierId is the current
+   *  or ANY prior holder/executor — or the item creator — of this WorkItem (A2 HISTORY check). */
+  verifierId: string;
+  /** The load-bearing verdict. `pass` satisfies the requirement's gate; `fail` parks it in review. */
+  verdict: AttestationVerdict;
+  producedAt: string;
+  /** >=1 typed evidence ref (WorkItem evidence entry / OIS-internal entity id; external = format-only).
+   *  Non-empty REQUIRED — a bare pass/fail with no referent is the trust-by-prose verdict SEAL kills. */
+  evidenceRefs: string[];
+  /** Relocation guard (A2): a hash of the requirement descriptor at attest time — the validator
+   *  recomputes and rejects if the requirement mutated out from under the attestation. */
+  requirementHash: string;
+  /** Relocation guard (A2): the item's targetRef snapshot + hash at attest time. targetRef mutation
+   *  after any attestation exists is rejected — closes the point-at-A-then-move-to-B laundering path. */
+  targetRefSnapshot: { kind: string; id: string } | null;
+  targetRefHash: string;
+  /** Relocation guard (A2): a hash over the bound evidence set at attest time. */
+  evidenceSetHash: string;
+  /** Supersession (A2): when a later attestation replaces this one, the new record names the
+   *  superseded attestation's identity here; the active projection repoints to the latest. */
+  supersedes?: string;
 }
 
 /** Supplied evidence (status). Binds to a requirement by `requirementId`. */
@@ -243,10 +288,44 @@ export interface WorkItem {
   /** idea-384 Part A (work-98): accumulated wall-clock MS per dwell state (cumulative across
    *  the node's life incl requeues). status-partitioned. Non-filterable. */
   stateDurations: StateDurations;
+  /** SEAL (idea-444): APPEND-ONLY log of every attestation ever recorded against this item
+   *  (never mutated/erased; supersession appends a new record). status-partitioned, non-filterable.
+   *  Birth-empty. The disjoint authority subtree — no owner/executor write path admits it. */
+  attestationHistory: Attestation[];
+  /** SEAL (idea-444): the ACTIVE (latest, non-superseded) attestation per requirementId — a
+   *  projection over attestationHistory[]. The map↔history consistency invariant holds by
+   *  construction (attest_evidence appends to history + repoints this projection atomically under
+   *  CAS). status-partitioned, non-filterable. Birth-empty. */
+  attestations: Record<string, Attestation>;
   // metadata / provenance
   createdBy?: EntityProvenance;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * SEAL (idea-444) — the pure, LEVEL-TRIGGERED completion gate over the ATTESTATION dimension.
+ * Reads the item's STATE (never a verb-event): for every requirement whose `evidenceAuthority` is
+ * `verifier-attestation`, that requirement is satisfied iff its ACTIVE attestation is `pass`. A
+ * missing or `fail` active attestation leaves it pending (→ park in review). Requirements with
+ * `executor-evidence` authority (the default when absent) are NOT decided here — they stay the
+ * evidence-predicate's domain (`evaluateEvidence`). PURE: no I/O; reads only `item`.
+ *
+ * A1 lays + unit-tests this seam. A2 wires it DUAL-EDGE — called at BOTH `complete_work` AND the
+ * `attest_evidence` tail (attest advances review→done when the gate flips true, no re-poke) — and
+ * adds the hard fence (executor evidence cannot satisfy a `verifier-attestation` requirement).
+ */
+export function evaluateCompletionGate(
+  item: Pick<WorkItem, "evidenceRequirements" | "attestations">,
+): { attestationReqsSatisfied: boolean; pendingAttestationReqs: string[] } {
+  const pending: string[] = [];
+  for (const req of item.evidenceRequirements) {
+    // executor-evidence (or absent default) requirements are not this gate's domain.
+    if (req.evidenceAuthority !== "verifier-attestation") continue;
+    const active = item.attestations[req.id];
+    if (!active || active.verdict !== "pass") pending.push(req.id);
+  }
+  return { attestationReqsSatisfied: pending.length === 0, pendingAttestationReqs: pending };
 }
 
 /**

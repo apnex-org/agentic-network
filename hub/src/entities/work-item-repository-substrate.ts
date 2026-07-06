@@ -349,6 +349,11 @@ function cloneWorkItem(w: WorkItem): WorkItem {
   // so the sum-identity is asserted only on nodes born under the timer).
   flat.enteredCurrentStateAt = (flat.enteredCurrentStateAt as string | undefined) ?? (flat.updatedAt as string);
   flat.stateDurations = (flat.stateDurations as StateDurations | undefined) ?? { ...DEFAULT_STATE_DURATIONS };
+  // SEAL (idea-444): birth-empty the attestation subtree — a freshly-decoded / pre-SEAL row omits
+  // these; default them here so the flat shape round-trips through the encoder with the subtree
+  // intact (the preserve-not-inject read boundary; A2's attest_evidence is the only writer).
+  flat.attestationHistory = (flat.attestationHistory as unknown[] | undefined) ?? [];
+  flat.attestations = (flat.attestations as Record<string, unknown> | undefined) ?? {};
   return flat as unknown as WorkItem;
 }
 
@@ -422,6 +427,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // work-98 (idea-384 Part A): birth-stamp the timer — entered `ready` at createdAt, zero buckets.
       enteredCurrentStateAt: now,
       stateDurations: { ...DEFAULT_STATE_DURATIONS },
+      // SEAL (idea-444): birth-empty the attestation subtree.
+      attestationHistory: [],
+      attestations: {},
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -551,6 +559,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // work-98 (idea-384 Part A): birth-stamp the timer — entered `ready` at createdAt, zero buckets.
       enteredCurrentStateAt: now,
       stateDurations: { ...DEFAULT_STATE_DURATIONS },
+      // SEAL (idea-444): birth-empty the attestation subtree.
+      attestationHistory: [],
+      attestations: {},
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,

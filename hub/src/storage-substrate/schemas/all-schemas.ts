@@ -593,6 +593,11 @@ const WorkItem: SchemaDef = {
     // non-filterable (no index; surfaced on get_work/get_current_stint, not queried).
     enteredCurrentStateAt: "status.enteredCurrentStateAt",
     stateDurations: "status.stateDurations",
+    // SEAL (idea-444): the attestation subtree — status (lifecycle), non-filterable
+    // (surfaced on get_work, not queried). Mirrors the kinds/WorkItem.ts status partition
+    // (the W1 renamemap-contract sentinel-probe asserts this agreement).
+    attestationHistory: "status.attestationHistory",
+    attestations: "status.attestations",
     priority: "spec.priority",
     type: "spec.type",
     roleEligibility: "spec.roleEligibility",
