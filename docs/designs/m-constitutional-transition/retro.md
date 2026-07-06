@@ -2,7 +2,7 @@
 
 **Status:** final (work-155 close sweep, 2026-07-06)
 **Arc span:** 2026-07-05 (intent, riding straight off mission-102's close) → 2026-07-06 (G3)
-**Record chain:** G0 decision-14 · G1 decision-15 · G2 decision-17 (design v1.0) · S2 batch decision-18 (charter v1 bound) · SC1 static audit-10997 · SC1 live audit-11060 (steve, work-155 — clean, no carve-out) · G3
+**Record chain:** G0 decision-14 · G1 decision-15 · G2 decision-17 (design v1.0) · S2 batch decision-18 (charter v1 bound) · SC1 static audit-10997 · SC1 live gates catalog-negative + cold-start recall (steve) · SC1 clean hub-doc closure audit-11060 (work-155 — no carve-out) · G3
 
 ---
 
@@ -22,7 +22,7 @@ The constitution is now **bound and sole** — the axiom surface is the only con
 
 | SC | Verdict | Evidence |
 |---|---|---|
-| SC1 Zero live tele refs | **MET** | Hard cut complete; SC1 static gate green (audit-10997); catalog-negative confirmed (tele verbs unknown-tool on prod); SC1 **live** bundle (catalog-negative + exhaustive 68/68 hub-doc sweep + cold-start recall probe) audited **clean** by steve (**audit-11060**) under work-155 — no carve-out. The two legacy bare-path residues (`teles`, `policy-network-v1`) were tombstoned **within the arc** by the bug-237 fix (work-159 / PR #517: `create_document` overwrites existing docs at any path), so Option A closed with zero live residue. Scoped `tele_`-identifier gate honored; historical dirs preserved (A4). |
+| SC1 Zero live tele refs | **MET** | Hard cut complete; SC1 static gate green (audit-10997). steve's SC1 **live gates**: catalog-negative confirmed (tele verbs unknown-tool on prod) + cold-start recall probe passed (both recorded). The **final clean closure** — exhaustive 68/68 hub-doc re-sweep with the two legacy bare-path residues (`teles`, `policy-network-v1`) tombstoned within-arc by the bug-237 fix (work-159 / PR #517: `create_document` overwrites existing docs at any path) — is **audit-11060**, no carve-out. So Option A closed with zero live residue. Scoped `tele_`-identifier gate honored; historical dirs preserved (A4). |
 | SC2 All 15 teles dispositioned | **MET** | 1:1 bijection ratified as one clean batch (decision-18), each binding carrying its proof chain; tele-0 correctly historical (superseded by tele-14→A0). Zero split-outs. |
 | SC3 Cold-start recall-proof | **MET (probe) / gap named** | steve's cold-start recall probe (fresh agent recalls the constitution from the new surface, refuses tele as live authority). Honest gap surfaced: the constitution is *served* but not yet *auto-hydrated* at startup → idea-428 (cold-start hydration), the future-arc line. |
 | SC4 mission-kit project-agnostic | **MET (live) / pen follow** | Axiom bodies agnostic (M6 discipline). Residual normative `tele` in axiom bodies (idea-426, generalized to Option A) purges via the constitutional pen post-arc — does not gate close. |
