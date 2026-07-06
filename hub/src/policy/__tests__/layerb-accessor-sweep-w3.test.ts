@@ -160,8 +160,8 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     ]);
     // status → status.phase (the dispositive prod regression: pre-fix → 0 matches)
     expect((parse(await router.handle("list_missions", { filter: { status: "active" } }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m1"]);
-    // legacy scalar status path
-    expect((parse(await router.handle("list_missions", { status: "completed" }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m2"]);
+    // work-171 (A2): deprecated scalar `status:` retired → filter{status} is the sole surface
+    expect((parse(await router.handle("list_missions", { filter: { status: "completed" } }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m2"]);
     // relocated metadata.correlationId accessor
     expect((parse(await router.handle("list_missions", { filter: { correlationId: "corr-A" } }, ctx)).missions as Array<{ id: string }>).map((m) => m.id)).toEqual(["w7-m1"]);
     // work-162 (A1): the status.turnId accessor assertion is retired with Mission.turnId.

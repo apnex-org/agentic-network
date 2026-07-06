@@ -513,16 +513,12 @@ async function listMissions(args: Record<string, unknown>, ctx: IPolicyContext):
   let missions = await ctx.stores.mission.listMissions();
   const totalPreFilter = missions.length;
 
-  // Backwards-compat: legacy scalar `status` arg subsumed by the new
-  // `filter.status` field. filter.status wins when both are present.
-  // bug-198: empty-string legacy status + any empty values in the `filter` object are
-  // adapter-serialized UNSETs (opencode) — drop them, don't AND them to zero matches.
-  const legacyStatus = unsetIfEmpty(typeof args.status === "string" ? args.status : undefined) as MissionStatus | undefined;
+  // work-171 (A2, idea-359): the deprecated scalar `status:` arg is RETIRED —
+  // `filter: { status }` is the single query surface (north-star). bug-198: empty
+  // values in the `filter` object are adapter-serialized UNSETs (opencode) — drop
+  // them, don't AND them to zero matches.
   const filterArgRaw = args.filter as Record<string, unknown> | undefined;
   const effectiveFilter: Record<string, unknown> = omitEmptyValues({ ...(filterArgRaw ?? {}) });
-  if (legacyStatus && effectiveFilter.status === undefined) {
-    effectiveFilter.status = legacyStatus;
-  }
   const hasFilter = Object.keys(effectiveFilter).length > 0;
 
   if (hasFilter) {
@@ -663,14 +659,12 @@ export function registerMissionPolicy(router: PolicyRouter): void {
     "`sort` accepts an ordered tuple `[{field, order}]` on: id, status, createdAt, updatedAt, correlationId, sourceThreadId, sourceActionId, 'createdBy.role', 'createdBy.agentId', 'createdBy.id'. " +
     "Implicit id:asc tie-breaker is appended for deterministic pagination. " +
     "Returns `_ois_query_unmatched: true` when the filter yields zero matches but the collection is non-empty. " +
-    "Legacy scalar `status:` arg preserved for backwards compat; `filter.status` wins when both present.",
+    "(work-171: the deprecated scalar `status:` arg is retired — use `filter: { status }`.)",
     {
       filter: MISSION_FILTER_SCHEMA.optional()
         .describe("Mongo-ish filter object; see tool description for permitted fields + operators"),
       sort: MISSION_SORT_SCHEMA
         .describe("Ordered-tuple sort; see tool description for permitted fields"),
-      status: z.enum(["proposed", "active", "completed", "abandoned"]).optional()
-        .describe("DEPRECATED: use `filter: { status: ... }`. Preserved for backwards compat; `filter.status` wins when both present."),
       ...LIST_PAGINATION_SCHEMA,
       ...LIST_COMPACT_SCHEMA,
     },
