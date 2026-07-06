@@ -47,12 +47,16 @@ export async function performStateSync(ctx: StateSyncContext): Promise<void> {
     // ADR-017 additive: drain_pending_actions runs alongside the legacy
     // surface. Hubs that don't expose the tool yet (pre-ADR-017) return
     // an error here which we swallow — the other two calls still land.
+    // work-162 (A1): the legacy `get_task` directive-fetch is retired with the
+    // Task subsystem. `list_missions` ([Any]) replaces it as the sync-phase
+    // liveness read-probe — a benign read every role can issue, so the
+    // dispatcher records a read-success and the agent transitions to online.
     const [directive, pendingActions, drainedRaw] = await Promise.all([
-      ctx.executeTool("get_task", {}).catch((err: unknown) => {
+      ctx.executeTool("list_missions", {}).catch((err: unknown) => {
         log.log(
-          "agent.sync.get_task.failed",
+          "agent.sync.list_missions.failed",
           { error: String(err) },
-          `[StateSync] get_task: ${err}`
+          `[StateSync] list_missions: ${err}`
         );
         return null;
       }),

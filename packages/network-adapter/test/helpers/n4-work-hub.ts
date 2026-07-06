@@ -30,12 +30,10 @@ import type { CreateMcpServerFn, HubNetworkingConfig } from "../../../../hub/src
 import { createMemoryStorageSubstrate } from "../../../../hub/src/storage-substrate/memory-substrate.js";
 import { SubstrateCounter } from "../../../../hub/src/entities/substrate-counter.js";
 import { AgentRepositorySubstrate } from "../../../../hub/src/entities/agent-repository-substrate.js";
-import { TaskRepositorySubstrate } from "../../../../hub/src/entities/task-repository-substrate.js";
 import { ProposalRepositorySubstrate } from "../../../../hub/src/entities/proposal-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "../../../../hub/src/entities/thread-repository-substrate.js";
 import { IdeaRepositorySubstrate } from "../../../../hub/src/entities/idea-repository-substrate.js";
 import { MissionRepositorySubstrate } from "../../../../hub/src/entities/mission-repository-substrate.js";
-import { TurnRepositorySubstrate } from "../../../../hub/src/entities/turn-repository-substrate.js";
 import { AuditRepositorySubstrate } from "../../../../hub/src/entities/audit-repository-substrate.js";
 import { BugRepositorySubstrate } from "../../../../hub/src/entities/bug-repository-substrate.js";
 import { MessageRepositorySubstrate } from "../../../../hub/src/entities/message-repository-substrate.js";
@@ -47,15 +45,11 @@ import type { AllStores, IPolicyContext } from "../../../../hub/src/policy/types
 import type { IWorkItemStore } from "../../../../hub/src/entities/work-item.js";
 import { createMetricsCounter } from "../../../../hub/src/observability/metrics.js";
 // Production policies — imported from leaves (mirrors hub/src/index.ts), pg-free.
-import { registerTaskPolicy } from "../../../../hub/src/policy/task-policy.js";
 import { registerSystemPolicy } from "../../../../hub/src/policy/system-policy.js";
 import { registerAuditPolicy } from "../../../../hub/src/policy/audit-policy.js";
 import { registerSessionPolicy } from "../../../../hub/src/policy/session-policy.js";
 import { registerIdeaPolicy } from "../../../../hub/src/policy/idea-policy.js";
 import { registerMissionPolicy } from "../../../../hub/src/policy/mission-policy.js";
-import { registerTurnPolicy } from "../../../../hub/src/policy/turn-policy.js";
-import { registerClarificationPolicy } from "../../../../hub/src/policy/clarification-policy.js";
-import { registerReviewPolicy } from "../../../../hub/src/policy/review-policy.js";
 import { registerProposalPolicy } from "../../../../hub/src/policy/proposal-policy.js";
 import { registerThreadPolicy } from "../../../../hub/src/policy/thread-policy.js";
 import { registerBugPolicy } from "../../../../hub/src/policy/bug-policy.js";
@@ -80,22 +74,19 @@ export interface N4Stores {
 export function buildN4Stores(): N4Stores {
   const substrate = createMemoryStorageSubstrate();
   const counter = new SubstrateCounter(substrate);
-  const task = new TaskRepositorySubstrate(substrate, counter);
   const idea = new IdeaRepositorySubstrate(substrate, counter);
-  const mission = new MissionRepositorySubstrate(substrate, counter, task, idea);
+  const mission = new MissionRepositorySubstrate(substrate, counter, idea);
   const engineerRegistry = new AgentRepositorySubstrate(substrate);
   const audit = new AuditRepositorySubstrate(substrate, counter);
   const message = new MessageRepositorySubstrate(substrate);
   const workItem = new WorkItemRepositorySubstrate(substrate, counter);
   const stores: AllStores = {
-    task,
     engineerRegistry,
     proposal: new ProposalRepositorySubstrate(substrate, counter),
     thread: new ThreadRepositorySubstrate(substrate, counter),
     audit,
     idea,
     mission,
-    turn: new TurnRepositorySubstrate(substrate, counter, mission, task),
     bug: new BugRepositorySubstrate(substrate, counter),
     pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
     message,
@@ -110,15 +101,11 @@ export function buildN4Stores(): N4Stores {
  *  registered policy's backing store is present in buildN4Stores(). */
 export function buildN4Router(): PolicyRouter {
   const router = new PolicyRouter(() => {});
-  registerTaskPolicy(router);
   registerSystemPolicy(router);
   registerAuditPolicy(router);
   registerSessionPolicy(router);
   registerIdeaPolicy(router);
   registerMissionPolicy(router);
-  registerTurnPolicy(router);
-  registerClarificationPolicy(router);
-  registerReviewPolicy(router);
   registerProposalPolicy(router);
   registerThreadPolicy(router);
   registerBugPolicy(router);

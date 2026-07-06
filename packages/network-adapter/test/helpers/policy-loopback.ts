@@ -17,7 +17,7 @@
  * `PolicyRouter`.
  */
 
-import { PolicyRouter, registerTaskPolicy, registerSystemPolicy, registerAuditPolicy, registerSessionPolicy, registerIdeaPolicy, registerMissionPolicy, registerTurnPolicy, registerClarificationPolicy, registerReviewPolicy, registerProposalPolicy, registerThreadPolicy, registerMessagePolicy } from "../../../../hub/src/policy/index.js";
+import { PolicyRouter, registerSystemPolicy, registerAuditPolicy, registerSessionPolicy, registerIdeaPolicy, registerMissionPolicy, registerProposalPolicy, registerThreadPolicy, registerMessagePolicy } from "../../../../hub/src/policy/index.js";
 import { registerWorkItemPolicy } from "../../../../hub/src/policy/work-item-policy.js";
 import type { AllStores, IPolicyContext } from "../../../../hub/src/policy/types.js";
 import type { Selector } from "../../../../hub/src/state.js";
@@ -33,12 +33,10 @@ import type { Selector } from "../../../../hub/src/state.js";
 import { createMemoryStorageSubstrate } from "../../../../hub/src/storage-substrate/memory-substrate.js";
 import { SubstrateCounter } from "../../../../hub/src/entities/substrate-counter.js";
 import { AgentRepositorySubstrate } from "../../../../hub/src/entities/agent-repository-substrate.js";
-import { TaskRepositorySubstrate } from "../../../../hub/src/entities/task-repository-substrate.js";
 import { ProposalRepositorySubstrate } from "../../../../hub/src/entities/proposal-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "../../../../hub/src/entities/thread-repository-substrate.js";
 import { IdeaRepositorySubstrate } from "../../../../hub/src/entities/idea-repository-substrate.js";
 import { MissionRepositorySubstrate } from "../../../../hub/src/entities/mission-repository-substrate.js";
-import { TurnRepositorySubstrate } from "../../../../hub/src/entities/turn-repository-substrate.js";
 import { AuditRepositorySubstrate } from "../../../../hub/src/entities/audit-repository-substrate.js";
 import { BugRepositorySubstrate } from "../../../../hub/src/entities/bug-repository-substrate.js";
 import { MessageRepositorySubstrate } from "../../../../hub/src/entities/message-repository-substrate.js";
@@ -197,18 +195,15 @@ export class PolicyLoopbackHub implements ILoopbackHub {
     // SubstrateCounter — mirrors hub/src/policy/test-utils.ts createTestContext.
     const substrate = createMemoryStorageSubstrate();
     const counter = new SubstrateCounter(substrate);
-    const task = new TaskRepositorySubstrate(substrate, counter);
     const idea = new IdeaRepositorySubstrate(substrate, counter);
-    const mission = new MissionRepositorySubstrate(substrate, counter, task, idea);
+    const mission = new MissionRepositorySubstrate(substrate, counter, idea);
     return {
-      task,
       engineerRegistry: new AgentRepositorySubstrate(substrate),
       proposal: new ProposalRepositorySubstrate(substrate, counter),
       thread: new ThreadRepositorySubstrate(substrate, counter),
       audit: new AuditRepositorySubstrate(substrate, counter),
       idea,
       mission,
-      turn: new TurnRepositorySubstrate(substrate, counter, mission, task),
       bug: new BugRepositorySubstrate(substrate, counter),
       pendingAction: new PendingActionRepositorySubstrate(substrate, counter),
       message: new MessageRepositorySubstrate(substrate),
@@ -219,14 +214,10 @@ export class PolicyLoopbackHub implements ILoopbackHub {
   private createRouter(): PolicyRouter {
     const router = new PolicyRouter(() => {});
     registerSessionPolicy(router);
-    registerTaskPolicy(router);
     registerSystemPolicy(router);
     registerAuditPolicy(router);
     registerIdeaPolicy(router);
     registerMissionPolicy(router);
-    registerTurnPolicy(router);
-    registerClarificationPolicy(router);
-    registerReviewPolicy(router);
     registerProposalPolicy(router);
     registerThreadPolicy(router);
     // P1d: the sovereign Message surface (create_message/list_messages/
