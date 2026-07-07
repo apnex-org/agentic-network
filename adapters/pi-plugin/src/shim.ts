@@ -163,14 +163,18 @@ function buildDispatchContext(d: SharedDispatcher): ToolDispatchContext {
 }
 
 function buildToolSurfaceReconciler(
-  hubUrl: string,
+  fetchLiveRevision: () => Promise<string | null>,
+  readServedRevision: () => string | null,
   onDrift: () => void,
 ): ToolSurfaceReconciler {
   return new ToolSurfaceReconciler({
-    fetchLiveRevision: makeFetchLiveToolSurfaceRevision({ hubUrl, log }),
-    // pi has NO persistent tool-catalog cache (like opencode): seed baselines
-    // from live without emitting; the L2 heartbeat catches mid-session redeploys.
-    readServedRevision: () => null,
+    fetchLiveRevision,
+    // idea-465: pi has NO on-disk cache — the LEVEL is the CONSUMER's (HubSpecSource)
+    // last-successfully-applied Hub revision, advanced only after a refresh SUCCEEDS.
+    // A pure trigger: live !== served ⇒ re-emit ⇒ retry, so a failed refresh cannot
+    // mask a stale surface as converged (the reconciler's emit-only branch).
+    readServedRevision,
+    consumerOwnedLevel: true,
     emitListChanged: onDrift,
     log,
   });
@@ -347,6 +351,12 @@ async function connectAndSeed(
   // ∪ preserved built-ins) — one authoritative REPLACE that both ADDS and REMOVES
   // (removal = set-subtraction; pi has no deregister). One store instance is shared
   // by the loop (reads it) and the facade (writes it).
+  // idea-465: one /health revision fetcher, shared by the reconciler (its live-level)
+  // and HubSpecSource (its applied-revision latch, advanced only on refresh-success).
+  const fetchLiveRevision = makeFetchLiveToolSurfaceRevision({
+    hubUrl: config.hubUrl,
+    log,
+  });
   const actuatorPort = new PiToolActuatorPort(pi, dispatchCtx);
   const store = new SpecStore();
   const specLoop = new SpecReconcileLoop(
@@ -363,6 +373,9 @@ async function connectAndSeed(
     // U6 fetches the live LLM-facing catalog (core-hydrated); the KF1(b) zero-tool
     // poison guard lives inside refreshFromHub, not here.
     fetchCatalog: async () => (hubAdapter ? hubAdapter.listTools() : []),
+    // idea-465: the same /health revision fetcher feeds the applied-revision latch,
+    // advanced only after a successful applyConfig inside refreshFromHub.
+    fetchLiveRevision,
     controlPlane: plane,
     log,
   });
@@ -370,17 +383,23 @@ async function connectAndSeed(
   hubSpecSource = source;
 
   // Reconciler drift (L3) → refresh the declared spec from the Hub, then converge.
-  reconciler = buildToolSurfaceReconciler(config.hubUrl, () => {
-    void source
-      .refreshFromHub()
-      .then(() => plane.sync("drift"))
-      .catch((err) => log(`[hcap] drift refresh failed (non-fatal): ${err}`));
-    try {
-      ctx.ui.notify("Hub tools updated — reconciling", "info");
-    } catch {
-      /* UI not ready */
-    }
-  });
+  // The reconciler's LEVEL is the consumer's last-applied revision (idea-465): a
+  // failed refresh leaves it behind → the next heartbeat re-drifts + retries.
+  reconciler = buildToolSurfaceReconciler(
+    fetchLiveRevision,
+    () => source.getLastAppliedRevision(),
+    () => {
+      void source
+        .refreshFromHub()
+        .then(() => plane.sync("drift"))
+        .catch((err) => log(`[hcap] drift refresh failed (non-fatal): ${err}`));
+      try {
+        ctx.ui.notify("Hub tools updated — reconciling", "info");
+      } catch {
+        /* UI not ready */
+      }
+    },
+  );
 
   await hubAdapter.start();
   log("Connected to remote Hub via McpAgentClient (pi native binding)");

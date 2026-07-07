@@ -85,6 +85,18 @@ export interface ToolSurfaceReconcilerDeps {
    */
   readServedRevision: () => string | null;
 
+  /**
+   * idea-465 — opt into the CONSUMER-OWNED emit-only level. When true (the pi HCAP
+   * shim), `readServedRevision()` returns the consumer's last-SUCCESSFULLY-applied
+   * revision (advanced ONLY after its async apply succeeds); the emit-only path uses
+   * it directly as the level — a pure trigger with NO internal emit-dedup latch, so a
+   * failed refresh leaves served behind and re-emits (retries) rather than masking.
+   * Absent/false ⇒ the legacy emit-only latch (a STATIC host-enumerated served marker
+   * or null, with the internal latch for emit-dedup — hosts that re-enumerate on emit,
+   * e.g. opencode / the S2b oracle). Repair-capable hosts (claude) ignore this.
+   */
+  consumerOwnedLevel?: boolean;
+
   /** Emit `notifications/tools/list_changed` to the host (BEST-EFFORT; clause 3). */
   emitListChanged: () => void;
 
@@ -119,13 +131,17 @@ export interface ReconcileOutcome {
 export class ToolSurfaceReconciler {
   /**
    * The emit baseline/marker: the revision we last emitted `list_changed` for
-   * (repair path) OR the seeded baseline (emit-only path). mission-106 (F1): in
-   * the REPAIR path this is ONLY emit-dedup and is NEVER the convergence
-   * decision — convergence there is `readServedRevision() === live` (a real disk
-   * read, every pass). In the emit-only fallback (a host with no on-disk cache /
-   * no repair authority — e.g. pi/opencode) it is the pre-mission-106
-   * baseline+latch, which is safe there precisely because there is no disk for it
-   * to mask.
+   * (repair path) OR the seeded baseline (LEGACY emit-only latch). mission-106 (F1):
+   * in the REPAIR path this is ONLY emit-dedup and is NEVER the convergence decision
+   * — convergence there is `readServedRevision() === live` (a real disk read, every
+   * pass). idea-465: an emit-only host with an ASYNC apply (e.g. the pi HCAP shim)
+   * opts into `consumerOwnedLevel` + provides `readServedRevision()` (its CONSUMER's
+   * last-successfully-applied revision), so the level is that served revision, NOT
+   * this latch (see the emit-only branch). This latch is emit-dedup ONLY for legacy
+   * emit-only hosts (opencode / the S2b oracle) that re-enumerate on emit — safe there
+   * because there is no async apply behind it. An advance-on-emit latch for an
+   * async-apply host WOULD mask a failed refresh as converged until the next revision
+   * bump — exactly what idea-465 fixed.
    */
   private appliedRevision: string | null = null;
   private consecutiveRepairFailures = 0;
@@ -210,12 +226,38 @@ export class ToolSurfaceReconciler {
       return { emitted: false, live, repaired: false, converged: false };
     }
 
-    // ── EMIT-ONLY fallback (no repair authority / no on-disk cache — the
-    // pre-mission-106 behavior, retained for hosts like pi/opencode). Seed the
-    // baseline on the first pass WITHOUT emitting (the host already enumerated
-    // live at bootstrap — a fresh install has nothing stale to signal); emit +
-    // advance only on a genuine change. F1-safe: with no disk to repair, this
-    // latch masks nothing. ──
+    // ── EMIT-ONLY fallback (no repair authority / no on-disk cache). ──
+    //
+    // idea-465 — CONSUMER-OWNED LEVEL (F1) for hosts that opt in (consumerOwnedLevel).
+    // `readServedRevision()` is the CONSUMER's last-SUCCESSFULLY-applied Hub revision,
+    // advanced ONLY after its async apply (fetch→applyConfig) succeeds. Read fresh
+    // every pass, it IS the level — a PURE TRIGGER with NO internal latch: emit
+    // whenever live !== served, converge only when the consumer has actually caught
+    // up. A failed/kept-prior refresh (fetch throw / poison-guard-empty / blip) leaves
+    // served BEHIND → re-emit next tick → retry → converge. This closes the
+    // premature-advance where the old latch moved to `live` on emit — BEFORE the async
+    // refresh resolved — so a failed refresh masked a stale surface as converged until
+    // the next Hub revision bump (pi's PRIMARY redeploy-propagation path; the fetch can
+    // blip right after a Hub reboot). The pi HCAP shim wires this via
+    // HubSpecSource.getLastAppliedRevision. (served may be null pre-first-apply → live
+    // !== null → emit → the emit triggers the refresh that records it.)
+    if (this.deps.consumerOwnedLevel) {
+      if (live !== served) {
+        this.log(
+          `[tool-surface-reconcile] ${reason}: drift served=${served ?? "none"} → live=${live} — emitting tools/list_changed (consumer applies + advances)`,
+        );
+        this.safeEmit(reason);
+        return { emitted: true, live, repaired: false, converged: false };
+      }
+      return { emitted: false, live, repaired: false, converged: true };
+    }
+
+    // ── Legacy emit-only latch (consumerOwnedLevel absent — opencode / the S2b
+    // oracle). `readServedRevision` is a STATIC host-enumerated marker (or null) and
+    // the host RE-ENUMERATES on emit, so the internal latch is emit-dedup only. ──
+    // Seed the baseline on the first pass WITHOUT emitting (the host already
+    // enumerated live at bootstrap); emit + advance only on a genuine change. Safe
+    // here ONLY because there is no async apply behind it (idea-465 above).
     if (this.appliedRevision === null) {
       this.appliedRevision = served ?? live;
       this.log(
