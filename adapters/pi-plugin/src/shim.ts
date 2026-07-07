@@ -7,13 +7,17 @@
  * the thin harness binding.
  *
  * Architectural divergence from the MCP hosts (claude/opencode): pi has NO MCP
- * client, so there is NO local MCP proxy server. Tools are registered NATIVELY
- * (`tool-bridge.registerHubTools`) and each `execute` routes through the shared
- * `runToolDispatch` authority via a `ToolDispatchContext` built from the
- * dispatcher's shared state. pi's native `ctx.isIdle()` feeds the dispatcher's
- * wake/stall idle-gate (`externalIdle`), and the dispatcher's shared
- * `workLeases` feeds the dispatch context so lease observations reach the
- * stall-prompt path. "One dispatch authority; a native binding instead of MCP."
+ * client, so there is NO local MCP proxy server. Tools are registered NATIVELY via
+ * the HCAP declarative tool-control-plane (mission-107): `HubSpecSource` fetches the
+ * live catalog into the declared spec and `SpecReconcileLoop` converges it onto pi
+ * through the sole `PiToolActuatorPort`, which renders each descriptor via
+ * `tool-bridge.buildPiToolDefinition` and calls `pi.registerTool`. Each tool's
+ * `execute` routes through the shared `runToolDispatch` authority via a
+ * `ToolDispatchContext` built from the dispatcher's shared state. pi's native
+ * `ctx.isIdle()` feeds the dispatcher's wake/stall idle-gate (`externalIdle`), and
+ * the dispatcher's shared `workLeases` feeds the dispatch context so lease
+ * observations reach the stall-prompt path. "One dispatch authority; a native
+ * binding instead of MCP."
  *
  * Boundary: imports `@apnex/network-adapter` ONLY from the @apnex graph.
  *
