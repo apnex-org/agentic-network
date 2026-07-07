@@ -440,7 +440,7 @@ Each dispatch thread + each PR-review thread is bilateral-sealed via `create_thr
 
 Some sub-execution transitions are Hub-cascade-driven:
 - Mission `plannedTasks` cascade auto-issues next-unissued task on review-approval (task-316 / idea-144 Path A) — applies when missions use formal Task entities (NOT mission-57's thread-dispatch pattern)
-- Thread convergence cascade fires `close_no_action` / `update_mission_status` / `propose_mission` / `create_idea` / `create_task` / `create_proposal` actions per Threads 2.0 (ADR-013/014)
+- Thread convergence cascade fires `close_no_action` / `update_mission_status` / `propose_mission` / `create_idea` actions per Threads 2.0; `create_task` and `create_proposal` are retired produce paths.
 - Pulse-fire cascade on PulseSweeper tick (per §4)
 - ack_message webhook on Message status flip to `acked` (mission-56 W3.2 + mission-57 W2 webhook composition)
 

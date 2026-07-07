@@ -40,11 +40,11 @@ const CHARTER_SECTIONS = ["vision", "directorProfile"] as const;
 export interface ExecutionTargets {
   workItem?: Pick<IWorkItemStore, "getWorkItem" | "systemUnblock">;
   proposal?: Pick<IProposalStore, "getProposal">;
-  /** PR #489 review (audit-9938): approve fires through the SHIPPED policy
-   *  handler (create_proposal_review semantics: submitted-only guard, auto-
-   *  scaffold with revert-on-failure, task_issued + proposal_decided
-   *  dispatches) — the policy layer supplies this closure; the executor never
-   *  touches the raw repository method. */
+  /** PR #489 review (audit-9938) + proptool0: approve fires through the
+   *  shipped INTERNAL Proposal approval bridge (submitted-only guard,
+   *  auto-scaffold with revert-on-failure, proposal_decided dispatches) — the
+   *  policy layer supplies this closure; the executor never touches the raw
+   *  repository method and no public create_proposal_review tool is required. */
   approveViaPolicy?: (proposalRef: string, feedback: string) => Promise<{ ok: boolean; detail: string }>;
   /** mission-103 S1: the served constitution — bind_axiom targets must
    *  resolve in the CURRENT snapshot manifest (referential, fail-closed). */

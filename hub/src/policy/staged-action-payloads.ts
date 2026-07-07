@@ -1,5 +1,5 @@
 /**
- * Mission-24 Phase 2 (ADR-014): Zod schemas for the 8 autonomous
+ * Mission-24 Phase 2 (ADR-014): Zod schemas for autonomous
  * StagedAction payload shapes.
  *
  * Usage:
@@ -29,13 +29,8 @@ export const CloseNoActionPayloadSchema = z.object({
 
 // work-162 (A1): CreateTaskActionPayloadSchema removed — create_task is no
 // longer a convergence-spawnable cascade action (Task subsystem retired).
-
-/** create_proposal { title, description, correlationId? } */
-export const CreateProposalActionPayloadSchema = z.object({
-  title: z.string().describe("Short title for the Proposal"),
-  description: z.string().describe("Proposal body"),
-  correlationId: z.string().optional().describe("Optional correlation ID"),
-});
+// proptool0: CreateProposalActionPayloadSchema removed — proposal creation is
+// no longer a convergence-spawnable cascade action or public tool surface.
 
 /** create_idea { title, description, tags? } */
 export const CreateIdeaActionPayloadSchema = z.object({
@@ -95,7 +90,6 @@ export const CreateBugActionPayloadSchema = z.object({
  */
 export const STAGED_ACTION_PAYLOAD_SCHEMAS = {
   close_no_action: CloseNoActionPayloadSchema,
-  create_proposal: CreateProposalActionPayloadSchema,
   create_idea: CreateIdeaActionPayloadSchema,
   update_idea: UpdateIdeaActionPayloadSchema,
   update_mission_status: UpdateMissionStatusActionPayloadSchema,
@@ -119,7 +113,6 @@ export const STAGED_ACTION_PAYLOAD_SCHEMAS = {
  */
 export const STAGED_ACTION_STAGE_OP_SCHEMA = z.discriminatedUnion("type", [
   z.object({ kind: z.literal("stage"), type: z.literal("close_no_action"), payload: CloseNoActionPayloadSchema }),
-  z.object({ kind: z.literal("stage"), type: z.literal("create_proposal"), payload: CreateProposalActionPayloadSchema }),
   z.object({ kind: z.literal("stage"), type: z.literal("create_idea"), payload: CreateIdeaActionPayloadSchema }),
   z.object({ kind: z.literal("stage"), type: z.literal("update_idea"), payload: UpdateIdeaActionPayloadSchema }),
   z.object({ kind: z.literal("stage"), type: z.literal("update_mission_status"), payload: UpdateMissionStatusActionPayloadSchema }),
@@ -130,7 +123,6 @@ export const STAGED_ACTION_STAGE_OP_SCHEMA = z.discriminatedUnion("type", [
 /** Enum of all autonomous (convergence-spawnable) action types. */
 export const AUTONOMOUS_STAGED_ACTION_TYPES = [
   "close_no_action",
-  "create_proposal",
   "create_idea",
   "update_idea",
   "update_mission_status",
@@ -144,9 +136,9 @@ export const AUTONOMOUS_STAGED_ACTION_TYPES = [
  *
  * The converger's role must be ≥ the max-privilege of any staged
  * action in the thread. Architect holds directive authority for
- * task + mission + mission-status updates. Proposals are engineer-
- * authored per ADR-010. Everything else is symmetric — either
- * party can converge.
+ * mission + mission-status updates. Proposal creation was removed
+ * from the convergence vocabulary by proptool0. Everything else is
+ * symmetric — either party can converge.
  *
  * Convergence gate in thread-policy.ts reads this map and rejects
  * converged=true with a reject-with-hint error when the caller's
@@ -159,7 +151,6 @@ export const REQUIRED_CONVERGER_ROLE: Record<
   ConvergerRoleRequirement
 > = {
   close_no_action: "either",
-  create_proposal: "engineer",
   create_idea: "either",
   update_idea: "either",
   update_mission_status: "architect",

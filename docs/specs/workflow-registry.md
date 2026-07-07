@@ -92,43 +92,18 @@ Reports and reviews use versioned naming based on `revisionCount`:
 
 ---
 
-### 1.2 Proposal
+### 1.2 Proposal (retired public surface)
 
-```
-Entity: Proposal
-States: submitted, approved, rejected, changes_requested, implemented
-Initial: submitted
-Terminal: implemented
-Additional fields:
-  labels — Record<string, string>; Mission-19 routing metadata inherited from the creator's Agent at submit-time
-```
+Proposal rows remain historical storage, but the active Proposal MCP/LLM workflow
+was retired by `proptool0` / mission-109. The public tools
+`create_proposal`, `create_proposal_review`, `close_proposal`, `get_proposal`,
+and `list_proposals` are not registered on the active tool surface.
 
-#### Transitions
-
-| From               | To                  | Trigger                    | Actor     |
-| ------------------ | ------------------- | -------------------------- | --------- |
-| (initial)          | submitted           | `create_proposal`          | Engineer  |
-| submitted          | approved            | `create_proposal_review`   | Architect |
-| submitted          | rejected            | `create_proposal_review`   | Architect |
-| submitted          | changes_requested   | `create_proposal_review`   | Architect |
-| approved           | implemented         | `close_proposal`           | Engineer  |
-| rejected           | implemented         | `close_proposal`           | Engineer  |
-| changes_requested  | implemented         | `close_proposal`           | Engineer  |
-
-#### Invariants
-
-| ID       | Invariant                                                                       | Tested By                              |
-| -------- | ------------------------------------------------------------------------------- | -------------------------------------- |
-| INV-P1   | Only the Architect can review proposals                                         | `e2e-remediation.test.ts` "RBAC enforcement"; `hub/test/e2e/invariants/INV-P1.test.ts` (mission-41 Wave 2) |
-| INV-P2   | Only submitted proposals can be reviewed                                        | `hub/test/e2e/invariants/INV-P2.test.ts` (mission-41 Wave 2 — bundled with proposal-policy status-guard fix at `1019b4f`; ratchet closed) |
-| INV-P3   | `close_proposal` requires status in {approved, rejected, changes_requested}     | `wave3b-policies.test.ts` "close_proposal fails" |
-| INV-P4   | implemented is terminal — no outbound transitions                               | `hub/test/e2e/invariants/INV-P4.test.ts` (mission-41 Wave 2) |
-| INV-P5   | A Proposal's `labels` are set at `create_proposal` from the caller Agent's labels and are immutable | `test/mission-19/labels.test.ts` "proposal inherits creator labels" |
-| INV-P6   | Scaffolded child Tasks use the Proposal's `labels`, never the approver's — so a Director-role approver cannot redirect the pool | `test/mission-19/labels.test.ts` "scaffold inherits proposal labels" |
-
-~~**Gap: `under_review` phantom state — RESOLVED (task-107): removed from enum.**~~
-
-**Gap (GAP-5):** `reviewProposal` in the store has no status guard — a proposal could theoretically be reviewed multiple times, overwriting previous decisions. The Registry specifies that only `submitted` proposals should be reviewable.
+Historical Proposal data is preserved. If first-class reads are needed again,
+reintroduce them as an explicit archival/admin surface rather than normal
+coordination tools. The only retained production behavior is the internal
+Decision-rail compatibility bridge for `approve(proposalRef)`, which uses
+Proposal approval/scaffold semantics without exposing a public Proposal tool.
 
 ---
 
@@ -194,7 +169,7 @@ Additional fields:
 | **INV-TH22** *(P2 spec, ratified thread-125)* | **`StagedAction.proposer` carries `{role, agentId}` rather than role alone. Essential for audit/provenance in P2P threads where multiple agents share a role (engineer↔engineer).** | TBD — `M-Phase2-Impl` |
 | **INV-TH23** *(P2 spec, ratified thread-125; Summary-as-Living-Record)* | **Every entity spawned by the cascade carries first-class metadata `sourceThreadId`, `sourceActionId`, and `sourceThreadSummary` (the `Thread.summary` frozen at the moment of commit). The consensus narrative is preserved immutably on the spawned entity even if the source thread is later archived.** | TBD — `M-Phase2-Impl` |
 
-**Phase 1 vocabulary (live):** `StagedActionType = "close_no_action"` only. Phase 2 ratified (spec, awaiting `M-Phase2-Impl`): `close_no_action | create_task | create_proposal | create_idea | update_idea | update_mission_status | propose_mission | create_clarification` as autonomous-via-convergence actions. Director-gated (scope-widening, never autonomous): `create_mission | update_mission_scope | cancel_task`. Scope-of-commitment principle: actions widening authorization scope require Director; actions within existing scope are autonomous.
+**Active autonomous vocabulary:** `close_no_action | create_idea | update_idea | update_mission_status | propose_mission | create_clarification | create_bug`. Retired public/cascade produce paths include `create_task` (work-162) and `create_proposal` (proptool0). Director-gated scope-widening actions remain outside thread convergence.
 
 **Phase 2 additions (spec, awaiting `M-Phase2-Impl`):** `leave_thread` tool (participant-only; thread → `abandoned`; auto-retracts leaver's staged actions); `list_available_peers(role?, matchLabels?)` discovery tool (returns `{agentId, role, labels}`); `thread_convergence_finalized` merged event superseding `thread_converged` + `thread_convergence_completed` (carries full `ConvergenceReport`); Director first-class participation with reserved `director-*` agentId prefix and chat-injection notification surface.
 
@@ -578,60 +553,12 @@ Precondition: Parent task with blocked dependents
 
 ---
 
-### WF-004 Proposal Happy Path
+### WF-004 Proposal Workflow (retired)
 
-```
-Actors: Architect, Engineer
-Precondition: None
-```
-
-| Step | Actor     | Action                                     | State After       | Dispatch Selector                                                |
-| ---- | --------- | ------------------------------------------ | ----------------- | ---------------------------------------------------------------- |
-| 1    | Engineer  | `create_proposal(title, summary, body)`    | submitted         | `proposal_submitted` → { roles: [architect], matchLabels: proposal.labels } |
-| 2    | Architect | `create_proposal_review(id, decision, fb)` | approved          | `proposal_decided` → { roles: [engineer], matchLabels: proposal.labels } |
-| 3    | Engineer  | `close_proposal(id)`                       | implemented       | (none)                                                           |
-
-**Agent behavior:** Step 2 is automated — the Architect's `sandwichReviewProposal` handler fires on `proposal_submitted`.
-**Label inheritance:** When the review scaffolds child Tasks (via `ProposedExecutionPlan`), each scaffolded Task is created with `proposal.labels`, not the approver's labels (INV-P6, INV-T16). A Director-role approver outside the original label scope cannot accidentally redirect implementation to a different pool.
-
-**Tested By:** `e2e-workflows.test.ts` "create → changes_requested → resubmit → approve → close"
-
----
-
-### WF-004a Proposal with Changes Requested
-
-```
-Actors: Architect, Engineer
-Precondition: None
-```
-
-| Step | Actor     | Action                                           | State After         | Event Emitted                       |
-| ---- | --------- | ------------------------------------------------ | ------------------- | ----------------------------------- |
-| 1    | Engineer  | `create_proposal(title, summary, body)`          | submitted           | `proposal_submitted` → [architect]  |
-| 2    | Architect | `create_proposal_review(id, "changes_requested", fb)` | changes_requested | `proposal_decided` → [engineer]  |
-| 3    | Engineer  | `create_proposal(title_v2, summary_v2, body_v2)` | new: submitted      | `proposal_submitted` → [architect]  |
-| 4    | Architect | `create_proposal_review(id_v2, "approved", fb)`  | new: approved       | `proposal_decided` → [engineer]     |
-| 5    | Engineer  | `close_proposal(id_v2)`                          | new: implemented    | (none)                              |
-
-**Note:** There is no "update proposal" operation. The Engineer creates a new proposal. The original remains in `changes_requested` state permanently.
-
-**Tested By:** `e2e-workflows.test.ts` "create → changes_requested → resubmit → approve → close"
-
----
-
-### WF-004b Proposal Rejection
-
-```
-Actors: Architect, Engineer
-Precondition: Submitted proposal
-```
-
-| Step | Actor     | Action                                       | State After  | Event Emitted                       |
-| ---- | --------- | -------------------------------------------- | ------------ | ----------------------------------- |
-| 1    | Engineer  | `create_proposal(title, summary, body)`      | submitted    | `proposal_submitted` → [architect]  |
-| 2    | Architect | `create_proposal_review(id, "rejected", fb)` | rejected     | `proposal_decided` → [engineer]     |
-
-**Tested By:** `e2e-workflows.test.ts` "proposal rejection flow"
+The Proposal happy-path / changes-requested / rejection public workflows are
+retired by `proptool0` / mission-109. Current best-practice coordination flows
+through WorkItems, Ideas, Decisions, and Threads; Proposal rows remain only as
+historical data plus the internal Decision `approve(proposalRef)` bridge.
 
 ---
 
@@ -693,13 +620,12 @@ Precondition: Thread converged WITH a convergenceAction attached
 | 1    | Any    | `create_thread_reply(converged: true, convergenceAction: {type, template})` | converged         | internal: `thread_converged_with_action`                      |
 | 2    | Hub    | `handleThreadConvergedWithAction` reads action type                         | —                 | —                                                             |
 | 3a   | Hub    | If `create_task`: `submitDirective(description, labels: thread.labels)`     | task: pending     | `task_issued` → { roles: [engineer], matchLabels: thread.labels } |
-| 3b   | Hub    | If `create_proposal`: `submitProposal(title, description, labels: thread.labels)` | proposal: submitted | `proposal_submitted` → { roles: [architect], matchLabels: thread.labels } |
 | 4    | Hub    | `closeThread(threadId)`                                                     | thread: closed    | —                                                             |
 | 5    | System | `thread_converged` SSE emitted (hasAction: true)                            | —                 | `thread_converged` → { roles: [architect], matchLabels: thread.labels } |
 
-**Label inheritance:** The spawned Task or Proposal inherits the Thread's labels — NOT the converging party's labels (INV-T17, INV-TH10). This lets a Director-role Agent mediate a conversation between two domain-scoped Engineers/Architects without rewriting the downstream routing scope.
+**Label inheritance:** Spawned entities inherit the Thread's labels — NOT the converging party's labels. This lets a Director-role Agent mediate a conversation between domain-scoped Agents without rewriting downstream routing scope.
 
-**Dedup:** Step 5 emits the SSE event with `hasAction: true`. The Architect's notification handler skips `sandwichThreadConverged` when this flag is set, preventing duplicate task/proposal creation. The event-loop polling backup is also guarded — `sandwichThreadConverged` re-reads the thread and skips if status is already `closed`.
+**Dedup:** Step 5 emits the SSE event with `hasAction: true`. The Architect's notification handler skips `sandwichThreadConverged` when this flag is set, preventing duplicate entity creation. The event-loop polling backup is also guarded — `sandwichThreadConverged` re-reads the thread and skips if status is already `closed`.
 
 **Key difference from WF-005a:** This path is deterministic and Hub-driven. The action is pre-declared via `convergenceAction` (late-binding) — no LLM reasoning required. The converging party specifies exactly what should happen on convergence.
 
@@ -872,12 +798,13 @@ Since Mission-19 (v2.1.0), all events in this catalogue are delivered via `ctx.d
 | `revision_required`          | ReviewPolicy.createReview | **P2P** task.assignedAgentId (fallback: [engineer] ∧ task.labels) | taskId, assessment, previousReportRef, reviewRef, revisionCount | Report rejected — revision needed by the original claimant |
 | `director_attention_required`| ReviewPolicy.createReview | [architect] ∧ task.labels                              | taskId, revisionCount, assessment                     | Circuit breaker: task escalated after 3+ rejections |
 
-### 4.4 Proposal Events
+### 4.4 Proposal Events (legacy compatibility)
 
-| Event                | Emitter                                  | Target                           | Payload                                    | Purpose                    |
-| -------------------- | ---------------------------------------- | -------------------------------- | ------------------------------------------ | -------------------------- |
-| `proposal_submitted` | ProposalPolicy.createProposal            | [architect] ∧ proposal.labels    | proposalId, title, summary, proposalRef    | New proposal for review    |
-| `proposal_decided`   | ProposalPolicy.createProposalReview      | [engineer] ∧ proposal.labels     | proposalId, decision, feedback             | Architect made a decision  |
+`proposal_submitted` and `proposal_decided` remain known legacy event types for
+compatibility with stored notifications/shared event typing. `proptool0` removes
+the public Proposal producer tools and thread-convergence Proposal creation; do
+not introduce new active producers except the internal Decision approval bridge
+where explicitly tested.
 
 ### 4.5 Thread Events
 
@@ -1026,7 +953,6 @@ Policy handlers MUST NOT reach into the registry directly — they must go throu
 | Source                                         | Destination                         | Rule                                                              |
 | ---------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------- |
 | Caller Agent's labels                          | `Task.labels` at `create_task`      | Set at submit-time (INV-T13)                                      |
-| Caller Agent's labels                          | `Proposal.labels` at `create_proposal` | Set at submit-time (INV-P5)                                    |
 | Opener Agent's labels                          | `Thread.labels` at `create_thread`  | Set at create-time (INV-TH9)                                      |
 | `Proposal.labels`                              | Child `Task.labels` on scaffold     | Read from parent Proposal, NOT the approver (INV-P6, INV-T16)     |
 | `Thread.labels`                                | Spawned `Task.labels` or `Proposal.labels` on convergence | Read from source Thread, NOT the converging party (INV-T17, INV-TH10) |

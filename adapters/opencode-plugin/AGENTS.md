@@ -21,7 +21,7 @@ The Plugin receives real-time SSE notifications from the Hub. When the Architect
 **INFORMATIONAL notifications** (injected as context, no response required):
 - `task_issued` — New directive available. Pick up when ready.
 - `review_completed` — Architect reviewed your report. Check when ready.
-- `proposal_decided` — Architect decided on your proposal.
+- `proposal_decided` — Legacy Proposal decision notification; Proposal tools are retired from active workflow.
 
 When prompted by a Push-to-LLM notification, respond by calling the appropriate Hub tools (e.g., `get_thread` then `create_thread_reply`).
 
@@ -47,9 +47,6 @@ All tools follow a consistent CRUD naming convention: `create_*`, `get_*`, `list
 **Engineer tools:**
 - `architect-hub_get_task` — Get the next pending task from the Architect
 - `architect-hub_create_report` — Submit an engineering report after completing a task
-- `architect-hub_create_proposal` — Submit a proposal for the Architect to review
-- `architect-hub_get_proposal` — Check the Architect's decision on a specific proposal
-- `architect-hub_close_proposal` — Mark a proposal as implemented after acting on approval
 - `architect-hub_create_clarification` — Request clarification from the Architect on an active task
 - `architect-hub_get_clarification` — Check if the Architect has responded to a clarification request
 
@@ -57,7 +54,6 @@ All tools follow a consistent CRUD naming convention: `create_*`, `get_*`, `list
 - `architect-hub_create_task` — Create a new task for the Engineer (with `title` and `description`)
 - `architect-hub_get_report` — Get a completed report
 - `architect-hub_get_agents` — Get the roster of registered agents (filter `{livenessState:"online"}` for connected peers); returns each agent's `agentId`, `role`, `labels`, and liveness
-- `architect-hub_create_proposal_review` — Approve/reject/request changes on proposals
 - `architect-hub_cancel_task` — Cancel a pending task
 - `architect-hub_resolve_clarification` — Answer Engineer clarification requests
 - `architect-hub_create_review` — Store review assessment for a completed task
@@ -71,7 +67,6 @@ All tools follow a consistent CRUD naming convention: `create_*`, `get_*`, `list
 - `architect-hub_get_document` — Read a document from the Hub's state storage (e.g., full reports)
 - `architect-hub_create_document` — Write a document to the Hub's state storage
 - `architect-hub_list_documents` — List documents in a directory of the Hub's state storage
-- `architect-hub_list_proposals` — List all proposals, optionally filtered by status
 - `architect-hub_get_review` — Get the Architect's review assessment for a specific task
 - `architect-hub_create_thread` — Open a new ideation thread for bidirectional discussion
 - `architect-hub_create_thread_reply` — Reply to an active ideation thread
@@ -103,10 +98,10 @@ After submitting a report, the Architect will automatically review it. To check 
 1. Call `architect-hub_get_review` with the `taskId` to retrieve the Architect's assessment
 2. If the review includes feedback or requests changes, act on it and submit an updated report
 
-### Closing Proposals
+### Proposal Workflow Retired
 
-After a proposal is approved and you've implemented the changes:
-1. Call `architect-hub_close_proposal` with the `proposalId` to mark it as implemented
+Proposal workflow tools are retired from the active Hub surface. Use WorkItems,
+Ideas, Decisions, and Threads for current coordination.
 
 ### Ideation Threads (Threads 2.0, ADR-013, Mission-21 Phase 1)
 
@@ -138,7 +133,7 @@ Both sides of the thread must then signal `converged=true` for the thread to act
 
 If the Hub rejects your reply with `"Thread convergence rejected: …"`, read the error — it names exactly what's missing (no convergenceActions, empty summary, or both). Retry with the missing piece populated.
 
-**NEVER rely on prose promises in the message field to create tasks/proposals/ideas etc. after convergence.** Only machine-readable `stagedActions` cascade. In Phase 1 the cascade only executes `close_no_action`; if the thread needs to spawn a task or proposal, converge with `close_no_action` and then call the relevant tool (`architect-hub_create_task`, `architect-hub_create_proposal`, etc.) explicitly in the same or next turn. Phase 2 will widen the vocabulary to let those entities spawn atomically from convergence.
+**NEVER rely on prose promises in the message field to create downstream artefacts after convergence.** Only machine-readable `stagedActions` cascade. The active cascade vocabulary excludes retired Task and Proposal creation paths; use current WorkItems, Ideas, Decisions, and Threads flows instead.
 
 **Intent** — set on your reply when relevant: `decision_needed`, `agreement_pending`, `director_input`, or `implementation_ready`. Purely informational for the counterparty.
 

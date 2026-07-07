@@ -1,13 +1,18 @@
 /**
- * Proposal Policy — Full lifecycle proposal management with Auto-Scaffolding.
+ * Proposal Policy — retired public Proposal tool surface with preserved
+ * internal Decision-rail approval semantics.
  *
- * Tools: create_proposal, list_proposals, create_proposal_review,
- *        get_proposal, close_proposal
+ * proptool0 removed create_proposal, list_proposals, create_proposal_review,
+ * get_proposal, and close_proposal from the active MCP/LLM tool surface.
+ * Proposal storage/history remains intact. Decision `approve(proposalRef)`
+ * still needs the shipped approval/scaffold behavior, exposed below only as
+ * an internal helper, not as a registered tool.
+ *
  * FSM: submitted → approved/rejected/changes_requested → implemented
  *
  * Auto-Scaffolding (Tele-2): When a proposal with a `proposedExecutionPlan`
- * is approved, the Hub automatically creates all missions and tasks defined
- * in the plan, resolving local reference IDs to generated entity IDs.
+ * is approved, the Hub automatically creates all missions defined in the
+ * plan. Task auto-scaffolding is retired with the Task subsystem.
  */
 
 import { z } from "zod";
@@ -223,11 +228,12 @@ async function listProposals(args: Record<string, unknown>, ctx: IPolicyContext)
   };
 }
 
-// Exported for mission-102 P3-B5 (PR #489 review, audit-9938): the decision
-// executor's approve action calls THIS handler — the exact shipped semantics
-// (submitted-only guard, auto-scaffold with revert-on-failure, task_issued +
-// proposal_decided dispatches) — never the raw repository method.
-export async function createProposalReview(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+// Internal review helper retained for mission-102 P3-B5 (PR #489 review,
+// audit-9938) and proptool0's compatibility bridge. Decision approve calls
+// this logic for the exact shipped semantics (submitted-only guard,
+// auto-scaffold with revert-on-failure, proposal_decided dispatches) without
+// exposing create_proposal_review as a public MCP tool.
+async function reviewProposalInternal(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const proposalId = args.proposalId as string;
   const decision = args.decision as string;
   const feedback = args.feedback as string;
@@ -325,6 +331,14 @@ export async function createProposalReview(args: Record<string, unknown>, ctx: I
   };
 }
 
+export async function approveProposalForDecision(
+  proposalId: string,
+  feedback: string,
+  ctx: IPolicyContext,
+): Promise<PolicyResult> {
+  return reviewProposalInternal({ proposalId, decision: "approved", feedback }, ctx);
+}
+
 async function getProposal(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const proposalId = args.proposalId as string;
 
@@ -393,55 +407,8 @@ const executionPlanSchema = z.object({
 // ── Registration ────────────────────────────────────────────────────
 
 export function registerProposalPolicy(router: PolicyRouter): void {
-  router.register(
-    "create_proposal",
-    "[Engineer] Submit a proposal for the Architect to review. Returns the proposal ID and reference path. The Architect will be notified via webhook.",
-    {
-      title: z.string().describe("Short title for the proposal"),
-      summary: z.string().describe("1-2 sentence summary of what is being proposed"),
-      body: z.string().describe("Full proposal text (Markdown supported)"),
-      correlationId: z.string().optional().describe("Optional correlation ID to link this proposal to related tasks/threads"),
-      proposedExecutionPlan: executionPlanSchema,
-    },
-    createProposal,
-  );
-
-  router.register(
-    "list_proposals",
-    "[Any] List proposals with optional status filter and pagination.",
-    {
-      status: z.enum(["submitted", "approved", "rejected", "changes_requested", "implemented"]).optional().describe("Filter proposals by status (optional)"),
-      ...LIST_PAGINATION_SCHEMA,
-    },
-    listProposals,
-  );
-
-  router.register(
-    "create_proposal_review",
-    "[Architect] Review a proposal and provide a decision. Called by the Architect. If the proposal has a proposedExecutionPlan and the decision is 'approved', the Hub automatically scaffolds all missions and tasks.",
-    {
-      proposalId: z.string().describe("The proposal ID to review"),
-      decision: z.enum(["approved", "rejected", "changes_requested"]).describe("The review decision"),
-      feedback: z.string().describe("Feedback or rationale for the decision"),
-    },
-    createProposalReview,
-  );
-
-  router.register(
-    "get_proposal",
-    "[Engineer|Verifier] Check the decision on a specific proposal (by id). Returns the proposal status, decision, and feedback. (mission-93 bug-167: verifier broad/audit read per verifier-role.md §2.2.)",
-    {
-      proposalId: z.string().describe("The proposal ID to check"),
-    },
-    getProposal,
-  );
-
-  router.register(
-    "close_proposal",
-    "[Engineer] Mark a proposal as implemented/closed after acting on the Architect's decision.",
-    {
-      proposalId: z.string().describe("The proposal ID to close"),
-    },
-    closeProposal,
-  );
+  // proptool0: public Proposal workflow tools are retired from the active
+  // MCP/LLM tool surface. Keep this registration hook as a no-op so boot code
+  // does not need special casing and re-exposure guard tests can call it.
+  void router;
 }

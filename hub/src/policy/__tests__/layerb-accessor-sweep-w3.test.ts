@@ -9,9 +9,9 @@
  * scalar filter silently missed.
  *
  * Covers §2.4 per-tool matrix: list_ideas/list_tasks/list_threads (accessor
- * bodies), list_proposals (push-down → W2 translate-point), list_tele (boolean
- * include-flags guard via phaseFromEntity), get_pending_actions alignment
- * (state push-down). testcontainers postgres.
+ * bodies), list_tele (boolean include-flags guard via phaseFromEntity),
+ * get_pending_actions alignment (state push-down). testcontainers postgres.
+ * proptool0 retires list_proposals from the public policy surface.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -83,8 +83,8 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
       warn: () => { /* silent */ },
     });
     await reconciler.start();
-    // W2 translate-point — needed for the push-down tools (list_proposals,
-    // get_pending_actions) whose repos filter via substrate.list.
+    // W2 translate-point — needed for push-down tools such as
+    // get_pending_actions whose repos filter via substrate.list.
     substrate.setFieldTranslator((kind, key) => reconciler.getFieldTranslation(kind, key));
 
     const counter = new SubstrateCounter(substrate);
@@ -186,15 +186,9 @@ describe("W3 Layer-B FieldAccessor envelope sweep (testcontainers, real policy p
     expect((parse(await router.handle("list_threads", { filter: { currentTurnAgentId: "eng-9" } }, ctx)).threads as Array<{ id: string }>).map((t) => t.id)).toEqual(["w3-th1"]);
   }, 30_000);
 
-  it("W3.4 list_proposals: status PUSH-DOWN → substrate translate-point (envelope path)", async () => {
-    await seed([
-      { kind: "Proposal", id: "w3-p1", data: { id: "w3-p1", kind: "Proposal", apiVersion: "core.ois/v1", metadata: { name: "w3-p1" }, spec: { title: "a" }, status: { phase: "approved" } } },
-      { kind: "Proposal", id: "w3-p2", data: { id: "w3-p2", kind: "Proposal", apiVersion: "core.ois/v1", metadata: { name: "w3-p2" }, spec: { title: "b" }, status: { phase: "submitted" } } },
-    ]);
-    expect((parse(await router.handle("list_proposals", { status: "approved" }, ctx)).proposals as Array<{ id: string }>).map((p) => p.id)).toEqual(["w3-p1"]);
-    const none = parse(await router.handle("list_proposals", { status: "rejected" }, ctx));
-    expect(none.proposals as unknown[]).toHaveLength(0);
-    expect(none._ois_query_unmatched).toBe(true); // collection non-empty, nothing matched
+  it("W3.4 list_proposals is retired from the public policy surface (proptool0)", async () => {
+    const retired = parse(await router.handle("list_proposals", { status: "approved" }, ctx));
+    expect(retired.error).toMatch(/Unknown tool: list_proposals/);
   }, 30_000);
 
   it("W3.6 get_pending_actions alignment: listForAgent state filter pushes down (envelope path)", async () => {
