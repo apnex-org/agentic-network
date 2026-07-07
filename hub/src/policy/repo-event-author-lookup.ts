@@ -19,9 +19,11 @@
  *     filters to online agents only, and we need to resolve push-author
  *     identity even when the author is offline (architect-pushed-then-
  *     stepped-away common case).
- *   - First match wins. Unique-login invariant is adapter-side discipline
- *     (one Hub agent per GH login); duplicates would surface as
- *     non-deterministic role lookup but are not enforced here.
+ *   - lookupRoleByGhLogin preserves the legacy first-match behavior for
+ *     existing peer-role notifications.
+ *   - lookupUniqueAgentByGhLogin is the safe pinpoint identity primitive:
+ *     it returns null unless exactly one registered Hub agent carries the
+ *     login label. Use it when the dispatch target is a specific agentId.
  *   - Missing label or no-match → null. Caller handles (commit-pushed
  *     handler logs + skips per Design v1.0 §3 step 5).
  */
@@ -31,6 +33,74 @@ import type { AgentRole } from "../state.js";
 
 /** Reserved AgentLabels namespace key for GitHub login mapping. */
 export const GITHUB_LOGIN_LABEL = "ois.io/github/login";
+
+export interface GhLoginAgentIdentity {
+  agentId: string;
+  name?: string;
+  role: AgentRole;
+}
+
+export type GhLoginAgentLookupResult =
+  | { status: "none" }
+  | { status: "ambiguous"; count: number }
+  | { status: "unique"; agent: GhLoginAgentIdentity };
+
+/**
+ * Resolve a GitHub login string → registered Hub agent identity. Returns
+ * null when no agent carries the login as its `ois.io/github/login`
+ * label value.
+ *
+ * Keeps the historical listAgents() semantics from lookupRoleByGhLogin:
+ * selectAgents() filters to online agents, but repo-event facts must be
+ * routable to the responsible actor even when that actor is offline.
+ */
+function toGhLoginIdentity(agent: { id: string; name?: string; role: AgentRole }): GhLoginAgentIdentity {
+  return {
+    agentId: agent.id,
+    name: agent.name,
+    role: agent.role,
+  };
+}
+
+export async function lookupAgentByGhLogin(
+  ghLogin: string,
+  ctx: IPolicyContext,
+): Promise<GhLoginAgentIdentity | null> {
+  if (typeof ghLogin !== "string" || ghLogin.length === 0) return null;
+  const agents = await ctx.stores.engineerRegistry.listAgents();
+  for (const agent of agents) {
+    if (agent.labels?.[GITHUB_LOGIN_LABEL] === ghLogin) {
+      return toGhLoginIdentity(agent);
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve a GitHub login string → a UNIQUE registered Hub agent identity.
+ * Returns null on no match OR duplicate matches, because an agentId-pinned
+ * delivery must never guess between multiple agents sharing a GitHub login.
+ */
+export async function lookupAgentByGhLoginUniqueState(
+  ghLogin: string,
+  ctx: IPolicyContext,
+): Promise<GhLoginAgentLookupResult> {
+  if (typeof ghLogin !== "string" || ghLogin.length === 0) return { status: "none" };
+  const matches = (await ctx.stores.engineerRegistry.listAgents())
+    .filter((agent) => agent.labels?.[GITHUB_LOGIN_LABEL] === ghLogin)
+    .map(toGhLoginIdentity);
+  if (matches.length === 0) return { status: "none" };
+  if (matches.length > 1) return { status: "ambiguous", count: matches.length };
+  return { status: "unique", agent: matches[0] };
+}
+
+export async function lookupUniqueAgentByGhLogin(
+  ghLogin: string,
+  ctx: IPolicyContext,
+): Promise<GhLoginAgentIdentity | null> {
+  const result = await lookupAgentByGhLoginUniqueState(ghLogin, ctx);
+  return result.status === "unique" ? result.agent : null;
+}
 
 /**
  * Resolve a GitHub login string → registered Hub agent role. Returns
@@ -43,12 +113,5 @@ export async function lookupRoleByGhLogin(
   ghLogin: string,
   ctx: IPolicyContext,
 ): Promise<AgentRole | null> {
-  if (typeof ghLogin !== "string" || ghLogin.length === 0) return null;
-  const agents = await ctx.stores.engineerRegistry.listAgents();
-  for (const agent of agents) {
-    if (agent.labels?.[GITHUB_LOGIN_LABEL] === ghLogin) {
-      return agent.role;
-    }
-  }
-  return null;
+  return (await lookupAgentByGhLogin(ghLogin, ctx))?.role ?? null;
 }

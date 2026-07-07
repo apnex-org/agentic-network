@@ -543,15 +543,26 @@ describe("PR_MERGED_HANDLER (mission-76 W1 §3.1)", () => {
       }),
     );
     const dispatches = await PR_MERGED_HANDLER.handle(wrapAsInboundMessage(repoEvent), ctx);
-    expect(dispatches).toHaveLength(1);
-    expect(dispatches[0].target).toEqual({ role: "architect" });
-    expect(dispatches[0].intent).toBe("pr-merged-notification");
-    const payload = dispatches[0].payload as Record<string, unknown>;
+    expect(dispatches).toHaveLength(2);
+
+    const peer = dispatches.find((d) => d.intent === "pr-merged-notification");
+    expect(peer?.target).toEqual({ role: "architect" });
+    const payload = peer?.payload as Record<string, unknown>;
     expect(payload.body).toBe(
       "Engineer merged PR #168: [mission-75] Phase 9 closing audit + Phase 10 retrospective",
     );
     expect(payload.prNumber).toBe(168);
     expect(payload.prBaseRef).toBe("main");
+
+    const direct = dispatches.find((d) => d.intent === "pr-merged-author-notification");
+    expect(direct).toMatchObject({
+      target: { agentId: "eng-A" },
+      payload: {
+        body: "Engineer merged PR #168: [mission-75] Phase 9 closing audit + Phase 10 retrospective",
+        routingReason: "pr-author-direct",
+        authorAgentId: "eng-A",
+      },
+    });
   });
 
   it("webhook-shape: architect-merges-PR → engineer notification (symmetric per §3.4)", async () => {
@@ -569,11 +580,23 @@ describe("PR_MERGED_HANDLER (mission-76 W1 §3.1)", () => {
       }),
     );
     const dispatches = await PR_MERGED_HANDLER.handle(wrapAsInboundMessage(repoEvent), ctx);
-    expect(dispatches).toHaveLength(1);
-    expect(dispatches[0].target).toEqual({ role: "engineer" });
-    expect((dispatches[0].payload as Record<string, unknown>).body).toBe(
+    expect(dispatches).toHaveLength(2);
+
+    const peer = dispatches.find((d) => d.intent === "pr-merged-notification");
+    expect(peer?.target).toEqual({ role: "engineer" });
+    expect((peer?.payload as Record<string, unknown>).body).toBe(
       "Architect merged PR #168: [mission-75] Phase 9 closing audit + Phase 10 retrospective",
     );
+
+    const direct = dispatches.find((d) => d.intent === "pr-merged-author-notification");
+    expect(direct).toMatchObject({
+      target: { agentId: "arch-A" },
+      payload: {
+        body: "Architect merged PR #168: [mission-75] Phase 9 closing audit + Phase 10 retrospective",
+        routingReason: "pr-author-direct",
+        authorAgentId: "arch-A",
+      },
+    });
   });
 
   it("Events-API-shape: action='merged' → engineer-merges PR (bug-50 Class A + B coverage)", async () => {
@@ -591,13 +614,50 @@ describe("PR_MERGED_HANDLER (mission-76 W1 §3.1)", () => {
       }),
     );
     const dispatches = await PR_MERGED_HANDLER.handle(wrapAsInboundMessage(repoEvent), ctx);
-    expect(dispatches).toHaveLength(1);
-    const payload = dispatches[0].payload as Record<string, unknown>;
+    expect(dispatches).toHaveLength(2);
+    const peer = dispatches.find((d) => d.intent === "pr-merged-notification");
+    const payload = peer?.payload as Record<string, unknown>;
     expect(payload.body).toBe("Engineer merged PR #168"); // colon dropped (title null)
     expect(payload.prAuthor).toBe("apnex-greg"); // bug-49 actor fallback
     expect(payload.prUrl).toBe("https://github.com/apnex-org/agentic-network/pull/168"); // bug-50 derived
     expect(payload.prBaseRef).toBe("main"); // bug-50 Class A
     expect(payload.prHeadRef).toBe("agent-greg/feature");
+
+    const direct = dispatches.find((d) => d.intent === "pr-merged-author-notification");
+    expect(direct).toMatchObject({
+      target: { agentId: "eng-A" },
+      payload: {
+        body: "Engineer merged PR #168",
+        routingReason: "pr-author-direct",
+        authorAgentId: "eng-A",
+      },
+    });
+  });
+
+  it("duplicate GitHub-login skips direct author route while preserving legacy peer notification", async () => {
+    const ctx = makeCtx([
+      makeAgent("eng-A", "engineer", "apnex-shared"),
+      makeAgent("eng-B", "engineer", "apnex-shared"),
+    ]);
+    const repoEvent = translateGhEvent(
+      makePullRequestEventWebhookShape({
+        action: "closed",
+        authorLogin: "apnex-shared",
+        prNumber: 168,
+        prTitle: "test",
+        prHtmlUrl: "https://github.com/x/y/pull/168",
+        baseRef: "main",
+        headRef: "feat/x",
+        merged: true,
+      }),
+    );
+    const dispatches = await PR_MERGED_HANDLER.handle(wrapAsInboundMessage(repoEvent), ctx);
+    expect(dispatches).toHaveLength(1);
+    expect(dispatches[0]).toMatchObject({
+      intent: "pr-merged-notification",
+      target: { role: "architect" },
+    });
+    expect(dispatches.some((d) => d.intent === "pr-merged-author-notification")).toBe(false);
   });
 
   it("unknown-author → skip", async () => {
