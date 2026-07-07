@@ -47,10 +47,16 @@ import {
   type TelemetryEvent,
   type BuildInfo,
 } from "@apnex/network-adapter";
-import { registerHubTools } from "./tool-bridge.js";
 import { buildPiNotificationHooks } from "./wake.js";
 import { installFooter, type FooterController } from "./footer-install.js";
 import { runSwarmPoll } from "./footer-poll.js";
+import { SpecStore } from "./hcap/tools/spec-store.js";
+import { DiffEngine } from "./hcap/tools/diff-engine.js";
+import { ConvergenceActuator } from "./hcap/tools/convergence-actuator.js";
+import { SpecReconcileLoop } from "./hcap/tools/reconcile-loop.js";
+import { PiToolActuatorPort } from "./hcap/tools/pi-tool-actuator-port.js";
+import { HubSpecSource } from "./hcap/tools/hub-spec-source.js";
+import { PiToolControlPlane } from "./hcap/tools/tool-control-plane.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -97,6 +103,13 @@ let notificationLogPath = "";
 let hubAdapter: McpAgentClient | null = null;
 let config: HubConfig;
 let reconciler: ToolSurfaceReconciler | null = null;
+// HCAP tool-control-plane (mission-107). The reconciler above CLEAVES: it remains the
+// Hub-revision DRIFT DETECTOR (its onDrift refreshes the spec + converges); the
+// actuation / converge half is the HCAP stack below. `controlPlane.sync` converges the
+// held declared spec (U1) onto pi's running active-set (U5); `hubSpecSource` refreshes
+// the declared spec from the live Hub catalog. Both null until connect.
+let controlPlane: PiToolControlPlane | null = null;
+let hubSpecSource: HubSpecSource | null = null;
 let currentRole = process.env.OIS_HUB_ROLE ?? "architect";
 let started = false;
 
@@ -230,7 +243,12 @@ async function connectAndSeed(
       firstTimerEnabled: true,
       log,
       onHeartbeatTick: async () => {
+        // L2 heartbeat: (1) the reconciler detects Hub-revision drift → onDrift
+        // refreshes the declared spec; (2) sync converges the held spec onto pi's
+        // running active-set every tick — repairing pi active-set drift even when the
+        // Hub is unchanged (mission-106 F1 disk-repair loop, re-pointed at the spec).
         await reconciler?.reconcile("heartbeat");
+        controlPlane?.sync("heartbeat");
         // mission-99 slice (b): Tier-C swarm PULL on the SAME heartbeat tick
         // (spec §6 — no new timer; rides the F2 ±20% jitter for anti-stampede).
         // READ-ONLY (get_agents + role-scoped S4 reads); pushes into the footer
@@ -318,13 +336,43 @@ async function connectAndSeed(
   );
   hubAdapter.setCallbacks(d.callbacks);
 
-  // Reconciler drift → re-seed the native tool surface + toast.
+  // ── HCAP tool-control-plane (mission-107) ────────────────────────────
+  // The 6-unit converge stack. U5 (the port) is the SOLE ExtensionAPI crossing;
+  // U1-U4 + U6 are pi-neutral. The additive `seedToolSurface` UNION is GONE:
+  // converge = registerTool(ALL declared, KF2) + setActiveTools(EXACT enabled subset
+  // ∪ preserved built-ins) — one authoritative REPLACE that both ADDS and REMOVES
+  // (removal = set-subtraction; pi has no deregister). One store instance is shared
+  // by the loop (reads it) and the facade (writes it).
+  const actuatorPort = new PiToolActuatorPort(pi, dispatchCtx);
+  const store = new SpecStore();
+  const specLoop = new SpecReconcileLoop(
+    {
+      store,
+      diff: new DiffEngine(),
+      actuator: new ConvergenceActuator(actuatorPort),
+      port: actuatorPort,
+    },
+    { log },
+  );
+  const plane = new PiToolControlPlane({ store, loop: specLoop, port: actuatorPort });
+  const source = new HubSpecSource({
+    // U6 fetches the live LLM-facing catalog (core-hydrated); the KF1(b) zero-tool
+    // poison guard lives inside refreshFromHub, not here.
+    fetchCatalog: async () => (hubAdapter ? hubAdapter.listTools() : []),
+    controlPlane: plane,
+    log,
+  });
+  controlPlane = plane;
+  hubSpecSource = source;
+
+  // Reconciler drift (L3) → refresh the declared spec from the Hub, then converge.
   reconciler = buildToolSurfaceReconciler(config.hubUrl, () => {
-    void seedToolSurface(pi, dispatchCtx).catch((err) =>
-      log(`[ToolSurface] re-seed failed (non-fatal): ${err}`),
-    );
+    void source
+      .refreshFromHub()
+      .then(() => plane.sync("drift"))
+      .catch((err) => log(`[hcap] drift refresh failed (non-fatal): ${err}`));
     try {
-      ctx.ui.notify("Hub tools updated — re-enumerating", "info");
+      ctx.ui.notify("Hub tools updated — reconciling", "info");
     } catch {
       /* UI not ready */
     }
@@ -336,28 +384,12 @@ async function connectAndSeed(
   assertHostWiringComplete(d, log);
   d.pollBackstop?.start(() => hubAdapter);
 
-  // Seed the native tool surface from the live catalog.
-  await seedToolSurface(pi, dispatchCtx);
+  // L1 bootstrap: refresh the declared spec from the live catalog, then converge
+  // (registration + activation) in one authoritative pass.
+  await source.refreshFromHub();
+  plane.sync("bootstrap");
   // Baseline the reconciler's applied revision (seed pass: no emit).
   await reconciler.reconcile("identityReady");
-}
-
-/**
- * Fetch the LLM-facing catalog and register each tool natively with pi. Core
- * already tier-filters + cognitively-enriches (agent.listTools), so this reads a
- * pre-hydrated catalog (A11) and renders it — no re-derivation.
- */
-async function seedToolSurface(
-  pi: ExtensionAPI,
-  dispatchCtx: ToolDispatchContext,
-): Promise<void> {
-  if (!hubAdapter) return;
-  const descriptors = await hubAdapter.listTools();
-  const names = registerHubTools(pi, descriptors, dispatchCtx);
-  // Enable the Hub tools alongside pi's existing active tools.
-  const active = pi.getActiveTools();
-  pi.setActiveTools([...new Set([...active, ...names])]);
-  log(`[ToolSurface] seeded ${names.length} Hub tools`);
 }
 
 // ── Lifecycle entrypoints (called from index.ts factory) ─────────────
