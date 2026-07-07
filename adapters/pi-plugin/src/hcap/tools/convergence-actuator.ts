@@ -5,19 +5,22 @@
  * `ToolActuatorPort` (U5), owning the built-in-preserving active-set computation.
  * Neutral — imports ZERO pi types; talks only to the port contract.
  *
- * §4 mechanic: (1) register each declared def (idempotent by name; KF2 refresh);
- * (2) compute the full authoritative active list ONCE:
- *     desiredActive = (snapshot.activeNames − snapshot.managedNames)  // preserve pi built-ins + non-Hub actives
- *                   ∪ plan.desiredActiveNames                          // the declared enabled subset
+ * §4 mechanic (ruling R1): (1) register each declared def (idempotent by name; KF2
+ * refresh); (2) compute the full authoritative active list ONCE:
+ *     desiredActive = snapshot.builtinNames        // the captured built-in preserve baseline (U5)
+ *                   ∪ plan.desiredActiveNames      // the declared enabled subset
  * (3) `port.setActive(desiredActive)` — a single AUTHORITATIVE REPLACE (never union).
  * Both `enabled:false` and *removed* collapse to omission → not LLM-callable next turn.
  *
+ * R1 REPLACED the old `(activeNames − managedNames)` term — a leaky proxy for
+ * built-ins that preserved ANY unmanaged active, so it could not tell a built-in
+ * (preserve, T5) from an out-of-band ROGUE (revert, T4/A2). The captured baseline
+ * distinguishes them; anything active but NOT in (baseline ∪ enabled) is reverted.
+ *
  * KF1 — built-ins-only is VALID, not poison: an empty declared/enabled set →
- * desiredActive == the preserved built-ins → converge, NO escalation. The size of
- * the desired set is NEVER treated as poison here (the fetch-anomaly poison guard
- * lives in U6). F3 "never STRIP built-ins" holds via the managedNames-subtraction:
- * built-ins are active-but-not-managed, so they survive into desiredActive by
- * construction. The coherence guard below defends against a corrupt snapshot only.
+ * desiredActive == baseline → converge, NO escalation (the fetch-anomaly poison
+ * guard lives in U6, not here). F3 "never STRIP built-ins" is now STRUCTURAL — the
+ * baseline is always unioned — so no runtime strip-guard is needed.
  */
 import type {
   ConvergencePlan,
@@ -40,26 +43,19 @@ export class ConvergenceActuator {
     // Level 1 — (re-)register EVERY declared definition (idempotent-by-name; KF2).
     for (const def of plan.toRegister) this.port.register(def);
 
-    // Level 2 — authoritative active set: preserve pi built-ins + non-managed
-    // actives (subtract ONLY managedNames), union the declared enabled subset.
-    const managed = new Set(snapshot.managedNames);
-    const preserved = snapshot.activeNames.filter((n) => !managed.has(n));
-    const desiredActive = [...new Set([...preserved, ...plan.desiredActiveNames])];
+    // Level 2 — authoritative active set (R1): desiredActive = builtinBaseline ∪
+    // (declared enabled subset). The captured baseline (U5) IS the authoritative
+    // preserve-set, so built-ins survive the REPLACE (T5) BY CONSTRUCTION while any
+    // out-of-band ROGUE (active but ∉ baseline ∪ enabled) is reverted (T4/A2).
+    const desiredActive = [
+      ...new Set([...snapshot.builtinNames, ...plan.desiredActiveNames]),
+    ];
 
-    // F3 / KF1 coherence guard — built-ins-only is fine (size is never poison), but
-    // a list that would STRIP a currently-active built-in is incoherent → skip +
-    // escalate, NEVER actuate. `desiredActive ⊇ preserved` by construction, so this
-    // only ever fires on a corrupt snapshot (defense in depth), never normal converge.
-    const stripsPreserved = preserved.some((n) => !desiredActive.includes(n));
-    if (stripsPreserved) {
-      return {
-        ok: false,
-        expectedActive: desiredActive,
-        klass: "incoherent-plan",
-        detail: "computed active set would strip a currently-active built-in — skipped",
-      };
-    }
-
+    // KF1: built-ins-only is VALID, never poison — an empty declared/enabled set →
+    // desiredActive == baseline → converge, no escalation. `setActive([])` happens
+    // ONLY when the baseline itself is empty (no built-ins) AND nothing is enabled,
+    // which is the correct "nothing active" state, not a strip. Built-in
+    // preservation is STRUCTURAL here; the fetch-anomaly poison guard stays in U6.
     try {
       this.port.setActive(desiredActive);
     } catch (err) {

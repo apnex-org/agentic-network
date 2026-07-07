@@ -37,8 +37,19 @@ export interface ToolSpec {
 export interface RunningSnapshot {
   /** names currently active (LLM-callable) — INCLUDES pi built-ins + non-Hub actives. */
   activeNames: string[];
-  /** names this control plane has ever registered (the U5 ledger) — the built-in-subtraction key. */
+  /** names this control plane has ever registered (the U5 ledger) — for KF5 status + the
+   *  idempotent-register set. NOT the preserve-set (see builtinNames; ruling R1). */
   managedNames: string[];
+  /**
+   * R1 (ruling v0.2.1) — the STABLE built-in preserve BASELINE: pi's active tools
+   * captured at U5 CONSTRUCTION, before the plane registered/activated anything.
+   * U3 unions this into every desiredActive, so it is the AUTHORITATIVE preserve-set
+   * — NOT "current unmanaged actives" (`activeNames − managedNames`), a leaky proxy
+   * that preserves ANY unmanaged active and so cannot tell a built-in (preserve, T5)
+   * from an out-of-band ROGUE (revert, T4/A2). Distinguishing them REQUIRES this
+   * captured baseline.
+   */
+  builtinNames: string[];
 }
 
 /** The deterministic converge plan (U2 output). Total, pure. */

@@ -27,10 +27,13 @@ class FakeActuatorPort implements ToolActuatorPort {
   readonly registerLog: string[] = [];
   private active: Set<string>;
   private readonly managed = new Set<string>();
+  private readonly builtins: string[];
 
   constructor(initialActive: string[] = []) {
     // e.g. a pi built-in already active and NOT managed by this plane.
     this.active = new Set(initialActive);
+    // R1: the preserve baseline is captured at construction (before any register).
+    this.builtins = [...initialActive];
   }
 
   register(def: ToolDefinitionNeutral): void {
@@ -44,7 +47,11 @@ class FakeActuatorPort implements ToolActuatorPort {
   }
 
   snapshot(): RunningSnapshot {
-    return { activeNames: [...this.active], managedNames: [...this.managed] };
+    return {
+      activeNames: [...this.active],
+      managedNames: [...this.managed],
+      builtinNames: [...this.builtins],
+    };
   }
 }
 
