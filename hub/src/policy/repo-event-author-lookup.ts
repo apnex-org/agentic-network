@@ -40,6 +40,11 @@ export interface GhLoginAgentIdentity {
   role: AgentRole;
 }
 
+export type GhLoginAgentLookupResult =
+  | { status: "none" }
+  | { status: "ambiguous"; count: number }
+  | { status: "unique"; agent: GhLoginAgentIdentity };
+
 /**
  * Resolve a GitHub login string → registered Hub agent identity. Returns
  * null when no agent carries the login as its `ois.io/github/login`
@@ -76,15 +81,25 @@ export async function lookupAgentByGhLogin(
  * Returns null on no match OR duplicate matches, because an agentId-pinned
  * delivery must never guess between multiple agents sharing a GitHub login.
  */
+export async function lookupAgentByGhLoginUniqueState(
+  ghLogin: string,
+  ctx: IPolicyContext,
+): Promise<GhLoginAgentLookupResult> {
+  if (typeof ghLogin !== "string" || ghLogin.length === 0) return { status: "none" };
+  const matches = (await ctx.stores.engineerRegistry.listAgents())
+    .filter((agent) => agent.labels?.[GITHUB_LOGIN_LABEL] === ghLogin)
+    .map(toGhLoginIdentity);
+  if (matches.length === 0) return { status: "none" };
+  if (matches.length > 1) return { status: "ambiguous", count: matches.length };
+  return { status: "unique", agent: matches[0] };
+}
+
 export async function lookupUniqueAgentByGhLogin(
   ghLogin: string,
   ctx: IPolicyContext,
 ): Promise<GhLoginAgentIdentity | null> {
-  if (typeof ghLogin !== "string" || ghLogin.length === 0) return null;
-  const matches = (await ctx.stores.engineerRegistry.listAgents())
-    .filter((agent) => agent.labels?.[GITHUB_LOGIN_LABEL] === ghLogin)
-    .map(toGhLoginIdentity);
-  return matches.length === 1 ? matches[0] : null;
+  const result = await lookupAgentByGhLoginUniqueState(ghLogin, ctx);
+  return result.status === "unique" ? result.agent : null;
 }
 
 /**
