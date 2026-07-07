@@ -210,6 +210,9 @@ export { ToolSurfaceReconciler } from "./tool-manager/catalog/tool-surface-recon
 export type {
   ToolSurfaceReconcilerDeps,
   ReconcileOutcome,
+  RepairOutcome,
+  RepairFailureClass,
+  ReconcilerCatalog,
 } from "./tool-manager/catalog/tool-surface-reconciler.js";
 
 // idea-355 SLICE-1T — the Hub /health toolSurfaceRevision fetcher, hoisted from

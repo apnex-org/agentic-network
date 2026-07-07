@@ -82,6 +82,12 @@ export async function createClaudeRuntime(opts: ClaudeRuntimeOptions): Promise<C
     getIsIdentityReady: opts.getIsIdentityReady,
     getCurrentToolSurfaceRevision: opts.getCurrentToolSurfaceRevision,
     isCacheValid,
+    // mission-106 (D3): the serve path fire-and-forgets a reconcile when it
+    // serves a labeled-stale cache. `reconciler` is assigned just below (closure);
+    // the kick is best-effort acceleration of the reliable L1/L2 repair triggers.
+    scheduleRepair: () => {
+      void reconciler?.reconcile("serve-stale-kick");
+    },
     persistCatalog: (catalog) => {
       // Best-effort persist. Skip if we don't yet have a tool-surface revision to
       // tag — better to let the next live-fetch populate the cache than write a
@@ -131,6 +137,24 @@ export async function createClaudeRuntime(opts: ClaudeRuntimeOptions): Promise<C
   const liveReconciler = new ToolSurfaceReconciler({
     fetchLiveRevision: opts.fetchLiveToolSurfaceRevision,
     readServedRevision: () => readCache(opts.workDir, opts.log)?.toolSurfaceRevision ?? null,
+    // mission-106 (clause 1 / D1 / F3) — disk-repair authority. On drift the
+    // reconciler re-fetches the live catalog (through the same enricher pipeline
+    // the bootstrap uses) and atomically rewrites the on-disk cache tagged with
+    // the coherently re-confirmed live revision.
+    fetchLiveCatalog: () => opts.agent.listTools(),
+    writeServedCatalog: (catalog, revision) =>
+      writeCache(opts.workDir, catalog as unknown[], revision, opts.log),
+    // F5 — repair outcomes are loud + metriceable (the ESCALATION log fires
+    // inside the reconciler after repairFailureBound consecutive failures).
+    onRepairOutcome: (o) => {
+      if (o.ok) {
+        opts.log("[ToolSurface][repair] on-disk cache rewritten to live revision (converged)");
+      } else {
+        opts.log(
+          `[ToolSurface][repair] FAILED class=${o.klass}${o.detail ? ` (${o.detail})` : ""} consecutive=${o.consecutiveFailures} — disk stays stale, will retry next reconcile`,
+        );
+      }
+    },
     emitListChanged: () => {
       // sendToolListChanged() is promise-returning; a stale/vintage host
       // transport (the exact S2b scenario) can reject ASYNCHRONOUSLY, which the
@@ -142,7 +166,10 @@ export async function createClaudeRuntime(opts: ClaudeRuntimeOptions): Promise<C
           `[ToolSurface] sendToolListChanged rejected (non-fatal; host transport likely closing): ${(err as Error)?.message ?? String(err)}`,
         );
       });
-      opts.log("[ToolSurface] notifications/tools/list_changed emitted — host will re-enumerate");
+      // mission-106 (clause 3 / F2): emit is BEST-EFFORT acceleration of the
+      // live in-memory host surface — correctness already holds via the disk
+      // repair; a host that ignores this still converges on next enumeration.
+      opts.log("[ToolSurface] notifications/tools/list_changed emitted (best-effort acceleration)");
     },
     log: opts.log,
   });

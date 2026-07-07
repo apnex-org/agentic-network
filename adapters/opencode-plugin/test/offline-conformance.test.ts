@@ -193,13 +193,13 @@ describe("mission-101 offline conformance — real OpenCode runtime via MockOpen
       fetchLiveRevision,
     );
 
-    expect(await reconciler.reconcile("offline-seed")).toEqual({
+    expect(await reconciler.reconcile("offline-seed")).toMatchObject({
       emitted: false,
       live: "rev-open-a",
     });
     expect(fakeServer.sendToolListChanged).not.toHaveBeenCalled();
 
-    expect(await reconciler.reconcile("offline-drift")).toEqual({
+    expect(await reconciler.reconcile("offline-drift")).toMatchObject({
       emitted: true,
       live: "rev-open-b",
     });

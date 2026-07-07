@@ -145,15 +145,19 @@ export function readCache(
 /**
  * Persist the catalog atomically. Writes a sibling tmp file then
  * renames — so a crash mid-write leaves either the previous cache
- * intact OR the new cache fully landed. Best-effort: failures log
- * and return; the caller's primary flow continues.
+ * intact OR the new cache fully landed. Best-effort on the primary
+ * ListTools flow (never throws), but mission-106 (F5) needs the
+ * outcome: returns `true` iff the atomic rename landed, `false` on any
+ * failure (dir/write/rename). The reconciler's disk-repair path uses
+ * this to decide convergence — a failed write must NOT be counted as
+ * repaired (the stale disk stays visible for the next reconcile tick).
  */
 export function writeCache(
   workDir: string,
   catalog: ToolCatalog,
   toolSurfaceRevision: string,
   log?: (msg: string) => void,
-): void {
+): boolean {
   const path = cachePathFor(workDir);
   const tmpPath = `${path}.tmp.${process.pid}`;
   const body: CachedCatalog = {
@@ -167,6 +171,7 @@ export function writeCache(
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(tmpPath, JSON.stringify(body), { encoding: "utf8" });
     renameSync(tmpPath, path);
+    return true;
   } catch (err) {
     log?.(
       `[tool-catalog-cache] writeCache: failed at ${path}: ${(err as Error).message ?? err} — cache will not populate this run`,
@@ -176,22 +181,27 @@ export function writeCache(
     } catch {
       /* ignore */
     }
+    return false;
   }
 }
 
 /**
  * Check cache validity against the current Hub tool-surface revision.
  *
- * Two semantics:
+ * mission-106 (F4 — fail CLOSED on unknown revision): validity means a
+ * DEFINITIVE equal revision, nothing else.
  *   - currentRevision is a non-empty string: strict equality vs
- *     cached.toolSurfaceRevision. Mismatch → invalid → caller
- *     re-bootstraps.
- *   - currentRevision is null/undefined/empty: caller doesn't know the
- *     current revision yet (e.g. /health fetch in flight at startup, or
- *     an old Hub that doesn't return the field). Trust the cache
- *     (probe-friendly default) — worst case is serving a stale catalog
- *     ONCE until the next /health fetch completes and a real session
- *     refreshes the cache.
+ *     cached.toolSurfaceRevision. Mismatch → NOT valid.
+ *   - currentRevision is null/undefined/empty: the caller does not yet know
+ *     the live revision (the /health warm is fire-and-forget — shim.ts — and
+ *     loses the race to the host's startup tools/list). Unknown freshness is
+ *     NOT validity → return false. Pre-mission-106 this returned `true`
+ *     (probe-friendly "trust the cache"), which rubber-stamped a stale cache
+ *     as valid and served it FOREVER (the frozen-catalog defect). The caller
+ *     (dispatcher) still keeps the probe path fast, but treats a false result
+ *     as a LABELED-STALE serve (serve warm cache + log STALE + schedule an
+ *     out-of-band repair), never a silent "valid" serve — correctness comes
+ *     from the reconciler's disk repair, not from trusting an unknown revision.
  *
  * Schema-version check is enforced inside readCache, so isCacheValid
  * never sees a wrong-schema cached object.
@@ -205,7 +215,7 @@ export function isCacheValid(
     currentRevision === undefined ||
     currentRevision === ""
   ) {
-    return true;
+    return false;
   }
   return cached.toolSurfaceRevision === currentRevision;
 }

@@ -115,34 +115,73 @@ describe("dispatcher cache fallback — ListTools", () => {
     expect(log.some((l) => l.includes("no cache"))).toBe(true);
   });
 
-  it("re-bootstraps when cache is stale (tool-surface-revision mismatch)", async () => {
+  it("serves stale-labeled + schedules repair when cache is revision-mismatched pre-identity (probe-safe, no bootstrap)", async () => {
+    // mission-106 (F4/D3): a revision-mismatched warm cache pre-identity is NOT
+    // "valid" — but the probe path stays sub-50ms. Serve the stale cache as an
+    // explicit labeled-stale fallback + fire-and-forget a repair; NEVER bootstrap
+    // here (that would defeat the zero-round-trip probe). Correctness comes from
+    // the reconciler repairing the disk for the NEXT enumeration.
     const agent = fakeAgent();
     (agent.listTools as ReturnType<typeof vi.fn>).mockResolvedValue(LIVE_CATALOG);
     const persist = vi.fn();
+    const scheduleRepair = vi.fn();
     const log: string[] = [];
-
-    let resolveHandshake!: () => void;
-    const listToolsGate = new Promise<void>((res) => { resolveHandshake = res; });
 
     const { handler } = makeListToolsHandler({
       getAgent: () => agent,
       proxyVersion: "test-1.0.0",
       log: (m) => log.push(m),
-      listToolsGate,
+      listToolsGate: Promise.resolve(),
       getCachedCatalog: () => CACHED,                       // toolSurfaceRevision=REV_CACHED
       getIsIdentityReady: () => false,
-      getCurrentToolSurfaceRevision: () => REV_CURRENT,     // surface changed → stale
+      getCurrentToolSurfaceRevision: () => REV_CURRENT,     // surface changed → mismatch
       isCacheValid,
       persistCatalog: persist,
+      scheduleRepair,
     });
 
-    queueMicrotask(() => resolveHandshake());
     const result = await handler({ method: "tools/list", params: {} });
 
-    expect(result).toEqual({ tools: LIVE_CATALOG });
-    expect(agent.listTools).toHaveBeenCalledOnce();
-    expect(persist).toHaveBeenCalledWith(LIVE_CATALOG);
-    expect(log.some((l) => l.includes("cache stale") && l.includes(REV_CACHED) && l.includes(REV_CURRENT))).toBe(true);
+    // stale cache served FAST (not the live bootstrap) — probe-safe.
+    expect(result).toEqual({ tools: CACHED.catalog });
+    expect(agent.listTools).not.toHaveBeenCalled(); // no bootstrap on the probe path
+    expect(persist).not.toHaveBeenCalled();
+    // clause 4: never a silent stale serve.
+    expect(log.some((l) => l.includes("STALE served") && l.includes(REV_CACHED) && l.includes(REV_CURRENT))).toBe(true);
+    // D3: out-of-band repair kicked.
+    expect(scheduleRepair).toHaveBeenCalledOnce();
+  });
+
+  it("gate-4: NULL-revision warm cache pre-identity → not valid; serves stale-labeled + schedules repair, no block/bootstrap (F4)", async () => {
+    // The startup race: /health warm is fire-and-forget so currentRevision is
+    // null. Pre-mission-106 isCacheValid(null)=true rubber-stamped this as valid
+    // and served it forever. Now null is UNKNOWN (not valid): serve fast + log +
+    // schedule repair, never block-await, never bootstrap on the probe path.
+    const agent = fakeAgent();
+    const persist = vi.fn();
+    const scheduleRepair = vi.fn();
+    const log: string[] = [];
+
+    const { handler } = makeListToolsHandler({
+      getAgent: () => agent,
+      proxyVersion: "test-1.0.0",
+      log: (m) => log.push(m),
+      listToolsGate: Promise.resolve(),
+      getCachedCatalog: () => CACHED,
+      getIsIdentityReady: () => false,
+      getCurrentToolSurfaceRevision: () => null, // /health not resolved yet — UNKNOWN
+      isCacheValid,
+      persistCatalog: persist,
+      scheduleRepair,
+    });
+
+    const result = await handler({ method: "tools/list", params: {} });
+
+    expect(result).toEqual({ tools: CACHED.catalog }); // served fast
+    expect(agent.listTools).not.toHaveBeenCalled(); // no block / no bootstrap
+    expect(persist).not.toHaveBeenCalled();
+    expect(log.some((l) => l.includes("STALE served") && l.includes("unknown"))).toBe(true);
+    expect(scheduleRepair).toHaveBeenCalledOnce();
   });
 
   it("cached path skipped when identityReady is resolved (live session — always live fetch)", async () => {
@@ -275,7 +314,7 @@ describe("ToolSurfaceReconciler — bug-180 L1/L2 revision reconcile", () => {
 
     const out = await reconciler.reconcile("identityReady");
 
-    expect(out).toEqual({ emitted: true, live: REV_LIVE });
+    expect(out).toMatchObject({ emitted: true, live: REV_LIVE });
     expect(emit).toHaveBeenCalledOnce();
     expect(reconciler.getAppliedRevision()).toBe(REV_LIVE);
   });
@@ -305,7 +344,7 @@ describe("ToolSurfaceReconciler — bug-180 L1/L2 revision reconcile", () => {
 
     const out = await reconciler.reconcile();
 
-    expect(out).toEqual({ emitted: false, live: null });
+    expect(out).toMatchObject({ emitted: false, live: null });
     expect(emit).not.toHaveBeenCalled();
     // Unknown-live pass establishes no baseline — the next successful pass seeds it.
     expect(reconciler.getAppliedRevision()).toBeNull();
@@ -328,7 +367,7 @@ describe("ToolSurfaceReconciler — bug-180 L1/L2 revision reconcile", () => {
     expect(emit).not.toHaveBeenCalled();
 
     const second = await reconciler.reconcile("heartbeat");
-    expect(second).toEqual({ emitted: true, live: REV_NEXT });
+    expect(second).toMatchObject({ emitted: true, live: REV_NEXT });
     expect(emit).toHaveBeenCalledOnce();
     expect(reconciler.getAppliedRevision()).toBe(REV_NEXT);
   });

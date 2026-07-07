@@ -177,6 +177,15 @@ export interface SharedDispatcherOptions {
   ) => boolean;
 
   /**
+   * mission-106 (D3) — kick an out-of-band reconcile when the serve path
+   * serves a LABELED-STALE cache (isCacheValid false: unknown or mismatched
+   * revision). Fire-and-forget: the serve path stays sub-50ms and NEVER awaits
+   * this; correctness (a fresh disk for the next enumeration) comes from the
+   * reconciler's disk repair, not from the serve path. Omit to disable the kick.
+   */
+  scheduleRepair?: () => void;
+
+  /**
    * Universal Adapter notification contract. Host shim attaches its
    * render-surface bindings here.
    */
@@ -832,9 +841,29 @@ export function createSharedDispatcher(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return { tools: cached.catalog as any[] };
           }
+          // mission-106 (F4/D3) — NOT valid (unknown OR mismatched revision).
+          // Preserve the probe-safe sub-50ms path: serve the warm cache as an
+          // EXPLICIT labeled-stale fallback (never a silent "valid" serve —
+          // clause 4) and fire-and-forget an out-of-band reconcile to repair the
+          // on-disk cache (clause 1 / D3). We do NOT block-await /health and do
+          // NOT bootstrap here — that would defeat the zero-round-trip probe path
+          // (D2/D3). Correctness comes from the repaired disk being served on the
+          // NEXT enumeration; the reconciler's L1/L2 triggers repair reliably even
+          // if this kick no-ops (e.g. the agent isn't usable pre-identity yet).
           log(
-            `[ListTools] cache stale (cached.toolSurfaceRevision=${cached.toolSurfaceRevision}, current=${currentRevision ?? "unknown"}) — bootstrapping`,
+            `[Cache] STALE served (rev ${cached.toolSurfaceRevision} != live ${currentRevision ?? "unknown"}) — repair scheduled`,
           );
+          if (opts.scheduleRepair) {
+            try {
+              opts.scheduleRepair();
+            } catch (err) {
+              log(
+                `[ListTools] scheduleRepair hook threw (non-fatal): ${(err as Error).message ?? err}`,
+              );
+            }
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return { tools: cached.catalog as any[] };
         } else {
           log("[ListTools] no cache (bootstrapping cache from Hub)");
         }
