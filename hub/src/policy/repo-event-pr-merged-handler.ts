@@ -17,7 +17,7 @@
 import type { Message } from "../entities/index.js";
 import type { IPolicyContext } from "./types.js";
 import type { MessageDispatch, RepoEventHandler } from "./repo-event-handlers.js";
-import { lookupUniqueAgentByGhLogin } from "./repo-event-author-lookup.js";
+import { resolveGhLoginAgent } from "./repo-event-author-lookup.js";
 import {
   synthesizePrNotification,
   extractRefField,
@@ -78,18 +78,21 @@ async function buildDirectAuthorNotification(
   const authorLogin = PR_MERGED_OPTS.extractAuthorLogin(payload);
   if (!authorLogin) return null;
 
-  const author = await lookupUniqueAgentByGhLogin(authorLogin, ctx);
-  if (!author) return null;
+  const resolution = await resolveGhLoginAgent(ctx, authorLogin, {
+    allowedRoles: ["engineer", "architect"],
+  });
 
   // Slice 0 direct author routing is for production engineer/architect actors
-  // only, and only when the GitHub-login→agent mapping is unique. Director,
-  // verifier, unregistered, and duplicate-login authors preserve the existing
-  // skip semantics from the bilateral peer notification path.
+  // only, and only when GitHub-login→agent cardinality is explicitly unique.
+  // none / ambiguous / disallowed-role matches preserve the existing skip
+  // semantics from the bilateral peer notification path.
+  if (resolution.status !== "unique") return null;
+  const author = resolution.agent;
   if (author.role !== "engineer" && author.role !== "architect") return null;
 
   return {
     kind: "note",
-    target: { agentId: author.agentId },
+    target: { agentId: author.id },
     delivery: "push-immediate",
     intent: "pr-merged-author-notification",
     payload: {
@@ -97,7 +100,7 @@ async function buildDirectAuthorNotification(
       ...PR_MERGED_OPTS.buildPayloadFields(payload),
       sourceMessageId: inbound.id,
       routingReason: "pr-author-direct",
-      authorAgentId: author.agentId,
+      authorAgentId: author.id,
     },
   };
 }
