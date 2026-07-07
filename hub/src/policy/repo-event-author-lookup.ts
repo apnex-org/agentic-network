@@ -1,10 +1,10 @@
 /**
- * Repo-event author lookup primitive — mission-68 W1.
+ * Repo-event author lookup primitive — mission-68 W1 + extidcard0.
  *
- * Translates a GitHub login string → registered Hub agent → role
- * determination. Used by the commit-pushed handler (and forward by
- * idea-227 additional handlers) to route per-author cross-party
- * notifications based on the GH-side actor identity.
+ * Translates a GitHub login string (external identity) through AgentLabels.
+ * GitHub-login → specific Hub agent routing MUST use cardinality-explicit
+ * resolution; first-match lookup is retained only for the legacy coarse
+ * peer-role notification path.
  *
  * Per Design v1.0 §2.2 (engineer C4 + P2 ratification): AgentLabels
  * reserved-key approach with namespace `ois.io/github/login`. Avoids
@@ -16,20 +16,21 @@
  *
  * Lookup semantics:
  *   - listAgents() rather than selectAgents(matchLabels) — selectAgents
- *     filters to online agents only, and we need to resolve push-author
- *     identity even when the author is offline (architect-pushed-then-
- *     stepped-away common case).
- *   - lookupRoleByGhLogin preserves the legacy first-match behavior for
- *     existing peer-role notifications.
- *   - lookupUniqueAgentByGhLogin is the safe pinpoint identity primitive:
- *     it returns null unless exactly one registered Hub agent carries the
- *     login label. Use it when the dispatch target is a specific agentId.
- *   - Missing label or no-match → null. Caller handles (commit-pushed
- *     handler logs + skips per Design v1.0 §3 step 5).
+ *     filters to online agents only, and repo-event facts must resolve even
+ *     when the author is offline.
+ *   - resolveGhLoginAgent / lookupAgentByGhLoginUniqueState are the safe
+ *     cardinality-aware surfaces for direct `target.agentId` routing.
+ *   - lookupRoleByGhLogin preserves legacy first-match role inference for
+ *     broad peer-role notifications ONLY. It is NOT valid for direct agentId
+ *     routing.
  */
 
 import type { IPolicyContext } from "./types.js";
 import type { AgentRole } from "../state.js";
+import {
+  resolveUniqueAgentByLabel,
+  type ExternalAgentResolution,
+} from "./external-agent-resolution.js";
 
 /** Reserved AgentLabels namespace key for GitHub login mapping. */
 export const GITHUB_LOGIN_LABEL = "ois.io/github/login";
@@ -40,20 +41,8 @@ export interface GhLoginAgentIdentity {
   role: AgentRole;
 }
 
-export type GhLoginAgentLookupResult =
-  | { status: "none" }
-  | { status: "ambiguous"; count: number }
-  | { status: "unique"; agent: GhLoginAgentIdentity };
+export type GhLoginAgentLookupResult = ExternalAgentResolution;
 
-/**
- * Resolve a GitHub login string → registered Hub agent identity. Returns
- * null when no agent carries the login as its `ois.io/github/login`
- * label value.
- *
- * Keeps the historical listAgents() semantics from lookupRoleByGhLogin:
- * selectAgents() filters to online agents, but repo-event facts must be
- * routable to the responsible actor even when that actor is offline.
- */
 function toGhLoginIdentity(agent: { id: string; name?: string; role: AgentRole }): GhLoginAgentIdentity {
   return {
     agentId: agent.id,
@@ -62,7 +51,11 @@ function toGhLoginIdentity(agent: { id: string; name?: string; role: AgentRole }
   };
 }
 
-export async function lookupAgentByGhLogin(
+/**
+ * Legacy role-only first-match helper. Keep private so future direct-agent
+ * routing cannot import an order-dependent GitHub-login → agent resolver.
+ */
+async function lookupFirstMatchAgentByGhLoginForRoleOnly(
   ghLogin: string,
   ctx: IPolicyContext,
 ): Promise<GhLoginAgentIdentity | null> {
@@ -77,41 +70,50 @@ export async function lookupAgentByGhLogin(
 }
 
 /**
- * Resolve a GitHub login string → a UNIQUE registered Hub agent identity.
- * Returns null on no match OR duplicate matches, because an agentId-pinned
- * delivery must never guess between multiple agents sharing a GitHub login.
+ * Resolve a GitHub login using the shared external-identity cardinality helper.
+ * Only `status: "unique"` may feed a direct target.agentId route.
  */
+export async function resolveGhLoginAgent(
+  ctx: IPolicyContext,
+  ghLogin: unknown,
+  options: { allowedRoles?: AgentRole[] } = {},
+): Promise<ExternalAgentResolution> {
+  return resolveUniqueAgentByLabel(ctx, {
+    labelKey: GITHUB_LOGIN_LABEL,
+    labelValue: ghLogin,
+    identityKind: "github-login",
+    allowedRoles: options.allowedRoles,
+  });
+}
+
+/** Compatibility wrapper: cardinality state for GitHub-login resolution. */
 export async function lookupAgentByGhLoginUniqueState(
   ghLogin: string,
   ctx: IPolicyContext,
 ): Promise<GhLoginAgentLookupResult> {
-  if (typeof ghLogin !== "string" || ghLogin.length === 0) return { status: "none" };
-  const matches = (await ctx.stores.engineerRegistry.listAgents())
-    .filter((agent) => agent.labels?.[GITHUB_LOGIN_LABEL] === ghLogin)
-    .map(toGhLoginIdentity);
-  if (matches.length === 0) return { status: "none" };
-  if (matches.length > 1) return { status: "ambiguous", count: matches.length };
-  return { status: "unique", agent: matches[0] };
+  return resolveGhLoginAgent(ctx, ghLogin);
 }
 
+/** Compatibility wrapper: unique agent or null for no/ambiguous matches. */
 export async function lookupUniqueAgentByGhLogin(
   ghLogin: string,
   ctx: IPolicyContext,
 ): Promise<GhLoginAgentIdentity | null> {
   const result = await lookupAgentByGhLoginUniqueState(ghLogin, ctx);
-  return result.status === "unique" ? result.agent : null;
+  return result.status === "unique"
+    ? { agentId: result.agent.id, name: result.agent.name, role: result.agent.role }
+    : null;
 }
 
 /**
- * Resolve a GitHub login string → registered Hub agent role. Returns
- * null when no agent carries the login as its `ois.io/github/login`
- * label value, OR when the resolved agent's role is not one of the
- * canonical roles (defensive — Agent.role is enum-typed but this is
- * the load-bearing translation surface).
+ * Resolve a GitHub login string → registered Hub agent role for legacy
+ * peer-role PR notifications. This path may first-match because it emits only
+ * broad role/cohort notifications; it is NOT valid for direct `agentId`
+ * routing.
  */
 export async function lookupRoleByGhLogin(
   ghLogin: string,
   ctx: IPolicyContext,
 ): Promise<AgentRole | null> {
-  return (await lookupAgentByGhLogin(ghLogin, ctx))?.role ?? null;
+  return (await lookupFirstMatchAgentByGhLoginForRoleOnly(ghLogin, ctx))?.role ?? null;
 }

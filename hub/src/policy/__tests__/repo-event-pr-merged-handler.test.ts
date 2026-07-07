@@ -129,6 +129,17 @@ describe("PR_MERGED_HANDLER — direct author notification", () => {
     });
   });
 
+  it("mapped director/verifier authors are never direct author-agent recipients", async () => {
+    for (const role of ["director", "verifier"] as const) {
+      const dispatches = await PR_MERGED_HANDLER.handle(
+        inbound(prPayload(`${role}-gh`)),
+        ctxWithAgents([agent(`agent-${role}`, role, `${role}-gh`)]),
+      );
+
+      expect(dispatches).toEqual([]);
+    }
+  });
+
   it("duplicate GitHub-login matches preserve peer behavior but skip direct author-agent routing", async () => {
     const dispatches = await PR_MERGED_HANDLER.handle(
       inbound(prPayload("shared-gh")),
