@@ -665,6 +665,65 @@ function unionTopoSort(nodes: BlueprintNode[]): string[] | null {
   return order.length === ids.length ? order : null; // fewer than all => a cycle remains
 }
 
+function rolesFor(node: BlueprintNode): string[] {
+  return node.roleEligibility ?? [];
+}
+
+function isAnyRole(node: BlueprintNode): boolean {
+  return rolesFor(node).length === 0;
+}
+
+function isArchitectEligible(node: BlueprintNode): boolean {
+  return rolesFor(node).includes("architect");
+}
+
+function hasStartGate(node: BlueprintNode): boolean {
+  return (node.dependsOn?.length ?? 0) > 0;
+}
+
+function hasAnyGraphEdge(node: BlueprintNode): boolean {
+  return hasStartGate(node) || (node.completionDependsOn?.length ?? 0) > 0;
+}
+
+function isCrossAgentNode(node: BlueprintNode, callerRole: string): boolean {
+  return isAnyRole(node) || rolesFor(node).some((role) => role !== callerRole && role !== "architect");
+}
+
+function isNonArchitectWorkerNode(node: BlueprintNode): boolean {
+  return isAnyRole(node) || rolesFor(node).some((role) => role !== "architect");
+}
+
+function blueprintRequiresArchitectDriver(nodes: BlueprintNode[], callerRole: string): boolean {
+  if (nodes.length < 2) return false;
+  const crossAgent = nodes.some((node) => isCrossAgentNode(node, callerRole));
+  if (!crossAgent) return false;
+  const autonomousGraph =
+    nodes.some(hasAnyGraphEdge) ||
+    nodes.filter(isNonArchitectWorkerNode).length > 1;
+  return autonomousGraph;
+}
+
+function isValidArchitectDriver(node: BlueprintNode, allLocalIds: Set<string>): boolean {
+  if (!isArchitectEligible(node)) return false;
+  if (hasStartGate(node)) return false; // must be immediately claimable after seed
+  if (!(node.runbook && node.runbook.trim() !== "")) return false;
+
+  const covered = new Set(node.completionDependsOn ?? []);
+  if (covered.size === 0) return false;
+  const expected = [...allLocalIds].filter((localId) => localId !== node.localId);
+  return covered.size === expected.length && expected.every((localId) => covered.has(localId));
+}
+
+function validateArchitectDriverGuard(nodes: BlueprintNode[], callerRole: string): { errorKind: string; message: string } | null {
+  if (!blueprintRequiresArchitectDriver(nodes, callerRole)) return null;
+  const allLocalIds = new Set(nodes.map((node) => node.localId));
+  if (nodes.some((node) => isValidArchitectDriver(node, allLocalIds))) return null;
+  return {
+    errorKind: "missing_arc_driver",
+    message: "multi-agent/autonomous blueprints must include an immediately claimable architect driver node: roleEligibility includes architect, dependsOn empty, non-empty runbook, and completionDependsOn directly covering every other localId",
+  };
+}
+
 async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
@@ -778,6 +837,12 @@ async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext)
     const intrinsic = await validateNodeIntrinsics(n, store, ctx);
     if (intrinsic) return err(intrinsic.errorKind, `node "${n.localId}": ${intrinsic.message}`);
   }
+
+  // 4b) wglive0 Slice 0 guard: multi-agent/autonomous blueprints must carry an explicit,
+  // immediately-claimable architect driver/backstop node. This is intentionally a SHAPE guard,
+  // not a PR/workflow platform: no hidden node auto-create, no lease coupling, no transitive magic.
+  const architectDriverGuard = validateArchitectDriverGuard(nodes, caller.role);
+  if (architectDriverGuard) return err(architectDriverGuard.errorKind, architectDriverGuard.message);
 
   // The deterministic localId -> work-id map (derivable purely from runId+localId; identical for
   // the dry-run preview AND the real expansion).
@@ -1113,7 +1178,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "seed_blueprint",
-    "[Architect] Expand a declarative blueprint (a WorkItem-graph template) onto the queue — the seed_blueprint primitive (idea-380 S2). A FINITE DAG expander (NOT a workflow platform): nodes[] keyed by localId, dependsOn + completionDependsOn referencing OTHER localIds. Supply the nodes INLINE (nodes[]) OR by POINTER (nodesRef — a Hub Document holding the blueprint JSON, resolved server-side; idea-393, lets a large/committed blueprint seed without inlining ~39KB into the call). VALIDATES THE WHOLE GRAPH fail-closed BEFORE creating anything (dup/dangling localId; cycle across BOTH edges; per-node #416 runbook+required-refs; node-cap) → any validation failure creates ZERO. Deterministic + idempotent (kubectl-apply): each node id = work-bp-{runId}-{localId}, created via createOnly, so re-running the same runId+blueprint never double-creates AND completes a crash-partial. dryRun:true validates + returns the planned create-order + would-be work-ids, creating ZERO. A mid-create infra fault compensating-deletes THIS run's creates + returns a loud id-trail.",
+    "[Architect] Expand a declarative blueprint (a WorkItem-graph template) onto the queue — the seed_blueprint primitive (idea-380 S2). A FINITE DAG expander (NOT a workflow platform): nodes[] keyed by localId, dependsOn + completionDependsOn referencing OTHER localIds. Supply the nodes INLINE (nodes[]) OR by POINTER (nodesRef — a Hub Document holding the blueprint JSON, resolved server-side; idea-393, lets a large/committed blueprint seed without inlining ~39KB into the call). VALIDATES THE WHOLE GRAPH fail-closed BEFORE creating anything (dup/dangling localId; cycle across BOTH edges; per-node #416 runbook+required-refs; missing_arc_driver for multi-agent/autonomous graphs; node-cap) → any validation failure creates ZERO. Deterministic + idempotent (kubectl-apply): each node id = work-bp-{runId}-{localId}, created via createOnly, so re-running the same runId+blueprint never double-creates AND completes a crash-partial. dryRun:true validates + returns the planned create-order + would-be work-ids, creating ZERO. A mid-create infra fault compensating-deletes THIS run's creates + returns a loud id-trail.",
     {
       runId: z.string().min(1).optional().describe("Deterministic run-key (alphanumeric/underscore) — keys the per-node ids work-bp-{runId}-{localId}; re-running the same runId+blueprint is idempotent (no double-create). Required inline; with nodesRef it MAY instead come from the document's top-level runId (the explicit arg wins)."),
       nodes: z.array(blueprintNodeSchema).optional().describe("The blueprint nodes (≥1, ≤cap) INLINE. Each localId-keyed; dependsOn/completionDependsOn reference other localIds in the SAME blueprint. Provide EITHER nodes[] OR nodesRef — not both."),

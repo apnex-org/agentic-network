@@ -832,6 +832,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     ...overrides,
   });
   const node = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ localId: "n1", type: "task", ...over });
+  const archNode = (over: Record<string, unknown> = {}): Record<string, unknown> => node({ roleEligibility: ["architect"], ...over });
   const bpCalls = (calls: Call[]) => calls.filter((c) => c.method === "createBlueprintNode").map((c) => c.args[0] as Record<string, unknown>);
 
   it("registers seed_blueprint", () => {
@@ -983,9 +984,77 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     expect(bpCalls(stub.calls).length).toBe(0);
   });
 
+  const hcapLikeDriverless = () => [
+    node({ localId: "build", roleEligibility: ["engineer"], runbook: "engineer build" }),
+    node({ localId: "verify", type: "verifier-gate", roleEligibility: ["verifier"], dependsOn: ["build"], runbook: "verifier gate" }),
+    node({ localId: "close", roleEligibility: ["architect"], dependsOn: ["verify"], runbook: "architect close" }),
+  ];
+  const driverPresentShape = (driverOverrides: Record<string, unknown> = {}) => [
+    node({ localId: "build", roleEligibility: ["engineer"], runbook: "engineer build" }),
+    node({ localId: "verify", type: "verifier-gate", roleEligibility: ["verifier"], dependsOn: ["build"], runbook: "verifier gate" }),
+    node({ localId: "close", roleEligibility: ["architect"], dependsOn: ["verify"], runbook: "architect close" }),
+    node({
+      localId: "driver",
+      roleEligibility: ["architect"],
+      completionDependsOn: ["build", "verify", "close"],
+      runbook: "architect driver",
+      ...driverOverrides,
+    }),
+  ];
+
+  it("wglive0 guard: hcap1x-like multi-agent autonomous shape without an immediate architect driver fails dry-run and real-run with zero creates", async () => {
+    const dryStub = expandStub();
+    const dry = await router.handle("seed_blueprint", { runId: "drv0", dryRun: true, nodes: hcapLikeDriverless() }, ctxFor(dryStub, "architect"));
+    expect(body(dry).errorKind).toBe("missing_arc_driver");
+    expect(String(body(dry).error)).toMatch(/immediately claimable architect driver/);
+    expect(bpCalls(dryStub.calls)).toHaveLength(0);
+
+    const realStub = expandStub();
+    const real = await router.handle("seed_blueprint", { runId: "drv1", nodes: hcapLikeDriverless() }, ctxFor(realStub, "architect"));
+    expect(body(real).errorKind).toBe("missing_arc_driver");
+    expect(bpCalls(realStub.calls)).toHaveLength(0);
+  });
+
+  it("wglive0 guard: driver-present multi-agent autonomous shape passes and wires direct coverage to every child", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", { runId: "drv2", nodes: driverPresentShape() }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    const calls = bpCalls(stub.calls);
+    expect(calls).toHaveLength(4);
+    const driver = calls.find((c) => c.id === "work-bp-drv2-driver")!;
+    expect(driver.dependsOn).toEqual([]);
+    expect(driver.completionDependsOn).toEqual(["work-bp-drv2-build", "work-bp-drv2-verify", "work-bp-drv2-close"]);
+  });
+
+  it("wglive0 guard: a start-gated architect node does NOT count as the driver", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", { runId: "drv3", nodes: driverPresentShape({ dependsOn: ["build"] }) }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("missing_arc_driver");
+    expect(bpCalls(stub.calls)).toHaveLength(0);
+  });
+
+  it("wglive0 guard: a driver whose completionDependsOn omits a child does NOT count", async () => {
+    const stub = expandStub();
+    const r = await router.handle("seed_blueprint", { runId: "drv4", nodes: driverPresentShape({ completionDependsOn: ["build", "verify"] }) }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("missing_arc_driver");
+    expect(bpCalls(stub.calls)).toHaveLength(0);
+  });
+
+  it("wglive0 guard: single-node blueprints and all-architect internal blueprints do not require a driver", async () => {
+    const singleStub = expandStub();
+    const single = await router.handle("seed_blueprint", { runId: "drv5", nodes: [node({ localId: "solo", roleEligibility: ["engineer"] })] }, ctxFor(singleStub, "architect"));
+    expect(single.isError).toBeFalsy();
+    expect(bpCalls(singleStub.calls)).toHaveLength(1);
+
+    const archStub = expandStub();
+    const archOnly = await router.handle("seed_blueprint", { runId: "drv6", nodes: [archNode({ localId: "a" }), archNode({ localId: "b", dependsOn: ["a"] })] }, ctxFor(archStub, "architect"));
+    expect(archOnly.isError).toBeFalsy();
+    expect(bpCalls(archStub.calls)).toHaveLength(2);
+  });
+
   it("dry-run: validates + returns the PLAN (order + deterministic ids), creates ZERO", async () => {
     const stub = expandStub();
-    const r = await router.handle("seed_blueprint", { runId: "run1", dryRun: true, nodes: [node({ localId: "child" }), node({ localId: "arc", completionDependsOn: ["child"] })] }, ctxFor(stub, "architect"));
+    const r = await router.handle("seed_blueprint", { runId: "run1", dryRun: true, nodes: [archNode({ localId: "child" }), archNode({ localId: "arc", completionDependsOn: ["child"] })] }, ctxFor(stub, "architect"));
     expect(r.isError).toBeFalsy();
     const b = body(r);
     expect(b.dryRun).toBe(true);
@@ -1000,9 +1069,9 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     const r = await router.handle("seed_blueprint", {
       runId: "run2",
       nodes: [
-        node({ localId: "leaf" }),
-        node({ localId: "arc", completionDependsOn: ["leaf"] }),
-        node({ localId: "after", dependsOn: ["arc"] }),
+        archNode({ localId: "leaf" }),
+        archNode({ localId: "arc", completionDependsOn: ["leaf"] }),
+        archNode({ localId: "after", dependsOn: ["arc"] }),
       ],
     }, ctxFor(stub, "architect"));
     expect(r.isError).toBeFalsy();
@@ -1037,7 +1106,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     it("resolves { nodes } from the referenced doc + expands identically to inline", async () => {
       const stub = expandStub();
       const content = JSON.stringify({
-        nodes: [node({ localId: "leaf" }), node({ localId: "arc", completionDependsOn: ["leaf"] })],
+        nodes: [archNode({ localId: "leaf" }), archNode({ localId: "arc", completionDependsOn: ["leaf"] })],
       });
       const r = await router.handle(
         "seed_blueprint",
@@ -1192,8 +1261,8 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
       deleteWorkItem: (id: unknown) => { deleted.push(id as string); return undefined; },
       entityExists: async () => true,
     });
-    // 3 independent nodes → topo order = [a,b,c]; a created, b throws → a is rolled back
-    const r = await router.handle("seed_blueprint", { runId: "rollback", nodes: [node({ localId: "a" }), node({ localId: "b" }), node({ localId: "c" })] }, ctxFor(stub, "architect"));
+    // 3 independent architect-only nodes → topo order = [a,b,c]; a created, b throws → a is rolled back
+    const r = await router.handle("seed_blueprint", { runId: "rollback", nodes: [archNode({ localId: "a" }), archNode({ localId: "b" }), archNode({ localId: "c" })] }, ctxFor(stub, "architect"));
     expect(r.isError).toBe(true);
     const b = body(r);
     expect(b.errorKind).toBe("expansion_failed");
@@ -1207,7 +1276,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
       createBlueprintNode: (input: unknown) => ({ item: sampleItem({ id: (input as { id: string }).id }), created: false }), // all pre-existing
       entityExists: async () => true,
     });
-    const r = await router.handle("seed_blueprint", { runId: "rerun", nodes: [node({ localId: "a" }), node({ localId: "b", dependsOn: ["a"] })] }, ctxFor(stub, "architect"));
+    const r = await router.handle("seed_blueprint", { runId: "rerun", nodes: [archNode({ localId: "a" }), archNode({ localId: "b", dependsOn: ["a"] })] }, ctxFor(stub, "architect"));
     expect(r.isError).toBeFalsy();
     const b = body(r);
     expect(b.created).toEqual([]);
