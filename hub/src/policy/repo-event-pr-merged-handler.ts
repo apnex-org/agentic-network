@@ -17,7 +17,7 @@
 import type { Message } from "../entities/index.js";
 import type { IPolicyContext } from "./types.js";
 import type { MessageDispatch, RepoEventHandler } from "./repo-event-handlers.js";
-import { lookupAgentByGhLogin } from "./repo-event-author-lookup.js";
+import { lookupUniqueAgentByGhLogin } from "./repo-event-author-lookup.js";
 import {
   synthesizePrNotification,
   extractRefField,
@@ -78,12 +78,13 @@ async function buildDirectAuthorNotification(
   const authorLogin = PR_MERGED_OPTS.extractAuthorLogin(payload);
   if (!authorLogin) return null;
 
-  const author = await lookupAgentByGhLogin(authorLogin, ctx);
+  const author = await lookupUniqueAgentByGhLogin(authorLogin, ctx);
   if (!author) return null;
 
   // Slice 0 direct author routing is for production engineer/architect actors
-  // only. Director/verifier/unregistered authors preserve the existing skip
-  // semantics from the bilateral peer notification path.
+  // only, and only when the GitHub-login→agent mapping is unique. Director,
+  // verifier, unregistered, and duplicate-login authors preserve the existing
+  // skip semantics from the bilateral peer notification path.
   if (author.role !== "engineer" && author.role !== "architect") return null;
 
   return {

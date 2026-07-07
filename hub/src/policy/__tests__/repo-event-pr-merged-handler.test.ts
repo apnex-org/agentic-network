@@ -129,6 +129,23 @@ describe("PR_MERGED_HANDLER — direct author notification", () => {
     });
   });
 
+  it("duplicate GitHub-login matches preserve peer behavior but skip direct author-agent routing", async () => {
+    const dispatches = await PR_MERGED_HANDLER.handle(
+      inbound(prPayload("shared-gh")),
+      ctxWithAgents([
+        agent("agent-greg", "engineer", "shared-gh"),
+        agent("agent-other", "engineer", "shared-gh"),
+      ]),
+    );
+
+    expect(dispatches).toHaveLength(1);
+    expect(dispatches[0]).toMatchObject({
+      intent: "pr-merged-notification",
+      target: { role: "architect" },
+    });
+    expect(dispatches.some((d) => d.intent === "pr-merged-author-notification")).toBe(false);
+  });
+
   it("unmapped author preserves the expected skip path and emits no direct note", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "info").mockImplementation(() => {});
