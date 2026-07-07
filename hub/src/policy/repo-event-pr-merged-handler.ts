@@ -17,6 +17,7 @@
 import type { Message } from "../entities/index.js";
 import type { IPolicyContext } from "./types.js";
 import type { MessageDispatch, RepoEventHandler } from "./repo-event-handlers.js";
+import { lookupAgentByGhLogin } from "./repo-event-author-lookup.js";
 import {
   synthesizePrNotification,
   extractRefField,
@@ -60,11 +61,53 @@ const PR_MERGED_OPTS: PrNotificationOpts<PrLifecyclePayload> = {
   },
 };
 
+function extractPrMergedPayloadSilently(inbound: Message): PrLifecyclePayload | null {
+  const repoEvent = inbound.payload as { payload?: unknown } | undefined;
+  const inner = repoEvent?.payload;
+  if (!inner || typeof inner !== "object" || Array.isArray(inner)) return null;
+  return PR_MERGED_OPTS.extractPayload(inner as Record<string, unknown>);
+}
+
+async function buildDirectAuthorNotification(
+  inbound: Message,
+  ctx: IPolicyContext,
+): Promise<MessageDispatch | null> {
+  const payload = extractPrMergedPayloadSilently(inbound);
+  if (!payload) return null;
+
+  const authorLogin = PR_MERGED_OPTS.extractAuthorLogin(payload);
+  if (!authorLogin) return null;
+
+  const author = await lookupAgentByGhLogin(authorLogin, ctx);
+  if (!author) return null;
+
+  // Slice 0 direct author routing is for production engineer/architect actors
+  // only. Director/verifier/unregistered authors preserve the existing skip
+  // semantics from the bilateral peer notification path.
+  if (author.role !== "engineer" && author.role !== "architect") return null;
+
+  return {
+    kind: "note",
+    target: { agentId: author.agentId },
+    delivery: "push-immediate",
+    intent: "pr-merged-author-notification",
+    payload: {
+      body: PR_MERGED_OPTS.bodyTemplate(author.role, payload),
+      ...PR_MERGED_OPTS.buildPayloadFields(payload),
+      sourceMessageId: inbound.id,
+      routingReason: "pr-author-direct",
+      authorAgentId: author.agentId,
+    },
+  };
+}
+
 async function handlePrMerged(
   inbound: Message,
   ctx: IPolicyContext,
 ): Promise<MessageDispatch[]> {
-  return synthesizePrNotification(inbound, ctx, PR_MERGED_OPTS);
+  const dispatches = await synthesizePrNotification(inbound, ctx, PR_MERGED_OPTS);
+  const directAuthor = await buildDirectAuthorNotification(inbound, ctx);
+  return directAuthor ? [...dispatches, directAuthor] : dispatches;
 }
 
 export const PR_MERGED_HANDLER: RepoEventHandler = {

@@ -32,6 +32,39 @@ import type { AgentRole } from "../state.js";
 /** Reserved AgentLabels namespace key for GitHub login mapping. */
 export const GITHUB_LOGIN_LABEL = "ois.io/github/login";
 
+export interface GhLoginAgentIdentity {
+  agentId: string;
+  name?: string;
+  role: AgentRole;
+}
+
+/**
+ * Resolve a GitHub login string → registered Hub agent identity. Returns
+ * null when no agent carries the login as its `ois.io/github/login`
+ * label value.
+ *
+ * Keeps the historical listAgents() semantics from lookupRoleByGhLogin:
+ * selectAgents() filters to online agents, but repo-event facts must be
+ * routable to the responsible actor even when that actor is offline.
+ */
+export async function lookupAgentByGhLogin(
+  ghLogin: string,
+  ctx: IPolicyContext,
+): Promise<GhLoginAgentIdentity | null> {
+  if (typeof ghLogin !== "string" || ghLogin.length === 0) return null;
+  const agents = await ctx.stores.engineerRegistry.listAgents();
+  for (const agent of agents) {
+    if (agent.labels?.[GITHUB_LOGIN_LABEL] === ghLogin) {
+      return {
+        agentId: agent.id,
+        name: agent.name,
+        role: agent.role,
+      };
+    }
+  }
+  return null;
+}
+
 /**
  * Resolve a GitHub login string → registered Hub agent role. Returns
  * null when no agent carries the login as its `ois.io/github/login`
@@ -43,12 +76,5 @@ export async function lookupRoleByGhLogin(
   ghLogin: string,
   ctx: IPolicyContext,
 ): Promise<AgentRole | null> {
-  if (typeof ghLogin !== "string" || ghLogin.length === 0) return null;
-  const agents = await ctx.stores.engineerRegistry.listAgents();
-  for (const agent of agents) {
-    if (agent.labels?.[GITHUB_LOGIN_LABEL] === ghLogin) {
-      return agent.role;
-    }
-  }
-  return null;
+  return (await lookupAgentByGhLogin(ghLogin, ctx))?.role ?? null;
 }
