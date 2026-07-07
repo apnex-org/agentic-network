@@ -2,6 +2,21 @@
 
 All notable changes to the pi host extension are documented here.
 
+## 0.1.5 — Publish idea-465 retry-gap hardening (HCAP Slice-1.x)
+
+### Fixed
+- Publishes the post-#552 PI HCAP retry-gap hardening for live fleet use: failed
+  Hub-spec refreshes no longer mark a drift revision as applied, so the next
+  heartbeat retries and live agents can converge after a transient first-refresh
+  failure.
+- Includes the reconnect/identity-ready refresh path and corrected HCAP comments
+  from idea-465, enabling fleet verification of the `[hcap-source]` marker after
+  the updated package is active.
+
+### Release boundary
+- Depends on the matching republished `@apnex/network-adapter` line; the publish
+  flow rewrites the workspace `*` dependency to the concrete registry floor.
+
 ## 0.1.2 — Swarm-Aware Footer (mission-99)
 
 The pi footer becomes swarm-aware — a zero-hot-path, 2-line status surface
