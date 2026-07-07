@@ -172,16 +172,17 @@ describe("tool-catalog-cache — isCacheValid", () => {
     expect(isCacheValid(cached, REV_B)).toBe(false);
   });
 
-  it("returns true (probe-friendly default) when current revision is null", () => {
-    // Probe scenario: /health fetch in flight; current revision unknown.
-    // Trust cache to keep probe path fast — worst case is one stale serve
-    // until next live ListTools refreshes the cache.
-    expect(isCacheValid(cached, null)).toBe(true);
+  it("returns FALSE (fail-closed) when current revision is null — mission-106 F4", () => {
+    // Pre-mission-106 this returned true (probe-friendly "trust cache"), which
+    // with the fire-and-forget /health warm losing the startup race rubber-stamped
+    // a stale cache as valid and served it forever (the frozen-catalog defect).
+    // Unknown freshness is NOT validity; the caller keeps the probe fast via a
+    // LABELED-STALE serve + out-of-band repair, never a silent "valid" serve.
+    expect(isCacheValid(cached, null)).toBe(false);
   });
 
-  it("returns true when current revision is undefined or empty string", () => {
-    // Empty string also covers an old Hub whose /health omits the field.
-    expect(isCacheValid(cached, undefined)).toBe(true);
-    expect(isCacheValid(cached, "")).toBe(true);
+  it("returns FALSE (fail-closed) when current revision is undefined or empty string — mission-106 F4", () => {
+    expect(isCacheValid(cached, undefined)).toBe(false);
+    expect(isCacheValid(cached, "")).toBe(false);
   });
 });

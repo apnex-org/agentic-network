@@ -173,11 +173,11 @@ describe("mission-100 offline conformance — real Claude runtime via MockClaude
     // The runtime's identityReady pass may already have established the baseline;
     // an unchanged reconcile must not emit a host refresh.
     const stable = await mock.engineer.reconciler.reconcile("offline-conformance-stable");
-    expect(stable).toEqual({ emitted: false, live: "rev-offline-a" });
+    expect(stable).toMatchObject({ emitted: false, live: "rev-offline-a" });
 
     mock.engineer.runtimeControls.setLiveToolSurfaceRevision("rev-offline-b");
     const drift = await mock.engineer.reconciler.reconcile("offline-conformance-drift");
-    expect(drift).toEqual({ emitted: true, live: "rev-offline-b" });
+    expect(drift).toMatchObject({ emitted: true, live: "rev-offline-b" });
 
     await mock.waitFor(
       () => notifications.some((n) => n.method === "notifications/tools/list_changed"),

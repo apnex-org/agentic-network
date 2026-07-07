@@ -170,7 +170,8 @@ describe("S2b — two-victim tool-surface reachability oracle (real registration
       emitListChanged: vi.fn(),
       log: noop,
     });
-    // establish a baseline first
+    // establish an emit baseline first (mission-106: getAppliedRevision reflects
+    // the emit-throttle marker, not a convergence latch)
     reconciler["appliedRevision"] = rev2; // eslint-disable-line @typescript-eslint/dot-notation
     const forced = await reconciler.forceEmit("unstick-offline");
     expect(forced.live).toBeNull();
