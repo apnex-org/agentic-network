@@ -127,9 +127,9 @@ describe("Registry Remediation", () => {
   // ── T4b: RBAC Enforcement ─────────────────────────────────────────
 
   describe("RBAC Enforcement", () => {
-    // work-162 (A1): the create_task/cancel_task/get_task/create_clarification/
-    // list_tasks RBAC cases are re-pointed onto surviving role-gated verbs —
-    // create_mission [Architect], create_proposal [Engineer], list_missions [Any].
+    // work-162/proptool0: retired Task/Proposal RBAC cases are re-pointed onto
+    // surviving role-gated verbs where possible; Proposal tools now assert
+    // unknown-tool retirement rather than role denial.
     it("engineer cannot call architect-only tool (create_mission)", async () => {
       const result = await eng.call("create_mission", {
         title: "Unauthorized",
@@ -143,13 +143,11 @@ describe("Registry Remediation", () => {
       expect(parsed.error).toContain("engineer");
     });
 
-    it("architect cannot call engineer-only tool (create_proposal)", async () => {
+    it("retired Proposal tool is not callable (create_proposal)", async () => {
       const result = await arch.call("create_proposal", { title: "T", summary: "s", body: "b" });
       expect(result.isError).toBe(true);
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.error).toContain("Authorization denied");
-      expect(parsed.error).toContain("engineer");
-      expect(parsed.error).toContain("architect");
+      expect(parsed.error).toContain("Unknown tool: create_proposal");
     });
 
     it("[Any] tools accessible by both roles (list_missions)", async () => {

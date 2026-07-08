@@ -241,17 +241,17 @@ Audit emission is **not blocking**. If the audit store write fails post-spawn, t
 
 ## §7 — Action vocabulary
 
-Nine registered action types, partitioned by **autonomy scope**:
+Registered action types, partitioned by **autonomy scope**. `create_proposal`
+was retired from thread convergence by `proptool0` / mission-109.
 
-### 7.1 — Autonomous (7)
+### 7.1 — Autonomous
 
 Actions the cascade can commit without Director approval:
 
 | Type | Kind | Spawns | Notes |
 |------|------|--------|-------|
 | `close_no_action` | audit_only | — | Phase 1 "we talked, nothing to do". Leaves audit trail. |
-| `create_task` | spawn | Task | Architect→Engineer work assignment from thread consensus. |
-| `create_proposal` | spawn | Proposal | Engineer-authored proposal surfaced to Architect queue. |
+| `create_task` | spawn | Task | Retired with the Task subsystem. |
 | `create_idea` | spawn | Idea | Emergent insight / future-work bucket. |
 | `update_idea` | update | Idea | Status/tag mutation (e.g., "triage this open idea"). |
 | `update_mission_status` | update | Mission | Thread resolves a mission gate question. |

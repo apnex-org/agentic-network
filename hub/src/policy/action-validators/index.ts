@@ -6,8 +6,8 @@
  * first `create_thread_reply` handler ever runs.
  *
  * Action types without a state-reality concern (close_no_action,
- * create_idea, create_proposal, create_bug, propose_mission,
- * create_clarification) register the NULL_VALIDATOR — the payload-shape
+ * create_idea, create_bug, propose_mission, create_clarification)
+ * register the NULL_VALIDATOR — the payload-shape
  * check in `validateStagedActions` already covers their promotion-gate
  * semantics, and the cascade handler itself remains the transactional
  * arbiter.
@@ -23,7 +23,6 @@ registerActionValidator("update_idea", updateIdeaValidator);
 
 // Pass-through — no state-reality concern under the current schema.
 registerActionValidator("close_no_action", NULL_VALIDATOR);
-registerActionValidator("create_proposal", NULL_VALIDATOR);
 registerActionValidator("create_idea", NULL_VALIDATOR);
 registerActionValidator("propose_mission", NULL_VALIDATOR);
 registerActionValidator("create_clarification", NULL_VALIDATOR); // revisit post-idea-125

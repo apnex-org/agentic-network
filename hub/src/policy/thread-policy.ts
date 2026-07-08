@@ -28,10 +28,9 @@ import {
 } from "./list-filters.js";
 import { runCascade } from "./cascade.js";
 import { resolveRecipient } from "../entities/recipient-resolver.js";
-// Side-effect import: registers per-action-type cascade handlers
-// (create_task, create_proposal, create_idea) with the cascade
-// registry at module-load time. Adding a new handler type: append
-// to cascade-actions/index.ts.
+// Side-effect import: registers per-action-type cascade handlers with the
+// cascade registry at module-load time. Adding a new handler type: append to
+// cascade-actions/index.ts. proptool0 retires create_proposal from this set.
 import "./cascade-actions/index.js";
 import { validateActionsWithRegistry } from "./action-validators/index.js";
 import type { ValidationContext } from "./action-validators/index.js";
@@ -1143,10 +1142,9 @@ async function leaveThread(args: Record<string, unknown>, ctx: IPolicyContext): 
 /**
  * Mission-21 Phase 1: iterate committed StagedAction[] in array order
  * and execute each. Phase 1 only supports close_no_action, which just
- * writes an audit entry and closes the thread. Phase 2 widens this to
- * the full vocabulary (create_task, create_proposal, create_mission,
- * update_idea, update_mission, create_idea) with best-effort cascade
- * and a ConvergenceReport per action.
+ * writes an audit entry and closes the thread. Phase 2 widened this to
+ * the current autonomous vocabulary with best-effort cascade and a
+ * ConvergenceReport per action. proptool0 retires create_proposal.
  */
 async function handleThreadConvergedWithAction(
   event: DomainEvent,
@@ -1318,7 +1316,7 @@ export function registerThreadPolicy(router: PolicyRouter): void {
 
   router.register(
     "create_thread_reply",
-    "[Any] Reply to an active ideation thread. Only works when it is your turn. Threads 2.0 (ADR-013/014): stage / revise / retract convergenceActions, author a summary narrating the thread's agreed outcome. At converged=true, the policy rejects the reply unless at least one action is committed and the summary is non-empty. Mission-24 Phase 2 widens the stage vocabulary to the autonomous action types — close_no_action, create_proposal, create_idea, update_idea, update_mission_status, propose_mission, create_clarification, create_bug — each committed action is executed by a registered cascade handler that spawns its entity with back-link metadata (sourceThreadId, sourceActionId, sourceThreadSummary). (work-162: create_task retired with the Task subsystem.)",
+    "[Any] Reply to an active ideation thread. Only works when it is your turn. Threads 2.0 (ADR-013/014): stage / revise / retract convergenceActions, author a summary narrating the thread's agreed outcome. At converged=true, the policy rejects the reply unless at least one action is committed and the summary is non-empty. The active autonomous action types are close_no_action, create_idea, update_idea, update_mission_status, propose_mission, create_clarification, create_bug — each committed action is executed by a registered cascade handler with back-link metadata when it spawns or mutates an entity. (work-162: create_task retired with the Task subsystem; proptool0: create_proposal retired from convergence.)",
     {
       threadId: z.string().describe("The thread ID to reply to"),
       message: z.string().describe("Your response message"),
@@ -1328,7 +1326,7 @@ export function registerThreadPolicy(router: PolicyRouter): void {
       summary: z.string().optional().describe("Negotiated narrative summary of the thread's agreed outcome. Either party can set or revise across rounds; latest value wins. Required non-empty at convergence."),
       stagedActions: z.array(
         // Mission-24 Phase 2 (M24-T11, ADR-014): 3-arm discriminated
-        // union on `kind` with the full 8-type autonomous vocabulary
+        // union on `kind` with the active autonomous vocabulary
         // on the `stage` arm. The per-type payload validation is
         // enforced at the gate via validateStagedActions() rather
         // than at the tool layer — a nested discriminatedUnion on
@@ -1340,7 +1338,7 @@ export function registerThreadPolicy(router: PolicyRouter): void {
         z.discriminatedUnion("kind", [
           z.object({
             kind: z.literal("stage"),
-            type: z.enum(AUTONOMOUS_STAGED_ACTION_TYPES).describe("One of the 8 Phase 2 autonomous action types"),
+            type: z.enum(AUTONOMOUS_STAGED_ACTION_TYPES).describe("One of the active Phase 2 autonomous action types"),
             payload: z.record(z.string(), z.unknown()).describe("Per-type payload — shape validated at the cascade gate (validateStagedActions)"),
           }),
           z.object({

@@ -20,7 +20,7 @@
 | **Bug** | Bug filing; orthogonal to mission | `open` → `resolved` | create_bug / get_bug / update_bug / list_bugs |
 | **Clarification** | Engineer-raised question blocking task progress | `pending` → `resolved` | create_clarification / get_clarification / resolve_clarification |
 | **Thread** | Bilateral ideation discussion; Threads 2.0 (ADR-013/014) | `active` → (`converged` / `round_limit` / `closed` / `abandoned` / `cascade_failed`) | create_thread / create_thread_reply / get_thread / list_threads / leave_thread / close_thread / force_close_thread |
-| **Proposal** | Architect-authored proposal entity | `open` → (`accepted` / `rejected`) | create_proposal / close_proposal / get_proposal / list_proposals / create_proposal_review |
+| **Proposal** (legacy) | Historical proposal record; storage rows preserved for lineage/audit, but public Proposal workflow tools retired by proptool0 | Legacy statuses preserved in storage; no current public Proposal FSM surface | No active public MCP tools (`create_proposal`, `create_proposal_review`, `close_proposal`, `get_proposal`, `list_proposals` retired). Decision `approve(proposalRef)` uses an internal bridge only. |
 | **Report** | Engineer-authored task report | Implicit (attached to parent task; status lives on parent) | create_report / get_report |
 | **Review** | Instantaneous review entity; triggers downstream cascades | Instantaneous (no status field; `verdict ∈ {approved, revision_required}`) | create_review / get_review |
 | **Turn** | Work-traced unit of agent activity; orthogonal to mission lifecycle | `planning` → `active` → `completed` | create_turn / get_turn / update_turn / list_turns |
@@ -127,14 +127,14 @@ When `create_thread_reply(converged=true)` is called with `stagedActions[]` + no
 2. Hub commits all staged actions atomically
 3. Each committed action invokes its registered cascade handler:
    - `close_no_action` — no entity spawn (purely-ideation thread; close)
-   - `create_task` — spawns Task entity with `sourceThreadId` + `sourceActionId` + `sourceThreadSummary` back-link
-   - `create_proposal` — spawns Proposal entity with back-links
-   - `create_idea` — spawns Idea entity with back-links
+   - `create_idea` — spawns Idea entity with `sourceThreadId` + `sourceActionId` + `sourceThreadSummary` back-link
    - `update_idea` — updates Idea entity (status / text / tags)
    - `update_mission_status` — updates Mission entity status
    - `propose_mission` — spawns Mission entity at status=proposed
    - `create_clarification` — spawns Clarification entity
    - `create_bug` — spawns Bug entity
+
+   Retired convergence actions: `create_task` was retired with the Task subsystem; proptool0 retired `create_proposal` from staged-action validation and cascade registration. Historical Proposal rows remain in storage, but thread convergence must not spawn Proposal entities.
 4. Thread status flips `active → converged`
 5. Hub fires `thread_convergence_finalized` event
 

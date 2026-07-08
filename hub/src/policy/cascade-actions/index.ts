@@ -12,7 +12,9 @@
  */
 
 import "./close-no-action.js";
-import "./create-proposal.js";
+// proptool0: create_proposal cascade action retired from the active
+// convergence vocabulary. Keep Proposal storage/history, but do not register
+// a hidden Proposal-creation path.
 import "./create-idea.js";
 import "./update-idea.js";
 import "./update-mission-status.js";

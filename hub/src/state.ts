@@ -612,7 +612,6 @@ export interface ThreadParticipant {
  */
 export type StagedActionType =
   | "close_no_action"
-  | "create_proposal"
   | "create_idea"
   | "update_idea"
   | "update_mission_status"
@@ -637,13 +636,8 @@ export interface CloseNoActionPayload {
 
 // work-162 (A1): CreateTaskActionPayload removed — create_task retired as a
 // convergence-spawnable action with the Task subsystem.
-
-/** Phase 2 autonomous: spawn a Proposal from thread convergence. */
-export interface CreateProposalActionPayload {
-  title: string;
-  description: string;
-  correlationId?: string;
-}
+// proptool0: CreateProposalActionPayload removed — Proposal creation is no
+// longer stageable through thread convergence.
 
 /** Phase 2 autonomous: spawn an Idea from thread convergence. */
 export interface CreateIdeaActionPayload {
@@ -698,7 +692,6 @@ export interface CreateBugActionPayload {
  * the paired `type` discriminator on StagedAction. */
 export type StagedActionPayload =
   | CloseNoActionPayload
-  | CreateProposalActionPayload
   | CreateIdeaActionPayload
   | UpdateIdeaActionPayload
   | UpdateMissionStatusActionPayload
@@ -743,7 +736,6 @@ interface StagedActionCommon {
  * access payload fields without explicit casts. */
 export type StagedAction =
   | (StagedActionCommon & { type: "close_no_action"; payload: CloseNoActionPayload })
-  | (StagedActionCommon & { type: "create_proposal"; payload: CreateProposalActionPayload })
   | (StagedActionCommon & { type: "create_idea"; payload: CreateIdeaActionPayload })
   | (StagedActionCommon & { type: "update_idea"; payload: UpdateIdeaActionPayload })
   | (StagedActionCommon & { type: "update_mission_status"; payload: UpdateMissionStatusActionPayload })
@@ -753,7 +745,6 @@ export type StagedAction =
 
 export type StagedActionOp =
   | { kind: "stage"; type: "close_no_action"; payload: CloseNoActionPayload }
-  | { kind: "stage"; type: "create_proposal"; payload: CreateProposalActionPayload }
   | { kind: "stage"; type: "create_idea"; payload: CreateIdeaActionPayload }
   | { kind: "stage"; type: "update_idea"; payload: UpdateIdeaActionPayload }
   | { kind: "stage"; type: "update_mission_status"; payload: UpdateMissionStatusActionPayload }

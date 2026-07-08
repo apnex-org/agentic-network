@@ -35,7 +35,7 @@ import {
   hashExecutionPlan,
 } from "../entities/director-proof-repository-substrate.js";
 import { validatePlan, executePlan } from "../entities/decision-executor.js";
-import { createProposalReview } from "./proposal-policy.js";
+import { approveProposalForDecision } from "./proposal-policy.js";
 
 /** Confirmation TTL: 30 minutes — long enough for a live decision walkthrough,
  *  short enough that a stale prompt cannot authorize much later (design §1.3). */
@@ -327,10 +327,12 @@ async function resolveAsDirector(args: Record<string, unknown>, ctx: IPolicyCont
   const targets = {
     workItem: ctx.stores.workItem,
     proposal: ctx.stores.proposal,
-    // The SHIPPED create_proposal_review semantics, closed over ctx (audit-9938):
+    // The shipped Proposal approval semantics, closed over ctx (audit-9938):
     // submitted-only guard + auto-scaffold (revert on failure) + dispatches.
+    // proptool0 keeps this as an internal bridge after retiring the public
+    // create_proposal_review MCP tool.
     approveViaPolicy: async (proposalRef: string, feedback: string) => {
-      const res = await createProposalReview({ proposalId: proposalRef, decision: "approved", feedback }, ctx);
+      const res = await approveProposalForDecision(proposalRef, feedback, ctx);
       const parsed = JSON.parse(res.content[0].text) as { success?: boolean; error?: string; scaffolded?: boolean };
       return { ok: !res.isError && parsed.success === true, detail: res.isError ? (parsed.error ?? "review failed") : `approved${parsed.scaffolded ? " + scaffolded" : ""}` };
     },

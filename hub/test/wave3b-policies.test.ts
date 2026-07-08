@@ -20,146 +20,32 @@ const noop = () => {};
 
 // ── Proposal Policy ─────────────────────────────────────────────────
 
-describe("ProposalPolicy", () => {
+describe("ProposalPolicy — proptool0 retired public surface", () => {
   let router: PolicyRouter;
   let ctx: IPolicyContext;
 
   beforeEach(async () => {
     router = new PolicyRouter(noop);
     registerProposalPolicy(router);
-    // bug-175: proposals are engineer-initiated ([Engineer] create/close, [Engineer|Verifier]
-    // get); the full-lifecycle review uses its own architect reviewCtx.
     ctx = createTestContext({ role: "engineer" });
   });
 
-  it("registers all proposal tools", () => {
-    expect(router.has("create_proposal")).toBe(true);
-    expect(router.has("list_proposals")).toBe(true);
-    expect(router.has("create_proposal_review")).toBe(true);
-    expect(router.has("get_proposal")).toBe(true);
-    expect(router.has("close_proposal")).toBe(true);
-    expect(router.size).toBe(5);
-  });
+  it("does not register legacy Proposal workflow tools", async () => {
+    const retired = [
+      "create_proposal",
+      "list_proposals",
+      "create_proposal_review",
+      "get_proposal",
+      "close_proposal",
+    ];
 
-  it("create_proposal creates and emits proposal_submitted", async () => {
-    const result = await router.handle("create_proposal", {
-      title: "Add dark mode",
-      summary: "Implement dark mode toggle in settings",
-      body: "# Dark Mode\n\nFull proposal text...",
-    }, ctx);
-
-    expect(result.isError).toBeUndefined();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.proposalId).toBeDefined();
-    expect(parsed.status).toBe("submitted");
-
-    const emitted = (ctx as any).dispatchedEvents.find((e: any) => e.event === "proposal_submitted");
-    expect(emitted).toBeDefined();
-    expect(emitted.selector.roles).toEqual(["architect"]);
-  });
-
-  it("list_proposals returns proposals", async () => {
-    await router.handle("create_proposal", {
-      title: "P1", summary: "S1", body: "B1",
-    }, ctx);
-    await router.handle("create_proposal", {
-      title: "P2", summary: "S2", body: "B2",
-    }, ctx);
-
-    const result = await router.handle("list_proposals", {}, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.count).toBe(2);
-  });
-
-  it("list_proposals filters by status", async () => {
-    await router.handle("create_proposal", {
-      title: "P1", summary: "S1", body: "B1",
-    }, ctx);
-
-    const result = await router.handle("list_proposals", { status: "approved" }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.count).toBe(0);
-  });
-
-  // ── CP2 C5 (task-307): _ois_query_unmatched sentinel ────────────
-  it("list_proposals fires _ois_query_unmatched when filter yields zero on non-empty collection", async () => {
-    await router.handle("create_proposal", { title: "P1", summary: "S1", body: "B1" }, ctx);
-    const result = await router.handle("list_proposals", { status: "approved" }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.count).toBe(0);
-    expect(parsed._ois_query_unmatched).toBe(true);
-  });
-
-  it("list_proposals omits _ois_query_unmatched when no filter is provided", async () => {
-    // empty collection + no filter → no sentinel (it's for filter-yields-zero case only)
-    const result = await router.handle("list_proposals", {}, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed._ois_query_unmatched).toBeUndefined();
-  });
-
-  it("list_proposals omits _ois_query_unmatched when filter yields zero on truly-empty collection", async () => {
-    const result = await router.handle("list_proposals", { status: "approved" }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.count).toBe(0);
-    // no sentinel — distinguish "filter valid, nothing matches" from "collection empty"
-    expect(parsed._ois_query_unmatched).toBeUndefined();
-  });
-
-  it("full lifecycle: create → review → get → close", async () => {
-    // Create
-    const createResult = await router.handle("create_proposal", {
-      title: "Lifecycle test",
-      summary: "Test full lifecycle",
-      body: "Full body",
-    }, ctx);
-    const { proposalId } = JSON.parse(createResult.content[0].text);
-
-    // Review (approve)
-    const reviewCtx = createTestContext({ stores: ctx.stores });
-    const reviewResult = await router.handle("create_proposal_review", {
-      proposalId,
-      decision: "approved",
-      feedback: "Looks good, proceed",
-    }, reviewCtx);
-    expect(reviewResult.isError).toBeUndefined();
-    const reviewParsed = JSON.parse(reviewResult.content[0].text);
-    expect(reviewParsed.decision).toBe("approved");
-
-    const emitted = (reviewCtx as any).dispatchedEvents.find((e: any) => e.event === "proposal_decided");
-    expect(emitted).toBeDefined();
-    expect(emitted.selector.roles).toEqual(["engineer"]);
-
-    // Get
-    const getResult = await router.handle("get_proposal", { proposalId }, ctx);
-    const getParsed = JSON.parse(getResult.content[0].text);
-    expect(getParsed.status).toBe("approved");
-    expect(getParsed.decision).toBe("approved");
-    expect(getParsed.feedback).toBe("Looks good, proceed");
-
-    // Close
-    const closeResult = await router.handle("close_proposal", { proposalId }, ctx);
-    const closeParsed = JSON.parse(closeResult.content[0].text);
-    expect(closeParsed.success).toBe(true);
-    expect(closeParsed.status).toBe("implemented");
-  });
-
-  it("create_proposal_review fails for non-existent proposal", async () => {
-    const result = await router.handle("create_proposal_review", {
-      proposalId: "prop-999",
-      decision: "approved",
-      feedback: "N/A",
-    }, ctx);
-    expect(result.isError).toBe(true);
-  });
-
-  it("get_proposal returns error for non-existent", async () => {
-    const result = await router.handle("get_proposal", { proposalId: "prop-999" }, ctx);
-    expect(result.isError).toBe(true);
-  });
-
-  it("close_proposal fails for non-existent", async () => {
-    const result = await router.handle("close_proposal", { proposalId: "prop-999" }, ctx);
-    expect(result.isError).toBe(true);
+    expect(router.size).toBe(0);
+    for (const tool of retired) {
+      expect(router.has(tool)).toBe(false);
+      const result = await router.handle(tool, {}, ctx);
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(`Unknown tool: ${tool}`);
+    }
   });
 });
 
@@ -1902,7 +1788,6 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
   let engCtx: IPolicyContext;
 
   beforeEach(async () => {
-    // Import registers all 3 handlers as a side effect.
     await import("../src/policy/cascade-actions/index.js");
     router = new PolicyRouter(noop);
     registerThreadPolicy(router);
@@ -1923,23 +1808,6 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
     });
   });
 
-  /** Open thread → engineer converge staging the given action → caller
-   * finishes via architect converge. Returns threadId. */
-  async function spawnViaConvergence(stagedAction: Record<string, unknown>, summary = "Agreed; proceed."): Promise<string> {
-    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
-    const threadId = JSON.parse(r.content[0].text).threadId;
-    await router.handle("create_thread_reply", {
-      threadId, message: "agree", converged: true, summary, stagedActions: [stagedAction],
-    }, engCtx);
-    // Poison the action.type in the gate's Zod schema? No — we run by
-    // injecting the committed action post-gate via the test hook below.
-    return threadId;
-  }
-
-  /** Bypass the tool-surface Zod narrow schema (Phase 1: only
-   * close_no_action) by staging via direct store mutation. The gate's
-   * validateStagedActions() still runs against the Phase 2 payload
-   * schema registry, so payloads must be valid Phase 2 shapes. */
   async function injectStagedAction(threadId: string, type: string, payload: Record<string, unknown>, ctx: IPolicyContext): Promise<void> {
     const repo = ctx.stores.thread as ThreadRepository;
     const t = (await repo.getThread(threadId))!;
@@ -1953,87 +1821,37 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
     await repo.__debugSetThread(threadId, { convergenceActions: t.convergenceActions });
   }
 
-  /** Minimal convergence flow using direct-injection for staging: arch
-   * opens, eng replies (no stage, converged=true; gate needs a staged
-   * action, so inject first), then arch converges. */
-  async function convergeWithInjectedAction(type: string, payload: Record<string, unknown>, summary: string): Promise<string> {
-    const result = await convergeWithInjectedActionResult(type, payload, summary);
-    return result.threadId;
-  }
-
-  // CP2 C4: some tests need the final arch-converge result to assert
-  // gate rejections (stale_reference, invalid_transition). Expose via
-  // a sibling helper that returns the threadId + final reply result.
   async function convergeWithInjectedActionResult(
     type: string,
     payload: Record<string, unknown>,
     summary: string,
   ): Promise<{ threadId: string; finalReply: any }> {
-    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "t", message: "m" }, archCtx);
+    const r = await router.handle("create_thread", { routingMode: "broadcast", title: "t", message: "m" }, archCtx);
     const threadId = JSON.parse(r.content[0].text).threadId;
-    // Stage via direct injection BEFORE the eng converge reply.
     await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
     await injectStagedAction(threadId, type, payload, archCtx);
-    // eng converges (round 3). Summary set via message param path.
-    await router.handle("create_thread_reply", {
-      threadId, message: "arch-round", summary,
-    }, archCtx);
-    await router.handle("create_thread_reply", {
-      threadId, message: "eng-converge", converged: true,
-    }, engCtx);
-    // arch converges to seal.
-    const finalReply = await router.handle("create_thread_reply", {
-      threadId, message: "arch-converge", converged: true,
-    }, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "arch-round", summary }, archCtx);
+    await router.handle("create_thread_reply", { threadId, message: "eng-converge", converged: true }, engCtx);
+    const finalReply = await router.handle("create_thread_reply", { threadId, message: "arch-converge", converged: true }, archCtx);
     return { threadId, finalReply };
   }
 
-  // work-162 (A1): the create_task handler tests (spawn + idempotent) are
-  // retired with the Task cascade. The create_proposal / create_idea handler
-  // tests below retain the spawn-handler + idempotency coverage identically.
-
-  // ── create_proposal ──────────────────────────────────────────
-
-  it("create_proposal handler spawns a Proposal with back-link metadata", async () => {
-    const threadId = await convergeWithInjectedAction(
+  it("proptool0 rejects retired create_proposal at convergence validation", async () => {
+    const { threadId, finalReply } = await convergeWithInjectedActionResult(
       "create_proposal",
       { title: "Proposal title", description: "Full proposal body text" },
-      "Converged on drafting a proposal.",
+      "Retired proposal action should fail.",
     );
 
+    expect(finalReply.isError).toBe(true);
+    const parsed = JSON.parse(finalReply.content[0].text);
+    expect(parsed.error).toContain('unknown autonomous action type "create_proposal"');
     const proposals = await archCtx.stores.proposal.getProposals();
-    const spawned = proposals.find((p) => p.sourceThreadId === threadId);
-    expect(spawned).toBeDefined();
-    expect(spawned!.title).toBe("Proposal title");
-    expect(spawned!.summary).toBe("Full proposal body text");
-    expect(spawned!.sourceThreadSummary).toMatch(/drafting a proposal/i);
-
-    const finalized = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_finalized");
-    expect(finalized.data.report.some((r: any) => r.type === "create_proposal" && r.entityId === spawned!.id && r.status === "executed")).toBe(true);
+    expect(proposals.filter((p) => p.sourceThreadId === threadId)).toHaveLength(0);
   });
 
-  it("create_proposal handler is idempotent on re-run", async () => {
-    const { runCascade } = await import("../src/policy/cascade.js");
-    const threadId = await convergeWithInjectedAction(
-      "create_proposal",
-      { title: "P1", description: "body" },
-      "Draft once.",
-    );
-    const thread = await archCtx.stores.thread.getThread(threadId);
-    const action = thread!.convergenceActions.find((a: any) => a.type === "create_proposal")!;
-
-    const result = await runCascade(archCtx, thread!, [action as any], "Draft once.");
-    expect(result.report[0].status).toBe("skipped_idempotent");
-    expect(result.skippedCount).toBe(1);
-
-    const proposals = await archCtx.stores.proposal.getProposals();
-    expect(proposals.filter((p) => p.sourceThreadId === threadId)).toHaveLength(1);
-  });
-
-  // ── create_idea ──────────────────────────────────────────────
-
-  it("create_idea handler spawns an Idea with back-link metadata", async () => {
-    const threadId = await convergeWithInjectedAction(
+  it("create_idea handler still spawns an Idea with back-link metadata", async () => {
+    const { threadId } = await convergeWithInjectedActionResult(
       "create_idea",
       { title: "Idea title", description: "Body of the idea", tags: ["exploration", "followup"] },
       "Captured idea for future exploration.",
@@ -2052,9 +1870,9 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
     expect(finalized.data.report.some((r: any) => r.type === "create_idea" && r.entityId === spawned!.id && r.status === "executed")).toBe(true);
   });
 
-  it("create_idea handler is idempotent on re-run", async () => {
+  it("create_idea handler remains idempotent on re-run", async () => {
     const { runCascade } = await import("../src/policy/cascade.js");
-    const threadId = await convergeWithInjectedAction(
+    const { threadId } = await convergeWithInjectedActionResult(
       "create_idea",
       { title: "IdeaX", description: "desc" },
       "Record once.",
@@ -2067,78 +1885,6 @@ describe("ThreadPolicy — cascade handlers (M24-T5)", () => {
 
     const ideas = await archCtx.stores.idea.listIdeas();
     expect(ideas.filter((i) => i.sourceThreadId === threadId)).toHaveLength(1);
-  });
-
-  // ── Multi-action cascade ─────────────────────────────────────
-
-  it("multiple committed actions of different types all spawn correctly", async () => {
-    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "multi", message: "m" }, archCtx);
-    const threadId = JSON.parse(r.content[0].text).threadId;
-    await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
-    // Inject 2 actions of different types.
-    await injectStagedAction(threadId, "create_proposal", { title: "T1", description: "dt" }, archCtx);
-    await injectStagedAction(threadId, "create_idea", { title: "I1", description: "di" }, archCtx);
-    await router.handle("create_thread_reply", { threadId, message: "arch", summary: "Multi-action test." }, archCtx);
-    await router.handle("create_thread_reply", { threadId, message: "eng-converge", converged: true }, engCtx);
-    await router.handle("create_thread_reply", { threadId, message: "arch-converge", converged: true }, archCtx);
-
-    const finalized = (archCtx as any).dispatchedEvents.find((e: any) => e.event === "thread_convergence_finalized");
-    expect(finalized.data.committedActionCount).toBe(2);
-    expect(finalized.data.executedCount).toBe(2);
-    expect(finalized.data.warning).toBe(false);
-
-    // work-162: re-pointed off create_task → create_proposal.
-    const proposals = await archCtx.stores.proposal.getProposals();
-    const ideas = await archCtx.stores.idea.listIdeas();
-    expect(proposals.filter((p) => p.sourceThreadId === threadId)).toHaveLength(1);
-    expect(ideas.filter((i) => i.sourceThreadId === threadId)).toHaveLength(1);
-  });
-
-  // ── Spawned-entity shape guards ──────────────────────────────
-
-  it("spawned entities carry labels inherited from the thread", async () => {
-    // Open with architect-authored labels via direct setting
-    const r = await router.handle("create_thread", { routingMode: "broadcast",title: "lab", message: "m" }, archCtx);
-    const threadId = JSON.parse(r.content[0].text).threadId;
-    await (archCtx.stores.thread as ThreadRepository).__debugSetThread(threadId, {
-      labels: { team: "platform", env: "prod" },
-    });
-
-    await router.handle("create_thread_reply", { threadId, message: "stage" }, engCtx);
-    await injectStagedAction(threadId, "create_proposal", { title: "T", description: "d" }, archCtx);
-    await router.handle("create_thread_reply", { threadId, message: "arch", summary: "Label inheritance test." }, archCtx);
-    await router.handle("create_thread_reply", { threadId, message: "e", converged: true }, engCtx);
-    await router.handle("create_thread_reply", { threadId, message: "a", converged: true }, archCtx);
-
-    // work-162: re-pointed off create_task → create_proposal (labels inherit identically).
-    const proposals = await archCtx.stores.proposal.getProposals();
-    const spawned = proposals.find((p) => p.sourceThreadId === threadId);
-    expect(spawned!.labels).toEqual({ team: "platform", env: "prod" });
-  });
-
-  // ── findByCascadeKey helpers ─────────────────────────────────
-
-  it("findByCascadeKey returns the spawned entity for proposal/idea stores", async () => {
-    // work-162: re-pointed off create_task → create_proposal.
-    const threadId = await convergeWithInjectedAction(
-      "create_proposal",
-      { title: "T", description: "d" },
-      "s",
-    );
-    const thread = await archCtx.stores.thread.getThread(threadId);
-    const action = thread!.convergenceActions.find((a: any) => a.type === "create_proposal")!;
-    const key = { sourceThreadId: threadId, sourceActionId: action.id };
-
-    const proposal = await archCtx.stores.proposal.findByCascadeKey(key);
-    expect(proposal).toBeDefined();
-    expect(proposal!.sourceThreadId).toBe(threadId);
-    expect(proposal!.sourceActionId).toBe(action.id);
-
-    // Unrelated key → null
-    const missing = await archCtx.stores.proposal.findByCascadeKey({
-      sourceThreadId: "thread-999", sourceActionId: "action-99",
-    });
-    expect(missing).toBeNull();
   });
 });
 
@@ -2471,18 +2217,18 @@ describe("Phase 2 invariants (M24-T11)", () => {
       converged: true,
       summary: "COMMIT-TIME SUMMARY",
       stagedActions: [{
-        kind: "stage", type: "create_proposal",
+        kind: "stage", type: "create_idea",
         payload: { title: "T", description: "d" },
       }],
     }, engCtx);
     // Architect converges → gate promotes + cascade executes immediately.
     await router.handle("create_thread_reply", { threadId, message: "go", converged: true }, archCtx);
 
-    // work-162: re-pointed off create_task → create_proposal. Find the spawned
-    // proposal — sourceThreadSummary should reflect what the commit saw. (Thread
-    // is now closed; subsequent direct summary mutation does NOT propagate.)
-    const proposals = await archCtx.stores.proposal.getProposals();
-    const spawned = proposals.find((p) => p.sourceThreadId === threadId);
+    // work-162/proptool0: use the surviving create_idea spawn path. The
+    // sourceThreadSummary should reflect what the commit saw. (Thread is now
+    // closed; subsequent direct summary mutation does NOT propagate.)
+    const ideas = await archCtx.stores.idea.listIdeas();
+    const spawned = ideas.find((i) => i.sourceThreadId === threadId);
     expect(spawned).toBeDefined();
     expect(spawned!.sourceThreadSummary).toBe("COMMIT-TIME SUMMARY");
 
@@ -2491,7 +2237,7 @@ describe("Phase 2 invariants (M24-T11)", () => {
       summary: "POST-COMMIT MUTATION",
     });
     // Re-read the entity — still the frozen commit-time summary.
-    const after = await archCtx.stores.proposal.getProposal(spawned!.id);
+    const after = (await archCtx.stores.idea.listIdeas()).find((i) => i.id === spawned!.id);
     expect(after!.sourceThreadSummary).toBe("COMMIT-TIME SUMMARY");
     expect(after!.sourceThreadSummary).not.toBe("POST-COMMIT MUTATION");
   });
@@ -2508,12 +2254,7 @@ describe("Phase 2 invariants (M24-T11)", () => {
       return threadId;
     }
 
-    // work-162: create_task spawn-type retired — proposal/idea below retain coverage.
-
-    // create_proposal
-    const tid2 = await runConverge("create_proposal", { title: "P1", description: "d" }, "SUM-PROP");
-    const p = (await archCtx.stores.proposal.getProposals()).find((p) => p.sourceThreadId === tid2);
-    expect(p!.sourceThreadSummary).toBe("SUM-PROP");
+    // work-162/proptool0: create_task and create_proposal spawn-types retired.
 
     // create_idea
     const tid3 = await runConverge("create_idea", { title: "I1", description: "d" }, "SUM-IDEA");
@@ -2654,12 +2395,12 @@ describe("Phase 2 invariants (M24-T11)", () => {
     const threadId = JSON.parse(r.content[0].text).threadId;
     await router.handle("create_thread_reply", {
       threadId, message: "s", converged: true, summary: "Spawn once.",
-      stagedActions: [{ kind: "stage", type: "create_proposal", payload: { title: "T", description: "d" } }],
+      stagedActions: [{ kind: "stage", type: "create_idea", payload: { title: "T", description: "d" } }],
     }, engCtx);
     await router.handle("create_thread_reply", { threadId, message: "go", converged: true }, archCtx);
 
     const thread = await archCtx.stores.thread.getThread(threadId);
-    const action = thread!.convergenceActions.find((a) => a.type === "create_proposal")!;
+    const action = thread!.convergenceActions.find((a) => a.type === "create_idea")!;
 
     // Three replay attempts — all should be skipped_idempotent
     for (let i = 0; i < 3; i++) {
@@ -2668,9 +2409,9 @@ describe("Phase 2 invariants (M24-T11)", () => {
       expect(result.anyFailure).toBe(false);
     }
 
-    // work-162: re-pointed off create_task → create_proposal. Still exactly one spawned.
-    const proposals = await archCtx.stores.proposal.getProposals();
-    expect(proposals.filter((p) => p.sourceThreadId === threadId)).toHaveLength(1);
+    // work-162/proptool0: use surviving create_idea spawn path. Still exactly one spawned.
+    const ideas = await archCtx.stores.idea.listIdeas();
+    expect(ideas.filter((i) => i.sourceThreadId === threadId)).toHaveLength(1);
 
     // At least 3 action_already_executed audit entries (one per replay)
     const audits = await archCtx.stores.audit.listEntries(100);
@@ -2847,24 +2588,8 @@ describe("Cascade-path SSE parity (dispatch-helpers)", () => {
     return threadId;
   }
 
-  // work-162 (A1): the "create_task cascade fires task_issued" parity test is
-  // retired; create_proposal / create_idea / propose_mission cascade-dispatch
-  // parity tests below retain the coverage.
-
-  it("create_proposal cascade fires proposal_submitted to architects", async () => {
-    await runConverge(
-      "create_proposal",
-      { title: "P", description: "body" },
-      "Spawn via cascade.",
-    );
-    const submitted = (archCtx as any).dispatchedEvents.find(
-      (e: any) => e.event === "proposal_submitted",
-    );
-    expect(submitted).toBeDefined();
-    expect(submitted.selector.roles).toEqual(["architect"]);
-    expect(submitted.data.proposalId).toMatch(/^prop-/);
-    expect(submitted.data.title).toBe("P");
-  });
+  // work-162/proptool0: task/proposal creation parity tests are retired;
+  // create_idea / propose_mission cascade-dispatch parity tests retain coverage.
 
   it("create_idea cascade fires idea_submitted (emit to both roles)", async () => {
     await runConverge(
@@ -2940,27 +2665,27 @@ describe("Cascade-path SSE parity (dispatch-helpers)", () => {
   });
 
   it("idempotent re-run does NOT re-dispatch (status: skipped_idempotent → no event)", async () => {
-    // work-162: re-pointed off create_task → create_proposal (proposal_submitted dispatch).
+    // work-162/proptool0: use surviving create_idea dispatch parity.
     const { runCascade } = await import("../src/policy/cascade.js");
     const threadId = await runConverge(
-      "create_proposal",
+      "create_idea",
       { title: "Once", description: "only once" },
       "Single dispatch.",
     );
-    // First dispatch count on proposal_submitted
-    const firstCount = (archCtx as any).dispatchedEvents.filter(
-      (e: any) => e.event === "proposal_submitted",
+    // First dispatch count on idea_submitted
+    const firstCount = (archCtx as any).emittedEvents.filter(
+      (e: any) => e.event === "idea_submitted",
     ).length;
     expect(firstCount).toBe(1);
 
     // Replay cascade against the same thread+action
     const thread = await archCtx.stores.thread.getThread(threadId);
-    const action = thread!.convergenceActions.find((a: any) => a.type === "create_proposal")!;
+    const action = thread!.convergenceActions.find((a: any) => a.type === "create_idea")!;
     const result = await runCascade(archCtx, thread!, [action as any], "Single dispatch.");
     expect(result.report[0].status).toBe("skipped_idempotent");
-    // No additional proposal_submitted dispatch
-    const finalCount = (archCtx as any).dispatchedEvents.filter(
-      (e: any) => e.event === "proposal_submitted",
+    // No additional idea_submitted dispatch
+    const finalCount = (archCtx as any).emittedEvents.filter(
+      (e: any) => e.event === "idea_submitted",
     ).length;
     expect(finalCount).toBe(1);
   });
@@ -3016,8 +2741,8 @@ describe("runCascade — depth guard (INV-TH25)", () => {
         payload: { reason: "ok" },
       },
       {
-        // work-162: re-pointed off create_task → create_proposal.
-        id: "action-2", type: "create_proposal" as const, status: "committed" as const,
+        // work-162/proptool0: use surviving create_idea shape for depth-bound fixture.
+        id: "action-2", type: "create_idea" as const, status: "committed" as const,
         proposer: { role: "engineer" as const, agentId: null },
         timestamp: new Date().toISOString(),
         payload: { title: "T", description: "d" },
@@ -3033,8 +2758,8 @@ describe("runCascade — depth guard (INV-TH25)", () => {
       expect(entry.error).toMatch(/MAX_CASCADE_DEPTH/);
     }
     // No entities were actually spawned
-    const proposals = await archCtx.stores.proposal.getProposals();
-    expect(proposals.filter((p) => p.sourceThreadId === threadId)).toHaveLength(0);
+    const ideas = await archCtx.stores.idea.listIdeas();
+    expect(ideas.filter((i) => i.sourceThreadId === threadId)).toHaveLength(0);
   });
 });
 
@@ -3048,11 +2773,11 @@ describe("ActionSpec kinds (ADR-015)", () => {
     archCtx = createTestContext({ role: "architect", sessionId: "s-arch" });
   });
 
-  it("all 8 autonomous action types have registered ActionSpecs (work-162: create_task retired)", async () => {
+  it("all active autonomous action types have registered ActionSpecs (task/proposal creation retired)", async () => {
     const { listActionSpecs } = await import("../src/policy/cascade-spec.js");
     const types = new Set(listActionSpecs());
     for (const type of [
-      "close_no_action", "create_proposal", "create_idea",
+      "close_no_action", "create_idea",
       "update_idea", "update_mission_status", "propose_mission", "create_clarification",
       "create_bug",
     ]) {
@@ -3070,9 +2795,9 @@ describe("ActionSpec kinds (ADR-015)", () => {
   });
 
   it("spawn spec declares findByCascadeKey + dispatch", async () => {
-    // work-162: re-pointed off create_task → create_proposal (a surviving spawn spec).
+    // work-162/proptool0: create_idea is the surviving simple spawn spec.
     const { getActionSpec } = await import("../src/policy/cascade-spec.js");
-    const spec = getActionSpec("create_proposal");
+    const spec = getActionSpec("create_idea");
     expect(spec).toBeDefined();
     expect(spec!.kind).toBe("spawn");
     expect(spec!.findByCascadeKey).toBeDefined();

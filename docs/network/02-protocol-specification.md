@@ -165,8 +165,8 @@ Notifications are sent as MCP `LoggingMessageNotification` with these fields:
 | `directive_acknowledged`   | `["architect"]`         | `{ taskId }`                                      |
 | `report_submitted`         | `["architect"]`         | `{ taskId, summary }`                             |
 | `review_completed`         | `["engineer"]`          | `{ taskId }`                                      |
-| `proposal_submitted`       | `["architect"]`         | `{ proposalId, title, summary }`                  |
-| `proposal_decided`         | `["engineer"]`          | `{ proposalId, decision }`                        |
+| `proposal_submitted`       | `["architect"]`         | `{ proposalId, title, summary }` — legacy Proposal compatibility only; no active public producer after proptool0 |
+| `proposal_decided`         | `["engineer"]`          | `{ proposalId, decision }` — legacy/internal Decision-bridge compatibility only; not a current workflow entry point |
 | `clarification_requested`  | `["architect"]`         | `{ taskId, question }`                            |
 | `clarification_answered`   | `["engineer"]`          | `{ taskId }`                                      |
 | `thread_opened`            | Opposite of initiator | `{ threadId, title }`                             |

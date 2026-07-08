@@ -28,22 +28,22 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
     eng = orch.asEngineer();
   });
 
-  // work-162 (A1): the "create_task action spawns a task" convergence test is
-  // retired (create_task cascade + Task store gone). create_proposal / create_idea
-  // spawn tests below retain the bilateral-convergence-cascade coverage.
+  // work-162/proptool0: create_task and create_proposal convergence spawn
+  // paths are retired. create_bug / create_idea spawn tests retain the
+  // bilateral-convergence-cascade coverage.
 
-  it("bilateral convergence with create_proposal action spawns a proposal", async () => {
-    const thread = await arch.createThread("Store refactor", "Repository pattern?");
+  it("bilateral convergence with create_bug action spawns a bug", async () => {
+    const thread = await arch.createThread("Bug capture", "Unexpected failure?");
     const threadId = thread.threadId as string;
 
     await eng.replyToThread(threadId, "Yes, let's formalise it", {
       converged: true,
-      summary: "Agreed: refactor store layer to repository pattern.",
+      summary: "Agreed: capture the unexpected failure as a bug.",
       stagedActions: [{
-        kind: "stage", type: "create_proposal",
+        kind: "stage", type: "create_bug",
         payload: {
-          title: "Store Layer Refactoring",
-          description: "Refactor the store layer to use repository pattern with dependency injection",
+          title: "Unexpected failure",
+          description: "Reproduction steps for the unexpected failure",
         },
       }],
     });
@@ -53,15 +53,15 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
 
     const finalized = orch.events.expectEvent("thread_convergence_finalized");
     const entry = (finalized.data.report as any[])[0];
-    expect(entry.type).toBe("create_proposal");
+    expect(entry.type).toBe("create_bug");
     expect(entry.status).toBe("executed");
-    expect(entry.entityId).toMatch(/^prop-/);
+    expect(entry.entityId).toMatch(/^bug-/);
 
-    const proposals = await orch.stores.proposal.getProposals();
-    const spawned = proposals.find((p) => p.title === "Store Layer Refactoring");
+    const { items: bugs } = await orch.stores.bug.listBugs();
+    const spawned = bugs.find((b) => b.title === "Unexpected failure");
     expect(spawned).toBeDefined();
     expect(spawned!.sourceThreadId).toBe(threadId);
-    expect(spawned!.sourceThreadSummary).toMatch(/repository pattern/);
+    expect(spawned!.sourceThreadSummary).toMatch(/unexpected failure/);
   });
 
   it("bilateral convergence with create_idea action spawns an idea", async () => {
@@ -160,18 +160,18 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
     expect(spawned).toBeDefined();
   });
 
-  it("multi-action cascade: create_proposal + create_idea in one convergence, both execute", async () => {
-    // work-162: re-pointed off create_task → create_proposal (both surviving spawn actions).
+  it("multi-action cascade: create_bug + create_idea in one convergence, both execute", async () => {
+    // work-162/proptool0: re-pointed off retired create_task/create_proposal.
     const thread = await arch.createThread("Multi", "Two outcomes");
     const threadId = thread.threadId as string;
 
     await eng.replyToThread(threadId, "Spawn both.", {
       converged: true,
-      summary: "Agreed to spawn a proposal and a backlog idea.",
+      summary: "Agreed to spawn a bug and a backlog idea.",
       stagedActions: [
         {
-          kind: "stage", type: "create_proposal",
-          payload: { title: "Proposal A", description: "desc A" },
+          kind: "stage", type: "create_bug",
+          payload: { title: "Bug A", description: "desc A" },
         },
         {
           kind: "stage", type: "create_idea",
@@ -188,9 +188,9 @@ describe("E2E Convergence Cascade (Mission-24 Phase 2)", () => {
     expect(finalized.data.executedCount).toBe(2);
     expect(finalized.data.warning).toBe(false);
 
-    const proposals = await orch.stores.proposal.getProposals();
+    const { items: bugs } = await orch.stores.bug.listBugs();
     const ideas = await orch.stores.idea.listIdeas();
-    expect(proposals.filter((p) => p.sourceThreadId === threadId)).toHaveLength(1);
+    expect(bugs.filter((b) => b.sourceThreadId === threadId)).toHaveLength(1);
     expect(ideas.filter((i) => i.sourceThreadId === threadId)).toHaveLength(1);
   });
 
