@@ -44,129 +44,25 @@ function fail(inv: string, mode: string, detail: string): never {
 
 // work-162 (A1): assertInvT4 (Task terminal states) RETIRED with the Task subsystem.
 
-// ── INV-P1 — Architect-only proposal review ──────────────────────────
+// ── INV-P* — Proposal public workflow retired ─────────────────────────
 
 /**
- * INV-P1: Only the Architect can review proposals. workflow-registry §7.2.
- * Enforced at the PolicyRouter RBAC gate via `create_proposal_review`'s
- * architect-only role binding.
+ * proptool0 retired the public Proposal workflow tools (`create_proposal`,
+ * `create_proposal_review`, `close_proposal`, `get_proposal`,
+ * `list_proposals`). Historical Proposal storage remains covered by repository
+ * tests and Decision `approve(proposalRef)` bridge tests; there is no active
+ * public Proposal FSM surface for the old INV-P helpers to exercise.
  */
-export async function assertInvP1(o: TestOrchestrator, mode: InvariantMode = "all"): Promise<void> {
-  const arch = o.asArchitect();
-  const eng = o.asEngineer();
-
-  if (shouldRun(mode, "positive")) {
-    await eng.createProposal("P1 positive", "summary", "body");
-    const reviewResult = await arch.call("create_proposal_review", {
-      proposalId: "prop-1", decision: "approved", feedback: "LGTM",
-    });
-    if (reviewResult.isError) fail("P1", "positive", `architect review should succeed; got ${JSON.stringify(reviewResult)}`);
-  }
-
-  if (shouldRun(mode, "negativeReject")) {
-    o.reset();
-    const eng2 = o.asEngineer();
-    await eng2.createProposal("P1 negative", "summary", "body");
-    const engineerReview = await eng2.call("create_proposal_review", {
-      proposalId: "prop-1", decision: "approved", feedback: "unauthorized",
-    });
-    if (!engineerReview.isError) fail("P1", "negativeReject", "engineer calling create_proposal_review should be rejected (Authorization denied)");
-    const parsed = JSON.parse(engineerReview.content[0].text);
-    if (!parsed.error || !/Authorization denied/.test(parsed.error)) {
-      fail("P1", "negativeReject", `expected Authorization-denied shape; got ${parsed.error}`);
-    }
-  }
+export async function assertInvP1(_o: TestOrchestrator, _mode: InvariantMode = "all"): Promise<void> {
+  return;
 }
 
-// ── INV-P2 — Only submitted proposals are reviewable (gap-surfacing) ──
-
-/**
- * INV-P2: Only submitted proposals can be reviewed. workflow-registry §7.2.
- *
- * **Gap-surfacing helper.** Per mission-41 kickoff-decisions §Decision 1,
- * the proposal policy currently has NO status guard on `create_proposal_review`.
- * The `negativeReject` mode encodes the spec-correct behavior; it WILL throw
- * under today's policy. When the guard lands, the helper goes green — this
- * is the ratchet.
- */
-export async function assertInvP2(o: TestOrchestrator, mode: InvariantMode = "all"): Promise<void> {
-  const arch = o.asArchitect();
-  const eng = o.asEngineer();
-
-  if (shouldRun(mode, "positive")) {
-    await eng.createProposal("P2 positive", "summary", "body");
-    const first = await arch.call("create_proposal_review", {
-      proposalId: "prop-1", decision: "approved", feedback: "LGTM",
-    });
-    if (first.isError) fail("P2", "positive", `first review of submitted proposal should succeed; got ${JSON.stringify(first)}`);
-  }
-
-  if (shouldRun(mode, "negativeReject")) {
-    o.reset();
-    const arch2 = o.asArchitect();
-    const eng2 = o.asEngineer();
-    await eng2.createProposal("P2 negative", "summary", "body");
-    await arch2.call("create_proposal_review", {
-      proposalId: "prop-1", decision: "approved", feedback: "first review",
-    });
-    // proposal is now in approved/reviewed state. Re-review should be rejected.
-    const secondReview = await arch2.call("create_proposal_review", {
-      proposalId: "prop-1", decision: "rejected", feedback: "second review should be blocked",
-    });
-    if (!secondReview.isError) fail("P2", "negativeReject", "re-reviewing a non-submitted proposal should be rejected (SPEC-GAP — fails until status guard lands)");
-  }
+export async function assertInvP2(_o: TestOrchestrator, _mode: InvariantMode = "all"): Promise<void> {
+  return;
 }
 
-// ── INV-P4 — Proposal `implemented` is terminal ──────────────────────
-
-/**
- * INV-P4: `implemented` is a terminal proposal state with no outbound
- * transitions. workflow-registry §7.2.
- */
-export async function assertInvP4(o: TestOrchestrator, mode: InvariantMode = "all"): Promise<void> {
-  const arch = o.asArchitect();
-  const eng = o.asEngineer();
-
-  if (shouldRun(mode, "positive")) {
-    await eng.createProposal("P4 positive", "summary", "body");
-    await arch.call("create_proposal_review", {
-      proposalId: "prop-1", decision: "approved", feedback: "approve",
-    });
-    const close = await eng.call("close_proposal", { proposalId: "prop-1" });
-    if (close.isError) fail("P4", "positive", `close_proposal after approved should reach implemented; got ${JSON.stringify(close)}`);
-    const parsed = JSON.parse(close.content[0].text);
-    if (parsed.status !== "implemented") fail("P4", "positive", `expected status=implemented; got ${parsed.status}`);
-  }
-
-  if (shouldRun(mode, "negativeReject")) {
-    o.reset();
-    const arch2 = o.asArchitect();
-    const eng2 = o.asEngineer();
-    await eng2.createProposal("P4 negative", "summary", "body");
-    await arch2.call("create_proposal_review", {
-      proposalId: "prop-1", decision: "approved", feedback: "approve",
-    });
-    await eng2.call("close_proposal", { proposalId: "prop-1" });
-    // proposal is now implemented. Attempt to re-review → should reject.
-    const reReview = await arch2.call("create_proposal_review", {
-      proposalId: "prop-1", decision: "rejected", feedback: "should be blocked",
-    });
-    if (!reReview.isError) fail("P4", "negativeReject", "create_proposal_review on implemented proposal should be rejected");
-  }
-
-  if (shouldRun(mode, "edge")) {
-    o.reset();
-    const arch3 = o.asArchitect();
-    const eng3 = o.asEngineer();
-    await eng3.createProposal("P4 edge", "summary", "body");
-    await arch3.call("create_proposal_review", {
-      proposalId: "prop-1", decision: "approved", feedback: "approve",
-    });
-    await eng3.call("close_proposal", { proposalId: "prop-1" });
-    // Double close — no outbound from implemented.
-    const secondClose = await eng3.call("close_proposal", { proposalId: "prop-1" });
-    if (!secondClose.isError) fail("P4", "edge", "close_proposal on implemented proposal should be rejected (no outbound)");
-  }
+export async function assertInvP4(_o: TestOrchestrator, _mode: InvariantMode = "all"): Promise<void> {
+  return;
 }
 
 // ── INV-TH6 — Replies to non-active threads are rejected ─────────────
@@ -469,11 +365,11 @@ export async function assertInvTH19(o: TestOrchestrator, mode: InvariantMode = "
     const eng2 = o.asEngineer();
     await eng2.call("list_missions", {});
     const { threadId } = (await arch2.createThread("TH19 invalid-payload", "open", { routingMode: "broadcast" })) as { threadId: string };
-    // work-162: create_proposal payload requires title+description. Omit description → invalid.
+    // proptool0: use active create_bug payload validation. Omit description → invalid.
     await eng2.replyToThread(threadId, "staging invalid", {
       converged: true,
       summary: "invalid staged action — should reject whole convergence",
-      stagedActions: [{ kind: "stage", type: "create_proposal", payload: { title: "missing description" } }],
+      stagedActions: [{ kind: "stage", type: "create_bug", payload: { title: "missing description" } }],
     });
     // Architect converges — gate should reject because staged action is invalid.
     const archResult = await arch2.call("create_thread_reply", {

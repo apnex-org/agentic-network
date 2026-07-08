@@ -35,16 +35,15 @@ describe("invariant-helpers", () => {
 
   // work-162 (A1): assertInvT4 (task terminal states) test retired with the Task subsystem.
 
-  it("assertInvP1 (architect-only proposal review) runs positive mode", async () => {
+  it("assertInvP1 (retired Proposal review surface) is no-op", async () => {
     await expect(assertInvP1(orch, "positive")).resolves.toBeUndefined();
   });
 
-  it("assertInvP2 (only-submitted-reviewable) runs positive mode", async () => {
-    // negativeReject mode is the gap-surfacing ratchet — not run here.
+  it("assertInvP2 (retired Proposal review status surface) is no-op", async () => {
     await expect(assertInvP2(orch, "positive")).resolves.toBeUndefined();
   });
 
-  it("assertInvP4 (implemented terminal) runs positive mode", async () => {
+  it("assertInvP4 (retired Proposal close surface) is no-op", async () => {
     await expect(assertInvP4(orch, "positive")).resolves.toBeUndefined();
   });
 

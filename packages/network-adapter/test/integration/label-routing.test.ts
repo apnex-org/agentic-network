@@ -110,76 +110,73 @@ describe("Mission-19 — label routing (loopback E2E)", () => {
   });
 
   describe("Dispatch — selector matches only labeled Agents", () => {
-    // work-162 (A1): re-pointed off create_task → create_proposal (the surviving
-    // label-scoped dispatch: proposal_submitted → architects with matchLabels).
-    // Role-inverted — engineer authors, matching-label architect receives.
-    it("labeled proposal from {env:prod} engineer reaches only {env:prod} architect", async () => {
-      const eng = await createActor(hub, "engineer", { env: "prod" });
-      const archProd = await createActor(hub, "architect", { env: "prod" });
-      const archSmoke = await createActor(hub, "architect", { env: "smoke" });
+    // proptool0 retired proposal_submitted as an active producer path. Use
+    // broadcast create_thread, whose open dispatch still derives matchLabels
+    // from the opener's scope labels and routes to the opposite role.
+    it("labeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer", async () => {
+      const arch = await createActor(hub, "architect", { env: "prod" });
+      const engProd = await createActor(hub, "engineer", { env: "prod" });
+      const engSmoke = await createActor(hub, "engineer", { env: "smoke" });
 
       try {
-        // proposal.labels inherits from creator (engineer) = {env:"prod"}
-        // dispatch selector → {roles:["architect"], matchLabels:{env:"prod"}}
-        const result = await eng.client.call("create_proposal", {
-          title: "Prod-only proposal",
-          summary: "s",
-          body: "Should only reach env:prod architect",
+        const result = await arch.client.call("create_thread", {
+          title: "Prod-only thread",
+          message: "Should only reach env:prod engineer",
+          routingMode: "broadcast",
         }) as Record<string, unknown>;
-        expect(result.proposalId).toBeTruthy();
+        expect(result.threadId).toBeTruthy();
 
         await waitFor(() =>
-          archProd.actionable.some((e) => e.event === "proposal_submitted"),
+          engProd.actionable.some((e) => e.event === "thread_message"),
           2_000,
         );
 
-        const prodHits = archProd.actionable.filter((e) => e.event === "proposal_submitted");
-        const smokeHits = archSmoke.actionable.filter((e) => e.event === "proposal_submitted");
+        const prodHits = engProd.actionable.filter((e) => e.event === "thread_message");
+        const smokeHits = engSmoke.actionable.filter((e) => e.event === "thread_message");
         expect(prodHits.length).toBe(1);
         expect(smokeHits.length).toBe(0);
 
         // Verify the dispatch record agrees with delivery.
-        const dispatches = hub.dispatched.filter((d) => d.event === "proposal_submitted");
+        const dispatches = hub.dispatched.filter((d) => d.event === "thread_message");
         expect(dispatches.length).toBe(1);
         expect(dispatches[0].selector.matchLabels).toEqual({ env: "prod" });
-        expect(dispatches[0].deliveredTo).toEqual([archProd.agentId]);
+        expect(dispatches[0].deliveredTo).toEqual([engProd.agentId]);
       } finally {
-        await stopAll([eng, archProd, archSmoke]);
+        await stopAll([arch, engProd, engSmoke]);
       }
     });
 
     it("empty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)", async () => {
-      // work-162: re-pointed off create_task → create_proposal (role-inverted).
-      // Engineer created with no labels → labels={} → proposal.labels={} →
-      // selector.matchLabels={} → matches every architect regardless of labels.
-      const eng = await createActor(hub, "engineer");
-      const archProd = await createActor(hub, "architect", { env: "prod" });
-      const archSmoke = await createActor(hub, "architect", { env: "smoke" });
-      const archBare = await createActor(hub, "architect");
+      // Architect created with no labels → thread.labels={} →
+      // selector.matchLabels={} → matches every engineer regardless of labels.
+      const arch = await createActor(hub, "architect");
+      const engProd = await createActor(hub, "engineer", { env: "prod" });
+      const engSmoke = await createActor(hub, "engineer", { env: "smoke" });
+      const engBare = await createActor(hub, "engineer");
 
       try {
-        await eng.client.call("create_proposal", {
+        await arch.client.call("create_thread", {
           title: "Unlabeled broadcast",
-          summary: "s",
-          body: "Every architect should see this",
+          message: "Every engineer should see this",
+          routingMode: "broadcast",
         });
 
         await waitFor(
           () =>
-            archProd.actionable.some((e) => e.event === "proposal_submitted") &&
-            archSmoke.actionable.some((e) => e.event === "proposal_submitted") &&
-            archBare.actionable.some((e) => e.event === "proposal_submitted"),
+            engProd.actionable.some((e) => e.event === "thread_message") &&
+            engSmoke.actionable.some((e) => e.event === "thread_message") &&
+            engBare.actionable.some((e) => e.event === "thread_message"),
           2_000,
         );
 
-        const dispatches = hub.dispatched.filter((d) => d.event === "proposal_submitted");
+        const dispatches = hub.dispatched.filter((d) => d.event === "thread_message");
         expect(dispatches.length).toBe(1);
         expect(dispatches[0].selector.matchLabels).toEqual({});
         expect(dispatches[0].deliveredTo.sort()).toEqual(
-          [archProd.agentId, archSmoke.agentId, archBare.agentId].sort(),
+          [engProd.agentId, engSmoke.agentId, engBare.agentId].sort(),
         );
       } finally {
-        await stopAll([eng, archProd, archSmoke, archBare]);
+        await stopAll([arch, engProd, engSmoke, engBare]);
       }
     });
   });

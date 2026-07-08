@@ -154,8 +154,8 @@ describe("E2E Foundation", () => {
     });
 
     it("E2EError is thrown on policy errors", async () => {
-      // work-162 (A1): re-pointed off create_report → create_proposal_review on
-      // a non-existent proposal (still a policy error → E2EError).
+      // proptool0: retired Proposal tool helper now fails as Unknown tool,
+      // which still exercises the E2EError policy-error path.
       await expect(
         arch.reviewProposal("proposal-nonexistent", "approved", "fb")
       ).rejects.toThrow();

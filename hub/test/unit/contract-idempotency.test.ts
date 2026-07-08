@@ -73,8 +73,7 @@ interface SpawnCase {
 }
 
 const SPAWN_CASES: SpawnCase[] = [
-  // work-162 (A1): create_task spawn-case retired (cascade ActionSpec removed).
-  { type: "create_proposal", payload: { title: "contract-proposal", description: "body" } },
+  // work-162/proptool0: create_task and create_proposal spawn-cases retired (cascade ActionSpecs removed).
   { type: "create_idea", payload: { title: "contract-idea", description: "body" } },
   { type: "create_bug", payload: { title: "contract-bug", description: "repro" } },
   { type: "propose_mission", payload: { title: "contract-mission", description: "body", goals: ["goal-1"] } },

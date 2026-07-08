@@ -71,10 +71,10 @@ describe("INV-TH19 — cascade validate-then-execute atomicity", () => {
       await eng.replyToThread(threadId, "agreed", {
         converged: true,
         summary: "multi-action atomic commit",
-        // work-162: re-pointed off create_task → create_proposal.
+        // work-162/proptool0: re-pointed off retired create_task/create_proposal.
         stagedActions: [
-          { kind: "stage", type: "create_proposal", payload: { title: "t1", description: "first" } },
-          { kind: "stage", type: "create_proposal", payload: { title: "t2", description: "second" } },
+          { kind: "stage", type: "create_bug", payload: { title: "t1", description: "first" } },
+          { kind: "stage", type: "create_bug", payload: { title: "t2", description: "second" } },
         ],
       });
       orch.events.clear();
@@ -84,10 +84,10 @@ describe("INV-TH19 — cascade validate-then-execute atomicity", () => {
       expect(finalized.data.committedActionCount).toBe(2);
       expect(finalized.data.executedCount).toBe(2);
 
-      // Both proposals spawned.
-      const proposals = await orch.stores.proposal.getProposals();
-      const t1 = proposals.find((p) => p.title === "t1");
-      const t2 = proposals.find((p) => p.title === "t2");
+      // Both bugs spawned.
+      const { items: bugs } = await orch.stores.bug.listBugs();
+      const t1 = bugs.find((b) => b.title === "t1");
+      const t2 = bugs.find((b) => b.title === "t2");
       expect(t1).toBeDefined();
       expect(t2).toBeDefined();
       // Back-link metadata populated for both.
@@ -97,18 +97,18 @@ describe("INV-TH19 — cascade validate-then-execute atomicity", () => {
   });
 
   describe("negativeReject — invalid staged action rejects WHOLE convergence", () => {
-    it("create_task missing description: convergence rejected; thread stays active; no commit", async () => {
+    it("create_bug missing description: convergence rejected; thread stays active; no commit", async () => {
       const arch = orch.asArchitect();
       const eng = orch.asEngineer();
       await eng.call("list_missions", {}); // work-162: was eng.listTasks() (registration warm-up)
-      const thread = await arch.createThread("TH19 invalid create_task", "open", { routingMode: "broadcast" });
+      const thread = await arch.createThread("TH19 invalid create_bug", "open", { routingMode: "broadcast" });
       const threadId = thread.threadId as string;
 
       await eng.replyToThread(threadId, "staging invalid", {
         converged: true,
-        summary: "invalid create_proposal",
-        // work-162: create_proposal requires title+description; omit description → invalid.
-        stagedActions: [{ kind: "stage", type: "create_proposal", payload: { title: "no-description" } }],
+        summary: "invalid create_bug",
+        // proptool0: use active create_bug payload validation; omit description → invalid.
+        stagedActions: [{ kind: "stage", type: "create_bug", payload: { title: "no-description" } }],
       });
       const archResult = await arch.call("create_thread_reply", {
         threadId, message: "attempting to converge", converged: true,
@@ -124,9 +124,9 @@ describe("INV-TH19 — cascade validate-then-execute atomicity", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const actions = (stored as any).convergenceActions as Array<{ status: string }>;
       expect(actions.every((a) => a.status !== "committed")).toBe(true);
-      // No proposal was spawned (ensures execute phase didn't partially run).
-      const proposals = await orch.stores.proposal.getProposals();
-      expect(proposals.find((p) => p.title === "no-description")).toBeUndefined();
+      // No bug was spawned (ensures execute phase didn't partially run).
+      const { items: bugs } = await orch.stores.bug.listBugs();
+      expect(bugs.find((b) => b.title === "no-description")).toBeUndefined();
     });
 
     it("atomicity: one valid + one invalid → BOTH rejected (no partial commit of the valid one)", async () => {
@@ -139,10 +139,10 @@ describe("INV-TH19 — cascade validate-then-execute atomicity", () => {
       await eng.replyToThread(threadId, "staging mixed", {
         converged: true,
         summary: "one valid one invalid",
-        // work-162: re-pointed off create_task → create_proposal.
+        // work-162/proptool0: re-pointed off retired create_task/create_proposal.
         stagedActions: [
-          { kind: "stage", type: "create_proposal", payload: { title: "valid", description: "has description" } },
-          { kind: "stage", type: "create_proposal", payload: { title: "invalid-missing-description" } },
+          { kind: "stage", type: "create_bug", payload: { title: "valid", description: "has description" } },
+          { kind: "stage", type: "create_bug", payload: { title: "invalid-missing-description" } },
         ],
       });
       const archResult = await arch.call("create_thread_reply", {
@@ -151,8 +151,8 @@ describe("INV-TH19 — cascade validate-then-execute atomicity", () => {
       expect(archResult.isError).toBe(true);
 
       // Critical: the valid one must NOT have spawned. All-or-nothing.
-      const proposals = await orch.stores.proposal.getProposals();
-      expect(proposals.find((p) => p.title === "valid")).toBeUndefined();
+      const { items: bugs } = await orch.stores.bug.listBugs();
+      expect(bugs.find((b) => b.title === "valid")).toBeUndefined();
 
       // Thread stays active.
       const stored = await orch.stores.thread.getThread(threadId);
