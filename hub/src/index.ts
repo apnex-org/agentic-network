@@ -502,6 +502,9 @@ const hub = new HubNetworking(
   // mission-86 W3 — bearer-token store: /mcp uses token-store bearer-auth +
   // /admin/tokens is mounted.
   tokenStore,
+  // mission-111 / stale_fyi0: WorkItem store for current-state projection
+  // during SSE replay; live system emissions project at the message policy seam.
+  workItemStore,
 );
 
 // ── Start Server ─────────────────────────────────────────────────────

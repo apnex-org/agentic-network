@@ -17,6 +17,7 @@ import type { IEngineerRegistry, Selector, IAuditStore } from "./state.js";
 import type { ToolTier } from "./policy/router.js";
 import { fireWebhook } from "./webhook.js";
 import { emitLegacyNotification } from "./policy/notification-helpers.js";
+import { messageArrivalData, projectMessageForConsumption } from "./policy/message-consumption-projection.js";
 import {
   deriveRenderContext,
   renderPeekLineBody,
@@ -97,6 +98,13 @@ export function augmentDataWithRenderFields(
   event: string,
   data: Record<string, unknown>,
 ): Record<string, unknown> {
+  // mission-111 / stale_fyi0: a Hub-side consumption projector may already
+  // have attached current-state render fields. Preserve that projection rather
+  // than re-deriving event-time peek-line fields or applying the legacy hot-path
+  // suppress list (which would recreate stale replay/poll work later).
+  if (event === "message_arrived" && typeof data.body === "string" && data.projection) {
+    return data;
+  }
   const { renderEvent, renderData } = resolveRenderSource(event, data);
   const suppress = shouldFilterPeekLine(renderEvent, renderData);
   if (suppress) {
@@ -306,6 +314,8 @@ export class HubNetworking {
      * deploys) → the static-apiToken `requireAuth` fallback.
      */
     private tokenStore?: TokenStore,
+    /** mission-111 / stale_fyi0: optional WorkItem store for SSE replay projection. */
+    private workItemStore?: import("./entities/work-item.js").IWorkItemStore,
   ) {
     this.config = {
       port: config.port ?? 0,
@@ -735,7 +745,11 @@ export class HubNetworking {
             data: {
               id: msg.id,
               event: "message_arrived",
-              data: { message: msg },
+              data: messageArrivalData(await projectMessageForConsumption(
+                { workItem: this.workItemStore, engineerRegistry: this.engineerRegistry },
+                msg,
+                { role, agentId },
+              )),
               timestamp: new Date().toISOString(),
             },
           });

@@ -67,6 +67,21 @@ describe("buildPromptText — message_arrived (mission-62 Pass 7)", () => {
     expect(msgCase).toContain("via message field");
   });
 
+  it("renders explicit terminal/no-reply notes as ack-only", () => {
+    const text = buildPromptText("message_arrived", {
+      message: {
+        id: "z",
+        kind: "note",
+        authorRole: "verifier",
+        authorAgentId: "agent-v",
+        payload: { body: "Standing down; no further action.", terminalAck: true, replyExpected: false },
+      },
+    }, cfg);
+    expect(text).toContain("Standing down");
+    expect(text).toContain("no reply expected");
+    expect(text).not.toContain("<your reply text>");
+  });
+
   it("renders external-injection wrapped events via getActionText", () => {
     const text = buildPromptText("message_arrived", {
       message: {

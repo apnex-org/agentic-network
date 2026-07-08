@@ -48,6 +48,7 @@ import {
   type Message,
 } from "../entities/index.js";
 import { findRepoEventHandler } from "./repo-event-handlers.js";
+import { projectMessageArrivalData, projectMessagesForConsumption, projectMessageForConsumption } from "./message-consumption-projection.js";
 import { resolveRecipient } from "../entities/recipient-resolver.js";
 
 // ── list_messages ────────────────────────────────────────────────────
@@ -74,14 +75,24 @@ async function listMessages(
       delivery,
       since,
     });
+    const callerAgentId = await resolveCallerAgentId(ctx);
+    const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
+    const projectedMessages = await projectMessagesForConsumption(
+      { workItem: ctx.stores.workItem, engineerRegistry: ctx.stores.engineerRegistry },
+      messages,
+      {
+        role: targetRole ?? (callerRole === "engineer" || callerRole === "director" || callerRole === "verifier" ? callerRole : "architect"),
+        agentId: targetAgentId ?? callerAgentId,
+      },
+    );
     return {
       content: [
         {
           type: "text" as const,
           text: JSON.stringify(
             {
-              messages,
-              count: messages.length,
+              messages: projectedMessages,
+              count: projectedMessages.length,
             },
             null,
             2,
@@ -277,7 +288,11 @@ async function createMessage(
     if (message.delivery === "push-immediate") {
       try {
         const selector: Selector = pushSelector(target);
-        await ctx.dispatch("message_arrived", { message }, selector);
+        const arrivalData = await projectMessageArrivalData(ctx, message, {
+          role: target?.role,
+          agentId: target?.agentId,
+        });
+        await ctx.dispatch("message_arrived", arrivalData, selector);
       } catch (err) {
         // Non-fatal: Message commits regardless of push delivery success.
         // Adapter recovers via cold reconnect-replay (W1b) or poll
@@ -339,9 +354,13 @@ async function createMessage(
                 if (derived.delivery === "push-immediate") {
                   try {
                     const derivedSelector = pushSelector(dispatch.target);
+                    const derivedArrivalData = await projectMessageArrivalData(ctx, derived, {
+                      role: dispatch.target?.role,
+                      agentId: dispatch.target?.agentId,
+                    });
                     await ctx.dispatch(
                       "message_arrived",
-                      { message: derived },
+                      derivedArrivalData,
                       derivedSelector,
                     );
                   } catch (err) {
@@ -465,13 +484,22 @@ async function claimMessage(
     //   message.claimedBy === claimerAgentId → won the claim
     //   message.claimedBy !== claimerAgentId → lost (silent-drop in adapter)
     //   message.status === "acked"           → claim too late (already acked)
+    const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
+    const projectedMessage = await projectMessageForConsumption(
+      { workItem: ctx.stores.workItem, engineerRegistry: ctx.stores.engineerRegistry },
+      message,
+      {
+        role: callerRole === "engineer" || callerRole === "director" || callerRole === "verifier" ? callerRole : "architect",
+        agentId: claimerAgentId,
+      },
+    );
     return {
       content: [
         {
           type: "text" as const,
           text: JSON.stringify(
             {
-              message,
+              message: projectedMessage,
               wonClaim:
                 message.status === "received" &&
                 message.claimedBy === claimerAgentId,
@@ -633,7 +661,11 @@ export async function emitAndPush(
   const message = await ctx.stores.message.createMessage(input);
   if (message.delivery === "push-immediate") {
     try {
-      await ctx.dispatch("message_arrived", { message }, pushSelector(message.target ?? null));
+      const arrivalData = await projectMessageArrivalData(ctx, message, {
+        role: message.target?.role,
+        agentId: message.target?.agentId,
+      });
+      await ctx.dispatch("message_arrived", arrivalData, pushSelector(message.target ?? null));
     } catch (err) {
       // Non-fatal — the Message is committed; cold-replay / poll-backstop recover.
       console.error(
