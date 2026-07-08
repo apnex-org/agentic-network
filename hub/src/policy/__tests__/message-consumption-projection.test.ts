@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { projectMessageForConsumption } from "../message-consumption-projection.js";
+import {
+  dryRunEventPolicy,
+  EVENT_POLICY_REGISTRY,
+  projectMessageForConsumption,
+  selectEventPolicyRule,
+  validateEventPolicyRegistry,
+  WORKITEM_NOTIFICATION_RULE,
+  type EventPolicyRule,
+} from "../message-consumption-projection.js";
 import type { Message } from "../../entities/message.js";
 import type { LegalMoves, WorkItem } from "../../entities/work-item.js";
 
@@ -200,5 +208,130 @@ describe("projectMessageForConsumption — WorkItem notification projection", ()
     expect(projected.projection?.presentation).toBe("degraded");
     expect(projected.projection?.actionability).toBe("inspect");
     expect(projected.projection?.degradedReason).toBe("work-item-store-unavailable");
+  });
+});
+
+describe("EventPolicy registry/evaluator — evpolicy0 Slice 0", () => {
+  const rawUnblocked = () => message({
+    notificationEvent: "work-unblocked-notification",
+    work_id: "work-1",
+    body: "work-1 is now claimable",
+  });
+
+  const snapshot = (overrides: Record<string, unknown> = {}) => ({
+    kind: "workitem" as const,
+    id: "work-1",
+    status: "ready" as const,
+    holder: null,
+    priority: "high",
+    targetRef: { kind: "mission", id: "mission-112" },
+    roleEligibility: ["architect"],
+    ...overrides,
+  });
+
+  const legalClaim = (legal: boolean, reason?: string) => ({
+    source: "item-local-legal-moves" as const,
+    claim: legal ? { legal: true } : { legal: false, reason },
+  });
+
+  it("validates the static production registry row and authority boundary", () => {
+    expect(validateEventPolicyRegistry()).toEqual([]);
+    expect(EVENT_POLICY_REGISTRY).toHaveLength(1);
+    expect(WORKITEM_NOTIFICATION_RULE).toMatchObject({
+      ruleId: "workitem-notification-projection-v1",
+      version: 1,
+      enabled: true,
+      eventFamily: "workitem-notification",
+      outputs: ["message-projection"],
+      authority: { mutation: "code-review-only-for-slice0", runtimeActions: "none" },
+    });
+  });
+
+  it("selects the WorkItem notification rule and passes unknown families through as no-match", () => {
+    const selected = selectEventPolicyRule(rawUnblocked());
+    expect(selected).toMatchObject({ matched: true, selectedBy: "production", productionEligible: true });
+    expect(selected.rule?.ruleId).toBe("workitem-notification-projection-v1");
+
+    const none = selectEventPolicyRule(message({ notificationEvent: "future-event", work_id: "work-1" }));
+    expect(none).toMatchObject({ matched: false, selectedBy: "none", productionEligible: false });
+  });
+
+  it("excludes disabled rules from production selection", () => {
+    const disabled: EventPolicyRule = { ...WORKITEM_NOTIFICATION_RULE, enabled: false };
+    const selected = selectEventPolicyRule(rawUnblocked(), [disabled]);
+    expect(selected).toMatchObject({ matched: false, selectedBy: "none", productionEligible: false });
+  });
+
+  it("detects ambiguous enabled rule conflicts deterministically", () => {
+    const clone: EventPolicyRule = { ...WORKITEM_NOTIFICATION_RULE, ruleId: "workitem-notification-projection-v1-clone" };
+    expect(validateEventPolicyRegistry([WORKITEM_NOTIFICATION_RULE, clone]).some((err) => err.startsWith("ambiguous-match:"))).toBe(true);
+
+    const selected = selectEventPolicyRule(rawUnblocked(), [WORKITEM_NOTIFICATION_RULE, clone]);
+    expect(selected).toMatchObject({ matched: false, selectedBy: "conflict", productionEligible: false });
+    expect(selected.conflicts).toHaveLength(2);
+  });
+
+  it("dry-runs terminal stale transition through the same decision shape", () => {
+    const raw = message({ notificationEvent: "work-transition-notification", work_id: "work-1", to_status: "done" });
+    const evaln = dryRunEventPolicy({
+      message: raw,
+      recipient: { role: "architect", agentId: "agent-a" },
+      context: { workItem: snapshot({ status: "done", holder: "agent-a", eventToStatus: "done" }) },
+    });
+
+    expect(evaln).toMatchObject({
+      ruleId: "workitem-notification-projection-v1",
+      ruleVersion: 1,
+      matched: true,
+      productionEligible: true,
+      selectedBy: "production",
+      decision: { presentation: "historical", actionability: "none", reason: "terminal-now" },
+      effects: [{ type: "message-projection", rawMessageId: "01KXMSG" }],
+      audit: { authority: { runtimeActions: "none" } },
+    });
+  });
+
+  it("dry-runs claimable, missing-agent, quarantined, and unknown-family fixture classes", () => {
+    const claimable = dryRunEventPolicy({
+      message: rawUnblocked(),
+      recipient: { role: "architect", agentId: "agent-a" },
+      context: { workItem: snapshot(), legalMoves: legalClaim(true), agent: { agentId: "agent-a", registryRead: "ok", quarantined: false } },
+    });
+    expect(claimable.decision).toMatchObject({ presentation: "actionable", actionability: "your-turn", reason: "claimable-now" });
+
+    const missingAgent = dryRunEventPolicy({
+      message: rawUnblocked(),
+      recipient: { role: "architect" },
+      context: { workItem: snapshot(), contextErrors: ["agent-context-unavailable"] },
+    });
+    expect(missingAgent.decision).toMatchObject({ presentation: "degraded", actionability: "inspect", degradedReason: "agent-context-unavailable" });
+
+    const quarantined = dryRunEventPolicy({
+      message: rawUnblocked(),
+      recipient: { role: "architect", agentId: "agent-a" },
+      // Verifier regression: WorkGraph legal_moves does not encode registry quarantine.
+      // The pure evaluator must overlay quarantine even when item-local claim is legal.
+      context: { workItem: snapshot(), legalMoves: legalClaim(true), agent: { agentId: "agent-a", registryRead: "ok", quarantined: true } },
+    });
+    expect(quarantined.decision).toMatchObject({ presentation: "awareness", actionability: "ack-only", reason: "quarantined" });
+
+    const unknown = dryRunEventPolicy({
+      message: message({ notificationEvent: "unknown-future-event", work_id: "work-1" }),
+      recipient: { role: "architect", agentId: "agent-a" },
+      context: { workItem: snapshot() },
+    });
+    expect(unknown).toMatchObject({ matched: false, selectedBy: "none", effects: [] });
+  });
+
+  it("dry-runs visible degraded errors for read, legal-moves, and registry failures", () => {
+    for (const reason of ["work-item-store-unavailable", "legal-moves-read-failed:boom", "agent-registry-read-failed"]) {
+      const evaln = dryRunEventPolicy({
+        message: rawUnblocked(),
+        recipient: { role: "architect", agentId: "agent-a" },
+        context: { workItem: snapshot(), contextErrors: [reason] },
+      });
+      expect(evaln.decision).toMatchObject({ presentation: "degraded", actionability: "inspect", reason, degradedReason: reason });
+      expect(evaln.effects).toEqual([{ type: "message-projection", rawMessageId: "01KXMSG" }]);
+    }
   });
 });
