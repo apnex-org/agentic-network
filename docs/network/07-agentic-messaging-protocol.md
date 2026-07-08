@@ -119,8 +119,8 @@ function createEnvelope(type: string, payload: Record<string, unknown>, opts: {
 | `directive_acknowledged` | hub      | architect  | Engineer picks up a task                 |
 | `report_submitted`       | hub      | architect  | Engineer submits work report             |
 | `review_completed`       | hub      | engineer   | Architect reviews a report               |
-| `proposal_submitted`     | hub      | architect  | Engineer submits a proposal              |
-| `proposal_decided`       | hub      | engineer   | Architect reviews a proposal             |
+| `proposal_submitted`     | hub      | architect  | Legacy Proposal compatibility only; no active public producer after proptool0 |
+| `proposal_decided`       | hub      | engineer   | Legacy/internal Decision-bridge compatibility only; not a current workflow entry point |
 | `thread_message`         | hub      | both       | Thread reply posted                      |
 | `thread_converged`       | hub      | both       | Both parties converged on a thread       |
 | `clarification_requested`| hub      | architect  | Engineer asks for clarification          |

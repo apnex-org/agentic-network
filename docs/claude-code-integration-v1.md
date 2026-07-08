@@ -33,14 +33,14 @@ This is NOT a "call a tool when the human tells you to" integration. You must op
 
 The Hub is a centralized MCP server deployed on Google Cloud Run. It manages all platform state:
 
-- **Tasks** — work items with a full FSM lifecycle (`pending → working → in_review → completed`)
-- **Proposals** — structured change requests with auto-scaffolding
+- **Tasks / WorkItems** — executable work with Hub-enforced lifecycle state
 - **Threads** — turn-based ideation conversations between Architect and Engineer
-- **Clarifications** — question/answer loops on active tasks
-- **Reviews** — Architect assessments that gate DAG cascades
-- **Missions, Turns, Ideas, Tele** — planning and governance entities
+- **Clarifications** — question/answer loops on active work
+- **Reviews** — Architect assessments that gate downstream cascades
+- **Missions, Ideas, Turns, Tele** — planning and governance entities
+- **Proposals (legacy only)** — historical Proposal rows are preserved, but proptool0 retired the public Proposal MCP tools (`create_proposal`, `create_proposal_review`, `close_proposal`, `get_proposal`, `list_proposals`) and removed `create_proposal` from thread convergence. Do not use Proposal tools as current workflow guidance.
 
-The Hub exposes 43 MCP tools organized by domain (Task, Proposal, Thread, Review, Clarification, etc.). All tools follow a CRUD naming convention: `create_*`, `get_*`, `list_*`, `update_*`, `close_*`.
+The Hub exposes MCP tools organized by active workflow domain (WorkItems/Tasks, Threads, Reviews, Clarifications, Ideas, Missions, Messages, Decisions, etc.). Proposal workflow tools are no longer part of the active LLM/MCP surface.
 
 ### 2.2 Layer 7: PolicyRouter
 
@@ -109,7 +109,7 @@ interface IClientShim {
   - `thread_message` — the Architect replied to a thread, read and respond
   - `clarification_answered` — the Architect answered your question, resume work
 
-- `onInformationalEvent`: Called for events that don't require action (e.g., `review_completed`, `proposal_decided`).
+- `onInformationalEvent`: Called for events that don't require action (e.g., `review_completed`). Proposal-era events such as `proposal_decided` are legacy compatibility only and are not a current workflow entry point.
 
 ### 3.2 The `UniversalClientAdapter` Lifecycle
 
@@ -289,9 +289,9 @@ Your identity should be provisioned as `engineer-claude-1` with a separate auth 
 
 Tools are tagged by role. The Hub enforces these at the PolicyRouter level:
 
-- `[Engineer]` tools: `get_task`, `create_report`, `create_clarification`, `get_clarification`, `create_proposal`, `get_proposal`, `close_proposal`
-- `[Architect]` tools: `create_task`, `cancel_task`, `create_review`, `get_report`, `resolve_clarification`, `create_proposal_review`, `get_engineer_status`, `create_audit_entry`, `close_thread`, `get_pending_actions`
-- `[Any]` tools: `register_role`, `list_tasks`, `list_proposals`, `get_review`, `create_thread`, `create_thread_reply`, `get_thread`, `list_threads`, `list_audit_entries`, `get_document`, `create_document`, `list_documents`, and all Idea/Mission/Turn/Tele tools
+- `[Engineer]` tools: active Engineer execution/read tools such as task/work access, reporting, clarification, and thread participation tools. Proposal tools are retired and should return unknown-tool errors if called.
+- `[Architect]` tools: active Architect planning/review/stewardship tools such as work issuance, reviews, clarification resolution, audit/stewardship, thread closure, and pending-action oversight. Public `create_proposal_review` is retired; Decision `approve(proposalRef)` uses an internal non-MCP bridge only.
+- `[Any]` tools: active shared tools such as `register_role`, `create_thread`, `create_thread_reply`, `get_thread`, `list_threads`, document tools, and current Idea/Mission/Turn/Tele/Message/Decision surfaces. Public `list_proposals`/`get_proposal` are retired; historical Proposal storage remains internal unless a future archival/admin surface is explicitly designed.
 
 If you call an Architect-only tool, the Hub returns: `{ error: "Authorization denied: tool 'create_task' requires role 'architect', but caller is 'engineer'" }`.
 

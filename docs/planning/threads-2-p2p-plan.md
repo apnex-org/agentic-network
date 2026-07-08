@@ -93,15 +93,16 @@ Two phases, no rollback.
 
 ### Phase 2 action vocabulary
 
-**Autonomous (convergence-spawnable):**
+**Autonomous (convergence-spawnable), current after work-162 + proptool0:**
 - `close_no_action` — Phase 1 type, retained.
-- `create_task`
-- `create_proposal`
 - `create_idea`
 - `update_idea`
 - `update_mission_status` — status transitions only (e.g. `active → paused`)
 - `propose_mission` — creates Mission in `draft`, Director approves to activate
 - `create_clarification`
+- `create_bug`
+
+Retired autonomous produce paths: `create_task` (Task subsystem retirement) and `create_proposal` (proptool0). Proposal storage/history remains, but `create_proposal` is no longer valid staged-action vocabulary and must not be advertised as normal thread-convergence workflow.
 
 **Director-gated (scope-widening, NOT autonomous):**
 - `create_mission` — Director sovereign
@@ -211,7 +212,7 @@ Authorized by architect in thread-125 round 8. Addresses the failure mode observ
 
 - [ ] Immediate-retry topology — on sandwich failure (LLM-tool-call-miss, transient 4xx/5xx), enqueue one immediate retry with jittered backoff before the 300s poll fallback.
 - [ ] Thread-prompt context pruning — don't re-prefetch static docs on every round; support progressive thread-history summarization so long threads don't monotonically grow the prompt.
-- [ ] Sandwich unit-test harness — mock `HubAdapter` + `ContextStore`; cover all five sandwiches (thread reply, thread converged, review report, review proposal, clarification). Locks in the tool-driven contract so the prose-promise failure class cannot silently regress.
+- [ ] Sandwich unit-test harness — mock `HubAdapter` + `ContextStore`; cover active sandwiches (thread reply, thread converged, review report, clarification). The legacy review-proposal sandwich is retired with the public Proposal tool surface; only historical compatibility/internal Decision-bridge behavior should mention Proposal review.
 
 Size: 1–2 days. Can run parallel to M-Phase2-Impl; mostly touches the Architect service.
 
