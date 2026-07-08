@@ -78,7 +78,7 @@ async function listMessages(
     const callerAgentId = await resolveCallerAgentId(ctx);
     const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
     const projectedMessages = await projectMessagesForConsumption(
-      { workItem: ctx.stores.workItem },
+      { workItem: ctx.stores.workItem, engineerRegistry: ctx.stores.engineerRegistry },
       messages,
       {
         role: targetRole ?? (callerRole === "engineer" || callerRole === "director" || callerRole === "verifier" ? callerRole : "architect"),
@@ -486,7 +486,7 @@ async function claimMessage(
     //   message.status === "acked"           → claim too late (already acked)
     const callerRole = ctx.stores.engineerRegistry.getRole(ctx.sessionId);
     const projectedMessage = await projectMessageForConsumption(
-      { workItem: ctx.stores.workItem },
+      { workItem: ctx.stores.workItem, engineerRegistry: ctx.stores.engineerRegistry },
       message,
       {
         role: callerRole === "engineer" || callerRole === "director" || callerRole === "verifier" ? callerRole : "architect",

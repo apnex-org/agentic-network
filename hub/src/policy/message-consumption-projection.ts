@@ -8,6 +8,7 @@
 
 import type { Message } from "../entities/message.js";
 import type { IWorkItemStore, WorkItem, WorkItemPhase } from "../entities/work-item.js";
+import type { IEngineerRegistry } from "../state.js";
 import type { IPolicyContext } from "./types.js";
 
 export type MessageProjectionPresentation = "actionable" | "awareness" | "historical" | "degraded";
@@ -52,6 +53,7 @@ export interface ProjectionRecipientContext {
 
 export interface ProjectionRuntime {
   workItem?: IWorkItemStore;
+  engineerRegistry?: Pick<IEngineerRegistry, "getAgent">;
   now?: () => string;
 }
 
@@ -109,17 +111,40 @@ async function computeClaimable(
   store: IWorkItemStore,
   item: WorkItem,
   recipient: ProjectionRecipientContext,
-): Promise<{ claimable: boolean; reason?: string }> {
+  engineerRegistry?: Pick<IEngineerRegistry, "getAgent">,
+): Promise<{ claimable: boolean; reason?: string; degraded?: boolean }> {
   if (item.status !== "ready") return { claimable: false, reason: reasonForNonClaimable(item, recipient.role) };
 
+  // The projection is per-message for a specific WorkItem. It must not decide
+  // actionability by intersecting with a capped global ready-list page: that can
+  // hide a live work_id ranked beyond the page. Use the item-local legal-moves
+  // predicate instead, and fail open when the caller-specific context needed for
+  // claim_work parity is absent.
+  if (!recipient.agentId) {
+    return { claimable: false, reason: "agent-context-unavailable", degraded: true };
+  }
+
   try {
-    const role = recipient.role;
-    const ready = await store.listReadyForRole(role, 500, recipient.agentId);
-    if (ready.items.some((candidate) => candidate.id === item.id)) return { claimable: true };
-    if (ready.emptyReason) return { claimable: false, reason: ready.emptyReason };
-    return { claimable: false, reason: reasonForNonClaimable(item, role) };
+    const agent = await engineerRegistry?.getAgent(recipient.agentId);
+    if (agent?.quarantined) return { claimable: false, reason: "quarantined" };
   } catch (err) {
-    return { claimable: false, reason: `claimability-projection-failed:${(err as Error)?.message ?? String(err)}` };
+    return {
+      claimable: false,
+      reason: `claimability-projection-failed:agent-registry-read-failed:${(err as Error)?.message ?? String(err)}`,
+      degraded: true,
+    };
+  }
+
+  try {
+    const legalMoves = await store.getLegalMoves(item.id, { agentId: recipient.agentId, role: recipient.role });
+    if (!legalMoves) return { claimable: false, reason: "legal-moves-workitem-not-found", degraded: true };
+    const claimMove = legalMoves.moves.find((move) => move.verb === "claim");
+    if (!claimMove) return { claimable: false, reason: "claim-move-missing", degraded: true };
+    return claimMove.legal
+      ? { claimable: true }
+      : { claimable: false, reason: claimMove.reason ?? "not-currently-claimable" };
+  } catch (err) {
+    return { claimable: false, reason: `claimability-projection-failed:${(err as Error)?.message ?? String(err)}`, degraded: true };
   }
 }
 
@@ -207,13 +232,22 @@ export async function projectMessageForConsumption(
   if (!item) return degradedProjection(message, payload, observedAt, "work-item-not-found", recipient);
 
   const toStatus = eventStatus(payload, "to_status");
-  const { claimable, reason: claimabilityReason } = await computeClaimable(store, item, recipient);
+  const { claimable, reason: claimabilityReason, degraded: claimabilityDegraded } = await computeClaimable(
+    store,
+    item,
+    recipient,
+    runtime.engineerRegistry,
+  );
 
   let presentation: MessageProjectionPresentation = "awareness";
   let actionability: MessageProjectionActionability = "ack-only";
   let reason = "awareness-current-state";
 
-  if (event === WORK_UNBLOCKED) {
+  if (claimabilityDegraded) {
+    presentation = "degraded";
+    actionability = "inspect";
+    reason = claimabilityReason ?? "claimability-projection-failed";
+  } else if (event === WORK_UNBLOCKED) {
     if (claimable) {
       presentation = "actionable";
       actionability = "your-turn";
@@ -264,6 +298,7 @@ export async function projectMessageForConsumption(
     recipientBasis: { ...recipient, ...targetLabel(message) },
     recommendedActions: actionability === "none" ? [] : [actionability],
     renderBody: projectionBody(item, projectionBase, payload),
+    ...(presentation === "degraded" ? { degradedReason: reason } : {}),
   });
 }
 
@@ -294,7 +329,7 @@ export async function projectMessageArrivalData(
   recipientContext?: ProjectionRecipientContext,
 ): Promise<Record<string, unknown>> {
   const projected = await projectMessageForConsumption(
-    { workItem: ctx.stores.workItem },
+    { workItem: ctx.stores.workItem, engineerRegistry: ctx.stores.engineerRegistry },
     message,
     recipientContext,
   );

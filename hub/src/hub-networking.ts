@@ -746,7 +746,7 @@ export class HubNetworking {
               id: msg.id,
               event: "message_arrived",
               data: messageArrivalData(await projectMessageForConsumption(
-                { workItem: this.workItemStore },
+                { workItem: this.workItemStore, engineerRegistry: this.engineerRegistry },
                 msg,
                 { role, agentId },
               )),
