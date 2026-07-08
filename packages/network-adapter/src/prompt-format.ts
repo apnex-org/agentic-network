@@ -275,6 +275,19 @@ function renderMessageArrived(data: Record<string, unknown>, cfg: PromptFormatCo
       "(empty note body)";
     const sender = (msg.authorAgentId as string) || "unknown";
     const senderRole = (msg.authorRole as string) || "agent";
+    const replyExpected = payload.replyExpected;
+    const terminalAck = payload.terminalAck === true;
+    const noReplyExpected = replyExpected === false || terminalAck;
+    // mission-111 / stale_fyi0: explicit terminal-ACK/no-reply metadata makes
+    // a note ACK-only at render time. This is display-only; it does not resolve
+    // threads, complete work, or mutate substrate state.
+    if (noReplyExpected) {
+      const reason = terminalAck ? "terminalAck=true" : "replyExpected=false";
+      return (
+        `[${senderRole}/${sender}] Note: ${body} ` +
+        `(Message ID: ${msgId}; ${reason}; no reply expected — claim/ack only unless current substrate state creates a separate action.)`
+      );
+    }
     // mission-66 W1+W2 commit 5b-final (architect-portion; canonical shape per
     // hub/src/policy/note-schema.ts; see pulse-template comment above for context).
     return (
