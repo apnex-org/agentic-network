@@ -309,7 +309,9 @@ describe("EventPolicy registry/evaluator — evpolicy0 Slice 0", () => {
     const quarantined = dryRunEventPolicy({
       message: rawUnblocked(),
       recipient: { role: "architect", agentId: "agent-a" },
-      context: { workItem: snapshot(), legalMoves: legalClaim(false, "quarantined"), agent: { agentId: "agent-a", registryRead: "ok", quarantined: true } },
+      // Verifier regression: WorkGraph legal_moves does not encode registry quarantine.
+      // The pure evaluator must overlay quarantine even when item-local claim is legal.
+      context: { workItem: snapshot(), legalMoves: legalClaim(true), agent: { agentId: "agent-a", registryRead: "ok", quarantined: true } },
     });
     expect(quarantined.decision).toMatchObject({ presentation: "awareness", actionability: "ack-only", reason: "quarantined" });
 

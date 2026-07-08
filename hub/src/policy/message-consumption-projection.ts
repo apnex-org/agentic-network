@@ -428,8 +428,12 @@ export function evaluateWorkItemNotificationPolicy(
   const role = context.recipientBasis.role;
   const agentId = context.recipientBasis.agentId;
   const claimMove = context.legalMoves?.claim;
-  const claimable = claimMove?.legal === true;
-  const claimabilityReason = context.agent?.quarantined
+  // Quarantine lives in the registry/policy layer, not item-local legal_moves.
+  // It must be enforced in the pure evaluator too, not only pre-normalized by
+  // the production context collector, or dry-run/replay can overclaim your-turn.
+  const quarantined = context.agent?.quarantined === true;
+  const claimable = claimMove?.legal === true && !quarantined;
+  const claimabilityReason = quarantined
     ? "quarantined"
     : claimMove?.reason ?? reasonForNonClaimableSnapshot(item, role);
 
