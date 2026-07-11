@@ -36,6 +36,12 @@ CFG="$ROOT/config"
 SEC="$ROOT/secrets"
 STATE="$ROOT/state"
 
+# npmdeliver0 (idea-492): the Claude agent-adapter plugin ships via the npm registry
+# (single channel; the Channel-2 GitHub-Release tarball is retired). EXACT pin — never
+# @latest (silent drift); deploy.sh can grep-guard this token.
+CLAUDE_PLUGIN_VERSION="0.1.14"
+_CLAUDE_PLUGIN_MP=""   # process-cached npm-installed marketplace dir (set by claude_npm_ensure)
+
 fatal() { echo "ois: FATAL: $*" >&2; exit 1; }
 expand() { local p="${1:-}"; [[ "$p" == "~/"* ]] && p="$HOME/${p#\~/}"; printf '%s' "$p"; }
 sha12() { sha256sum | cut -c1-12; }
@@ -296,12 +302,33 @@ cmd_skill_sync_preview() {
   rm -rf "$prev"
 }
 
+# claude_npm_ensure — npmdeliver0: globally install the pinned agent-adapter plugin
+# from the npm registry ONCE per ois invocation + resolve its marketplace dir. The
+# npm-installed install.sh runs `npm install --no-save` inside the plugin dir so its
+# node_modules carry the bundled sovereign deps (na@0.1.11 etc.) — that is what makes
+# claude's plugin-cache copy able to require @apnex/network-adapter at launch. install.sh's
+# own marketplace-add + cache-wipe target $HOME/.claude (operator dir), NOT the sovereign
+# seats; the per-seat converge in claude_seed is what makes each SEAT live. Result path is
+# process-constant → cached in _CLAUDE_PLUGIN_MP (latch avoids re-running under `seed --all`).
+claude_npm_ensure() {
+  [[ -n "$_CLAUDE_PLUGIN_MP" ]] && return 0
+  command -v npm >/dev/null 2>&1 || fatal "'npm' not found on PATH (needed for @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION)"
+  echo "  seeding : npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION"
+  npm install -g "@apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION" >/dev/null || fatal "npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION failed"
+  local mp; mp="$(npm root -g)/@apnex/claude-plugin"   # <nvm prefix>/lib/node_modules/@apnex/claude-plugin
+  [[ -d "$mp" ]] || fatal "npm-installed plugin dir missing at $mp after install"
+  [[ -x "$mp/install.sh" ]] && ( cd "$mp" && ./install.sh >/dev/null ) || echo "  · install.sh missing/failed at $mp — continuing (per-seat converge follows)"
+  _CLAUDE_PLUGIN_MP="$mp"
+}
+
 claude_seed() {
   local c="$1" a ws cdir mp
   a=$(jq -r '.cellAgent' <<<"$c"); ws=$(expand "$(jq -r '.workspace' <<<"$c")")
   cdir=$(jq -r '.configDirTemplate' <<<"$c"); cdir=$(expand "${cdir//\{agent\}/$a}")
-  mp=$(jq -r '.marketplacePath' <<<"$c")
-  [[ -d "$mp" ]] || fatal "missing $mp (staged agent-adapter plugin)"
+  # npmdeliver0 (idea-492): the marketplace is now the npm-installed plugin dir
+  # (Channel-2 directory marketplace retired). Config .marketplacePath is vestigial.
+  claude_npm_ensure
+  mp="$_CLAUDE_PLUGIN_MP"
   export CLAUDE_CONFIG_DIR="$cdir"
   mkdir -p "$cdir" && chmod 700 "$cdir"
   if [[ ! -f "$cdir/.claude.json" ]]; then
@@ -347,20 +374,30 @@ claude_seed() {
     # old statusLine-only elif never reached them), plus backfill statusLine only if absent.
     # `. + $cs` is idempotent and leaves other keys untouched; a later change to
     # .claudeSettings converges on the next re-seed.
-    echo "  seeding : merging claudeSettings ($cs) into existing settings.json (+statusLine backfill if absent)"
+    echo "  seeding : merging claudeSettings ($cs) + forcing extraKnownMarketplaces→npm ($mp) into existing settings.json"
     local tmp="$cdir/settings.json.tmp.$$"
-    jq --arg sl "$sl" --argjson cs "$cs" '. + $cs
+    # npmdeliver0: UNCONDITIONALLY rewrite extraKnownMarketplaces to the npm path. The old
+    # `. + $cs` never touched it, so a bare marketplacePath flip was a SILENT NO-OP on
+    # already-seeded seats (the whole cutover trap). Keep source type "directory" — an
+    # npm-installed filesystem path is a directory-source to claude.
+    jq --arg mp "$mp" --arg sl "$sl" --argjson cs "$cs" '. + $cs
+      + {extraKnownMarketplaces: ((.extraKnownMarketplaces // {}) + {"agentic-network": {source: {source: "directory", path: $mp}}})}
       + (if $sl != "" and (.statusLine | not) then {statusLine: {type: "command", command: $sl}} else {} end)' \
       "$cdir/settings.json" > "$tmp" && mv "$tmp" "$cdir/settings.json"
   fi
-  if ! grep -qs '"agentic-network"' "$cdir/plugins/known_marketplaces.json"; then
-    echo "  seeding : registering agentic-network marketplace (${mp})"
-    claude plugin marketplace add "$mp"
-  fi
-  if ! grep -qs '"agent-adapter@agentic-network"' "$cdir/plugins/installed_plugins.json"; then
-    echo "  seeding : installing agent-adapter@agentic-network into sovereign config"
-    claude plugin install agent-adapter@agentic-network
-  fi
+  # npmdeliver0: CONVERGE the marketplace SOURCE unconditionally. settings.json was
+  # force-rewritten to $mp above, but known_marketplaces.json / installed_plugins.json /
+  # the plugin cache can still point at a retired directory path — a bare flip is a SILENT
+  # NO-OP (the plugin keeps loading the stale cached extract). Uninstall → drop marketplace →
+  # wipe stale cache → re-add + install from the npm path. Runs under the exported
+  # CLAUDE_CONFIG_DIR=$cdir so every claude-CLI write lands on THIS seat. Idempotent on
+  # fresh seats (teardown steps are best-effort).
+  echo "  seeding : converging agent-adapter marketplace source → $mp"
+  claude plugin uninstall agent-adapter@agentic-network 2>/dev/null || true
+  claude plugin marketplace remove agentic-network 2>/dev/null || true
+  rm -rf "$cdir/plugins/cache/agentic-network" 2>/dev/null || true
+  claude plugin marketplace add "$mp"
+  claude plugin install agent-adapter@agentic-network
   # work-179 (Arc-1 S4 / idea-453): sync ratified mission-kit operator skills into
   # the agent's sovereign skills dir, alongside the local-repo skills. Best-effort
   # (never blocks launch). This is the deployment last-mile — ratifying a skill in

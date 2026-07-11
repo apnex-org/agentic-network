@@ -1,35 +1,27 @@
 #!/usr/bin/env bash
 #
-# scripts/test/full-end-to-end-install.test.sh — TRUE end-to-end install test
+# scripts/test/full-end-to-end-install.test.sh — npm-registry end-to-end install test
 #
-# Mission-64 W1+W2-fix-2 deliverable; closes Calibration #37 (install-from-
-# registry test surface insufficient — file-presence test missed source-format
-# defect + version-rewrite never-fired defect).
+# npmdeliver0 (idea-492): validates the SINGLE surviving delivery channel —
+# `npm install @apnex/claude-plugin@<ver>` from the npm registry (the Channel-2
+# GitHub-Release vendored-tarball path is RETIRED). Proves the consumer install path
+# end-to-end, exercising exactly what the ois claude_seed cutover relies on:
+#   1. `npm install @apnex/claude-plugin@<ver>` resolves from the registry
+#   2. @apnex/network-adapter comes FROM THE REGISTRY (no vendored apnex-*.tgz), and
+#      claude-plugin declares it as registry semver (^X.Y.Z), NOT a file: ref
+#   3. marketplace.json source format is claude-marketplace-parser-friendly ("./")
+#   4. @apnex/network-adapter + dist/shim.js are loadable from the installed location
+#   5. install.sh (npm-installed mode) exits 0 + registers the marketplace + plugin
+#   6. .mcp.json is delivered (else Claude Code never spawns the shim)
 #
-# Test scope:
-#   1. Run publish-packages.sh --dry-run (exercises actual publish flow incl.
-#      version-rewrite hoist; emulates registry publish without slot-claim)
-#   2. Pack 4 publish-scope tarballs
-#   3. Inspect rendered package.json deps in claude-plugin tarball — verify
-#      registry-pinned semver (NOT *); catches Calibration #35 defect class
-#   4. npm install --prefix /tmp/<dir> the claude-plugin tarball locally
-#      (emulates `npm install -g @apnex/claude-plugin@<v>` from registry)
-#   5. Run install.sh from npm-installed location
-#   6. Assert install.sh exits 0 + marketplace add succeeded + claude plugin
-#      install successful — catches Calibration #36 defect class
-#
-# This test exercises the FULL consumer install path. Catches:
-#   - Missing files in tarball (Calibration #33)
-#   - Wrong source format in marketplace.json (Calibration #36)
-#   - * deps escaping to published tarball (Calibration #35)
-#   - Plugin not loadable post-install (any future packaging defect)
+# <ver> is read from the source tree's adapters/claude-plugin/package.json, so the
+# test tracks the current version (which must be published to the registry to pass).
 #
 # Usage: ./scripts/test/full-end-to-end-install.test.sh
-#
 # Exit:
-#   0 = full e2e GREEN; tarball + install + claude plugin install all succeed
-#   1 = one or more steps failed
-#   2 = test setup error (claude CLI missing, etc.)
+#   0 = e2e GREEN (registry install + install.sh + shape all succeed)
+#   1 = one or more assertions failed
+#   2 = test setup error (npm/claude missing, version unreadable, registry unreachable)
 
 set -uo pipefail
 
@@ -39,202 +31,119 @@ cd "$REPO_ROOT"
 PASS=0
 FAIL=0
 FAILED_TESTS=()
+assert_pass() { PASS=$((PASS + 1)); echo "  ✓ $1"; }
+assert_fail() { FAIL=$((FAIL + 1)); FAILED_TESTS+=("$1${2:+: $2}"); echo "  ✗ $1${2:+: $2}"; }
 
-assert_pass() {
-  PASS=$((PASS + 1))
-  echo "  ✓ $1"
-}
-assert_fail() {
-  FAIL=$((FAIL + 1))
-  FAILED_TESTS+=("$1${2:+: $2}")
-  echo "  ✗ $1${2:+: $2}"
-}
+# Pre-flight
+command -v npm >/dev/null 2>&1 || { echo "✗ npm not on PATH; cannot run npm-registry install test"; exit 2; }
+command -v claude >/dev/null 2>&1 || { echo "✗ claude CLI not on PATH; cannot run end-to-end install test"; exit 2; }
+VER="$(node -p "require('./adapters/claude-plugin/package.json').version" 2>/dev/null)"
+[ -n "$VER" ] || { echo "✗ could not read adapters/claude-plugin/package.json version"; exit 2; }
 
-echo "=== Full end-to-end install test for @apnex/claude-plugin ==="
+echo "=== npm-registry end-to-end install test for @apnex/claude-plugin@$VER ==="
 
-# Pre-flight: claude CLI present?
-if ! command -v claude >/dev/null 2>&1; then
-  echo "✗ claude CLI not on PATH; cannot run end-to-end install test"
-  exit 2
-fi
+# Fully-isolated throwaway: isolated npm prefix + CLAUDE_CONFIG_DIR + plugin cache + HOME,
+# so install.sh's marketplace-add / cache-stomp / skill-bootstrap never touch real state.
+TEST_DIR="/tmp/npmdeliver0-e2e-$$"
+NPM_PREFIX="$TEST_DIR/npm"
+CFG_DIR="$TEST_DIR/config.claude"
+CACHE_DIR="$TEST_DIR/plugin-cache"
+FAKE_HOME="$TEST_DIR/home"
+mkdir -p "$NPM_PREFIX" "$CFG_DIR" "$CACHE_DIR" "$FAKE_HOME"
+trap 'rm -rf "$TEST_DIR"' EXIT
 
-TEST_DIR="/tmp/m64-e2e-install-$$"
-mkdir -p "$TEST_DIR"
-
-# User-settings backup+restore discipline (mission-64 post-cleanup PR addition).
-# Reason: install.sh invokes `claude plugin marketplace add "$MARKETPLACE_PATH"`
-# which clobbers user `~/.claude/settings.json:extraKnownMarketplaces.agentic-network.source.path`
-# to point at the test's $TEST_DIR/install-prefix/... directory. After test
-# cleanup (rm -rf $TEST_DIR), that path is dangling — until the next time
-# the consumer runs `update-adapter.sh` against the global install (which
-# re-adds the marketplace entry to point at /home/.../@apnex/claude-plugin).
-# Self-heals on next adapter update; but during the test run, user state is
-# corrupted. Mission-64 W4-followon calibration class: "test that mutates
-# global state without rollback" — folded into post-cleanup PR scope.
-USER_SETTINGS="${HOME}/.claude/settings.json"
-SETTINGS_BACKUP="$TEST_DIR/settings.json.backup"
-HAD_SETTINGS=0
-if [ -f "$USER_SETTINGS" ]; then
-  cp "$USER_SETTINGS" "$SETTINGS_BACKUP"
-  HAD_SETTINGS=1
-fi
-restore_user_settings() {
-  if [ "$HAD_SETTINGS" = "1" ] && [ -f "$SETTINGS_BACKUP" ]; then
-    # User had settings.json pre-test; restore from backup
-    cp "$SETTINGS_BACKUP" "$USER_SETTINGS"
-  elif [ "$HAD_SETTINGS" = "0" ] && [ -f "$USER_SETTINGS" ]; then
-    # Fresh-install user (no pre-test settings.json); test created garbage
-    # settings.json with marketplace path → $TEST_DIR (now being removed).
-    # Remove the test-created file to restore clean fresh-install state.
-    rm -f "$USER_SETTINGS"
-  fi
-}
-trap 'restore_user_settings; rm -rf "$TEST_DIR"' EXIT
-
-# Step 1 — Apply version-rewrite explicitly (mirrors hoisted publish-packages.sh flow)
+# Section 1 — real registry install (na@^0.1.x auto-resolves from the registry)
 echo ""
-echo "Section 1: pack flow with hoisted version-rewrite"
-node scripts/version-rewrite.js >/dev/null 2>&1
-echo "  ✓ version-rewrite applied (deps now ^X.Y.Z)"
-
-# Step 2 — Pack the 4 publish-scope tarballs
-if ! npm pack --workspace=@apnex/cognitive-layer --workspace=@apnex/message-router --workspace=@apnex/network-adapter --workspace=@apnex/claude-plugin --pack-destination "$TEST_DIR" >/dev/null 2>&1; then
-  assert_fail "1.1 npm pack failed for 4 publish-scope packages"
-  node scripts/version-rewrite.js --revert >/dev/null 2>&1
-  exit 1
-fi
-assert_pass "1.1 4 tarballs packed"
-
-CP_TGZ="$(ls "$TEST_DIR"/apnex-claude-plugin-*.tgz 2>/dev/null | head -1)"
-if [ -z "$CP_TGZ" ]; then
-  assert_fail "1.2 claude-plugin tarball not found"
-  node scripts/version-rewrite.js --revert >/dev/null 2>&1
-  exit 1
-fi
-
-# Step 3 — Verify rendered package.json has registry-pinned deps (Calibration #35)
-echo ""
-echo "Section 2: rendered tarball deps registry-pinned (Calibration #35 fix)"
-deps_json="$(tar -xzf "$CP_TGZ" -O package/package.json 2>/dev/null | node -e "let s=''; process.stdin.on('data', c => s+=c); process.stdin.on('end', () => { try { const p = JSON.parse(s); process.stdout.write(JSON.stringify(p.dependencies)); } catch(e) {} });")"
-if echo "$deps_json" | grep -qE '"@apnex/[^"]+":\s*"\*"'; then
-  assert_fail "2.1 published tarball has unsafe \"*\" deps for @apnex/* siblings" "Calibration #35 defect class"
-  echo "    Actual deps: $deps_json"
+echo "Section 1: npm install @apnex/claude-plugin@$VER (registry)"
+if npm install --prefix "$NPM_PREFIX" "@apnex/claude-plugin@$VER" --no-audit --no-fund >/dev/null 2>&1; then
+  assert_pass "1.1 npm install @apnex/claude-plugin@$VER succeeded"
 else
-  if echo "$deps_json" | grep -qE '"@apnex/[^"]+":\s*"\^[0-9]'; then
-    assert_pass "2.1 published tarball has registry-pinned ^X.Y.Z for @apnex/* siblings"
-  else
-    assert_fail "2.1 published tarball deps unexpected format" "Actual: $deps_json"
-  fi
+  assert_fail "1.1 npm install @apnex/claude-plugin@$VER FAILED" "is @$VER published + registry reachable?"
+fi
+CP_DIR="$NPM_PREFIX/node_modules/@apnex/claude-plugin"
+[ -d "$CP_DIR" ] && assert_pass "1.2 installed at $CP_DIR" || assert_fail "1.2 installed claude-plugin dir missing" "$CP_DIR"
+
+# Section 2 — na FROM THE REGISTRY (Channel-2 retired: no vendored tgz), semver dep not file:
+echo ""
+echo "Section 2: na resolved from the registry (no vendored tarball)"
+NA_DIR="$(find "$NPM_PREFIX/node_modules" -type d -path '*@apnex/network-adapter' 2>/dev/null | head -1)"
+NA_VER="$([ -n "$NA_DIR" ] && node -p "require('$NA_DIR/package.json').version" 2>/dev/null)"
+case "$NA_VER" in
+  0.1.*) assert_pass "2.1 @apnex/network-adapter resolved from registry: $NA_VER";;
+  *)     assert_fail "2.1 na version unexpected/unresolved" "got '$NA_VER'";;
+esac
+if [ -z "$(find "$NPM_PREFIX" -name 'apnex-*.tgz' 2>/dev/null | head -1)" ]; then
+  assert_pass "2.2 no vendored apnex-*.tgz in the tree (na is a registry dependency)"
+else
+  assert_fail "2.2 unexpected vendored apnex-*.tgz present (Channel-2 vendoring should be gone)"
+fi
+CP_NA_DEP="$(node -p "require('$CP_DIR/package.json').dependencies['@apnex/network-adapter'] || ''" 2>/dev/null)"
+if [ -n "$CP_NA_DEP" ] && [[ "$CP_NA_DEP" != file:* ]]; then
+  assert_pass "2.3 claude-plugin declares na as registry semver (not file:): $CP_NA_DEP"
+else
+  assert_fail "2.3 claude-plugin na dep is not registry semver" "got '$CP_NA_DEP'"
 fi
 
-# Step 4 — Verify marketplace.json source format (Calibration #36)
+# Section 3 — marketplace.json source format
 echo ""
-echo "Section 3: marketplace.json source format (Calibration #36 fix)"
-marketplace_src="$(tar -xzf "$CP_TGZ" -O package/.claude-plugin/marketplace.json 2>/dev/null | node -e "let s=''; process.stdin.on('data', c => s+=c); process.stdin.on('end', () => { try { const m = JSON.parse(s); process.stdout.write(m.plugins[0].source || ''); } catch(e) {} });")"
-case "$marketplace_src" in
-  ./|./.|./*)
-    assert_pass "3.1 marketplace.json source format starts with \"./\" (claude-marketplace-parser-friendly): $marketplace_src"
-    ;;
-  *)
-    assert_fail "3.1 marketplace.json source format will reject from claude-marketplace-parser" "Actual: '$marketplace_src' (need leading \"./\")"
-    ;;
+echo "Section 3: marketplace.json source format"
+MP_SRC="$(node -p "JSON.parse(require('fs').readFileSync('$CP_DIR/.claude-plugin/marketplace.json','utf8')).plugins[0].source || ''" 2>/dev/null)"
+case "$MP_SRC" in
+  ./ | ./. | ./*) assert_pass "3.1 marketplace.json source starts with \"./\": $MP_SRC";;
+  *)              assert_fail "3.1 marketplace.json source bad format (parser rejects)" "got '$MP_SRC'";;
 esac
 
-# Step 5 — Local emulation of `npm install -g @apnex/claude-plugin`
+# Section 4 — na + shim.js loadable from the installed location
 echo ""
-echo "Section 4: local install emulation"
-INSTALL_PREFIX="$TEST_DIR/install-prefix"
-mkdir -p "$INSTALL_PREFIX"
-# npm install with --prefix installs to $INSTALL_PREFIX/lib/node_modules/<pkg>
-# We need all 4 deps available; create a host package.json that lists tarball paths
-cat > "$INSTALL_PREFIX/package.json" <<EOF
-{
-  "name": "m64-e2e-host",
-  "version": "0.0.0",
-  "private": true,
-  "dependencies": {
-    "@apnex/cognitive-layer": "file:$TEST_DIR/$(ls $TEST_DIR/apnex-cognitive-layer-*.tgz | xargs basename)",
-    "@apnex/message-router": "file:$TEST_DIR/$(ls $TEST_DIR/apnex-message-router-*.tgz | xargs basename)",
-    "@apnex/network-adapter": "file:$TEST_DIR/$(ls $TEST_DIR/apnex-network-adapter-*.tgz | xargs basename)",
-    "@apnex/claude-plugin": "file:$TEST_DIR/$(basename $CP_TGZ)"
-  }
-}
-EOF
-if (cd "$INSTALL_PREFIX" && npm install --no-audit --no-fund --silent 2>&1 | tail -3) >/dev/null; then
-  assert_pass "4.1 local install of 4 tarballs succeeded (emulates registry install)"
+echo "Section 4: na + dist/shim.js loadable from the installed plugin"
+if node -e "require(require.resolve('@apnex/network-adapter',{paths:['$CP_DIR','$NPM_PREFIX']}))" 2>/dev/null; then
+  assert_pass "4.1 @apnex/network-adapter require()s from the installed plugin"
 else
-  assert_fail "4.1 local install failed" "see $INSTALL_PREFIX/package.json"
+  assert_fail "4.1 na not require-able from the installed plugin location"
 fi
+node --check "$CP_DIR/dist/shim.js" 2>/dev/null && assert_pass "4.2 dist/shim.js parses (node --check)" || assert_fail "4.2 dist/shim.js failed node --check"
 
-# Step 6 — Run install.sh from installed location + assert exit 0
+# Section 5 — install.sh (npm-installed) exits 0 + registers marketplace/plugin (isolated)
 echo ""
-echo "Section 5: install.sh exits 0 from npm-installed location"
-INSTALL_SH="$INSTALL_PREFIX/node_modules/@apnex/claude-plugin/install.sh"
+echo "Section 5: install.sh (npm-installed) exits 0 under isolated config"
+INSTALL_SH="$CP_DIR/install.sh"
 if [ ! -x "$INSTALL_SH" ]; then
-  assert_fail "5.0 install.sh not found at expected path" "$INSTALL_SH"
+  assert_fail "5.0 install.sh missing/not-executable" "$INSTALL_SH"
 else
-  # Ensure CLAUDE_PLUGIN_CACHE_DIR is set to test-isolated dir so we don't pollute global state
-  test_cache="$TEST_DIR/claude-cache"
-  mkdir -p "$test_cache"
-  install_out="$(CLAUDE_PLUGIN_CACHE_DIR="$test_cache" "$INSTALL_SH" 2>&1)"
-  install_rc=$?
-  if [ $install_rc -eq 0 ]; then
-    assert_pass "5.1 install.sh exit 0 (marketplace add + claude plugin install both succeeded)"
-    if echo "$install_out" | grep -qiE "marketplace.*added|registered local marketplace"; then
-      assert_pass "5.2 install.sh stdout indicates marketplace registered"
-    fi
-    if echo "$install_out" | grep -qiE "plugin.*install"; then
-      assert_pass "5.3 install.sh stdout indicates claude plugin install path"
-    fi
+  INSTALL_OUT="$(HOME="$FAKE_HOME" CLAUDE_CONFIG_DIR="$CFG_DIR" CLAUDE_PLUGIN_CACHE_DIR="$CACHE_DIR" "$INSTALL_SH" 2>&1)"
+  INSTALL_RC=$?
+  if [ $INSTALL_RC -eq 0 ]; then
+    assert_pass "5.1 install.sh exit 0"
+    echo "$INSTALL_OUT" | grep -qiE 'Context: npm-installed' && assert_pass "5.2 install.sh auto-detected npm-installed context"
+    echo "$INSTALL_OUT" | grep -qiE 'added marketplace: agentic-network|Registering local marketplace' && assert_pass "5.3 marketplace agentic-network registered"
+    echo "$INSTALL_OUT" | grep -qiE 'installed plugin: agent-adapter|Installing agent-adapter' && assert_pass "5.4 plugin agent-adapter installed"
   else
-    assert_fail "5.1 install.sh exited $install_rc" "Calibration #36 defect class — likely marketplace source format or path issue"
-    echo "----- install.sh output -----"
-    echo "$install_out" | tail -10
-    echo "-----------------------------"
+    assert_fail "5.1 install.sh exited $INSTALL_RC"
+    echo "----- install.sh output (tail) -----"; echo "$INSTALL_OUT" | tail -12; echo "------------------------------------"
   fi
 fi
 
-# Step 7 — Verify .mcp.json delivered to npm-install location (Calibration #38)
-# Without .mcp.json at the npm-installed path, Claude Code cannot register the
-# plugin's MCP server even though plugin install + manifest validation pass.
-# The shim subprocess is silently never spawned. Smoking-gun symptom: claude
-# plugin list shows agent-adapter enabled, but claude mcp list does NOT show
-# the registered server, and ToolSearch finds no mcp__plugin_agent-adapter_*
-# tool schemas.
+# Section 6 — .mcp.json delivered (else Claude Code never spawns the shim)
 echo ""
-echo "Section 6: .mcp.json delivered to npm-install location (Calibration #38 root-cause fix)"
-INSTALLED_MCP_JSON="$INSTALL_PREFIX/node_modules/@apnex/claude-plugin/.mcp.json"
-if [ -f "$INSTALLED_MCP_JSON" ]; then
-  assert_pass "6.1 .mcp.json present at npm-installed path"
-  installed_proxy="$(node -e "
-    const m = JSON.parse(require('fs').readFileSync('$INSTALLED_MCP_JSON', 'utf8'));
-    process.stdout.write(Object.keys(m.mcpServers || {}).join(','));
-  " 2>/dev/null)"
-  if echo "$installed_proxy" | grep -q "proxy"; then
-    assert_pass "6.2 installed .mcp.json declares mcpServers.proxy (Claude Code will spawn shim)"
-  else
-    assert_fail "6.2 installed .mcp.json missing mcpServers.proxy" "Actual servers: '$installed_proxy'"
-  fi
+echo "Section 6: .mcp.json delivered to npm-installed location"
+INSTALLED_MCP="$CP_DIR/.mcp.json"
+if [ -f "$INSTALLED_MCP" ] && node -e "process.exit(JSON.parse(require('fs').readFileSync('$INSTALLED_MCP','utf8')).mcpServers && JSON.parse(require('fs').readFileSync('$INSTALLED_MCP','utf8')).mcpServers.proxy ? 0 : 1)" 2>/dev/null; then
+  assert_pass "6.1 .mcp.json declares mcpServers.proxy (Claude Code will spawn the shim)"
 else
-  assert_fail "6.1 .mcp.json MISSING from npm-installed path" "Calibration #38 — Claude Code cannot register MCP server; ToolSearch will find no schemas"
+  assert_fail "6.1 .mcp.json missing/invalid at npm-installed path" "Calibration #38 — MCP server never registers"
 fi
-
-# Cleanup: revert source-tree to placeholder
-node scripts/version-rewrite.js --revert >/dev/null 2>&1
 
 # Summary
 echo ""
-echo "=== Full end-to-end install test results ==="
+echo "=== npm-registry end-to-end install test results ==="
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
 if [ "$FAIL" -gt 0 ]; then
   echo ""
   echo "Failed tests:"
-  for t in "${FAILED_TESTS[@]}"; do
-    echo "  - $t"
-  done
+  for t in "${FAILED_TESTS[@]}"; do echo "  - $t"; done
   exit 1
 fi
 echo ""
-echo "✓ Full e2e install GREEN — Calibrations #35 + #36 + #37 closed structurally."
+echo "✓ npm-registry e2e install GREEN — na-from-registry + registry-semver deps + install.sh(npm-installed) + .mcp.json."
 exit 0

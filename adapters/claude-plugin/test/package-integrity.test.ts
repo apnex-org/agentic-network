@@ -76,11 +76,11 @@ describe("claude-plugin package/install integrity", () => {
     expect(install).toContain("bootstrap_skills");
   });
 
-  it("quickstart documents the no-clone tarball install and build-identity check", () => {
+  it("quickstart documents the npm install path and build-identity check", () => {
     const quickstart = readText("QUICKSTART.md");
-    expect(quickstart).toContain("gh release download <TAG>");
-    expect(quickstart).toContain("bash package/install.sh");
+    expect(quickstart).toContain("npm install -g @apnex/claude-plugin");
+    expect(quickstart).toContain("install.sh");
     expect(quickstart).toContain("dist/build-info.json");
-    expect(quickstart).toContain("Tarball install fails to resolve `@apnex/...`");
+    expect(quickstart).toContain("npm install fails to resolve `@apnex/...`");
   });
 });

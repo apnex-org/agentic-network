@@ -142,7 +142,7 @@ jobs:
       # time — and `--ignore-scripts` does NOT suppress a workspace
       # target's own prepare (calibration #62). A root install would run
       # those builds before their deps exist and fail. Mirrors the scoped
-      # install in scripts/build/lib/prepack-claude-plugin.sh.
+      # install in publish-npm.yml's "Install workspaces (scoped)" step.
       - name: Install workspaces (scoped)
         run: |
           npm install --no-audit --no-fund --ignore-scripts \
@@ -156,8 +156,8 @@ jobs:
       # The sovereign packages must be built (dist/) before a cell's
       # vitest can resolve `@apnex/*` (main → dist/index.js).
       # network-adapter ↔ message-router form an import cycle, broken via
-      # the multi-pass build per scripts/build/lib/prepack-claude-plugin.sh
-      # Step 0.5.
+      # the multi-pass topological build (see publish-npm.yml's "Build
+      # family (topological)" step).
       - name: Build sovereign packages (topological)
         run: |
           rm -rf packages/cognitive-layer/dist packages/network-adapter/dist packages/message-router/dist packages/storage-provider/dist

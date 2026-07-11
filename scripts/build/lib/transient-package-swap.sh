@@ -4,9 +4,9 @@
 # staging helper.
 #
 # Extracted from scripts/local/build-hub.sh:139-180 per M-GitHub-Releases-
-# Plugin-Distribution Design v1.0 §1.4 lib-extraction prescription. Two
-# consumers (build-hub.sh + scripts/build/lib/prepack-claude-plugin.sh)
-# share this helper. Sunset condition: idea-186 (npm workspaces) lands +
+# Plugin-Distribution Design v1.0 §1.4 lib-extraction prescription.
+# Consumers: build-hub.sh + modules/hub/cloudbuild.tf stage sovereign packages
+# into the prod Hub image. Sunset condition: idea-186 (npm workspaces) lands +
 # all consumers migrate to workspace resolution.
 #
 # Pattern: for each sovereign package, `npm pack` it into the target
@@ -41,8 +41,8 @@ TPS_SWAP_APPLIED=0
 # ── Internal: state-only cleanup (no exit) ─────────────────────────────
 #
 # Composable cleanup primitive. Use directly when the caller needs to
-# layer additional cleanup (e.g., prepack-claude-plugin.sh stages
-# skills/ separately and combines its cleanup with this one).
+# layer additional cleanup (e.g., a caller that stages extra files
+# separately and combines its cleanup with this one).
 
 _tps_cleanup_state() {
   if [[ $TPS_SWAP_APPLIED -eq 1 && -n "$TPS_BACKUP_DIR" && -d "$TPS_BACKUP_DIR" ]]; then

@@ -123,8 +123,8 @@ LOCAL_TAG="ois-hub:local"
 #
 # Lib-extracted (M-GitHub-Releases-Plugin-Distribution Design v1.0 §1.4):
 # the pack-and-swap-then-restore primitive lives at
-# scripts/build/lib/transient-package-swap.sh; consumed by
-# release-plugin.yml workflow as well.
+# scripts/build/lib/transient-package-swap.sh (also consumed by
+# modules/hub/cloudbuild.tf for the prod Hub image build).
 
 HUB_DIR="$REPO_ROOT/hub"
 
