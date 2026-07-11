@@ -122,14 +122,25 @@ swap_workspace_deps_to_tarballs() {
     TPS_STAGED_TARBALLS+=("$target_dir/$tarball_name")
     echo "[transient-swap] Tarball: $tarball_name"
 
-    # Rewrite "<pkg_name>": "<anything>" → "<pkg_name>": "file:./<tarball>"
-    # in target package.json. Handles both workspace `*` and `file:../path`
-    # ref shapes. `|` delimiter avoids escape-storm on `/` in pkg names.
-    sed -i.sedbak -E "s|\"${pkg_name}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"${pkg_name}\": \"file:./${tarball_name}\"|" "$target_dir/package.json"
-    rm -f "$target_dir/package.json.sedbak"
+    # Point the target's dep at the freshly-packed tarball.
+    #   - DECLARED dep   → rewrite its ref in place (workspace `*` or `file:../path`).
+    #   - UNDECLARED dep → inject it as a transient file: dep. #461 ("facade-only
+    #     @apnex boundary") trimmed claude-plugin to declare ONLY network-adapter,
+    #     but the self-contained bundle still needs network-adapter's transitive
+    #     sovereign deps (cognitive-layer, message-router) resolvable as a closed
+    #     set offline — so vendor them here. The edit is transient either way: the
+    #     trap restores the original package.json after pack, so the committed
+    #     source facade boundary is untouched.
+    # `|` delimiter on the sed avoids an escape-storm on `/` in scoped names.
+    if grep -qE "\"${pkg_name}\"[[:space:]]*:" "$target_dir/package.json"; then
+      sed -i.sedbak -E "s|\"${pkg_name}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"|\"${pkg_name}\": \"file:./${tarball_name}\"|" "$target_dir/package.json"
+      rm -f "$target_dir/package.json.sedbak"
+    else
+      node -e 'const fs=require("fs"),f=process.argv[1],p=JSON.parse(fs.readFileSync(f,"utf8"));(p.dependencies||(p.dependencies={}))[process.argv[2]]="file:./"+process.argv[3];fs.writeFileSync(f,JSON.stringify(p,null,2)+"\n");' "$target_dir/package.json" "$pkg_name" "$tarball_name"
+    fi
 
     if ! grep -q "file:./${tarball_name}" "$target_dir/package.json"; then
-      echo "[transient-swap] ERROR: $pkg_name ref swap did not take effect in $target_dir/package.json." >&2
+      echo "[transient-swap] ERROR: $pkg_name ref swap/inject did not take effect in $target_dir/package.json." >&2
       return 1
     fi
   done
