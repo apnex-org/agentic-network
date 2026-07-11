@@ -134,6 +134,11 @@ export async function createClaudeRuntime(opts: ClaudeRuntimeOptions): Promise<C
   mcpServer = dispatcher.createMcpServer();
   await mcpServer.connect(opts.mcpTransport);
 
+  // Claude's programmable-tool contract is the MCP binding path: the on-disk
+  // catalog is the pre-identity served level, repaired by drift detection, while
+  // `notifications/tools/list_changed` is a best-effort host refresh accelerator.
+  // Do not mirror Pi HCAP here unless Claude gains a real native running active
+  // set that needs declared-spec/running-set convergence outside MCP ListTools.
   const liveReconciler = new ToolSurfaceReconciler({
     fetchLiveRevision: opts.fetchLiveToolSurfaceRevision,
     readServedRevision: () => readCache(opts.workDir, opts.log)?.toolSurfaceRevision ?? null,
