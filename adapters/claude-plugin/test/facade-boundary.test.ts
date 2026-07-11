@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const srcRoot = resolve(root, "src");
-const FORBIDDEN = ["@apnex/cognitive-layer", "@apnex/message-router"];
+const ALLOWED_APNEX_IMPORTS = new Set(["@apnex/network-adapter"]);
 
 function tsFiles(dir: string): string[] {
   const out: string[] = [];
@@ -25,7 +25,9 @@ describe("claude-plugin facade boundary", () => {
       const source = readFileSync(file, "utf-8");
       for (const match of source.matchAll(/\b(?:import|export)\b[^;]*?from\s+["']([^"']+)["']/gs)) {
         const spec = match[1];
-        if (FORBIDDEN.includes(spec)) offenders.push(`${file.replace(`${root}/`, "")}: ${spec}`);
+        if (spec.startsWith("@apnex/") && !ALLOWED_APNEX_IMPORTS.has(spec)) {
+          offenders.push(`${file.replace(`${root}/`, "")}: ${spec}`);
+        }
       }
     }
     expect(offenders).toEqual([]);

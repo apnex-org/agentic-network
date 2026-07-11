@@ -177,7 +177,16 @@ describe("mission-100 offline conformance — real Claude runtime via MockClaude
 
     mock.engineer.runtimeControls.setLiveToolSurfaceRevision("rev-offline-b");
     const drift = await mock.engineer.reconciler.reconcile("offline-conformance-drift");
-    expect(drift).toMatchObject({ emitted: true, live: "rev-offline-b" });
+    expect(drift).toMatchObject({
+      emitted: true,
+      live: "rev-offline-b",
+      repaired: true,
+      converged: true,
+    });
+
+    const repairedCache = JSON.parse(readFileSync(cachePathFor(mock.engineer.workDir), "utf-8"));
+    expect(repairedCache.toolSurfaceRevision).toBe("rev-offline-b");
+    expect(repairedCache.catalog.length).toBeGreaterThan(20);
 
     await mock.waitFor(
       () => notifications.some((n) => n.method === "notifications/tools/list_changed"),
