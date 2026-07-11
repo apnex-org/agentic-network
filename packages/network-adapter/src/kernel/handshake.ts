@@ -77,6 +77,33 @@ export interface HandshakeFatalError {
   message: string;
 }
 
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  const parsed = JSON.parse(text) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return parsed as Record<string, unknown>;
+}
+
+function parseHandshakeBody(result: unknown): { body: Record<string, unknown>; envelopeError: boolean } | null {
+  if (typeof result === "string") {
+    const body = parseJsonObject(result);
+    return body ? { body, envelopeError: false } : null;
+  }
+  if (!result || typeof result !== "object") return null;
+
+  const r = result as { content?: Array<{ text?: string }>; isError?: boolean } & Record<string, unknown>;
+  if (Array.isArray(r.content) && r.content[0]?.text) {
+    const body = parseJsonObject(r.content[0].text);
+    return body ? { body, envelopeError: r.isError === true } : null;
+  }
+
+  // Parsed-body-directly shape: executeTool unwraps the envelope on some
+  // transports (e.g. bun-serve-proxy / opencode), dropping the isError
+  // flag — so the body-level `ok:false` is the failure signal. mission-93:
+  // this unwrapped path is exactly why a role_mismatch rejection fell
+  // through to parse_failed + silent engineer/offline degrade for Steve.
+  return { body: r, envelopeError: false };
+}
+
 /**
  * Parse an MCP CallTool result for a structured handshake error payload.
  * Returns the fatal error if the result matches `{isError:true, content:[{text: <json>}]}`
@@ -84,22 +111,9 @@ export interface HandshakeFatalError {
  */
 export function parseHandshakeError(result: unknown): HandshakeFatalError | null {
   try {
-    const r = result as { content?: Array<{ text?: string }>; isError?: boolean } & Record<string, unknown>;
-    if (!r || typeof r !== "object") return null;
-    let body: Record<string, unknown>;
-    let envelopeError = false;
-    if (Array.isArray(r.content) && r.content[0]?.text) {
-      // {content:[{text:<json>}], isError} envelope shape.
-      body = JSON.parse(r.content[0].text);
-      envelopeError = r.isError === true;
-    } else {
-      // Parsed-body-directly shape: executeTool unwraps the envelope on some
-      // transports (e.g. bun-serve-proxy / opencode), dropping the isError
-      // flag — so the body-level `ok:false` is the failure signal. mission-93:
-      // this unwrapped path is exactly why a role_mismatch rejection fell
-      // through to parse_failed + silent engineer/offline degrade for Steve.
-      body = r;
-    }
+    const parsed = parseHandshakeBody(result);
+    if (!parsed) return null;
+    const { body, envelopeError } = parsed;
     const isFailure = envelopeError || body.ok === false;
     if (isFailure && typeof body.code === "string" && FATAL_CODES.has(body.code)) {
       return { code: body.code, message: String(body.message ?? "") };
@@ -122,14 +136,9 @@ export function parseHandshakeError(result: unknown): HandshakeFatalError | null
  */
 export function parseHandshakeResponse(result: unknown): HandshakeResponse | null {
   try {
-    const r = result as { content?: Array<{ text?: string }> } | Record<string, unknown>;
-    let body: Record<string, unknown>;
-    if (Array.isArray((r as { content?: unknown[] }).content)) {
-      const text = (r as { content: Array<{ text?: string }> }).content[0]?.text;
-      body = text ? JSON.parse(text) : {};
-    } else {
-      body = r as Record<string, unknown>;
-    }
+    const parsed = parseHandshakeBody(result);
+    if (!parsed) return null;
+    const { body } = parsed;
     const agent = body.agent as Record<string, unknown> | undefined;
     const session = body.session as Record<string, unknown> | undefined;
     if (
@@ -360,11 +369,14 @@ export async function performHandshake(
         | { content?: Array<{ text?: string }> }
         | Record<string, unknown>;
       let body: Record<string, unknown> = {};
-      if (Array.isArray((r as { content?: unknown[] }).content)) {
+      if (typeof result === "string") {
+        envelope = "raw-string";
+        body = parseJsonObject(result) ?? {};
+      } else if (Array.isArray((r as { content?: unknown[] }).content)) {
         envelope = "content-array";
         const text = (r as { content: Array<{ text?: string }> }).content[0]
           ?.text;
-        body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+        body = text ? (parseJsonObject(text) ?? {}) : {};
       } else {
         envelope = "raw-object";
         body = r as Record<string, unknown>;

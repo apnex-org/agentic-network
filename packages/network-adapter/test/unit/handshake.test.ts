@@ -68,6 +68,11 @@ describe("parseHandshakeError", () => {
     expect(fatal?.code).toBe("role_mismatch");
   });
 
+  it("parses raw string JSON fatal bodies from live transports", () => {
+    const result = JSON.stringify({ ok: false, code: "role_mismatch", message: "token bound to architect" });
+    expect(parseHandshakeError(result)).toEqual({ code: "role_mismatch", message: "token bound to architect" });
+  });
+
   it("returns null for malformed JSON bodies", () => {
     const result = { isError: true, content: [{ text: "not-json" }] };
     expect(parseHandshakeError(result)).toBeNull();
@@ -111,6 +116,20 @@ describe("parseHandshakeResponse (mission-63 W3 canonical envelope)", () => {
     expect(parseHandshakeResponse(result)).toEqual({
       agentId: "eng-abc123",
       sessionEpoch: 2,
+      wasCreated: false,
+    });
+  });
+
+  it("parses canonical envelope delivered as a raw string JSON body", () => {
+    const wire = {
+      ok: true,
+      agent: { id: "eng-string", name: "n", role: "engineer", livenessState: "online", activityState: "online_idle", labels: {} },
+      session: { epoch: 7, claimed: false },
+      wasCreated: false,
+    };
+    expect(parseHandshakeResponse(JSON.stringify(wire))).toEqual({
+      agentId: "eng-string",
+      sessionEpoch: 7,
       wasCreated: false,
     });
   });
