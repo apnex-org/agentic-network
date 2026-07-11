@@ -3,6 +3,11 @@
 **Status:** v0.2 — REWRITTEN after discovering ADR-029. Plan-before-code: no
 implementation until this rewrite is ratified. (v0.1 is superseded; see §13 for
 what changed and why — the v0.1 premises were factually wrong.)
+**SUPERSEDED IN PART (npmdeliver0 / idea-492, 2026-07-11):** the premise that the
+claude GitHub-Release tarball channel (`release-plugin.yml`) STAYS is now REVERSED —
+mission npmdeliver0 RETIRES Channel-2; the npm graph-publish is the sole
+`@apnex/claude-plugin` delivery channel. The historical body below is preserved per
+the Zero-Loss record discipline; read it as of its date.
 **Mission class:** CI automation of an already-ratified publish path + one new
 family member (pi).
 **Author context:** pi-plugin native binding shipped + validated live

@@ -2,7 +2,12 @@
 
 **Mission:** mission-86 M-Hub-Storage-Cloud-Deploy (W5)
 **Audience:** operator tracking `m-github-releases-plugin-distribution` releases
-**Distribution:** `gh release` on `apnex-org/agentic-network`
+**Distribution:** `gh release` on `apnex-org/agentic-network` (HISTORICAL — see banner)
+
+> **npmdeliver0 (idea-492, 2026-07-11): the current claude-plugin install path is npm** —
+> `npm install -g @apnex/claude-plugin` (see `adapters/claude-plugin/QUICKSTART.md`).
+> Channel-2 (the `gh release` vendored tarball built by `release-plugin.yml`) is RETIRED;
+> the dated entries below are a historical record of that channel.
 
 ---
 

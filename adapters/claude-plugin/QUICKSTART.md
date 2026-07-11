@@ -4,19 +4,19 @@ Install the OIS agent adapter plugin into Claude Code. This bridges Claude Code 
 
 ## Install (no source clone required)
 
-Each tagged release attaches a self-contained tarball to the GitHub
-Release. No clone, no workspace, no toolchain — just `gh` + `tar` + `bash`:
+The plugin ships on the public npm registry (npmdeliver0 / idea-492 — the
+GitHub-Release vendored-tarball channel is retired). No clone, no workspace,
+no toolchain — just `npm` + `bash`:
 
 ```bash
-gh release download <TAG> --repo apnex-org/agentic-network --pattern 'apnex-claude-plugin-*.tgz'
-tar xzf apnex-claude-plugin-*.tgz
-bash package/install.sh
+npm install -g @apnex/claude-plugin
+bash "$(npm prefix -g)/lib/node_modules/@apnex/claude-plugin/install.sh"
 ```
 
-Replace `<TAG>` with the desired release (e.g., `v0.1.5`). The tarball
-bundles the compiled shim, the install script, the sovereign-package
-tarballs, and the Skill bootstrap library — `install.sh` resolves its
-own dependencies offline from the bundled tarballs.
+`npm install` resolves the sovereign dependencies (`@apnex/network-adapter`
+et al.) from the registry; `install.sh` (npm-installed mode) registers the
+`agentic-network` marketplace and installs the plugin into Claude Code. Pin
+an exact version for reproducible installs, e.g. `@apnex/claude-plugin@0.1.14`.
 
 After install, configure credentials (see [Developer install §1
 below](#1-configure-hub-credentials)) and launch:
@@ -27,7 +27,7 @@ claude --dangerously-load-development-channels plugin:agent-adapter@agentic-netw
 
 ### Verify build identity
 
-The release tarball embeds a build-info stamp. Confirm post-install:
+The npm-installed plugin embeds a build-info stamp. Confirm post-install:
 
 ```bash
 cat ~/.claude/plugins/cache/agentic-network/agent-adapter/*/dist/build-info.json
@@ -153,4 +153,4 @@ You should see Hub tools available when you type `/` in Claude Code. The adapter
 - **"Hub credentials not found"** — Neither config file nor env vars are set. Check that `.ois/adapter-config.json` exists in your working directory, or set `OIS_HUB_URL` and `OIS_HUB_TOKEN`.
 - **Plugin not found** — Ensure the marketplace was added with the correct absolute path to the `agentic-network` root directory.
 - **Build errors (developer install)** — Run `npm install` again from the repo root so workspace symlinks for `@apnex/{network-adapter,message-router,cognitive-layer}` are populated.
-- **Tarball install fails to resolve `@apnex/...`** — The release tarball bundles `apnex-*.tgz` sovereign-package tarballs alongside `install.sh`; if those are missing the package is malformed. Re-download from the GitHub Release page.
+- **npm install fails to resolve `@apnex/...`** — `@apnex/network-adapter` (+ `cognitive-layer`, `message-router`) resolve from the npm registry as dependencies of `@apnex/claude-plugin`; a resolution failure is usually a registry/network issue — retry `npm install`.

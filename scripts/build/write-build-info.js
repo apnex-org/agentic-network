@@ -102,7 +102,7 @@ function runAssert() {
   // is a false positive. That pack sets OIS_SKIP_VERSION_ASSERT=1 to skip ONLY
   // this FAIL check; the build-info stamp (above) + the package's prepare/tsc
   // build still run, so dist stays intact (NOT a blanket --ignore-scripts). The
-  // real publish paths (publish-packages.sh / release-plugin / release-opencode)
+  // real publish paths (publish-packages.sh / release-opencode)
   // leave the flag unset and still gate.
   if (process.env.OIS_SKIP_VERSION_ASSERT === "1") {
     assertSkip("OIS_SKIP_VERSION_ASSERT=1 (internal vendor-pack; gate scoped to consumer publishes)");
