@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 #
-# update-claude-plugin.sh — pull + install the latest @apnex/claude-plugin release
-# into the local "agentic-network" marketplace, ready for a client restart.
+# update-claude-plugin.sh — install/upgrade @apnex/claude-plugin from the npm
+# registry into the operator's local "agentic-network" marketplace, ready for a
+# client restart.
 #
-# Automates the manual adapter hop. The proper consumer/producer auto-refresh
-# distribution channel (subscribe the marketplace to a published artifact, à la
-# the opencode republish path) is tracked as idea-354; until that lands, this is
-# the one-command updater.
+# npmdeliver0 (idea-492): the plugin ships via the npm registry — the Channel-2
+# GitHub-Release vendored-tarball path is RETIRED. This one-command operator
+# updater mirrors the ois `claude_seed` cutover: a global npm install of an exact
+# version + the npm-installed install.sh + a CONVERGE-on-existing re-register
+# (uninstall -> drop marketplace -> wipe stale cache -> re-add + install from the
+# npm path), so an operator whose marketplace still points at a retired hand-staged
+# dir actually moves — a bare re-point is a SILENT NO-OP.
 #
 # It does EVERYTHING EXCEPT the restart: a stdio MCP proxy code-swap requires a
 # full Claude Code exit+relaunch, which only the operator can do per client.
@@ -14,82 +18,80 @@
 # proxy's own code.)
 #
 # Usage:
-#   ./update-claude-plugin.sh             # install the latest v* release
-#   ./update-claude-plugin.sh v0.1.9      # install a specific tag
-#   OIS_REPO=owner/repo ./update-claude-plugin.sh    # override the source repo
+#   ./update-claude-plugin.sh             # install the latest published version (resolved to an exact pin)
+#   ./update-claude-plugin.sh 0.1.14      # install a specific version (EXACT pin)
+#   CLAUDE_CONFIG_DIR=... ./update-claude-plugin.sh   # target a specific seat's config (default: ~/.claude)
 #
-# Requires: gh (authenticated), jq, tar. Safe to re-run (idempotent: no-ops when
-# the release build is already staged; always backs up before swapping).
+# Requires: npm, claude (authenticated), jq. Safe to re-run (idempotent: the npm
+# install + converge both no-op cleanly when already at the target).
 #
 set -euo pipefail
 
-REPO="${OIS_REPO:-apnex-org/agentic-network}"
+# Suppress npm's update-notifier so its "new version available" banner can never
+# pollute a command substitution (e.g. `npm root -g`) on a pristine HOME.
+export npm_config_update_notifier=false
+
 MARKET="agentic-network"
 PLUGIN="agent-adapter"
-KM="$HOME/.claude/plugins/known_marketplaces.json"
+CDIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-command -v gh  >/dev/null || { echo "ERROR: gh CLI required + authenticated" >&2; exit 1; }
-command -v jq  >/dev/null || { echo "ERROR: jq required" >&2; exit 1; }
-command -v tar >/dev/null || { echo "ERROR: tar required" >&2; exit 1; }
+command -v npm    >/dev/null || { echo "ERROR: npm required" >&2; exit 1; }
+command -v claude >/dev/null || { echo "ERROR: claude CLI required + authenticated" >&2; exit 1; }
+command -v jq     >/dev/null || { echo "ERROR: jq required" >&2; exit 1; }
 
-# 1. Resolve the staged marketplace directory from the marketplace registration
-#    (falls back to the known default if the registration can't be read).
-STAGE_DIR="$(jq -r --arg n "$MARKET" '.[$n].source.path // empty' "$KM" 2>/dev/null || true)"
-STAGE_DIR="${STAGE_DIR:-/home/apnex/apnex-claude-plugin/package}"
-[ -d "$STAGE_DIR" ] || { echo "ERROR: staged plugin dir not found: $STAGE_DIR" >&2; exit 1; }
+# 1. Resolve the target version — explicit arg, else the latest PUBLISHED version
+#    resolved to an EXACT number (never float a dist-tag).
+VER="${1:-}"
+if [ -z "$VER" ]; then
+  VER="$(npm view @apnex/claude-plugin version 2>/dev/null || true)"
+  [ -n "$VER" ] || { echo "ERROR: could not resolve latest @apnex/claude-plugin version from the npm registry" >&2; exit 1; }
+fi
+echo "[update] target: @apnex/claude-plugin@$VER (npm registry)"
 
-# 2. Resolve the target tag (explicit arg, else the latest published release)
-TAG="${1:-$(gh release view --repo "$REPO" --json tagName --jq '.tagName')}"
-[ -n "$TAG" ] || { echo "ERROR: could not resolve a release tag on $REPO" >&2; exit 1; }
+# 2. Current registered marketplace + its staged identity (for the before/after report)
+KM="$CDIR/plugins/known_marketplaces.json"
+CUR_MP="$(jq -r --arg n "$MARKET" '.[$n].source.path // empty' "$KM" 2>/dev/null || true)"
+CUR_SHA="$(jq -r '.commitSha // "unknown"' "$CUR_MP/dist/build-info.json" 2>/dev/null || echo unknown)"
+echo "[update] config dir: $CDIR"
+echo "[update] currently registered marketplace: ${CUR_MP:-<none>} (commitSha=$CUR_SHA)"
 
-CUR_SHA="$(jq -r '.commitSha // "unknown"' "$STAGE_DIR/dist/build-info.json" 2>/dev/null || echo unknown)"
-echo "[update] repo=$REPO  target=$TAG"
-echo "[update] staged-dir=$STAGE_DIR"
-echo "[update] currently staged: commitSha=$CUR_SHA"
+# 3. Global npm install (exact) + resolve the npm-installed marketplace dir
+echo "[update] npm install -g @apnex/claude-plugin@$VER ..."
+npm install -g "@apnex/claude-plugin@$VER"
+# `tail -n1`: take only the path line, defensive against any npm banner on stdout.
+MP="$(npm root -g 2>/dev/null | tail -n1)/@apnex/claude-plugin"
+[ -d "$MP" ] || { echo "ERROR: npm-installed plugin dir missing at $MP after install" >&2; exit 1; }
+NEW_SHA="$(jq -r '.commitSha // "unknown"' "$MP/dist/build-info.json" 2>/dev/null || echo unknown)"
+NEW_VER="$(jq -r '.version // "unknown"' "$MP/package.json" 2>/dev/null || echo "$VER")"
+echo "[update] npm-installed build: version=$NEW_VER  commitSha=$NEW_SHA"
+echo "[update] marketplace dir: $MP"
 
-# 3. Download the release tarball into a scratch dir
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-gh release download "$TAG" --repo "$REPO" --pattern '*claude-plugin-*.tgz' --dir "$TMP"
-TGZ="$(ls "$TMP"/*claude-plugin-*.tgz 2>/dev/null | head -1)"
-[ -n "$TGZ" ] || { echo "ERROR: no *claude-plugin-*.tgz asset on release $TAG" >&2; exit 1; }
-
-# 4. Extract (npm-pack → package/) + read its identity
-tar xzf "$TGZ" -C "$TMP"
-[ -d "$TMP/package" ] || { echo "ERROR: tarball did not contain package/" >&2; exit 1; }
-NEW_SHA="$(jq -r '.commitSha // "unknown"' "$TMP/package/dist/build-info.json" 2>/dev/null || echo unknown)"
-NEW_VER="$(jq -r '.version // "unknown"' "$TMP/package/package.json" 2>/dev/null || echo unknown)"
-echo "[update] release build: version=$NEW_VER  commitSha=$NEW_SHA"
-
-# 5. No-op if the release build is already what's staged
-if [ "$NEW_SHA" = "$CUR_SHA" ] && [ "$CUR_SHA" != "unknown" ]; then
-  echo "[update] already staged at $CUR_SHA — nothing to swap."
-  echo "[update] (if your RUNNING proxy predates it, still do a full Claude Code restart.)"
-  exit 0
+# 4. install.sh (npm-installed): its `npm install --no-save` populates $MP/node_modules
+#    with the sovereign deps (na etc.) so Claude's plugin-cache copy resolves them.
+if [ -x "$MP/install.sh" ]; then
+  echo "[update] running npm-installed install.sh ..."
+  ( cd "$MP" && ./install.sh )
 fi
 
-# 6. Back up the current staged dir, then swap in the new build
-BACKUP="$(dirname "$STAGE_DIR")/$(basename "$STAGE_DIR")-backup-${CUR_SHA}-$(date +%Y%m%d-%H%M%S)"
-echo "[update] backing up -> $BACKUP"
-cp -r "$STAGE_DIR" "$BACKUP"
-rm -rf "$STAGE_DIR"
-mv "$TMP/package" "$STAGE_DIR"
-
-# 7. Reinstall: refreshes the marketplace + reinstalls + clears the stale cache
-if [ -f "$STAGE_DIR/install.sh" ]; then
-  echo "[update] running staged install.sh ..."
-  bash "$STAGE_DIR/install.sh"
-else
-  echo "[update] install.sh absent; invoking claude plugin commands directly"
-  claude plugin marketplace add "$STAGE_DIR" || true
-  claude plugin install "${PLUGIN}@${MARKET}"
-fi
+# 5. CONVERGE-on-existing (mirrors ois claude_seed). An operator who already holds the
+#    marketplace pointed at a retired hand-staged dir would otherwise SILENT-NO-OP.
+#    Uninstall -> drop marketplace -> wipe stale cache -> re-add + install from the npm
+#    path so known_marketplaces.json / installed_plugins.json / the cache all converge.
+#    Runs under the exported CLAUDE_CONFIG_DIR so every claude-CLI write lands on this seat.
+export CLAUDE_CONFIG_DIR="$CDIR"
+echo "[update] converging marketplace source -> $MP"
+claude plugin uninstall "${PLUGIN}@${MARKET}" 2>/dev/null || true
+claude plugin marketplace remove "$MARKET" 2>/dev/null || true
+rm -rf "$CDIR/plugins/cache/$MARKET" 2>/dev/null || true
+claude plugin marketplace add "$MP"
+claude plugin install "${PLUGIN}@${MARKET}"
 
 cat <<EOF
 
-[update] ✅ staged + installed: $PLUGIN $NEW_VER ($NEW_SHA)
+[update] ✅ installed: $PLUGIN $NEW_VER ($NEW_SHA) from the npm registry
 [update] ⚠ FINAL STEP — in EACH Claude Code client you want upgraded:
 [update]     fully EXIT and relaunch (respawns the proxy).  NOT /reload-plugins.
 [update] verify after restart:  get_agents (or scripts/local/get-agents.sh) -> proxyVersion=$NEW_VER, sdkCommitSha=$NEW_SHA
-[update] break-glass (proxy still on old sha):  rm -rf ~/.claude/plugins/cache/$MARKET  then restart.
-[update] rollback the stage:  rm -rf "$STAGE_DIR" && mv "$BACKUP" "$STAGE_DIR" && bash "$STAGE_DIR/install.sh"
+[update] break-glass (proxy still on old sha):  rm -rf "$CDIR/plugins/cache/$MARKET"  then restart.
+[update] rollback:  npm install -g @apnex/claude-plugin@<prior-version>  then re-run this script.
 EOF
