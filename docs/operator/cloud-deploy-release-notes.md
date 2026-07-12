@@ -24,7 +24,7 @@ First real `m-github-releases-plugin-distribution` release — prior pipeline ru
 - Bundles the three sovereign tarballs: `@apnex/network-adapter`,
   `@apnex/cognitive-layer`, `@apnex/message-router`.
 
-Operator reinstall (per session, restart after):
+Operator reinstall (per session, restart after) — **⚠ RETIRED Channel-2 recipe — historical only.** The current operator path is `npm install -g @apnex/claude-plugin` then the npm-installed `install.sh` (see the banner at the top + `adapters/claude-plugin/QUICKSTART.md`, or `scripts/operator/update-claude-plugin.sh`). The `gh release download` recipe below no longer works — npmdeliver0 deleted the Channel-2 producer:
 
 ```
 gh release download v0.1.4 --repo apnex-org/agentic-network --pattern 'apnex-claude-plugin-*.tgz'
