@@ -6,6 +6,8 @@
 **Date ratified:** 2026-04-29 (W4 closing; bilateral architect lily + engineer greg)
 **Authors:** lily / architect; bilateral ratify with greg / engineer at W4 close
 
+> **Status update (cleanslate0 / npmdeliver0, idea-492, 2026-07-11):** this ADR's decision — consumer-self-serve via npm-published packages + script-driven local install — is now the **SOLE** distribution path, realized. The interim GitHub-Release vendored-tarball channel (`m-github-releases-plugin-distribution` / `release-plugin.yml`) that briefly ran alongside it is **RETIRED**: npmdeliver0 deleted the producer, and `ois claude_seed` + `scripts/operator/update-claude-plugin.sh` now do `npm install -g @apnex/claude-plugin` + converge-on-existing. Original decision text preserved below (Zero-Loss); no lineage rewritten.
+
 ---
 
 ## Status flow
