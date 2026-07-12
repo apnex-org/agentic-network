@@ -1,0 +1,13 @@
+# Root build context for hub/Dockerfile (cleanslate0 hub_rebase — context widened
+# from hub/ to the repo root so npm workspaces resolve @apnex/* natively).
+# Keep the uploaded context small: deps are installed in-container via npm ci
+# from the committed root lockfile, and dist is built in-container.
+**/node_modules
+.git
+**/dist
+**/*.tgz
+**/*.log
+**/.DS_Store
+# scratch / local-only
+coverage
+.claude
