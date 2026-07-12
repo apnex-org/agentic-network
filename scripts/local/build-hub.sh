@@ -67,7 +67,9 @@ if [[ -z "$PROJECT_ID" ]]; then
 fi
 
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy"
-REMOTE_TAG="${REGISTRY}/hub:latest"
+# HUB_IMAGE_TAG overrides the pushed tag. Non-prod builds MUST set a distinct
+# tag so they NEVER touch :latest — Watchtower auto-deploys :latest to prod.
+REMOTE_TAG="${HUB_IMAGE_TAG:-${REGISTRY}/hub:latest}"
 LOCAL_TAG="ois-hub:local"
 
 # ── Sovereign-package tarball staging (mission-50 T1+T5; task-386 ext.) ─
@@ -128,35 +130,25 @@ LOCAL_TAG="ois-hub:local"
 
 HUB_DIR="$REPO_ROOT/hub"
 
-# Sovereign packages staged into hub/ as tarballs for Cloud Build.
-# Format: "<package-name>:<source-dir-relative-to-REPO_ROOT>"
-SOVEREIGN_PACKAGES=(
-  "@apnex/storage-provider:packages/storage-provider"
-  "@apnex/repo-event-bridge:packages/repo-event-bridge"
-)
-
-source "$REPO_ROOT/scripts/build/lib/transient-package-swap.sh"
-
-# Combined cleanup: restore package.json + remove the staged tarballs
-# (tps_cleanup), AND remove the transient build-info.json stamped below
-# (C3-R1 M-Roll-Signal / idea-340). Bash traps overwrite per-signal, so a
-# single wrapper covers both. HUB_DIR is set above.
+# idea-186 npm workspaces (cleanslate0 hub_rebase): the sovereign packages
+# (@apnex/storage-provider + @apnex/repo-event-bridge) resolve NATIVELY via the
+# root npm workspace + committed root lockfile — no transient tarball staging.
+# The Cloud Build context is the REPO ROOT (widened below); hub/Dockerfile runs
+# `npm ci` against the root lockfile. Cleanup removes only the transient
+# build-info.json stamped below + the generated Cloud Build config.
 hub_build_cleanup() {
-  tps_cleanup
-  rm -f "$HUB_DIR/build-info.json"
+  rm -f "$HUB_DIR/build-info.json" "${CB_CONFIG:-}"
 }
 trap hub_build_cleanup EXIT INT TERM HUP
-
-swap_workspace_deps_to_tarballs "$HUB_DIR" "${SOVEREIGN_PACKAGES[@]}"
 
 # ── build-info.json — deploy-truth stamp (C3-R1 M-Roll-Signal / idea-340) ─
 #
 # Stamp the image with the exact source it was built from so prod /health
 # can report {gitSha, builtAt} and CI can confirm the new image actually
-# rolled (closes the bug-107/DR-011 silent-deploy class). Generated INTO
-# the hub/ build context — `gcloud builds submit "$REPO_ROOT/hub"` uploads
-# hub/ AS the context (no --build-arg path), hub/Dockerfile COPYs it into
-# the prod stage, hub/src/index.ts reads it at boot. Transient: gitignored
+# rolled (closes the bug-107/DR-011 silent-deploy class). Generated at
+# hub/build-info.json — the Cloud Build context is the REPO ROOT, hub/Dockerfile
+# COPYs `hub` (incl. build-info.json) into the prod stage, hub/src/index.ts reads
+# it at boot (../build-info.json = /repo/hub/build-info.json). Transient: gitignored
 # + removed by hub_build_cleanup; regenerated every build. gitSha prefers
 # the CI-authoritative GITHUB_SHA (so it equals github.sha for the
 # deploy-hub.yml roll-confirm), falls back to local HEAD.
@@ -170,14 +162,25 @@ echo "[build-hub] build-info: gitSha=$BUILD_GIT_SHA builtAt=$BUILD_BUILT_AT"
 echo "[build-hub] OIS_ENV:  $OIS_ENV"
 echo "[build-hub] Project:  $PROJECT_ID"
 echo "[build-hub] Region:   $REGION"
-echo "[build-hub] Source:   $REPO_ROOT/hub"
+echo "[build-hub] Source:   $REPO_ROOT (root context; -f hub/Dockerfile)"
 echo "[build-hub] Remote:   $REMOTE_TAG"
 echo "[build-hub] Local:    $LOCAL_TAG"
 echo "[build-hub] ──────── Cloud Build submit ────────"
 
-gcloud builds submit "$REPO_ROOT/hub" \
+# Root-context build (npm workspaces): the `--tag` shorthand only builds a
+# ROOT Dockerfile, so submit an explicit config pointing at hub/Dockerfile with
+# the repo root as context. The root .gcloudignore keeps the upload lean.
+CB_CONFIG="$(mktemp)"
+cat > "$CB_CONFIG" <<EOF
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'hub/Dockerfile', '-t', '${REMOTE_TAG}', '.']
+images:
+  - '${REMOTE_TAG}'
+EOF
+gcloud builds submit "$REPO_ROOT" \
   --project "$PROJECT_ID" \
-  --tag "$REMOTE_TAG" \
+  --config "$CB_CONFIG" \
   --quiet
 
 # CI hosts (e.g. .github/workflows/deploy-hub.yml) push the image to

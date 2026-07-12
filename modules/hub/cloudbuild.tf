@@ -88,28 +88,14 @@ resource "google_cloudbuild_trigger" "hub_image" {
       args = ["clone", "--depth=1", "--branch", var.source_repo_branch, var.source_repo_url, "."]
     }
 
-    # 2. Stage sovereign packages into hub/ as tarballs (the Hub depends on
-    #    them via file:../packages/* refs that don't survive the build
-    #    context). Mirrors scripts/local/build-hub.sh.
-    step {
-      id         = "stage-sovereign-packages"
-      name       = "node:22"
-      entrypoint = "bash"
-      args = ["-c", <<-EOT
-        set -euo pipefail
-        source scripts/build/lib/transient-package-swap.sh
-        swap_workspace_deps_to_tarballs hub \
-          "@apnex/storage-provider:packages/storage-provider" \
-          "@apnex/repo-event-bridge:packages/repo-event-bridge"
-      EOT
-      ]
-    }
-
-    # 3. Build the Hub image.
+    # 2. Build the Hub image from the REPO ROOT context (idea-186 npm
+    #    workspaces): @apnex/* resolve natively via the root workspace +
+    #    committed root lockfile; hub/Dockerfile runs `npm ci` in-container.
+    #    No transient tarball staging (cleanslate0 hub_rebase).
     step {
       id   = "build-hub"
       name = "gcr.io/cloud-builders/docker"
-      args = ["build", "-t", "${local.registry_prefix}/hub:latest", "hub"]
+      args = ["build", "-t", "${local.registry_prefix}/hub:latest", "-f", "hub/Dockerfile", "."]
     }
 
     # 4. Build the nginx ingress-proxy image.

@@ -19,10 +19,18 @@ COPY package.json package-lock.json ./
 COPY hub/package.json ./hub/
 COPY packages/storage-provider/package.json ./packages/storage-provider/
 COPY packages/repo-event-bridge/package.json ./packages/repo-event-bridge/
-RUN npm ci --workspace=hub --include-workspace-root --ignore-scripts --no-audit --no-fund
+# Install all THREE build-target workspaces (not just hub) so their devDeps
+# (typescript etc.) are present for the tsc build below.
+RUN npm ci --workspace=@apnex/storage-provider \
+           --workspace=@apnex/repo-event-bridge \
+           --workspace=hub \
+           --include-workspace-root --ignore-scripts --no-audit --no-fund
 
-# 2. Source for the 3 build targets, then explicit TOPOLOGICAL build (deps first).
-#    (Replaces the retired `prepare` cascade, which auto-built these on install.)
+# 2. Source for the 3 build targets + the shared build scripts (the packages'
+#    `prebuild` hook runs ../../scripts/build/write-build-info.js), then the
+#    explicit TOPOLOGICAL build (deps first — replaces the retired `prepare`
+#    cascade, which auto-built these on install).
+COPY scripts ./scripts
 COPY packages/storage-provider ./packages/storage-provider
 COPY packages/repo-event-bridge ./packages/repo-event-bridge
 COPY hub ./hub
@@ -30,8 +38,9 @@ RUN npm run build --workspace=@apnex/storage-provider \
                   --workspace=@apnex/repo-event-bridge \
                   --workspace=hub
 
-# 3. Drop dev deps for a lean runtime tree (keeps prod deps + workspace symlinks).
-RUN npm prune --omit=dev --workspace=hub --include-workspace-root --ignore-scripts
+# 3. Drop dev deps for a lean runtime tree (keeps prod deps + workspace symlinks
+#    + the built dist).
+RUN npm prune --omit=dev --ignore-scripts
 
 # ── Production stage ──────────────────────────────────────────────────
 FROM node:22-slim

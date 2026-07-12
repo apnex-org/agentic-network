@@ -1,6 +1,4 @@
 node_modules/
-apnex-storage-provider-*.tgz
-apnex-repo-event-bridge-*.tgz
 # Transient deploy-truth stamp generated per build by
 # scripts/local/build-hub.sh (C3-R1 M-Roll-Signal / idea-340); never committed.
 build-info.json

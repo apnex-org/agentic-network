@@ -43,66 +43,46 @@ jobs:
   vitest-hub:
     runs-on: ubuntu-latest
     name: vitest (hub)
-    defaults:
-      run:
-        working-directory: hub
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: hub/package-lock.json
-      # Pre-build sovereign packages before hub install. file: deps' `prepare`
-      # hooks fire on hub's npm install but cannot succeed without the package's
-      # OWN devDeps (@types/node, typescript, @google-cloud/storage) being
-      # installed first — and npm install of file: deps does NOT recurse to
-      # install their devDeps. So we install + build each package explicitly
-      # first; hub install then sees usable dist/ in node_modules.
-      # Reverts to single hub install when idea-186 (npm workspaces) lands.
-      - name: Install + build sovereign packages
-        working-directory: ${{ github.workspace }}
-        run: |
-          npm install --no-audit --no-fund --prefix packages/storage-provider
-          npm run build --prefix packages/storage-provider
-          npm install --no-audit --no-fund --prefix packages/repo-event-bridge
-          npm run build --prefix packages/repo-event-bridge
-      - name: Install hub
-        run: npm install --no-audit --no-fund
+          cache-dependency-path: package-lock.json
+      # idea-186 npm workspaces (cleanslate0 hub_rebase): hub is a root
+      # workspace. Scoped install of the build-target workspaces from the ROOT
+      # lockfile, then an explicit topological build (deps before hub) — replaces
+      # the retired per-package `prepare` cascade + the old --prefix pre-installs.
+      - name: Install hub workspace (scoped)
+        run: npm ci --workspace=@apnex/storage-provider --workspace=@apnex/repo-event-bridge --workspace=hub --include-workspace-root --no-audit --no-fund
+      - name: Build sovereign packages + hub (topological)
+        run: npm run build --workspace=@apnex/storage-provider --workspace=@apnex/repo-event-bridge --workspace=hub
       - name: Test
-        run: npm test
+        run: npm test --workspace=hub
 
   # ── Required coverage-spec-sync gate ─────────────────────────────────
   coverage-report-sync:
     runs-on: ubuntu-latest
     name: workflow-test-coverage in-sync
-    defaults:
-      run:
-        working-directory: hub
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: hub/package-lock.json
-      - name: Install + build sovereign packages
-        working-directory: ${{ github.workspace }}
-        run: |
-          npm install --no-audit --no-fund --prefix packages/storage-provider
-          npm run build --prefix packages/storage-provider
-          npm install --no-audit --no-fund --prefix packages/repo-event-bridge
-          npm run build --prefix packages/repo-event-bridge
-      - name: Install hub deps
-        run: npm install --no-audit --no-fund
+          cache-dependency-path: package-lock.json
+      - name: Install hub workspace (scoped)
+        run: npm ci --workspace=@apnex/storage-provider --workspace=@apnex/repo-event-bridge --workspace=hub --include-workspace-root --no-audit --no-fund
+      - name: Build sovereign packages + hub (topological)
+        run: npm run build --workspace=@apnex/storage-provider --workspace=@apnex/repo-event-bridge --workspace=hub
       - name: Regenerate coverage report
-        run: npm run coverage:invariants
+        run: npm run coverage:invariants --workspace=hub
       - name: Verify committed report matches
-        working-directory: ${{ github.workspace }}
         run: |
           if ! git diff --quiet -- docs/audits/workflow-test-coverage.md; then
             echo "::error::docs/audits/workflow-test-coverage.md is out of sync."
-            echo "Run 'cd hub && npm run coverage:invariants' locally and commit the regenerated file."
+            echo "Run 'npm run coverage:invariants --workspace=hub' locally and commit the regenerated file."
             git diff -- docs/audits/workflow-test-coverage.md
             exit 1
           fi

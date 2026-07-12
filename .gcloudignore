@@ -1,0 +1,14 @@
+# Root build context for the Hub Cloud Build (cleanslate0 hub_rebase — context
+# widened from hub/ to the repo root for npm-workspace resolution). gcloud builds
+# submit reads .gcloudignore if present (else .gitignore). Keep the upload lean:
+# deps install in-container (npm ci from the root lockfile), dist builds
+# in-container. hub/build-info.json (the transient deploy-truth stamp) is NOT
+# excluded here — it must upload for hub/Dockerfile's `COPY hub ./hub`.
+**/node_modules
+.git
+**/dist
+**/*.tgz
+**/*.log
+**/.DS_Store
+coverage
+.claude
