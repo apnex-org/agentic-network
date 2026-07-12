@@ -50,9 +50,21 @@ function safeExitOk(cmd) {
   }
 }
 
-const sha = safeExec("git rev-parse --short HEAD", "unknown");
-const dirty = safeExec("git status --porcelain", "") !== "";
-const branch = safeExec("git rev-parse --abbrev-ref HEAD", "unknown");
+// Provenance overrides (idea-493). The publish path (scripts/publish-packages.sh
+// + .github/workflows/publish-npm.yml) rewrites cross-@apnex deps `*` → `^X.Y.Z`
+// via scripts/version-rewrite.js RIGHT BEFORE pack — which modifies tracked
+// package.jsons and so makes the tree dirty. This prepack stamp fires AFTER that
+// rewrite, so a live `git status` would flag `dirty: true` over our OWN transient
+// publish churn, and the published commitSha would stop attesting the artifact.
+// To keep the stamp honest, the publish path captures the VERIFIED-CLEAN source
+// identity BEFORE the rewrite and exports it here; when present we honor it. Absent
+// (dev / workspace / hub-vendor builds) we fall back to live git — unchanged.
+const sha = process.env.OIS_BUILD_SHA || safeExec("git rev-parse --short HEAD", "unknown");
+const dirty =
+  process.env.OIS_BUILD_DIRTY !== undefined
+    ? process.env.OIS_BUILD_DIRTY === "true"
+    : safeExec("git status --porcelain", "") !== "";
+const branch = process.env.OIS_BUILD_BRANCH || safeExec("git rev-parse --abbrev-ref HEAD", "unknown");
 
 const buildInfo = {
   commitSha: sha,

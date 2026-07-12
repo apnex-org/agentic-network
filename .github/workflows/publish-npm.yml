@@ -13,10 +13,12 @@ name: publish-npm
 #
 # Safe publish path: scripts/publish-packages.sh publishes an EXPLICIT package
 # list in topological order and HOISTS the version-rewrite (* → ^X.Y.Z) with a
-# trap-revert. This avoids two traps: (a) `npm publish --workspaces` would
-# attempt private/non-registry workspaces (opencode/storage-provider/
-# repo-event-bridge are not private:true); (b) `npm publish --workspace=X` skips
-# root's prepublishOnly rewrite (calibration #35) and would ship `*` deps.
+# trap-revert. This avoids two traps: (a) `npm publish --workspaces` publishes
+# every non-private workspace with no topological-order control (storage-provider
+# + repo-event-bridge are now private:true — cleanslate0 npm_dedual — so they are
+# correctly skipped, but the explicit list still gives us the required publish
+# ORDER); (b) `npm publish --workspace=X` skips root's prepublishOnly rewrite
+# (calibration #35) and would ship `*` deps.
 #
 # Auth: setup-node writes a project .npmrc wired to NODE_AUTH_TOKEN; the script's
 # .npmrc preflight is satisfied by that file, and NPM_TOKEN (repo secret) drives
@@ -49,6 +51,28 @@ jobs:
           # Full history: the version-bump --assert gate (prepack) does a git
           # ancestry check (versionCommit vs latest src/ commit).
           fetch-depth: 0
+
+      # Provenance gate (idea-493): a fresh checkout MUST be pristine. Fail-closed
+      # BEFORE we build/publish so an unattestable (dirty) artifact can never reach
+      # the registry. Then stamp the verified-clean sha/dirty/branch into the job
+      # env so EVERY build-info.json — including the prepack re-stamp that fires
+      # AFTER publish-packages.sh's `*` → `^X.Y.Z` version-rewrite — attests the
+      # true source instead of flagging our own transient rewrite churn as dirty.
+      # (Build artifacts — dist/, node_modules, setup-node's .npmrc — are all
+      # gitignored, so a clean source checkout reads clean here.)
+      - name: Provenance gate (clean tree + honest build-info stamp)
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::working tree dirty at checkout — refusing to publish unattestable artifacts (idea-493)"
+            git status --porcelain
+            exit 1
+          fi
+          {
+            echo "OIS_BUILD_SHA=$(git rev-parse --short HEAD)"
+            echo "OIS_BUILD_DIRTY=false"
+            echo "OIS_BUILD_BRANCH=$(git rev-parse --abbrev-ref HEAD)"
+          } >> "$GITHUB_ENV"
+          echo "provenance: $(git rev-parse --short HEAD) clean on $(git rev-parse --abbrev-ref HEAD)"
 
       # registry-url makes setup-node write a project .npmrc that reads
       # NODE_AUTH_TOKEN — satisfies publish-packages.sh's .npmrc preflight AND
