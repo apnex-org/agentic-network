@@ -19,8 +19,8 @@
   "author": "",
   "type": "module",
   "dependencies": {
-    "@apnex/repo-event-bridge": "file:../packages/repo-event-bridge",
-    "@apnex/storage-provider": "file:../packages/storage-provider",
+    "@apnex/repo-event-bridge": "*",
+    "@apnex/storage-provider": "*",
     "@google-cloud/storage": "^7.19.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/pg": "^8.20.0",

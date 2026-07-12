@@ -14,7 +14,6 @@
     "prebuild": "node ../../scripts/build/write-build-info.js",
     "build": "tsc",
     "prepack": "node ../../scripts/build/write-build-info.js --assert",
-    "prepare": "npm run build",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest"

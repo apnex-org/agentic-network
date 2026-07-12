@@ -6,7 +6,8 @@
   "description": "OIS agentic-network monorepo root — workspaces wrapper for packages/* + adapters/*. Not published to registry; per-workspace publishing per scripts/publish-packages.sh.",
   "workspaces": [
     "packages/*",
-    "adapters/*"
+    "adapters/*",
+    "hub"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
