@@ -36,6 +36,13 @@ CFG="$ROOT/config"
 SEC="$ROOT/secrets"
 STATE="$ROOT/state"
 
+# bug-247: transport-neutral interactive-prompt handling. The pure resolver lib is deployed
+# beside this script (deploy.sh co-ships it); the handler table lives under config/. If the
+# lib is absent (un-migrated estate), cmd_up simply does no auto-handling — never a hard fail.
+_OIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -r "$_OIS_DIR/prompt-resolve.sh" ]]; then source "$_OIS_DIR/prompt-resolve.sh"; fi
+PROMPT_HANDLERS="${OIS_PROMPT_HANDLERS:-$CFG/prompt-handlers.json}"
+
 # npmdeliver0 (idea-492): the Claude agent-adapter plugin ships via the npm registry
 # (single channel; the Channel-2 GitHub-Release tarball is retired). EXACT pin — never
 # @latest (silent drift); deploy.sh can grep-guard this token.
@@ -590,8 +597,30 @@ harness_log_marker() { # $1 harness -> "logfile-rel|marker-regex"
   esac
 }
 
+# bug-247: thin TMUX transport adapter over the transport-neutral resolver (prompt-resolve.sh).
+# Captures the pane, asks prompt_resolve for the first not-yet-fired handler whose guard AND
+# detect fully match, and maps its abstract respond tokens to keystrokes. The ONLY transport
+# verbs (capture-pane/send-keys) live HERE; every matching decision is in the pure lib (also
+# exercised by test/test-prompt-resolve.sh through a mock stdout adapter). Fail-safe: no lib,
+# empty pane, or no confident match => does nothing. $4 is a nameref to the fire-once CSV.
+_pane_handle_prompts() {
+  local sess="$1" harness="$2" largs="$3"; local -n _fired="$4"
+  declare -F prompt_resolve >/dev/null || return 0
+  local pane resp id tok
+  pane=$(tmux capture-pane -pt "$sess" 2>/dev/null || true)
+  [[ -n "$pane" ]] || return 0
+  resp=$(prompt_resolve "$PROMPT_HANDLERS" "$harness" "$largs" "$_fired" "$pane")
+  id=$(printf '%s\n' "$resp" | sed -n '1p')
+  [[ -n "$id" ]] || return 0                                # no confident match -> fall through
+  while IFS= read -r tok; do
+    [[ -n "$tok" ]] && tmux send-keys -t "$sess" "$tok"
+  done < <(printf '%s\n' "$resp" | tail -n +2)
+  _fired="${_fired:+$_fired,}$id"
+  echo "  · prompt handled: $id"
+}
+
 cmd_up() {
-  local a="$1" h="$2" c ws s lm logf marker pre banner=0 ok=0 pane new i
+  local a="$1" h="$2" c ws s lm logf marker pre fired="" ok=0 new i
   # work-157 (bug-235): trailing args after <agent> <harness> are harness launch
   # passthrough (e.g. `ois up lily claude -c` to resume). do_launch already execs
   # them onto the harness command; here we thread them through the tmux launch
@@ -613,10 +642,9 @@ cmd_up() {
   for i in $(seq 1 60); do
     sleep 2
     tmux has-session -t "$s" 2>/dev/null || { echo "  ✗ session exited during startup — check $logf"; return 1; }
-    if [[ "$h" == "claude" && $banner -eq 0 ]]; then
-      pane=$(tmux capture-pane -pt "$s" 2>/dev/null || true)
-      echo "$pane" | grep -qi "local development" && { banner=1; tmux send-keys -t "$s" Enter; echo "  · dev-channels banner accepted"; }
-    fi
+    # bug-247: table-driven interactive-prompt handling (dev-channels banner, resume-mode, …)
+    # via the transport-neutral resolver. Guards/detect/respond are DATA in prompt-handlers.json.
+    _pane_handle_prompts "$s" "$h" "${largs[*]-}" fired
     new=$(tail -n +$((pre+1)) "$logf" 2>/dev/null)
     echo "$new" | grep -q "FATAL" && { echo "  ✗ harness FATAL:"; echo "$new" | grep FATAL | head -2 | sed 's/^/    /'; return 1; }
     echo "$new" | grep -qiE "$marker" && { ok=1; break; }

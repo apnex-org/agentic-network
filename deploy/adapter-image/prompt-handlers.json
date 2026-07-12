@@ -1,0 +1,29 @@
+{
+  "_doc": "ois interactive-prompt handler table (bug-247). TRANSPORT-NEUTRAL, PURE DATA — consumed by prompt-resolve.sh. Contains ZERO transport verbs (no tmux/capture-pane/send-keys); a transport adapter (ois's tmux wrapper; the mock stdout adapter in test/; a future in-container prompt-supervisor over a different transport) maps the abstract respond tokens to real keystrokes.",
+  "_contract": {
+    "guard": "Preconditions that must ALL hold for the handler to be eligible. 'harness' (absent = any) must equal the launching harness; 'launchArgsContains' (absent = unconditional) must be a substring of the joined launch args. FAIL-SAFE: guard miss => fall through, never respond.",
+    "detect": "Ordered list of substrings that must ALL appear in the captured pane text for a confident match. A partial/ambiguous pane (any substring missing) => fall through.",
+    "respond": "Ordered ABSTRACT key tokens applied on a confident match. A token is either a tmux/terminal key name (Enter, Down, Up, Space, Escape, Tab) or a literal character/string (e.g. \"2\"). The adapter maps each token to one keystroke.",
+    "once": "Fire at most once per session (tracked by handler id).",
+    "_rule": "A handler responds ONLY when every guard AND every detect substring match. Anything less falls through with no keystroke — cmd_up is the fleet seat-launch/resume path, so ambiguity is fail-closed."
+  },
+  "version": 1,
+  "handlers": [
+    {
+      "id": "claude-dev-channels-banner",
+      "guard": { "harness": "claude" },
+      "detect": ["local development"],
+      "respond": ["Enter"],
+      "once": true,
+      "_why": "The --dangerously-* dev-channels confirmation banner Claude shows once per session; there is no config bypass, so cmd_up must accept it to reach the hub handshake."
+    },
+    {
+      "id": "claude-resume-mode-full",
+      "guard": { "harness": "claude", "launchArgsContains": "-c" },
+      "detect": ["Resume full session as-is"],
+      "respond": ["Down", "Enter"],
+      "once": true,
+      "_why": "bug-247: `claude -c` resuming a compacted seat shows an Ink select menu (header 'Summarized conversation') with options compact/continue/never. We select option 2 'Resume full session as-is' (value 'continue') to preserve COMPLETE context, not the recommended summary. Default cursor is index 0 (no initialIndex in the binary) so Down moves to index 1, Enter selects. detect is the exact, menu-unique option label. VALIDATION: mechanics are ground-truthed from the claude binary (exact labels + option order + no-initialIndex default) and confirmed live on the IDENTICAL Ink <select> (Down navigates, Enter selects, number-keys ignored); resolver detect/respond are covered by test-prompt-resolve.sh. The end-to-end auto-answer of the LIVE menu is tracked as the node's resume-validate evidence — note the menu is gated by claude's session token/time/auth state (CLAUDE_CODE_RESUME_TOKEN_THRESHOLD etc.), so it surfaces only under those conditions."
+    }
+  ]
+}
