@@ -65,8 +65,6 @@ The repository still keeps the legacy self-contained bundle path:
 
 ```bash
 npm run bundle --workspace=@apnex/opencode-plugin
-# or, for the legacy release gate:
-scripts/build/release-opencode-plugin.sh
 ```
 
 That bundle emits `adapters/opencode-plugin/dist/shim.js`, inlines the `@apnex/*` runtime graph, and exports only `HubPlugin`. It is retained as a migration bridge for existing GitHub/source consumers, not as the canonical long-term distribution channel.

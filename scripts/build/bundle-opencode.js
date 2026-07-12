@@ -34,7 +34,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const writeBuildInfo = resolve(scriptDir, "write-build-info.js");
 
 // 1. Stamp dist/build-info.json (bundle git sha). Stamp-only — the --assert
-//    version-bump gate is a separate ship-path step (release-opencode-plugin.sh).
+//    version-bump gate is a separate ship-path step (publish-packages.sh).
 execSync(`node ${JSON.stringify(writeBuildInfo)}`, {
   cwd: pkgDir,
   stdio: ["ignore", "ignore", "inherit"],

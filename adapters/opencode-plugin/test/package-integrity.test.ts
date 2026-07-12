@@ -167,9 +167,5 @@ describe("opencode-plugin package/bundle integrity", () => {
     expect(bundleScript).toContain("legacy GitHub/source-bundle bridge");
     expect(bundleScript).toContain("__OPENCODE_BUILD_INFO__");
     expect(bundleScript).toContain("__NETWORK_ADAPTER_VERSION__");
-
-    const releaseScript = readRepoText("scripts/build/release-opencode-plugin.sh");
-    expect(releaseScript).toContain("compatibility bridge");
-    expect(releaseScript).toContain("HubPlugin-only export surface");
   });
 });
