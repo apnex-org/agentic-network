@@ -48,10 +48,10 @@ cd "$REPO_ROOT"
 #   6. pi-plugin        (deps on network-adapter; M-Shim-Distribution) — after net-adapter
 #
 # storage-provider + repo-event-bridge: workspace-only (not for the registry).
-# NOTE: these are NOT marked `private:true`, so a blanket `npm publish --workspaces`
-#   would wrongly attempt them — that is exactly why this script publishes an
-#   EXPLICIT list (+ hoists version-rewrite, which `npm publish --workspace=X`
-#   skips per calibration #35).
+# They are now marked `private:true` (cleanslate0 npm_dedual), so `npm publish`
+#   fail-closes on them anyway; this script still publishes an EXPLICIT list
+#   (rather than `--workspaces`) because it also hoists version-rewrite, which
+#   `npm publish --workspace=X` skips per calibration #35.
 PACKAGES=(
   "@apnex/cognitive-layer"
   "@apnex/message-router"
@@ -114,6 +114,45 @@ echo "[publish-packages] Pre-flight checks passed"
 # rewrite call here as architect-lean (a): single-source-of-truth; bypasses
 # npm lifecycle quirk; controls the whole flow.
 #
+# ── Provenance capture (idea-493) ───────────────────────────────────
+# The authoritative fail-closed clean-tree GATE runs UPSTREAM at the only correct
+# moment — post-checkout, PRE-install/pre-rewrite (.github/workflows/publish-npm.yml).
+# By the time THIS script runs, the caller has already `npm install`ed (which
+# rewrites the TRACKED package-lock.json) and is about to version-rewrite the
+# package.jsons, so a `git status` here CANNOT distinguish real source drift from
+# expected tooling churn — gating on it would false-fail every publish. So: TRUST
+# the caller-provided provenance when present (CI exports OIS_BUILD_* from the gate
+# via $GITHUB_ENV) and pass it through to write-build-info.js — fired by each
+# `npm publish` prepack, AFTER version-rewrite — so the stamp attests the true
+# pre-rewrite source rather than our own churn. For a bare LOCAL run with no
+# upstream gate, best-effort capture sha/branch and WARN to publish from a clean
+# tree (the CI tag path is the attestable release path; local is a fallback).
+if [ -z "${OIS_BUILD_SHA:-}" ]; then
+  # DIRECT/LOCAL path — no upstream YAML gate vouched for the tree. The script
+  # still supports a real `source greg.env && ./publish-packages.sh` publish (its
+  # NPM_TOKEN/.npmrc preflights exist for exactly that; it was the pre-CI method),
+  # so close the provenance hole HERE too — but ONLY on this env-absent path, so
+  # the CI env-vouched path (OIS_BUILD_SHA already set) is NEVER re-gated and can't
+  # regress. Measure genuine SOURCE dirt, ignoring the package-lock.json churn
+  # `npm install` legitimately produces (preflight already required node_modules);
+  # version-rewrite has not run yet, so the package.jsons are still pristine here.
+  export OIS_BUILD_SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  export OIS_BUILD_BRANCH="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+  if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- ':!package-lock.json' 2>/dev/null || true)" ]; then
+    if [ -z "$DRY_RUN" ]; then
+      echo "[publish-packages] ✗ dirty source tree (no upstream gate) — refusing to publish unattestable artifacts (idea-493). Commit/clean the tree, or publish via the CI tag path."
+      git -C "$REPO_ROOT" status --porcelain -- ':!package-lock.json'
+      exit 3  # unrecoverable: cannot attest a dirty-tree publish
+    fi
+    echo "[publish-packages] ⚠ dirty source (excl. lockfile) — dry-run continues, but a real direct publish would REFUSE (idea-493)."
+    export OIS_BUILD_DIRTY="${OIS_BUILD_DIRTY:-true}"
+  else
+    export OIS_BUILD_DIRTY="${OIS_BUILD_DIRTY:-false}"
+    echo "[publish-packages] no upstream gate (idea-493) — source clean (excl. lockfile)."
+  fi
+fi
+echo "[publish-packages] Provenance: sha=$OIS_BUILD_SHA dirty=$OIS_BUILD_DIRTY branch=$OIS_BUILD_BRANCH"
+
 # Trap revert on any exit (success or failure) so source-tree always returns
 # to placeholder state for dev workflow continuity.
 echo ""

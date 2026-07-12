@@ -31,6 +31,11 @@ trap 'rm -rf "$TMP_BASE"' EXIT
 PASS=0
 FAIL=0
 
+# Cases 1-3 verify the git-derived FALLBACK path — unset the idea-493 provenance
+# overrides so ambient env (e.g. a publish shell) can't leak in and skew them.
+# Case 4 sets them explicitly to verify the override.
+unset OIS_BUILD_SHA OIS_BUILD_DIRTY OIS_BUILD_BRANCH
+
 assert() {
   local desc="$1" expected="$2" actual="$3"
   if [ "$expected" = "$actual" ]; then
@@ -106,6 +111,23 @@ NOGIT_BRANCH=$(node -e "console.log(JSON.parse(require('fs').readFileSync('dist/
 assert "no-git: commitSha=unknown" "unknown" "$NOGIT_SHA"
 assert "no-git: dirty=false (git status fails → empty → not non-empty)" "false" "$NOGIT_DIRTY"
 assert "no-git: branch=unknown" "unknown" "$NOGIT_BRANCH"
+
+# ── Case 4: idea-493 provenance override ──────────────────────────────
+# The publish path captures the VERIFIED-CLEAN source identity BEFORE
+# version-rewrite.js dirties the tree, and exports OIS_BUILD_SHA/DIRTY/BRANCH so
+# this prepack stamp (which fires AFTER the rewrite) attests the true source
+# rather than the transient rewrite churn. Reuse the Case-2 repo, which still has
+# untracked.txt (live git → dirty=true); the exported OIS_BUILD_DIRTY=false must
+# win, proving a genuinely-dirty live tree can't override an explicit clean stamp.
+echo "Case 4: idea-493 provenance-override case"
+cd "$CLEAN_DIR"
+OIS_BUILD_SHA="abc1234" OIS_BUILD_DIRTY="false" OIS_BUILD_BRANCH="release" node "$SCRIPT" >/dev/null
+OVR_SHA=$(node -e "console.log(JSON.parse(require('fs').readFileSync('dist/build-info.json','utf-8')).commitSha)")
+OVR_DIRTY=$(node -e "console.log(JSON.parse(require('fs').readFileSync('dist/build-info.json','utf-8')).dirty)")
+OVR_BRANCH=$(node -e "console.log(JSON.parse(require('fs').readFileSync('dist/build-info.json','utf-8')).branch)")
+assert "override: commitSha honors OIS_BUILD_SHA" "abc1234" "$OVR_SHA"
+assert "override: dirty honors OIS_BUILD_DIRTY=false despite dirty tree" "false" "$OVR_DIRTY"
+assert "override: branch honors OIS_BUILD_BRANCH" "release" "$OVR_BRANCH"
 
 # ── Result ────────────────────────────────────────────────────────────
 echo ""
