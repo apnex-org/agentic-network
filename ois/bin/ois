@@ -624,9 +624,28 @@ cmd_up() {
   # work-157 (bug-235): trailing args after <agent> <harness> are harness launch
   # passthrough (e.g. `ois up lily claude -c` to resume). do_launch already execs
   # them onto the harness command; here we thread them through the tmux launch
-  # string. DEFAULT stays fresh-start — nothing is auto-injected.
+  # string. Fresh-start is the default; the one exception is a claude seat with a prior
+  # session, which auto-resumes (idea-494, just below).
   shift 2; local -a largs=("$@")
   c=$(cell_json "$a" "$h"); ws=$(expand "$(jq -r '.workspace' <<<"$c")"); s=$(session_name "$a" "$h")
+  # resfix0/idea-494 (Director Option A — durable roll-forward): a claude seat launched with
+  # NO explicit args AND a prior session for its workspace gets `-c` injected into largs, so
+  # (a) bug-247's resume-menu handler fires (guard = launchArgsContains:"-c") and a compacted
+  # seat auto-answers the summary/full menu, and (b) fresh/no-session seats are SKIPPED —
+  # `claude -c` errors 'No conversation found to continue' with no prior session (unlike pi).
+  # Detection = claude's OWN -c criterion: a *.jsonl under the seat's
+  # CLAUDE_CONFIG_DIR/projects/<workspace-slug>/ (claude keys sessions by cwd=workspace,
+  # '/'->'-'). A false detection can only mis-miss (safe fresh start), never mis-fire, because
+  # it reads the same store claude does. Explicit largs are always respected.
+  if [[ "$h" == "claude" && ${#largs[@]} -eq 0 ]]; then
+    local cdir slug
+    cdir=$(jq -r '.configDirTemplate // empty' <<<"$c"); cdir=${cdir//\{agent\}/$a}; cdir=$(expand "$cdir")
+    slug=${ws//\//-}
+    if [[ -n "$cdir" ]] && compgen -G "$cdir/projects/$slug/*.jsonl" >/dev/null 2>&1; then
+      largs=(-c)
+      echo "  · prior claude session for $ws → auto-resume (-c)"
+    fi
+  fi
   command -v tmux >/dev/null 2>&1 || fatal "'tmux' required for ois up"
   tmux has-session -t "$s" 2>/dev/null && fatal "session $s already running (ois down $a $h first)"
   # displacement guard: one live harness per agent (hub allows one session per identity)
