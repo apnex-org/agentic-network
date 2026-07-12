@@ -72,62 +72,6 @@ REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy"
 REMOTE_TAG="${HUB_IMAGE_TAG:-${REGISTRY}/hub:latest}"
 LOCAL_TAG="ois-hub:local"
 
-# ── Sovereign-package tarball staging (mission-50 T1+T5; task-386 ext.) ─
-#
-# Hub depends on multiple sovereign packages via `file:../packages/...`
-# refs in hub/package.json. Those refs work for local dev
-# (`cd hub && npm install`) but not for Cloud Build: the build context
-# is hub/ only — `..` escapes the upload.
-#
-# Pre-build hook: for each sovereign package, `npm pack` it into hub/
-# as a tarball and rewrite the corresponding `file:../packages/<pkg>`
-# ref in a transient hub/package.json swap to `file:./<tarball>`, then
-# let `gcloud builds submit hub/` upload the prepared directory. The
-# container resolves its own dep tree at build time (Dockerfile uses
-# `npm install`, not `npm ci`). A trap on EXIT/INT/TERM/HUP restores
-# package.json and removes ALL staged tarballs, so committed state
-# stays clean even on signal interrupt.
-#
-# Adding a sovereign package = append one entry to SOVEREIGN_PACKAGES
-# below + add matching `COPY ois-<pkg>-*.tgz ./` lines to hub/Dockerfile
-# (both stages) + add matching exclusion to hub/.gitignore + add matching
-# `!ois-<pkg>-*.tgz` re-include to hub/.gcloudignore.
-#
-# Why the script does NOT regenerate hub/package-lock.json (bug-38, T5):
-# Earlier mission-50 iterations regenerated the lockfile on the host
-# before the gcloud upload (T1: `npm install --package-lock-only`; T4:
-# full `npm install`). Both produced lockfiles that were structurally
-# fragile against (a) host-vs-container npm/node version drift (host
-# npm 11 / node 24 vs container npm 10 / node 22), (b) registry state
-# at regen time (different runs produced different @emnapi/* version
-# pinnings), and (c) operator-environment variation (different hosts
-# produce different lockfiles for identical inputs). The Cloud Build
-# container demanded multiple @emnapi/* versions simultaneously that
-# host-side regen could not consistently produce. T5 removed host-side
-# regen entirely; the container does its own resolution against the
-# swap-modified package.json (file:./tarball ref) using its own
-# toolchain. Tradeoff: Dockerfile uses `npm install` not `npm ci` for
-# the build path, so strict lockfile-validation is removed for that
-# path — acceptable because the lockfile was already transient (regen
-# per build before T5; never reaching commit-state-strictness anyway)
-# and `cd hub && npm install` local dev keeps using the committed
-# lockfile via the file:../packages/<pkg> refs.
-#
-# TODO(idea-186): When npm workspaces lands, this transient-swap hook
-# becomes obsolete — workspaces resolve internal packages without
-# tarball staging. Sunset condition: idea-186 ratified + Hub migrated
-# to workspace resolution. At that point, delete this entire section,
-# the `COPY ois-<pkg>-*.tgz` lines from hub/Dockerfile (one per
-# sovereign package), the tarball exclusions from hub/.gitignore, and
-# hub/.gcloudignore; the Dockerfile's `npm install` reverts to `npm ci`
-# for strict lockfile-validation against the committed
-# (workspaces-resolved) lockfile.
-#
-# Lib-extracted (M-GitHub-Releases-Plugin-Distribution Design v1.0 §1.4):
-# the pack-and-swap-then-restore primitive lives at
-# scripts/build/lib/transient-package-swap.sh (also consumed by
-# modules/hub/cloudbuild.tf for the prod Hub image build).
-
 HUB_DIR="$REPO_ROOT/hub"
 
 # idea-186 npm workspaces (cleanslate0 hub_rebase): the sovereign packages
