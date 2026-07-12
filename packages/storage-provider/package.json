@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Sovereign StorageProvider contract — CSI-inspired pluggable storage abstraction for the OIS agentic network",
   "type": "module",
+  "private": true,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [

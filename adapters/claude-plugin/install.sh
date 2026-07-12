@@ -75,15 +75,11 @@ elif [ ! -d "$PLUGIN_DIR/dist" ]; then
   exit 2
 fi
 
-# npm-installed (tarball-extract) mode: resolve sovereign deps from bundled
-# apnex-*.tgz tarballs that the release workflow staged into the package.
-# --no-save keeps the published package.json clean (consumer doesn't see
-# tarball-relative refs leak back). Source-tree context already has these
-# symlinked via the workspace root install.
-if [ "$CONTEXT" = "npm-installed" ]; then
-  echo "[install] Resolving bundled sovereign-package dependencies ..."
-  ( cd "$PLUGIN_DIR" && npm install --no-audit --no-fund --no-save )
-fi
+# npm-installed mode: the sovereign deps (@apnex/network-adapter etc.) resolve from the
+# npm REGISTRY. `npm install -g @apnex/claude-plugin` already nests them in this package's
+# own node_modules, so claude's plugin-cache copy resolves them with no second install
+# here. (The retired bundled-apnex-*.tgz path — release-plugin.yml / prepack-claude-plugin.sh
+# — is gone; npmdeliver0/cleanslate0.)
 
 # Cache invalidation per Design v1.0 §2.8: claude-plugin cache stomp
 # protection — wipe stale cache entry before plugin install so fresh dist/

@@ -16,8 +16,7 @@
     "src/",
     "test/",
     "lib/",
-    "skills/",
-    "apnex-*.tgz"
+    "skills/"
   ],
   "scripts": {
     "prebuild": "node ../../scripts/build/write-build-info.js",

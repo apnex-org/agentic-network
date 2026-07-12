@@ -20,7 +20,6 @@ describe("claude-plugin package/install integrity", () => {
       "QUICKSTART.md",
       "lib/",
       "skills/",
-      "apnex-*.tgz",
     ]));
     expect(pkg.main).toBe("dist/shim.js");
     expect(pkg.scripts.prebuild).toBe("node ../../scripts/build/write-build-info.js");
@@ -69,7 +68,7 @@ describe("claude-plugin package/install integrity", () => {
     expect(install).toContain("source-tree");
     expect(install).toContain("npm-installed");
     expect(install).toContain("npm-installed context but no dist/ found");
-    expect(install).toContain("npm install --no-audit --no-fund --no-save");
+    expect(install).toContain("npm REGISTRY");
     expect(install).toContain("Clearing stale cache");
     expect(install).toContain("claude plugin marketplace add");
     expect(install).toContain("claude plugin install");
