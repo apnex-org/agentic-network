@@ -70,7 +70,12 @@ cell_json() {
       # labels REPLACE wholesale across layers (never deep-merge) — same rule the hub
       # plugins apply to OIS_HUB_LABELS; deep-merging would leak fleet labels into
       # deliberately-reduced label sets (pitest isolation).
-      labels: (($ag.harness[$h] // {}).labels // $ag.labels // $d.labels),
+      # ois.io/github/login is DERIVED per-agent from gitIdentity.githubLogin (single
+      # source of truth; NOT a fleet default) — each seat registers its OWN gh identity
+      # so gh-login->role routing (pr-opened bilateral) resolves uniquely. Fixes bug-253
+      # identity-collision (all seats previously shared the fleet-wide "apnex" login).
+      labels: ((($ag.harness[$h] // {}).labels // $ag.labels // $d.labels // {})
+               + (if $ag.gitIdentity.githubLogin then {"ois.io/github/login": $ag.gitIdentity.githubLogin} else {} end)),
       fleetHub: .[0].hub,
       fleetCredentials: (.[0].credentials // {}),
       cellAgent: $a,
