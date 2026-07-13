@@ -173,10 +173,14 @@ export type {
 // tool-bridge) consumes the SAME per-call behavior wrapper the MCP CallTool
 // handler uses — without importing an MCP server. This is the concrete payoff of
 // the Slice-B extraction: one dispatch authority, many last-mile bindings.
-export { runToolDispatch } from "./tool-manager/dispatch/dispatch.js";
+export {
+  runToolDispatch,
+  DEFAULT_TRANSIENT_DROP_RETRY,
+} from "./tool-manager/dispatch/dispatch.js";
 export type {
   ToolDispatchContext,
   McpToolCallResult,
+  TransientDropRetryConfig,
 } from "./tool-manager/dispatch/dispatch.js";
 
 // Slice C: dispatcher is the orchestrator (binding assembly); dispatch authority

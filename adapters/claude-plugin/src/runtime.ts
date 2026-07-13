@@ -12,6 +12,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   buildPromptText,
   createSharedDispatcher,
+  DEFAULT_TRANSIENT_DROP_RETRY,
   isCacheValid,
   readCache,
   writeCache,
@@ -72,6 +73,9 @@ export async function createClaudeRuntime(opts: ClaudeRuntimeOptions): Promise<C
 
   const dispatcher = createSharedDispatcher({
     getAgent: () => opts.agent,
+    // bug-252: auto-retry a transient Hub-wire drop at the CallTool not-connected
+    // pre-check (idempotency-safe; production opt-in — tests stay default-off).
+    transientDropRetry: DEFAULT_TRANSIENT_DROP_RETRY,
     proxyVersion: opts.proxyVersion,
     serverName: opts.manifest.serverName,
     serverCapabilities: serverCapabilitiesFromManifest(opts.manifest),

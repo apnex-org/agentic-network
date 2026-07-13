@@ -32,6 +32,7 @@ import {
   buildPromptText,
   buildToastMessage,
   createSharedDispatcher,
+  DEFAULT_TRANSIENT_DROP_RETRY,
   assertHostWiringComplete,
   getActionText,
   isPulseEvent,
@@ -218,6 +219,9 @@ const activeProxyServers: Server[] = [];
 // post-connect rather than freezing the module-init env default.
 const dispatcher = createSharedDispatcher({
   getAgent: () => hubAdapter,
+  // bug-252: auto-retry a transient Hub-wire drop at the CallTool not-connected
+  // pre-check (idempotency-safe; production opt-in — tests stay default-off).
+  transientDropRetry: DEFAULT_TRANSIENT_DROP_RETRY,
   proxyVersion: PROXY_VERSION,
   serverName: "hub-proxy",
   serverCapabilities: { tools: {}, logging: {} },
