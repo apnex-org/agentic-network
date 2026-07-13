@@ -134,7 +134,7 @@ describe("golden-master S5 — desired-set shrink (unlink path, managed-scoped)"
   });
 });
 
-describe("golden-master S2 — T8 pending-next-turn is TOLERATED (loosened per lily ruling (a))", () => {
+describe("golden-master S2 — T8 pending (pi setActive lands next turn) is TOLERATED (loosened per lily ruling (a))", () => {
   it("a within-turn stale re-read is not-converged + NOT escalated; next turn converges", () => {
     const stub = new StubExtensionAPI();
     stub.nextTurnLatency = true; // setActive lands NEXT turn

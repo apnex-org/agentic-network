@@ -85,14 +85,15 @@ export class PiToolActuatorPort implements ResourceActuatorPort {
     }
 
     // Observe the MANAGED subset fresh (observed ∩ managed). pi's setActive lands the
-    // NEXT agent turn (T8): an immediate stale read → pending-next-turn (the loop
-    // tolerates it within-turn; only a cross-turn stall counts toward escalation).
+    // NEXT agent turn (T8) — this substrate's meaning of the neutral `pending`: an
+    // immediate stale read reports `pending`; the loop tolerates it within a pass and
+    // only a cross-pass stall (still stale a later pass) counts toward escalation.
     const observedManaged = this.pi
       .getActiveTools()
       .filter((n) => this.managed.has(n));
     const status = sameSet(observedManaged, managedEnabled)
       ? "converged"
-      : "pending-next-turn";
+      : "pending";
     return { status, desiredManaged: managedEnabled };
   }
 

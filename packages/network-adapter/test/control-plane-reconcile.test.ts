@@ -4,7 +4,7 @@
  * OPAQUE resource definition (a skill/corpus id string, not a ToolDescriptor). This
  * is the falsifiable proof that the core is genuinely resource-generic — the
  * property the future claude-skills consumer relies on — and it pins the neutral
- * loop's T8 cross-turn escalation contract at its own level, independent of pi.
+ * loop's T8 cross-pass escalation contract at its own level, independent of pi.
  */
 import { describe, it, expect } from "vitest";
 import { SpecStore, ReconcileLoop } from "../src/control-plane/index.js";
@@ -17,12 +17,13 @@ import type {
 } from "../src/control-plane/index.js";
 
 /** A generic resource actuator (no tools, no pi) — `applied` is any managed surface.
- *  Optionally defers actuation to a turn boundary (T8) or fails outright. */
+ *  Optionally defers actuation so it isn't observable until settle() (a substrate-
+ *  neutral stand-in for pi's next-turn / a filesystem watcher's lag) or fails. */
 class FakeResourceActuator implements ResourceActuatorPort {
   private applied = new Set<string>();
   private pending: string[] | null = null;
   private readonly managed = new Set<string>();
-  nextTurnLatency = false;
+  deferActuation = false;
   failConverge = false;
 
   converge(desired: readonly ResourceSpec[]): ConvergeResult {
@@ -31,11 +32,11 @@ class FakeResourceActuator implements ResourceActuatorPort {
     if (this.failConverge) {
       return { status: "failed", klass: "actuate-failed", desiredManaged: managedEnabled };
     }
-    if (this.nextTurnLatency) this.pending = [...managedEnabled];
+    if (this.deferActuation) this.pending = [...managedEnabled];
     else this.applied = new Set(managedEnabled);
     const observedManaged = [...this.applied].filter((n) => this.managed.has(n));
     return {
-      status: sameSet(observedManaged, managedEnabled) ? "converged" : "pending-next-turn",
+      status: sameSet(observedManaged, managedEnabled) ? "converged" : "pending",
       desiredManaged: managedEnabled,
     };
   }
@@ -45,7 +46,8 @@ class FakeResourceActuator implements ResourceActuatorPort {
       managedNames: [...this.managed],
     };
   }
-  advanceTurn(): void {
+  /** the deferred actuation becomes observable (next pass reads it as converged). */
+  settle(): void {
     if (this.pending) {
       this.applied = new Set(this.pending);
       this.pending = null;
@@ -100,24 +102,24 @@ describe("control-plane — resource-generic (opaque definition, non-tool actuat
   });
 });
 
-describe("control-plane — T8 cross-turn escalation contract (bounded both sides)", () => {
-  it("a pending-next-turn is TOLERATED + not counted; next turn converges", () => {
+describe("control-plane — T8 cross-pass escalation contract (bounded both sides)", () => {
+  it("a pending actuation is TOLERATED + not counted; the next pass converges", () => {
     const act = new FakeResourceActuator();
-    act.nextTurnLatency = true;
+    act.deferActuation = true;
     const { store, loop } = stack(act, 3);
     store.apply([skill("a", true)]);
     const p1 = loop.sync("t1");
     expect(p1.converged).toBe(false);
     expect(p1.consecutiveFailures).toBe(0); // pending NOT counted (design v2 §2 / ruling a)
-    act.advanceTurn();
+    act.settle();
     const p2 = loop.sync("t2");
     expect(p2.converged).toBe(true);
     expect(p2.consecutiveFailures).toBe(0);
   });
 
-  it("a cross-turn stuck actuation DOES count + escalates at the bound (termination guarantee)", () => {
+  it("a cross-pass stuck actuation DOES count + escalates at the bound (termination guarantee)", () => {
     const act = new FakeResourceActuator();
-    act.nextTurnLatency = true; // never advanceTurn → genuinely stuck across boundaries
+    act.deferActuation = true; // never settle() → genuinely stuck across passes
     const { store, loop } = stack(act, 3);
     store.apply([skill("a", true)]);
     let last = loop.sync("s0");

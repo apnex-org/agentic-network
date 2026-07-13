@@ -29,11 +29,14 @@ export interface ResourceSpec {
 }
 
 /**
- * Tri-state convergence outcome from the actuator (design §2 — preserves pi's T8:
- * an actuation that only takes effect NEXT turn is `pending-next-turn`, which the
- * loop counts-but-tolerates and must NEVER read as `converged` OR `failed`).
+ * Tri-state convergence outcome from the actuator. The ACTUATOR decides what
+ * "not-yet-observable" means for ITS substrate (pi: setActive lands the next agent
+ * turn; claude: a filesystem watcher hasn't yet picked up the write) and reports
+ * `pending`; the neutral loop counts-but-tolerates it and must NEVER read it as
+ * `converged` OR `failed`. The loop counts converge PASSES, never a wall-clock
+ * "turn" — the vocabulary here is substrate-agnostic on purpose.
  */
-export type ConvergeStatus = "converged" | "pending-next-turn" | "failed";
+export type ConvergeStatus = "converged" | "pending" | "failed";
 
 /** Failure taxonomy for a converge pass (loud escalation after the bound). */
 export type ConvergeFailureClass =
@@ -92,7 +95,7 @@ export interface SpecPersistencePort {
 export interface ConvergeOutcome {
   reason: string;
   converged: boolean;
-  /** true only for the T8 tolerated interim (pending-next-turn) — not converged, not escalating yet. */
+  /** true only for the tolerated interim (`pending`) — actuation accepted, effect not yet observed; not converged, not escalating yet. */
   pending?: boolean;
   klass?: ConvergeFailureClass;
   detail?: string;

@@ -8,15 +8,16 @@
  * drift; design v2 §2 blocker fix). The actuator decides HOW to converge and reports
  * a tri-state; the loop owns the escalation classification.
  *
- * T8 escalation semantics (design v2 §2; lily ruling (a) + cross-turn definition):
- * the failure counter is a POISON/termination guard for "genuinely won't converge",
- * NOT a divergence tally. A `pending-next-turn` (this pass actuated; the actuation is
- * accepted and merely deferred to the turn boundary) is the system working as
- * designed — it is TOLERATED and does NOT count. Only a divergence that SURVIVES A
- * TURN BOUNDARY (we actuated the same managed set a prior pass, the boundary elapsed,
- * and it is STILL diverged) counts + escalates at the bound. `awaitingBoundary`
- * tracks the last-actuated-but-unconverged managed set to make exactly that
- * within-turn-vs-cross-turn distinction. A hard actuation fault (status:"failed",
+ * Escalation semantics (design v2 §2; ratified ruling): the failure counter is a
+ * POISON/termination guard for "genuinely won't converge", NOT a divergence tally.
+ * The loop counts converge PASSES, never a wall-clock "turn" — the ACTUATOR reports
+ * `pending` (its actuation is accepted but not yet observable; what that means is the
+ * actuator's substrate concern: pi setActive lands next agent turn, claude a watcher
+ * hasn't yet picked up the write), and the loop TOLERATES it — it does NOT count.
+ * Only a CROSS-PASS stall — the actuator reports `pending` again for the SAME managed
+ * set on a LATER pass (it never became observable) — counts + escalates at the bound.
+ * `pendingSince` tracks the last-actuated-still-pending managed set to make exactly
+ * that within-pass-vs-cross-pass distinction. A hard actuation fault (status:"failed",
  * e.g. a registration reject) is a DISTINCT input that counts immediately.
  */
 import type {
@@ -39,9 +40,9 @@ export interface ReconcileLoopOptions {
 export class ReconcileLoop {
   private consecutiveFailures = 0;
   /** the managed desired-set actuated in a prior pass that had NOT converged; a later
-   *  pass still-diverged on the SAME set = a cross-turn failure (counts); a first
-   *  divergence = a within-turn pending (tolerated, not counted). */
-  private awaitingBoundary: string[] | null = null;
+   *  pass still-pending on the SAME set = a cross-pass stall (counts); a first
+   *  divergence = a within-pass pending (tolerated, not counted). */
+  private pendingSince: string[] | null = null;
   private readonly failureBound: number;
   private readonly log: (msg: string) => void;
 
@@ -65,35 +66,35 @@ export class ReconcileLoop {
 
     if (result.status === "failed") {
       // a genuine actuation fault (registration reject, setActive throw) — counts NOW.
-      this.awaitingBoundary = null;
+      this.pendingSince = null;
       return this.fail(reason, result.klass ?? "actuate-failed", result.detail);
     }
 
     if (result.status === "converged") {
       this.consecutiveFailures = 0;
-      this.awaitingBoundary = null;
+      this.pendingSince = null;
       return this.emit({ reason, converged: true, consecutiveFailures: 0 });
     }
 
-    // status === "pending-next-turn": actuated, managed surface not yet reflecting it.
-    const crossTurn =
-      this.awaitingBoundary !== null &&
-      sameSet(this.awaitingBoundary, result.desiredManaged);
-    this.awaitingBoundary = [...result.desiredManaged];
+    // status === "pending": actuated, managed surface not yet reflecting it.
+    const crossPass =
+      this.pendingSince !== null &&
+      sameSet(this.pendingSince, result.desiredManaged);
+    this.pendingSince = [...result.desiredManaged];
 
-    if (crossTurn) {
-      // prior-pass actuation, turn boundary elapsed, STILL diverged = genuinely not
-      // converging → count + escalate at the bound (the S2b termination guarantee).
+    if (crossPass) {
+      // same managed set reported pending again on a LATER pass, still not observable
+      // = genuinely not converging → count + escalate at the bound (termination guard).
       return this.fail(
         reason,
         "still-diverged",
-        "managed set still diverged across a turn boundary",
+        "managed set still pending across a converge pass",
       );
     }
 
-    // within-turn deferral — TOLERATED, NOT counted (design v2 §2; lily ruling (a)).
+    // within-pass deferral — TOLERATED, NOT counted (design v2 §2; lily ruling (a)).
     this.log(
-      `[hcap-reconcile] ${reason}: pending-next-turn (managed actuation deferred to turn boundary) — not counted`,
+      `[hcap-reconcile] ${reason}: pending (managed actuation accepted, effect not yet observed) — not counted`,
     );
     return this.emit({
       reason,
@@ -115,7 +116,7 @@ export class ReconcileLoop {
     );
     if (this.consecutiveFailures >= this.failureBound) {
       this.log(
-        `[hcap-reconcile] ${reason}: ESCALATION — ${this.consecutiveFailures} consecutive cross-turn/failed converges (>= ${this.failureBound}, ${klass}); surface cannot converge, operator/architect intervention required`,
+        `[hcap-reconcile] ${reason}: ESCALATION — ${this.consecutiveFailures} consecutive cross-pass/failed converges (>= ${this.failureBound}, ${klass}); surface cannot converge, operator/architect intervention required`,
       );
     }
     return this.emit({
