@@ -13,13 +13,13 @@
 #   bundles:      - <name>   resolved via mission-kit bundles/<name>.yaml (`skills:` list)
 #   extra_skills: - <name>   individual skill, resolved via mission-kit skills/<name>/SKILL.md
 #
-# STAGING NOTE (idea-453 / work-179): mission-kit's operator K-series K3–K6 exist
-# as claude-skill directories and are declared below:
-#   K3 = substrate-audit, K4 = research-artefacts, K5 = survey, K6 = arc-lifecycle.
-# K1/K2 are flat rule-cards not yet in SKILL.md-directory form, and
-# O1-convene-council is a ratified design not yet promoted into mission-kit —
-# both are Director-owned mission-kit promotions (see the staging doc). Add them
-# here (or via an `operator-manuals` bundle) once promoted.
+# BASELINE NOTE (fleetskills0, 2026-07-13): the uniform fleet baseline is the 4 skills
+# declared below — arc-lifecycle + survey (operator sensemaking) and the
+# workgraph-arc-operator + workgraph-arc-closeout pair (WorkGraph arc execution + its
+# terminal closeout). substrate-audit + research-artefacts were the earlier M2-sidecar
+# set and were DROPPED from the fleet baseline here (they remain in mission-kit for
+# ad-hoc use, not fleet-synced). K1/K2 flat rule-cards + O1-convene-council remain
+# Director-owned mission-kit promotions; add them here once promoted.
 #
 # Source is PINNED for reproducible activation — the deployed sync pulls this
 # REVIEWED mission-kit SHA, not whatever `main` happens to be at activation time.
@@ -27,12 +27,12 @@
 # `source_ref` to its SHA and re-stage (this is the reviewable diff). Env vars
 # SKILL_SYNC_REPO / SKILL_SYNC_REF override at runtime (testing only).
 source_repo: https://github.com/apnex/mission-kit.git
-source_ref: a93e71114b7e21e6bf6bac25b227537ca78817b9
+source_ref: a874bd371920ab62c3664318eb190ab17cfadaac
 
 bundles: []
 
 extra_skills:
-  - survey
-  - substrate-audit
-  - research-artefacts
   - arc-lifecycle
+  - survey
+  - workgraph-arc-closeout
+  - workgraph-arc-operator
