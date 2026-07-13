@@ -5,6 +5,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "ois-seed-skills": "dist/bin/seed-skills.js"
+  },
   "files": [
     "dist",
     "README.md"

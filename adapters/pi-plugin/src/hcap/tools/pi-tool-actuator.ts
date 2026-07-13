@@ -1,6 +1,8 @@
 /**
- * pi-tool-actuator-port.ts — the PI ResourceActuatorPort (hcapskills0 build_core;
- * the generalize+invert of mission-107's U5). THE sole crossing of the pi
+ * pi-tool-actuator.ts — PiToolActuator, the PI concrete ResourceActuatorPort impl
+ * (naming convention: <Harness><Kind>Actuator = the concrete last-mile shim; a
+ * bare `...Port` name is reserved for the neutral interface). hcapskills0 build_core;
+ * the generalize+invert of mission-107's U5. THE sole crossing of the pi
  * `ExtensionAPI` air-gap (A3): the ONLY unit importing pi SDK types, the SOLE caller
  * of `registerTool` / `setActiveTools`. Implements the harness-neutral
  * `ResourceActuatorPort` from @apnex/network-adapter — the neutral core (SpecStore →
@@ -25,7 +27,7 @@ import type {
 } from "@apnex/network-adapter";
 import { buildPiToolDefinition } from "../../tool-bridge.js";
 
-export class PiToolActuatorPort implements ResourceActuatorPort {
+export class PiToolActuator implements ResourceActuatorPort {
   /** every name this plane has registered (the managed ledger; scoping key for
    *  observed ∩ managed + KF5 status). NOT the preserve-set (that is builtinBaseline). */
   private readonly managed = new Set<string>();
