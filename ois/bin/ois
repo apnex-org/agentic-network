@@ -412,6 +412,24 @@ claude_seed() {
   # `|| true`: hard guarantee the sync can never abort launch, even on an
   # unforeseen failure inside the function under `set -e`.
   mission_kit_sync "$cdir/skills" || true
+  # hcapskills0 build_claude (design §5/§9): the OPT-IN new HCAP skills-consumer path,
+  # COEXISTING with the legacy mission_kit_sync above (which stays the fallback). Default
+  # OFF ⇒ zero fleet change. When HCAP_SKILLS_EMBED is set, the network-adapter seed bin
+  # materializes the role's declared baseline via the NEW consumer, FAIL-CLOSED: a
+  # converge/gate failure aborts THIS seat's launch (no `|| true`, so the non-zero exit
+  # propagates under set -e) rather than exec claude with a partial baseline. Its LIVE
+  # set-diff gate (role_map ⊇ mks-delivered) guarantees it never unlinks a skill the
+  # coexisting legacy path delivered. CLAUDE_CONFIG_DIR is already exported above.
+  if [[ -n "${HCAP_SKILLS_EMBED:-}" ]]; then
+    local na_bin="$_CLAUDE_PLUGIN_MP/node_modules/@apnex/network-adapter/dist/bin/seed-skills.js"
+    [[ -f "$na_bin" ]] || na_bin="$(npm root -g)/@apnex/network-adapter/dist/bin/seed-skills.js"
+    [[ -f "$na_bin" ]] || fatal "HCAP_SKILLS_EMBED set but seed-skills bin not found (plugin/npm-root)"
+    local srole; srole=$(jq -r '.role // "unknown"' <<<"$c")
+    echo "  seeding : HCAP skills embed (fail-closed, role=$srole) → $cdir/skills"
+    HCAP_SKILLS_MANIFEST="${HCAP_SKILLS_MANIFEST:-$ROOT/manifests/skill-sync/wanted-bundles.yaml}" \
+    OIS_ROLE="$srole" \
+      node "$na_bin" "$cdir/skills"
+  fi
 }
 
 # ---------- artifact write with LKG retention ----------
