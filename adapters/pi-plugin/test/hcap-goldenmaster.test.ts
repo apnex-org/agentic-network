@@ -20,12 +20,9 @@ import { WorkLeaseTracker } from "@apnex/network-adapter";
 import type { ToolDispatchContext, IToolDispatchAgent } from "@apnex/network-adapter";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { PiToolActuatorPort } from "../src/hcap/tools/pi-tool-actuator-port.js";
-import { SpecStore } from "../src/hcap/tools/spec-store.js";
-import { DiffEngine } from "../src/hcap/tools/diff-engine.js";
-import { ConvergenceActuator } from "../src/hcap/tools/convergence-actuator.js";
-import { SpecReconcileLoop } from "../src/hcap/tools/reconcile-loop.js";
 import { PiToolControlPlane } from "../src/hcap/tools/tool-control-plane.js";
-import type { ConvergeOutcome, ToolSpec } from "../src/hcap/tools/contracts.js";
+import { SpecStore, ReconcileLoop } from "@apnex/network-adapter";
+import type { ConvergeOutcome, ResourceSpec } from "@apnex/network-adapter";
 
 const BUILTINS = ["bash", "read"];
 
@@ -86,7 +83,7 @@ function makeCtx(): ToolDispatchContext {
   };
 }
 
-const spec = (name: string, enabled: boolean): ToolSpec => ({
+const spec = (name: string, enabled: boolean): ResourceSpec => ({
   name,
   definition: { name },
   enabled,
@@ -96,8 +93,8 @@ function makeStack(stub: StubExtensionAPI, failureBound = 3) {
   const outcomes: ConvergeOutcome[] = [];
   const port = new PiToolActuatorPort(stub as unknown as ExtensionAPI, makeCtx());
   const store = new SpecStore();
-  const loop = new SpecReconcileLoop(
-    { store, diff: new DiffEngine(), actuator: new ConvergenceActuator(port), port },
+  const loop = new ReconcileLoop(
+    { store, actuator: port },
     { failureBound, onOutcome: (o) => outcomes.push(o) },
   );
   const plane = new PiToolControlPlane({ store, loop, port });

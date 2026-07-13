@@ -17,8 +17,7 @@
  * empty spec via a direct `applyConfig([])` is a VALID controller action on a
  * different path — U3/U4 converge it to built-ins-only, no escalation; KF1(a).)
  */
-import type { ToolDescriptor } from "@apnex/network-adapter";
-import type { ToolControlPlane, ToolSpec } from "./contracts.js";
+import type { ToolDescriptor, ResourceSpec } from "@apnex/network-adapter";
 
 export interface HubSpecSourceDeps {
   /** fetch the live LLM-facing catalog (core-hydrated: tier-filtered + enriched). */
@@ -31,7 +30,10 @@ export interface HubSpecSourceDeps {
    */
   fetchLiveRevision: () => Promise<string | null>;
   /** the control plane whose declared spec this source refreshes. */
-  controlPlane: Pick<ToolControlPlane, "applyConfig" | "listDeclaredConfig">;
+  controlPlane: {
+    applyConfig(spec: readonly ResourceSpec[]): void;
+    listDeclaredConfig(): readonly ResourceSpec[];
+  };
   log?: (msg: string) => void;
 }
 
@@ -94,7 +96,7 @@ export class HubSpecSource {
       return;
     }
 
-    const spec: ToolSpec[] = descriptors.map((d) => ({
+    const spec: ResourceSpec[] = descriptors.map((d) => ({
       name: d.name,
       definition: d,
       enabled: true,

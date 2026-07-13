@@ -54,10 +54,7 @@ import {
 import { buildPiNotificationHooks } from "./wake.js";
 import { installFooter, type FooterController } from "./footer-install.js";
 import { runSwarmPoll } from "./footer-poll.js";
-import { SpecStore } from "./hcap/tools/spec-store.js";
-import { DiffEngine } from "./hcap/tools/diff-engine.js";
-import { ConvergenceActuator } from "./hcap/tools/convergence-actuator.js";
-import { SpecReconcileLoop } from "./hcap/tools/reconcile-loop.js";
+import { SpecStore, ReconcileLoop } from "@apnex/network-adapter";
 import { PiToolActuatorPort } from "./hcap/tools/pi-tool-actuator-port.js";
 import { HubSpecSource } from "./hcap/tools/hub-spec-source.js";
 import { PiToolControlPlane } from "./hcap/tools/tool-control-plane.js";
@@ -359,15 +356,7 @@ async function connectAndSeed(
   });
   const actuatorPort = new PiToolActuatorPort(pi, dispatchCtx);
   const store = new SpecStore();
-  const specLoop = new SpecReconcileLoop(
-    {
-      store,
-      diff: new DiffEngine(),
-      actuator: new ConvergenceActuator(actuatorPort),
-      port: actuatorPort,
-    },
-    { log },
-  );
+  const specLoop = new ReconcileLoop({ store, actuator: actuatorPort }, { log });
   const plane = new PiToolControlPlane({ store, loop: specLoop, port: actuatorPort });
   const source = new HubSpecSource({
     // U6 fetches the live LLM-facing catalog (core-hydrated); the KF1(b) zero-tool
