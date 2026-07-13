@@ -44,6 +44,29 @@ export interface McpToolCallResult {
 }
 
 /**
+ * bug-252 — retry-with-backoff config for a TRANSIENT Hub-wire drop, applied ONLY at
+ * the pre-dispatch not-connected gate (nothing has been sent to the Hub yet, so a
+ * retry is idempotency-safe). `maxRetries <= 0` disables it (immediate error =
+ * today's behavior). The dispatcher binding applies `DEFAULT_TRANSIENT_DROP_RETRY`
+ * fleet-wide; a direct `runToolDispatch` caller opts in explicitly.
+ */
+export interface TransientDropRetryConfig {
+  /** backoff retries after the initial check (0 = disabled). */
+  maxRetries: number;
+  /** first backoff delay (ms); doubles each retry, capped at `maxDelayMs`. */
+  baseDelayMs: number;
+  /** cap on the per-retry backoff (ms). */
+  maxDelayMs: number;
+}
+
+/** Fleet default applied by the dispatcher binding: 500→1000→2000→4000ms ≈ 7.5s budget. */
+export const DEFAULT_TRANSIENT_DROP_RETRY: TransientDropRetryConfig = {
+  maxRetries: 4,
+  baseDelayMs: 500,
+  maxDelayMs: 4000,
+};
+
+/**
  * Explicit dependency context for a single tool dispatch. In the god-object
  * these were closure variables; making them injected params is the A3 Air-Gap
  * boundary being realized — `runToolDispatch` is now understandable and testable
@@ -72,6 +95,15 @@ export interface ToolDispatchContext {
   ) => void;
   /** Diagnostic logger. */
   log: (msg: string) => void;
+  /**
+   * bug-252: opt-in retry-with-backoff for a TRANSIENT Hub-wire drop at the
+   * not-connected pre-check (idempotency-safe — nothing sent yet). Undefined ⇒ no
+   * retry (today's immediate "Hub not connected" error). The dispatcher binding
+   * defaults it on fleet-wide (`DEFAULT_TRANSIENT_DROP_RETRY`).
+   */
+  transientDropRetry?: TransientDropRetryConfig;
+  /** injectable sleep (test seam); defaults to a setTimeout-based sleep. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** True when the agent is present and not explicitly disconnected. */
@@ -79,6 +111,43 @@ function isUsableAgent(
   agent: IToolDispatchAgent | null,
 ): agent is IToolDispatchAgent {
   return !!agent && agent.isConnected !== false;
+}
+
+/**
+ * bug-252 — bounded retry-with-backoff waiting for a transiently-dropped Hub wire to
+ * reconnect. Invoked ONLY at the pre-dispatch not-connected gate (nothing sent to the
+ * Hub yet ⇒ idempotency-safe). Returns a usable agent as soon as one appears, or the
+ * last (still-unusable) `getAgent()` after exhausting the budget. Surfaces the drop,
+ * each retry, and the outcome as structured `transient-drop` log lines. A no-op when
+ * `ctx.transientDropRetry` is undefined or `maxRetries <= 0` (today's behavior).
+ */
+async function awaitAgentRecovery(
+  ctx: ToolDispatchContext,
+  tool: string,
+  startedAt: number,
+): Promise<IToolDispatchAgent | null> {
+  const cfg = ctx.transientDropRetry;
+  if (!cfg || cfg.maxRetries <= 0) return ctx.getAgent();
+  const sleep =
+    ctx.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let attempt = 1; attempt <= cfg.maxRetries; attempt++) {
+    const delay = Math.min(cfg.baseDelayMs * 2 ** (attempt - 1), cfg.maxDelayMs);
+    ctx.log(
+      `[CallTool] ${tool} transient-drop: Hub not connected — retry ${attempt}/${cfg.maxRetries} after ${delay}ms backoff`,
+    );
+    await sleep(delay);
+    const agent = ctx.getAgent();
+    if (isUsableAgent(agent)) {
+      ctx.log(
+        `[CallTool] ${tool} transient-drop RECOVERED — Hub reconnected on retry ${attempt}/${cfg.maxRetries} (+${Date.now() - startedAt}ms)`,
+      );
+      return agent;
+    }
+  }
+  ctx.log(
+    `[CallTool] ${tool} transient-drop UNRECOVERED — Hub still not connected after ${cfg.maxRetries} retries (+${Date.now() - startedAt}ms)`,
+  );
+  return ctx.getAgent();
 }
 
 /**
@@ -123,7 +192,16 @@ export async function runToolDispatch(
       }
       log(`[CallTool] ${requestedTool} gate passed (+${Date.now() - callStartedAt}ms)`);
     }
-    const agent = ctx.getAgent();
+    let agent = ctx.getAgent();
+    if (!isUsableAgent(agent)) {
+      // bug-252: a transient wire drop (Hub adapter reconnecting) leaves the agent
+      // momentarily unusable, then self-recovers. Nothing has been sent to the Hub at
+      // THIS pre-check, so retry-with-backoff is idempotency-SAFE — wait for the
+      // transport to restore the agent, then dispatch. Opt-in (undefined ⇒ no retry).
+      // A mid-flight drop (the catch below) is deliberately NOT retried — the write
+      // may have partially applied.
+      agent = await awaitAgentRecovery(ctx, requestedTool, callStartedAt);
+    }
     if (!isUsableAgent(agent)) {
       log(`[CallTool] ${requestedTool} aborted — Hub not connected`);
       return {
