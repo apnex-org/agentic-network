@@ -137,22 +137,42 @@ describe("golden-master S5 — desired-set shrink (unlink path, managed-scoped)"
   });
 });
 
-describe("golden-master S2 — T8 pending-next-turn (tri-state 'pending' ≠ converged/failed)", () => {
-  it("a stale immediate re-read is still-diverged (counted, tolerated); next turn converges", () => {
+describe("golden-master S2 — T8 pending-next-turn is TOLERATED (loosened per lily ruling (a))", () => {
+  it("a within-turn stale re-read is not-converged + NOT escalated; next turn converges", () => {
     const stub = new StubExtensionAPI();
     stub.nextTurnLatency = true; // setActive lands NEXT turn
-    const { plane, loop } = makeStack(stub);
+    const { plane, loop } = makeStack(stub, 3);
     plane.applyConfig([spec("a", true)]);
 
-    const p1 = loop.sync("turn-1"); // setActive issued, but active-set not yet updated
+    const p1 = loop.sync("turn-1"); // actuated this turn; immediate re-read stale
+    // CONTRACT both current & refactored satisfy: a within-turn deferral is not
+    // converged and has NOT escalated. We deliberately DO NOT pin consecutiveFailures:
+    // current counts it (=1); design v2 §2 refines pending to NOT count (=0). The count
+    // is the impl detail the refactor changes — pinning it = a false-regression signal.
     expect(p1.converged).toBe(false);
-    expect(p1.klass).toBe("still-diverged");
-    expect(p1.consecutiveFailures).toBe(1); // counted but NOT escalated (bound 3)
+    expect(p1.consecutiveFailures).toBeLessThan(3); // not escalated
 
-    stub.advanceTurn(); // the queued setActive now takes effect
+    stub.advanceTurn(); // the queued setActive now takes effect (turn boundary elapsed)
     const p2 = loop.sync("turn-2");
     expect(p2.converged).toBe(true);
     expect(p2.consecutiveFailures).toBe(0); // resets on convergence
+  });
+});
+
+describe("golden-master S2b — cross-turn stuck DOES count + escalates (termination guarantee)", () => {
+  it("actuation that never lands across repeated turns escalates at the bound — no infinite silent retry", () => {
+    const stub = new StubExtensionAPI();
+    stub.nextTurnLatency = true; // and we NEVER advanceTurn → genuinely stuck across boundaries
+    const { plane, loop } = makeStack(stub, 3);
+    plane.applyConfig([spec("a", true)]);
+
+    let last = loop.sync("stuck-0");
+    for (let i = 1; i < 5; i++) last = loop.sync(`stuck-${i}`); // 5 turns, boundary never satisfied
+    // CONTRACT both must satisfy (the mirror of S2's loosening): a genuinely-stuck
+    // converge MUST reach escalation. A never-incrementing impl — which would trivially
+    // pass loosened S2 — FAILS here. This is the two-sided pin lily required.
+    expect(last.converged).toBe(false);
+    expect(last.consecutiveFailures).toBeGreaterThanOrEqual(3); // escalated at/after bound-3
   });
 });
 
@@ -174,26 +194,26 @@ describe("golden-master S3 — built-in ∪ desired NAME COLLISION (the inversio
   });
 });
 
-describe("golden-master S1 — poison-guard: a tool that FAILS registration", () => {
-  it("a registration throw surfaces as a failed pass; consecutive failures accrue (no silent no-op)", () => {
+describe("golden-master S1 — poison: registration hard-reject counts + escalates (distinct from pending)", () => {
+  it("a genuine registration reject is NOT silently absorbed — it throws or escalates, never activates the good tool", () => {
     const stub = new StubExtensionAPI();
     stub.poisonRegister = "poison";
-    const { plane, loop, outcomes } = makeStack(stub, 2);
+    const { plane, loop } = makeStack(stub, 3);
     plane.applyConfig([spec("poison", true), spec("ok", true)]);
 
-    // capture whatever the CURRENT code does on a register throw (golden master).
+    // A registration reject is a DISTINCT escalation input from a T8 deferral (lily #3):
+    // decoupling pending from the counter does not weaken it. CONTRACT both satisfy:
+    // current PROPAGATES the register throw out of sync (threw); refactored converge
+    // CATCHES it → failed → counts + escalates. Either way it is loud, and the good
+    // 'ok' tool is never activated behind the failed register.
     let threw = false;
-    let out: ConvergeOutcome | undefined;
+    let last: ConvergeOutcome | undefined;
     try {
-      out = loop.sync("poison-1");
+      for (let i = 0; i < 5; i++) last = loop.sync(`poison-${i}`);
     } catch {
       threw = true;
     }
-    // Pin the observed shape: either a failed outcome OR a thrown error — recorded
-    // so the refactor must reproduce it identically (this asserts the CURRENT
-    // behavior, whatever it is; adjusted to the run).
-    expect(threw || out?.converged === false).toBe(true);
-    // the good tool must not have been silently activated behind a failed register.
+    expect(threw || (last !== undefined && last.consecutiveFailures >= 3)).toBe(true);
     expect(activeSet(stub).has("ok")).toBe(false);
   });
 });
