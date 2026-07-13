@@ -1,7 +1,7 @@
 /**
  * skills/contracts.ts — skills-kind-LOCAL types (hcapskills0 build_claude). These are
- * NOT part of the neutral control-plane/ core; they carry the skill-ism (a skill is a
- * directory TREE materialized on a filesystem claude watches). The neutral core sees
+ * NOT part of the neutral control-plane/ Controller; they carry the skill-ism (a skill is a
+ * directory TREE materialized on a filesystem claude watches). The neutral Controller sees
  * only `ResourceSpec` with an OPAQUE `definition` — here we pin what that opaque
  * payload IS for the skills kind, and the ledger the actuator scopes itself with.
  *

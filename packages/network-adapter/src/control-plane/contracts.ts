@@ -2,7 +2,7 @@
  * control-plane/contracts.ts — the harness-neutral, RESOURCE-GENERIC HCAP consumer
  * core (hcapskills0 build_core; design docs/design/hcapskills-design.md v2).
  *
- * The generalize+invert of the mission-107 PI tool-control-plane: one neutral core
+ * The generalize+invert of the mission-107 PI tool-control-plane: one neutral Controller
  * (SpecStore → DiffEngine → ReconcileLoop) drives ANY resource kind (tools on MCP,
  * skills on filesystem, …) through a `ResourceActuatorPort` that decides HOW to
  * converge. Two inversions vs the pi original (grounding §3, design §2/§3):
@@ -12,7 +12,7 @@
  *     poison-guard are pi-ACTUATOR internals now — they never appear here (a
  *     root-scoped filesystem actuator has no built-ins to preserve).
  *  2. Every observed/desired comparison is MANAGED-SCOPED (`observed ∩ managedNames`
- *     vs desired). The neutral core never sees the raw running surface, so a host's
+ *     vs desired). The neutral Controller never sees the raw running surface, so a host's
  *     ever-present built-ins can never read as drift.
  *
  * `definition` is OPAQUE (actuator-interpreted): a ToolDescriptor for pi-tools, a
