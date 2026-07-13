@@ -1,10 +1,10 @@
 /**
  * skills/ — the Claude SKILLS kind-module (hcapskills0 build_claude): the SECOND kind
- * composed onto the neutral control-plane/ core (the FIRST being pi-tools, in
+ * composed onto the neutral control-plane/ Controller (the FIRST being pi-tools, in
  * adapters/pi-plugin). Contains the ClaudeSkillActuator (outbound edge-seam) +
  * RoleSkillSource (inbound) + the wanted-bundles manifest expansion + the durable
  * ledger. Skill-isms (node:fs, SKILL.md layout, the managed ledger) live HERE — NEVER
- * in control-plane/ (the import-boundary test guards that). The Manager still depends
+ * in control-plane/ (the import-boundary test guards that). The Controller still depends
  * only on ResourceActuatorPort; the seed bin constructs + injects this actuator.
  */
 export type { SkillDefinition, SkillLedgerPort } from "./contracts.js";

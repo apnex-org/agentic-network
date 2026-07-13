@@ -1,5 +1,5 @@
 /**
- * control-plane-reconcile.test.ts — the harness-neutral HCAP consumer core tested
+ * control-plane-reconcile.test.ts — the harness-neutral HCAP consumer Controller tested
  * STANDALONE (hcapskills0 build_core), with a NON-tool, NON-pi actuator over an
  * OPAQUE resource definition (a skill/corpus id string, not a ToolDescriptor). This
  * is the falsifiable proof that the core is genuinely resource-generic — the
