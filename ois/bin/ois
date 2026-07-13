@@ -574,7 +574,16 @@ do_launch() {
     shas+="$kind:$(printf '%s\n' "$content" | sha12) "
   done < <(artifact_targets "$c")
   # claude: sovereign seed
-  [[ "$h" == "claude" ]] && claude_seed "$c"
+  # fleetskills0 (idea-520 — durable HCAP flag-on): per-cell HCAP opt-in. claude_seed's HCAP
+  # block reads HCAP_SKILLS_EMBED from the ENV, but env_lines exports the cell env AFTER the
+  # seed (below), so a DURABLE per-seat flag must be exported HERE — BEFORE claude_seed — so the
+  # standard `ois up` path (not just a launch wrapper) delivers the baseline via the new HCAP
+  # consumer. .hcapSkillsEmbed defaults false => zero change (legacy mission_kit_sync only);
+  # true => HCAP on. Claude-harness-scoped; reversible (unset the field / drop this export).
+  if [[ "$h" == "claude" ]]; then
+    [[ "$(jq -r '.hcapSkillsEmbed // false' <<<"$c")" == "true" ]] && export HCAP_SKILLS_EMBED=1
+    claude_seed "$c"
+  fi
   # env
   local line
   while IFS= read -r line; do export "${line%%=*}=${line#*=}"; done < <(env_lines "$c" raw)
