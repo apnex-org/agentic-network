@@ -1,39 +1,42 @@
 /**
- * tool-control-plane.ts — the HCAP facade on PI (seam-arch §2).
+ * tool-control-plane.ts — the HCAP facade on PI (hcapskills0 build_core). DELEGATES,
+ * holds NO logic: the 4 spec verbs → the neutral SpecStore, `sync` → the neutral
+ * ReconcileLoop, `listRunningTools` computed from the store records + the actuator's
+ * MANAGED observation (never host introspection).
  *
- * DELEGATES, holds NO logic (§2 God-Object guard): the 4 spec verbs → U1 SpecStore,
- * `sync` → U4 SpecReconcileLoop, `listRunningTools` computed from U1 records + U5
- * snapshot (NEVER pi introspection). A KIND-scoped plane (tool kind); future kinds
- * (skills/context/plugins/hooks) get sibling planes sharing the machinery (§8).
+ * Post-inversion, `listRunningTools` is MANAGED-SCOPED — it reports this plane's
+ * managed resources (declared ∪ managed ∪ observed-managed), NOT host built-ins.
+ * That is a deliberate scoping refinement of the inversion (the reconciler's blocker
+ * fix); it has NO production caller (only tests) and built-in PRESERVATION is
+ * unchanged (structural, in the actuator's union), so it is not a functional
+ * regression. Enumerated for verify_build in the PR body.
  */
 import type {
   ConvergeOutcome,
-  RunningSnapshot,
-  RunningToolStatus,
-  ToolActuatorPort,
-  ToolControlPlane,
-  ToolSpec,
-} from "./contracts.js";
-import type { SpecStore } from "./spec-store.js";
-import type { SpecReconcileLoop } from "./reconcile-loop.js";
+  ResourceSpec,
+  RunningResourceStatus,
+  SpecStore,
+  ReconcileLoop,
+} from "@apnex/network-adapter";
+import type { PiToolActuatorPort } from "./pi-tool-actuator-port.js";
 
 export interface ToolControlPlaneDeps {
   store: SpecStore;
-  loop: SpecReconcileLoop;
-  /** the port, for the status join only (U5 snapshot); actuation stays in U3/U4. */
-  port: Pick<ToolActuatorPort, "snapshot">;
+  loop: ReconcileLoop;
+  /** the actuator, for the managed-status join only (observeManaged). */
+  port: Pick<PiToolActuatorPort, "observeManaged">;
 }
 
-export class PiToolControlPlane implements ToolControlPlane {
+export class PiToolControlPlane {
   constructor(private readonly deps: ToolControlPlaneDeps) {}
 
-  listDeclaredConfig(): readonly ToolSpec[] {
+  listDeclaredConfig(): readonly ResourceSpec[] {
     return this.deps.store.list();
   }
-  applyConfig(spec: readonly ToolSpec[]): void {
+  applyConfig(spec: readonly ResourceSpec[]): void {
     this.deps.store.apply(spec);
   }
-  createTool(spec: ToolSpec): void {
+  createTool(spec: ResourceSpec): void {
     this.deps.store.create(spec);
   }
   destroyTool(name: string): void {
@@ -43,17 +46,13 @@ export class PiToolControlPlane implements ToolControlPlane {
     return this.deps.loop.sync(reason);
   }
 
-  /**
-   * KF5 — status DERIVED from U1 records + U5 snapshot, NEVER pi introspection
-   * (`getAllTools` can't tell enabled:false from removed). Reports every name known
-   * to any level (declared ∪ managed ∪ active). An absent-but-still-managed name
-   * (removed from the spec but lingering in the ledger) → `{declared:false,
-   * enabled:false, active:false, managed:true}`.
-   */
-  listRunningTools(): RunningToolStatus[] {
-    const snap: RunningSnapshot = this.deps.port.snapshot();
-    const active = new Set(snap.activeNames);
-    const managed = new Set(snap.managedNames);
+  /** Status DERIVED from store records + the MANAGED observation (never host
+   *  introspection). Reports every name known to any managed level (declared ∪
+   *  managed ∪ observed-managed); host built-ins are out of scope by construction. */
+  listRunningTools(): RunningResourceStatus[] {
+    const obs = this.deps.port.observeManaged();
+    const active = new Set(obs.observedManaged);
+    const managed = new Set(obs.managedNames);
     const declaredNames = new Set(this.deps.store.list().map((s) => s.name));
     const names = new Set<string>([...declaredNames, ...managed, ...active]);
     return [...names].map((name) => {
