@@ -47,7 +47,6 @@ import {
 } from "../dispatch/tool-call-policy.js";
 import {
   runToolDispatch,
-  DEFAULT_TRANSIENT_DROP_RETRY,
   type ToolDispatchContext,
   type TransientDropRetryConfig,
 } from "../dispatch/dispatch.js";
@@ -153,8 +152,10 @@ export interface SharedDispatcherOptions {
   /**
    * bug-252: retry-with-backoff for a TRANSIENT Hub-wire drop at the CallTool
    * not-connected pre-check (idempotency-safe — nothing sent to the Hub yet).
-   * Defaults to `DEFAULT_TRANSIENT_DROP_RETRY` fleet-wide; pass `{ maxRetries: 0, ... }`
-   * to disable (immediate "Hub not connected" error = pre-bug-252 behavior).
+   * Undefined ⇒ DISABLED (immediate "Hub not connected" error = pre-bug-252
+   * behavior), so the dispatch authority + every dispatcher test that doesn't opt
+   * in stays byte-identical. The production runtime shims pass
+   * `DEFAULT_TRANSIENT_DROP_RETRY` to enable it fleet-wide.
    */
   transientDropRetry?: TransientDropRetryConfig;
 
@@ -977,9 +978,10 @@ export function createSharedDispatcher(
         },
         callToolGate: opts.callToolGate,
         callToolGateTimeoutMs: opts.callToolGateTimeoutMs,
-        // bug-252: default the transient-drop retry ON fleet-wide (the dispatcher is
-        // the shared host binding); a host may override/disable via opts.
-        transientDropRetry: opts.transientDropRetry ?? DEFAULT_TRANSIENT_DROP_RETRY,
+        // bug-252: transient-drop retry is OFF unless the host opts in (the production
+        // runtime shims pass DEFAULT_TRANSIENT_DROP_RETRY). Default-off keeps the
+        // dispatch authority + all dispatcher tests byte-identical.
+        transientDropRetry: opts.transientDropRetry,
         onToolCallResult: opts.onToolCallResult,
         log,
       };

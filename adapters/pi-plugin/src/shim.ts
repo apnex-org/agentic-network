@@ -31,6 +31,7 @@ import type {
 import {
   McpAgentClient,
   createSharedDispatcher,
+  DEFAULT_TRANSIENT_DROP_RETRY,
   assertHostWiringComplete,
   ToolSurfaceReconciler,
   makeFetchLiveToolSurfaceRevision,
@@ -237,6 +238,9 @@ async function connectAndSeed(
 
   const d = createSharedDispatcher({
     getAgent: () => hubAdapter,
+    // bug-252: auto-retry a transient Hub-wire drop at the CallTool not-connected
+    // pre-check (idempotency-safe; production opt-in — tests stay default-off).
+    transientDropRetry: DEFAULT_TRANSIENT_DROP_RETRY,
     proxyVersion: PROXY_VERSION,
     serverName: "hub-proxy",
     serverCapabilities: { tools: {}, logging: {} },
