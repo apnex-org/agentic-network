@@ -296,3 +296,6 @@ export type {
   CascadeDriftRule,
   ResponseSummarizerConfig,
 } from "@apnex/cognitive-layer";
+
+// hcapskills0 build_core — the harness-neutral, resource-generic HCAP consumer core.
+export * from "./control-plane/index.js";
