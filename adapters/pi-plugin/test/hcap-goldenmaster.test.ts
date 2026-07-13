@@ -19,7 +19,7 @@ import { describe, it, expect } from "vitest";
 import { WorkLeaseTracker } from "@apnex/network-adapter";
 import type { ToolDispatchContext, IToolDispatchAgent } from "@apnex/network-adapter";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PiToolActuatorPort } from "../src/hcap/tools/pi-tool-actuator-port.js";
+import { PiToolActuator } from "../src/hcap/tools/pi-tool-actuator.js";
 import { PiToolControlPlane } from "../src/hcap/tools/tool-control-plane.js";
 import { SpecStore, ReconcileLoop } from "@apnex/network-adapter";
 import type { ConvergeOutcome, ResourceSpec } from "@apnex/network-adapter";
@@ -91,7 +91,7 @@ const spec = (name: string, enabled: boolean): ResourceSpec => ({
 
 function makeStack(stub: StubExtensionAPI, failureBound = 3) {
   const outcomes: ConvergeOutcome[] = [];
-  const port = new PiToolActuatorPort(stub as unknown as ExtensionAPI, makeCtx());
+  const port = new PiToolActuator(stub as unknown as ExtensionAPI, makeCtx());
   const store = new SpecStore();
   const loop = new ReconcileLoop(
     { store, actuator: port },

@@ -18,13 +18,13 @@ import type {
   SpecStore,
   ReconcileLoop,
 } from "@apnex/network-adapter";
-import type { PiToolActuatorPort } from "./pi-tool-actuator-port.js";
+import type { PiToolActuator } from "./pi-tool-actuator.js";
 
 export interface ToolControlPlaneDeps {
   store: SpecStore;
   loop: ReconcileLoop;
   /** the actuator, for the managed-status join only (observeManaged). */
-  port: Pick<PiToolActuatorPort, "observeManaged">;
+  port: Pick<PiToolActuator, "observeManaged">;
 }
 
 export class PiToolControlPlane {

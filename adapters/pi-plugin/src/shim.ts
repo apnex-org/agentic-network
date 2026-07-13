@@ -10,7 +10,7 @@
  * client, so there is NO local MCP proxy server. Tools are registered NATIVELY via
  * the HCAP declarative tool-control-plane (mission-107): `HubSpecSource` fetches the
  * live catalog into the declared spec and `SpecReconcileLoop` converges it onto pi
- * through the sole `PiToolActuatorPort`, which renders each descriptor via
+ * through the sole `PiToolActuator`, which renders each descriptor via
  * `tool-bridge.buildPiToolDefinition` and calls `pi.registerTool`. Each tool's
  * `execute` routes through the shared `runToolDispatch` authority via a
  * `ToolDispatchContext` built from the dispatcher's shared state. pi's native
@@ -55,7 +55,7 @@ import { buildPiNotificationHooks } from "./wake.js";
 import { installFooter, type FooterController } from "./footer-install.js";
 import { runSwarmPoll } from "./footer-poll.js";
 import { SpecStore, ReconcileLoop } from "@apnex/network-adapter";
-import { PiToolActuatorPort } from "./hcap/tools/pi-tool-actuator-port.js";
+import { PiToolActuator } from "./hcap/tools/pi-tool-actuator.js";
 import { HubSpecSource } from "./hcap/tools/hub-spec-source.js";
 import { PiToolControlPlane } from "./hcap/tools/tool-control-plane.js";
 import { dirname, join, resolve } from "node:path";
@@ -354,7 +354,7 @@ async function connectAndSeed(
     hubUrl: config.hubUrl,
     log,
   });
-  const actuatorPort = new PiToolActuatorPort(pi, dispatchCtx);
+  const actuatorPort = new PiToolActuator(pi, dispatchCtx);
   const store = new SpecStore();
   const specLoop = new ReconcileLoop({ store, actuator: actuatorPort }, { log });
   const plane = new PiToolControlPlane({ store, loop: specLoop, port: actuatorPort });
