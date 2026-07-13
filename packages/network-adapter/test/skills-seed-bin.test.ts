@@ -5,10 +5,18 @@
  * gate-fail case is the runtime guarantee for unlink-safety invariant 3b.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runSeedSkills } from "../src/bin/seed-skills.js";
+import { pathToFileURL } from "node:url";
+import { runSeedSkills, isInvokedAsMain } from "../src/bin/seed-skills.js";
 import type { WantedBundles } from "../src/skills/index.js";
 
 let root: string;
@@ -79,5 +87,24 @@ describe("runSeedSkills", () => {
 
     expect(r.ok).toBe(false);
     expect(r.missing).toEqual([]); // gate passed; the FAILURE is at converge
+  });
+});
+
+describe("isInvokedAsMain — bug-251 symlink main-guard regression", () => {
+  it("resolves main invocation through a SYMLINK (the npm-bin shape), not just direct", () => {
+    // Reproduce the npm bin topology: a real compiled module + a `.bin` symlink to it.
+    const real = join(root, "seed-skills.js");
+    writeFileSync(real, "// compiled bin\n");
+    const link = join(root, "ois-seed-skills"); // mirrors node_modules/.bin/<name>
+    symlinkSync(real, link);
+    const moduleUrl = pathToFileURL(real).href; // import.meta.url resolves to the real file
+
+    // Invoked via the SYMLINK, process.argv[1] is the symlink path — the EXACT bug input.
+    // Pre-fix (raw `===`) this was FALSE → main() silently no-op'd → skill delivery lost.
+    expect(isInvokedAsMain(moduleUrl, link)).toBe(true);
+    // Direct invocation still detected; unrelated / undefined argv[1] → not main.
+    expect(isInvokedAsMain(moduleUrl, real)).toBe(true);
+    expect(isInvokedAsMain(moduleUrl, join(root, "not-a-file.js"))).toBe(false);
+    expect(isInvokedAsMain(moduleUrl, undefined)).toBe(false);
   });
 });

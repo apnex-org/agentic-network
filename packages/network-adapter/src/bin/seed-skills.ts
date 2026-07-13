@@ -18,7 +18,14 @@
  * coexist from clobbering an mks skill at runtime under manifest drift.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -198,7 +205,27 @@ function main(argv: string[]): number {
   }
 }
 
-// Run only when invoked as a script (not when imported by a test).
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+/**
+ * True iff this module is the process entrypoint — robust to SYMLINK invocation
+ * (bug-251). The npm bin `ois-seed-skills` is a symlink, so `process.argv[1]` is the
+ * symlink path while `import.meta.url` is the real file; a raw `===` mismatches and
+ * `main()` silently no-ops (the fleet rollout invokes via that symlink → skill delivery
+ * would silently vanish). realpath-normalize BOTH sides so they compare canonical paths.
+ * Guarded for a missing/unresolvable argv[1] (e.g. under a test importer).
+ */
+export function isInvokedAsMain(
+  moduleUrl: string,
+  argv1: string | undefined,
+): boolean {
+  if (!argv1) return false;
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(argv1);
+  } catch {
+    return false;
+  }
+}
+
+// Run only when invoked as a script (not when imported by a test) — symlink-safe.
+if (isInvokedAsMain(import.meta.url, process.argv[1])) {
   process.exit(main(process.argv));
 }
