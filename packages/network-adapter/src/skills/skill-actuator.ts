@@ -1,13 +1,16 @@
 /**
- * claude-skill-actuator.ts — ClaudeSkillActuator (hcapskills0 build_claude): the
- * Claude SKILLS concrete `ResourceActuatorPort` impl. The mirror of `PiToolActuator`
- * for a different (harness, kind): pi actuates tools via an in-process ExtensionAPI;
- * this actuates skills via the FILESYSTEM claude watches ($CLAUDE_CONFIG_DIR/skills/).
+ * skill-actuator.ts — SkillActuator (piuplift0 p1): the HARNESS-NEUTRAL SKILLS
+ * `ResourceActuatorPort` impl. A filesystem SKILL.md-tree materializer parameterized by an
+ * INJECTED `skillsDir` (node:fs only, NO harness SDK) — the SAME universal class seeds every
+ * harness that discovers SKILL.md from a config dir: claude ($CLAUDE_CONFIG_DIR/skills) AND
+ * pi ($PI_CODING_AGENT_DIR/skills), each via the headless seed bin with its own injected dir.
+ * (Renamed from ClaudeSkillActuator — it was ALREADY harness-neutral, so a per-harness
+ * subclass would be redundant duplication; the fs mechanism is not in the name.)
  *
- * RUNTIME-FREE by construction — node:fs only, NO claude SDK — which is what lets the
- * headless seed bin materialize skills before/without the claude runtime (design §5).
- * The SOLE coupling to the claude skill surface (the fs layout + SKILL.md tree shape);
- * skill-isms live here, NEVER in control-plane/ (the import-boundary test guards it).
+ * RUNTIME-FREE by construction — node:fs only, NO harness SDK — which is what lets the
+ * headless seed bin materialize skills before/without the harness runtime (design §5).
+ * The SOLE coupling is to the SKILL.md-tree shape (fs layout); skill-isms live here,
+ * NEVER in control-plane/ (the import-boundary test guards it).
  *
  * COEXISTENCE UNLINK SAFETY (design §9 firebreak; the load-bearing fleet-safety
  * property during coexist with legacy `mission_kit_sync`, which writes the SAME dir):
@@ -42,7 +45,7 @@ import type {
 } from "../control-plane/contracts.js";
 import type { SkillDefinition, SkillLedgerPort } from "./contracts.js";
 
-export interface ClaudeSkillActuatorDeps {
+export interface SkillActuatorDeps {
   /** the seat's skills root — $CLAUDE_CONFIG_DIR/skills (INJECTED by the bin; the
    *  shared package never reads env). Must exist (the bin creates it cold). */
   skillsDir: string;
@@ -58,17 +61,17 @@ export interface ClaudeSkillActuatorDeps {
   log?: (msg: string) => void;
 }
 
-export class ClaudeSkillActuator implements ResourceActuatorPort {
+export class SkillActuator implements ResourceActuatorPort {
   private readonly skillsDir: string;
   private readonly ledger: SkillLedgerPort;
   private readonly log: (msg: string) => void;
-  /** idea-521 opt-in converge-prune (default false); see ClaudeSkillActuatorDeps. */
+  /** idea-521 opt-in converge-prune (default false); see SkillActuatorDeps. */
   private readonly pruneOrphans: boolean;
   /** the DURABLE managed ledger, in memory for this pass — seeded from persistence at
    *  construct, written back after every converge. The ONLY set removal may touch. */
   private readonly managed: Set<string>;
 
-  constructor(deps: ClaudeSkillActuatorDeps) {
+  constructor(deps: SkillActuatorDeps) {
     this.skillsDir = deps.skillsDir;
     this.ledger = deps.ledger;
     this.log = deps.log ?? (() => {});

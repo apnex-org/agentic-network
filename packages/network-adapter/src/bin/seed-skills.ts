@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { SpecStore } from "../control-plane/spec-store.js";
 import { ReconcileLoop } from "../control-plane/reconcile-loop.js";
-import { ClaudeSkillActuator } from "../skills/claude-skill-actuator.js";
+import { SkillActuator } from "../skills/skill-actuator.js";
 import { FileSkillLedger } from "../skills/file-skill-ledger.js";
 import { RoleSkillSource } from "../skills/role-skill-source.js";
 import {
@@ -71,7 +71,7 @@ export interface SeedSkillsResult {
 /**
  * The orchestration core (injected deps; no env/git). Runs: mechanical bundle-expand →
  * LIVE fail-closed set-diff gate (role_map ⊇ mks-delivered) → converge via the neutral
- * loop + ClaudeSkillActuator. Returns ok=false on gate violation OR non-converged
+ * loop + SkillActuator. Returns ok=false on gate violation OR non-converged
  * (the caller fail-closes the launch).
  */
 export function runSeedSkills(deps: SeedSkillsDeps): SeedSkillsResult {
@@ -115,7 +115,7 @@ export function runSeedSkills(deps: SeedSkillsDeps): SeedSkillsResult {
   mkdirSync(deps.skillsDir, { recursive: true });
 
   const ledger = new FileSkillLedger(deps.ledgerPath);
-  const actuator = new ClaudeSkillActuator({
+  const actuator = new SkillActuator({
     skillsDir: deps.skillsDir,
     ledger,
     log,
@@ -145,24 +145,47 @@ export function runSeedSkills(deps: SeedSkillsDeps): SeedSkillsResult {
   };
 }
 
+/**
+ * The per-seat config-dir env var each harness roots its sovereign dir under. There is NO
+ * universal naming convention — claude uses CLAUDE_CONFIG_DIR, pi uses PI_CODING_AGENT_DIR
+ * (NOT PI_CONFIG_DIR) — so OIS_HARNESS is mapped EXPLICITLY here. A new harness adds one
+ * entry; the ois seat exports that same var (guardrail 2: env/ois-layout coupling lives in
+ * this bin, not smeared across the shell).
+ */
+const HARNESS_CONFIG_DIR_ENV: Readonly<Record<string, string>> = {
+  claude: "CLAUDE_CONFIG_DIR",
+  pi: "PI_CODING_AGENT_DIR",
+};
+
+/**
+ * Harness-neutral config-dir selector (piuplift0 p1): OIS_HARNESS selects its mapped env
+ * var (e.g. pi → PI_CODING_AGENT_DIR), falling back to CLAUDE_CONFIG_DIR for back-compat so
+ * the claude seed path stays byte-identical (with OIS_HARNESS unset this returns
+ * CLAUDE_CONFIG_DIR exactly). An unmapped harness also falls back to CLAUDE_CONFIG_DIR.
+ */
+export function harnessConfigDir(env: NodeJS.ProcessEnv): string | undefined {
+  const harness = env.OIS_HARNESS?.trim().toLowerCase();
+  const key = harness ? HARNESS_CONFIG_DIR_ENV[harness] : undefined;
+  const selected = key ? env[key] : undefined;
+  return selected || env.CLAUDE_CONFIG_DIR;
+}
+
 /** env/git wrapper: read env, parse the manifest, clone the pinned source, delegate. */
 function main(argv: string[]): number {
   const log = (m: string): void => console.error(m);
+  const configDir = harnessConfigDir(process.env);
   const skillsDir =
-    argv[2] ??
-    (process.env.CLAUDE_CONFIG_DIR
-      ? join(process.env.CLAUDE_CONFIG_DIR, "skills")
-      : undefined);
+    argv[2] ?? // explicit positional — unchanged, still wins (the live ois seed path)
+    process.env.HCAP_SKILLS_DIR ?? // neutral explicit override
+    (configDir ? join(configDir, "skills") : undefined);
   const manifestPath = process.env.HCAP_SKILLS_MANIFEST;
   const role = process.env.OIS_ROLE ?? process.env.OIS_AGENT_ROLE ?? "unknown";
   const ledgerPath =
     process.env.HCAP_SKILLS_LEDGER ??
-    (process.env.CLAUDE_CONFIG_DIR
-      ? join(process.env.CLAUDE_CONFIG_DIR, ".hcap-skills-managed.json")
-      : undefined);
+    (configDir ? join(configDir, ".hcap-skills-managed.json") : undefined);
 
   if (!skillsDir) {
-    log("[hcap-skills] FATAL: no skills dir (arg1 or CLAUDE_CONFIG_DIR)");
+    log("[hcap-skills] FATAL: no skills dir (arg1, HCAP_SKILLS_DIR, or <HARNESS>_CONFIG_DIR/CLAUDE_CONFIG_DIR)");
     return 2;
   }
   if (!manifestPath || !existsSync(manifestPath)) {
@@ -170,7 +193,7 @@ function main(argv: string[]): number {
     return 2;
   }
   if (!ledgerPath) {
-    log("[hcap-skills] FATAL: no ledger path (HCAP_SKILLS_LEDGER or CLAUDE_CONFIG_DIR)");
+    log("[hcap-skills] FATAL: no ledger path (HCAP_SKILLS_LEDGER or <HARNESS>_CONFIG_DIR/CLAUDE_CONFIG_DIR)");
     return 2;
   }
 

@@ -1,13 +1,13 @@
-# wanted-bundles.yaml — claude/ois skill-sync manifest (Arc-1 S4 / idea-453).
+# wanted-bundles.yaml — HCAP skill-sync manifest (Arc-1 S4 / idea-453; harness-agnostic per piuplift0/p1).
 #
-# Declares which mission-kit skills the claude fleet carries. The
-# HCAP skills-consumer in ois/bin/ois::claude_seed (fleetskills0/idea-505, sole path) resolves these against
-# apnex/mission-kit and copies the SKILL.md trees into the agent's sovereign
-# $CLAUDE_CONFIG_DIR/skills/, ALONGSIDE the local-repo skills (per-skill merge,
-# never a wipe). Mirrors hermes/manifests/skill-sync/wanted-bundles.yaml — same
-# format, same apnex/mission-kit source — and extends the mission-103
-# constitution-sync pattern (mission-kit canonical, synced fleet-wide) from
-# axioms to SKILLS for the claude/ois path.
+# Declares which mission-kit skills the fleet carries. The HCAP skills-consumer seed bin
+# (ois/bin/ois::claude_seed AND ::pi_seed — fleetskills0/idea-505 + piuplift0/p1, sole path)
+# resolves these against apnex/mission-kit and copies the SKILL.md trees into the agent's
+# sovereign per-seat skills dir ($CLAUDE_CONFIG_DIR/skills for claude, $PI_CODING_AGENT_DIR/skills
+# for pi), ALONGSIDE the local-repo skills (per-skill merge, never a wipe). Mirrors
+# hermes/manifests/skill-sync/wanted-bundles.yaml — same format, same apnex/mission-kit source —
+# and extends the mission-103 constitution-sync pattern (mission-kit canonical, synced fleet-wide)
+# from axioms to SKILLS. The SAME manifest drives every harness's consumer unmodified.
 #
 # Format:
 #   bundles:      - <name>   resolved via mission-kit bundles/<name>.yaml (`skills:` list)
