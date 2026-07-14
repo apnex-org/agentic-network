@@ -124,6 +124,7 @@ describe("E2E Foundation", () => {
         "get_idea",
         "get_metrics",
         "get_mission",
+        "get_now",
         "get_pending_actions",
         "get_thread",
         "leave_thread",
