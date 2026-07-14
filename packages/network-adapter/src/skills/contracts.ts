@@ -6,7 +6,7 @@
  * payload IS for the skills kind, and the ledger the actuator scopes itself with.
  *
  * Home rule (ratified 2026-07-13): an actuator lives at the LOWEST layer that can
- * express its coupling. `ClaudeSkillActuator` is contract-coupled but RUNTIME-FREE
+ * express its coupling. `SkillActuator` is contract-coupled but RUNTIME-FREE
  * (node:fs to a path claude watches; no claude SDK) → it lives in the shared package
  * as a control-plane/ SIBLING, reachable by the headless seed bin — which is exactly
  * what lets §5's entrypoint materialize skills before/without the claude runtime.

@@ -1,6 +1,6 @@
 /**
- * skills-claude-actuator.test.ts — ClaudeSkillActuator fs behavior + the COEXISTENCE
- * UNLINK-SAFETY invariants (hcapskills0 build_claude). These are the load-bearing
+ * skill-actuator.test.ts — SkillActuator fs behavior + the COEXISTENCE
+ * UNLINK-SAFETY invariants (hcapskills0 build_claude; renamed harness-neutral in piuplift0 p1). These are the load-bearing
  * fleet-safety properties the pi-boundary golden master can't see — the backstop's
  * precise watch. Real temp dirs (no mocks): the actuator writes/unlinks actual
  * SKILL.md trees, and we assert on the disk + the durable ledger.
@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  ClaudeSkillActuator,
+  SkillActuator,
   FileSkillLedger,
   type SkillLedgerPort,
 } from "../src/skills/index.js";
@@ -62,9 +62,9 @@ class MemLedger implements SkillLedgerPort {
   }
 }
 
-describe("ClaudeSkillActuator — materialize + observe", () => {
+describe("SkillActuator — materialize + observe", () => {
   it("materializes enabled declared skills onto disk; observe is managed-scoped", () => {
-    const act = new ClaudeSkillActuator({ skillsDir, ledger: new MemLedger() });
+    const act = new SkillActuator({ skillsDir, ledger: new MemLedger() });
     const r = act.converge([skill("a"), skill("b"), skill("c", false)]);
     expect(r.status).toBe("converged");
     expect(onDisk("a")).toBe(true);
@@ -75,7 +75,7 @@ describe("ClaudeSkillActuator — materialize + observe", () => {
   });
 
   it("materialize is an idempotent merge-copy (converge twice = same converged state)", () => {
-    const act = new ClaudeSkillActuator({ skillsDir, ledger: new MemLedger() });
+    const act = new SkillActuator({ skillsDir, ledger: new MemLedger() });
     act.converge([skill("a")]);
     const r2 = act.converge([skill("a")]);
     expect(r2.status).toBe("converged");
@@ -85,7 +85,7 @@ describe("ClaudeSkillActuator — materialize + observe", () => {
   it("fails (not throws) when a source tree has no SKILL.md — drives the bin fail-closed", () => {
     const emptyDir = join(sourceRoot, "skills", "empty");
     mkdirSync(emptyDir, { recursive: true }); // no SKILL.md inside
-    const act = new ClaudeSkillActuator({ skillsDir, ledger: new MemLedger() });
+    const act = new SkillActuator({ skillsDir, ledger: new MemLedger() });
     const r = act.converge([
       { name: "empty", definition: { sourceDir: emptyDir }, enabled: true },
     ]);
@@ -94,14 +94,14 @@ describe("ClaudeSkillActuator — materialize + observe", () => {
   });
 });
 
-describe("ClaudeSkillActuator — coexistence unlink-safety invariants", () => {
+describe("SkillActuator — coexistence unlink-safety invariants", () => {
   it("INVARIANT 2: never unlinks a FOREIGN skill absent from the ledger", () => {
     // a foreign/bootstrap/mission_kit_sync skill lands on disk NOT via this actuator.
     const foreign = join(skillsDir, "foreign");
     mkdirSync(foreign, { recursive: true });
     writeFileSync(join(foreign, "SKILL.md"), "# foreign\n");
 
-    const act = new ClaudeSkillActuator({ skillsDir, ledger: new MemLedger() });
+    const act = new SkillActuator({ skillsDir, ledger: new MemLedger() });
     act.converge([skill("a")]); // manages only "a"
 
     // foreign survives (removal is ledger-scoped; foreign was never in the ledger) …
@@ -111,7 +111,7 @@ describe("ClaudeSkillActuator — coexistence unlink-safety invariants", () => {
   });
 
   it("removal is ledger-scoped: a dropped MANAGED skill unlinks; a co-present one stays", () => {
-    const act = new ClaudeSkillActuator({ skillsDir, ledger: new MemLedger() });
+    const act = new SkillActuator({ skillsDir, ledger: new MemLedger() });
     act.converge([skill("mks"), skill("other")]);
     expect(onDisk("mks")).toBe(true);
     expect(onDisk("other")).toBe(true);
@@ -127,7 +127,7 @@ describe("ClaudeSkillActuator — coexistence unlink-safety invariants", () => {
     const ledgerPath = join(root, ".hcap-skills-managed.json");
 
     // launch 1: a fresh process materializes a + b, persists the ledger, exits.
-    const act1 = new ClaudeSkillActuator({
+    const act1 = new SkillActuator({
       skillsDir,
       ledger: new FileSkillLedger(ledgerPath),
     });
@@ -137,7 +137,7 @@ describe("ClaudeSkillActuator — coexistence unlink-safety invariants", () => {
 
     // launch 2: a BRAND-NEW actuator+ledger reads the sidecar → reconstructs managed
     // {a,b}; dropping b now unlinks it (an in-memory ledger could not have done this).
-    const act2 = new ClaudeSkillActuator({
+    const act2 = new SkillActuator({
       skillsDir,
       ledger: new FileSkillLedger(ledgerPath),
     });
@@ -153,7 +153,7 @@ describe("ClaudeSkillActuator — coexistence unlink-safety invariants", () => {
     mkdirSync(pre, { recursive: true });
     writeFileSync(join(pre, "SKILL.md"), "# pre\n");
 
-    const act = new ClaudeSkillActuator({ skillsDir, ledger: new MemLedger() });
+    const act = new SkillActuator({ skillsDir, ledger: new MemLedger() });
     act.converge([skill("a")]);
     // nothing outside the (empty→{a}) ledger is touched.
     expect(onDisk("pre-existing")).toBe(true);
@@ -161,7 +161,7 @@ describe("ClaudeSkillActuator — coexistence unlink-safety invariants", () => {
   });
 });
 
-describe("ClaudeSkillActuator — idea-521 converge-prune (pruneOrphans opt-in)", () => {
+describe("SkillActuator — idea-521 converge-prune (pruneOrphans opt-in)", () => {
   /** land a skill tree straight on disk (as legacy mission_kit_sync / a foreign source
    *  would) — NOT via this actuator, so it is absent from the ledger. */
   function putOnDisk(id: string): void {
@@ -175,7 +175,7 @@ describe("ClaudeSkillActuator — idea-521 converge-prune (pruneOrphans opt-in)"
     putOnDisk("research-artefacts");
     putOnDisk("substrate-audit");
 
-    const act = new ClaudeSkillActuator({
+    const act = new SkillActuator({
       skillsDir,
       ledger: new MemLedger(),
       pruneOrphans: true,
@@ -193,7 +193,7 @@ describe("ClaudeSkillActuator — idea-521 converge-prune (pruneOrphans opt-in)"
 
   it("pruneOrphans defaults OFF — an orphan survives (coexistence firebreak intact)", () => {
     putOnDisk("legacy-leftover");
-    const act = new ClaudeSkillActuator({ skillsDir, ledger: new MemLedger() }); // no opt-in
+    const act = new SkillActuator({ skillsDir, ledger: new MemLedger() }); // no opt-in
     act.converge([skill("arc-lifecycle")]);
     expect(onDisk("arc-lifecycle")).toBe(true);
     expect(onDisk("legacy-leftover")).toBe(true); // NOT pruned by default (invariant 2)
@@ -201,7 +201,7 @@ describe("ClaudeSkillActuator — idea-521 converge-prune (pruneOrphans opt-in)"
 
   it("converge-prune NEVER removes a wanted/baseline skill, even alongside pruned orphans", () => {
     putOnDisk("orphan");
-    const act = new ClaudeSkillActuator({
+    const act = new SkillActuator({
       skillsDir,
       ledger: new MemLedger(),
       pruneOrphans: true,
@@ -215,7 +215,7 @@ describe("ClaudeSkillActuator — idea-521 converge-prune (pruneOrphans opt-in)"
     const notASkill = join(skillsDir, "not-a-skill");
     mkdirSync(notASkill, { recursive: true });
     writeFileSync(join(notASkill, "README.md"), "# not a skill\n"); // no SKILL.md
-    const act = new ClaudeSkillActuator({
+    const act = new SkillActuator({
       skillsDir,
       ledger: new MemLedger(),
       pruneOrphans: true,
@@ -227,7 +227,7 @@ describe("ClaudeSkillActuator — idea-521 converge-prune (pruneOrphans opt-in)"
   it("prune is durable-ledger-coherent: an adopted orphan is dropped from the managed set", () => {
     putOnDisk("orphan");
     const ledger = new MemLedger();
-    const act = new ClaudeSkillActuator({ skillsDir, ledger, pruneOrphans: true });
+    const act = new SkillActuator({ skillsDir, ledger, pruneOrphans: true });
     act.converge([skill("a")]);
     // the pruned orphan must not linger in the persisted managed set.
     expect(ledger.read()).not.toContain("orphan");

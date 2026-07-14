@@ -303,3 +303,8 @@ export type {
 
 // hcapskills0 build_core — the harness-neutral, resource-generic HCAP consumer core.
 export * from "./control-plane/index.js";
+
+// piuplift0 p1 — the HCAP SKILLS kind-module (SkillActuator + role source + ledger +
+// manifest), promoted to the public API surface (was intra-package only) so any harness
+// seed imports the harness-neutral skills consumer directly, not via a deep path.
+export * from "./skills/index.js";

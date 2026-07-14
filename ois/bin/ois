@@ -151,10 +151,25 @@ render_kind() { # $1 kind, $2 cell-json -> stdout
   esac
 }
 
+# cell_configdir <cell-json> -> the cell's sovereign per-seat config dir, {agent}- and
+# ~-expanded, or EMPTY STRING if the cell declares none. The `// empty` is LOAD-BEARING:
+# `jq -r '.configDirTemplate'` on a missing/null key yields the literal string "null", which
+# must NEVER reach an exported *_CONFIG_DIR or a seeded skills path — a null/shared path
+# collides every seat on one dir and races the managed-skills ledger. Callers that REQUIRE a
+# per-seat dir (claude_seed/pi_seed) fail-closed on empty; env_lines simply omits the line.
+# (Sibling of seat_config_dir, which takes <agent> <harness> and resolves via cell_json.)
+cell_configdir() {
+  local c="$1" a cdir
+  a=$(jq -r '.cellAgent' <<<"$c")
+  cdir=$(jq -r '.configDirTemplate // empty' <<<"$c")
+  [[ -n "$cdir" ]] || return 0
+  expand "${cdir//\{agent\}/$a}"
+}
+
 # ---------- env assembly ----------
 # emits NAME=VALUE lines; secret values raw when $2=raw, sha256:12 otherwise
 env_lines() {
-  local c="$1" mode="${2:-masked}" ws role tag name eager
+  local c="$1" mode="${2:-masked}" harness="${3:-}" ws role tag name eager
   ws=$(expand "$(jq -r '.workspace' <<<"$c")")
   role=$(jq -r '.role' <<<"$c"); tag=$(jq -r '.hubModelTag' <<<"$c"); name=$(jq -r '.agentName' <<<"$c")
   eager=$(jq -r '.eagerSessionClaim' <<<"$c")
@@ -203,11 +218,15 @@ env_lines() {
              ref=$(jq -r --arg cr "$cred" '.fleetCredentials[$cr].secretRef // empty' <<<"$c")
              [[ -n "$ref" ]] && printf '%s\t%s\t%s\n' "$cred" "$inj" "$ref"
            done)
-  # claude sovereign config dir
-  local cdir; cdir=$(jq -r '.configDirTemplate // empty' <<<"$c")
+  # sovereign per-seat config dir — the env var NAME is harness-specific (piuplift0 p1):
+  # pi discovers skills from $PI_CODING_AGENT_DIR/skills, claude from $CLAUDE_CONFIG_DIR/skills.
+  local cdir; cdir=$(cell_configdir "$c")   # the load-bearing `// empty` null-guard lives in the helper
   if [[ -n "$cdir" ]]; then
-    cdir=${cdir//\{agent\}/$(jq -r '.cellAgent' <<<"$c")}
-    echo "CLAUDE_CONFIG_DIR=$(expand "$cdir")"
+    if [[ "$harness" == "pi" ]]; then
+      echo "PI_CODING_AGENT_DIR=$cdir"
+    else
+      echo "CLAUDE_CONFIG_DIR=$cdir"
+    fi
   fi
 }
 
@@ -235,7 +254,8 @@ claude_npm_ensure() {
 claude_seed() {
   local c="$1" a ws cdir mp
   a=$(jq -r '.cellAgent' <<<"$c"); ws=$(expand "$(jq -r '.workspace' <<<"$c")")
-  cdir=$(jq -r '.configDirTemplate' <<<"$c"); cdir=$(expand "${cdir//\{agent\}/$a}")
+  cdir=$(cell_configdir "$c")
+  [[ -n "$cdir" ]] || fatal "claude cell '$a' has no configDirTemplate — cannot resolve a sovereign CLAUDE_CONFIG_DIR (declare it in config/harnesses/claude.json); refusing to seed to a bogus/shared path"
   # npmdeliver0 (idea-492): the marketplace is now the npm-installed plugin dir
   # (Channel-2 directory marketplace retired). Config .marketplacePath is vestigial.
   claude_npm_ensure
@@ -326,6 +346,54 @@ claude_seed() {
     node "$na_bin" "$cdir/skills"
 }
 
+# ---------- pi sovereign seed (piuplift0 p1) ----------
+
+# pi_na_ensure — resolve the HCAP skills-consumer seed bin for pi. Unlike claude (whose
+# plugin install.sh bundles @apnex/network-adapter), pi loads its plugin at EXEC via
+# piPluginSpec, so there is no pre-exec na. Install @apnex/network-adapter GLOBALLY (just the
+# seed BIN pi needs) once per invocation. @latest tracks claude-plugin's floating na dep
+# ("@apnex/network-adapter":"*") so the seed bin stays byte-consistent across harnesses.
+# DEFERRED-CONVERGENCE (backport_synthesis / P3 npm-distribution / the D4 gap): pi resolves
+# the seed bin via direct global na-install, divergent from claude's bundled-via-plugin
+# resolution; the clean unified resolution (both harnesses on a pinned na) is the pi-delivery
+# / npm-unification work — NOT p1-skills scope.
+_PI_NA_MP=""
+pi_na_ensure() {
+  [[ -n "$_PI_NA_MP" ]] && return 0
+  command -v npm >/dev/null 2>&1 || fatal "'npm' not found on PATH (needed for the @apnex/network-adapter seed bin)"
+  echo "  seeding : npm install -g @apnex/network-adapter@latest (pi HCAP skills seed bin)"
+  npm install -g "@apnex/network-adapter@latest" >/dev/null || fatal "npm install -g @apnex/network-adapter@latest failed"
+  local mp; mp="$(npm root -g)/@apnex/network-adapter"
+  [[ -d "$mp" ]] || fatal "npm-installed network-adapter dir missing at $mp after install"
+  _PI_NA_MP="$mp"
+}
+
+# pi_seed — mirror of claude_seed's HCAP skills-consumer tail for the pi harness. Same
+# generalized seed bin, same fail-closed discipline (no `|| true`, under set -e). pi-native
+# discovery = the materialized $PI_CODING_AGENT_DIR/skills (default ~/.pi/agent/skills) that
+# the pi runtime reads at startup. Seed-time (pre-exec) materialization is race-free, exactly
+# like claude's pre-`exec claude` seed.
+pi_seed() {
+  local c="$1" a cdir na_bin srole
+  a=$(jq -r '.cellAgent' <<<"$c")
+  cdir=$(cell_configdir "$c")
+  [[ -n "$cdir" ]] || fatal "pi cell '$a' has no configDirTemplate — cannot resolve a sovereign PI_CODING_AGENT_DIR (declare it in config/harnesses/pi.json, mirroring claude's '{agent}.claude'); refusing to seed to a bogus/shared path"
+  pi_na_ensure
+  na_bin="$_PI_NA_MP/dist/bin/seed-skills.js"
+  [[ -f "$na_bin" ]] || na_bin="$(npm root -g)/@apnex/network-adapter/dist/bin/seed-skills.js"
+  [[ -f "$na_bin" ]] || fatal "HCAP skills-consumer seed bin not found (npm-root)"
+  export PI_CODING_AGENT_DIR="$cdir"
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  srole=$(jq -r '.role // "unknown"' <<<"$c")
+  echo "  seeding : HCAP skills embed (fail-closed, role=$srole) → $cdir/skills"
+  # OIS_HARNESS=pi → the seed bin's harnessConfigDir selects PI_CODING_AGENT_DIR for the
+  # managed-ledger path; skillsDir is passed explicitly as the positional arg.
+  HCAP_SKILLS_MANIFEST="${HCAP_SKILLS_MANIFEST:-$ROOT/manifests/skill-sync/wanted-bundles.yaml}" \
+  OIS_HARNESS="pi" \
+  OIS_ROLE="$srole" \
+    node "$na_bin" "$cdir/skills"
+}
+
 # ---------- artifact write with LKG retention ----------
 write_artifact() { # $1 agent, $2 path, $3 content
   local a="$1" path="$2" content="$3"
@@ -349,7 +417,7 @@ cmd_render() {
   done < <(artifact_targets "$c")
 }
 
-cmd_env() { local c; c=$(cell_json "$1" "$2"); env_lines "$c" masked | sort; }
+cmd_env() { local c; c=$(cell_json "$1" "$2"); env_lines "$c" masked "$2" | sort; }
 
 check_cell() { # returns nonzero on any mismatch
   local a="$1" h="$2" rc=0 c kind path live rendered
@@ -468,10 +536,12 @@ do_launch() {
   # vestigial after this and can be dropped from the estate configs in a follow-up sweep.
   if [[ "$h" == "claude" ]]; then
     claude_seed "$c"
+  elif [[ "$h" == "pi" ]]; then
+    pi_seed "$c"
   fi
   # env
   local line
-  while IFS= read -r line; do export "${line%%=*}=${line#*=}"; done < <(env_lines "$c" raw)
+  while IFS= read -r line; do export "${line%%=*}=${line#*=}"; done < <(env_lines "$c" raw "$h")
   # opencode plugin cache refresh (npm channel only — github: specs are retired)
   if [[ "$h" == "opencode" ]]; then
     local plug; plug=$(jq -r '.opencodePlugin' <<<"$c")
