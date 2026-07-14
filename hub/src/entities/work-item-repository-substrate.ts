@@ -248,7 +248,11 @@ function mergeEvidence(existing: EvidenceItem[], supplied: EvidenceItem[]): Evid
  * (which legitimately PARKS the item in `review` awaiting the verifier).
  *
  *   #1 coverage-by-BINDING (evidence names the requirement id, not just kind)
- *   #2 kind-match  #3 freshness (producedAt >= lease.claimedAt unless the requirement
+ *   #2 kind-match  #3 freshness (producedAt >= w.createdAt [bug-261: anchor on the item's
+ *      EXISTENCE, not the forced-late lease.claimedAt — a dependency-gated node's claim is
+ *      forced late by its gate, so honest own-deliverable evidence produced while the work was
+ *      legitimately underway can predate the claim; createdAt <= claimedAt always, so this is
+ *      strictly looser -> zero regression] unless the requirement
  *      sets allowPreClaim OR the entry is ALREADY PERSISTED on the item — bug-222: a
  *      review/blocked item reaped to ready preserves its evidence by design; on re-claim
  *      that evidence predates the NEW lease, but it was freshness-validated when bound
@@ -261,11 +265,10 @@ function mergeEvidence(existing: EvidenceItem[], supplied: EvidenceItem[]): Evid
 function evaluateEvidence(
   requirements: EvidenceRequirement[],
   evidence: EvidenceItem[],
-  lease: WorkItemLease | null,
+  createdAt: string,
   isVerifierGate: boolean,
   priorKeys: ReadonlySet<string>,
 ): { nextPhase: WorkItemPhase; refsToResolve: RefToResolve[]; verifierChecks: VerifierCheck[] } {
-  const claimedAt = lease?.claimedAt ?? null;
   const refsToResolve: RefToResolve[] = [];
   const verifierChecks: VerifierCheck[] = [];
 
@@ -319,9 +322,9 @@ function evaluateEvidence(
     }
     // #3 freshness (already-persisted evidence is grandfathered — bug-222)
     const fresh = kindMatched.filter((e) =>
-      req.allowPreClaim || priorKeys.has(evidenceKey(e)) || (claimedAt != null && producedAtOnOrAfter(e.producedAt, claimedAt)));
+      req.allowPreClaim || priorKeys.has(evidenceKey(e)) || producedAtOnOrAfter(e.producedAt, createdAt));
     if (fresh.length === 0) {
-      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence failed freshness (producedAt before lease.claimedAt=${claimedAt}; only the requirement author can waive this via the requirement-level allowPreClaim flag)`);
+      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence failed freshness (producedAt before the work item's createdAt=${createdAt}; bug-261: evidence cannot predate the item's existence. Only the requirement author can waive this via the seed-time allowPreClaim flag)`);
     }
     const e = fresh[0]; // the binding evidence
     // #4 refResolvable: OIS-internal → existence + RELEVANCE check (queued, audit-4103 #1);
@@ -1359,7 +1362,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // fail-fast the sync predicate + collect the async checks. priorKeys = the evidence
     // ALREADY persisted on the item (bound by a prior predicate-enforced complete) —
     // grandfathered through freshness (bug-222), never caller-suppliable.
-    const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.lease, isVerifierGate, new Set(item.evidence.map(evidenceKey)));
+    const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.createdAt, isVerifierGate, new Set(item.evidence.map(evidenceKey)));
     // #4 + audit-4103 #1: each OIS-internal ref must RESOLVE *and* RELATE to this work-item
     // or its targetRef (existence-AND-relevance — closes the existence-theatre where any
     // org-wide entity, incl. the item's own id, satisfied existence-only).
@@ -1421,7 +1424,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       this.assertLease(w, agentId, leaseToken, "complete");
       if (!COMPLETABLE_PHASES.includes(w.status)) throw new TransitionRejected(`complete requires in_progress or review, was ${w.status}`);
       const merged = mergeEvidence(w.evidence, evidence);
-      const { nextPhase: evidencePhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)));
+      const { nextPhase: evidencePhase } = evaluateEvidence(w.evidenceRequirements, merged, w.createdAt, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)));
       // SEAL (idea-444) dual-edge, edge #1 (complete_work): combine the executor-evidence phase
       // with the attestation gate. A pending verifier-attestation requirement parks the item in
       // `review` until a verifier attests pass — the attest_evidence tail (edge #2) then advances
@@ -1563,7 +1566,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations });
         let executorDone = false;
         try {
-          executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey))).nextPhase === "done";
+          executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.createdAt, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey))).nextPhase === "done";
         } catch {
           executorDone = false;
         }
