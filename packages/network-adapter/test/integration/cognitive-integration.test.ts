@@ -329,4 +329,36 @@ describe("McpAgentClient cognitive integration", () => {
     expect((result as { isError?: boolean }).isError).toBe(true);
     await agent.stop();
   });
+
+  // ── bug-206: resilience/liveness PROBE cache exemption (end-to-end) ──
+
+  it("baseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)", async () => {
+    const { agent } = await createAgent(hub, CognitivePipeline.standard({}));
+    hub.clearToolCallLog();
+
+    await agent.call("get_agents", {});
+    await agent.call("get_agents", {});
+
+    // Second identical read served from ToolResultCache — only ONE real round-trip.
+    expect(hub.getToolCalls("get_agents").length).toBe(1);
+    await agent.stop();
+  });
+
+  it("a { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)", async () => {
+    const { agent } = await createAgent(hub, CognitivePipeline.standard({}));
+    hub.clearToolCallLog();
+
+    // Warm the cache with a NORMAL read — a fresh cached success now exists.
+    await agent.call("get_agents", {});
+    expect(hub.getToolCalls("get_agents").length).toBe(1);
+
+    // Two probes with identical args must BOTH still hit the Hub. If the probe
+    // tag were dropped (or the cache honored it wrongly), they'd be served the
+    // warm cached success — masking a dead session from the liveness watchdog.
+    await agent.call("get_agents", {}, { probe: true });
+    await agent.call("get_agents", {}, { probe: true });
+    expect(hub.getToolCalls("get_agents").length).toBe(3);
+
+    await agent.stop();
+  });
 });

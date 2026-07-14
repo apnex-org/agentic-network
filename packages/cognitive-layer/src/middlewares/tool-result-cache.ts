@@ -22,6 +22,8 @@ import type {
   CognitiveMiddleware,
   ToolCallContext,
 } from "../contract.js";
+// bug-206: runtime value import (not `import type`) — isProbeCall is a function.
+import { isProbeCall } from "../contract.js";
 
 // ── Strategy contract ───────────────────────────────────────────────
 
@@ -193,6 +195,18 @@ export class ToolResultCache implements CognitiveMiddleware {
     // write-tool call) — measures real invalidation frequency.
     if (flushed) {
       ctx.tags.cacheFlushed = "true";
+    }
+
+    // bug-206: resilience/liveness probe calls are structurally cache-exempt —
+    // NEVER served from cache, NEVER stored. A probe exists to prove a real Hub
+    // round-trip; a cached-success would report the session healthy without one,
+    // masking a server-side-dead session from the liveness watchdog. Placed
+    // after the invalidation pass (so a probe write still flushes) but before
+    // the cacheable gate + key/serve/store paths, so a probe on a cacheable tool
+    // (e.g. the watchdog's get_agents) still round-trips and never pollutes the
+    // cache. No cacheHit tag is emitted — a probe is not a cache candidate.
+    if (isProbeCall(ctx.tags)) {
+      return next(ctx);
     }
 
     // Non-cacheable tools pass through (writes + unclassified).
