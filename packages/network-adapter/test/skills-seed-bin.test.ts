@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runSeedSkills, isInvokedAsMain } from "../src/bin/seed-skills.js";
+import { parseWantedBundles } from "../src/skills/manifest.js";
 import type { WantedBundles } from "../src/skills/index.js";
 
 let root: string;
@@ -43,6 +44,7 @@ const manifest: WantedBundles = {
   sourceRef: "s",
   bundles: [],
   extraSkills: ["alpha", "beta"],
+  pruneOrphans: false,
 };
 
 describe("runSeedSkills", () => {
@@ -87,6 +89,60 @@ describe("runSeedSkills", () => {
 
     expect(r.ok).toBe(false);
     expect(r.missing).toEqual([]); // gate passed; the FAILURE is at converge
+  });
+
+  it("idea-521: manifest prune_orphans converges the seat — prunes an on-disk orphan, keeps the baseline", () => {
+    makeSkillTree("alpha");
+    makeSkillTree("beta");
+    // a legacy leftover already on disk (foreign to the HCAP ledger), as post-retire seats carry.
+    const orphanDir = join(skillsDir, "legacy-leftover");
+    mkdirSync(orphanDir, { recursive: true });
+    writeFileSync(join(orphanDir, "SKILL.md"), "# legacy-leftover\n");
+
+    const r = runSeedSkills({
+      skillsDir,
+      ledgerPath,
+      role: "engineer",
+      manifest: { ...manifest, pruneOrphans: true },
+      sourceRoot,
+    });
+
+    expect(r.ok).toBe(true);
+    expect(existsSync(join(skillsDir, "alpha", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(skillsDir, "beta", "SKILL.md"))).toBe(true);
+    // the orphan is swept — estate converged to the wanted-set {alpha, beta}.
+    expect(existsSync(join(skillsDir, "legacy-leftover", "SKILL.md"))).toBe(false);
+  });
+
+  it("idea-521: default (no prune_orphans) leaves an on-disk orphan intact — firebreak preserved", () => {
+    makeSkillTree("alpha");
+    makeSkillTree("beta");
+    const orphanDir = join(skillsDir, "legacy-leftover");
+    mkdirSync(orphanDir, { recursive: true });
+    writeFileSync(join(orphanDir, "SKILL.md"), "# legacy-leftover\n");
+
+    const r = runSeedSkills({ skillsDir, ledgerPath, role: "engineer", manifest, sourceRoot });
+
+    expect(r.ok).toBe(true);
+    expect(existsSync(join(skillsDir, "legacy-leftover", "SKILL.md"))).toBe(true); // preserved
+  });
+});
+
+describe("parseWantedBundles — prune_orphans (idea-521)", () => {
+  it("parses `prune_orphans: true`", () => {
+    const m = parseWantedBundles(
+      "source_repo: r\nsource_ref: s\nextra_skills:\n  - a\nprune_orphans: true\n",
+    );
+    expect(m.pruneOrphans).toBe(true);
+    expect(m.extraSkills).toEqual(["a"]);
+  });
+  it("defaults prune_orphans to false when the key is absent", () => {
+    const m = parseWantedBundles("source_repo: r\nsource_ref: s\nextra_skills:\n  - a\n");
+    expect(m.pruneOrphans).toBe(false);
+  });
+  it("treats any non-`true` value as false (fail-safe)", () => {
+    const m = parseWantedBundles("source_repo: r\nsource_ref: s\nprune_orphans: no\n");
+    expect(m.pruneOrphans).toBe(false);
   });
 });
 

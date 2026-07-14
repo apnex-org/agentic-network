@@ -160,3 +160,77 @@ describe("ClaudeSkillActuator — coexistence unlink-safety invariants", () => {
     expect(onDisk("a")).toBe(true);
   });
 });
+
+describe("ClaudeSkillActuator — idea-521 converge-prune (pruneOrphans opt-in)", () => {
+  /** land a skill tree straight on disk (as legacy mission_kit_sync / a foreign source
+   *  would) — NOT via this actuator, so it is absent from the ledger. */
+  function putOnDisk(id: string): void {
+    const d = join(skillsDir, id);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "SKILL.md"), `# ${id}\n`);
+  }
+
+  it("pruneOrphans:true converges the seat to EXACTLY the wanted-set — sweeps orphans the ledger can't reach", () => {
+    // the fleetskills0 residual: legacy leftovers on disk, absent from the HCAP ledger.
+    putOnDisk("research-artefacts");
+    putOnDisk("substrate-audit");
+
+    const act = new ClaudeSkillActuator({
+      skillsDir,
+      ledger: new MemLedger(),
+      pruneOrphans: true,
+    });
+    const r = act.converge([skill("arc-lifecycle"), skill("survey")]);
+
+    expect(r.status).toBe("converged");
+    // baseline (the wanted-set) present + untouched …
+    expect(onDisk("arc-lifecycle")).toBe(true);
+    expect(onDisk("survey")).toBe(true);
+    // … and the orphaned legacy leftovers are pruned — estate converged to the wanted-set.
+    expect(onDisk("research-artefacts")).toBe(false);
+    expect(onDisk("substrate-audit")).toBe(false);
+  });
+
+  it("pruneOrphans defaults OFF — an orphan survives (coexistence firebreak intact)", () => {
+    putOnDisk("legacy-leftover");
+    const act = new ClaudeSkillActuator({ skillsDir, ledger: new MemLedger() }); // no opt-in
+    act.converge([skill("arc-lifecycle")]);
+    expect(onDisk("arc-lifecycle")).toBe(true);
+    expect(onDisk("legacy-leftover")).toBe(true); // NOT pruned by default (invariant 2)
+  });
+
+  it("converge-prune NEVER removes a wanted/baseline skill, even alongside pruned orphans", () => {
+    putOnDisk("orphan");
+    const act = new ClaudeSkillActuator({
+      skillsDir,
+      ledger: new MemLedger(),
+      pruneOrphans: true,
+    });
+    act.converge([skill("keep-me")]);
+    expect(onDisk("keep-me")).toBe(true); // baseline untouched
+    expect(onDisk("orphan")).toBe(false); // orphan swept
+  });
+
+  it("converge-prune touches only SKILL.md-bearing dirs — a non-skill directory is left alone", () => {
+    const notASkill = join(skillsDir, "not-a-skill");
+    mkdirSync(notASkill, { recursive: true });
+    writeFileSync(join(notASkill, "README.md"), "# not a skill\n"); // no SKILL.md
+    const act = new ClaudeSkillActuator({
+      skillsDir,
+      ledger: new MemLedger(),
+      pruneOrphans: true,
+    });
+    act.converge([skill("a")]);
+    expect(existsSync(join(skillsDir, "not-a-skill", "README.md"))).toBe(true);
+  });
+
+  it("prune is durable-ledger-coherent: an adopted orphan is dropped from the managed set", () => {
+    putOnDisk("orphan");
+    const ledger = new MemLedger();
+    const act = new ClaudeSkillActuator({ skillsDir, ledger, pruneOrphans: true });
+    act.converge([skill("a")]);
+    // the pruned orphan must not linger in the persisted managed set.
+    expect(ledger.read()).not.toContain("orphan");
+    expect(new Set(ledger.read())).toEqual(new Set(["a"]));
+  });
+});

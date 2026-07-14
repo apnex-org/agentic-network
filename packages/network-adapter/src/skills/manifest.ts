@@ -17,6 +17,12 @@ export interface WantedBundles {
   sourceRef: string;
   bundles: string[];
   extraSkills: string[];
+  /** idea-521 (opt-in, default false): when true, the HCAP skills-consumer reconcile
+   *  PRUNES on-disk skill entries not in the wanted-set — converging the seat to exactly
+   *  the delivered baseline (removing orphaned/legacy leftovers, e.g. a retired
+   *  mission_kit_sync skill). Default false preserves the ledger-scoped coexistence
+   *  firebreak (removal never reads the dir). Manifest key: `prune_orphans: true`. */
+  pruneOrphans: boolean;
 }
 
 /** Parse the top-level manifest (pure). */
@@ -26,6 +32,7 @@ export function parseWantedBundles(text: string): WantedBundles {
     sourceRef: scalar(text, "source_ref") ?? "",
     bundles: list(text, "bundles"),
     extraSkills: list(text, "extra_skills"),
+    pruneOrphans: bool(scalar(text, "prune_orphans")),
   };
 }
 
@@ -53,6 +60,11 @@ export function expandWantedBundles(
 }
 
 // ── subset YAML helpers ──────────────────────────────────────────────────────
+
+/** Parse a scalar as a boolean (idea-521) — only the literal `true` (any case) is true. */
+function bool(v: string | undefined): boolean {
+  return v?.trim().toLowerCase() === "true";
+}
 
 function scalar(text: string, key: string): string | undefined {
   for (const rawLine of text.split("\n")) {
