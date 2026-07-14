@@ -77,6 +77,40 @@ describe("toTypeboxParameters", () => {
   });
 });
 
+describe("buildPiToolDefinition — MCP display classification (bug-239/216)", () => {
+  // The exact predicate pi-tool-display's isMcpToolCandidate() check #2 uses on
+  // label OR description. Before the fix Hub tools had label:name → matched nothing
+  // → rendered as raw verbose JSON instead of being summarized.
+  const MCP_PATTERN = /\bmcp\b/i;
+
+  it("decorates the label so the upstream isMcpToolCandidate() detects the tool", () => {
+    const def = buildPiToolDefinition(
+      { name: "list_ready_work", description: "List claimable work." },
+      makeCtx(fakeAgent([])),
+    );
+    expect(MCP_PATTERN.test(def.label)).toBe(true);
+    expect(def.label).toBe("list_ready_work [mcp]");
+  });
+
+  it("leaves the LLM-facing surface (name + description) UNCHANGED — no tool-selection regression", () => {
+    const descriptor: ToolDescriptor = { name: "get_work", description: "Read a WorkItem by id." };
+    const def = buildPiToolDefinition(descriptor, makeCtx(fakeAgent([])));
+    // pi SDK ToolDefinition: `name` is "used in LLM tool calls", `description` is
+    // "Description for LLM". Both must be byte-identical to the Hub descriptor; the
+    // `mcp` token lives ONLY in the UI-only label.
+    expect(def.name).toBe("get_work");
+    expect(def.description).toBe("Read a WorkItem by id.");
+    expect(MCP_PATTERN.test(def.description)).toBe(false);
+  });
+
+  it("classifies every bridged tool deterministically (the bug was ALL Hub tools failing)", () => {
+    for (const name of ["get_work", "create_message", "list_ready_work", "attest_evidence"]) {
+      const def = buildPiToolDefinition({ name }, makeCtx(fakeAgent([])));
+      expect(MCP_PATTERN.test(def.label), `${name} label must classify as MCP`).toBe(true);
+    }
+  });
+});
+
 describe("buildPiToolDefinition.execute", () => {
   it("routes through the shared dispatch authority (fake agent records the call)", async () => {
     const calls: Array<{ method: string; params: unknown }> = [];

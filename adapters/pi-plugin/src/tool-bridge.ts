@@ -71,7 +71,15 @@ export function buildPiToolDefinition(
   const name = descriptor.name;
   return {
     name,
-    label: name,
+    // bug-239/216: pi-tool-display's isMcpToolCandidate() only applies mcpOutputMode
+    // (summary/hidden) to tools whose LABEL or description matches /\bmcp\b/i (its
+    // check #2). Hub tools are bridged as native pi tools and fail all six checks →
+    // raw verbose JSON. `label` is UI-ONLY (pi SDK ToolDefinition: "Human-readable
+    // label for UI"; `name`/`description` are the LLM surface), so an `[mcp]` suffix
+    // is a deterministic, non-breaking classifier — it changes NOTHING the model sees,
+    // so tool selection is unchanged. Honest: these tools DO originate from the MCP
+    // catalog (agent.listTools via mcp-agent-client), even though pi's transport is a shim.
+    label: `${name} [mcp]`,
     description: descriptor.description ?? name,
     parameters: toTypeboxParameters(descriptor),
     async execute(_toolCallId, params) {
