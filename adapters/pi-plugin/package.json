@@ -1,6 +1,6 @@
 {
   "name": "@apnex/pi-plugin",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "pi host extension — Universal Agent Adapter for the OIS agentic network (architect peer; reference implementation of the sovereign tool-manager + native-binding architecture)",
   "license": "MIT",
   "type": "module",
