@@ -1,0 +1,27 @@
+{
+  "name": "@apnex/workgraph-sim",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sovereign greenfield headless WorkGraph simulator + contract-oracle platform (idea-449). Drives the REAL PolicyRouter over the REAL WorkItemRepositorySubstrate FSM via role-typed micro-harnesses; independent hand-authored spec-table as ground truth; adversarial negative-path oracle catalog. Workspace-only (never published).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "hub": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.4"
+  }
+}
