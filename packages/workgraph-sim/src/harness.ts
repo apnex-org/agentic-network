@@ -18,9 +18,11 @@
  */
 import { PolicyRouter } from "hub/dist/policy/router.js";
 import { registerWorkItemPolicy } from "hub/dist/policy/work-item-policy.js";
+import { registerSystemPolicy } from "hub/dist/policy/system-policy.js";
 import { WorkItemRepositorySubstrate } from "hub/dist/entities/work-item-repository-substrate.js";
 import { AgentRepositorySubstrate } from "hub/dist/entities/agent-repository-substrate.js";
 import { SubstrateCounter } from "hub/dist/entities/substrate-counter.js";
+import { type Clock, systemClock } from "hub/dist/entities/clock.js";
 import {
   createMemoryStorageSubstrate,
   buildEnvelopeWriteEncoder,
@@ -40,8 +42,12 @@ export interface VerbOutcome {
 }
 
 export interface SimHarnessOptions {
-  /** deterministic clock injected into the substrate (VirtualClock sub-slice hook). */
-  readonly now?: () => number;
+  /**
+   * Deterministic time source injected into BOTH the substrate repositories and
+   * ctx.clock (idea-449 VirtualClock). Defaults to real wall time; pass a
+   * `VirtualClock` for byte-identical, reproducible timestamps across runs.
+   */
+  readonly clock?: Clock;
   readonly log?: (msg: string) => void;
 }
 
@@ -53,6 +59,8 @@ export class SimHarness {
   readonly router: PolicyRouter;
   readonly workItem: WorkItemRepositorySubstrate;
   readonly registry: AgentRepositorySubstrate;
+  /** The injected time source — shared by the repositories and ctx.clock. */
+  readonly clock: Clock;
   private readonly stores: AllStores;
   private readonly metrics = createMetricsCounter();
 
@@ -63,8 +71,11 @@ export class SimHarness {
     // the FSM). This is the single line every real substrate consumer sets.
     substrate.setWriteEncoder(buildEnvelopeWriteEncoder());
     const counter = new SubstrateCounter(substrate);
-    this.workItem = new WorkItemRepositorySubstrate(substrate, counter);
-    this.registry = new AgentRepositorySubstrate(substrate);
+    // One clock, shared by both repositories AND ctx.clock (so get_now reports the same
+    // source the substrate stamps with). A VirtualClock makes the whole run deterministic.
+    this.clock = opts.clock ?? systemClock;
+    this.workItem = new WorkItemRepositorySubstrate(substrate, counter, this.clock);
+    this.registry = new AgentRepositorySubstrate(substrate, this.clock);
     // The work-item verbs + the router's RBAC/auto-claim only read `workItem` +
     // `engineerRegistry`; other stores are out of this plane. A verb that reaches
     // for an absent store throws at runtime (caught by the sim's oracle), which is
@@ -76,6 +87,10 @@ export class SimHarness {
     // Quiet by default (the hub logs verbosely); pass opts.log to observe.
     this.router = new PolicyRouter(opts.log ?? (() => {}));
     registerWorkItemPolicy(this.router);
+    // System-domain reads — brings in the get_now read-verb (idea-525) that reports
+    // from ctx.clock. The other cross-domain reads here touch stores the sim omits, but
+    // they only fail if CALLED; the sim drives only get_now from this policy.
+    registerSystemPolicy(this.router);
     // SIM BOUNDARY (design-of-record §1): the sim drives the real FSM + real event
     // EMISSION, but has NO message-router (delivery) and NO adapter. `emit`/`dispatch`
     // are no-op sinks; a transition that cascades an internal notification whose delivery
@@ -94,6 +109,7 @@ export class SimHarness {
       dispatch: async () => {},
       internalEvents: [],
       metrics: this.metrics,
+      clock: this.clock,
     };
   }
 

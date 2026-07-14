@@ -56,6 +56,7 @@ import { PendingActionRepositorySubstrate } from "./entities/pending-action-repo
 import { ProposalRepositorySubstrate } from "./entities/proposal-repository-substrate.js";
 import { ThreadRepositorySubstrate } from "./entities/thread-repository-substrate.js";
 import { WorkItemRepositorySubstrate } from "./entities/work-item-repository-substrate.js";
+import { systemClock } from "./entities/clock.js";
 import { DecisionRepositorySubstrate } from "./entities/decision-repository-substrate.js";
 import { DirectorProofRepositorySubstrate } from "./entities/director-proof-repository-substrate.js";
 import { ClassGrantRepositorySubstrate } from "./entities/class-grant-repository-substrate.js";
@@ -417,6 +418,11 @@ function createMcpServer(
   // Shared per-process metrics counter — all ctx instances share it so
   // counter state accumulates across requests (see Phase 2d CP1).
   const metrics = createMetricsCounter();
+  // idea-449 VirtualClock: the ctx-level clock the get_now read-verb reports from.
+  // Production is real wall time — the SAME systemClock singleton the repository
+  // substrates default to, so get_now and the substrate share one source. (A sim
+  // injects a VirtualClock into both its repos and ctx.clock for deterministic time.)
+  const clock = systemClock;
   const ctxFactory = () => ({
     stores: allStores,
     emit: notifyEvent,
@@ -426,6 +432,7 @@ function createMcpServer(
     role: "unknown", // resolved at handler level via engineerRegistry
     internalEvents: [],
     metrics,
+    clock,
   });
 
   bindRouterToMcp(server, policyRouter, ctxFactory);

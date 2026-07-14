@@ -41,6 +41,7 @@
 
 import type { Filter, HubStorageSubstrate } from "../storage-substrate/index.js";
 import { LOCK_CLASS, withAdvisoryLock } from "../storage-substrate/advisory-lock.js";
+import { type Clock, systemClock } from "./clock.js";
 import {
   agentToEnvelope,
   envelopeToAgent,
@@ -255,7 +256,12 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
   }
   private readonly lastTouchAt = new Map<string, number>();
 
-  constructor(private readonly substrate: HubStorageSubstrate) {}
+  constructor(
+    private readonly substrate: HubStorageSubstrate,
+    // idea-449 VirtualClock: agent-registry timestamps + liveness reads route through
+    // the injected clock; defaults to real wall time so production is unchanged.
+    private readonly clock: Clock = systemClock,
+  ) {}
 
   // ── Envelope-aware substrate-boundary wrappers (mission-89 (A3); bug-138-class) ──
   //
@@ -402,7 +408,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       // path `metadata.fingerprint`; post-W11 cutover rows are envelope-shape).
       const items = await this.listAgentsRaw({ filter: { fingerprint }, limit: 1 });
       const existingAgent = items[0] ?? null;
-      const now = new Date().toISOString();
+      const now = this.clock.now().toISOString();
 
       if (!existingAgent) {
         // First-contact create. Lock-held → no concurrent creator can win
@@ -619,7 +625,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       // Thrashing rate-limit (only when displacing a live session).
       if (agent.status === "online") {
         const history = this.displacementHistory.get(agent.fingerprint) ?? [];
-        const tripped = recordDisplacementAndCheck(history, Date.now());
+        const tripped = recordDisplacementAndCheck(history, this.clock.now().getTime());
         this.displacementHistory.set(agent.fingerprint, history);
         if (tripped) {
           return {
@@ -629,7 +635,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
           };
         }
       }
-      const now = new Date().toISOString();
+      const now = this.clock.now().toISOString();
       const displaced =
         agent.currentSessionId && agent.currentSessionId !== sessionId
           ? { sessionId: agent.currentSessionId, epoch: agent.sessionEpoch }
@@ -667,7 +673,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         continue;
       }
       this.sessionToEngineerId.set(sessionId, updated.id);
-      this.lastTouchAt.set(updated.id, Date.now());
+      this.lastTouchAt.set(updated.id, this.clock.now().getTime());
       if (displaced) {
         console.log(
           `[AgentRepositorySubstrate] Agent displaced: ${updated.id} epoch=${updated.sessionEpoch} (trigger=${trigger}, prior sessionId=${displaced.sessionId} epoch=${displaced.epoch})`,
@@ -696,7 +702,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
   async getAgent(agentId: string): Promise<Agent | null> {
     const raw = await this.loadAgent(agentId);
     if (!raw) return null;
-    return applyLivenessRecompute(normalizeAgentShape(raw), Date.now());
+    return applyLivenessRecompute(normalizeAgentShape(raw), this.clock.now().getTime());
   }
 
   async getAgentForSession(sessionId: string): Promise<Agent | null> {
@@ -721,12 +727,12 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
   async listAgents(): Promise<Agent[]> {
     // Substrate-API kind-uniform list; no path-scan + no by-fingerprint mirror skip.
     const items = await this.listAgentsRaw({ limit: 500 });
-    const nowMs = Date.now();
+    const nowMs = this.clock.now().getTime();
     return items.map((a) => applyLivenessRecompute(normalizeAgentShape(a), nowMs));
   }
 
   async selectAgents(selector: Selector): Promise<Agent[]> {
-    const nowMs = Date.now();
+    const nowMs = this.clock.now().getTime();
     const agentIdSet = selector.agentIds && selector.agentIds.length > 0
       ? new Set(selector.agentIds)
       : null;
@@ -771,7 +777,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
   async touchAgent(sessionId: string): Promise<void> {
     const agentId = this.sessionToEngineerId.get(sessionId);
     if (!agentId) return;
-    const now = Date.now();
+    const now = this.clock.now().getTime();
     const last = this.lastTouchAt.get(agentId) ?? 0;
     if (now - last < AGENT_TOUCH_MIN_INTERVAL_MS) return;
     this.lastTouchAt.set(agentId, now);
@@ -794,7 +800,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
-    const nowMs = Date.now();
+    const nowMs = this.clock.now().getTime();
     const stamped: Agent = {
       ...agent,
       lastHeartbeatAt: new Date(nowMs).toISOString(),
@@ -887,7 +893,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
-    const now = new Date().toISOString();
+    const now = this.clock.now().toISOString();
     const updated: Agent = {
       ...agent,
       activityState: "online_working",
@@ -903,7 +909,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
-    const now = new Date().toISOString();
+    const now = this.clock.now().toISOString();
     const updated: Agent = {
       ...agent,
       activityState: "online_idle",
@@ -917,7 +923,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
-    const nowMs = Date.now();
+    const nowMs = this.clock.now().getTime();
     const quotaBlockedUntil = new Date(nowMs + retryAfterSeconds * 1000).toISOString();
     const updated: Agent = {
       ...agent,
@@ -932,7 +938,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     const existing = await this.loadAgentWithRevision(agentId);
     if (!existing) return;
     const agent = normalizeAgentShape(existing.entity);
-    const now = new Date().toISOString();
+    const now = this.clock.now().toISOString();
     const updated: Agent = {
       ...agent,
       activityState: "online_idle",
@@ -970,7 +976,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       ...agent,
       status: "offline",
       livenessState: "offline",
-      lastSeenAt: new Date().toISOString(),
+      lastSeenAt: this.clock.now().toISOString(),
     };
     const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
     if (!result.ok) return;
@@ -987,7 +993,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
 
   async listOfflineAgentsOlderThan(staleThresholdMs: number): Promise<Agent[]> {
     const agents = await this.listAgents();
-    const nowMs = Date.now();
+    const nowMs = this.clock.now().getTime();
     const stale: Agent[] = [];
     for (const a of agents) {
       const isOffline = a.status === "offline" || a.livenessState === "offline";

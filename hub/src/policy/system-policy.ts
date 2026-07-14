@@ -11,6 +11,7 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { RECENT_DETAILS_CAP } from "../observability/metrics.js";
 import { phaseFromEntity } from "../entities/shape-helpers.js";
+import { systemClock } from "../entities/clock.js";
 import type { Proposal, Thread } from "../state.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
@@ -148,6 +149,21 @@ async function getMetrics(args: Record<string, unknown>, ctx: IPolicyContext): P
   };
 }
 
+// idea-449 / idea-525: the agent-facing companion to the substrate VirtualClock.
+// Reports "now" from the SAME injected clock source (ctx.clock) the WorkGraph
+// substrate stamps its timestamps with, so agent-visible time matches FSM time —
+// and is deterministic under a simulation's VirtualClock. Falls back to real wall
+// time when a ctx builder omitted the clock (e.g. an internal sweeper context).
+async function getNow(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const now = (ctx.clock ?? systemClock).now();
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ now: now.toISOString(), epochMs: now.getTime() }, null, 2),
+    }],
+  };
+}
+
 // ── Registration ────────────────────────────────────────────────────
 
 export function registerSystemPolicy(router: PolicyRouter): void {
@@ -172,5 +188,15 @@ export function registerSystemPolicy(router: PolicyRouter): void {
         .describe(`Cap on recentDetails entries returned (max ${RECENT_DETAILS_CAP}, default ${RECENT_DETAILS_CAP}). Ignored when no bucket is specified.`),
     },
     getMetrics,
+  );
+
+  router.register(
+    "get_now",
+    "[Any] Read the Hub's current time from the authoritative clock (idea-525). Returns " +
+    "`{ now: ISO-8601 string, epochMs: number }` from the SAME clock source the WorkGraph " +
+    "substrate stamps its timestamps with — under a simulation's VirtualClock this is " +
+    "deterministic. No lease, no side effects, no args.",
+    {},
+    getNow,
   );
 }
