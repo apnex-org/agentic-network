@@ -505,6 +505,28 @@ do_launch() {
 
 # ---------- fleet session ops (tmux) ----------
 session_name() { echo "ois-$1-$2"; }
+
+# bug-248/idea-512 — PER-SEAT tmux isolation. Every ois seat runs on its OWN tmux server,
+# selected by `-L <socket>` where the socket name == the session name (ois-<agent>-<harness>).
+# A `tmux kill-server` (or any signal) on one seat's socket therefore reaches ONLY that seat —
+# never another seat, never the operator's shared DEFAULT server (the cleanslate0 blast radius) —
+# and it is the down-payment on containerization (one server per seat). stmux runs a tmux
+# command against a seat's per-seat socket; `-L` must precede the tmux subcommand.
+stmux() { local sk="$1"; shift; tmux -L "$sk" "$@"; }
+
+# live_harness <agent> -> the harness of the agent's currently-live seat (probing each declared
+# harness's OWN per-seat socket), empty if none. Replaces the old shared-server
+# `tmux ls | grep ^ois-<agent>-` scan — there is no shared server to scan under -L isolation.
+# MIGRATION NOTE: a seat launched by a PRE-idea-512 ois is on the DEFAULT server + INVISIBLE
+# here; the live-fleet rollout (driver-coordinated, within-spine) relaunches each seat onto its
+# own socket. That relaunch is NOT part of this change.
+live_harness() {
+  local a="$1" h s
+  for h in $(jq -r '.harness | keys[]' "$CFG/agents/$a.json" 2>/dev/null); do
+    s="ois-$a-$h"
+    stmux "$s" has-session -t "$s" 2>/dev/null && { echo "$h"; return 0; }
+  done
+}
 harness_log_marker() { # $1 harness -> "logfile-rel|marker-regex"
   case "$1" in
     claude)   echo ".ois/shim.log|Sync complete" ;;
@@ -524,13 +546,13 @@ _pane_handle_prompts() {
   local sess="$1" harness="$2" largs="$3"; local -n _fired="$4"
   declare -F prompt_resolve >/dev/null || return 0
   local pane resp id tok
-  pane=$(tmux capture-pane -pt "$sess" 2>/dev/null || true)
+  pane=$(stmux "$sess" capture-pane -pt "$sess" 2>/dev/null || true)
   [[ -n "$pane" ]] || return 0
   resp=$(prompt_resolve "$PROMPT_HANDLERS" "$harness" "$largs" "$_fired" "$pane")
   id=$(printf '%s\n' "$resp" | sed -n '1p')
   [[ -n "$id" ]] || return 0                                # no confident match -> fall through
   while IFS= read -r tok; do
-    [[ -n "$tok" ]] && tmux send-keys -t "$sess" "$tok"
+    [[ -n "$tok" ]] && stmux "$sess" send-keys -t "$sess" "$tok"
   done < <(printf '%s\n' "$resp" | tail -n +2)
   _fired="${_fired:+$_fired,}$id"
   echo "  · prompt handled: $id"
@@ -564,20 +586,21 @@ cmd_up() {
     fi
   fi
   command -v tmux >/dev/null 2>&1 || fatal "'tmux' required for ois up"
-  tmux has-session -t "$s" 2>/dev/null && fatal "session $s already running (ois down $a $h first)"
-  # displacement guard: one live harness per agent (hub allows one session per identity)
+  stmux "$s" has-session -t "$s" 2>/dev/null && fatal "session $s already running (ois down $a $h first)"
+  # displacement guard: one live harness per agent (hub allows one session per identity).
+  # idea-512: check the agent's OWN per-seat sockets (no shared server to `tmux ls`).
   local other
-  other=$(tmux ls -F '#S' 2>/dev/null | grep "^ois-$a-" || true)
-  [[ -n "$other" ]] && fatal "agent '$a' already has a live session ($other) — hub would displace it; ois down first"
+  other=$(live_harness "$a")
+  [[ -n "$other" ]] && fatal "agent '$a' already has a live session (ois-$a-$other) — hub would displace it; ois down first"
   lm=$(harness_log_marker "$h"); logf="$ws/${lm%%|*}"; marker="${lm##*|}"
   pre=0; [[ -f "$logf" ]] && pre=$(wc -l < "$logf")
   echo "→ ois up $a/$h  (session: $s)${largs:+  [launch args: ${largs[*]}]}"
   # Append passthrough args %q-quoted so flags/values survive the tmux shell-string parse.
   local ltail=""; ((${#largs[@]})) && ltail=" $(printf '%q ' "${largs[@]}")"
-  tmux new-session -d -s "$s" -x 220 -y 50 "$ROOT/bin/ois launch $a $h$ltail"
+  stmux "$s" new-session -d -s "$s" -x 220 -y 50 "$ROOT/bin/ois launch $a $h$ltail"
   for i in $(seq 1 60); do
     sleep 2
-    tmux has-session -t "$s" 2>/dev/null || { echo "  ✗ session exited during startup — check $logf"; return 1; }
+    stmux "$s" has-session -t "$s" 2>/dev/null || { echo "  ✗ session exited during startup — check $logf"; return 1; }
     # bug-247: table-driven interactive-prompt handling (dev-channels banner, resume-mode, …)
     # via the transport-neutral resolver. Guards/detect/respond are DATA in prompt-handlers.json.
     _pane_handle_prompts "$s" "$h" "${largs[*]-}" fired
@@ -588,9 +611,9 @@ cmd_up() {
   if [[ $ok -eq 1 ]]; then
     echo "  ✓ hub handshake confirmed ($(basename "$logf"): '$marker' at $((i*2))s)"
     tail -n +$((pre+1)) "$logf" | grep -E "Registered as|Session claimed" | head -2 | sed 's/^/    /'
-    echo "  session stays up — attach: tmux attach -t $s ; stop: ois down $a $h"
+    echo "  session stays up — attach: ois attach $a $h ; stop: ois down $a $h"
   else
-    echo "  ✗ no handshake within 120s — session left up for debugging (tmux attach -t $s)"; return 1
+    echo "  ✗ no handshake within 120s — session left up for debugging (ois attach $a $h)"; return 1
   fi
 }
 
@@ -651,18 +674,18 @@ cmd_down() { # <agent> [harness] — harness optional: at most one live session 
   if [[ -n "$h" ]]; then
     s=$(session_name "$a" "$h")
   else
-    s=$(tmux ls -F '#S' 2>/dev/null | grep "^ois-$a-" | head -1 || true)
-    [[ -n "$s" ]] || { echo "no live session for agent '$a'"; return 0; }
-    h=${s#ois-$a-}
+    h=$(live_harness "$a")
+    [[ -n "$h" ]] || { echo "no live session for agent '$a'"; return 0; }
+    s=$(session_name "$a" "$h")
   fi
-  tmux has-session -t "$s" 2>/dev/null || { echo "no session $s"; return 0; }
+  stmux "$s" has-session -t "$s" 2>/dev/null || { echo "no session $s"; return 0; }
   # bug-256/idea-511: capture the seat's process group + config dir BEFORE teardown, so we
   # can blast-safely reap the detached claude/bg-pty-host tree that survives kill-session.
   local pane_pid cdir=""
-  pane_pid=$(tmux list-panes -t "$s" -F '#{pane_pid}' 2>/dev/null | head -1)
+  pane_pid=$(stmux "$s" list-panes -t "$s" -F '#{pane_pid}' 2>/dev/null | head -1)
   if [[ "$h" == "claude" ]]; then cdir=$(seat_config_dir "$a" "$h"); fi
-  if [[ "$h" == "claude" ]]; then tmux send-keys -t "$s" "/exit" Enter; else tmux send-keys -t "$s" C-c; fi
-  sleep 5; tmux kill-session -t "$s" 2>/dev/null || true
+  if [[ "$h" == "claude" ]]; then stmux "$s" send-keys -t "$s" "/exit" Enter; else stmux "$s" send-keys -t "$s" C-c; fi
+  sleep 5; stmux "$s" kill-session -t "$s" 2>/dev/null || true
   reap_seat_procgroup "$pane_pid" "$cdir"
   echo "session $s stopped"
 }
@@ -673,12 +696,13 @@ cmd_attach() { # <agent> [harness] — harness optional: at most one live sessio
   if [[ -n "$h" ]]; then
     s=$(session_name "$a" "$h")
   else
-    s=$(tmux ls -F '#S' 2>/dev/null | grep "^ois-$a-" | head -1 || true)
-    [[ -n "$s" ]] || fatal "no live session for agent '$a' — ois up $a <harness> first"
+    h=$(live_harness "$a")
+    [[ -n "$h" ]] || fatal "no live session for agent '$a' — ois up $a <harness> first"
+    s=$(session_name "$a" "$h")
   fi
-  tmux has-session -t "$s" 2>/dev/null || fatal "no session $s (ois ps to list)"
+  stmux "$s" has-session -t "$s" 2>/dev/null || fatal "no session $s (ois ps to list)"
   echo "attaching to $s — detach with Ctrl+b d (leaves the agent running)"
-  exec tmux attach -t "$s"
+  exec tmux -L "$s" attach -t "$s"
 }
 
 
@@ -800,18 +824,20 @@ cmd_say() { # send a Director note to an agent via the hub (create_message -> ch
 }
 
 cmd_ps() {
-  local sessions out s a h m j
-  sessions=$(tmux ls -F '#S' 2>/dev/null | grep '^ois-' || true)
+  local out s a h m j any=0
   out=$(printf '%-8s %-9s %-20s %-22s %-6s %s\n' AGENT HARNESS MODEL SESSION STATE "LAST LAUNCH")
-  for s in $sessions; do
-    a=${s#ois-}; h=${a#*-}; a=${a%%-*}
+  # idea-512: no shared server to `tmux ls` — probe each declared cell's OWN per-seat socket.
+  while read -r a h; do
+    s=$(session_name "$a" "$h")
+    stmux "$s" has-session -t "$s" 2>/dev/null || continue
+    any=1
     # one targeted jq: agent-cell override, else harness default (skip the full merge)
     m=$(jq -rn --arg h "$h" '(input.harness[$h].hubModelTag) // (input.hubModelTag) // "?"' \
         "$CFG/agents/$a.json" "$CFG/harnesses/$h.json" 2>/dev/null || echo "?")
     j=$(tail -1 "$STATE/$a/launches.jsonl" 2>/dev/null | jq -r '.ts' 2>/dev/null || echo "?")
     out+=$'\n'"$(printf '%-8s %-9s %-20s %-22s %-6s %s' "$a" "$h" "$m" "$s" up "$j")"
-  done
-  [[ -z "$sessions" ]] && out+=$'\n(no ois sessions)'
+  done < <(cells_all)
+  [[ $any -eq 0 ]] && out+=$'\n(no ois sessions)'
   printf '%s\n' "$out"
   return 0
 }
