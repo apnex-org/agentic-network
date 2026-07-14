@@ -44,6 +44,26 @@ export function isInternalCall(tags: Readonly<Record<string, string>>): boolean 
   return tags[INTERNAL_CALL_TAG] === "true";
 }
 
+/**
+ * Tag key on `ToolCallContext.tags` marking a resilience/liveness PROBE call
+ * (e.g. the L1.5 liveness-watchdog server-validity probe, the poll-backstop
+ * transport heartbeat) — a call whose whole purpose is to prove a live Hub
+ * round-trip. bug-206: the cognitive result caches MUST NOT return a cached
+ * success for a probe — a cached-success would report the session healthy
+ * WITHOUT a real round-trip, masking a server-side-dead session from the
+ * watchdog. Both result-caching middlewares honor this: `ToolResultCache`
+ * (never serve/never store) and `WriteCallDedup` (never replay), so the probe
+ * call-class is structurally cache-exempt regardless of the probe method's
+ * verb. Independent of (and composable with) INTERNAL_CALL_TAG — a call may be
+ * both internal-machinery and a probe.
+ */
+export const PROBE_CALL_TAG = "probe";
+
+/** True when `tags` marks the call as a resilience/liveness probe (bug-206). */
+export function isProbeCall(tags: Readonly<Record<string, string>>): boolean {
+  return tags[PROBE_CALL_TAG] === "true";
+}
+
 export interface ListToolsContext {
   readonly sessionId: string;
   readonly agentId?: string;

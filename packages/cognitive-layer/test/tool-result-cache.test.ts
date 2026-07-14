@@ -14,6 +14,7 @@ import {
   type InvalidationDirective,
 } from "../src/middlewares/tool-result-cache.js";
 import type { ToolCallContext } from "../src/contract.js";
+import { PROBE_CALL_TAG } from "../src/contract.js";
 
 function ctx(overrides: Partial<ToolCallContext> = {}): ToolCallContext {
   return {
@@ -107,6 +108,141 @@ describe("ToolResultCache — non-cacheable tools", () => {
     await cache.onToolCall(ctx({ tool: "custom_tool", args: {} }), next);
     await cache.onToolCall(ctx({ tool: "custom_tool", args: {} }), next);
     expect(next).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Probe-call cache bypass (bug-206) ───────────────────────────────
+
+describe("ToolResultCache — probe-call bypass (bug-206)", () => {
+  const probe = { [PROBE_CALL_TAG]: "true" };
+
+  it("a PROBE-tagged cacheable call ALWAYS round-trips and is NEVER stored", async () => {
+    const cache = new ToolResultCache();
+    const next = vi.fn().mockResolvedValue({ agents: [] });
+
+    // Two identical probe calls to a cacheable tool (the watchdog's get_agents)
+    // — both MUST reach next(); neither may be served from cache.
+    await cache.onToolCall(ctx({ tool: "get_agents", args: {}, tags: { ...probe } }), next);
+    await cache.onToolCall(ctx({ tool: "get_agents", args: {}, tags: { ...probe } }), next);
+    expect(next).toHaveBeenCalledTimes(2);
+
+    // A probe never populates the cache — a later probe/read can't be masked.
+    expect(cache.getSessionSize("sess-A")).toBe(0);
+  });
+
+  it("a probe does NOT serve from a cache a normal read populated (the bug-206 guarantee)", async () => {
+    const cache = new ToolResultCache();
+    const next = vi.fn().mockResolvedValue({ agents: [] });
+
+    // A normal read warms the cache for get_agents{}.
+    await cache.onToolCall(ctx({ tool: "get_agents", args: {} }), next);
+    expect(cache.getSessionSize("sess-A")).toBe(1);
+    expect(next).toHaveBeenCalledTimes(1);
+
+    // A probe with identical args must STILL round-trip — otherwise a cached
+    // success would report the session alive while the Hub is dead.
+    const p = ctx({ tool: "get_agents", args: {}, tags: { ...probe } });
+    await cache.onToolCall(p, next);
+    expect(next).toHaveBeenCalledTimes(2);
+    // A probe is not a cache candidate — no cacheHit telemetry is emitted.
+    expect(p.tags.cacheHit).toBeUndefined();
+  });
+
+  it("a normal (untagged) cacheable call still caches as before", async () => {
+    const cache = new ToolResultCache();
+    const next = vi.fn().mockResolvedValue({ agents: [] });
+
+    const first = ctx({ tool: "get_agents", args: {} });
+    const second = ctx({ tool: "get_agents", args: {} });
+
+    await cache.onToolCall(first, next); // cold miss → stored
+    await cache.onToolCall(second, next); // warm hit → served
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(first.tags.cacheHit).toBe("false");
+    expect(second.tags.cacheHit).toBe("true");
+    expect(cache.getSessionSize("sess-A")).toBe(1);
+  });
+
+  it("a probe-tagged WRITE still invalidates (guard sits AFTER the invalidation pass)", async () => {
+    const cache = new ToolResultCache();
+    const next = vi.fn().mockResolvedValue({ ok: true });
+
+    // Warm the cache with a normal read.
+    await cache.onToolCall(ctx({ tool: "get_agents", args: {} }), next);
+    expect(cache.getSessionSize("sess-A")).toBe(1);
+
+    // A probe-tagged write verb must STILL flush — the probe bypass must not
+    // short-circuit ahead of the invalidation pass.
+    await cache.onToolCall(
+      ctx({ tool: "create_idea", args: { title: "x" }, tags: { ...probe } }),
+      next,
+    );
+    expect(cache.getSessionSize("sess-A")).toBe(0);
+  });
+
+  it("a cached SUCCESS does NOT mask a probe whose live round-trip is DEAD (the bug-206 guarantee)", async () => {
+    const cache = new ToolResultCache();
+
+    // A normal read warms the cache with a SUCCESS.
+    const liveNext = vi.fn().mockResolvedValue({ agents: ["a"] });
+    await cache.onToolCall(ctx({ tool: "get_agents", args: {} }), liveNext);
+    expect(cache.getSessionSize("sess-A")).toBe(1);
+
+    // The session then dies. A probe with identical args MUST surface the dead
+    // round-trip — not the cached success — or the watchdog would never escalate.
+    const deadNext = vi.fn().mockRejectedValue(new Error("hub dead"));
+    await expect(
+      cache.onToolCall(ctx({ tool: "get_agents", args: {}, tags: { ...probe } }), deadNext),
+    ).rejects.toThrow("hub dead");
+    expect(deadNext).toHaveBeenCalledTimes(1); // the probe really round-tripped
+  });
+
+  it("a probe returns its LIVE result (not the cached value) and leaves the existing entry untouched", async () => {
+    const cache = new ToolResultCache();
+
+    // Distinct values on the cached vs live path prove the returned value came
+    // from the round-trip, not the cache.
+    const cachedNext = vi.fn().mockResolvedValue({ v: "cached" });
+    await cache.onToolCall(ctx({ tool: "get_agents", args: {} }), cachedNext);
+    expect(cache.getSessionSize("sess-A")).toBe(1);
+
+    const liveNext = vi.fn().mockResolvedValue({ v: "live" });
+    const p = ctx({ tool: "get_agents", args: {}, tags: { ...probe } });
+    const result = await cache.onToolCall(p, liveNext);
+    expect(result).toEqual({ v: "live" });
+    expect(liveNext).toHaveBeenCalledTimes(1);
+    expect(p.tags.cacheHit).toBeUndefined(); // a probe is not a cache candidate
+    expect(cache.getSessionSize("sess-A")).toBe(1); // probe neither added nor evicted
+  });
+
+  it("a probe does NOT poison the cache for a later NORMAL read", async () => {
+    const cache = new ToolResultCache();
+
+    // Probe runs first — it must store nothing.
+    const probeNext = vi.fn().mockResolvedValue({ v: "probe" });
+    await cache.onToolCall(ctx({ tool: "get_agents", args: {}, tags: { ...probe } }), probeNext);
+    expect(cache.getSessionSize("sess-A")).toBe(0);
+
+    // A later normal read with identical args must be a cold miss that returns
+    // its OWN value — never the probe's.
+    const realNext = vi.fn().mockResolvedValue({ v: "real" });
+    const normal = ctx({ tool: "get_agents", args: {} });
+    const result = await cache.onToolCall(normal, realNext);
+    expect(result).toEqual({ v: "real" });
+    expect(normal.tags.cacheHit).toBe("false");
+    expect(realNext).toHaveBeenCalledTimes(1);
+    expect(cache.getSessionSize("sess-A")).toBe(1);
+  });
+
+  it("a probe on a non-cacheable tool (transport_heartbeat) round-trips and stores nothing", async () => {
+    const cache = new ToolResultCache();
+    const next = vi.fn().mockResolvedValue({ ok: true });
+
+    await cache.onToolCall(ctx({ tool: "transport_heartbeat", args: {}, tags: { ...probe } }), next);
+    await cache.onToolCall(ctx({ tool: "transport_heartbeat", args: {}, tags: { ...probe } }), next);
+    expect(next).toHaveBeenCalledTimes(2);
+    expect(cache.getSessionSize("sess-A")).toBe(0);
   });
 });
 

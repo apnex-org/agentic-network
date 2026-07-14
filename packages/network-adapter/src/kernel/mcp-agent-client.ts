@@ -67,7 +67,7 @@ import type {
   ListToolsContext,
   Tool as CognitiveTool,
 } from "@apnex/cognitive-layer";
-import { INTERNAL_CALL_TAG } from "@apnex/cognitive-layer";
+import { INTERNAL_CALL_TAG, PROBE_CALL_TAG } from "@apnex/cognitive-layer";
 import { performStateSync } from "./state-sync.js";
 
 // Same list as McpConnectionManager. Matched case-insensitively.
@@ -297,6 +297,10 @@ export class McpAgentClient implements IAgentClient {
     // context so LLM-facing result-transform middlewares (ResponseSummarizer)
     // skip it — machinery (poll-backstop, heartbeat) needs the raw result.
     if (opts?.internal) ctx.tags[INTERNAL_CALL_TAG] = "true";
+    // bug-206: propagate the resilience/liveness probe marker so ToolResultCache
+    // structurally cache-exempts it (no serve, no store) — a probe must always
+    // be a real Hub round-trip or it cannot detect a server-side-dead session.
+    if (opts?.probe) ctx.tags[PROBE_CALL_TAG] = "true";
     try {
       return await this.cognitive.runToolCall(ctx, async (c) => {
         const result = await this.rawCall(c.tool, c.args);

@@ -14,6 +14,7 @@ import {
   DedupTimeoutError,
 } from "../src/middlewares/write-call-dedup.js";
 import type { ToolCallContext } from "../src/contract.js";
+import { PROBE_CALL_TAG } from "../src/contract.js";
 
 function ctx(overrides: Partial<ToolCallContext> = {}): ToolCallContext {
   return {
@@ -313,5 +314,26 @@ describe("WriteCallDedup — .standard() integration", () => {
     const p = CognitivePipeline.standard();
     const names = p.getMiddlewares().map((m) => m.name);
     expect(names.indexOf("WriteCallDedup")).toBe(2);
+  });
+});
+
+// ── Probe-call bypass (bug-206) ─────────────────────────────────────
+
+describe("WriteCallDedup — probe-call bypass (bug-206)", () => {
+  const probe = { [PROBE_CALL_TAG]: "true" };
+
+  it("a probe-tagged write is NEVER replayed — always round-trips, registers no entry", async () => {
+    const dedup = new WriteCallDedup();
+    const next = vi.fn().mockResolvedValue({ ok: true });
+
+    // A normal duplicate write within the settle window replays the cached
+    // result; a probe must NEVER be replayed — that would be a cached-success
+    // without a real Hub round-trip (the bug-206 masking hole). Even on a WRITE
+    // verb, the probe must round-trip.
+    await dedup.onToolCall(ctx({ tool: "create_thread", tags: { ...probe } }), next);
+    await dedup.onToolCall(ctx({ tool: "create_thread", tags: { ...probe } }), next);
+
+    expect(next).toHaveBeenCalledTimes(2); // no replay — both execute
+    expect(dedup.getEntryCount()).toBe(0); // probe registered no dedup entry
   });
 });

@@ -614,7 +614,10 @@ export class PollBackstop {
     const agent = getAgent();
     if (!agent || agent.state !== "streaming") return;
     try {
-      await agent.call("transport_heartbeat", {}, { internal: true });
+      // bug-206: probe-tag the heartbeat so the resilience-probe call-class is
+      // structurally cache-exempt (defense-in-depth; transport_heartbeat is not
+      // a cacheable read today, but the tag makes the guarantee structural).
+      await agent.call("transport_heartbeat", {}, { internal: true, probe: true });
       return;
     } catch (firstErr) {
       this.opts.log(
@@ -628,7 +631,8 @@ export class PollBackstop {
       // Re-check agent state after the backoff (could have torn down).
       const agent2 = getAgent();
       if (!agent2 || agent2.state !== "streaming") return;
-      await agent2.call("transport_heartbeat", {}, { internal: true });
+      // bug-206: probe-tag the retry heartbeat too (see the initial site above).
+      await agent2.call("transport_heartbeat", {}, { internal: true, probe: true });
     } catch (secondErr) {
       this.opts.log(
         `[poll-backstop] transport_heartbeat failed (2nd; skipping cycle): ${(secondErr as Error)?.message ?? String(secondErr)}`,

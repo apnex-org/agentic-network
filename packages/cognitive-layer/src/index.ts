@@ -24,6 +24,8 @@ export type {
 } from "./contract.js";
 // bug-106: internal-machinery call marker (value exports).
 export { INTERNAL_CALL_TAG, isInternalCall } from "./contract.js";
+// bug-206: resilience/liveness probe-call marker (value exports).
+export { PROBE_CALL_TAG, isProbeCall } from "./contract.js";
 
 export { CognitivePipeline } from "./pipeline.js";
 export type { StandardPipelineConfig } from "./pipeline.js";

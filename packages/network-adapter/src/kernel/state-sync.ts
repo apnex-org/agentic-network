@@ -51,6 +51,14 @@ export async function performStateSync(ctx: StateSyncContext): Promise<void> {
     // Task subsystem. `list_missions` ([Any]) replaces it as the sync-phase
     // liveness read-probe — a benign read every role can issue, so the
     // dispatcher records a read-success and the agent transitions to online.
+    // bug-206: this probe is ALREADY structurally cache-exempt — `executeTool`
+    // routes it through `transport.request` DIRECTLY (mcp-agent-client.ts),
+    // bypassing the cognitive pipeline (and hence ToolResultCache) entirely, so
+    // it always round-trips. It needs no PROBE_CALL_TAG; routing it through
+    // `call({probe:true})` would instead newly subject it to the cognitive
+    // middlewares (e.g. ResponseSummarizer) — a regression. The tag guards the
+    // OTHER probes that DO go through `call()` (the liveness-watchdog probe and
+    // the poll-backstop heartbeat).
     const [directive, pendingActions, drainedRaw] = await Promise.all([
       ctx.executeTool("list_missions", {}).catch((err: unknown) => {
         log.log(

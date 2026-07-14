@@ -31,6 +31,8 @@ import type {
   CognitiveMiddleware,
   ToolCallContext,
 } from "../contract.js";
+// bug-206: runtime value import (not `import type`) — isProbeCall is a function.
+import { isProbeCall } from "../contract.js";
 
 export interface WriteCallDedupConfig {
   /**
@@ -188,6 +190,17 @@ export class WriteCallDedup implements CognitiveMiddleware {
     ctx: ToolCallContext,
     next: (ctx: ToolCallContext) => Promise<unknown>,
   ): Promise<unknown> {
+    // bug-206: resilience/liveness probe calls bypass dedup replay entirely — a
+    // settled-success replay is a cached-success without a real Hub round-trip,
+    // exactly what a probe must never receive (it would mask a dead session).
+    // Belt-and-suspenders with ToolResultCache: today's probes are reads (which
+    // isWriteTool already skips), but this keeps the whole cognitive result-cache
+    // layer structurally probe-exempt even if a probe is ever pointed at a write
+    // verb. Placed first so no dedup entry is consulted or created for a probe.
+    if (isProbeCall(ctx.tags)) {
+      return next(ctx);
+    }
+
     // Read tools pass through — cache is ToolResultCache's job.
     if (!this.isWriteTool(ctx.tool)) {
       return next(ctx);

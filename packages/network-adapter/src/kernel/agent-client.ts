@@ -175,6 +175,13 @@ export interface AgentClientMetrics {
 export interface AgentCallOptions {
   /** Mark this call internal-machinery — skip LLM-facing result transforms. */
   internal?: boolean;
+  /**
+   * bug-206: mark this call a resilience/liveness PROBE — the cognitive
+   * `ToolResultCache` must never serve it from cache nor store its result, so a
+   * probe always forces a real Hub round-trip (a cached-success would mask a
+   * server-side-dead session). Independent of `internal` — a call may set both.
+   */
+  probe?: boolean;
 }
 
 export interface IAgentClient {

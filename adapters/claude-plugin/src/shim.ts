@@ -573,7 +573,13 @@ async function main(): Promise<void> {
           const a = agent;
           if (!a) return false;
           try {
-            await a.call(probeMethod, {});
+            // bug-206: mark this a probe so the cognitive result caches never
+            // serve a cached success — the watchdog probe (default get_agents,
+            // a cacheable read) MUST force a real Hub round-trip, or a cached
+            // hit would report the session alive while it is server-side dead.
+            // Also `internal` — the watchdog discards the result and only reads
+            // success/failure, so it needs no LLM-facing summarization.
+            await a.call(probeMethod, {}, { internal: true, probe: true });
             return true;
           } catch {
             return false;
