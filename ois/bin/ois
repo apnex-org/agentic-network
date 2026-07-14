@@ -594,6 +594,58 @@ cmd_up() {
   fi
 }
 
+# ---------- bug-256/idea-511: blast-safe seat process-tree reap ----------
+# `tmux kill-session` frees the pane, but a claude seat's process GROUP (its shim + any
+# bg-pty-host children) and a DETACHED cc-daemon can survive and ACCRETE across restarts
+# (bug-256: the cleanslate0 incident — a broad kill wiped greg+lily off the SHARED default
+# tmux server). We reap ONLY the target seat, NEVER `tmux kill-server` / broad `pkill`.
+# Two provably-scoped reaps:
+#   1. the seat's claude process GROUP — the pane process is a session/group leader whose
+#      pgid is UNIQUE to the seat, so `kill -- -<pgid>` reaches exactly that group and can
+#      NOT touch another seat's group nor the shared tmux server (each has its own pgid).
+#   2. any DETACHED straggler carrying THIS seat's CLAUDE_CONFIG_DIR in its environ — the
+#      config dir is unique per seat, so an exact match can never select another seat or
+#      the operator (belt-and-suspenders for a daemon that setsid'd out of the group).
+
+seat_config_dir() { # <agent> <harness> -> expanded CLAUDE_CONFIG_DIR ("" if none)
+  local c cdir
+  c=$(cell_json "$1" "$2" 2>/dev/null) || return 0
+  cdir=$(jq -r '.configDirTemplate // empty' <<<"$c"); [[ -n "$cdir" ]] || return 0
+  expand "${cdir//\{agent\}/$1}"
+}
+
+# _reap_by_configdir <cdir> <signal>: signal every own-user claude-family proc whose
+# environ has EXACTLY CLAUDE_CONFIG_DIR=<cdir>. Excludes self/parent. Always returns 0.
+_reap_by_configdir() {
+  local cdir="$1" sig="$2" pid
+  for pid in $(pgrep -u "$(id -u)" -f 'claude|bg-pty-host|bg-spare|@apnex/claude-plugin' 2>/dev/null); do
+    [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
+    if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qxF "CLAUDE_CONFIG_DIR=$cdir"; then
+      kill "-$sig" "$pid" 2>/dev/null || true
+    fi
+  done
+  return 0
+}
+
+# reap_seat_procgroup <pane_pid> <config_dir>: SIGTERM→(2s)→SIGKILL the seat's process
+# group AND any config-dir-scoped detached stragglers. Both args may be empty (no-op).
+reap_seat_procgroup() {
+  local pane_pid="${1:-}" cdir="${2:-}" pgid="" selfpgid
+  selfpgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
+  if [[ "$pane_pid" =~ ^[0-9]+$ && "$pane_pid" != "$$" && "$pane_pid" != "${PPID:-}" ]] \
+       && kill -0 "$pane_pid" 2>/dev/null; then
+    pgid=$(ps -o pgid= -p "$pane_pid" 2>/dev/null | tr -d ' ')
+    # refuse a non-numeric / init(1) / OUR-OWN group — provably no self/operator blast.
+    if [[ ! "$pgid" =~ ^[0-9]+$ ]] || [[ "$pgid" -le 1 ]] || [[ "$pgid" == "$selfpgid" ]]; then pgid=""; fi
+  fi
+  if [[ -n "$pgid" ]]; then kill -TERM "-$pgid" 2>/dev/null || true; fi
+  if [[ -n "$cdir" ]]; then _reap_by_configdir "$cdir" TERM; fi
+  sleep 2
+  if [[ -n "$pgid" ]]; then kill -KILL "-$pgid" 2>/dev/null || true; echo "  · reaped seat process group $pgid"; fi
+  if [[ -n "$cdir" ]]; then _reap_by_configdir "$cdir" KILL; fi
+  return 0
+}
+
 cmd_down() { # <agent> [harness] — harness optional: at most one live session per agent
   local a="$1" h="${2:-}" s
   if [[ -n "$h" ]]; then
@@ -604,8 +656,14 @@ cmd_down() { # <agent> [harness] — harness optional: at most one live session 
     h=${s#ois-$a-}
   fi
   tmux has-session -t "$s" 2>/dev/null || { echo "no session $s"; return 0; }
+  # bug-256/idea-511: capture the seat's process group + config dir BEFORE teardown, so we
+  # can blast-safely reap the detached claude/bg-pty-host tree that survives kill-session.
+  local pane_pid cdir=""
+  pane_pid=$(tmux list-panes -t "$s" -F '#{pane_pid}' 2>/dev/null | head -1)
+  if [[ "$h" == "claude" ]]; then cdir=$(seat_config_dir "$a" "$h"); fi
   if [[ "$h" == "claude" ]]; then tmux send-keys -t "$s" "/exit" Enter; else tmux send-keys -t "$s" C-c; fi
   sleep 5; tmux kill-session -t "$s" 2>/dev/null || true
+  reap_seat_procgroup "$pane_pid" "$cdir"
   echo "session $s stopped"
 }
 
@@ -759,6 +817,10 @@ cmd_ps() {
 }
 
 # ---------- dispatch ----------
+# Source-guard (idea-511/bug-256 testability): SKIP the CLI dispatch when this file is
+# SOURCED — the reap-scope test sources it to exercise reap_seat_procgroup directly and
+# gets every function def without running a command. The exec path is unchanged.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 sub="${1:-}"; shift || true
 case "$sub" in
   launch) [[ $# -ge 2 ]] || fatal "usage: ois launch <agent> <harness> [args...]"; do_launch "$@" ;;
@@ -796,3 +858,4 @@ case "$sub" in
   doctor) cmd_doctor ;;
   *) fatal "usage: ois {launch|up|attach|say|confirm|decisions|nodes|show|down|ps|render|env|check|seed|list|doctor}" ;;
 esac
+fi
