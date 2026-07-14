@@ -4,3 +4,6 @@
  */
 export { SimHarness } from "./harness.js";
 export type { VerbOutcome, SimHarnessOptions } from "./harness.js";
+export { SimClient } from "./clients.js";
+export * from "./spec-table.js";
+export * from "./oracles.js";

@@ -73,8 +73,14 @@ export class SimHarness {
       workItem: this.workItem,
       engineerRegistry: this.registry,
     } as unknown as AllStores;
-    this.router = new PolicyRouter(opts.log);
+    // Quiet by default (the hub logs verbosely); pass opts.log to observe.
+    this.router = new PolicyRouter(opts.log ?? (() => {}));
     registerWorkItemPolicy(this.router);
+    // SIM BOUNDARY (design-of-record §1): the sim drives the real FSM + real event
+    // EMISSION, but has NO message-router (delivery) and NO adapter. `emit`/`dispatch`
+    // are no-op sinks; a transition that cascades an internal notification whose delivery
+    // store is absent logs a benign "emit failed" — the TRANSITION still commits (the FSM
+    // is what the sim exercises; delivery is out of boundary). Not an error condition.
   }
 
   /** Fresh ctx per call (mirrors `mcp-binding.ts`: one ctxFactory() per tool call). */
