@@ -176,6 +176,21 @@ jobs:
       - name: Test
         run: npm test --workspace=@apnex/workgraph-sim
 
+  # ── Blocking: ois shell regressions (piuplift0 p1 / PR #606) ─────────
+  # ois/bin/ois is bash, outside the npm workspaces, so it has no vitest
+  # cell. This job gives it CI coverage: a syntax check + the self-contained
+  # shell regressions (jq is preinstalled on ubuntu-latest). Currently the
+  # sovereign per-seat config-dir null-guard + pi_seed fail-closed contract.
+  ois-shell-tests:
+    runs-on: ubuntu-latest
+    name: ois shell tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax-check ois
+        run: bash -n ois/bin/ois
+      - name: Run ois shell regressions
+        run: bash scripts/test/ois-seat-configdir.test.sh
+
   # ── Aggregator: single status-check name for branch-protection rules ─
   # Branch-protection rule targets `test` (a stable name); the
   # dependencies below decide what gates are load-bearing. Matrix
@@ -186,7 +201,7 @@ jobs:
   # `vitest-non-hub` matrix once all four cells were genuinely CI-green.
   test:
     name: test
-    needs: [vitest-hub, coverage-report-sync, vitest-non-hub, vitest-workgraph-sim]
+    needs: [vitest-hub, coverage-report-sync, vitest-non-hub, vitest-workgraph-sim, ois-shell-tests]
     runs-on: ubuntu-latest
     steps:
       - run: echo "All required test jobs passed."

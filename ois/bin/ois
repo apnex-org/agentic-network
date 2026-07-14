@@ -151,6 +151,21 @@ render_kind() { # $1 kind, $2 cell-json -> stdout
   esac
 }
 
+# cell_configdir <cell-json> -> the cell's sovereign per-seat config dir, {agent}- and
+# ~-expanded, or EMPTY STRING if the cell declares none. The `// empty` is LOAD-BEARING:
+# `jq -r '.configDirTemplate'` on a missing/null key yields the literal string "null", which
+# must NEVER reach an exported *_CONFIG_DIR or a seeded skills path — a null/shared path
+# collides every seat on one dir and races the managed-skills ledger. Callers that REQUIRE a
+# per-seat dir (claude_seed/pi_seed) fail-closed on empty; env_lines simply omits the line.
+# (Sibling of seat_config_dir, which takes <agent> <harness> and resolves via cell_json.)
+cell_configdir() {
+  local c="$1" a cdir
+  a=$(jq -r '.cellAgent' <<<"$c")
+  cdir=$(jq -r '.configDirTemplate // empty' <<<"$c")
+  [[ -n "$cdir" ]] || return 0
+  expand "${cdir//\{agent\}/$a}"
+}
+
 # ---------- env assembly ----------
 # emits NAME=VALUE lines; secret values raw when $2=raw, sha256:12 otherwise
 env_lines() {
@@ -205,13 +220,12 @@ env_lines() {
            done)
   # sovereign per-seat config dir — the env var NAME is harness-specific (piuplift0 p1):
   # pi discovers skills from $PI_CODING_AGENT_DIR/skills, claude from $CLAUDE_CONFIG_DIR/skills.
-  local cdir; cdir=$(jq -r '.configDirTemplate // empty' <<<"$c")
+  local cdir; cdir=$(cell_configdir "$c")   # the load-bearing `// empty` null-guard lives in the helper
   if [[ -n "$cdir" ]]; then
-    cdir=${cdir//\{agent\}/$(jq -r '.cellAgent' <<<"$c")}
     if [[ "$harness" == "pi" ]]; then
-      echo "PI_CODING_AGENT_DIR=$(expand "$cdir")"
+      echo "PI_CODING_AGENT_DIR=$cdir"
     else
-      echo "CLAUDE_CONFIG_DIR=$(expand "$cdir")"
+      echo "CLAUDE_CONFIG_DIR=$cdir"
     fi
   fi
 }
@@ -240,7 +254,8 @@ claude_npm_ensure() {
 claude_seed() {
   local c="$1" a ws cdir mp
   a=$(jq -r '.cellAgent' <<<"$c"); ws=$(expand "$(jq -r '.workspace' <<<"$c")")
-  cdir=$(jq -r '.configDirTemplate' <<<"$c"); cdir=$(expand "${cdir//\{agent\}/$a}")
+  cdir=$(cell_configdir "$c")
+  [[ -n "$cdir" ]] || fatal "claude cell '$a' has no configDirTemplate — cannot resolve a sovereign CLAUDE_CONFIG_DIR (declare it in config/harnesses/claude.json); refusing to seed to a bogus/shared path"
   # npmdeliver0 (idea-492): the marketplace is now the npm-installed plugin dir
   # (Channel-2 directory marketplace retired). Config .marketplacePath is vestigial.
   claude_npm_ensure
@@ -361,7 +376,8 @@ pi_na_ensure() {
 pi_seed() {
   local c="$1" a cdir na_bin srole
   a=$(jq -r '.cellAgent' <<<"$c")
-  cdir=$(jq -r '.configDirTemplate' <<<"$c"); cdir=$(expand "${cdir//\{agent\}/$a}")
+  cdir=$(cell_configdir "$c")
+  [[ -n "$cdir" ]] || fatal "pi cell '$a' has no configDirTemplate — cannot resolve a sovereign PI_CODING_AGENT_DIR (declare it in config/harnesses/pi.json, mirroring claude's '{agent}.claude'); refusing to seed to a bogus/shared path"
   pi_na_ensure
   na_bin="$_PI_NA_MP/dist/bin/seed-skills.js"
   [[ -f "$na_bin" ]] || na_bin="$(npm root -g)/@apnex/network-adapter/dist/bin/seed-skills.js"
