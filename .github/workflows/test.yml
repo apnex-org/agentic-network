@@ -152,6 +152,30 @@ jobs:
         working-directory: ${{ matrix.package }}
         run: npm test
 
+  # ── Blocking: workgraph-sim keystone cell (idea-449) ─────────────────
+  # @apnex/workgraph-sim drives the REAL hub WorkGraph FSM (it imports
+  # hub/dist), so — unlike the non-hub cells — it needs hub itself built.
+  # Mirror vitest-hub's scoped install + topological build (hub's sovereign
+  # deps → hub), then build + vitest the sim. Added to the `test` aggregator.
+  vitest-workgraph-sim:
+    runs-on: ubuntu-latest
+    name: vitest (packages/workgraph-sim)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+      - name: Install hub + sim workspaces (scoped)
+        run: npm ci --workspace=@apnex/storage-provider --workspace=@apnex/repo-event-bridge --workspace=hub --workspace=@apnex/workgraph-sim --include-workspace-root --no-audit --no-fund
+      - name: Build hub (topological) + sim
+        run: |
+          npm run build --workspace=@apnex/storage-provider --workspace=@apnex/repo-event-bridge --workspace=hub
+          npm run build --workspace=@apnex/workgraph-sim
+      - name: Test
+        run: npm test --workspace=@apnex/workgraph-sim
+
   # ── Aggregator: single status-check name for branch-protection rules ─
   # Branch-protection rule targets `test` (a stable name); the
   # dependencies below decide what gates are load-bearing. Matrix
@@ -162,7 +186,7 @@ jobs:
   # `vitest-non-hub` matrix once all four cells were genuinely CI-green.
   test:
     name: test
-    needs: [vitest-hub, coverage-report-sync, vitest-non-hub]
+    needs: [vitest-hub, coverage-report-sync, vitest-non-hub, vitest-workgraph-sim]
     runs-on: ubuntu-latest
     steps:
       - run: echo "All required test jobs passed."
