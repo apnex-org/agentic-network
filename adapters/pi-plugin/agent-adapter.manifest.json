@@ -1,0 +1,27 @@
+{
+  "manifestVersion": 1,
+  "harness": "pi",
+  "proxyName": "@apnex/pi-plugin",
+  "transport": "pi-native",
+  "serverName": "hub-proxy",
+  "toolPrefix": "",
+  "injectionChannel": "pi/session",
+  "injectionMechanism": "pi-sendUserMessage",
+  "dialect": "pi-native",
+  "capabilityMatrix": {
+    "consumption-ack": {
+      "value": "partial",
+      "reason": "pi wakes via sendUserMessage (fire-and-forget in wake.ts deliverWake); no native per-delivery consumption confirm — the backstop chain (PollBackstop dedup-aware re-delivery + claim_message + ack_message-on-action) yields at-least-once-with-dedup, not exactly-once-at-the-LLM."
+    },
+    "tools-list-changed-honored": {
+      "value": "yes",
+      "reason": "pi registers Hub tools natively (tool-bridge PiToolActuator.converge) and re-converges on tool-surface revision drift (HCAP control-plane reconcile on the heartbeat tick), so a mid-session tool-surface change is honored without a restart (contrast claude bug-203)."
+    },
+    "notification-coalescer": {
+      "value": "no",
+      "reason": "pi binds the DispatcherNotificationHooks directly (wake.ts buildPiNotificationHooks) with no coalescer; pacing comes from the native idle-gate + PollBackstop dedup."
+    }
+  },
+  "authOrder": ["defaults", "file", "env"],
+  "envTemplate": ["OIS_HUB_URL", "OIS_HUB_TOKEN", "OIS_HUB_ROLE", "OIS_HUB_LABELS", "OIS_AGENT_NAME", "WORK_DIR", "HUB_LLM_MODEL"]
+}

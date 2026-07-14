@@ -36,6 +36,7 @@ import {
   ToolSurfaceReconciler,
   makeFetchLiveToolSurfaceRevision,
   loadConfig,
+  loadHarnessManifest,
   readRequiredAgentName,
   readPackageVersion,
   readBuildInfo,
@@ -98,6 +99,15 @@ const SDK_BUILD_INFO: BuildInfo = (() => {
     return UNKNOWN_BUILD_INFO;
   }
 })();
+
+// ── Harness manifest (bug-266) ───────────────────────────────────────
+// Per-harness config as schema-validated DATA (not hardcoded inline), loaded once
+// fail-closed — mirrors the claude shim. toolPrefix "" = pi registers Hub tools RAW,
+// so wake prompts name the bare tool (get_task, not architect-hub_get_task); the
+// stale architect-hub prefix is retired here.
+const MANIFEST = loadHarnessManifest(
+  resolve(__shimDir, "..", "agent-adapter.manifest.json"),
+);
 
 // ── Module state ─────────────────────────────────────────────────────
 let __fileLog: FileLogger | null = null;
@@ -232,6 +242,7 @@ async function connectAndSeed(
     isIdle: () => ctx.isIdle(),
     log,
     notificationLogPath,
+    toolPrefix: MANIFEST.toolPrefix,
     ctx,
     footer,
   });
@@ -242,7 +253,7 @@ async function connectAndSeed(
     // pre-check (idempotency-safe; production opt-in — tests stay default-off).
     transientDropRetry: DEFAULT_TRANSIENT_DROP_RETRY,
     proxyVersion: PROXY_VERSION,
-    serverName: "hub-proxy",
+    serverName: MANIFEST.serverName,
     serverCapabilities: { tools: {}, logging: {} },
     log,
     notificationHooks,
@@ -294,9 +305,9 @@ async function connectAndSeed(
       logger: log,
       handshake: {
         name: agentName,
-        proxyName: "@apnex/pi-plugin",
+        proxyName: MANIFEST.proxyName,
         proxyVersion: PROXY_VERSION,
-        transport: "pi-native",
+        transport: MANIFEST.transport,
         sdkVersion: SDK_VERSION,
         proxyCommitSha: PROXY_BUILD_INFO.commitSha,
         proxyDirty: PROXY_BUILD_INFO.dirty,
