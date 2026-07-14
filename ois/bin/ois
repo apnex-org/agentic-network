@@ -414,6 +414,53 @@ pi_auth_bridge() { # <agent> <per-seat-cdir>
   echo "  seeding : pi auth bridge linked ($dst -> $src)"
 }
 
+pi_models_400k_valid() { # <models.json>
+  jq -e '.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000' "$1" >/dev/null 2>&1
+}
+
+# pi_models_bridge — bug-271: per-seat PI_CODING_AGENT_DIR must inherit the operator's
+# pi model policy too. Without this, a per-seat config dir falls back to pi's built-in
+# gpt-5.5 context window instead of the intended 400k override. This is policy/config
+# inheritance, not secret material, but it uses the same fail-closed symlink posture as auth:
+#   - source defaults to ~/.pi/agent/models.json (override: OIS_PI_MODELS_SOURCE)
+#   - source must declare providers.openai-codex.modelOverrides.gpt-5.5.contextWindow == 400000
+#   - existing correct symlink is accepted
+#   - missing target, empty target, or matching non-symlink target is replaced with the symlink
+#   - wrong symlink or non-matching non-empty target refuses to launch
+pi_models_bridge() { # <agent> <per-seat-cdir>
+  local a="$1" cdir="$2" src dst
+  src="${OIS_PI_MODELS_SOURCE:-$HOME/.pi/agent/models.json}"
+  dst="$cdir/models.json"
+  src=$(expand "$src")
+  [[ -n "$cdir" ]] || fatal "pi models bridge called without a per-seat config dir"
+  [[ "$src" != "$dst" ]] || return 0  # default/non-sovereign pi dir; no bridge needed
+  [[ -e "$src" ]] || fatal "pi models source missing for '$a': $src (expected gpt-5.5 400k policy; set OIS_PI_MODELS_SOURCE if needed)"
+  [[ -f "$src" ]] || fatal "pi models source is not a regular file for '$a': $src"
+  [[ -s "$src" ]] || fatal "pi models source is empty for '$a': $src"
+  pi_models_400k_valid "$src" || fatal "pi models source for '$a' lacks providers.openai-codex.modelOverrides.gpt-5.5.contextWindow == 400000: $src"
+
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  if [[ -L "$dst" ]]; then
+    local resolved_src resolved_dst
+    resolved_src=$(readlink -f "$src") || fatal "cannot resolve pi models source symlink for '$a': $src"
+    resolved_dst=$(readlink -f "$dst") || fatal "pi models symlink for '$a' is dangling: $dst"
+    [[ "$resolved_dst" == "$resolved_src" ]] || fatal "pi models symlink for '$a' points at $resolved_dst, expected $resolved_src; refusing to rewrite model policy"
+    echo "  seeding : pi models bridge already linked ($dst -> $src)"
+    return 0
+  fi
+  if [[ -e "$dst" ]]; then
+    if [[ -f "$dst" && ! -s "$dst" ]]; then
+      rm -f "$dst"
+    elif [[ -f "$dst" ]] && pi_models_400k_valid "$dst"; then
+      rm -f "$dst"
+    else
+      fatal "pi models target exists and does not match required gpt-5.5 400k policy for '$a': $dst; refusing to overwrite model policy"
+    fi
+  fi
+  ln -s "$src" "$dst"
+  echo "  seeding : pi models bridge linked ($dst -> $src)"
+}
+
 # pi_seed — mirror of claude_seed's HCAP skills-consumer tail for the pi harness. Same
 # generalized seed bin, same fail-closed discipline (no `|| true`, under set -e). pi-native
 # discovery = the materialized $PI_CODING_AGENT_DIR/skills (default ~/.pi/agent/skills) that
@@ -425,6 +472,7 @@ pi_seed() {
   cdir=$(cell_configdir "$c")
   [[ -n "$cdir" ]] || fatal "pi cell '$a' has no configDirTemplate — cannot resolve a sovereign PI_CODING_AGENT_DIR (declare it in config/harnesses/pi.json, mirroring claude's '{agent}.claude'); refusing to seed to a bogus/shared path"
   pi_auth_bridge "$a" "$cdir"
+  pi_models_bridge "$a" "$cdir"
   pi_na_ensure
   na_bin="$_PI_NA_MP/dist/bin/seed-skills.js"
   [[ -f "$na_bin" ]] || na_bin="$(npm root -g)/@apnex/network-adapter/dist/bin/seed-skills.js"
