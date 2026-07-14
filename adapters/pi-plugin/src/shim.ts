@@ -44,12 +44,18 @@ import {
   appendNotification,
   buildPendingTaskNotification,
   CognitivePipeline,
+  LivenessWatchdog,
+  emitLivenessLostSignal,
+  isEagerWarmupEnabled,
+  parseClaimSessionResponse,
+  formatSessionClaimedLogLine,
   UNKNOWN_BUILD_INFO,
   type HubConfig,
   type FileLogger,
   type SharedDispatcher,
   type ToolDispatchContext,
   type HandshakeFatalError,
+  type HandshakeResponse,
   type TelemetryEvent,
   type BuildInfo,
 } from "@apnex/network-adapter";
@@ -115,6 +121,10 @@ let notificationLogPath = "";
 let hubAdapter: McpAgentClient | null = null;
 let config: HubConfig;
 let reconciler: ToolSurfaceReconciler | null = null;
+// L1.5 session-validity watchdog (default-off opt-in; OIS_LIVENESS_WATCHDOG_ENABLED=1).
+// Constructed in connectAndSeed (its wedged-exit path needs `ctx`), stopped in
+// shutdownSession. Null until enabled + connected.
+let livenessWatchdog: LivenessWatchdog | null = null;
 // HCAP tool-control-plane (mission-107). The reconciler above CLEAVES: it remains the
 // Hub-revision DRIFT DETECTOR (its onDrift refreshes the spec + converges); the
 // actuation / converge half is the HCAP stack below. `controlPlane.sync` converges the
@@ -298,6 +308,17 @@ async function connectAndSeed(
   // forwards to the SAME notification hooks (bug-108 wake parity) in one call.
   const pendingActionItemHandler = d.makePendingActionItemHandler(notificationHooks);
 
+  // ── Eager-vs-lazy session-claim (mirror claude; OIS_EAGER_SESSION_CLAIM=1) ──
+  // Fire-and-log ONLY: pi's native tool path (tool-bridge → runToolDispatch) has no
+  // CallTool gate, so — unlike claude — there is NO sessionReady promise to thread; a
+  // failed eager claim is non-fatal (the Hub auto-claims lazily on first SSE-subscribe
+  // / first tools/call). `eagerWarmup` is captured here so the onHandshakeComplete
+  // closure below sees it.
+  const eagerWarmup = isEagerWarmupEnabled(process.env);
+  log(
+    `[Handshake] Eager-warmup: ${eagerWarmup ? "ON (OIS_EAGER_SESSION_CLAIM=1)" : "OFF (lazy mode; Hub auto-claim on first SSE / first tools/call)"}`,
+  );
+
   hubAdapter = new McpAgentClient(
     {
       role: config.role,
@@ -327,6 +348,21 @@ async function connectAndSeed(
             /* UI not ready */
           }
           ctx.shutdown();
+        },
+        onHandshakeComplete: (r: HandshakeResponse): void => {
+          log(`[Handshake] Identity asserted: ${r.agentId}`);
+          if (eagerWarmup) {
+            const a = hubAdapter;
+            if (!a) {
+              log("[Handshake] Eager claim_session aborted — hubAdapter null (should be impossible)");
+              return;
+            }
+            a.call("claim_session", {})
+              .then((wrapper) => log(formatSessionClaimedLogLine(parseClaimSessionResponse(wrapper))))
+              .catch((err) => log(`[Handshake] Eager claim_session failed: ${err}`));
+          } else {
+            log("[Handshake] Session claim deferred (lazy mode; Hub auto-claim on first SSE-subscribe / first tools/call)");
+          }
         },
         onPendingTask: (task) => {
           appendNotification(buildPendingTaskNotification(task), {
@@ -410,6 +446,55 @@ async function connectAndSeed(
 
   assertHostWiringComplete(d, log);
   d.pollBackstop?.start(() => hubAdapter);
+
+  // ── L1.5 liveness self-watchdog (M-Adapter-Modernization P1c; opt-in) ──
+  // DEFAULT-OFF (OIS_LIVENESS_WATCHDOG_ENABLED=1). A proactive session-validity probe;
+  // on a bounded budget of SUSTAINED probe failures it emits the wedged-restart sentinel
+  // then requests pi's OWN graceful exit via ctx.shutdown() — NOT process.exit(1). pi runs
+  // the plugin IN-PROCESS (unlike claude's grandchild shim, whose exit code the CLI
+  // swallows), so ctx.shutdown() is the correct wedged-exit, mirroring onFatalHalt. The
+  // full container-supervisor watchdog redesign is DEFERRED (backport_synthesis).
+  if (process.env.OIS_LIVENESS_WATCHDOG_ENABLED === "1") {
+    const probeIntervalMs = Number(process.env.OIS_LIVENESS_PROBE_INTERVAL_MS) || 60_000;
+    const failureBudget = Number(process.env.OIS_LIVENESS_FAILURE_BUDGET) || 3;
+    const probeMethod = process.env.OIS_LIVENESS_PROBE_METHOD || "get_agents";
+    const watchdog = new LivenessWatchdog({
+      probeIntervalMs,
+      failureBudget,
+      log,
+      probe: async () => {
+        const a = hubAdapter;
+        if (!a) return false;
+        try {
+          await a.call(probeMethod, {}, { internal: true, probe: true });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      onLivenessLost: (info) => {
+        // Emit the durable wedge sentinel FIRST (best-effort, never throws out), THEN
+        // exit — the sentinel must be on disk before the process goes away.
+        emitLivenessLostSignal({
+          consecutiveFailures: info.consecutiveFailures,
+          lastError: info.lastError,
+          log,
+        });
+        log("[LivenessWatchdog] session wedged + unrecoverable — requesting pi graceful shutdown");
+        try {
+          ctx.ui.notify("Hub session wedged — restarting", "error");
+        } catch {
+          /* UI not ready */
+        }
+        ctx.shutdown();
+      },
+    });
+    watchdog.start();
+    livenessWatchdog = watchdog;
+    log(`[LivenessWatchdog] ENABLED — probe '${probeMethod}' every ${probeIntervalMs}ms, budget ${failureBudget}`);
+  } else {
+    log("[LivenessWatchdog] disabled (default; set OIS_LIVENESS_WATCHDOG_ENABLED=1 once a supervisor is in place)");
+  }
 
   // L1 bootstrap: refresh the declared spec from the live catalog, then converge
   // (registration + activation) in one authoritative pass.
@@ -495,6 +580,11 @@ export async function shutdownSession(): Promise<void> {
     /* idempotent */
   }
   try {
+    livenessWatchdog?.stop();
+  } catch {
+    /* idempotent */
+  }
+  try {
     await hubAdapter?.stop();
   } catch {
     /* idempotent */
@@ -502,6 +592,7 @@ export async function shutdownSession(): Promise<void> {
   hubAdapter = null;
   reconciler = null;
   dispatcher = null;
+  livenessWatchdog = null;
   started = false;
 }
 
