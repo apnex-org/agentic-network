@@ -22,6 +22,18 @@ const flatId = (data: unknown): string => {
   const d = data as Record<string, unknown>;
   return (((d.workItem as Record<string, unknown>) ?? d).id as string);
 };
+const phaseOf = async (reader: SimClient, workId: string): Promise<string | undefined> => {
+  const d = (await reader.call("get_work", { workId })).data as Record<string, unknown>;
+  return (((d.workItem as Record<string, unknown>) ?? d).status as string | undefined);
+};
+const commitEvidence = (h: SimHarness): unknown[] => [
+  { requirementId: "commit", kind: "commit", ref: "deadbeef", producedAt: h.clock.now().toISOString() },
+];
+const gateReqs = [
+  { id: "commit", kind: "commit", description: "executor evidence" },
+  { id: "seal", kind: "review", evidenceAuthority: "verifier-attestation", description: "verifier verdict" },
+];
+const taskReqs = [{ id: "commit", kind: "commit", description: "x" }];
 
 /**
  * P3 — no-deadlock. A well-formed DAG arc reaches all-done; a dependency cycle is
@@ -128,10 +140,141 @@ export async function p9SingleVerifierDeadlock(): Promise<OracleResult[]> {
   ];
 }
 
-/** The B2 property battery (this increment). Each P contributes its positive + mutant result. */
+/**
+ * P1 — legal-only / zero-unhandled-transition. A well-formed arc completes entirely via
+ * legal moves; an illegal move (start before claim) is REJECTED, not silently applied.
+ */
+export async function p1LegalOnly(): Promise<OracleResult[]> {
+  const good = await new WholeArcSim(freshHarness()).run({ nodes: [{ id: "a" }, { id: "b", dependsOn: ["a"] }] });
+  const h = freshHarness();
+  const arch = await SimClient.create(h, "a", "architect", "a");
+  const eng = await SimClient.create(h, "e", "engineer", "e");
+  const wid = flatId((await arch.createWork({ type: "task", roleEligibility: ["engineer"], evidenceRequirements: taskReqs })).data);
+  const illegal = await eng.start(wid); // start-before-claim — illegal
+  return [
+    { name: "P1:legal-only/well-formed-arc-all-legal", pass: good.deadlock === false && good.stuck.length === 0, detail: good.deadlock ? `unexpected deadlock: stuck=${good.stuck}` : undefined },
+    { name: "P1:MUTANT/illegal-move-rejected", pass: illegal.ok === false, detail: illegal.ok ? "start-before-claim was ACCEPTED — an illegal transition slipped through" : undefined },
+  ];
+}
+
+/**
+ * P2 — gate-ordering + driver-LAST. In a closer→completionDependsOn→gate arc, the gate
+ * reaches done and the driver (closer) completes LAST. Mutant: completing the closer
+ * before its completion-gate is done is REJECTED.
+ */
+export async function p2GateOrderingDriverLast(): Promise<OracleResult[]> {
+  const good = await new WholeArcSim(freshHarness()).run({ nodes: [{ id: "closer", completionDependsOn: ["gate"] }, { id: "gate", gate: true }] });
+  const driverLast = good.done[good.done.length - 1] === "closer";
+  const h = freshHarness();
+  const arch = await SimClient.create(h, "a", "architect", "a");
+  const eng = await SimClient.create(h, "e", "engineer", "e");
+  const gid = flatId((await arch.createWork({ type: "verifier-gate", roleEligibility: ["engineer"], runbook: "g", evidenceRequirements: gateReqs })).data);
+  const clid = flatId((await arch.createWork({ type: "task", roleEligibility: ["engineer"], evidenceRequirements: taskReqs, completionDependsOn: [gid] })).data);
+  await eng.claim(clid); await eng.start(clid);
+  const early = await eng.complete(clid, commitEvidence(h)); // gate not done → completion-gate rejects
+  return [
+    { name: "P2:gate-ordering/driver-completes-last", pass: good.deadlock === false && driverLast, detail: driverLast ? undefined : `driver not last: done order = ${good.done}` },
+    { name: "P2:MUTANT/complete-before-gate-rejected", pass: early.ok === false, detail: early.ok ? "closer completed before its completion-gate — gate ordering bypassed" : undefined },
+  ];
+}
+
+/**
+ * P4 — evidence-satisfiable. A node with valid evidence completes; completing with the
+ * required evidence MISSING is rejected (the evidence predicate is real, not decorative).
+ */
+export async function p4EvidenceSatisfiable(): Promise<OracleResult[]> {
+  const h = freshHarness();
+  const arch = await SimClient.create(h, "a", "architect", "a");
+  const eng = await SimClient.create(h, "e", "engineer", "e");
+  const mk = async (): Promise<string> => flatId((await arch.createWork({ type: "task", roleEligibility: ["engineer"], evidenceRequirements: taskReqs })).data);
+  const w1 = await mk();
+  await eng.claim(w1); await eng.start(w1);
+  const okC = await eng.complete(w1, commitEvidence(h));
+  const w2 = await mk();
+  await eng.claim(w2); await eng.start(w2);
+  const badC = await eng.complete(w2, []); // no evidence for the commit req
+  return [
+    { name: "P4:evidence-satisfiable/valid-evidence-completes", pass: okC.ok && (await phaseOf(arch, w1)) === "done", detail: okC.ok ? undefined : JSON.stringify(okC.data) },
+    { name: "P4:MUTANT/missing-evidence-rejected", pass: badC.ok === false, detail: badC.ok ? "completed with NO evidence — the evidence predicate was bypassed" : undefined },
+  ];
+}
+
+/**
+ * P5 — freshness / anti-gameability. Fresh evidence (producedAt ≥ claimedAt) is accepted;
+ * stale evidence (producedAt well before the claim) is REJECTED — no self-backdating.
+ */
+export async function p5Freshness(): Promise<OracleResult[]> {
+  const clock = new VirtualClock(START);
+  const h = new SimHarness({ clock });
+  const arch = await SimClient.create(h, "a", "architect", "a");
+  const eng = await SimClient.create(h, "e", "engineer", "e");
+  const mk = async (): Promise<string> => flatId((await arch.createWork({ type: "task", roleEligibility: ["engineer"], evidenceRequirements: taskReqs })).data);
+  const w1 = await mk();
+  await eng.claim(w1); await eng.start(w1); clock.advance(1_000);
+  const freshC = await eng.complete(w1, commitEvidence(h)); // producedAt = now ≥ claimedAt
+  const w2 = await mk();
+  await eng.claim(w2); await eng.start(w2);
+  const staleC = await eng.complete(w2, [{ requirementId: "commit", kind: "commit", ref: "deadbeef", producedAt: new Date(START - 100_000).toISOString() }]);
+  return [
+    { name: "P5:freshness/fresh-evidence-accepted", pass: freshC.ok, detail: freshC.ok ? undefined : JSON.stringify(freshC.data) },
+    { name: "P5:MUTANT/stale-evidence-rejected", pass: staleC.ok === false, detail: staleC.ok ? "stale evidence (producedAt << claimedAt) was ACCEPTED — anti-gameability bypassed" : undefined },
+  ];
+}
+
+/**
+ * P6 — durable-park. A gate parked in review STAYS review (across a clock advance) until a
+ * verifier attests — no spontaneous advance; and an attest DOES advance it (review is not a
+ * dead-end). Both together prove the park is durable AND live.
+ */
+export async function p6DurablePark(): Promise<OracleResult[]> {
+  const clock = new VirtualClock(START);
+  const h = new SimHarness({ clock });
+  const arch = await SimClient.create(h, "a", "architect", "a");
+  const eng = await SimClient.create(h, "e", "engineer", "e");
+  const ver = await SimClient.create(h, "v", "verifier", "v");
+  const gid = flatId((await arch.createWork({ type: "verifier-gate", roleEligibility: ["engineer"], runbook: "g", evidenceRequirements: gateReqs })).data);
+  await eng.claim(gid); await eng.start(gid);
+  await eng.complete(gid, commitEvidence(h)); // → review
+  const parked = await phaseOf(arch, gid);
+  clock.advance(10_000);
+  const stillParked = await phaseOf(arch, gid);
+  await ver.call("attest_evidence", { workId: gid, requirementId: "seal", verdict: "pass", evidenceRefs: [{ kind: "evidence", ref: "deadbeef" }] });
+  const advanced = await phaseOf(arch, gid);
+  return [
+    { name: "P6:durable-park/review-stays-until-attested", pass: parked === "review" && stillParked === "review", detail: parked === "review" && stillParked === "review" ? undefined : `parked=${parked} still=${stillParked} (spontaneous advance!)` },
+    { name: "P6:MUTANT/attest-advances-review-to-done", pass: advanced === "done", detail: advanced === "done" ? undefined : `review did not advance on attest (dead-end): phase=${advanced}` },
+  ];
+}
+
+/**
+ * P7 — lease/poison chaos. A stolen-lease complete (a second agent wielding the holder's
+ * token) is REJECTED (relocation-laundering fence); the real holder still completes.
+ */
+export async function p7LeasePoisonChaos(): Promise<OracleResult[]> {
+  const h = freshHarness();
+  const arch = await SimClient.create(h, "a", "architect", "a");
+  const eng = await SimClient.create(h, "e", "engineer", "e");
+  const thief = await SimClient.create(h, "t", "engineer", "t");
+  const wid = flatId((await arch.createWork({ type: "task", roleEligibility: ["engineer"], evidenceRequirements: taskReqs })).data);
+  await eng.claim(wid); await eng.start(wid);
+  const stolen = await thief.misbehaveStolenLease("complete_work", wid, eng, { evidence: commitEvidence(h) });
+  const real = await eng.complete(wid, commitEvidence(h));
+  return [
+    { name: "P7:lease-fencing/real-holder-completes", pass: real.ok && (await phaseOf(arch, wid)) === "done", detail: real.ok ? undefined : JSON.stringify(real.data) },
+    { name: "P7:MUTANT/stolen-lease-rejected", pass: stolen.ok === false, detail: stolen.ok ? "stolen-lease complete was ACCEPTED — relocation-laundering" : undefined },
+  ];
+}
+
+/** The full B2 property battery P1-P9. Each P contributes its positive + mutant result. */
 export async function runPropertyBattery(): Promise<OracleResult[]> {
   return [
+    ...(await p1LegalOnly()),
+    ...(await p2GateOrderingDriverLast()),
     ...(await p3NoDeadlock()),
+    ...(await p4EvidenceSatisfiable()),
+    ...(await p5Freshness()),
+    ...(await p6DurablePark()),
+    ...(await p7LeasePoisonChaos()),
     ...(await p8StateTimerSumIdentity()),
     ...(await p9SingleVerifierDeadlock()),
   ];
