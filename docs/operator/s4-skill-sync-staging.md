@@ -1,6 +1,8 @@
 # S4 — mission-kit → claude/ois Skill-Sync (STAGED; Director activation recipe)
 
-**Arc:** Stint Arc-1 · **Slice:** S4 · **idea:** idea-453 · **Status:** BUILT + STAGED, not activated.
+> ⚠️ **RETIRED (fleetskills0 / idea-505, 2026-07-14).** The legacy `mission_kit_sync` path and the `ois skill-sync-preview` command documented below have been **removed** from `ois/bin/ois`. Skills are now delivered fleet-wide by the **HCAP skills-consumer** (`claude_seed`), which is the SOLE skill-delivery path — it reads this same `wanted-bundles.yaml` manifest and materializes the role baseline unconditionally on every `ois up <agent> claude`. This document is retained as a point-in-time record of the retired S4 procedure; the commands below (`ois skill-sync-preview`, the `mission_kit_sync` internals) no longer exist.
+
+**Arc:** Stint Arc-1 · **Slice:** S4 · **idea:** idea-453 · **Status:** BUILT + STAGED, not activated. **(RETIRED — see banner above.)**
 
 This wires the deployment last-mile so ratified **mission-kit** skills become reachable by **claude/ois** agents. It is **staged**: the code + manifest are committed, but nothing runs until the Director deploys and restarts a harness. Activation touches the live harness and is the Director's switch (per the standing harness boundary).
 
