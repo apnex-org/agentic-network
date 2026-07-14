@@ -28,12 +28,10 @@ on:
   push:
     tags:
       - 'npm-v*'
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'Dry-run (no actual publish)'
-        type: boolean
-        default: true
+  # c493 (G7 tag-provenance): workflow_dispatch is DRY-RUN ONLY — a REAL publish requires
+  # an `npm-v*` tag push, so there is no dry_run input to misconfigure into an untagged,
+  # provenance-less publish. Manual dispatch validates the flow (dry-run) only.
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -127,10 +125,13 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            echo "→ dry-run publish"
-            bash scripts/publish-packages.sh --dry-run
-          else
+          # c493 (G7 tag-provenance): a REAL publish happens ONLY on an `npm-v*` TAG push, so
+          # every published artifact traces to a tag. A workflow_dispatch is DRY-RUN ONLY — it
+          # validates the flow but can never publish untagged (provenance-less) artifacts.
+          if [ "${{ github.event_name }}" = "push" ]; then
             echo "→ REAL publish (tag ${GITHUB_REF#refs/tags/})"
             bash scripts/publish-packages.sh
+          else
+            echo "→ dry-run publish (workflow_dispatch is dry-run only; a real publish requires an npm-v* tag)"
+            bash scripts/publish-packages.sh --dry-run
           fi
