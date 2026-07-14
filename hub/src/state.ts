@@ -1281,6 +1281,16 @@ export interface IEngineerRegistry {
    * unpinning in particular).
    */
   deleteAgent(agentId: string): Promise<boolean>;
+  /**
+   * bug-264: TOMBSTONE the Agent (append-only) by setting `archived = true` via
+   * CAS — the append-only-safe alternative to `deleteAgent`. The Agent reaper
+   * calls this so dead seats drop out of the default `get_agents` view without
+   * violating the 'never deleted' registry invariant. Idempotent; a returning
+   * seat clears `archived` on its next `assertIdentity` (un-archive-on-online).
+   * Returns `true` if the agent is (now or already) archived, `false` if no such
+   * agent existed or the CAS was lost.
+   */
+  archiveAgent(agentId: string): Promise<boolean>;
 }
 
 /**

@@ -13,6 +13,8 @@ import { projectAgent } from "./agent-projection.js";
 import type { AgentProjection, SessionBindingState } from "./agent-projection.js";
 import { resolveRecipient } from "../entities/recipient-resolver.js";
 import { replayLostWakesForAgent } from "./director-proof-policy.js";
+// bug-263: get_agents must honor limit/offset like every other list_* tool.
+import { LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 
 // ── M18 Handshake: register_role ────────────────────────────────────
 
@@ -456,9 +458,18 @@ async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   // bug-54: bind nowMs once per batch so all projected agents share the
   // same reference timestamp (cross-agent consistency in the response).
   const nowMs = Date.now();
+  // bug-264: the default view hides archived (tombstoned/dead-swept) seats.
+  // includeTombstoned/includeAll opt into the full graveyard; an explicit
+  // livenessState filter for a dead tier (offline/unresponsive) also surfaces
+  // them, so `get_agents(filter:{livenessState:'offline'})` never returns empty
+  // just because the matching seats were already swept.
+  const includeTombstoned = args.includeTombstoned === true || args.includeAll === true;
+  const explicitDeadTier = !!livenessAllow &&
+    (livenessAllow.has("offline") || livenessAllow.has("unresponsive"));
+  const showArchived = includeTombstoned || explicitDeadTier;
   const results: AgentProjection[] = [];
   for (const a of agents) {
-    if (a.archived) continue;
+    if (a.archived && !showArchived) continue;
     if (roles && !roles.includes(a.role)) continue;
     if (livenessAllow && !livenessAllow.has(a.livenessState)) continue;
     if (activityAllow && !activityAllow.has(a.activityState)) continue;
@@ -471,10 +482,20 @@ async function getAgents(args: Record<string, unknown>, ctx: IPolicyContext): Pr
     results.push(projectAgent(a, nowMs));
   }
 
+  // bug-263: page the filtered results through the shared helper so `offset`
+  // is actually applied (it was previously ignored — the whole set returned)
+  // and the response carries count/total/offset/limit like every other list_*.
+  const page = paginate(results, args);
   return {
     content: [{
       type: "text" as const,
-      text: JSON.stringify({ agents: results }),
+      text: JSON.stringify({
+        agents: page.items,
+        count: page.count,
+        total: page.total,
+        offset: page.offset,
+        limit: page.limit,
+      }),
     }],
   };
 }
@@ -797,6 +818,14 @@ export function registerSessionPolicy(router: PolicyRouter): void {
         currentMissionId: z.string().optional().describe("Filter by currently-active mission (derived). Reserved; derivation deferred to idea-220 Phase 2."),
         agentId: z.union([z.string(), z.array(z.string())]).optional().describe("Filter by agent ID; single or array."),
       }).optional().describe("Multi-axis filter. All axes ANDed."),
+      // bug-263: honor limit/offset so the full fleet is pageable (was a no-op).
+      ...LIST_PAGINATION_SCHEMA,
+      // bug-264: escape hatch — the default view hides archived/tombstoned
+      // (dead-swept) seats for the live-fleet ergonomics; these opt back into the
+      // full graveyard for watchdogs/audits/sweeps. A tombstone is a view filter,
+      // not amnesia.
+      includeTombstoned: z.boolean().optional().describe("Include archived/tombstoned (dead-swept) agents that the default view hides (bug-264)."),
+      includeAll: z.boolean().optional().describe("Alias for includeTombstoned — return the full registry including tombstoned seats (bug-264)."),
     },
     getAgents,
   );
