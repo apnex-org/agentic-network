@@ -103,6 +103,12 @@ for pkg in "${PACKAGES[@]}"; do
     echo "[publish-packages] ✗ $pkg dist/ not built — run 'npm run build --workspaces' first"
     exit 2
   fi
+  # idea-509 (survey G6, bug-254/255): a declared `bin` MUST be present in the tarball —
+  # a missing bin ships a broken published package (install ok, CLI entrypoint absent).
+  if ! node "$REPO_ROOT/scripts/build/assert-pack-contents.js" "$actual_dir"; then
+    echo "[publish-packages] ✗ $pkg — declared bin absent from tarball (bug-254 class); refusing to publish"
+    exit 2
+  fi
 done
 
 echo "[publish-packages] Pre-flight checks passed"
