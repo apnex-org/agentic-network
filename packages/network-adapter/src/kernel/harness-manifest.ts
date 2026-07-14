@@ -35,7 +35,12 @@ export interface HarnessManifest {
   transport: string;
   /** MCP server name, e.g. "proxy". */
   serverName: string;
-  /** Tool-prefix / dialect the host sees, e.g. "mcp__plugin_agent-adapter_proxy__". */
+  /**
+   * Tool-prefix the host sees, e.g. "mcp__plugin_agent-adapter_proxy__". MAY be the
+   * EMPTY string for a harness that registers Hub tools RAW (no host namespacing) —
+   * e.g. pi-native, whose wake prompts must name the bare tool (`get_task`, not
+   * `<prefix>get_task`). See bug-266.
+   */
   toolPrefix: string;
   /**
    * Last-hop injection mechanism (capability-matrix seed). For claude this is the
@@ -61,6 +66,13 @@ function fail(msg: string): never {
 function str(obj: Record<string, unknown>, key: string): string {
   const v = obj[key];
   if (typeof v !== "string" || v.length === 0) fail(`field '${key}' must be a non-empty string`);
+  return v as string;
+}
+/** Like {@link str} but permits the EMPTY string — for fields (toolPrefix) where ""
+ *  is a meaningful value: a harness that registers tools RAW carries "" (bug-266). */
+function emptyableStr(obj: Record<string, unknown>, key: string): string {
+  const v = obj[key];
+  if (typeof v !== "string") fail(`field '${key}' must be a string`);
   return v as string;
 }
 function strArray(obj: Record<string, unknown>, key: string): string[] {
@@ -101,7 +113,7 @@ export function parseHarnessManifest(raw: unknown): HarnessManifest {
     proxyName: str(o, "proxyName"),
     transport: str(o, "transport"),
     serverName: str(o, "serverName"),
-    toolPrefix: str(o, "toolPrefix"),
+    toolPrefix: emptyableStr(o, "toolPrefix"),
     injectionChannel: str(o, "injectionChannel"),
     injectionMechanism: str(o, "injectionMechanism"),
     ...(typeof o.dialect === "string" ? { dialect: o.dialect } : {}),

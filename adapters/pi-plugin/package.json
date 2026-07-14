@@ -16,6 +16,7 @@
   "files": [
     "dist/",
     "src/",
+    "agent-adapter.manifest.json",
     "tsconfig.json",
     "QUICKSTART.md"
   ],

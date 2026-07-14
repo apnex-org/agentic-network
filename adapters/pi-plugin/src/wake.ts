@@ -34,9 +34,6 @@ import {
   type DrainedPendingAction,
 } from "@apnex/network-adapter";
 
-/** Tool-prefix used in wake prompts — matches the other hosts for comparable transcripts. */
-const TOOL_PREFIX = "architect-hub_";
-
 export interface PiWakeDeps {
   pi: ExtensionAPI;
   /** Live idle probe (pi native). Idle → deliver a fresh turn; else queue followUp. */
@@ -45,6 +42,12 @@ export interface PiWakeDeps {
   log: (msg: string) => void;
   /** Notification audit-log path (best-effort append). */
   notificationLogPath: string;
+  /**
+   * The host tool-prefix from the harness manifest (bug-266). pi registers Hub tools
+   * RAW, so this is "" — wake prompts name the bare tool (`get_task`), NOT the stale
+   * `architect-hub_get_task`. Threaded from MANIFEST.toolPrefix, never hardcoded.
+   */
+  toolPrefix: string;
   /** Live status surface (optional; TUI-only). */
   ctx?: ExtensionContext;
   /**
@@ -103,7 +106,7 @@ export function buildPiNotificationHooks(
       // wake — matches opencode's informational disposition for pulses).
       if (isPulse) return;
       const promptText = buildPromptText(event.event, event.data, {
-        toolPrefix: TOOL_PREFIX,
+        toolPrefix: deps.toolPrefix,
       });
       deliverWake(deps, promptText);
     },
@@ -156,7 +159,7 @@ export function buildPiNotificationHooks(
       }
       if (level === "informational") return; // drained-but-informational: log only
       const promptText = buildPromptText(agentEvent.event, agentEvent.data, {
-        toolPrefix: TOOL_PREFIX,
+        toolPrefix: deps.toolPrefix,
       });
       deliverWake(deps, promptText);
     },

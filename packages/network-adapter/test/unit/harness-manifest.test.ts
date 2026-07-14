@@ -31,13 +31,25 @@ describe("harness-manifest schema validation (fail-closed, non-vacuous)", () => 
     expect(() => parseHarnessManifest({ ...valid, manifestVersion: 2 })).toThrow(/manifestVersion/);
   });
 
-  it("rejects a missing OR empty required string field (each one)", () => {
-    for (const k of ["harness", "proxyName", "transport", "serverName", "toolPrefix", "injectionChannel", "injectionMechanism"]) {
+  it("rejects a missing OR empty required string field (each one; toolPrefix is exempt — see below)", () => {
+    // toolPrefix is EXCLUDED: bug-266 relaxed it to allow "" (raw registration). Its own case below.
+    for (const k of ["harness", "proxyName", "transport", "serverName", "injectionChannel", "injectionMechanism"]) {
       expect(() => parseHarnessManifest({ ...valid, [k]: "" }), `empty ${k}`).toThrow(new RegExp(k));
       const without: Record<string, unknown> = { ...valid };
       delete without[k];
       expect(() => parseHarnessManifest(without), `missing ${k}`).toThrow(new RegExp(k));
     }
+  });
+
+  it("ACCEPTS an empty toolPrefix (bug-266: a raw-registration harness like pi carries \"\") — still required + typed", () => {
+    // Empty is now a MEANINGFUL value (raw tool names in wake prompts) — must NOT throw.
+    const m = parseHarnessManifest({ ...valid, toolPrefix: "" });
+    expect(m.toolPrefix).toBe("");
+    // ...but the field is STILL required (missing or non-string throws).
+    const without: Record<string, unknown> = { ...valid };
+    delete without.toolPrefix;
+    expect(() => parseHarnessManifest(without), "missing toolPrefix").toThrow(/toolPrefix/);
+    expect(() => parseHarnessManifest({ ...valid, toolPrefix: 5 }), "non-string toolPrefix").toThrow(/toolPrefix/);
   });
 
   it("rejects a capability cell with an invalid 3-valued value", () => {
