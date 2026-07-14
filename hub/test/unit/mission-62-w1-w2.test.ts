@@ -244,9 +244,12 @@ describe("mission-63 W1+W2 — get_agents canonical AgentProjection", () => {
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
     // mission-63 W1+W2: { agents: AgentProjection[] } per Design §3.3.
-    // No `count` field (anti-goal §8.1 clean cutover; callers compute
-    // from .length). No field-groups; canonical projection only.
-    expect(parsed.count).toBeUndefined();
+    // bug-263 (work-221): get_agents now paginates like every other list_* tool,
+    // so the response carries count/total/offset/limit alongside `agents`. This
+    // supersedes the mission-62 §8.1 'no count' cutover — the missing pagination
+    // was exactly bug-263 (offset was a silent no-op, the fleet >10 unreachable).
+    expect(parsed.count).toBe(1);
+    expect(parsed.total).toBe(1);
     expect(parsed.agents.length).toBe(1);
     const agent = parsed.agents[0];
     // Required canonical fields per §2.1

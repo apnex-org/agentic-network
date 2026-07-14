@@ -534,6 +534,12 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       );
       const stamped: Agent = {
         ...agent,
+        // bug-264: un-archive-on-online-transition — a re-registering seat is
+        // coming back, so clear any tombstone by construction. This is what
+        // makes a shorter reaper grace safe: a genuinely-returning seat always
+        // re-materializes in the default view (tombstone = view filter, not
+        // amnesia); only never-returning dead seats stay archived.
+        archived: false,
         clientMetadata: payload.clientMetadata,
         advisoryTags: refreshedAdvisoryTags,
         labels: nextLabels,
@@ -567,6 +573,8 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         const refreshedAgent = normalizeAgentShape(refreshed.entity);
         const restamped: Agent = {
           ...refreshedAgent,
+          // bug-264: un-archive-on-online-transition (retry leg — see above).
+          archived: false,
           // bug-230: persist the handshake binding so a rail verb after a hub
           // restart (or from an unclaimed bridge session) still resolves the
           // registered identity instead of stamping anonymous-<role>.
@@ -981,6 +989,27 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
     if (!result.ok) return;
     console.log(`[AgentRepositorySubstrate] Agent marked offline: ${agentId}`);
+  }
+
+  /**
+   * bug-264: Tombstone an Agent (append-only soft-delete) by setting archived=true
+   * via CAS — mirrors markAgentOffline. The Agent Reaper calls this INSTEAD of
+   * deleteAgent so dead seats drop out of the default get_agents view WITHOUT
+   * violating the append-only ('never deleted') registry invariant. Idempotent.
+   * A returning seat clears archived on its next assertIdentity (un-archive-on-
+   * online-transition), so a tombstone is a view filter, not amnesia. Returns
+   * true if the agent is (now or already) archived, false if not found / CAS-lost.
+   */
+  async archiveAgent(agentId: string): Promise<boolean> {
+    const existing = await this.loadAgentWithRevision(agentId);
+    if (!existing) return false;
+    const agent = normalizeAgentShape(existing.entity);
+    if (agent.archived) return true; // already tombstoned — idempotent
+    const updated: Agent = { ...agent, archived: true };
+    const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
+    if (!result.ok) return false;
+    console.log(`[AgentRepositorySubstrate] Agent archived (tombstone): ${agentId}`);
+    return true;
   }
 
   async migrateAgentQueue(sourceEngineerId: string, targetEngineerId: string): Promise<{ moved: number }> {

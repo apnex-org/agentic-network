@@ -621,16 +621,21 @@ function stopThreadReaper(): void {
   }
 }
 
-// ── Agent Reaper (CP3 C4, bug-16 part 1) ─────────────────────────────
-// Periodic background task symmetric to the thread reaper: scans
-// offline Agent records and permanently deletes those whose lastSeenAt
-// is older than HUB_AGENT_STALE_THRESHOLD_MS. Before each delete, any
-// thread whose currentTurnAgentId pins to the victim is unpinned
-// (cascade unpin per thread-234 architect direction) so the thread
-// remains replyable by its other participants. Default threshold: 7
-// days; default interval: 1 hour.
-const HUB_AGENT_STALE_THRESHOLD_MS = parseInt(
-  process.env.HUB_AGENT_STALE_THRESHOLD_MS || String(7 * 24 * 60 * 60 * 1000),
+// ── Agent Reaper (CP3 C4, bug-16 part 1; bug-264 tombstone) ──────────
+// Periodic background task symmetric to the thread reaper: scans offline
+// Agent records and TOMBSTONES (archives — append-only, NOT a hard delete)
+// those whose lastSeenAt is older than AGENT_TOMBSTONE_GRACE_MS. bug-264:
+// agents are append-only ('never deleted'), so a dead seat is hidden from the
+// default get_agents view by setting archived=true, not by deletion; a
+// returning seat self-un-archives on re-register (assertIdentity). Before each
+// archive, any thread whose currentTurnAgentId pins to the seat is unpinned
+// (cascade unpin per thread-234) so the thread stays replyable. Default grace:
+// 24h — generous vs the 15min WorkItem lease-reap floor and the ~60s transient
+// blip window, so no live/briefly-offline seat is ever caught; interval: 1 hour.
+const AGENT_TOMBSTONE_GRACE_MS = parseInt(
+  process.env.AGENT_TOMBSTONE_GRACE_MS
+    || process.env.HUB_AGENT_STALE_THRESHOLD_MS // backward-compat fallback
+    || String(24 * 60 * 60 * 1000),
   10,
 );
 const HUB_AGENT_REAPER_INTERVAL_MS = parseInt(
@@ -642,9 +647,9 @@ let agentReaperHandle: NodeJS.Timeout | null = null;
 
 async function runAgentReaperTick(): Promise<void> {
   try {
-    const stale = await engineerRegistry.listOfflineAgentsOlderThan(HUB_AGENT_STALE_THRESHOLD_MS);
+    const stale = await engineerRegistry.listOfflineAgentsOlderThan(AGENT_TOMBSTONE_GRACE_MS);
     if (stale.length === 0) return;
-    console.log(`[Reaper] agent reaper: ${stale.length} stale agent(s) to delete (threshold ${Math.round(HUB_AGENT_STALE_THRESHOLD_MS / 1000)}s)`);
+    console.log(`[Reaper] agent reaper: ${stale.length} stale agent(s) to tombstone/archive (grace ${Math.round(AGENT_TOMBSTONE_GRACE_MS / 1000)}s)`);
     for (const agent of stale) {
       const staleMs = Date.now() - Date.parse(agent.lastSeenAt);
       // CP3 C4 cascade unpin — strip the stale agentId from any thread
@@ -668,17 +673,20 @@ async function runAgentReaperTick(): Promise<void> {
       }
 
       try {
-        const deleted = await engineerRegistry.deleteAgent(agent.id);
-        if (deleted) {
+        // bug-264: TOMBSTONE (archive, append-only) instead of hard-delete —
+        // agents are 'never deleted'; a dead seat is hidden from the default
+        // get_agents view and self-un-archives if it ever re-registers.
+        const archived = await engineerRegistry.archiveAgent(agent.id);
+        if (archived) {
           await auditStore.logEntry(
             "hub",
-            "agent_reaper_deleted",
-            `Agent ${agent.id} (role=${agent.role}, fingerprint=${agent.fingerprint.slice(0, 12)}…) deleted after ${Math.round(staleMs / 1000)}s offline (threshold ${Math.round(HUB_AGENT_STALE_THRESHOLD_MS / 1000)}s). lastSeenAt=${agent.lastSeenAt}.`,
+            "agent_reaper_archived",
+            `Agent ${agent.id} (role=${agent.role}, fingerprint=${agent.fingerprint.slice(0, 12)}…) tombstoned (archived, append-only) after ${Math.round(staleMs / 1000)}s offline (grace ${Math.round(AGENT_TOMBSTONE_GRACE_MS / 1000)}s). Hidden from default get_agents; self-un-archives on re-register. lastSeenAt=${agent.lastSeenAt}.`,
             agent.id,
           );
         }
-      } catch (deleteErr) {
-        console.error(`[Reaper] deleteAgent failed for ${agent.id}:`, deleteErr);
+      } catch (archiveErr) {
+        console.error(`[Reaper] archiveAgent failed for ${agent.id}:`, archiveErr);
       }
     }
   } catch (err) {
@@ -688,7 +696,7 @@ async function runAgentReaperTick(): Promise<void> {
 
 function startAgentReaper(): void {
   if (agentReaperHandle) return;
-  console.log(`[Hub] Starting agent reaper: interval=${HUB_AGENT_REAPER_INTERVAL_MS}ms, stale-threshold=${HUB_AGENT_STALE_THRESHOLD_MS}ms`);
+  console.log(`[Hub] Starting agent reaper (bug-264: archive/tombstone, not delete): interval=${HUB_AGENT_REAPER_INTERVAL_MS}ms, tombstone-grace=${AGENT_TOMBSTONE_GRACE_MS}ms`);
   agentReaperHandle = setInterval(() => {
     void runAgentReaperTick();
   }, HUB_AGENT_REAPER_INTERVAL_MS);
