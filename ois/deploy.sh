@@ -78,8 +78,8 @@ install -m 0755 "$SRC" "$DEST"
 echo "deployed $SRC -> $DEST"
 
 # work-179 (Arc-1 S4): ship the claude/ois skill-sync manifest alongside bin/ois.
-# `mission_kit_sync` (in claude_seed) reads $ROOT/manifests/skill-sync/wanted-bundles.yaml;
-# absent it no-ops, so this deploy is what activates the sync. Non-fatal if absent.
+# The HCAP skills-consumer (claude_seed, fleetskills0/idea-505) reads
+# $ROOT/manifests/skill-sync/wanted-bundles.yaml; absent it no-ops. Non-fatal if absent.
 MANIFEST_SRC="$(dirname "$SRC")/../manifests/skill-sync/wanted-bundles.yaml"
 MANIFEST_DEST="$HOME/.config/apnex-agents/manifests/skill-sync/wanted-bundles.yaml"
 if [[ -f "$MANIFEST_SRC" ]]; then

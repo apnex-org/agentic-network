@@ -1,7 +1,7 @@
 # wanted-bundles.yaml — claude/ois skill-sync manifest (Arc-1 S4 / idea-453).
 #
 # Declares which mission-kit skills the claude fleet carries. The
-# `mission_kit_sync` step in ois/bin/ois::claude_seed resolves these against
+# HCAP skills-consumer in ois/bin/ois::claude_seed (fleetskills0/idea-505, sole path) resolves these against
 # apnex/mission-kit and copies the SKILL.md trees into the agent's sovereign
 # $CLAUDE_CONFIG_DIR/skills/, ALONGSIDE the local-repo skills (per-skill merge,
 # never a wipe). Mirrors hermes/manifests/skill-sync/wanted-bundles.yaml — same
