@@ -115,7 +115,13 @@ export function runSeedSkills(deps: SeedSkillsDeps): SeedSkillsResult {
   mkdirSync(deps.skillsDir, { recursive: true });
 
   const ledger = new FileSkillLedger(deps.ledgerPath);
-  const actuator = new ClaudeSkillActuator({ skillsDir: deps.skillsDir, ledger, log });
+  const actuator = new ClaudeSkillActuator({
+    skillsDir: deps.skillsDir,
+    ledger,
+    log,
+    // idea-521: opt-in converge-prune, driven by the manifest `prune_orphans` field.
+    pruneOrphans: deps.manifest.pruneOrphans,
+  });
   const store = new SpecStore();
   const loop = new ReconcileLoop({ store, actuator }, { log });
 

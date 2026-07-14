@@ -48,6 +48,13 @@ export interface ClaudeSkillActuatorDeps {
   skillsDir: string;
   /** durable managed-set persistence (invariant 1). */
   ledger: SkillLedgerPort;
+  /** idea-521 (opt-in, default false): CONVERGE-PRUNE — after the ledger-scoped removal,
+   *  also unlink any on-disk skill entry (a dir with SKILL.md) NOT in the wanted-set, so
+   *  the seat converges to EXACTLY the delivered baseline (sweeps orphaned/legacy
+   *  leftovers a retired mission_kit_sync left behind). This is the ONLY readdir-based
+   *  removal and it is OFF by default — the default path keeps the strictly-ledger-scoped
+   *  coexistence firebreak (invariant 2) fully intact. */
+  pruneOrphans?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -55,6 +62,8 @@ export class ClaudeSkillActuator implements ResourceActuatorPort {
   private readonly skillsDir: string;
   private readonly ledger: SkillLedgerPort;
   private readonly log: (msg: string) => void;
+  /** idea-521 opt-in converge-prune (default false); see ClaudeSkillActuatorDeps. */
+  private readonly pruneOrphans: boolean;
   /** the DURABLE managed ledger, in memory for this pass — seeded from persistence at
    *  construct, written back after every converge. The ONLY set removal may touch. */
   private readonly managed: Set<string>;
@@ -63,6 +72,7 @@ export class ClaudeSkillActuator implements ResourceActuatorPort {
     this.skillsDir = deps.skillsDir;
     this.ledger = deps.ledger;
     this.log = deps.log ?? (() => {});
+    this.pruneOrphans = deps.pruneOrphans ?? false;
     this.managed = new Set(this.ledger.read());
   }
 
@@ -90,6 +100,24 @@ export class ClaudeSkillActuator implements ResourceActuatorPort {
         if (managedEnabledSet.has(name)) continue;
         this.unlink(name);
         this.managed.delete(name);
+      }
+
+      // Level 3 — CONVERGE-PRUNE (idea-521, OPT-IN via `pruneOrphans`): converge the seat
+      // to EXACTLY the wanted-set by removing any on-disk skill entry not in it. This is
+      // the ONLY readdir-based removal — it exists to sweep ORPHANS the ledger-scoped
+      // removal structurally can't reach (e.g. a legacy mission_kit_sync skill dropped
+      // from the baseline once mission_kit_sync itself is retired). DEFAULT OFF ⇒ the
+      // coexistence firebreak (invariant 2) is untouched. Safe-by-construction guards:
+      // (a) only entries that are a directory WITH a SKILL.md — never the ledger sidecar
+      // (it lives outside skillsDir) nor stray files; (b) NEVER a wanted/baseline skill
+      // (managedEnabled is skipped). Orphans are adopt-and-pruned (dropped from the ledger
+      // too) so ledger and disk stay coherent.
+      if (this.pruneOrphans) {
+        for (const name of this.readSkillDirsOnDisk()) {
+          if (managedEnabledSet.has(name)) continue; // baseline — never prune
+          this.pruneOrphan(name);
+          this.managed.delete(name);
+        }
       }
     } catch (err) {
       // persist whatever we durably achieved before the fault (no ledger/disk skew).
@@ -142,6 +170,33 @@ export class ClaudeSkillActuator implements ResourceActuatorPort {
     const dest = join(this.skillsDir, name);
     rmSync(dest, { recursive: true, force: true });
     this.log(`[hcap-skills] unlinked managed skill '${name}' (no longer desired)`);
+  }
+
+  /** idea-521 converge-prune: rm an ORPHANED on-disk skill dir not in the wanted-set.
+   *  Only reachable under the `pruneOrphans` opt-in; the caller has already excluded the
+   *  baseline and confirmed the entry is a SKILL.md-bearing directory. */
+  private pruneOrphan(name: string): void {
+    const dest = join(this.skillsDir, name);
+    rmSync(dest, { recursive: true, force: true });
+    this.log(`[hcap-skills] pruned orphaned skill '${name}' (not in wanted-set)`);
+  }
+
+  /** every on-disk entry under skillsDir that is a DIRECTORY holding a SKILL.md — a
+   *  claude-visible skill (idea-521 converge-prune scope). Unlike readManagedOnDisk this
+   *  is NOT ledger-filtered (it must see orphans); it is only ever called under the
+   *  pruneOrphans opt-in. A missing skillsDir yields []. */
+  private readSkillDirsOnDisk(): string[] {
+    let entries: string[];
+    try {
+      entries = readdirSync(this.skillsDir);
+    } catch {
+      return [];
+    }
+    return entries.filter(
+      (name) =>
+        isDir(join(this.skillsDir, name)) &&
+        existsSync(join(this.skillsDir, name, "SKILL.md")),
+    );
   }
 
   /** the managed-scoped on-disk observation: dirs under skillsDir that hold a SKILL.md
