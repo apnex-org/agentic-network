@@ -611,6 +611,11 @@ live_harness() {
     s="ois-$a-$h"
     stmux "$s" has-session -t "$s" 2>/dev/null && { echo "$h"; return 0; }
   done
+  # No live seat found is a VALID result (empty output) — return success, else the last
+  # `stmux has-session` non-zero propagates out and a caller's `x=$(live_harness ..)` trips
+  # `set -e` (silent rc=1 in cmd_up/ois-up before any output). bug: broke `ois up` on a
+  # fresh launch (the agent's normal pre-launch state).
+  return 0
 }
 harness_log_marker() { # $1 harness -> "logfile-rel|marker-regex"
   case "$1" in
