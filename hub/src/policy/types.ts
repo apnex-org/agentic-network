@@ -12,6 +12,7 @@ import type {
   IMessageStore,
 } from "../entities/index.js";
 import type { MetricsCounter } from "../observability/metrics.js";
+import type { Clock } from "../entities/clock.js";
 
 // ── Domain Event (internal, synchronous) ────────────────────────────
 
@@ -96,6 +97,13 @@ export interface IPolicyContext {
   // mission-83 W6-narrowed. If future Hub-config emerges, restore as needed.
   /** Phase 2d CP1: in-process counter for invariant + cascade telemetry. */
   metrics: MetricsCounter;
+  /**
+   * idea-449 VirtualClock: the injected time source the `get_now` read-verb reports
+   * from. Optional — ctx builders that omit it (sweepers, some tests) fall back to
+   * real wall time. The hub wires the SAME systemClock the substrate defaults to; a
+   * simulation injects a VirtualClock so agent-visible time is deterministic too.
+   */
+  clock?: Clock;
 }
 
 // ── Policy Result (what handlers return) ────────────────────────────

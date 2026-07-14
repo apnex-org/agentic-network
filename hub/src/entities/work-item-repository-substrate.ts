@@ -46,6 +46,7 @@ import { DEFAULT_STATE_DURATIONS, evaluateCompletionGate } from "./work-item.js"
 import { SubstrateCounter } from "./substrate-counter.js";
 import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
+import { type Clock, systemClock } from "./clock.js";
 
 const KIND = "WorkItem";
 const LIST_CAP = 500;
@@ -434,6 +435,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   constructor(
     private readonly substrate: HubStorageSubstrate,
     private readonly counter: SubstrateCounter,
+    // idea-449 VirtualClock: every timestamp this repository writes routes through
+    // the injected clock; defaults to real wall time so production is unchanged.
+    private readonly clock: Clock = systemClock,
   ) {}
 
   async createWorkItem(input: {
@@ -454,7 +458,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   }): Promise<WorkItem> {
     const num = await this.counter.next("workItemCounter");
     const id = `work-${num}`;
-    const now = new Date().toISOString();
+    const now = this.clock.now().toISOString();
     const w: WorkItem = {
       id,
       type: input.type,
@@ -572,7 +576,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!preClaim) throw new TransitionRejected(`update rejected: references append pre-claim only (status=${before.status})`);
       next.references = [...(before.references ?? []), ...mutation.appendReferences];
     }
-    next.updatedAt = new Date().toISOString();
+    next.updatedAt = this.clock.now().toISOString();
     const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
     if (!result.ok) {
       throw new TransitionRejected(`update rejected: stale write on ${workId} (the row changed under you) — re-read and re-decide`);
@@ -599,7 +603,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
   }): Promise<{ item: WorkItem; created: boolean }> {
-    const now = new Date().toISOString();
+    const now = this.clock.now().toISOString();
     const w: WorkItem = {
       id: input.id,
       type: input.type,
@@ -1057,7 +1061,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
           if (depsNotDone.length > 0) { // (b) all dependsOn must be phase=done
             throw new ClaimRejected(`dependencies not done: ${depsNotDone.join(", ")}`);
           }
-          const now = new Date();
+          const now = this.clock.now();
           const nowISO = now.toISOString();
           const lease: WorkItemLease = {
             holder: agentId,
@@ -1080,7 +1084,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "start");
       if (w.status !== "claimed") throw new TransitionRejected(`start requires claimed, was ${w.status}`);
-      const nowISO = new Date().toISOString();
+      const nowISO = this.clock.now().toISOString();
       return { ...w, status: "in_progress", ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
@@ -1089,7 +1093,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "block");
       if (w.status !== "in_progress") throw new TransitionRejected(`block requires in_progress, was ${w.status}`);
-      const nowISO = new Date().toISOString();
+      const nowISO = this.clock.now().toISOString();
       return { ...w, status: "blocked", blockedOn, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
@@ -1098,7 +1102,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "resume");
       if (w.status !== "blocked") throw new TransitionRejected(`resume requires blocked, was ${w.status}`);
-      const nowISO = new Date().toISOString();
+      const nowISO = this.clock.now().toISOString();
       return { ...w, status: "in_progress", blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
@@ -1116,7 +1120,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (w.status !== "ready") {
         throw new TransitionRejected(`pause requires ready (no lease to zombie), was ${w.status} — use release/abandon for leased work`);
       }
-      const nowISO = new Date().toISOString();
+      const nowISO = this.clock.now().toISOString();
       return { ...w, status: "paused" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
@@ -1130,7 +1134,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (w.status !== "paused") throw new TransitionRejected(`unpause requires paused, was ${w.status}`);
       // → ready: re-enters the NORMAL claim gate — deps + roleEligibility are re-validated fail-closed
       // at the subsequent claim (claimWorkItem's authority). Start-gates are NOT bypassed.
-      const nowISO = new Date().toISOString();
+      const nowISO = this.clock.now().toISOString();
       return { ...w, status: "ready" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
@@ -1141,7 +1145,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const renewed = await this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "renew");
       if (!LEASE_HELD_PHASES.includes(w.status)) throw new TransitionRejected(`renew requires a held lease, was ${w.status}`);
-      const now = new Date();
+      const now = this.clock.now();
       const nowISO = now.toISOString();
       // audit-4103 (LOW): cannot renew an ALREADY-EXPIRED lease — it's the sweeper's to
       // re-queue; renewing a dead lease would race the sweeper. Fail-loud (ISO-8601
@@ -1238,9 +1242,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   private async tryBumpAncestorHeartbeat(arcId: string): Promise<void> {
     const pre = await this.getWorkItem(arcId);
     if (!pre?.lease) return; // nothing held to keep alive
-    if (pre.lease.expiresAt < new Date().toISOString()) return; // already-expired → sweeper's; never resurrect
+    if (pre.lease.expiresAt < this.clock.now().toISOString()) return; // already-expired → sweeper's; never resurrect
     await this.tryCasUpdate(arcId, (w) => {
-      const now = new Date();
+      const now = this.clock.now();
       const nowISO = now.toISOString();
       // Re-check on the FRESH row — the airtight already-expired guard (a lease that lapsed
       // between the pre-read and here must NOT be bumped); return unchanged to skip.
@@ -1261,7 +1265,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "release");
       if (!RELEASABLE_PHASES.includes(w.status)) throw new TransitionRejected(`release requires an active claim, was ${w.status}`);
-      const nowISO = new Date().toISOString();
+      const nowISO = this.clock.now().toISOString();
       return { ...w, status: "ready", lease: null, blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
@@ -1283,7 +1287,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!w.blockedOn?.blockerIds?.includes(decisionRef)) {
         throw new TransitionRejected(`systemUnblock rejected: ${workId} is not blocked on ${decisionRef} (blockers: [${w.blockedOn?.blockerIds?.join(", ") ?? ""}]) — a decision only unblocks what waits on it`);
       }
-      const nowISO = new Date().toISOString();
+      const nowISO = this.clock.now().toISOString();
       return { ...w, status: "in_progress", blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
@@ -1298,7 +1302,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!RELEASABLE_PHASES.includes(w.status) && !(w.status === "ready" && isCreator)) {
         throw new TransitionRejected(`abandon requires an active claim (or the creator from ready), was ${w.status}`);
       }
-      const nowISO = new Date().toISOString();
+      const nowISO = this.clock.now().toISOString();
       return { ...w, status: "abandoned", lease: null, blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
@@ -1424,7 +1428,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // review→done, level-triggered. Only both-satisfied reaches done.
       const gate = evaluateCompletionGate(w);
       const nextPhase: WorkItemPhase = evidencePhase === "done" && gate.attestationReqsSatisfied ? "done" : "review";
-      const nowISO = new Date().toISOString();
+      const nowISO = this.clock.now().toISOString();
       return { ...w, status: nextPhase, evidence: merged, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
@@ -1535,7 +1539,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         throw new AttestationRejected(`targetRef of ${workId} changed after an attestation exists — relocation rejected (point-at-A-then-move-to-B laundering)`);
       }
       // Build the attestation FROM THE FRESH w (hashes, targetRef snapshot, supersedes).
-      const producedAt = new Date().toISOString();
+      const producedAt = this.clock.now().toISOString();
       const prior = w.attestations[requirementId];
       const attestation: Attestation = {
         requirementId,
@@ -1565,11 +1569,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         }
         const isLeaf = w.completionDependsOn.length === 0;
         if (gate.attestationReqsSatisfied && executorDone && isLeaf) {
-          const nowISO = new Date().toISOString();
+          const nowISO = this.clock.now().toISOString();
           return { ...w, attestationHistory, attestations, status: "done" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
         }
       }
-      return { ...w, attestationHistory, attestations, updatedAt: new Date().toISOString() };
+      return { ...w, attestationHistory, attestations, updatedAt: this.clock.now().toISOString() };
     });
     return { item: written!, attestation: written!.attestations[requirementId] };
   }
