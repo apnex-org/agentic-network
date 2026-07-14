@@ -106,19 +106,11 @@ function assertSkip(note) {
 }
 
 function runAssert() {
-  // idea-355 SLICE-3 hot-gate scoping (fork-1 follow-up, architect decision B):
-  // the gate's intent is "can't PUBLISH unstamped" — a CONSUMER-publish check.
-  // OIS_SKIP_VERSION_ASSERT=1 scopes the gate OFF for a non-registry build that
-  // vendors sovereign SOURCE and is traced by its OWN git-sha build-info (skips
-  // ONLY this FAIL check; the build-info stamp above + the package's prepare/tsc
-  // build still run, so dist stays intact — NOT a blanket --ignore-scripts). Its
-  // original setter, the hub transient-vendor-pack, was retired in cleanslate0,
-  // leaving this a no-op guard (removing the branch is separate scope). The real
-  // publish path (publish-packages.sh) leaves the flag unset and still gates.
-  if (process.env.OIS_SKIP_VERSION_ASSERT === "1") {
-    assertSkip("OIS_SKIP_VERSION_ASSERT=1 (internal vendor-pack; gate scoped to consumer publishes)");
-    return;
-  }
+  // c493 (bug-255 residual): the OIS_SKIP_VERSION_ASSERT escape hatch is RETIRED. Its only
+  // setter — the hub transient-vendor-pack — was removed in cleanslate0, leaving a dead
+  // no-op branch; a live env override of a publish GATE is also a footgun. The version-bump
+  // gate now runs unconditionally on the publish (prepack) path.
+  //
   // No git context → the top-level `git rev-parse` already fell back to
   // "unknown". Nothing to assert against.
   if (sha === "unknown") {
