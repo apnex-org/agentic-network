@@ -17,9 +17,10 @@
  *      is a Phase-B property, not the driver's concern). A pass with no progress and
  *      unfinished nodes is a DEADLOCK finding.
  *
- * SCOPE (B1 first increment): TASK nodes. Verifier-gate nodes (the review→attest
- * cycle, bug-220) are the next B1 increment — NOT silently skipped: a `gate: true`
- * node throws `notImplemented` here so a scenario that needs one fails loudly.
+ * Supports TASK nodes and VERIFIER-GATE nodes. A gate node (`gate: true`) is a real
+ * `type:"verifier-gate"`: the executor drives it to `review` (complete with executor
+ * evidence), then a DISTINCT verifier — never the executor/creator/holder, the bug-249
+ * self-attestation fence — attests `pass`, advancing review→done (leaf auto-advance).
  */
 import { SimHarness } from "./harness.js";
 import { SimClient } from "./clients.js";
@@ -95,10 +96,6 @@ export class WholeArcSim {
   }
 
   async run(scenario: ArcScenario): Promise<ArcRunResult> {
-    for (const n of scenario.nodes) {
-      if (n.gate) throw new Error(`WholeArcSim B1: verifier-gate node "${n.id}" not yet supported (next B1 increment)`);
-    }
-
     // A cyclic dependency graph cannot be built (create_work needs deps to exist) —
     // report it as deadlock, deterministically, rather than looping forever.
     const order = topoOrder(scenario.nodes);
@@ -116,10 +113,26 @@ export class WholeArcSim {
     // Create every WorkItem in dependency order, mapping logical id → real id.
     const realId = new Map<string, string>();
     for (const node of order) {
+      // A gate node is a real verifier-gate: it needs a runbook (the just-in-time
+      // claimant instruction) and a `seal` requirement whose evidenceAuthority is
+      // verifier-attestation — satisfiable ONLY by a verifier's attest_evidence verdict,
+      // never the executor's own evidence (that is what parks it in `review`).
+      const shape = node.gate
+        ? {
+            type: "verifier-gate" as const,
+            runbook: `sim gate ${node.id}: executor produces commit evidence; a distinct verifier attests pass`,
+            evidenceRequirements: [
+              { id: "commit", kind: "commit", description: node.id },
+              { id: "seal", kind: "review", evidenceAuthority: "verifier-attestation", description: `${node.id} verdict` },
+            ],
+          }
+        : {
+            type: "task" as const,
+            evidenceRequirements: [{ id: "commit", kind: "commit", description: node.id }],
+          };
       const c = await arch.createWork({
-        type: "task",
+        ...shape,
         roleEligibility: [node.role ?? "engineer"],
-        evidenceRequirements: [{ id: "commit", kind: "commit", description: node.id }],
         dependsOn: (node.dependsOn ?? []).map((l) => realId.get(l)).filter((x): x is string => !!x),
         completionDependsOn: (node.completionDependsOn ?? []).map((l) => realId.get(l)).filter((x): x is string => !!x),
       });
@@ -150,8 +163,19 @@ export class WholeArcSim {
         const claimed = await exec.claim(wid);
         if (!claimed.ok) continue;
         await exec.start(wid);
-        const completed = await exec.complete(wid, this.evidence());
-        if (completed.ok && (await this.phaseOf(arch, wid)) === "done") {
+        await exec.complete(wid, this.evidence()); // task → done; gate → parks in review
+        if (node.gate) {
+          // A DISTINCT verifier (never the executor/creator/holder — the bug-249
+          // self-attestation fence) attests the seal, referencing the executor's
+          // load-bearing commit evidence; a leaf gate advances review→done here.
+          await clients.verifier.call("attest_evidence", {
+            workId: wid,
+            requirementId: "seal",
+            verdict: "pass",
+            evidenceRefs: [{ kind: "evidence", ref: "deadbeef" }],
+          });
+        }
+        if ((await this.phaseOf(arch, wid)) === "done") {
           doneSet.add(node.id);
           progress = true;
         }

@@ -64,7 +64,17 @@ describe("WholeArcSim — task-node arcs (B1)", () => {
     expect(new Set(r.stuck)).toEqual(new Set(["a", "b"]));
   });
 
-  it("fails LOUDLY on a not-yet-supported verifier-gate node (no silent skip)", async () => {
-    await expect(sim().run({ nodes: [{ id: "vg", gate: true }] })).rejects.toThrow(/verifier-gate/);
+  it("drives a verifier-gate node to done (executor→review→distinct verifier attests→done)", async () => {
+    const r = await sim().run({ nodes: [{ id: "build" }, { id: "gate", gate: true, dependsOn: ["build"] }] });
+    expect(r.deadlock).toBe(false);
+    expect(new Set(r.done)).toEqual(new Set(["build", "gate"]));
+  });
+
+  it("drives the real mp0bn -vg shape: a closer whose completionDependsOn is a verifier-gate", async () => {
+    // closer cannot complete until its verifier-gate (vg) is attested done — the exact
+    // build→gate completion-gate the mp0bn arc uses.
+    const r = await sim().run({ nodes: [{ id: "closer", completionDependsOn: ["vg"] }, { id: "vg", gate: true }] });
+    expect(r.deadlock).toBe(false);
+    expect(new Set(r.done)).toEqual(new Set(["closer", "vg"]));
   });
 });
