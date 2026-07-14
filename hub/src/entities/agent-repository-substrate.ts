@@ -1025,6 +1025,11 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     const nowMs = this.clock.now().getTime();
     const stale: Agent[] = [];
     for (const a of agents) {
+      // bug-264 fast-follow: an already-tombstoned (archived) seat is NOT a
+      // re-reap candidate — skip it so the reaper doesn't repeat the cascade-
+      // unpin + archiveAgent (idempotent) + agent_reaper_archived audit on every
+      // sweep. The tombstone stays queryable via get_agents includeTombstoned.
+      if (a.archived) continue;
       const isOffline = a.status === "offline" || a.livenessState === "offline";
       if (!isOffline) continue;
       const lastSeenMs = Date.parse(a.lastSeenAt);

@@ -93,6 +93,21 @@ describe("work-221 bug-264 — agent tombstoning (append-only) + self-un-archive
     const staleAged = await reg.listOfflineAgentsOlderThan(-1);
     expect(staleAged.find((a) => a.id === r.agentId)).toBeDefined();
   });
+
+  it("an ALREADY-archived offline+aged seat is NOT re-selected as a reaper candidate (no re-audit loop)", async () => {
+    // steve's #599 watchpoint: archiveAgent is idempotent-true for archived rows,
+    // so if a tombstoned seat stayed a candidate, each sweep would re-unpin +
+    // re-archive + re-log agent_reaper_archived forever. Once archived it must
+    // drop out of the candidate set.
+    const r = await reg.registerAgent("s1", "engineer", payload("seat-tombstoned"));
+    if (!r.ok) return;
+    await reg.markAgentOffline("s1");
+    await reg.archiveAgent(r.agentId);
+    // Even with a -1ms grace (which selects ANY offline-aged seat), an already-
+    // tombstoned row must NOT come back as a candidate.
+    const staleAged = await reg.listOfflineAgentsOlderThan(-1);
+    expect(staleAged.find((a) => a.id === r.agentId)).toBeUndefined();
+  });
 });
 
 // ── bug-263 pagination + bug-264 escape hatch (router level) ──
