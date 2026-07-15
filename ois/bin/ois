@@ -751,18 +751,55 @@ session_name() { echo "ois-$1-$2"; }
 # command against a seat's per-seat socket; `-L` must precede the tmux subcommand.
 stmux() { local sk="$1"; shift; tmux -L "$sk" "$@"; }
 
-# bug-259 — create a seat session size-PINNED so a later `ois attach` never resizes it.
-# Root cause: `ois up` makes the detached session at a fixed size and tmux's default
-# `window-size latest` then resizes the window to whatever terminal attaches. When the
-# operator's terminal != that size, attach fires SIGWINCH -> the claude-code (Ink) TUI
-# full-repaints, replaying the whole conversation = the "attach scrollback flood". Setting
-# `window-size manual` freezes the window so attach shows the CURRENT pane, not a re-scroll.
-# The option is set -g on the seat's OWN per-seat server (idea-512 isolation) so it can never
-# reach another seat or the operator's server. Size is overridable via OIS_TMUX_COLS/_ROWS
-# (default 220x50 — unchanged) so an operator can pin it to their usual terminal.
+# bug-259 — create a seat session size-PINNED so a later raw `tmux attach` never
+# implicitly resizes it. Root cause: tmux's default `window-size latest` resizes a
+# detached window to whatever terminal attaches; the harness TUI sees SIGWINCH and
+# can full-repaint/replay scrollback. Setting `window-size manual` freezes the
+# window unless OIS explicitly resizes it.
+#
+# bug-273 — keep tmux's final status row, but never size the pane to the FULL
+# client height when status is on. A 53-row pane + a 1-row tmux status in a 53-row
+# client makes tmux enter viewport mode (`[0,0]` in status-right), producing the
+# bottom horizontal/dot artifact under the Pi footer. Treat OIS_TMUX_ROWS as the
+# CLIENT height and create/fit the PANE height as rows - OIS_TMUX_STATUS_ROWS.
+# Defaults: client 220x50, status rows 1 => pane/window 220x49. Operators may
+# override exact pane rows with OIS_TMUX_PANE_ROWS.
+_tty_size() { # stdout: "<cols> <rows>" or nothing
+  local r c
+  if [[ -t 0 ]] && read -r r c < <(stty size 2>/dev/null); then
+    [[ "$r" =~ ^[0-9]+$ && "$c" =~ ^[0-9]+$ ]] && echo "$c $r"
+  fi
+}
+
+_tmux_pane_dims() { # stdout: "<cols> <pane-rows>"; OIS_TMUX_ROWS means CLIENT rows
+  local tty cols client_rows status_rows pane_rows
+  tty=$(_tty_size || true)
+  cols="${OIS_TMUX_COLS:-${tty%% *}}"
+  [[ -n "$cols" && "$cols" != "$tty" ]] || cols=220
+  client_rows="${OIS_TMUX_ROWS:-${tty##* }}"
+  [[ -n "$client_rows" && "$client_rows" != "$tty" ]] || client_rows=50
+  status_rows="${OIS_TMUX_STATUS_ROWS:-1}"
+  pane_rows="${OIS_TMUX_PANE_ROWS:-}"
+  if [[ -z "$pane_rows" ]]; then
+    pane_rows=$(( client_rows - status_rows ))
+    (( pane_rows > 0 )) || pane_rows=1
+  fi
+  echo "$cols $pane_rows"
+}
+
+_seat_fit_window_to_tty() { # <session/socket> — explicit pre-attach fit; preserves manual mode
+  local s="$1" dims cols rows
+  [[ "${OIS_TMUX_ATTACH_FIT:-1}" != "0" ]] || return 0
+  dims=$(_tmux_pane_dims || true)
+  [[ -n "$dims" ]] || return 0
+  read -r cols rows <<<"$dims"
+  stmux "$s" resize-window -t "$s:0" -x "$cols" -y "$rows" 2>/dev/null || true
+}
+
 _seat_new_session() { # <session/socket> <command-string> — same target for -L and -s (per-seat)
-  local s="$1"; shift
-  stmux "$s" new-session -d -s "$s" -x "${OIS_TMUX_COLS:-220}" -y "${OIS_TMUX_ROWS:-50}" "$@" || return 1
+  local s="$1" cols rows; shift
+  read -r cols rows <<<"$(_tmux_pane_dims)"
+  stmux "$s" new-session -d -s "$s" -x "$cols" -y "$rows" "$@" || return 1
   stmux "$s" set-option -g window-size manual 2>/dev/null || true
 }
 
@@ -958,11 +995,12 @@ cmd_attach() { # <agent> [harness] — harness optional: at most one live sessio
     s=$(session_name "$a" "$h")
   fi
   stmux "$s" has-session -t "$s" 2>/dev/null || fatal "no session $s (ois ps to list)"
-  # bug-259: ensure the window is size-pinned so THIS attach shows the current pane instead of
-  # resizing it (SIGWINCH -> harness full-repaint = the conversation-history re-scroll flood).
-  # Idempotent + own-socket-scoped; also fixes seats already up before the pin was added, so
-  # the fleet gets the fix on the next attach without a down/up cycle.
+  # bug-259: keep tmux in manual-size mode so attach itself never implicitly resizes.
+  # bug-273: OIS may explicitly pre-fit the pane to this terminal minus the tmux
+  # status row, preserving the final status row while avoiding viewport `[0,0]`
+  # artifacts under the Pi footer. Set OIS_TMUX_ATTACH_FIT=0 to skip this.
   stmux "$s" set-option -g window-size manual 2>/dev/null || true
+  _seat_fit_window_to_tty "$s"
   echo "attaching to $s — detach with Ctrl+b d (leaves the agent running)"
   exec tmux -L "$s" attach -t "$s"
 }

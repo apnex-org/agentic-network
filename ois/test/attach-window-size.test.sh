@@ -5,11 +5,14 @@
 # `window-size latest` then resizes the window to whatever terminal ATTACHES. When the operator's
 # terminal != that size, attach fires SIGWINCH -> the claude-code (Ink) TUI full-repaints,
 # replaying the whole conversation = the "attach scrollback flood". The fix pins `window-size
-# manual` at session creation (real code path: `_seat_new_session`) so attach never resizes ->
-# no SIGWINCH -> the operator sees the CURRENT pane, not a re-scroll.
+# manual` at session creation (real code path: `_seat_new_session`) so raw tmux attach never
+# resizes -> no implicit SIGWINCH -> the operator sees the CURRENT pane, not a re-scroll.
+#
+# bug-273: OIS_TMUX_ROWS is CLIENT rows; with tmux status on, _seat_new_session creates
+# a 220x49 pane by default (50 client rows - 1 status row) to avoid tmux viewport `[0,0]`.
 #
 # This test attaches a deliberately-mismatched (100x30) client through a pty and asserts the
-# seat window keeps its created 220x50 size. A CONTROL session (plain new-session, default
+# seat window keeps its created 220x49 size. A CONTROL session (plain new-session, default
 # window-size) is attached the same way to confirm the attach path really does resize — so the
 # fix assertion cannot false-PASS in an environment where the pty attach is inert.
 #
@@ -76,14 +79,16 @@ echo "  ok: attach resizes an unpinned window (bug mechanism reproduced)"
 echo "== FIX: _seat_new_session (window-size manual) — attach must NOT resize =="
 _seat_new_session "$SFIX" 'sleep 120'
 fix_before=$(winw "$SFIX" "$SFIX")
+fix_before_h=$(tmux -L "$SFIX" display-message -p -t "$SFIX" '#{window_height}' 2>/dev/null)
 pty_attach "$SFIX" "$SFIX" 100 30
 fix_after=$(winw "$SFIX" "$SFIX")
-echo "  fixed window width: ${fix_before} -> ${fix_after} (attach @100 cols)"
+fix_after_h=$(tmux -L "$SFIX" display-message -p -t "$SFIX" '#{window_height}' 2>/dev/null)
+echo "  fixed window size: ${fix_before}x${fix_before_h} -> ${fix_after}x${fix_after_h} (attach @100 cols)"
 
-if [[ "$fix_before" == "220" && "$fix_after" == "220" ]]; then
-  echo "  ok: window held 220 across a 100-col attach — no resize, no repaint flood"
+if [[ "$fix_before" == "220" && "$fix_after" == "220" && "$fix_before_h" == "49" && "$fix_after_h" == "49" ]]; then
+  echo "  ok: window held 220x49 across a 100-col attach — no resize, no repaint flood, status-row space preserved"
 else
-  echo "  FAIL: window changed on attach (${fix_before} -> ${fix_after}) — resize-on-attach not eliminated"
+  echo "  FAIL: window changed on attach (${fix_before}x${fix_before_h} -> ${fix_after}x${fix_after_h}) — resize-on-attach not eliminated"
   fail=1
 fi
 
