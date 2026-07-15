@@ -23,7 +23,8 @@ fail=0
 fail_case() { echo "  FAIL: $*"; fail=1; }
 ok_case() { echo "  ok: $*"; }
 
-CELL='{"cellAgent":"greg"}'
+CELL='{"cellAgent":"greg","piModels":{"providers":{"openai-codex":{"modelOverrides":{"gpt-5.5":{"contextWindow":400000}}}}}}'
+NO_MODELS_CELL='{"cellAgent":"greg"}'
 SEAT="$TDIR/seat-pi"
 mkdir -p "$SEAT"
 
@@ -83,6 +84,16 @@ write_models_400k_extra_provider() {
 }
 JSON
 }
+
+CONFIG_PI="$DIR/../../config/harnesses/pi.json"
+if [[ -f "$CONFIG_PI" ]] && pi_models_400k_valid <(jq '.piModels' "$CONFIG_PI"); then
+  ok_case "repo config/harnesses/pi.json declares openai-codex/gpt-5.5 400k piModels policy"
+else
+  fail_case "repo config/harnesses/pi.json does not declare required piModels 400k policy"
+fi
+
+out=$(pi_models_seed greg "$SEAT" "$NO_MODELS_CELL" 2>&1); rc=$?
+[[ $rc -ne 0 ]] && ok_case "missing fleet piModels declaration rejected fail-closed" || fail_case "missing fleet piModels declaration was accepted"
 
 out=$(pi_models_seed greg "$SEAT" "$CELL" 2>&1); rc=$?
 [[ $rc -eq 0 ]] || fail_case "missing target seed returned rc=$rc: $out"

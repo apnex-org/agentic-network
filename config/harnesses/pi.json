@@ -1,0 +1,37 @@
+{
+  "harness": "pi",
+  "_why": "pi harness: hub plugin loaded ephemerally from npm each launch, pinned via piPluginSpec (the -e flag overrides the global packages pin in ~/.pi/agent/settings.json). Workspace .pi/settings.json is rendered only when the cell declares piReserveTokens.",
+  "exec": [
+    "pi",
+    "-e",
+    "{piPluginSpec}",
+    "--provider",
+    "{piProvider}",
+    "--model",
+    "{piModel}",
+    "--continue"
+  ],
+  "piPluginSpec": "npm:@apnex/pi-plugin@0.1.6",
+  "piKeepRecentTokens": 24000,
+  "envTemplate": {
+    "OIS_EAGER_SESSION_CLAIM": "{eagerFlag}",
+    "HUB_LLM_MODEL": "{hubModelTag}",
+    "OIS_HUB_ROLE": "{role}"
+  },
+  "renders": [
+    "adapter-config",
+    "pi-settings"
+  ],
+  "configDirTemplate": "~/.config/apnex-agents/{agent}.pi",
+  "piModels": {
+    "providers": {
+      "openai-codex": {
+        "modelOverrides": {
+          "gpt-5.5": {
+            "contextWindow": 400000
+          }
+        }
+      }
+    }
+  }
+}

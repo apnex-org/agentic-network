@@ -424,19 +424,10 @@ pi_json_equiv() { # <json-a> <json-b> — canonical semantic equality
 
 render_pi_models() { # cell-json arg -> per-seat pi models.json on stdout
   # bug-271: the 400k gpt-5.5 model policy is part of the OIS fleet declaration/render
-  # contract, not an implicit inheritance from ~/.pi/agent or a workspace .pi fallback. The
-  # cell may override the full piModels document later; absent that, current prod pi seats get
-  # the required openai-codex/gpt-5.5 400k context-window declaration explicitly rendered.
-  jq -n --argjson c "$1" '
-    $c.piModels // {
-      providers: {
-        "openai-codex": {
-          modelOverrides: {
-            "gpt-5.5": {contextWindow: 400000}
-          }
-        }
-      }
-    }'
+  # contract, not an implicit inheritance from ~/.pi/agent or a workspace .pi fallback, and
+  # not a default embedded in this command script. The source of truth is the merged cell's
+  # .piModels config (declared under config/, currently config/harnesses/pi.json).
+  jq -e -n --argjson c "$1" '$c.piModels'
 }
 
 # pi_models_seed — bug-271: per-seat PI_CODING_AGENT_DIR must receive an explicit,
