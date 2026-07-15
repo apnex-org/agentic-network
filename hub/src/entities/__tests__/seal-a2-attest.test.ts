@@ -65,10 +65,55 @@ describe("SEAL A2 — attest_evidence authority", () => {
     expect(item.attestationHistory).toHaveLength(1);
   });
 
-  it("HISTORY check: an agent who executed the item CANNOT attest it (release-then-attest closed)", async () => {
+  it("HISTORY check: an agent who executed the verified work CANNOT attest it (release-then-attest closed)", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
     await expect(repo.attestEvidence(workId, "att", "agent-eng", "pass", [{ kind: "evidence", ref: "pr-1" }])).rejects.toThrow(AttestationRejected);
+  });
+
+  it("bug-249/idea-528: one verifier may drive+attest a gate when they did NOT author the gated target work", async () => {
+    const { repo } = await setup();
+    const gate = await repo.createWorkItem({ type: "verifier-gate", roleEligibility: ["verifier"], runbook: "verify build", evidenceRequirements: [EXEC, ATT] });
+    const build = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"], evidenceRequirements: [EXEC], completionDependsOn: [gate.id] });
+    const buildClaim = await repo.claimWorkItem(build.id, "agent-eng", "engineer");
+    await repo.startWork(build.id, "agent-eng", buildClaim!.lease!.token); // marks agent-eng as author of the VERIFIED work
+
+    const gateClaim = await repo.claimWorkItem(gate.id, "agent-verifier", "verifier");
+    const gateToken = gateClaim!.lease!.token;
+    await repo.startWork(gate.id, "agent-verifier", gateToken);
+    const parked = await repo.completeWork(gate.id, "agent-verifier", gateToken, [{ requirementId: "exec", kind: "freeform", ref: "pr-1", producedAt: new Date().toISOString() }], NO_FRICTION);
+    expect(parked!.status).toBe("review");
+
+    const { item } = await repo.attestEvidence(gate.id, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }]);
+    expect(item.status).toBe("done");
+    const v = await repo.verifyAttestation(gate.id, "att");
+    expect(v.valid).toBe(true);
+  });
+
+  it("bug-249/idea-528: a verifier still cannot attest a gate for target work they authored", async () => {
+    const { repo } = await setup();
+    const gate = await repo.createWorkItem({ type: "verifier-gate", roleEligibility: ["verifier"], runbook: "verify own build", evidenceRequirements: [EXEC, ATT] });
+    const build = await repo.createWorkItem({ type: "task", roleEligibility: ["verifier"], evidenceRequirements: [EXEC], completionDependsOn: [gate.id] });
+    const buildClaim = await repo.claimWorkItem(build.id, "agent-verifier", "verifier");
+    await repo.startWork(build.id, "agent-verifier", buildClaim!.lease!.token); // verifier authored the VERIFIED work
+
+    const gateClaim = await repo.claimWorkItem(gate.id, "agent-verifier", "verifier");
+    const gateToken = gateClaim!.lease!.token;
+    await repo.startWork(gate.id, "agent-verifier", gateToken);
+    await repo.completeWork(gate.id, "agent-verifier", gateToken, [{ requirementId: "exec", kind: "freeform", ref: "pr-1", producedAt: new Date().toISOString() }], NO_FRICTION);
+
+    await expect(repo.attestEvidence(gate.id, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }])).rejects.toThrow(AttestationRejected);
+  });
+
+  it("bug-249/idea-528: a verifier-driven gate with no resolvable target work fails safe to gate-node self-history", async () => {
+    const { repo } = await setup();
+    const gate = await repo.createWorkItem({ type: "verifier-gate", roleEligibility: ["verifier"], runbook: "orphan gate", evidenceRequirements: [EXEC, ATT] });
+    const gateClaim = await repo.claimWorkItem(gate.id, "agent-verifier", "verifier");
+    const gateToken = gateClaim!.lease!.token;
+    await repo.startWork(gate.id, "agent-verifier", gateToken);
+    await repo.completeWork(gate.id, "agent-verifier", gateToken, [{ requirementId: "exec", kind: "freeform", ref: "pr-1", producedAt: new Date().toISOString() }], NO_FRICTION);
+
+    await expect(repo.attestEvidence(gate.id, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }])).rejects.toThrow(AttestationRejected);
   });
 
   it("HARD FENCE: executor evidence bound to a verifier-attestation req is rejected at complete_work", async () => {
