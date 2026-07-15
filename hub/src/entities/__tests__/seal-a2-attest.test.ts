@@ -1,3 +1,6 @@
+
+const NO_FRICTION = { observed: false, summary: "no friction observed" } as const;
+
 /**
  * SEAL A2 (idea-444) — attest_evidence + verify_attestation authority logic.
  *
@@ -44,7 +47,7 @@ async function sealItemInReview(repo: WorkItemRepositorySubstrate, reqs: Evidenc
   const evidence: EvidenceItem[] = reqs.some((r) => r.id === "exec")
     ? [{ requirementId: "exec", kind: "freeform", ref: "pr-1", producedAt: new Date().toISOString() }]
     : [];
-  const completed = await repo.completeWork(w.id, "agent-eng", token, evidence);
+  const completed = await repo.completeWork(w.id, "agent-eng", token, evidence, NO_FRICTION);
   return { workId: w.id, completed };
 }
 
@@ -73,7 +76,7 @@ describe("SEAL A2 — attest_evidence authority", () => {
     const token = claimed!.lease!.token;
     await repo.startWork(w.id, "agent-eng", token);
     await expect(
-      repo.completeWork(w.id, "agent-eng", token, [{ requirementId: "att", kind: "freeform", ref: "x", producedAt: new Date().toISOString() }]),
+      repo.completeWork(w.id, "agent-eng", token, [{ requirementId: "att", kind: "freeform", ref: "x", producedAt: new Date().toISOString() }], NO_FRICTION),
     ).rejects.toThrow(EvidencePredicateFailed);
   });
 
@@ -89,7 +92,7 @@ describe("SEAL A2 — attest_evidence authority", () => {
     const token = claimed!.lease!.token;
     await repo.startWork(w.id, "agent-eng", token);
     await expect(
-      repo.completeWork(w.id, "agent-eng", token, [{ requirementId: "att", kind: "audit", ref: "audit-firehose-1", producedAt: new Date().toISOString() }]),
+      repo.completeWork(w.id, "agent-eng", token, [{ requirementId: "att", kind: "audit", ref: "audit-firehose-1", producedAt: new Date().toISOString() }], NO_FRICTION),
     ).rejects.toThrow(EvidencePredicateFailed);
   });
 

@@ -52,6 +52,7 @@ describe("SimHarness — drives the REAL WorkGraph FSM via PolicyRouter.handle",
           producedAt: new Date().toISOString(),
         },
       ],
+      frictionReflection: { observed: false, summary: "no friction observed" },
     });
     expect(done.ok, `complete_work: ${JSON.stringify(done.data)}`).toBe(true);
     expect(wi(done.data).status).toBe("done");

@@ -81,7 +81,7 @@ export class SimClient {
     return this.call("renew_lease", { workId });
   }
   complete(workId: string, evidence: readonly unknown[]): Promise<VerbOutcome> {
-    return this.call("complete_work", { workId, evidence });
+    return this.call("complete_work", { workId, evidence, frictionReflection: { observed: false, summary: "no friction observed" } });
   }
   abandon(workId: string): Promise<VerbOutcome> {
     return this.call("abandon_work", { workId });

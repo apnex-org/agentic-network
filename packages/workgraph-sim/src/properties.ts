@@ -193,9 +193,13 @@ export async function p4EvidenceSatisfiable(): Promise<OracleResult[]> {
   const w2 = await mk();
   await eng.claim(w2); await eng.start(w2);
   const badC = await eng.complete(w2, []); // no evidence for the commit req
+  const w3 = await mk();
+  await eng.claim(w3); await eng.start(w3);
+  const noFrictionC = await eng.call("complete_work", { workId: w3, evidence: commitEvidence(h) });
   return [
     { name: "P4:evidence-satisfiable/valid-evidence-completes", pass: okC.ok && (await phaseOf(arch, w1)) === "done", detail: okC.ok ? undefined : JSON.stringify(okC.data) },
     { name: "P4:MUTANT/missing-evidence-rejected", pass: badC.ok === false, detail: badC.ok ? "completed with NO evidence — the evidence predicate was bypassed" : undefined },
+    { name: "P4:friction-required/missing-friction-blocks-fsm", pass: noFrictionC.ok && (noFrictionC.data as Record<string, unknown>).completionBlocked === "friction_reflection_required" && (await phaseOf(arch, w3)) === "in_progress", detail: noFrictionC.ok ? undefined : JSON.stringify(noFrictionC.data) },
   ];
 }
 

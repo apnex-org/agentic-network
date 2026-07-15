@@ -1,3 +1,6 @@
+
+const NO_FRICTION = { observed: false, summary: "no friction observed" } as const;
+
 /**
  * work-136 (idea-419) — update_work per the RATIFIED contract v1.0
  * (decision-11, director-direct via dconf-9, 2026-07-05; the design's C4
@@ -68,7 +71,7 @@ describe("update_work (work-136 / idea-419: the ratified WorkItem mutation contr
     // the unblock scan lives on the complete_work verb path.
     const claimR = body(await router.handle("claim_work", { workId: dep }, strangerCtx)) as { workItem: { lease: { token: string } } };
     await router.handle("start_work", { workId: dep, leaseToken: claimR.workItem.lease.token }, strangerCtx);
-    const done = await router.handle("complete_work", { workId: dep, leaseToken: claimR.workItem.lease.token, evidence: [{ requirementId: "any", kind: "freeform", producedAt: new Date().toISOString(), note: "done" }] }, strangerCtx);
+    const done = await router.handle("complete_work", { workId: dep, leaseToken: claimR.workItem.lease.token, evidence: [{ requirementId: "any", kind: "freeform", producedAt: new Date().toISOString(), note: "done" }], frictionReflection: NO_FRICTION }, strangerCtx);
     expect(done.isError).toBeFalsy();
     const msgs = await ctx.stores.message.listMessages({});
     const unblock = msgs.find((m) => (m.payload as Record<string, unknown>)?.notificationEvent === "work-unblocked-notification" && (m.payload as Record<string, unknown>)?.work_id === item);
@@ -123,7 +126,7 @@ describe("update_work (work-136 / idea-419: the ratified WorkItem mutation contr
     const item = await created({ roleEligibility: [] });
     const claimed = await repo.claimWorkItem(item, "agent-x");
     await repo.startWork(item, "agent-x", claimed!.lease!.token);
-    await repo.completeWork(item, "agent-x", claimed!.lease!.token, [{ requirementId: "any", kind: "freeform", producedAt: new Date().toISOString() } as never]);
+    await repo.completeWork(item, "agent-x", claimed!.lease!.token, [{ requirementId: "any", kind: "freeform", producedAt: new Date().toISOString() } as never], NO_FRICTION);
     const r = await router.handle("update_work", { workId: item, set: { priority: "high" } }, ctx);
     expect(r.isError).toBe(true);
     expect(String(body(r).error)).toMatch(/terminal/);

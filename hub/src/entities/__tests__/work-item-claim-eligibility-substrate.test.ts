@@ -1,3 +1,6 @@
+
+const NO_FRICTION = { observed: false, summary: "no friction observed" } as const;
+
 /**
  * C1-R2 (mission-94) audit-4085 #1/#3 — claim_work AUTHORITY enforcement (real-pg).
  *
@@ -57,7 +60,7 @@ describe("WorkItem claim_work authority enforcement (real-pg)", () => {
     const w = await repo.createWorkItem({ type: "task", roleEligibility: [] });
     const c = await repo.claimWorkItem(w.id, agent);
     await repo.startWork(w.id, agent, c!.lease!.token);
-    await repo.completeWork(w.id, agent, c!.lease!.token, [{ requirementId: "x", kind: "freeform", producedAt: new Date().toISOString() }]);
+    await repo.completeWork(w.id, agent, c!.lease!.token, [{ requirementId: "x", kind: "freeform", producedAt: new Date().toISOString() }], NO_FRICTION);
     return w.id;
   }
 
@@ -119,7 +122,7 @@ describe("WorkItem claim_work authority enforcement (real-pg)", () => {
     // drive the dep to done
     const dc = await repo.claimWorkItem(dep.id, "agent-depdriver");
     await repo.startWork(dep.id, "agent-depdriver", dc!.lease!.token);
-    await repo.completeWork(dep.id, "agent-depdriver", dc!.lease!.token, [{ requirementId: "x", kind: "freeform", producedAt: new Date().toISOString() }]);
+    await repo.completeWork(dep.id, "agent-depdriver", dc!.lease!.token, [{ requirementId: "x", kind: "freeform", producedAt: new Date().toISOString() }], NO_FRICTION);
     expect((await repo.claimWorkItem(w.id, "agent-c"))!.status).toBe("claimed");
   }, OP_TIMEOUT);
 

@@ -1,3 +1,6 @@
+
+const NO_FRICTION = { observed: false, summary: "no friction observed" } as const;
+
 /**
  * work-99 (idea-384 Part B) — recursive arc-subtree rollup (real-pg).
  *
@@ -76,7 +79,7 @@ describe("WorkItem arc-rollup (real-pg: idea-384 Part B)", () => {
     await sleep(GAP);
     await repo.startWork(id, a, c!.lease!.token);
     await sleep(GAP);
-    return (await repo.completeWork(id, a, c!.lease!.token, [freeform()]))!;
+    return (await repo.completeWork(id, a, c!.lease!.token, [freeform()], NO_FRICTION))!;
   }
 
   it("LEAVES-ONLY: an intermediate's OWN span is NOT in the rollup", async () => {

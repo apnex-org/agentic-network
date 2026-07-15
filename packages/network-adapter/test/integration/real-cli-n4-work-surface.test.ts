@@ -99,6 +99,7 @@ describe("real-cli n4 — test-Hub-with-work serves a claimable -> completable i
       workId,
       leaseToken,
       evidence: [{ requirementId: "self-test", kind: "freeform", producedAt: new Date().toISOString(), note: `wrote ${PROOF}` }],
+      frictionReflection: { observed: false, summary: "no friction observed", suggestedFollowUp: { kind: "none" } },
     }, ctx())) as PolicyResultLike;
     expect(completeRes.isError, `complete_work: ${completeRes.content?.[0]?.text}`).toBeFalsy();
 

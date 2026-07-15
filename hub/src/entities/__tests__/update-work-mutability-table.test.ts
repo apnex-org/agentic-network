@@ -1,3 +1,6 @@
+
+const NO_FRICTION = { observed: false, summary: "no friction observed" } as const;
+
 /**
  * Stint Arc-1 S2 (idea-449/idea-456) — update_work EXECUTABLE MUTABILITY-TABLE.
  *
@@ -50,8 +53,8 @@ async function itemAt(repo: WorkItemRepositorySubstrate, phase: WorkItemPhase, r
   await repo.startWork(w.id, "agent-eng", t);
   if (phase === "in_progress") return w.id;
   if (phase === "blocked") { await repo.blockWork(w.id, "agent-eng", t, { blockerKind: "WorkItem", blockerIds: ["work-dep"], reason: "d" }); return w.id; }
-  if (phase === "review") { await repo.completeWork(w.id, "agent-eng", t, []); return w.id; } // uncovered review req parks
-  if (phase === "done") { await repo.completeWork(w.id, "agent-eng", t, [{ requirementId: "f", kind: "freeform", ref: "x", producedAt: now() }] as EvidenceItem[]); return w.id; }
+  if (phase === "review") { await repo.completeWork(w.id, "agent-eng", t, [], NO_FRICTION); return w.id; } // uncovered review req parks
+  if (phase === "done") { await repo.completeWork(w.id, "agent-eng", t, [{ requirementId: "f", kind: "freeform", ref: "x", producedAt: now() }] as EvidenceItem[], NO_FRICTION); return w.id; }
   return w.id;
 }
 
