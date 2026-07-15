@@ -59,6 +59,31 @@ write_models_bad_ctx() {
 JSON
 }
 
+write_models_400k_extra_provider() {
+  cat > "$1" <<'JSON'
+{
+  "providers": {
+    "openai-codex": {
+      "modelOverrides": {
+        "gpt-5.5": {
+          "contextWindow": 400000
+        }
+      }
+    },
+    "extra-provider": {
+      "models": [
+        {
+          "id": "x",
+          "contextWindow": 999,
+          "maxTokens": 1
+        }
+      ]
+    }
+  }
+}
+JSON
+}
+
 out=$(pi_models_seed greg "$SEAT" "$CELL" 2>&1); rc=$?
 [[ $rc -eq 0 ]] || fail_case "missing target seed returned rc=$rc: $out"
 [[ -f "$SEAT/models.json" && ! -L "$SEAT/models.json" ]] || fail_case "per-seat models.json is not an explicit rendered file"
@@ -96,10 +121,16 @@ out=$(pi_models_seed greg "$SEAT" "$CELL" 2>&1); rc=$?
 [[ -L "$SEAT/models.json" ]] || fail_case "wrong symlink was modified"
 
 rm -f "$SEAT/models.json"
+write_models_400k_extra_provider "$SEAT/models.json"
+out=$(pi_models_seed greg "$SEAT" "$CELL" 2>&1); rc=$?
+[[ $rc -ne 0 ]] && ok_case "400k-valid but non-equivalent per-seat models rejected fail-closed" || fail_case "400k-valid non-equivalent target was overwritten"
+grep -q 'extra-provider' "$SEAT/models.json" && ok_case "400k-valid non-equivalent per-seat models was preserved" || fail_case "extra provider policy was removed"
+
+rm -f "$SEAT/models.json"
 write_models_bad_ctx "$SEAT/models.json"
 out=$(pi_models_seed greg "$SEAT" "$CELL" 2>&1); rc=$?
-[[ $rc -ne 0 ]] && ok_case "non-matching per-seat models rejected fail-closed" || fail_case "non-matching target was overwritten"
-pi_models_400k_valid "$SEAT/models.json" && fail_case "bad per-seat models was modified to 400k" || ok_case "non-matching per-seat models was preserved"
+[[ $rc -ne 0 ]] && ok_case "non-400k per-seat models rejected fail-closed" || fail_case "non-400k target was overwritten"
+pi_models_400k_valid "$SEAT/models.json" && fail_case "bad per-seat models was modified to 400k" || ok_case "non-400k per-seat models was preserved"
 
 BAD_CELL='{"cellAgent":"greg","piModels":{"providers":{"openai-codex":{"modelOverrides":{"gpt-5.5":{"contextWindow":272000}}}}}}'
 rm -f "$SEAT/models.json"

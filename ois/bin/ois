@@ -418,6 +418,10 @@ pi_models_400k_valid() { # <models.json>
   jq -e '.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000' "$1" >/dev/null 2>&1
 }
 
+pi_json_equiv() { # <json-a> <json-b> — canonical semantic equality
+  diff -q <(jq -S . "$1") <(jq -S . "$2") >/dev/null 2>&1
+}
+
 render_pi_models() { # cell-json arg -> per-seat pi models.json on stdout
   # bug-271: the 400k gpt-5.5 model policy is part of the OIS fleet declaration/render
   # contract, not an implicit inheritance from ~/.pi/agent or a workspace .pi fallback. The
@@ -455,15 +459,19 @@ pi_models_seed() { # <agent> <per-seat-cdir> <cell-json>
   elif [[ -e "$dst" ]]; then
     if [[ -f "$dst" && ! -s "$dst" ]]; then
       rm -f "$dst"
-    elif [[ -f "$dst" ]] && pi_models_400k_valid "$dst"; then
+    elif [[ -f "$dst" ]] && pi_json_equiv "$dst" "$tmp"; then
       rm -f "$dst"
     else
       rm -f "$tmp"
-      fatal "pi models target exists and does not match required gpt-5.5 400k policy for '$a': $dst; refusing to overwrite model policy"
+      fatal "pi models target exists and is not exactly the rendered gpt-5.5 400k policy for '$a': $dst; refusing to overwrite model policy"
     fi
   fi
+  local old_umask
+  old_umask=$(umask)
   umask 077
   mv "$tmp" "$dst"
+  chmod 600 "$dst"
+  umask "$old_umask"
   echo "  seeding : pi models policy rendered ($dst; openai-codex/gpt-5.5 contextWindow=400000)"
 }
 
