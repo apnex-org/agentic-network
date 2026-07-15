@@ -33,6 +33,15 @@ SFIX="ois-testFIX-$$"; SCTL="ois-testCTL-$$"
 cleanup() { tmux -L "$SFIX" kill-server 2>/dev/null; tmux -L "$SCTL" kill-server 2>/dev/null; }
 trap cleanup EXIT
 
+# Deterministic fixture: _seat_new_session may derive default size from the current
+# interactive TTY. Pin the test's client-size contract so it asserts the intended
+# bug-273 math regardless of whether the test runs under Lily/Greg's attached Pi pane
+# (e.g. 211x53) or a headless CI shell.
+export OIS_TMUX_COLS=220
+export OIS_TMUX_ROWS=50
+export OIS_TMUX_STATUS_ROWS=1
+unset OIS_TMUX_PANE_ROWS
+
 # Attach to <socket>/<session> through a pty sized <cols>x<rows>, hold briefly, then detach.
 # This is exactly the resize path `ois attach` triggers when the operator terminal mismatches.
 pty_attach() { # <socket> <session> <cols> <rows>
