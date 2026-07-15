@@ -18,6 +18,8 @@ RESOLVER_SRC="$(dirname "$SRC")/../../deploy/adapter-image/prompt-resolve.sh"
 HANDLERS_SRC="$(dirname "$SRC")/../../deploy/adapter-image/prompt-handlers.json"
 RESOLVER_DEST="$HOME/.config/apnex-agents/bin/prompt-resolve.sh"
 HANDLERS_DEST="$HOME/.config/apnex-agents/config/prompt-handlers.json"
+PI_HARNESS_CONFIG_SRC="$(dirname "$SRC")/../../config/harnesses/pi.json"
+PI_HARNESS_CONFIG_DEST="$HOME/.config/apnex-agents/config/harnesses/pi.json"
 
 [[ -f "$SRC" ]] || { echo "error: canonical source not found at $SRC" >&2; exit 1; }
 bash -n "$SRC" || { echo "error: canonical source fails bash -n; refusing to deploy" >&2; exit 1; }
@@ -28,6 +30,11 @@ bash -n "$SRC" || { echo "error: canonical source fails bash -n; refusing to dep
 # (config/harnesses/claude.json) — verify those are present at deploy time too, else the
 # reader defaults to {} and seeds nothing.
 grep -q 'claudeSettings' "$SRC" || { echo "error: deploy source lacks the claudeSettings reader — stale ois? pull main or deploy from the worktree with the code. Refusing to deploy." >&2; exit 1; }
+# bug-272: pi settings/models policy is config, not inline script or implicit ~/.pi/agent.
+# This deployable surface must co-ship the repo-side harness config into live OIS /config,
+# because bin/ois reads $HOME/.config/apnex-agents/config at runtime.
+[[ -f "$PI_HARNESS_CONFIG_SRC" ]] || { echo "error: missing repo pi harness config at $PI_HARNESS_CONFIG_SRC — refusing to deploy pi settings/models renderer without its config source" >&2; exit 1; }
+jq -e '.piSettings.theme == "dark" and .piSettings.defaultProvider == "openai-codex" and .piSettings.defaultModel == "gpt-5.5" and .piSettings.defaultThinkingLevel == "xhigh" and .piSettings.terminal.showTerminalProgress == true and ((.piSettings.packages // []) | index("npm:pi-tool-display")) != null and ((.piSettings.packages // []) | index("npm:pi-web-access")) != null and .piSettings.compaction.enabled == true and (.piSettings.compaction.reserveTokens | type == "number") and (.piSettings.compaction.keepRecentTokens | type == "number") and .piModels.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000' "$PI_HARNESS_CONFIG_SRC" >/dev/null || { echo "error: repo pi harness config lacks required piSettings/piModels fleet policy — refusing to deploy" >&2; exit 1; }
 # bug-247 co-deploy guard: if THIS ois sources the resolver, its lib + table MUST co-ship.
 # The new ois moved the dev-channels-banner handler (which seat-launch depends on) out of a
 # hardcoded branch and INTO the table — so shipping the ois without them would silently hang
@@ -59,6 +66,8 @@ if [[ "${1:-}" == "--diff" ]]; then
     echo "--- prompt-handlers.json diff ---"
     diff -u "$HANDLERS_DEST" "$HANDLERS_SRC" && echo "live prompt-handlers.json is identical to canonical" || true
   fi
+  echo "--- config/harnesses/pi.json diff ---"
+  diff -u "$PI_HARNESS_CONFIG_DEST" "$PI_HARNESS_CONFIG_SRC" && echo "live pi harness config is identical to canonical" || true
   exit 0
 fi
 
@@ -93,6 +102,10 @@ fi
 # bug-247: co-ship the interactive-prompt resolver lib (beside bin/ois, where ois sources it)
 # + the handler table (config/, where ois reads it). Guarded above to co-deploy with any ois
 # that references them — so a claude seat's dev-channels banner is always auto-accepted.
+mkdir -p "$(dirname "$PI_HARNESS_CONFIG_DEST")"
+install -m 0644 "$PI_HARNESS_CONFIG_SRC" "$PI_HARNESS_CONFIG_DEST"
+echo "deployed $PI_HARNESS_CONFIG_SRC -> $PI_HARNESS_CONFIG_DEST"
+
 if grep -q 'prompt-resolve.sh' "$SRC"; then
   install -m 0755 "$RESOLVER_SRC" "$RESOLVER_DEST"
   echo "deployed $RESOLVER_SRC -> $RESOLVER_DEST"

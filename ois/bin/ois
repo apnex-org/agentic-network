@@ -123,9 +123,17 @@ render_git_config() { # agent-level: directory-scoped git identity include
   printf '[core]\n\tsshCommand = ssh -F /dev/null -i ~/.config/apnex-agents/secrets/%s -o IdentitiesOnly=yes\n' "$ref"
 }
 
-render_pi_settings() {
-  jq -n --argjson c "$1" \
-    '{compaction: {enabled: true, reserveTokens: $c.piReserveTokens, keepRecentTokens: ($c.piKeepRecentTokens // 24000)}}'
+render_pi_settings() { # cell-json arg -> per-seat pi settings.json on stdout
+  # bug-272: seat-critical Pi UI/model defaults are OIS config, not implicit inheritance from
+  # ~/.pi/agent/settings.json or workspace .pi/settings.json. The source of truth is the
+  # merged cell's .piSettings (declared under config/, currently config/harnesses/pi.json).
+  # Per-cell compaction fields remain authoritative when present.
+  jq -e -n --argjson c "$1" '
+    ($c.piSettings) as $s |
+    $s
+    * (if $c.piReserveTokens
+       then {compaction: (($s.compaction // {}) * {enabled: true, reserveTokens: $c.piReserveTokens, keepRecentTokens: ($c.piKeepRecentTokens // 24000)})}
+       else {} end)'
 }
 
 artifact_targets() { # echo "<kind> <path>" lines for a cell
@@ -134,7 +142,7 @@ artifact_targets() { # echo "<kind> <path>" lines for a cell
     case "$r" in
       adapter-config) echo "adapter-config $ws/.ois/adapter-config.json" ;;
       opencode-json)  echo "opencode-json $ws/opencode.json" ;;
-      pi-settings)    jq -e '.piReserveTokens' <<<"$c" >/dev/null 2>&1 && echo "pi-settings $ws/.pi/settings.json" || true ;;
+      pi-settings)    true ;; # retired for pi: per-seat settings are materialized by pi_seed (bug-272), never workspace .pi fallback
     esac
   done
   # agent-level renders (harness-independent)
@@ -430,6 +438,64 @@ render_pi_models() { # cell-json arg -> per-seat pi models.json on stdout
   jq -e -n --argjson c "$1" '$c.piModels'
 }
 
+pi_settings_valid() { # <settings.json>
+  jq -e '
+    type == "object" and
+    .theme == "dark" and
+    .defaultProvider == "openai-codex" and
+    .defaultModel == "gpt-5.5" and
+    .defaultThinkingLevel == "xhigh" and
+    .terminal.showTerminalProgress == true and
+    ((.packages // []) | index("npm:pi-tool-display")) != null and
+    ((.packages // []) | index("npm:pi-web-access")) != null and
+    .compaction.enabled == true and
+    (.compaction.reserveTokens | type == "number") and
+    (.compaction.keepRecentTokens | type == "number")
+  ' "$1" >/dev/null 2>&1
+}
+
+pi_settings_legacy_placeholder() { # <settings.json>
+  jq -e 'type == "object" and ((keys - ["lastChangelogVersion"]) | length == 0)' "$1" >/dev/null 2>&1
+}
+
+# pi_settings_seed — bug-272: per-seat PI_CODING_AGENT_DIR must receive an explicit,
+# fleet-rendered settings.json for UI/theme/model defaults. Existing valid symlink/global
+# mitigations are accepted only as predecessor state and replaced by the rendered file.
+# Empty or lastChangelogVersion-only per-seat placeholders are replaced; meaningful
+# non-equivalent local policy fails closed and is preserved.
+pi_settings_seed() { # <agent> <per-seat-cdir> <cell-json>
+  local a="$1" cdir="$2" c="$3" dst content tmp old_umask
+  dst="$cdir/settings.json"
+  [[ -n "$cdir" ]] || fatal "pi settings seed called without a per-seat config dir"
+  content=$(render_pi_settings "$c") || fatal "pi settings config missing for '$a': merged cell lacks .piSettings (declare it under config/harnesses/pi.json)"
+  tmp=$(mktemp)
+  printf '%s\n' "$content" > "$tmp"
+  [[ -s "$tmp" ]] && pi_settings_valid "$tmp" || { rm -f "$tmp"; fatal "rendered pi settings policy for '$a' lacks required dark/openai-codex/gpt-5.5/UI/compaction baseline"; }
+
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  if [[ -L "$dst" ]]; then
+    pi_settings_valid "$dst" || { rm -f "$tmp"; fatal "pi settings symlink for '$a' does not resolve to required fleet UI/settings policy: $dst"; }
+    rm -f "$dst"
+  elif [[ -e "$dst" ]]; then
+    if [[ -f "$dst" && ! -s "$dst" ]]; then
+      rm -f "$dst"
+    elif [[ -f "$dst" ]] && pi_settings_legacy_placeholder "$dst"; then
+      rm -f "$dst"
+    elif [[ -f "$dst" ]] && pi_json_equiv "$dst" "$tmp"; then
+      rm -f "$dst"
+    else
+      rm -f "$tmp"
+      fatal "pi settings target exists and is not an empty/legacy placeholder or exactly the rendered fleet policy for '$a': $dst; refusing to overwrite UI/settings policy"
+    fi
+  fi
+  old_umask=$(umask)
+  umask 077
+  mv "$tmp" "$dst"
+  chmod 600 "$dst"
+  umask "$old_umask"
+  echo "  seeding : pi settings policy rendered ($dst; theme=dark, provider=openai-codex, model=gpt-5.5)"
+}
+
 # pi_models_seed — bug-271: per-seat PI_CODING_AGENT_DIR must receive an explicit,
 # fleet-rendered models.json. Existing valid symlink mitigations are accepted only as a
 # compatible predecessor state: launch replaces them with the rendered file so the seat no
@@ -438,10 +504,10 @@ pi_models_seed() { # <agent> <per-seat-cdir> <cell-json>
   local a="$1" cdir="$2" c="$3" dst content tmp
   dst="$cdir/models.json"
   [[ -n "$cdir" ]] || fatal "pi models seed called without a per-seat config dir"
-  content=$(render_pi_models "$c")
+  content=$(render_pi_models "$c") || fatal "pi models config missing for '$a': merged cell lacks .piModels (declare it under config/harnesses/pi.json)"
   tmp=$(mktemp)
   printf '%s\n' "$content" > "$tmp"
-  pi_models_400k_valid "$tmp" || { rm -f "$tmp"; fatal "rendered pi models policy for '$a' lacks providers.openai-codex.modelOverrides.gpt-5.5.contextWindow == 400000"; }
+  [[ -s "$tmp" ]] && pi_models_400k_valid "$tmp" || { rm -f "$tmp"; fatal "rendered pi models policy for '$a' lacks providers.openai-codex.modelOverrides.gpt-5.5.contextWindow == 400000"; }
 
   mkdir -p "$cdir" && chmod 700 "$cdir"
   if [[ -L "$dst" ]]; then
@@ -477,6 +543,7 @@ pi_seed() {
   cdir=$(cell_configdir "$c")
   [[ -n "$cdir" ]] || fatal "pi cell '$a' has no configDirTemplate — cannot resolve a sovereign PI_CODING_AGENT_DIR (declare it in config/harnesses/pi.json, mirroring claude's '{agent}.claude'); refusing to seed to a bogus/shared path"
   pi_auth_bridge "$a" "$cdir"
+  pi_settings_seed "$a" "$cdir" "$c"
   pi_models_seed "$a" "$cdir" "$c"
   pi_na_ensure
   na_bin="$_PI_NA_MP/dist/bin/seed-skills.js"
